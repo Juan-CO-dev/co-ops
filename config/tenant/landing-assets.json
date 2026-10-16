@@ -17,7 +17,7 @@
   },
   {
     "id": "lineup-frex-480",
-    "path": "/media/frex-lineup-001-480-90bf2e417db7.webp"
+    "path": "/media/frex-lineup-001-480-517d10fd7598.webp"
   },
   {
     "id": "lineup-hot-pants",
@@ -25,7 +25,7 @@
   },
   {
     "id": "lineup-hot-pants-480",
-    "path": "/media/hot-pants-lineup-005-480-1a636cebdb05.webp"
+    "path": "/media/hot-pants-lineup-005-480-343abd691c3f.webp"
   },
   {
     "id": "lineup-teamster",
@@ -33,15 +33,11 @@
   },
   {
     "id": "lineup-teamster-480",
-    "path": "/media/teamster-lineup-011-480-23a4cd92e4bd.webp"
-  },
-  {
-    "id": "lineup-crunchy-boi",
-    "path": "/media/crunchy-boi-lineup-014-3566a724066c.webp"
+    "path": "/media/teamster-lineup-011-480-986e5e108a02.webp"
   },
   {
     "id": "lineup-crunchy-boi-480",
-    "path": "/media/crunchy-boi-lineup-014-480-62023e4bd14c.webp"
+    "path": "/media/crunchy-boi-lineup-014-480-ed44ac35b10b.webp"
   },
   {
     "id": "lineup-sicky-wicky",
@@ -49,7 +45,7 @@
   },
   {
     "id": "lineup-sicky-wicky-480",
-    "path": "/media/sicky-wicky-lineup-024-480-6e37a792a1c2.webp"
+    "path": "/media/sicky-wicky-lineup-024-480-634275f3b822.webp"
   },
   {
     "id": "lineup-never-been-cheddar",
@@ -57,7 +53,7 @@
   },
   {
     "id": "lineup-never-been-cheddar-480",
-    "path": "/media/never-been-cheddar-lineup-029-480-7a3a828a2502.webp"
+    "path": "/media/never-been-cheddar-lineup-029-480-4fc09dc6adbe.webp"
   },
   {
     "id": "lineup-turkey-caesar",
@@ -65,7 +61,7 @@
   },
   {
     "id": "lineup-turkey-caesar-480",
-    "path": "/media/turkey-caesar-lineup-033-480-29582ee703c3.webp"
+    "path": "/media/turkey-caesar-lineup-033-480-4faa0ad0b824.webp"
   },
   {
     "id": "lineup-farmers-market",
@@ -73,7 +69,7 @@
   },
   {
     "id": "lineup-farmers-market-480",
-    "path": "/media/farmers-market-lineup-037-480-3caa1d0a65ae.webp"
+    "path": "/media/farmers-market-lineup-037-480-4ec2dca44de4.webp"
   },
   {
     "id": "lineup-french-dip",
@@ -89,11 +85,15 @@
   },
   {
     "id": "lineup-vesuvio-480",
-    "path": "/media/vesuvio-lineup-047-480-47dbcb3aa300.webp"
+    "path": "/media/vesuvio-lineup-047-480-cf5baf4c9974.webp"
   },
   {
     "id": "landing-icon",
     "path": "/brand/co-icon.png"
+  },
+  {
+    "id": "landing-og",
+    "path": "/brand/og-card.webp"
   },
   {
     "id": "subdex-catch",
@@ -101,6 +101,6 @@
   },
   {
     "id": "subdex-poster",
-    "path": "/media/subdex-poster-drawn-1c61ffe1c9e8.webp"
+    "path": "/media/subdex-poster-drawn-4f35ab463487.webp"
   }
 ]

@@ -1,19 +1,22 @@
 {
   "id": "subdex-poster",
-  "publicPath": "/media/subdex-poster-drawn-1c61ffe1c9e8.webp",
+  "publicPath": "/media/subdex-poster-drawn-4f35ab463487.webp",
   "classification": "drawn",
-  "sourcePath": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
-  "sourceSha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82",
-  "sha256": "1c61ffe1c9e85b44b710db8bf5b810e638608650e74415f877c688ce63ea8300",
+  "sourcePath": "assets/work/subdex-source-frame.png",
+  "sourceSha256": "f1321be97625c1484cc0c41f40c22f23dd2cb44c19be3925cf80c8c72236ba7f",
+  "sourceId": "subdex-frame-17-5",
+  "mode": "crop-resize-only",
+  "quality": 85,
+  "sha256": "4f35ab4634873d62b3dcf2e1595c1fb10486796671790c40d1a06a0c72e8369d",
   "width": 720,
   "height": 720,
-  "bytes": 17576,
+  "bytes": 16874,
   "maxBytes": 100000,
   "sidecar": "assets/provenance/subdex-poster.json",
   "steps": [
     "Existing AI-DRAWN source; no generation",
     "Crop and uniform resize; metadata stripped",
-    "WebP quality85"
+    "Sharp rotate + uniform resize 720 + WebP quality85 effort6 from pinned drawn source frame"
   ],
   "cut": {
     "start": 17.3,
@@ -168,7 +171,7 @@
     }
   },
   "toolVersion": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers\r",
-  "scriptSha256": "06f7c5b3574e4badc746790ff551c6e344f6a5da513c55e4e30b21808cf5d84a",
+  "scriptSha256": "c23a7eb6a5f5d0a25f5c84d5bbe262f7d78890e8b01988b67cd28c165381fb77",
   "commands": [
     {
       "tool": "ffprobe",
@@ -211,30 +214,6 @@
         "-map_metadata",
         "-1",
         "C:\\Users\\conta\\co-ops-landing\\tmp\\subdex-export\\subdex-catch-drawn.mp4"
-      ]
-    },
-    {
-      "tool": "ffmpeg",
-      "args": [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-ss",
-        "17.5",
-        "-i",
-        "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
-        "-vf",
-        "crop=1080:1080:0:780,scale=720:720:flags=lanczos",
-        "-frames:v",
-        "1",
-        "-c:v",
-        "libwebp",
-        "-quality",
-        "85",
-        "-map_metadata",
-        "-1",
-        "C:\\Users\\conta\\co-ops-landing\\tmp\\subdex-export\\subdex-catch-drawn.webp"
       ]
     },
     {

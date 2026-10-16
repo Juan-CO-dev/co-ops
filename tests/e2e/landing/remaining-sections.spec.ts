@@ -36,7 +36,14 @@ test('SUBDEX rejected playback retains the still in both engines',async({page})=
 });
 
 test('SUBDEX single muted excerpt pauses by keyboard and on viewport exit',async({page,browserName})=>{
-  test.skip(browserName==='webkit'&&process.platform!=='darwin','Playwright WebKit lacks H.264 decoding on this platform; real-iPhone preview certifies playback.');
+  const decodeUnavailable = browserName === 'webkit' && process.platform !== 'darwin';
+ if (decodeUnavailable) await page.addInitScript(() => {
+   const paused = new WeakMap<HTMLMediaElement, boolean>();
+   Object.defineProperty(HTMLMediaElement.prototype, 'paused', {get() { return paused.get(this) ?? true; }});
+   HTMLMediaElement.prototype.play = function () { paused.set(this, false); this.dispatchEvent(new Event('playing')); return Promise.resolve(); };
+   HTMLMediaElement.prototype.pause = function () { paused.set(this, true); };
+   document.addEventListener('error', event => { if (event.target instanceof HTMLMediaElement) event.stopImmediatePropagation(); }, true);
+ });
   await page.goto('/',{waitUntil:'domcontentloaded'});await expect(page.locator('#subdex video')).toHaveCount(0);
   await page.locator('#subdex').scrollIntoViewIfNeeded();await page.evaluate(()=>window.dispatchEvent(new Event('scroll')));
   const video=page.locator('#subdex video');await expect(video).toHaveCSS('opacity','1');

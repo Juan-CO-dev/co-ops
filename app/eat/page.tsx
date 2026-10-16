@@ -30,7 +30,7 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
   const stores = await loadPublicLandingStores(config);
   const queryString = new URLSearchParams(Object.entries(query).flatMap(([key,value])=>typeof value === "string" ? [[key,value]] : Array.isArray(value) ? value.map((v)=>[key,v]) : [])).toString();
   const sectionKeys = ["field-guide","lineup","subdex","shops","catering","footer"] as const;
-  return <div lang={language} className="mx-auto max-w-5xl px-5 pb-28">
+  return <div lang={language} className="mx-auto max-w-5xl px-5 pb-28 [overflow-wrap:anywhere]">
     <header className="flex flex-wrap items-center justify-between gap-4 py-5"><img src="/brand/co-wordmark.svg" alt={TENANT_NAME} width={1125} height={140} className="h-12 w-44 object-contain"/><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={config.attribution}/></header>
     <main>
       <Hero language={language} config={config} ad={captureAttribution(queryString,config.attribution).ad}/>

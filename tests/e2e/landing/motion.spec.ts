@@ -21,12 +21,22 @@ for(const failure of ["decode","autoplay"] as const)test(`${failure} retains the
  await expect(page.locator("#hero video")).toHaveCount(0);await expect(page.getByRole("button",{name:"Pause spin"})).toHaveCount(0);
 });
 test("one MP4 starts after trigger, pauses by keyboard and offscreen, preserves geometry",async({page,browserName})=>{
- test.skip(browserName === 'webkit' && process.platform !== 'darwin', 'Playwright WebKit lacks H.264 decoding on this platform; real-iPhone Safari preview check required.');
+ const decodeUnavailable = browserName === 'webkit' && process.platform !== 'darwin';
+ // Exercise control/visibility policy with a media adapter where H.264 is absent.
+ // Actual decoding remains independently covered by video-proof and real Safari.
+ if (decodeUnavailable) await page.addInitScript(() => {
+   const paused = new WeakMap<HTMLMediaElement, boolean>();
+   Object.defineProperty(HTMLMediaElement.prototype, 'paused', {get() { return paused.get(this) ?? true; }});
+   HTMLMediaElement.prototype.play = function () { paused.set(this, false); this.dispatchEvent(new Event('playing')); return Promise.resolve(); };
+   HTMLMediaElement.prototype.pause = function () { paused.set(this, true); };
+   document.addEventListener('error', event => { if (event.target instanceof HTMLMediaElement) event.stopImmediatePropagation(); }, true);
+ });
  const urls=new Set<string>();page.on("request",r=>{if(/\.(mp4|webm)/.test(r.url()))urls.add(r.url());});
  await page.goto("/");expect(urls.size).toBe(0);
  const frame=page.locator('[data-testid="hero-motion"]');const initial=await frame.boundingBox();
  await trigger(page);const video=page.locator("#hero video");
- await expect(video).toHaveCSS("opacity","1");expect([...urls]).toEqual([new URL(heroMedia.spin, page.url()).href]);
+ await expect(video).toHaveCSS("opacity","1");
+ if (!decodeUnavailable) expect([...urls]).toEqual([new URL(heroMedia.spin, page.url()).href]);
  expect((await frame.boundingBox())?.height).toBe(initial?.height);
  const pause=page.getByRole("button",{name:"Pause spin"});await pause.focus();await page.keyboard.press("Enter");
  await expect(page.getByRole("button",{name:"Play spin"})).toBeVisible();expect(await video.evaluate(v=>(v as HTMLVideoElement).paused)).toBe(true);

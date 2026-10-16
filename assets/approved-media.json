@@ -103,13 +103,13 @@
     {
       "id": "lineup-frex-480",
       "sourceId": "001",
-      "publicPath": "/media/frex-lineup-001-480-90bf2e417db7.webp",
+      "publicPath": "/media/frex-lineup-001-480-517d10fd7598.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_001.JPG",
       "sourceSha256": "ccdb8337d0e48f41a3194e1964595b2640557c9159199d3589fa6008b61342a3",
-      "sha256": "90bf2e417db77f9aee4f229b5a1c4464c2434cce0e46f8e5d0d319c589a18c8a",
-      "bytes": 26562,
+      "sha256": "517d10fd7598bdb6fe5f4ce421fe8065179cea6fcdd8678749e7cea395958ffb",
+      "bytes": 19790,
       "maxBytes": 100000,
       "width": 480,
       "height": 720,
@@ -124,11 +124,11 @@
         "full-frame uniform resize",
         "WebP encode; metadata stripped"
       ],
-      "quality": 86,
+      "quality": 78,
       "tool": {
         "sharp": "0.34.5",
         "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
@@ -169,13 +169,13 @@
     {
       "id": "lineup-hot-pants-480",
       "sourceId": "005",
-      "publicPath": "/media/hot-pants-lineup-005-480-1a636cebdb05.webp",
+      "publicPath": "/media/hot-pants-lineup-005-480-343abd691c3f.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_005.JPG",
       "sourceSha256": "8509a69b5f513985e2b55f4f01a3cceec8f50c1346dcb6e328c825f882a56e8b",
-      "sha256": "1a636cebdb05e615556cd8645fd059c8617ccb71634fd400a2ef563d90111f52",
-      "bytes": 38850,
+      "sha256": "343abd691c3f1244e379019318638ceade003e85c304bad08892aa269c6ee2f6",
+      "bytes": 28774,
       "maxBytes": 100000,
       "width": 480,
       "height": 720,
@@ -190,11 +190,11 @@
         "full-frame uniform resize",
         "WebP encode; metadata stripped"
       ],
-      "quality": 86,
+      "quality": 78,
       "tool": {
         "sharp": "0.34.5",
         "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
@@ -235,13 +235,13 @@
     {
       "id": "lineup-teamster-480",
       "sourceId": "011",
-      "publicPath": "/media/teamster-lineup-011-480-23a4cd92e4bd.webp",
+      "publicPath": "/media/teamster-lineup-011-480-986e5e108a02.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_011.JPG",
       "sourceSha256": "c75a446a8d1769462a3cae0bcdf60b7b77c2550420919f535ed77921de21d9e1",
-      "sha256": "23a4cd92e4bd7b3f3182c4511c70364ee2b0b749a3d4c8ac0940671e918e0a77",
-      "bytes": 21602,
+      "sha256": "986e5e108a025791e2defa4cde783413611c24ba5ee1bd812415d5ff4b4894e0",
+      "bytes": 15928,
       "maxBytes": 100000,
       "width": 480,
       "height": 720,
@@ -256,44 +256,11 @@
         "full-frame uniform resize",
         "WebP encode; metadata stripped"
       ],
-      "quality": 86,
+      "quality": 78,
       "tool": {
         "sharp": "0.34.5",
         "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
-      },
-      "command": "node scripts/assets/export.mjs",
-      "review": "Original framing retained, including any source-edge crops; phone approval pending"
-    },
-    {
-      "id": "lineup-crunchy-boi",
-      "sourceId": "014",
-      "publicPath": "/media/crunchy-boi-lineup-014-3566a724066c.webp",
-      "classification": "real-photo",
-      "mode": "crop-resize-only",
-      "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
-      "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
-      "sha256": "3566a724066c84283bbda344aeea78cf90e8115398b39196bea1f4b7c04b0463",
-      "bytes": 44380,
-      "maxBytes": 100000,
-      "width": 750,
-      "height": 1125,
-      "sidecar": "assets/provenance/lineup-crunchy-boi.json",
-      "crop": [
-        0,
-        0,
-        3707,
-        5560
-      ],
-      "steps": [
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "quality": 86,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
@@ -301,13 +268,13 @@
     {
       "id": "lineup-crunchy-boi-480",
       "sourceId": "014",
-      "publicPath": "/media/crunchy-boi-lineup-014-480-62023e4bd14c.webp",
+      "publicPath": "/media/crunchy-boi-lineup-014-480-ed44ac35b10b.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
       "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
-      "sha256": "62023e4bd14c75c3584a8ef1bc356322a65948e1d963bc575f759eb88e479dc2",
-      "bytes": 21642,
+      "sha256": "ed44ac35b10b8b12e1f9498eea7d3181dc8f2e88733f9d4bfd0a4fbca6b949d7",
+      "bytes": 15666,
       "maxBytes": 100000,
       "width": 480,
       "height": 721,
@@ -322,11 +289,11 @@
         "full-frame uniform resize",
         "WebP encode; metadata stripped"
       ],
-      "quality": 86,
+      "quality": 78,
       "tool": {
         "sharp": "0.34.5",
         "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
@@ -367,13 +334,13 @@
     {
       "id": "lineup-sicky-wicky-480",
       "sourceId": "024",
-      "publicPath": "/media/sicky-wicky-lineup-024-480-6e37a792a1c2.webp",
+      "publicPath": "/media/sicky-wicky-lineup-024-480-634275f3b822.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_024.JPG",
       "sourceSha256": "4d820beb14edf64d274b2e559fe6de0b57cb619555380f3e73eee97a5982d739",
-      "sha256": "6e37a792a1c203b8ac1b6d5c21bb45228ab6fd5568fb42f84edeccf30003d427",
-      "bytes": 16910,
+      "sha256": "634275f3b822440fc2fbb2175f8f3466f90b652e19e3136777e9910bf163f125",
+      "bytes": 12462,
       "maxBytes": 100000,
       "width": 480,
       "height": 720,
@@ -388,11 +355,11 @@
         "full-frame uniform resize",
         "WebP encode; metadata stripped"
       ],
-      "quality": 86,
+      "quality": 78,
       "tool": {
         "sharp": "0.34.5",
         "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
@@ -433,13 +400,13 @@
     {
       "id": "lineup-never-been-cheddar-480",
       "sourceId": "029",
-      "publicPath": "/media/never-been-cheddar-lineup-029-480-7a3a828a2502.webp",
+      "publicPath": "/media/never-been-cheddar-lineup-029-480-4fc09dc6adbe.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_029.JPG",
       "sourceSha256": "d82d4c965f29c276547ff8ece9df8e7cc8f3d2c186ce73bb032e0d02436004a2",
-      "sha256": "7a3a828a2502d41235585831505230ac97eb35aef9bfc8d84df648e8d72dcf46",
-      "bytes": 21282,
+      "sha256": "4fc09dc6adbeb16a6e8beffac7b49a167497d00735a425cc74841b34d2dc7df4",
+      "bytes": 15734,
       "maxBytes": 100000,
       "width": 480,
       "height": 720,
@@ -454,11 +421,11 @@
         "full-frame uniform resize",
         "WebP encode; metadata stripped"
       ],
-      "quality": 86,
+      "quality": 78,
       "tool": {
         "sharp": "0.34.5",
         "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
@@ -499,13 +466,13 @@
     {
       "id": "lineup-turkey-caesar-480",
       "sourceId": "033",
-      "publicPath": "/media/turkey-caesar-lineup-033-480-29582ee703c3.webp",
+      "publicPath": "/media/turkey-caesar-lineup-033-480-4faa0ad0b824.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_033.JPG",
       "sourceSha256": "679a5d4ecd7070ce0a7bc60e65ec141953158754a72fa7e4b2cd2d50d3f7415a",
-      "sha256": "29582ee703c37524f434e5cbfa5f5b72d2f6aa07443afe3e0e032512b2de04cd",
-      "bytes": 47140,
+      "sha256": "4faa0ad0b82426622a903b73991e9f17ac1e754375b883a64a227551681b6fa3",
+      "bytes": 40180,
       "maxBytes": 100000,
       "width": 480,
       "height": 720,
@@ -520,11 +487,11 @@
         "full-frame uniform resize",
         "WebP encode; metadata stripped"
       ],
-      "quality": 82,
+      "quality": 78,
       "tool": {
         "sharp": "0.34.5",
         "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
@@ -565,13 +532,13 @@
     {
       "id": "lineup-farmers-market-480",
       "sourceId": "037",
-      "publicPath": "/media/farmers-market-lineup-037-480-3caa1d0a65ae.webp",
+      "publicPath": "/media/farmers-market-lineup-037-480-4ec2dca44de4.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_037.JPG",
       "sourceSha256": "5a8ca9d149000c519b1a23c0fae5fa7e93d190ac4f82c1e19d6f2362146cd555",
-      "sha256": "3caa1d0a65ae2e84450504dd8eb5f1f8bb601169e27bce02aba1393785fd1d8a",
-      "bytes": 17538,
+      "sha256": "4ec2dca44de447a57720aeab00a1a4f2f55153684bb2e234d80e11d31665d8c0",
+      "bytes": 13340,
       "maxBytes": 100000,
       "width": 480,
       "height": 720,
@@ -586,11 +553,11 @@
         "full-frame uniform resize",
         "WebP encode; metadata stripped"
       ],
-      "quality": 86,
+      "quality": 78,
       "tool": {
         "sharp": "0.34.5",
         "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
@@ -697,13 +664,13 @@
     {
       "id": "lineup-vesuvio-480",
       "sourceId": "047",
-      "publicPath": "/media/vesuvio-lineup-047-480-47dbcb3aa300.webp",
+      "publicPath": "/media/vesuvio-lineup-047-480-cf5baf4c9974.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_047.JPG",
       "sourceSha256": "6bc057e4df8c12d0b2ce08b83bc71435ea409f164d40372d8faabe6ec55b5c9c",
-      "sha256": "47dbcb3aa3002d386f38ef2a0e8030b48be8170adf5361e8401a4f151a1d1e4a",
-      "bytes": 44210,
+      "sha256": "cf5baf4c997449975806c5330c3d7517df98bbaf8cb2d4572a99929b954375ba",
+      "bytes": 36496,
       "maxBytes": 100000,
       "width": 480,
       "height": 720,
@@ -718,11 +685,11 @@
         "full-frame uniform resize",
         "WebP encode; metadata stripped"
       ],
-      "quality": 82,
+      "quality": 78,
       "tool": {
         "sharp": "0.34.5",
         "vips": "8.17.3",
-        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
@@ -741,6 +708,23 @@
       "sidecar": "assets/provenance/landing-icon.json",
       "steps": [
         "Existing repository brand asset, unchanged from 51829f5e"
+      ]
+    },
+    {
+      "id": "landing-og",
+      "publicPath": "/brand/og-card.webp",
+      "classification": "brand",
+      "sourcePath": "public/brand/co-wordmark.svg",
+      "sourceSha256": "1170f72dc7e96e3e3f5910870023a71624ab08b50d1ff37c7af0ff53eabb2a45",
+      "sha256": "9b5998e9761b40e48673ed5d400e8a7c022d2149433dcb8f1c2f061f4d77bc11",
+      "bytes": 11956,
+      "maxBytes": 100000,
+      "width": 1200,
+      "height": 630,
+      "sidecar": "assets/provenance/landing-og.json",
+      "steps": [
+        "Existing approved wordmark, centered on brand Mayo background",
+        "Uniform width 1000; 1200x630 WebP quality90 effort6; no food"
       ]
     },
     {
@@ -778,20 +762,23 @@
     },
     {
       "id": "subdex-poster",
-      "publicPath": "/media/subdex-poster-drawn-1c61ffe1c9e8.webp",
+      "publicPath": "/media/subdex-poster-drawn-4f35ab463487.webp",
       "classification": "drawn",
-      "sourcePath": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
-      "sourceSha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82",
-      "sha256": "1c61ffe1c9e85b44b710db8bf5b810e638608650e74415f877c688ce63ea8300",
+      "sourcePath": "assets/work/subdex-source-frame.png",
+      "sourceSha256": "f1321be97625c1484cc0c41f40c22f23dd2cb44c19be3925cf80c8c72236ba7f",
+      "sourceId": "subdex-frame-17-5",
+      "mode": "crop-resize-only",
+      "quality": 85,
+      "sha256": "4f35ab4634873d62b3dcf2e1595c1fb10486796671790c40d1a06a0c72e8369d",
       "width": 720,
       "height": 720,
-      "bytes": 17576,
+      "bytes": 16874,
       "maxBytes": 100000,
       "sidecar": "assets/provenance/subdex-poster.json",
       "steps": [
         "Existing AI-DRAWN source; no generation",
         "Crop and uniform resize; metadata stripped",
-        "WebP quality85"
+        "Sharp rotate + uniform resize 720 + WebP quality85 effort6 from pinned drawn source frame"
       ],
       "cut": {
         "start": 17.3,

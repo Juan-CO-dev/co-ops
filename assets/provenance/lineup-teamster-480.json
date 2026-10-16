@@ -1,13 +1,13 @@
 {
   "id": "lineup-teamster-480",
   "sourceId": "011",
-  "publicPath": "/media/teamster-lineup-011-480-23a4cd92e4bd.webp",
+  "publicPath": "/media/teamster-lineup-011-480-986e5e108a02.webp",
   "classification": "real-photo",
   "mode": "crop-resize-only",
   "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_011.JPG",
   "sourceSha256": "c75a446a8d1769462a3cae0bcdf60b7b77c2550420919f535ed77921de21d9e1",
-  "sha256": "23a4cd92e4bd7b3f3182c4511c70364ee2b0b749a3d4c8ac0940671e918e0a77",
-  "bytes": 21602,
+  "sha256": "986e5e108a025791e2defa4cde783413611c24ba5ee1bd812415d5ff4b4894e0",
+  "bytes": 15928,
   "maxBytes": 100000,
   "width": 480,
   "height": 720,
@@ -22,11 +22,11 @@
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],
-  "quality": 86,
+  "quality": 78,
   "tool": {
     "sharp": "0.34.5",
     "vips": "8.17.3",
-    "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+    "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
   },
   "command": "node scripts/assets/export.mjs",
   "review": "Original framing retained, including any source-edge crops; phone approval pending"

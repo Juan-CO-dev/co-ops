@@ -1,13 +1,13 @@
 {
   "id": "lineup-hot-pants-480",
   "sourceId": "005",
-  "publicPath": "/media/hot-pants-lineup-005-480-1a636cebdb05.webp",
+  "publicPath": "/media/hot-pants-lineup-005-480-343abd691c3f.webp",
   "classification": "real-photo",
   "mode": "crop-resize-only",
   "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_005.JPG",
   "sourceSha256": "8509a69b5f513985e2b55f4f01a3cceec8f50c1346dcb6e328c825f882a56e8b",
-  "sha256": "1a636cebdb05e615556cd8645fd059c8617ccb71634fd400a2ef563d90111f52",
-  "bytes": 38850,
+  "sha256": "343abd691c3f1244e379019318638ceade003e85c304bad08892aa269c6ee2f6",
+  "bytes": 28774,
   "maxBytes": 100000,
   "width": 480,
   "height": 720,
@@ -22,11 +22,11 @@
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],
-  "quality": 86,
+  "quality": 78,
   "tool": {
     "sharp": "0.34.5",
     "vips": "8.17.3",
-    "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+    "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
   },
   "command": "node scripts/assets/export.mjs",
   "review": "Original framing retained, including any source-edge crops; phone approval pending"

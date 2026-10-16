@@ -181,5 +181,35 @@
   "tools": {
     "C:/Users/conta/co-scenes-fx-copy/tools/vfx-footage/fxv4/finish.py": "d4a81b2a72dd77ffed9ab4117a3a9f583bd23d03fb69a701148961d69098ec93",
     "C:/Users/conta/co-3d/batch4/choose-fighter/scripts/finish_subs.py": "c08930e04bbf64cc7536d1d5ba926211d75241648e6986a800b392d3244cb674"
-  }
+  },
+  "drawnSources": [
+    {
+      "id": "subdex-frame-17-5",
+      "representative": "subdex-frame-17-5",
+      "confirmedIds": [
+        "subdex-frame-17-5"
+      ],
+      "classification": "drawn",
+      "eligible": true,
+      "hold": null,
+      "path": "assets/work/subdex-source-frame.png",
+      "sha256": "f1321be97625c1484cc0c41f40c22f23dd2cb44c19be3925cf80c8c72236ba7f",
+      "videoPath": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
+      "videoSha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82",
+      "cut": {
+        "start": 17.3,
+        "duration": 0.9,
+        "poster": 17.5,
+        "crop": [
+          0,
+          780,
+          1080,
+          1080
+        ],
+        "width": 720,
+        "height": 720
+      },
+      "evidence": "Existing approved AI-DRAWN SUBDEX source and Chunk D inspected cut; frame extraction only, no new generation; final phone/timecode acceptance remains open"
+    }
+  ]
 }

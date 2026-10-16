@@ -1,0 +1,36 @@
+name: Landing launch monitor
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: landing-launch-monitor
+  cancel-in-progress: false
+jobs:
+  probe:
+    # Disabled until CC records reviewed merchant baselines, US runner evidence,
+    # notification receipt and an independent stale-heartbeat alarm.
+    if: vars.LANDING_MONITOR_ENABLED == 'true'
+    runs-on: [self-hosted, linux, landing-probe-us]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Probe five destinations and incident rechecks
+        run: node --experimental-strip-types scripts/probe-money-path.mjs docs/landing-monitor-baseline.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: money-path-report
+          path: money-path-report.json
+          retention-days: 14
+          if-no-files-found: error
+      - name: Notify through workflow failure
+        if: failure()
+        run: |
+          echo '::error::Money path failed. Juan must inspect the report and pause spend for a broken order link or prolonged landing outage. Missing evidence is not recovery.'
+          exit 1

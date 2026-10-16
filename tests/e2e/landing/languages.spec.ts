@@ -11,6 +11,10 @@ for (const language of ["en","es"] as const) test(`every section and control ren
     await expect(page.locator(`#${section}`)).toContainText(dictionary[`landing.${section}.body`]);
   }
   await expect(page.getByRole("navigation",{name:dictionary["landing.language"]})).toBeVisible();
+  const held = page.locator('#field-guide');
+  await expect(held).toContainText(dictionary['landing.field-guide.body']);
+  await expect(held.locator('img,picture,video')).toHaveCount(0);
+  expect(await held.innerHTML()).not.toContain('/media/');
   await expect(page.getByRole("button",{name:dictionary["landing.consent.accept"],exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:dictionary["landing.consent.reject"],exact:true})).toBeVisible();
   expect((await page.context().cookies()).some(c=>/lang/i.test(c.name))).toBe(false);

@@ -154,3 +154,23 @@ For incident response or credential rotation procedures, see `docs/runbooks/` (c
 ---
 
 *Last updated: Phase 0 of foundation.*
+## PREVIEW
+
+Juan opens the existing Vercel **branch preview for `feat/landing-p1`** in Safari on his phone. CC copies its exact hostname from the existing project's deployment page; no preview hostname or URL has been verified in this checkout. Do not use the staff production URL to review the landing page.
+
+CC sets these values in **Preview**, scoped to `feat/landing-p1`, then redeploys that branch through the normal approved flow. Replace `<branch-preview-host>` with that exact lowercase hostname (no scheme, port or slash); it is not a literal value or a wildcard:
+
+| Name | Value |
+| --- | --- |
+| `LANDING_HOSTS` | `<branch-preview-host>` |
+| `SITE_ORIGIN` | `https://<branch-preview-host>` |
+| `STAFF_ORIGIN` | `https://co-ops-ashy.vercel.app` |
+| `LANDING_CAPI_ENABLED` | `false` |
+| `LANDING_COUNTER_ENABLED` | `false` |
+| `LANDING_META_UA_APPROVED` | `false` |
+| `LANDING_WAF_STATE` | `dormant` |
+| `NEXT_PUBLIC_META_PIXEL_ID` | empty / unset for this branch |
+
+Keep `META_PIXEL_ID`, `META_CAPI_ACCESS_TOKEN`, `META_TEST_EVENT_CODE`, `LANDING_WAF_VERIFIED_AT` and `LANDING_WAF_RULE_IDS` empty / unset for this branch. Preserve the project's existing required app configuration; credentials must never be copied into this README. CC verifies that Preview has access to approved public shop facts before sharing it.
+
+CC sends Juan `https://<branch-preview-host>/?lang=en` and `https://<branch-preview-host>/?lang=es` after confirming root/privacy work, `/admin` and `/order` return 404, and noindex remains present. Use Vercel's existing authorized preview-sharing flow if deployment protection requires it. On the phone, inspect both stores, scroll the lineup to its end, try native order/catering links, and test reduced motion and hero/SUBDEX pause controls. Record the real iPhone Safari result in [the release checklist](docs/release-checklist.md). No domain, alias, resource or environment setting was created or changed by this task.

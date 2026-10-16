@@ -41,6 +41,6 @@
   ],
   "exclude": [
     "node_modules",
-    "tmp/landing-review"
+    "tmp/"
   ]
 }

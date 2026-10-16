@@ -1,13 +1,13 @@
 {
   "id": "lineup-vesuvio-480",
   "sourceId": "047",
-  "publicPath": "/media/vesuvio-lineup-047-480-47dbcb3aa300.webp",
+  "publicPath": "/media/vesuvio-lineup-047-480-cf5baf4c9974.webp",
   "classification": "real-photo",
   "mode": "crop-resize-only",
   "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_047.JPG",
   "sourceSha256": "6bc057e4df8c12d0b2ce08b83bc71435ea409f164d40372d8faabe6ec55b5c9c",
-  "sha256": "47dbcb3aa3002d386f38ef2a0e8030b48be8170adf5361e8401a4f151a1d1e4a",
-  "bytes": 44210,
+  "sha256": "cf5baf4c997449975806c5330c3d7517df98bbaf8cb2d4572a99929b954375ba",
+  "bytes": 36496,
   "maxBytes": 100000,
   "width": 480,
   "height": 720,
@@ -22,11 +22,11 @@
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],
-  "quality": 82,
+  "quality": 78,
   "tool": {
     "sharp": "0.34.5",
     "vips": "8.17.3",
-    "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+    "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
   },
   "command": "node scripts/assets/export.mjs",
   "review": "Original framing retained, including any source-edge crops; phone approval pending"

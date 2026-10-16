@@ -22,7 +22,7 @@ if (process.env.LANDING_E2E_USE_BUILD === '1') {
 const locations = createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1:44172');
   if (req.method !== 'GET' || url.pathname !== '/rest/v1/locations' || url.searchParams.get('select') !== 'code,name,address,phone' || url.searchParams.get('active') !== 'eq.true') {
-    res.writeHead(404); res.end(); return;
+    res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({code:'PGRST202',message:'Unsupported fixture request'})); return;
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify([
@@ -33,7 +33,7 @@ const locations = createServer((req, res) => {
 await new Promise((resolve, reject) => { locations.once('error', reject); locations.listen(44172, '127.0.0.1', resolve); });
 runtime.NEXT_PUBLIC_SUPABASE_URL = 'http://127.0.0.1:44172';
 runtime.SUPABASE_SERVICE_ROLE_KEY = 'landing-e2e-fictional-local-only';
-const active = run(['start', '-p', '44170', '-H', '0.0.0.0'], { ...runtime, LANDING_HOSTS: 'localhost,eat.example.test,preview.example.test', SITE_ORIGIN: 'https://localhost:44170', STAFF_ORIGIN: 'https://127.0.0.1:44170', NEXT_PUBLIC_META_PIXEL_ID: '123456789', LANDING_CAPI_ENABLED: 'true' });
+const active = run(['start', '-p', '44170', '-H', '0.0.0.0'], { ...runtime, LANDING_HOSTS: 'localhost,eat.example.test,preview.example.test', SITE_ORIGIN: 'https://localhost:44170', STAFF_ORIGIN: 'https://127.0.0.1:44170', NEXT_PUBLIC_META_PIXEL_ID: '123456789', LANDING_CAPI_ENABLED: 'true', LANDING_COUNTER_ENABLED: 'true' });
 const dormant = run(['start', '-p', '44171', '-H', '0.0.0.0'], { ...runtime, SITE_ORIGIN: 'https://localhost:44171', STAFF_ORIGIN: 'https://127.0.0.1:44171' });
 writeFileSync('tmp-landing-server-pids.json', JSON.stringify([active.pid,dormant.pid]));
 for (const child of [active, dormant]) child.on('exit', code => { active.kill(); dormant.kill(); process.exit(code ?? 1); });

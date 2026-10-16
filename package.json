@@ -15,7 +15,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:links": "tsx tests/live/landing-links.probe.ts",
-    "perf:ci": "npx --yes --package=@lhci/cli@0.15.1 lhci autorun",
+    "perf:ci": "node scripts/landing/perf-ci.mjs",
     "assets:check": "node scripts/assets/inventory.mjs"
   },
   "dependencies": {

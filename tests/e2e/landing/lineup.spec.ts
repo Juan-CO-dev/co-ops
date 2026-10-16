@@ -24,7 +24,10 @@ for (const javaScriptEnabled of [true, false]) test(`lineup is usable with JS ${
   // Keyboard movement is pinned above. Reach the end without an actionability
   // stability wait racing native scroll snap in Chromium's JS-disabled context.
   await strip.evaluate(el => { el.scrollLeft = el.scrollWidth; });
-  await expect(strip.locator('li').last()).toBeInViewport();
+  await expect.poll(() => strip.locator('li').last().evaluate(el => {
+    const rect = el.getBoundingClientRect();
+    return rect.left >= 0 && rect.right <= 375;
+  })).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
   await expect(page.locator('#lineup').getByRole('link',{name:'Order Capitol Hill'})).toHaveAttribute('href',/appfront/);
   await page.screenshot({path:test.info().outputPath('lineup-375.png')});

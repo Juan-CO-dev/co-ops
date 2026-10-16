@@ -8,6 +8,25 @@ async function isolateMeta(page:Page) {
   return requests;
 }
 
+test('lineup native order click sends Pixel, CAPI request and independent counter', async ({page}) => {
+  await isolateMeta(page);
+  const events: Record<string,unknown>[] = [], counters: Record<string,unknown>[] = [];
+  await page.route('**/api/landing/events', route => { events.push(route.request().postDataJSON()); return route.fulfill({status:204}); });
+  await page.route('**/api/landing/order-click', route => { counters.push(route.request().postDataJSON()); return route.fulfill({status:204}); });
+  await page.goto('/');
+  await page.locator('[data-landing-consent]').getByRole('button').first().click();
+  const link = page.locator('#lineup').getByRole('link', {name:'Order Capitol Hill'});
+  // Preserve the document for queued-pixel inspection; React's real click handler runs.
+  await link.evaluate(el => el.addEventListener('click', event => event.preventDefault()));
+  await link.click();
+  await expect.poll(() => events.length).toBe(1);
+  await expect.poll(() => counters.length).toBe(1);
+  expect(events[0]).toMatchObject({event_name:'OrderClick',placement:'lineup',store:'capitol-hill'});
+  expect(counters[0]).toEqual({store:'capitol-hill',ad:'unattributed'});
+  const queued = await page.evaluate(() => window.fbq?.queue?.find(args => args[1] === 'OrderClick'));
+  expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement:'lineup',store:'capitol-hill'},{eventID:events[0]?.event_id}]);
+});
+
 test('no Meta or attribution persistence before consent; equal keyboard consent choices',async({page})=>{
   const requests=await isolateMeta(page);
   await page.goto('/?ad=subsim-photo&fbclid=Valid_123&email=must-not-persist@example.com');

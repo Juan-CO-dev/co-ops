@@ -19,7 +19,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-paths.txt
-          if grep -Eq '^(app/(eat|api/landing)/|components/(landing|portal)/|lib/(landing|i18n)/|config/tenant/|supabase/migrations/.*landing|public/(media|brand)/|app/(layout.tsx|globals.css)|proxy.ts|instrumentation.ts|lib/security-headers.ts|next.config.ts|package(-lock)?.json|tests/(landing|e2e/landing|live)/|tests/(security-headers|sim-isolation).test.ts|scripts/landing/|playwright.config.ts|lighthouserc.cjs|.github/workflows/landing-checks.yml)' changed-paths.txt; then
+          if grep -Eq '^(app/(eat|api/landing)/|components/(landing|portal)/|lib/(landing|i18n)/|config/tenant/|supabase/migrations/.*landing|public/(media|brand)/|app/(layout.tsx|globals.css)|proxy.ts|instrumentation.ts|lib/security-headers.ts|next.config.ts|package(-lock)?.json|tests/(landing|e2e/landing|live)/|tests/(security-headers|sim-isolation).test.ts|scripts/(landing|assets)/|scripts/(check-transfer-budget|probe-money-path).mjs|assets/|playwright.config.ts|lighthouserc.cjs|.github/workflows/(landing-checks|launch-monitor).yml)' changed-paths.txt; then
             echo 'landing=true' >> "$GITHUB_OUTPUT"
           else
             echo 'landing=false' >> "$GITHUB_OUTPUT"
@@ -42,6 +42,9 @@ jobs:
       - run: npx playwright install --with-deps chromium webkit
       # webServer builds without landing env and starts both enabled and disabled hosts.
       - run: npm run test:e2e
+      - run: npx playwright test lineup.spec.ts tracking.spec.ts --repeat-each=2
+        env:
+          LANDING_E2E_USE_BUILD: "1"
       - run: npm run perf:ci
       - uses: actions/upload-artifact@v6
         if: always()
@@ -51,6 +54,7 @@ jobs:
             playwright-report/
             test-results/
             .lighthouseci/
+            tmp/landing-performance/
           if-no-files-found: ignore
   landing-gate:
     name: landing-gate

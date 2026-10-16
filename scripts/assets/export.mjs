@@ -30,7 +30,7 @@ for (const product of source.products.filter(p => p.eligible)) {
  const src = approvedSource(source, product.representative);
  if (sha256(src.path) !== src.sha256) throw new Error('Original source changed');
  const meta = await sharp(src.path).metadata();
- const publicPath = `/media/${product.id}-lineup-${src.representative}.webp`;
+ const publicPath = src.representative === '014' ? record.publicPath : `/media/${product.id}-lineup-${src.representative}.webp`;
  const dest = safeOutput(root, 'public'+publicPath);
  let data, quality=86;
  for (;quality>=60;quality-=2) {
@@ -41,15 +41,16 @@ for (const product of source.products.filter(p => p.eligible)) {
  writeFileSync(dest,data);
  const out=await sharp(data).metadata();
  const entry={id:`lineup-${product.id}`,sourceId:src.representative,publicPath,classification:'real-photo',mode:'crop-resize-only',sourcePath:src.path,sourceSha256:src.sha256,sha256:sha256(dest),bytes:data.length,maxBytes:100000,width:out.width,height:out.height,sidecar:`assets/provenance/lineup-${product.id}.json`,crop:[0,0,meta.width,meta.height],steps:['full-frame uniform resize','WebP encode; metadata stripped'],quality,tool:{sharp:sharp.versions.sharp,vips:sharp.versions.vips,scriptSha256:sha256('scripts/assets/export.mjs')},command:'node scripts/assets/export.mjs',review:'Original framing retained, including any source-edge crops; phone approval pending'};
- writeFileSync(entry.sidecar,JSON.stringify(entry,null,2)+'\n');
- manifest.media=manifest.media.filter(e=>e.id!==entry.id);manifest.media.push(entry);
- const smallPath = publicPath.replace('.webp','-480.webp');
+ manifest.media=manifest.media.filter(e=>e.id!==entry.id);
+ if(src.representative !== '014') { writeFileSync(entry.sidecar,JSON.stringify(entry,null,2)+'\n'); manifest.media.push(entry); }
+ const smallPath = `/media/${product.id}-lineup-${src.representative}-480.webp`;
  const smallDest = safeOutput(root,'public'+smallPath);
- const smallData = await sharp(src.path).rotate().resize({width:480,withoutEnlargement:true}).webp({quality,effort:6}).toBuffer();
+ const smallQuality = Math.min(quality,78);
+ const smallData = await sharp(src.path).rotate().resize({width:480,withoutEnlargement:true}).webp({quality:smallQuality,effort:6}).toBuffer();
  if(smallData.length>100000) throw new Error('Small lineup budget failed');
  writeFileSync(smallDest,smallData);
  const smallMeta=await sharp(smallData).metadata();
- const small={...entry,id:entry.id+'-480',publicPath:smallPath,sha256:sha256(smallDest),bytes:smallData.length,width:smallMeta.width,height:smallMeta.height,sidecar:entry.sidecar.replace('.json','-480.json')};
+ const small={...entry,quality:smallQuality,id:entry.id+'-480',publicPath:smallPath,sha256:sha256(smallDest),bytes:smallData.length,width:smallMeta.width,height:smallMeta.height,sidecar:entry.sidecar.replace('.json','-480.json')};
  writeFileSync(small.sidecar,JSON.stringify(small,null,2)+'\n');
  manifest.media=manifest.media.filter(e=>e.id!==small.id);manifest.media.push(small);
  lineup.push({id:product.id,name:product.name,sourceId:src.representative,image:publicPath,smallImage:smallPath,width:out.width,height:out.height});

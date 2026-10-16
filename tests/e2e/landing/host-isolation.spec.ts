@@ -126,11 +126,11 @@ for (const [path, canonical] of [['/order/','/order'],['/admin/','/admin'],['/ap
   });
 }
 
-test('production measurement routes enforce Origin and remain dormant without credentials',async ({request})=>{
+test('measurement routes enforce Origin; unconfigured CAPI is dormant and enabled counter fails closed without its database',async ({request})=>{
   const headers={origin:'https://localhost:44170',cookie:'landing_consent=accepted'};
   const event={event_name:'OrderClick',event_id:crypto.randomUUID(),event_time:Math.floor(Date.now()/1000),consent:'accepted',source_url:'https://localhost:44170/',store:'capitol-hill',ad:'unattributed',placement:'hero'};
   for(const [path,data] of [['/api/landing/events',event],['/api/landing/order-click',{store:'capitol-hill',ad:'unattributed'}]] as const) {
-    const accepted=await request.post(path,{headers,data});expect(accepted.status()).toBe(204);expect(accepted.headers()['set-cookie']).toBeUndefined();
+    const accepted=await request.post(path,{headers,data});expect(accepted.status()).toBe(path.endsWith('order-click') ? 503 : 204);expect(accepted.headers()['set-cookie']).toBeUndefined();
     expect((await request.post(path,{headers:{cookie:headers.cookie},data})).status()).toBe(403);
     expect((await request.post(path,{headers:{...headers,origin:'https://evil.test'},data})).status()).toBe(403);
     expect((await request.post(path,{headers:{...headers,dnt:'1'},data})).status()).toBe(403);

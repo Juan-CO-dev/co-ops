@@ -1,7 +1,7 @@
 /** Bounded vocabulary only: never accept arbitrary customer data or destinations. */
 export const LANDING_STORE_KEYS = ["capitol-hill", "dupont"] as const;
 export const LANDING_AD_CODES = ["subsim-photo", "unattributed"] as const;
-export const LANDING_PLACEMENTS = ["hero", "field-guide", "shops", "catering", "footer"] as const;
+export const LANDING_PLACEMENTS = ["hero", "field-guide", "lineup", "shops", "catering", "footer"] as const;
 export const LANDING_VENDORS = ["ubereats", "doordash"] as const;
 export const LANDING_SERVER_EVENTS = ["Lead", "OrderClick", "CateringClick"] as const;
 export type LandingStoreKey = (typeof LANDING_STORE_KEYS)[number];

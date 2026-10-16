@@ -254,7 +254,7 @@
     }
   },
   "toolVersion": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers\r",
-  "scriptSha256": "06f7c5b3574e4badc746790ff551c6e344f6a5da513c55e4e30b21808cf5d84a",
+  "scriptSha256": "c23a7eb6a5f5d0a25f5c84d5bbe262f7d78890e8b01988b67cd28c165381fb77",
   "commands": [
     {
       "tool": "ffprobe",
@@ -297,30 +297,6 @@
         "-map_metadata",
         "-1",
         "C:\\Users\\conta\\co-ops-landing\\tmp\\subdex-export\\subdex-catch-drawn.mp4"
-      ]
-    },
-    {
-      "tool": "ffmpeg",
-      "args": [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-ss",
-        "17.5",
-        "-i",
-        "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
-        "-vf",
-        "crop=1080:1080:0:780,scale=720:720:flags=lanczos",
-        "-frames:v",
-        "1",
-        "-c:v",
-        "libwebp",
-        "-quality",
-        "85",
-        "-map_metadata",
-        "-1",
-        "C:\\Users\\conta\\co-ops-landing\\tmp\\subdex-export\\subdex-catch-drawn.webp"
       ]
     },
     {
