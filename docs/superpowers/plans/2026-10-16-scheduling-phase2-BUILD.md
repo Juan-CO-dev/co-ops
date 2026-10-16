@@ -1572,3 +1572,47 @@ No question is left open for Juan. Each default above is one setting he can flip
 | E-3 (P2) | The budget suggestion compared the live structure with itself when the reference week used an older one | `referenceStructureOf`: the structure stored with the reference revision's own context (else the saved version by id), never the live one; unknown → the delta is not applied and the suggestion says so (`schedule.budget.reference_structure_unavailable`, en / es) | budget-shared; settings.ts |
 | E-4 (P2) | `assigned_at` was cut to its UTC date | `memberSinceDate`: the operational (America/New_York) date, the clock the punch dates use; a Sunday-night ET assignment stays Sunday | inputs-shared; inputs.ts |
 | E-5 (P3) | `op: {}` / `op: []` reached the lib (500) | `isEditOp`: the exact discriminated union (kind's keys only, integer quarters, an exact `ShiftRef`); the route answers 400 `bad_request`, the lib refuses `invalid_payload` before any read | edit-shared; the route; schedules.ts |
+
+---
+
+## Chunk G as built (2026-10-16)
+
+Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). The builder ran no script against any database.
+
+### Go-live sequence (CC / Juan; nothing here was run by the builder)
+
+1. CC: integration (merge main into the branch); the full suite, `tsc`, `next build`; `node scripts/sql-harness-0274.mjs` and `0275.mjs` (PASS 145 / 124).
+2. CC, sim: Phase 1 (0268 → 0271) and 0272 must already be there; apply **0274 → 0275** with each header's PRE-FLIGHT and VERIFY; seed with `scripts/sim/seed-scheduling.ts` (dry run, then `--apply`); the checks after each step are in `docs/runbooks/scheduling-sim.md` §1–2.
+3. CC: the browser sim walk at 375 px, in English and in Spanish (runbook §3: drag, keyboard, cancelled step-up, the main Regenerate confirmation, stale response, Approve, settings, the cron by hand, the two-session `head_moved` check, the reconciliation, the AGM money check, the budget control). Record each step in the PR.
+4. CC: the prod rollback dry-run (0274 + 0275 inside one transaction that ends ROLLBACK; VERIFY inside; nothing left after); then prod apply 0274 → 0275 **on Juan's word**; stamp each header `APPLIED TO PROD`.
+5. PR, CI green, merge (Juan clicks). Everything stays OFF: no shop is enabled, so the board reads "Scheduling is off for this shop." and the Wednesday cron answers `{skipped: "no_enabled_shops"}` with no lease and no heartbeat.
+6. Per shop, the MoO (Tier E, `/schedule/settings`): review the structure with the GM → set the wage estimates → switch scheduling ON (runbook §5).
+
+### Build self-review (spec point → where built → the test that proves it)
+
+| Spec point | Where built | Proof |
+|---|---|---|
+| §5.2 hours budget per week / month, per date, with the suggestion | `budget-shared.ts`, `settings.ts` `setBudget`, `BudgetSetter.tsx`, `BudgetSuggestion.tsx` | `schedule-budget` (F11–F16, none_set), `schedule-board-ui` (Set one, exact body), 0274 harness |
+| §5.8 horizon, never silently overwrite an edited week | `horizon-shared.ts`, `schedules.ts`, `HorizonBuilder.tsx`, `runRegenerate` | `schedule-horizon`, `schedule-board-ui` (P2-3 both paths), 0275 harness `edited_week_unconfirmed` |
+| §6 generator: shapes, segments, skills, strength, leaders, presence, salaried cover, closing / MoD, 4 h min, priority, cover | `lib/scheduling/generator/*` | 27 goldens (p2.5), `schedule-generator`, property test |
+| §6.5 the validator on every schedule; edits saved with their rule | `rules-shared.ts` `checkScheduleRules` | `schedule-rules`, mockup parity, `schedule-edit` |
+| Gap causes and certificates; budget_limited; unresolved_search blocks Approve | `rules-shared.ts`, 0275 `valid_gap_certificate` | `schedule-rules`, certificate-cases (both twins), F17 |
+| §6.6 labor target ≤ 28%, the math shown, no contradiction | `labor-target-shared.ts`, `LaborTargetCard.tsx` | `schedule-labor-target`, `schedule-board-ui` (one note, amber rule) |
+| §7 the board at 375 px, en / es, drag in 15-min snaps, reasons | `components/schedule/*`, `board-view-shared.ts` | `schedule-board-ui`, `schedule-board-load`, screens |
+| §8.0 Toast interim + the three-way reconciliation, against PUBLISHED shifts | `reconcile-shared.ts`, `reconcile.ts`, `/admin/people-reconcile` | `schedule-reconcile` (follower, drafts, not-published), `-load`, `-ui`, `-schema-check` |
+| Permissions in the lib; SMM by role; AGM no money | `access-shared.ts`; AGM window trim | `schedule-access`, `schedule-agm-no-money` (allowlist) |
+| Step-up B / E, the session arm | routes, `lib/session.ts` | `schedule-step-up-path`, `schedule-settings-tier-e-session`, `step-up-tier-map` |
+| No email / notifications; the cron inert before its lease | `draft.ts`, the cron route | `schedule-no-notify`, `schedule-cron` |
+| Files-only migrations, deny-all RLS, definer writers | 0274, 0275 | `sql-harness-0274/0275`, the two loader schema checks |
+| The sim seed and walk | `scripts/sim/*scheduling*`, runbook | `schedule-sim-seed-guard` |
+| The law and the guide | AGENTS.md "Scheduling Phase 2", `docs/guides/manager-guide.md` | `manager-guide-scheduling` |
+
+### Phase 3 list (unchanged from "Phase 3 backlog", plus what Phase 2 shows as coming)
+
+- The push to 7shifts as DRAFT shifts (the board's "Ready for 7shifts — sending comes in a later update"), reconciled by stable ids; forecast interval overrides; the station-mapping screen.
+- Two-way availability sync and the CO-OPS picker (replaces "Assumed from Toast punches").
+- "Out" call-outs with reasons and fill (§6.3).
+- Staffing recommendations (§6.4).
+- A staff "My shifts" view, if Juan wants one.
+- The demand anticipation hub (§11).
+- Guide screenshots for the six Phase 2 sections (every step "(not shown)").
