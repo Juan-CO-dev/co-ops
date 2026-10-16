@@ -1,0 +1,27 @@
+name: Landing monitor heartbeat
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  heartbeat:
+    if: vars.LANDING_MONITOR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Alert if no completed monitor report in two hours
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/landing/check-monitor-heartbeat.mjs
+      - name: Notify through workflow failure
+        if: failure()
+        run: |
+          echo '::error::Landing monitor heartbeat missing or unavailable. Juan must investigate monitoring coverage; this alert alone does not request a spend pause.'
+          exit 1

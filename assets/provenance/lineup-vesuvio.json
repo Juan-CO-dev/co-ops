@@ -1,0 +1,34 @@
+{
+  "id": "lineup-vesuvio",
+  "sourceId": "047",
+  "publicPath": "/media/vesuvio-lineup-047-43c31e4810ad.webp",
+  "classification": "real-photo",
+  "mode": "resize-only",
+  "sourcePath": "source:047",
+  "sourceSha256": "6bc057e4df8c12d0b2ce08b83bc71435ea409f164d40372d8faabe6ec55b5c9c",
+  "sha256": "43c31e4810addc1825202cab13d937529235f5bc15b49133fbb4ba1d071cea35",
+  "bytes": 93672,
+  "maxBytes": 100000,
+  "width": 750,
+  "height": 1125,
+  "sidecar": "assets/provenance/lineup-vesuvio.json",
+  "crop": [
+    0,
+    0,
+    4000,
+    6000
+  ],
+  "steps": [
+    "EXIF auto-orientation (.rotate())",
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "quality": 82,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+  },
+  "command": "node scripts/assets/export.mjs",
+  "review": "Original framing retained, including any source-edge crops; phone approval pending"
+}

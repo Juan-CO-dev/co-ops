@@ -20,7 +20,7 @@ export default function AppError({
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-co-bg px-6 text-center text-co-text">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/brand/co-wordmark.png" alt="Compliments Only" className="h-6 w-auto sm:h-7" />
+      <img src="/brand/co-wordmark.svg" alt="Compliments Only" className="h-6 w-auto sm:h-7" />
       <div className="max-w-sm">
         <h1 className="text-xl font-bold">Something went wrong</h1>
         <p className="text-lg font-semibold text-co-text-muted">Algo salió mal</p>

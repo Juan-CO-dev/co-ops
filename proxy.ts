@@ -1,130 +1,70 @@
-/**
- * Edge proxy — Phase 2.
- *
- * Renamed from `middleware.ts` per Next 16. Same export shape, same role.
- *
- * Responsibilities (edge runtime — no DB access):
- *   1. Read session JWT from the httpOnly cookie.
- *   2. Validate signature + exp via lib/auth verifyJwt.
- *   3. On any failure → 302 redirect to / with `?next=<orig>` for return-to-origin.
- *   4. On success → attach x-co-{user-id,app-role,role-level,session-id}
- *      headers to the forwarded request and pass through.
- *
- * NOT this proxy's job (handled in lib/session.ts requireSession on the
- * Node-runtime side):
- *   - sessions row lookup, revoked/expired/idle checks
- *   - token_hash dual verification
- *   - last_activity_at touch
- *   - step-up clearing on URL transition out of /admin/*
- *
- * Public-path exclusion is implemented via:
- *   (a) the matcher's negative-lookahead regex (so the proxy fn never runs
- *       for explicitly-public paths), AND
- *   (b) a defensive isPublicPath() check at the top of the proxy fn.
- * (a) is the production fast path; (b) is defense-in-depth — if the matcher
- * misses an edge case (or someone adds a new public route without updating
- * the matcher), the function still bypasses correctly.
- */
+import { NextResponse, type NextRequest } from 'next/server';
+import { verifyJwt } from './lib/auth';
+import { loadLandingConfig } from './lib/landing/config';
+import { resolveLandingLanguage } from './lib/landing/language-shared';
+import { classifyLandingHost, configuredOrigin, landingPathDecision, isLandingAsset } from './lib/landing/host-shared';
+import { LANDING_SECURITY_HEADERS, SECURITY_HEADERS } from './lib/security-headers';
 
-import { NextResponse, type NextRequest } from "next/server";
-import { verifyJwt } from "./lib/auth";
-
-const COOKIE_NAME = "co_ops_session";
-
-const PUBLIC_PATHS = new Set<string>([
-  "/",
-  "/verify",
-  "/reset-password",
-  "/api/auth/pin",
-  "/api/auth/password",
-  // Logout is public so it can clear the cookie idempotently even when the
-  // session is already invalid/revoked. The route does its own best-effort
-  // cookie + JWT read; it never depends on proxy-enforced auth.
-  "/api/auth/logout",
-  "/api/auth/verify",
-  "/api/auth/password-reset-request",
-  "/api/auth/password-reset",
-  // Tile-flow login surfaces these as public so the unauthenticated page can
-  // populate location → role → name pickers before any sign-in attempt.
-  // Privacy tradeoff documented in AGENTS.md: surfaces names by location+role
-  // but no email/last-login.
-  "/api/locations",
-  "/api/users/login-options",
-  // Customer catering portal — public storefront (no staff auth). Mockup pass.
-  "/order",
-]);
-
-function isPublicPath(pathname: string): boolean {
-  if (PUBLIC_PATHS.has(pathname)) return true;
-  // Customer catering portal surface (storefront + order flow) — all public. Mockup pass.
-  if (pathname === "/order" || pathname.startsWith("/order/")) return true;
-  // Customer portal API (magic-link request/verify) — public; the routes do their own
-  // customer-session checks and are NOT staff-JWT-gated.
-  if (pathname.startsWith("/api/portal/")) return true;
-  // Inbound provider webhooks (ezCater; future platforms) — no staff session
-  // exists on these callers; authenticity = per-route HMAC signature + secret.
-  if (pathname.startsWith("/api/webhooks/")) return true;
-  // Scheduled jobs (Vercel Cron) — authenticity = CRON_SECRET at the route.
-  if (pathname.startsWith("/api/cron/")) return true;
-  // Static brand assets (public/brand/*) are never auth-gated — otherwise the
-  // login/PIN surfaces (unauthenticated) can't load the wordmark/icon and the
-  // proxy 307-redirects the <img> request. The matcher also excludes asset
-  // extensions; this is the defense-in-depth half.
-  if (pathname.startsWith("/brand/")) return true;
-  return false;
+const PUBLIC_PATHS = new Set(['/', '/verify', '/reset-password', '/api/auth/pin', '/api/auth/password', '/api/auth/logout', '/api/auth/verify', '/api/auth/password-reset-request', '/api/auth/password-reset', '/api/locations', '/api/users/login-options', '/order']);
+function isPublicPath(path: string): boolean {
+  // The original matcher bypasses remain staff-only after the landing gate.
+  return PUBLIC_PATHS.has(path) || ['/order/', '/api/portal/', '/api/webhooks/', '/api/cron/', '/brand/', '/_next/static', '/_next/image', '/favicon.ico'].some(prefix => path.startsWith(prefix)) || /\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$/.test(path);
 }
-
+function finishResponse(response: NextResponse, landing: boolean, assetPath?: string, nearbyEnabled = false): NextResponse {
+  for (const { key, value } of landing ? LANDING_SECURITY_HEADERS : SECURITY_HEADERS) response.headers.set(key, value);
+  if (landing && !assetPath) {
+    response.headers.set('Cache-Control', 'private, no-store');
+  }
+  if (landing && assetPath?.startsWith('/media/')) response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  if (landing && (assetPath?.startsWith('/brand/') || assetPath === '/robots.txt' || assetPath === '/sitemap.xml')) response.headers.set('Cache-Control', 'public, max-age=300');
+  if (landing && assetPath?.startsWith('/api/landing/')) response.headers.set('Cache-Control', 'no-store');
+  if (landing && nearbyEnabled) response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
+  return response;
+}
 export async function proxy(req: NextRequest): Promise<NextResponse> {
-  const pathname = req.nextUrl.pathname;
-
-  // Defensive bypass — matcher should already exclude these.
-  if (isPublicPath(pathname)) return NextResponse.next();
-
-  const rawJwt = req.cookies.get(COOKIE_NAME)?.value;
-  if (!rawJwt) return redirectToLogin(req);
-
-  let claims;
-  try {
-    claims = await verifyJwt(rawJwt);
-  } catch {
-    return redirectToLogin(req);
-  }
-
-  // Forward identity headers to the downstream Node-runtime handler.
-  // requireSession() will still run there — these are convenience hints,
-  // not authorization. The handler must call requireSession() for the real
-  // session check (sessions row, token_hash, idle, revoked, etc.).
+  const landingConfig = loadLandingConfig();
+  const finish = (response: NextResponse, landing: boolean, assetPath?: string) => finishResponse(response, landing, assetPath, landingConfig.nearbyEnabled);
+  const kind = classifyLandingHost(req.headers, landingConfig);
+  const path = req.nextUrl.pathname;
   const headers = new Headers(req.headers);
-  headers.set("x-co-user-id", claims.user_id);
-  headers.set("x-co-app-role", claims.app_role);
-  headers.set("x-co-role-level", String(claims.role_level));
-  headers.set("x-co-session-id", claims.session_id);
-
-  return NextResponse.next({ request: { headers } });
-}
-
-function redirectToLogin(req: NextRequest): NextResponse {
-  const url = req.nextUrl.clone();
-  url.pathname = "/";
-  url.search = "";
-  if (req.nextUrl.pathname !== "/") {
-    url.searchParams.set("next", req.nextUrl.pathname + req.nextUrl.search);
+  // No client-supplied routing/identity hints survive the public boundary.
+  for (const key of [...headers.keys()]) if (key.startsWith('x-landing') || key.startsWith('x-co-')) headers.delete(key);
+  if (kind === 'landing') {
+    headers.set('x-landing-path', path === '/privacy' ? '/privacy' : '/');
+    headers.set('x-landing-language', resolveLandingLanguage(req.nextUrl.searchParams.get('lang'), req.headers.get('accept-language')));
+    const decision = landingPathDecision(path, req.nextUrl.searchParams);
+    if (decision === 'deny') return finish(new NextResponse(null, { status: 404 }), true);
+    if (decision === 'redirect') {
+      const target = configuredOrigin(landingConfig.siteOrigin ?? undefined)!;
+      target.pathname = path === '/eat' ? '/' : '/privacy';
+      target.search = req.nextUrl.search;
+      return finish(NextResponse.redirect(target, 301), true);
+    }
+    if (path === '/robots.txt') return finish(new NextResponse('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } }), true, path);
+    if (path === '/sitemap.xml') return finish(new NextResponse('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>', { headers: { 'Content-Type': 'application/xml' } }), true, path);
+    const target = req.nextUrl.clone();
+    if (decision === 'rewrite') target.pathname = path === '/' ? '/eat' : '/eat/privacy';
+    const icon = ['/favicon.ico', '/eat/icon.png', '/eat/apple-icon.png'].includes(path);
+    if (icon) target.pathname = '/brand/landing-icon.png';
+    return finish(target.pathname !== path ? NextResponse.rewrite(target, { request: { headers } }) : NextResponse.next({ request: { headers } }), true, icon ? target.pathname : isLandingAsset(path, req.nextUrl.searchParams) || path.startsWith('/api/landing/') ? path : undefined);
   }
+  if (path.startsWith('/eat') || path.startsWith('/api/landing') || path.startsWith('/media/')) return finish(new NextResponse(null, { status: 404 }), false);
+  // Preserve the pre-chunk-A matcher bypass on staff, including static suffixes.
+  if (isPublicPath(path)) return NextResponse.next();
+  const jwt = req.cookies.get('co_ops_session')?.value;
+  if (!jwt) return redirectToLogin(req);
+  try {
+    const claims = await verifyJwt(jwt);
+    headers.set('x-co-user-id', claims.user_id);
+    headers.set('x-co-app-role', claims.app_role);
+    headers.set('x-co-role-level', String(claims.role_level));
+    headers.set('x-co-session-id', claims.session_id);
+    return NextResponse.next({ request: { headers } });
+  } catch { return redirectToLogin(req); }
+}
+function redirectToLogin(req: NextRequest): NextResponse {
+  const url = req.nextUrl.clone(); url.pathname = '/'; url.search = '';
+  if (req.nextUrl.pathname !== '/') url.searchParams.set('next', req.nextUrl.pathname + req.nextUrl.search);
   return NextResponse.redirect(url);
 }
-
-export const config = {
-  // Match every path EXCEPT:
-  //   - Next infrastructure (_next/static, _next/image, favicon.ico)
-  //   - Static asset extensions (png/jpg/svg/... and fonts) — public/ assets like
-  //     /brand/*.png must NOT be auth-gated, or unauthenticated pages (login/PIN)
-  //     get their <img> requests 307-redirected and the brand marks break.
-  //   - Public auth endpoints (verify, reset-password, /api/auth/{pin,password,verify,password-reset-request,password-reset})
-  //   - The root login page (the `.+` quantifier requires ≥ 1 char after `/`,
-  //     so `/` alone is excluded).
-  matcher: [
-    // Next 16 disallows capturing groups in matcher patterns. Use non-capturing
-    // group `(?:...)` for the alternation of public auth endpoints.
-    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$|order(?:/.*)?$|api/portal/.*|api/webhooks/.*|api/cron/.*).+)",
-  ],
-};
+export const config = { matcher: ['/:path*'] };

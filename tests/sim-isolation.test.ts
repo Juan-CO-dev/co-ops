@@ -253,3 +253,14 @@ it("transitive launch-readiness imports never reach product-identity/harness.ts"
   scan(resolve(root, "scripts/sim/launch-readiness"));
   expect(visited.size).toBeGreaterThan(3);
 });
+
+it('runtime landing configuration never changes build-time staff/sim headers', async () => {
+  vi.stubEnv('SIM_MODE', ''); vi.resetModules();
+  const before = await (await import('../next.config')).default.headers!();
+  vi.stubEnv('LANDING_HOSTS', 'eat.example.test');
+  vi.stubEnv('SITE_ORIGIN', 'https://eat.example.test');
+  vi.stubEnv('STAFF_ORIGIN', 'https://staff.example.test');
+  vi.resetModules();
+  expect(await (await import('../next.config')).default.headers!()).toEqual(before);
+  expect(JSON.stringify(before)).not.toContain('facebook');
+});

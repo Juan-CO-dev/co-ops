@@ -33,7 +33,7 @@ export default function GlobalError({
         }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/brand/co-wordmark.png" alt="Compliments Only" style={{ height: "26px", width: "auto" }} />
+        <img src="/brand/co-wordmark.svg" alt="Compliments Only" style={{ height: "26px", width: "auto" }} />
         <div style={{ maxWidth: "24rem" }}>
           <h1 style={{ fontSize: "20px", fontWeight: 700, margin: 0 }}>Something went wrong</h1>
           <p style={{ fontSize: "18px", fontWeight: 600, margin: "4px 0 0", color: "#4A4A4A" }}>Algo salió mal</p>

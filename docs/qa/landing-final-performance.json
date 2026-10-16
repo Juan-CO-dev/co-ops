@@ -1,0 +1,146 @@
+{
+  "date": "2026-10-16",
+  "beforeSource": "Fresh LHCI runs of preserved 8720af81 production build, copied into tmp/landing-before-8720af81; original archive unchanged",
+  "afterSource": "Uncommitted final round on feat/landing-p1 at 9aeb73a1",
+  "lhci": "0.15.1",
+  "chrome": "154.0.8037.95",
+  "settings": {
+    "runsPerConsent": 3,
+    "viewport": "375x812",
+    "rttMs": 150,
+    "throughputKbps": 1600,
+    "cpuSlowdownMultiplier": 4
+  },
+  "acceptedLimitation": "Real fbevents.js request remained unfinished, status -1, transferSize 0. Accepted scores/totals are incomplete; pixel-transfer-unmeasured gate fails.",
+  "before": {
+    "unset": {
+      "state": "unset",
+      "failures": [
+        "first-party-bytes"
+      ],
+      "runs": [
+        {
+          "performance": 0.93,
+          "lcp": 3145.551625,
+          "tbt": 101,
+          "firstParty": 545220,
+          "thirdParty": 0,
+          "total": 545220
+        },
+        {
+          "performance": 0.96,
+          "lcp": 2637.85915,
+          "tbt": 124.50000000000011,
+          "firstParty": 545220,
+          "thirdParty": 0,
+          "total": 545220
+        },
+        {
+          "performance": 0.93,
+          "lcp": 3133.4995,
+          "tbt": 111,
+          "firstParty": 545220,
+          "thirdParty": 0,
+          "total": 545220
+        }
+      ]
+    },
+    "accepted": {
+      "state": "accepted",
+      "failures": [
+        "first-party-bytes",
+        "pixel-transfer-unmeasured"
+      ],
+      "runs": [
+        {
+          "performance": 0.96,
+          "lcp": 2664.2863,
+          "tbt": 88.5,
+          "firstParty": 545220,
+          "thirdParty": 0,
+          "total": 545220
+        },
+        {
+          "performance": 0.92,
+          "lcp": 3130.3424999999997,
+          "tbt": 149.00000000000023,
+          "firstParty": 545220,
+          "thirdParty": 0,
+          "total": 545220
+        },
+        {
+          "performance": 0.95,
+          "lcp": 2917.137,
+          "tbt": 64.5,
+          "firstParty": 545220,
+          "thirdParty": 0,
+          "total": 545220
+        }
+      ]
+    }
+  },
+  "after": {
+    "unset": {
+      "state": "unset",
+      "failures": [],
+      "runs": [
+        {
+          "performance": 0.96,
+          "lcp": 2701.006125,
+          "tbt": 86,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.95,
+          "lcp": 2723.921875,
+          "tbt": 109,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.93,
+          "lcp": 2778.342999999999,
+          "tbt": 188.6569999999997,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        }
+      ]
+    },
+    "accepted": {
+      "state": "accepted",
+      "failures": [
+        "pixel-transfer-unmeasured"
+      ],
+      "runs": [
+        {
+          "performance": 0.96,
+          "lcp": 2767.4219000000003,
+          "tbt": 64,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.86,
+          "lcp": 2938.5719999999997,
+          "tbt": 358.42799999999943,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.94,
+          "lcp": 2739.968375,
+          "tbt": 139.5,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "lineup-never-been-cheddar",
+  "sourceId": "029",
+  "publicPath": "/media/never-been-cheddar-lineup-029-4efc33caa2de.webp",
+  "classification": "real-photo",
+  "mode": "resize-only",
+  "sourcePath": "source:029",
+  "sourceSha256": "d82d4c965f29c276547ff8ece9df8e7cc8f3d2c186ce73bb032e0d02436004a2",
+  "sha256": "4efc33caa2debf1b5e5141276c60b5231eeaed7a564383a28abc0c08432ee780",
+  "bytes": 41480,
+  "maxBytes": 100000,
+  "width": 750,
+  "height": 1125,
+  "sidecar": "assets/provenance/lineup-never-been-cheddar.json",
+  "crop": [
+    0,
+    0,
+    4000,
+    6000
+  ],
+  "steps": [
+    "EXIF auto-orientation (.rotate())",
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "quality": 86,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+  },
+  "command": "node scripts/assets/export.mjs",
+  "review": "Original framing retained, including any source-edge crops; phone approval pending"
+}

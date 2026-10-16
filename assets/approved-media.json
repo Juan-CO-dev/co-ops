@@ -1,0 +1,918 @@
+{
+  "version": 1,
+  "media": [
+    {
+      "id": "crunchy-boi-spin",
+      "publicPath": "/media/crunchy-boi-spin-drawn-dfb8c93fe64d.mp4",
+      "classification": "drawn",
+      "sourcePath": "source:hero-spin-original",
+      "sourceSha256": "ebb277e24a3d8e7bc71b90081931af8d959680cca5f585c22173270b266c4127",
+      "sha256": "dfb8c93fe64d4c2aac3380dab9762a74110423b93f3f545288425ac0b5a2645a",
+      "width": 720,
+      "height": 720,
+      "bytes": 562664,
+      "maxBytes": 1500000,
+      "sidecar": "assets/provenance/hero-spin.json",
+      "duration": 8,
+      "background": "#FFE560",
+      "codec": "h264",
+      "provenance": "DRAWN (AI REFERENCE), supplied approved spin; decode/composite/encode only"
+    },
+    {
+      "id": "hero-poster",
+      "sourceId": "014",
+      "publicPath": "/media/crunchy-boi-014-3566a724066c.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:014",
+      "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+      "sha256": "3566a724066c84283bbda344aeea78cf90e8115398b39196bea1f4b7c04b0463",
+      "bytes": 44380,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/hero-poster.json",
+      "crop": [
+        0,
+        0,
+        3707,
+        5560
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Full frame preserved; phone visual review remains required"
+    },
+    {
+      "id": "wordmark",
+      "publicPath": "/brand/co-wordmark.svg",
+      "classification": "brand",
+      "sourcePath": "source:wordmark-original",
+      "sourceSha256": "1170f72dc7e96e3e3f5910870023a71624ab08b50d1ff37c7af0ff53eabb2a45",
+      "sha256": "1170f72dc7e96e3e3f5910870023a71624ab08b50d1ff37c7af0ff53eabb2a45",
+      "bytes": 26563,
+      "maxBytes": 500000,
+      "width": 1125,
+      "height": 140,
+      "sidecar": "assets/provenance/wordmark.json",
+      "steps": [
+        "byte-identical copy"
+      ]
+    },
+    {
+      "id": "lineup-frex",
+      "sourceId": "001",
+      "publicPath": "/media/frex-lineup-001-c36000951c0c.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:001",
+      "sourceSha256": "ccdb8337d0e48f41a3194e1964595b2640557c9159199d3589fa6008b61342a3",
+      "sha256": "c36000951c0ca2f02b918c4680c238576e1044c8359436e6bc6a2b530aa35879",
+      "bytes": 51868,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/lineup-frex.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-frex-480",
+      "sourceId": "001",
+      "publicPath": "/media/frex-lineup-001-480-517d10fd7598.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:001",
+      "sourceSha256": "ccdb8337d0e48f41a3194e1964595b2640557c9159199d3589fa6008b61342a3",
+      "sha256": "517d10fd7598bdb6fe5f4ce421fe8065179cea6fcdd8678749e7cea395958ffb",
+      "bytes": 19790,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 720,
+      "sidecar": "assets/provenance/lineup-frex-480.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 78,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-hot-pants",
+      "sourceId": "005",
+      "publicPath": "/media/hot-pants-lineup-005-93e4e8c18dbe.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:005",
+      "sourceSha256": "8509a69b5f513985e2b55f4f01a3cceec8f50c1346dcb6e328c825f882a56e8b",
+      "sha256": "93e4e8c18dbe0dcde05f5bfb94ed99822a0d75d6e9767deb68370b3a2c5687aa",
+      "bytes": 78754,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/lineup-hot-pants.json",
+      "crop": [
+        0,
+        0,
+        3535,
+        5302
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-hot-pants-480",
+      "sourceId": "005",
+      "publicPath": "/media/hot-pants-lineup-005-480-343abd691c3f.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:005",
+      "sourceSha256": "8509a69b5f513985e2b55f4f01a3cceec8f50c1346dcb6e328c825f882a56e8b",
+      "sha256": "343abd691c3f1244e379019318638ceade003e85c304bad08892aa269c6ee2f6",
+      "bytes": 28774,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 720,
+      "sidecar": "assets/provenance/lineup-hot-pants-480.json",
+      "crop": [
+        0,
+        0,
+        3535,
+        5302
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 78,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-teamster",
+      "sourceId": "011",
+      "publicPath": "/media/teamster-lineup-011-895508296c97.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:011",
+      "sourceSha256": "c75a446a8d1769462a3cae0bcdf60b7b77c2550420919f535ed77921de21d9e1",
+      "sha256": "895508296c9767ffaf66bfab4f96a846c844c4a7f89b7911eb4e5730a247422e",
+      "bytes": 41994,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/lineup-teamster.json",
+      "crop": [
+        0,
+        0,
+        3901,
+        5852
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-teamster-480",
+      "sourceId": "011",
+      "publicPath": "/media/teamster-lineup-011-480-986e5e108a02.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:011",
+      "sourceSha256": "c75a446a8d1769462a3cae0bcdf60b7b77c2550420919f535ed77921de21d9e1",
+      "sha256": "986e5e108a025791e2defa4cde783413611c24ba5ee1bd812415d5ff4b4894e0",
+      "bytes": 15928,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 720,
+      "sidecar": "assets/provenance/lineup-teamster-480.json",
+      "crop": [
+        0,
+        0,
+        3901,
+        5852
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 78,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-crunchy-boi-480",
+      "sourceId": "014",
+      "publicPath": "/media/crunchy-boi-lineup-014-480-ed44ac35b10b.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:014",
+      "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+      "sha256": "ed44ac35b10b8b12e1f9498eea7d3181dc8f2e88733f9d4bfd0a4fbca6b949d7",
+      "bytes": 15666,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 721,
+      "sidecar": "assets/provenance/lineup-crunchy-boi-480.json",
+      "crop": [
+        0,
+        0,
+        3707,
+        5560
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 78,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-sicky-wicky",
+      "sourceId": "024",
+      "publicPath": "/media/sicky-wicky-lineup-024-918d9cc75ec4.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:024",
+      "sourceSha256": "4d820beb14edf64d274b2e559fe6de0b57cb619555380f3e73eee97a5982d739",
+      "sha256": "918d9cc75ec408bb343e7b55683e9eec8475c6128326831d06ef9fb0e3ae4058",
+      "bytes": 33098,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/lineup-sicky-wicky.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-sicky-wicky-480",
+      "sourceId": "024",
+      "publicPath": "/media/sicky-wicky-lineup-024-480-634275f3b822.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:024",
+      "sourceSha256": "4d820beb14edf64d274b2e559fe6de0b57cb619555380f3e73eee97a5982d739",
+      "sha256": "634275f3b822440fc2fbb2175f8f3466f90b652e19e3136777e9910bf163f125",
+      "bytes": 12462,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 720,
+      "sidecar": "assets/provenance/lineup-sicky-wicky-480.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 78,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-never-been-cheddar",
+      "sourceId": "029",
+      "publicPath": "/media/never-been-cheddar-lineup-029-4efc33caa2de.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:029",
+      "sourceSha256": "d82d4c965f29c276547ff8ece9df8e7cc8f3d2c186ce73bb032e0d02436004a2",
+      "sha256": "4efc33caa2debf1b5e5141276c60b5231eeaed7a564383a28abc0c08432ee780",
+      "bytes": 41480,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/lineup-never-been-cheddar.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-never-been-cheddar-480",
+      "sourceId": "029",
+      "publicPath": "/media/never-been-cheddar-lineup-029-480-4fc09dc6adbe.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:029",
+      "sourceSha256": "d82d4c965f29c276547ff8ece9df8e7cc8f3d2c186ce73bb032e0d02436004a2",
+      "sha256": "4fc09dc6adbeb16a6e8beffac7b49a167497d00735a425cc74841b34d2dc7df4",
+      "bytes": 15734,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 720,
+      "sidecar": "assets/provenance/lineup-never-been-cheddar-480.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 78,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-turkey-caesar",
+      "sourceId": "033",
+      "publicPath": "/media/turkey-caesar-lineup-033-650f5a6e02b4.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:033",
+      "sourceSha256": "679a5d4ecd7070ce0a7bc60e65ec141953158754a72fa7e4b2cd2d50d3f7415a",
+      "sha256": "650f5a6e02b47c5514c6bfe4e2838906d89835929eaa2ed6f6a2c007481b8a4a",
+      "bytes": 94980,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/lineup-turkey-caesar.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 82,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-turkey-caesar-480",
+      "sourceId": "033",
+      "publicPath": "/media/turkey-caesar-lineup-033-480-4faa0ad0b824.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:033",
+      "sourceSha256": "679a5d4ecd7070ce0a7bc60e65ec141953158754a72fa7e4b2cd2d50d3f7415a",
+      "sha256": "4faa0ad0b82426622a903b73991e9f17ac1e754375b883a64a227551681b6fa3",
+      "bytes": 40180,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 720,
+      "sidecar": "assets/provenance/lineup-turkey-caesar-480.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 78,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-farmers-market",
+      "sourceId": "037",
+      "publicPath": "/media/farmers-market-lineup-037-b7e4f26b8aa1.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:037",
+      "sourceSha256": "5a8ca9d149000c519b1a23c0fae5fa7e93d190ac4f82c1e19d6f2362146cd555",
+      "sha256": "b7e4f26b8aa11425c75ff503dff697a6a4040a80e7e51060ff50197c60cbc7d8",
+      "bytes": 36450,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/lineup-farmers-market.json",
+      "crop": [
+        0,
+        0,
+        3745,
+        5618
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-farmers-market-480",
+      "sourceId": "037",
+      "publicPath": "/media/farmers-market-lineup-037-480-4ec2dca44de4.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:037",
+      "sourceSha256": "5a8ca9d149000c519b1a23c0fae5fa7e93d190ac4f82c1e19d6f2362146cd555",
+      "sha256": "4ec2dca44de447a57720aeab00a1a4f2f55153684bb2e234d80e11d31665d8c0",
+      "bytes": 13340,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 720,
+      "sidecar": "assets/provenance/lineup-farmers-market-480.json",
+      "crop": [
+        0,
+        0,
+        3745,
+        5618
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 78,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-french-dip",
+      "sourceId": "040",
+      "publicPath": "/media/french-dip-lineup-040-33ff8db796a0.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:040",
+      "sourceSha256": "0fb2b11906fab361ad082a6011aaef7aab7092ce2b88377ad54d612979aecfbc",
+      "sha256": "33ff8db796a00c2adf91a60b8d91a7ba87065d1f83968d6f745ec09814337ac5",
+      "bytes": 97462,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/lineup-french-dip.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 66,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-french-dip-480",
+      "sourceId": "040",
+      "publicPath": "/media/french-dip-lineup-040-480-06427ec29381.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:040",
+      "sourceSha256": "0fb2b11906fab361ad082a6011aaef7aab7092ce2b88377ad54d612979aecfbc",
+      "sha256": "06427ec2938168b05c60d926d6e3e1e3daa14c9437b4d0c9bcf5f1b157f72c02",
+      "bytes": 45858,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 720,
+      "sidecar": "assets/provenance/lineup-french-dip-480.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 66,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-vesuvio",
+      "sourceId": "047",
+      "publicPath": "/media/vesuvio-lineup-047-43c31e4810ad.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:047",
+      "sourceSha256": "6bc057e4df8c12d0b2ce08b83bc71435ea409f164d40372d8faabe6ec55b5c9c",
+      "sha256": "43c31e4810addc1825202cab13d937529235f5bc15b49133fbb4ba1d071cea35",
+      "bytes": 93672,
+      "maxBytes": 100000,
+      "width": 750,
+      "height": 1125,
+      "sidecar": "assets/provenance/lineup-vesuvio.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 82,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "lineup-vesuvio-480",
+      "sourceId": "047",
+      "publicPath": "/media/vesuvio-lineup-047-480-cf5baf4c9974.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:047",
+      "sourceSha256": "6bc057e4df8c12d0b2ce08b83bc71435ea409f164d40372d8faabe6ec55b5c9c",
+      "sha256": "cf5baf4c997449975806c5330c3d7517df98bbaf8cb2d4572a99929b954375ba",
+      "bytes": 36496,
+      "maxBytes": 100000,
+      "width": 480,
+      "height": 720,
+      "sidecar": "assets/provenance/lineup-vesuvio-480.json",
+      "crop": [
+        0,
+        0,
+        4000,
+        6000
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 78,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+      },
+      "command": "node scripts/assets/export.mjs",
+      "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "landing-icon",
+      "publicPath": "/brand/landing-icon.png",
+      "classification": "brand",
+      "sourcePath": "public/brand/co-icon.png",
+      "sourceSha256": "dd72a09b805e4c24a53d7bf52739df8ddaf73f5b0fc7374eff06d6d0f293ef2e",
+      "sha256": "007d12ccb60b8a50269e9df89634589ae4009a1ce64fcfabc29a29524a085c6f",
+      "bytes": 6135,
+      "maxBytes": 15000,
+      "width": 180,
+      "height": 180,
+      "sidecar": "assets/provenance/landing-icon.json",
+      "steps": [
+        "Uniform contain resize of existing repository brand asset to 180x180 with transparent padding",
+        "PNG compression level 9, 64-colour palette; original public/brand/co-icon.png unchanged"
+      ]
+    },
+    {
+      "id": "landing-og",
+      "publicPath": "/brand/og-card.webp",
+      "classification": "brand",
+      "sourcePath": "public/brand/co-wordmark.svg",
+      "sourceSha256": "1170f72dc7e96e3e3f5910870023a71624ab08b50d1ff37c7af0ff53eabb2a45",
+      "sha256": "9b5998e9761b40e48673ed5d400e8a7c022d2149433dcb8f1c2f061f4d77bc11",
+      "bytes": 11956,
+      "maxBytes": 100000,
+      "width": 1200,
+      "height": 630,
+      "sidecar": "assets/provenance/landing-og.json",
+      "steps": [
+        "Existing approved wordmark, centered on brand Mayo background",
+        "Uniform width 1000; 1200x630 WebP quality90 effort6; no food"
+      ]
+    },
+    {
+      "id": "subdex-catch",
+      "publicPath": "/media/subdex-catch-drawn-c539c9f5e05e.mp4",
+      "classification": "drawn",
+      "sourcePath": "source:subdex-video-original",
+      "sourceSha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82",
+      "sha256": "c539c9f5e05e67212f9c9ad8b091d8677096e63a30031a292e41a4aa04659b99",
+      "width": 720,
+      "height": 720,
+      "bytes": 63770,
+      "maxBytes": 1000000,
+      "sidecar": "assets/provenance/subdex-catch.json",
+      "duration": 0.9,
+      "codec": "h264",
+      "steps": [
+        "Existing AI-DRAWN source; no generation",
+        "Crop and uniform resize; metadata stripped",
+        "H264 CRF23 slow yuv420p faststart; audio removed"
+      ],
+      "cut": {
+        "start": 17.3,
+        "duration": 0.9,
+        "poster": 17.5,
+        "crop": [
+          0,
+          780,
+          1080,
+          1080
+        ],
+        "width": 720,
+        "height": 720
+      }
+    },
+    {
+      "id": "subdex-poster",
+      "publicPath": "/media/subdex-poster-drawn-4f35ab463487.webp",
+      "classification": "drawn",
+      "sourcePath": "assets/work/subdex-source-frame.png",
+      "sourceSha256": "f1321be97625c1484cc0c41f40c22f23dd2cb44c19be3925cf80c8c72236ba7f",
+      "sourceId": "subdex-frame-17-5",
+      "mode": "resize-only",
+      "quality": 85,
+      "sha256": "4f35ab4634873d62b3dcf2e1595c1fb10486796671790c40d1a06a0c72e8369d",
+      "width": 720,
+      "height": 720,
+      "bytes": 16874,
+      "maxBytes": 100000,
+      "sidecar": "assets/provenance/subdex-poster.json",
+      "steps": [
+        "Existing AI-DRAWN source; no generation",
+        "Crop and uniform resize; metadata stripped",
+        "Sharp rotate + uniform resize 720 + WebP quality85 effort6 from pinned drawn source frame"
+      ],
+      "cut": {
+        "start": 17.3,
+        "duration": 0.9,
+        "poster": 17.5,
+        "crop": [
+          0,
+          780,
+          1080,
+          1080
+        ],
+        "width": 720,
+        "height": 720
+      }
+    },
+    {
+      "id": "hero-poster-320",
+      "sourceId": "014",
+      "publicPath": "/media/crunchy-boi-014-320-1c40aa3dc34f.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:014",
+      "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+      "sha256": "1c40aa3dc34f08645d5b660c5b7194a5c7682c27389ed6d6453b96cda0d052ca",
+      "bytes": 11156,
+      "maxBytes": 100000,
+      "width": 320,
+      "height": 480,
+      "sidecar": "assets/provenance/hero-poster-320.json",
+      "crop": [
+        0,
+        0,
+        3707,
+        5560
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "57b17a8a9d1be36de339c2fbd2ce61615140414c1883b250af7159867725b29e"
+      },
+      "command": "node scripts/assets/export-hero-sizes.mjs"
+    },
+    {
+      "id": "hero-poster-640",
+      "sourceId": "014",
+      "publicPath": "/media/crunchy-boi-014-640-60b196bce4cb.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:014",
+      "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+      "sha256": "60b196bce4cb79d4b5232d0a07085a07770b825aad18bd97861f3383dc9ffb15",
+      "bytes": 33496,
+      "maxBytes": 100000,
+      "width": 640,
+      "height": 961,
+      "sidecar": "assets/provenance/hero-poster-640.json",
+      "crop": [
+        0,
+        0,
+        3707,
+        5560
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "57b17a8a9d1be36de339c2fbd2ce61615140414c1883b250af7159867725b29e"
+      },
+      "command": "node scripts/assets/export-hero-sizes.mjs"
+    },
+    {
+      "id": "hero-poster-960",
+      "sourceId": "014",
+      "publicPath": "/media/crunchy-boi-014-960-3c7d6237a944.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:014",
+      "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+      "sha256": "3c7d6237a94424a7dda636d637619084a1a0cf3d9575554f58b4aecdbcb778f1",
+      "bytes": 66754,
+      "maxBytes": 100000,
+      "width": 960,
+      "height": 1440,
+      "sidecar": "assets/provenance/hero-poster-960.json",
+      "crop": [
+        0,
+        0,
+        3707,
+        5560
+      ],
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "57b17a8a9d1be36de339c2fbd2ce61615140414c1883b250af7159867725b29e"
+      },
+      "command": "node scripts/assets/export-hero-sizes.mjs"
+    }
+  ]
+}
