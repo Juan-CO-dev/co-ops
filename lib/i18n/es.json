@@ -7334,7 +7334,7 @@
   "schedule.board.strength.chip": "{window}: {word}",
   "schedule.board.labor_card.title": "Objetivo de mano de obra",
   "schedule.board.labor_card.intro": "Las personas y horas que mantienen un gran servicio sin pasar el objetivo de mano de obra.",
-  "schedule.board.labor_card.amber": "Revisa este día: una franja pasa el objetivo o está bajo su equipo mínimo.",
+  "schedule.board.labor_card.amber": "Revisa este día: una franja tiene más personas que su óptimo.",
   "schedule.board.edit.head_moved": "Alguien más cambió esta semana — tu vista está actualizada",
   "schedule.board.row.week_hours": "{hours} h esta semana",
   "schedule.board.row.ot_risk": "Riesgo de horas extra",

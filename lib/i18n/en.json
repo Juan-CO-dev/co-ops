@@ -7334,7 +7334,7 @@
   "schedule.board.strength.chip": "{window}: {word}",
   "schedule.board.labor_card.title": "Labor target",
   "schedule.board.labor_card.intro": "The people and hours that keep great service without going over the labor target.",
-  "schedule.board.labor_card.amber": "Check this day: a window is over the target or under its minimum crew.",
+  "schedule.board.labor_card.amber": "Check this day: a window has more people on than its optimal.",
   "schedule.board.edit.head_moved": "Someone else changed this week — your view is updated",
   "schedule.board.row.week_hours": "{hours} h this week",
   "schedule.board.row.ot_risk": "Overtime risk",
