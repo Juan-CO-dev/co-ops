@@ -15,6 +15,10 @@ async function requirePmTask(service: SupabaseClient, actor: PmActor, locationId
   if (!(await hasTaskAccess(service, { userId: actor.userId, level: actor.level, locationId,
     date: etCalendarDate(new Date().toISOString()), task: "pm_report" }))) throw new PmReportError(403, "forbidden");
 }
+/** The pm_report task access (today's rule), for the PM v2 lib (lib/pm-report-v2.ts). */
+export async function assertPmTaskAccess(service: SupabaseClient, actor: PmActor, locationId: string): Promise<void> {
+  await requirePmTask(service, actor, locationId);
+}
 
 export type Gradient = "great" | "good" | "needs_work";
 
@@ -236,28 +240,57 @@ export async function loadMyFeedback(
 
 import { audit } from "@/lib/audit";
 import { enqueueNotification, NOTIFICATION_TYPES } from "@/lib/notifications";
+import { loadPeopleShopSettings, PM_V2_SWITCH_AVAILABLE } from "@/lib/people/settings";
 
+export type PmReportFormat = "v1" | "v2";
+
+/**
+ * The format a NEW day row gets (Scheduling Phase 1, Task 20): v2 only while the PM v2 switch exists
+ * (`PM_V2_SWITCH_AVAILABLE`, off until the chunk that wires it) AND the shop's `people_shop_settings.pm_v2`
+ * is on. With the switch unavailable nothing is read and every day is v1, exactly as before.
+ */
+async function newDayFormat(service: SupabaseClient, locationId: string): Promise<PmReportFormat> {
+  if (!PM_V2_SWITCH_AVAILABLE) return "v1";
+  return (await loadPeopleShopSettings(service, locationId)).pmV2 ? "v2" : "v1";
+}
+
+/**
+ * Today's day row, created on first use. `format` is stamped ONLY on creation (0271 freezes it), so switching a
+ * shop mid-day never converts a day. The read is `select("*")` so it works before AND after 0271 adds the
+ * column (a missing column reads as v1); a v1 row is inserted without naming `format` (the default).
+ */
 export async function getOrCreatePmReport(
   service: SupabaseClient,
   args: { locationId: string; date: string; actor: PmActor },
-): Promise<{ id: string }> {
+): Promise<{ id: string; format: PmReportFormat }> {
   await requirePmTask(service, args.actor, args.locationId);
   const { data: existing } = await service
     .from("pm_reports")
-    .select("id")
+    .select("*")
     .eq("location_id", args.locationId)
     .eq("report_date", args.date)
     .is("superseded_at", null)
-    .maybeSingle<{ id: string }>();
-  if (existing) return { id: existing.id };
+    .maybeSingle<{ id: string; format?: string | null }>();
+  if (existing) return { id: existing.id, format: existing.format === "v2" ? "v2" : "v1" };
+  const format = await newDayFormat(service, args.locationId);
   const { data, error } = await service
     .from("pm_reports")
-    .insert({ location_id: args.locationId, report_date: args.date, status: "open", created_by: args.actor.userId })
+    .insert({ location_id: args.locationId, report_date: args.date, status: "open", created_by: args.actor.userId, ...(format === "v2" ? { format: "v2" } : {}) })
     .select("id")
     .single<{ id: string }>();
   if (error) throw new Error(`getOrCreatePmReport: ${error.message}`);
   await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "pm_report", operation: "pm_report.create" });
-  return { id: data.id };
+  return { id: data.id, format };
+}
+
+/**
+ * A v1 writer on a v2 day is a refusal (Task 20): v2 days are written through the copies (lib/pm-report-v2.ts).
+ * `select("*")` so the read works before 0271 adds the column; the format never changes once set (0271).
+ */
+async function refuseV2Day(service: SupabaseClient, pmReportId: string): Promise<void> {
+  const { data, error } = await service.from("pm_reports").select("*").eq("id", pmReportId).maybeSingle<{ format?: string | null }>();
+  if (error) throw new Error(`refuseV2Day: ${error.message}`);
+  if (data?.format === "v2") throw new PmReportError(409, "format_mismatch", "This day uses manager copies");
 }
 
 /**
@@ -327,6 +360,7 @@ export async function saveEmployeeEval(
   },
 ): Promise<{ id: string }> {
   await requirePmTask(service, args.actor, args.locationId);
+  await refuseV2Day(service, args.pmReportId);
   // The status guard, ahead of both writes — see readReportStatus for why it is a
   // pre-check here and an in-UPDATE predicate in setMvp.
   const status = await readReportStatus(service, args.pmReportId);
@@ -375,6 +409,7 @@ export async function setMvp(
   args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null; actor: PmActor; locationId: string },
 ): Promise<void> {
   await requirePmTask(service, args.actor, args.locationId);
+  await refuseV2Day(service, args.pmReportId);
   const { error, count } = await service
     .from("pm_reports")
     .update({ mvp_user_id: args.mvpUserId, mvp_note: args.mvpNote }, { count: "exact" })
@@ -417,6 +452,7 @@ export async function submitPmReport(
   args: { pmReportId: string; locationId: string; actor: PmActor },
 ): Promise<{ notified: number }> {
   await requirePmTask(service, args.actor, args.locationId);
+  await refuseV2Day(service, args.pmReportId); // a v2 day is submitted by submit_pm_day_v2 (it seals the copies)
   const { error, count } = await service
     .from("pm_reports")
     .update(

@@ -284,3 +284,14 @@ export function canReadPmCopy(actor: PeopleActor, copy: PmCopyRef, day: PmDayRef
   if (day.authorIds.includes(actor.userId)) return true;
   return managerOwnOrMooAny(actor, day.locationId);
 }
+
+/**
+ * The after-submit day results (copies side by side, averages, write-ins, themes; J9): that day's copy
+ * authors, GM / Op-6 of the shop, MoO+ any shop. Never before submit (blind by design), never the SMM,
+ * never another KH/SL of the shop.
+ */
+export function canReadPmDayResults(actor: PeopleActor, day: PmDayRef): boolean {
+  if (!pmDaySubmitted(day.status) || isSmm(actor)) return false;
+  if (day.authorIds.includes(actor.userId)) return true;
+  return managerOwnOrMooAny(actor, day.locationId);
+}
