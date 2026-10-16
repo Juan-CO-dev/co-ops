@@ -156,7 +156,7 @@ function PersonRow({ row, page, initialOpen, flagText }: { row: ReconcileRow; pa
 
 function DayBlock({ day, flagText }: { day: ReconcileDay; flagText: (f: ReconcileFlag) => string }) {
   const { t, language } = useTranslation();
-  const hours = (h: number | null) => (h === null ? t("schedule.reconcile.day.none") : String(h));
+  const hours = (h: number | null) => (h === null ? t("schedule.reconcile.day.none") : `${h} h`);
   return (
     <div className="grid gap-1 rounded-lg border border-co-border bg-co-surface-inset p-3" data-day={day.date} data-basis={day.basis}>
       <span className="text-sm font-bold text-co-text">{formatDateLabel(day.date, language)}</span>

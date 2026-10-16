@@ -87,6 +87,9 @@ describe("the drawers: the basis, the flags, the missing evidence, the actions",
     expect(t).toMatch(/a published shift 11:00\s?AM–3:00\s?PM with no punch/);
     expect(t).toMatch(/a punch at 4:00\s?PM with no published shift/);
     expect(t).toMatch(/7shifts says 5 h, Toast says 6 h\. Toast stays the backup source of actual hours\./);
+    // Hours carry their unit only when known: an unknown source reads "—", never "— h".
+    expect(t).toContain("Toast 2 h · 7shifts —");
+    expect(t).not.toContain("— h");
   });
 
   it("no published data → 'Against the CO-OPS proposal (not published)' and the missing evidence, by reason", () => {
