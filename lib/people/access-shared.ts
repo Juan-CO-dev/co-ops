@@ -45,6 +45,12 @@ export const KH_LEVEL = 4;
 /** The level-6 OPERATIONAL managers ("Op-6"): level 6 minus the social media manager. */
 export const OPERATIONAL_LEVEL6_ROLES: readonly RoleCode[] = ["agm", "catering_mgr", "prep_mgr"];
 
+/**
+ * The roles that can hold `canEditPmCriteria` at some shop: the GM (own shops) and MoO+ (every shop). The admin hub
+ * shows the criteria card to exactly these roles (chunk F ruling (a)); the social media manager is never one.
+ */
+export const PM_CRITERIA_EDITOR_ROLES: readonly RoleCode[] = ["gm", "moo", "owner", "cgs"];
+
 function isSmm(actor: PeopleActor): boolean {
   return actor.role === "social_media_mgr";
 }

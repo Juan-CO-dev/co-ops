@@ -1,5 +1,5 @@
 import type { TranslationKey } from "@/lib/i18n/types";
-import { OPERATIONAL_LEVEL6_ROLES } from "@/lib/people/access-shared";
+import { OPERATIONAL_LEVEL6_ROLES, PM_CRITERIA_EDITOR_ROLES } from "@/lib/people/access-shared";
 import type { RoleCode } from "@/lib/roles";
 
 /**
@@ -33,6 +33,12 @@ export interface AdminSection {
    * social media manager (also level 6) may not (chunk C review, Astra P3).
    */
   alsoRoles?: readonly RoleCode[];
+  /**
+   * When set, ONLY these trusted roles see the card (checked on top of the level rule). Used where a level
+   * alone must not open a card: the PM criteria editor is GM own shop / MoO+, never the social media manager,
+   * whatever level a session claims (CC's chunk F ruling (a), 2026-10-16).
+   */
+  onlyRoles?: readonly RoleCode[];
 }
 
 // Order = display order, and it walks the derivation pipeline (Juan's model):
@@ -45,8 +51,9 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // 8+ every shop). The card shows from GM up AND to the operational level-6 managers, who may view the
   // status (canViewSevenShiftsStatus); the social media manager never sees it (role-aware, not level).
   { id: "sevenshifts", i18nKey: "sevenshifts.title", href: "/admin/sevenshifts", minLevel: 7, alsoRoles: OPERATIONAL_LEVEL6_ROLES },
-  // Scheduling Phase 1 (0271, Task 22): the PM v2 criteria editor — GM own shop, 8+ every shop; Tier E.
-  { id: "pm-criteria", i18nKey: "pmCriteria.title", href: "/admin/pm-criteria", minLevel: 7 },
+  // Scheduling Phase 1 (0271, Task 22): the PM v2 criteria editor — GM own shop, 8+ every shop; Tier E. Role-aware
+  // (chunk F ruling (a)): the GM and MoO+ roles only; the page binds a GM to their own shops (canEditPmCriteria).
+  { id: "pm-criteria", i18nKey: "pmCriteria.title", href: "/admin/pm-criteria", minLevel: 7, onlyRoles: PM_CRITERIA_EDITOR_ROLES },
   // 0234: customer profiles (stats GM+ own shop / 8+ every shop; contact + consent desk 9+).
   { id: "customers", i18nKey: "customers.title", href: "/admin/customers", minLevel: 7 },
   { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },
@@ -89,7 +96,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "audit",               i18nKey: "admin.section.audit",               href: "/admin/audit",               minLevel: 9, comingSoon: true },
 ];
 
-/** Sections the viewer may reach, in display order: by level, plus a card's `alsoRoles` by trusted role. */
+/**
+ * Sections the viewer may reach, in display order: by level, plus a card's `alsoRoles` by trusted role, and never
+ * a card whose `onlyRoles` leaves the viewer's role out.
+ */
 export function adminSectionsFor(level: number, role: RoleCode): AdminSection[] {
-  return ADMIN_SECTIONS.filter((s) => level >= s.minLevel || (s.alsoRoles?.includes(role) ?? false));
+  return ADMIN_SECTIONS.filter((s) => (level >= s.minLevel || (s.alsoRoles?.includes(role) ?? false))
+    && (s.onlyRoles === undefined || s.onlyRoles.includes(role)));
 }
