@@ -13,7 +13,7 @@ module.exports = {
       // Match Playwright's local browser launch in restricted test environments.
       puppeteerLaunchOptions: { args: process.env.LANDING_PERF_NO_SANDBOX === '1' ? ['--no-sandbox'] : [] },
       ...(launch?{}:{startServerCommand: 'node scripts/landing/e2e-server.mjs', startServerReadyPattern: 'LANDING_E2E_READY', startServerReadyTimeout: 600000}),
-      settings: { ...blocked, formFactor: 'mobile', throttlingMethod:'simulate', throttling:{rttMs:150,throughputKbps:1600,cpuSlowdownMultiplier:4}, screenEmulation: { mobile:true, width:375, height:812, deviceScaleFactor:1, disabled:false } } },
+      settings: { ...blocked, ...(process.env.LANDING_PERF_NO_SANDBOX === '1' ? { chromeFlags: '--no-sandbox' } : {}), formFactor: 'mobile', throttlingMethod:'simulate', throttling:{rttMs:150,throughputKbps:1600,cpuSlowdownMultiplier:4}, screenEmulation: { mobile:true, width:375, height:812, deviceScaleFactor:1, disabled:false } } },
     assert: { assertions: {
       'categories:performance': ['error', { minScore:0.85, aggregationMethod:'median' }],
       'categories:accessibility': ['error', { minScore:0.95, aggregationMethod:'median' }],

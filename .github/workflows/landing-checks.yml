@@ -53,6 +53,9 @@ jobs:
       - name: Point Lighthouse at Playwright's Chromium
         run: echo "CHROME_PATH=$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
       - name: First-party landing merge budgets
+        env:
+          # Ubuntu runners block Chromium's user-namespace sandbox (AppArmor); CI-only opt-in.
+          LANDING_PERF_NO_SANDBOX: "1"
         run: npm run perf:ci
       - uses: actions/upload-artifact@v6
         if: always()
