@@ -1,5 +1,7 @@
 -- Migration 0272_postgrest_write_lockdown
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim → prod; no code depends on it).
+-- APPLIED TO SIM 2026-10-15 (schema_migrations version 20261016001727, name 'postgrest_write_lockdown')
+-- APPLIED TO PROD 2026-10-15 (schema_migrations version 20261016020728, name 'postgrest_write_lockdown')
 -- The staff JWT is a valid PostgREST bearer. Astra's audit found no user-context
 -- writer on these 42 tables; direct writes must therefore be closed at the DB.
 -- Manifest by risk:
