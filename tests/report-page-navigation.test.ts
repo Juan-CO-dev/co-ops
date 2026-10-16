@@ -12,6 +12,8 @@ vi.mock("@/lib/reports-hub", async original => ({ ...await original<typeof impor
 vi.mock("@/lib/written-reports", async original => ({ ...await original<typeof import("@/lib/written-reports")>(), listWrittenReports: async () => ({ reports: [], nextCursor: null }) }));
 vi.mock("@/lib/pm-report", async original => ({ ...await original<typeof import("@/lib/pm-report")>(), loadMyFeedback: async () => [] }));
 vi.mock("@/lib/team-metrics", async original => ({ ...await original<typeof import("@/lib/team-metrics")>(), loadPersonReportLocations: mocks.personLocations, loadTeamOperatingHealth: async () => null, loadPersonDetail: async () => null, loadMyPerformance: async () => null }));
+// Scheduling Phase 1, Task 17: the skills sections read their own fact families; this test is about navigation.
+vi.mock("@/lib/people/skills", async original => ({ ...await original<typeof import("@/lib/people/skills")>(), loadMySkills: async () => ({ available: false }), loadSkills: async () => ({ available: false }) }));
 vi.mock("@/lib/reports-trends", async original => ({ ...await original<typeof import("@/lib/reports-trends")>(), loadTrendSeries: async () => ({ current: [], previous: null, cashVisible: false, totals: Object.fromEntries(["par", "temps", "cash", "completion"].map(key => [key, { current: 0, delta: null }])) }) }));
 import Landing from "@/app/(authed)/reports/page";
 import Operations from "@/app/(authed)/reports/operations/page";

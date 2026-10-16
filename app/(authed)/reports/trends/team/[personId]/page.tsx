@@ -18,6 +18,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { TrendControls } from "@/components/trends/TrendControls";
 import { PersonDetail } from "@/components/team/PersonDetail";
+import { SkillsSection } from "@/components/people/SkillsSection";
+import { loadSkills, PeopleSkillError } from "@/lib/people/skills";
 
 interface PageProps {
   params: Promise<{ personId: string }>;
@@ -73,12 +75,20 @@ async function renderPage(personId: string, paramsRange: Record<string, string |
   });
 
 
+  // Task 17: the Skills section, after the existing sections. Its own gate (canViewPeople) runs in the lib;
+  // a refusal or a missing 0270 just leaves the section out or says it is not available.
+  const skills = detail ? await loadSkills(sb, { actor: peopleActorFromAuth(auth), locationId: locationParam, personId }).catch((e: unknown) => {
+    if (e instanceof PeopleSkillError) return null;
+    throw e;
+  }) : null;
+
   const Container = allShops ? "div" : "main";
   return (
     <Container className={allShops ? "pt-4" : "mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6"}>
       {!allShops && header}
       <div className="mt-4">
         {detail ? <PersonDetail context={context.toString()} detail={detail} locationId={locationParam} language={language} /> : <p>{serverT(language, "reports.not_available")}</p>}
+        {skills && (skills.available ? <SkillsSection view={skills.view} /> : <p className="mt-6 text-sm text-co-text-muted">{serverT(language, "people.skills.unavailable")}</p>)}
       </div>
     </Container>
   );

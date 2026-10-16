@@ -29,6 +29,9 @@ import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
 import { TrendControls } from "@/components/trends/TrendControls";
 import { MyPerformance } from "@/components/me/MyPerformance";
+import { MySkills } from "@/components/people/MySkills";
+import { peopleActorFromAuth } from "@/lib/people/access-shared";
+import { loadMySkills, PeopleSkillError } from "@/lib/people/skills";
 
 interface PageProps {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -93,6 +96,12 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
 
   const allFeedback = await loadMyFeedback(sb, { userId: auth.user.id });
   const feedback = allFeedback.filter((f) => f.locationId === selected.id);
+  // Task 17 (R8): "My skills" — bands and positive lines only, stripped at the lib boundary. The person
+  // comes from the session. Before 0270 is applied (or on a refusal) the section is simply absent.
+  const mySkills = await loadMySkills(sb, { actor: peopleActorFromAuth(auth), locationId: selected.id }).catch((e: unknown) => {
+    if (e instanceof PeopleSkillError) return null;
+    throw e;
+  });
 
   const Container = allShops ? "div" : "main";
   return (
@@ -105,6 +114,7 @@ async function renderPage(query: Record<string, string | undefined>, allShops = 
           {serverT(language, "me.empty")}
         </p>
       )}
+      {mySkills?.available && <MySkills rows={mySkills.view} language={language} />}
     </Container>
   );
 }
