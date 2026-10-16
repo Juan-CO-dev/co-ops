@@ -17,6 +17,38 @@ import { NEW_ITEM_ERROR_CODES } from "@/lib/catalog/new-item-shared";
 import { SWAP_ERROR_CODES } from "@/lib/catalog/swap-shared";
 
 const REQUIRED = [
+  "catalog.jobs.sandwich.unpriced",
+  // Phase 4b chunk 4 sandwich job.
+  "catalog.jobs.sandwich.title",
+  "catalog.jobs.sandwich.intro",
+  "catalog.jobs.sandwich.price",
+  "catalog.jobs.sandwich.global",
+  "catalog.jobs.sandwich.link_shop",
+  "catalog.jobs.sandwich.choose_shop",
+  "catalog.jobs.sandwich.directions",
+  "catalog.jobs.sandwich.edit",
+  "catalog.jobs.sandwich.remove",
+  "catalog.jobs.sandwich.remove_aria",
+  "catalog.jobs.sandwich.costed",
+  "catalog.jobs.sandwich.inconsistent",
+  "catalog.jobs.sandwich.unweighed",
+  "catalog.jobs.sandwich.unresolved",
+  "catalog.jobs.sandwich.no_recipe",
+  "catalog.jobs.sandwich.cost_pending",
+  "catalog.jobs.sandwich.cost_error",
+  "catalog.jobs.sandwich.margin",
+  "catalog.jobs.sandwich.summary",
+  "catalog.jobs.sandwich.confirm",
+  "catalog.jobs.sandwich.create",
+  "catalog.jobs.sandwich.created",
+  "catalog.jobs.sandwich.already_created",
+  "catalog.jobs.sandwich.recovery",
+  "catalog.jobs.sandwich.open",
+  "catalog.jobs.sandwich.uncertain",
+  "catalog.jobs.sandwich.read_error",
+  "catalog.jobs.sandwich.reread",
+  "catalog.jobs.sandwich.start_again",
+
   // Phase 4b chunk 3: explicit New item inventory.
   "catalog.jobs.new_item.title",
   "catalog.jobs.new_item.intro",

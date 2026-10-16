@@ -4,10 +4,9 @@ import type { AuthContext } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { resolveShopId } from "@/lib/shop-context";
 import { catalogShopAllowed } from "@/lib/sku-versions-shared";
-import { creationScope, ownerVisible, ownerWriteCheck, shareGate, ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
-import { loadRecipeBuilderCatalog } from "@/lib/admin/recipe-builder-data";
+import { ownerVisible, ownerWriteCheck, shareGate, ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
+import { loadRecipeBuilderCatalog, loadRecipeBuilderScope } from "@/lib/admin/recipe-builder-data";
 import { loadLiveSwapsForItem } from "@/lib/catalog/swap-vendor";
 import type { JobScopeView, JobOwner, JobVendorOptions, NewItemJobView, NewSandwichJobView, ItemJobsStripView, SwapVendorJobView } from "@/lib/catalog/jobs-shared";
 
@@ -31,16 +30,8 @@ async function shopsFor(actor: AuthContext): Promise<Option[]> {
 
 /** Omission uses the remembered authorized shop. Explicit null means global. */
 async function jobScope(actor: AuthContext, requested?: string | null): Promise<JobScopeView> {
-  requireRole(actor);
-  if (requested !== undefined) {
-    const gate = creationScope(actorFacts(actor), requested);
-    if (!gate.ok) throw new ShopOwnedError(gate.status, gate.code);
-  }
-  const shops = await shopsFor(actor);
-  if (requested != null && !shops.some(shop => shop.id === requested)) throw new ShopOwnedError(404, "not_found");
-  const scope = requested === null ? null : await resolveShopId(shops.map(shop => shop.id), requested);
-  if (scope === null && requested !== null) throw new ShopOwnedError(400, "location_required");
-  return { scope, shops, allowGlobal: getRoleLevel(actor.user.role) >= 8 };
+  return loadRecipeBuilderScope(actor, requested === null ? "global" : requested, true, undefined,
+    { minimumLevel: 7, defaultToShop: true });
 }
 
 /** Bounded request lines AND paginated responses; never one request per vendor. */

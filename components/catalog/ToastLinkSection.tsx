@@ -24,7 +24,9 @@ function ToastLinkBody({ menuItemId, shopId, initial }: Props) {
     const [selected, setSelected] = useState(validInitial?.suggestion?.guid ?? '');
     const [search, setSearch] = useState('');
     const [confirmed, setConfirmed] = useState(false);
-    const [busy, setBusy] = useState(false);
+    const [busy, setBusy] = useState(!validInitial);
+    const [needsRefresh, setNeedsRefresh] = useState(false);
+    const seeded = useRef(Boolean(validInitial));
     const [error, setError] = useState<TranslationKey | null>(null);
     const alive = useRef(true), generation = useRef(0), pending = useRef(false);
     const url = `/api/admin/catalog/menu-item/${encodeURIComponent(menuItemId)}/toast`;
@@ -43,6 +45,7 @@ function ToastLinkBody({ menuItemId, shopId, initial }: Props) {
             if (alive.current && version === generation.current) {
                 setView(next);
                 setSelected(next.suggestion?.guid ?? '');
+                setNeedsRefresh(false);
             }
         }
         catch {
@@ -58,19 +61,20 @@ function ToastLinkBody({ menuItemId, shopId, initial }: Props) {
     }, [url, shopId, menuItemId]);
     useEffect(() => {
         alive.current = true;
-        if (!validInitial)
-            void refresh();
-        return () => { alive.current = false; generation.current++; };
+        let cancelled = false;
+        if (!seeded.current)
+            queueMicrotask(() => { if (!cancelled) void refresh(); });
+        return () => { cancelled = true; alive.current = false; };
     }, [refresh]); // Initial props seed only this identity's mount.
     async function save() {
-        if (pending.current || !confirmed || !selected || !view?.choices.some(c => c.guid === selected))
+        if (pending.current || busy || needsRefresh || !confirmed || !selected || !view?.choices.some(c => c.guid === selected))
             return;
         pending.current = true;
         setBusy(true);
         setError(null);
         const version = generation.current;
         try {
-            if (await requestStepUp('A') !== 'ok')
+            if (await requestStepUp("A") !== 'ok')
                 return;
             if (!alive.current || version !== generation.current)
                 return;
@@ -78,14 +82,19 @@ function ToastLinkBody({ menuItemId, shopId, initial }: Props) {
             if (!alive.current || version !== generation.current)
                 return;
             if (!result.ok) {
+                setNeedsRefresh(true);
+                setConfirmed(false);
                 setError(result.code === "generic" ? "catalog.jobs.toast.save_error" : jobErrorKey(result.code));
                 return;
             }
             await refresh();
         }
         catch {
-            if (alive.current && version === generation.current)
+            if (alive.current && version === generation.current) {
+                setNeedsRefresh(true);
+                setConfirmed(false);
                 setError("catalog.jobs.toast.save_error");
+            }
         }
         finally {
             pending.current = false;
@@ -105,9 +114,9 @@ function ToastLinkBody({ menuItemId, shopId, initial }: Props) {
     {view?.suggestion && <p>{t('catalog.jobs.toast.suggested', { name: view.suggestion.name })}</p>}
     {!!view?.choices.length && <fieldset disabled={busy} className="min-w-0 space-y-3">
       <label className="block">{t('catalog.jobs.toast.search')}<input className={control} value={search} onChange={e => { setSearch(e.target.value); setConfirmed(false); setSelected(''); }} type="search" aria-label={t('catalog.jobs.toast.search_aria')}/></label>
-      <label className="block">{t('catalog.jobs.toast.choices')}<select className={control} value={selected} onChange={e => { setSelected(e.target.value); setConfirmed(false); }}><option value="">{t('catalog.jobs.toast.select')}</option>{choices.map(c => <option key={c.guid} value={c.guid}>{c.name}</option>)}</select></label>
-      <label className="flex min-h-[44px] items-center gap-2"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>{t('catalog.jobs.toast.confirmation')}</label>
-      <button type="button" className={`${control} flex items-center justify-center`} disabled={!confirmed || !selected} onClick={() => void save()}>{t('catalog.jobs.toast.confirm')}</button>
+      <label className="block">{t('catalog.jobs.toast.choices')}<select aria-label={t("catalog.jobs.toast.choices")} className={control} value={selected} onChange={e => { setSelected(e.target.value); setConfirmed(false); }}><option value="">{t('catalog.jobs.toast.select')}</option>{choices.map(c => <option key={c.guid} value={c.guid}>{c.name}</option>)}</select></label>
+      <label className="flex min-h-[44px] items-center gap-2"><input aria-label={t("catalog.jobs.toast.confirmation")} type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>{t('catalog.jobs.toast.confirmation')}</label>
+      <button type="button" className={`${control} flex items-center justify-center`} disabled={busy || needsRefresh || !confirmed || !selected} onClick={() => void save()}>{t('catalog.jobs.toast.confirm')}</button>
     </fieldset>}
     <button type="button" className={`${control} flex items-center justify-center`} disabled={busy} onClick={() => void refresh()}>{t('catalog.jobs.toast.refresh')}</button>
   </section>;

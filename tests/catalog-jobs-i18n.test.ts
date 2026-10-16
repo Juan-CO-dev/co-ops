@@ -3,6 +3,13 @@ import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { JOB_ERROR_CODES, jobErrorKey } from "@/lib/catalog/jobs-shared";
 
+it("uses the ruled reconciliation copy in both languages", () => {
+  expect(en["catalog.jobs.sandwich.already_created"]).toBe("This sandwich was already created; open it");
+  expect(es["catalog.jobs.sandwich.already_created"]).toBe("Este sándwich ya se creó; ábrelo");
+  expect(en["catalog.jobs.sandwich.recovery"]).toBe("You may have already added this sandwich. Find it in the catalog");
+  expect(es["catalog.jobs.sandwich.recovery"]).toBe("Puede que ya hayas añadido este sándwich. Búscalo en el catálogo");
+});
+
 it("has bilingual named refusals and matching job placeholders including ARIA", () => {
   for (const code of JOB_ERROR_CODES) {
     const key = jobErrorKey(code);

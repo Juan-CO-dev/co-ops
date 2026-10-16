@@ -12,7 +12,7 @@
  */
 import { useMemo, useState, useRef, useCallback } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -60,9 +60,13 @@ function matchesLens(e: CatalogEntity, lens: Lens): boolean {
 export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntity[]; actorLevel: number }) {
   const { t } = useTranslation();
   const router = useRouter();
+  const urlQuery = useSearchParams().get("q") ?? "";
 
   const [lens, setLens] = useState<Lens>("all");
-  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState({ urlQuery, query: urlQuery });
+  // A new recovery link replaces the search; unrelated navigation preserves typing.
+  if (search.urlQuery !== urlQuery) setSearch({ urlQuery, query: urlQuery });
+  const query = search.urlQuery === urlQuery ? search.query : urlQuery;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
@@ -201,7 +205,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
           aria-label={t("admin.catalog.search_label")}
           placeholder={t("admin.catalog.search_placeholder")}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => setSearch({ urlQuery, query: e.target.value })}
           className={inputCls}
         />
         <span className="text-xs text-co-text-muted">{t("admin.catalog.count", { n: String(filtered.length) })}</span>

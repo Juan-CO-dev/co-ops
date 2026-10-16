@@ -86,3 +86,4 @@ tmp/
 
 # build scratch logs (agent handoffs)
 scratch/
+.tmp/

@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({ builder: vi.fn(), resolve: vi.fn() }));
 let db: ReturnType<typeof createFakeDb>, tables: Tables;
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => db.client }));
 vi.mock("@/lib/shop-context", () => ({ resolveShopId: mocks.resolve }));
-vi.mock("@/lib/admin/recipe-builder-data", () => ({ loadRecipeBuilderCatalog: mocks.builder }));
+vi.mock("@/lib/admin/recipe-builder-data", async original => ({ ...await original<typeof import("@/lib/admin/recipe-builder-data")>(), loadRecipeBuilderCatalog: mocks.builder }));
 import { loadNewItemJobView, loadNewSandwichJobView, loadSwapVendorJobView, loadItemJobsStrip } from "@/lib/catalog/jobs";
 const A = "11111111-1111-4111-8111-111111111111", B = "22222222-2222-4222-8222-222222222222", SKU = "33333333-3333-4333-8333-333333333333";
 const gm = { user: { id: A, role: "gm" }, level: 7, locations: [A] } as AuthContext;
@@ -104,4 +104,11 @@ it("projects correct owned, shared first-override and existing override baseline
     .toMatchObject({ activeVersionId: "shared-B", basedOnVersionId: null });
   expect(global.setupShops.find(s => s.shopId === B)?.recipes.some(r => r.id === "owned")).toBe(false);
   expect(db.writes).toEqual([]);
+});
+
+it("shared scope helper supports the jobs floor and remembered multi-membership shop", async () => {
+  const { loadRecipeBuilderScope } = await import("@/lib/admin/recipe-builder-data");
+  mocks.resolve.mockResolvedValue(B);
+  expect((await loadRecipeBuilderScope({ ...gm, locations: [A, B] }, undefined, true, undefined, { minimumLevel: 7, defaultToShop: true })).scope).toBe(B);
+  await expect(loadRecipeBuilderScope({ ...gm, user: { ...gm.user, role: "agm" }, level: 6 }, A, true, undefined, { minimumLevel: 7, defaultToShop: true })).rejects.toMatchObject({ code: "forbidden" });
 });

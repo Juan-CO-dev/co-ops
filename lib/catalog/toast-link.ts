@@ -60,7 +60,9 @@ export async function loadToastLinkChoices(actor: AuthContext, menuItemId: strin
         }),
     ]);
     const linked = maps.filter(r => r.menu_item_id === menuItemId && r.match_status === 'confirmed').map((r): ToastLinkChoice => ({ guid: r.toast_item_guid, name: r.toast_item_name, price: r.toast_price_cents === null ? null : r.toast_price_cents / 100 }));
-    const blocked = new Set(maps.filter(r => r.disposition === 'open_item' || (r.menu_item_id === menuItemId ? r.match_status === 'rejected' || r.match_status === 'confirmed' : r.match_status !== 'rejected')).map(r => r.toast_item_guid));
+    // 4a runAutoMatch claims only confirmed GUIDs; candidate/stale pairs remain available.
+    // manualMap also refuses open_item GUIDs; rejected pairs only exclude this entity.
+    const blocked = new Set(maps.filter(r => r.disposition === 'open_item' || (r.menu_item_id === menuItemId ? r.match_status === 'rejected' || r.match_status === 'confirmed' : r.match_status === 'confirmed')).map(r => r.toast_item_guid));
     const available = menu.filter(r => !blocked.has(r.itemGuid));
     const toChoice = (r: typeof menu[number]): ToastLinkChoice => ({ guid: r.itemGuid, name: r.name, price: r.priceCents === null ? null : r.priceCents / 100 });
     const here = resolveMenuItemForShop({ id: item.id, name: item.name, nameEs: item.name_es, menuPrice: price(item.menu_price) }, settings.get(menuItemId));

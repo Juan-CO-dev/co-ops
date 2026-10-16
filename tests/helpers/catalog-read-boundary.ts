@@ -6,7 +6,7 @@ const imports: Record<string, readonly string[]> = {
   "@/lib/session": ["requireSession"],
   "@/lib/api-helpers": ["jsonOk", "jsonError", "parseJsonBody"],
   "@/app/api/admin/catalog/job-http": ["uuid", "objectBody", "catalogError", "catalogRefusal"],
-  "@/lib/catalog/new-sandwich": ["previewNewSandwich"],
+  "@/lib/catalog/new-sandwich": ["previewNewSandwich", "reconcileNewSandwich"],
   "@/lib/catalog/new-sandwich-shared": ["parseNewSandwichRequest"],
   "@/lib/catalog/menu-item-page": ["computeMenuPreview"],
   "@/lib/catalog/recipe-item-shared": ["parseMenuChange", "parseRecipeChange"],
@@ -51,12 +51,12 @@ export function readBoundaryViolations(source: string, method?: string): string[
     if (!ts.isImportDeclaration(node)) continue;
     const clause = node.importClause;
     if (clause?.isTypeOnly) continue;
-    const module = (node.moduleSpecifier as ts.StringLiteral).text;
-    if (!clause || clause.name || !clause.namedBindings || !ts.isNamedImports(clause.namedBindings)) { issues.push(`unreviewed import:${module}`); continue; }
+    const moduleName = (node.moduleSpecifier as ts.StringLiteral).text;
+    if (!clause || clause.name || !clause.namedBindings || !ts.isNamedImports(clause.namedBindings)) { issues.push(`unreviewed import:${moduleName}`); continue; }
     for (const symbol of clause.namedBindings.elements) {
       if (symbol.isTypeOnly || (method && !used.has(symbol.name.text))) continue;
       const original = (symbol.propertyName ?? symbol.name).text;
-      if (!imports[module]?.includes(original)) issues.push(`unreviewed import:${module}:${original}`);
+      if (!imports[moduleName]?.includes(original)) issues.push(`unreviewed import:${moduleName}:${original}`);
     }
   }
   return issues;

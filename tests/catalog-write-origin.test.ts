@@ -35,6 +35,7 @@ const mutations = {
   'swaps/[swapId]/back-to-normal': 'POST',
 } as const;
 const readOnly = {
+  'jobs/new-sandwich/reconcile': 'POST',
   'jobs/new-sandwich/preview': 'POST',
   'menu-item/[id]/preview': 'POST',
   'menu-item/[id]/share/preview': 'POST',
@@ -61,14 +62,14 @@ beforeEach(() => {
   mocks.session.mockResolvedValue(Response.json({ code: 'unauthorized' }, { status: 401 }));
   mocks.db.mockImplementation(() => { throw new Error('Unexpected database access'); });
 });
-it('classifies every route file exactly once and pins 39 files / 41 handlers', async () => {
+it('classifies every route file exactly once and pins 40 files / 42 handlers', async () => {
   const files = catalogRouteFiles(readdirSync('app/api/admin/catalog', { recursive: true }).map(String));
   const listed = [...Object.keys(mutations), ...Object.keys(readOnly)];
   expect(new Set(listed).size).toBe(listed.length);
   expect(files).toEqual(listed.map(p => `${p}/route.ts`).sort());
-  expect(files).toHaveLength(39);
+  expect(files).toHaveLength(40);
   expect(Object.keys(mutations)).toHaveLength(28);
-  expect(Object.keys(readOnly)).toHaveLength(11);
+  expect(Object.keys(readOnly)).toHaveLength(12);
   let handlers = 0;
   for (const path of listed) {
     const route = await load(path);
@@ -77,7 +78,7 @@ it('classifies every route file exactly once and pins 39 files / 41 handlers', a
     expect(actual, path).toEqual(expected);
     handlers += actual.length;
   }
-  expect(handlers).toBe(41);
+  expect(handlers).toBe(42);
 });
 describe.each(Object.entries(mutations))('%s %s origin boundary', (path, method) => {
   it.each([undefined, 'https://attacker.invalid', 'null', 'not-a-url'])('refuses origin %s before session, body, or database', async origin => {

@@ -1,7 +1,7 @@
 # Catalog Phase 4b — Chunk 2 result
 
-Worktree: `C:\Users\conta\co-ops-cat-p4b`  
-Branch: `feat/catalog-phase4b-job-pages`  
+Worktree: `C:\Users\conta\co-ops-cat-p4b`
+Branch: `feat/catalog-phase4b-job-pages`
 Starting base: `a06baf5d`. At final readback HEAD is `4db4efd0`: CC independently added the scratch-log ignore rule during this task (the intervening diff is `.gitignore` only). All Chunk 2 changes remain uncommitted; Astra made no commits. No push, merge, deployment, migration, env-file access or database operation.
 
 ## Changes

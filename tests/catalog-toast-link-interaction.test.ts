@@ -11,10 +11,14 @@ vi.mock('@/components/admin/useStepUpPost', () => ({ useStepUpPost: () => h.post
 import { ToastLinkSection } from '@/components/catalog/ToastLinkSection';
 type Node = {
     type: unknown;
-    props: Record<string, any>;
+    props: {
+        children?: unknown; type?: string; role?: string; disabled?: boolean; value?: string;
+        onChange: (event: { target: { checked?: boolean; value?: string } }) => void;
+        onClick: () => void;
+    };
 };
 const initial: ToastLinkChoices = { menuItemId: 'menu', shopId: 'shop', status: 'suggested', choices: [{ guid: 'guid', name: 'Sandwich', price: 12 }], suggestion: { guid: 'guid', name: 'Sandwich', price: 12 }, linked: [] };
-function render(shopId = 'shop') { h.cursor = 0; h.effects = []; const wrapper = ToastLinkSection({ menuItemId: 'menu', shopId, initial: { ...initial, shopId } }); return (wrapper.type as Function)(wrapper.props) as Node; }
+function render(shopId = 'shop') { h.cursor = 0; h.effects = []; const wrapper = ToastLinkSection({ menuItemId: 'menu', shopId, initial: { ...initial, shopId } }); return (wrapper.type as (props: typeof wrapper.props) => Node)(wrapper.props) as Node; }
 function find(node: unknown, predicate: (n: Node) => boolean): Node | undefined { if (!node || typeof node !== 'object')
     return; if (Array.isArray(node)) {
     for (const child of node) {
@@ -35,3 +39,20 @@ it('discarding old keyed scope prevents a delayed write result refreshing the ne
 it('cancelled step-up preserves selection and does not write', async () => { h.step.mockResolvedValue('cancelled'); let tree = render(); find(tree, n => n.type === 'input' && n.props.type === 'checkbox')!.props.onChange({ target: { checked: true } }); tree = render(); find(tree, confirm)!.props.onClick(); await flush(); expect(h.post).not.toHaveBeenCalled(); expect(find(render(), n => n.type === 'select')?.props.value).toBe('guid'); });
 it('search editing clears the reviewed confirmation', async () => { let tree = render(); find(tree, n => n.type === 'input' && n.props.type === 'checkbox')!.props.onChange({ target: { checked: true } }); tree = render(); find(tree, n => n.type === 'input' && n.props.type === 'search')!.props.onChange({ target: { value: 'different' } }); expect(find(render(), confirm)?.props.disabled).toBe(true); });
 it('a refused confirmation shows write feedback rather than a read failure', async () => { h.post.mockResolvedValue({ ok: false, code: 'generic' }); let tree = render(); find(tree, n => n.type === 'input' && n.props.type === 'checkbox')!.props.onChange({ target: { checked: true } }); tree = render(); find(tree, confirm)!.props.onClick(); await flush(); expect(find(render(), n => n.props?.role === 'alert')?.props.children).toBe('catalog.jobs.toast.save_error'); expect(h.fetch).not.toHaveBeenCalled(); });
+
+it('refusal requires a successful refresh before confirmation can be enabled', async () => {
+  h.post.mockResolvedValue({ ok: false, code: 'generic' });
+  const tree = render();
+  const check = (n: Node) => n.type === 'input' && n.props.type === 'checkbox';
+  find(tree, check)!.props.onChange({ target: { checked: true } });
+  find(render(), confirm)!.props.onClick(); await flush();
+  find(render(), check)!.props.onChange({ target: { checked: true } });
+  expect(find(render(), confirm)?.props.disabled).toBe(true);
+  let resolve!: (value: unknown) => void;
+  h.fetch.mockReturnValue(new Promise(r => resolve = r));
+  find(render(), n => n.type === 'button' && n.props.children === 'catalog.jobs.toast.refresh')!.props.onClick();
+  expect(find(render(), confirm)?.props.disabled).toBe(true);
+  resolve({ ok: true, json: async () => initial }); await flush();
+  find(render(), check)!.props.onChange({ target: { checked: true } });
+  expect(find(render(), confirm)?.props.disabled).toBe(false);
+});

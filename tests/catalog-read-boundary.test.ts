@@ -17,3 +17,7 @@ it("refuses new write-path imports even when aliased as a preview", () => {
   expect(readBoundaryViolations(`import * as writer from '@/lib/catalog/swap-vendor'; writer.startSkuSwap();`)).not.toEqual([]);
   expect(readBoundaryViolations(`import { previewSkuSwap } from '@/lib/catalog/swap-vendor'; previewSkuSwap();`)).toEqual([]);
 });
+it("allows only the reviewed sandwich readers, never the adjacent creator", () => {
+  expect(readBoundaryViolations(`import { reconcileNewSandwich } from '@/lib/catalog/new-sandwich'; reconcileNewSandwich();`)).toEqual([]);
+  expect(readBoundaryViolations(`import { createNewSandwich as reconcileNewSandwich } from '@/lib/catalog/new-sandwich'; reconcileNewSandwich();`)).not.toEqual([]);
+});

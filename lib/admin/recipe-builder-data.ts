@@ -10,6 +10,7 @@
  * Errors keep the pages' old posture — a failed read yields an empty list — and a failed
  * vendors read only drops the names.
  */
+import { selectAllRows } from "@/lib/supabase-paginate";
 import type { AuthContext } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { catalogShopAllowed, assertScopeToken } from "@/lib/sku-versions-shared";
@@ -141,12 +142,17 @@ export async function loadRecipeBuilderCatalog(actor: AuthContext, scope: string
 }
 
 /** Pages authorize before choosing a scope; explicit foreign queries never fall back silently. */
-export async function loadRecipeBuilderScope(actor: AuthContext, requested: string | undefined, creation: boolean, owner?: string | null) {
+export async function loadRecipeBuilderScope(actor: AuthContext, requested: string | undefined, creation: boolean, owner?: string | null, options: { minimumLevel?: number; defaultToShop?: boolean } = {}) {
   const level = getRoleLevel(actor.user.role);
-  if (actor.user.role === "social_media_mgr" || level < 6) throw new ShopOwnedError(403, "forbidden");
-  const { data, error } = await getServiceRoleClient().from("locations").select("id, name").eq("active", true).order("name").returns<Array<{id: string; name: string}>>();
-  if (error) throw new Error(`builder shops: ${error.message}`);
-  const shops = (data ?? []).filter(s => catalogShopAllowed({ level, locations: actor.locations }, s.id));
+  if (actor.user.role === "social_media_mgr" || level < (options.minimumLevel ?? 6)) throw new ShopOwnedError(403, "forbidden");
+  const data = await selectAllRows<{ id: string; name: string }>((from, to) => getServiceRoleClient().from("locations").select("id,name").eq("active", true).order("name").order("id").range(from, to).returns<Array<{id: string; name: string}>>());
+  const shops = data.filter(s => catalogShopAllowed({ level, locations: actor.locations }, s.id));
+  if (creation && requested === undefined && options.defaultToShop) {
+    const { resolveShopId } = await import("@/lib/shop-context");
+    const scope = await resolveShopId(shops.map(s => s.id), undefined);
+    if (scope === null) throw new ShopOwnedError(400, "location_required");
+    return { scope, shops, allowGlobal: level >= 8 };
+  }
   if (owner != null) {
     if (!shops.some(s => s.id === owner)) throw new ShopOwnedError(404, "not_found");
     return { scope: owner, shops: shops.filter(s => s.id === owner), allowGlobal: false };
