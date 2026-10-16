@@ -78,6 +78,19 @@ describe("SevenShiftsScreen", () => {
     for (const hidden of ["Shops", "People", "Recent syncs", "Sync now", "Wages on file", "waiting"]) expect(html).not.toContain(hidden);
   });
 
+  it("ruling (c): sync off behaves EXACTLY like not connected — the same page with only its own status line (en + es)", () => {
+    for (const lang of ["en", "es"] as const) {
+      const dict = lang === "en" ? en : es;
+      const off = render({ ...base, state: "sync_off" }, lang);
+      const nc = render({ ...base, state: "not_connected" }, lang);
+      expect(dict["sevenshifts.status.syncOff"]).not.toBe(dict["sevenshifts.status.notConnected"]);
+      const esc = (t: string) => renderToStaticMarkup(createElement("span", null, t)).slice(6, -7);
+      expect(off).toContain(esc(dict["sevenshifts.status.syncOff"]));
+      expect(nc).toContain(esc(dict["sevenshifts.status.notConnected"]));
+      expect(off.replace(esc(dict["sevenshifts.status.syncOff"]), "§")).toBe(nc.replace(esc(dict["sevenshifts.status.notConnected"]), "§"));
+    }
+  });
+
   it("no wage figure, no email address, no full 7shifts last name in the HTML (MoO, GM, dormant)", () => {
     for (const screen of [base, { ...base, can: { manageShops: false, linkPeople: true, syncNow: false } }, { ...base, state: "not_connected" as const }]) {
       const html = render(screen);

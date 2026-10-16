@@ -148,6 +148,14 @@ export function canLinkSevenShiftsUser(
 }
 
 /**
+ * Ruling (a), `remote_not_at_shop`: below MoO, the 7shifts person must hold a LIVE assignment at the
+ * 7shifts location LIVE-linked to the shop. MoO+ links anywhere. The 0269 RPC enforces the same rule.
+ */
+export function linkNeedsRemoteAtShop(actor: PeopleActor): boolean {
+  return !isMooPlus(actor);
+}
+
+/**
  * May this actor link or unlink 7shifts PEOPLE at this shop at all (Task 10)? GM own shop, MoO+ any.
  * The front-door check, decided before any I/O; `canLinkSevenShiftsUser` then judges the subject.
  */

@@ -70,6 +70,14 @@ describe("0269_sevenshifts_links", () => {
     expect(src).not.toMatch(/create (or replace )?function public\.(toast_link_actor_level|assignment_user_level|assignment_author_level)/);
   });
 
+  it("ruling (a): below level 8 the 7shifts person needs a LIVE assignment at the shop's LIVE 7shifts location", () => {
+    const link = extractFunction(src, "create function public.link_sevenshifts_user(", "end $$;");
+    expect(link).toContain("if v_actor < 8 and not exists (");
+    expect(link).toContain("join public.sevenshifts_user_assignments a on a.location_id = l.sevenshifts_location_id");
+    expect(link).toContain("where l.location_id = p_location and l.active and a.user_id = p_remote_user and a.active) then");
+    expect(link).toContain("raise exception 'remote_not_at_shop';");
+  });
+
   it("no function body compares (or even mentions) a name — identity is ids only", () => {
     const bodies = [...src.matchAll(/as \$\$([\s\S]*?)end \$\$;/g)].map((m) => m[1]!);
     expect(bodies).toHaveLength(4);

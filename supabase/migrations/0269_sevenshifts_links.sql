@@ -20,8 +20,9 @@
 --
 -- REFUSALS (raise exception '<code>', P0001; mapped by lib/sevenshifts/links.ts):
 --   invalid_payload · role_insufficient · location_access_denied · assignee_unavailable (subject inactive)
---   remote_unknown (not in the 0268 mirror) · remote_not_at_shop (a GM may link only a 7shifts person
---   assigned to the 7shifts location linked to that shop) · shop_already_linked · remote_already_linked ·
+--   remote_unknown (not in the 0268 mirror) · remote_not_at_shop (below level 8, the 7shifts person must
+--   hold a LIVE assignment at the 7shifts location LIVE-linked to that shop; CC ruling (a) 2026-10-15,
+--   enforced here AND in the lib) · shop_already_linked · remote_already_linked ·
 --   user_already_linked · link_not_found.
 --
 -- WHO READS / WRITES (service role only, through the lib; no PostgREST role holds anything):

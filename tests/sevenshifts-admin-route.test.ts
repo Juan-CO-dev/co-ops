@@ -3,6 +3,7 @@
  * the /admin/toast-employees precedent) and Sync now (MoO+, no step-up: it changes no config). The actor
  * comes from the session, never the body; payloads are exact; refusals carry their fixed code.
  */
+import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -62,6 +63,28 @@ describe("POST /api/admin/sevenshifts", () => {
     expect(await res.json()).toMatchObject({ code: "step_up_stale" });
     expect(vi.mocked(assertStepUp).mock.calls[0]![1]).toBe("B");
     expect(linkUser).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["link_shop", { action: "link_shop", locationId: SHOP, remoteLocationId: "4569" }],
+    ["unlink_shop", { action: "unlink_shop", linkId: LINK }],
+    ["link_user", { action: "link_user", locationId: SHOP, remoteUserId: "501", userId: USER }],
+    ["unlink_user", { action: "unlink_user", locationId: SHOP, linkId: LINK }],
+  ] as const)("ruling (b): %s asks Tier B every time (it binds identities); a stale window stops it before the lib", async (_name, body) => {
+    vi.mocked(assertStepUp).mockReturnValue({ ok: false, code: "step_up_required" } as never);
+    const res = await post(body);
+    expect(res.status).toBe(403);
+    expect(vi.mocked(assertStepUp).mock.calls.map((c) => c[1])).toEqual(["B"]);
+    for (const fn of [linkShop, unlinkShop, linkUser, unlinkUser, requestSyncNow]) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("ruling (b): the step-up tier map lists this route and its screen at exactly Tier B (none for Sync now is the route's own branch)", () => {
+    const pin = readFileSync("tests/step-up-tier-map.test.ts", "utf8");
+    expect(pin).toContain('"app/api/admin/sevenshifts/route.ts": ["B"],');
+    expect(pin).toContain('"components/admin/sevenshifts/SevenShiftsScreen.tsx": ["B"],');
+    const route = readFileSync("app/api/admin/sevenshifts/route.ts", "utf8");
+    expect(route.indexOf('if (b.action === "sync_now")')).toBeLessThan(route.indexOf('assertStepUp(ctx, "B")'));
+    expect(route.match(/assertStepUp\(/g)).toHaveLength(1);
   });
 
   it("Sync now needs no step-up (it changes no config); the lib decides MoO+", async () => {

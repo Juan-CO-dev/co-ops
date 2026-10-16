@@ -291,6 +291,45 @@ describe("the link writers — access before any I/O, dormancy, P0001 codes, aud
     expect(JSON.stringify(row)).not.toMatch(/Ana|Rivera/);
   });
 
+  it("ruling (a) remote_not_at_shop in the LIB: below MoO the 7shifts person must hold a LIVE assignment at the shop's LIVE 7shifts location — refused before the RPC", async () => {
+    // 503 works only at 4570 (shop B's 7shifts location): a GM of shop A cannot claim them.
+    let w = world();
+    w.tables.sevenshifts_users!.push({ id: "503", first_name: "Cy", last_name: "Q", preferred_first_name: null, employee_id: null, active: true });
+    w.tables.sevenshifts_user_assignments!.push({ user_id: "503", location_id: "4570", role_id: null, active: true });
+    await expect(linkUser(w.db, { actor: gmA, locationId: SHOP_A, remoteUserId: "503", userId: U(2) }, READY)).rejects.toMatchObject({ status: 403, code: "remote_not_at_shop" });
+    expect(w.rpc).not.toHaveBeenCalled();
+    // A RETIRED assignment at the right location does not count.
+    w = world();
+    w.tables.sevenshifts_user_assignments = [{ user_id: "501", location_id: "4569", role_id: null, active: false }];
+    await expect(linkUser(w.db, { actor: gmA, locationId: SHOP_A, remoteUserId: "501", userId: U(1) }, READY)).rejects.toMatchObject({ status: 403, code: "remote_not_at_shop" });
+    expect(w.rpc).not.toHaveBeenCalled();
+    // A shop whose 7shifts link was UNLINKED has no 7shifts location at all.
+    w = world();
+    w.tables.sevenshifts_location_links = [{ id: "SL1", location_id: SHOP_A, sevenshifts_location_id: "4569", active: false }];
+    await expect(linkUser(w.db, { actor: gmA, locationId: SHOP_A, remoteUserId: "501", userId: U(1) }, READY)).rejects.toMatchObject({ status: 403, code: "remote_not_at_shop" });
+    expect(w.rpc).not.toHaveBeenCalled();
+  });
+
+  it("ruling (a): MoO+ is exempt — the lib reads no assignment and the RPC decides", async () => {
+    const w = world({ rpc: () => ({ data: { id: "UL3", changed: true } }) });
+    w.tables.sevenshifts_users!.push({ id: "503", first_name: "Cy", last_name: "Q", preferred_first_name: null, employee_id: null, active: true });
+    w.tables.sevenshifts_user_assignments!.push({ user_id: "503", location_id: "4570", role_id: null, active: true });
+    expect(await linkUser(w.db, { actor: moo, locationId: SHOP_A, remoteUserId: "503", userId: U(2) }, READY)).toEqual({ id: "UL3", changed: true });
+    expect(w.from.mock.calls.map(([t]) => t)).not.toContain("sevenshifts_user_assignments");
+  });
+
+  it("ruling (a): a failed read of the shop link or the assignments is a 500 link_failed, never a pass", async () => {
+    for (const table of ["sevenshifts_location_links", "sevenshifts_user_assignments"]) {
+      const w = world();
+      const real = w.from.getMockImplementation()!;
+      w.from.mockImplementation(((t: string) => t === table
+        ? { select: () => { const q = { eq: () => q, limit: () => q, then: (r: (v: unknown) => unknown) => r({ data: null, error: { message: "boom" } }) }; return q; } }
+        : real(t)) as never);
+      await expect(linkUser(w.db, { actor: gmA, locationId: SHOP_A, remoteUserId: "501", userId: U(1) }, READY)).rejects.toMatchObject({ status: 500, code: "link_failed" });
+      expect(w.rpc).not.toHaveBeenCalled();
+    }
+  });
+
   it("unlinkUser and unlinkShop audit .deactivate only when something changed", async () => {
     const w = world({ rpc: (fn) => ({ data: fn === "unlink_sevenshifts_user"
       ? { id: "UL1", changed: true, sevenshifts_user_id: 501, user_id: U(1), linked_at_location_id: SHOP_A }

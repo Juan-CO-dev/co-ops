@@ -18,7 +18,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import {
-  canLinkSevenShiftsUser, canManageSevenShiftsPeople, canManageSevenShiftsShops, canSyncNow, canViewSevenShiftsStatus,
+  canLinkSevenShiftsUser, canManageSevenShiftsPeople, canManageSevenShiftsShops, canSyncNow, canViewSevenShiftsStatus, linkNeedsRemoteAtShop,
   type PeopleActor,
 } from "@/lib/people/access-shared";
 import { getRoleLevel, isRoleCode } from "@/lib/roles";
@@ -122,6 +122,22 @@ async function loadSubject(service: SupabaseClient, userId: string): Promise<{ l
   return { level: getRoleLevel(u.data.role), locations: (m.data ?? []).map((r) => String((r as { location_id: string }).location_id)) };
 }
 
+/**
+ * Ruling (a): the 7shifts person holds a LIVE assignment at the shop's LIVE-linked 7shifts location, or
+ * 403 `remote_not_at_shop`. A failed read is 500 `link_failed`, never a pass. The RPC re-checks it.
+ */
+async function requireRemoteAtShop(service: SupabaseClient, locationId: string, remoteUserId: string): Promise<void> {
+  const link = await service.from("sevenshifts_location_links").select("sevenshifts_location_id")
+    .eq("location_id", locationId).eq("active", true).limit(1);
+  if (link.error) throw new SevenShiftsLinkError(500, "link_failed");
+  const remoteLocation = (link.data ?? [])[0] as { sevenshifts_location_id: number | string } | undefined;
+  if (!remoteLocation) throw new SevenShiftsLinkError(403, "remote_not_at_shop");
+  const edge = await service.from("sevenshifts_user_assignments").select("user_id")
+    .eq("user_id", remoteUserId).eq("location_id", String(remoteLocation.sevenshifts_location_id)).eq("active", true).limit(1);
+  if (edge.error) throw new SevenShiftsLinkError(500, "link_failed");
+  if ((edge.data ?? []).length === 0) throw new SevenShiftsLinkError(403, "remote_not_at_shop");
+}
+
 export async function linkUser(
   service: SupabaseClient,
   args: { actor: PeopleActor; locationId: string; remoteUserId: string; userId: string },
@@ -136,6 +152,7 @@ export async function linkUser(
   if (!canLinkSevenShiftsUser(args.actor, subject.level, subject.locations, args.locationId)) {
     throw new SevenShiftsLinkError(403, subject.level > args.actor.level ? "role_insufficient" : "location_access_denied");
   }
+  if (linkNeedsRemoteAtShop(args.actor)) await requireRemoteAtShop(service, args.locationId, args.remoteUserId);
   const { data, error } = await service.rpc("link_sevenshifts_user", {
     p_actor: args.actor.userId, p_location: args.locationId, p_remote_user: args.remoteUserId, p_user: args.userId,
   });

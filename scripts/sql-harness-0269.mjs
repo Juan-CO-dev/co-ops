@@ -14,7 +14,8 @@
  *   L3  shop links: every refusal by name, one live link per side, same pair → changed:false,
  *       unlink → relink is a NEW row (history kept), a deactivated actor is refused
  *   L4  person links: every refusal by name (GM own shop only, subject ≤ actor, an active member,
- *       remote_unknown, remote_not_at_shop for a GM, one live link per side), MoO any shop, unlink at the
+ *       remote_unknown, remote_not_at_shop for a GM — another location, a RETIRED assignment, a shop with
+ *       no live or an UNLINKED 7shifts link (ruling (a)) — one live link per side), MoO any shop, unlink at the
  *       link's shop (GM) or anywhere (MoO), relink = a new row, a deactivated actor is refused
  *   L5  NO function in 0269 compares names (source scan of every function body)
  */
@@ -117,15 +118,23 @@ try {
   const owner = await user("owner"), moo = await user("moo"), mooOff = await user("moo", false);
   const gmA = await user("gm"), gmB = await user("gm"), gmOff = await user("gm", false), agmA = await user("agm"), smmA = await user("social_media_mgr");
   const empA = await user("employee"), emp2A = await user("employee"), empB = await user("employee"), empOff = await user("employee", false), gm2A = await user("gm");
-  for (const [u, l] of [[gmA, SA], [gmB, SB], [gmOff, SA], [agmA, SA], [smmA, SA], [empA, SA], [emp2A, SA], [empB, SB], [empOff, SA], [gm2A, SA], [moo, SA]]) await member(u, l);
+  // Ruling (a) fixtures: shop C has NO 7shifts link; emp3A is a free employee of shop A.
+  const SC = await shop(), gmC = await user("gm"), empC = await user("employee"), emp3A = await user("employee");
+  for (const [u, l] of [[gmA, SA], [gmB, SB], [gmOff, SA], [agmA, SA], [smmA, SA], [empA, SA], [emp2A, SA], [empB, SB], [empOff, SA], [gm2A, SA], [moo, SA],
+    [gmC, SC], [empC, SC], [emp3A, SA]]) await member(u, l);
   await db.exec(`insert into public.sevenshifts_locations (id, company_id, name, active) values (4569, 1234, 'P', true), (4570, 1234, 'C', true);
     insert into public.sevenshifts_users (id, company_id, first_name, active) values (501, 1234, 'Ana', true), (502, 1234, 'Ana', true),
-      (503, 1234, 'Bo', true), (504, 1234, 'Cy', true);`);
+      (503, 1234, 'Bo', true), (504, 1234, 'Cy', true), (505, 1234, 'Di', true), (506, 1234, 'Ed', true);`);
   await db.exec("set role service_role");
   const runId = (await db.query("insert into public.sevenshifts_sync_run_ids (trigger) values ('cron') returning id")).rows[0].id;
   const edges = async (u, loc) => db.query("select public.reconcile_sevenshifts_user_snapshot($1, $2, 'assignments', true, $3::jsonb)",
     [runId, u, JSON.stringify([{ edge_key: `${u}:${loc}:-:-`, user_id: String(u), location_id: String(loc), department_id: null, role_id: null, is_primary: null }])]);
-  await edges(501, 4569); await edges(502, 4569); await edges(503, 4570); await edges(504, 4569);
+  await edges(501, 4569); await edges(502, 4569); await edges(503, 4570); await edges(504, 4569); await edges(505, 4569); await edges(506, 4569);
+  // 505's assignment at 4569 is RETIRED by a later complete, empty snapshot.
+  const runId2 = (await db.query("insert into public.sevenshifts_sync_run_ids (trigger) values ('cron') returning id")).rows[0].id;
+  await db.query("select public.reconcile_sevenshifts_user_snapshot($1, 505, 'assignments', true, '[]'::jsonb)", [runId2]);
+  check((await db.query("select active from public.sevenshifts_user_assignments where user_id = 505")).rows.every((r) => r.active === false),
+    "L4 ruling (a) fixture: 505's 4569 assignment is retired");
 
   const rpc = async (fn, args) => (await db.query(`select public.${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args)).rows[0].r;
   const linkShop = (actor, loc, remote) => rpc("link_sevenshifts_location", [actor, loc, remote]);
@@ -178,6 +187,8 @@ try {
   await refuses(() => linkUser(gmA, SA, 501, moo), "role_insufficient", "L4 a GM cannot link a MoO (subject ≤ actor)");
   await refuses(() => linkUser(gmA, SA, 9999, empA), "remote_unknown", "L4 a 7shifts user not in the mirror → remote_unknown");
   await refuses(() => linkUser(gmA, SA, 503, empA), "remote_not_at_shop", "L4 a GM cannot claim a 7shifts person of another 7shifts location");
+  await refuses(() => linkUser(gmA, SA, 505, emp3A), "remote_not_at_shop", "L4 ruling (a): a RETIRED assignment at the shop's 7shifts location does not count");
+  await refuses(() => linkUser(gmC, SC, 506, empC), "remote_not_at_shop", "L4 ruling (a): a shop with NO live 7shifts link → a GM can claim nobody");
   const a = await linkUser(gmA, SA, 501, empA);
   check(a.changed === true, "L4 GM links 7shifts 501 → an employee of their shop");
   const gmPeer = await linkUser(gmA, SA, 504, gm2A);
@@ -190,6 +201,16 @@ try {
   const mooAny = await linkUser(owner, SA, 502, emp2A);
   check(mooAny.changed === true, "L4 owner links (no remote_not_at_shop needed at 8+)");
   check((await count("sevenshifts_user_links", "active")) === 4, "L4 four live person links");
+  // ruling (a): once shop B's 7shifts link is UNLINKED, its GM can no longer claim a 4570 person; MoO still can.
+  const shopBLink = (await db.query("select id from public.sevenshifts_location_links where location_id = $1 and active", [SB])).rows[0].id;
+  await unlinkShop(moo, shopBLink);
+  const empB2 = await (async () => { await db.exec("reset role"); const u = await user("employee"); await member(u, SB); await db.exec("set role service_role"); return u; })();
+  await db.exec("reset role");
+  await db.query("insert into public.sevenshifts_users (id, company_id, first_name, active) values (507, 1234, 'Fy', true)");
+  await db.exec("set role service_role");
+  await edges(507, 4570);
+  await refuses(() => linkUser(gmB, SB, 507, empB2), "remote_not_at_shop", "L4 ruling (a): an UNLINKED shop link no longer admits its GM");
+  check((await linkUser(moo, SB, 507, empB2)).changed === true, "L4 ruling (a): MoO+ is exempt (links 507 at an unlinked shop)");
   // unlink
   await refuses(() => unlinkUser(gmB, SB, a.id), "link_not_found", "L4 a GM cannot unlink another shop's link (reads as not found)");
   await refuses(() => unlinkUser(gmB, SA, a.id), "location_access_denied", "L4 a GM cannot act for a shop they do not belong to");
