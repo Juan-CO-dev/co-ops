@@ -29,7 +29,7 @@ import type { NarrativeLine } from "@/lib/people-narrative";
 import type { PositionInterval } from "@/lib/people/positions-shared";
 import type { SkillTunables } from "@/lib/people/tunables-shared";
 import { batchSignedDrift, isUsableBatch, type YieldBatch } from "@/lib/yield-stats-shared";
-import { etWallClockToUtcIso } from "@/lib/operational-day";
+import { etDisplayDate, etWallClockToUtcIso, etYmdMinusDays } from "@/lib/operational-day";
 
 export type QualityKind = "pm" | "closeOnTime" | "prepYield";
 export const QUALITY_KINDS: readonly QualityKind[] = ["pm", "closeOnTime", "prepYield"];
@@ -247,12 +247,12 @@ function evidenceLines(
     lines.push({ key: "people.skills.evidence.noMaker", params: { count: notes.noMakerBatches! }, source: "noMaker" });
   }
   if (priorSource === "manager_rating" && notes.rating) {
-    lines.push({ key: "people.skills.evidence.rating", params: { actor: notes.rating.actorName, date: notes.rating.at.slice(0, 10) }, source: "rating" });
+    lines.push({ key: "people.skills.evidence.rating", params: { actor: notes.rating.actorName, date: etDisplayDate(notes.rating.at) }, source: "rating" });
   }
   if (notes.adjustment && notes.adjustment.delta !== 0) {
     lines.push({
       key: "people.skills.evidence.adjustment",
-      params: { delta: formatDelta(notes.adjustment.delta), actor: notes.adjustment.actorName, date: notes.adjustment.at.slice(0, 10), reason: notes.adjustment.reasonCode },
+      params: { delta: formatDelta(notes.adjustment.delta), actor: notes.adjustment.actorName, date: etDisplayDate(notes.adjustment.at), reason: notes.adjustment.reasonCode },
       source: "adjustment",
     });
   }
@@ -264,13 +264,19 @@ function evidenceLines(
 /** An observation for a person (the builders attribute; `skillFor` takes one person's at a time). */
 export interface PersonObservation extends QualityObservation { userId: string }
 
-/** The position a person held at an instant: the CLOSED interval [start, end) containing it, or null. */
+/**
+ * The position a person held at an instant: the CLOSED interval [start, end) containing it, or null. ONE
+ * named exception (Astra chunk E #1): an interval ended by a 0230 `station_closed` release also owns its
+ * end instant — that release is stamped at the final closing completion's time, so the completion that
+ * closed the station stays attributed. Every other end is exclusive.
+ */
 export function positionAt(intervals: readonly PositionInterval[], userId: string, at: string): PositionInterval | null {
   const t = Date.parse(at);
   if (!Number.isFinite(t)) return null;
   for (const i of intervals) {
     if (i.userId !== userId || i.end === null) continue;
-    if (Date.parse(i.start) <= t && t < Date.parse(i.end)) return i;
+    const end = Date.parse(i.end);
+    if (Date.parse(i.start) <= t && (t < end || (t === end && i.endedByStationClose === true))) return i;
   }
   return null;
 }
@@ -303,6 +309,23 @@ export function workedDays(intervals: readonly PositionInterval[]): {
   return { byUser, unrecordedMinutes: new Map([...unrecorded].map(([u, m]) => [u, Math.round(m)])) };
 }
 
+/**
+ * THE CLOSE DEADLINE ON A BUSINESS DAY (Astra chunk E #7). A station's usual close is an ET wall time
+ * (`stations.usually_closes_at`); the closing instance of business day `day` runs past midnight (0230's
+ * C.48 shift start + 16 h), so the deadline is the FIRST occurrence of that wall time at or after the
+ * closing's start — 00:30 after a closing that started at 15:00 on the 15th is 00:30 on the 16th, while
+ * 22:00 stays the 15th. With no recorded start (`shift_start_at`, else `triggered_at`) the closing is
+ * anchored at noon of its business day. DST-correct through `etWallClockToUtcIso`; null on bad input.
+ */
+export function closingDeadlineIso(day: string, usualClose: string, closingStartIso: string | null): string | null {
+  const sameDay = etWallClockToUtcIso(day, usualClose);
+  if (!sameDay) return null;
+  const startMs = closingStartIso ? Date.parse(closingStartIso) : Number.NaN;
+  const anchor = Number.isFinite(startMs) ? startMs : Date.parse(etWallClockToUtcIso(day, "12:00") ?? "");
+  if (!Number.isFinite(anchor) || Date.parse(sameDay) >= anchor) return sameDay;
+  return etWallClockToUtcIso(etYmdMinusDays(day, -1), usualClose);
+}
+
 export interface ClosingCompletion { id: string; instanceId: string; templateItemId: string; completedBy: string | null; completedAt: string }
 export interface ClosingStationFact { id: string; name: string; usuallyClosesAt: string | null }
 
@@ -318,6 +341,8 @@ export interface ClosingStationFact { id: string; name: string; usuallyClosesAt:
 export function closeOnTimeObservations(input: {
   completions: readonly ClosingCompletion[];
   instanceDay: ReadonlyMap<string, string>;
+  /** instance id → the closing's start (`shift_start_at`, else `triggered_at`), for the overnight deadline. */
+  instanceStart?: ReadonlyMap<string, string | null>;
   lineStation: ReadonlyMap<string, string>;
   stations: readonly ClosingStationFact[];
   /** `${stationId}/${day}` → the station's observed closure (0230). */
@@ -334,7 +359,7 @@ export function closeOnTimeObservations(input: {
     if (!day || !station) continue;
     let deadline: number | null = null;
     if (station.usuallyClosesAt) {
-      const iso = etWallClockToUtcIso(day, station.usuallyClosesAt);
+      const iso = closingDeadlineIso(day, station.usuallyClosesAt, input.instanceStart?.get(c.instanceId) ?? null);
       if (iso) deadline = Date.parse(iso) + t.closeGraceMinutes * 60_000;
     } else {
       const closed = input.closures.get(`${station.id}/${day}`);

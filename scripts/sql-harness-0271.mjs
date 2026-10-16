@@ -149,6 +149,9 @@ try {
   const stA = await station(SA), stB = await station(SB);
   const posP = await position(stA, SA, "Expeditor"), posQ = await position(stA, SA, "Walk-ins"), posR = await position(stA, SA, "Old", false);
   const posS = await position(stB, SB, "Expeditor");
+  const stOffA = await station(SA);
+  await db.query("update public.stations set active = false where id = $1", [stOffA]);
+  const posT = await position(stOffA, SA, "Expeditor (old station)");
   const CS = await criterion(SA, null, "Arrived ready"), CP = await criterion(SA, posP, "Ticket accuracy"), CQ = await criterion(SA, posQ, "Greets guests");
   const CI = await criterion(SA, null, "Old line", false), CB = await criterion(SB, null, "Arrived ready");
   let dayN = 0;
@@ -198,13 +201,13 @@ try {
   await refuses(() => rpc("save_pm_copy_grade", [khA, c1, empA, null, CS, "excellent"]), "invalid_payload", "a grade outside great|good|needs_work → invalid_payload");
 
   // ── P1-1 THE SHARED CASE FILE ──
-  const POS = { own_active: posP, own_retired: posR, other_shop: posS, nonexistent: "00000000-0000-4000-8000-0000000000ff", null: null };
+  const POS = { own_active: posP, own_retired: posR, own_station_retired: posT, other_shop: posS, nonexistent: "00000000-0000-4000-8000-0000000000ff", null: null };
   let agree = 0;
   for (const c of GRADE_CASES) {
     const subj = await user("employee");
     await member(subj, SA);
     const pos = POS[String(c.position)];
-    if (c.worked) await event(subj, c.position === "other_shop" ? SB : SA, D.date, c.position === "other_shop" ? stB : stA, pos);
+    if (c.worked) await event(subj, c.position === "other_shop" ? SB : SA, D.date, c.position === "other_shop" ? stB : c.position === "own_station_retired" ? stOffA : stA, pos);
     if (c.added === "this") await rpc("add_pm_copy_position", [khA, c1, subj, pos, "covered the rush"]);
     if (c.added === "other") await rpc("add_pm_copy_position", [gmA, c2, subj, pos, "covered the rush"]);
     const crit = { own_shared: CS, own_position_same: c.position === "own_active" ? CP : CQ, own_position_other: CQ, own_inactive: CI, other_shop: CB }[c.criterion];

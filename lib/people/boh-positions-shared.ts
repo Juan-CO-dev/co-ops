@@ -34,13 +34,16 @@ export function bohPositionsReport(
   positions: readonly BohPositionRow[],
 ): BohReport {
   const stationName = new Map(stations.map((s) => [s.id, s.name] as const));
+  // A position counts only when its STATION is active too (Astra chunk E #2): a station deactivated by the
+  // station sync keeps its positions' own active flag, so the flag alone overstates readiness.
+  const stationActive = new Map(stations.map((s) => [s.id, s.active] as const));
   const out: BohShopReport[] = [];
   for (const shop of [...shops].filter((s) => s.active).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))) {
     const findings: BohFinding[] = BOH_POSITION_NAMES.map((name) => {
       const matches = positions
         .filter((p) => p.location_id === shop.id && p.name === name)
-        .sort((a, b) => Number(b.active) - Number(a.active) || a.id.localeCompare(b.id))
-        .map((p) => ({ positionId: p.id, station: stationName.get(p.station_id) ?? "?", nameEs: p.name_es, active: p.active }));
+        .sort((a, b) => Number(b.active && stationActive.get(b.station_id) === true) - Number(a.active && stationActive.get(a.station_id) === true) || a.id.localeCompare(b.id))
+        .map((p) => ({ positionId: p.id, station: stationName.get(p.station_id) ?? "?", nameEs: p.name_es, active: p.active && stationActive.get(p.station_id) === true }));
       const live = matches.filter((m) => m.active);
       const state: BohFinding["state"] = live.length === 1 ? "ok" : live.length > 1 ? "duplicate" : matches.length ? "inactive" : "missing";
       return { name, state, matches };

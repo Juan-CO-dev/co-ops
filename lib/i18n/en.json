@@ -6852,6 +6852,8 @@
   "people.skills.toggle": "Show details for {name}",
   "people.skills.otherPositions": "Other positions",
   "people.skills.unrecorded": "Position not recorded: {hours} h",
+  "people.skills.unplaced": "Prep batches made here, not placed at a position yet (no station held and no prep position set): {count}",
+  "people.skills.unsaved": "Unsaved changes",
   "people.skills.evidenceTitle": "Evidence",
   "people.skills.noEvidence": "No evidence in this window yet.",
   "people.skills.historyTitle": "History",

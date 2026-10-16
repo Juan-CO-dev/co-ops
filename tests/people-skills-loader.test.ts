@@ -247,6 +247,19 @@ describe("adjustSkill / rateNewHire", () => {
   });
 });
 
+describe("Astra chunk E #2 — a write names a position on an ACTIVE station (refused before the RPC)", () => {
+  it("adjust, rate and the shop's prep position: a position whose station was deactivated → 409 position_retired, no RPC", async () => {
+    const t = tables();
+    for (const s of t.stations!) if (s.id === ST_A_WALK || s.id === ST_A_PREP) s.active = false;
+    db = createFakeDb(t);
+    await expect(adjustSkill(service(), { ...write, actor: gmA, delta: 0.1 })).rejects.toMatchObject({ status: 409, code: "position_retired" });
+    await expect(rateNewHire(service(), { ...write, actor: gmA, rating: 0.5 })).rejects.toMatchObject({ status: 409, code: "position_retired" });
+    await expect(savePeopleShopSettings(service(), { actor: gmA, locationId: A, pmV2: false, prepPositionId: P_PREP })).rejects.toMatchObject({ status: 409, code: "position_retired" });
+    await expect(adjustSkill(service(), { ...write, actor: gmA, positionId: P_B, delta: 0.1 })).rejects.toMatchObject({ status: 404, code: "position_not_at_shop" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
 describe("saveSkillTunables / savePeopleShopSettings", () => {
   it("tunables: MoO+ only (a GM is refused before I/O); an invalid set is refused naming the key and never reaches the database", async () => {
     await expect(saveSkillTunables(service(), { actor: gmA, locationId: null, tunables: SKILL_TUNABLE_DEFAULTS })).rejects.toMatchObject({ code: "forbidden" });

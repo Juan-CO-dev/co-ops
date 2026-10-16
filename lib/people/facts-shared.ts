@@ -133,6 +133,8 @@ export interface StationEventFact {
   id: string; sequence: string; locationId: string; businessDate: string; userId: string;
   stationId: string | null; positionId: string | null; kind: "assign" | "claim" | "move" | "release";
   at: string; source: "assigned" | "claimed" | null; effectiveAt: string | null;
+  /** 0228/0230/0233 `reason_code` (a release's lifecycle reason: station_closed, clocked_out, on_break, …). */
+  reasonCode?: string | null;
 }
 export interface ClosingInstanceFact { id: string; date: string; template_id: string; shift_start_at: string | null; triggered_at: string | null }
 export interface ClosingItemFact { id: string; template_id: string; station: string | null; active: boolean }

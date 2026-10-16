@@ -285,8 +285,9 @@ async function loadSkillFamilies(
 
   if (want.has("positionIntervals")) {
     type Row = { id: string; sequence: string | number; location_id: string; business_date: string; user_id: string; station_id: string | null;
-      position_id: string | null; kind: StationEventFact["kind"]; at: string; source: StationEventFact["source"]; effective_at: string | null };
-    const cols = "id, sequence, location_id, business_date, user_id, station_id, position_id, kind, at, source, effective_at";
+      position_id: string | null; kind: StationEventFact["kind"]; at: string; source: StationEventFact["source"]; effective_at: string | null;
+      reason_code: string | null };
+    const cols = "id, sequence, location_id, business_date, user_id, station_id, position_id, kind, at, source, effective_at, reason_code";
     const rows: Row[] = [];
     const groups = person !== null ? [[person]] : chunk(memberIds, ID_CHUNK);
     for (const ids of groups) {
@@ -298,6 +299,7 @@ async function loadSkillFamilies(
     s.stationEvents = rows.map((r) => ({
       id: r.id, sequence: String(r.sequence), locationId: r.location_id, businessDate: r.business_date, userId: r.user_id,
       stationId: r.station_id, positionId: r.position_id, kind: r.kind, at: r.at, source: r.source, effectiveAt: r.effective_at,
+      reasonCode: r.reason_code ?? null,
     }));
     loaded.add("positionIntervals");
   }

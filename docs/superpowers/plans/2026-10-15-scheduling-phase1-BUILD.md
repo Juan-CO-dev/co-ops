@@ -925,7 +925,7 @@ export function skillFor(signals: PositionSignals, prior: number | null, adjustm
 **Files:** create `components/people/SkillsSection.tsx`, `components/people/MySkills.tsx`; modify `app/(authed)/reports/trends/team/[personId]/page.tsx`, `app/(authed)/my-feedback/page.tsx`, `lib/i18n/en.json`, `lib/i18n/es.json`; create the UI tests in `tests/people-skills-ui.test.ts`.
 
 - [ ] **Manager view** (on the person page, after the existing sections; disclosure doctrine):
-  - a summary row "Skills · 5 positions · 1 adjusted" (collapsed by default on phone, open on desktop);
+  - a summary row "Skills · 5 positions · 1 adjusted" (collapsed by default on EVERY width — disclosure D8, which forbids extra default-open content on desktop; ruling on chunk E, Astra agreed);
   - per position a full-row toggle: name (es when the viewer's language is es and `name_es` is set), a bar, the value to two decimals, the band, a confidence hint ("based on 9 days" / "basado en 9 días"), and an "Adjusted +0.10" chip when one applies;
   - the drawer holds the evidence lines and the adjustment history (who, when, reason);
   - the Adjust control is GM+/MoO+ only: − / + in 0.05 steps clamped to ±0.30, as in the mockup, then a reason picker, then Save. 44 px, `items-center`;

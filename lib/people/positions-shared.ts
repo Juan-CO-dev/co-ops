@@ -27,6 +27,13 @@ export interface PositionInterval {
   start: string;
   end: string | null;
   source: "assigned" | "claimed";
+  /**
+   * Set ONLY when the event that ended this interval is a 0230 lifecycle release with reason
+   * `station_closed` (the station closed: `effective_at = closed_at`, the instant of its final closing
+   * completion). `positionAt` (skills) then attributes a completion AT that end instant to this interval —
+   * the completion that caused the release (Astra chunk E #1). Every other interval end stays exclusive.
+   */
+  endedByStationClose?: true;
 }
 
 function instantMs(iso: string): number {
@@ -48,6 +55,7 @@ export function positionTimeline(events: readonly StationEvent[]): PositionInter
     let start = instant;
     if (prior) {
       prior.end = notBefore(instant, prior.start);
+      if (event.kind === "release" && event.releaseReason === "station_closed") prior.endedByStationClose = true;
       start = prior.end;
     }
     open.delete(key);

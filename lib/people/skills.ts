@@ -25,7 +25,7 @@ import { canAdjustSkill, canAdjustSkillsAt, canViewOwnSkills, canViewPeople, typ
 import { loadPeopleFacts, SkillsUnavailableError } from "@/lib/people/facts";
 import { SKILL_FAMILIES, type FactSubject, type PeopleFacts } from "@/lib/people/facts-shared";
 import {
-  computeSkills, skillFactWindow, toManagerSkillView, toSelfSkillView, type ManagerSkillView, type SelfSkillRow, type SkillMatrix,
+  computeSkills, positionUsable, skillFactWindow, toManagerSkillView, toSelfSkillView, type ManagerSkillView, type SelfSkillRow, type SkillMatrix,
   type SkillMember,
 } from "@/lib/people/skill-matrix-shared";
 import { skillReasonValid, toCents, validAdjustmentDelta, validSkillRating } from "@/lib/people/skills-shared";
@@ -195,6 +195,22 @@ async function requireSubject(service: SupabaseClient, actor: PeopleActor, args:
   if (!canAdjustSkill(actor, { role: subject.role }, args.locationId)) throw new PeopleSkillError(403, "forbidden");
 }
 
+/**
+ * Astra chunk E #2, the lib half: a write names a position of THIS shop that is active ON AN ACTIVE STATION,
+ * refused by name before the RPC (`position_not_at_shop` / `position_retired`); 0270's
+ * `people_position_at_shop` decides it again in SQL.
+ */
+export async function requireUsablePosition(service: SupabaseClient, locationId: string, positionId: string): Promise<void> {
+  const { data, error } = await service.from("station_positions").select("id, station_id, location_id, active").eq("id", positionId).maybeSingle();
+  if (error) throw new PeopleSkillError(500, "write_failed");
+  const position = data as { id: string; station_id: string; location_id: string; active: boolean } | null;
+  if (!position || position.location_id !== locationId) throw new PeopleSkillError(404, "position_not_at_shop");
+  const station = await service.from("stations").select("id, active").eq("id", position.station_id).maybeSingle();
+  if (station.error) throw new PeopleSkillError(500, "write_failed");
+  const rows = station.data ? [station.data as { id: string; active: boolean }] : [];
+  if (!positionUsable(position, rows)) throw new PeopleSkillError(409, "position_retired");
+}
+
 async function record(
   service: SupabaseClient, fn: "record_skill_adjustment" | "record_skill_rating", action: AuditAction,
   args: SkillWriteArgs, value: number, valueKey: "delta" | "rating",
@@ -226,6 +242,7 @@ export async function adjustSkill(service: SupabaseClient, args: SkillWriteArgs 
   frontDoor(args);
   if (!validAdjustmentDelta(args.delta)) throw new PeopleSkillError(400, "invalid_adjustment");
   await requireSubject(service, args.actor, args);
+  await requireUsablePosition(service, args.locationId, args.positionId);
   return record(service, "record_skill_adjustment", "people.skill_adjust", args, toCents(args.delta), "delta");
 }
 
@@ -234,5 +251,6 @@ export async function rateNewHire(service: SupabaseClient, args: SkillWriteArgs 
   frontDoor(args);
   if (!validSkillRating(args.rating)) throw new PeopleSkillError(400, "invalid_rating");
   await requireSubject(service, args.actor, args);
+  await requireUsablePosition(service, args.locationId, args.positionId);
   return record(service, "record_skill_rating", "people.skill_rating", args, toCents(args.rating), "rating");
 }

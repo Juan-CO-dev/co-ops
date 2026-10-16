@@ -242,12 +242,17 @@ grant select on public.people_shop_settings, public.people_skill_adjustments, pu
 
 -- ── THE WRITERS ─────────────────────────────────────────────────────────────────────────────────
 
--- The position must be an ACTIVE position of THIS shop (the composite FK is the backstop for the shop).
+-- The position must be an ACTIVE position of THIS shop ON AN ACTIVE STATION (the composite FK is the backstop
+-- for the shop). Station sync can deactivate a station without retiring its positions, so the position's own
+-- flag is not enough (Astra chunk E #2): a position under an inactive station is retired.
 create function public.people_position_at_shop(p_position uuid, p_location uuid)
 returns void language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_active boolean;
 begin
-  select active into v_active from public.station_positions where id = p_position and location_id = p_location;
+  select p.active and s.active into v_active
+    from public.station_positions p
+    join public.stations s on s.id = p.station_id
+   where p.id = p_position and p.location_id = p_location;
   if not found then raise exception 'position_not_at_shop'; end if;
   if not v_active then raise exception 'position_retired'; end if;
 end $$;
@@ -269,6 +274,9 @@ returns jsonb language plpgsql security definer set search_path = pg_catalog, pu
 declare v_old public.people_shop_settings%rowtype; v_had boolean;
 begin
   if p_actor is null or p_location is null or p_pm_v2 is null then raise exception 'invalid_payload'; end if;
+  -- One shop's settings saves are serialised BEFORE the read (Astra chunk E #6): `select … for update` locks
+  -- nothing while the row does not exist yet, so two first saves could both insert and the loser hit 23505.
+  perform pg_advisory_xact_lock(hashtextextended('people-shop-settings/' || p_location::text, 0));
   perform public.toast_link_actor_level(p_actor, p_location);
   if p_prep_position is not null then perform public.people_position_at_shop(p_prep_position, p_location); end if;
   select * into v_old from public.people_shop_settings where location_id = p_location for update;

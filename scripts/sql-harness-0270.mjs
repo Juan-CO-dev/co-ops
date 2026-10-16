@@ -214,6 +214,30 @@ try {
   await db.exec("reset role");
   await refuses(() => db.query("update public.people_shop_settings set prep_position_id = $1 where location_id = $2", [posB, SA]),
     "23503", "P5 the composite FK refuses another shop's position even past the writer");
+  // Astra chunk E #6: one shop's saves serialise on a per-shop advisory lock taken BEFORE the read.
+  {
+    const src = (await db.query("select prosrc from pg_proc where oid = 'public.save_people_shop_settings(uuid, uuid, boolean, uuid)'::regprocedure")).rows[0].prosrc;
+    const lockAt = src.indexOf("pg_advisory_xact_lock(hashtextextended('people-shop-settings/' || p_location::text, 0))");
+    check(lockAt > -1 && lockAt < src.indexOf("select * into v_old"), "P5 the shop-settings writer locks the shop before it reads (source order)");
+    await db.exec("begin");
+    await db.exec("set local role service_role");
+    await saveS(gmA, SA, false, null);
+    await db.exec("reset role");
+    const held = (await db.query("select count(*)::int as n from pg_locks where locktype = 'advisory' and granted")).rows[0].n;
+    await db.exec("commit");
+    check(held >= 1, "P5 … and the lock is really held inside the writer's transaction (pg_locks)");
+  }
+  // Astra chunk E #2: a position counts only when its STATION is active too.
+  {
+    const stOff = await station(SA);
+    await db.query("update public.stations set active = false where id = $1", [stOff]);
+    const posOff = await position(stOff, SA, "Prep (old station)");
+    await db.exec("set role service_role");
+    await refuses(() => saveS(gmA, SA, false, posOff), "position_retired", "P5 a position under an INACTIVE station is retired (prep position)");
+    await refuses(() => rpc("record_skill_adjustment", [gmA, SA, empA, posOff, 0.1, "observed_on_floor", null]), "position_retired", "P6 … and for an adjustment");
+    await refuses(() => rpc("record_skill_rating", [gmA, SA, newA, posOff, 0.5, "observed_on_floor", null]), "position_retired", "P7 … and for a rating");
+    await db.exec("reset role");
+  }
 
   // P6 — adjustments
   await db.exec("set role service_role");

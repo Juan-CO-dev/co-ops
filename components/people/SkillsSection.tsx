@@ -9,10 +9,16 @@
  * control (− / + in 0.05 steps clamped to ±0.30, a reason, Save) and, while the skill is a starting point,
  * "Set a starting rating" (the same 0–1 scale in 0.05 steps, never stars; J5). Positions with no evidence sit
  * under a collapsed "Other positions". useState only; 44 px controls with items-center; 375 px safe.
+ *
+ * D10 (Astra chunk E #4): a control with unsaved edits stays MOUNTED — its row and every enclosing section
+ * lock open (`toggleDisclosure`), and the header says "Unsaved changes" — so a collapse never throws a
+ * draft away. Everything starts collapsed on every width (D8).
  */
-import { useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
+import { disclosureIsOpen, toggleDisclosure } from "@/lib/disclosure-lock-shared";
+import { etDisplayDate } from "@/lib/operational-day";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -45,28 +51,60 @@ function useLine() {
   };
 }
 
-/** `initiallyOpen` exists for the SSR tests only; the page renders it collapsed (the disclosure doctrine). */
-export function SkillsSection({ view, initiallyOpen = false }: { view: ManagerSkillView; initiallyOpen?: boolean }) {
+/**
+ * `initiallyOpen` and `initiallyDirty` exist for the SSR tests only; the page renders it collapsed and clean
+ * (the disclosure doctrine).
+ */
+export function SkillsSection({ view, initiallyOpen = false, initiallyDirty = [] }: {
+  view: ManagerSkillView; initiallyOpen?: boolean; initiallyDirty?: readonly string[];
+}) {
   const { t } = useTranslation();
   const shown = view.rows.filter((r) => r.hasEvidence);
   const others = view.rows.filter((r) => !r.hasEvidence);
+  const [sectionOpen, setSectionOpen] = useState(initiallyOpen);
+  const [othersOpen, setOthersOpen] = useState(initiallyOpen);
+  const [dirty, setDirty] = useState<ReadonlySet<string>>(() => new Set(initiallyDirty));
+  const onDirtyChange = useCallback((positionId: string, isDirty: boolean) => {
+    setDirty((prev) => {
+      if (prev.has(positionId) === isDirty) return prev;
+      const next = new Set(prev);
+      if (isDirty) next.add(positionId); else next.delete(positionId);
+      return next;
+    });
+  }, []);
+  const anyDirty = dirty.size > 0;
+  const othersDirty = others.some((r) => dirty.has(r.position.positionId));
+  const unsavedBadge = <span className="rounded-full bg-co-warning-surface px-2 py-0.5 text-xs font-bold text-co-warning-text">{t("people.skills.unsaved")}</span>;
+  const rowProps = (row: ManagerSkillRow) => ({
+    row, view, initiallyOpen, dirty: dirty.has(row.position.positionId), onDirtyChange,
+  });
   return (
     <section className="mt-6" aria-label={t("people.skills.title")}>
       <CollapsibleSection
         idBase="people-skills"
         title={t("people.skills.title")}
         count={t("people.skills.summary", { positions: shown.length, adjusted: view.adjustedCount })}
-        defaultOpen={initiallyOpen}
+        badge={anyDirty ? unsavedBadge : null}
+        open={disclosureIsOpen(sectionOpen, anyDirty)}
+        onToggle={() => setSectionOpen((o) => toggleDisclosure(disclosureIsOpen(o, anyDirty), anyDirty))}
       >
         <div className="grid gap-2">
-          {shown.map((row) => <SkillRow key={row.position.positionId} row={row} view={view} initiallyOpen={initiallyOpen} />)}
+          {shown.map((row) => <SkillRow key={row.position.positionId} {...rowProps(row)} />)}
           {view.unrecordedMinutes > 0 && (
             <p className="text-sm text-co-text-muted">{t("people.skills.unrecorded", { hours: Math.round(view.unrecordedMinutes / 60) })}</p>
           )}
+          {view.unplacedBatches > 0 && (
+            <p className="text-sm text-co-text-muted">{t("people.skills.unplaced", { count: view.unplacedBatches })}</p>
+          )}
           {others.length > 0 && (
-            <CollapsibleSection idBase="people-skills-other" title={t("people.skills.otherPositions")} count={t("people.skills.positionsCount", { n: others.length })} defaultOpen={initiallyOpen}>
+            <CollapsibleSection
+              idBase="people-skills-other" title={t("people.skills.otherPositions")} count={t("people.skills.positionsCount", { n: others.length })}
+              badge={othersDirty ? unsavedBadge : null}
+              open={disclosureIsOpen(othersOpen, othersDirty)}
+              onToggle={() => setOthersOpen((o) => toggleDisclosure(disclosureIsOpen(o, othersDirty), othersDirty))}
+            >
               <div className="grid gap-2">
-                {others.map((row) => <SkillRow key={row.position.positionId} row={row} view={view} initiallyOpen={initiallyOpen} />)}
+                {others.map((row) => <SkillRow key={row.position.positionId} {...rowProps(row)} />)}
               </div>
             </CollapsibleSection>
           )}
@@ -76,10 +114,13 @@ export function SkillsSection({ view, initiallyOpen = false }: { view: ManagerSk
   );
 }
 
-function SkillRow({ row, view, initiallyOpen }: { row: ManagerSkillRow; view: ManagerSkillView; initiallyOpen: boolean }) {
+function SkillRow({ row, view, initiallyOpen, dirty, onDirtyChange }: {
+  row: ManagerSkillRow; view: ManagerSkillView; initiallyOpen: boolean; dirty: boolean; onDirtyChange: (positionId: string, dirty: boolean) => void;
+}) {
   const { t, language } = useTranslation();
   const line = useLine();
-  const [open, setOpen] = useState(initiallyOpen);
+  const [chosenOpen, setOpen] = useState(initiallyOpen);
+  const open = disclosureIsOpen(chosenOpen, dirty);
   const id = useId();
   const s = row.skill;
   const name = language === "es" && row.position.nameEs ? row.position.nameEs : row.position.name;
@@ -92,7 +133,7 @@ function SkillRow({ row, view, initiallyOpen }: { row: ManagerSkillRow; view: Ma
         aria-expanded={open}
         aria-controls={id}
         aria-label={t("people.skills.toggle", { name })}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen((o) => toggleDisclosure(disclosureIsOpen(o, dirty), dirty))}
       >
         <span className="min-w-0 flex-1 basis-[10rem] font-bold text-co-text">{name}</span>
         <span className="h-2 w-24 shrink-0 overflow-hidden rounded-full bg-co-surface-inset" role="img" aria-label={t("people.skills.barLabel", { value })}>
@@ -103,6 +144,7 @@ function SkillRow({ row, view, initiallyOpen }: { row: ManagerSkillRow; view: Ma
         <span className="text-sm text-co-text-muted">
           {s.startingPoint && s.qualityDays === 0 ? t("people.skills.startingPoint") : t("people.skills.basedOn", { n: s.qualityDays })}
         </span>
+        {dirty && <span className="rounded-full bg-co-warning-surface px-2 py-0.5 text-xs font-bold text-co-warning-text">{t("people.skills.unsaved")}</span>}
         {s.adjustment !== 0 && (
           <span className="rounded-full bg-co-gold/20 px-2 py-0.5 text-xs font-bold text-co-text">{t("people.skills.adjustedChip", { delta: formatDelta(s.adjustment) })}</span>
         )}
@@ -122,18 +164,18 @@ function SkillRow({ row, view, initiallyOpen }: { row: ManagerSkillRow; view: Ma
                 {row.history.map((h) => (
                   <li key={h.id}>
                     {h.kind === "adjustment"
-                      ? t("people.skills.history.adjustment", { delta: formatDelta(h.value), actor: h.actorName, date: formatDateLabel(h.at.slice(0, 10), language), reason: t(`people.skills.reason.${h.reasonCode}` as TranslationKey) })
-                      : t("people.skills.history.rating", { rating: h.value.toFixed(2), actor: h.actorName, date: formatDateLabel(h.at.slice(0, 10), language), reason: t(`people.skills.reason.${h.reasonCode}` as TranslationKey) })}
+                      ? t("people.skills.history.adjustment", { delta: formatDelta(h.value), actor: h.actorName, date: formatDateLabel(etDisplayDate(h.at), language), reason: t(`people.skills.reason.${h.reasonCode}` as TranslationKey) })
+                      : t("people.skills.history.rating", { rating: h.value.toFixed(2), actor: h.actorName, date: formatDateLabel(etDisplayDate(h.at), language), reason: t(`people.skills.reason.${h.reasonCode}` as TranslationKey) })}
                   </li>
                 ))}
               </ul>
             ) : <p className="mt-1 text-sm text-co-text-muted">{t("people.skills.noHistory")}</p>}
           </div>
           {view.canAdjust && (
-            <SkillControl kind="adjust" row={row} view={view} initial={s.adjustment} min={-SKILL_ADJUSTMENT_LIMIT} max={SKILL_ADJUSTMENT_LIMIT} />
+            <SkillControl kind="adjust" row={row} view={view} initial={s.adjustment} min={-SKILL_ADJUSTMENT_LIMIT} max={SKILL_ADJUSTMENT_LIMIT} onDirtyChange={onDirtyChange} />
           )}
           {view.canAdjust && s.startingPoint && (
-            <SkillControl kind="rate" row={row} view={view} initial={s.prior} min={0} max={1} />
+            <SkillControl kind="rate" row={row} view={view} initial={s.prior} min={0} max={1} onDirtyChange={onDirtyChange} />
           )}
         </div>
       )}
@@ -141,8 +183,9 @@ function SkillRow({ row, view, initiallyOpen }: { row: ManagerSkillRow; view: Ma
   );
 }
 
-function SkillControl({ kind, row, view, initial, min, max }: {
+function SkillControl({ kind, row, view, initial, min, max, onDirtyChange }: {
   kind: "adjust" | "rate"; row: ManagerSkillRow; view: ManagerSkillView; initial: number; min: number; max: number;
+  onDirtyChange: (positionId: string, dirty: boolean) => void;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -155,6 +198,10 @@ function SkillControl({ kind, row, view, initial, min, max }: {
   const id = useId();
   const step = (dir: 1 | -1) => setDraft((d) => stepSkillControl(d, dir, min, max));
   const needsNote = reason === "other" && !/\S/.test(note);
+  // D10: unsaved edits (or a save in flight) hold this control's row and sections open.
+  const isDirty = busy || draft !== snapSkillStep(initial, min, max) || reason !== "" || note !== "";
+  const positionId = row.position.positionId;
+  useEffect(() => { onDirtyChange(positionId, isDirty); }, [onDirtyChange, positionId, isDirty]);
   const shownValue = kind === "adjust" ? t("people.skills.adjust.value", { delta: formatDelta(draft) }) : t("people.skills.rate.value", { rating: draft.toFixed(2) });
 
   async function save() {
@@ -169,6 +216,8 @@ function SkillControl({ kind, row, view, initial, min, max }: {
       });
       if (!res.ok) { setError(errorKey((await res.json().catch(() => ({}))).code)); return; }
       setSaved(true);
+      setReason("");
+      setNote("");
       router.refresh();
     } catch {
       setError("people.skills.error.generic");

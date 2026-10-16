@@ -151,6 +151,8 @@ describe("r1 P1-1 — gradeTargetProblem returns the RPC's code for EVERY shared
   const POS: Record<string, { id: string; locationId: string; active: boolean } | undefined> = {
     own_active: { id: "pos-p", locationId: A, active: true },
     own_retired: { id: "pos-r", locationId: A, active: false },
+    // the lib looks the position up with its station: usable = position active AND station active
+    own_station_retired: { id: "pos-t", locationId: A, active: false },
     other_shop: { id: "pos-s", locationId: B, active: true },
     nonexistent: undefined,
   };

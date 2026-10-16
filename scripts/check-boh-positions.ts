@@ -4,17 +4,29 @@
  *   npx tsx --env-file=.env.local scripts/check-boh-positions.ts
  *
  * Prints, per active shop, whether positions named exactly "Prep" and "Prep/Dishwasher" exist and are
- * active, on which station, and their Spanish names. Exit 0 when every active shop has both; exit 1
- * otherwise. It NEVER writes: service role, SELECT only. The data step itself is a human act through
- * the existing station admin (docs/runbooks/boh-positions.md), never a migration or a seed.
- * The report logic is pure in lib/people/boh-positions-shared.ts (tested in tests/boh-positions.test.ts).
+ * active ON AN ACTIVE STATION, on which station, and their Spanish names. Exit 0 when every active shop has
+ * both; exit 1 otherwise; exit 2 when it cannot run (no credentials, a read error). It NEVER writes:
+ * service role, SELECT only. The data step itself is a human act through the existing station admin
+ * (docs/runbooks/boh-positions.md), never a migration or a seed.
+ *
+ * A SCRIPT-LOCAL client (Astra chunk E #3): it never imports lib/supabase-server, whose `server-only` guard
+ * throws outside Next, so it starts under plain node / tsx. Credentials come from the environment only
+ * (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) — the repo's script pattern
+ * (scripts/link-marketplace-guests.ts). The report logic is pure in lib/people/boh-positions-shared.ts
+ * (tested in tests/boh-positions.test.ts); the startup is smoke-tested with no database.
  */
 import { pathToFileURL } from "node:url";
-import { bohPositionsReport, formatBohReport, type BohPositionRow, type BohShopRow, type BohStationRow } from "@/lib/people/boh-positions-shared";
+import { createClient } from "@supabase/supabase-js";
+import { bohPositionsReport, formatBohReport, type BohPositionRow, type BohShopRow, type BohStationRow } from "../lib/people/boh-positions-shared";
 
-async function main(): Promise<number> {
-  const { getServiceRoleClient } = await import("@/lib/supabase-server");
-  const sb = getServiceRoleClient();
+export async function main(): Promise<number> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !secret) {
+    console.error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set (e.g. npx tsx --env-file=.env.local …). Nothing was read.");
+    return 2;
+  }
+  const sb = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
   const shops = await sb.from("locations").select("id, name, active").eq("active", true).order("name", { ascending: true });
   if (shops.error) throw new Error(`locations: ${shops.error.message}`);
   const ids = (shops.data ?? []).map((s) => s.id as string);
@@ -35,5 +47,5 @@ async function main(): Promise<number> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().then((code) => process.exit(code)).catch((e) => { console.error(e); process.exit(2); });
+  main().then((code) => process.exit(code)).catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(2); });
 }

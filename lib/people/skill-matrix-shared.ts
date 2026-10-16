@@ -28,6 +28,22 @@ import {
 import { tunablesDigest, type SkillTunables } from "@/lib/people/tunables-shared";
 import type { StationEvent } from "@/lib/assignments-shared";
 
+const RELEASE_REASONS = ["station_closed", "clocked_out", "on_break", "ended_shift", "shop_closed"] as const;
+function isReleaseReason(v: unknown): v is NonNullable<StationEvent["releaseReason"]> {
+  return typeof v === "string" && (RELEASE_REASONS as readonly string[]).includes(v);
+}
+
+/**
+ * A position COUNTS only when it AND its parent station are active (Astra chunk E #2): station sync can
+ * deactivate a station without retiring its positions. Readiness, the matrix, every list of available
+ * positions and every new write (the lib, and 0270's `people_position_at_shop` in SQL) apply this.
+ */
+export function positionUsable(
+  position: { station_id: string; active: boolean }, stations: ReadonlyArray<{ id: string; active: boolean }>,
+): boolean {
+  return position.active && stations.some((s) => s.id === position.station_id && s.active);
+}
+
 export interface SkillMember { userId: string; name: string; role: RoleCode }
 export interface SkillMatrixPosition { positionId: string; stationId: string; name: string; nameEs: string | null; active: boolean }
 export interface SkillMatrix {
@@ -85,6 +101,7 @@ export function skillIntervals(facts: Pick<SkillFacts, "stationEvents">, nowIso:
     id: e.id, sequence: e.sequence, locationId: e.locationId, businessDate: e.businessDate, userId: e.userId,
     stationId: e.stationId, positionId: e.positionId, kind: e.kind, actorId: null, actorName: null, at: e.at,
     source: e.source, effectiveAt: e.effectiveAt,
+    ...(e.kind === "release" && isReleaseReason(e.reasonCode) ? { releaseReason: e.reasonCode } : {}),
   }));
   const intervals = positionTimeline(events);
   const now = Date.parse(nowIso);
@@ -95,11 +112,11 @@ export function skillIntervals(facts: Pick<SkillFacts, "stationEvents">, nowIso:
   });
 }
 
-/** Active positions of the shop in DISPLAY order (station sort, position sort, name, id) — never a priority. */
+/** Usable positions of the shop (active, on an active station) in DISPLAY order (station sort, position sort, name, id) — never a priority. */
 export function orderedPositions(facts: Pick<SkillFacts, "positions" | "stations">): SkillMatrixPosition[] {
   const station = new Map(facts.stations.map((s) => [s.id, s] as const));
   return facts.positions
-    .filter((p) => p.active)
+    .filter((p) => positionUsable(p, facts.stations))
     .sort((a, b) => {
       const sa = station.get(a.station_id)?.sort ?? Number.MAX_SAFE_INTEGER, sb = station.get(b.station_id)?.sort ?? Number.MAX_SAFE_INTEGER;
       return sa - sb || a.station_id.localeCompare(b.station_id) || a.sort - b.sort || a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
@@ -121,6 +138,8 @@ export interface ComputedSkills {
   unrecordedMinutes: Map<string, number>;
   /** Prep rows in the window with no maker recorded (the shop's, not a person's). */
   noMakerBatches: number;
+  /** Per maker: prep rows with a maker but no position to count toward (no interval, no shop prep position). */
+  unplacedBatches: Map<string, number>;
 }
 
 /**
@@ -140,6 +159,7 @@ export function computeSkills(input: {
   const closing = closeOnTimeObservations({
     completions: facts.closingCompletions.map((c) => ({ id: c.id, instanceId: c.instance_id, templateItemId: c.template_item_id, completedBy: c.completed_by, completedAt: c.completed_at })),
     instanceDay, lineStation,
+    instanceStart: new Map(facts.closingInstances.map((i) => [i.id, i.shift_start_at ?? i.triggered_at ?? null] as const)),
     stations: facts.stations.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name, usuallyClosesAt: s.usually_closes_at })),
     closures, intervals,
   }, t);
@@ -166,6 +186,7 @@ export function computeSkills(input: {
     matrix: { locationId: input.locationId, asOf: input.asOf, tunablesVersion: tunablesDigest(t), positions, people },
     unrecordedMinutes: worked.unrecordedMinutes,
     noMakerBatches: prep.noMaker,
+    unplacedBatches: prep.unplaced,
   };
 }
 
@@ -187,6 +208,8 @@ export interface ManagerSkillView {
   rows: ManagerSkillRow[];
   adjustedCount: number;
   unrecordedMinutes: number;
+  /** Prep batches this person made here that could not be placed at a position (evidence only, no skill). */
+  unplacedBatches: number;
   /** Set by the lib from `canAdjustSkill` (GM own shop / MoO+, strictly outranking the subject). */
   canAdjust: boolean;
 }
@@ -210,6 +233,7 @@ export function toManagerSkillView(input: {
     locationId: input.computed.matrix.locationId, subjectId: input.subjectId, asOf: input.computed.matrix.asOf, rows,
     adjustedCount: rows.filter((r) => r.skill.adjustment !== 0).length,
     unrecordedMinutes: input.computed.unrecordedMinutes.get(input.subjectId) ?? 0,
+    unplacedBatches: input.computed.unplacedBatches.get(input.subjectId) ?? 0,
     canAdjust: input.canAdjust,
   };
 }

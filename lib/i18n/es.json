@@ -6852,6 +6852,8 @@
   "people.skills.toggle": "Ver detalles de {name}",
   "people.skills.otherPositions": "Otros puestos",
   "people.skills.unrecorded": "Puesto no registrado: {hours} h",
+  "people.skills.unplaced": "Tandas de prep hechas aquí, todavía sin puesto (no tenía estación y no hay puesto de prep configurado): {count}",
+  "people.skills.unsaved": "Cambios sin guardar",
   "people.skills.evidenceTitle": "Evidencia",
   "people.skills.noEvidence": "Todavía no hay evidencia en este periodo.",
   "people.skills.historyTitle": "Historial",

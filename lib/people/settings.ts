@@ -13,7 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import { canEditPeopleSettings, type PeopleActor } from "@/lib/people/access-shared";
 import { isMissingTable } from "@/lib/people/facts";
-import { PeopleSkillError, rpcFailure } from "@/lib/people/skills";
+import { PeopleSkillError, requireUsablePosition, rpcFailure } from "@/lib/people/skills";
 
 export const PM_V2_SWITCH_AVAILABLE = false;
 
@@ -42,6 +42,7 @@ export async function savePeopleShopSettings(
     throw new PeopleSkillError(400, "invalid_payload");
   }
   if (args.pmV2 && !PM_V2_SWITCH_AVAILABLE) throw new PeopleSkillError(409, "pm_v2_unavailable");
+  if (typeof args.prepPositionId === "string") await requireUsablePosition(service, args.locationId, args.prepPositionId);
   const { data, error } = await service.rpc("save_people_shop_settings", {
     p_actor: args.actor.userId, p_location: args.locationId, p_pm_v2: args.pmV2, p_prep_position: args.prepPositionId,
   });
