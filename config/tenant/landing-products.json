@@ -1,0 +1,92 @@
+[
+  {
+    "id": "frex",
+    "name": "Frex",
+    "sourceId": "001",
+    "image": "/media/frex-lineup-001.webp",
+    "smallImage": "/media/frex-lineup-001-480.webp",
+    "width": 750,
+    "height": 1125
+  },
+  {
+    "id": "hot-pants",
+    "name": "Hot Pants",
+    "sourceId": "005",
+    "image": "/media/hot-pants-lineup-005.webp",
+    "smallImage": "/media/hot-pants-lineup-005-480.webp",
+    "width": 750,
+    "height": 1125
+  },
+  {
+    "id": "teamster",
+    "name": "The Teamster",
+    "sourceId": "011",
+    "image": "/media/teamster-lineup-011.webp",
+    "smallImage": "/media/teamster-lineup-011-480.webp",
+    "width": 750,
+    "height": 1125
+  },
+  {
+    "id": "crunchy-boi",
+    "name": "Crunchy Boi",
+    "sourceId": "014",
+    "image": "/media/crunchy-boi-lineup-014.webp",
+    "smallImage": "/media/crunchy-boi-lineup-014-480.webp",
+    "width": 750,
+    "height": 1125
+  },
+  {
+    "id": "sicky-wicky",
+    "name": "Sicky Wicky Club",
+    "sourceId": "024",
+    "image": "/media/sicky-wicky-lineup-024.webp",
+    "smallImage": "/media/sicky-wicky-lineup-024-480.webp",
+    "width": 750,
+    "height": 1125
+  },
+  {
+    "id": "never-been-cheddar",
+    "name": "Never Been Cheddar",
+    "sourceId": "029",
+    "image": "/media/never-been-cheddar-lineup-029.webp",
+    "smallImage": "/media/never-been-cheddar-lineup-029-480.webp",
+    "width": 750,
+    "height": 1125
+  },
+  {
+    "id": "turkey-caesar",
+    "name": "Turkey Caesar",
+    "sourceId": "033",
+    "image": "/media/turkey-caesar-lineup-033.webp",
+    "smallImage": "/media/turkey-caesar-lineup-033-480.webp",
+    "width": 750,
+    "height": 1125
+  },
+  {
+    "id": "farmers-market",
+    "name": "Farmers Market",
+    "sourceId": "037",
+    "image": "/media/farmers-market-lineup-037.webp",
+    "smallImage": "/media/farmers-market-lineup-037-480.webp",
+    "width": 750,
+    "height": 1125
+  },
+  {
+    "id": "french-dip",
+    "name": "French Dip",
+    "sourceId": "040",
+    "image": "/media/french-dip-lineup-040.webp",
+    "smallImage": "/media/french-dip-lineup-040-480.webp",
+    "width": 750,
+    "height": 1125
+  },
+  {
+    "id": "vesuvio",
+    "name": "Vesuvio II",
+    "sourceId": "047",
+    "image": "/media/vesuvio-lineup-047.webp",
+    "smallImage": "/media/vesuvio-lineup-047-480.webp",
+    "width": 750,
+    "height": 1125
+  }
+]

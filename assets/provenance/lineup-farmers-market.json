@@ -1,0 +1,33 @@
+{
+  "id": "lineup-farmers-market",
+  "sourceId": "037",
+  "publicPath": "/media/farmers-market-lineup-037.webp",
+  "classification": "real-photo",
+  "mode": "crop-resize-only",
+  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_037.JPG",
+  "sourceSha256": "5a8ca9d149000c519b1a23c0fae5fa7e93d190ac4f82c1e19d6f2362146cd555",
+  "sha256": "b7e4f26b8aa11425c75ff503dff697a6a4040a80e7e51060ff50197c60cbc7d8",
+  "bytes": 36450,
+  "maxBytes": 100000,
+  "width": 750,
+  "height": 1125,
+  "sidecar": "assets/provenance/lineup-farmers-market.json",
+  "crop": [
+    0,
+    0,
+    3745,
+    5618
+  ],
+  "steps": [
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "quality": 86,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+  },
+  "command": "node scripts/assets/export.mjs",
+  "review": "Original framing retained, including any source-edge crops; phone approval pending"
+}

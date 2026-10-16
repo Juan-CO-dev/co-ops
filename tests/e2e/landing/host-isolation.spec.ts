@@ -101,15 +101,25 @@ test('HTML and RSC are private and no-store, with distinct content per host',asy
 });
 
 for (const [path, canonical] of [['/order/','/order'],['/admin/','/admin'],['/api/locations/','/api/locations'],['/foo//','/foo'],['/privacy/','/privacy']]) {
-  test(`landing slash canonicalization redirects once: ${path}`, async ({request,baseURL}) => {
-    const response = await request.get(path!, {maxRedirects:0});
-    expect(response.status()).toBe(308);
-    const location = new URL(response.headers().location!, baseURL);
-    expect(location.origin).toBe(new URL(baseURL!).origin);
-    expect(location.pathname).toBe(canonical);
-    const followUp = await request.get(location.href, {maxRedirects:0});
-    expect(followUp.status()).toBe(canonical === '/privacy' ? 200 : 404);
-    expect(followUp.headers().location).toBeUndefined();
+  test(`landing slash canonicalization terminates: ${path}`, async ({request,baseURL}) => {
+    let url = new URL(path!, baseURL);
+    const seen = new Set([url.href]);
+    const maxHops = path!.includes('//') ? 2 : 1;
+    let response = await request.get(url.href, {maxRedirects:0});
+    let hops = 0;
+    while (response.status() >= 300 && response.status() < 400) {
+      expect(++hops).toBeLessThanOrEqual(maxHops);
+      expect(response.status()).toBe(308);
+      url = new URL(response.headers().location!, url);
+      expect(url.origin).toBe(new URL(baseURL!).origin);
+      expect(seen.has(url.href)).toBe(false);
+      seen.add(url.href);
+      response = await request.get(url.href, {maxRedirects:0});
+    }
+    expect(hops).toBeGreaterThanOrEqual(1);
+    expect(url.pathname).toBe(canonical);
+    expect(response.status()).toBe(canonical === '/privacy' ? 200 : 404);
+    expect(response.headers().location).toBeUndefined();
   });
 }
 

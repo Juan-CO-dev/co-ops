@@ -1,0 +1,33 @@
+{
+  "id": "lineup-french-dip-480",
+  "sourceId": "040",
+  "publicPath": "/media/french-dip-lineup-040-480.webp",
+  "classification": "real-photo",
+  "mode": "crop-resize-only",
+  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_040.JPG",
+  "sourceSha256": "0fb2b11906fab361ad082a6011aaef7aab7092ce2b88377ad54d612979aecfbc",
+  "sha256": "06427ec2938168b05c60d926d6e3e1e3daa14c9437b4d0c9bcf5f1b157f72c02",
+  "bytes": 45858,
+  "maxBytes": 100000,
+  "width": 480,
+  "height": 720,
+  "sidecar": "assets/provenance/lineup-french-dip-480.json",
+  "crop": [
+    0,
+    0,
+    4000,
+    6000
+  ],
+  "steps": [
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "quality": 66,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+  },
+  "command": "node scripts/assets/export.mjs",
+  "review": "Original framing retained, including any source-edge crops; phone approval pending"
+}

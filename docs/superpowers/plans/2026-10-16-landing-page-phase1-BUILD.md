@@ -458,3 +458,9 @@ Record Chunk A fixes as a distinct change set before B1-B3. TDD and required ver
 Production proof on the installed Next 16.2.4 shows stock `/foo//` normalization takes two 308s (`/foo//` -> `/foo/` -> `/foo`). This conflicts with the one-hop requirement above. The strict test remains red; no skip flag or custom redirect was reintroduced. A lead ruling is pending; the other four single-slash cases pass.
 
 Chunk B exports are present, but the v4 lock/smoke is blocked by missing Python dependencies, and this local WebKit media engine stalls on a standalone MP4 data URL as well as app/control videos. Chromium media checks pass. These are unresolved gates, not accepted deviations; see the Chunk A+B handoff for exact final test outcomes.
+
+## Chunk C lead amendments (2026-10-16)
+
+Supersedes historical requirements: repeated-slash paths may use at most two same-host redirects without loops; single trailing slashes take exactly one. Non-Darwin Playwright WebKit skips six H.264 decode/playback checks; fallback/poster checks remain active and real-iPhone Safari preview proof is required. Phase-1 photos use direct crop/resize/encode-only exports with explicit mode; v4 REAL-EDITED finishing is deferred.
+
+Implementation: extend export.mjs, manifests and sidecars for ten representatives; add tenant public roster, products.ts validation, Lineup.tsx, translated labels and page wiring. Test identities/uniqueness/provenance first, then lazy images, keyboard/no-JS navigation, overflow and order links in production browsers. Field Guide held for confirmed cut face and build copy (content-evidence.md); existing scaffold unchanged. Source-edge crops remain honest; phone approval pending. Run landing/full Vitest (maxWorkers=3), tsc, build, Chromium/WebKit. Leave changes uncommitted; 0273 unchanged.

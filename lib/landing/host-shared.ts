@@ -1,3 +1,4 @@
+import lineup from '@/config/tenant/landing-products.json';
 /** Pure host policy. HTTP Host is authoritative; forwarded hints never grant access. */
 export interface LandingHostEnv { LANDING_HOSTS?: string; STAFF_ORIGIN?: string; SITE_ORIGIN?: string }
 export interface Authority { hostname: string; port: number }
@@ -33,7 +34,7 @@ export function classifyLandingHost(headers: Pick<Headers, 'get'>, env: LandingH
   return entries.includes(host.hostname) ? 'landing' : 'staff';
 }
 // Finite approved public inventory; new assets must be explicitly added with provenance.
-export const LANDING_ASSETS = new Set(['/media/crunchy-boi-014.webp', '/media/crunchy-boi-spin.mp4', '/brand/co-wordmark.svg', '/brand/co-wordmark.png', '/brand/co-wordmark-icon.png', '/brand/co-logomark.png', '/brand/co-icon.png']);
+export const LANDING_ASSETS = new Set(['/media/crunchy-boi-014.webp', '/media/crunchy-boi-spin.mp4', '/brand/co-wordmark.svg', '/brand/co-wordmark.png', '/brand/co-wordmark-icon.png', '/brand/co-logomark.png', '/brand/co-icon.png', ...lineup.flatMap(product => [product.image, product.smallImage])]);
 export function isLandingAsset(path: string, search: URLSearchParams): boolean {
   if (LANDING_ASSETS.has(path)) return true;
   if (path.startsWith('/_next/static/') && !path.includes('..') && !path.includes('%')) return true;

@@ -40,6 +40,7 @@
     ".next-sim-launch/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "tmp/landing-review"
   ]
 }

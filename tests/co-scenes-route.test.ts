@@ -172,7 +172,11 @@ describe("the photo store (git-ignored, manifest-allowlisted)", () => {
 
   it("no photo is tracked by git, and the photo store is ignored", () => {
     const tracked = execFileSync("git", ["ls-files", "vendor", "public"], { encoding: "utf8" }).split(/\r?\n/).filter(Boolean);
-    expect(tracked.filter((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) && !f.startsWith("public/brand/"))).toEqual([]);
+    // Public landing derivatives have their own hash/identity provenance gate.
+    // This exception never includes private training photos or arbitrary media.
+    const landing = JSON.parse(readFileSync("assets/approved-media.json", "utf8")) as { media: { publicPath: string }[] };
+    const approvedLanding = new Set(landing.media.map(asset => `public${asset.publicPath}`));
+    expect(tracked.filter((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) && !f.startsWith("public/brand/") && !approvedLanding.has(f))).toEqual([]);
     expect(tracked.filter((f) => f.startsWith("vendor/co-scenes/photos/"))).toEqual([]);
     // check-ignore exits 0 (no throw) only when the path IS ignored.
     expect(() => execFileSync("git", ["check-ignore", "-q", "--no-index", "vendor/co-scenes/photos/x.png"])).not.toThrow();

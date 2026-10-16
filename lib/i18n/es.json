@@ -6795,5 +6795,7 @@
   "landing.metadata.description": "Mucho sabor, preparados al momento. Encuentra tu tienda y pide tu próximo sub.",
   "landing.hero.alt": "Sub Crunchy Boi",
   "landing.hero.pause": "Pausar giro",
-  "landing.hero.play": "Reproducir giro"
+  "landing.hero.play": "Reproducir giro",
+  "landing.lineup.browse": "Explora los subs",
+  "landing.lineup.photo": "Sub {name}"
 }

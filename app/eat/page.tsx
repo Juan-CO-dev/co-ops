@@ -1,3 +1,4 @@
+import { Lineup } from "@/components/landing/Lineup";
 import { Hero } from "@/components/landing/Hero";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
@@ -34,7 +35,8 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
         <SectionView section={key}>
           <h2 id={`${key}-title`} className="text-3xl font-black tracking-tight">{serverT(language,`landing.${key}.title`)}</h2>
           <p className="mt-4 max-w-xl text-lg">{serverT(language,`landing.${key}.body`)}</p>
-          {(key === "field-guide" || key === "shops") && <div className="mt-6 flex flex-wrap items-center gap-3">{config.stores.map((store)=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-co-cta px-5 py-3 font-bold text-co-text">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
+          {key === "lineup" && <Lineup language={language}/>}
+          {(key === "field-guide" || key === "shops" || key === "lineup") && <div className="mt-6 flex flex-wrap items-center gap-3">{config.stores.map((store)=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-co-cta px-5 py-3 font-bold text-co-text">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
           {(key === "field-guide" || key === "shops") && config.stores.map((store) => <OfferCode key={store.key} ad={captureAttribution(queryString,config.attribution).ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}
           {key === "field-guide" && <div className="mt-6"><Reveal><FaqItem q={serverT(language,"landing.faq.question")} a={serverT(language,"landing.faq.answer")}/></Reveal></div>}
           {key === "shops" && <div className="mt-6"><GoodToKnow items={[serverT(language,"landing.shops.body")]} label={serverT(language,"landing.good-to-know")} tone="dark"/></div>}

@@ -10,7 +10,8 @@ for(const preference of ["reduce","save-data"] as const)test(`${preference} down
  await page.goto("/");await trigger(page);await expect(page.locator("#hero img")).toBeVisible();await page.waitForTimeout(250);
  expect(requests).toEqual([]);await expect(page.locator("#hero video")).toHaveCount(0);
 });
-for(const failure of ["decode","autoplay"] as const)test(`${failure} retains the real poster`,async({page})=>{
+for(const failure of ["decode","autoplay"] as const)test(`${failure} retains the real poster`,async({page,browserName})=>{
+ test.skip(failure === 'decode' && browserName === 'webkit' && process.platform !== 'darwin', 'Playwright WebKit lacks H.264 decoding on this platform; poster/fallback checks remain active.');
  let requested=false;
  if(failure==="decode")await page.route("**/crunchy-boi-spin.mp4",route=>{requested=true;return route.fulfill({status:200,contentType:"video/mp4",body:"invalid video"});});
  else await page.addInitScript(()=>{HTMLMediaElement.prototype.play=()=>{Reflect.set(window,"motionPlayAttempted",true);return Promise.reject(new DOMException("blocked","NotAllowedError"));};});
@@ -18,7 +19,8 @@ for(const failure of ["decode","autoplay"] as const)test(`${failure} retains the
  if(failure==="decode")await expect.poll(()=>requested).toBe(true);else await expect.poll(()=>page.evaluate(()=>Reflect.get(window,"motionPlayAttempted"))).toBe(true);
  await expect(page.locator("#hero video")).toHaveCount(0);await expect(page.getByRole("button",{name:"Pause spin"})).toHaveCount(0);
 });
-test("one MP4 starts after trigger, pauses by keyboard and offscreen, preserves geometry",async({page})=>{
+test("one MP4 starts after trigger, pauses by keyboard and offscreen, preserves geometry",async({page,browserName})=>{
+ test.skip(browserName === 'webkit' && process.platform !== 'darwin', 'Playwright WebKit lacks H.264 decoding on this platform; real-iPhone Safari preview check required.');
  const urls=new Set<string>();page.on("request",r=>{if(/\.(mp4|webm)/.test(r.url()))urls.add(r.url());});
  await page.goto("/");expect(urls.size).toBe(0);
  const frame=page.locator('[data-testid="hero-motion"]');const initial=await frame.boundingBox();

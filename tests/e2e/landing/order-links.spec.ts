@@ -5,7 +5,7 @@ test("all direct and catering destinations match approved tenant config",async (
   await page.goto("/");
   for (const store of landingTenantConfig.stores) {
     const links = page.getByRole("link",{name:`Order ${store.orderLabel}`,exact:true});
-    await expect(links).toHaveCount(3);
+    await expect(links).toHaveCount(4);
     for (const link of await links.all()) {
       await expect(link).toHaveAttribute("href",store.orderUrl);
       await expect(link).toHaveAttribute("referrerpolicy","origin");

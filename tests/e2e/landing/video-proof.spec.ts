@@ -6,7 +6,8 @@ const proof = JSON.parse(readFileSync(resolve('assets/verification/hero/provenan
 
 // Private controls are fulfilled only inside this test; never copied to public/.
 for (const subject of ['spin','control']) for (const color of ['yellow','ink']) {
-  test(`decoder proof at 375px: ${subject} on ${color}`, async ({page}, testInfo) => {
+  test(`decoder proof at 375px: ${subject} on ${color}`, async ({page,browserName}, testInfo) => {
+    test.skip(browserName === 'webkit' && process.platform !== 'darwin', 'Playwright WebKit lacks H.264 decoding on this platform; real-iPhone Safari preview check required.');
     const videoPath = subject === 'spin' && color === 'yellow'
       ? 'public/media/crunchy-boi-spin.mp4' : `assets/verification/hero/${subject}-${color}.mp4`;
     const referencePath = `assets/verification/hero/${subject}-${color}-reference.png`;

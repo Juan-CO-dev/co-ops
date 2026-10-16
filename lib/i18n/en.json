@@ -6795,5 +6795,7 @@
   "landing.metadata.description": "Big flavors, fresh builds. Find your shop and order your next sub.",
   "landing.hero.alt": "Crunchy Boi sub",
   "landing.hero.pause": "Pause spin",
-  "landing.hero.play": "Play spin"
+  "landing.hero.play": "Play spin",
+  "landing.lineup.browse": "Browse the subs",
+  "landing.lineup.photo": "{name} sub"
 }
