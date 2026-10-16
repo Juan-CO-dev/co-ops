@@ -6,7 +6,7 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
 import { stepUpFor } from "@/lib/scheduling/access-shared";
 import { ScheduleError, scheduleErrorStatus } from "@/lib/scheduling/errors-shared";
 import { SCHEDULE_ACTIONS, exactShape } from "@/lib/scheduling/route-shapes-shared";
-import type { EditOp } from "@/lib/scheduling/edit-shared";
+import { isEditOp } from "@/lib/scheduling/edit-shared";
 import type { HorizonRequest } from "@/lib/scheduling/horizon-shared";
 import { applyHorizon, approveWeek, generateWeek, previewHorizon, saveEdit } from "@/lib/scheduling/schedules";
 import { acceptBudgetSuggestion, keepBudget, recordPersonSettings, setBudget, setDayType, setPin, type PersonSettingsInput } from "@/lib/scheduling/settings";
@@ -64,8 +64,8 @@ export async function POST(req: NextRequest) {
         if (!b.request || typeof b.request !== "object" || !isStr(b.token) || !Array.isArray(b.confirmedWeekStarts) || !b.confirmedWeekStarts.every(isStr)) return jsonError(400, "bad_request");
         return jsonOk({ result: await applyHorizon(deps, { actor, locationId, request: b.request as HorizonRequest, token: b.token, confirmedWeekStarts: b.confirmedWeekStarts as string[] }) });
       case "edit":
-        if (!isStr(b.weekStart) || !isStr(b.expectedHead) || !b.op || typeof b.op !== "object") return jsonError(400, "bad_request");
-        return jsonOk({ result: await saveEdit(deps, { actor, locationId, weekStart: b.weekStart, expectedHead: b.expectedHead, op: b.op as EditOp }) });
+        if (!isStr(b.weekStart) || !isStr(b.expectedHead) || !isEditOp(b.op)) return jsonError(400, "bad_request");
+        return jsonOk({ result: await saveEdit(deps, { actor, locationId, weekStart: b.weekStart, expectedHead: b.expectedHead, op: b.op }) });
       case "approve":
         if (!isStr(b.weekStart) || !isStr(b.expectedHead)) return jsonError(400, "bad_request");
         return jsonOk({ result: await approveWeek(deps, { actor, locationId, weekStart: b.weekStart, expectedHead: b.expectedHead }) });

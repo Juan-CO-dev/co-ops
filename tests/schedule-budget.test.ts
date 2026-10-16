@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  BUDGET_LINE_KEYS, acceptSuggestion, apportion, budgetForDates, entryDates, minCrewHours, needHours, structureDeltaHours,
+  BUDGET_LINE_KEYS, acceptSuggestion, apportion, budgetForDates, entryDates, minCrewHours, needHours, referenceStructureOf, structureDeltaHours,
   suggestBudget, suggestionHidden, type BudgetEntry, type SuggestBudgetInput,
 } from "@/lib/scheduling/budget-shared";
 import type { DayForecast } from "@/lib/scheduling/demand-shared";
@@ -228,6 +228,31 @@ describe("suggestBudget: an explicit completed reference, the matched-weekday RA
     if (s.kind !== "suggestion") throw new Error(s.kind);
     expect(s.lines[0]).toEqual({ key: "schedule.budget.ratio", params: { pct: 12, referenceWeek: REF, matched: "1,2,3,4", matchedDays: 4 } });
     for (const l of s.lines) expect(BUDGET_LINE_KEYS).toContain(l.key);
+  });
+});
+
+describe("Astra chunk E P2-3: the reference week's ACTUAL structure, never the live one", () => {
+  const old = structure((x) => { x.crews.normal.waves.service.heads = 2; });
+  const live = structure();
+  const head = (days: Record<string, unknown>, versionId = "sv-old") => ({
+    revision: { id: "r1", kind: "generated" as const, basedOnRevisionId: null, structureVersionId: versionId, createdAt: "2026-10-12T10:00:00Z", createdBy: null, actorContext: "user" as const, generatorVersion: "p2.5", inputsDigest: "d" },
+    context: { days } as never,
+  });
+  it("the structure stored with the reference revision's context wins, even when the live map does not hold it", () => {
+    expect(referenceStructureOf(head({ [refDates[0]!]: { structureVersionId: "sv-old", structure: old } }), {})).toEqual(old);
+    expect(referenceStructureOf(head({}), { "sv-old": old })).toEqual(old);
+  });
+  it("missing everywhere → null (never the live structure)", () => {
+    expect(referenceStructureOf(head({ [refDates[0]!]: { structureVersionId: "sv-other", structure: live } }), { "sv-live": live })).toBeNull();
+    expect(referenceStructureOf(head({}), {})).toBeNull();
+  });
+  it("an unknown reference structure is SHOWN: the explicit line, and no structure-delta line (never a silent zero)", () => {
+    const s = suggestBudget(suggestion({ structureDeltaUnknown: true, structureDeltaByDate: Object.fromEntries(targetDates.map((d) => [d, 5])) }));
+    expect(s.kind).toBe("suggestion");
+    if (s.kind !== "suggestion") return;
+    expect(s.lines).toContainEqual({ key: "schedule.budget.reference_structure_unavailable", params: { referenceWeek: REF } });
+    expect(s.lines.some((l) => l.key === "schedule.budget.structure_delta")).toBe(false);
+    expect(BUDGET_LINE_KEYS).toContain("schedule.budget.reference_structure_unavailable");
   });
 });
 

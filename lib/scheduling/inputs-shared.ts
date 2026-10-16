@@ -14,6 +14,7 @@
  *    linked user and never placed in a view-model;
  *  - the head's days, shifts, gaps and STORED reasons are carried as they are (the historical contract).
  */
+import { operationalNow } from "@/lib/midshift-shared";
 import type { RoleCode } from "@/lib/roles";
 import type { SkillMatrix } from "@/lib/people/skill-matrix-shared";
 import type { ClosingStatusFact, ClosingInstanceFact, ClosingCompletionFact } from "@/lib/people/facts-shared";
@@ -90,6 +91,17 @@ export interface SchedulingInputs {
 }
 
 // ─── Small pure readers ──────────────────────────────────────────────────────
+
+/**
+ * Astra chunk E P2-4: `user_locations.assigned_at` (an instant) as the OPERATIONAL business date (America/New_York, the
+ * same clock the punch dates and `operationalNow` use) — never its UTC date: a Sunday-night ET assignment is Sunday,
+ * not Monday, so the observation window of the punch patterns keeps its week. Null / unparseable → null.
+ */
+export function memberSinceDate(assignedAt: string | null | undefined): string | null {
+  if (!assignedAt) return null;
+  const t = Date.parse(assignedAt);
+  return Number.isFinite(t) ? operationalNow(new Date(t)).date : null;
+}
 
 /** The first clock time in a free-text catering window ("11:30 AM–1 PM", "12pm", "13:00") as a quarter, else null. */
 export function eventQFromWindow(text: string | null): number | null {

@@ -68,6 +68,17 @@ describe("POST /api/schedule — the envelope", () => {
     }
     expect(sched.approveWeek).not.toHaveBeenCalled();
   });
+  it("Astra chunk E P3-5: the edit op is validated as the exact discriminated union → 400 bad_request before the lib", async () => {
+    const ref = { date: WEEK, userId: "u", startQ: 44 };
+    for (const op of [{}, [], { kind: "move" }, { kind: "move", shift: ref }, { kind: "move", shift: ref, deltaQ: "1" }, { kind: "move", shift: ref, deltaQ: 1, extra: 1 },
+      { kind: "teleport", shift: ref }, { kind: "addShift", date: WEEK, userId: "u", startQ: 44, endQ: 60 }, { kind: "removeShift", shift: { date: WEEK, userId: "u" } }, null]) {
+      const r = await post({ action: "edit", locationId: SHOP, weekStart: WEEK, expectedHead: HEAD, op });
+      expect(r.status, JSON.stringify(op)).toBe(400);
+      expect((await r.json()).code).toBe("bad_request");
+    }
+    expect(sched.saveEdit).not.toHaveBeenCalled();
+    expect((await post({ action: "edit", locationId: SHOP, weekStart: WEEK, expectedHead: HEAD, op: { kind: "move", shift: ref, deltaQ: -1 } })).status).toBe(200);
+  });
 });
 
 describe("POST /api/schedule — the tier, asserted before the lib", () => {

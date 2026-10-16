@@ -29,6 +29,37 @@ export type EditOp =
   | { kind: "removeShift"; shift: ShiftRef }
   | { kind: "addShift"; date: string; userId: string; startQ: number; endQ: number; positionId: string };
 
+const OP_KEYS: Readonly<Record<EditOp["kind"], readonly string[]>> = {
+  move: ["kind", "shift", "deltaQ"], start: ["kind", "shift", "toQ"], end: ["kind", "shift", "toQ"], divider: ["kind", "shift", "index", "toQ"],
+  setSegmentPosition: ["kind", "shift", "index", "positionId"], removeShift: ["kind", "shift"], addShift: ["kind", "date", "userId", "startQ", "endQ", "positionId"],
+};
+const INT = new Set(["deltaQ", "toQ", "index", "startQ", "endQ"]);
+const STR = new Set(["date", "userId", "positionId"]);
+const plainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const exactKeys = (o: Record<string, unknown>, keys: readonly string[]) => Object.keys(o).length === keys.length && keys.every((k) => Object.hasOwn(o, k));
+const fieldOk = (k: string, v: unknown) => (INT.has(k) ? Number.isInteger(v) : STR.has(k) ? typeof v === "string" && v.length > 0 : true);
+
+/**
+ * Astra chunk E P3-5: the EXACT discriminated union of an edit op — the kind's keys and no others, integers where a
+ * quarter / index / delta goes, non-empty strings for ids and dates, and an exact `ShiftRef`. The route answers 400
+ * `bad_request` before the lib; the lib refuses `invalid_payload` itself (defence in depth).
+ */
+export function isEditOp(v: unknown): v is EditOp {
+  if (!plainObject(v) || typeof v.kind !== "string" || !Object.hasOwn(OP_KEYS, v.kind)) return false;
+  const keys = OP_KEYS[v.kind as EditOp["kind"]];
+  if (!exactKeys(v, keys)) return false;
+  for (const k of keys) {
+    if (k === "kind") continue;
+    if (k === "shift") {
+      const r = v.shift;
+      if (!plainObject(r) || !exactKeys(r, ["date", "userId", "startQ"]) || !fieldOk("date", r.date) || !fieldOk("userId", r.userId) || !fieldOk("startQ", r.startQ)) return false;
+      continue;
+    }
+    if (!fieldOk(k, v[k])) return false;
+  }
+  return true;
+}
+
 export interface EditResult { schedule: WeekSchedule; day: DayRecord; problems: RuleProblem[]; gaps: DeclaredGap[] }
 
 const refuse = (code: ScheduleErrorCode, params: Record<string, string | number> = {}): never => { throw new ScheduleError(code, { params }); };

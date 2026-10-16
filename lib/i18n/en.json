@@ -7251,5 +7251,6 @@
   "schedule.board.gap.unresolved_try": "No fill found within the search limit — you may find one: try {candidates}.",
   "schedule.board.problem.earlier": "Earlier problem",
   "schedule.board.demand.basis": "4-week same-day average",
-  "schedule.board.ready_for_7shifts": "Ready for 7shifts — sending comes in a later update."
+  "schedule.board.ready_for_7shifts": "Ready for 7shifts — sending comes in a later update.",
+  "schedule.budget.reference_structure_unavailable": "The week of {referenceWeek} was built with settings that can't be loaded, so settings changes aren't counted in this suggestion."
 }

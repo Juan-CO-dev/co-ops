@@ -7251,5 +7251,6 @@
   "schedule.board.gap.unresolved_try": "No se encontró a nadie dentro del límite de búsqueda — tú puedes encontrar a alguien: prueba con {candidates}.",
   "schedule.board.problem.earlier": "Problema anterior",
   "schedule.board.demand.basis": "Promedio de 4 semanas del mismo día",
-  "schedule.board.ready_for_7shifts": "Listo para 7shifts — el envío llega en una actualización posterior."
+  "schedule.board.ready_for_7shifts": "Listo para 7shifts — el envío llega en una actualización posterior.",
+  "schedule.budget.reference_structure_unavailable": "La semana del {referenceWeek} se armó con ajustes que no se pueden cargar, así que los cambios de ajustes no se cuentan en esta sugerencia."
 }

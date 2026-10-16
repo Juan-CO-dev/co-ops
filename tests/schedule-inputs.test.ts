@@ -19,7 +19,7 @@ const { computeSkillMatrixForShop, loadSkillMatrix } = await import("@/lib/peopl
 const { loadPeopleFacts } = await import("@/lib/people/facts");
 const { loadSchedulingInputs, loadSchedulingDemand } = await import("@/lib/scheduling/inputs");
 const {
-  STRUCTURE_DEFAULTS_ID, closingFacts, eventQFromWindow, firstSeenFor, generatorInputFor, overrideFor, sqlStructureVersion, toCateringEvents, tsStructureVersion,
+  STRUCTURE_DEFAULTS_ID, closingFacts, eventQFromWindow, firstSeenFor, generatorInputFor, memberSinceDate, overrideFor, sqlStructureVersion, toCateringEvents, tsStructureVersion,
 } = await import("@/lib/scheduling/inputs-shared");
 const { ScheduleError } = await import("@/lib/scheduling/errors-shared");
 const { forecastWeek } = await import("@/lib/scheduling/demand-shared");
@@ -126,6 +126,22 @@ describe("the extractions keep their callers identical", () => {
     ]);
     expect(closingFacts(fin.skills)).toMatchObject([{ instanceId: "iA", hasFinalConfirmation: true, lastLiveCompletionAt: "2026-10-15T01:30:00Z" }, { instanceId: "iB", status: "open" }]);
     await expect(loadPeopleFacts(c, { locationId: A, subject, window, families: ["closingFinalization"] })).rejects.toThrow();
+  });
+});
+
+describe("Astra chunk E P2-4: the membership date is the OPERATIONAL (America/New_York) date of assigned_at", () => {
+  it("a Sunday-night ET assignment stays Sunday (UTC would say Monday); EST and EDT both; null and junk stay null", () => {
+    expect(memberSinceDate("2026-10-26T02:30:00Z")).toBe("2026-10-25"); // Sun Oct 25, 10:30 PM EDT
+    expect(memberSinceDate("2026-11-09T04:30:00Z")).toBe("2026-11-08"); // Sun Nov 8, 11:30 PM EST
+    expect(memberSinceDate("2026-10-26T12:00:00Z")).toBe("2026-10-26");
+    expect(memberSinceDate(null)).toBeNull();
+    expect(memberSinceDate("not a date")).toBeNull();
+  });
+  it("the loader applies it: a member assigned Sunday night ET has memberSince = that Sunday", async () => {
+    const t = baseTables();
+    t.user_locations = t.user_locations!.map((r) => (r.user_id === EMP ? { ...r, assigned_at: "2026-10-19T03:15:00Z" } : r)); // Sun Oct 18, 11:15 PM EDT
+    const inputs = await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+    expect(inputs.members.find((m) => m.userId === EMP)!.memberSince).toBe("2026-10-18");
   });
 });
 

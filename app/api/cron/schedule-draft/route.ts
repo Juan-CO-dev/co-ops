@@ -17,10 +17,10 @@ export async function GET(req: NextRequest) {
   const auth = cronAuthStatus(req.headers);
   if (auth) return jsonError(auth, auth === 503 ? "cron_disabled" : "unauthorized");
   try {
-    // CC chunk F GO: inert until enabled — before the applies (0274 / 0275) or with no shop switched on, a clean skip
-    // BEFORE the lease (0275 owns the lease name): no heartbeat, no failure row.
+    // Astra chunk E P1-2: secret → readiness → lease. Before the applies (0274 / 0275), with no shop switched on, or off a
+    // Wednesday morning, a clean 200 skip BEFORE the lease (0275 owns the lease name): no heartbeat, no failure row.
     const pre = await draftPrecheck({ service: getServiceRoleClient(), now: new Date() });
-    if (!pre.go) return jsonOk({ skipped: true, reason: pre.reason });
+    if (!pre.go) return jsonOk({ skipped: pre.reason });
     if (!await claimCronRoute("schedule-draft")) return jsonOk({ skipped: true, reason: "cron_route_busy" });
     const run = await runWednesdayDraft({ service: getServiceRoleClient(), now: new Date() });
     if (!run.ran) return jsonOk({ skipped: true, reason: run.reason });

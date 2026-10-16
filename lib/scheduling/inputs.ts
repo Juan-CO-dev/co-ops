@@ -35,7 +35,7 @@ import { forecastWeek, withCatering, type DayTypeOverride, type SalesBaselineRes
 import { ScheduleError } from "./errors-shared";
 import type { Pin } from "./generator/build-shared";
 import {
-  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, toCateringEvents, tsStructureVersion,
+  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, memberSinceDate, toCateringEvents, tsStructureVersion,
   type DayTypeRow, type EzcaterOrderRow, type MemberRow, type ScheduleShopSettings, type SchedulingInputs, type StoredRevision, type StoredWeek,
 } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
@@ -94,7 +94,7 @@ async function loadMembersWithSince(service: SupabaseClient, locationId: string)
   const ul = await selectAllRows<{ user_id: string; assigned_at: string | null }>((from, to) => service
     .from("user_locations").select("user_id, assigned_at").eq("location_id", locationId).eq("active", true)
     .order("user_id", { ascending: true }).range(from, to));
-  const since = new Map(ul.map((r) => [r.user_id, r.assigned_at ? r.assigned_at.slice(0, 10) : null]));
+  const since = new Map(ul.map((r) => [r.user_id, memberSinceDate(r.assigned_at)]));
   const out: MemberRow[] = [];
   for (const ids of chunks([...since.keys()])) {
     for (const r of await selectAllRows<{ id: string; name: string; role: RoleCode }>((from, to) => service

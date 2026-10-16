@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CALLOUT_LAST_RESORT, RULE_CODES, REPAIR_LIMITS, approvalRefusal, capacityBound, checkCertificate, checkScheduleRules,
-  cheapestFill, proveGap, structureInfeasible, type DeclaredGap, type RuleCode, type RuleProblem,
+  cheapestFill, fillIsLegal, proveGap, structureInfeasible, type DeclaredGap, type RuleCode, type RuleProblem,
 } from "@/lib/scheduling/rules-shared";
 import { contextAdvisory, ruleContextFromSnapshot, toContextSnapshot, type RuleContext } from "@/lib/scheduling/context-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
@@ -818,6 +818,66 @@ describe("Astra's chunk D review P1 + CC's design ruling: budget_limited — R <
       { kind: "relabel", userId: U.ben, shiftStartQ: 42, fromPositionId: P.WALKON, positionId: P.REG, fromQ: 48, toQ: 52 },
       { kind: "extend", userId: U.maya, shiftStartQ: 52, positionId: P.WALKON, fromQ: 48, toQ: 52, hours: 1 },
     ] });
+  });
+});
+
+describe("Astra's chunk E review P1-1: a witness is legal only when the WHOLE combined fill applies cleanly", () => {
+  /**
+   * Her probe: Ben is on Register 11–3 (needed); Walk-ins (secondary) and Walk-ins / Online (primary) are both needed
+   * 11–3 and empty. Only Ben and Maya can work. The old search moved Ben to Walk-ins, refilled Register with a Maya
+   * block AND paired Walk-ins / Online with ANOTHER Maya block over the same hours (W = 8) — Maya double-booked.
+   */
+  const probe = (extra: (ctx: RuleContext) => void = () => {}) => {
+    // Register holds two heads (the room her refill used); one is needed.
+    const ctx = context({ s: structure((x) => { x.positions[P.REG]!.headsBefore = 2; x.positions[P.REG]!.headsAfter = 2; }) });
+    for (const id of [U.iris, U.dani, U.eli, U.kai, U.alex, U.pete]) ctx.people[id]!.activeMember = false;
+    setNeed(ctx, WED, P.REG, 44, 60);
+    setNeed(ctx, WED, P.WALKON, 44, 60);
+    setNeed(ctx, WED, P.WALK, 44, 60);
+    ctx.budgetByDate[WED] = 0;
+    extra(ctx);
+    const s = week([shift(U.ben, WED, 44, 60, P.REG)]);
+    return { ctx, s, subject: { code: "coverage_gap" as const, date: WED, positionId: P.WALK, fromQ: 44, toQ: 60 } };
+  };
+  const herWitness = [
+    { kind: "relabel" as const, userId: U.ben, shiftStartQ: 44, fromPositionId: P.REG, positionId: P.WALK, fromQ: 44, toQ: 60 },
+    { kind: "new_block" as const, userId: U.maya, positionId: P.REG, fromQ: 44, toQ: 60, hours: 4 },
+    { kind: "new_block" as const, userId: U.maya, positionId: P.WALKON, fromQ: 44, toQ: 60, hours: 4 },
+  ];
+
+  it("her double-booked plan is REFUSED as a witness; with no legal plan the deficit is never budget_limited", () => {
+    const { ctx, s, subject } = probe();
+    expect(fillIsLegal(subject, s, ctx, { hours: 8, steps: herWitness })).toBe(false);
+    expect(cheapestFill(subject, s, ctx)).toBeNull();
+    expect(proveGap(subject, s, ctx)?.cause).not.toBe("budget_limited");
+    const f = { budgetedDates: [WED], budgetHours: 0, usedHours: 4, essentialHours: 0, remainingHours: -4, fillHours: 8, witness: herWitness };
+    expect(checkCertificate({ ...subject, cause: "budget_limited", certificate: f } as DeclaredGap, s, ctx)).toBe(false);
+  });
+
+  it("when a LEGAL combined plan exists (a third person for the paired primary) it is the witness, and it validates", () => {
+    const { ctx, s, subject } = probe((c) => { c.people[U.eli]!.activeMember = true; });
+    const plan = cheapestFill(subject, s, ctx)!;
+    expect(plan).not.toBeNull();
+    expect(fillIsLegal(subject, s, ctx, plan)).toBe(true);
+    const users = plan.steps.filter((x) => x.kind === "new_block").map((x) => x.userId);
+    expect(new Set(users).size).toBe(users.length); // nobody gets two blocks over the same hours
+    const g = proven(subject, s, ctx);
+    expect(g.certificate).toMatchObject({ fillHours: plan.hours, witness: plan.steps });
+    expect(checkCertificate(g, s, ctx)).toBe(true);
+  });
+
+  it("the applied witness is validated, not just re-found: an overlapping, over-maximum or unavailable step is illegal", () => {
+    const { ctx, s, subject } = probe((c) => { c.people[U.eli]!.activeMember = true; });
+    // Overlap with the person's own shift.
+    expect(fillIsLegal(subject, s, ctx, { hours: 4, steps: [{ kind: "new_block", userId: U.ben, positionId: P.WALK, fromQ: 44, toQ: 60, hours: 4 }] })).toBe(false);
+    // Outside availability.
+    ctx.people[U.eli]!.availability[WED] = { fromQ: 64, toQ: 84, source: "toast_pattern" };
+    expect(fillIsLegal(subject, s, ctx, { hours: 8, steps: [
+      { kind: "new_block", userId: U.eli, positionId: P.WALK, fromQ: 44, toQ: 60, hours: 4 },
+      { kind: "new_block", userId: U.maya, positionId: P.WALKON, fromQ: 44, toQ: 60, hours: 4 },
+    ] })).toBe(false);
+    // A step that does not apply (no such shift) is illegal.
+    expect(fillIsLegal(subject, s, ctx, { hours: 1, steps: [{ kind: "extend", userId: U.maya, shiftStartQ: 30, positionId: P.WALK, fromQ: 44, toQ: 60, hours: 4 }] })).toBe(false);
   });
 });
 

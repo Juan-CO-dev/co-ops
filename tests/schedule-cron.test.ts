@@ -75,7 +75,7 @@ describe("the run (lib/scheduling/draft.ts)", () => {
     expect(r.ran && r.shops.map((x) => [x.locationId, x.outcome])).toEqual([[A, "skipped"], [B, "built"]]);
     const off = shopTables({ enabled: false });
     const o = scheduleStore(off);
-    expect(await runWednesdayDraft({ service: o.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "no_shop_enabled" });
+    expect(await runWednesdayDraft({ service: o.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "no_enabled_shops" });
     expect(o.calls).toEqual([]);
   });
 
@@ -83,20 +83,20 @@ describe("the run (lib/scheduling/draft.ts)", () => {
     const t = shopTables();
     t.schedule_shop_settings = [];
     const s = scheduleStore(t);
-    expect(await runWednesdayDraft({ service: s.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "no_shop_enabled" });
+    expect(await runWednesdayDraft({ service: s.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "no_enabled_shops" });
     expect(s.calls).toEqual([]);
     expect(vi.mocked(audit)).not.toHaveBeenCalled();
   });
 
-  it("CC chunk F GO: 0274 or 0275 not applied (prod right after merge) → skipped cleanly as not_installed, no throw, no audit", async () => {
+  it("CC chunk F GO: 0274 or 0275 not applied (prod right after merge) → skipped cleanly as not_ready (Astra chunk E P1-2), no throw, no audit", async () => {
     const no0274 = shopTables();
     delete no0274.schedule_shop_settings;
     const a = scheduleStore(no0274);
-    expect(await runWednesdayDraft({ service: a.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "not_installed" });
+    expect(await runWednesdayDraft({ service: a.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "not_ready" });
     const no0275 = shopTables();
     delete no0275.schedule_weeks;
     const b = scheduleStore(no0275);
-    expect(await runWednesdayDraft({ service: b.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "not_installed" });
+    expect(await runWednesdayDraft({ service: b.client, now: new Date("2026-10-21T10:15:00Z") })).toEqual({ ran: false, reason: "not_ready" });
     expect([...a.calls, ...b.calls]).toEqual([]);
     expect(vi.mocked(audit)).not.toHaveBeenCalled();
   });
@@ -160,7 +160,7 @@ describe("the route before the applies (CC chunk F GO)", () => {
   const request = () => new NextRequest("https://example.com/api/cron/schedule-draft", { headers: { authorization: "Bearer test-cron" } });
   it("not installed / no shop enabled → 200 skipped BEFORE the lease (0275 owns 'schedule-draft'), no cron.failure, no heartbeat", async () => {
     vi.stubEnv("CRON_SECRET", "test-cron");
-    for (const reason of ["not_installed", "no_shop_enabled", "not_wednesday_morning"] as const) {
+    for (const reason of ["not_ready", "no_enabled_shops", "not_wednesday_morning"] as const) {
       vi.resetModules();
       vi.doMock("@/lib/scheduling/draft", () => ({
         draftPrecheck: vi.fn(async () => ({ go: false, reason })),
@@ -173,13 +173,45 @@ describe("the route before the applies (CC chunk F GO)", () => {
       vi.mocked(audit4).mockClear();
       const res = await GET(request());
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ skipped: true, reason });
+      expect(await res.json()).toEqual({ skipped: reason });
       expect(claim).not.toHaveBeenCalled();
       expect(vi.mocked(audit4)).not.toHaveBeenCalled();
       vi.doUnmock("@/lib/scheduling/draft");
     }
     vi.resetModules();
   });
+});
+
+describe("Astra chunk E P1-2: the REAL route is inert before the lease (secret → readiness → lease)", () => {
+  const request = () => new NextRequest("https://example.com/api/cron/schedule-draft", { headers: { authorization: "Bearer test-cron" } });
+  const cases: Array<[string, (t: ReturnType<typeof shopTables>) => void, string]> = [
+    ["no 0274", (t) => { delete t.schedule_shop_settings; }, "not_ready"],
+    ["0274 without 0275 (claim_cron_route would reject the job)", (t) => { delete t.schedule_weeks; }, "not_ready"],
+    ["0274 + 0275 with every shop OFF", (t) => { t.schedule_shop_settings = t.schedule_shop_settings!.map((r) => ({ ...r, enabled: false })); }, "no_enabled_shops"],
+  ];
+  for (const [name, mutate, reason] of cases) {
+    it(`${name} → 200 {skipped: ${reason}}, no lease claim, no failure heartbeat — on ANY day`, async () => {
+      vi.stubEnv("CRON_SECRET", "test-cron");
+      vi.resetModules();
+      const t = shopTables();
+      mutate(t);
+      const store = scheduleStore(t);
+      vi.doMock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn(() => store.client) }));
+      const { GET } = await import("@/app/api/cron/schedule-draft/route");
+      const { claimCronRoute: claim } = await import("@/lib/cron-route-lease");
+      const { audit: audit5 } = await import("@/lib/audit");
+      vi.mocked(claim).mockClear();
+      vi.mocked(audit5).mockClear();
+      const res = await GET(request());
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ skipped: reason });
+      expect(claim).not.toHaveBeenCalled();
+      expect(vi.mocked(audit5)).not.toHaveBeenCalled();
+      expect(store.calls).toEqual([]);
+      vi.doUnmock("@/lib/supabase-server");
+      vi.resetModules();
+    });
+  }
 });
 
 void claimCronRoute;

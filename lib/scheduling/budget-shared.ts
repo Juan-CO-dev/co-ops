@@ -28,6 +28,8 @@ export const BUDGET_LINE_KEYS = [
   "schedule.budget.catering_delta", "schedule.budget.structure_delta",
   "schedule.budget.errand.no_reference", "schedule.budget.errand.reference_not_ended", "schedule.budget.errand.incomplete_reference",
   "schedule.budget.errand.demand_not_ok", "schedule.budget.errand.no_matched_days", "schedule.budget.errand.zero_reference_sales",
+  // Astra chunk E P2-3: the reference week's structure could not be loaded — the structure delta is UNKNOWN, and said so.
+  "schedule.budget.reference_structure_unavailable",
 ] as const;
 export type BudgetLineKey = (typeof BUDGET_LINE_KEYS)[number];
 
@@ -188,6 +190,26 @@ export interface SuggestBudgetInput {
   currentBudgetTotal: number | null;
   /** `labor.budgetDeadbandH`. */
   deadbandH: number;
+  /**
+   * Astra chunk E P2-3: the reference week's ACTUAL structure was not available, so the structure delta is unknown: it is
+   * not applied, and the suggestion SAYS so (`schedule.budget.reference_structure_unavailable`) — never a silent zero.
+   */
+  structureDeltaUnknown?: boolean;
+}
+
+/**
+ * The structure a reference week was BUILT with (Astra chunk E P2-3): the snapshot stored in its head revision's own
+ * context (a day whose structure version is the revision's), else the saved version by id; null when neither holds it.
+ * Never the live structure.
+ */
+export function referenceStructureOf(
+  head: { revision: { structureVersionId: string }; context: { days: Record<string, { structureVersionId: string; structure: ScheduleStructure }> } },
+  structuresById: Readonly<Record<string, ScheduleStructure>>,
+): ScheduleStructure | null {
+  const id = head.revision.structureVersionId;
+  const days = head.context?.days ?? {};
+  for (const d of Object.keys(days).sort()) if (days[d]?.structureVersionId === id) return days[d]!.structure;
+  return Object.hasOwn(structuresById, id) ? structuresById[id]! : null;
 }
 
 export type SuggestionCause = "no_reference" | "reference_not_ended" | "incomplete_reference" | "demand_not_ok" | "no_matched_days" | "zero_reference_sales";
@@ -227,6 +249,7 @@ export function suggestBudget(input: SuggestBudgetInput): BudgetSuggestion {
   const byDate: Record<string, number> = {};
   const clamped: string[] = [];
   const lines: NarrativeLine[] = [{ key: "schedule.budget.ratio", params: { pct: Math.round((ratio - 1) * 100), referenceWeek: ref.weekStart, matched: matchedDows.join(","), matchedDays: matchedDows.length } }];
+  if (input.structureDeltaUnknown) lines.push({ key: "schedule.budget.reference_structure_unavailable", params: { referenceWeek: ref.weekStart } });
   const deltaLines: NarrativeLine[] = [];
   let unmatchedDays = 0;
   let unmatchedRefH = 0;
@@ -234,7 +257,7 @@ export function suggestBudget(input: SuggestBudgetInput): BudgetSuggestion {
     const dow = isoDowOf(d);
     const refH = refByDow(dow, ref.hoursByDate);
     const cat = (input.cateringHoursByDate[d] ?? 0) - refByDow(dow, ref.cateringHoursByDate);
-    const str = input.structureDeltaByDate[d] ?? 0;
+    const str = input.structureDeltaUnknown ? 0 : input.structureDeltaByDate[d] ?? 0;
     if (cat !== 0) deltaLines.push({ key: "schedule.budget.catering_delta", params: { date: d, hours: cat } });
     if (str !== 0) deltaLines.push({ key: "schedule.budget.structure_delta", params: { date: d, hours: str } });
     if (matchedDows.includes(dow)) {

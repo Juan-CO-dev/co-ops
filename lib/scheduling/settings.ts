@@ -16,7 +16,7 @@ import type { PeopleActor } from "@/lib/people/access-shared";
 import { summarizeSales, type DailyRaw } from "@/lib/sales-reports-shared";
 import { canManageShopSwitch } from "./access-shared";
 import {
-  acceptSuggestion, apportion, budgetForDates, entryDates, minCrewHours, structureDeltaHours, suggestBudget, type BudgetEntry, type BudgetSuggestion,
+  acceptSuggestion, apportion, budgetForDates, entryDates, minCrewHours, referenceStructureOf, structureDeltaHours, suggestBudget, type BudgetEntry, type BudgetSuggestion,
 } from "./budget-shared";
 import { forecastWeek } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
@@ -184,20 +184,23 @@ export async function budgetSuggestion(deps: ScheduleDeps, args: { actor: People
   const gi = generatorInputFor(inputs, args.weekStart, { today: weekDays(args.weekStart)[0]! < asOf ? asOf : weekDays(args.weekStart)[0]! });
   const ctx = buildWeek(gi).context;
   const live = inputs.structure.structure;
-  const ref = refHead ? inputs.structuresById[refHead.revision.structureVersionId] ?? live : live;
+  // Astra chunk E P2-3: the reference week's ACTUAL structure (stored with its revision); never the live one. Unknown →
+  // the delta is not applied and the suggestion says so.
+  const ref = refHead ? referenceStructureOf(refHead, inputs.structuresById) : live;
+  const structureDeltaUnknown = ref === null;
   const cateringHoursByDate: Record<string, number> = {};
   const structureDeltaByDate: Record<string, number> = {};
   const minCrewHoursByDate: Record<string, number> = {};
   for (const d of gi.days) {
     const need = ctx.days[d.date]?.need;
     cateringHoursByDate[d.date] = (need?.sources ?? []).filter((r) => r.source === "catering").reduce((n, r) => n + (r.heads * (r.toQ - r.fromQ)) / 4, 0);
-    structureDeltaByDate[d.date] = structureDeltaHours({ live, ref, day: { dayType: d.dayType, scheduledOutQ: d.scheduledOutQ, hourlyCents: d.hourlyCents, demandKind: d.demandKind, catering: d.catering } });
+    structureDeltaByDate[d.date] = ref === null ? 0 : structureDeltaHours({ live, ref, day: { dayType: d.dayType, scheduledOutQ: d.scheduledOutQ, hourlyCents: d.hourlyCents, demandKind: d.demandKind, catering: d.catering } });
     minCrewHoursByDate[d.date] = minCrewHours(live, d.dayType, d.scheduledOutQ);
   }
   const current = budgetForDates(inputs.budget.entries, inputs.budget.rows, weekDays(args.weekStart));
   return suggestBudget({
     asOf, targetWeekStart: args.weekStart, reference, demand: inputs.demand, cateringHoursByDate, structureDeltaByDate, minCrewHoursByDate,
-    currentBudgetTotal: current.unbudgetedDates.length === 7 ? null : current.total, deadbandH: live.labor.budgetDeadbandH,
+    currentBudgetTotal: current.unbudgetedDates.length === 7 ? null : current.total, deadbandH: live.labor.budgetDeadbandH, structureDeltaUnknown,
   });
 }
 

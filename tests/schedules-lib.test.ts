@@ -85,7 +85,7 @@ describe("generate → buildWeek → commit_schedule_revision; round-trip parity
     expect(Object.keys(c[0]!.args).sort()).toEqual(["p_actor", "p_context", "p_days", "p_expected_head", "p_gaps", "p_kind", "p_location", "p_meta", "p_shifts", "p_structure_version", "p_week_start"]);
     expect(c[0]!.args).toMatchObject({ p_actor: GM, p_location: A, p_week_start: WEEK, p_expected_head: null, p_kind: "generated", p_structure_version: null });
     expect((c[0]!.args.p_days as unknown[]).length).toBe(7);
-    expect((c[0]!.args.p_meta as Record<string, unknown>)).toMatchObject({ actor_context: "user", generator_version: "p2.4" });
+    expect((c[0]!.args.p_meta as Record<string, unknown>)).toMatchObject({ actor_context: "user", generator_version: "p2.5" });
     expect(vi.mocked(audit).mock.calls.some(([a]) => a.action === "schedule.generate")).toBe(true);
     expect(await code(lib.generateWeek(s.deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: null }))).toBe("head_moved");
   });
@@ -247,6 +247,12 @@ describe("history (r2 P1-3) end to end; edits; approve", () => {
     expect(monDay).toMatchObject({ inherited: true, originRevisionId: e.revisionId });
     expect((monDay.problems as RuleProblem[]).some((p) => p.code === "shift_below_minimum" && p.inherited)).toBe(true);
     expect((last.args.p_shifts as Array<Record<string, unknown>>).some((x) => x.userId === STAFF[6] && x.date === MON)).toBe(true);
+  });
+
+  it("Astra chunk E P3-5: a malformed op ({}, []) is refused invalid_payload by the lib itself, before any read", async () => {
+    for (const op of [{}, [], { kind: "move", shift: { date: WEEK, userId: "u", startQ: 44 } }]) {
+      await expect(lib.saveEdit({ service: noIoClient() }, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: "h", op: op as never })).rejects.toMatchObject({ code: "invalid_payload" });
+    }
   });
 
   it("saveEdit records the edit's problems; a structural failure is refused by name; a stale head is head_moved; a past day is day_locked", async () => {

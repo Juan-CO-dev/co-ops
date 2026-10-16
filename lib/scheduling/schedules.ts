@@ -29,7 +29,7 @@ import { isMissingTable } from "@/lib/people/facts";
 import { canSeeScheduleMoney, scheduleActRefusal, type ScheduleAct } from "./access-shared";
 import { assertContextFits, canonicalJson, contextAdvisory, digest64, toContextSnapshot, type AdvisoryItem, type RuleContext } from "./context-shared";
 import { diffWeeks, type WeekDiff } from "./diff-shared";
-import { applyEdit, type EditOp } from "./edit-shared";
+import { applyEdit, isEditOp, type EditOp } from "./edit-shared";
 import { ScheduleError, isScheduleErrorCode, type ScheduleErrorCode } from "./errors-shared";
 import { GENERATOR_VERSION, buildWeek, type GeneratorOutput } from "./generator/build-shared";
 import { horizonActions, planHorizon, type HorizonRequest } from "./horizon-shared";
@@ -273,6 +273,8 @@ export async function applyHorizon(deps: ScheduleDeps, args: { actor: PeopleActo
 
 export async function saveEdit(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; weekStart: string; expectedHead: string; op: EditOp }): Promise<{ revisionId: string; problems: RuleProblem[] }> {
   await gate(deps.service, args.actor, args.locationId, "edit");
+  // Astra chunk E P3-5: the exact op union, before any read (the route already answered 400 for a malformed body).
+  if (!isEditOp(args.op)) throw new ScheduleError("invalid_payload");
   const inputs = await loader(deps)(deps.service, { locationId: args.locationId, weekStarts: [args.weekStart], now: nowOf(deps) });
   if (!inputs.shopSettings.enabled) throw new ScheduleError("shop_not_enabled");
   const w = inputs.weeks[args.weekStart];
