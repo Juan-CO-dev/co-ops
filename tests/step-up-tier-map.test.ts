@@ -110,6 +110,9 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/toast-employees/route.ts": ["B"],
   // Scheduling Phase 1: the 7shifts shop and person links (Tier B, the toast-employees precedent); Sync now takes none.
   "app/api/admin/sevenshifts/route.ts": ["B"],
+  // Scheduling Phase 1 (Task 16): the people settings (skill tunables MoO+, shop settings) take the Tier E edit
+  // window; adjust / rate (/api/people/skills) take none (J8). No client calls it yet (no settings screen in Phase 1).
+  "app/api/people/settings/route.ts": ["E"],
   // 0234 customer profiles: Tier A = reveal / lookup / dismiss / link catering; Tier B = merge, erase,
   // retention, consent import; exports Tier B.
   "app/api/admin/customers/route.ts": ["A"],

@@ -4,6 +4,8 @@ import lifecycle from "./fixtures/pm-copy-lifecycle-cases.json";
 import {
   PM_COPY_TRANSITIONS,
   canAdjustSkill,
+  canAdjustSkillsAt,
+  canViewOwnSkills,
   canEditPeopleSettings,
   canEditPmCriteria,
   canEditSkillTunables,
@@ -374,5 +376,35 @@ describe("Task 13 — canOpenPeopleViews: the team pages' role gate, every role"
 describe("ruling (a) — linkNeedsRemoteAtShop: below MoO only", () => {
   it.each(ALL_ROLES)("%s", (role) => {
     expect(linkNeedsRemoteAtShop(actor(role))).toBe(role === "social_media_mgr" || ROLES[role].level < 8);
+  });
+});
+
+describe("Task 16 — canAdjustSkillsAt: the adjust / rate front door (before the subject is read), GM own shop, MoO+ any", () => {
+  for (const role of ALL_ROLES) {
+    for (const where of ["own", "other", "none"] as const) {
+      const want = expectGmOwnMooAny(role, where);
+      it(`${role} @ ${where} → ${want}`, () => {
+        expect(canAdjustSkillsAt(actor(role, where), shopFor(where))).toBe(want);
+      });
+    }
+  }
+  it("never for 'all' or an empty shop", () => {
+    expect(canAdjustSkillsAt(actor("owner"), "all")).toBe(false);
+    expect(canAdjustSkillsAt(actor("owner"), "")).toBe(false);
+  });
+});
+
+describe("Task 16 — canViewOwnSkills (R8): any staff level at a shop they belong to; MoO+ any; the SMM too (My Performance stays theirs)", () => {
+  for (const role of ALL_ROLES) {
+    for (const where of ["own", "other", "none"] as const) {
+      const want = where === "own" || ROLES[role].level >= 8;
+      it(`${role} @ ${where} → ${want}`, () => {
+        expect(canViewOwnSkills(actor(role, where), shopFor(where))).toBe(want);
+      });
+    }
+  }
+  it("never for 'all' or an empty shop", () => {
+    expect(canViewOwnSkills(actor("employee"), "all")).toBe(false);
+    expect(canViewOwnSkills(actor("employee"), "")).toBe(false);
   });
 });

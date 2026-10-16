@@ -35,7 +35,29 @@ export type FactFamily =
   /** Person only: the person's live PM v1 grades on the shop's finalized reports dated in the window. */
   | "pmGrades"
   /** Person only: the shop's finalized reports dated in the window that named the person MVP. */
-  | "mvps";
+  | "mvps"
+  // ── Skills (Task 16). Loaded ONLY by lib/people/skills.ts, never by a legacy number. ──
+  /** The shop's stations and station positions (every row; the matrix keeps the active ones). */
+  | "shopPositions"
+  /** station_events at the shop on the window's business days (subject-filtered) → position intervals. */
+  | "positionIntervals"
+  /** The shop's closing instances in the window, their template lines (with station) and live completions. */
+  | "closingLines"
+  /** `productions` at the shop in the bounds, EXACTLY lib/yield-stats.ts loadBatches' columns and filters. */
+  | "productionFacts"
+  /** people_skill_adjustments at the shop (all time; the latest per person × position is current). */
+  | "skillAdjustments"
+  /** people_skill_ratings at the shop (all time; the latest per person × position is the prior). */
+  | "skillRatings"
+  /** people_skill_tunables: the company row and this shop's row. */
+  | "skillTunables"
+  /** people_shop_settings for the shop (the prep evidence position; the PM v2 switch). */
+  | "shopSettings";
+
+/** Every skill family (the matrix loads them all; nothing else does). */
+export const SKILL_FAMILIES: readonly FactFamily[] = [
+  "shopPositions", "positionIntervals", "closingLines", "productionFacts", "skillAdjustments", "skillRatings", "shopSettings",
+];
 
 export const LEGACY_TEAM_FAMILIES: readonly FactFamily[] = ["instances", "completions", "cash", "pmReports", "pmNotes", "oversight"];
 export const LEGACY_PERSON_FAMILIES: readonly FactFamily[] = [
@@ -97,7 +119,49 @@ export interface PeopleFacts {
   pmGradedReports: DatedReportFact[];
   pmGrades: PmGradeFact[];
   mvps: DatedReportFact[];
+  /** The skill families (Task 16): empty unless asked for. */
+  skills: SkillFacts;
   loaded: ReadonlySet<FactFamily>;
+}
+
+// ─── the skill families (Task 16) ────────────────────────────────────────────
+
+export interface StationFact { id: string; name: string; name_es: string | null; sort: number; active: boolean; usually_closes_at: string | null }
+export interface PositionFact { id: string; station_id: string; name: string; name_es: string | null; sort: number; active: boolean }
+/** A station_events row, as `positionTimeline` needs it (lib/assignments-shared StationEvent). */
+export interface StationEventFact {
+  id: string; sequence: string; locationId: string; businessDate: string; userId: string;
+  stationId: string | null; positionId: string | null; kind: "assign" | "claim" | "move" | "release";
+  at: string; source: "assigned" | "claimed" | null; effectiveAt: string | null;
+}
+export interface ClosingInstanceFact { id: string; date: string; template_id: string; shift_start_at: string | null; triggered_at: string | null }
+export interface ClosingItemFact { id: string; template_id: string; station: string | null; active: boolean }
+export interface ClosingCompletionFact { id: string; instance_id: string; template_item_id: string; completed_by: string | null; completed_at: string }
+/** One `productions` row in lib/yield-stats-shared's `YieldBatch` shape (numbers parsed). */
+export interface ProductionFact { id: string; itemId: string; producedAt: string; madeBy: string | null; batchesMade: number; cameOutTo: number; yieldAtTime: number }
+export interface SkillAdjustmentFact { id: string; user_id: string; position_id: string; delta: number; reason_code: string; reason_note: string | null; actor_id: string; created_at: string }
+export interface SkillRatingFact { id: string; user_id: string; position_id: string; rating: number; reason_code: string; reason_note: string | null; actor_id: string; created_at: string }
+
+export interface SkillFacts {
+  stations: StationFact[];
+  positions: PositionFact[];
+  stationEvents: StationEventFact[];
+  closingInstances: ClosingInstanceFact[];
+  closingItems: ClosingItemFact[];
+  closingCompletions: ClosingCompletionFact[];
+  productions: ProductionFact[];
+  adjustments: SkillAdjustmentFact[];
+  ratings: SkillRatingFact[];
+  /** The raw jsonb of the company row and the shop row (resolved by `resolveTunables`). */
+  tunables: { company: unknown; shop: unknown };
+  settings: { pmV2: boolean; prepPositionId: string | null } | null;
+}
+
+export function emptySkillFacts(): SkillFacts {
+  return {
+    stations: [], positions: [], stationEvents: [], closingInstances: [], closingItems: [], closingCompletions: [],
+    productions: [], adjustments: [], ratings: [], tunables: { company: null, shop: null }, settings: null,
+  };
 }
 
 /** An empty fact set over a window (a loader fills what it is asked for). */
@@ -105,7 +169,7 @@ export function emptyPeopleFacts(locationId: string, subject: FactSubject, windo
   return {
     locationId, subject, window,
     instances: [], completions: [], confirmations: [], cash: [], pmReports: [], pmNotes: [], oversight: [],
-    pmGradedReports: [], pmGrades: [], mvps: [], loaded: new Set(),
+    pmGradedReports: [], pmGrades: [], mvps: [], skills: emptySkillFacts(), loaded: new Set(),
   };
 }
 

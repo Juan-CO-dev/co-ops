@@ -113,6 +113,23 @@ export function canAdjustSkill(actor: PeopleActor, subject: { role: RoleCode }, 
   return gmOwnOrMooAny(actor, locationId) && canActOn(actor.role, subject.role);
 }
 
+/**
+ * The front door of an adjustment or a rating at a shop, decided before any I/O (the subject's role is
+ * not known yet): GM own shop, MoO+ any. `canAdjustSkill` then judges the subject.
+ */
+export function canAdjustSkillsAt(actor: PeopleActor, locationId: string): boolean {
+  return gmOwnOrMooAny(actor, locationId);
+}
+
+/**
+ * The person's OWN skills at a shop (R8: a band, never a number or an adjustment): any staff level, at a
+ * shop the person belongs to (MoO+ any). The person always comes from the session.
+ */
+export function canViewOwnSkills(actor: PeopleActor, locationId: string): boolean {
+  if (!concreteShop(locationId)) return false;
+  return actor.level >= MOO_LEVEL || actor.locations.includes(locationId);
+}
+
 /** The new-hire starting rating: the same rule as an adjustment. */
 export function canRateNewHire(actor: PeopleActor, subject: { role: RoleCode }, locationId: string): boolean {
   return canAdjustSkill(actor, subject, locationId);

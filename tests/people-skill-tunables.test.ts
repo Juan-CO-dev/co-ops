@@ -49,7 +49,8 @@ describe("resolveTunables, the digest", () => {
     expect(Object.isFrozen(SKILL_TUNABLE_DEFAULTS.bands)).toBe(true);
   });
   it("the digest is stable under key order and changes with any value", () => {
-    const reordered = JSON.parse(JSON.stringify({ windowDays: 90, ...SKILL_TUNABLE_DEFAULTS })) as SkillTunables;
+    const { windowDays, ...rest } = SKILL_TUNABLE_DEFAULTS;
+    const reordered = JSON.parse(JSON.stringify({ windowDays, ...rest })) as SkillTunables;
     expect(canonicalTunables(reordered)).toBe(canonicalTunables(SKILL_TUNABLE_DEFAULTS));
     expect(tunablesDigest(reordered)).toBe(tunablesDigest(SKILL_TUNABLE_DEFAULTS));
     expect(tunablesDigest(shop)).not.toBe(tunablesDigest(SKILL_TUNABLE_DEFAULTS));

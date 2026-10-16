@@ -15,7 +15,8 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import {
   emptyPeopleFacts, type CashFact, type CompletionFact, type ConfirmationFact, type DatedReportFact, type FactFamily,
   type FactSubject, type FactWindow, type InstanceFact, type OversightFact, type PeopleFacts, type PmGradeFact,
-  type PmNoteFact, type PmReportFact, type ProfileFacts,
+  type PmNoteFact, type PmReportFact, type ProfileFacts, type StationFact, type PositionFact, type StationEventFact,
+  type ClosingInstanceFact, type ClosingItemFact, type ClosingCompletionFact, type SkillAdjustmentFact, type SkillRatingFact,
 } from "@/lib/people/facts-shared";
 import { OVERSIGHT_ACTIONS } from "@/lib/people/performance-shared";
 
@@ -222,7 +223,176 @@ export async function loadPeopleFacts(service: SupabaseClient, scope: PeopleFact
     loaded.add("mvps");
   }
 
+  await loadSkillFamilies(service, scope, want, facts, loaded);
   return { ...facts, loaded };
+}
+
+// ─── the skill families (Task 16) ────────────────────────────────────────────
+// Read ONLY when lib/people/skills.ts asks; no legacy number reads them, so the golden cannot move.
+
+/** A 0270 table is not there yet (deploy before apply): the skills surfaces show "not available". */
+export class SkillsUnavailableError extends Error {
+  constructor() { super("skills_unavailable"); }
+}
+/** True when a PostgREST / Postgres error says the table does not exist (yet). */
+export function isMissingTable(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  if (error.code === "42P01" || error.code === "PGRST205") return true;
+  return /does not exist|could not find the table/i.test(error.message ?? "");
+}
+/** A read of a 0270 table: a missing table is `skills_unavailable`, any other error throws. */
+async function people0270<T>(build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error?: { code?: string; message: string } | null }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await build(from, from + 999);
+    if (error) {
+      if (isMissingTable(error)) throw new SkillsUnavailableError();
+      throw new Error(`people 0270 read: ${error.message}`);
+    }
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < 1000) break;
+  }
+  return out;
+}
+const numOrNull = (v: unknown): number | null => {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "string" ? Number(v) : (v as number);
+  return Number.isFinite(n) ? n : null;
+};
+
+/** `productions` at a shop: lib/yield-stats.ts loadBatches' columns and filters, bounded by [start, end). */
+export const PRODUCTION_FACT_COLUMNS = "id, output_item_id, produced_at, made_by, batches_made, came_out_to, yield_at_time";
+
+async function loadSkillFamilies(
+  service: SupabaseClient, scope: PeopleFactScope, want: ReadonlySet<FactFamily>, facts: PeopleFacts, loaded: Set<FactFamily>,
+): Promise<void> {
+  const { locationId, subject, window } = scope;
+  const { start, end } = window.bounds;
+  const person = subject.kind === "person" ? subject.personId : null;
+  const memberIds = subject.kind === "team" ? [...subject.memberIds] : [];
+  const s = facts.skills;
+
+  if (want.has("shopPositions")) {
+    s.stations = await selectAllRows<StationFact>((from, to) => service
+      .from("stations").select("id, name, name_es, sort, active, usually_closes_at").eq("location_id", locationId)
+      .order("id", { ascending: true }).range(from, to));
+    s.positions = await selectAllRows<PositionFact>((from, to) => service
+      .from("station_positions").select("id, station_id, name, name_es, sort, active").eq("location_id", locationId)
+      .order("id", { ascending: true }).range(from, to));
+    loaded.add("shopPositions");
+  }
+
+  if (want.has("positionIntervals")) {
+    type Row = { id: string; sequence: string | number; location_id: string; business_date: string; user_id: string; station_id: string | null;
+      position_id: string | null; kind: StationEventFact["kind"]; at: string; source: StationEventFact["source"]; effective_at: string | null };
+    const cols = "id, sequence, location_id, business_date, user_id, station_id, position_id, kind, at, source, effective_at";
+    const rows: Row[] = [];
+    const groups = person !== null ? [[person]] : chunk(memberIds, ID_CHUNK);
+    for (const ids of groups) {
+      rows.push(...await selectAllRows<Row>((from, to) => service
+        .from("station_events").select(cols).eq("location_id", locationId).in("user_id", ids)
+        .gte("business_date", window.dates.from).lte("business_date", window.dates.to)
+        .order("sequence", { ascending: true }).range(from, to)));
+    }
+    s.stationEvents = rows.map((r) => ({
+      id: r.id, sequence: String(r.sequence), locationId: r.location_id, businessDate: r.business_date, userId: r.user_id,
+      stationId: r.station_id, positionId: r.position_id, kind: r.kind, at: r.at, source: r.source, effectiveAt: r.effective_at,
+    }));
+    loaded.add("positionIntervals");
+  }
+
+  if (want.has("closingLines")) {
+    const templates = await selectAllRows<{ id: string }>((from, to) => service
+      .from("checklist_templates").select("id").eq("location_id", locationId).eq("type", "closing")
+      .order("id", { ascending: true }).range(from, to));
+    const templateIds = templates.map((t) => t.id);
+    for (const ids of chunk(templateIds, ID_CHUNK)) {
+      s.closingInstances.push(...await selectAllRows<ClosingInstanceFact>((from, to) => service
+        .from("checklist_instances").select("id, date, template_id, shift_start_at, triggered_at")
+        .eq("location_id", locationId).in("template_id", ids).is("dropped_at", null)
+        .gte("date", window.dates.from).lte("date", window.dates.to)
+        .order("id", { ascending: true }).range(from, to)));
+      s.closingItems.push(...await selectAllRows<ClosingItemFact>((from, to) => service
+        .from("checklist_template_items").select("id, template_id, station, active").in("template_id", ids)
+        .order("id", { ascending: true }).range(from, to)));
+    }
+    // EVERY live completion at those instances (a closure needs all of a station's lines, by anyone).
+    for (const ids of chunk(s.closingInstances.map((i) => i.id), ID_CHUNK)) {
+      s.closingCompletions.push(...await selectAllRows<ClosingCompletionFact>((from, to) => service
+        .from("checklist_completions").select("id, instance_id, template_item_id, completed_by, completed_at")
+        .in("instance_id", ids).is("superseded_at", null).is("revoked_at", null)
+        .order("id", { ascending: true }).range(from, to)));
+    }
+    if (!want.has("shopPositions")) {
+      s.stations = await selectAllRows<StationFact>((from, to) => service
+        .from("stations").select("id, name, name_es, sort, active, usually_closes_at").eq("location_id", locationId)
+        .order("id", { ascending: true }).range(from, to));
+    }
+    loaded.add("closingLines");
+  }
+
+  if (want.has("productionFacts")) {
+    // r1 P2-6: productions ALONE (no prep_batch_sessions join), EXACTLY loadBatches' columns and filters;
+    // one row = one observation. Every maker's rows (a no-maker row is counted as evidence).
+    type Row = { id: string; output_item_id: string; produced_at: string; made_by: string | null; batches_made: number | string | null; came_out_to: number | string | null; yield_at_time: number | string | null };
+    const rows = await selectAllRows<Row>((from, to) => service
+      .from("productions").select(PRODUCTION_FACT_COLUMNS)
+      .eq("location_id", locationId)
+      .is("superseded_at", null).is("revoked_at", null)
+      .gt("batches_made", 0)
+      .not("came_out_to", "is", null).not("yield_at_time", "is", null)
+      .gte("produced_at", start).lt("produced_at", end)
+      .order("produced_at", { ascending: false }).order("id", { ascending: false }).range(from, to));
+    for (const r of rows) {
+      const batchesMade = numOrNull(r.batches_made), cameOutTo = numOrNull(r.came_out_to), yieldAtTime = numOrNull(r.yield_at_time);
+      if (batchesMade === null || cameOutTo === null || yieldAtTime === null) continue;
+      s.productions.push({ id: r.id, itemId: r.output_item_id, producedAt: r.produced_at, madeBy: r.made_by, batchesMade, cameOutTo, yieldAtTime });
+    }
+    loaded.add("productionFacts");
+  }
+
+  if (want.has("skillAdjustments")) {
+    const cols = "id, user_id, position_id, delta, reason_code, reason_note, actor_id, created_at";
+    const rows = await people0270<SkillAdjustmentFact>((from, to) => {
+      const q = service.from("people_skill_adjustments").select(cols).eq("location_id", locationId);
+      return (person !== null ? q.eq("user_id", person) : q).order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, to);
+    });
+    s.adjustments = rows.map((r) => ({ ...r, delta: Number(r.delta) }));
+    loaded.add("skillAdjustments");
+  }
+
+  if (want.has("skillRatings")) {
+    const cols = "id, user_id, position_id, rating, reason_code, reason_note, actor_id, created_at";
+    const rows = await people0270<SkillRatingFact>((from, to) => {
+      const q = service.from("people_skill_ratings").select(cols).eq("location_id", locationId);
+      return (person !== null ? q.eq("user_id", person) : q).order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, to);
+    });
+    s.ratings = rows.map((r) => ({ ...r, rating: Number(r.rating) }));
+    loaded.add("skillRatings");
+  }
+
+  if (want.has("skillTunables")) {
+    const rows = await people0270<{ location_id: string | null; tunables: unknown }>((from, to) => service
+      .from("people_skill_tunables").select("location_id, tunables").or(`location_id.is.null,location_id.eq.${locationId}`)
+      .order("id", { ascending: true }).range(from, to));
+    s.tunables = { company: rows.find((r) => r.location_id === null)?.tunables ?? null, shop: rows.find((r) => r.location_id === locationId)?.tunables ?? null };
+    loaded.add("skillTunables");
+  }
+
+  if (want.has("shopSettings")) {
+    const rows = await people0270<{ pm_v2: boolean; prep_position_id: string | null }>((from, to) => service
+      .from("people_shop_settings").select("pm_v2, prep_position_id").eq("location_id", locationId)
+      .order("location_id", { ascending: true }).range(from, to));
+    s.settings = rows[0] ? { pmV2: rows[0].pm_v2 === true, prepPositionId: rows[0].prep_position_id } : null;
+    loaded.add("shopSettings");
+  }
+}
+
+function chunk<T>(xs: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
+  return out;
 }
 
 /**

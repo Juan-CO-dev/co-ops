@@ -405,3 +405,38 @@ export function signalsFor(
     observations: observations.filter((o) => o.userId === userId && o.positionId === positionId),
   };
 }
+
+// ─── the write rules (pure; the lib checks them before any I/O, the 0270 RPCs again) ──
+
+/** The closed reason list (0270 CHECK). 'other' needs a note. */
+export const SKILL_REASON_CODES = ["observed_on_floor", "training_completed", "correction", "other"] as const;
+export type SkillReasonCode = (typeof SKILL_REASON_CODES)[number];
+export const SKILL_ADJUSTMENT_STEP = 0.05;
+export const SKILL_ADJUSTMENT_LIMIT = 0.3;
+export const SKILL_NOTE_MAX = 500;
+
+/** A finite multiple of 0.05 (to the cent), within the range. */
+function onStep(v: unknown, lo: number, hi: number): v is number {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < lo - 1e-9 || v > hi + 1e-9) return false;
+  const cents = Math.round(v * 100);
+  return Math.abs(v * 100 - cents) < 1e-6 && cents % 5 === 0;
+}
+/** ±0.30 in 0.05 steps (the mockup's control). */
+export function validAdjustmentDelta(v: unknown): v is number {
+  return onStep(v, -SKILL_ADJUSTMENT_LIMIT, SKILL_ADJUSTMENT_LIMIT);
+}
+/** The new-hire rating: 0..1 in 0.05 steps (one scale everywhere, J5). */
+export function validSkillRating(v: unknown): v is number {
+  return onStep(v, 0, 1);
+}
+/** The value sent to SQL: exactly two decimals, so 0.1 + 0.2 never reaches numeric as 0.30000000000000004. */
+export function toCents(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+/** The reason rule: a closed code; 'other' needs a non-blank note; a note ≤ 500 characters. */
+export function skillReasonValid(code: unknown, note: unknown): boolean {
+  if (typeof code !== "string" || !(SKILL_REASON_CODES as readonly string[]).includes(code)) return false;
+  if (note !== null && note !== undefined && (typeof note !== "string" || note.length > SKILL_NOTE_MAX)) return false;
+  if (code === "other" && !(typeof note === "string" && /\S/.test(note))) return false;
+  return true;
+}
