@@ -126,7 +126,7 @@ describe("the money strip", () => {
 });
 
 describe("labor % per hour, the demand curve, the day tabs", () => {
-  const curve = new Array<number>(24).fill(0).map((_, h) => (h >= 11 && h <= 13 ? 40_000 : h >= 7 && h <= 20 ? 10_000 : 0));
+  const curve: number[] = new Array<number>(24).fill(0).map((_, h): number => (h >= 11 && h <= 13 ? 40_000 : h >= 7 && h <= 20 ? 10_000 : 0));
   const withDemand = () => {
     const ctx = context();
     ctx.days[THU]!.inputs = { demandKind: "ok", hourlyCents: curve, dayCents: curve.reduce((a, b) => a + b, 0), dayTypeSource: "forecast", overrideId: null, cateringEvents: [] };
