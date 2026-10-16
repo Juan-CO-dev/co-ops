@@ -77,3 +77,26 @@ export class ScheduleError extends Error {
     this.params = { ...(opts.params ?? {}) };
   }
 }
+
+/**
+ * The HTTP status of every refusal (Task 17): 400 a malformed request, 403 who / where, 404 what is not there,
+ * 409 the state moved or forbids it now, 422 a well-formed request the rules refuse, 503 a dependency that did not
+ * load (nothing was changed), 500 a programmer error (never the caller's fault). Closed: the compiler demands a row
+ * for every code.
+ */
+export const SCHEDULE_ERROR_STATUS: Record<ScheduleErrorCode, 400 | 403 | 404 | 409 | 422 | 500 | 503> = {
+  schedule_forbidden: 403, schedule_role_refused: 403, shop_not_allowed: 403, roster_include_refused: 403,
+  shop_not_enabled: 409, week_not_found: 404, past_week: 409, day_locked: 409, head_moved: 409, edited_week_unconfirmed: 409, preview_stale: 409,
+  rules_failing: 409, unresolved_gaps: 409, history_changed: 409, structure_moved: 409,
+  generator_invalid_output: 500, context_too_large: 500,
+  structure_invalid: 422, budget_invalid: 422, horizon_invalid: 422, horizon_too_long: 422, edit_off_grid: 422, edit_overlap: 422, edit_segments_malformed: 422,
+  edit_below_segment_min: 422, pin_invalid: 422, wage_estimate_invalid: 422, shift_over_maximum: 422, gap_certificate_invalid: 422, suggestion_unavailable: 422,
+  person_not_at_shop: 404, position_not_at_shop: 404, position_retired: 409,
+  inputs_unavailable: 503, demand_unavailable: 503,
+  invalid_payload: 400,
+};
+
+/** The status of a refusal. */
+export function scheduleErrorStatus(code: ScheduleErrorCode): number {
+  return SCHEDULE_ERROR_STATUS[code];
+}
