@@ -25,6 +25,9 @@ describe('swap exact restoration in real SQL',()=>{
  });
  it('pins journal ceilings and exact RPC privileges',async()=>{await setup();for(const signature of ['sku_swap_product_snapshot(uuid,uuid,uuid)','sku_swap_recipe_snapshot(uuid,uuid,uuid)','start_sku_swap(uuid,uuid,uuid,uuid,jsonb,jsonb,boolean,text,jsonb)','end_sku_swap(uuid,uuid)']){
  const rows=await db.query<{a:boolean;b:boolean;c:boolean}>(`select has_function_privilege('anon',$1,'execute') a,has_function_privilege('authenticated',$1,'execute') b,has_function_privilege('service_role',$1,'execute') c`,[signature]);expect(rows.rows[0]).toEqual({a:false,b:false,c:true});}
+ for(const table of ['sku_swaps','sku_swap_ends']) for(const role of ['anon','authenticated']) for(const privilege of ['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) {
+ const result=await db.query<{allowed:boolean}>('select has_table_privilege($1,$2,$3) allowed',[role,table,privilege]);expect(result.rows[0]!.allowed,`${role} ${table} ${privilege}`).toBe(false);
+ }
  for(const table of ['sku_swaps','sku_swap_ends']){const row=(await db.query<{u:boolean;d:boolean}>(`select has_table_privilege('service_role',$1,'update') u,has_table_privilege('service_role',$1,'delete') d`,[table])).rows[0];expect(row).toEqual({u:false,d:false});}
  });
  it.each(['scoped','default','membership','same-sku'])('rejects stale %s product evidence without recipes',async(kind)=>{await setup();await db.exec('update recipes set active=false');const product=(await db.query<{id:string}>(`insert into products(name) values('Product') returning id`)).rows[0]!.id;await db.query('update vendor_items set product_id=$1 where id in($2,$3)',[product,I.sharedSku,next]);if(kind==='same-sku')await db.query('insert into product_primaries(product_id,primary_sku_id) values($1,$2)',[product,I.sharedSku]);const p=await preview();

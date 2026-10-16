@@ -4,6 +4,8 @@ import type { PGlite } from "@electric-sql/pglite";
 import { migratedShopOwnedDb, persistedCatalogRows, seedOperationalBaseline, SHOP_OWNED_ID as ID } from "./fixtures/shop-owned-pglite";
 import { createFakeDb } from "./fixtures/counts-fake-db";
 import type { AuthContext } from "@/lib/session";
+import { audit } from "@/lib/audit";
+import { isDestructive } from "@/lib/destructive-actions";
 let db: PGlite;
 let snapshot: ReturnType<typeof createFakeDb>;
 let accesses = 0;
@@ -63,12 +65,17 @@ it("normalizes, costs the real direct recipe, starts atomically and restores it"
  const p = await previewSkuSwap(actor, req);
  expect(p.request.productName).toBeTruthy();
  expect(p.recipes).toHaveLength(1);
+ expect(p.ordering).toEqual({ scope: ID.shopA, primarySkuId: replacement, parsChanged: false, messageKey: "catalog.swap.ordering_consequence" });
  expect(p.costs).toContainEqual(expect.objectContaining({ menuItemId: ID.sharedMenu, before: 4.5, after: 6 }));
  expect((await previewSkuSwap(actor, p.request)).token).toBe(p.token);
  const saved = await startSkuSwap(actor, p.request, p.token);
+ expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "sku_swap.start", resourceTable: "sku_swaps", resourceId: saved.swapId }));
+ expect(isDestructive("sku_swap.start")).toBe(true);
  const back = await previewBackToNormal(actor, saved.swapId);
  expect(back.goingBack).toHaveLength(1);
  expect(await endSkuSwap(actor, saved.swapId, back.token)).toMatchObject({ back: [ID.sharedRecipe], kept: [] });
+ expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "sku_swap.end", resourceTable: "sku_swaps", resourceId: saved.swapId }));
+ expect(isDestructive("sku_swap.end")).toBe(true);
 });
 it("maps a product change racing between fresh preview and locked start to exact 409", async () => {
  const p = await previewSkuSwap(actor, req);

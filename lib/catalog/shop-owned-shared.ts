@@ -29,7 +29,7 @@ type RefusalStatus = 400 | 403 | 404 | 409;
 export type OwnerRefusal = { ok: false; status: RefusalStatus; code: ShopOwnedErrorCode };
 type Gate = { ok: true } | OwnerRefusal;
 
-const RPC_STATUS: Record<ShopOwnedErrorCode, RefusalStatus> = {
+export const RPC_STATUS: Record<ShopOwnedErrorCode, RefusalStatus> = {
   forbidden: 403, not_found: 404, global_requires_moo: 403, location_required: 400, shop_owned_edit_here: 409,
   location_not_found: 404, sku_not_found: 404, vendor_not_found: 404, name_taken: 409, ownership_changed: 409,
   already_shared: 409, skus_changed: 409, items_changed: 409, item_number_taken: 409, uses_other_shop_sku: 409,

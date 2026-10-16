@@ -34,7 +34,7 @@ describe("new item parser and atomic consumer", () => {
     expect(parseNewItemRequest({ ...raw(), scope: null })).toMatchObject({ ok: true, request: { scope: null } });
   });
   it("uses the actual atomic RPC and audits committed facts without fabricated history IDs", async () => {
-    expect(await createCatalogItem(gm, request())).toEqual({ skuId: SKU, ownerLocationId: A });
+    expect(await createCatalogItem(gm, request())).toEqual({ skuId: SKU, ownerLocationId: A, replayed: false });
     expect(mocks.rpc).toHaveBeenCalledWith("create_catalog_sku", { p_sku: { request_id: A, name: "New item", vendorId: VENDOR, itemNumber: "42", skuClass: "raw", avgOzPerEach: null }, p_pack: { levels: raw().levels }, p_price: { unitPrice: 12, effectiveDate: "2026-10-16" }, p_actor: A, p_location_id: A });
     expect(mocks.audit).toHaveBeenCalledOnce();
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "vendor_item.create", resourceId: SKU, metadata: expect.objectContaining({ job: "new_item", initial_price: { unitPrice: 12, effectiveDate: "2026-10-16" } }) }));
@@ -126,4 +126,21 @@ it("creates one request identity per form open and retains it across retries", (
 });
 it.each([undefined, null, "bad", 42])("requires a valid client request identity %j", request_id => {
   expect(parseNewItemRequest({ ...raw(), request_id })).toEqual({ ok: false, code: "invalid_payload", field: "request_id" });
+});
+
+it("passes replay identity through without auditing an earlier creation again", async () => {
+  mocks.rpc.mockResolvedValue({ data: { id: SKU, location_id: null, replayed: true }, error: null });
+  expect(await createCatalogItem(gm, { ...request(), name: "Latest edits" })).toEqual({ skuId: SKU, ownerLocationId: null, replayed: true });
+  expect(mocks.audit).not.toHaveBeenCalled();
+});
+it("re-mints the factory after acknowledged success so a second create has a fresh identity", async () => {
+  let form = newItemFormRequest();
+  const first = form.request(request());
+  await createCatalogItem(gm, first);
+  form = newItemFormRequest();
+  const second = form.request({ ...request(), name: "Second item" });
+  expect(second.request_id).not.toBe(first.request_id);
+  expect(form.request(second).request_id).toBe(second.request_id);
+  await createCatalogItem(gm, second);
+  expect(mocks.rpc.mock.calls.map(call => call[1].p_sku.request_id)).toEqual([first.request_id, second.request_id]);
 });

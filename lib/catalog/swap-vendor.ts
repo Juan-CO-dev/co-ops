@@ -59,6 +59,7 @@ export interface SwapPreview {
  recipes: Array<{ recipeId: string; recipeName: string; changes: Array<{ position: number; before: RecipeLineFields; after: RecipeLineFields; converted: boolean }> }>;
  refused: Array<{ recipeId: string; recipeName: string; position: number; reason: "unit_unknown" }>;
  followsPrimary: Named[]; untouchedShops: Named[];
+ ordering: { scope: string | null; primarySkuId: string; parsChanged: false; messageKey: "catalog.swap.ordering_consequence" };
  costs: Array<{ menuItemId: string; name: string; nameEs: string | null; before: number | null; after: number | null }>; token: string;
 }
 export async function previewSkuSwap(actor: AuthContext, req: SwapRequest): Promise<SwapPreview> {
@@ -125,7 +126,8 @@ export async function previewSkuSwap(actor: AuthContext, req: SwapRequest): Prom
  if (previewToken(productEnd) !== previewToken(productSnapshot)) throw new SwapError(409, "product_changed");
  if (previewToken(recipesEnd) !== previewToken(captured)) throw new SwapError(409, "recipes_changed");
  const vendorName = (id: string | null) => productSnapshot.vendors.find(v => v.id === id)?.name ?? null;
- const body = { request, oldSku: { id: old.id, name: old.name, vendorName: vendorName(old.vendor_id) }, newSku: { id: neu.id, name: neu.name, vendorName: vendorName(neu.vendor_id) },
+ const ordering: SwapPreview["ordering"] = { scope: req.scope, primarySkuId: neu.id, parsChanged: false, messageKey: "catalog.swap.ordering_consequence" };
+ const body = { request, ordering, oldSku: { id: old.id, name: old.name, vendorName: vendorName(old.vendor_id) }, newSku: { id: neu.id, name: neu.name, vendorName: vendorName(neu.vendor_id) },
   scopeName: shops.find(s => s.id === req.scope)?.name ?? null, product, productSnapshot, recipeSnapshots, recipes, refused, followsPrimary, untouchedShops: shops.filter(s => keptShopIds.has(s.id)), costs };
  return { ...body, token: previewToken({ request, productSnapshot, recipeSnapshots, refused, costs }) };
 }
@@ -140,7 +142,7 @@ export async function startSkuSwap(actor: AuthContext, req: SwapRequest, token: 
   p_product_snapshot: p.productSnapshot, p_recipes: p.recipeSnapshots, p_temporary: p.request.mode === "for_now", p_note: p.request.note,
   p_product: p.product.kind === "create" ? { name: p.product.name, name_es: p.product.nameEs } : null,
  });
- await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "vendor_item.update", resourceTable: "sku_swaps", resourceId: r.swap_id,
+ await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "sku_swap.start", resourceTable: "sku_swaps", resourceId: r.swap_id,
   metadata: { operation: "swap_start", location_id: req.scope, product_id: r.product_id, recipes: r.recipes }, ipAddress: null, userAgent: null });
  return { swapId: r.swap_id, productId: r.product_id, versions: r.recipes.map(v => ({ recipeId: v.recipe_id, versionId: v.version_id })) };
 }
@@ -189,14 +191,27 @@ export async function endSkuSwap(actor: AuthContext, swapId: string, token: stri
  // SQL locks before comparing journal effects, including edits after this preview.
  const r = await rpc<{ recipes: Array<{ recipe_id: string; outcome: string }>; primary: string; grouping: string }>("end_sku_swap", { p_swap: swapId, p_actor: actor.user.id });
  const result = { back: r.recipes.filter(v => v.outcome === "restored").map(v => v.recipe_id), kept: r.recipes.filter(v => v.outcome === "changed_since").map(v => v.recipe_id), primary: r.primary, grouping: r.grouping };
- await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "vendor_item.update", resourceTable: "sku_swaps", resourceId: swapId,
+ await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "sku_swap.end", resourceTable: "sku_swaps", resourceId: swapId,
   metadata: { operation: "swap_end", location_id: p.shopId, ...result }, ipAddress: null, userAgent: null });
  return result;
 }
 export async function loadLiveSwapsForItem(actor: AuthContext, skuId: string, shopId: string): Promise<Array<{ swapId: string; oldSkuId: string; newSkuId: string; startedAt: string }>> {
- if (getRoleLevel(actor.user.role) < 6 || !catalogShopAllowed({ level: getRoleLevel(actor.user.role), locations: actor.locations }, shopId)) throw new ShopOwnedError(404, "not_found");
+ if (getRoleLevel(actor.user.role) < 6 || actor.user.role === "social_media_mgr" || !catalogShopAllowed({ level: getRoleLevel(actor.user.role), locations: actor.locations }, shopId)) throw new ShopOwnedError(404, "not_found");
  if (!UUID.test(skuId) || !UUID.test(shopId)) throw new SwapError(400, "invalid_payload");
- const [journals, ends] = await Promise.all([rows<Journal>("sku_swaps", "*"), rows<{ swap_id: string }>("sku_swap_ends", "id,swap_id")]);
- return journals.filter(j => j.temporary && j.location_id === shopId && !ends.some(e => e.swap_id === j.id) && (j.old_sku_id === skuId || j.new_sku_id === skuId))
+ const sb = getServiceRoleClient();
+ // Scope before transfer; UUID validation above also makes the OR expression safe.
+ const journals = await selectAllRows<Journal>((from, to) => sb.from("sku_swaps")
+  .select("id,old_sku_id,new_sku_id,location_id,temporary,created_at")
+  .eq("location_id", shopId).eq("temporary", true)
+  .or(`old_sku_id.eq.${skuId},new_sku_id.eq.${skuId}`).order("id").range(from, to).returns<Journal[]>());
+ const ended = new Set<string>();
+ // Bounded batches avoid a request-line overflow as the journal grows.
+ for (let offset = 0; offset < journals.length; offset += 100) {
+  const ids = journals.slice(offset, offset + 100).map(j => j.id);
+  const ends = await selectAllRows<{ swap_id: string }>((from, to) => sb.from("sku_swap_ends")
+   .select("id,swap_id").in("swap_id", ids).order("id").range(from, to).returns<Array<{ swap_id: string }>>());
+  for (const end of ends) ended.add(end.swap_id);
+ }
+ return journals.filter(j => !ended.has(j.id))
  .map(j => ({ swapId: j.id, oldSkuId: j.old_sku_id, newSkuId: j.new_sku_id, startedAt: j.created_at }));
 }

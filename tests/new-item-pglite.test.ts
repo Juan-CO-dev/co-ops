@@ -69,7 +69,8 @@ it("replays one request without duplicating the SKU, pack, price or audit", asyn
   const after = await counts();
   const { audit } = await import("@/lib/audit");
   vi.mocked(audit).mockClear();
-  expect(await createCatalogItem(actor, input)).toEqual(first);
+  expect(first.replayed).toBe(false);
+  expect(await createCatalogItem(actor, input)).toEqual({ ...first, replayed: true });
   expect(await counts()).toEqual(after);
   expect(audit).not.toHaveBeenCalled();
 });
@@ -86,10 +87,11 @@ it("scopes a request id to its creation owner, including the shared scope", asyn
   const b = await createCatalogItem(moo, { ...input, scope: ID.shopB });
   const global = await createCatalogItem(moo, { ...input, scope: null });
   expect(new Set([a.skuId, b.skuId, global.skuId]).size).toBe(3);
-  expect(await createCatalogItem(moo, { ...input, scope: null })).toEqual(global);
+  expect([a.replayed, b.replayed, global.replayed]).toEqual([false, false, false]);
+  expect(await createCatalogItem(moo, { ...input, scope: null })).toEqual({ ...global, replayed: true });
   await db.query("update vendor_items set location_id=null where id=$1", [a.skuId]);
   const replay = await createCatalogItem(moo, input);
-  expect(replay).toEqual({ skuId: a.skuId, ownerLocationId: null });
+  expect(replay).toEqual({ skuId: a.skuId, ownerLocationId: null, replayed: true });
 });
 
 it("the partial unique index refuses duplicate creation keys, including null global owners", async () => {

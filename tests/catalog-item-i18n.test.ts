@@ -17,6 +17,9 @@ import { NEW_ITEM_ERROR_CODES } from "@/lib/catalog/new-item-shared";
 import { SWAP_ERROR_CODES } from "@/lib/catalog/swap-shared";
 
 const REQUIRED = [
+  ...["exists", "section_name_taken", "sku_already_placed", "guide_stale", "section_not_found", "foreign_section", "foreign_line", "foreign_sku", "guide_not_found", "invalid_code", "vendor_mismatch", "level_differs", "teach_failed", "open_item_guid", "invalid_json"].map(code => `catalog.error.${code}`),
+  "catalog.new_item.replayed",
+  "catalog.swap.ordering_consequence", "catalog.setup.guide_unconfirmed",
   ...SWAP_ERROR_CODES.map(c => `catalog.error.${c}`),
   ...NEW_ITEM_ERROR_CODES.map(c => `catalog.error.${c}`),
   "catalog.only_at_shop",
@@ -118,4 +121,19 @@ describe("catalog Phase 2b strings", () => {
       expect(keys.length - new Set(keys).size, f).toBe(0);
     }
   });
+});
+
+it("plainly discloses replayed creation and unapplied latest edits in both languages", () => {
+  expect(E["catalog.new_item.replayed"]).toBe("This item was already created by your earlier submit; your latest changes were not applied. Open it to edit.");
+  expect(S["catalog.new_item.replayed"]).toBe("Este artículo ya se creó con tu envío anterior; tus últimos cambios no se aplicaron. Ábrelo para editarlo.");
+});
+
+it("discloses ordering, unchanged pars, uncertain saves and the producing recipe", () => {
+  expect(E["catalog.swap.ordering_consequence"]).toMatch(/Ordering follows the replacement item/);
+  expect(E["catalog.swap.ordering_consequence"]).toMatch(/Par values are unchanged/);
+  expect(S["catalog.swap.ordering_consequence"]).toMatch(/valores par no cambian/);
+  expect(E["catalog.setup.guide_unconfirmed"]).toMatch(/may have been saved.*Refresh/);
+  expect(S["catalog.setup.guide_unconfirmed"]).toMatch(/puede haberse guardado/);
+  expect(E["catalog.error.uses_shop_only_item"]).toMatch(/recipe that produces/);
+  expect(S["catalog.error.uses_shop_only_item"]).toMatch(/receta que produce/);
 });

@@ -29,7 +29,7 @@ function setupRefusal(error: unknown): { status: number; code: string } {
   return { status: 500, code: "generic" };
 }
 
-export interface CreatedItem { skuId: string; ownerLocationId: string | null }
+export interface CreatedItem { skuId: string; ownerLocationId: string | null; replayed: boolean }
 
 /** No setup write is part of this transaction. The returned identity is already committed. */
 export async function createCatalogItem(actor: AuthContext, input: NewItemRequest): Promise<CreatedItem> {
@@ -58,7 +58,7 @@ export async function createCatalogItem(actor: AuthContext, input: NewItemReques
   if (!result.replayed) await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "vendor_item.create", resourceTable: "vendor_items", resourceId: result.id,
     metadata: { name: req.name, vendor_id: req.vendorId, item_number: req.itemNumber, location_id: scope, job: "new_item", initial_pack: pack, initial_price: price, avg_oz_per_each: req.avgOzPerEach },
     ipAddress: null, userAgent: null });
-  return { skuId: result.id, ownerLocationId: result.location_id === undefined ? scope : result.location_id };
+  return { skuId: result.id, ownerLocationId: result.location_id === undefined ? scope : result.location_id, replayed: result.replayed === true };
 }
 
 export type OrderDayOutcome = { orderDow: number; leadDays: number } & (

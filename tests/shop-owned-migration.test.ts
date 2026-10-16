@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { SHOP_OWNED_ERROR_CODES, shopOwnedErrorFromRpc, ShopOwnedError } from "../lib/catalog/shop-owned-shared";
+import { RPC_STATUS, SHOP_OWNED_ERROR_CODES, shopOwnedErrorFromRpc, ShopOwnedError } from "../lib/catalog/shop-owned-shared";
 
 const sql = readFileSync("supabase/migrations/0264_catalog_shop_owned.sql", "utf8").replace(/\r\n/g, "\n");
 
@@ -27,10 +27,11 @@ describe("0264 ownership migration contracts", () => {
       try { shopOwnedErrorFromRpc(`shop_owned:${code}`); }
       catch (error) {
         expect(error).toBeInstanceOf(ShopOwnedError);
-        expect(error).toMatchObject({ code, status: expect.any(Number) });
+        expect(error).toMatchObject({ code, status: RPC_STATUS[code as keyof typeof RPC_STATUS] });
       }
     }
-    for (const code of ["items_changed", "share_the_recipe", "line_other_shop"]) expect(codes).toContain(code);
+    for (const code of ["items_changed", "share_the_recipe", "line_other_shop", "output_other_shop"]) expect(codes).toContain(code);
+    expect(sql).toContain("raise exception 'shop_owned:line_other_shop:%',v_line.position");
     expect(() => shopOwnedErrorFromRpc("shop_owned:line_other_shop:2"))
       .toThrow(expect.objectContaining({ code: "line_other_shop", line: { position: 2, reason: "line_other_shop" } }));
   });

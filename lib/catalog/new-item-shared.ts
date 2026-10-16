@@ -26,14 +26,21 @@ const textOrNull = (v: unknown, max: number): string | null | undefined => {
   return t === "" ? null : t.length <= max ? t : undefined;
 };
 
-/** Open once with the form (for example useState(newItemFormRequest)); reuse on every submit/retry. */
+/**
+ * Open once with the form (for example useState(newItemFormRequest)); reuse on
+ * every pending submit, double-submit and lost-response retry, including edits.
+ * After an acknowledged success (including replay), replace this factory with
+ * newItemFormRequest() before the next create, even if the page stays open.
+ * A replay returns the earlier item: show catalog.new_item.replayed and open it
+ * to edit; never imply that the latest fields were applied.
+ */
 export function newItemFormRequest() {
   const request_id = crypto.randomUUID();
   return { request: <T extends object>(fields: T): T & { request_id: string } => ({ ...fields, request_id }) };
 }
 
 export interface NewItemRequest {
-  /** Client-generated once per form open; retained for double-submits and lost-response retries. */
+  /** Client-generated per new creation; retain for retries, re-mint after acknowledged success. */
   request_id: string;
   /** Where it starts (spec §3): a shop the actor works in; null = every shop — MoO+ only. */
   scope?: string | null;

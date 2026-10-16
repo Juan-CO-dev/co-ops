@@ -196,3 +196,17 @@ describe("every named refusal the writers can return has its own en + es message
     for (const c of [...codes, ...validator]) expect(RECIPE_VERSION_ERROR_CODES as readonly string[], c).toContain(c);
   });
 });
+
+import { RPC_STATUS, SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
+import { recipeVersionErrorFromRpc } from "@/lib/admin/recipe-versions";
+describe("ownership transport mapping", () => {
+ it.each(SHOP_OWNED_ERROR_CODES)("maps ownership %s from shared statuses", code => {
+  expect(() => recipeVersionErrorFromRpc(`shop_owned:${code}`)).toThrow(expect.objectContaining({ name: "RecipeVersionError", code, status: RPC_STATUS[code] }));
+ });
+ it("retains a one-based ownership line", () => {
+  expect(() => recipeVersionErrorFromRpc("shop_owned:line_other_shop:3")).toThrow(expect.objectContaining({ status: 400, line: expect.objectContaining({ position: 3, reason: "line_other_shop" }) }));
+ });
+ it("retains its native namespace", () => {
+  expect(() => recipeVersionErrorFromRpc("recipe_version:dependencies_busy")).toThrow(expect.objectContaining({ status: 409, code: "dependencies_busy" }));
+ });
+});
