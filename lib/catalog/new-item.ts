@@ -12,6 +12,8 @@ import { recipeVersionErrorFromRpc, saveRecipeLines } from "@/lib/admin/recipe-v
 import { teachBarcode } from "@/lib/barcodes";
 import { creationScope, NEW_THING_MIN, ownerVisible, ShopOwnedError, shopOwnedErrorFromRpc } from "@/lib/catalog/shop-owned-shared";
 import { parseNewItemRequest, parseSetupStep, type NewItemRequest, type SetupStep } from "@/lib/catalog/new-item-shared";
+import { logCatalogFailure } from "@/lib/catalog/error-log";
+import en from "@/lib/i18n/en.json";
 
 function requireLocation(actor: AuthContext, requested?: string | null): string | null {
   const gate = creationScope({ role: actor.user.role, level: actor.level, locations: actor.locations }, requested);
@@ -23,10 +25,15 @@ function requireActor(actor: AuthContext): void {
   if (actor.level < NEW_THING_MIN || actor.user.role === "social_media_mgr") throw new ShopOwnedError(403, "forbidden");
 }
 
-function setupRefusal(error: unknown): { status: number; code: string } {
+function setupRefusal(error: unknown): { status: number; code: string; messageKey: string } {
   const named = error as { status?: unknown; code?: unknown } | null;
-  if (typeof named?.status === "number" && named.status >= 400 && named.status < 500 && typeof named.code === "string") return { status: named.status, code: named.code };
-  return { status: 500, code: "generic" };
+  if (typeof named?.status === "number" && named.status >= 400 && named.status < 500 && typeof named.code === "string") {
+    const vendorKey = `admin.vendors.error.${named.code}`;
+    const catalogKey = `catalog.error.${named.code}`;
+    return { status: named.status, code: named.code, messageKey: Object.hasOwn(en, vendorKey) ? vendorKey : Object.hasOwn(en, catalogKey) ? catalogKey : "catalog.error.generic" };
+  }
+  logCatalogFailure(error);
+  return { status: 500, code: "generic", messageKey: "catalog.error.generic" };
 }
 
 export interface CreatedItem { skuId: string; ownerLocationId: string | null; replayed: boolean }
@@ -62,7 +69,7 @@ export async function createCatalogItem(actor: AuthContext, input: NewItemReques
 }
 
 export type OrderDayOutcome = { orderDow: number; leadDays: number } & (
-  { ok: true; pairId: string } | { ok: false; status: number; code: string; refreshRequired: boolean }
+  { ok: true; pairId: string } | { ok: false; status: number; code: string; messageKey: string; refreshRequired: boolean }
 );
 export interface SetupResult { step: SetupStep["kind"]; ok: boolean; detail: Record<string, unknown> }
 

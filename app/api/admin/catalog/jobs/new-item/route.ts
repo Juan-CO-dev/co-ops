@@ -6,7 +6,10 @@ import { objectBody, catalogError, catalogRefusal } from "@/app/api/admin/catalo
 import { createCatalogItem } from "@/lib/catalog/new-item";
 import { parseNewItemRequest } from "@/lib/catalog/new-item-shared";
 import { serverT } from "@/lib/i18n/server";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 export async function POST(req: NextRequest) {
+    const origin = assertSameOrigin(req);
+    if (origin) return origin;
     const ctx = await requireSession(req, req.nextUrl.pathname);
     if (ctx instanceof Response)
         return ctx;

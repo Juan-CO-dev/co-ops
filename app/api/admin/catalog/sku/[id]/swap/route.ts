@@ -5,11 +5,14 @@ import { jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { uuid, objectBody, token, catalogError, catalogRefusal } from "@/app/api/admin/catalog/job-http";
 import { startSkuSwap, loadLiveSwapsForItem } from "@/lib/catalog/swap-vendor";
 import { parseSwapRequest } from "@/lib/catalog/swap-shared";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 export async function POST(req: NextRequest, { params }: {
     params: Promise<{
         id: string;
     }>;
 }) {
+    const origin = assertSameOrigin(req);
+    if (origin) return origin;
     const ctx = await requireSession(req, req.nextUrl.pathname);
     if (ctx instanceof Response)
         return ctx;

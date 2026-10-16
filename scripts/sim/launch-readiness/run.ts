@@ -16,8 +16,8 @@ import { resetFixture, assertClean } from "./reset";
 import type { Catalog } from "./fixtures";
 import { startProduction, buildReceiptPath, buildAssetsFromHtml, type BuildReceipt } from "./target";
 
-export const SUITES = ["runner", "isolation", "personas", "fixtures", "opening", "ordering", "customer"] as const;
-export const FIXTURES = ["warm-history", "cold-empty", "incomplete-pack", "over-1000", "two-shop-divergent"] as const;
+export const SUITES = ["runner", "isolation", "personas", "fixtures", "opening", "ordering", "customer", "catalog"] as const;
+export const FIXTURES = ["warm-history", "cold-empty", "incomplete-pack", "over-1000", "two-shop-divergent", "catalog-isolated"] as const;
 export function parseArgs(args: string[]) {
   let suite = "runner", fixture = "cold-empty", dev = false, noRestore = false, repeat = 1, restoreOnly = false;
   for (let i = 0; i < args.length; i++) {
@@ -35,7 +35,8 @@ export function parseArgs(args: string[]) {
   if (!(SUITES as readonly string[]).includes(suite) || !(FIXTURES as readonly string[]).includes(fixture) || !Number.isSafeInteger(repeat)) throw new Error("usage");
   if (noRestore && (suite !== "runner" || restoreOnly)) throw new Error("usage");
   if (["opening", "ordering", "customer"].includes(suite) && fixture !== "cold-empty") throw new Error("usage");
-  if (suite === "customer" && dev) throw new Error("usage"); // action IDs come from the attested production build
+  if ((suite === "catalog") !== (fixture === "catalog-isolated") || (fixture === "catalog-isolated" && restoreOnly)) throw new Error("usage");
+  if (["customer", "catalog"].includes(suite) && dev) throw new Error("usage"); // release suites require attested production build
   return { suite, fixture, dev, noRestore, repeat, restoreOnly };
 }
 export const restoreFixture = resetFixture;
@@ -45,6 +46,7 @@ async function portFree() {
 function launch(args: string[], env: Record<string, string | undefined>): ChildProcess {
   const childEnv = { ...env };
   delete childEnv.SIM_PIN_TOMMY; // Node-only reconcile persona; never browser/app input.
+  delete childEnv.SIM_CATALOG_PASSWORD; // Node-only step-up control; never a child or browser input.
   // LRA_DEBUG: inherit child stdio so startup failures are visible locally (never in evidence).
   return spawn(process.execPath, args, { cwd: process.cwd(), env: { ...childEnv, NODE_ENV: env.NODE_ENV === "development" ? "development" : "production" }, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: process.env.LRA_DEBUG ? "inherit" : "ignore" });
 }
@@ -128,7 +130,7 @@ function requireSeparator() { return process.platform === "win32" ? "\\" : "/"; 
 export async function main(args = process.argv.slice(2)) {
   const runId = randomUUID();
   let options: ReturnType<typeof parseArgs>;
-  try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures|opening|ordering|customer --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>; opening, ordering and customer require cold-empty; customer requires production mode"; e.finalize([]); return 2; }
+  try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures|opening|ordering|customer|catalog --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>; opening, ordering and customer require cold-empty; catalog requires catalog-isolated; customer and catalog require production mode"; e.finalize([]); return 2; }
   const evidence = new Evidence(runId, options.fixture);
   // Heartbeat (2026-09-10): a watcher must never mistake silence for progress. Touched every 30 s while the run lives;
   // lra-watch.sh alerts when it stops moving or the pid disappears without a terminal LRA line.
@@ -146,6 +148,7 @@ export async function main(args = process.argv.slice(2)) {
     // Exercise the actual CLI while we hold the lease, BEFORE config or DB work.
     const contenderEnv = { ...process.env };
     delete contenderEnv.SIM_PIN_TOMMY;
+    delete contenderEnv.SIM_CATALOG_PASSWORD;
     const contender = spawnSync(process.execPath, ["--import", "tsx", resolve("scripts/sim/launch-readiness/run.ts"), "--suite", "runner", "--no-restore", "--dev"], { env: contenderEnv, shell: false, windowsHide: true, encoding: "utf8", timeout: 15_000 });
     if (contender.status !== 2 || !contender.stdout.includes(`owned by ${runId}`)) throw new Error("second runner was not refused by this lease");
     evidence.manifest.identity.secondRunnerRefused = true;
@@ -155,6 +158,7 @@ export async function main(args = process.argv.slice(2)) {
     const initial = loadSimEnv(process.cwd());
     if (!initial.ok) throw new Error("sim environment blocked");
     delete initial.env.SIM_PIN_TOMMY;
+    delete initial.env.SIM_CATALOG_PASSWORD;
     const parsed = parseEnv(readFileSync(resolve(".env.sim"), "utf8"));
     const pins: Record<string, string> = {};
     // Environment-only control: the closed .env.sim schema deliberately excludes Tommy.
@@ -174,6 +178,7 @@ export async function main(args = process.argv.slice(2)) {
     writeFileSync(configFile, Object.entries(parsed).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("\n"), { mode: 0o600 });
     const loaded = loadSimEnv(privateDir); if (!loaded.ok) throw new Error("sim environment blocked");
     delete loaded.env.SIM_PIN_TOMMY;
+    delete loaded.env.SIM_CATALOG_PASSWORD;
     // Runner-owned preference, never accepted from .env.sim. buildChildEnv preserves SIM_;
     // no F1 preference allowlist change is needed. Override any inherited capture location.
     const mailDir = resolve(privateDir, "mail");
@@ -224,6 +229,30 @@ export async function main(args = process.argv.slice(2)) {
       }, pins.SIM_PIN_ROSA ?? "");
       evidence.write("results.json", { status: "pass", tests: results });
       evidence.manifest.status = "pass"; evidence.manifest.reason = "fixture Node contracts passed";
+    } else if (options.suite === "catalog") {
+      const { runCatalogContracts } = await import("../catalog/catalog");
+      // These fixtures are additive synthetic identities, retired by the suite.
+      // F2's older full-reset inventory cannot delete the new append-only journals.
+      evidence.manifest.fixture = { id: "catalog-isolated", restore: "not-required" };
+      let passed = true;
+      for (let attempt = 1; attempt <= options.repeat && !interrupted; attempt++) {
+        await startServer();
+        stage = "identity";
+        evidence.manifest.identity.locations = true; evidence.manifest.identity.personas = true;
+        const catalogReport = await runCatalogContracts({ assertLease: () => assertHeld(runId),
+          verifiedServer: evidence.manifest.identity.server, pin: pins.SIM_PIN_MARCUS ?? "",
+          password: process.env.SIM_CATALOG_PASSWORD ?? "" });
+        const success = catalogReport.fails.length === 0;
+        passed &&= success;
+        const file = `catalog-contracts-${attempt}.json`;
+        evidence.write(file, catalogReport); journeyArtifacts.push(file);
+        evidence.manifest.tests.push({ id: `catalog-${attempt}`, assertionIds: catalogReport.rows.map((row: { name: string }) => row.name),
+          viewport: null, project: "node-catalog", status: success ? "passed" : "failed", attempt });
+        await stopped(server); await portFree(); server = undefined;
+      }
+      evidence.manifest.status = passed && !interrupted ? "pass" : "fail";
+      evidence.manifest.reason = passed && !interrupted ? "catalog SQL, lock and Session contracts passed" : "catalog contracts failed";
+      evidence.write("results.json", { status: evidence.manifest.status, tests: evidence.manifest.tests });
     } else if (["opening", "ordering", "customer"].includes(options.suite)) {
       // Today's opening and vendor PO are singletons. Every Node pass and viewport
       // must start from cold-empty under this SAME lease, with the app stopped.

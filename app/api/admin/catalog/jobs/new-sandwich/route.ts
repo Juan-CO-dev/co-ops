@@ -5,7 +5,10 @@ import { jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { objectBody, catalogError, catalogRefusal } from "@/app/api/admin/catalog/job-http";
 import { createNewSandwich } from "@/lib/catalog/new-sandwich";
 import { parseNewSandwichRequest } from "@/lib/catalog/new-sandwich-shared";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 export async function POST(req: NextRequest) {
+    const origin = assertSameOrigin(req);
+    if (origin) return origin;
     const ctx = await requireSession(req, req.nextUrl.pathname);
     if (ctx instanceof Response)
         return ctx;

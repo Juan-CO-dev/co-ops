@@ -3,6 +3,16 @@ import {readFileSync} from 'node:fs';
 import {SWAP_ERROR_CODES, SWAP_RPC_STATUS, swapErrorFromRpc} from '../lib/catalog/swap-shared';
 const sql=readFileSync('supabase/migrations/0265_sku_swaps.sql','utf8');
 describe('0265 contract',()=>{
+ it('pins the authored gate while allowing dated SIM and PROD stamps',()=>{
+  const valid=(source:string)=>{const lines=source.replace(/\r\n/g,'\n').split('\n');return lines[0]==='-- 0265_sku_swaps.sql'
+   && lines[1]==='-- AUTHORED 2026-10-16; FILE ONLY. Apply only after CC/Juan review.'
+   && lines.filter(line=>line.startsWith('-- APPLIED ')).every(line=>/^-- APPLIED TO (PROD|SIM) \d{4}-\d{2}-\d{2}(?: \(.*\))?$/.test(line));};
+  expect(valid(sql)).toBe(true);const [head,gate,...rest]=sql.replace(/\r\n/g,'\n').split('\n');
+  for(const target of ['SIM','PROD'])expect(valid([head,gate,`-- APPLIED TO ${target} 2026-10-17`,...rest].join('\n'))).toBe(true);
+  expect(valid(sql.replace('FILE ONLY','READY'))).toBe(false);
+  expect(valid([head,...rest].join('\n'))).toBe(false);
+  expect(valid([head,gate,'-- APPLIED TO SIM yesterday',...rest].join('\n'))).toBe(false);
+ });
  it('maps every literal refusal to the closed application list',()=>{for(const match of sql.matchAll(/swap:([a-z_]+)/g)){
   const code = match[1] as keyof typeof SWAP_RPC_STATUS;
   expect(SWAP_ERROR_CODES).toContain(code);

@@ -65,7 +65,7 @@ describe("independent shop setup", () => {
   it("reports per-day commits and refusals, and retries only the failed day independently", async () => {
     mocks.rhythm.mockImplementation(async (_actor, input) => { if (input.orderDow === 2) throw Object.assign(new Error("stale"), { code: "rhythm_pair_conflict", status: 409 }); return { id: `day-${input.orderDow}` }; });
     const result = await setUpItemAtShop(gm, { skuId: SKU, shopId: A, step: { kind: "order_days", days: [{ orderDow: 1, leadDays: 0 }, { orderDow: 2, leadDays: 1 }, { orderDow: 3, leadDays: 2 }] } });
-    expect(result).toMatchObject({ step: "order_days", ok: false, detail: { outcomes: [{ orderDow: 1, ok: true, pairId: "day-1" }, { orderDow: 2, ok: false, code: "rhythm_pair_conflict", status: 409 }, { orderDow: 3, ok: true, pairId: "day-3" }] } });
+    expect(result).toMatchObject({ step: "order_days", ok: false, detail: { outcomes: [{ orderDow: 1, ok: true, pairId: "day-1" }, { orderDow: 2, ok: false, code: "rhythm_pair_conflict", status: 409, messageKey: "admin.vendors.error.rhythm_pair_conflict" }, { orderDow: 3, ok: true, pairId: "day-3" }] } });
     mocks.rhythm.mockResolvedValueOnce({ id: "retry" });
     expect(await setUpItemAtShop(gm, { skuId: SKU, shopId: A, step: { kind: "order_days", days: [{ orderDow: 2, leadDays: 1 }] } })).toMatchObject({ ok: true });
     expect(tables.vendor_items).toHaveLength(1);
@@ -103,10 +103,24 @@ describe("independent shop setup", () => {
 });
 
 it("marks an unknown post-save failure as unconfirmed instead of claiming no line was saved", async () => {
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
   mocks.loadGuide.mockResolvedValue(null);
   mocks.createGuide.mockResolvedValue({ guideId: A, vendorId: VENDOR, name: "Guide", updatedAt: "token", sections: [] });
   mocks.saveGuide.mockRejectedValue(new Error("Read failed after save"));
   expect(await setUpItemAtShop(gm, { skuId: SKU, shopId: A, step: { kind: "guide_line", sectionId: null, newSectionName: "New" } })).toMatchObject({ ok: false, detail: { guideId: A, guideCreated: true, lineSaved: null, refreshRequired: true, code: "generic", status: 500 } });
+  expect(logged).toHaveBeenCalledWith("catalog request failed", { errorClass: "Error", message: "unexpected catalog failure" });
+  expect(JSON.stringify(logged.mock.calls)).not.toContain("Read failed after save");
+  logged.mockRestore();
+});
+
+it("logs and names an unknown per-day failure without exposing its message", async () => {
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  mocks.rhythm.mockRejectedValue(new Error("customer@example.com private SQL"));
+  const result = await setUpItemAtShop(gm, { skuId: SKU, shopId: A, step: { kind: "order_days", days: [{ orderDow: 2, leadDays: 1 }] } });
+  expect(result).toMatchObject({ ok: false, detail: { outcomes: [{ ok: false, status: 500, code: "generic", messageKey: "catalog.error.generic", refreshRequired: true }] } });
+  expect(logged).toHaveBeenCalledWith("catalog request failed", { errorClass: "Error", message: "unexpected catalog failure" });
+  expect(JSON.stringify(logged.mock.calls)).not.toContain("customer@example.com");
+  logged.mockRestore();
 });
 
 it("does not create a guide for a forged existing section when this vendor has no guide", async () => {

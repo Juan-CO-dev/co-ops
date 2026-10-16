@@ -1,10 +1,10 @@
 # Catalog Phase 4a Chunk 7 handoff
 
-Worktree: `C:\Users\conta\co-ops-astra-p4`; branch `feat/catalog-p4a`; baseline `0cb4988a`. All changes uncommitted. No fetch, push, merge, deployment, SIM or production operation. Migrations remain files only.
+Worktree: `C:\Users\conta\co-ops-astra-p4`; branch `feat/catalog-p4a`; implementation baseline `0cb4988a`. CC committed the implementation as `712a57c3` and the remaining AGENTS.md rules as `35748f42`. These describe the committed chunk-7 state; chunk-8 work starts at `35748f42` and remains uncommitted. No deployment, SIM or production operation is established by this handoff. Migrations remain files only.
 
 ## Change sets
 
-1. Chunk 6 review fixes: `2026-10-16-catalog-phase4a-chunk6-review-fixes.md` records UTF-8 repair/guards, explicit replay, request-factory lifecycle and expanded table ceilings. This is a distinct documented change set, not a commit.
+1. Chunk 6 review fixes: `2026-10-16-catalog-phase4a-chunk6-review-fixes.md` records UTF-8 repair/guards, explicit replay, request-factory lifecycle and expanded table ceilings. This documented change set was included in `712a57c3` with chunk 7.
 2. Chunk 7: job/setup/share/swap/Toast/Back HTTP adapters, scoped journal reads, route tier and ownership/refusal contracts, destructive swap audit vocabulary, translated disclosure and the concrete 4b contract below. Route details: `chunk7-routes.md`. Execution plan: `2026-10-16-catalog-phase4a-chunk7-worklog.md`.
 
 ## Concrete 4b contract
@@ -32,12 +32,12 @@ Aggie Chunk 6 P3-3: capture a recipe/product-primary closure before real 0265 ad
 
 Final checks all passed; no failing test waived:
 
-- Consolidated touched tests plus 0264/0265: **25 files / 602 tests passed**, zero failures, native exit 0 (88.83 s). Includes all new HTTP/encoding/journal/permissions tests, original parser tests, tier map, i18n, audit, location-bind, new-item replay, share/sandwich and ownership/swap migration/PGlite/equivalence tests. Log: `tmp/chunk7-focused.log`.
+- Reproducible focused evidence from Aggie's independent review at `712a57c3`: **25 files / 600 tests passed**, zero failures, exit 0. The earlier 602-test claim lacked a recorded selection and is withdrawn. Selection: `catalog-item-i18n`, `catalog-job-http-routes`, `i18n-encoding`, `location-bind-differential`, `menu-item-shop-permissions`, `new-item-pglite`, `new-item`, `recipe-versions-permissions`, `shop-owned-migration`, `sku-swaps-migration`, `sku-swaps-pglite`, `step-up-tier-map`, `swap-journal-scope`, `swap-permissions`, `swap-vendor`, `shop-owned-pglite`, `shop-owned-review-pglite`, `shop-owned-recipe-mutations-pglite`, `shop-owned-full-route-pglite`, `shop-owned-sql-equivalence`, `shop-owned-i18n`, `shop-owned-fixture`, `share`, `new-sandwich`, `swap-shared` (each under `tests/` with `.test.ts`). These are historical results, not chunk-8 results.
 - `node scripts/sql-harness-0262.mjs`: PASS (all B/J/C/W/W2/P/S/V/O sections).
 - `node scripts/sql-harness-0263.mjs`: PASS (all M1-M7 sections).
 - Full suite: **659 files passed / 1 skipped; 10,387 tests passed / 3 skipped; ZERO failures**, native exit 0 (452.09 s). Log: `tmp/chunk7-full-suite.log`.
 - TypeScript: native exit 0, zero diagnostics. The existing generated `next-env.d.ts` is present; no clean-checkout Leaflet exception is claimed. Log: `tmp/chunk7-tsc.log`.
-- `git diff --check`: PASS. HEAD remains `0cb4988a`; staged diff empty. No migration file changed. Original `tests/catalog-job-routes.test.ts` has no content diff; new HTTP tests are separate.
+- Historical `git diff --check`: PASS. The implementation is committed at `712a57c3`; AGENTS.md followed at `35748f42`. No migration file changed in chunk 7. Original `tests/catalog-job-routes.test.ts` has no content diff; new HTTP tests are separate.
 
 ```powershell
 node scripts/sql-harness-0262.mjs

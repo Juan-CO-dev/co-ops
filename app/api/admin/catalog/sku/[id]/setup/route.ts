@@ -6,11 +6,14 @@ import { jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { uuid, objectBody, catalogError, catalogRefusal } from "@/app/api/admin/catalog/job-http";
 import { setUpItemAtShop } from "@/lib/catalog/new-item";
 import { parseSetupStep } from "@/lib/catalog/new-item-shared";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 export async function POST(req: NextRequest, { params }: {
     params: Promise<{
         id: string;
     }>;
 }) {
+    const origin = assertSameOrigin(req);
+    if (origin) return origin;
     const ctx = await requireSession(req, req.nextUrl.pathname);
     if (ctx instanceof Response)
         return ctx;

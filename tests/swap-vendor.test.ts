@@ -71,6 +71,9 @@ it("normalizes, costs the real direct recipe, starts atomically and restores it"
  const saved = await startSkuSwap(actor, p.request, p.token);
  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "sku_swap.start", resourceTable: "sku_swaps", resourceId: saved.swapId }));
  expect(isDestructive("sku_swap.start")).toBe(true);
+ await expect(previewBackToNormal({ ...actor, user: { ...actor.user, role: "employee" }, level: 6 }, saved.swapId)).rejects.toMatchObject({ status: 403, code: "forbidden" });
+ await expect(previewBackToNormal({ ...actor, user: { ...actor.user, role: "social_media_mgr" } }, saved.swapId)).rejects.toMatchObject({ status: 403, code: "forbidden" });
+ await expect(previewBackToNormal({ ...actor, locations: [ID.shopB] }, saved.swapId)).rejects.toMatchObject({ status: 404, code: "swap_not_found" });
  const back = await previewBackToNormal(actor, saved.swapId);
  expect(back.goingBack).toHaveLength(1);
  expect(await endSkuSwap(actor, saved.swapId, back.token)).toMatchObject({ back: [ID.sharedRecipe], kept: [] });

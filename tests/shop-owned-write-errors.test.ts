@@ -78,6 +78,11 @@ vi.mock("@/lib/audit", () => ({ audit: async () => {} }));
 import { recipeVersionErrorFromRpc, RecipeVersionError } from "@/lib/admin/recipe-versions";
 import { menuShopErrorFromRpc, MenuShopError } from "@/lib/admin/menu-item-shop";
 
+it("maps the 0265 pre-schema stale recipe preview refusal to HTTP 409", () => {
+  expect(() => recipeVersionErrorFromRpc("recipe_version:dependencies_changed", "P0001"))
+    .toThrowError(expect.objectContaining({ status: 409, code: "dependencies_changed" }));
+});
+
 it.each([
   ["recipe versions", recipeVersionErrorFromRpc, RecipeVersionError],
   ["menu settings", menuShopErrorFromRpc, MenuShopError],

@@ -12,7 +12,7 @@ vi.mock("@/lib/admin/toast-map",async importOriginal=>({...await importOriginal<
 const id = "11111111-1111-4111-8111-111111111111";
 const shop = "22222222-2222-4222-8222-222222222222";
 const actor = { level: 8, locations: [shop], user: { id, role: "moo", language: "en" } };
-const req = (body: unknown, path = "jobs/new-item") => new NextRequest(`http://localhost/api/admin/catalog/${path}`, { method: "POST", body: JSON.stringify(body) });
+const req = (body: unknown, path = "jobs/new-item", origin = "http://localhost") => new NextRequest(`http://localhost/api/admin/catalog/${path}`, { method: "POST", body: JSON.stringify(body), headers: { origin } });
 beforeEach(() => { vi.clearAllMocks(); mocks.session.mockResolvedValue(actor); mocks.step.mockReturnValue({ ok: true }); });
 describe("catalog jobs HTTP contracts", () => {
   it("requires a session before a job can write", async () => {
@@ -78,6 +78,17 @@ const endpoints = [
  ["menu-item/[id]/toast", "A"], ["sku/[id]/swap", "E"], ["sku/[id]/swap/preview", null],
  ["swaps/[swapId]/back-to-normal", "E"], ["swaps/[swapId]/back-to-normal/preview", null],
 ] as const;
+const writeEndpoints = endpoints.filter((entry) => entry[1] !== null);
+describe.each(writeEndpoints)("%s same-origin gate", (path) => {
+ it("rejects cross-site before session or body work", async () => {
+  const route = await routeImports[path]();
+  const response = await route.POST(req({}, path, "https://attacker.invalid"), {params:Promise.resolve({id,swapId:id})});
+  expect(response.status).toBe(403);
+  expect(await response.json()).toEqual({error:"bad_origin"});
+  expect(mocks.session).not.toHaveBeenCalled();
+  expect(mocks.step).not.toHaveBeenCalled();
+ });
+});
 describe.each(endpoints)("%s boundary", (path, tier) => {
  const invoke = async (body: unknown) => {
   const route = await routeImports[path]();
@@ -123,8 +134,12 @@ describe("named route errors", () => {
  });
  it("does not turn an arbitrary status/code object into a public error",async()=>{
   const {catalogError}=await import("../app/api/admin/catalog/job-http");
+  const logged=vi.spyOn(console,"error").mockImplementation(()=>{});
   const response=catalogError(actor as never,{status:400,code:"private",message:"secret"});
   expect(response.status).toBe(500); expect(await response.json()).toMatchObject({code:"generic"});
+  expect(logged).toHaveBeenCalledWith("catalog request failed",{errorClass:"Object",message:"unexpected catalog failure"});
+  expect(JSON.stringify(logged.mock.calls)).not.toContain("secret");
+  logged.mockRestore();
  });
 });
 
@@ -201,6 +216,23 @@ describe("positive route contracts",()=>{
   const response=await POST(req({shopId:shop,step:{kind:"guide_line",sectionId:id,newSectionName:null}}),{params:Promise.resolve({id})});
   expect(await response.json()).toMatchObject({...result,messageKey:"catalog.setup.guide_unconfirmed",message:expect.any(String)});
  });
+ it("returns a message key for every per-day setup refusal",async()=>{
+  const {POST}=await routeImports["sku/[id]/setup"]();
+  mocks.extra.setup.mockResolvedValue({step:"order_days",ok:false,detail:{outcomes:[{orderDow:1,leadDays:2,ok:false,status:409,code:"rhythm_pair_conflict",refreshRequired:false,messageKey:"admin.vendors.error.rhythm_pair_conflict"}]}});
+  const response=await POST(req({shopId:shop,step:{kind:"order_days",days:[{orderDow:1,leadDays:2}]}},"sku/[id]/setup"),{params:Promise.resolve({id})});
+  expect(await response.json()).toMatchObject({detail:{outcomes:[{code:"rhythm_pair_conflict",messageKey:"admin.vendors.error.rhythm_pair_conflict"}]}});
+ });
+});
+
+it("bounds UUID dependency lists",async()=>{
+ const {uuidList}=await import("../app/api/admin/catalog/job-http");
+ expect(uuidList(Array.from({length:500},()=>id))).toBe(true);
+ expect(uuidList(Array.from({length:501},()=>id))).toBe(false);
+ const {POST}=await routeImports["recipe/[id]/share"]();
+ const response=await POST(req({expectedOwner:shop,previewToken:"token",shareItemIds:Array.from({length:501},()=>id),shareSkuIds:[]},"recipe/[id]/share"),{params:Promise.resolve({id})});
+ expect(response.status).toBe(400);
+ expect(await response.json()).toMatchObject({code:"invalid_payload"});
+ expect(mocks.share).not.toHaveBeenCalled();
 });
 
 describe("HTTP namespace mapping",()=>{
@@ -234,6 +266,6 @@ it("localizes malformed JSON without exposing parser details",async()=>{
  const {POST}=await routeImports["jobs/new-item"]();
  const {serverT}=await import("@/lib/i18n/server");
  mocks.session.mockResolvedValue({...actor,user:{...actor.user,language:"es"}});
- const response=await POST(new NextRequest("http://localhost/api/admin/catalog/jobs/new-item",{method:"POST",body:"{"}));
+ const response=await POST(new NextRequest("http://localhost/api/admin/catalog/jobs/new-item",{method:"POST",body:"{",headers:{origin:"http://localhost"}}));
  expect(response.status).toBe(400);expect(await response.json()).toMatchObject({code:"invalid_json",error:serverT("es","catalog.error.invalid_json")});
 });
