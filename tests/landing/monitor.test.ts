@@ -123,3 +123,10 @@ it.each(['timeout', 'host-drift'])('pauses landing %s without an HTTP response s
   expect(report).toMatchObject({ ok: false, pauseRequired: true });
  }
 });
+
+it.each([400,401,403,404,429])('ordinary order HTTP %s needs review, not pause', async status => {
+ const order = {...target,name:'order-a',branchId:'expected'};
+ const result = await probe(order,{...rule,sha256:digest(ok)},async()=>response('ordinary client error',status));
+ const report = await monitor([order],{}, {probe:async()=>result});
+ expect(report).toMatchObject({ok:false,reviewRequired:true,pauseRequired:false});
+});

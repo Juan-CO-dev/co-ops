@@ -12,13 +12,21 @@ export function summarizeRun(report) {
   return {performance:report.categories.performance.score,
     lcp:report.audits['largest-contentful-paint'].numericValue,
     tbt:report.audits['total-blocking-time'].numericValue,
+    // Lighthouse's entity-attributed blocking, distinct from page-wide TBT.
+    thirdPartyBlockingTime:report.audits['third-party-summary']?.details?.summary?.wastedMs ?? null,
     firstParty,thirdParty,total:firstParty+thirdParty};
 }
 export function checkFirstPartyRuns(reports) {
   if(reports.length!==3)return ['three-cold-runs-required'];
   try {
     const runs=reports.map(summarizeRun);
-    return runs.some(run=>run.firstParty>500000)?['first-party-bytes']:[];
+    const failures=runs.some(run=>run.firstParty>500000)?['first-party-bytes']:[];
+    const median=key=>runs.map(run=>run[key]).sort((a,b)=>a-b)[1];
+    for(const key of ['performance','lcp','tbt']) if(runs.some(run=>!Number.isFinite(run[key]))) return ['incomplete-run'];
+    if(median('performance')<0.85)failures.push('performance');
+    if(median('lcp')>=2500)failures.push('lcp');
+    if(median('tbt')>200)failures.push('tbt');
+    return failures;
   } catch {return ['incomplete-run'];}
 }
 export function checkConsentRuns(reports,state,{blockPixel=false}={}) {

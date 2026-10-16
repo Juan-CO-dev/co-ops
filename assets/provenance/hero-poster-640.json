@@ -3,8 +3,8 @@
   "sourceId": "014",
   "publicPath": "/media/crunchy-boi-014-640-60b196bce4cb.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:014",
   "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
   "sha256": "60b196bce4cb79d4b5232d0a07085a07770b825aad18bd97861f3383dc9ffb15",
   "bytes": 33496,
@@ -19,6 +19,7 @@
     5560
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],
@@ -26,7 +27,7 @@
   "tool": {
     "sharp": "0.34.5",
     "vips": "8.17.3",
-    "scriptSha256": "efbce1906b7142ac158834d1233f527249d1c8c9608908547947ec77acbb845d"
+    "scriptSha256": "57b17a8a9d1be36de339c2fbd2ce61615140414c1883b250af7159867725b29e"
   },
   "command": "node scripts/assets/export-hero-sizes.mjs"
 }

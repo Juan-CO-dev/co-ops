@@ -26,3 +26,18 @@ it('refuses an accepted benchmark with an unfinished or missing real Pixel',()=>
   Object.assign(measured.audits['network-requests'].details.items[1]!,{finished:false});
   expect(checkConsentRuns([measured,measured,measured],'accepted')).toEqual(['pixel-transfer-unmeasured']);
 });
+
+it.each(['performance','lcp','tbt'])('rejects a first-party %s regression', metric => {
+ const report=fixture();
+ if(metric==='performance') report.categories.performance.score=0.84;
+ if(metric==='lcp') report.audits['largest-contentful-paint'].numericValue=2500;
+ if(metric==='tbt') report.audits['total-blocking-time'].numericValue=201;
+ expect(checkFirstPartyRuns([report,report,report])).toContain(metric);
+});
+
+it('reports measured third-party blocking separately, never inventing a missing attribution', () => {
+ const report=fixture();
+ expect(summarizeRun(report).thirdPartyBlockingTime).toBeNull();
+ const attributed={...report,audits:{...report.audits,'third-party-summary':{details:{summary:{wastedMs:158}}}}};
+ expect(summarizeRun(attributed).thirdPartyBlockingTime).toBe(158);
+});

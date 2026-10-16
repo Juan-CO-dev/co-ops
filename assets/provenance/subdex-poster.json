@@ -5,7 +5,7 @@
   "sourcePath": "assets/work/subdex-source-frame.png",
   "sourceSha256": "f1321be97625c1484cc0c41f40c22f23dd2cb44c19be3925cf80c8c72236ba7f",
   "sourceId": "subdex-frame-17-5",
-  "mode": "crop-resize-only",
+  "mode": "resize-only",
   "quality": 85,
   "sha256": "4f35ab4634873d62b3dcf2e1595c1fb10486796671790c40d1a06a0c72e8369d",
   "width": 720,

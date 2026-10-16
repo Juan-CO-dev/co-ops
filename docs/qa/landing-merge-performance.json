@@ -1,0 +1,113 @@
+{
+  "base": "21eeedde",
+  "branch": "feat/landing-p1",
+  "workingTree": "uncommitted",
+  "command": "npm.cmd run perf:ci",
+  "exitCode": 0,
+  "states": [
+    {
+      "state": "unset",
+      "measurement": "first-party-only-pixel-blocked",
+      "thirdPartyCostMeasured": false,
+      "failures": [],
+      "runs": [
+        {
+          "performance": 0.96,
+          "lcp": 2554.0625,
+          "tbt": 98,
+          "thirdPartyBlockingTime": null,
+          "firstParty": 261068,
+          "thirdParty": 0,
+          "total": 261068
+        },
+        {
+          "performance": 0.98,
+          "lcp": 2346.2949999999996,
+          "tbt": 59.5,
+          "thirdPartyBlockingTime": null,
+          "firstParty": 261068,
+          "thirdParty": 0,
+          "total": 261068
+        },
+        {
+          "performance": 0.97,
+          "lcp": 2439.4525,
+          "tbt": 98,
+          "thirdPartyBlockingTime": null,
+          "firstParty": 261068,
+          "thirdParty": 0,
+          "total": 261068
+        }
+      ],
+      "medians": {
+        "performance": 0.97,
+        "lcp": 2439.4525,
+        "tbt": 98
+      },
+      "maxFirstPartyBytes": 261068,
+      "rawDirectory": "tmp/landing-performance/2026-10-16T18-02-00.778Z-merge-5290f71b/raw-unset",
+      "rawLhrCount": 3,
+      "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "lighthouseVersion": "12.6.1",
+      "blockedUrlPatterns": [
+        "*://connect.facebook.net/*",
+        "*://www.facebook.com/tr/*"
+      ]
+    },
+    {
+      "state": "accepted",
+      "measurement": "first-party-only-pixel-blocked",
+      "thirdPartyCostMeasured": false,
+      "failures": [],
+      "runs": [
+        {
+          "performance": 0.97,
+          "lcp": 2544.222,
+          "tbt": 51.5,
+          "thirdPartyBlockingTime": null,
+          "firstParty": 261068,
+          "thirdParty": 0,
+          "total": 261068
+        },
+        {
+          "performance": 0.98,
+          "lcp": 2355.6175,
+          "tbt": 67,
+          "thirdPartyBlockingTime": null,
+          "firstParty": 261068,
+          "thirdParty": 0,
+          "total": 261068
+        },
+        {
+          "performance": 0.98,
+          "lcp": 2348.1525,
+          "tbt": 55,
+          "thirdPartyBlockingTime": null,
+          "firstParty": 261068,
+          "thirdParty": 0,
+          "total": 261068
+        }
+      ],
+      "medians": {
+        "performance": 0.98,
+        "lcp": 2355.6175,
+        "tbt": 55
+      },
+      "maxFirstPartyBytes": 261068,
+      "rawDirectory": "tmp/landing-performance/2026-10-16T18-02-00.778Z-merge-5290f71b/raw-accepted",
+      "rawLhrCount": 3,
+      "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "lighthouseVersion": "12.6.1",
+      "blockedUrlPatterns": [
+        "*://connect.facebook.net/*",
+        "*://www.facebook.com/tr/*"
+      ]
+    }
+  ],
+  "launch": {
+    "command": "npm.cmd run perf:launch",
+    "exitCode": 1,
+    "status": "unmeasured",
+    "reason": "HTTPS preview URL not supplied; LANDING_PERF_URL required"
+  }
+}

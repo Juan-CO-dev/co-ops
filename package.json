@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:links": "tsx tests/live/landing-links.probe.ts",
+    "perf:launch": "node scripts/landing/perf-ci.mjs --launch",
     "perf:ci": "node scripts/landing/perf-ci.mjs",
     "assets:check": "node scripts/assets/inventory.mjs"
   },

@@ -3,8 +3,8 @@
   "sourceId": "047",
   "publicPath": "/media/vesuvio-lineup-047-43c31e4810ad.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_047.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:047",
   "sourceSha256": "6bc057e4df8c12d0b2ce08b83bc71435ea409f164d40372d8faabe6ec55b5c9c",
   "sha256": "43c31e4810addc1825202cab13d937529235f5bc15b49133fbb4ba1d071cea35",
   "bytes": 93672,
@@ -19,6 +19,7 @@
     6000
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],

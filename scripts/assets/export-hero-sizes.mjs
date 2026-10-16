@@ -17,7 +17,7 @@ for(const width of [320,640,960]) {
  if(dimensions.width!==width || bytes.length>100000)throw Error('Hero dimensions/budget failed');
  const hash=createHash('sha256').update(bytes).digest('hex');
  const publicPath=`/media/crunchy-boi-014-${width}-${hash.slice(0,12)}.webp`;
- const record={id:`hero-poster-${width}`,sourceId:'014',publicPath,classification:'real-photo',mode:'crop-resize-only',sourcePath:source.path,sourceSha256:source.sha256,sha256:hash,bytes:bytes.length,maxBytes:100000,width:dimensions.width,height:dimensions.height,sidecar:`assets/provenance/hero-poster-${width}.json`,crop:[0,0,metadata.width,metadata.height],steps:['full-frame uniform resize','WebP encode; metadata stripped'],quality,tool:{sharp:sharp.versions.sharp,vips:sharp.versions.vips,scriptSha256:sha256('scripts/assets/export-hero-sizes.mjs')},command:'node scripts/assets/export-hero-sizes.mjs'};
+ const record={id:`hero-poster-${width}`,sourceId:'014',publicPath,classification:'real-photo',mode:'resize-only',sourcePath:'source:014',sourceSha256:source.sha256,sha256:hash,bytes:bytes.length,maxBytes:100000,width:dimensions.width,height:dimensions.height,sidecar:`assets/provenance/hero-poster-${width}.json`,crop:[0,0,metadata.width,metadata.height],steps:['EXIF auto-orientation (.rotate())','full-frame uniform resize','WebP encode; metadata stripped'],quality,tool:{sharp:sharp.versions.sharp,vips:sharp.versions.vips,scriptSha256:sha256('scripts/assets/export-hero-sizes.mjs')},command:'node scripts/assets/export-hero-sizes.mjs'};
  records.push({record,bytes});
 }
 if(sha256(source.path)!==source.sha256)throw Error('Original source changed');

@@ -3,8 +3,8 @@
   "sourceId": "005",
   "publicPath": "/media/hot-pants-lineup-005-480-343abd691c3f.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_005.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:005",
   "sourceSha256": "8509a69b5f513985e2b55f4f01a3cceec8f50c1346dcb6e328c825f882a56e8b",
   "sha256": "343abd691c3f1244e379019318638ceade003e85c304bad08892aa269c6ee2f6",
   "bytes": 28774,
@@ -19,6 +19,7 @@
     5302
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],

@@ -3,8 +3,8 @@
   "sourceId": "014",
   "publicPath": "/media/crunchy-boi-014-3566a724066c.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:014",
   "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
   "sha256": "3566a724066c84283bbda344aeea78cf90e8115398b39196bea1f4b7c04b0463",
   "bytes": 44380,
@@ -19,6 +19,7 @@
     5560
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],

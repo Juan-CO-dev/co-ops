@@ -3,8 +3,8 @@
   "sourceId": "011",
   "publicPath": "/media/teamster-lineup-011-480-986e5e108a02.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_011.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:011",
   "sourceSha256": "c75a446a8d1769462a3cae0bcdf60b7b77c2550420919f535ed77921de21d9e1",
   "sha256": "986e5e108a025791e2defa4cde783413611c24ba5ee1bd812415d5ff4b4894e0",
   "bytes": 15928,
@@ -19,6 +19,7 @@
     5852
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],

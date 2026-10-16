@@ -211,5 +211,22 @@
       },
       "evidence": "Existing approved AI-DRAWN SUBDEX source and Chunk D inspected cut; frame extraction only, no new generation; final phone/timecode acceptance remains open"
     }
+  ],
+  "externalSources": [
+    {
+      "id": "hero-spin-original",
+      "path": "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+      "sha256": "ebb277e24a3d8e7bc71b90081931af8d959680cca5f585c22173270b266c4127"
+    },
+    {
+      "id": "wordmark-original",
+      "path": "C:/Users/conta/co-3d/logo-pack/vector/co-wordmark.svg",
+      "sha256": "1170f72dc7e96e3e3f5910870023a71624ab08b50d1ff37c7af0ff53eabb2a45"
+    },
+    {
+      "id": "subdex-video-original",
+      "path": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
+      "sha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82"
+    }
   ]
 }

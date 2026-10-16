@@ -3,8 +3,8 @@
   "sourceId": "029",
   "publicPath": "/media/never-been-cheddar-lineup-029-480-4fc09dc6adbe.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_029.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:029",
   "sourceSha256": "d82d4c965f29c276547ff8ece9df8e7cc8f3d2c186ce73bb032e0d02436004a2",
   "sha256": "4fc09dc6adbeb16a6e8beffac7b49a167497d00735a425cc74841b34d2dc7df4",
   "bytes": 15734,
@@ -19,6 +19,7 @@
     6000
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],

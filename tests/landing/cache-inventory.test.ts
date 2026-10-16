@@ -30,7 +30,7 @@ it('every public media file has provenance; every photo names a confirmed eligib
       expect(source?.hold).toBeNull();
       expect(source?.confirmedIds).toContain(source?.representative);
       expect(source?.sha256).toBe(entry.sourceSha256);
-      expect(source?.path).toBe(entry.sourcePath);
+      expect(entry.sourcePath).toBe(`source:${source?.representative}`);
     }
   }
 });

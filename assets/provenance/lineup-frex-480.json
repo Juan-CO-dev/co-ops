@@ -3,8 +3,8 @@
   "sourceId": "001",
   "publicPath": "/media/frex-lineup-001-480-517d10fd7598.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_001.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:001",
   "sourceSha256": "ccdb8337d0e48f41a3194e1964595b2640557c9159199d3589fa6008b61342a3",
   "sha256": "517d10fd7598bdb6fe5f4ce421fe8065179cea6fcdd8678749e7cea395958ffb",
   "bytes": 19790,
@@ -19,6 +19,7 @@
     6000
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],

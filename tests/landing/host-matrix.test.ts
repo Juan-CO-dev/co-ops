@@ -1,3 +1,6 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import NotFound from '@/app/not-found';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { classifyLandingHost, parseAuthority, isLandingAsset, landingPathDecision } from '@/lib/landing/host-shared';
@@ -38,9 +41,14 @@ it('a mistakenly allowlisted staff canonical origin never enables landing redire
   expect(classifyLandingHost(headers('eat.example.test'),{...env,LANDING_HOSTS:'eat.example.test,staff.example.test',SITE_ORIGIN:'https://staff.example.test'})).toBe('staff');
 });
 
-it('permits the actual shared not-found wordmark on the landing host', () => {
-  const source = readFileSync('app/not-found.tsx', 'utf8');
-  const image = source.match(/<img src="([^"]+)"/);
+it.each(['app/not-found.tsx','app/error.tsx','app/global-error.tsx'])('permits shared boundary assets: %s', file => {
+  const source = readFileSync(file, 'utf8');
+  const image = source.match(/<img\b[^>]*\bsrc="([^"]+)"/);
   expect(image).not.toBeNull();
   expect(landingPathDecision(image![1]!, new URLSearchParams())).toBe('allow');
+});
+
+it('the serialized not-found fallback does not preload a hidden wordmark', () => {
+ const html=renderToStaticMarkup(createElement(NotFound));
+ expect(html).not.toMatch(/<link[^>]+as="image"/);
 });

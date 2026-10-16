@@ -23,10 +23,11 @@ export function safeOutput(root, relative) {
 export const requiresRasterDerivation = e => e.classification === 'real-photo' || /^\/media\/.*\.(webp|png|jpe?g)$/i.test(e.publicPath ?? '');
 export function validateEntry(e) {
  for (const k of ['id','publicPath','sourcePath','sidecar']) if(typeof e[k]!=='string'||!e[k]) throw new Error('Missing '+k);
+ if (/^(?:[A-Za-z]:[\\/]|[\\/])/.test(e.sourcePath)) throw Error('Absolute source path');
  for (const k of ['sourceSha256','sha256']) if (!/^[a-f0-9]{64}$/.test(e[k]??'')) throw new Error('Missing hash');
  if (!['real-photo','real-edited','drawn','brand'].includes(e.classification)) throw new Error('Unknown provenance');
  if ((requiresRasterDerivation(e) || e.classification === 'real-edited') && (typeof e.sourceId!=='string'||!e.sourceId)) throw new Error('Missing photo source identity');
- if (requiresRasterDerivation(e) && (e.mode !== 'crop-resize-only' || !Number.isInteger(e.quality) || e.quality < 1 || e.quality > 100)) throw new Error('Missing crop-resize-only derivation');
+ if (requiresRasterDerivation(e) && (e.mode !== 'resize-only' || !Number.isInteger(e.quality) || e.quality < 1 || e.quality > 100)) throw new Error('Missing resize-only derivation');
  if (!/^\/(media|brand)\/[a-z0-9.-]+$/.test(e.publicPath)) throw new Error('Invalid public path');
  const ceiling=/\.(mp4|webm)$/.test(e.publicPath)?1500000:e.classification==='brand'?500000:100000;
  if (![e.bytes,e.maxBytes,e.width,e.height].every(n=>Number.isInteger(n)&&n>0)||e.bytes>e.maxBytes||e.maxBytes>ceiling) throw new Error('Invalid dimensions or oversized asset');
@@ -47,8 +48,10 @@ export async function checkAssets(root, {sources=false}={}) {
   if(sha256(file)!==e.sha256 || statSync(file).size!==e.bytes) throw new Error('Export hash/size changed');
   const record=JSON.parse(readFileSync(side,'utf8'));
   if(record.sourceSha256!==e.sourceSha256 || record.sha256!==e.sha256 || record.classification!==e.classification || record.sourceId!==e.sourceId || record.mode!==e.mode || record.quality!==e.quality) throw new Error('Sidecar mismatch');
-  if(e.sourceId){const src=approvedSource(manifest,e.sourceId,e.classification);if(src.path!==e.sourcePath||src.sha256!==e.sourceSha256)throw new Error('Source identity mismatch');}
-  const sourcePath=path.resolve(root,e.sourcePath);
+  if(e.sourceId){const src=approvedSource(manifest,e.sourceId,e.classification);if((e.sourcePath!==`source:${e.sourceId}` && src.path!==e.sourcePath)||src.sha256!==e.sourceSha256)throw new Error('Source identity mismatch');}
+  const sourceRef=e.sourcePath.startsWith('source:') ? (e.sourceId ? approvedSource(manifest,e.sourceId,e.classification).path : manifest.externalSources?.find(source=>`source:${source.id}`===e.sourcePath)?.path) : e.sourcePath;
+  if(!sourceRef)throw Error('Unknown source reference');
+  const sourcePath=path.resolve(root,sourceRef);
   if(sources && sha256(sourcePath)!==e.sourceSha256) throw new Error('Original source changed');
   if(sources && requiresRasterDerivation(e)) {
    const {default:sharp}=await import('sharp');

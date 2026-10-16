@@ -3,8 +3,8 @@
   "sourceId": "040",
   "publicPath": "/media/french-dip-lineup-040-480-06427ec29381.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_040.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:040",
   "sourceSha256": "0fb2b11906fab361ad082a6011aaef7aab7092ce2b88377ad54d612979aecfbc",
   "sha256": "06427ec2938168b05c60d926d6e3e1e3daa14c9437b4d0c9bcf5f1b157f72c02",
   "bytes": 45858,
@@ -19,6 +19,7 @@
     6000
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],

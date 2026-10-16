@@ -27,7 +27,7 @@ describe('approved landing lineup', () => {
       const asset = manifest.media.find((m: {publicPath:string}) => m.publicPath === image);
       expect(asset.sourceId).toBe(product.sourceId);
       expect(asset.classification).toBe('real-photo');
-      expect(asset.mode).toBe('crop-resize-only');
+      expect(asset.mode).toBe('resize-only');
       expect(asset.bytes).toBeLessThanOrEqual(100000);
       expect(product).not.toHaveProperty('ingredients');
       }

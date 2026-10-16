@@ -1,6 +1,6 @@
 # Landing final fix round - result
 
-2026-10-16. Branch `feat/landing-p1`, HEAD `9aeb73a1`; dedicated clone `C:/Users/conta/co-ops-landing`. All final-round changes are UNCOMMITTED. No push, merge, deploy, environment-file or production-data change. Migration 0273 is unchanged and file-only.
+Custody (2026-10-16): branch `feat/landing-p1`, HEAD/base `21eeedde`, dedicated clone `C:/Users/conta/co-ops-landing`; clean before this round. Only this merge-gate/P3 round is UNCOMMITTED. Earlier rounds are committed. No push, merge, deploy, environment change or production write; 0273 remains file-only. Current evidence: [merge-gate result](landing-merge-gate-result.md). The results below describe the historical round, not the current diff.
 
 ## Outcome
 

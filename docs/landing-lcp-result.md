@@ -1,6 +1,6 @@
 # Landing LCP round — implementation and evidence
 
-Branch: `feat/landing-p1` at `c8563eb8`. Worktree: `C:/Users/conta/co-ops-landing`. All changes are uncommitted. CC approved the plan with the first-paint investigation first. No push, merge, deployment, environment-file change, or migration application; 0273 remains file-only. Final code review belongs to CC.
+Custody (2026-10-16): branch `feat/landing-p1`, HEAD/base `21eeedde`, dedicated clone `C:/Users/conta/co-ops-landing`; clean before this round. Only this merge-gate/P3 round is UNCOMMITTED. Earlier rounds are committed. No push, merge, deploy, environment change or production write; 0273 remains file-only. Current evidence: [merge-gate result](landing-merge-gate-result.md). The results below describe the historical round, not the current diff.
 
 ## What changed
 

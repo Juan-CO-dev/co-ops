@@ -104,3 +104,10 @@ for (const language of ['en', 'es'] as const) {
     }
   }
 }
+
+test('only the hero receives an image preload on the full page', async ({page}) => {
+ await page.goto('/');
+ const hints=page.locator('link[rel="preload"][as="image"]');
+ await expect(hints).toHaveCount(1);
+ await expect(hints).toHaveAttribute('imagesrcset', /crunchy-boi-014/);
+});

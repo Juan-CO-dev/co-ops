@@ -45,7 +45,10 @@ jobs:
       - run: npx playwright test lineup.spec.ts tracking.spec.ts --repeat-each=2
         env:
           LANDING_E2E_USE_BUILD: "1"
-      - run: npm run perf:ci
+      # Merge gate: unset + accepted with Pixel blocked in Lighthouse only.
+      # Real HTTPS Pixel measurement is the separate release/spend gate.
+      - name: First-party landing merge budgets
+        run: npm run perf:ci
       - uses: actions/upload-artifact@v6
         if: always()
         with:

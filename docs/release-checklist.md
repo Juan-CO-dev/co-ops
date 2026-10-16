@@ -1,15 +1,15 @@
 # Landing release checklist
 
-Release status: PREPARATION, NOT APPROVED FOR SPEND. Base 814e3a30; work remains uncommitted on feat/landing-p1. Migration 0273 is file-only. CC reviews and commits; Juan owns production merge and spend decisions.
+Custody (2026-10-16): branch `feat/landing-p1`, HEAD/base `21eeedde`, dedicated clone `C:/Users/conta/co-ops-landing`; clean before this round. Only this merge-gate/P3 round is UNCOMMITTED. Earlier rounds are committed. No push, merge, deploy, environment change or production write; 0273 remains file-only. Current evidence: [merge-gate result](landing-merge-gate-result.md). Release status: PREPARATION, NOT APPROVED FOR SPEND.
 
 ## Local release packet
 
-- [ ] CC reviews separate chunk-C ruling changes, then Chunk E; incorporate parallel Aggie chunk-D findings when received.
+- [ ] CC reviews the uncommitted merge-gate/P3 diff against 21eeedde and its verification report; reconcile it with Aggie's supplied 21eeedde review.
 - [ ] Landing tests and full Vitest suite --maxWorkers=3: zero failures, actual totals in docs/qa/phase1.md.
 - [ ] tsc and production build pass.
 - [ ] Chromium + WebKit browser suite passes; lineup repeats three times, lineup/tracking repeat twice. Record decoder skips separately.
 - [ ] `node scripts/assets/inventory.mjs --sources` re-hashes original masters and re-derives photo outputs. CI only checks manifest/outputs because original masters are local-only.
-- [ ] Lighthouse three cold runs for each consent state, all reports retained; consented median Performance >=85, Accessibility >=95, LCP <2500ms, CLS <=0.1, TBT <=200ms. Registry failure is NOT a score.
+- [ ] MERGE / CI: `npm run perf:ci` passes three cold runs each for UNSET and ACCEPTED with Pixel blocked by Lighthouse only. Unchanged medians: Performance >=85, Accessibility >=95, LCP <2500ms, CLS <=0.1, TBT <=200ms; first-party <=500,000 bytes in every run. Evidence lives in unique per-invocation directories under `tmp/landing-performance/`. Registry failure is NOT a score.
 - [ ] Initial compressed transfer <=500KB, LCP critical <=250KB, initial JS <=200KB, lazy media after full scroll <=5MB. Repeat consented with real Meta traffic before spend.
 
 ## Content and device approval
@@ -30,6 +30,8 @@ Release status: PREPARATION, NOT APPROVED FOR SPEND. Base 814e3a30; work remains
 - [ ] Production indexing decision reviewed: current code remains noindex; do not infer that setting SITE_ORIGIN enables indexing.
 
 ## Paid activation gates
+
+- [ ] LAUNCH (not CI): set process-local `LANDING_PERF_URL` to the actual HTTPS preview and run `npm run perf:launch`. Three accepted-consent cold runs with real Pixel traffic; report performance, LCP, total TBT, third-party blocking attribution and bytes to Juan before paid spend. Require completed real SDK traffic; missing/unfinished traffic is unmeasured, never zero cost. Preserve raw LHRs and record revision/URL/date. No budget thresholds are loosened.
 
 - [ ] Pete verifies Meta domain, pixel allowed host and AEM; records Test Events for PageView/ViewContent/Lead/custom OrderClick/CateringClick and OrderClick conversion for CRAVE/RETARGET.
 - [ ] Record PIXEL-ONLY or PIXEL+CAPI. Pixel proof and real consented performance mandatory. CAPI absence alone does not block verified pixel-only launch.

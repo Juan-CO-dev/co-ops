@@ -3,8 +3,8 @@
   "sourceId": "033",
   "publicPath": "/media/turkey-caesar-lineup-033-650f5a6e02b4.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_033.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:033",
   "sourceSha256": "679a5d4ecd7070ce0a7bc60e65ec141953158754a72fa7e4b2cd2d50d3f7415a",
   "sha256": "650f5a6e02b47c5514c6bfe4e2838906d89835929eaa2ed6f6a2c007481b8a4a",
   "bytes": 94980,
@@ -19,6 +19,7 @@
     6000
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],

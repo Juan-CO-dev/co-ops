@@ -20,3 +20,25 @@ it('still refuses an unset run requesting the Pixel',()=>{
  const report=blocked();
  expect(checkConsentRuns([report,report,report],'unset',{blockPixel:true})).toEqual(['unexpected-third-party-request']);
 });
+
+it('rejects pixel blocking outside the named measurement harness', async () => {
+ const {createRequire}=await import('node:module');
+ const require=createRequire(import.meta.url);
+ const old={...process.env};
+ try {
+  process.env.LANDING_PERF_BLOCK_PIXEL='1';
+  delete process.env.LANDING_PERF_HARNESS;
+  delete require.cache[require.resolve('../../lighthouserc.cjs')];
+  expect(()=>require('../../lighthouserc.cjs')).toThrow('measurement harness');
+ } finally {process.env=old;delete require.cache[require.resolve('../../lighthouserc.cjs')];}
+});
+
+it('keeps the blocking switch outside all shipped application code', async () => {
+ const {readdirSync,readFileSync}=await import('node:fs');
+ for(const dir of ['app','components','lib']) {
+  for(const file of readdirSync(dir,{recursive:true}) as string[]) {
+   if(/\.(?:tsx?|[cm]?js)$/.test(file)) expect(readFileSync(`${dir}/${file}`,'utf8')).not.toContain('LANDING_PERF_BLOCK_PIXEL');
+  }
+ }
+ for(const file of ['proxy.ts','next.config.ts','instrumentation.ts']) expect(readFileSync(file,'utf8')).not.toContain('LANDING_PERF_BLOCK_PIXEL');
+});

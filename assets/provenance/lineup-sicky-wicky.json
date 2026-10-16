@@ -3,8 +3,8 @@
   "sourceId": "024",
   "publicPath": "/media/sicky-wicky-lineup-024-918d9cc75ec4.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_024.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:024",
   "sourceSha256": "4d820beb14edf64d274b2e559fe6de0b57cb619555380f3e73eee97a5982d739",
   "sha256": "918d9cc75ec408bb343e7b55683e9eec8475c6128326831d06ef9fb0e3ae4058",
   "bytes": 33098,
@@ -19,6 +19,7 @@
     6000
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],

@@ -14,7 +14,7 @@ describe('landing asset provenance', () => {
     const {default:sharp} = await import('sharp');
     for (const width of [320,640,960]) {
       const entry = manifest.media.find((entry: {id:string}) => entry.id === `hero-poster-${width}`);
-      expect(entry).toMatchObject({sourceId:'014',classification:'real-photo',mode:'crop-resize-only',sourceSha256:original.sourceSha256,crop:original.crop,width});
+      expect(entry).toMatchObject({sourceId:'014',classification:'real-photo',mode:'resize-only',sourceSha256:original.sourceSha256,crop:original.crop,width});
       const bytes = readFileSync('public' + entry.publicPath);
       const meta = await sharp(bytes).metadata();
       expect(meta.width).toBe(width);
@@ -53,15 +53,17 @@ describe('landing asset provenance', () => {
     for (const p of ['../escape.webp','C:/escape.webp','/escape.webp','public/../../escape.webp']) expect(() => tools.safeOutput(process.cwd(),p)).toThrow();
   });
   it('requires complete provenance and size budget', () => {
-    const entry = {id:'poster',sourceId:'014',mode:'crop-resize-only',quality:86,publicPath:'/media/a.webp',classification:'real-photo',sourcePath:'source.jpg',sourceSha256:'a'.repeat(64),sha256:'b'.repeat(64),bytes:10,maxBytes:100,width:10,height:10,sidecar:'assets/provenance/a.json'};
+    const entry = {id:'poster',sourceId:'014',mode:'resize-only',quality:86,publicPath:'/media/a.webp',classification:'real-photo',sourcePath:'source.jpg',sourceSha256:'a'.repeat(64),sha256:'b'.repeat(64),bytes:10,maxBytes:100,width:10,height:10,sidecar:'assets/provenance/a.json'};
     expect(() => tools.validateEntry(entry)).not.toThrow();
     for (const key of ['sourcePath','sourceSha256','sha256','sidecar','classification','mode','quality']) expect(() => tools.validateEntry({...entry,[key]:''})).toThrow();
     expect(() => tools.validateEntry({...entry,classification:'unknown'})).toThrow();
+    expect(() => tools.validateEntry({...entry,mode:'crop-resize-only'})).toThrow();
+    expect(() => tools.validateEntry({...entry,sourcePath:'C:/private/master.jpg'})).toThrow();
     expect(() => tools.validateEntry({...entry,bytes:101})).toThrow();
     expect(() => tools.validateEntry({...entry,bytes:100001,maxBytes:100001})).toThrow();
   });
   it.each(['real-photo', 'real-edited'])('requires a photo identity for %s', classification => {
-    const entry = { id: 'fixture', mode:'crop-resize-only', quality:86, publicPath: '/media/a.webp', classification, sourcePath: 'source.jpg', sourceSha256: 'a'.repeat(64), sha256: 'b'.repeat(64), bytes: 10, maxBytes: 100, width: 1, height: 1, sidecar: 'assets/provenance/a.json' };
+    const entry = { id: 'fixture', mode:'resize-only', quality:86, publicPath: '/media/a.webp', classification, sourcePath: 'source.jpg', sourceSha256: 'a'.repeat(64), sha256: 'b'.repeat(64), bytes: 10, maxBytes: 100, width: 1, height: 1, sidecar: 'assets/provenance/a.json' };
     for (const sourceId of [undefined, '', 14]) expect(() => tools.validateEntry({ ...entry, sourceId })).toThrow('Missing photo source identity');
     expect(() => tools.validateEntry({ ...entry, sourceId: '014' })).not.toThrow();
     for (const classification of ['drawn', 'brand']) expect(() => tools.validateEntry({ ...entry, classification })).toThrow('Missing photo source identity');
@@ -76,7 +78,7 @@ describe('landing asset provenance', () => {
       const originalBytes = await sharp({create:{width:1,height:1,channels:3,background:'red'}}).jpeg().toBuffer();
       const output = join(root, 'public/media/test.webp');
       writeFileSync(original, originalBytes); writeFileSync(output, 'export');
-      const entry = { id: 'fixture', sourceId: '014', mode:'crop-resize-only', quality:86, publicPath: '/media/test.webp', classification: 'real-photo', sourcePath: original, sourceSha256: tools.sha256(original), sha256: tools.sha256(output), bytes: 6, maxBytes: 100, width: 1, height: 1, sidecar: 'assets/provenance/fixture.json' };
+      const entry = { id: 'fixture', sourceId: '014', mode:'resize-only', quality:86, publicPath: '/media/test.webp', classification: 'real-photo', sourcePath: 'source:014', sourceSha256: tools.sha256(original), sha256: tools.sha256(output), bytes: 6, maxBytes: 100, width: 1, height: 1, sidecar: 'assets/provenance/fixture.json' };
       writeFileSync(join(root, 'assets/source-manifest.json'), JSON.stringify({ products: [{ representative: '014', confirmedIds: ['014'], eligible: true, hold: null, path: original, sha256: entry.sourceSha256 }] }));
       writeFileSync(join(root, 'assets/approved-media.json'), JSON.stringify({ media: [entry] }));
       writeFileSync(join(root, entry.sidecar), JSON.stringify(entry));
@@ -116,4 +118,12 @@ it('registers the existing drawn SUBDEX frame without permitting photo relabelin
  expect(() => tools.approvedSource(source,'subdex-frame-17-5','real-edited')).toThrow();
  expect(() => tools.approvedSource(source,'unknown-drawn','drawn')).toThrow();
  for(const patch of [{videoSha256:'a'.repeat(64)},{cut:{...drawn.cut,poster:0}},{path:'assets/work/unapproved.png'}]) expect(() => tools.approvedSource({...source,drawnSources:[{...drawn,...patch}]},'subdex-frame-17-5','drawn')).toThrow('Unapproved drawn source recipe');
+});
+
+it('records portable sources and EXIF orientation for all real photos', () => {
+ const manifest = JSON.parse(readFileSync('assets/approved-media.json','utf8'));
+ for(const entry of manifest.media) {
+  expect(entry.sourcePath).not.toMatch(/^(?:[A-Za-z]:|\\|\/)/);
+  if(entry.classification==='real-photo') expect(entry.steps).toContain('EXIF auto-orientation (.rotate())');
+ }
 });

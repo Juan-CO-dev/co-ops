@@ -3,8 +3,8 @@
   "sourceId": "037",
   "publicPath": "/media/farmers-market-lineup-037-480-4ec2dca44de4.webp",
   "classification": "real-photo",
-  "mode": "crop-resize-only",
-  "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_037.JPG",
+  "mode": "resize-only",
+  "sourcePath": "source:037",
   "sourceSha256": "5a8ca9d149000c519b1a23c0fae5fa7e93d190ac4f82c1e19d6f2362146cd555",
   "sha256": "4ec2dca44de447a57720aeab00a1a4f2f55153684bb2e234d80e11d31665d8c0",
   "bytes": 13340,
@@ -19,6 +19,7 @@
     5618
   ],
   "steps": [
+    "EXIF auto-orientation (.rotate())",
     "full-frame uniform resize",
     "WebP encode; metadata stripped"
   ],
