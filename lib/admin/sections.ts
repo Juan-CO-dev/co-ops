@@ -57,6 +57,9 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // Scheduling Phase 2 (chunk F): the schedule board — GM own shop, MoO+ any, and the AGM at their own shop (read; edit
   // when the shop grants it). Role-aware like canViewSchedule: never the social media, catering or prep managers.
   { id: "schedule", i18nKey: "schedule.page.title", href: "/schedule", minLevel: 7, alsoRoles: ["agm"] },
+  // Scheduling Phase 2 (Task 25): the three-way reconciliation (CO-OPS ↔ Toast ↔ 7shifts) — GM own shop, MoO+ any;
+  // never the AGM or a level-6 role (canViewReconciliation). Role-aware like the PM criteria card.
+  { id: "people-reconcile", i18nKey: "schedule.reconcile.title", href: "/admin/people-reconcile", minLevel: 7, onlyRoles: PM_CRITERIA_EDITOR_ROLES },
   // 0234: customer profiles (stats GM+ own shop / 8+ every shop; contact + consent desk 9+).
   { id: "customers", i18nKey: "customers.title", href: "/admin/customers", minLevel: 7 },
   { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },

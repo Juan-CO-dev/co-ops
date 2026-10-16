@@ -85,6 +85,7 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/admin/pm-criteria": ["loc"], // Scheduling Phase 1 — the PM v2 criteria editor, per shop
   "/schedule": ["loc"], // Scheduling Phase 2 — the schedule board, per shop
   "/schedule/settings": ["loc"], // Scheduling Phase 2 — the schedule settings, per shop
+  "/admin/people-reconcile": ["loc"], // Scheduling Phase 2 (Task 25) — the three-way reconciliation, per shop
   "/assignments": ["location", "loc"],
   "/my-feedback": ["location", "loc"], // old ?loc= links keep working; the shared tabs use ?location=
   "/reports": ["location"],
