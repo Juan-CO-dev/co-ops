@@ -31,3 +31,29 @@ create table public.user_locations (
   active      boolean not null default true,
   primary key (user_id, location_id)
 );
+-- public.stations (0217) and public.station_positions (0219): the columns 0270's composite FKs and
+-- writers use, with 0219's deny-all posture (service_role SELECT / INSERT / UPDATE, no DELETE).
+create table public.stations (
+  id          uuid primary key default gen_random_uuid(),
+  location_id uuid not null references public.locations(id),
+  name        text not null default 'Station',
+  name_es     text not null default 'Estación',
+  sort        integer not null default 0,
+  active      boolean not null default true,
+  unique (id, location_id)
+);
+create table public.station_positions (
+  id          uuid primary key default gen_random_uuid(),
+  station_id  uuid not null,
+  location_id uuid not null,
+  name        text not null default 'Position',
+  name_es     text,
+  sort        smallint not null default 1,
+  active      boolean not null default true,
+  foreign key (station_id, location_id) references public.stations(id, location_id),
+  unique (station_id, name), unique (id, station_id, location_id)
+);
+alter table public.stations enable row level security;
+alter table public.station_positions enable row level security;
+revoke all on public.stations, public.station_positions from public, anon, authenticated;
+revoke delete, truncate on public.stations, public.station_positions from service_role;
