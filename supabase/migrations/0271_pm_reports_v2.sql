@@ -1,5 +1,7 @@
 -- Migration 0271_pm_reports_v2
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0270; REQUIRES 0267).
+-- APPLIED TO SIM 2026-10-16 (schema_migrations version 20261016082527, name 'pm_reports_v2')
+-- APPLIED TO PROD 2026-10-16 (schema_migrations version 20261016084020, name 'pm_reports_v2')
 -- Provenance: Smart Scheduling Phase 1, Task 18 (docs/superpowers/plans/2026-10-15-scheduling-phase1-BUILD.md),
 --   r1 P1-1 (every grade bound to a valid ACTIVE position at the report's shop that the subject worked or
 --   THIS copy added — composite FKs + the RPC), r1 P2-9 / J16 (ONE copy lifecycle: open → done → reopen →

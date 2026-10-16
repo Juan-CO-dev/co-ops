@@ -1,5 +1,7 @@
 -- Migration 0269_sevenshifts_links
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0268 and BEFORE SEVENSHIFTS_SYNC=1).
+-- APPLIED TO SIM 2026-10-16 (schema_migrations version 20261016082525, name 'sevenshifts_links')
+-- APPLIED TO PROD 2026-10-16 (schema_migrations version 20261016084018, name 'sevenshifts_links')
 -- Provenance: Smart Scheduling Phase 1, Task 9 (docs/superpowers/plans/2026-10-15-scheduling-phase1-BUILD.md),
 --   R4 (the link screen shows the 7shifts employee id + name + roles; NO auto-match by name; a manager
 --   confirms every link), the GO law "a person is matched across systems ONLY through a link a manager

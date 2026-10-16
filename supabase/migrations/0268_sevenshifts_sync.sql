@@ -1,5 +1,7 @@
 -- Migration 0268_sevenshifts_sync
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, BEFORE SEVENSHIFTS_SYNC=1).
+-- APPLIED TO SIM 2026-10-16 (schema_migrations version 20261016082524, name 'sevenshifts_sync')
+-- APPLIED TO PROD 2026-10-16 (schema_migrations version 20261016084016, name 'sevenshifts_sync')
 -- Provenance: Smart Scheduling Phase 1, Task 5 (docs/superpowers/plans/2026-10-15-scheduling-phase1-BUILD.md),
 --   Astra plan rounds r1–r3 (r1 P2-3 reconciled snapshots, r1 P2-4 per-resource conflict keys, r2 #2
 --   snapshot completeness) and chunk A review (time off, deleted punches, labor thresholds).

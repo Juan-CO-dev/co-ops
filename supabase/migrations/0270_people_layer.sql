@@ -1,5 +1,7 @@
 -- Migration 0270_people_layer
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0269 and BEFORE 0271).
+-- APPLIED TO SIM 2026-10-16 (schema_migrations version 20261016082526, name 'people_layer')
+-- APPLIED TO PROD 2026-10-16 (schema_migrations version 20261016084019, name 'people_layer')
 -- Provenance: Smart Scheduling Phase 1, Task 14 (docs/superpowers/plans/2026-10-15-scheduling-phase1-BUILD.md),
 --   R8 (staff see a band, never an adjustment), R11 (the skill constants as tunable settings), J19 (company
 --   row + optional shop override, MoO+ only), J22 + CC ruling 2026-10-15 on Astra r3 P3 (weights ≥ 0, at
