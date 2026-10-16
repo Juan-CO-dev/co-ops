@@ -6,6 +6,9 @@
 --   inheritance integrity past AND future, P2-4 the validation-context snapshot), r4 (P1 every unresolved_search gap
 --   blocks Approve, inherited or not; P2 the complete need grid inside the snapshot), CC chunk B ruling 3 (the daily
 --   maximum, HARD, per person per date — chunk C ruling 2), R3 (the Wednesday cron, its lease).
+--   Astra chunk D review + CC design ruling (2026-10-16): the budget cause is budget_limited (remaining R < the cheapest
+--   legal fill FOUND, W, with its witness — no minimality claim); valid_gap_certificate is TOTAL and admission requires
+--   IS TRUE; impossible calendar dates are invalid_payload; shift reasons are bound on inherited days.
 --
 -- WHAT (every table deny-all RLS, SELECT-only for service_role; the definer writers are the ONLY writers):
 --   1. schedule_weeks: one row per (shop, ISO week) — the HEAD pointer (the newest revision) and the newest approval.
@@ -152,11 +155,30 @@ declare k text; v jsonb;
 begin
   if p_cause is null or c is null or jsonb_typeof(c) <> 'object' then return false; end if;
   case p_cause
-    when 'budget' then
-      return public.schedule_json_exact_keys(c, array['budgetedDates', 'budgetHours', 'usedHours', 'essentialHours', 'hoursNeeded'])
-        and public.schedule_json_strings(c -> 'budgetedDates') and public.schedule_json_nonneg(c -> 'budgetHours')
-        and public.schedule_json_nonneg(c -> 'usedHours') and public.schedule_json_nonneg(c -> 'essentialHours')
-        and public.schedule_json_nonneg(c -> 'hoursNeeded');
+    when 'budget_limited' then
+      -- CC chunk D design ruling: "remaining R h < the cheapest legal fill FOUND, W h", with the witness fill's steps
+      -- (rules-shared FillStep: relabel / extend / new_block), never a minimality claim.
+      if not coalesce(public.schedule_json_exact_keys(c, array['budgetedDates', 'budgetHours', 'usedHours', 'essentialHours', 'remainingHours',
+                                                                'fillHours', 'witness'])
+         and public.schedule_json_strings(c -> 'budgetedDates') and public.schedule_json_nonneg(c -> 'budgetHours')
+         and public.schedule_json_nonneg(c -> 'usedHours') and public.schedule_json_nonneg(c -> 'essentialHours')
+         and public.schedule_json_num(c -> 'remainingHours') is not null and public.schedule_json_nonneg(c -> 'fillHours')
+         and jsonb_typeof(c -> 'witness') = 'array' and jsonb_array_length(c -> 'witness') > 0, false) then return false; end if;
+      for v in select value from jsonb_array_elements(c -> 'witness') loop
+        if not coalesce(jsonb_typeof(v) = 'object' and jsonb_typeof(v -> 'kind') = 'string'
+           and case v ->> 'kind'
+                 when 'relabel' then public.schedule_json_exact_keys(v, array['kind', 'userId', 'shiftStartQ', 'fromPositionId', 'positionId', 'fromQ', 'toQ'])
+                   and jsonb_typeof(v -> 'fromPositionId') = 'string' and public.schedule_json_quarter(v -> 'shiftStartQ')
+                 when 'extend' then public.schedule_json_exact_keys(v, array['kind', 'userId', 'shiftStartQ', 'positionId', 'fromQ', 'toQ', 'hours'])
+                   and public.schedule_json_quarter(v -> 'shiftStartQ') and public.schedule_json_nonneg(v -> 'hours')
+                 when 'new_block' then public.schedule_json_exact_keys(v, array['kind', 'userId', 'positionId', 'fromQ', 'toQ', 'hours'])
+                   and public.schedule_json_nonneg(v -> 'hours')
+                 else false end
+           and jsonb_typeof(v -> 'userId') = 'string' and jsonb_typeof(v -> 'positionId') = 'string'
+           and public.schedule_json_quarter(v -> 'fromQ') and public.schedule_json_quarter(v -> 'toQ')
+           and public.schedule_json_num(v -> 'fromQ') < public.schedule_json_num(v -> 'toQ'), false) then return false; end if;
+      end loop;
+      return true;
     when 'floor_limit' then
       if not public.schedule_json_exact_keys(c, array['managerIds', 'floorHoursUsed', 'limitH']) or not public.schedule_json_strings(c -> 'managerIds')
          or jsonb_typeof(c -> 'floorHoursUsed') <> 'object' or not public.schedule_json_nonneg(c -> 'limitH') then return false; end if;
@@ -165,31 +187,31 @@ begin
       end loop;
       return true;
     when 'eligibility' then
-      return public.schedule_json_exact_keys(c, array['positionId', 'eligibleCount'])
-        and jsonb_typeof(c -> 'positionId') in ('string', 'null') and public.schedule_json_num(c -> 'eligibleCount') = 0;
+      return coalesce(public.schedule_json_exact_keys(c, array['positionId', 'eligibleCount'])
+        and jsonb_typeof(c -> 'positionId') in ('string', 'null') and public.schedule_json_num(c -> 'eligibleCount') = 0, false);
     when 'availability' then
-      return public.schedule_json_exact_keys(c, array['eligibleIds', 'unavailableIds'])
-        and public.schedule_json_strings(c -> 'eligibleIds') and public.schedule_json_strings(c -> 'unavailableIds');
+      return coalesce(public.schedule_json_exact_keys(c, array['eligibleIds', 'unavailableIds'])
+        and public.schedule_json_strings(c -> 'eligibleIds') and public.schedule_json_strings(c -> 'unavailableIds'), false);
     when 'capacity' then
-      return public.schedule_json_exact_keys(c, array['fromQ', 'toQ', 'positionIds', 'requiredHeads', 'peopleIds', 'people', 'shortBy'])
+      return coalesce(public.schedule_json_exact_keys(c, array['fromQ', 'toQ', 'positionIds', 'requiredHeads', 'peopleIds', 'people', 'shortBy'])
         and public.schedule_json_quarter(c -> 'fromQ') and public.schedule_json_quarter(c -> 'toQ')
         and public.schedule_json_num(c -> 'fromQ') < public.schedule_json_num(c -> 'toQ')
         and public.schedule_json_strings(c -> 'positionIds') and public.schedule_json_strings(c -> 'peopleIds')
         and public.schedule_json_int(c -> 'requiredHeads', 0, 1000) and public.schedule_json_int(c -> 'people', 0, 1000)
-        and public.schedule_json_int(c -> 'shortBy', 1, 1000);
+        and public.schedule_json_int(c -> 'shortBy', 1, 1000), false);
     when 'structure' then
-      return public.schedule_json_exact_keys(c, array['rule', 'detail']) and jsonb_typeof(c -> 'rule') = 'string'
+      return coalesce(public.schedule_json_exact_keys(c, array['rule', 'detail']) and jsonb_typeof(c -> 'rule') = 'string'
         and (c ->> 'rule') in ('primary_window_closed', 'no_mod_member', 'no_closing_role', 'max_shift')
-        and jsonb_typeof(c -> 'detail') = 'object';
+        and jsonb_typeof(c -> 'detail') = 'object', false);
     when 'unresolved_search' then
-      return public.schedule_json_exact_keys(c, array['searched', 'limits', 'candidateIds'])
+      return coalesce(public.schedule_json_exact_keys(c, array['searched', 'limits', 'candidateIds'])
         and public.schedule_json_exact_keys(c -> 'searched', array['steps', 'donorsTried', 'chainDepth'])
         and public.schedule_json_int(c -> 'searched' -> 'steps', 0, 1e6) and public.schedule_json_int(c -> 'searched' -> 'donorsTried', 0, 1e6)
         and public.schedule_json_int(c -> 'searched' -> 'chainDepth', 0, 1e6)
         and public.schedule_json_exact_keys(c -> 'limits', array['REPAIR_MAX_STEPS', 'maxDonors', 'maxChainDepth'])
         and public.schedule_json_int(c -> 'limits' -> 'REPAIR_MAX_STEPS', 0, 1e6) and public.schedule_json_int(c -> 'limits' -> 'maxDonors', 0, 1e6)
         and public.schedule_json_int(c -> 'limits' -> 'maxChainDepth', 0, 1e6)
-        and public.schedule_json_strings(c -> 'candidateIds');
+        and public.schedule_json_strings(c -> 'candidateIds'), false);
     else
       return false;
   end case;
@@ -292,12 +314,13 @@ create table public.schedule_revision_gaps (
   position_id        uuid,
   from_q             smallint not null,
   to_q               smallint not null,
-  cause              text     not null check (cause in ('budget', 'floor_limit', 'eligibility', 'availability', 'capacity', 'structure', 'unresolved_search')),
+  cause              text     not null check (cause in ('budget_limited', 'floor_limit', 'eligibility', 'availability', 'capacity', 'structure', 'unresolved_search')),
   certificate        jsonb    not null,
   origin_revision_id uuid,
   constraint schedule_revision_gaps_window check (0 <= from_q and from_q < to_q and to_q <= 96),
   constraint schedule_revision_gaps_position check ((code = 'coverage_gap') = (position_id is not null)),
-  constraint schedule_revision_gaps_certificate check (public.valid_gap_certificate(cause, certificate)),
+  -- Astra chunk D P2: admission requires IS TRUE (the validator is total, and a NULL must never pass a CHECK).
+  constraint schedule_revision_gaps_certificate check (public.valid_gap_certificate(cause, certificate) is true),
   foreign key (revision_id, location_id) references public.schedule_revisions (id, location_id),
   foreign key (origin_revision_id, location_id) references public.schedule_revisions (id, location_id)
 );
@@ -346,11 +369,12 @@ grant select on public.schedule_weeks, public.schedule_revisions, public.schedul
 
 -- ── CANONICAL DAY CONTENT ───────────────────────────────────────────────────────────────────────
 -- One date of one revision, canonical: the day row (origin, structure version, problems with the carried-label set
--- aside), the COMPLETE shift set (user, start, end, segments, the three flags; ordered) and the COMPLETE gap set
--- (code, position, window, cause, certificate, origin; ordered). A date with no row reads as an empty day (no
--- origin, no problems, no shifts, no gaps). `p_with_sv` false sets the structure version aside — used only when
--- the HEAD has no row for the date (a day nobody built yet). Shift `reasons` are explanation, not content: the
--- generator relabels a carried shift "inherited", so they are not bound.
+-- aside), the COMPLETE shift set (user, start, end, segments, the three flags, AND the reasons; ordered) and the
+-- COMPLETE gap set (code, position, window, cause, certificate, origin; ordered). A date with no row reads as an empty
+-- day (no origin, no problems, no shifts, no gaps). `p_with_sv` false sets the structure version aside — used only
+-- when the HEAD has no row for the date (a day nobody built yet). Astra chunk D P2: shift `reasons` ARE bound — they
+-- carry content (the catering-rule hours a later budget suggestion reads); a carried shift keeps its ORIGINAL reasons
+-- and "inherited" is the day row's flag, never a relabelled reason.
 create function public.schedule_day_canon(p_revision uuid, p_date date, p_with_sv boolean)
 returns jsonb language sql stable set search_path = pg_catalog, public as $$
   select jsonb_build_object(
@@ -359,7 +383,7 @@ returns jsonb language sql stable set search_path = pg_catalog, public as $$
                                      where d.revision_id = p_revision and d.business_date = p_date) else null end,
     'problems', coalesce((select public.schedule_problems_canon(d.problems) from public.schedule_revision_days d
                            where d.revision_id = p_revision and d.business_date = p_date), '[]'::jsonb),
-    'shifts', coalesce((select jsonb_agg(jsonb_build_object('user', s.user_id, 'start', s.start_q, 'end', s.end_q, 'segments', s.segments,
+    'shifts', coalesce((select jsonb_agg(jsonb_build_object('user', s.user_id, 'start', s.start_q, 'end', s.end_q, 'segments', s.segments, 'reasons', s.reasons,
                                   'cm', s.closing_manager, 'flex', s.flex, 'pinned', s.pinned) order by s.user_id, s.start_q)
                           from public.schedule_revision_shifts s where s.revision_id = p_revision and s.business_date = p_date), '[]'::jsonb),
     'gaps', coalesce((select jsonb_agg(jsonb_build_object('code', g.code, 'position', g.position_id, 'from', g.from_q, 'to', g.to_q,
@@ -461,7 +485,8 @@ begin
        or not (jsonb_typeof(v_e -> 'structureVersionId') = 'null' or public.schedule_uuid_ok(v_e ->> 'structureVersionId')) then
       raise exception 'invalid_payload';
     end if;
-    v_date := (v_e ->> 'date')::date;
+    -- Astra chunk D P3: an impossible calendar date (2026-02-30) is a named refusal, never a 22008.
+    begin v_date := (v_e ->> 'date')::date; exception when others then raise exception 'invalid_payload'; end;
     if not (v_date = any (v_dates)) or v_date = any (v_seen) then raise exception 'invalid_payload'; end if;
     v_seen := v_seen || v_date;
     v_inh := (v_e ->> 'inherited')::boolean;
@@ -497,7 +522,8 @@ begin
        or (v_e ? 'reasons' and jsonb_typeof(v_e -> 'reasons') not in ('object', 'null')) then
       raise exception 'invalid_payload';
     end if;
-    v_date := (v_e ->> 'date')::date;
+    -- Astra chunk D P3: an impossible calendar date (2026-02-30) is a named refusal, never a 22008.
+    begin v_date := (v_e ->> 'date')::date; exception when others then raise exception 'invalid_payload'; end;
     v_start := (v_e ->> 'startQ')::numeric; v_end := (v_e ->> 'endQ')::numeric;
     v_user := (v_e ->> 'userId')::uuid;
     if not (v_date = any (v_dates)) then raise exception 'invalid_payload'; end if;
@@ -517,15 +543,15 @@ begin
        or jsonb_typeof(v_e -> 'date') <> 'string' or (v_e ->> 'date') !~ '^\d{4}-\d{2}-\d{2}$'
        or jsonb_typeof(v_e -> 'code') <> 'string' or (v_e ->> 'code') not in ('coverage_gap', 'mod_missing', 'closing_manager_missing')
        or jsonb_typeof(v_e -> 'cause') <> 'string'
-       or (v_e ->> 'cause') not in ('budget', 'floor_limit', 'eligibility', 'availability', 'capacity', 'structure', 'unresolved_search')
+       or (v_e ->> 'cause') not in ('budget_limited', 'floor_limit', 'eligibility', 'availability', 'capacity', 'structure', 'unresolved_search')
        or not (jsonb_typeof(v_e -> 'positionId') = 'null' or public.schedule_uuid_ok(v_e ->> 'positionId'))
        or ((v_e ->> 'code') = 'coverage_gap') <> (jsonb_typeof(v_e -> 'positionId') = 'string')
        or not public.schedule_json_quarter(v_e -> 'fromQ') or not public.schedule_json_quarter(v_e -> 'toQ')
        or (v_e ->> 'fromQ')::numeric >= (v_e ->> 'toQ')::numeric then
       raise exception 'invalid_payload';
     end if;
-    if not public.valid_gap_certificate(v_e ->> 'cause', v_e -> 'certificate') then raise exception 'gap_certificate_invalid'; end if;
-    v_date := (v_e ->> 'date')::date;
+    if public.valid_gap_certificate(v_e ->> 'cause', v_e -> 'certificate') is not true then raise exception 'gap_certificate_invalid'; end if;
+    begin v_date := (v_e ->> 'date')::date; exception when others then raise exception 'invalid_payload'; end;
     if not (v_date = any (v_dates)) then raise exception 'invalid_payload'; end if;
     if exists (select 1 from public.schedule_revision_gaps where revision_id = v_rev and business_date = v_date and code = (v_e ->> 'code')
                 and position_id is not distinct from (v_e ->> 'positionId')::uuid and from_q = (v_e ->> 'fromQ')::numeric) then

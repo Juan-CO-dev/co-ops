@@ -20,6 +20,7 @@
 import type { DayContext, RuleContext, RulePerson } from "../context-shared";
 import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../people-input-shared";
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
+import type { FillPlan, FillStep } from "../rules-shared";
 import {
   MOD, availableOn, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition, isManagerRole, leaderSettingAllows, modCountsAt, shiftExtendsOver, zeroCostCovers,
   type DayRecord, type RuleProblem, type Segment, type Shift,
@@ -453,7 +454,7 @@ export function fillRun(
     // Astra chunk B P1-1: a salaried manager's MoD block costs no hourly money — take it before the budget stops the fill.
     // (A salaried manager STAYING LONGER is taken later, in takeZeroCostFills, once the hourly fill has settled — CC chunk D ruling 2.)
     if (opts.allowCover && !t.closingLead && carveZeroCostCovers(b, week, date, positionId, fromQ, toQ, { extend: false })) return "covered";
-    // Astra chunk B ruling (hoursNeeded): extending an ESSENTIAL shift (it works the closing window) costs no
+    // Astra chunk B ruling (the budget search): extending an ESSENTIAL shift (it works the closing window) costs no
     // non-essential hour either — the budget certificate refuses while such an extension is legal, so take it.
     if (extendEssentialShift(b, week, date, positionId, fromQ, toQ)) return "placed";
     if (relabelSpareSegment(b, week, date, positionId, fromQ, toQ)) return "placed";
@@ -584,7 +585,7 @@ export function carveZeroCostCovers(b: BuildCtx, week: WeekState, date: string, 
 
 /**
  * Extend an hourly person's ESSENTIAL shift (one working the closing window, whole-shift essential) over
- * [fromQ, toQ) on `positionId`, bridging to it on the same position — exactly the extensions `hoursNeeded` counts
+ * [fromQ, toQ) on `positionId`, bridging to it on the same position — exactly the extensions the budget search counts
  * at zero non-essential cost (`shiftExtendsOver`: no overlap, inside the shop day, availability, leader setting,
  * room on the position over the bridge; not pinned; within the daily maximum). The smallest bridge first, then
  * userId. Guarded.
@@ -631,7 +632,7 @@ export function extendEssentialShift(b: BuildCtx, week: WeekState, date: string,
 /**
  * A zero-cost REASSIGNMENT: relabel part of an hourly person's segment onto `positionId` over [fromQ, toQ) where
  * their own position is over-covered there (occupancy − 1 ≥ need) — the repair's relabel, without its step budget,
- * because `hoursNeeded` counts it as free and the budget certificate refuses while it exists. Guarded; the day's
+ * because the budget search counts it as free and the budget certificate refuses while it exists. Guarded; the day's
  * uncovered total must fall and essential coverage never does.
  */
 export function relabelSpareSegment(b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number): boolean {
@@ -760,6 +761,64 @@ export function extendToCap(b: BuildCtx, week: WeekState, date: string, d: { cod
     if (guarded(b, week, date, mutate, (next) => { const after = uncoveredTotals(b, date, next); return after.total < baseline.total && after.essential <= baseline.essential; })) return true;
   }
   return false;
+}
+
+/**
+ * CC chunk D DESIGN RULING: apply a fill the budget search FOUND (`cheapestFill`'s witness — relabels, extensions, new
+ * blocks, a paired primary, a reassignment's refill) to one built day, guarded: it lands only when every step applies,
+ * no new rule error appears, the budget still holds, and the day's uncovered total strictly falls. When the found fill
+ * fits what is left of the budget the deficit is NOT a budget gap — so the generator takes it.
+ */
+export function applyFill(b: BuildCtx, week: WeekState, date: string, plan: FillPlan): boolean {
+  const before = uncoveredTotals(b, date, week.built[date]!);
+  const label = (userId: string, positionId: string) => {
+    const p = b.people[userId];
+    return !!p && positionId !== MOD && isManagerRole(p.role) && !p.coverPositions.includes(positionId);
+  };
+  const why = (st: FillStep): Reason => {
+    const p = b.people[st.userId];
+    if (p?.salaried) return st.kind === "extend" ? reason("salaried_extension", { positionId: st.positionId, fromQ: st.fromQ, toQ: st.toQ, userId: st.userId, lastResort: label(st.userId, st.positionId) })
+      : reason("manager_cover", { positionId: st.positionId, fromQ: st.fromQ, toQ: st.toQ, rank: Math.max(0, p.coverPositions.indexOf(st.positionId)) + 1 });
+    return reason("budget_fill", { positionId: st.positionId, fromQ: st.fromQ, toQ: st.toQ, kind: st.kind, hours: "hours" in st ? st.hours : 0 });
+  };
+  return guarded(b, week, date, (next) => {
+    for (const st of plan.steps) {
+      const r = why(st);
+      const last = label(st.userId, st.positionId) ? { lastResort: true } : {};
+      if (st.kind === "new_block") {
+        next.push({ userId: st.userId, date, startQ: st.fromQ, endQ: st.toQ, segments: [{ positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ, reasons: [r], ...last }],
+          closingManager: false, flex: false, pinned: false, reasons: [r], origin: "hourly" });
+        continue;
+      }
+      const sh = next.find((x) => x.userId === st.userId && x.startQ === st.shiftStartQ);
+      if (!sh || sh.pinned) return false;
+      if (st.kind === "extend") {
+        const seg: GSegment = { positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ, reasons: [r], ...last };
+        if (st.fromQ === sh.endQ) sh.segments = [...sh.segments, seg];
+        else if (st.toQ === sh.startQ) sh.segments = [seg, ...sh.segments];
+        else return false;
+        sh.startQ = Math.min(sh.startQ, st.fromQ);
+        sh.endQ = Math.max(sh.endQ, st.toQ);
+      } else {
+        const host = sh.segments.find((g) => g.positionId === st.fromPositionId && g.startQ <= st.fromQ && g.endQ >= st.toQ);
+        if (!host) return false;
+        const parts: GSegment[] = [];
+        for (const g of sh.segments) {
+          if (g !== host) { parts.push(g); continue; }
+          if (g.startQ < st.fromQ) parts.push({ ...g, endQ: st.fromQ });
+          parts.push({ positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ, reasons: [r], ...last });
+          if (st.toQ < g.endQ) parts.push({ ...g, startQ: st.toQ });
+        }
+        sh.segments = parts;
+      }
+      sh.reasons = [...sh.reasons, r];
+    }
+    return true;
+  }, (next) => {
+    if (b.budgetedDates.includes(date) && budgetUsedHours(b, { built: { ...week.built, [date]: next }, inherited: week.inherited }) > b.budgetHours) return false;
+    const after = uncoveredTotals(b, date, next);
+    return after.total < before.total && after.essential <= before.essential;
+  });
 }
 
 // ─── Priority enforcement (the mockup's enforcePriority) ─────────────────────

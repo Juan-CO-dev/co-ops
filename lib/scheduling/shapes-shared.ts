@@ -15,7 +15,7 @@ const isQ = (v: unknown): v is number => isInt(v, 0, 96);
 const nonneg = (v: unknown) => isNum(v) && v >= 0;
 const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
 const exact = (o: unknown, keys: readonly string[]): o is Record<string, unknown> =>
-  isObj(o) && Object.keys(o).length === keys.length && keys.every((k) => k in o);
+  isObj(o) && Object.keys(o).length === keys.length && keys.every((k) => Object.hasOwn(o, k));
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 const SEGMENT_KEYS = ["positionId", "startQ", "endQ", "lastResort", "coverFor", "reasonKey"];
@@ -40,16 +40,34 @@ export function validScheduleSegments(segments: unknown, startQ: unknown, endQ: 
   return at === endQ;
 }
 
-export const GAP_CAUSES = ["budget", "floor_limit", "eligibility", "availability", "capacity", "structure", "unresolved_search"] as const;
+const STEP_KEYS: Record<string, readonly string[]> = {
+  relabel: ["kind", "userId", "shiftStartQ", "fromPositionId", "positionId", "fromQ", "toQ"],
+  extend: ["kind", "userId", "shiftStartQ", "positionId", "fromQ", "toQ", "hours"],
+  new_block: ["kind", "userId", "positionId", "fromQ", "toQ", "hours"],
+};
+
+/** One step of a budget_limited witness (rules-shared FillStep): its exact keys, ids as strings, a window on the grid. */
+function validFillStep(v: unknown): boolean {
+  if (!isObj(v) || typeof v.kind !== "string" || !Object.hasOwn(STEP_KEYS, v.kind)) return false;
+  if (!exact(v, STEP_KEYS[v.kind]!) || typeof v.userId !== "string" || typeof v.positionId !== "string") return false;
+  if (!isQ(v.fromQ) || !isQ(v.toQ) || v.fromQ >= v.toQ) return false;
+  if ("shiftStartQ" in v && !isQ(v.shiftStartQ)) return false;
+  if ("fromPositionId" in v && typeof v.fromPositionId !== "string") return false;
+  return !("hours" in v) || nonneg(v.hours);
+}
+
+export const GAP_CAUSES = ["budget_limited", "floor_limit", "eligibility", "availability", "capacity", "structure", "unresolved_search"] as const;
 const STRUCTURE_RULES = ["primary_window_closed", "no_mod_member", "no_closing_role", "max_shift"];
 
 /** A gap certificate's SHAPE per cause: the exact key set, strings where ids go, non-negative numbers where numbers go. */
 export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
   if (!isObj(c)) return false;
   switch (cause) {
-    case "budget":
-      return exact(c, ["budgetedDates", "budgetHours", "usedHours", "essentialHours", "hoursNeeded"]) && strings(c.budgetedDates)
-        && nonneg(c.budgetHours) && nonneg(c.usedHours) && nonneg(c.essentialHours) && nonneg(c.hoursNeeded);
+    case "budget_limited":
+      // CC chunk D design ruling: R (remainingHours, may be negative) < W (fillHours), with the witness fill's steps.
+      return exact(c, ["budgetedDates", "budgetHours", "usedHours", "essentialHours", "remainingHours", "fillHours", "witness"]) && strings(c.budgetedDates)
+        && nonneg(c.budgetHours) && nonneg(c.usedHours) && nonneg(c.essentialHours) && isNum(c.remainingHours) && nonneg(c.fillHours)
+        && Array.isArray(c.witness) && c.witness.length > 0 && c.witness.every(validFillStep);
     case "floor_limit":
       return exact(c, ["managerIds", "floorHoursUsed", "limitH"]) && strings(c.managerIds) && isObj(c.floorHoursUsed)
         && Object.values(c.floorHoursUsed).every(nonneg) && nonneg(c.limitH);

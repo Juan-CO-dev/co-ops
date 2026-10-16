@@ -63,7 +63,8 @@ export const ROLES: Record<RoleCode, RoleDefinition> = {
 };
 
 export function isRoleCode(v: string): v is RoleCode {
-  return v in ROLES;
+  // Own properties only: "constructor" / "toString" are on every object's prototype, never role codes (Astra, chunk D P3).
+  return Object.hasOwn(ROLES, v);
 }
 
 export function getRoleLevel(code: RoleCode): number {

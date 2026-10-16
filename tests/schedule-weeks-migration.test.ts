@@ -114,11 +114,15 @@ describe("0275_schedule_weeks", () => {
     expect(src).toMatch(/revoke all on function public\.claim_cron_route\(text\) from public, anon, authenticated;\ngrant execute on function public\.claim_cron_route\(text\) to service_role;/);
   });
 
-  it("what the content comparison binds: the day row, the COMPLETE shift set (segments + flags) and the COMPLETE gap set; reasons are explanation", () => {
+  it("what the content comparison binds: the day row, the COMPLETE shift set (segments + flags + REASONS, Astra chunk D P2) and the COMPLETE gap set", () => {
     const canon = extractFunction(src, "create function public.schedule_day_canon(", "$$;");
     for (const k of ["'origin'", "'sv'", "'problems'", "'segments', s.segments", "'cm', s.closing_manager", "'flex', s.flex", "'pinned', s.pinned",
       "'certificate', g.certificate", "'origin', g.origin_revision_id", "'from', g.from_q", "'to', g.to_q", "'cause', g.cause"]) expect(canon, k).toContain(k);
-    expect(canon).not.toContain("s.reasons");
+    expect(canon).toContain("'reasons', s.reasons");
+    // Astra chunk D P2 / P3: the certificate admission is IS TRUE, and impossible dates are caught by name.
+    expect(src).toContain("check (public.valid_gap_certificate(cause, certificate) is true)");
+    expect(src).toContain("if public.valid_gap_certificate(v_e ->> 'cause', v_e -> 'certificate') is not true then raise exception 'gap_certificate_invalid'");
+    expect(src.split("begin v_date := (v_e ->> 'date')::date; exception when others then raise exception 'invalid_payload'; end;").length - 1).toBe(3);
     expect(extractFunction(src, "create function public.schedule_problems_canon(", "$$;")).toContain("e - 'inherited'");
   });
 

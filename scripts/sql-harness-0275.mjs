@@ -253,16 +253,18 @@ try {
     actorId: o.actor === undefined ? gmA : o.actor, locationId: o.loc ?? SA, weekStart: o.week ?? WEEK, expectedHead: o.head ?? null, kind: o.kind ?? "generated",
     structureVersionId: o.sv ?? null, shifts: o.shifts ?? [], days: o.days ?? DAYS.map((d) => dayRec(d)), gaps: o.gaps ?? [],
     context: o.context ?? ctx(o.loc ?? SA, (o.days ?? DAYS.map((d) => dayRec(d))).filter((d) => !d.inherited).map((d) => d.date)),
-    reasons: o.reasons, meta: meta(o.meta),
+    reasons: o.reasons ?? carriedReasons(o.shifts ?? []), meta: meta(o.meta),
   })));
+  /** A carried shift's STORED reasons travel with it (Astra chunk D P2: SQL binds them on inherited days). */
+  function carriedReasons(shifts) { const out = {}; for (const s of shifts) if (s._reasons) out[`${s.date}|${s.userId}|${s.startQ}`] = s._reasons; return Object.keys(out).length ? out : undefined; }
   /** A raw meta key the builder would never send (to prove SQL refuses it on its own). */
   function withRaw(o, call) { if (o.rawMeta) Object.assign(call.args.p_meta, o.rawMeta); return call; }
   /** The head's content for some dates, as an INHERITED payload (exactly what the generator carries). */
   const carry = async (rev, dates) => {
     const days = (await db.query("select business_date::text as d, origin_revision_id as o, structure_version_id as sv, problems from public.schedule_revision_days where revision_id = $1 and business_date::text = any($2) order by business_date", [rev, dates])).rows
       .map((r) => ({ date: r.d, originRevisionId: r.o, structureVersionId: r.sv, inherited: true, problems: r.problems.map((p) => ({ ...p, inherited: true })) }));
-    const shifts = (await db.query("select user_id as u, business_date::text as d, start_q as a, end_q as z, segments, closing_manager as cm, flex, pinned from public.schedule_revision_shifts where revision_id = $1 and business_date::text = any($2) order by business_date, user_id, start_q", [rev, dates])).rows
-      .map((r) => ({ userId: r.u, date: r.d, startQ: r.a, endQ: r.z, segments: r.segments, closingManager: r.cm, flex: r.flex, pinned: r.pinned }));
+    const shifts = (await db.query("select user_id as u, business_date::text as d, start_q as a, end_q as z, segments, closing_manager as cm, flex, pinned, reasons from public.schedule_revision_shifts where revision_id = $1 and business_date::text = any($2) order by business_date, user_id, start_q", [rev, dates])).rows
+      .map((r) => ({ userId: r.u, date: r.d, startQ: r.a, endQ: r.z, segments: r.segments, closingManager: r.cm, flex: r.flex, pinned: r.pinned, ...(r.reasons ? { _reasons: r.reasons } : {}) }));
     const gaps = (await db.query("select business_date::text as d, code, position_id as p, from_q as a, to_q as z, cause, certificate from public.schedule_revision_gaps where revision_id = $1 and business_date::text = any($2) order by business_date, code, from_q", [rev, dates])).rows
       .map((r) => ({ date: r.d, code: r.code, positionId: r.p, fromQ: r.a, toQ: r.z, cause: r.cause, certificate: r.certificate }));
     return { days, shifts, gaps };
@@ -298,7 +300,18 @@ try {
   await refuses(() => commit({ shifts: [sh(EB, MON, 44, 60)] }), "person_not_at_shop", "W4 a NEW shift for a person of another shop → person_not_at_shop");
   await refuses(() => commit({ shifts: [sh(E1, MON, 44, 60, posB)] }), "position_not_at_shop", "W4 a NEW shift on another shop's position → position_not_at_shop");
   check((await count("schedule_revisions")) === 0 && (await count("schedule_weeks")) === 0, "W4 every refusal left NOTHING behind (one transaction)");
-  const g1 = await commit({ shifts: g1Shifts, gaps: g1Gaps, days: g1Days });
+  // Astra chunk D P3: an impossible calendar date is a NAMED refusal (never a 22008), for days, shifts and gaps.
+  await refuses(() => commit({ days: DAYS.map((d) => dayRec(d === MON ? "2026-02-30" : d)) }), "invalid_payload", "W4 a day dated 2026-02-30 → invalid_payload (not 22008)");
+  await refuses(() => commit({ shifts: [sh(E1, "2026-02-30", 44, 60)] }), "invalid_payload", "W4 a shift dated 2026-02-30 → invalid_payload (not 22008)");
+  await refuses(() => commit({ gaps: [{ ...unresolved(SUN, EXPO, 60, 64), date: "2026-02-30" }] }), "invalid_payload", "W4 a gap dated 2026-02-30 → invalid_payload (not 22008)");
+  // Astra chunk D P2: a certificate whose fields are NULL is not a certificate — the validator is total, admission IS TRUE.
+  await refuses(() => commit({ gaps: [{ code: "mod_missing", date: SUN, positionId: null, fromQ: 60, toQ: 64, cause: "eligibility", certificate: { positionId: null, eligibleCount: null } }] }),
+    "gap_certificate_invalid", "W4 an eligibility certificate of NULLs → gap_certificate_invalid (never admitted through NULL)");
+  check((await db.query("select public.valid_gap_certificate('eligibility', '{\"positionId\": null, \"eligibleCount\": null}'::jsonb) as v")).rows[0].v === false,
+    "W3 valid_gap_certificate is TOTAL: NULL fields give FALSE, never NULL");
+  // The Sunday shift carries content in its reasons (the catering-rule hours a budget suggestion reads): 4 h.
+  const g1Reasons = { [`${SUN}|${E2}|44`]: { shift: [{ key: "catering_prep", params: { hours: 4 } }], segments: [[]], alternates: [] } };
+  const g1 = await commit({ shifts: g1Shifts, gaps: g1Gaps, days: g1Days, reasons: g1Reasons });
   check(typeof g1.revision_id === "string" && g1.kind === "generated" && (await head(SA)).h === g1.revision_id, "W4 a generated revision over no head; the head moves to it");
   await refuses(() => commit({ shifts: g1Shifts }), "head_moved", "W4 'generated' over an existing head → head_moved (the cron's idempotence)");
   await refuses(() => commit({ kind: "regenerated", head: "00000000-0000-4000-8000-000000000000", shifts: g1Shifts }), "head_moved", "W4 a stale expected head → head_moved");
@@ -345,6 +358,11 @@ try {
     await refuses(() => r2({ gaps: gapsSunLonger }), "history_changed", "W7 (b) a future inherited gap's to_q changed → history_changed");
     const noMonGap = [...keep.gaps.filter((g) => g.date !== MON), capacity(FRI, WALK, 46, 56)];
     await refuses(() => r2({ gaps: noMonGap }), "history_changed", "W7 (c) a PAST inherited gap dropped → history_changed");
+    // Astra chunk D P2: her tamper — an inherited shift's reasons 4 → 400 h — is history_changed (reasons are bound).
+    const tampered = r2Shifts.map((s) => (s.date === SUN ? { ...s, _reasons: { shift: [{ key: "catering_prep", params: { hours: 400 } }], segments: [[]], alternates: [] } } : s));
+    await refuses(() => r2({ shifts: tampered }), "history_changed", "W7 an inherited shift's ORIGINAL reasons changed (catering 4 → 400 h) → history_changed");
+    const relabelled = r2Shifts.map((s) => (s.date === SUN ? { ...s, _reasons: { shift: [{ key: "inherited", params: {} }], segments: [[]], alternates: [] } } : s));
+    await refuses(() => r2({ shifts: relabelled }), "history_changed", "W7 an inherited shift relabelled 'inherited' instead of its original reasons → history_changed");
     const monProblemsChanged = r2Days.map((d) => (d.date === MON ? { ...d, problems: [] } : d));
     await refuses(() => r2({ days: monProblemsChanged }), "history_changed", "W7 a past inherited day's problems changed → history_changed");
     const monRejudged = r2Days.map((d) => (d.date === MON ? { ...d, inherited: false, originRevisionId: null } : d));

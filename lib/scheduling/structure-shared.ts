@@ -307,7 +307,7 @@ const isQuarterHours = (v: unknown, lo: number, hi: number): v is number => isNu
 /** The first unknown or missing key of `o` against `keys`, as a path; null when exact. */
 function exactKeys(o: Record<string, unknown>, keys: readonly string[], path: string): Problem {
   for (const k of Object.keys(o)) if (!keys.includes(k)) return `${path}${k}`;
-  for (const k of keys) if (!(k in o)) return `${path}${k}`;
+  for (const k of keys) if (!Object.hasOwn(o, k)) return `${path}${k}`;
   return null;
 }
 
@@ -401,7 +401,7 @@ function checkCrews(v: unknown, positions: Record<string, StructurePosition>): P
     const mins = c.lineMinHeads;
     if (!isObj(mins)) return `${at}.lineMinHeads`;
     for (const id of Object.keys(mins).sort()) {
-      const p = positions[id];
+      const p = Object.hasOwn(positions, id) ? positions[id] : undefined;
       const n = mins[id];
       const key = `${at}.lineMinHeads.${id}`;
       if (!p || !isLineRole(p.role) || !isInt(n, 0, 8)) return key;
@@ -423,7 +423,7 @@ function checkPriority(v: unknown, positions: Record<string, StructurePosition>)
     const k = exactKeys(e, ["pair", "primary"], `${at}.`);
     if (k) return k;
     const pair = e.pair;
-    if (!Array.isArray(pair) || pair.length !== 2 || pair.some((x) => typeof x !== "string" || !positions[x]) || pair[0] === pair[1]
+    if (!Array.isArray(pair) || pair.length !== 2 || pair.some((x) => typeof x !== "string" || !Object.hasOwn(positions, x)) || pair[0] === pair[1]
       || pair.some((x) => seen.has(x as string))) return `${at}.pair`;
     if (typeof e.primary !== "string" || !pair.includes(e.primary)) return `${at}.primary`;
     for (const x of pair) seen.add(x as string);

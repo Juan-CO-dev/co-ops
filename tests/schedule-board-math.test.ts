@@ -111,6 +111,8 @@ describe("the money strip", () => {
     expect(strip.hours.remainingHours).toBe(36 - 44);
     // Alex on Register 11:00–15:00 Friday where no hourly person is on Register: 4 hourly hours saved.
     expect(strip.hours.hourlySavedBySalaried).toBe(4);
+    // Astra chunk D: the floor limit is STATION time only; MoD time is shown separately (Thu 8 h + Fri 4 h of MoD).
+    expect(strip.hours.managerModHours).toBe(8 + 4);
   });
 
   it("$: hourly cost and % of forecast, salaried fixed, TOTAL %; blank (null, never 0) with an unknown wage or forecast", () => {

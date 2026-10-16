@@ -25,7 +25,7 @@ export const BOARD_LABEL_KEYS = [
   "schedule.board.window.boh_open", "schedule.board.window.setup", "schedule.board.window.lunch_rush", "schedule.board.window.afternoon", "schedule.board.window.close",
   "schedule.board.day_type.auto", "schedule.board.day_type.slow", "schedule.board.day_type.normal", "schedule.board.day_type.busy", "schedule.board.day_type.weekend",
   "schedule.board.money.hours_vs_budget", "schedule.board.money.hourly_cost", "schedule.board.money.salaried", "schedule.board.money.total_pct",
-  "schedule.board.money.ot_risk", "schedule.board.money.flex_used", "schedule.board.money.manager_floor", "schedule.board.money.blank",
+  "schedule.board.money.ot_risk", "schedule.board.money.flex_used", "schedule.board.money.manager_floor", "schedule.board.money.manager_mod", "schedule.board.money.blank",
   "schedule.board.money.errand_set_wage", "schedule.board.money.hidden",
   "schedule.board.day_tab.done",
   "schedule.board.flag.assumed_availability", "schedule.board.flag.starting_point", "schedule.board.flag.not_linked", "schedule.board.flag.flex_later",

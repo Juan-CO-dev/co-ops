@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.3. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.4. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -267,54 +267,6 @@
       "toQ": 80,
       "userId": "u-k4-ok"
      }
-    }
-   ]
-  },
-  "2026-10-27|u-k1-ot|42": {
-   "alternates": [],
-   "segments": [
-    []
-   ],
-   "shift": [
-    {
-     "key": "inherited",
-     "params": {}
-    }
-   ]
-  },
-  "2026-10-28|u-k1-ot|42": {
-   "alternates": [],
-   "segments": [
-    []
-   ],
-   "shift": [
-    {
-     "key": "inherited",
-     "params": {}
-    }
-   ]
-  },
-  "2026-10-29|u-k1-ot|42": {
-   "alternates": [],
-   "segments": [
-    []
-   ],
-   "shift": [
-    {
-     "key": "inherited",
-     "params": {}
-    }
-   ]
-  },
-  "2026-10-30|u-k1-ot|42": {
-   "alternates": [],
-   "segments": [
-    []
-   ],
-   "shift": [
-    {
-     "key": "inherited",
-     "params": {}
     }
    ]
   }

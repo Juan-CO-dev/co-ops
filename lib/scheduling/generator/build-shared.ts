@@ -24,7 +24,7 @@ import { buildDayNeed, type NeedCatering } from "../need-shared";
 import type { SchedPerson, SkillLookup } from "../people-input-shared";
 import { reason, shiftKey, type BoardNote, type ReasonIndex, type ShiftReasons } from "../reasons-shared";
 import {
-  MOD, PROVEN_CAUSE_ORDER, REPAIR_LIMITS, checkScheduleRules, eligibleFor, proveGap, type DayRecord, type DeclaredGap, type GapSubject, type RuleProblem, type Shift,
+  MOD, PROVEN_CAUSE_ORDER, REPAIR_LIMITS, checkScheduleRules, cheapestFill, eligibleFor, proveGap, type DayRecord, type DeclaredGap, type GapSubject, type RuleProblem, type Shift,
 } from "../rules-shared";
 import { availableOn, eligibleForPosition, isManagerRole, leaderSettingAllows } from "../rules-shared";
 import { scheduledOut, type CrewType, type ScheduleStructure } from "../structure-shared";
@@ -32,14 +32,14 @@ import { skillOf } from "../people-input-shared";
 import { teamStrength, type WindowStrength } from "../strength-shared";
 import { weekDays } from "../time-shared";
 import {
-  allShifts, assignClosingManager, canonicalDay, cmp, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
+  allShifts, applyFill, assignClosingManager, budgetUsedHours, canonicalDay, cmp, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
   type BuildCtx, type GShift, type WeekState,
 } from "./assign-shared";
 import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repair-shared";
 import { salariedBlocks, templatesFor, templateOrder } from "./templates-shared";
 
 /** Bumped whenever a golden changes; stored on the revision. */
-export const GENERATOR_VERSION = "p2.3";
+export const GENERATOR_VERSION = "p2.4";
 
 // ─── Input / output ──────────────────────────────────────────────────────────
 
@@ -64,6 +64,11 @@ export interface HeadSnapshot {
   days: DayRecord[];
   gaps: DeclaredGap[];
   closingWindowByDate: Record<string, { fromQ: number; toQ: number }>;
+  /**
+   * Astra chunk D P2: the head's STORED reasons per shift (`date|user|start`). A carried shift keeps them exactly (SQL
+   * binds them); "inherited" is the day record's flag, never a relabelled reason. Absent = the shift had none.
+   */
+  reasons?: Readonly<Record<string, unknown>>;
 }
 
 export interface GeneratorInput {
@@ -257,7 +262,7 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     enforcePriority(b, week, date);
     assignClosingManager(b, week, date);
   }
-  // Astra chunk B P1-1 + the hoursNeeded ruling: before any gap is declared, every legal zero-non-essential-cost fill
+  // Astra chunk B P1-1 + the budget-search ruling: before any gap is declared, every legal zero-non-essential-cost fill
   // is taken (salaried MoD cover, a spare reassignment, an essential closer's extension) — a budget certificate is
   // refused while one exists, and a free fill should never sit beside a hole.
   for (const date of builtDates) {
@@ -277,6 +282,27 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   for (const date of builtDates) {
     for (let round = 0; round < 32; round++) {
       if (!deficitsOf(b, date, week.built[date]!).some((d) => unproven(date, d) && extendToCap(b, week, date, d))) break;
+    }
+    enforcePriority(b, week, date);
+    assignClosingManager(b, week, date);
+  }
+
+  // CC chunk D DESIGN RULING: on a budgeted date, a coverage deficit whose cheapest legal fill FOUND fits what is left
+  // of the budget is not a budget gap — take that fill (relabels, extensions incl. a paired primary, a reassignment's
+  // refill, a new block). Bounded: each accepted fill lowers the day's uncovered total.
+  for (const date of builtDates) {
+    if (!budgetedDates.includes(date)) continue;
+    const cw = closingWindowByDate[date];
+    for (let round = 0; round < 32; round++) {
+      let progress = false;
+      for (const d of deficitsOf(b, date, week.built[date]!)) {
+        if (d.code !== "coverage_gap" || !d.positionId || (cw && d.fromQ < cw.toQ && d.toQ > cw.fromQ)) continue;
+        const probe = { locationId: input.locationId, weekStart: input.weekStart, shifts: [...inheritedShifts, ...allShifts({ built: week.built, inherited: [] })], gaps: [] as DeclaredGap[], days: inheritedDays };
+        const plan = cheapestFill({ date, positionId: d.positionId, fromQ: d.fromQ, toQ: d.toQ }, probe, ctx);
+        if (!plan || (plan.hours > 0 && plan.hours > b.budgetHours - budgetUsedHours(b, week))) continue;
+        if (applyFill(b, week, date, plan)) { progress = true; break; }
+      }
+      if (!progress) break;
     }
     enforcePriority(b, week, date);
     assignClosingManager(b, week, date);
@@ -335,7 +361,12 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
       reasons[shiftKey(date, sh.userId, sh.startQ)] = entry;
     }
   }
-  for (const sh of inheritedShifts) reasons[shiftKey(sh.date, sh.userId, sh.startQ)] = { shift: [reason("inherited", {})], segments: sh.segments.map(() => []), alternates: [] };
+  // Astra chunk D P2: a carried shift keeps its ORIGINAL reasons (bound in SQL); "inherited" is the day's flag.
+  for (const sh of inheritedShifts) {
+    const k = shiftKey(sh.date, sh.userId, sh.startQ);
+    const stored = input.head?.reasons?.[k];
+    if (stored !== undefined && stored !== null) reasons[k] = structuredClone(stored) as ShiftReasons;
+  }
   const strength: Record<string, WindowStrength[]> = {};
   for (const d of buildDays) strength[d.date] = teamStrength(builtShifts, d.date, ctx.people, s, input.skills, d.dayType, d.scheduledOutQ);
   // Pairing notes come from the validator's warnings too (the final word).

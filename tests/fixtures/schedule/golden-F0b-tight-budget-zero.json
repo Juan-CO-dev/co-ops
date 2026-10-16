@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.3. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.4. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -11,7 +11,7 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "cause": "budget",
+      "cause": "budget_limited",
       "fromQ": 28,
       "proven": true,
       "toQ": 60
@@ -25,7 +25,7 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "cause": "budget",
+      "cause": "budget_limited",
       "fromQ": 28,
       "proven": true,
       "toQ": 67
@@ -39,7 +39,7 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "cause": "budget",
+      "cause": "budget_limited",
       "fromQ": 38,
       "proven": true,
       "toQ": 56
@@ -53,7 +53,7 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "cause": "budget",
+      "cause": "budget_limited",
       "fromQ": 44,
       "proven": true,
       "toQ": 56
@@ -158,15 +158,34 @@
  ],
  "gaps": [
   {
-   "cause": "budget",
+   "cause": "budget_limited",
    "certificate": {
     "budgetHours": 0,
     "budgetedDates": [
      "2026-10-26"
     ],
     "essentialHours": 33.75,
-    "hoursNeeded": 16,
-    "usedHours": 33.75
+    "fillHours": 16,
+    "remainingHours": 0,
+    "usedHours": 33.75,
+    "witness": [
+     {
+      "fromQ": 28,
+      "hours": 8,
+      "kind": "new_block",
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "toQ": 60,
+      "userId": "u-b-bo"
+     },
+     {
+      "fromQ": 28,
+      "hours": 8,
+      "kind": "new_block",
+      "positionId": "5c000000-0000-4000-8000-000000000002",
+      "toQ": 60,
+      "userId": "u-e-eve"
+     }
+    ]
    },
    "code": "coverage_gap",
    "date": "2026-10-26",
@@ -175,15 +194,26 @@
    "toQ": 60
   },
   {
-   "cause": "budget",
+   "cause": "budget_limited",
    "certificate": {
     "budgetHours": 0,
     "budgetedDates": [
      "2026-10-26"
     ],
     "essentialHours": 33.75,
-    "hoursNeeded": 9.75,
-    "usedHours": 33.75
+    "fillHours": 9.75,
+    "remainingHours": 0,
+    "usedHours": 33.75,
+    "witness": [
+     {
+      "fromQ": 28,
+      "hours": 9.75,
+      "kind": "new_block",
+      "positionId": "5c000000-0000-4000-8000-000000000002",
+      "toQ": 67,
+      "userId": "u-e-eve"
+     }
+    ]
    },
    "code": "coverage_gap",
    "date": "2026-10-26",
@@ -192,15 +222,26 @@
    "toQ": 67
   },
   {
-   "cause": "budget",
+   "cause": "budget_limited",
    "certificate": {
     "budgetHours": 0,
     "budgetedDates": [
      "2026-10-26"
     ],
     "essentialHours": 33.75,
-    "hoursNeeded": 4,
-    "usedHours": 33.75
+    "fillHours": 4,
+    "remainingHours": 0,
+    "usedHours": 33.75,
+    "witness": [
+     {
+      "fromQ": 42,
+      "hours": 4,
+      "kind": "new_block",
+      "positionId": "5c000000-0000-4000-8000-000000000006",
+      "toQ": 58,
+      "userId": "u-b-bo"
+     }
+    ]
    },
    "code": "coverage_gap",
    "date": "2026-10-26",
@@ -209,15 +250,26 @@
    "toQ": 56
   },
   {
-   "cause": "budget",
+   "cause": "budget_limited",
    "certificate": {
     "budgetHours": 0,
     "budgetedDates": [
      "2026-10-26"
     ],
     "essentialHours": 33.75,
-    "hoursNeeded": 4.5,
-    "usedHours": 33.75
+    "fillHours": 4.5,
+    "remainingHours": 0,
+    "usedHours": 33.75,
+    "witness": [
+     {
+      "fromQ": 38,
+      "hours": 4.5,
+      "kind": "new_block",
+      "positionId": "5c000000-0000-4000-8000-000000000008",
+      "toQ": 56,
+      "userId": "u-b-bo"
+     }
+    ]
    },
    "code": "coverage_gap",
    "date": "2026-10-26",

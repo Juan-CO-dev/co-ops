@@ -310,18 +310,18 @@ describe("Task 7: budget, certificates and the repair search", () => {
     expectClean(zero);
     expect(zero.shifts.filter((x) => x.date === MON && x.closingManager)).toHaveLength(1);
     expect(zero.gaps.length).toBeGreaterThan(0);
-    expect(zero.gaps.every((g) => g.cause === "budget" && g.certificate.hoursNeeded > 0 && g.certificate.budgetHours === 0)).toBe(true);
+    expect(zero.gaps.every((g) => g.cause === "budget_limited" && g.certificate.fillHours > g.certificate.remainingHours && g.certificate.budgetHours === 0)).toBe(true);
     const free = Object.keys(zero.context.people).filter((u) => !zero.shifts.some((x) => x.userId === u) && !zero.context.people[u]!.salaried);
     expect(free.length).toBeGreaterThan(0);
     const essential = zero.stats.essentialHours;
     const tight = buildWeek(monday(essential + 6));
     expectClean(tight);
     expect(tight.stats.hourlyHours - tight.stats.essentialHours).toBeLessThanOrEqual(essential + 6);
-    expect(tight.gaps.every((g) => g.cause === "budget")).toBe(true);
+    expect(tight.gaps.every((g) => g.cause === "budget_limited")).toBe(true);
     expect(tight.gaps.length).toBeLessThan(zero.gaps.length);
     const loose = buildWeek(monday(400));
     expectClean(loose);
-    expect(loose.gaps.filter((g) => g.cause === "budget")).toEqual([]);
+    expect(loose.gaps.filter((g) => g.cause === "budget_limited")).toEqual([]);
     expect(loose.notes.some((n) => n.code === "unbudgeted_date")).toBe(false);
     // CC chunk C ruling 3: essential closer hours are exempt from the cap but COUNTED and NAMED — at budget 0 every
     // hourly hour is essential, all of it past the budget; salaried / MoD cover was taken first (no zero-cost fill left).
@@ -565,7 +565,11 @@ describe("Task 7: the historical contract, strength, the priority relabel", () =
     expect(out.problems.filter((p) => p.day === MON).every((p) => p.inherited)).toBe(true);
     expect(out.problems.filter((p) => p.severity === "error" && !p.inherited)).toEqual([]);
     expect(out.shifts.filter((x) => x.userId === "u-x-gone" && x.date !== MON)).toEqual([]);
-    expect(out.reasons[`${MON}|u-b-bo|44`]!.shift).toEqual([{ key: "inherited", params: {} }]);
+    // Astra chunk D P2: a carried shift keeps its ORIGINAL stored reasons (here: none were stored), never a relabel.
+    expect(out.reasons[`${MON}|u-b-bo|44`]).toBeUndefined();
+    const stored = { shift: [{ key: "catering_prep", params: { hours: 4 } }], segments: [[]], alternates: [] };
+    const again = buildWeek(fixture({ specs, today: TUE, days: [day(TUE)], head: { ...head, reasons: { [`${MON}|u-b-bo|44`]: stored } } }));
+    expect(again.reasons[`${MON}|u-b-bo|44`]).toEqual(stored);
   });
 
   it("team strength: weighted by minutes, MoD excluded, thresholds from the structure, unproven minutes reported separately (never averaged as 0), all-unproven reads unknown", () => {
@@ -750,8 +754,8 @@ describe("CC chunk D rulings 1 + 2: a salaried manager STAYS LONGER — a zero-h
     const schedule = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts, gaps: [], days: out.days };
     const subject = { code: "coverage_gap" as const, date: MON, positionId: I.$REG, fromQ: 56, toQ: 60 };
     expect(zeroCostCovers(subject, schedule, out.context)).toEqual([{ userId: "u-gm", fromQ: 56, toQ: 60, extend: "after" }]);
-    const cert = { ...subject, cause: "budget" as const, certificate: { budgetedDates: [MON], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 4 } };
-    for (const hoursNeeded of [0, 1, 4]) expect(checkCertificate({ ...cert, certificate: { ...cert.certificate, hoursNeeded } }, schedule, out.context)).toBe(false);
+    const cert = { ...subject, cause: "budget_limited" as const, certificate: { budgetedDates: [MON], budgetHours: 0, usedHours: 0, essentialHours: 0, remainingHours: 0, fillHours: 4, witness: [] } };
+    for (const fillHours of [0, 1, 4]) expect(checkCertificate({ ...cert, certificate: { ...cert.certificate, fillHours } }, schedule, out.context)).toBe(false);
     const off = structuredClone(out.context);
     off.days[MON]!.structure.limits.salariedStayLonger = false;
     expect(zeroCostCovers(subject, schedule, off)).toEqual([]);

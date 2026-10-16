@@ -13,12 +13,14 @@ export const REASON_KEYS = [
   "extended_to_minimum", "next_position", "manager_cover", "manager_cover_last_resort", "priority_cover",
   "salaried_minimum", "presence_pin", "added_pin", "repair_moved", "repair_replaced", "repair_relabelled",
   "overtime_last_resort", "closing_manager", "mod_cover", "inherited",
-  // Astra chunk B ruling (hoursNeeded): an essential closer extended over a hole costs no non-essential hour.
+  // Astra chunk B ruling (the budget search): an essential closer extended over a hole costs no non-essential hour.
   "essential_extension",
   // CC chunk C ruling 2: a shift extended up to the shop's daily maximum toward a need run longer than one shift.
   "extended_to_cap",
   // CC chunk D rulings 1 + 2: a salaried manager stayed longer (up to the daily maximum) — a zero-hourly-cost fill.
   "salaried_extension",
+  // CC chunk D design ruling: a fill the budget search found within what is left of the budget (it is never a budget gap).
+  "budget_fill",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

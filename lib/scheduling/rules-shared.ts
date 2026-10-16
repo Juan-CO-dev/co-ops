@@ -22,7 +22,7 @@
  */
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import {
-  checklistFits, isLineRole, positionLimit, primaryOf, type LeaderSetting, type ScheduleStructure, type StructurePosition,
+  checklistFits, isLineRole, positionLimit, primaryOf, secondaryOf, type LeaderSetting, type ScheduleStructure, type StructurePosition,
 } from "./structure-shared";
 import { canonicalJson, type DayContext, type RuleContext, type RulePerson } from "./context-shared";
 import type { ScheduleErrorCode } from "./errors-shared";
@@ -38,14 +38,21 @@ export interface Segment { positionId: string; startQ: number; endQ: number; las
 export interface Shift { userId: string; date: string; startQ: number; endQ: number; segments: Segment[]; closingManager: boolean; flex: boolean; pinned: boolean }
 
 export type GapCode = "coverage_gap" | "mod_missing" | "closing_manager_missing";
-export type GapCause = "budget" | "floor_limit" | "eligibility" | "availability" | "capacity" | "structure" | "unresolved_search";
+export type GapCause = "budget_limited" | "floor_limit" | "eligibility" | "availability" | "capacity" | "structure" | "unresolved_search";
 /** The fixed order in which a deficit takes the FIRST proven cause that certifies (generator step 9a.6). */
-export const PROVEN_CAUSE_ORDER = ["structure", "eligibility", "capacity", "availability", "floor_limit", "budget"] as const;
+export const PROVEN_CAUSE_ORDER = ["structure", "eligibility", "capacity", "availability", "floor_limit", "budget_limited"] as const;
 
 /** The bounded repair search's limits (generator step 9a), stored in every `unresolved_search` certificate. */
 export const REPAIR_LIMITS = { REPAIR_MAX_STEPS: 200, maxDonors: 8, maxChainDepth: 3 } as const;
 
-export interface BudgetCertificate { budgetedDates: string[]; budgetHours: number; usedHours: number; essentialHours: number; hoursNeeded: number }
+/**
+ * CC chunk D DESIGN RULING (2026-10-16): a budget gap claims only what it can verify — the remaining hourly budget on the
+ * budgeted dates (`remainingHours` = budget − (used − essential)) is below `fillHours`, the cheapest legal fill the
+ * deterministic search FOUND (`cheapestFill`), whose steps are the `witness`. Never a minimality claim.
+ */
+export interface BudgetLimitedCertificate {
+  budgetedDates: string[]; budgetHours: number; usedHours: number; essentialHours: number; remainingHours: number; fillHours: number; witness: FillStep[];
+}
 export interface FloorLimitCertificate { managerIds: string[]; floorHoursUsed: Record<string, number>; limitH: number }
 export interface EligibilityCertificate { positionId: string | null; eligibleCount: 0 }
 export interface AvailabilityCertificate { eligibleIds: string[]; unavailableIds: string[] }
@@ -70,7 +77,7 @@ export interface UnresolvedSearchCertificate {
 
 interface GapBase { code: GapCode; date: string; positionId: string | null; fromQ: number; toQ: number }
 export type DeclaredGap = GapBase & (
-  | { cause: "budget"; certificate: BudgetCertificate }
+  | { cause: "budget_limited"; certificate: BudgetLimitedCertificate }
   | { cause: "floor_limit"; certificate: FloorLimitCertificate }
   | { cause: "eligibility"; certificate: EligibilityCertificate }
   | { cause: "availability"; certificate: AvailabilityCertificate }
@@ -614,89 +621,147 @@ export function zeroCostCovers(g: Pick<GapSubject, "date" | "positionId" | "from
 }
 
 /**
- * The budget certificate's `hoursNeeded` (Astra chunk B ruling): the LEGAL MARGINAL NON-ESSENTIAL HOURLY COST of
- * the cheapest legal fill of the deficit — 0 when a salaried manager can take it from their MoD block, when an
- * hourly person can be reassigned from an over-covered position, or when an ESSENTIAL shift (one working the
- * closing window, whole-shift essential) can legally extend over it; the extension's added hours for a legal
- * extension of a non-essential shift (no overlap, availability, leader setting, not pinned, the head limit over any
- * bridge, the daily maximum); else at least the minimum shift for an eligible person with a LEGAL PLACEMENT WITNESS
- * (a 1 h hole with nobody beside it costs a 4 h block). Null when no legal fill exists at all: the budget is then
- * not the reason.
+ * THE CHEAPEST LEGAL FILL FOUND (CC chunk D DESIGN RULING, 2026-10-16 — ends the budget soundness loop). A budget gap
+ * no longer claims minimality: `budget_limited` certifies only "the remaining hourly budget R h < W h, the cheapest legal
+ * fill this DETERMINISTIC search FOUND", with the witness attached. The verifier re-runs the same search and compares
+ * the witness exactly; if W ≤ R it is not a budget gap at all (the generator takes that fill instead).
  *
- * Astra chunk C P1: a new block is charged ONLY when a legal placement of it exists — a whole block of
- * max(window, minimum shift) containing the window, within the daily maximum (the person's other shifts that day
- * included), inside the position's open–close window with room under its head limit at every quarter, inside the
- * person's availability and leader setting, not overlapping their own shifts, never on an untouchable day; for a
- * priority secondary whose primary is not staffed over the block, a SECOND person's legal block on the primary is part
- * of the witness (and of the cost). No witness → no charge.
+ * The search, for ONE more head on `positionId` over [fromQ, toQ):
+ *   (0) a zero-hourly-cost fill (`zeroCostCovers`: a salaried MoD relabel or a salaried manager staying longer) → 0;
+ *   for every eligible, active hourly member in id order:
+ *   (1) a spare segment: they stand on an OVER-covered position over the whole window → relabel, 0;
+ *   (2) an extension of one of their unpinned shifts over the window (`shiftExtendsOver`, the daily maximum on their
+ *       whole day): the added quarters, 0 when the shift works the closing window (essential, budget-exempt);
+ *   (3) a new block of max(window, minimum shift) containing the window with a LEGAL PLACEMENT WITNESS (Astra chunk C
+ *       P1): its hours (0 if it works the closing window);
+ *   (4) a REASSIGNMENT (depth 1, at most REPAIR_LIMITS.maxDonors donors): their segment on another position spanning
+ *       the window moves here, and that position is refilled over the quarters it then lacks by (0)–(3) of SOMEONE
+ *       ELSE — the refill's hours;
+ *   and for a priority SECONDARY whose primary is unstaffed anywhere the fill adds time, a PAIRED fill of the primary
+ *   over those quarters by someone else ((0)–(3)), its hours added (Astra chunk D P1: two staffed shifts each extended
+ *   to noon = 2 h).
+ * The cheapest plan wins; ties keep the first in that canonical order. A fill that works the closing window costs no
+ * budget hour (the essential rule). Pure and deterministic.
  */
-function hoursNeededFor(g: GapSubject, s: WeekSchedule, day: DayContext, ctx: RuleContext): number | null {
-  const uncovered = uncoveredHoursFor(g, s, day, ctx);
-  if (g.code !== "coverage_gap" || !g.positionId || uncovered <= 0) return uncovered;
-  if (zeroCostCovers(g, s, ctx).length > 0) return 0;
+export type FillStep =
+  | { kind: "relabel"; userId: string; shiftStartQ: number; fromPositionId: string; positionId: string; fromQ: number; toQ: number }
+  | { kind: "extend"; userId: string; shiftStartQ: number; positionId: string; fromQ: number; toQ: number; hours: number }
+  | { kind: "new_block"; userId: string; positionId: string; fromQ: number; toQ: number; hours: number };
+export interface FillPlan { hours: number; steps: FillStep[] }
+
+interface FillOpts { exclude: readonly string[]; depth: number; staffOnly: boolean }
+
+function addPlan(a: FillPlan, b: FillPlan): FillPlan {
+  return { hours: a.hours + b.hours, steps: [...a.steps, ...b.steps] };
+}
+
+function fillFor(positionId: string, fromQ: number, toQ: number, date: string, s: WeekSchedule, day: DayContext, ctx: RuleContext, o: FillOpts): FillPlan | null {
   const st = day.structure;
-  const target = g.positionId;
-  const pos = st.positions[target];
-  if (!pos) return null;
-  const shifts = shiftsOn(s, g.date);
+  const pos = st.positions[positionId];
+  if (!pos || fromQ >= toQ) return null;
+  const shifts = shiftsOn(s, date);
   const cov = dayCoverage(shifts, day, ctx);
   const occ = (id: string, q: number) => cov.byPosition.get(id)?.[q] ?? 0;
-  const overCovered = (id: string) => {
-    for (let q = g.fromQ; q < g.toQ; q++) if (occ(id, q) <= (day.need.positions[id]?.[q] ?? 0)) return false;
-    return true;
-  };
-  const cw = ctx.closingWindowByDate[g.date];
+  const cw = ctx.closingWindowByDate[date];
+  const works = (a: number, z: number) => !!cw && a < cw.toQ && z > cw.fromQ;
   const maxQ = Math.round(st.limits.maxShiftH * 4);
-  // A priority secondary is legal only where its primary is staffed (rule h): a reassignment or an extension onto it
-  // is counted only then; otherwise filling it also means filling the primary — never free.
-  const primary = primaryOf(st, target);
-  const needsPrimary = primary !== null && primary !== target;
-  const primaryOk = (from: number, to: number) => { if (!needsPrimary) return true; for (let q = from; q < to; q++) if (occ(primary!, q) === 0) return false; return true; };
-  const roomAt = (q: number) => occ(target, q) < positionLimit(pos, q) && (!needsPrimary || occ(primary!, q) > 0);
-  const newBlock = Math.max(uncovered, st.limits.minimumShiftQ / 4);
-  const blockQ = Math.max(g.toQ - g.fromQ, st.limits.minimumShiftQ);
+  const primary = primaryOf(st, positionId);
+  const needsPrimary = primary !== null && primary !== positionId;
   const sorted = Object.values(ctx.people).sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
-  /** May p legally take a NEW block [a, a + blockQ) on `positionId` (Astra chunk C P1)? */
-  const legalBlock = (p: RulePerson, positionId: string, a: number): boolean => {
-    const ps = st.positions[positionId];
-    const z = a + blockQ;
-    if (!ps || !isHourly(p) || !p.activeMember || !eligibleForPosition(p, ps) || p.untouchableDates.includes(g.date)) return false;
-    const own = shifts.filter((sh) => sh.userId === p.userId);
-    if (own.reduce((n, sh) => n + sh.endQ - sh.startQ, 0) + blockQ > maxQ) return false;
-    if (own.some((sh) => sh.startQ < z && sh.endQ > a)) return false;
-    if (!availableOn(p, g.date, a, z) || !leaderSettingAllows(p, st, a, z)) return false;
-    for (let q = a; q < z; q++) if (occ(positionId, q) >= positionLimit(ps, q)) return false;
-    return true;
+  const usable = (p: RulePerson, ps: StructurePosition | undefined) =>
+    !o.exclude.includes(p.userId) && isHourly(p) && p.activeMember && eligibleForPosition(p, ps) && !p.untouchableDates.includes(date);
+  const dayQ = (userId: string) => shifts.filter((x) => x.userId === userId).reduce((n, x) => n + (x.endQ - x.startQ), 0);
+  /** The primary's PAIRED fill over the quarters of [a, z) where it is unstaffed (rule h), by someone other than `who`. */
+  const paired = (a: number, z: number, who: string): FillPlan | null => {
+    if (!needsPrimary) return { hours: 0, steps: [] };
+    const open: number[] = [];
+    for (let q = a; q < z; q++) if (occ(primary!, q) === 0) open.push(q);
+    if (open.length === 0) return { hours: 0, steps: [] };
+    return fillFor(primary!, open[0]!, open[open.length - 1]! + 1, date, s, day, ctx, { exclude: [...o.exclude, who], depth: o.depth + 1, staffOnly: true });
   };
-  /** The cost of the cheapest legal new block containing the window for p (+ a companion on the unstaffed primary), or null. */
-  const witnessCost = (p: RulePerson): number | null => {
-    if (blockQ > maxQ) return null;
-    for (let a = Math.max(0, g.toQ - blockQ); a <= g.fromQ && a + blockQ <= 96; a++) {
-      if (!legalBlock(p, target, a)) continue;
-      if (!needsPrimary || primaryOk(a, a + blockQ)) return newBlock;
-      // Rule (h): the secondary is legal only beside its primary — a second person's legal block on the primary.
-      if (sorted.some((c) => c.userId !== p.userId && legalBlock(c, primary!, a))) return newBlock + blockQ / 4;
-    }
-    return null;
-  };
-  const costs: number[] = [];
-  for (const p of sorted) {
-    if (!isHourly(p) || !p.activeMember || !eligibleForPosition(p, pos) || p.untouchableDates.includes(g.date)) continue;
-    const w = witnessCost(p);
-    if (w !== null) costs.push(w);
-    const own = shifts.filter((sh) => sh.userId === p.userId);
-    if (own.length === 0 || !primaryOk(g.fromQ, g.toQ)) continue;
-    for (const sh of own) {
-      if (sh.pinned) continue;
-      if (sh.segments.some((x) => x.positionId !== MOD && x.positionId !== target && x.startQ <= g.fromQ && x.endQ >= g.toQ && overCovered(x.positionId))) { costs.push(0); continue; }
-      if (Math.max(sh.endQ, g.toQ) - Math.min(sh.startQ, g.fromQ) > maxQ || !shiftExtendsOver(p, sh, day, g.date, g.fromQ, g.toQ, roomAt)) continue;
-      const essential = !!cw && sh.segments.some((x) => x.positionId !== MOD && x.startQ < cw.toQ && x.endQ > cw.fromQ);
-      const bridgeQ = sh.endQ <= g.fromQ ? g.fromQ - sh.endQ : sh.startQ - g.toQ;
-      costs.push(essential ? 0 : uncovered + bridgeQ / 4);
+  let best: FillPlan | null = null;
+  const consider = (plan: FillPlan | null) => { if (plan && (!best || plan.hours < best.hours)) best = plan; };
+
+  // (0) zero hourly cost: a salaried MoD relabel or a salaried manager staying longer.
+  if (!o.staffOnly || [...Array(toQ - fromQ).keys()].some((i) => (day.need.positions[positionId]?.[fromQ + i] ?? 0) > occ(positionId, fromQ + i))) {
+    const z = zeroCostCovers({ date, positionId, fromQ, toQ }, s, ctx).filter((c) => !o.exclude.includes(c.userId));
+    if (z.length > 0) {
+      const c = z[0]!;
+      const sh = shifts.find((x) => x.userId === c.userId && (c.extend === "after" ? x.endQ === c.fromQ : c.extend === "before" ? x.startQ === c.toQ : x.startQ <= c.fromQ && x.endQ >= c.toQ))!;
+      return { hours: 0, steps: [c.extend
+        ? { kind: "extend", userId: c.userId, shiftStartQ: sh.startQ, positionId, fromQ: c.fromQ, toQ: c.toQ, hours: 0 }
+        : { kind: "relabel", userId: c.userId, shiftStartQ: sh.startQ, fromPositionId: MOD, positionId, fromQ: c.fromQ, toQ: c.toQ }] };
     }
   }
-  return costs.length > 0 ? Math.min(...costs) : null;
+  const roomAt = (q: number) => occ(positionId, q) < positionLimit(pos, q);
+  const blockQ = Math.max(toQ - fromQ, st.limits.minimumShiftQ);
+  let donors = 0;
+  for (const p of sorted) {
+    if (!usable(p, pos)) continue;
+    const own = shifts.filter((x) => x.userId === p.userId).sort((a, b) => a.startQ - b.startQ);
+    for (const sh of own) {
+      if (sh.pinned) continue;
+      // (1) a spare segment on an over-covered position spanning the window, and (4) a reassignment.
+      for (const g of sh.segments) {
+        if (g.positionId === MOD || g.positionId === positionId || g.startQ > fromQ || g.endQ < toQ) continue;
+        const lack: number[] = [];
+        const sec = secondaryOf(st, g.positionId);
+        for (let q = fromQ; q < toQ; q++) {
+          // The position loses a head: refill where it falls below its need, or where it is a primary left empty
+          // beside its staffed secondary (rule h).
+          if (occ(g.positionId, q) - 1 < (day.need.positions[g.positionId]?.[q] ?? 0) || (!!sec && occ(g.positionId, q) === 1 && occ(sec, q) > 0)) lack.push(q);
+        }
+        const pair = paired(fromQ, toQ, p.userId);
+        if (!pair) continue;
+        const move: FillStep = { kind: "relabel", userId: p.userId, shiftStartQ: sh.startQ, fromPositionId: g.positionId, positionId, fromQ, toQ };
+        if (lack.length === 0) { consider(addPlan({ hours: 0, steps: [move] }, pair)); continue; }
+        if (o.depth > 0 || donors >= REPAIR_LIMITS.maxDonors) continue;
+        donors++;
+        const refill = fillFor(g.positionId, lack[0]!, lack[lack.length - 1]! + 1, date, s, day, ctx, { exclude: [...o.exclude, p.userId], depth: o.depth + 1, staffOnly: false });
+        if (refill) consider(addPlan(addPlan({ hours: 0, steps: [move] }, refill), pair));
+      }
+      // (2) an extension of this shift over the window.
+      const span = Math.max(sh.endQ, toQ) - Math.min(sh.startQ, fromQ);
+      if (sh.endQ > fromQ && sh.startQ < toQ) continue;
+      if (dayQ(p.userId) - (sh.endQ - sh.startQ) + span > maxQ || !shiftExtendsOver(p, sh, day, date, fromQ, toQ, roomAt)) continue;
+      const [a, z] = sh.endQ <= fromQ ? [sh.endQ, toQ] : [fromQ, sh.startQ];
+      const essential = works(Math.min(sh.startQ, a), Math.max(sh.endQ, z));
+      const pair = paired(a, z, p.userId);
+      if (!pair) continue;
+      const hours = essential ? 0 : (z - a) / 4;
+      consider(addPlan({ hours, steps: [{ kind: "extend", userId: p.userId, shiftStartQ: sh.startQ, positionId, fromQ: a, toQ: z, hours }] }, pair));
+    }
+    // (3) a new block containing the window, with a legal placement witness.
+    if (blockQ > maxQ || dayQ(p.userId) + blockQ > maxQ) continue;
+    for (let a = Math.max(0, toQ - blockQ); a <= fromQ && a + blockQ <= 96; a++) {
+      const z = a + blockQ;
+      if (own.some((x) => x.startQ < z && x.endQ > a)) continue;
+      if (!availableOn(p, date, a, z) || !leaderSettingAllows(p, st, a, z)) continue;
+      let room = true;
+      for (let q = a; q < z && room; q++) room = roomAt(q);
+      if (!room) continue;
+      const pair = paired(a, z, p.userId);
+      if (!pair) continue;
+      const hours = works(a, z) ? 0 : blockQ / 4;
+      consider(addPlan({ hours, steps: [{ kind: "new_block", userId: p.userId, positionId, fromQ: a, toQ: z, hours }] }, pair));
+      break;
+    }
+  }
+  return best;
 }
+
+/** The cheapest legal fill FOUND for one more head on a coverage deficit (null when the search finds none). */
+export function cheapestFill(g: Pick<GapSubject, "date" | "positionId" | "fromQ" | "toQ">, s: WeekSchedule, ctx: RuleContext): FillPlan | null {
+  const day = ctx.days[g.date];
+  if (!day || !g.positionId) return null;
+  return fillFor(g.positionId, g.fromQ, g.toQ, g.date, s, day, ctx, { exclude: [], depth: 0, staffOnly: false });
+}
+
+/** The budget's remaining hourly hours on the budgeted dates: budget − (used − essential). */
+function remainingOf(f: ReturnType<typeof budgetFacts>): number {
+  return f.budgetHours - (f.usedHours - f.essentialHours);
+}
+
 
 function eligibleMembers(g: GapSubject, day: DayContext, ctx: RuleContext): RulePerson[] {
   return Object.values(ctx.people).filter((p) => eligibleInWindow(p, g.code, g.positionId, day.structure, g.fromQ, g.toQ))
@@ -708,17 +773,19 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
   if (!day || g.toQ <= g.fromQ) return false;
   const st = day.structure;
   switch (g.cause) {
-    case "budget": {
+    case "budget_limited": {
       // Astra chunk A P1: essential coverage is budget-exempt and can never be excused by budget — the MoD,
       // the Closing Manager, and any coverage deficit whose fill would work the closing window.
       if (!budgetMayExcuse(g, ctx)) return false;
       const c = g.certificate;
       const f = budgetFacts(s, ctx);
       if (!f.budgetedDates.includes(g.date) || !sameIds(c.budgetedDates, f.budgetedDates)) return false;
-      if (c.budgetHours !== f.budgetHours || c.usedHours !== f.usedHours || c.essentialHours !== f.essentialHours) return false;
-      const needed = hoursNeededFor(g, s, day, ctx);
-      if (needed === null || c.hoursNeeded !== needed || needed <= 0) return false;
-      return c.usedHours - c.essentialHours + c.hoursNeeded > c.budgetHours;
+      if (c.budgetHours !== f.budgetHours || c.usedHours !== f.usedHours || c.essentialHours !== f.essentialHours || c.remainingHours !== remainingOf(f)) return false;
+      // The design ruling: the SAME deterministic search, re-run; the witness must be exactly what it found, and cost more than is left.
+      const plan = cheapestFill(g, s, ctx);
+      if (!plan || c.fillHours !== plan.hours || canonicalJson(c.witness) !== canonicalJson(plan.steps)) return false;
+      // A zero-hourly-cost fill is never a budget gap, even when the budget is already overspent (R < 0).
+      return plan.hours > 0 && plan.hours > c.remainingHours;
     }
     case "floor_limit": {
       if (g.code !== "coverage_gap") return false;
@@ -815,9 +882,10 @@ export function proveGap(subject: GapSubject, s: WeekSchedule, ctx: RuleContext)
   }
   if (budgetMayExcuse(subject, ctx)) {
     const f = budgetFacts(s, ctx);
-    const hoursNeeded = hoursNeededFor(subject, s, day, ctx);
-    const bud = hoursNeeded === null ? null : tryCert({ ...subject, cause: "budget", certificate: {
-      budgetedDates: f.budgetedDates, budgetHours: f.budgetHours, usedHours: f.usedHours, essentialHours: f.essentialHours, hoursNeeded,
+    const plan = f.budgetedDates.includes(subject.date) ? cheapestFill(subject, s, ctx) : null;
+    const bud = plan === null ? null : tryCert({ ...subject, cause: "budget_limited", certificate: {
+      budgetedDates: f.budgetedDates, budgetHours: f.budgetHours, usedHours: f.usedHours, essentialHours: f.essentialHours,
+      remainingHours: remainingOf(f), fillHours: plan.hours, witness: plan.steps,
     } });
     if (bud) return bud;
   }

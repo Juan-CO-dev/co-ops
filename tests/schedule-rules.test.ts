@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CALLOUT_LAST_RESORT, RULE_CODES, REPAIR_LIMITS, approvalRefusal, capacityBound, checkCertificate, checkScheduleRules,
-  proveGap, structureInfeasible, type DeclaredGap, type RuleCode, type RuleProblem,
+  cheapestFill, proveGap, structureInfeasible, type DeclaredGap, type RuleCode, type RuleProblem,
 } from "@/lib/scheduling/rules-shared";
 import { contextAdvisory, ruleContextFromSnapshot, toContextSnapshot, type RuleContext } from "@/lib/scheduling/context-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
@@ -17,6 +17,14 @@ import {
 
 const run = (shifts = [] as ReturnType<typeof shift>[], ctx: RuleContext = context(), gaps: DeclaredGap[] = []) =>
   checkScheduleRules(week(shifts, gaps), ctx);
+/** A budget_limited gap exactly as the search proves it (the witness is the search's own), or a forged one for refusals. */
+const proven = (subject: Omit<DeclaredGap, "cause" | "certificate">, s: ReturnType<typeof week>, ctx: RuleContext): DeclaredGap => {
+  const got = proveGap(subject, s, ctx);
+  expect(got?.cause).toBe("budget_limited");
+  return { ...subject, ...got! } as DeclaredGap;
+};
+const forged = (subject: Omit<DeclaredGap, "cause" | "certificate">, budgetedDates: string[], fillHours: number): DeclaredGap => ({ ...subject, cause: "budget_limited",
+  certificate: { budgetedDates, budgetHours: 0, usedHours: 0, essentialHours: 0, remainingHours: 0, fillHours, witness: [] } } as DeclaredGap);
 const codes = (ps: RuleProblem[]) => [...new Set(ps.map((p) => p.code))].sort();
 const of = (ps: RuleProblem[], code: RuleCode) => ps.filter((p) => p.code === code);
 
@@ -200,9 +208,9 @@ describe("every code: a positive and a negative case", () => {
     setNeed(ctx, WED, P.REG, 44, 48);
     expect(of(run([], ctx), "undeclared_gap")[0]).toMatchObject({ day: WED, positionId: P.REG, params: { gap: "coverage_gap", fromQ: 44, toQ: 48 } });
     ctx.budgetByDate[WED] = 0;
-    // A 1 h hole with no adjacent shift costs a 4 h block: hoursNeeded is the legal fill's hours (chunk B).
-    const gap: DeclaredGap = { code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48, cause: "budget",
-      certificate: { budgetedDates: [WED], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 4 } };
+    // A 1 h hole with no adjacent shift: the cheapest legal fill FOUND is a 4 h block (budget_limited, CC chunk D ruling).
+    const gap = proven({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx);
+    expect(gap.certificate).toMatchObject({ fillHours: 4, remainingHours: 0 });
     const shown = run([], ctx, [gap]);
     expect(codes(shown)).toEqual(["coverage_gap"]);
     ctx.budgetByDate[WED] = 10;
@@ -255,25 +263,28 @@ describe("every code: a positive and a negative case", () => {
 });
 
 describe("gap certificates, per cause", () => {
-  it("budget: certifies with free qualified people when the arithmetic holds; fails when the budget had room", () => {
+  it("budget_limited: certifies R < W (the cheapest legal fill FOUND, its witness re-found exactly); fails when the budget had room", () => {
     const ctx = context();
     setNeed(ctx, WED, P.REG, 44, 48);
     ctx.budgetByDate[WED] = 0;
-    const g: DeclaredGap = { code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48, cause: "budget",
-      certificate: { budgetedDates: [WED], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 4 } };
+    const g = proven({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx);
     expect(checkCertificate(g, week([]), ctx)).toBe(true);
+    // A tampered witness or W is refused: the verifier re-runs the same search.
+    const c = g.certificate as { fillHours: number; witness: unknown[] };
+    expect(checkCertificate({ ...g, certificate: { ...c, fillHours: 3 } } as unknown as DeclaredGap, week([]), ctx)).toBe(false);
+    expect(checkCertificate({ ...g, certificate: { ...c, witness: [] } } as unknown as DeclaredGap, week([]), ctx)).toBe(false);
     ctx.budgetByDate[WED] = 10;
     expect(checkCertificate({ ...g, certificate: { ...g.certificate, budgetHours: 10 } as never }, week([]), ctx)).toBe(false);
-    // hoursNeeded is what a LEGAL fill adds: 4 h for the lone hole; exactly the hole when an eligible hourly shift is adjacent.
+    // W is what the found LEGAL fill adds: 4 h for the lone hole; exactly the hole when an eligible hourly shift is adjacent.
     ctx.budgetByDate[WED] = 2;
     const lone = proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx);
-    expect(lone).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 4, budgetHours: 2 } });
+    expect(lone).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 4, budgetHours: 2, remainingHours: 2 } });
     ctx.budgetByDate[WED] = 6;
     const beside = proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([shift(U.ben, WED, 48, 64, P.REG)]), ctx);
     expect(beside).toBeNull(); // Ben (4 h) extends over the 1 h hole within the 6 h budget: the budget does not excuse it
     ctx.budgetByDate[WED] = 4.5;
     expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([shift(U.ben, WED, 48, 64, P.REG)]), ctx))
-      .toMatchObject({ cause: "budget", certificate: { hoursNeeded: 1, usedHours: 4 } }); // 4 + 1 > 4.5: even the extension is unaffordable
+      .toMatchObject({ cause: "budget_limited", certificate: { fillHours: 1, usedHours: 4, remainingHours: 0.5 } }); // 1 > 4.5 - 4: even the extension is unaffordable
   });
 
   it("floor_limit: only when every free eligible candidate is a salaried manager at the cap and no hourly person is free", () => {
@@ -378,9 +389,9 @@ describe("gap certificates, per cause", () => {
     expect(ps).toMatchObject([{ code: "coverage_gap", severity: "gap", params: { cause: "unresolved_search", proven: false } }]);
     const notHit = { ...g, certificate: { ...g.certificate, searched: { steps: 50, donorsTried: 2, chainDepth: 1 } } } as DeclaredGap;
     expect(checkCertificate(notHit, week([]), ctx)).toBe(false);
-    ctx.budgetByDate[WED] = 0; // now `budget` proves it: an unresolved claim is no longer honest
+    ctx.budgetByDate[WED] = 0; // now `budget_limited` proves it: an unresolved claim is no longer honest
     expect(checkCertificate(g, week([]), ctx)).toBe(false);
-    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx)?.cause).toBe("budget");
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx)?.cause).toBe("budget_limited");
   });
 
   it("Approve refuses unresolved_gaps while ANY unresolved_search gap exists, inherited or not (r4); rules_failing on a NEW error", () => {
@@ -525,13 +536,12 @@ describe("Astra's chunk A review probes (failing first, fixed in the same commit
     const ctx = context({ built: [WED] });
     setNeed(ctx, WED, P.REG, 80, 83);
     ctx.budgetByDate[WED] = 0;
-    const closing: DeclaredGap = { code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 80, toQ: 83, cause: "budget",
-      certificate: { budgetedDates: [WED], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 0.75 } };
+    const closing = forged({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 80, toQ: 83 }, [WED], 0.75);
     expect(checkCertificate(closing, week([]), ctx)).toBe(false);
-    expect(proveGap(closing, week([]), ctx)?.cause).not.toBe("budget");
+    expect(proveGap(closing, week([]), ctx)?.cause).not.toBe("budget_limited");
     // A gap that merely TOUCHES the closing window is filled by a closing shift: exempt too.
     setNeed(ctx, WED, P.REG, 76, 83);
-    const touching: DeclaredGap = { ...closing, fromQ: 76, toQ: 81, certificate: { ...closing.certificate, hoursNeeded: 1.25 } };
+    const touching = forged({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 76, toQ: 81 }, [WED], 1.25);
     expect(checkCertificate(touching, week([]), ctx)).toBe(false);
     // Scheduling the closer costs no budget: a whole shift working the closing window is essential.
     const filled = run([shift(U.iris, WED, 67, 83, P.REG, { closingManager: true })], ctx);
@@ -539,12 +549,12 @@ describe("Astra's chunk A review probes (failing first, fixed in the same commit
     // MoD deficits are never budget gaps either.
     const modCtx = context({ s: structure((s) => { s.leadership.modRequired = true; }), built: [THU] });
     modCtx.budgetByDate[THU] = 0;
-    expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 28, toQ: 83 }, week([]), modCtx)?.cause).not.toBe("budget");
+    expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 28, toQ: 83 }, week([]), modCtx)?.cause).not.toBe("budget_limited");
     // A lunch gap with no budget is still a budget gap.
     const lunch = context({ built: [WED] });
     setNeed(lunch, WED, P.REG, 44, 48);
     lunch.budgetByDate[WED] = 0;
-    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), lunch)?.cause).toBe("budget");
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), lunch)?.cause).toBe("budget_limited");
   });
 
   it("P2 short windows: the minimum applies to the whole SHIFT; a 2 h window is a segment of a multi-position shift, never a structure proof", () => {
@@ -635,10 +645,10 @@ describe("Astra's chunk B review probes (failing first)", () => {
     setNeed(ctx, THU, P.REG, 44, 60);
     ctx.budgetByDate[THU] = 0;
     const gm = shift(U.alex, THU, 28, 60, "mod");
-    const g: DeclaredGap = { code: "coverage_gap", date: THU, positionId: P.REG, fromQ: 44, toQ: 60, cause: "budget",
-      certificate: { budgetedDates: [THU], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 4 } };
+    const g = proven({ code: "coverage_gap", date: THU, positionId: P.REG, fromQ: 44, toQ: 60 }, week([]), ctx);
     expect(checkCertificate(g, week([gm]), ctx)).toBe(false);
-    expect(proveGap(g, week([gm]), ctx)?.cause).not.toBe("budget");
+    expect(proveGap(g, week([gm]), ctx)?.cause).not.toBe("budget_limited");
+    expect(cheapestFill(g, week([gm]), ctx)).toMatchObject({ hours: 0, steps: [{ kind: "relabel", userId: U.alex, fromPositionId: "mod" }] });
     // Relabelling the GM's block to Register is legal and costs no hourly money: zero problems.
     const relabelled = { ...gm, segments: [{ positionId: "mod", startQ: 28, endQ: 44 }, { positionId: P.REG, startQ: 44, endQ: 60 }] };
     expect(run([relabelled], ctx).filter((p) => p.severity !== "warning")).toEqual([]);
@@ -647,7 +657,7 @@ describe("Astra's chunk B review probes (failing first)", () => {
     const capped = context({ s: structure((x) => { x.limits.managerFloorH = 0; }), built: [THU] });
     setNeed(capped, THU, P.REG, 44, 60);
     capped.budgetByDate[THU] = 0;
-    expect(checkCertificate(g, week([gm]), capped)).toBe(true);
+    expect(proveGap(g, week([gm]), capped)?.cause).toBe("budget_limited");
   });
 
   it("P1-2 KH-MoD boundaries: impossibility before the KH-may-be-MoD time never certifies the time after it", () => {
@@ -676,16 +686,16 @@ describe("Astra's chunk B review probes (failing first)", () => {
     const subject = { code: "coverage_gap" as const, date: WED, positionId: P.REG, fromQ: 60, toQ: 64 };
     // Iris closes 16:00–20:45 on Register (essential): extending her back to 15:00 costs no non-essential hour.
     const closer = shift(U.iris, WED, 64, 83, P.REG, { closingManager: true });
-    expect(proveGap(subject, week([closer]), ctx)?.cause).not.toBe("budget");
+    expect(proveGap(subject, week([closer]), ctx)?.cause).not.toBe("budget_limited");
     // A non-essential adjacent shift: the extension's hours (1 h); its availability ending at 15:00 makes it illegal → a new 4 h block.
     const ben = shift(U.ben, WED, 44, 60, P.REG);
     ctx.budgetByDate[WED] = 4;
-    expect(proveGap(subject, week([ben]), ctx)).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 1, usedHours: 4 } });
+    expect(proveGap(subject, week([ben]), ctx)).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 1, usedHours: 4 } });
     ctx.people[U.ben]!.availability[WED] = { fromQ: 40, toQ: 60, source: "toast_pattern" };
-    expect(proveGap(subject, week([ben]), ctx)).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 4 } });
+    expect(proveGap(subject, week([ben]), ctx)).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 4 } });
     // A pinned shift is never extended.
     ctx.people[U.ben]!.availability = {};
-    expect(proveGap(subject, week([{ ...ben, pinned: true }]), ctx)).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 4 } });
+    expect(proveGap(subject, week([{ ...ben, pinned: true }]), ctx)).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 4 } });
     // Reassignment: Ben on an over-covered Walk-ins / Online can move over at no extra hour → never a budget gap.
     const twoWalk = shift(U.ben, WED, 56, 72, P.WALKON);
     const maya = shift(U.maya, WED, 56, 72, P.WALKON);
@@ -693,7 +703,7 @@ describe("Astra's chunk B review probes (failing first)", () => {
     setNeed(roomy, WED, P.REG, 60, 64);
     setNeed(roomy, WED, P.WALKON, 56, 72);
     roomy.budgetByDate[WED] = 0;
-    expect(proveGap(subject, week([twoWalk, maya]), roomy)?.cause).not.toBe("budget");
+    expect(proveGap(subject, week([twoWalk, maya]), roomy)?.cause).not.toBe("budget_limited");
   });
 });
 
@@ -705,8 +715,7 @@ describe("Astra's chunk C review probes (failing first)", () => {
     ctx.budgetByDate[WED] = 0;
     return ctx;
   };
-  const budgetGap = (hoursNeeded: number): DeclaredGap => ({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48, cause: "budget",
-    certificate: { budgetedDates: [WED], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded } });
+  const budgetGap = (fillHours: number): DeclaredGap => forged({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, [WED], fillHours);
 
   it("P1 budget needs a LEGAL PLACEMENT WITNESS: one eligible employee available 11:00–12:00, a 4 h minimum, a 1 h gap, budget 0 → NOT a budget proof", () => {
     const ctx = regOnlyBen();
@@ -714,10 +723,11 @@ describe("Astra's chunk C review probes (failing first)", () => {
     // No 4 h shift fits inside 11:00–12:00, so no legal fill exists: the budget is not the reason.
     expect(checkCertificate(budgetGap(4), week([]), ctx)).toBe(false);
     expect(checkCertificate(budgetGap(1), week([]), ctx)).toBe(false);
-    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx)?.cause).not.toBe("budget");
-    // With 11:00–15:00 available, the 4 h block 11:00–15:00 is the witness: a budget proof, hoursNeeded 4.
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx)?.cause).not.toBe("budget_limited");
+    // With 11:00–15:00 available, the 4 h block 11:00–15:00 is the witness: budget_limited, W = 4.
     ctx.people[U.ben]!.availability[WED] = { fromQ: 44, toQ: 60, source: "toast_pattern" };
-    expect(checkCertificate(budgetGap(4), week([]), ctx)).toBe(true);
+    expect(proven({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx).certificate).toMatchObject({ fillHours: 4,
+      witness: [{ kind: "new_block", userId: U.ben, positionId: P.REG, fromQ: 44, toQ: 60, hours: 4 }] });
   });
 
   it("P1 the witness is a whole legal block: inside the position's open–close window, no overlap with the person's own shift, the daily maximum, the leader setting", () => {
@@ -729,7 +739,7 @@ describe("Astra's chunk C review probes (failing first)", () => {
     const gap = (hoursNeeded: number): DeclaredGap => ({ ...budgetGap(hoursNeeded), fromQ: 42, toQ: 44 });
     expect(checkCertificate(gap(4), week([]), ctx)).toBe(false);
     ctx.people[U.ben]!.availability[WED] = { fromQ: 36, toQ: 58, source: "toast_pattern" }; // 9:00–14:30: 10:30–14:30 fits
-    expect(checkCertificate(gap(4), week([]), ctx)).toBe(true);
+    expect(proven({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 42, toQ: 44 }, week([]), ctx).certificate).toMatchObject({ fillHours: 4 });
     // Ben's own shift that day (Walk-ins / Online 1:00–8:00 PM, 7 h, not the closing window): a NEW 4 h block from 10:30 would
     // overlap it and break the daily maximum (7 + 4 > 10.5 h), so it is never the witness; extending his shift back to 10:30 (9.5 h, the
     // 0.5 h hole + a 2 h bridge on Register) is, and it costs 2.5 h.
@@ -739,7 +749,7 @@ describe("Astra's chunk C review probes (failing first)", () => {
     setNeed(busy, WED, P.REG, 42, 44);
     const own = shift(U.ben, WED, 52, 80, P.WALKON);
     expect(checkCertificate({ ...gap(4), certificate: { ...gap(4).certificate, usedHours: 7 } } as DeclaredGap, week([own]), busy)).toBe(false);
-    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 42, toQ: 44 }, week([own]), busy)).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 2.5 } });
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 42, toQ: 44 }, week([own]), busy)).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 2.5 } });
   });
 
   it("P1 a secondary whose primary is unstaffed: the witness must staff the primary too (two people, two blocks), else no budget proof", () => {
@@ -747,12 +757,67 @@ describe("Astra's chunk C review probes (failing first)", () => {
     setNeed(ctx, WED, P.WALK, 44, 48); // Walk-ins (secondary of Walk-ins / Online), primary unstaffed
     ctx.budgetByDate[WED] = 0;
     const proof = proveGap({ code: "coverage_gap", date: WED, positionId: P.WALK, fromQ: 44, toQ: 48 }, week([]), ctx);
-    expect(proof).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 8 } }); // 4 h on Walk-ins + 4 h on Walk-ins / Online
+    expect(proof).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 8 } }); // 4 h on Walk-ins + 4 h on Walk-ins / Online (paired)
     // Only one person may work either position: no legal pair exists → not a budget proof.
     const solo = context({ s: structure((x) => { x.positions[P.WALK]!.allowedRoles = ["employee"]; x.positions[P.WALKON]!.allowedRoles = ["employee"]; }) });
     setNeed(solo, WED, P.WALK, 44, 48);
     solo.budgetByDate[WED] = 0;
-    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.WALK, fromQ: 44, toQ: 48 }, week([]), solo)?.cause).not.toBe("budget");
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.WALK, fromQ: 44, toQ: 48 }, week([]), solo)?.cause).not.toBe("budget_limited");
+  });
+});
+
+describe("Astra's chunk D review P1 + CC's design ruling: budget_limited — R < the cheapest legal fill FOUND (never a minimality claim)", () => {
+  /** Her probe: Walk-ins / Online (primary) and Walk-ins (secondary) staffed 10:30–2:30 by two people; both needed to 3:30. */
+  const probe = (budget: number) => {
+    const ctx = context();
+    setNeed(ctx, WED, P.WALKON, 42, 62);
+    setNeed(ctx, WED, P.WALK, 42, 62);
+    ctx.budgetByDate[WED] = budget;
+    const s = week([shift(U.maya, WED, 42, 58, P.WALKON), shift(U.ben, WED, 42, 58, P.WALK)]);
+    return { ctx, s, subject: { code: "coverage_gap" as const, date: WED, positionId: P.WALK, fromQ: 58, toQ: 62 } };
+  };
+
+  it("the PAIRED extension is found (each existing shift extended 1 h = 2 h) — with 2 h left it is NOT a budget gap", () => {
+    const { ctx, s, subject } = probe(10); // 8 h used, R = 2
+    expect(cheapestFill(subject, s, ctx)).toEqual({ hours: 2, steps: [
+      { kind: "extend", userId: U.ben, shiftStartQ: 42, positionId: P.WALK, fromQ: 58, toQ: 62, hours: 1 },
+      { kind: "extend", userId: U.maya, shiftStartQ: 42, positionId: P.WALKON, fromQ: 58, toQ: 62, hours: 1 },
+    ] });
+    expect(proveGap(subject, s, ctx)?.cause).not.toBe("budget_limited");
+    // The old over-statement (a hand-made 8 h claim) is refused: it is not what the search found.
+    expect(checkCertificate(forged(subject, [WED], 8), s, ctx)).toBe(false);
+    // The completed schedule (both extended) leaves no error and no gap on those positions.
+    const done = run([shift(U.maya, WED, 42, 62, P.WALKON), shift(U.ben, WED, 42, 62, P.WALK)], ctx);
+    expect(done.filter((p) => p.severity !== "warning" && (p.positionId === P.WALK || p.positionId === P.WALKON))).toEqual([]);
+  });
+
+  it("with less than W left (R = 1.5 < 2) it IS budget_limited, carrying R, W and the witness; shown as a proven gap", () => {
+    const { ctx, s, subject } = probe(9.5);
+    const g = proven(subject, s, ctx);
+    expect(g.certificate).toMatchObject({ remainingHours: 1.5, fillHours: 2 });
+    expect(checkCertificate(g, s, ctx)).toBe(true);
+    expect(run(s.shifts, ctx, [g]).filter((p) => p.code === "coverage_gap" && p.positionId === P.WALK)).toMatchObject([{ params: { cause: "budget_limited", proven: true } }]);
+  });
+
+  it("Approve does NOT refuse a budget_limited gap (a manager's choice); it still refuses unresolved_search", () => {
+    const { ctx, s, subject } = probe(9.5);
+    const g = proven(subject, s, ctx);
+    expect(approvalRefusal(week(s.shifts, [g]), run(s.shifts, ctx, [g]).filter((p) => p.positionId === P.WALK))).toBeNull();
+    const unresolved = { ...subject, cause: "unresolved_search", certificate: { searched: { steps: 200, donorsTried: 8, chainDepth: 3 }, limits: { ...REPAIR_LIMITS }, candidateIds: [] } } as DeclaredGap;
+    expect(approvalRefusal(week(s.shifts, [unresolved]), [])).toBe("unresolved_gaps");
+  });
+
+  it("a REASSIGNMENT is searched: Ben moves off Walk-ins / Online to Register and Maya stays on there 1 h earlier (W = 1)", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.REG, 48, 52);
+    setNeed(ctx, WED, P.WALKON, 42, 68);
+    ctx.budgetByDate[WED] = 0;
+    const s = week([shift(U.ben, WED, 42, 52, P.WALKON), shift(U.maya, WED, 52, 68, P.WALKON)]);
+    const plan = cheapestFill({ date: WED, positionId: P.REG, fromQ: 48, toQ: 52 }, s, ctx);
+    expect(plan).toEqual({ hours: 1, steps: [
+      { kind: "relabel", userId: U.ben, shiftStartQ: 42, fromPositionId: P.WALKON, positionId: P.REG, fromQ: 48, toQ: 52 },
+      { kind: "extend", userId: U.maya, shiftStartQ: 52, positionId: P.WALKON, fromQ: 48, toQ: 52, hours: 1 },
+    ] });
   });
 });
 

@@ -12,7 +12,7 @@ const opts = (canSeeMoney: boolean) => ({ people, canSeeMoney, wageCentsByUser: 
 const snap = (shifts: WeekSnapshot["shifts"], gaps: DeclaredGap[] = [], days: DayRecord[] = []): WeekSnapshot => ({ shifts, gaps, days });
 const modGap = (date: string, fromQ: number, toQ: number): DeclaredGap => ({ code: "mod_missing", date, positionId: null, fromQ, toQ, cause: "structure", certificate: { rule: "no_mod_member", detail: {} } });
 const budgetGap = (date: string, fromQ: number, toQ: number): DeclaredGap => ({
-  code: "coverage_gap", date, positionId: P.REG, fromQ, toQ, cause: "budget", certificate: { budgetedDates: [date], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 4 },
+  code: "coverage_gap", date, positionId: P.REG, fromQ, toQ, cause: "budget_limited", certificate: { budgetedDates: [date], budgetHours: 0, usedHours: 0, essentialHours: 0, remainingHours: 0, fillHours: 4, witness: [{ kind: "new_block", userId: "u-x", positionId: P.REG, fromQ, toQ: fromQ + 16, hours: 4 }] },
 });
 const prob = (day: string, severity: RuleProblem["severity"], inherited: boolean): RuleProblem => ({ code: severity === "warning" ? "overtime" : severity === "gap" ? "coverage_gap" : "person_overlap", severity, day, params: {}, inherited });
 
@@ -43,7 +43,7 @@ describe("diffWeeks: each change kind", () => {
     expect(thu.find((c) => c.kind === "hourly_hours")).toEqual({ kind: "hourly_hours", deltaHours: 5.75 }); // Dani 5.75 h added
     expect(thu.find((c) => c.kind === "problems")).toEqual({ kind: "problems", severity: "warning", inherited: false, delta: -1 });
     const wed = d.days.find((x) => x.date === WED)!.changes;
-    expect(wed).toContainEqual({ kind: "gap_hours", cause: "budget", deltaHours: -1 });
+    expect(wed).toContainEqual({ kind: "gap_hours", cause: "budget_limited", deltaHours: -1 });
     expect(wed).toContainEqual({ kind: "cost", deltaCents: -6400 }); // Eli's 4 h at $16
     expect(d.summary).toMatchObject({ added: 1, removed: 1, moved: 1, relabelled: 2, closingManagerChanged: 1, gapHoursDelta: -1, newProblemsDelta: -1, inheritedProblemsDelta: 0 });
     expect(d.summaryLine.key).toBe("schedule.diff.summary");

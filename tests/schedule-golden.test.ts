@@ -48,11 +48,11 @@ const ASSERT: Record<string, (out: GeneratorOutput) => void> = {
     expect(out.gaps.some((g) => g.cause === "structure" && g.certificate.rule === "no_mod_member")).toBe(true);
   },
   "F0b-tight-budget-zero": (out) => {
-    expect(out.gaps.length).toBeGreaterThan(0); expect(out.gaps.every((g) => g.cause === "budget")).toBe(true); expect(out.shifts.some((x) => x.closingManager)).toBe(true);
+    expect(out.gaps.length).toBeGreaterThan(0); expect(out.gaps.every((g) => g.cause === "budget_limited")).toBe(true); expect(out.shifts.some((x) => x.closingManager)).toBe(true);
     // CC chunk C ruling 3: the essential closer hours at budget 0 are correct, provided the note shows them.
     expect(out.notes).toContainEqual({ code: "essential_past_budget", date: null, userId: null, positionId: null, params: { hours: out.stats.essentialHours, budgetHours: 0 } });
   },
-  "F0b-tight-budget-essential-plus-6": (out) => { expect(out.gaps.every((g) => g.cause === "budget")).toBe(true); expect(out.stats.hourlyHours - out.stats.essentialHours).toBeLessThanOrEqual(22); },
+  "F0b-tight-budget-essential-plus-6": (out) => { expect(out.gaps.every((g) => g.cause === "budget_limited")).toBe(true); expect(out.stats.hourlyHours - out.stats.essentialHours).toBeLessThanOrEqual(22); },
   "F0c-no-eligible": (out) => expect(out.gaps.filter((g) => g.positionId === I.$DISH).map((g) => g.cause)).toEqual(["eligibility"]),
   "F0d-floor-capped": (out) => { const f = out.gaps.filter((g) => g.positionId === I.$EXPO); expect(f.length).toBeGreaterThan(0); expect(f.every((g) => g.cause === "floor_limit")).toBe(true); },
   "F0e-repair-needed": (out) => { expect(out.gaps).toEqual([]); expect(out.stats.repair.accepted).toBeGreaterThan(0); },

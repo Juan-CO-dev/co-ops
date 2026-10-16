@@ -26,7 +26,7 @@ describe("the shared shape case files, TS side", () => {
   it("the case files exercise both verdicts and every cause", () => {
     expect(segmentCases.filter((c) => c.valid).length).toBeGreaterThan(3);
     expect(segmentCases.filter((c) => !c.valid).length).toBeGreaterThan(10);
-    for (const cause of ["budget", "floor_limit", "eligibility", "availability", "capacity", "structure", "unresolved_search"]) {
+    for (const cause of ["budget_limited", "floor_limit", "eligibility", "availability", "capacity", "structure", "unresolved_search"]) {
       expect(certificateCases.some((c) => c.cause === cause && c.valid), cause).toBe(true);
       expect(certificateCases.some((c) => c.cause === cause && !c.valid), cause).toBe(true);
     }

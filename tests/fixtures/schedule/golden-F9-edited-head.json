@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.3. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.4. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -667,18 +667,6 @@
   }
  ],
  "reasons": {
-  "2026-10-26|u-b-bo|42": {
-   "alternates": [],
-   "segments": [
-    []
-   ],
-   "shift": [
-    {
-     "key": "inherited",
-     "params": {}
-    }
-   ]
-  },
   "2026-10-27|u-a-ana|42": {
    "alternates": [],
    "segments": [

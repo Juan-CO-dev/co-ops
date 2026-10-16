@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.3. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.4. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -94,20 +94,6 @@
    "originRevisionId": null,
    "problems": [
     {
-     "code": "coverage_gap",
-     "day": "2026-11-01",
-     "inherited": false,
-     "params": {
-      "cause": "unresolved_search",
-      "fromQ": 38,
-      "proven": false,
-      "toQ": 60
-     },
-     "positionId": "5c000000-0000-4000-8000-000000000008",
-     "q": 38,
-     "severity": "gap"
-    },
-    {
      "code": "overtime",
      "day": "2026-11-01",
      "inherited": false,
@@ -139,6 +125,17 @@
      },
      "severity": "warning",
      "userId": "u-e-eve"
+    },
+    {
+     "code": "overtime",
+     "day": "2026-11-01",
+     "inherited": false,
+     "params": {
+      "hours": 43.75,
+      "limit": 40
+     },
+     "severity": "warning",
+     "userId": "u-f-finn"
     },
     {
      "code": "overtime",
@@ -197,6 +194,18 @@
      },
      "severity": "warning",
      "userId": "u-e-eve"
+    },
+    {
+     "code": "soft_range",
+     "day": "2026-11-01",
+     "inherited": false,
+     "params": {
+      "hours": 43.75,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-f-finn"
     },
     {
      "code": "soft_range",
@@ -310,36 +319,6 @@
    "fromQ": 32,
    "positionId": "5c000000-0000-4000-8000-000000000001",
    "toQ": 60
-  },
-  {
-   "cause": "unresolved_search",
-   "certificate": {
-    "candidateIds": [
-     "u-a-ana",
-     "u-b-bo",
-     "u-c-cy",
-     "u-f-finn",
-     "u-g-gus",
-     "u-h-hal",
-     "u-i-ivy",
-     "u-j-gm"
-    ],
-    "limits": {
-     "REPAIR_MAX_STEPS": 200,
-     "maxChainDepth": 3,
-     "maxDonors": 8
-    },
-    "searched": {
-     "chainDepth": 3,
-     "donorsTried": 8,
-     "steps": 200
-    }
-   },
-   "code": "coverage_gap",
-   "date": "2026-11-01",
-   "fromQ": 38,
-   "positionId": "5c000000-0000-4000-8000-000000000008",
-   "toQ": 60
   }
  ],
  "notes": [
@@ -348,7 +327,7 @@
    "date": null,
    "params": {
     "budgetHours": 408,
-    "hours": 2.5
+    "hours": 8
    },
    "positionId": null,
    "userId": null
@@ -3846,6 +3825,35 @@
     }
    ]
   },
+  "2026-11-01|u-f-finn|38": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "budget_fill",
+      "params": {
+       "fromQ": 38,
+       "hours": 5.5,
+       "kind": "new_block",
+       "positionId": "5c000000-0000-4000-8000-000000000008",
+       "toQ": 60
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "budget_fill",
+     "params": {
+      "fromQ": 38,
+      "hours": 5.5,
+      "kind": "new_block",
+      "positionId": "5c000000-0000-4000-8000-000000000008",
+      "toQ": 60
+     }
+    }
+   ]
+  },
   "2026-11-01|u-f-finn|67": {
    "alternates": [],
    "segments": [
@@ -5281,6 +5289,22 @@
   {
    "closingManager": false,
    "date": "2026-11-01",
+   "endQ": 60,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 60,
+     "positionId": "5c000000-0000-4000-8000-000000000008",
+     "startQ": 38
+    }
+   ],
+   "startQ": 38,
+   "userId": "u-f-finn"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-11-01",
    "endQ": 83,
    "flex": false,
    "pinned": false,
@@ -5387,9 +5411,9 @@
    "2026-11-01"
   ],
   "essentialHours": 184.5,
-  "gaps": 4,
-  "hourlyCostCents": 779950,
-  "hourlyHours": 410.5,
+  "gaps": 3,
+  "hourlyCostCents": 790400,
+  "hourlyHours": 416,
   "hourlyHoursByDate": {
    "2026-10-26": 62,
    "2026-10-27": 62,
@@ -5397,7 +5421,7 @@
    "2026-10-29": 54,
    "2026-10-30": 57.25,
    "2026-10-31": 62,
-   "2026-11-01": 59.25
+   "2026-11-01": 64.75
   },
   "repair": {
    "accepted": 18,
@@ -5407,6 +5431,6 @@
    "steps": 200
   },
   "salariedCoverHours": 32,
-  "shifts": 70
+  "shifts": 71
  }
 }

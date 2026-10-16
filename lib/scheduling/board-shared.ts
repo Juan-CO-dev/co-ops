@@ -201,6 +201,8 @@ export interface MoneyStripHours {
   /** Salaried managers' floor (non-MoD) hours, and the hourly hours that floor time saves (no hourly person on that position then). */
   managerFloorHours: number;
   hourlySavedBySalaried: number;
+  /** Astra chunk D: salaried managers' MoD-only time, shown SEPARATELY — it never counts toward the floor limit (station time only). */
+  managerModHours: number;
   /**
    * CC chunk C ruling 3: the ESSENTIAL hourly hours on the budgeted dates (whole shifts working the closing window) —
    * exempt from the budget cap, counted in every total — and how much of the budget they pass (0 within it; null with
@@ -241,13 +243,14 @@ export function moneyStrip(input: MoneyStripInput, opts: { canSeeMoney: boolean 
   const otRiskCount = [...weekQ.entries()].filter(([u, q]) => isHourly(people[u]) && q / 4 > overtimeH).length;
   let floorQ = 0;
   let savedQ = 0;
+  let modQ = 0;
   for (const sh of inWeek) {
     const p = people[sh.userId];
     if (!p?.salaried) continue;
     const s = structureFor(ctx, sh.date);
     const sameDay = inWeek.filter((x) => x.date === sh.date && isHourly(people[x.userId]));
     for (const g of sh.segments) {
-      if (g.positionId === MOD) continue;
+      if (g.positionId === MOD) { modQ += g.endQ - g.startQ; continue; }
       floorQ += g.endQ - g.startQ;
       const pos = s?.positions[g.positionId];
       const lo = pos ? Math.max(g.startQ, pos.openQ) : g.startQ;
@@ -259,7 +262,7 @@ export function moneyStrip(input: MoneyStripInput, opts: { canSeeMoney: boolean 
   const hours: MoneyStripHours = {
     hourlyHours: hourlyQ / 4, hourlyHoursOnBudgetedDates: budgetedQ / 4, budgetHours, unbudgetedDates,
     remainingHours: budgetHours === null ? null : budgetHours - budgetedQ / 4, otRiskCount, flexUsed: 0, flexAvailable: false,
-    managerFloorHours: floorQ / 4, hourlySavedBySalaried: savedQ / 4,
+    managerFloorHours: floorQ / 4, hourlySavedBySalaried: savedQ / 4, managerModHours: modQ / 4,
     essentialHoursOnBudgetedDates: essentialQ / 4,
     essentialPastBudgetHours: budgetHours === null ? null : Math.max(0, Math.min(essentialQ / 4, budgetedQ / 4 - budgetHours)),
   };
