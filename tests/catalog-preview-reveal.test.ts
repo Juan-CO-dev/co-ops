@@ -26,14 +26,35 @@ describe("preview panels reveal themselves when they open", () => {
     });
     const { useRevealOnOpen } = await import("@/components/catalog/useRevealOnOpen");
     const { panelRef, headingRef } = useRevealOnOpen<HTMLElement, HTMLHeadingElement>();
-    const scrollIntoView = vi.fn();
-    const focus = vi.fn();
-    (panelRef as { current: unknown }).current = { scrollIntoView };
-    (headingRef as { current: unknown }).current = { focus };
-    expect(effects).toHaveLength(1);
-    effects[0]!();
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
-    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
-    vi.doUnmock("react");
+    const g = globalThis as { window?: unknown };
+    const hadWindow = "window" in g;
+    const saved = g.window;
+    g.window = { innerHeight: 812 };
+    try {
+      expect(effects).toHaveLength(1);
+      const run = (headingTop: number, headingBottom: number) => {
+        const panelScroll = vi.fn();
+        const headingScroll = vi.fn();
+        const focus = vi.fn();
+        (panelRef as { current: unknown }).current = { scrollIntoView: panelScroll };
+        (headingRef as { current: unknown }).current = {
+          focus, scrollIntoView: headingScroll, getBoundingClientRect: () => ({ top: headingTop, bottom: headingBottom }),
+        };
+        effects[0]!();
+        return { panelScroll, headingScroll, focus };
+      };
+      // The heading is on screen after the nearest-edge scroll: no second scroll, focus without moving.
+      const visible = run(14, 40);
+      expect(visible.panelScroll).toHaveBeenCalledWith({ block: "nearest" });
+      expect(visible.headingScroll).not.toHaveBeenCalled();
+      expect(visible.focus).toHaveBeenCalledWith({ preventScroll: true });
+      // A tall panel aligned by its bottom leaves the heading above the fold: the heading is brought to the top first.
+      const tall = run(-529, -503);
+      expect(tall.headingScroll).toHaveBeenCalledWith({ block: "start" });
+      expect(tall.focus).toHaveBeenCalledWith({ preventScroll: true });
+    } finally {
+      if (hadWindow) g.window = saved; else delete g.window;
+      vi.doUnmock("react");
+    }
   });
 });

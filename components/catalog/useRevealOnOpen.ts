@@ -13,7 +13,13 @@ export function useRevealOnOpen<T extends HTMLElement, H extends HTMLElement>() 
   const headingRef = useRef<H>(null);
   useEffect(() => {
     panelRef.current?.scrollIntoView?.({ block: "nearest" });
-    headingRef.current?.focus?.({ preventScroll: true });
+    const heading = headingRef.current;
+    if (!heading) return;
+    // A panel taller than the viewport can be aligned by its BOTTOM, leaving the heading above the fold
+    // (Astra review): bring the heading itself to the top in that case, then focus it without moving again.
+    const r = heading.getBoundingClientRect?.();
+    if (r && typeof window !== "undefined" && (r.top < 0 || r.bottom > window.innerHeight)) heading.scrollIntoView?.({ block: "start" });
+    heading.focus?.({ preventScroll: true });
   }, []);
   return { panelRef, headingRef };
 }
