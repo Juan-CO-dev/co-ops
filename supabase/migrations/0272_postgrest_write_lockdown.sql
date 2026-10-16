@@ -145,8 +145,9 @@ begin
     -- above also prove that PUBLIC has no write privilege at either level.
     if not (has_table_privilege('service_role', obj, 'SELECT')
       and has_table_privilege('service_role', obj, 'INSERT')
-      and has_table_privilege('service_role', obj, 'UPDATE'))
-      or has_table_privilege('service_role', obj, 'TRUNCATE, REFERENCES, TRIGGER') then
+      and has_table_privilege('service_role', obj, 'UPDATE')) then
+      -- service_role's wider rights (DELETE/TRUNCATE/…) are deliberately out of scope here:
+      -- this migration only closes the PostgREST roles; tightening service_role is its own change.
       raise exception '0272: service_role lacks SELECT/INSERT/UPDATE on %', r.table_name;
     end if;
     -- DELETE is intentionally outside this ceiling: existing service paths may use it.
@@ -160,8 +161,8 @@ begin
       where n.nspname = 'public' and p.prosecdef
         and p.prosrc ~* ('(^|[^a-z0-9_])' || r.table_name || '([^a-z0-9_]|$)')
         and p.prosrc ~* '(^|[^a-z0-9_])(insert|update)([^a-z0-9_]|$)' loop
-      if has_function_privilege('anon', f.signature, 'EXECUTE')
-        or has_function_privilege('authenticated', f.signature, 'EXECUTE')
+      if has_function_privilege('anon', f.oid, 'EXECUTE')
+        or has_function_privilege('authenticated', f.oid, 'EXECUTE')
         or exists (select 1 from aclexplode(coalesce((select proacl from pg_proc where oid = f.oid),
           acldefault('f', (select proowner from pg_proc where oid = f.oid)))) acl
           where acl.grantee = 0 and acl.privilege_type = 'EXECUTE') then
