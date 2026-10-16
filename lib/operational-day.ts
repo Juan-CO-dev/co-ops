@@ -130,6 +130,8 @@ export function etWallClockToUtcIso(dateYmd: string, time: string): string | nul
  *   .gte("created_at", startIso).lt("created_at", endExclusiveIso)
  * DST-correct: resolve each ET midnight independently. The next midnight is
  * 23, 24, or 25 hours later, so adjacent days have no gap or overlap.
+ * An impossible but well-formed date normalizes (2026-02-30 → 2026-03-02);
+ * callers receiving user input must validate the calendar date first.
  */
 export function operationalDayUtcRange(dateYmd: string): { startIso: string; endExclusiveIso: string } {
   const midnightIso = (ymd: string): string => {

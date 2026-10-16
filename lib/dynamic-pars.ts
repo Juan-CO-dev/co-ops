@@ -426,6 +426,7 @@ export async function loadDemandInputs(
           .select("id, produced_at")
           .eq("location_id", locationId)
           .is("superseded_at", null).is("revoked_at", null)
+          // Exact start of the ET date filter below (d >= windowStart); widen both together.
           .gte("produced_at", operationalDayUtcRange(windowStart).startIso)
           .order("id", { ascending: true })
           .range(from, to)
@@ -465,6 +466,7 @@ export async function loadDemandInputs(
     sb.from("par_suggestion_actions")
       .select("sku_id, day_class, action, acted_at")
       .eq("location_id", locationId)
+      // Exact budget cutoff: derivePriorAndBudget counts every fetched revert action.
       .gte("acted_at", operationalDayUtcRange(budgetFrom).startIso)
       .returns<Array<{ sku_id: string; day_class: string; action: string; acted_at: string }>>(),
     // ⑭ the velocity recipe-edit reset.

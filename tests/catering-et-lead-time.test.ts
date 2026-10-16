@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { operationalDayUtcRange } from "@/lib/operational-day";
+import { stubUtcDateParsing } from "./helpers/utc-date";
 
 const mocks = vi.hoisted(() => ({ client: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: mocks.client }));
@@ -34,7 +35,10 @@ function client() {
   } };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("catering lead time uses the start of the ET event day", () => {
   it.each(DAYS)("capacity on %s", async (day, startIso) => {
@@ -54,8 +58,19 @@ describe("catering lead time uses the start of the ET event day", () => {
     const start = Date.parse(startIso);
     vi.useFakeTimers();
     vi.setSystemTime(start - 30 * 60_000);
+    stubUtcDateParsing();
     expect(await routeDelivery({ lat: 38.9, lng: -77.03, eventDate: day, headcount: 1 })).toEqual({ status: "no_capacity" });
     vi.setSystemTime(start - 90 * 60_000);
     expect(await routeDelivery({ lat: 38.9, lng: -77.03, eventDate: day, headcount: 1 })).toMatchObject({ status: "routed", locationId: "shop" });
   });
+
+  it.each(["bad-date", "2026-7-10", "2026-07-10T00:00:00Z"])(
+    "malformed date %s fails the capacity and routing lead-time gates without throwing",
+    async (eventDate) => {
+      mocks.client.mockReturnValue(client());
+      const capacity = await checkCateringCapacity({ locationId: "shop", eventDate, requestedCovers: 1 });
+      expect(capacity).toMatchObject({ meetsLeadTime: false, signal: "below_lead_time" });
+      expect(await routeDelivery({ lat: 38.9, lng: -77.03, eventDate, headcount: 1 })).toEqual({ status: "no_capacity" });
+    },
+  );
 });

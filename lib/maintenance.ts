@@ -410,7 +410,7 @@ export async function loadEquipmentDetail(
       .is("superseded_at", null)
       .is("revoked_at", null)
       .not("notes", "is", null)
-      .gte("completed_at", args.sinceDate);
+      .gte("completed_at", operationalDayUtcRange(args.sinceDate).startIso);
     for (const r of (cNotes ?? []) as Array<{ notes: string | null; completed_at: string }>) {
       if (r.notes && r.notes.trim()) {
         notes.push({ id: `c-${r.completed_at}`, equipmentId: equip.id, otherLabel: null, note: r.notes, byName: null, at: r.completed_at });

@@ -51,6 +51,7 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
         .select("resource_id,occurred_at,metadata").eq("resource_table", "catering_pipeline")
         .in("resource_id", leadIds.slice(start, start + 100))
         .in("action", ["catering.pipeline.transfer_location", "ezcater.location_reassigned"])
+        // Exact earliest ET day accepted by productionLocations(eventDate, transfers): eventDate - 1.
         .gte("occurred_at", operationalDayUtcRange(etYmdMinusDays(window.fromDate, 1)).startIso).order("id").range(from, to), 250));
     }
     return rows;
