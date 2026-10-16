@@ -638,6 +638,7 @@ function CatalogRow({
               {t("admin.skus.unverified_badge")}
             </span>
           ) : null}
+          {s.locationName ? <span className="text-xs font-bold text-co-text-muted">{t("catalog.only_at_shop", { shop: s.locationName })}</span> : null}
           {readiness ? <StatusBadge status={readiness.status as "incomplete" | "upstream_gaps"} /> : null}
           {readiness ? <ReadinessReasons reasons={readiness.reasons} /> : null}
           <SkuDataChips skuId={s.id} shops={dataShops} />

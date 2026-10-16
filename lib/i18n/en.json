@@ -6782,7 +6782,7 @@
   "recipes.builder.lines_global_only": "Only the Director of Operations changes these lines for every shop. Change your shop's own version on the catalog page.",
   "recipes.builder.lines_change_shop": "Change your shop's version",
   "catalog.only_at_shop": "Only at {shop}",
-  "catering.quotes.error.owned_not_catering": "This item is only available at one shop. Choose a shared item for catering.",
+  "catering.quotes.error.catering_owned_item_refused": "This item is only available at one shop. Choose a shared item for catering.",
   "admin.items.add_item": "Add prep item",
   "admin.items.scope": "Available at",
   "admin.items.choose_shop": "Choose a shop",
@@ -6791,5 +6791,7 @@
   "recipes.output.create_for_shop": "Create prep item for this shop",
   "recipes.output.new_name": "Prep item name",
   "recipes.output.new_name_es": "Prep item name (Spanish)",
-  "recipes.output.new_section": "Prep section"
+  "recipes.output.new_section": "Prep section",
+  "admin.skus.share_all_shops": "Share with all shops",
+  "catalog.error.needs_vendor": "Choose a vendor before setting order days, placing this item on a guide, or adding a barcode."
 }

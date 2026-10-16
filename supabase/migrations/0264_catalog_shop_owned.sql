@@ -538,6 +538,7 @@ declare
   v_number text;
   v_class text;
   v_basis text;
+  v_avg numeric;
   v_price numeric;
   v_date date;
 begin
@@ -570,6 +571,16 @@ begin
   v_number := nullif(btrim(p_sku ->> 'itemNumber'), '');
   v_class := coalesce(p_sku ->> 'skuClass', 'raw');
   v_basis := p_sku ->> 'priceBasis';
+  -- The count-leaf weight is part of the atomic creation, not a later edit.
+  if p_sku ? 'avgOzPerEach' and jsonb_typeof(p_sku -> 'avgOzPerEach') <> 'null' then
+    if jsonb_typeof(p_sku -> 'avgOzPerEach') <> 'number' then
+      raise exception 'shop_owned:invalid_payload' using errcode = 'P0001';
+    end if;
+    v_avg := (p_sku ->> 'avgOzPerEach')::numeric;
+    if v_avg <= 0 or v_avg::text in ('NaN', 'Infinity', '-Infinity') then
+      raise exception 'shop_owned:invalid_payload' using errcode = 'P0001';
+    end if;
+  end if;
   if v_class not in ('raw', 'packaging', 'cleaning', 'misc')
      or (v_basis is not null and v_basis not in ('per_case', 'per_each', 'per_lb', 'per_dozen', 'per_bundle')) then
     raise exception 'shop_owned:invalid_payload' using errcode = 'P0001';
@@ -621,9 +632,9 @@ begin
     end if;
   end if;
   insert into public.vendor_items
-    (id, vendor_id, location_id, name, item_number, sku_class, price_basis,
+    (id, vendor_id, location_id, name, item_number, sku_class, price_basis, avg_oz_per_each,
      pack_format, notes, active, created_by, updated_by)
-  values (v_id, v_vendor, p_location_id, v_name, v_number, v_class, v_basis,
+  values (v_id, v_vendor, p_location_id, v_name, v_number, v_class, v_basis, v_avg,
           'Each (no case)', nullif(btrim(p_sku ->> 'notes'), ''), true, p_actor, p_actor);
   -- Use the existing validators and history writers in this transaction. A
   -- failure at either step unwinds the row and every earlier initial value.
@@ -692,8 +703,79 @@ begin
   end case;
   perform public.shop_owned_check_recipe(p_recipe_id);
   return v_result;
+exception when invalid_text_representation or numeric_value_out_of_range then
+  raise exception 'shop_owned:invalid_payload' using errcode='P0001';
 end $$;
 revoke all on function public.write_owned_recipe(uuid,uuid,text,jsonb,uuid) from public,anon,authenticated;
 grant execute on function public.write_owned_recipe(uuid,uuid,text,jsonb,uuid) to service_role;
+
+-- Chunk 5: a preview binds more than the original owner's SKU/item sets. In
+-- particular, a sandwich may gain another producer after preview. Preserve the
+-- reviewed writers and wrap their dispatch with the existing graph/closure locks.
+create or replace function public.catalog_share_recipe_ids(p_kind text,p_id uuid)
+returns uuid[] language sql stable security definer set search_path = pg_catalog, public as $$
+  select coalesce(array_agg(distinct recipe_id order by recipe_id),'{}'::uuid[]) from (
+    select p_id recipe_id where p_kind='recipe'
+    union all select recipe_id from public.recipe_outputs where p_kind='menu_item' and output_menu_item_id=p_id
+    union all select recipe_id from public.recipe_inputs where p_kind='sku' and component_sku_id=p_id
+    union all select l.recipe_id from public.recipe_version_lines l join public.recipe_versions v on v.id=l.version_id
+      where p_kind='sku' and l.component_sku_id=p_id and v.active and v.location_id is not null
+  ) refs
+$$;
+
+create or replace function public.catalog_share_snapshot(p_kind text,p_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = pg_catalog, public as $$
+declare v_target jsonb; v_recipes uuid[];
+begin
+  case p_kind
+    when 'sku' then select to_jsonb(t) into v_target from public.vendor_items t where id=p_id;
+    when 'recipe' then select to_jsonb(t) into v_target from public.recipes t where id=p_id;
+    when 'menu_item' then select to_jsonb(t) into v_target from public.menu_items t where id=p_id;
+    else raise exception 'shop_owned:invalid_payload' using errcode='P0001';
+  end case;
+  if v_target is null then raise exception 'shop_owned:not_found' using errcode='P0001'; end if;
+  v_recipes:=public.catalog_share_recipe_ids(p_kind,p_id);
+  return jsonb_build_object('kind',p_kind,'target',v_target,
+    'owner_shop',(select to_jsonb(l) from public.locations l where l.id=(v_target->>'location_id')::uuid),
+    'recipes',coalesce((select jsonb_agg(jsonb_build_object('id',r.id,'snapshot',public.recipe_change_snapshot(r.id,r.location_id,null)) order by r.id)
+      from public.recipes r where r.id=any(v_recipes)),'[]'::jsonb),
+    'packs',case when p_kind='sku' then (select coalesce(jsonb_agg(to_jsonb(v) order by v.id),'[]'::jsonb) from public.sku_pack_versions v where v.sku_id=p_id) else '[]'::jsonb end,
+    'price_lanes',case when p_kind='sku' then (select coalesce(jsonb_agg(to_jsonb(v) order by v.id),'[]'::jsonb) from public.sku_price_lanes v where v.sku_id=p_id) else '[]'::jsonb end);
+end $$;
+
+create or replace function public.share_catalog_entity(p_kind text,p_id uuid,p_expected_owner uuid,p_expected_snapshot jsonb,
+  p_expected_items uuid[],p_expected_skus uuid[],p_actor uuid)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_owner uuid; v_recipe uuid; v_result jsonb;
+begin
+  perform pg_advisory_xact_lock(7258025800);
+  case p_kind
+    when 'sku' then select location_id into v_owner from public.vendor_items where id=p_id for update;
+    when 'recipe' then select location_id into v_owner from public.recipes where id=p_id for no key update;
+    when 'menu_item' then select location_id into v_owner from public.menu_items where id=p_id for update;
+    else raise exception 'shop_owned:invalid_payload' using errcode='P0001';
+  end case;
+  if not found then raise exception 'shop_owned:not_found' using errcode='P0001'; end if;
+  if v_owner is distinct from p_expected_owner then raise exception 'shop_owned:ownership_changed' using errcode='P0001'; end if;
+  if v_owner is null then raise exception 'shop_owned:already_shared' using errcode='P0001'; end if;
+  perform 1 from public.locations where id=v_owner for share nowait;
+  for v_recipe in select unnest(public.catalog_share_recipe_ids(p_kind,p_id)) loop
+    perform public.recipe_change_lock(v_recipe,(select location_id from public.recipes where id=v_recipe),null);
+  end loop;
+  if p_expected_snapshot is null or public.catalog_share_snapshot(p_kind,p_id) is distinct from p_expected_snapshot then
+    raise exception 'recipe_version:dependencies_changed' using errcode='P0001';
+  end if;
+  case p_kind
+    when 'sku' then v_result:=public.share_shop_sku(p_id,p_expected_owner,p_actor);
+    when 'recipe' then v_result:=public.share_shop_recipe(p_id,p_expected_owner,p_actor,p_expected_items,p_expected_skus);
+    when 'menu_item' then v_result:=public.share_shop_menu_item(p_id,p_expected_owner,p_actor,p_expected_skus);
+  end case;
+  return v_result;
+exception when lock_not_available then
+  raise exception 'recipe_version:dependencies_busy' using errcode='P0001';
+end $$;
+revoke all on function public.catalog_share_recipe_ids(text,uuid) from public,anon,authenticated,service_role;
+revoke all on function public.catalog_share_snapshot(text,uuid),public.share_catalog_entity(text,uuid,uuid,jsonb,uuid[],uuid[],uuid) from public,anon,authenticated;
+grant execute on function public.catalog_share_snapshot(text,uuid),public.share_catalog_entity(text,uuid,uuid,jsonb,uuid[],uuid[],uuid) to service_role;
 
 commit;

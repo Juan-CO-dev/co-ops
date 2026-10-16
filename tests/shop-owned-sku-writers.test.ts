@@ -33,6 +33,17 @@ it("a GM cannot move an owned SKU even between its memberships", async () => {
   await expect(updateSku({ ...gm, locations: [A, B] }, { id: "sku", changes: { locationId: B } })).rejects.toMatchObject({ code: "global_requires_moo" });
   expect(current.writes).toEqual([]);
 });
+it("MoO cannot move an owned SKU to another shop or assign a global SKU", async () => {
+  for (const before of [A, null]) {
+    tables.vendor_items![0]!.location_id = before;
+    await expect(updateSku(owner, { id: "sku", changes: { locationId: B } })).rejects.toMatchObject({ code: "owner_is_set_at_creation" });
+  }
+  expect(current.writes).toEqual([]);
+});
+it("MoO can share an owned SKU globally", async () => {
+  await updateSku(owner, { id: "sku", changes: { locationId: null } });
+  expect(tables.vendor_items![0]!.location_id).toBeNull();
+});
 it("owning GM can edit its own pack identity and existing price basis", async () => {
   await updateSku(gm, { id: "sku", changes: { packFormat: "box" } });
   await setSkuPriceBasis(gm, "sku", "per_each");

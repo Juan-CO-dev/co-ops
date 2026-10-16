@@ -73,7 +73,7 @@ export interface SkuFormProductOption {
  *  existing DB values are preserved for the legacy recipe-math reader. */
 export interface SkuFormValues {
   vendorId: string | null;
-  /** Create sends this explicitly; edit omits it unless MoO moves ownership. */
+  /** Create sends this explicitly; edit omits it unless MoO shares globally. */
   locationId?: string | null;
   name: string;
   packFormat: string;
@@ -120,7 +120,7 @@ export function skuLocationPayload(input: {
   choice: string;
 }): { locationId?: string | null } {
   const next = input.choice === GLOBAL_LOCATION_CHOICE ? null : input.choice;
-  if (input.isEdit && (!input.canMoveOwner || next === (input.initialLocationId ?? null))) return {};
+  if (input.isEdit && (!input.canMoveOwner || next !== null || next === (input.initialLocationId ?? null))) return {};
   return { locationId: next };
 }
 
@@ -231,7 +231,7 @@ export function SkuBuilder({
   /** Authorized ownership choices for a NEW SKU; separate from full-list filters. */
   creationScopes?: SkuFormLocationOption[];
   canCreateGlobal?: boolean;
-  /** MoO+: an edit may move ownership. Lower roles preserve the saved owner. */
+  /** MoO+: an edit may share globally. Lower roles preserve the saved owner. */
   canMoveOwner?: boolean;
   /** Products this SKU may join (0179). Empty/absent → no picker is rendered and
    *  no productId key is sent: products exist only where plurality does. */
@@ -564,14 +564,20 @@ export function SkuBuilder({
         ) : null}
 
         <Labeled label={t("admin.skus.field.location")}>
-          {isEdit && !canMoveOwner ? (
+          {isEdit ? (
+            <>
             <p className="mt-1 min-h-[44px] rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-base text-co-text">
               {initial?.locationName ?? t("admin.skus.global")}
             </p>
+            {canMoveOwner && initial?.locationId != null ? <button type="button" disabled={busy}
+              className={fieldCls} onClick={() => onSubmit({ ...assembleValues(), locationId: null }, null)}>
+              {t("admin.skus.share_all_shops")}
+            </button> : null}
+            </>
           ) : <select className={fieldCls} value={locationId} disabled={busy} onChange={(e) => setLocationId(e.target.value)}>
             {!isEdit && !canCreateGlobal && creationScopes.length > 1 ? <option value="" disabled>{t("admin.skus.choose_location")}</option> : null}
-            {(isEdit || canCreateGlobal) ? <option value={GLOBAL_LOCATION_CHOICE}>{t("admin.skus.global")}</option> : null}
-            {(isEdit ? locations : creationScopes).map((l) => (
+            {canCreateGlobal ? <option value={GLOBAL_LOCATION_CHOICE}>{t("admin.skus.global")}</option> : null}
+            {creationScopes.map((l) => (
               <option key={l.id} value={l.id}>{l.name}</option>
             ))}
           </select>}

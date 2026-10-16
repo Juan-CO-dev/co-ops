@@ -559,17 +559,19 @@ export async function manualMap(
       entityName = pkg.label_en;
     } else if (input.entityKind === "sku") {
       const { data: skuRow, error: skuErr } = await sb.from("vendor_items")
-        .select("id, name, sku_class").eq("id", input.entityId!).eq("active", true)
-        .maybeSingle<{ id: string; name: string; sku_class: string }>();
+        .select("id, name, sku_class, location_id").eq("id", input.entityId!).eq("active", true)
+        .maybeSingle<{ id: string; name: string; sku_class: string; location_id: string | null }>();
       if (skuErr) throw new Error(`toast-map manual sku check: ${skuErr.message}`);
       if (!skuRow || skuRow.sku_class !== "raw") throw new AdminToastMapError(400, "invalid_entity", "Raw SKU not found or inactive");
+      if (!ownerVisible(skuRow.location_id, input.locationId)) throw new AdminToastMapError(400, "invalid_entity", "Target not available at this shop");
       entityName = skuRow.name;
     } else {
       const table = input.entityKind === "menu_item" ? "menu_items" : "items";
-      const { data: ent, error: eErr } = await sb.from(table).select("id, name").eq("id", input.entityId!).eq("active", true)
-        .maybeSingle<{ id: string; name: string }>();
+      const { data: ent, error: eErr } = await sb.from(table).select("id, name, location_id").eq("id", input.entityId!).eq("active", true)
+        .maybeSingle<{ id: string; name: string; location_id: string | null }>();
       if (eErr) throw new Error(`toast-map manual entity check: ${eErr.message}`);
       if (!ent) throw new AdminToastMapError(400, "invalid_entity", "Target not found or inactive");
+      if (!ownerVisible(ent.location_id, input.locationId)) throw new AdminToastMapError(400, "invalid_entity", "Target not available at this shop");
       entityName = ent.name;
     }
   }
@@ -657,6 +659,29 @@ export interface MappableEntity {
   locationId: string | null;
 }
 
+/** Catalog sandwich job: real item-lane choices from the selected shop only.
+ * This read does not run matching or mutate any mapping. */
+export async function loadSandwichToastChoices(actor: AuthContext, locationId: string): Promise<ToastItem[]> {
+  requireLevel(actor, TOAST_MAP_MIN);
+  assertLocationAccess(actor, locationId);
+  return fetchToastMenuItems(await requireLocationGuid(locationId));
+}
+
+/** A deliberately separate confirmed action after creation. The route retains Tier A.
+ * Resolve the Toast name at the selected shop rather than trusting a client label. */
+export async function confirmSandwichToastLink(actor: AuthContext, input: {
+  locationId: string; menuItemId: string; toastItemGuid: string; confirmed: boolean;
+}): Promise<{ id: string }> {
+  requireLevel(actor, TOAST_MAP_MIN);
+  assertLocationAccess(actor, input.locationId);
+  if (input.confirmed !== true) throw new AdminToastMapError(400, "invalid_payload", "Explicit confirmation required");
+  const choices = await loadSandwichToastChoices(actor, input.locationId);
+  const choice = choices.find(row => row.itemGuid === input.toastItemGuid);
+  if (!choice) throw new AdminToastMapError(400, "invalid_payload", "Toast item is not available at this shop");
+  return manualMap(actor, { locationId: input.locationId, entityKind: "menu_item", entityId: input.menuItemId,
+    toastItemGuid: choice.itemGuid, toastItemName: choice.name, isModifier: false });
+}
+
 /** Lightweight mappable-entity list for manual-mapping pickers (id/name/kind).
  *  Includes active catering packages (platter parents map to packages) and
  *  active raw SKUs (modifier targets with no prep item — Part 2). */
@@ -676,4 +701,3 @@ export async function listMappableEntities(actor: AuthContext): Promise<Mappable
     ...rawSkus.map((s): MappableEntity => ({ id: s.id, name: s.name, kind: "sku", locationId: s.location_id ?? null })),
   ].sort((a, b) => (a.name < b.name ? -1 : 1));
 }
-

@@ -510,6 +510,9 @@ export async function loadRecipeGraph(opts?: {
   asOf?: string | null;
   /** A preview's hypothetical lines (catalog Phase 3b): recipe → lines, winning over every version. */
   recipeOverrides?: ReadonlyMap<string, readonly RecipeVersionLineRow[]>;
+  /** New unsaved recipes only. IDs cannot collide with ANY persisted recipe, including hidden/retired ones.
+   * Callers validate draft component ownership before passing them. Their leaves use the ordinary scoped resolver. */
+  draftRecipes?: readonly GraphRecipe[];
 }): Promise<RecipeGraph> {
   const locationId = opts?.locationId ?? null;
   // WHOSE SHOP VERSIONS, AND WHEN (catalog Phase 2a, 0259). `versionLocationId` defaults to the
@@ -564,6 +567,18 @@ export async function loadRecipeGraph(opts?: {
   ] as const) {
     if (err) throw new Error(`loadRecipeGraph ${label}: ${err.message}`);
   }
+  const draftRecipes = opts?.draftRecipes ?? [];
+  const knownRecipeIds = new Set((recRows ?? []).map(r => r.id));
+  const knownOutputIds = new Set((outRows ?? []).flatMap(r => [r.output_item_id, r.output_menu_item_id].filter((id): id is string => id !== null)));
+  for (const draft of draftRecipes) {
+    if (knownRecipeIds.has(draft.recipeId)) throw new Error("draft_recipe_id_collision");
+    knownRecipeIds.add(draft.recipeId);
+    for (const output of draft.outputs) {
+      const id = output.outputItemId ?? output.outputMenuItemId;
+      if (id !== null && knownOutputIds.has(id)) throw new Error("draft_recipe_output_collision");
+      if (id !== null) knownOutputIds.add(id);
+    }
+  }
   // CATALOG PHASE 3a (0262): THE RECIPE LINES THIS SCOPE RESOLVES. A recipe whose answer is a shop
   // version (live, or in force at `asOf`) or an older global version gets THAT version's lines; every
   // other recipe keeps its recipe_inputs rows exactly as read above (the live global head IS
@@ -575,7 +590,9 @@ export async function loadRecipeGraph(opts?: {
   for (const [recipeId, lines] of opts?.recipeOverrides ?? []) {
     if (visibleRecipeIds.has(recipeId)) replacements.set(recipeId, [...lines]);
   }
-  const lineRows = [...(inRows ?? []).filter(r => visibleRecipeIds.has(r.recipe_id)), ...[...replacements.values()].flat()];
+  const lineRows = [...(inRows ?? []).filter(r => visibleRecipeIds.has(r.recipe_id)), ...[...replacements.values()].flat(),
+    ...draftRecipes.flatMap(draft => draft.inputs.map(line => ({ recipe_id: draft.recipeId, quantity: line.quantity, unit: line.unit,
+      component_sku_id: line.componentSkuId, component_item_id: line.componentItemId, component_product_id: line.componentProductId ?? null })))];
   const outputItemIds = [...new Set((outRows ?? []).filter((o) => visibleRecipeIds.has(o.recipe_id) && o.output_item_id).map((o) => o.output_item_id!))];
   // Every SKU / product ANY resolved line names — the base rows first (so with no versions the order,
   // and the graph, are byte-identical), then a version's or a preview's additions.
@@ -631,7 +648,7 @@ export async function loadRecipeGraph(opts?: {
     recipeId: r.id, batchYield: num(r.batch_yield),
     inputs: inputsByRecipe.get(r.id) ?? [], outputs: outputsByRecipe.get(r.id) ?? [],
   }));
-  const graph = buildRecipeGraph(recipes, skuPack, measures, productIndex.index);
+  const graph = buildRecipeGraph([...recipes, ...draftRecipes], skuPack, measures, productIndex.index);
   GRAPH_PACKS.set(graph, resolvedPacks);
   return graph;
 }

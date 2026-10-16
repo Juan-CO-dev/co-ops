@@ -12,7 +12,10 @@ import { PHASE3B_KEYS } from "./catalog-phase3b-keys";
 
 import { SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
 
+import { NEW_ITEM_ERROR_CODES } from "@/lib/catalog/new-item-shared";
+
 const REQUIRED = [
+  ...NEW_ITEM_ERROR_CODES.map(c => `catalog.error.${c}`),
   "catalog.only_at_shop",
   ...SHOP_OWNED_ERROR_CODES.map((c) => `catalog.error.${c}`),
   "customers.catering.sort.quiet", "catalog.item.kind_bought", "catalog.item.version_global",

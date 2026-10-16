@@ -64,6 +64,15 @@ it("refuses shared output and preserves batch output-removal law", async () => {
   await write("remove_recipe_output", { p_output_id: added });
   expect((await db.query("select id from recipe_outputs where recipe_id=$1", [recipe])).rows).toHaveLength(1);
 });
+it.each([
+  { p_component_sku_id: "not-a-uuid", p_quantity: 1 },
+  { p_component_sku_id: ID.sharedSku, p_quantity: "not-a-number" },
+])("names malformed payload casts without mutating inputs", async payload => {
+  const before = (await db.query("select * from recipe_inputs where recipe_id=$1", [recipe])).rows;
+  await expect(write("add_recipe_input_atomic", { ...payload, p_unit: "oz", p_portioned: false }))
+    .rejects.toMatchObject({ message: "shop_owned:invalid_payload", code: "P0001" });
+  expect((await db.query("select * from recipe_inputs where recipe_id=$1", [recipe])).rows).toEqual(before);
+});
 it("refuses a share between owner read and write without mutation", async () => {
   await db.query("select public.share_shop_recipe($1,$2,$3,$4::uuid[],$5::uuid[])", [recipe, ID.shopA, ID.actor, [item], []]);
   await expect(write("update_recipe_atomic", { p_patch: { name: "Stale forbidden edit" } }))

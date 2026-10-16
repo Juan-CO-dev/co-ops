@@ -192,7 +192,7 @@ export default async function AdminSkusPage({
       {level >= ROLES.gm.level ? <StoreManagement locations={locations.filter((location) => lockLocationContext({ role: auth.user.role, locations: auth.locations }, location.id))} /> : null}
       <PackChangeRequestsList requests={packRequests} shops={locations} language={lang} />
       <SkuCatalogClient
-        skus={skus}
+        skus={readinessScope === null ? skus : skus.filter(s => s.locationId === null || s.locationId === readinessScope)}
         vendors={activeVendors}
         locations={locations}
         creationScopes={creationScopes}

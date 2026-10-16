@@ -839,16 +839,12 @@ export async function updateSku(
   }
   if (changes.locationId !== undefined && changes.locationId !== expectedOwner) {
     if (getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN) {
-      throw new AdminSkuError(403, "global_requires_moo", "Only a Manager of Operations can move a SKU between shops");
+      throw new AdminSkuError(403, "global_requires_moo", "Only a Manager of Operations can share a SKU globally");
     }
     if (changes.locationId !== null) {
-      // Reassignment TARGET: moving a SKU is a write against the destination shop too.
-      if (getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN && !lockLocationContext(actorLoc(actor), changes.locationId)) {
-        throw new AdminSkuError(404, "not_found", "Location not found");
-      }
-      await assertLocationActive(changes.locationId);
+      throw new AdminSkuError(400, "owner_is_set_at_creation", "Ownership is set at creation; only sharing globally is supported");
     }
-    update.location_id = changes.locationId;
+    update.location_id = null;
   }
   if (changes.name !== undefined) {
     const n = changes.name.trim();

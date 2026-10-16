@@ -27,7 +27,7 @@ beforeEach(() => { state.rows = {}; state.reads = []; });
 it.each(["items", "menu_items"])("catering refuses owned %s, even when the reference was on the wrong FK side", async table => {
   state.rows[table] = [{ id: "owned", active: true, location_id: "shop-a" }];
   for (const ref of [{ itemId: "owned" }, { menuItemId: "owned" }]) {
-    await expect(preflightQuoteLines([{ ...ref, quantity: 1, unitPriceCents: 100 }])).rejects.toMatchObject({ status: 400, code: "owned_not_catering" });
+    await expect(preflightQuoteLines([{ ...ref, quantity: 1, unitPriceCents: 100 }])).rejects.toMatchObject({ status: 400, code: "catering_owned_item_refused" });
   }
 });
 it("catering permits active global references and refuses inactive ones", async () => {
@@ -36,8 +36,8 @@ it("catering permits active global references and refuses inactive ones", async 
   await expect(preflightQuoteLines([{ itemId: "retired", quantity: 1, unitPriceCents: 100 }])).rejects.toMatchObject({ code: "unknown_item" });
 });
 it("the owned catering refusal has a friendly translation mapping", () => {
-  expect(resolveErrorKey("owned_not_catering")).toBe("catering.quotes.error.owned_not_catering");
-  for (const dictionary of [en, es]) expect(dictionary[resolveErrorKey("owned_not_catering")]).toBeTruthy();
+  expect(resolveErrorKey("catering_owned_item_refused")).toBe("catering.quotes.error.catering_owned_item_refused");
+  for (const dictionary of [en, es]) expect(dictionary[resolveErrorKey("catering_owned_item_refused")]).toBeTruthy();
 });
 it.each([null, "shop-a", "shop-b"])("batch context hides producers outside scope %s", async scope => {
   state.rows.recipes = [null, "shop-a", "shop-b"].map((owner, i) => ({ id: `r${i}`, location_id: owner, name: `Recipe ${i}`, recipe_type: "production", active: true, batch_mode: false, shelf_life_days: 5, created_at: null }));
