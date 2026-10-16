@@ -167,6 +167,27 @@ describe("staff settings, presence, Add to schedule", () => {
     expect(Object.keys(b).sort()).toEqual([...SCHEDULE_ACTIONS.pin!].sort());
     expect(b.pin).toEqual({ date: "2026-10-22", userId: MOO, startQ: 42, endQ: 58, positions: [], kind: "presence" });
   });
+  it("Astra chunk F P2-4: pins load for EVERY week the offered dates touch — Fri Oct 16 offers Oct 16 … 29, and the Oct 27 / 29 pins are there", async () => {
+    const FRI = new Date("2026-10-16T16:00:00Z");
+    const s = shop((t) => {
+      t.schedule_pins = [
+        { id: "pin-27", location_id: A, business_date: "2026-10-27", user_id: MOO, start_q: 42, end_q: 58, positions: [], kind: "presence", active: true, retires_id: null },
+        { id: "pin-29", location_id: A, business_date: "2026-10-29", user_id: MOO, start_q: 42, end_q: 58, positions: [], kind: "presence", active: true, retires_id: null },
+      ];
+    });
+    const v = await loadScheduleSettings({ ...s.deps, now: FRI }, { actor: gm, locationId: A });
+    if (v.state !== "ready") throw new Error(v.state);
+    expect(v.dates[0]).toBe("2026-10-16");
+    expect(v.dates[v.dates.length - 1]).toBe("2026-10-29");
+    expect(v.pins.map((p) => p.id).sort()).toEqual(["pin-27", "pin-29"]);
+    // The offered range and the loaded range come from ONE constant.
+    const shared = await import("@/lib/scheduling/settings-view-shared") as Record<string, unknown>;
+    const presenceDates = shared.presenceDates as (d: string) => string[];
+    const presenceWeekStarts = shared.presenceWeekStarts as (d: string) => string[];
+    expect(presenceDates("2026-10-16")).toHaveLength(shared.PRESENCE_DAYS as number);
+    expect(presenceWeekStarts("2026-10-16")).toEqual(["2026-10-12", "2026-10-19", "2026-10-26"]);
+    expect(readFileSync("lib/scheduling/settings-view.ts", "utf8")).toMatch(/weekStarts: presenceWeekStarts\(today\)/);
+  });
 });
 
 describe("MoO only: the shop switch, wage estimates, AGM access; the tunables editor; the prep position card", () => {
@@ -215,3 +236,18 @@ describe("en + es, 44 px, no shop-code literal", () => {
 function emptySettings(userId: string) {
   return { userId, workType: null, alsoAllowed: [], leaderSetting: null, coverPositions: [], softMinH: null, softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: null };
 }
+
+describe("Astra chunk F P2-5: collapsing a section HIDES it and never unmounts its editor (D10: drafts survive)", () => {
+  it("a collapsed section still renders its editor, hidden; the toggle names its state", async () => {
+    const { Section } = await import("@/components/schedule/ScheduleSettings");
+    const html = renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: "en", children: createElement(Section, {
+      id: "shop", title: "Shop", locked: false, defaultOpen: false, children: createElement("input", { "data-draft": "wage", defaultValue: "18.50" }) }) as ReactNode }));
+    expect(html).toContain('data-draft="wage"');
+    expect(html).toMatch(/<div[^>]*hidden=""[^>]*>[\s\S]*data-draft="wage"/);
+    expect(html).toMatch(/aria-expanded="false"/);
+    // Every section of the real page (shop settings and tunables included) goes through that Section.
+    const src = readFileSync("components/schedule/ScheduleSettings.tsx", "utf8");
+    expect(src).not.toMatch(/\{isOpen \? <div/);
+    for (const id of ["structure", "staff", "presence", "shop", "tunables", "prep"]) expect(src).toContain(`<Section id="${id}"`);
+  });
+});

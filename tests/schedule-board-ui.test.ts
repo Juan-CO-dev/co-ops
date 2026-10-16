@@ -263,7 +263,7 @@ describe("Task 21 — the day timeline", () => {
       if (d.labor?.state !== "ok") continue;
       for (const w of d.labor.windows) {
         expect(w.optimal.min).toBeGreaterThanOrEqual(w.floorHeads);
-        expect(w.tone === "amber").toBe(w.overQuarters > 0);
+        expect(w.tone === "amber").toBe((w.overQuarters ?? 0) > 0);
       }
       for (const lang of ["en", "es"] as const) {
         const card = renderBoard(view, lang, { initialDate: d.date }).match(/<section[^>]*data-section="labor-target"[\s\S]*?<\/section>/)![0];
@@ -350,6 +350,22 @@ describe("Task 22 — drag and keyboard → edit ops (pure; the real pointer wal
     const refused = editReducer(s, { type: "refused", seq: 1, expectedHead: "h1", code: "edit_overlap" });
     expect(refused).toMatchObject({ pending: null, reload: false, error: "edit_overlap", snapBack: s.snapBack + 1 });
     expect(editReducer(moved, { type: "reloaded", head: "h9" })).toMatchObject({ head: "h9", reload: false, notice: "head_moved" });
+  });
+  it("Astra chunk F P2-2: submit against A → reload B → A's late response: the board is NOT left disabled (pending cleared), and A's answer is discarded", async () => {
+    const { editReducer, initialEditState } = await import("@/components/schedule/use-drag-snap-shared");
+    let s = editReducer(initialEditState("hA"), { type: "submit" });
+    expect(s.pending).not.toBeNull();
+    s = editReducer(s, { type: "reloaded", head: "hB" });
+    expect(s).toMatchObject({ head: "hB", pending: null });
+    // A's late answers, accepted or refused, change nothing and leave the board editable.
+    expect(editReducer(s, { type: "accepted", seq: 1, expectedHead: "hA", revisionId: "hA2" })).toBe(s);
+    expect(editReducer(s, { type: "refused", seq: 1, expectedHead: "hA", code: "head_moved" })).toBe(s);
+    // A new edit on B works normally.
+    const next = editReducer(s, { type: "submit" });
+    expect(next.pending).toEqual({ expectedHead: "hB", seq: 2 });
+    // A reload to the SAME head while a request is in flight keeps that request (nothing replaced it).
+    const same = editReducer(editReducer(initialEditState("hA"), { type: "submit" }), { type: "reloaded", head: "hA" });
+    expect(same.pending).toEqual({ expectedHead: "hA", seq: 1 });
   });
 });
 
@@ -498,6 +514,41 @@ describe("Task 23 — the horizon builder, What changed, Approve", () => {
     expect(await runGuarded({ tier: null, requestStepUp: async () => { throw new Error("no prompt"); }, post: async () => ({ ok: false, code: "preview_stale" }) })).toEqual({ kind: "refused", code: "preview_stale" });
     const src = readFileSync("components/schedule/HorizonBuilder.tsx", "utf8");
     expect(src).toContain('requestStepUp("B")');
+  });
+
+  it("Astra chunk F P2-3: the main Regenerate on an EDITED week uses the horizon's confirmation — the warning, then Tier B, then confirmEdited: true; cancel applies nothing", async () => {
+    const { runRegenerate, regenerateBody } = await import("@/components/schedule/horizon-flow-shared");
+    const { SCHEDULE_ACTIONS } = await import("@/lib/scheduling/route-shapes-shared");
+    // Not edited: one post, confirmEdited false, no warning, no password.
+    const order: string[] = [];
+    const plain = await runRegenerate({ edited: false, confirm: async () => { order.push("confirm"); return true; }, requestStepUp: async () => { order.push("password"); return "ok"; },
+      post: async (c) => { order.push(`post:${c}`); return { ok: true, data: {} }; } });
+    expect(plain).toEqual({ kind: "ok", data: {} });
+    expect(order).toEqual(["post:false"]);
+    // Edited, the warning cancelled: nothing posted, no password asked.
+    const post = vi.fn(async () => ({ ok: true as const, data: {} }));
+    const step = vi.fn(async () => "ok" as const);
+    expect(await runRegenerate({ edited: true, confirm: async () => false, requestStepUp: step, post })).toEqual({ kind: "cancelled" });
+    expect(post).not.toHaveBeenCalled();
+    expect(step).not.toHaveBeenCalled();
+    // Edited, the password cancelled: nothing posted.
+    expect(await runRegenerate({ edited: true, confirm: async () => true, requestStepUp: async () => "cancelled", post })).toEqual({ kind: "cancelled" });
+    expect(post).not.toHaveBeenCalled();
+    // Edited, confirmed: warning → password → post with confirmEdited TRUE.
+    const seq: string[] = [];
+    await runRegenerate({ edited: true, confirm: async () => { seq.push("confirm"); return true; }, requestStepUp: async () => { seq.push("password"); return "ok"; },
+      post: async (c) => { seq.push(`post:${c}`); return { ok: true, data: {} }; } });
+    expect(seq).toEqual(["confirm", "password", "post:true"]);
+    const body = regenerateBody("L", DATES[0]!, "h1", true);
+    expect(body).toEqual({ action: "generate", locationId: "L", weekStart: DATES[0]!, expectedHead: "h1", confirmEdited: true });
+    expect(Object.keys(body).sort()).toEqual([...SCHEDULE_ACTIONS.generate!].sort());
+    // The board's button goes through it, with the literal Tier B prompt and the horizon's own warning text.
+    const src = readFileSync("components/schedule/ScheduleBoard.tsx", "utf8");
+    expect(src).toContain("runRegenerate(");
+    expect(src).toContain('requestStepUp("B")');
+    expect(src).not.toMatch(/confirmEdited: false/);
+    const html = renderBoard(ready({ week: { ...boardSource().week!, edited: true } }));
+    expect(html).toMatch(/<button[^>]*data-act="regenerate"[^>]*data-edited="true"|<button[^>]*data-edited="true"[^>]*data-act="regenerate"/);
   });
 
   it("preview_stale says preview again; a partial result names the landed, skipped and failed weeks", async () => {

@@ -11,7 +11,7 @@ import type { PositionLabel } from "./board-view-shared";
 import type { ScheduleShopSettings } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
 import { validScheduleStructure, type ScheduleStructure, type SeededFrom } from "./structure-shared";
-import { Q_PER_DAY, qToWall, wallToQ } from "./time-shared";
+import { Q_PER_DAY, addDays, isoWeekStart, qToWall, wallToQ } from "./time-shared";
 
 export interface SettingsPerms {
   /** The schedule structure (GM own shop / MoO+; Tier E). */
@@ -58,6 +58,20 @@ export interface ScheduleSettingsView {
   shop: ScheduleShopSettings | null;
   tunables: SkillTunables | null;
   prep: { pmV2: boolean; prepPositionId: string | null } | null;
+}
+
+// ─── The presence / Add-to-schedule range ─
+
+/** How many days, from today, presence and Add to schedule offer — the ONE constant the offered dates AND the loaded
+ * pins derive from (Astra chunk F P2-4: offering a date whose pins were never loaded hid them after a refresh). */
+export const PRESENCE_DAYS = 14;
+/** The offered dates: today … today + PRESENCE_DAYS − 1. */
+export function presenceDates(today: string): string[] {
+  return Array.from({ length: PRESENCE_DAYS }, (_, i) => addDays(today, i));
+}
+/** Every ISO week those dates touch (three when today is not a Monday): the weeks the loader reads pins for. */
+export function presenceWeekStarts(today: string): string[] {
+  return [...new Set(presenceDates(today).map(isoWeekStart))];
 }
 
 // ─── Clock text ──────────────────────────────────────────────────────────────

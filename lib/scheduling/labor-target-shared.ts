@@ -59,11 +59,11 @@ export interface LaborWindow {
   optimal: { min: number; max: number };
   /** The most heads on the floor (non-MoD) at any quarter of the window (display only — never the tone). */
   on: number;
-  /** The fewest heads on the floor at any quarter of the window. */
-  onMin: number;
-  /** Astra chunk C P2: quarters below the minimum crew AT THAT QUARTER, and quarters above max(that floor, ceil(spread)). */
-  shortQuarters: number;
-  overQuarters: number;
+  /** The fewest heads on the floor at any quarter of the window (money viewers only). */
+  onMin?: number;
+  /** Astra chunk C P2: quarters below the minimum crew AT THAT QUARTER, and quarters above max(that floor, ceil(spread)). Money viewers only. */
+  shortQuarters?: number;
+  overQuarters?: number;
   /** Why the window is amber; empty when good. Only over the optimal AND above the minimum (CC chunk G). */
   amberReasons: Array<"over_target">;
   tone: "good" | "amber";
@@ -128,7 +128,7 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
   const maxHoursExact = maxLaborCents / blended;
   const blendedWageCents = Math.round(blended);
 
-  const windows: LaborWindow[] = input.windows.map((w) => {
+  const windows: Array<Required<LaborWindow>> = input.windows.map((w) => {
     let cents = 0;
     let floorHeads = 0;
     let on = 0;
@@ -158,7 +158,7 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
     const amberReasons: LaborWindow["amberReasons"] = overQuarters > 0 ? ["over_target"] : [];
     const tone: LaborWindow["tone"] = amberReasons.length > 0 ? "amber" : "good";
     return {
-      key: w.key, fromQ: w.fromQ, toQ: w.toQ, ...(opts.canSeeMoney ? { demandShare, spreadHeads } : {}), floorHeads, optimal,
+      key: w.key, fromQ: w.fromQ, toQ: w.toQ, demandShare, spreadHeads, floorHeads, optimal,
       on, onMin: Number.isFinite(onMin) ? onMin : 0, shortQuarters, overQuarters, amberReasons, tone,
     };
   });
@@ -189,6 +189,12 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
     if (w.shortQuarters > 0) lines.push({ key: "schedule.labor.window_under_floor", params: { window: w.key, hours: w.shortQuarters / Q_PER_HOUR, floor: w.floorHeads } });
     if (w.overQuarters > 0) lines.push({ key: "schedule.labor.window_over_target", params: { window: w.key, hours: w.overQuarters / Q_PER_HOUR, max: w.optimal.max } });
   }
-  if (!opts.canSeeMoney) return { state: "ok", windows, lines };
+  // Astra chunk F P2-1 (CC): without money permission a window carries ONLY what the card displays — the heads on, the
+  // optimal range, the minimum crew, the tone and its reason. No spread, demand share or quarter counts behind them (the
+  // lines above were built from the full windows first).
+  if (!opts.canSeeMoney) {
+    const shown = windows.map(({ key, fromQ, toQ, floorHeads, optimal, on, amberReasons, tone }) => ({ key, fromQ, toQ, floorHeads, optimal, on, amberReasons, tone }));
+    return { state: "ok", windows: shown, lines };
+  }
   return { state: "ok", windows, lines, maxLaborCents, salariedDayCents, blendedWageCents, maxHours: round1(maxHoursExact) };
 }

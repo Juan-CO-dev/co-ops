@@ -86,6 +86,8 @@ export function editReducer(s: EditState, a: EditAction): EditState {
       return { ...s, pending: null, reload: false, error: a.code, snapBack: s.snapBack + 1 };
     }
     case "reloaded":
-      return { ...s, head: a.head, reload: false };
+      // Astra chunk F P2-2: a NEW head replaces any request made against the old one. Its late answer is then discarded
+      // (no pending), so the board is never left disabled. A reload to the same head keeps the request in flight.
+      return { ...s, head: a.head, reload: false, pending: s.pending && s.pending.expectedHead !== a.head ? null : s.pending };
   }
 }

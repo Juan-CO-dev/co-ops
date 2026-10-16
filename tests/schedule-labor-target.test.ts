@@ -181,6 +181,11 @@ describe("laborTarget: the math, line by line", () => {
     // figure that is a wage; the AGM keeps the whole-head optimal range only.
     expect(JSON.stringify(out)).not.toMatch(/spreadHeads|demandShare|maxHours|wage|salar/i);
     expect(out.lines.map((l) => l.key)).toEqual(["schedule.labor.window"]);
+    // The AGM still reads the over / under lines (built from the full windows before they are trimmed).
+    const overAgm = laborTarget(input({}, 6), { canSeeMoney: false });
+    if (overAgm.state !== "ok") throw new Error(overAgm.state);
+    expect(overAgm.lines.map((l) => l.key)).toContain("schedule.labor.window_over_target");
+    expect(overAgm.windows[0]).toEqual({ key: "lunch_rush", fromQ: 44, toQ: 56, floorHeads: 4, optimal: { min: 4, max: 5 }, on: 6, amberReasons: ["over_target"], tone: "amber" });
     const all = laborTarget(input({ need: need(6) }, 6), { canSeeMoney: true });
     if (all.state !== "ok") throw new Error(all.state);
     for (const l of all.lines) expect(LABOR_LINE_KEYS).toContain(l.key);

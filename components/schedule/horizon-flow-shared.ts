@@ -49,3 +49,24 @@ export async function runGuarded(args: { tier: "B" | "E" | null; requestStepUp: 
   const r = await args.post();
   return r.ok ? { kind: "ok", data: r.data } : { kind: "refused", code: r.code };
 }
+
+/** The single-week rebuild's exact body (`SCHEDULE_ACTIONS.generate`). */
+export const regenerateBody = (locationId: string, weekStart: string, expectedHead: string | null, confirmEdited: boolean) =>
+  ({ action: "generate" as const, locationId, weekStart, expectedHead, confirmEdited });
+
+/**
+ * The board's main Generate / Regenerate (Astra chunk F P2-3): the SAME confirmation as the horizon flow. A week with
+ * manager edits first shows "You edited this week — rebuilding replaces your edits" (`confirm`); then Tier B (the route
+ * asserts it for `confirmEdited: true`); only then the post with `confirmEdited: true`. Cancelling either step posts
+ * NOTHING. A week without edits posts at once with `confirmEdited: false` (no password: the route asks for none).
+ */
+export async function runRegenerate(args: {
+  edited: boolean;
+  confirm: () => Promise<boolean>;
+  requestStepUp: () => Promise<"ok" | "cancelled">;
+  post: (confirmEdited: boolean) => Promise<PostOutcome>;
+}): Promise<Guarded> {
+  if (!args.edited) return runGuarded({ tier: null, requestStepUp: args.requestStepUp, post: () => args.post(false) });
+  if (!(await args.confirm())) return { kind: "cancelled" };
+  return runGuarded({ tier: "B", requestStepUp: args.requestStepUp, post: () => args.post(true) });
+}

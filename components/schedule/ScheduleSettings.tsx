@@ -20,8 +20,13 @@ import { useBoardLine } from "./use-board-line";
 
 export type SettingsPageView = { state: "not_installed" } | ({ state: "ready" } & ScheduleSettingsView);
 
-function Section({ title, count, locked, children, id }: { title: string; count?: string | null; locked: boolean; children: ReactNode; id: string }) {
-  const [open, setOpen] = useState(true);
+/**
+ * A full-row toggle section. Collapsing HIDES the panel and never unmounts it (Astra chunk F P2-5): an editor's local
+ * draft (a wage estimate, a tunable) survives a collapse and is there on reopen, so D10 holds for every section, the
+ * ones whose editors do not report dirtiness included. A section whose editor reports unsaved work is also locked open.
+ */
+export function Section({ title, count, locked, children, id, defaultOpen = true }: { title: string; count?: string | null; locked: boolean; children: ReactNode; id: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const panel = useId();
   const isOpen = open || locked;
   return (
@@ -31,7 +36,7 @@ function Section({ title, count, locked, children, id }: { title: string; count?
         <span className="text-base font-bold text-co-text">{title}{count ? <span className="ml-2 text-xs font-bold text-co-text-muted">{count}</span> : null}</span>
         <span aria-hidden="true" className="text-co-text-dim">{isOpen ? "⌃" : "⌄"}</span>
       </button>
-      {isOpen ? <div id={panel} className="grid gap-3 px-4 pb-4">{children}</div> : null}
+      <div id={panel} hidden={!isOpen} className="grid gap-3 px-4 pb-4">{children}</div>
     </section>
   );
 }

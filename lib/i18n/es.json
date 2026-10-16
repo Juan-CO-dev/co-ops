@@ -7556,5 +7556,6 @@
   "schedule.board.budget.scope_month": "Todo el mes",
   "schedule.board.budget.hours": "Horas",
   "schedule.board.budget.save": "Guardar presupuesto",
-  "schedule.board.budget.invalid": "Escribe las horas como número, en cuartos de hora (como 312.5)."
+  "schedule.board.budget.invalid": "Escribe las horas como número, en cuartos de hora (como 312.5).",
+  "schedule.board.regenerate.cancel": "Mantener mis cambios"
 }

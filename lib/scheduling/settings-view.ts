@@ -20,9 +20,8 @@ import { loadPositionLabelRows } from "./board";
 import { ScheduleError } from "./errors-shared";
 import { loadScheduleShopSettings, loadSchedulingInputs, loadStationSeedRows } from "./inputs";
 import { gate, type ScheduleDeps } from "./schedules";
-import { stationAdvisory, type ScheduleSettingsView, type SettingsMember } from "./settings-view-shared";
+import { presenceDates, presenceWeekStarts, stationAdvisory, type ScheduleSettingsView, type SettingsMember } from "./settings-view-shared";
 import { structureFromStations, type PositionRole } from "./structure-shared";
-import { addDays, isoWeekStart } from "./time-shared";
 
 const notInstalled = (e: unknown) => e instanceof ScheduleError && e.code === "inputs_unavailable";
 /** Roles that are never put on the floor schedule, so never offered "Include on the schedule" (R6). */
@@ -44,10 +43,9 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
   try { shopSettings = await loadScheduleShopSettings(deps.service, locationId); } catch (e) { if (notInstalled(e)) return { state: "not_installed" }; throw e; }
   const now = deps.now ?? new Date();
   const today = operationalNow(now).date;
-  const thisWeek = isoWeekStart(today);
   let inputs;
   try {
-    inputs = await (deps.loadInputs ?? loadSchedulingInputs)(deps.service, { locationId, weekStarts: [thisWeek, addDays(thisWeek, 7)], now });
+    inputs = await (deps.loadInputs ?? loadSchedulingInputs)(deps.service, { locationId, weekStarts: presenceWeekStarts(today), now });
   } catch (e) {
     if (notInstalled(e)) return { state: "not_installed" };
     throw e;
@@ -82,7 +80,7 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
   let presencePeople: ScheduleSettingsView["presencePeople"] = [];
   if (perms.presence) presencePeople = await loadPresencePeople(deps.service);
   const names: Record<string, string> = Object.fromEntries([...inputs.members.map((m) => [m.userId, m.name] as const), ...presencePeople.map((p) => [p.userId, p.name] as const)]);
-  const dates = Array.from({ length: 14 }, (_, i) => addDays(today, i));
+  const dates = presenceDates(today);
   return {
     state: "ready", locationId, today, dates, perms,
     structure: perms.structure ? { id: inputs.structure.source === "saved" ? inputs.structure.id : null, source: inputs.structure.source, value: live } : null,

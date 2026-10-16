@@ -12,8 +12,9 @@
  * No email, no notification.
  */
 import Link from "next/link";
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import { formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -26,6 +27,7 @@ import { BudgetSuggestion } from "./BudgetSuggestion";
 import { DayTabs } from "./DayTabs";
 import { DayTimeline } from "./DayTimeline";
 import { ApproveBar, HorizonBuilder } from "./HorizonBuilder";
+import { regenerateBody, runRegenerate } from "./horizon-flow-shared";
 import { LaborTargetCard } from "./LaborTargetCard";
 import { BudgetLineItem, MoneyStrip } from "./MoneyStrip";
 import { EditNotice, PersonRow, shiftKeyOf } from "./PersonRow";
@@ -124,11 +126,23 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
   const onSelect = (sh: ShiftView, segment: number | null) => setPicked({ key: shiftKeyOf(sh), segment });
   const weekHref = (w: string) => `/schedule?loc=${view.locationId}&week=${w}`;
 
+  // Astra chunk F P2-3: a week with manager edits is rebuilt only after the horizon's own warning, then Tier B, then
+  // confirmEdited: true. Cancelling the warning or the password posts nothing.
+  const { requestStepUp } = useStepUp();
+  const [confirming, setConfirming] = useState(false);
+  const confirmRef = useRef<((yes: boolean) => void) | null>(null);
+  const answerConfirm = (yes: boolean) => { setConfirming(false); confirmRef.current?.(yes); confirmRef.current = null; };
   async function generate() {
     setBusy(true); setNotice(null);
-    const r = await post("/api/schedule", { action: "generate", locationId: view.locationId, weekStart: view.weekStart, expectedHead: view.generate.expectedHead, confirmEdited: false });
+    const out = await runRegenerate({
+      edited: view.generate.edited,
+      confirm: () => new Promise<boolean>((resolve) => { confirmRef.current = resolve; setConfirming(true); }),
+      requestStepUp: () => requestStepUp("B"),
+      post: (confirmEdited) => post("/api/schedule", regenerateBody(view.locationId, view.weekStart, view.generate.expectedHead, confirmEdited)),
+    });
     setBusy(false);
-    if (!r.ok) { setNotice(scheduleErrorKey(r.code)); if (r.code === "head_moved") router.refresh(); return; }
+    if (out.kind === "cancelled") return;
+    if (out.kind === "refused") { setNotice(scheduleErrorKey(out.code)); if (out.code === "head_moved") router.refresh(); return; }
     router.refresh();
   }
 
@@ -200,10 +214,21 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
 
       {view.perms.canEdit ? (
         <div className="grid gap-2">
-          <button type="button" data-act={view.week ? "regenerate" : "generate"} disabled={busy || view.generate.disabled} onClick={generate}
+          <button type="button" data-act={view.week ? "regenerate" : "generate"} data-edited={view.generate.edited ? "true" : "false"} disabled={busy || view.generate.disabled} onClick={generate}
             className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text disabled:opacity-60">
             {t(view.week ? "schedule.board.act.regenerate" : "schedule.board.act.generate")}
           </button>
+          {confirming ? (
+            <div role="alertdialog" aria-labelledby="schedule-regen-warning" className="grid gap-2 rounded-lg border-2 border-co-warning bg-co-warning-surface p-3" data-section="regenerate-confirm">
+              <p id="schedule-regen-warning" className="text-sm font-bold text-co-warning-text">{t("schedule.board.horizon.edited_warning")}</p>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" data-act="regenerate-confirm" onClick={() => answerConfirm(true)}
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text">{t("schedule.board.horizon.confirm_week")}</button>
+                <button type="button" data-act="regenerate-cancel" onClick={() => answerConfirm(false)}
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface px-4 font-bold text-co-text">{t("schedule.board.regenerate.cancel")}</button>
+              </div>
+            </div>
+          ) : null}
           {view.generate.disabled && view.banners.some((b) => b.id === "demand_unavailable") ? <p className="text-xs text-co-text-muted">{t("schedule.board.act.disabled_demand")}</p> : null}
         </div>
       ) : null}
