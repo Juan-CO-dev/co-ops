@@ -49,6 +49,9 @@ jobs:
           LANDING_E2E_USE_BUILD: "1"
       # Merge gate: unset + accepted with Pixel blocked in Lighthouse only.
       # Real HTTPS Pixel measurement is the separate release/spend gate.
+      # The runner image has no system Chrome; LHCI reads CHROME_PATH. Use the Chromium Playwright installed above.
+      - name: Point Lighthouse at Playwright's Chromium
+        run: echo "CHROME_PATH=$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
       - name: First-party landing merge budgets
         run: npm run perf:ci
       - uses: actions/upload-artifact@v6
