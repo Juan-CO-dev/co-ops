@@ -29,6 +29,7 @@ import {
   type RecipeLineFields,
   type RecipeLineRow,
 } from "@/lib/recipe-line-shared";
+import { RECIPE_GLOBAL_WRITE_MIN } from "@/lib/recipe-versions-shared";
 
 // Client-safe surface lives in lib/recipes-shared.ts (see its header for why);
 // re-exported here so existing server consumers keep their import paths.
@@ -51,6 +52,16 @@ export class RecipeError extends Error {
 }
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) throw new RecipeError(403, "forbidden");
+}
+/**
+ * Catalog Phase 3b (spec §3): the GLOBAL recipe's LINES are the Director of Operations' (8+). A GM's
+ * line edit is its shop's version (lib/admin/recipe-versions.ts, /admin/catalog/recipe/[id]) — named
+ * global_requires_moo so the builder can say where to go. Header, outputs, yields and creation keep
+ * their GM floor: Phase 3 versions the lines only. Runs before any I/O.
+ */
+function requireGlobalLineWriter(actor: AuthContext): void {
+  const level = getRoleLevel(actor.user.role);
+  if (level < RECIPE_GLOBAL_WRITE_MIN) throw new RecipeError(403, level >= RECIPE_WRITE_MIN ? "global_requires_moo" : "forbidden");
 }
 function num(v: number | string | null): number | null {
   if (v === null) return null; const n = typeof v === "string" ? Number(v) : v;
@@ -187,13 +198,39 @@ export async function assertInputLineIsValid(
     portioned: boolean;
   },
 ): Promise<void> {
+  assertInputLineShape(line);
+  if (line.componentProductId !== null) await assertProductLineIsValid(sb, line.componentProductId, line.unit);
+}
+
+type InputLineToCheck = Parameters<typeof assertInputLineIsValid>[1];
+
+/** The read-free half of assertInputLineIsValid (the line's shape), in the writer's order. */
+function assertInputLineShape(line: InputLineToCheck): void {
   if (componentTargets(line).count !== 1) throw new RecipeError(400, "invalid_component");
   if (!(typeof line.quantity === "number" && Number.isFinite(line.quantity) && line.quantity > 0)) {
     throw new RecipeError(400, "invalid_quantity");
   }
   if (line.componentSkuId === null && normStr(line.eachContainerLabel) !== null) throw new RecipeError(400, "invalid_payload");
   if (line.componentItemId !== null && line.portioned) throw new RecipeError(400, "invalid_payload");
-  if (line.componentProductId !== null) await assertProductLineIsValid(sb, line.componentProductId, line.unit);
+}
+
+/**
+ * assertInputLineIsValid against facts READ ONCE for a whole set (catalog 3b chunk-2 review P3): `productActive`
+ * maps every product id the set names to its `active` flag (an id missing from the map = no such product), and
+ * `activeMeasureLabels` holds the active measure labels. The SAME checks, in the SAME order, with the SAME codes as
+ * the writer's per-line reads (assertProductLineIsValid) — so a preview that validates a 200-line copied set from
+ * batched reads refuses exactly what the writer would.
+ */
+export function assertInputLineIsValidAgainst(
+  line: InputLineToCheck,
+  facts: { productActive: ReadonlyMap<string, boolean | null>; activeMeasureLabels: ReadonlySet<string> },
+): void {
+  assertInputLineShape(line);
+  if (line.componentProductId === null) return;
+  const active = facts.productActive.get(line.componentProductId);
+  if (active === undefined || active === false) throw new RecipeError(400, "invalid_component_product");
+  const label = normStr(line.unit);
+  if (label === null || !facts.activeMeasureLabels.has(label)) throw new RecipeError(400, "product_line_needs_measure_unit");
 }
 
 /** The 0258 recipe-line RPCs' named refusals (P0001), mapped to the lib's codes. */
@@ -578,6 +615,7 @@ async function outputWouldCycle(recipeId: string, childItemId: string): Promise<
 
 export async function addRecipeInput(actor: AuthContext, input: { recipeId: string; componentSkuId?: string | null; componentItemId?: string | null; componentProductId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean }): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
+  requireGlobalLineWriter(actor);
   const { skuId, itemId, productId } = componentTargets(input);
   const sb = getServiceRoleClient();
   await assertInputLineIsValid(sb, {
@@ -632,6 +670,7 @@ export async function updateRecipeInput(
   input: { recipeId: string; inputId: string; line: RecipeLineFields; expected: RecipeLineFields },
 ): Promise<{ changed: boolean }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
+  requireGlobalLineWriter(actor);
   const { line, expected } = input;
   if (componentTargets(expected).count !== 1) throw new RecipeError(400, "invalid_payload");
 
@@ -757,6 +796,7 @@ export async function updateRecipeOutputYield(actor: AuthContext, input: { recip
 
 export async function removeRecipeEdge(actor: AuthContext, args: { table: "recipe_inputs" | "recipe_outputs"; id: string }): Promise<void> {
   requireLevel(actor, RECIPE_WRITE_MIN);
+  if (args.table === "recipe_inputs") requireGlobalLineWriter(actor);
   const sb = getServiceRoleClient();
   if (args.table === "recipe_outputs") {
     // 0215: an output leaves through remove_recipe_output, under the recipe row lock, so the

@@ -199,7 +199,7 @@ export function diffRecipeLine(before: RecipeLineFields, after: RecipeLineFields
  */
 export function lineUnitChoices(
   kind: RecipeLineKind,
-  sku: { packFormat: string | null; eachContainerLabel: string | null; eachMeasure: string | null } | null,
+  sku: { packFormat: string | null; eachContainerLabel: string | null; eachMeasure: string | null; packChain?: ReadonlyArray<{ label: string }> | null } | null,
   measureLabels: readonly string[],
   current: string | null,
 ): string[] | null {
@@ -218,8 +218,14 @@ export function lineUnitChoices(
     return out;
   }
   push(current);
-  push(sku?.packFormat);
-  push(sku?.eachContainerLabel);
+  if (sku?.packChain && sku.packChain.length > 0) {
+    // A CHAINED SKU's container units are its chain's labels — the scope's own pack (catalog Phase 3b):
+    // ozForRecipeInput walks the chain first and does not honour the legacy flat labels for it.
+    for (const level of sku.packChain) push(level.label);
+  } else {
+    push(sku?.packFormat);
+    push(sku?.eachContainerLabel);
+  }
   push(sku?.eachMeasure);
   for (const m of measureLabels) push(m);
   return out;
@@ -295,7 +301,7 @@ export function legacyLineUnit(choices: readonly string[] | null, unit: string |
  */
 export function lineUnitOptions(
   kind: RecipeLineKind,
-  sku: { packFormat: string | null; eachContainerLabel: string | null; eachMeasure: string | null } | null,
+  sku: { packFormat: string | null; eachContainerLabel: string | null; eachMeasure: string | null; packChain?: ReadonlyArray<{ label: string }> | null } | null,
   activeMeasureLabels: readonly string[],
   retiredMeasureLabels: ReadonlySet<string>,
   savedUnit: string | null,
