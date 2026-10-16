@@ -6793,5 +6793,17 @@
   "recipes.output.new_name_es": "Nombre del artículo de preparación (español)",
   "recipes.output.new_section": "Sección de preparación",
   "admin.skus.share_all_shops": "Compartir con todas las tiendas",
-  "catalog.error.needs_vendor": "Elige un proveedor antes de configurar los días de pedido, agregar este artículo a una guía o añadir un código de barras."
+  "catalog.error.needs_vendor": "Elige un proveedor antes de configurar los días de pedido, agregar este artículo a una guía o añadir un código de barras.",
+  "catalog.error.product_changed": "El producto o su art?culo elegido cambi?. Actualiza la vista previa.",
+  "catalog.error.already_swapped": "Este art?culo ya tiene un cambio temporal aqu?.",
+  "catalog.error.in_other_product": "Estos art?culos pertenecen a productos distintos.",
+  "catalog.error.product_needs_primary": "Elige primero un art?culo predeterminado para este producto.",
+  "catalog.error.product_name_taken": "Ya existe un producto con ese nombre.",
+  "catalog.error.recipes_changed": "Cambiaron las recetas que usan este art?culo. Actualiza la vista previa.",
+  "catalog.error.unit_unknown": "Define el peso del empaque original antes de cambiar esta l?nea.",
+  "catalog.error.invalid_mode": "Elige un cambio temporal o permanente.",
+  "catalog.error.same_sku": "Elige otro art?culo de reemplazo.",
+  "catalog.error.swap_not_found": "Este cambio no est? disponible.",
+  "catalog.error.replacement_ineligible": "Este reemplazo no est? disponible en esta tienda. Elige otro art?culo.",
+  "catalog.error.not_temporary": "Solo puedes restaurar los cambios temporales."
 }

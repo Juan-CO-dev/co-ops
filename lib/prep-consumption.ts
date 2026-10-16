@@ -38,7 +38,7 @@ import {
   type GraphRecipe,
   type RecipeGraph,
 } from "@/lib/prep-consumption-graph";
-import { loadProductIndex } from "@/lib/products";
+import { loadProductIndex, type ProductProposal } from "@/lib/products";
 import { audit } from "@/lib/audit";
 import type { RoleCode } from "@/lib/roles";
 
@@ -513,6 +513,8 @@ export async function loadRecipeGraph(opts?: {
   /** New unsaved recipes only. IDs cannot collide with ANY persisted recipe, including hidden/retired ones.
    * Callers validate draft component ownership before passing them. Their leaves use the ordinary scoped resolver. */
   draftRecipes?: readonly GraphRecipe[];
+  /** Preview-only membership/primary proposal; uses the ordinary product resolver. */
+  productProposal?: ProductProposal;
 }): Promise<RecipeGraph> {
   const locationId = opts?.locationId ?? null;
   // WHOSE SHOP VERSIONS, AND WHEN (catalog Phase 2a, 0259). `versionLocationId` defaults to the
@@ -603,7 +605,7 @@ export async function loadRecipeGraph(opts?: {
     loadItemParBasis(outputItemIds),
     loadSkuPack(skuIds, versionScope, asOf, resolvedPacks),
     // Zero product-pinned rows → zero queries (loadProductIndex returns early).
-    loadProductIndex(productIds, locationId),
+    loadProductIndex(productIds, locationId, opts?.productProposal ? { proposal: opts.productProposal } : {}),
   ]);
   // THE RESOLVED MEMBER IS A LEAF TOO (LRA-231, 2026-09-11). A product pin resolves to one
   // member SKU and the flatten emits THAT id as the leaf (productLineOz), but `skuIds` above

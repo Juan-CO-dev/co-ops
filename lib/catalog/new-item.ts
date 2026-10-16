@@ -43,7 +43,7 @@ export async function createCatalogItem(actor: AuthContext, input: NewItemReques
   const pack = { levels: rpcLevels(levels) };
   const price = { unitPrice: req.unitPrice, effectiveDate: req.priceDate };
   const { data, error } = await getServiceRoleClient().rpc("create_catalog_sku", {
-    p_sku: { name: req.name, vendorId: req.vendorId, itemNumber: req.itemNumber, skuClass: req.skuClass, avgOzPerEach: req.avgOzPerEach },
+    p_sku: { request_id: req.request_id, name: req.name, vendorId: req.vendorId, itemNumber: req.itemNumber, skuClass: req.skuClass, avgOzPerEach: req.avgOzPerEach },
     p_pack: pack, p_price: price, p_actor: actor.user.id, p_location_id: scope,
   });
   if (error) {
@@ -51,14 +51,14 @@ export async function createCatalogItem(actor: AuthContext, input: NewItemReques
     if (error.message.startsWith("recipe_version:")) recipeVersionErrorFromRpc(error.message, error.code);
     versionErrorFromRpc(error.message);
   }
-  const result = data as { id: string } | null;
+  const result = data as { id: string; replayed?: boolean; location_id?: string | null } | null;
   if (!result || typeof result.id !== "string") throw new Error("create_catalog_sku returned no committed identity");
-  // The RPC returns the SKU identity only. Record initial facts on that entity,
+  // Record initial facts only on creation; replay returns the current identity/owner,
   // without claiming pack/price row identities or an audit transaction guarantee.
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "vendor_item.create", resourceTable: "vendor_items", resourceId: result.id,
+  if (!result.replayed) await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "vendor_item.create", resourceTable: "vendor_items", resourceId: result.id,
     metadata: { name: req.name, vendor_id: req.vendorId, item_number: req.itemNumber, location_id: scope, job: "new_item", initial_pack: pack, initial_price: price, avg_oz_per_each: req.avgOzPerEach },
     ipAddress: null, userAgent: null });
-  return { skuId: result.id, ownerLocationId: scope };
+  return { skuId: result.id, ownerLocationId: result.location_id === undefined ? scope : result.location_id };
 }
 
 export type OrderDayOutcome = { orderDow: number; leadDays: number } & (

@@ -26,7 +26,15 @@ const textOrNull = (v: unknown, max: number): string | null | undefined => {
   return t === "" ? null : t.length <= max ? t : undefined;
 };
 
+/** Open once with the form (for example useState(newItemFormRequest)); reuse on every submit/retry. */
+export function newItemFormRequest() {
+  const request_id = crypto.randomUUID();
+  return { request: <T extends object>(fields: T): T & { request_id: string } => ({ ...fields, request_id }) };
+}
+
 export interface NewItemRequest {
+  /** Client-generated once per form open; retained for double-submits and lost-response retries. */
+  request_id: string;
   /** Where it starts (spec §3): a shop the actor works in; null = every shop — MoO+ only. */
   scope?: string | null;
   vendorId: string | null;
@@ -50,6 +58,8 @@ export type NewItemParse =
 
 export function parseNewItemRequest(raw: unknown): NewItemParse {
   if (!isObj(raw)) return { ok: false, code: "invalid_payload", field: "body" };
+  if (typeof raw.request_id !== "string" || !UUID.test(raw.request_id)) return { ok: false, code: "invalid_payload", field: "request_id" };
+  const request_id = raw.request_id;
   const scope = raw.scope === undefined ? undefined : uuidOrNull(raw.scope);
   if (raw.scope !== undefined && scope === undefined) return { ok: false, code: "invalid_payload", field: "scope" };
   const vendorId = uuidOrNull(raw.vendorId);
@@ -71,7 +81,7 @@ export function parseNewItemRequest(raw: unknown): NewItemParse {
   if (priceDate === undefined) return { ok: false, code: "invalid_date", field: "priceDate" };
   const skuClass = raw.skuClass === null || raw.skuClass === undefined ? "raw" : isSkuClass(raw.skuClass) ? raw.skuClass : undefined;
   if (skuClass === undefined) return { ok: false, code: "invalid_payload", field: "skuClass" };
-  return { ok: true, request: { scope, vendorId, name, itemNumber, levels, avgOzPerEach, unitPrice, priceDate, skuClass } };
+  return { ok: true, request: { request_id, scope, vendorId, name, itemNumber, levels, avgOzPerEach, unitPrice, priceDate, skuClass } };
 }
 
 /** The shop setup after the create — each one an existing writer, saved and reported on its own. */

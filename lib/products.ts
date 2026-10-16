@@ -432,13 +432,22 @@ export interface ProductIndexLoad {
   productBySku: Map<string, string>;
 }
 
+/** A read-only swap proposal, evaluated through the ordinary eligibility ladder. */
+export interface ProductProposal {
+  productId: string;
+  joinSkuIds: readonly string[];
+  primarySkuId: string;
+  /** Explicit unsaved group for eligibility previews; cannot shadow a persisted product. */
+  draftProduct?: { name: string; unitOz: number | null };
+}
+
 /**
- * Reference reads a caller ALREADY holds for this render (B9: the counts page reads the
- * vendor list, the measure registry and the pack chains once and shares them). Each must
- * answer exactly what the default read would — same rows for the same ids — and must
- * THROW on failure, as the default reads do (vendor kind/activity are resolution inputs).
+ * Reference reads a caller already holds for this render. Each must answer the
+ * same rows as the default read and throw on failure. The proposal is preview-only.
  */
 export interface ProductIndexSharedReads {
+  /** Read-only proposal; eligibility still uses the common resolver. */
+  proposal?: ProductProposal;
   vendors?: (vendorIds: string[]) => Promise<Array<{ id: string; name: string; source_kind: "vendor" | "store"; active: boolean }>>;
   measures?: () => Promise<Map<string, MeasureUnitFactor>>;
   packChains?: (skuIds: string[]) => Promise<Map<string, PackChainLevel[]>>;
@@ -610,6 +619,11 @@ export async function loadProductIndex(
     if (pErr) throw new Error(`loadProductIndex products failed: ${pErr.message}`);
     return { data };
   });
+  if (shared.proposal?.draftProduct && ids.includes(shared.proposal.productId)) {
+    if (products.some(p => p.id === shared.proposal!.productId)) throw new Error("Draft product identity already exists");
+    products.push({ id: shared.proposal.productId, name: shared.proposal.draftProduct.name,
+      unit_oz: shared.proposal.draftProduct.unitOz, active: true });
+  }
   if (products.length === 0) return EMPTY_PRODUCT_INDEX;
   const presentIds = products.map((p) => p.id);
 
@@ -646,6 +660,20 @@ export async function loadProductIndex(
       return { data };
     }),
   ]);
+  const proposal = shared.proposal && presentIds.includes(shared.proposal.productId) ? shared.proposal : null;
+  if (proposal) {
+    const have = new Set(memberRowList.map(m => m.id));
+    const join = [...new Set(proposal.joinSkuIds)].filter(id => !have.has(id));
+    for (let i = 0; i < join.length; i += 100) {
+      const extra = await selectAllRows<DbMemberRow>((from, to) => sb.from("vendor_items")
+        .select("id, name, vendor_id, product_id, active, avg_oz_per_each, pending_review, location_id, units_per_pack, each_size, each_measure")
+        .in("id", join.slice(i, i + 100)).order("id").range(from,to).returns<DbMemberRow[]>());
+      for (const row of extra) {
+        if (row.product_id !== null && row.product_id !== proposal.productId) throw new Error("Product proposal cannot move an existing member");
+        memberRowList.push({...row, product_id:proposal.productId});
+      }
+    }
+  }
   const memberIds = memberRowList.map((m) => m.id);
 
   // Everything below keys off the member list — the overlay, vendor eligibility, receipt
@@ -761,12 +789,13 @@ export async function loadProductIndex(
     const locationRow = locationId != null ? scopes.find((r) => r.location_id === locationId) : undefined;
     const globalRow = scopes.find((r) => r.location_id === null);
     const chosen = locationRow ?? globalRow ?? null;
+    const proposedPrimary = proposal?.productId === p.id ? proposal.primarySkuId : null;
     const productActive = p.active ?? true; // nullable in DB → null is active (skus.ts idiom)
     const res = resolveProductMember({
       productId: p.id,
       active: productActive,
       storeRunStreak: locationId == null ? undefined : streakFor(p.id, locationId),
-      primarySkuId: chosen?.primary_sku_id ?? null,
+      primarySkuId: proposedPrimary ?? chosen?.primary_sku_id ?? null,
       members,
     });
     const resolvedMember = res.skuId != null ? members.find((m) => m.skuId === res.skuId) ?? null : null;
@@ -779,8 +808,8 @@ export async function loadProductIndex(
       active: productActive,
       unitOz: num(p.unit_oz),
       members,
-      primarySkuId: chosen?.primary_sku_id ?? null,
-      primaryIsLocationSpecific: locationRow != null,
+      primarySkuId: proposedPrimary ?? chosen?.primary_sku_id ?? null,
+      primaryIsLocationSpecific: (proposedPrimary !== null && locationId !== null) || locationRow != null,
       resolution: res,
       basis: b,
     });

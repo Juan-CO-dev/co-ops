@@ -14,7 +14,10 @@ import { SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
 
 import { NEW_ITEM_ERROR_CODES } from "@/lib/catalog/new-item-shared";
 
+import { SWAP_ERROR_CODES } from "@/lib/catalog/swap-shared";
+
 const REQUIRED = [
+  ...SWAP_ERROR_CODES.map(c => `catalog.error.${c}`),
   ...NEW_ITEM_ERROR_CODES.map(c => `catalog.error.${c}`),
   "catalog.only_at_shop",
   ...SHOP_OWNED_ERROR_CODES.map((c) => `catalog.error.${c}`),

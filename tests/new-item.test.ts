@@ -11,11 +11,11 @@ vi.mock("@/lib/vendor-rhythm", () => ({ setVendorRhythmPair: mocks.rhythm }));
 vi.mock("@/lib/barcodes", () => ({ teachBarcode: mocks.barcode }));
 vi.mock("@/lib/admin/recipe-versions", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/admin/recipe-versions")>(), saveRecipeLines: mocks.recipe }));
 vi.mock("@/lib/order-guides", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/order-guides")>(), loadOrderGuide: mocks.loadGuide, createEmptyGuide: mocks.createGuide, saveOrderGuide: mocks.saveGuide }));
-import { parseNewItemRequest, parseSetupStep } from "@/lib/catalog/new-item-shared";
+import { newItemFormRequest, parseNewItemRequest, parseSetupStep } from "@/lib/catalog/new-item-shared";
 import { createCatalogItem, setUpItemAtShop } from "@/lib/catalog/new-item";
 const A = "11111111-1111-4111-8111-111111111111", B = "22222222-2222-4222-8222-222222222222", SKU = "33333333-3333-4333-8333-333333333333", VENDOR = "44444444-4444-4444-8444-444444444444", RECIPE = "55555555-5555-4555-8555-555555555555";
 const gm = { user: { id: A, role: "gm" }, role: "gm", level: 7, locations: [A] } as AuthContext;
-const raw = () => ({ scope: A, vendorId: VENDOR, name: " New item ", itemNumber: " 42 ", levels: [{ label: "case", containsQty: 16, containsIndex: null, containsMeasureUnit: "oz" }], unitPrice: 12, priceDate: "2026-10-16" });
+const raw = () => ({ request_id: A, scope: A, vendorId: VENDOR, name: " New item ", itemNumber: " 42 ", levels: [{ label: "case", containsQty: 16, containsIndex: null, containsMeasureUnit: "oz" }], unitPrice: 12, priceDate: "2026-10-16" });
 function request() { const p = parseNewItemRequest(raw()); if (!p.ok) throw new Error(p.field); return p.request; }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -35,7 +35,7 @@ describe("new item parser and atomic consumer", () => {
   });
   it("uses the actual atomic RPC and audits committed facts without fabricated history IDs", async () => {
     expect(await createCatalogItem(gm, request())).toEqual({ skuId: SKU, ownerLocationId: A });
-    expect(mocks.rpc).toHaveBeenCalledWith("create_catalog_sku", { p_sku: { name: "New item", vendorId: VENDOR, itemNumber: "42", skuClass: "raw", avgOzPerEach: null }, p_pack: { levels: raw().levels }, p_price: { unitPrice: 12, effectiveDate: "2026-10-16" }, p_actor: A, p_location_id: A });
+    expect(mocks.rpc).toHaveBeenCalledWith("create_catalog_sku", { p_sku: { request_id: A, name: "New item", vendorId: VENDOR, itemNumber: "42", skuClass: "raw", avgOzPerEach: null }, p_pack: { levels: raw().levels }, p_price: { unitPrice: 12, effectiveDate: "2026-10-16" }, p_actor: A, p_location_id: A });
     expect(mocks.audit).toHaveBeenCalledOnce();
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "vendor_item.create", resourceId: SKU, metadata: expect.objectContaining({ job: "new_item", initial_price: { unitPrice: 12, effectiveDate: "2026-10-16" } }) }));
   });
@@ -114,4 +114,16 @@ it("does not create a guide for a forged existing section when this vendor has n
   mocks.createGuide.mockResolvedValue({ guideId: A, vendorId: VENDOR, name: "Guide", updatedAt: "token", sections: [] });
   await expect(setUpItemAtShop(gm, { skuId: SKU, shopId: A, step: { kind: "guide_line", sectionId: B, newSectionName: null } })).rejects.toMatchObject({ status: 404, code: "section_not_found" });
   expect(mocks.createGuide).not.toHaveBeenCalled();
+});
+
+it("creates one request identity per form open and retains it across retries", () => {
+  const form = newItemFormRequest();
+  const one = form.request(raw());
+  const retry = form.request({ ...raw(), name: "Edited" });
+  expect(one.request_id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(retry.request_id).toBe(one.request_id);
+  expect(newItemFormRequest().request(raw()).request_id).not.toBe(one.request_id);
+});
+it.each([undefined, null, "bad", 42])("requires a valid client request identity %j", request_id => {
+  expect(parseNewItemRequest({ ...raw(), request_id })).toEqual({ ok: false, code: "invalid_payload", field: "request_id" });
 });

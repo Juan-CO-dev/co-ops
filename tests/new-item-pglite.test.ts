@@ -22,7 +22,7 @@ import { createCatalogItem } from "@/lib/catalog/new-item";
 import { parseNewItemRequest } from "@/lib/catalog/new-item-shared";
 const actor = { user: { id: ID.actor, role: "gm" }, role: "gm", level: 7, locations: [ID.shopA] } as AuthContext;
 function request(name: string, count = false) {
-  const parsed = parseNewItemRequest({ scope: ID.shopA, name, levels: [{ label: "case", containsQty: 12, containsMeasureUnit: count ? "each" : "oz" }], avgOzPerEach: count ? 3 : null, unitPrice: 18, priceDate: "2026-10-16" });
+  const parsed = parseNewItemRequest({ request_id: crypto.randomUUID(), scope: ID.shopA, name, levels: [{ label: "case", containsQty: 12, containsMeasureUnit: count ? "each" : "oz" }], avgOzPerEach: count ? 3 : null, unitPrice: 18, priceDate: "2026-10-16" });
   if (!parsed.ok) throw new Error(parsed.field);
   return parsed.request;
 }
@@ -61,4 +61,50 @@ it.each(["bad", -2, {}, true])("SQL refuses malformed initial weight %j with no 
   const before = await counts();
   await expect(db.query("select public.create_catalog_sku($1::jsonb,null,null,$2,$3)", [JSON.stringify({ name: "Invalid weight", avgOzPerEach }), ID.actor, ID.shopA])).rejects.toMatchObject({ code: "P0001", message: "shop_owned:invalid_payload" });
   expect(await counts()).toEqual(before);
+});
+
+it("replays one request without duplicating the SKU, pack, price or audit", async () => {
+  const input = request("Replay no item number");
+  const first = await createCatalogItem(actor, input);
+  const after = await counts();
+  const { audit } = await import("@/lib/audit");
+  vi.mocked(audit).mockClear();
+  expect(await createCatalogItem(actor, input)).toEqual(first);
+  expect(await counts()).toEqual(after);
+  expect(audit).not.toHaveBeenCalled();
+});
+it("different request ids create two SKUs even with identical unnumbered inputs", async () => {
+  const input = request("Distinct requests");
+  const first = await createCatalogItem(actor, input);
+  const second = await createCatalogItem(actor, { ...input, request_id: crypto.randomUUID() });
+  expect(second.skuId).not.toBe(first.skuId);
+});
+it("scopes a request id to its creation owner, including the shared scope", async () => {
+  const input = request("Scoped replay");
+  const moo = { ...actor, role: "moo", level: 8, user: { ...actor.user, role: "moo" }, locations: [ID.shopA, ID.shopB] } as AuthContext;
+  const a = await createCatalogItem(moo, input);
+  const b = await createCatalogItem(moo, { ...input, scope: ID.shopB });
+  const global = await createCatalogItem(moo, { ...input, scope: null });
+  expect(new Set([a.skuId, b.skuId, global.skuId]).size).toBe(3);
+  expect(await createCatalogItem(moo, { ...input, scope: null })).toEqual(global);
+  await db.query("update vendor_items set location_id=null where id=$1", [a.skuId]);
+  const replay = await createCatalogItem(moo, input);
+  expect(replay).toEqual({ skuId: a.skuId, ownerLocationId: null });
+});
+
+it("the partial unique index refuses duplicate creation keys, including null global owners", async () => {
+  for (const scope of [ID.shopA, null]) {
+    const input = { ...request("Index enforced"), scope };
+    const moo = { ...actor, level: 8 } as AuthContext;
+    await createCatalogItem(moo, input);
+    await expect(db.query("insert into vendor_items(id,name,request_id,request_owner_location_id) values(gen_random_uuid(),'Forged',$1,$2)", [input.request_id, scope])).rejects.toMatchObject({ code: "23505" });
+  }
+});
+it("creation replay identity cannot be edited after insert", async () => {
+  const item = await createCatalogItem(actor, request("Immutable replay identity"));
+  await expect(db.query("update vendor_items set request_id=gen_random_uuid() where id=$1", [item.skuId])).rejects.toMatchObject({ message: "shop_owned:invalid_payload" });
+  await expect(db.query("update vendor_items set request_owner_location_id=null where id=$1", [item.skuId])).rejects.toMatchObject({ message: "shop_owned:invalid_payload" });
+});
+it.each(["bad", 3, {}, []])("SQL refuses malformed request identity %j", async request_id => {
+  await expect(db.query("select public.create_catalog_sku($1::jsonb,null,null,$2,$3)", [JSON.stringify({ name: "Bad request", request_id }), ID.actor, ID.shopA])).rejects.toMatchObject({ message: "shop_owned:invalid_payload", code: "P0001" });
 });

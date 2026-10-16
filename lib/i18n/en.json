@@ -6793,5 +6793,17 @@
   "recipes.output.new_name_es": "Prep item name (Spanish)",
   "recipes.output.new_section": "Prep section",
   "admin.skus.share_all_shops": "Share with all shops",
-  "catalog.error.needs_vendor": "Choose a vendor before setting order days, placing this item on a guide, or adding a barcode."
+  "catalog.error.needs_vendor": "Choose a vendor before setting order days, placing this item on a guide, or adding a barcode.",
+  "catalog.error.product_changed": "The product or its chosen item changed. Refresh the preview.",
+  "catalog.error.already_swapped": "This item already has a temporary swap here.",
+  "catalog.error.in_other_product": "These items belong to different products.",
+  "catalog.error.product_needs_primary": "Choose a default item for this product first.",
+  "catalog.error.product_name_taken": "A product already uses that name.",
+  "catalog.error.recipes_changed": "The recipes using this item changed. Refresh the preview.",
+  "catalog.error.unit_unknown": "Set the weight of the original pack before swapping this line.",
+  "catalog.error.invalid_mode": "Choose a temporary or permanent swap.",
+  "catalog.error.same_sku": "Choose a different replacement item.",
+  "catalog.error.swap_not_found": "This swap is unavailable.",
+  "catalog.error.replacement_ineligible": "This replacement is unavailable at this shop. Choose another item.",
+  "catalog.error.not_temporary": "Only temporary swaps can be restored."
 }

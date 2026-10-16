@@ -97,11 +97,11 @@ it("binds the preview again in SQL when a dependency changes immediately before 
   expect(await owner("vendor_items", skuId)).toBe(ID.shopA);
 });
 it("keeps both share entry points service-role only", async () => {
-  for (const name of ["catalog_share_snapshot", "share_catalog_entity"]) {
+  for (const name of ["catalog_share_recipe_ids", "catalog_share_snapshot", "share_catalog_entity"]) {
     const rows = (await db.query<{ signature: string }>("select oid::regprocedure::text signature from pg_proc where pronamespace='public'::regnamespace and proname=$1", [name])).rows;
     expect(rows).toHaveLength(1);
     for (const { signature } of rows) for (const role of ["anon", "authenticated", "service_role"]) {
-      expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,$2,'execute') allowed", [role, signature])).rows[0]!.allowed).toBe(role === "service_role");
+      expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,$2,'execute') allowed", [role, signature])).rows[0]!.allowed).toBe(role === "service_role" && name !== "catalog_share_recipe_ids");
     }
   }
 });

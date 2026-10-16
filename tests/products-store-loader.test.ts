@@ -103,3 +103,22 @@ describe("product loader store eligibility", () => {
     expect(loaded.byProduct.get("product")?.members.find(m => m.skuId === "regular-sku")).toBeUndefined();
   });
 });
+
+ it("preview proposals use the common resolver without moving persisted membership", async () => {
+  fixture.tables.vendor_items!.push({ ...fixture.tables.vendor_items![0], id:"new-sku",product_id:null });
+  const proposal = { productId:"product", joinSkuIds:["new-sku"], primarySkuId:"new-sku" };
+  expect((await loadProductIndex(["product"],"north",{proposal})).index.resolution.get("product")?.skuId).toBe("new-sku");
+  expect(fixture.tables.vendor_items!.at(-1)!.product_id).toBeNull();
+  fixture.tables.vendor_items!.at(-1)!.location_id="south";
+  expect((await loadProductIndex(["product"],"north",{proposal})).index.resolution.get("product")?.skuId).not.toBe("new-sku");
+ });
+
+it("evaluates an explicit unsaved grouping through the same eligibility ladder", async () => {
+ fixture.tables.vendor_items = [fixture.tables.vendor_items![0]!].map(row=>({...row,product_id:null}));
+ const proposal={productId:"draft",joinSkuIds:["regular-sku"],primarySkuId:"regular-sku",draftProduct:{name:"Draft",unitOz:null}};
+ expect((await loadProductIndex(["draft"],"north",{proposal})).index.resolution.get("draft")?.skuId).toBe("regular-sku");
+ fixture.tables.vendor_items![0]!.pending_review=true;
+ expect((await loadProductIndex(["draft"],"north",{proposal})).index.resolution.get("draft")?.skuId).toBeNull();
+ expect(fixture.tables.products).toHaveLength(1);
+ await expect(loadProductIndex(["product"],"north",{proposal:{...proposal,productId:"product"}})).rejects.toThrow("Draft product identity already exists");
+});

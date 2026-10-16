@@ -11,12 +11,24 @@ begin;
 select pg_advisory_xact_lock(7258025800);
 alter table public.recipes add column location_id uuid references public.locations(id);
 alter table public.menu_items add column location_id uuid references public.locations(id);
+-- Creation owner is permanent even when a shop later shares its SKU. Replays
+-- stay in the original owner's namespace; global requests also deduplicate.
+alter table public.vendor_items add column request_id uuid;
+alter table public.vendor_items add column request_owner_location_id uuid references public.locations(id);
+create unique index vendor_items_creation_request on public.vendor_items(request_owner_location_id, request_id)
+  nulls not distinct where request_id is not null;
 create index recipes_owner on public.recipes(location_id) where location_id is not null;
 create index menu_items_owner on public.menu_items(location_id) where location_id is not null;
 
 create or replace function public.shop_owned_owner_guard()
 returns trigger language plpgsql security definer set search_path = pg_catalog, public as $$
 begin
+  if TG_TABLE_NAME = 'vendor_items' then
+    if new.request_id is distinct from old.request_id
+       or new.request_owner_location_id is distinct from old.request_owner_location_id then
+      raise exception 'shop_owned:invalid_payload' using errcode='P0001';
+    end if;
+  end if;
   -- Promotion to shared is dependency-checked at commit. Entity owner moves and
   -- retroactively making a shared entity private are never a supported write.
   if new.location_id is not null and old.location_id is distinct from new.location_id then
@@ -30,7 +42,7 @@ create trigger shop_owned_owner_guard before update of location_id on public.men
   for each row execute function public.shop_owned_owner_guard();
 create trigger shop_owned_owner_guard before update of location_id on public.items
   for each row execute function public.shop_owned_owner_guard();
-create trigger shop_owned_owner_guard before update of location_id on public.vendor_items
+create trigger shop_owned_owner_guard before update of location_id, request_id, request_owner_location_id on public.vendor_items
   for each row execute function public.shop_owned_owner_guard();
 
 create or replace function public.shop_owned_graph_lock()
@@ -533,6 +545,8 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_id uuid := gen_random_uuid();
+  v_request uuid;
+  v_replay record;
   v_vendor uuid;
   v_name text;
   v_number text;
@@ -548,6 +562,23 @@ begin
   if p_sku is null or jsonb_typeof(p_sku) <> 'object'
      or p_actor is null or not exists (select 1 from public.users where id = p_actor) then
     raise exception 'shop_owned:invalid_payload' using errcode = 'P0001';
+  end if;
+  if p_sku ? 'request_id' and jsonb_typeof(p_sku -> 'request_id') <> 'null' then
+    if jsonb_typeof(p_sku -> 'request_id') <> 'string' then
+      raise exception 'shop_owned:invalid_payload' using errcode='P0001';
+    end if;
+    begin
+      v_request := (p_sku ->> 'request_id')::uuid;
+    exception when invalid_text_representation then
+      raise exception 'shop_owned:invalid_payload' using errcode='P0001';
+    end;
+    perform pg_advisory_xact_lock(hashtextextended(
+      'catalog_sku_request:' || coalesce(p_location_id::text, 'global') || ':' || v_request::text, 0));
+    select id, location_id into v_replay from public.vendor_items
+      where request_id=v_request and request_owner_location_id is not distinct from p_location_id;
+    if found then
+      return jsonb_build_object('id', v_replay.id, 'location_id', v_replay.location_id, 'replayed', true);
+    end if;
   end if;
   if jsonb_typeof(p_sku -> 'name') is distinct from 'string'
      or coalesce(btrim(p_sku ->> 'name'), '') = '' then
@@ -632,9 +663,9 @@ begin
     end if;
   end if;
   insert into public.vendor_items
-    (id, vendor_id, location_id, name, item_number, sku_class, price_basis, avg_oz_per_each,
+    (id, vendor_id, location_id, request_id, request_owner_location_id, name, item_number, sku_class, price_basis, avg_oz_per_each,
      pack_format, notes, active, created_by, updated_by)
-  values (v_id, v_vendor, p_location_id, v_name, v_number, v_class, v_basis, v_avg,
+  values (v_id, v_vendor, p_location_id, v_request, p_location_id, v_name, v_number, v_class, v_basis, v_avg,
           'Each (no case)', nullif(btrim(p_sku ->> 'notes'), ''), true, p_actor, p_actor);
   -- Use the existing validators and history writers in this transaction. A
   -- failure at either step unwinds the row and every earlier initial value.
@@ -645,7 +676,7 @@ begin
   if p_price is not null then
     perform public.save_sku_global_price(v_id, v_price, v_date, p_actor, true);
   end if;
-  return jsonb_build_object('id', v_id);
+  return jsonb_build_object('id', v_id, 'location_id', p_location_id, 'replayed', false);
 exception when lock_not_available then
   raise exception 'recipe_version:dependencies_busy' using errcode = 'P0001';
 end;
