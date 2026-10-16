@@ -1026,12 +1026,7 @@
    ]
   },
   "2026-10-27|u-06-iris|67": {
-   "alternates": [
-    {
-     "skill": 0.66,
-     "userId": "u-05-dani"
-    }
-   ],
+   "alternates": [],
    "segments": [
     [
      {
@@ -1250,12 +1245,7 @@
    ]
   },
   "2026-10-27|u-13-sam|67": {
-   "alternates": [
-    {
-     "skill": 0.64,
-     "userId": "u-05-dani"
-    }
-   ],
+   "alternates": [],
    "segments": [
     [
      {
@@ -1530,10 +1520,6 @@
   "2026-10-28|u-06-iris|67": {
    "alternates": [
     {
-     "skill": 0.66,
-     "userId": "u-05-dani"
-    },
-    {
      "skill": 0.5,
      "userId": "u-12-riley"
     }
@@ -1624,10 +1610,6 @@
   },
   "2026-10-28|u-09-tess|67": {
    "alternates": [
-    {
-     "skill": 0.64,
-     "userId": "u-05-dani"
-    },
     {
      "skill": 0.5,
      "userId": "u-12-riley"
@@ -2590,12 +2572,7 @@
    ]
   },
   "2026-10-30|u-09-tess|67": {
-   "alternates": [
-    {
-     "skill": 0.64,
-     "userId": "u-05-dani"
-    }
-   ],
+   "alternates": [],
    "segments": [
     [
      {
@@ -2636,12 +2613,7 @@
    ]
   },
   "2026-10-30|u-10-nora|67": {
-   "alternates": [
-    {
-     "skill": 0.66,
-     "userId": "u-05-dani"
-    }
-   ],
+   "alternates": [],
    "segments": [
     [
      {
@@ -2965,10 +2937,6 @@
   "2026-10-31|u-06-iris|67": {
    "alternates": [
     {
-     "skill": 0.66,
-     "userId": "u-05-dani"
-    },
-    {
      "skill": 0.58,
      "userId": "u-11-eli"
     }
@@ -3105,10 +3073,6 @@
   },
   "2026-10-31|u-09-tess|67": {
    "alternates": [
-    {
-     "skill": 0.64,
-     "userId": "u-05-dani"
-    },
     {
      "skill": 0.53,
      "userId": "u-11-eli"

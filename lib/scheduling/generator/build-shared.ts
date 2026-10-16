@@ -26,13 +26,13 @@ import { reason, shiftKey, type BoardNote, type ReasonIndex, type ShiftReasons }
 import {
   MOD, PROVEN_CAUSE_ORDER, REPAIR_LIMITS, checkScheduleRules, eligibleFor, proveGap, type DayRecord, type DeclaredGap, type GapSubject, type RuleProblem, type Shift,
 } from "../rules-shared";
-import { eligibleForPosition, isManagerRole } from "../rules-shared";
+import { availableOn, eligibleForPosition, isManagerRole, leaderSettingAllows } from "../rules-shared";
 import { scheduledOut, type CrewType, type ScheduleStructure } from "../structure-shared";
 import { skillOf } from "../people-input-shared";
 import { teamStrength, type WindowStrength } from "../strength-shared";
 import { weekDays } from "../time-shared";
 import {
-  allShifts, assignClosingManager, canonicalDay, cmp, deficitAt, enforcePriority, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, toShift,
+  allShifts, assignClosingManager, canonicalDay, cmp, deficitAt, enforcePriority, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
   type BuildCtx, type GShift, type WeekState,
 } from "./assign-shared";
 import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repair-shared";
@@ -257,6 +257,14 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     enforcePriority(b, week, date);
     assignClosingManager(b, week, date);
   }
+  // Astra chunk B P1-1 + the hoursNeeded ruling: before any gap is declared, every legal zero-non-essential-cost fill
+  // is taken (salaried MoD cover, a spare reassignment, an essential closer's extension) — a budget certificate is
+  // refused while one exists, and a free fill should never sit beside a hole.
+  for (const date of builtDates) {
+    takeZeroCostFills(b, week, date, () => deficitsOf(b, date, week.built[date]!));
+    enforcePriority(b, week, date);
+    assignClosingManager(b, week, date);
+  }
 
   // 11. Merge, canonicalise, declare, verify.
   for (const date of builtDates) week.built[date] = canonicalDay(week.built[date]!);
@@ -299,8 +307,11 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   const reasons: ReasonIndex = {};
   for (const date of builtDates) {
     for (const sh of week.built[date]!) {
+      // Astra chunk B P3: the same eligibility a placement needs — the whole shift inside their availability, no
+      // untouchable day, their leader setting, the daily maximum (the shift is already within it), every segment.
       const alternates = Object.values(people).filter((p) => p.userId !== sh.userId && !p.salaried && !p.presenceOnly && p.activeMember
-        && !week.built[date]!.some((x) => x.userId === p.userId) && p.availability[date] !== null
+        && !week.built[date]!.some((x) => x.userId === p.userId) && availableOn(p, date, sh.startQ, sh.endQ)
+        && !p.untouchableDates.includes(date) && leaderSettingAllows(p, s, sh.startQ, sh.endQ)
         && sh.segments.every((g) => g.positionId === MOD ? isManagerRole(p.role) : eligibleForPosition(p, s.positions[g.positionId])))
         .map((p) => ({ userId: p.userId, skill: Math.round(Math.max(...sh.segments.filter((g) => g.positionId !== MOD).map((g) => skillOf(input.skills, p, g.positionId, s.positions[g.positionId]).value), 0) * 1000) / 1000 }))
         .sort((x, y) => y.skill - x.skill || cmp(x.userId, y.userId)).slice(0, 3);

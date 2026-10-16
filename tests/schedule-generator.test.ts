@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { buildDayNeed } from "@/lib/scheduling/need-shared";
 import { salariedBlocks, templatesFor } from "@/lib/scheduling/generator/templates-shared";
 import { buildWeek, type GeneratorOutput } from "@/lib/scheduling/generator/build-shared";
-import { checkScheduleRules } from "@/lib/scheduling/rules-shared";
+import { checkScheduleRules, zeroCostCovers } from "@/lib/scheduling/rules-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { enforcePriority, type BuildCtx, type GShift, type WeekState } from "@/lib/scheduling/generator/assign-shared";
 import { teamStrength } from "@/lib/scheduling/strength-shared";
@@ -275,6 +275,21 @@ describe("Task 7: assignment rules, one per rule", () => {
     expect(three.reasons[`${MON}|u-x|44`]!.alternates).toEqual([{ userId: "u-z", skill: 0.7 }, { userId: "u-y", skill: 0.6 }]);
   });
 
+  it("Astra chunk B P3: alternates reuse full placement eligibility — the window, untouchable dates, the leader setting", () => {
+    const s = onePosition();
+    const input = fixture({ structure: s, specs: [
+      { id: "u-x", role: "employee", skills: { [I.$REG]: [0.9, 0.7] } }, { id: "u-y", role: "employee", skills: { [I.$REG]: [0.6, 0.7] } }, { id: "u-z", role: "employee", skills: { [I.$REG]: [0.7, 0.7] } },
+      { id: "u-w", role: "employee", window: { fromQ: 44, toQ: 52 }, skills: { [I.$REG]: [0.8, 0.7] } },
+      { id: "u-k", role: "key_holder", leader: "closes", skills: { [I.$REG]: [0.85, 0.7] } },
+    ], days: oneDay(s) });
+    input.people.find((p) => p.userId === "u-y")!.untouchableDates = [MON];
+    const out = buildWeek(input);
+    const sh = out.shifts.find((x) => x.date === MON && x.userId === "u-x")!;
+    expect(sh).toMatchObject({ startQ: 44, endQ: 60 });
+    // u-w is available 11:00–13:00 only, u-y's Monday is untouchable, u-k (closes only) may not start before service (11:00 is service start: allowed).
+    expect(out.reasons[`${MON}|u-x|44`]!.alternates.map((a) => a.userId)).toEqual(["u-k", "u-z"]);
+  });
+
   it("determinism: byte-identical twice, and with the roster, days and pins shuffled", () => {
     const base = small();
     const a = buildWeek(base);
@@ -307,6 +322,36 @@ describe("Task 7: budget, certificates and the repair search", () => {
     expectClean(loose);
     expect(loose.gaps.filter((g) => g.cause === "budget")).toEqual([]);
     expect(loose.notes.some((n) => n.code === "unbudgeted_date")).toBe(false);
+  });
+
+  it("Astra chunk B P1-1: budget 0 — the GM on MoD takes Register at ZERO hourly cost before the budget stops the fill; no budget gap a manager could take", () => {
+    const s = onePosition();
+    const specs: PersonSpec[] = [{ id: "u-e", role: "employee", skills: { [I.$REG]: [0.9, 0.7] } }, { id: "u-gm", role: "gm", leader: "opens", cover: [I.$REG] }];
+    const out = buildWeek(fixture({ structure: s, specs, days: oneDay(s), budgetByDate: Object.fromEntries(DATES.map((d) => [d, d === MON ? 0 : null])) }));
+    expectClean(out);
+    const gm = out.shifts.find((x) => x.userId === "u-gm")!;
+    expect(gm.segments.some((g) => g.positionId === I.$REG)).toBe(true);
+    expect(out.stats.hourlyHours).toBe(0);
+    const schedule = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts: out.shifts, gaps: out.gaps, days: out.days };
+    for (const g of out.gaps) expect(zeroCostCovers(g, schedule, out.context)).toEqual([]);
+    expect(out.gaps.every((g) => g.cause === "budget" && g.fromQ >= gm.endQ)).toBe(true);
+  });
+
+  it("Astra chunk B P1-2: KH-only roster, KH-as-MoD from noon — the afternoon gets a KH MoD block, no MoD certificate spans the boundary", () => {
+    const s = structure((x) => {
+      x.leadership.modRequired = true;
+      x.leadership.keyHolderModAfterQ = 48;
+      for (const id of Object.keys(x.positions)) x.positions[id]!.allowedRoles = ["trainee", "employee", "trainer"];
+    });
+    const specs: PersonSpec[] = [{ id: "u-k1", role: "key_holder", leader: "mix" }, { id: "u-k2", role: "key_holder", leader: "mix" }];
+    const out = buildWeek(fixture({ structure: s, specs, days: [day(MON, {}, s)] }));
+    expectClean(out);
+    const mods = out.gaps.filter((g) => g.code === "mod_missing");
+    expect(mods.every((g) => g.toQ <= 48 || g.fromQ >= 48)).toBe(true);
+    expect(mods.filter((g) => g.fromQ < 48).every((g) => g.cause === "structure")).toBe(true);
+    expect(mods.filter((g) => g.fromQ >= 48)).toEqual([]);
+    const out83 = out.context.days[MON]!.scheduledOutQ;
+    for (let q = 48; q < out83; q++) expect(out.shifts.some((x) => x.date === MON && x.startQ <= q && x.endQ > q), `MoD @${q}`).toBe(true);
   });
 
   it("certificates: eligibility (no member may work the position), availability (everyone off), structure (a secondary while its primary is closed; MoD with no SL+)", () => {

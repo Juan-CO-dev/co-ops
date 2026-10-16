@@ -16,7 +16,7 @@
  *     the skill lookup where a starting-point skill is its OWN band, `unproven` (r2 P1-2): never "newer",
  *     never blocking. Everything is canonical (sorted by id) and plain JSON.
  */
-import { etClockTime } from "@/lib/operational-day";
+import { etCalendarDate, etClockTime } from "@/lib/operational-day";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import type { SkillMatrix } from "@/lib/people/skill-matrix-shared";
 import type { AvailabilityWindow, RulePerson, WorkType } from "./context-shared";
@@ -50,11 +50,23 @@ export interface PersonPattern {
   firstWeek: string;
 }
 
-/** ET wall-clock quarter of an instant: floor for a clock-in, ceil for a clock-out. */
-function wallQ(iso: string, round: "floor" | "ceil"): number {
+/** Whole calendar days from `a` to `b` (YYYY-MM-DD), pure UTC date math. */
+function daysFrom(a: string, b: string): number {
+  const [ya, ma, da] = a.split("-").map(Number);
+  const [yb, mb, db] = b.split("-").map(Number);
+  return Math.round((Date.UTC(yb!, mb! - 1, db!) - Date.UTC(ya!, ma! - 1, da!)) / 86400000);
+}
+
+/**
+ * The quarter of an instant ON ITS BUSINESS DATE's wall clock: floor for a clock-in, ceil for a clock-out.
+ * Astra chunk B P2-4: the minutes are counted from the business date's ET midnight BEFORE clamping, so an
+ * overnight clock-out (18:00 → 00:30 the next day) is 24:30 → clamped to the end of the day (96), never 00:30.
+ */
+function wallQ(iso: string, round: "floor" | "ceil", businessDate: string): number {
   const [h, m] = etClockTime(iso).split(":").map(Number);
-  const minutes = h! * 60 + m!;
-  return Math.min(Q_PER_DAY, round === "floor" ? Math.floor(minutes / Q_MINUTES) : Math.ceil(minutes / Q_MINUTES));
+  const minutes = daysFrom(businessDate, etCalendarDate(iso)) * 24 * 60 + h! * 60 + m!;
+  const q = round === "floor" ? Math.floor(minutes / Q_MINUTES) : Math.ceil(minutes / Q_MINUTES);
+  return Math.min(Q_PER_DAY, Math.max(0, q));
 }
 
 /** Nearest-rank quantile of a sorted numeric array. */
@@ -65,7 +77,8 @@ function quantile(sorted: readonly number[], p: number): number {
 /**
  * Per user × ISO weekday over the last `weeks` COMPLETE ISO weeks before `asOf`'s week. `firstSeen[userId]`
  * (the later of the first punch at the shop and `user_locations.created_at`, as a date) floors the
- * person's observed weeks; without it the person's first punch in the window does. Entries with
+ * person's observed weeks and is never overridden by the window (Astra chunk B P2-3); without it the
+ * person's first punch in the window does. Entries with
  * `deleted` or no `userId` are skipped; an open entry (no `outAt`) counts its day and its in time, never
  * an out time.
  */
@@ -90,16 +103,18 @@ export function punchPatterns(
   for (const userId of [...byUser.keys()].sort(cmp)) {
     const mine = byUser.get(userId)!;
     const firstPunch = mine.map((e) => e.businessDate).sort(cmp)[0]!;
+    // Astra chunk B P2-3: the supplied historical start (the later of the first punch at the shop and the
+    // membership, from the loader) WINS; the truncated window's first punch is only the fallback.
     const seen = opts.firstSeen?.[userId];
-    const firstWeek = isoWeekStart(seen && seen > firstPunch ? seen : firstPunch);
+    const firstWeek = isoWeekStart(seen ?? firstPunch);
     const byDow: Record<number, DowPattern> = {};
     for (let dow = 1; dow <= 7; dow++) {
       const observed = weekStarts.filter((w) => w >= firstWeek && shopPunched.has(`${w}/${dow}`));
       // Punches before the person's first counted week (a membership that started later) count for nothing.
       const punches = mine.filter((e) => isoDowOf(e.businessDate) === dow && isoWeekStart(e.businessDate) >= firstWeek);
       const workedWeeks = new Set(punches.map((e) => isoWeekStart(e.businessDate))).size;
-      const ins = punches.map((e) => wallQ(e.inAt, "floor")).sort((a, b) => a - b);
-      const outs = punches.filter((e) => e.outAt !== null).map((e) => wallQ(e.outAt!, "ceil")).sort((a, b) => a - b);
+      const ins = punches.map((e) => wallQ(e.inAt, "floor", e.businessDate)).sort((a, b) => a - b);
+      const outs = punches.filter((e) => e.outAt !== null).map((e) => wallQ(e.outAt!, "ceil", e.businessDate)).sort((a, b) => a - b);
       byDow[dow] = {
         weeksWorked: workedWeeks, weeksObserved: observed.length,
         share: observed.length === 0 ? 0 : workedWeeks / observed.length,
@@ -194,11 +209,13 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
   const notes: RosterNote[] = [];
   const people: SchedPerson[] = [];
   for (const m of [...input.members].sort((a, b) => cmp(a.userId, b.userId))) {
+    // Astra chunk B P2-5: never on the roster, whatever the configurable exclusions or a person setting say.
+    if (NEVER_INCLUDED.includes(m.role)) continue;
     const st = settings.get(m.userId);
     const excluded = structure.roster.excludedRoles.includes(m.role) || getRoleLevel(m.role) < 2;
     const presenceOnly = PRESENCE_ONLY.includes(m.role);
     if (excluded && !presenceOnly) {
-      if (!st?.rosterInclude || NEVER_INCLUDED.includes(m.role)) continue;
+      if (!st?.rosterInclude) continue;
       notes.push({ code: "excluded_role_included", userId: m.userId, positionId: null });
     }
     const cover: string[] = [];

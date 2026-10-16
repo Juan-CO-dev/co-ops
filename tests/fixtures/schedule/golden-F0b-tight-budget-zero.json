@@ -42,38 +42,10 @@
       "cause": "budget",
       "fromQ": 38,
       "proven": true,
-      "toQ": 56
-     },
-     "positionId": "5c000000-0000-4000-8000-000000000007",
-     "q": 38,
-     "severity": "gap"
-    },
-    {
-     "code": "coverage_gap",
-     "day": "2026-10-26",
-     "inherited": false,
-     "params": {
-      "cause": "budget",
-      "fromQ": 38,
-      "proven": true,
       "toQ": 62
      },
      "positionId": "5c000000-0000-4000-8000-000000000008",
      "q": 38,
-     "severity": "gap"
-    },
-    {
-     "code": "coverage_gap",
-     "day": "2026-10-26",
-     "inherited": false,
-     "params": {
-      "cause": "budget",
-      "fromQ": 42,
-      "proven": true,
-      "toQ": 67
-     },
-     "positionId": "5c000000-0000-4000-8000-000000000003",
-     "q": 42,
      "severity": "gap"
     },
     {
@@ -96,6 +68,20 @@
      "inherited": false,
      "params": {
       "cause": "budget",
+      "fromQ": 42,
+      "proven": true,
+      "toQ": 56
+     },
+     "positionId": "5c000000-0000-4000-8000-000000000007",
+     "q": 42,
+     "severity": "gap"
+    },
+    {
+     "code": "coverage_gap",
+     "day": "2026-10-26",
+     "inherited": false,
+     "params": {
+      "cause": "budget",
       "fromQ": 44,
       "proven": true,
       "toQ": 56
@@ -105,39 +91,11 @@
      "severity": "gap"
     },
     {
-     "code": "coverage_gap",
-     "day": "2026-10-26",
-     "inherited": false,
-     "params": {
-      "cause": "budget",
-      "fromQ": 46,
-      "proven": true,
-      "toQ": 60
-     },
-     "positionId": "5c000000-0000-4000-8000-000000000004",
-     "q": 46,
-     "severity": "gap"
-    },
-    {
-     "code": "coverage_gap",
-     "day": "2026-10-26",
-     "inherited": false,
-     "params": {
-      "cause": "budget",
-      "fromQ": 62,
-      "proven": true,
-      "toQ": 64
-     },
-     "positionId": "5c000000-0000-4000-8000-000000000004",
-     "q": 62,
-     "severity": "gap"
-    },
-    {
      "code": "soft_range",
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "hours": 4,
+      "hours": 5.25,
       "max": 40,
       "min": 24
      },
@@ -173,7 +131,7 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "hours": 4,
+      "hours": 9.25,
       "max": 40,
       "min": 24
      },
@@ -234,9 +192,9 @@
     "budgetedDates": [
      "2026-10-26"
     ],
-    "essentialHours": 16,
+    "essentialHours": 22.5,
     "hoursNeeded": 8,
-    "usedHours": 16
+    "usedHours": 22.5
    },
    "code": "coverage_gap",
    "date": "2026-10-26",
@@ -251,9 +209,9 @@
     "budgetedDates": [
      "2026-10-26"
     ],
-    "essentialHours": 16,
+    "essentialHours": 22.5,
     "hoursNeeded": 9.75,
-    "usedHours": 16
+    "usedHours": 22.5
    },
    "code": "coverage_gap",
    "date": "2026-10-26",
@@ -268,60 +226,9 @@
     "budgetedDates": [
      "2026-10-26"
     ],
-    "essentialHours": 16,
+    "essentialHours": 22.5,
     "hoursNeeded": 6.25,
-    "usedHours": 16
-   },
-   "code": "coverage_gap",
-   "date": "2026-10-26",
-   "fromQ": 42,
-   "positionId": "5c000000-0000-4000-8000-000000000003",
-   "toQ": 67
-  },
-  {
-   "cause": "budget",
-   "certificate": {
-    "budgetHours": 0,
-    "budgetedDates": [
-     "2026-10-26"
-    ],
-    "essentialHours": 16,
-    "hoursNeeded": 4,
-    "usedHours": 16
-   },
-   "code": "coverage_gap",
-   "date": "2026-10-26",
-   "fromQ": 46,
-   "positionId": "5c000000-0000-4000-8000-000000000004",
-   "toQ": 60
-  },
-  {
-   "cause": "budget",
-   "certificate": {
-    "budgetHours": 0,
-    "budgetedDates": [
-     "2026-10-26"
-    ],
-    "essentialHours": 16,
-    "hoursNeeded": 4,
-    "usedHours": 16
-   },
-   "code": "coverage_gap",
-   "date": "2026-10-26",
-   "fromQ": 62,
-   "positionId": "5c000000-0000-4000-8000-000000000004",
-   "toQ": 64
-  },
-  {
-   "cause": "budget",
-   "certificate": {
-    "budgetHours": 0,
-    "budgetedDates": [
-     "2026-10-26"
-    ],
-    "essentialHours": 16,
-    "hoursNeeded": 6.25,
-    "usedHours": 16
+    "usedHours": 22.5
    },
    "code": "coverage_gap",
    "date": "2026-10-26",
@@ -336,9 +243,9 @@
     "budgetedDates": [
      "2026-10-26"
     ],
-    "essentialHours": 16,
+    "essentialHours": 22.5,
     "hoursNeeded": 4,
-    "usedHours": 16
+    "usedHours": 22.5
    },
    "code": "coverage_gap",
    "date": "2026-10-26",
@@ -353,13 +260,13 @@
     "budgetedDates": [
      "2026-10-26"
     ],
-    "essentialHours": 16,
-    "hoursNeeded": 4.5,
-    "usedHours": 16
+    "essentialHours": 22.5,
+    "hoursNeeded": 4,
+    "usedHours": 22.5
    },
    "code": "coverage_gap",
    "date": "2026-10-26",
-   "fromQ": 38,
+   "fromQ": 42,
    "positionId": "5c000000-0000-4000-8000-000000000007",
    "toQ": 56
   },
@@ -370,9 +277,9 @@
     "budgetedDates": [
      "2026-10-26"
     ],
-    "essentialHours": 16,
+    "essentialHours": 22.5,
     "hoursNeeded": 6,
-    "usedHours": 16
+    "usedHours": 22.5
    },
    "code": "coverage_gap",
    "date": "2026-10-26",
@@ -420,17 +327,6 @@
    "date": "2026-10-26",
    "params": {
     "budgetHours": 0,
-    "fromQ": 72,
-    "toQ": 76
-   },
-   "positionId": "5c000000-0000-4000-8000-000000000004",
-   "userId": null
-  },
-  {
-   "code": "budget_stopped",
-   "date": "2026-10-26",
-   "params": {
-    "budgetHours": 0,
     "fromQ": 46,
     "toQ": 60
    },
@@ -442,8 +338,8 @@
    "date": "2026-10-26",
    "params": {
     "budgetHours": 0,
-    "fromQ": 62,
-    "toQ": 64
+    "fromQ": 72,
+    "toQ": 76
    },
    "positionId": "5c000000-0000-4000-8000-000000000004",
    "userId": null
@@ -486,6 +382,17 @@
    "date": "2026-10-26",
    "params": {
     "budgetHours": 0,
+    "fromQ": 42,
+    "toQ": 56
+   },
+   "positionId": "5c000000-0000-4000-8000-000000000007",
+   "userId": null
+  },
+  {
+   "code": "budget_stopped",
+   "date": "2026-10-26",
+   "params": {
+    "budgetHours": 0,
     "fromQ": 38,
     "toQ": 62
    },
@@ -494,22 +401,33 @@
   }
  ],
  "reasons": {
-  "2026-10-26|u-a-ana|67": {
+  "2026-10-26|u-a-ana|62": {
    "alternates": [
     {
-     "skill": 0.5,
+     "skill": 0.8,
      "userId": "u-b-bo"
+    },
+    {
+     "skill": 0.6,
+     "userId": "u-i-ivy"
     },
     {
      "skill": 0.5,
      "userId": "u-c-cy"
-    },
-    {
-     "skill": 0.5,
-     "userId": "u-g-gus"
     }
    ],
    "segments": [
+    [
+     {
+      "key": "essential_extension",
+      "params": {
+       "fromQ": 62,
+       "positionId": "5c000000-0000-4000-8000-000000000004",
+       "toQ": 64,
+       "userId": "u-a-ana"
+      }
+     }
+    ],
     [
      {
       "key": "extended_to_minimum",
@@ -550,6 +468,15 @@
      "key": "closing_manager",
      "params": {
       "closeScore": 0.9,
+      "userId": "u-a-ana"
+     }
+    },
+    {
+     "key": "essential_extension",
+     "params": {
+      "fromQ": 62,
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "toQ": 64,
       "userId": "u-a-ana"
      }
     }
@@ -604,16 +531,16 @@
   "2026-10-26|u-f-finn|67": {
    "alternates": [
     {
-     "skill": 0.9,
-     "userId": "u-g-gus"
-    },
-    {
      "skill": 0.8,
      "userId": "u-b-bo"
     },
     {
      "skill": 0.7,
      "userId": "u-i-ivy"
+    },
+    {
+     "skill": 0.6,
+     "userId": "u-c-cy"
     }
    ],
    "segments": [
@@ -676,15 +603,15 @@
     }
    ]
   },
-  "2026-10-26|u-h-hal|67": {
+  "2026-10-26|u-h-hal|46": {
    "alternates": [
     {
      "skill": 0.9,
      "userId": "u-b-bo"
     },
     {
-     "skill": 0.8,
-     "userId": "u-g-gus"
+     "skill": 0.6,
+     "userId": "u-i-ivy"
     },
     {
      "skill": 0.5,
@@ -693,6 +620,24 @@
    ],
    "segments": [
     [
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 46,
+       "positionId": "5c000000-0000-4000-8000-000000000004",
+       "toQ": 60
+      }
+     }
+    ],
+    [
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 60,
+       "positionId": "5c000000-0000-4000-8000-000000000003",
+       "toQ": 67
+      }
+     },
      {
       "key": "extended_to_minimum",
       "params": {
@@ -727,13 +672,44 @@
       "skill": 0.85,
       "userId": "u-h-hal"
      }
+    },
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 60,
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "toQ": 67
+     }
+    },
+    {
+     "key": "under_soft_min",
+     "params": {
+      "hoursUnder": 20,
+      "userId": "u-h-hal"
+     }
+    },
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 46,
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "toQ": 60
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "skill": 0.5,
+      "userId": "u-h-hal"
+     }
     }
    ]
   },
   "2026-10-26|u-j-gm|28": {
    "alternates": [
     {
-     "skill": 0,
+     "skill": 0.8,
      "userId": "u-g-gus"
     }
    ],
@@ -747,6 +723,27 @@
        "userId": "u-j-gm"
       }
      }
+    ],
+    [
+     {
+      "key": "manager_cover_last_resort",
+      "params": {
+       "fromQ": 38,
+       "positionId": "5c000000-0000-4000-8000-000000000007",
+       "toQ": 42
+      }
+     }
+    ],
+    [
+     {
+      "key": "manager_cover",
+      "params": {
+       "fromQ": 42,
+       "positionId": "5c000000-0000-4000-8000-000000000003",
+       "rank": 3,
+       "toQ": 60
+      }
+     }
     ]
    ],
    "shift": [
@@ -756,6 +753,23 @@
       "fromQ": 28,
       "toQ": 60,
       "userId": "u-j-gm"
+     }
+    },
+    {
+     "key": "manager_cover",
+     "params": {
+      "fromQ": 42,
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "rank": 3,
+      "toQ": 60
+     }
+    },
+    {
+     "key": "manager_cover_last_resort",
+     "params": {
+      "fromQ": 38,
+      "positionId": "5c000000-0000-4000-8000-000000000007",
+      "toQ": 42
      }
     }
    ]
@@ -770,12 +784,17 @@
    "pinned": false,
    "segments": [
     {
+     "endQ": 67,
+     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "startQ": 62
+    },
+    {
      "endQ": 83,
      "positionId": "5c000000-0000-4000-8000-000000000005",
      "startQ": 67
     }
    ],
-   "startQ": 67,
+   "startQ": 62,
    "userId": "u-a-ana"
   },
   {
@@ -828,12 +847,17 @@
    "pinned": false,
    "segments": [
     {
+     "endQ": 60,
+     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "startQ": 46
+    },
+    {
      "endQ": 83,
      "positionId": "5c000000-0000-4000-8000-000000000003",
-     "startQ": 67
+     "startQ": 60
     }
    ],
-   "startQ": 67,
+   "startQ": 46,
    "userId": "u-h-hal"
   },
   {
@@ -844,9 +868,20 @@
    "pinned": false,
    "segments": [
     {
-     "endQ": 60,
+     "endQ": 38,
      "positionId": "mod",
      "startQ": 28
+    },
+    {
+     "endQ": 42,
+     "lastResort": true,
+     "positionId": "5c000000-0000-4000-8000-000000000007",
+     "startQ": 38
+    },
+    {
+     "endQ": 60,
+     "positionId": "5c000000-0000-4000-8000-000000000003",
+     "startQ": 42
     }
    ],
    "startQ": 28,
@@ -858,21 +893,21 @@
   "budgetedDates": [
    "2026-10-26"
   ],
-  "essentialHours": 16,
-  "gaps": 9,
-  "hourlyCostCents": 30400,
-  "hourlyHours": 16,
+  "essentialHours": 22.5,
+  "gaps": 6,
+  "hourlyCostCents": 42750,
+  "hourlyHours": 22.5,
   "hourlyHoursByDate": {
-   "2026-10-26": 16
+   "2026-10-26": 22.5
   },
   "repair": {
-   "accepted": 1,
+   "accepted": 3,
    "chainDepth": 3,
    "donorsTried": 4,
    "provenEarly": 0,
-   "steps": 86
+   "steps": 82
   },
-  "salariedCoverHours": 0,
+  "salariedCoverHours": 5.5,
   "shifts": 5
  }
 }

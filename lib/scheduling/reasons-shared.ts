@@ -13,6 +13,8 @@ export const REASON_KEYS = [
   "extended_to_minimum", "next_position", "manager_cover", "manager_cover_last_resort", "priority_cover",
   "salaried_minimum", "presence_pin", "added_pin", "repair_moved", "repair_replaced", "repair_relabelled",
   "overtime_last_resort", "closing_manager", "mod_cover", "inherited",
+  // Astra chunk B ruling (hoursNeeded): an essential closer extended over a hole costs no non-essential hour.
+  "essential_extension",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

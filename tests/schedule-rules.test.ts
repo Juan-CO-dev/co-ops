@@ -624,3 +624,72 @@ describe("Astra's chunk A review probes (failing first, fixed in the same commit
     expect(checkCertificate(dupPeople, week(placed), ctx)).toBe(false);
   });
 });
+
+describe("Astra's chunk B review probes (failing first)", () => {
+  it("P1-1 budget vs salaried cover: a budget certificate is REJECTED while a legal zero-hourly-cost fill exists (the GM on MoD can take Register)", () => {
+    const ctx = context({ built: [THU] });
+    setNeed(ctx, THU, P.REG, 44, 60);
+    ctx.budgetByDate[THU] = 0;
+    const gm = shift(U.alex, THU, 28, 60, "mod");
+    const g: DeclaredGap = { code: "coverage_gap", date: THU, positionId: P.REG, fromQ: 44, toQ: 60, cause: "budget",
+      certificate: { budgetedDates: [THU], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 4 } };
+    expect(checkCertificate(g, week([gm]), ctx)).toBe(false);
+    expect(proveGap(g, week([gm]), ctx)?.cause).not.toBe("budget");
+    // Relabelling the GM's block to Register is legal and costs no hourly money: zero problems.
+    const relabelled = { ...gm, segments: [{ positionId: "mod", startQ: 28, endQ: 44 }, { positionId: P.REG, startQ: 44, endQ: 60 }] };
+    expect(run([relabelled], ctx).filter((p) => p.severity !== "warning")).toEqual([]);
+    // Without the GM (or with the GM's floor exhausted) the budget proof stands again.
+    expect(checkCertificate(g, week([]), ctx)).toBe(true);
+    const capped = context({ s: structure((x) => { x.limits.managerFloorH = 0; }), built: [THU] });
+    setNeed(capped, THU, P.REG, 44, 60);
+    capped.budgetByDate[THU] = 0;
+    expect(checkCertificate(g, week([gm]), capped)).toBe(true);
+  });
+
+  it("P1-2 KH-MoD boundaries: impossibility before the KH-may-be-MoD time never certifies the time after it", () => {
+    const s = structure((x) => { x.leadership.modRequired = true; x.leadership.keyHolderModAfterQ = 48; });
+    const ctx = context({ s, built: [THU] });
+    ctx.people = { [U.iris]: ctx.people[U.iris]! }; // a key-holder-only roster
+    const across: DeclaredGap = { code: "mod_missing", date: THU, positionId: null, fromQ: 40, toQ: 64, cause: "structure", certificate: { rule: "no_mod_member", detail: {} } };
+    expect(checkCertificate(across, week([]), ctx)).toBe(false); // Iris may be MoD 12:00–16:00
+    expect(checkCertificate({ ...across, toQ: 48 }, week([]), ctx)).toBe(true); // before noon nobody can
+    expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 40, toQ: 64 }, week([]), ctx)).toBeNull();
+    expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 40, toQ: 48 }, week([]), ctx)?.cause).toBe("structure");
+    const elig: DeclaredGap = { ...across, cause: "eligibility", certificate: { positionId: null, eligibleCount: 0 } };
+    expect(checkCertificate(elig, week([]), ctx)).toBe(false);
+    // Availability is judged per quarter where the person counts: Iris unavailable after noon proves the afternoon.
+    ctx.people[U.iris]!.availability[THU] = { fromQ: 28, toQ: 48, source: "toast_pattern" };
+    const av: DeclaredGap = { ...across, cause: "availability", certificate: { eligibleIds: [U.iris], unavailableIds: [U.iris] } };
+    expect(checkCertificate(av, week([]), ctx)).toBe(true);
+    ctx.people[U.iris]!.availability[THU] = { fromQ: 28, toQ: 56, source: "toast_pattern" };
+    expect(checkCertificate(av, week([]), ctx)).toBe(false); // available 12:00–14:00, when she counts
+  });
+
+  it("hoursNeeded (Astra ruling): the legal MARGINAL non-essential hourly cost — extending an essential closer costs 0; an illegal extension is not counted", () => {
+    const ctx = context({ built: [WED] });
+    setNeed(ctx, WED, P.REG, 60, 64);
+    ctx.budgetByDate[WED] = 0;
+    const subject = { code: "coverage_gap" as const, date: WED, positionId: P.REG, fromQ: 60, toQ: 64 };
+    // Iris closes 16:00–20:45 on Register (essential): extending her back to 15:00 costs no non-essential hour.
+    const closer = shift(U.iris, WED, 64, 83, P.REG, { closingManager: true });
+    expect(proveGap(subject, week([closer]), ctx)?.cause).not.toBe("budget");
+    // A non-essential adjacent shift: the extension's hours (1 h); its availability ending at 15:00 makes it illegal → a new 4 h block.
+    const ben = shift(U.ben, WED, 44, 60, P.REG);
+    ctx.budgetByDate[WED] = 4;
+    expect(proveGap(subject, week([ben]), ctx)).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 1, usedHours: 4 } });
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 40, toQ: 60, source: "toast_pattern" };
+    expect(proveGap(subject, week([ben]), ctx)).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 4 } });
+    // A pinned shift is never extended.
+    ctx.people[U.ben]!.availability = {};
+    expect(proveGap(subject, week([{ ...ben, pinned: true }]), ctx)).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 4 } });
+    // Reassignment: Ben on an over-covered Walk-ins / Online can move over at no extra hour → never a budget gap.
+    const twoWalk = shift(U.ben, WED, 56, 72, P.WALKON);
+    const maya = shift(U.maya, WED, 56, 72, P.WALKON);
+    const roomy = context({ s: structure((x) => { x.positions[P.WALKON]!.headsBefore = 2; x.positions[P.WALKON]!.headsAfter = 2; }), built: [WED] });
+    setNeed(roomy, WED, P.REG, 60, 64);
+    setNeed(roomy, WED, P.WALKON, 56, 72);
+    roomy.budgetByDate[WED] = 0;
+    expect(proveGap(subject, week([twoWalk, maya]), roomy)?.cause).not.toBe("budget");
+  });
+});
+

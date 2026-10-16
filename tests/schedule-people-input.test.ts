@@ -176,3 +176,31 @@ describe("SkillLookup (r2 P1-2): unproven is its own band", () => {
     expect(people.map((p) => [p.userId, p.newerPositions, p.strongPositions])).toEqual([["u-eli", [I.$REG], []], ["u-maya", [], [I.$REG]]]);
   });
 });
+
+describe("Astra chunk B review — people input (failing first)", () => {
+  it("P2-3 firstSeen: the supplied historical start WINS; the truncated window's first punch never overrides it (January start, one recent 4 h Monday)", () => {
+    const entries = [...shopOpen(), punch("u-jan", MONDAYS[7]!, "10:00", "14:00", 4)];
+    const p = punchPatterns(entries, { asOf: ASOF, firstSeen: { "u-jan": "2026-01-12" } });
+    expect(p["u-jan"]!.byDow[1]).toMatchObject({ weeksWorked: 1, weeksObserved: 8, share: 0.125 });
+    expect(p["u-jan"]!.meanWeeklyHours).toBe(1); // 4 h over the last 4 observed weeks, not 4 h over 1
+    expect(p["u-jan"]!.firstWeek).toBe("2026-01-12");
+    // With 8 observed weeks and a 12.5% share the person is NOT assumed available on Mondays (never insufficient history).
+    expect(assumedAvailability(p["u-jan"]!.byDow[1], SHOP)).toBeNull();
+  });
+
+  it("P2-4 overnight punches: the clock-out is computed against the business date before clamping (18:00 → 00:30 is not 17:30–17:45)", () => {
+    const night = (mon: string) => ({ ...punch("u-night", mon, "18:00", null, 6.5), outAt: at(addDays(mon, 1), "00:30") });
+    const p = punchPatterns([...shopOpen(), ...MONDAYS.slice(5).map(night)], { asOf: ASOF });
+    expect(p["u-night"]!.byDow[1]).toMatchObject({ weeksWorked: 3, weeksObserved: 3, p10InQ: 72, p90OutQ: 96 });
+    expect(assumedAvailability(p["u-night"]!.byDow[1], SHOP)).toEqual({ fromQ: 70, toQ: 84, source: "toast_pattern" });
+  });
+
+  it("P2-5 cgs and the social media manager are NEVER on the roster — before the configurable exclusions, even with excludedRoles = [] and rosterInclude", () => {
+    const open = { ...S, roster: { excludedRoles: [] } } as ScheduleStructure;
+    const members: MemberInput[] = [{ userId: "u-cgs", role: "cgs", active: true }, { userId: "u-smm", role: "social_media_mgr", active: true }, { userId: "u-ben", role: "employee", active: true }];
+    const include = (userId: string): PersonSettingsRow => ({ userId, workType: null, alsoAllowed: [], leaderSetting: null, coverPositions: [], softMinH: null, softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: true });
+    const r = toSchedPeople({ members, settings: [include("u-cgs"), include("u-smm")], patterns: {}, dates: ["2026-10-26"], structure: open, shopDay: SHOP, skills: null, wages: { byUserCents: {}, estimateHourlyCents: null } });
+    expect(r.people.map((p) => p.userId)).toEqual(["u-ben"]);
+    expect(r.notes).toEqual([]);
+  });
+});

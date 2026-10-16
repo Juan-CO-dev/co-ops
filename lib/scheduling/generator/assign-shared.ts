@@ -21,7 +21,7 @@ import type { DayContext, RuleContext, RulePerson } from "../context-shared";
 import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../people-input-shared";
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
 import {
-  MOD, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition, leaderSettingAllows, modCountsAt,
+  MOD, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition, leaderSettingAllows, modCountsAt, shiftExtendsOver, zeroCostCovers,
   type DayRecord, type RuleProblem, type Segment, type Shift,
 } from "../rules-shared";
 import { isLineRole, isSecondary, positionLimit, primaryOf, type ScheduleStructure } from "../structure-shared";
@@ -267,8 +267,9 @@ export interface CandidateOpts {
   closingLead: boolean;
   /** Allow a candidate whose week would exceed the overtime threshold (the last resort). */
   allowOvertime: boolean;
-  /** MoD blocks: the candidate must count as the manager on duty from the plan's first quarter. */
+  /** MoD blocks: the candidate must count as the manager on duty from `modFromQ` (the hole's first quarter; default the plan's). */
   mod: boolean;
+  modFromQ?: number;
   /** Only people whose OWN shift that day is adjacent to the plan (an extension; the plan may be under the minimum). */
   extensionOnly?: boolean;
 }
@@ -310,7 +311,7 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
     const own = shifts.find((x) => x.userId === userId) ?? null;
     if (own && (own.pinned || !extendsOwn(own, o.plan))) continue;
     if (o.extensionOnly && !own) continue;
-    if (o.mod ? !modCountsAt(p, s, o.plan.startQ) : !o.plan.segments.every((g) => eligibleForPosition(p, s.positions[g.positionId]))) continue;
+    if (o.mod ? !modCountsAt(p, s, o.modFromQ ?? o.plan.startQ) : !o.plan.segments.every((g) => eligibleForPosition(p, s.positions[g.positionId]))) continue;
     if (o.closingLead && !closingManagerEligible(p, s)) continue;
     const fromQ = own ? Math.min(own.startQ, o.plan.startQ) : o.plan.startQ;
     const toQ = own ? Math.max(own.endQ, o.plan.endQ) : o.plan.endQ;
@@ -449,6 +450,12 @@ export function fillRun(
     }
   }
   if (budgetBlocked) {
+    // Astra chunk B P1-1: a salaried manager's MoD block costs no hourly money — take it before the budget stops the fill.
+    if (opts.allowCover && !t.closingLead && carveZeroCostCovers(b, week, date, positionId, fromQ, toQ)) return "covered";
+    // Astra chunk B ruling (hoursNeeded): extending an ESSENTIAL shift (it works the closing window) costs no
+    // non-essential hour either — the budget certificate refuses while such an extension is legal, so take it.
+    if (extendEssentialShift(b, week, date, positionId, fromQ, toQ)) return "placed";
+    if (relabelSpareSegment(b, week, date, positionId, fromQ, toQ)) return "placed";
     b.notes.push({ code: "budget_stopped", date, userId: null, positionId, params: { fromQ, toQ, budgetHours: b.budgetHours } });
     return "budget";
   }
@@ -516,6 +523,156 @@ export function coverWithManager(b: BuildCtx, week: WeekState, date: string, pos
     if (ok) return true;
   }
   return false;
+}
+
+/**
+ * Astra chunk B P1-1: carve every legal ZERO-hourly-cost fill of a coverage run out of salaried managers' MoD blocks
+ * (`zeroCostCovers` — the same predicate the budget certificate refuses on), guarded, until none is left. Returns
+ * true when the run has no deficit left.
+ */
+export function carveZeroCostCovers(b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number): boolean {
+  const day = b.ctx.days[date]!;
+  for (let round = 0; round < 8; round++) {
+    const schedule = { locationId: b.ctx.locationId, weekStart: b.ctx.weekStart, shifts: allShifts(week), gaps: [], days: [] };
+    const covers = zeroCostCovers({ date, positionId, fromQ, toQ }, schedule, b.ctx);
+    let progress = false;
+    for (const c of covers) {
+      const p = b.people[c.userId];
+      if (!p) continue;
+      const rank = p.coverPositions.indexOf(positionId);
+      const lastResort = rank < 0;
+      const r = lastResort ? reason("manager_cover_last_resort", { positionId, fromQ: c.fromQ, toQ: c.toQ }) : reason("manager_cover", { positionId, fromQ: c.fromQ, toQ: c.toQ, rank: rank + 1 });
+      const ok = guarded(b, week, date, (next) => {
+        const sh = next.find((x) => x.userId === c.userId && x.segments.some((g) => g.positionId === MOD && g.startQ <= c.fromQ && g.endQ >= c.toQ));
+        if (!sh) return false;
+        const parts: GSegment[] = [];
+        for (const g of sh.segments) {
+          if (g.positionId !== MOD || g.endQ <= c.fromQ || g.startQ >= c.toQ) { parts.push(g); continue; }
+          if (g.startQ < c.fromQ) parts.push({ ...g, endQ: c.fromQ });
+          parts.push({ positionId, startQ: c.fromQ, endQ: c.toQ, reasons: [r], ...(lastResort ? { lastResort: true } : {}) });
+          if (c.toQ < g.endQ) parts.push({ ...g, startQ: c.toQ });
+        }
+        sh.segments = parts;
+        sh.reasons = [...sh.reasons, r];
+        return true;
+      });
+      if (ok) progress = true;
+    }
+    if (!progress) break;
+  }
+  for (let q = fromQ; q < toQ; q++) if (deficitAt(week.built[date]!, day, positionId, q) > 0) return false;
+  return true;
+}
+
+/**
+ * Extend an hourly person's ESSENTIAL shift (one working the closing window, whole-shift essential) over
+ * [fromQ, toQ) on `positionId`, bridging to it on the same position — exactly the extensions `hoursNeeded` counts
+ * at zero non-essential cost (`shiftExtendsOver`: no overlap, inside the shop day, availability, leader setting,
+ * room on the position over the bridge; not pinned; within the daily maximum). The smallest bridge first, then
+ * userId. Guarded.
+ */
+export function extendEssentialShift(b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number): boolean {
+  const day = b.ctx.days[date]!;
+  const s = b.structure;
+  const pos = s.positions[positionId];
+  const cw = b.ctx.closingWindowByDate[date];
+  if (!pos || !cw) return false;
+  const shifts = week.built[date]!;
+  const primary = primaryOf(s, positionId);
+  const needsPrimary = primary !== null && primary !== positionId;
+  const room = (q: number) => occupancy(shifts, positionId, q) < positionLimit(pos, q) && (!needsPrimary || occupancy(shifts, primary!, q) > 0);
+  if (needsPrimary) for (let q = fromQ; q < toQ; q++) if (occupancy(shifts, primary!, q) === 0) return false;
+  const options = shifts.filter((sh) => {
+    const p = b.people[sh.userId];
+    if (!p || p.salaried || p.presenceOnly || !p.activeMember || sh.pinned || p.untouchableDates.includes(date) || !eligibleForPosition(p, pos)) return false;
+    if (!sh.segments.some((g) => g.positionId !== MOD && g.startQ < cw.toQ && g.endQ > cw.fromQ)) return false;
+    if (Math.max(sh.endQ, toQ) - Math.min(sh.startQ, fromQ) > maxShiftQ(s)) return false;
+    return shiftExtendsOver(p, sh, day, date, fromQ, toQ, room);
+  }).map((sh) => ({ sh, bridge: sh.endQ <= fromQ ? fromQ - sh.endQ : sh.startQ - toQ }))
+    .sort((x, y) => x.bridge - y.bridge || cmp(x.sh.userId, y.sh.userId));
+  for (const { sh } of options) {
+    const before = sh.endQ <= fromQ;
+    const a = before ? sh.endQ : fromQ;
+    const z = before ? toQ : sh.startQ;
+    const r = reason("essential_extension", { positionId, fromQ, toQ, userId: sh.userId });
+    const ok = guarded(b, week, date, (next) => {
+      const mine = next.find((x) => x.userId === sh.userId && x.startQ === sh.startQ);
+      if (!mine) return false;
+      const seg: GSegment = { positionId, startQ: a, endQ: z, reasons: [r] };
+      mine.segments = before ? [...mine.segments, seg] : [seg, ...mine.segments];
+      mine.startQ = Math.min(mine.startQ, a);
+      mine.endQ = Math.max(mine.endQ, z);
+      mine.reasons = [...mine.reasons, r];
+      return true;
+    });
+    if (ok) return true;
+  }
+  return false;
+}
+
+/**
+ * A zero-cost REASSIGNMENT: relabel part of an hourly person's segment onto `positionId` over [fromQ, toQ) where
+ * their own position is over-covered there (occupancy − 1 ≥ need) — the repair's relabel, without its step budget,
+ * because `hoursNeeded` counts it as free and the budget certificate refuses while it exists. Guarded; the day's
+ * uncovered total must fall and essential coverage never does.
+ */
+export function relabelSpareSegment(b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number): boolean {
+  const day = b.ctx.days[date]!;
+  const pos = b.structure.positions[positionId];
+  if (!pos) return false;
+  const shifts = week.built[date]!;
+  const baseline = uncoveredTotals(b, date, shifts);
+  for (const sh of [...shifts].sort(shiftOrder)) {
+    const p = b.people[sh.userId];
+    if (!p || p.salaried || p.presenceOnly || sh.pinned || !eligibleForPosition(p, pos)) continue;
+    for (const g of sh.segments) {
+      if (g.positionId === positionId || g.positionId === MOD) continue;
+      const from = Math.max(g.startQ, fromQ);
+      const to = Math.min(g.endQ, toQ);
+      if (to <= from) continue;
+      let spare = true;
+      for (let q = from; q < to; q++) if (occupancy(shifts, g.positionId, q) - 1 < needAt(day, g.positionId, q)) { spare = false; break; }
+      if (!spare) continue;
+      const ok = guarded(b, week, date, (next) => {
+        const mine = next.find((x) => x.userId === sh.userId && x.startQ === sh.startQ);
+        if (!mine) return false;
+        const parts: GSegment[] = [];
+        for (const seg of mine.segments) {
+          if (!(seg.startQ === g.startQ && seg.positionId === g.positionId)) { parts.push(seg); continue; }
+          if (seg.startQ < from) parts.push({ ...seg, endQ: from });
+          parts.push({ positionId, startQ: from, endQ: to, reasons: [reason("repair_relabelled", { positionId, fromPositionId: g.positionId, fromQ: from, toQ: to })] });
+          if (to < seg.endQ) parts.push({ ...seg, startQ: to });
+        }
+        mine.segments = parts;
+        return true;
+      }, (next) => { const after = uncoveredTotals(b, date, next); return after.total < baseline.total && after.essential <= baseline.essential; });
+      if (ok) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Before any gap is declared: take every legal ZERO-non-essential-cost fill the budget certificate counts as free —
+ * salaried MoD cover, a spare-segment reassignment, and (on a budgeted date) an essential closer's extension — so a budget proof is never
+ * refused by a fill the generator could have made, and a free fill never sits beside a hole. Bounded (each step
+ * strictly lowers the uncovered total).
+ */
+export function takeZeroCostFills(b: BuildCtx, week: WeekState, date: string, deficits: () => Array<{ code: string; positionId: string | null; fromQ: number; toQ: number }>): void {
+  // An essential closer's extension is free only in the BUDGET's accounting (it still costs wages): take it only on a
+  // budgeted date, where the certificate counts it. Salaried cover and a spare reassignment add no paid hour anywhere.
+  const budgeted = b.budgetedDates.includes(date);
+  for (let round = 0; round < 32; round++) {
+    let progress = false;
+    for (const d of deficits()) {
+      if (d.code !== "coverage_gap" || !d.positionId) continue;
+      const before = uncoveredTotals(b, date, week.built[date]!).total;
+      carveZeroCostCovers(b, week, date, d.positionId, d.fromQ, d.toQ);
+      if (uncoveredTotals(b, date, week.built[date]!).total < before) { progress = true; break; }
+      if (relabelSpareSegment(b, week, date, d.positionId, d.fromQ, d.toQ) || (budgeted && extendEssentialShift(b, week, date, d.positionId, d.fromQ, d.toQ))) { progress = true; break; }
+    }
+    if (!progress) return;
+  }
 }
 
 // ─── Priority enforcement (the mockup's enforcePriority) ─────────────────────
@@ -606,10 +763,12 @@ export function modHoles(b: BuildCtx, date: string, shifts: readonly GShift[]): 
   const day = b.ctx.days[date]!;
   if (!day.structure.leadership.modRequired) return [];
   const out: Array<[number, number]> = [];
+  // Astra chunk B P1-2: a hole never spans an eligibility boundary (KH may be MoD from `keyHolderModAfterQ`).
+  const boundary = day.structure.leadership.keyHolderModAfterQ;
   for (let q = day.structure.shopDay.prepStartQ; q < day.scheduledOutQ; q++) {
     if (modOnClockAt(b, shifts, q)) continue;
     const last = out[out.length - 1];
-    if (last && last[1] === q) last[1] = q + 1;
+    if (last && last[1] === q && q !== boundary) last[1] = q + 1;
     else out.push([q, q + 1]);
   }
   return out;
@@ -631,7 +790,7 @@ export function fillModHole(b: BuildCtx, week: WeekState, date: string, fromQ: n
   if (z - a < minQ) return false;
   const plan: BlockPlan = { startQ: a, endQ: z, segments: [{ positionId: MOD, startQ: a, endQ: z, kind: "core" }] };
   for (const allowOvertime of [false, true]) {
-    const o: CandidateOpts = { date, plan, positionId: null, closingLead: false, allowOvertime, mod: true };
+    const o: CandidateOpts = { date, plan, positionId: null, closingLead: false, allowOvertime, mod: true, modFromQ: fromQ };
     const ranked = rankCandidates(b, week, week.built[date]!, o);
     for (const c of ranked.slice(0, 6)) {
       const r = reason("mod_cover", { fromQ, toQ, userId: c.person.userId });
