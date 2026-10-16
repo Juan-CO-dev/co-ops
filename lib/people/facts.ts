@@ -139,21 +139,26 @@ export async function loadPeopleFacts(service: SupabaseClient, scope: PeopleFact
 
   // NOTES from pm evals (authored by the report submitter)
   if (want.has("pmNotes")) {
+    // Chunked (chunk D review, Astra P2): a compare's union load carries BOTH windows' report ids, and
+    // one `.in(...)` over 240 of them overflows the 8 KB request line. Every consumer counts, so the
+    // concatenated chunks give the same numbers.
     const reportIds = facts.pmReports.map((r) => r.id);
-    if (reportIds.length) {
-      facts.pmNotes = person === null
+    for (let i = 0; i < reportIds.length; i += ID_CHUNK) {
+      const chunk = reportIds.slice(i, i + ID_CHUNK);
+      const rows = person === null
         ? await selectAllRows<PmNoteFact>(
           (from, to) => service
             .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
-            .in("pm_report_id", reportIds).is("superseded_at", null)
+            .in("pm_report_id", chunk).is("superseded_at", null)
             .order("pm_report_id", { ascending: true }).order("id", { ascending: true }).range(from, to),
         )
         : await selectAllRows<PmNoteFact>(
           (from, to) => service
             .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
-            .in("pm_report_id", reportIds).is("superseded_at", null)
+            .in("pm_report_id", chunk).is("superseded_at", null)
             .order("id", { ascending: true }).range(from, to),
         );
+      facts.pmNotes.push(...rows);
     }
     loaded.add("pmNotes");
   }
@@ -193,13 +198,14 @@ export async function loadPeopleFacts(service: SupabaseClient, scope: PeopleFact
         .order("id", { ascending: true }).range(from, to),
     );
     const repIds = facts.pmGradedReports.map((r) => r.id);
-    if (repIds.length) {
-      facts.pmGrades = await selectAllRows<PmGradeFact>(
+    for (let i = 0; i < repIds.length; i += ID_CHUNK) { // chunked: the same request-line ceiling as the notes
+      const chunk = repIds.slice(i, i + ID_CHUNK);
+      facts.pmGrades.push(...await selectAllRows<PmGradeFact>(
         (from, to) => service
           .from("pm_employee_evals").select("pm_report_id, arrived_ready, attitude, production, team_player, area_to_improve")
-          .in("pm_report_id", repIds).eq("employee_id", person).is("superseded_at", null)
+          .in("pm_report_id", chunk).eq("employee_id", person).is("superseded_at", null)
           .order("id", { ascending: true }).range(from, to),
-      );
+      ));
     }
     loaded.add("pmGrades");
   }
