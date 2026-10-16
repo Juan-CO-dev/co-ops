@@ -25,6 +25,8 @@ describe("ScheduleErrorCode", () => {
       "invalid_payload", "roster_include_refused",
       // chunk D (0275): a certificate that is not the shape of its cause
       "gap_certificate_invalid",
+      // CC chunk D ruling 3: the stored context past the lib's safe ceiling (well under 0275's CHECK)
+      "context_too_large",
     ].sort());
   });
 
