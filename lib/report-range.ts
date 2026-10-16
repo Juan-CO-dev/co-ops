@@ -57,5 +57,5 @@ export function reportRangeWasShortened(r: ReportRange, requestedFrom: string | 
   return r.range === "custom" && validReportDate(requestedFrom) && requestedFrom < r.from;
 }
 export function reportTimestampBounds(from: string, to: string): { start: string; end: string } {
-  return { start: operationalDayUtcRange(from).startIso, end: operationalDayUtcRange(shiftReportDate(to, 1)).startIso };
+  return { start: operationalDayUtcRange(from).startIso, end: operationalDayUtcRange(to).endExclusiveIso };
 }

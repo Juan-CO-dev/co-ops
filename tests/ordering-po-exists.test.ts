@@ -238,10 +238,11 @@ describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
     expect(body("submitParPass")).toContain("{ noCodeSuffixRetry: true }");
   });
 
-  // Existing helper retained: DST transition-day fixed-24h limitation is out of scope.
   it.each([
     ["2026-09-10", "2026-09-10T04:00:00.000Z", "2026-09-11T04:00:00.000Z"],
     ["2026-01-15", "2026-01-15T05:00:00.000Z", "2026-01-16T05:00:00.000Z"],
+    ["2026-11-01", "2026-11-01T04:00:00.000Z", "2026-11-02T05:00:00.000Z"],
+    ["2027-03-14", "2027-03-14T05:00:00.000Z", "2027-03-15T04:00:00.000Z"],
   ])("uses the ET day window for %s", (date, start, end) => {
     expect(operationalDayUtcRange(date)).toEqual({ startIso: start, endExclusiveIso: end });
     expect(etCalendarDate(new Date(Date.parse(end) - 1).toISOString())).toBe(date);
