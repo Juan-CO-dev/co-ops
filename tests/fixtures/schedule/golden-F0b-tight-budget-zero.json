@@ -165,7 +165,7 @@
      "2026-10-26"
     ],
     "essentialHours": 33.75,
-    "hoursNeeded": 8,
+    "hoursNeeded": 16,
     "usedHours": 33.75
    },
    "code": "coverage_gap",

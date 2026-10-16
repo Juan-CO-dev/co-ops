@@ -79,6 +79,13 @@ describe("the MoD lane and the Closing Manager row", () => {
     expect(cells.find((c) => c.hour === 20)).toMatchObject({ state: "covered", userId: U.iris });
     expect(closingRoleCells(dayInput(THU, [shift(U.iris, THU, 64, 83, P.REG)], ctx)).find((c) => c.hour === 20)).toMatchObject({ state: "gap" });
   });
+
+  it("Astra chunk C P2: partial Closing Manager coverage is a GAP — the window 8:00–8:45, the flagged manager leaves at 8:15 → hour 20 is not covered (as the validator)", () => {
+    const ctx = context();
+    setNeed(ctx, THU, P.REG, 80, 83);
+    const cells = closingRoleCells(dayInput(THU, [shift(U.iris, THU, 64, 81, P.REG, { closingManager: true })], ctx));
+    expect(cells.find((c) => c.hour === 20)).toMatchObject({ state: "gap", userId: null });
+  });
 });
 
 describe("the money strip", () => {

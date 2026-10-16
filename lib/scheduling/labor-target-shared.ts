@@ -20,7 +20,7 @@ import { Q_PER_HOUR } from "./time-shared";
 
 export const LABOR_LINE_KEYS = [
   "schedule.labor.max_labor", "schedule.labor.minus_salaried", "schedule.labor.max_hours",
-  "schedule.labor.window", "schedule.labor.floor_over_target",
+  "schedule.labor.window", "schedule.labor.floor_over_target", "schedule.labor.window_under_floor", "schedule.labor.window_over_target",
   "schedule.labor.errand.no_forecast", "schedule.labor.errand.set_wage_estimate",
 ] as const;
 export type LaborLineKey = (typeof LABOR_LINE_KEYS)[number];
@@ -54,8 +54,15 @@ export interface LaborWindow {
   floorHeads: number;
   optimal: { min: number; max: number };
   floorOverTarget: boolean;
-  /** The most heads on the floor (non-MoD) at any quarter of the window. */
+  /** The most heads on the floor (non-MoD) at any quarter of the window (display only — never the tone). */
   on: number;
+  /** The fewest heads on the floor at any quarter of the window. */
+  onMin: number;
+  /** Astra chunk C P2: quarters below the minimum crew AT THAT QUARTER, and quarters above max(that floor, ceil(spread)). */
+  shortQuarters: number;
+  overQuarters: number;
+  /** Why the window is amber, in a fixed order; empty when good. */
+  amberReasons: Array<"under_floor" | "over_target" | "floor_over_target">;
   tone: "good" | "amber";
 }
 
@@ -122,10 +129,13 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
     let cents = 0;
     let floorHeads = 0;
     let on = 0;
+    let onMin = Infinity;
     for (let q = w.fromQ; q < w.toQ; q++) {
       cents += (d.hourlyCents[Math.floor(q / Q_PER_HOUR)] ?? 0) / Q_PER_HOUR;
       floorHeads = Math.max(floorHeads, floorAt(input.need, q));
-      on = Math.max(on, headsOn(input.shifts, q));
+      const h = headsOn(input.shifts, q);
+      on = Math.max(on, h);
+      onMin = Math.min(onMin, h);
     }
     const demandShare = cents / d.dayCents;
     const lengthH = (w.toQ - w.fromQ) / Q_PER_HOUR;
@@ -133,8 +143,24 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
     const ceilSpread = Math.ceil(spreadHeads - 1e-9);
     const floorOverTarget = ceilSpread < floorHeads;
     const optimal = { min: floorHeads, max: Math.max(floorHeads, ceilSpread) };
-    const tone: LaborWindow["tone"] = on > optimal.max || on < floorHeads ? "amber" : "good";
-    return { key: w.key, fromQ: w.fromQ, toQ: w.toQ, demandShare, spreadHeads, floorHeads, optimal, floorOverTarget, on, tone };
+    // Astra chunk C P2: judged per QUARTER against that quarter's own floor (and the target ceiling), never the window max.
+    let shortQuarters = 0;
+    let overQuarters = 0;
+    for (let q = w.fromQ; q < w.toQ; q++) {
+      const h = headsOn(input.shifts, q);
+      const f = floorAt(input.need, q);
+      if (h < f) shortQuarters++;
+      else if (h > Math.max(f, ceilSpread)) overQuarters++;
+    }
+    const amberReasons: LaborWindow["amberReasons"] = [];
+    if (shortQuarters > 0) amberReasons.push("under_floor");
+    if (overQuarters > 0) amberReasons.push("over_target");
+    if (floorOverTarget) amberReasons.push("floor_over_target");
+    const tone: LaborWindow["tone"] = amberReasons.length > 0 ? "amber" : "good";
+    return {
+      key: w.key, fromQ: w.fromQ, toQ: w.toQ, demandShare, spreadHeads, floorHeads, optimal, floorOverTarget,
+      on, onMin: Number.isFinite(onMin) ? onMin : 0, shortQuarters, overQuarters, amberReasons, tone,
+    };
   });
 
   const lines: NarrativeLine[] = [];
@@ -145,6 +171,8 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
   }
   for (const w of windows) {
     lines.push({ key: "schedule.labor.window", params: { window: w.key, on: w.on, min: w.optimal.min, max: w.optimal.max } });
+    if (w.shortQuarters > 0) lines.push({ key: "schedule.labor.window_under_floor", params: { window: w.key, hours: w.shortQuarters / Q_PER_HOUR, floor: w.floorHeads } });
+    if (w.overQuarters > 0) lines.push({ key: "schedule.labor.window_over_target", params: { window: w.key, hours: w.overQuarters / Q_PER_HOUR, max: w.optimal.max } });
     if (w.floorOverTarget) lines.push({ key: "schedule.labor.floor_over_target", params: { window: w.key, floor: w.floorHeads } });
   }
   if (!opts.canSeeMoney) return { state: "ok", windows, lines };

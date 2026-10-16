@@ -82,8 +82,28 @@ describe("laborTarget: the math, line by line", () => {
     expect(under.windows[0]).toMatchObject({ on: 3, tone: "amber" });
     const floor = laborTarget(input({ need: need(6) }, 6), { canSeeMoney: true });
     if (floor.state !== "ok") throw new Error(floor.state);
-    expect(floor.windows[0]).toMatchObject({ floorHeads: 6, optimal: { min: 6, max: 6 }, floorOverTarget: true, tone: "good" });
+    // Astra chunk C P2: a minimum crew already over the target is a target CONFLICT — amber, with its reason.
+    expect(floor.windows[0]).toMatchObject({ floorHeads: 6, optimal: { min: 6, max: 6 }, floorOverTarget: true, tone: "amber", amberReasons: ["floor_over_target"] });
     expect(floor.lines).toContainEqual({ key: "schedule.labor.floor_over_target", params: { window: "lunch_rush", floor: 6 } });
+  });
+
+  it("Astra chunk C P2: the tone comes from QUARTER-level shortages, never the window max — 5 on at 11:00, 2 leave at noon, minimum 4 to 2:00 → amber", () => {
+    const base = input({}, 5);
+    base.shifts = base.shifts.map((sh, i) => (i < 2 ? { ...sh, endQ: 48, segments: [{ ...sh.segments[0]!, endQ: 48 }] } : sh));
+    const out = laborTarget(base, { canSeeMoney: true });
+    if (out.state !== "ok") throw new Error(out.state);
+    expect(out.windows[0]).toMatchObject({ on: 5, onMin: 3, shortQuarters: 8, overQuarters: 0, tone: "amber", amberReasons: ["under_floor"] });
+    expect(out.lines).toContainEqual({ key: "schedule.labor.window_under_floor", params: { window: "lunch_rush", hours: 2, floor: 4 } });
+    // Fully staffed at every quarter stays good, with no reason.
+    const full = laborTarget(input({}, 5), { canSeeMoney: true });
+    if (full.state !== "ok") throw new Error(full.state);
+    expect(full.windows[0]).toMatchObject({ on: 5, onMin: 5, shortQuarters: 0, overQuarters: 0, tone: "good", amberReasons: [] });
+    // Over the target at some quarters only (a 6th person 11:00–12:00) is amber too, counted in quarters.
+    const peak = input({}, 5);
+    peak.shifts.push(shift(U.dani, THU, 44, 48, P.THIRD));
+    const over = laborTarget(peak, { canSeeMoney: true });
+    if (over.state !== "ok") throw new Error(over.state);
+    expect(over.windows[0]).toMatchObject({ on: 6, onMin: 5, overQuarters: 4, tone: "amber", amberReasons: ["over_target"] });
   });
 
   it("forecast unknown → {state: no_forecast} with its errand; no wage → {state: no_wage}", () => {

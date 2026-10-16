@@ -334,7 +334,12 @@ describe("Task 7: budget, certificates and the repair search", () => {
     expect(out.stats.hourlyHours).toBe(0);
     const schedule = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts: out.shifts, gaps: out.gaps, days: out.days };
     for (const g of out.gaps) expect(zeroCostCovers(g, schedule, out.context)).toEqual([]);
-    expect(out.gaps.every((g) => g.cause === "budget" && g.fromQ >= gm.endQ)).toBe(true);
+    // Astra chunk C P1 (legal placement witness): the hole left after the GM's 4 h block (2:00–3:00 PM) has NO legal
+    // 4 h block for the employee — Register is held by the GM until 2:00 and closes at 3:00 — so it is NOT a budget
+    // proof (before the fix it was, with an invented 4 h fill). It is the honest `unresolved_search`: a manager may
+    // extend the GM or swap them. Every remaining gap sits after the GM's block.
+    expect(out.gaps.every((g) => g.fromQ >= gm.endQ)).toBe(true);
+    expect(out.gaps.map((g) => [g.fromQ, g.toQ, g.cause])).toEqual([[56, 60, "unresolved_search"]]);
   });
 
   it("Astra chunk B P1-2: KH-only roster, KH-as-MoD from noon — the afternoon gets a KH MoD block, no MoD certificate spans the boundary", () => {

@@ -696,3 +696,61 @@ describe("Astra's chunk B review probes (failing first)", () => {
   });
 });
 
+
+describe("Astra's chunk C review probes (failing first)", () => {
+  const regOnlyBen = () => {
+    const ctx = context({ s: structure((x) => { x.positions[P.REG]!.allowedRoles = ["employee"]; }) }); // Ben is the one eligible member (Tess is inactive)
+    setNeed(ctx, WED, P.REG, 44, 48);
+    ctx.budgetByDate[WED] = 0;
+    return ctx;
+  };
+  const budgetGap = (hoursNeeded: number): DeclaredGap => ({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48, cause: "budget",
+    certificate: { budgetedDates: [WED], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded } });
+
+  it("P1 budget needs a LEGAL PLACEMENT WITNESS: one eligible employee available 11:00–12:00, a 4 h minimum, a 1 h gap, budget 0 → NOT a budget proof", () => {
+    const ctx = regOnlyBen();
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 44, toQ: 48, source: "toast_pattern" };
+    // No 4 h shift fits inside 11:00–12:00, so no legal fill exists: the budget is not the reason.
+    expect(checkCertificate(budgetGap(4), week([]), ctx)).toBe(false);
+    expect(checkCertificate(budgetGap(1), week([]), ctx)).toBe(false);
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx)?.cause).not.toBe("budget");
+    // With 11:00–15:00 available, the 4 h block 11:00–15:00 is the witness: a budget proof, hoursNeeded 4.
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 44, toQ: 60, source: "toast_pattern" };
+    expect(checkCertificate(budgetGap(4), week([]), ctx)).toBe(true);
+  });
+
+  it("P1 the witness is a whole legal block: inside the position's open–close window, no overlap with the person's own shift, the daily maximum, the leader setting", () => {
+    // Window: Register opens 10:30 (42). A gap at 10:30–11:00 needs a 4 h block starting at 10:30 at the earliest.
+    const ctx = regOnlyBen();
+    ctx.days[WED]!.need.positions[P.REG]!.fill(0);
+    setNeed(ctx, WED, P.REG, 42, 44);
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 36, toQ: 50, source: "toast_pattern" }; // 9:00–12:30: no 4 h block from 10:30 fits
+    const gap = (hoursNeeded: number): DeclaredGap => ({ ...budgetGap(hoursNeeded), fromQ: 42, toQ: 44 });
+    expect(checkCertificate(gap(4), week([]), ctx)).toBe(false);
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 36, toQ: 58, source: "toast_pattern" }; // 9:00–14:30: 10:30–14:30 fits
+    expect(checkCertificate(gap(4), week([]), ctx)).toBe(true);
+    // Ben's own shift that day (Walk-ins / Online 1:00–8:00 PM, 7 h, not the closing window): a NEW 4 h block from 10:30 would
+    // overlap it and break the daily maximum (7 + 4 > 10.5 h), so it is never the witness; extending his shift back to 10:30 (9.5 h, the
+    // 0.5 h hole + a 2 h bridge on Register) is, and it costs 2.5 h.
+    const busy = regOnlyBen();
+    busy.people[U.ben]!.availability[WED] = { fromQ: 36, toQ: 84, source: "toast_pattern" };
+    busy.days[WED]!.need.positions[P.REG]!.fill(0);
+    setNeed(busy, WED, P.REG, 42, 44);
+    const own = shift(U.ben, WED, 52, 80, P.WALKON);
+    expect(checkCertificate({ ...gap(4), certificate: { ...gap(4).certificate, usedHours: 7 } } as DeclaredGap, week([own]), busy)).toBe(false);
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 42, toQ: 44 }, week([own]), busy)).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 2.5 } });
+  });
+
+  it("P1 a secondary whose primary is unstaffed: the witness must staff the primary too (two people, two blocks), else no budget proof", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.WALK, 44, 48); // Walk-ins (secondary of Walk-ins / Online), primary unstaffed
+    ctx.budgetByDate[WED] = 0;
+    const proof = proveGap({ code: "coverage_gap", date: WED, positionId: P.WALK, fromQ: 44, toQ: 48 }, week([]), ctx);
+    expect(proof).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 8 } }); // 4 h on Walk-ins + 4 h on Walk-ins / Online
+    // Only one person may work either position: no legal pair exists → not a budget proof.
+    const solo = context({ s: structure((x) => { x.positions[P.WALK]!.allowedRoles = ["employee"]; x.positions[P.WALKON]!.allowedRoles = ["employee"]; }) });
+    setNeed(solo, WED, P.WALK, 44, 48);
+    solo.budgetByDate[WED] = 0;
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.WALK, fromQ: 44, toQ: 48 }, week([]), solo)?.cause).not.toBe("budget");
+  });
+});

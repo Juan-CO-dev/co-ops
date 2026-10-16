@@ -23,11 +23,13 @@ export type DayChange =
   | { kind: "gap_hours"; cause: GapCause; deltaHours: number }
   | { kind: "hourly_hours"; deltaHours: number }
   | { kind: "cost"; deltaCents: number }
+  /** Astra chunk C P2: the day's $ change is UNKNOWN — N changed hourly shifts have no wage; the known part is partial. */
+  | { kind: "cost_unknown"; unknownShifts: number; knownDeltaCents: number }
   | { kind: "problems"; severity: RuleSeverity; inherited: boolean; delta: number };
 
 export const DAY_CHANGE_ORDER: ReadonlyArray<DayChange["kind"]> = [
   "person_added", "person_removed", "shift_moved", "segments_relabelled", "closing_manager_changed", "mod_gap_opened", "mod_gap_closed",
-  "gap_hours", "hourly_hours", "cost", "problems",
+  "gap_hours", "hourly_hours", "cost", "cost_unknown", "problems",
 ];
 
 export interface WeekDiffSummary {
@@ -38,8 +40,10 @@ export interface WeekDiffSummary {
   closingManagerChanged: number;
   gapHoursDelta: number;
   hourlyHoursDelta: number;
-  /** Present only for money viewers. */
-  costDeltaCents?: number;
+  /** Present only for money viewers; null = UNKNOWN (some changed hourly shift has no wage — never a fabricated $0). */
+  costDeltaCents?: number | null;
+  /** Present only for money viewers: changed hourly shifts without a wage across the week ("partial: N shifts without a wage"). */
+  costUnknownShifts?: number;
   newProblemsDelta: number;
   inheritedProblemsDelta: number;
 }
@@ -76,15 +80,25 @@ function hourlyQ(shifts: readonly Shift[], o: DiffOpts): number {
   return shifts.filter((sh) => isHourly(o, sh.userId)).reduce((n, sh) => n + (sh.endQ - sh.startQ), 0);
 }
 
-function costCents(shifts: readonly Shift[], o: DiffOpts): number | null {
-  let c = 0;
-  for (const sh of shifts) {
-    if (!isHourly(o, sh.userId)) continue;
-    const w = o.wageCentsByUser?.[sh.userId];
-    if (w === null || w === undefined) return null;
-    c += (w * (sh.endQ - sh.startQ)) / 4;
+const shiftId = (sh: Shift) => `${sh.userId}|${sh.startQ}|${sh.endQ}`;
+
+/**
+ * The day's $ change (Astra chunk C P2). A shift identical in both snapshots cancels exactly, whatever its wage; every
+ * other hourly shift is costed when its wage is known and COUNTED as unknown otherwise. Unknown never becomes $0.
+ */
+function costChange(before: readonly Shift[], after: readonly Shift[], o: DiffOpts): { knownDeltaCents: number; unknownShifts: number } {
+  const keep = new Set(before.map(shiftId).filter((k) => after.some((sh) => shiftId(sh) === k)));
+  let known = 0;
+  let unknownShifts = 0;
+  for (const [list, sign] of [[after, 1], [before, -1]] as const) {
+    for (const sh of list) {
+      if (!isHourly(o, sh.userId) || keep.has(shiftId(sh))) continue;
+      const w = o.wageCentsByUser?.[sh.userId];
+      if (w === null || w === undefined) { unknownShifts++; continue; }
+      known += (sign * w * (sh.endQ - sh.startQ)) / 4;
+    }
   }
-  return Math.round(c);
+  return { knownDeltaCents: Math.round(known), unknownShifts };
 }
 
 function changeKey(c: DayChange): [number, string, number] {
@@ -139,9 +153,9 @@ function diffDay(date: string, before: WeekSnapshot | null, after: WeekSnapshot,
   const dh = (hourlyQ(a, o) - hourlyQ(b, o)) / 4;
   if (dh !== 0) out.push({ kind: "hourly_hours", deltaHours: dh });
   if (o.canSeeMoney) {
-    const cb = costCents(b, o);
-    const ca = costCents(a, o);
-    if (cb !== null && ca !== null && ca !== cb) out.push({ kind: "cost", deltaCents: ca - cb });
+    const c = costChange(b, a, o);
+    if (c.unknownShifts > 0) out.push({ kind: "cost_unknown", unknownShifts: c.unknownShifts, knownDeltaCents: c.knownDeltaCents });
+    else if (c.knownDeltaCents !== 0) out.push({ kind: "cost", deltaCents: c.knownDeltaCents });
   }
   const probs = (snap: WeekSnapshot | null) => {
     const m = new Map<string, number>();
@@ -177,12 +191,18 @@ export function diffWeeks(before: WeekSnapshot | null, after: WeekSnapshot, o: D
     gapHoursDelta: sum("gap_hours", (c) => c.deltaHours), hourlyHoursDelta: sum("hourly_hours", (c) => c.deltaHours),
     newProblemsDelta: sum("problems", (c) => (c.inherited ? 0 : c.delta)), inheritedProblemsDelta: sum("problems", (c) => (c.inherited ? c.delta : 0)),
   };
-  if (o.canSeeMoney) summary.costDeltaCents = sum("cost", (c) => c.deltaCents);
+  if (o.canSeeMoney) {
+    summary.costUnknownShifts = sum("cost_unknown", (c) => c.unknownShifts);
+    summary.costDeltaCents = summary.costUnknownShifts > 0 ? null : sum("cost", (c) => c.deltaCents);
+  }
   const params: Record<string, number> = {
     days: days.length, added: summary.added, removed: summary.removed, moved: summary.moved, relabelled: summary.relabelled,
     closingManagerChanged: summary.closingManagerChanged, gapHoursDelta: summary.gapHoursDelta, hourlyHoursDelta: summary.hourlyHoursDelta,
   };
-  if (o.canSeeMoney) params.costDeltaCents = summary.costDeltaCents!;
+  if (o.canSeeMoney) {
+    if (summary.costDeltaCents !== null && summary.costDeltaCents !== undefined) params.costDeltaCents = summary.costDeltaCents;
+    else params.costUnknownShifts = summary.costUnknownShifts!;
+  }
   const summaryLine: NarrativeLine = days.length === 0 ? { key: "schedule.diff.no_change" } : { key: "schedule.diff.summary", params };
   return { summary, summaryLine, days };
 }

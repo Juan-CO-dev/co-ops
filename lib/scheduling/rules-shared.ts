@@ -529,9 +529,16 @@ export function zeroCostCovers(g: Pick<GapSubject, "date" | "positionId" | "from
  * hourly person can be reassigned from an over-covered position, or when an ESSENTIAL shift (one working the
  * closing window, whole-shift essential) can legally extend over it; the extension's added hours for a legal
  * extension of a non-essential shift (no overlap, availability, leader setting, not pinned, the head limit over any
- * bridge, the daily maximum); else at least the minimum shift for a free eligible person available over the window
+ * bridge, the daily maximum); else at least the minimum shift for an eligible person with a LEGAL PLACEMENT WITNESS
  * (a 1 h hole with nobody beside it costs a 4 h block). Null when no legal fill exists at all: the budget is then
  * not the reason.
+ *
+ * Astra chunk C P1: a new block is charged ONLY when a legal placement of it exists — a whole block of
+ * max(window, minimum shift) containing the window, within the daily maximum (the person's other shifts that day
+ * included), inside the position's open–close window with room under its head limit at every quarter, inside the
+ * person's availability and leader setting, not overlapping their own shifts, never on an untouchable day; for a
+ * priority secondary whose primary is not staffed over the block, a SECOND person's legal block on the primary is part
+ * of the witness (and of the cost). No witness → no charge.
  */
 function hoursNeededFor(g: GapSubject, s: WeekSchedule, day: DayContext, ctx: RuleContext): number | null {
   const uncovered = uncoveredHoursFor(g, s, day, ctx);
@@ -557,15 +564,38 @@ function hoursNeededFor(g: GapSubject, s: WeekSchedule, day: DayContext, ctx: Ru
   const primaryOk = (from: number, to: number) => { if (!needsPrimary) return true; for (let q = from; q < to; q++) if (occ(primary!, q) === 0) return false; return true; };
   const roomAt = (q: number) => occ(target, q) < positionLimit(pos, q) && (!needsPrimary || occ(primary!, q) > 0);
   const newBlock = Math.max(uncovered, st.limits.minimumShiftQ / 4);
-  const costs: number[] = [];
-  for (const p of Object.values(ctx.people).sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0))) {
-    if (!isHourly(p) || !p.activeMember || !eligibleForPosition(p, pos) || p.untouchableDates.includes(g.date)) continue;
+  const blockQ = Math.max(g.toQ - g.fromQ, st.limits.minimumShiftQ);
+  const sorted = Object.values(ctx.people).sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
+  /** May p legally take a NEW block [a, a + blockQ) on `positionId` (Astra chunk C P1)? */
+  const legalBlock = (p: RulePerson, positionId: string, a: number): boolean => {
+    const ps = st.positions[positionId];
+    const z = a + blockQ;
+    if (!ps || !isHourly(p) || !p.activeMember || !eligibleForPosition(p, ps) || p.untouchableDates.includes(g.date)) return false;
     const own = shifts.filter((sh) => sh.userId === p.userId);
-    if (own.length === 0) {
-      if (availableOn(p, g.date, g.fromQ, g.toQ) && leaderSettingAllows(p, st, g.fromQ, g.toQ)) costs.push(newBlock);
-      continue;
+    if (own.reduce((n, sh) => n + sh.endQ - sh.startQ, 0) + blockQ > maxQ) return false;
+    if (own.some((sh) => sh.startQ < z && sh.endQ > a)) return false;
+    if (!availableOn(p, g.date, a, z) || !leaderSettingAllows(p, st, a, z)) return false;
+    for (let q = a; q < z; q++) if (occ(positionId, q) >= positionLimit(ps, q)) return false;
+    return true;
+  };
+  /** The cost of the cheapest legal new block containing the window for p (+ a companion on the unstaffed primary), or null. */
+  const witnessCost = (p: RulePerson): number | null => {
+    if (blockQ > maxQ) return null;
+    for (let a = Math.max(0, g.toQ - blockQ); a <= g.fromQ && a + blockQ <= 96; a++) {
+      if (!legalBlock(p, target, a)) continue;
+      if (!needsPrimary || primaryOk(a, a + blockQ)) return newBlock;
+      // Rule (h): the secondary is legal only beside its primary — a second person's legal block on the primary.
+      if (sorted.some((c) => c.userId !== p.userId && legalBlock(c, primary!, a))) return newBlock + blockQ / 4;
     }
-    if (!primaryOk(g.fromQ, g.toQ)) { if (availableOn(p, g.date, g.fromQ, g.toQ)) costs.push(newBlock); continue; }
+    return null;
+  };
+  const costs: number[] = [];
+  for (const p of sorted) {
+    if (!isHourly(p) || !p.activeMember || !eligibleForPosition(p, pos) || p.untouchableDates.includes(g.date)) continue;
+    const w = witnessCost(p);
+    if (w !== null) costs.push(w);
+    const own = shifts.filter((sh) => sh.userId === p.userId);
+    if (own.length === 0 || !primaryOk(g.fromQ, g.toQ)) continue;
     for (const sh of own) {
       if (sh.pinned) continue;
       if (sh.segments.some((x) => x.positionId !== MOD && x.positionId !== target && x.startQ <= g.fromQ && x.endQ >= g.toQ && overCovered(x.positionId))) { costs.push(0); continue; }

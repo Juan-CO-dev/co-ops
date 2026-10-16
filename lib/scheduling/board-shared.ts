@@ -12,7 +12,7 @@
  */
 import type { DayContext, RuleContext, RulePerson } from "./context-shared";
 import { skillOf, type SkillLookup } from "./people-input-shared";
-import { MOD, closingManagerEligible, eligibleForPosition, modCountsAt, type Shift } from "./rules-shared";
+import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, modCountsAt, type Shift } from "./rules-shared";
 import { isLineRole, positionIds, positionLimit, type CrewType, type ScheduleStructure } from "./structure-shared";
 import { Q_PER_HOUR } from "./time-shared";
 
@@ -148,7 +148,9 @@ export function closingRoleCells(input: BoardDayInput): ClosingRoleCell[] {
   return shopHours(day).map((hour) => {
     const qs = quartersOf(hour).filter((q) => q >= from && q < to);
     if (!required || qs.length === 0) return { hour, state: "closed", userId: null };
-    const covered = !!cm && qs.some((q) => onClockAt(cm, q));
+    // Astra chunk C P2: COMPLETE coverage, as the validator — the flagged eligible closer's shift spans the whole closing
+    // window (service close → everyone out) and is on the clock at every required quarter of this hour.
+    const covered = !!cm && coversClosingWindow(cm, day) && qs.every((q) => onClockAt(cm, q));
     return { hour, state: covered ? "covered" : "gap", userId: covered ? cm!.userId : null };
   });
 }

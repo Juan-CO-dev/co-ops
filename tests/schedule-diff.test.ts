@@ -49,6 +49,29 @@ describe("diffWeeks: each change kind", () => {
     expect(d.summaryLine.key).toBe("schedule.diff.summary");
   });
 
+  it("Astra chunk C P2: an unknown wage propagates as UNKNOWN — never a fabricated $0; a mixed day is partial, with its count", () => {
+    // Dani (hourly, no wage) is added on Thursday in the fixture above: Thursday's $ is unknown, so the week's is too.
+    const thu = d.days.find((x) => x.date === THU)!.changes;
+    expect(thu.find((c) => c.kind === "cost")).toBeUndefined();
+    expect(thu).toContainEqual({ kind: "cost_unknown", unknownShifts: 1, knownDeltaCents: 0 });
+    expect(d.summary).toMatchObject({ costDeltaCents: null, costUnknownShifts: 1 });
+    expect(d.summaryLine.params).toMatchObject({ costUnknownShifts: 1 });
+    expect(d.summaryLine.params).not.toHaveProperty("costDeltaCents");
+    // Adding a 4.25 h shift with an unknown wage alone: unknown, never costDeltaCents 0.
+    const lone = diffWeeks(snap([]), snap([shift(U.dani, WED, 44, 61, P.REG)]), opts(true));
+    expect(lone.summary).toMatchObject({ costDeltaCents: null, costUnknownShifts: 1 });
+    // Mixed: Eli's known 4 h ($64) beside Dani's unknown shift → partial, the known part named as such.
+    const mixed = diffWeeks(snap([]), snap([shift(U.eli, WED, 44, 60, P.WALK), shift(U.dani, WED, 44, 61, P.REG)]), opts(true));
+    expect(mixed.days[0]!.changes).toContainEqual({ kind: "cost_unknown", unknownShifts: 1, knownDeltaCents: 6400 });
+    expect(mixed.summary.costDeltaCents).toBeNull();
+    // An UNCHANGED unknown-wage shift cancels exactly: the delta stays known.
+    const kept = diffWeeks(snap([shift(U.dani, WED, 44, 61, P.REG)]), snap([shift(U.dani, WED, 44, 61, P.REG), shift(U.eli, WED, 44, 60, P.WALK)]), opts(true));
+    expect(kept.days[0]!.changes).toContainEqual({ kind: "cost", deltaCents: 6400 });
+    expect(kept.summary).toMatchObject({ costDeltaCents: 6400, costUnknownShifts: 0 });
+    // Without money permission none of it appears.
+    expect(JSON.stringify(diffWeeks(snap([]), snap([shift(U.dani, WED, 44, 61, P.REG)]), opts(false)))).not.toMatch(/Cents|cost/);
+  });
+
   it("$ lines are omitted without money permission (no cost change, no costDeltaCents key)", () => {
     const agm = diffWeeks(before, after, opts(false));
     expect(agm.days.flatMap((x) => x.changes).some((c) => c.kind === "cost")).toBe(false);
