@@ -11,9 +11,9 @@ vi.mock("@/components/ui/SummaryRow", () => ({ SummaryRow: ({ summary, badges, c
 const row = toMenuCostRow({ id: "one", name: "Sub", nameEs: "Sub ES", section: "Subs", menuPrice: 12, typedPrice: null, priceSource: "toast", toastPriceCents: 1200 },
   { status: "costed", cost: 3, pricedCost: 3, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [], retiredProductIds: [] });
 function render(canEditPrice: boolean, override: Partial<MenuCostRow> = {}, language: "en" | "es" = "en") {
-  const rows = [{ ...row, ...override }];
+  const rows = [{ ...row, canEditPrice, ...override }];
   return renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children:
-    createElement(MenuCostingClient, { rows, totals: summarizeMenuCostRows(rows), skuNames: {}, itemNames: {}, productNames: {}, canEditPrice,
+    createElement(MenuCostingClient, { rows, totals: summarizeMenuCostRows(rows), skuNames: {}, itemNames: {}, productNames: {},
       toastFetchedAt: "2026-10-01T12:00:00Z" }) }));
 }
 it("shows source, effective math, and cache date; lower levels have no editor", () => {

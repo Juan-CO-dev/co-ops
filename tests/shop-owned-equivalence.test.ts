@@ -11,6 +11,18 @@ import { computeLineReaderOutputs, computeRecipeOutputs, liveRecipeApi } from ".
 import { loadRecipeGraph, loadResolvedRecipeInputs, loadResolvedRecipeInputsByScope, loadRecipeInputsAcrossScopes } from "@/lib/prep-consumption";
 import { perUnitSkuOzForMenuItemFromGraph } from "@/lib/prep-consumption-graph";
 
+it("org-wide owned-row renderers disclose the owning shop name through the shared translated label", () => {
+  for (const file of [
+    "components/admin/catalog/CatalogClient.tsx",
+    "components/admin/menu-costing/MenuCostingClient.tsx",
+    "components/admin/weights/WeightBoardClient.tsx",
+    "components/admin/recipes/RecipesClient.tsx",
+  ]) {
+    const source = readFileSync(file, "utf8");
+    expect(source, file).toContain('t("catalog.only_at_shop", { shop:');
+  }
+});
+
 let current: ReturnType<typeof createFakeDb> | null = null;
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => {
   if (!current) throw new Error("no fixture installed");
@@ -115,7 +127,8 @@ describe("owned reader projections", () => {
 
 
 it("global admin costing uses each owned menu item's owner and shop boards exclude foreign menus", async () => {
-  install();
+  const tables = install();
+  tables.locations = OWNED.map((own, i) => ({ id: own.shop, name: `Shop ${i + 1}`, active: true }));
   const { loadMenuCostingBoard } = await import("@/lib/admin/menu-costing");
   const { OWNER_ACTOR } = await import("./fixtures/recipe-versions-harness");
   const global = await loadMenuCostingBoard(OWNER_ACTOR);
@@ -125,8 +138,24 @@ it("global admin costing uses each owned menu item's owner and shop boards exclu
     expect(local).toBeDefined();
     expect(local!.rollup.cost).toBe(2);
     expect(global.rows.find(r => r.id === own.menu)!.rollup.cost).toBe(local!.rollup.cost);
+    expect(global.rows.find(r => r.id === own.menu)!.onlyAtShopName).toBe(`Shop ${OWNED.indexOf(own) + 1}`);
+    expect(local!.onlyAtShopName).toBeNull();
     expect(board.rows.some(r => r.id === OWNED.find(o => o.shop !== own.shop)!.menu)).toBe(false);
   }
+});
+
+it("menu-price controls are row-scoped for a GM and organization-wide for an owner", async () => {
+  const tables = install();
+  tables.locations = OWNED.map((own, i) => ({ id: own.shop, name: `Shop ${i + 1}`, active: true }));
+  const { loadMenuCostingBoard } = await import("@/lib/admin/menu-costing");
+  const { OWNER_ACTOR } = await import("./fixtures/recipe-versions-harness");
+  const owner = await loadMenuCostingBoard(OWNER_ACTOR);
+  expect(owner.rows.every((row) => row.canEditPrice)).toBe(true);
+  const gm = { user: { id: "u-gm", role: "gm" }, role: "gm", level: 7, locations: [LOC] } as never;
+  const board = await loadMenuCostingBoard(gm);
+  expect(board.rows.find((row) => row.id === OWNED[0]!.menu)?.canEditPrice).toBe(true);
+  expect(board.rows.find((row) => row.id === OWNED[1]!.menu)?.canEditPrice).toBe(false);
+  expect(board.rows.find((row) => row.id === "m-italian")?.canEditPrice).toBe(false);
 });
 
 
@@ -139,6 +168,7 @@ it("ownership read failures cannot expose unprojected lines", async () => {
 
 it("the organization catalog keeps owned prep and menu producer graphs", async () => {
   const tables = install();
+  tables.locations = OWNED.map((own, i) => ({ id: own.shop, name: `Shop ${i + 1}`, active: true }));
   for (const table of ["catering_packages", "catering_package_items", "catering_package_slot_options", "toast_menu_map", "checklist_template_items", "item_sizes", "units", "checklist_templates"]) tables[table] ??= [];
   const { loadCatalogView } = await import("@/lib/admin/catalog");
   const { OWNER_ACTOR } = await import("./fixtures/recipe-versions-harness");
@@ -146,6 +176,19 @@ it("the organization catalog keeps owned prep and menu producer graphs", async (
   for (const own of OWNED) {
     expect(entities.find(e => e.id === own.item)!.edges.producedBy.map(r => r.id)).toEqual([own.prep]);
     expect(entities.find(e => e.id === own.menu)!.edges.build?.id).toBe(own.recipe);
+    expect(entities.find(e => e.id === own.item)!.onlyAtShopName).toBe(`Shop ${OWNED.indexOf(own) + 1}`);
+    expect(entities.find(e => e.id === own.menu)!.onlyAtShopName).toBe(`Shop ${OWNED.indexOf(own) + 1}`);
+  }
+});
+
+it("the organization recipe list attributes owned recipes by shop name", async () => {
+  const tables = install();
+  tables.locations = OWNED.map((own, i) => ({ id: own.shop, name: `Shop ${i + 1}`, active: true }));
+  const { loadRecipes } = await import("@/lib/recipes");
+  const { OWNER_ACTOR } = await import("./fixtures/recipe-versions-harness");
+  const recipes = await loadRecipes(OWNER_ACTOR);
+  for (const own of OWNED) {
+    expect(recipes.find((r) => r.id === own.recipe)?.onlyAtShopName).toBe(`Shop ${OWNED.indexOf(own) + 1}`);
   }
 });
 

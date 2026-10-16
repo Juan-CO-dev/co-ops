@@ -591,11 +591,16 @@ async function verifyLineRefs(sb: ReturnType<typeof getServiceRoleClient>, lines
   const ids = [...new Set(lines.flatMap((l) => [l.itemId, l.menuItemId].filter((v): v is string => v != null)))];
   if (ids.length === 0) return lines;
   const [items, menu] = await Promise.all([
-    sb.from("items").select("id").in("id", ids).eq("active", true).returns<Array<{ id: string }>>(),
-    sb.from("menu_items").select("id").in("id", ids).eq("active", true).returns<Array<{ id: string }>>(),
+    sb.from("items").select("id, location_id").in("id", ids).eq("active", true).returns<Array<{ id: string; location_id: string | null }>>(),
+    sb.from("menu_items").select("id, location_id").in("id", ids).eq("active", true).returns<Array<{ id: string; location_id: string | null }>>(),
   ]);
   if (items.error) throw new Error(`verifyLineRefs items: ${items.error.message}`);
   if (menu.error) throw new Error(`verifyLineRefs menu_items: ${menu.error.message}`);
+  // Catering is global-only, even for a quote at the entity's owning shop. Check both
+  // FK sides before reclassification so a stale or crafted reference cannot bypass it.
+  if ([...(items.data ?? []), ...(menu.data ?? [])].some(row => row.location_id != null)) {
+    throw new CateringQuoteError(400, "owned_not_catering", "Shop-only items must be shared before use in catering");
+  }
   const r = reclassifyQuoteLineRefs(lines, {
     itemIds: new Set((items.data ?? []).map((x) => x.id)),
     menuItemIds: new Set((menu.data ?? []).map((x) => x.id)),

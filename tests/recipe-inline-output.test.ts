@@ -5,7 +5,7 @@ import { POST } from "@/app/api/admin/recipes/full/route";
 import type { AuthContext } from "@/lib/session";
 
 const state = vi.hoisted(() => ({ rpc: vi.fn(), actor: null as unknown }));
-vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ rpc: state.rpc }) }));
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ rpc: state.rpc, from: () => { const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { id: "shop" }, error: null }) }; return q; } }) }));
 vi.mock("@/lib/audit", () => ({ audit: async () => {} }));
 vi.mock("@/lib/session", () => ({ requireSession: async () => state.actor }));
 vi.mock("@/lib/admin/step-up", () => ({ assertStepUp: () => ({ ok: true }) }));
@@ -61,10 +61,10 @@ describe("owned inline output payload", () => {
     await expect(createRecipeFull(actor, d)).rejects.toMatchObject({ status: 400, code: "invalid_payload" });
     expect(state.rpc).not.toHaveBeenCalled();
   });
-  it("does not allow inline creation through the omitted legacy scope", async () => {
+  it("resolves an omitted scope to the GM sole shop for inline creation", async () => {
     const d = draft(); delete d.locationId;
-    await expect(createRecipeFull(actor, d)).rejects.toMatchObject({ status: 400, code: "invalid_output" });
-    expect(state.rpc).not.toHaveBeenCalled();
+    await expect(createRecipeFull(actor, d)).resolves.toEqual({ id: "recipe-created", outputItemIds: ["item-created"] });
+    expect(state.rpc).toHaveBeenCalledWith("create_shop_recipe", expect.objectContaining({ p_location_id: SHOP }));
   });
   it("keeps the full HTTP id key and adds committed output identities", async () => {
     const response = await POST(new NextRequest("http://localhost/api/admin/recipes/full", { method: "POST", body: JSON.stringify(draft()), headers: { "content-type": "application/json" } }));

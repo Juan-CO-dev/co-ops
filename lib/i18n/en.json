@@ -6780,5 +6780,16 @@
   "recipes.catalog_link": "Shop versions of this recipe",
   "recipes.catalog_link_hint": "Each shop can have its own ingredients and amounts. Change them on the catalog page.",
   "recipes.builder.lines_global_only": "Only the Director of Operations changes these lines for every shop. Change your shop's own version on the catalog page.",
-  "recipes.builder.lines_change_shop": "Change your shop's version"
+  "recipes.builder.lines_change_shop": "Change your shop's version",
+  "catalog.only_at_shop": "Only at {shop}",
+  "catering.quotes.error.owned_not_catering": "This item is only available at one shop. Choose a shared item for catering.",
+  "admin.items.add_item": "Add prep item",
+  "admin.items.scope": "Available at",
+  "admin.items.choose_shop": "Choose a shop",
+  "admin.items.shop_definition_note": "Shop-only definitions apply only at their owning shop.",
+  "admin.skus.choose_location": "Choose a shop",
+  "recipes.output.create_for_shop": "Create prep item for this shop",
+  "recipes.output.new_name": "Prep item name",
+  "recipes.output.new_name_es": "Prep item name (Spanish)",
+  "recipes.output.new_section": "Prep section"
 }

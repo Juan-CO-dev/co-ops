@@ -110,6 +110,7 @@ export function RecipeBuilder({
   readiness = null,
   locationId,
   outputItems = items,
+  prepSections = [],
   scopeOptions = [],
   allowGlobalScope = false,
 }: {
@@ -128,6 +129,7 @@ export function RecipeBuilder({
   /** Authorized scope supplied by the server page; scope navigation is wired in Chunk 3/4. */
   locationId?: string | null;
   outputItems?: Array<{ id: string; name: string }>;
+  prepSections?: Array<{ slug: string; label: string }>;
   scopeOptions?: Array<{ id: string; name: string }>;
   allowGlobalScope?: boolean;
 }) {
@@ -141,7 +143,7 @@ export function RecipeBuilder({
   // Catalog Phase 3b (plan Task 11): a SAVED recipe's lines are the global default's, the Director of Operations'
   // (8+). A GM changes its shop's version on the catalog page, so here its lines are read-only with the way
   // forward. A NEW recipe (the draft) keeps its GM floor: creating a recipe is not versioned.
-  const canEditLines = recipe === null ? canEdit : level >= RECIPE_GLOBAL_WRITE_MIN;
+  const canEditLines = canEdit && (recipe === null || recipe.ownerLocationId != null || level >= RECIPE_GLOBAL_WRITE_MIN);
 
   // ── LIVE mode: header patch state ──
   const [patchError, setPatchError] = useState<string | null>(null);
@@ -378,7 +380,7 @@ export function RecipeBuilder({
   return (
     // Focused width: the recipe editor is a form — keep it comfortable and
     // centered inside the wide admin container instead of stretching to full width.
-    <fieldset disabled={scopePending} className="mt-2 mx-auto w-full max-w-3xl">
+    <fieldset disabled={scopePending} className="mt-2 mx-auto w-full max-w-3xl min-w-0 border-0 p-0">
       {scopeOptions.length > 0 || allowGlobalScope ? (
         <label className="mb-3 block text-sm font-bold">
           {t("catalog.item.shop_switcher")}
@@ -577,6 +579,8 @@ export function RecipeBuilder({
         liveInputs={liveInputs}
         draftOutputs={draftOutputs}
         items={outputItems}
+        ownerLocationId={recipe ? recipe.ownerLocationId ?? null : locationId ?? null}
+        prepSections={prepSections}
         unitRegistryOptions={unitRegistryOptions}
         canEdit={canEdit}
         level={level}
@@ -1042,6 +1046,8 @@ function DraftInputRow({
 // ── PRODUCES section ─────────────────────────────────────────────────────────
 function ProducesSection({
   recipeId,
+  ownerLocationId,
+  prepSections,
   recipeType,
   batchYield,
   liveOutputs,
@@ -1057,6 +1063,8 @@ function ProducesSection({
   onRemoveLive,
 }: {
   recipeId: string | null;
+  ownerLocationId: string | null;
+  prepSections: Array<{ slug: string; label: string }>;
   recipeType: "production" | "consumer";
   batchYield: number;
   liveOutputs: RecipeOutputView[];
@@ -1076,7 +1084,7 @@ function ProducesSection({
   const { requestStepUp } = useStepUp();
   const send = useStepUpPost();
 
-  const [addOpen, setAddOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(isDraft && ownerLocationId !== null && items.length === 0);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -1088,7 +1096,10 @@ function ProducesSection({
   const isOpen = sectionOpen || formInProgress;
 
   // Production output state
-  const [outputItemId, setOutputItemId] = useState("");
+  const [outputItemId, setOutputItemId] = useState(isDraft && ownerLocationId !== null && items.length === 0 ? "__new__" : "");
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemNameEs, setNewItemNameEs] = useState("");
+  const [newItemSection, setNewItemSection] = useState(prepSections[0]?.slug ?? "");
   const [outputYield, setOutputYield] = useState("1");
   const [outputContainerLabel, setOutputContainerLabel] = useState("");
 
@@ -1098,7 +1109,7 @@ function ProducesSection({
   const [menuItemYield, setMenuItemYield] = useState("1");
 
   const resetForms = () => {
-    setOutputItemId(""); setOutputYield("1"); setOutputContainerLabel("");
+    setOutputItemId(""); setNewItemName(""); setNewItemNameEs(""); setOutputYield("1"); setOutputContainerLabel("");
     setMenuItemName(""); setMenuItemPrice(""); setMenuItemYield("1");
     setErrorMsg(null);
   };
@@ -1107,6 +1118,11 @@ function ProducesSection({
     if (busy) return;
     setErrorMsg(null);
     const yld = Number(outputYield);
+    const newItem = outputItemId === "__new__" && isDraft && ownerLocationId !== null ? {
+      name: newItemName.trim(), nameEs: newItemNameEs.trim() || null, section: newItemSection,
+      recommendedPar: null, recommendedParUnit: null,
+    } : null;
+    if (newItem && (!newItem.name || !newItem.section)) { setErrorMsg(t(rk("recipes.error.invalid_name"))); return; }
     if (!outputItemId) { setErrorMsg(t(rk("recipes.error.invalid_output_item"))); return; }
     if (!Number.isFinite(yld) || yld <= 0) { setErrorMsg(t(rk("recipes.error.invalid_yield"))); return; }
     if ((await requestStepUp("E")) !== "ok") return;
@@ -1116,9 +1132,10 @@ function ProducesSection({
     if (isDraft) {
       onAddDraftOutput({
         kind: "item",
-        outputItemId,
+        outputItemId: newItem ? null : outputItemId,
+        newItem,
         outputMenuItemId: null,
-        outputName: itemObj?.name ?? outputItemId,
+        outputName: newItem?.name ?? itemObj?.name ?? outputItemId,
         yield: yld,
         outputContainerLabel: outputContainerLabel || null,
       });
@@ -1162,6 +1179,7 @@ function ProducesSection({
       const price = menuItemPrice.trim() ? Number(menuItemPrice) : null;
       const miResult = await send("/api/admin/menu-items", {
         name,
+        locationId: ownerLocationId,
         menuPrice: price,
       });
       if (!miResult.ok) { setBusy(false); setErrorMsg(t(resolveErrorKey(miResult.code))); return; }
@@ -1238,9 +1256,20 @@ function ProducesSection({
                   <span className="text-sm font-bold text-co-text">{t(rk("recipes.output.pick_item"))}</span>
                   <select className={fieldCls} value={outputItemId} disabled={busy} onChange={(e) => setOutputItemId(e.target.value)}>
                     <option value="">{t(rk("recipes.output.pick_item"))}</option>
+                    {isDraft && ownerLocationId !== null ? <option value="__new__">{t(rk("recipes.output.create_for_shop"))}</option> : null}
                     {items.map((i) => (<option key={i.id} value={i.id}>{i.name}</option>))}
                   </select>
                 </label>
+                {outputItemId === "__new__" ? <>
+                  <label className="block"><span className="text-sm font-bold">{t(rk("recipes.output.new_name"))}</span>
+                    <input className={fieldCls} value={newItemName} onChange={e => setNewItemName(e.target.value)} /></label>
+                  <label className="block"><span className="text-sm font-bold">{t(rk("recipes.output.new_name_es"))}</span>
+                    <input className={fieldCls} value={newItemNameEs} onChange={e => setNewItemNameEs(e.target.value)} /></label>
+                  <label className="block"><span className="text-sm font-bold">{t(rk("recipes.output.new_section"))}</span>
+                    <select className={fieldCls} value={newItemSection} onChange={e => setNewItemSection(e.target.value)}>
+                      {prepSections.map(section => <option key={section.slug} value={section.slug}>{section.label}</option>)}
+                    </select></label>
+                </> : null}
                 <label className="block">
                   <span className="text-sm font-bold text-co-text">{t(rk("recipes.output.yield"))}</span>
                   <input className={fieldCls} type="number" min={0.001} step="any" inputMode="decimal"

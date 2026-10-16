@@ -18,7 +18,6 @@
  * (pure, vitest-pinned); this file only fetches and hands off.
  */
 
-import { MENU_PRICE_WRITE_MIN } from "@/lib/admin/menu-prices";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -88,7 +87,6 @@ export default async function AdminMenuCostingPage({ searchParams }: { searchPar
         caption={serverT(lang, "admin.menu_costing.export_scope", { scope: scope === null ? serverT(lang, "admin.menu_costing.scope_all_short") : shops.find((s) => s.id === scope)?.name ?? "" })} />
       <MenuCostingClient
         scope={scope}
-        canEditPrice={level >= MENU_PRICE_WRITE_MIN}
         toastNotices={toastNotices}
         toastFetchedAt={toastFetchedAt}
         toastUnavailable={toastUnavailable}

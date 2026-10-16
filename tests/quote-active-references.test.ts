@@ -6,7 +6,7 @@ it("LRA-226: retired references are unknown on both catalog sides and map to 400
   const source = readFileSync("lib/catering/quotes.ts", "utf8");
   const verify = source.slice(source.indexOf("async function verifyLineRefs("), source.indexOf("async function resolveDeliveryFee("));
   for (const table of ["items", "menu_items"]) {
-    expect(verify).toContain(`sb.from("${table}").select("id").in("id", ids).eq("active", true)`);
+    expect(verify).toContain(`sb.from("${table}").select("id, location_id").in("id", ids).eq("active", true)`);
   }
   const result = reclassifyQuoteLineRefs([
     { itemId: "retired-item", menuItemId: null },

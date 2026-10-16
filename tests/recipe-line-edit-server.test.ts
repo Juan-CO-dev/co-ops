@@ -42,6 +42,7 @@ beforeEach(() => {
   // R outputs item-x. R2 outputs item-y and CONSUMES item-x — so item-y (and item-x itself)
   // inside R would close a loop.
   h.db = fakeSupabase({
+    recipes: [{ id: R, location_id: null }, { id: R2, location_id: null }],
     recipe_inputs: [
       { id: LINE, recipe_id: R, component_sku_id: "sku-ham", component_item_id: null, component_product_id: null, quantity: 4, unit: "oz", each_container_label: null, portioned: false, display_order: 1 },
       { id: "line-r2", recipe_id: R2, component_sku_id: "sku-salt", component_item_id: null, component_product_id: null, quantity: 1, unit: "oz", each_container_label: null, portioned: false, display_order: 1 },

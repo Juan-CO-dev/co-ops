@@ -8,6 +8,7 @@
  * editing, per-location enable/pars) live in the checklist-templates admin.
  */
 
+import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { orderedSectionSlugs, sectionLabelByLang } from "@/lib/prep-sections";
 import { EmptyState } from "@/components/EmptyState";
@@ -28,7 +29,8 @@ export function ItemsClient({
   shopScope?: string | null;
 }) {
   const { t, language } = useTranslation();
-  const canAdd = view.actorLevel >= 7;
+  const router = useRouter();
+  const canAdd = view.canCreate;
 
   // Group by section, standard sections first; null section → "—" bucket.
   const groups = new Map<string, ChecklistRegistryItem[]>();
@@ -43,8 +45,15 @@ export function ItemsClient({
 
   return (
     <div className="mt-4 flex flex-col gap-6">
+      <label className="flex flex-col gap-1 text-sm font-bold">
+        {t("admin.items.scope")}
+        <select aria-label={t("admin.items.scope")} value={shopScope ?? "global"} onChange={e => router.push(`/admin/items?view=registry&location=${encodeURIComponent(e.target.value)}`)} className="min-h-[44px] rounded-lg border-2 border-co-border bg-co-surface px-3">
+          <option value="global">{t("readiness.scope.default")}</option>
+          {view.shops.map(shop => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
+        </select>
+      </label>
       <p className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
-        {t("admin.templates.global_blast_radius_note")}
+        {t(shopScope === null ? "admin.templates.global_blast_radius_note" : "admin.items.shop_definition_note")}
       </p>
       {view.relationshipsUnavailable ? (
         <p role="status" className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
@@ -53,7 +62,7 @@ export function ItemsClient({
       ) : null}
 
       {canAdd ? (
-        <AddItemForm sections={view.sections} units={view.units} actorLevel={view.actorLevel} />
+        <AddItemForm key={shopScope ?? "global"} sections={view.sections} units={view.units} actorLevel={view.actorLevel} shops={view.shops} initialScope={shopScope} />
       ) : null}
 
       {/* view.registry is empty (no items yet) — previously rendered nothing at all,
@@ -75,6 +84,8 @@ export function ItemsClient({
                   key={r.itemId}
                   item={r}
                   actorLevel={view.actorLevel}
+                  canEditDefinition={view.editableDefinitionIds.includes(r.itemId)}
+                  ownerShopName={view.shops.find(shop => shop.id === r.locationId)?.name ?? null}
                   sections={view.sections}
                   units={view.units}
                   language={language}

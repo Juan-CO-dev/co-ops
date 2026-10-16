@@ -5,7 +5,7 @@ vi.mock("next/navigation",()=>({redirect:()=>{throw new Error("redirect")},notFo
 vi.mock("@/lib/session",()=>({requireSessionFromHeaders:vi.fn(async()=>({user:{role:"gm",language:"en"},locations:["shop"]}))}));
 vi.mock("@/lib/recipes",()=>({RECIPE_READ_MIN:6,loadRecipe:vi.fn(async()=>({id:"recipe",ownerLocationId:"owner",outputs:[]}))}));
 vi.mock("@/lib/admin/readiness-load",()=>({loadGraphReadiness:async()=>({recipeReadiness:new Map()})}));
-vi.mock("@/lib/admin/recipe-builder-data",()=>({loadRecipeBuilderScope:vi.fn(async(_a,requested,_create,owner)=>({scope:owner??requested,shops:[],allowGlobal:false})),loadRecipeBuilderCatalog:vi.fn(async()=>({skus:[],items:[],outputItems:[],products:[],unitOptions:[],measures:new Map(),activeMeasureLabels:[]}))}));
+vi.mock("@/lib/admin/recipe-builder-data",()=>({loadRecipePrepSections:async()=>[],loadRecipeBuilderScope:vi.fn(async(_a,requested,_create,owner)=>({scope:owner??requested,shops:[],allowGlobal:false})),loadRecipeBuilderCatalog:vi.fn(async()=>({skus:[],items:[],outputItems:[],products:[],unitOptions:[],measures:new Map(),activeMeasureLabels:[]}))}));
 vi.mock("@/lib/supabase-server",()=>({getServiceRoleClient:()=>{const q={select:()=>q,eq:()=>q,order:()=>q,returns:async()=>({data:[{id:"shop-a",name:"Shop A"},{id:"shop-b",name:"Shop B"}],error:null})};return {from:()=>q};}}));
 vi.mock("@/components/admin/recipes/RecipeBuilder",()=>({RecipeBuilder:()=>null}));
 import {requireSessionFromHeaders} from "@/lib/session";

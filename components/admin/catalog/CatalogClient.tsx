@@ -329,6 +329,11 @@ function CatalogRow({
       summary={
         <>
           <span className="text-sm font-bold text-co-text">{e.name}</span>
+          {e.onlyAtShopName ? (
+            <span className="text-xs font-semibold text-co-text-muted">
+              {t("catalog.only_at_shop", { shop: e.onlyAtShopName })}
+            </span>
+          ) : null}
           <TypeBadge e={e} />
           <RoleBadges e={e} />
         </>

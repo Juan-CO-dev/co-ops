@@ -117,6 +117,7 @@ export interface MenuCostingBoard {
  */
 export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: VersionScope } = {}): Promise<MenuCostingBoard> {
   requireLevel(actor, MENU_COSTING_READ_MIN);
+  const actorLevel = getRoleLevel(actor.user.role);
   // CATALOG PHASE 2a (lead decision): the board is costed FOR A SHOP — its pack versions and product
   // resolution (the graph) AND its prices (its lane, else global). null = All shops = global prices.
   const scope = opts.scope ?? null;
@@ -125,7 +126,7 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
   }
   const sb = getServiceRoleClient();
 
-  const [graph, menuRes, toast] = await Promise.all([
+  const [graph, menuRes, toast, locationsRes] = await Promise.all([
     loadRecipeGraph(scope === null ? undefined : { locationId: scope }),
     sb
       .from("menu_items")
@@ -134,8 +135,11 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
       .order("name")
       .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; price_same_as_id: string | null; catering_available: boolean; location_id: string | null }>>(),
     loadCachedMenuPrices(),
+    sb.from("locations").select("id, name").returns<Array<{ id: string; name: string }>>(),
   ]);
   if (menuRes.error) throw new Error(`loadMenuCostingBoard menu_items: ${menuRes.error.message}`);
+  if (locationsRes.error) throw new Error(`loadMenuCostingBoard locations: ${locationsRes.error.message}`);
+  const locationNameById = new Map((locationsRes.data ?? []).map((l) => [l.id, l.name]));
 
   // CATALOG PHASE 3a (0263): a SHOP view reads each menu item THROUGH ITS SHOP OVERLAY — its price here,
   // its name here, whether it is sold here (resolveMenuItemForShop, the one rule). "All shops" (scope
@@ -156,6 +160,8 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
       sameAs: parent && parentHere ? { typedPrice: parentHere.typedPrice, toastPrices: toast.prices.get(parent.id) ?? [] } : null,
     });
     return { id: m.id, name: mine.name, nameEs: mine.nameEs, section: m.section,
+      onlyAtShopName: scope === null && m.location_id ? (locationNameById.get(m.location_id) ?? null) : null,
+      canEditPrice: actorLevel >= 8 || (actorLevel >= 7 && m.location_id != null && actor.locations.includes(m.location_id)),
       ...resolved, cateringAvailable: m.catering_available, menuPrice: resolved.effectivePrice, typedPrice: mine.typedPrice,
       sameAsName: parentHere?.name ?? null, sameAsNameEs: parentHere?.nameEs ?? null };
   });

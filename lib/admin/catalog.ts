@@ -375,6 +375,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
     });
     entities.push({
       key: `item:${it.id}`, kind: "item", id: it.id, name: it.name, nameEs: it.name_es,
+      onlyAtShopName: it.location_id ? (locationNameById.get(it.location_id) ?? null) : null,
       section: it.section, active: it.active, seasonal: it.seasonal,
       flags: { soldDirectly: it.sold_directly, cateringAvailable: it.catering_available, cateringOnly: it.catering_only, cateringPortionable: null },
       serves: num(it.serves), priceCents: toCents(it.menu_price),
@@ -407,6 +408,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
     });
     entities.push({
       key: `menu_item:${mi.id}`, kind: "menu_item", id: mi.id, name: mi.name, nameEs: mi.name_es,
+      onlyAtShopName: mi.location_id ? (locationNameById.get(mi.location_id) ?? null) : null,
       section: mi.section, active: mi.active, seasonal: mi.seasonal,
       flags: { soldDirectly: false, cateringAvailable: mi.catering_available, cateringOnly: mi.catering_only, cateringPortionable: mi.catering_portionable },
       serves: num(mi.serves), priceCents: toCents(mi.menu_price),
@@ -434,6 +436,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
     });
     entities.push({
       key: `package:${p.id}`, kind: "package", id: p.id, name: p.label_en, nameEs: p.label_es,
+      onlyAtShopName: p.location_id ? (locationNameById.get(p.location_id) ?? null) : null,
       section: sectionLabel, active: p.active, seasonal: p.seasonal,
       flags: { soldDirectly: false, cateringAvailable: true, cateringOnly: false, cateringPortionable: null },
       serves: num(p.serves), priceCents: p.price_cents,

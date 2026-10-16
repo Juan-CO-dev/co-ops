@@ -543,6 +543,10 @@ export interface MenuCostInput {
   id: string;
   name: string;
   nameEs: string | null;
+  /** Org-wide board disclosure for a shop-owned row; null on a shop-scoped board. */
+  onlyAtShopName?: string | null;
+  /** Server-decided write capability for this exact row and actor. */
+  canEditPrice?: boolean;
   section: string | null;
   /** Effective selling price in dollars; typed, cached Toast, then one-hop inheritance. */
   menuPrice: number | null;

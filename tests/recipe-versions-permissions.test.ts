@@ -45,12 +45,14 @@ describe("GM writes only its own shops; MoO any shop and the global default", ()
       .toEqual({ status: 404, code: "not_found" });
   });
   it("an AGM cannot write any recipe version; a GM never edits the global recipe", async () => {
+    current = createFakeDb(buildRecipeVersionsFixture());
     expect(await refused(saveRecipeLines(actor("agm", 6, [LOC]), { recipeId: "r-slaw", scope: LOC, expectedVersionId: null, basedOnVersionId: null, op: ADD })))
       .toEqual({ status: 403, code: "forbidden" });
     expect(await refused(saveRecipeLines(actor("gm", 7, [LOC]), { recipeId: "r-slaw", scope: null, expectedVersionId: null, basedOnVersionId: null, op: ADD })))
       .toEqual({ status: 403, code: "global_requires_moo" });
   });
   it("back to default and restore bind the shop too", async () => {
+    current = createFakeDb(buildRecipeVersionsFixture());
     expect(await refused(retireShopRecipeVersion(actor("gm", 7, [LOC]), { recipeId: "r-slaw", versionId: "v", locationId: OTHER })))
       .toEqual({ status: 404, code: "not_found" });
     expect(await refused(restoreRecipeVersion(actor("gm", 7, [LOC]), { recipeId: "r-slaw", scope: null, fromVersionId: "v", expectedVersionId: null, basedOnVersionId: null })))

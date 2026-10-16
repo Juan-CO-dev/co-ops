@@ -18,7 +18,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { RECIPE_READ_MIN } from "@/lib/recipes";
 import { shopParamFor, searchParamValues } from "@/lib/shop-context-shared";
-import { loadRecipeBuilderCatalog, loadRecipeBuilderScope } from "@/lib/admin/recipe-builder-data";
+import { loadRecipePrepSections, loadRecipeBuilderCatalog, loadRecipeBuilderScope } from "@/lib/admin/recipe-builder-data";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
 import { PageHeader } from "@/components/ui/PageHeader";
 import type { RecipeType } from "@/lib/recipes";
@@ -70,6 +70,7 @@ export default async function AdminRecipesNewPage({
         scopeOptions={context.shops}
         allowGlobalScope={context.allowGlobal}
         outputItems={catalog.outputItems}
+        prepSections={await loadRecipePrepSections(auth)}
         recipe={null}
         skus={catalog.skus}
         items={catalog.items}

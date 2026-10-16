@@ -141,6 +141,8 @@ export interface InvoiceDrift {
 }
 
 export interface WeightBoardRow {
+  /** Org-wide audit disclosure for a shop-owned subject; the shop name, never its id. */
+  onlyAtShopName: string | null;
   belief: WeightBelief;
   provenance: WeightProvenance;
   /** Vendor label for a SKU row; member vendor labels for a product row. */
@@ -276,7 +278,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
   const windowStartDate = windowStart.slice(0, 10);
 
   // ── Reads 1-6: the subjects, their labels, and the cost seam ───────────────
-  const [skuRows, vendorRes, productRes, itemRes, graph] = await Promise.all([
+  const [skuRows, vendorRes, productRes, itemRes, locationRes, graph] = await Promise.all([
     selectAllRows<DbSkuRow>((from, to) =>
       sb
         .from("vendor_items")
@@ -300,10 +302,13 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
       .eq("active", true)
       .order("name")
       .returns<DbItemRow[]>(),
+    sb.from("locations").select("id, name").returns<Array<{ id: string; name: string }>>(),
     loadRecipeGraph(),
   ]);
 
   const vendorNames = new Map((vendorRes.data ?? []).map((v) => [v.id, v.name]));
+  if (locationRes.error) throw new Error(`loadWeightBoard locations: ${locationRes.error.message}`);
+  const locationNames = new Map((locationRes.data ?? []).map((l) => [l.id, l.name]));
   const productRows = productRes.data ?? [];
   const itemRows = itemRes.data ?? [];
   const skuIds = skuRows.map((s) => s.id);
@@ -488,6 +493,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
 
     const ruled = OPERATIONAL_SLICE_OZ[s.name];
     rows.push({
+      onlyAtShopName: s.location_id ? (locationNames.get(s.location_id) ?? null) : null,
       belief: {
         subjectKind: "sku",
         subjectId: s.id,
@@ -567,6 +573,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
       .filter((u): u is number => u != null);
 
     rows.push({
+      onlyAtShopName: null,
       belief: {
         subjectKind: "product",
         subjectId: p.id,
@@ -619,6 +626,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
     }
 
     rows.push({
+      onlyAtShopName: it.location_id ? (locationNames.get(it.location_id) ?? null) : null,
       belief: {
         subjectKind: "item",
         subjectId: it.id,

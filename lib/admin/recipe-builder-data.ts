@@ -137,3 +137,11 @@ export async function loadRecipeBuilderScope(actor: AuthContext, requested: stri
   if (scope === null && !allowGlobal) throw new ShopOwnedError(400, "location_required");
   return { scope, shops, allowGlobal };
 }
+
+export async function loadRecipePrepSections(actor: AuthContext) {
+  const sb = getServiceRoleClient();
+  const { data: sections, error: sectionError } = await sb.from("prep_sections").select("slug, label_en, label_es").eq("active", true).order("display_order").returns<Array<{ slug: string; label_en: string; label_es: string | null }>>();
+  if (sectionError) throw new Error(`builder prep sections: ${sectionError.message}`);
+  const prepSections = (sections ?? []).map(section => ({ slug: section.slug, label: actor.user.language === "es" ? section.label_es ?? section.label_en : section.label_en }));
+  return prepSections;
+}

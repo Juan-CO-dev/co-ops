@@ -344,18 +344,16 @@ export async function countNotReady(actor: AuthContext): Promise<{
   const [skuMaps, base, inputsByScope, measureUnits] = await Promise.all([
     loadSkuReadinessMaps(actor, ids), loadGraphBaseRows(), loadResolvedRecipeInputsByScope(ids), loadMeasureUnits(actor),
   ]);
-  const skuMap = skuMaps.get("global")!;
   const graphs = await Promise.all(scopes.map((s) => loadGraphReadiness(actor, s.id, {
     skuStatus: skuMaps.get(s.id ?? "global")!, measureUnits,
     rows: { ...base, inputs: toGraphInputs(inputsByScope.get(s.id ?? "global") ?? []) },
   })));
   const attributed = attributeNotReady(graphs.map((g, i) => ({
-    scope: scopes[i]!.id, scopeName: scopes[i]!.name, recipeReadiness: g.recipeReadiness, itemReadiness: g.itemReadiness,
+    scope: scopes[i]!.id, scopeName: scopes[i]!.name, skuReadiness: skuMaps.get(scopes[i]!.id ?? "global")!,
+    recipeReadiness: g.recipeReadiness, itemReadiness: g.itemReadiness,
   })));
-  const countBad = (m: Map<string, Readiness>) =>
-    [...m.values()].filter((r) => r.status !== "ready").length;
   return {
-    skus: countBad(skuMap),
+    skus: attributed.skus,
     recipes: attributed.recipes,
     items: attributed.items,
     byScope: attributed.byScope,

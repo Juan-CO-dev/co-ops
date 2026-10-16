@@ -95,9 +95,9 @@ describe("createSku binds a shop-scoped locationId before it validates the name"
     await expect(createSku(gmAtA as unknown as SkuActor, badPayload(LOCATION_A)))
       .rejects.toMatchObject({ name: "AdminSkuError", status: 400, code: "invalid_name" });
   });
-  it("a GLOBAL SKU (locationId null) is org-scope and is not bound", async () => {
+  it("a GLOBAL SKU (locationId null) requires MoO before payload validation", async () => {
     await expect(createSku(gmAtA as unknown as SkuActor, badPayload(null)))
-      .rejects.toMatchObject({ name: "AdminSkuError", status: 400, code: "invalid_name" });
+      .rejects.toMatchObject({ name: "AdminSkuError", status: 403, code: "global_requires_moo" });
   });
   it("lets an all-locations actor mint anywhere", async () => {
     await expect(createSku(ownerAnywhere as unknown as SkuActor, badPayload(LOCATION_B)))

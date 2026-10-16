@@ -43,6 +43,22 @@ it("real 0264 preserves persisted costing/depletion/ordering/count outputs byte 
   expect(before.counts.map(c => c.state.anchoredSkuCount)).toEqual([1, 1]);
   expect(before.counts[0]!.anchors[0]![1].anchorOz).toBe(32);
   await applyShopOwnership(db);
-  expect((await db.query<{ n: number }>("select count(*)::int n from pg_trigger where tgname like 'shop_owned%' and tgenabled <> 'D'")).rows[0]!.n).toBeGreaterThan(0);
+  // Pin table + name, not just a positive count: every installation surface is
+  // required, and a disabled or missing trigger must fail this persisted-row gate.
+  const triggers = (await db.query<{ table_name: string; trigger_name: string }>(`
+    select c.relname as table_name, t.tgname as trigger_name
+      from pg_trigger t join pg_class c on c.oid = t.tgrelid
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public' and t.tgname like 'shop_owned%' and t.tgenabled <> 'D'
+  `)).rows.map(row => `${row.table_name}.${row.trigger_name}`).sort();
+  const graphTables = ["recipes", "recipe_inputs", "recipe_outputs", "recipe_versions",
+    "recipe_version_lines", "items", "vendor_items", "menu_items", "menu_item_shop_settings",
+    "toast_menu_map", "toast_map_effects", "toast_open_item_aliases"];
+  const expectedTriggers = [
+    ...graphTables.flatMap(table => [`${table}.shop_owned_lock`, `${table}.shop_owned_integrity`]),
+    ...["recipes", "menu_items", "items", "vendor_items"].map(table => `${table}.shop_owned_owner_guard`),
+  ].sort();
+  expect(triggers).toHaveLength(28);
+  expect(triggers).toEqual(expectedTriggers);
   expect(JSON.stringify(await capture())).toBe(JSON.stringify(before));
 }, 120_000);

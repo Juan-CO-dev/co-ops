@@ -6,6 +6,7 @@
  */
 
 import type { TranslationKey } from "@/lib/i18n/types";
+import { SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
 import type { SkuView } from "@/lib/admin/skus";
 import { buildPackChain, formatChainDescriptor, type PackChainLevel } from "@/lib/pack-chain-shared";
 import { GLOBAL_VERSION_WRITE_MIN } from "@/lib/sku-versions-shared";
@@ -79,6 +80,7 @@ export function resolveErrorKey(code: string): TranslationKey {
   if (KNOWN_ERROR_CODES.has(code)) {
     return `admin.skus.error.${code}` as TranslationKey;
   }
+  if ((SHOP_OWNED_ERROR_CODES as readonly string[]).includes(code)) return `catalog.error.${code}` as TranslationKey;
   return "admin.skus.error.generic";
 }
 

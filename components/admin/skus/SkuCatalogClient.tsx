@@ -59,6 +59,9 @@ export function SkuCatalogClient({
   skus,
   vendors,
   locations,
+  creationScopes,
+  canCreateGlobal = false,
+  canMoveOwner = false,
   packFormats,
   measureUnits,
   skuCost,
@@ -84,6 +87,9 @@ export function SkuCatalogClient({
   skus: SkuView[];
   vendors: SkuFormVendorOption[];
   locations: SkuFormLocationOption[];
+  creationScopes: SkuFormLocationOption[];
+  canCreateGlobal?: boolean;
+  canMoveOwner?: boolean;
   packFormats: RegistryOption[];
   measureUnits: MeasureUnitOption[];
   skuCost: Record<string, SkuCostInfo>;
@@ -334,6 +340,9 @@ export function SkuCatalogClient({
           initialChainUnverified={chainUnverifiedBySku[s.id] ?? false}
           vendors={vendors}
           locations={locations}
+          creationScopes={creationScopes}
+          canCreateGlobal={canCreateGlobal}
+          canMoveOwner={canMoveOwner}
           products={products}
           initialProductId={productIdBySku[s.id] ?? null}
           parsFieldsReady={parsFieldsReady}
@@ -476,6 +485,9 @@ export function SkuCatalogClient({
           <SkuBuilder
             vendors={vendors}
             locations={locations}
+            creationScopes={creationScopes}
+            canCreateGlobal={canCreateGlobal}
+            canMoveOwner={canMoveOwner}
             products={products}
             parsFieldsReady={parsFieldsReady}
             packFormats={packFormats}

@@ -33,6 +33,8 @@ import { readinessRecipeHref } from "@/lib/catalog/recipe-item-shared";
 export function ItemRow({
   item,
   actorLevel,
+  canEditDefinition = false,
+  ownerShopName = null,
   sections,
   units,
   language,
@@ -44,6 +46,8 @@ export function ItemRow({
 }: {
   item: ChecklistRegistryItem;
   actorLevel: number;
+  canEditDefinition?: boolean;
+  ownerShopName?: string | null;
   sections: PrepSectionDefn[];
   units: Array<{ label: string }>;
   language: string;
@@ -58,7 +62,8 @@ export function ItemRow({
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const send = useStepUpPost();
-  const canEdit = actorLevel >= 8; // MoO+ — item-definition editor
+  const canEdit = actorLevel >= 8 || canEditDefinition;
+  const canManageDefaults = actorLevel >= 8 && item.locationId == null;
 
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -179,6 +184,7 @@ export function ItemRow({
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-bold text-co-text">
           {item.name}
+          {ownerShopName ? <span className="ml-2 text-xs text-co-text-muted">{t("catalog.only_at_shop", { shop: ownerShopName })}</span> : null}
           {item.recommendedPar != null ? (
             <span className="ml-2 text-co-text-muted">
               {t("admin.templates.field.par_value")}: {item.recommendedPar}
@@ -297,7 +303,7 @@ export function ItemRow({
               <input className={field} type="number" min={0} step="any" inputMode="decimal" value={ozPerParUnit} onChange={(e) => setOzPerParUnit(e.target.value)} />
               <span className="mt-1 block text-xs text-co-text-muted">{t("admin.templates.oz_per_par_unit_hint")}</span>
             </Labeled>
-            <p className="mt-2 text-xs text-co-text-muted">{t("admin.templates.definition.blast_radius_note")}</p>
+            <p className="mt-2 text-xs text-co-text-muted">{t(item.locationId == null ? "admin.templates.definition.blast_radius_note" : "admin.items.shop_definition_note")}</p>
             <div className="mt-3 flex justify-end">
               <button
                 type="button"
@@ -310,7 +316,7 @@ export function ItemRow({
             </div>
           </section>
 
-          <section className="rounded-lg border-2 border-co-border p-3">
+          {actorLevel >= 8 ? <section className="rounded-lg border-2 border-co-border p-3">
             <h3 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
               {t("admin.templates.sold_directly.title" as TranslationKey)}
             </h3>
@@ -381,18 +387,18 @@ export function ItemRow({
                 {t("admin.templates.save")}
               </button>
             </div>
-          </section>
+          </section> : null}
 
-          <div className="rounded-lg border-2 border-co-border p-3">
+          {canManageDefaults ? <div className="rounded-lg border-2 border-co-border p-3">
             <p className="text-xs text-co-text-muted">{t("admin.templates.default_toggle_hint")}</p>
             <div className="mt-2">
               <button type="button" disabled={submitting} onClick={() => void toggleDefault()} className={smallBtn}>
                 {item.isDefault ? t("admin.templates.default_remove") : t("admin.templates.default_add")}
               </button>
             </div>
-          </div>
+          </div> : null}
 
-          <div className="rounded-lg border-2 border-co-border p-3">
+          {actorLevel >= 8 ? <><div className="rounded-lg border-2 border-co-border p-3">
             <p className="text-xs text-co-text-muted">{t("admin.templates.opening_verify_hint")}</p>
             <div className="mt-2 flex items-center gap-2">
               {item.openingVerify ? (
@@ -406,7 +412,7 @@ export function ItemRow({
             </div>
           </div>
 
-          <ItemQuestionsEditor itemId={item.itemId} itemQuestions={itemQuestions} />
+          <ItemQuestionsEditor itemId={item.itemId} itemQuestions={itemQuestions} /></> : null}
 
           <div className="flex justify-end">
             <button

@@ -642,4 +642,58 @@ $$;
 revoke all on function public.create_catalog_sku(jsonb, jsonb, jsonb, uuid, uuid) from public, anon, authenticated;
 grant execute on function public.create_catalog_sku(jsonb, jsonb, jsonb, uuid, uuid) to service_role;
 
+-- Chunk 4: preserve each legacy writer's validation/journal while binding the
+-- owning shop under the same graph lock used by sharing. The service layer has
+-- already authorized this owner; a share between read and write must refuse.
+create or replace function public.write_owned_recipe(
+  p_recipe_id uuid, p_expected_owner uuid, p_operation text, p_payload jsonb, p_actor uuid
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_owner uuid; v_result jsonb; v_edge_recipe uuid;
+begin
+  perform pg_advisory_xact_lock(7258025800);
+  select location_id into v_owner from public.recipes where id=p_recipe_id for no key update;
+  if not found then raise exception 'shop_owned:not_found' using errcode='P0001'; end if;
+  if v_owner is distinct from p_expected_owner then raise exception 'shop_owned:ownership_changed' using errcode='P0001'; end if;
+  if v_owner is null then raise exception 'shop_owned:already_shared' using errcode='P0001'; end if;
+  if p_operation in ('remove_recipe_output','remove_recipe_input_atomic','update_recipe_input_atomic') then
+    if p_operation='remove_recipe_output' then
+      select recipe_id into v_edge_recipe from public.recipe_outputs where id=(p_payload->>'p_output_id')::uuid for update;
+    else
+      select recipe_id into v_edge_recipe from public.recipe_inputs where id=(p_payload->>'p_input_id')::uuid for update;
+    end if;
+    if v_edge_recipe is distinct from p_recipe_id then raise exception 'edge_not_found' using errcode='P0001'; end if;
+  end if;
+  case p_operation
+    when 'update_recipe_atomic' then
+      perform public.update_recipe_atomic(p_recipe_id,p_payload->'p_patch',(p_payload->>'p_batch_mode')::boolean,p_actor);
+      v_result := 'null'::jsonb;
+    when 'add_recipe_input_atomic' then
+      v_result := to_jsonb(public.add_recipe_input_atomic(p_recipe_id,
+        (p_payload->>'p_component_sku_id')::uuid,(p_payload->>'p_component_item_id')::uuid,(p_payload->>'p_component_product_id')::uuid,
+        (p_payload->>'p_quantity')::numeric,p_payload->>'p_unit',p_payload->>'p_each_container_label',(p_payload->>'p_portioned')::boolean,p_actor));
+    when 'update_recipe_input_atomic' then
+      select coalesce(jsonb_agg(to_jsonb(r)),'[]'::jsonb) into v_result from public.update_recipe_input_atomic(
+        (p_payload->>'p_input_id')::uuid,p_recipe_id,
+        (p_payload->>'p_component_sku_id')::uuid,(p_payload->>'p_component_item_id')::uuid,(p_payload->>'p_component_product_id')::uuid,
+        (p_payload->>'p_quantity')::numeric,p_payload->>'p_unit',p_payload->>'p_each_container_label',(p_payload->>'p_portioned')::boolean,
+        (p_payload->>'p_expected_component_sku_id')::uuid,(p_payload->>'p_expected_component_item_id')::uuid,(p_payload->>'p_expected_component_product_id')::uuid,
+        (p_payload->>'p_expected_quantity')::numeric,p_payload->>'p_expected_unit',p_payload->>'p_expected_each_container_label',
+        (p_payload->>'p_expected_portioned')::boolean,p_actor) r;
+    when 'add_recipe_output' then
+      v_result := to_jsonb(public.add_recipe_output(p_recipe_id,(p_payload->>'p_output_item_id')::uuid,
+        (p_payload->>'p_output_menu_item_id')::uuid,(p_payload->>'p_yield')::numeric,p_payload->>'p_output_container_label',p_actor));
+    when 'update_recipe_output_yield' then
+      v_result := public.update_recipe_output_yield(p_recipe_id,(p_payload->>'p_output_item_id')::uuid,(p_payload->>'p_yield')::numeric,p_actor);
+    when 'remove_recipe_output' then
+      v_result := public.remove_recipe_output((p_payload->>'p_output_id')::uuid,p_actor);
+    when 'remove_recipe_input_atomic' then
+      v_result := public.remove_recipe_input_atomic((p_payload->>'p_input_id')::uuid,p_actor);
+    else raise exception 'shop_owned:invalid_payload' using errcode='P0001';
+  end case;
+  perform public.shop_owned_check_recipe(p_recipe_id);
+  return v_result;
+end $$;
+revoke all on function public.write_owned_recipe(uuid,uuid,text,jsonb,uuid) from public,anon,authenticated;
+grant execute on function public.write_owned_recipe(uuid,uuid,text,jsonb,uuid) to service_role;
+
 commit;

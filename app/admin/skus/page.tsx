@@ -13,6 +13,8 @@ import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShopId } from "@/lib/shop-context";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
+import { loadSkuReadinessMap } from "@/lib/admin/readiness-load";
 import { ROLES } from "@/lib/roles";
 import { catalogShopAllowed, catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
 import { loadOpenPackChangeRequests } from "@/lib/pack-change-requests";
@@ -24,7 +26,7 @@ import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings, p
 import { listProducts, ProductError, type ProductView } from "@/lib/products";
 import { loadVendors } from "@/lib/admin/vendors";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
-import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
+import type { Readiness } from "@/lib/readiness";
 import { loadSkuPackResolution } from "@/lib/prep-consumption";
 import { levelsBySku } from "@/lib/sku-versions-shared";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
@@ -41,7 +43,7 @@ import { readFocusParam } from "@/lib/admin/product-item-links-shared";
 export default async function AdminSkusPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sku?: string | string[]; vendor?: string | string[] }>;
+  searchParams: Promise<{ sku?: string | string[]; vendor?: string | string[]; location?: string }>;
 }) {
   const auth = await requireSessionFromHeaders("/admin");
   const level = ROLES[auth.user.role].level;
@@ -69,6 +71,14 @@ export default async function AdminSkusPage({
     id: (r as { id: string }).id,
     name: (r as { name: string }).name,
   }));
+  const canCreateGlobal = level >= ROLES.moo.level;
+  const creationScopes = canCreateGlobal
+    ? locations
+    : locations.filter((location) => auth.locations.includes(location.id));
+  // Hub links select readiness, never the baseline of the global identity/pack editor.
+  const explicit = shopParamFor("/admin/skus", searchParamValues(sp));
+  const readinessScope = explicit && explicit !== "global" && locations.some(l => l.id === explicit)
+    ? await resolveShopId(locations.map(l => l.id), explicit) : null;
 
   // Product registry (0179) — the SKU form's membership picker. The registry is
   // ALSO where membership is read from: vendor_items.product_id stays out of the
@@ -122,18 +132,9 @@ export default async function AdminSkusPage({
   const avgOzById = new Map(skus.map((s) => [s.id, s.avgOzPerEach]));
   const classById = new Map(skus.map((s) => [s.id, s.skuClass]));
 
-  const skuReadinessMap: Record<string, Readiness> = {};
-  for (const s of skus) {
-    const r = skuReadiness({
-      active: s.active,
-      // PR-C: chain-aware pack-complete (delegates to the badge predicate for a
-      // chained SKU; legacy flat-trio for an unchained one).
-      packComplete: skuPackComplete(s, chainMap.get(s.id) ?? null, measuresByLabel, s.skuClass),
-      hasPrice: prices.has(s.id),
-      deliveryCount: ledgerMap.get(s.id)?.deliveries.length ?? 0,
-    });
-    if (r && r.status !== "ready") skuReadinessMap[s.id] = r;
-  }
+  const skuReadinessMap: Record<string, Readiness> = Object.fromEntries(
+    [...await loadSkuReadinessMap(auth, readinessScope)].filter(([, r]) => r.status !== "ready"),
+  );
 
   const chainsBySku: Record<string, PackChainLevel[]> = {};
   const chainUnverifiedBySku: Record<string, boolean> = {};
@@ -183,6 +184,10 @@ export default async function AdminSkusPage({
         title={serverT(lang, "admin.skus.title")}
         subtitle={serverT(lang, "admin.skus.subtitle")}
       />
+      <p className="mt-2 text-sm text-co-text-muted">
+        {readinessScope === null ? serverT(lang, "readiness.scope.default")
+          : serverT(lang, "readiness.scope.shop", { shop: locations.find(l => l.id === readinessScope)?.name ?? "" })}
+      </p>
       {level >= SKU_WRITE_MIN ? <PendingStoreItems locations={locations.filter((location) => lockLocationContext({ role: auth.user.role, locations: auth.locations }, location.id))} /> : null}
       {level >= ROLES.gm.level ? <StoreManagement locations={locations.filter((location) => lockLocationContext({ role: auth.user.role, locations: auth.locations }, location.id))} /> : null}
       <PackChangeRequestsList requests={packRequests} shops={locations} language={lang} />
@@ -190,6 +195,9 @@ export default async function AdminSkusPage({
         skus={skus}
         vendors={activeVendors}
         locations={locations}
+        creationScopes={creationScopes}
+        canCreateGlobal={canCreateGlobal}
+        canMoveOwner={level >= ROLES.moo.level}
         packFormats={packFormats}
         measureUnits={measureUnits}
         skuCost={skuCost}

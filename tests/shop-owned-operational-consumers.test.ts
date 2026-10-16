@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const walkerMocks = vi.hoisted(() => ({ rhythms: vi.fn(async () => new Map()), stores: vi.fn(async () => new Set<string>()) }));
@@ -28,8 +27,10 @@ import { createFakeDb } from "@/tests/fixtures/counts-fake-db";
 import { recordDelivery } from "@/lib/receiving";
 import { recordParRunSkipped, runParShadowForLocation } from "@/lib/dynamic-pars";
 import { createCountEvent } from "@/lib/counts";
+import { loadProductIndex } from "@/lib/products";
+import { forgetBarcode, lookupScan, teachBarcode } from "@/lib/barcodes";
 
-const source = (file: string) => readFileSync(new URL(`../lib/${file}`, import.meta.url), "utf8");
+
 
 const SHOP = "11111111-1111-4111-8111-111111111111";
 const FOREIGN = "22222222-2222-4222-8222-222222222222";
@@ -58,25 +59,25 @@ function walkerClient(selfLoaded: boolean) {
 beforeEach(() => vi.clearAllMocks());
 
 describe("shop-owned operational consumers", () => {
-  it("filters product members before they enter product resolution", () => {
-    const text = source("products.ts");
-    expect(text).toContain("m.location_id !== locationId");
-    expect(text.indexOf("m.location_id !== locationId")).toBeLessThan(text.indexOf("productBySku.set(m.id"));
+  it.each([SHOP, FOREIGN, null])("projects product members before resolution at scope %s", async scope => {
+    const fake = createFakeDb({
+      product_primaries: [], location_sku_settings: [], vendor_delivery_items: [],
+      products: [{ id: "product", name: "Ingredient", active: true, unit_oz: 1 }],
+      vendor_items: [{ id: SKU, name: "Owned", vendor_id: VENDOR, product_id: "product",
+        active: true, pending_review: false, location_id: SHOP, units_per_pack: 1,
+        each_size: 1, each_measure: "oz", avg_oz_per_each: null }],
+      vendors: [{ id: VENDOR, name: "Supplier", active: true, source_kind: "vendor" }],
+    });
+    vi.mocked(getServiceRoleClient).mockReturnValue(fake.client);
+    const loaded = await loadProductIndex(["product"], scope);
+    expect(loaded.productBySku.has(SKU)).toBe(scope === SHOP);
+    expect(loaded.byProduct.get("product")?.members.map(member => member.skuId))
+      .toEqual(scope === SHOP ? [SKU] : []);
+    expect(loaded.index.resolution.get("product")?.skuId).toBe(scope === SHOP ? SKU : null);
   });
 
-  it("filters both normal and skipped nightly par universes before writes", () => {
-    const text = source("dynamic-pars.ts");
-    expect(text.match(/s\.location_id == null \|\| s\.location_id === locationId/g)).toHaveLength(2);
-    expect(text.indexOf("const routable =")).toBeLessThan(text.indexOf("const skuIds = routable"));
-    expect(text.indexOf("const universe =")).toBeLessThan(text.indexOf("for (const s of universe)"));
-  });
-
-  it("filters self-loaded and passed suggestion indexes", () => {
-    const text = source("dynamic-pars-walker.ts");
-    expect(text).toContain("r.location_id == null || r.location_id === locationId");
-    expect(text).toContain("sku.locationId == null || sku.locationId === locationId");
-  });
-
+  // The normal/skipped par-universe and both walker-index contracts are tested
+  // through returned IDs and observed writes below, rather than source spelling.
   it.each(["passed", "self-loaded"] as const)("excludes historical foreign suggestions in %s index mode", async (mode) => {
     const passed = new Map([[SKU, { vendorId: VENDOR, name: "Foreign", locationId: FOREIGN }]]);
     const result = await loadParSuggestions(walkerClient(mode === "self-loaded"), SHOP, {
@@ -240,11 +241,50 @@ describe("shop-owned operational consumers", () => {
     expect(writes).toEqual([]);
   });
 
-  it("binds barcode lookup, teach and forget to the shop while allowing inactive own forget", () => {
-    const text = source("barcodes.ts");
-    expect(text).toContain("r.vendor_items.location_id == null || r.vendor_items.location_id === input.locationId");
-    expect(text.match(/sku\.location_id != null && sku\.location_id !== input\.locationId/g)).toHaveLength(2);
-    const forget = text.slice(text.indexOf("export async function forgetBarcode"));
-    expect(forget).not.toContain("!sku.active");
+  it.each(["lookup", "teach", "forget"] as const)("refuses a foreign barcode SKU through %s before writes", async operation => {
+    const writes: string[] = [];
+    const client = { from(table: string) {
+      const q: Record<string, unknown> = {};
+      for (const op of ["select", "eq", "is", "in", "order"]) q[op] = () => q;
+      for (const op of ["insert", "update"]) q[op] = () => { writes.push(table); return q; };
+      q.returns = () => q;
+      q.maybeSingle = () => q;
+      q.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data:
+        table === "sku_barcodes" ? [{ code: "012345678905", sku_id: SKU, level: "case",
+          vendor_items: { vendor_id: VENDOR, product_id: null, location_id: FOREIGN } }]
+        : operation === "lookup" ? [{ id: SKU, product_id: null, location_id: FOREIGN }]
+        : { id: SKU, vendor_id: VENDOR, location_id: FOREIGN, active: true }, error: null,
+      }).then(resolve);
+      return q;
+    } };
+    vi.mocked(getServiceRoleClient).mockReturnValue(client as never);
+    const actor = { user: { id: "user", role: "gm" }, locations: [SHOP], level: 7 } as never;
+    const input = { vendorId: VENDOR, locationId: SHOP, code: "012345678905", skuId: SKU, level: "case" as const };
+    if (operation === "lookup") {
+      await expect(lookupScan(actor, { ...input, lineSkuIds: [SKU] })).resolves.toMatchObject({ kind: "unknown" });
+    } else {
+      await expect((operation === "teach" ? teachBarcode : forgetBarcode)(actor, input))
+        .rejects.toMatchObject({ status: 404, code: "sku_not_found" });
+    }
+    expect(writes).toEqual([]);
+  });
+
+  it("allows forgetting an inactive owned SKU at its shop", async () => {
+    const updates: unknown[] = [];
+    const client = { from(table: string) {
+      const q: Record<string, unknown> = {};
+      for (const op of ["select", "eq", "is"]) q[op] = () => q;
+      q.update = (value: unknown) => { updates.push(value); return q; };
+      q.maybeSingle = () => q;
+      q.then = (resolve: (value: unknown) => unknown) => Promise.resolve({
+        data: table === "vendor_items" ? { id: SKU, vendor_id: VENDOR, location_id: SHOP, active: false } : null,
+        error: null, count: 1,
+      }).then(resolve);
+      return q;
+    } };
+    vi.mocked(getServiceRoleClient).mockReturnValue(client as never);
+    const actor = { user: { id: "user", role: "gm" }, locations: [SHOP], level: 7 } as never;
+    await forgetBarcode(actor, { vendorId: VENDOR, locationId: SHOP, code: "012345678905", skuId: SKU, level: "case" });
+    expect(updates).toEqual([{ forgotten_at: expect.any(String) }]);
   });
 });

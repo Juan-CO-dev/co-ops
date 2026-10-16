@@ -136,6 +136,9 @@ const BIND_PRIMITIVES = [
   // 2a: level ≥ 8 or a membership (D2) — and the owning-shop rule built on it.
   "catalogShopAllowed",
   "skuOwnerAllowed",
+  // Phase 4a: creation validates requested membership; version writes bind both scope and owner.
+  "creationScope",
+  "requireRecipeScope",
 ];
 
 /** The audit's named surface. Widen deliberately, one file per follow-up PR. */

@@ -18,6 +18,7 @@ import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { batchSkuOzForItemFromGraph, type RecipeGraph } from "@/lib/prep-consumption-graph";
 import { batchEligibility, type BatchItemContext } from "@/lib/batch-prep-shared";
 import type { VersionScope } from "@/lib/sku-versions-shared";
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 
 export type { BatchItemContext };
 
@@ -51,13 +52,17 @@ export async function loadBatchContextForItems(itemIds: string[], versionLocatio
 
   // 2. The recipes themselves — ACTIVE production only, in first-wins order.
   const { data: recipes, error: recErr } = await sb.from("recipes")
-    .select("id, name, recipe_type, active, batch_mode, shelf_life_days, created_at")
+    .select("id, name, recipe_type, active, batch_mode, shelf_life_days, created_at, location_id")
     .in("id", recipeIds).eq("active", true).eq("recipe_type", "production")
     .order("created_at", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true })
-    .returns<Array<{ id: string; name: string; recipe_type: string; active: boolean; batch_mode: boolean | null; shelf_life_days: number | string | null; created_at: string | null }>>();
+    .returns<Array<{ id: string; name: string; recipe_type: string; active: boolean; batch_mode: boolean | null; shelf_life_days: number | string | null; created_at: string | null; location_id: string | null }>>();
   if (recErr) throw new Error(`loadBatchContextForItems recipes: ${recErr.message}`);
-  const liveRecipeIds = (recipes ?? []).map((r) => r.id);
+  // Candidate outputs above only discover ids internally. No context is emitted until
+  // its producer passes the same ownership scope as the graph. The complete output
+  // read below is then bound to those visible producers (including multi-output counts).
+  const visibleRecipes = (recipes ?? []).filter(r => ownerVisible(r.location_id, versionLocationId));
+  const liveRecipeIds = visibleRecipes.map((r) => r.id);
   if (liveRecipeIds.length === 0) return out;
 
   // 3. ALL outputs of those recipes (the count is over every output, not just ours).
@@ -70,7 +75,7 @@ export async function loadBatchContextForItems(itemIds: string[], versionLocatio
   // 4. First-wins per item, walking recipes in their deterministic order.
   const yieldByRecipeItem = new Map<string, number | null>();
   for (const o of myOutputs) yieldByRecipeItem.set(`${o.recipe_id}:${o.output_item_id}`, num(o.yield));
-  for (const r of recipes ?? []) {
+  for (const r of visibleRecipes) {
     for (const o of myOutputs) {
       if (o.recipe_id !== r.id || out.has(o.output_item_id)) continue;
       const yieldPerBatch = yieldByRecipeItem.get(`${r.id}:${o.output_item_id}`) ?? null;

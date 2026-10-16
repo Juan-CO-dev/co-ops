@@ -6780,5 +6780,16 @@
   "recipes.catalog_link": "Versiones de tienda de esta receta",
   "recipes.catalog_link_hint": "Cada tienda puede tener sus propios ingredientes y cantidades. Cámbialos en la página del catálogo.",
   "recipes.builder.lines_global_only": "Solo el Director de Operaciones cambia estas líneas para todas las tiendas. Cambia la versión propia de tu tienda en la página del catálogo.",
-  "recipes.builder.lines_change_shop": "Cambiar la versión de tu tienda"
+  "recipes.builder.lines_change_shop": "Cambiar la versión de tu tienda",
+  "catalog.only_at_shop": "Solo en {shop}",
+  "catering.quotes.error.owned_not_catering": "Este artículo solo está disponible en una tienda. Elige un artículo compartido para catering.",
+  "admin.items.add_item": "Agregar artículo de preparación",
+  "admin.items.scope": "Disponible en",
+  "admin.items.choose_shop": "Elige una tienda",
+  "admin.items.shop_definition_note": "Las definiciones exclusivas de una tienda se aplican solo en esa tienda.",
+  "admin.skus.choose_location": "Elige una tienda",
+  "recipes.output.create_for_shop": "Crear un artículo de preparación para esta tienda",
+  "recipes.output.new_name": "Nombre del artículo de preparación",
+  "recipes.output.new_name_es": "Nombre del artículo de preparación (español)",
+  "recipes.output.new_section": "Sección de preparación"
 }

@@ -16,7 +16,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadRecipe, RECIPE_READ_MIN } from "@/lib/recipes";
 import { loadGraphReadiness } from "@/lib/admin/readiness-load";
 import { shopParamFor, searchParamValues } from "@/lib/shop-context-shared";
-import { loadRecipeBuilderCatalog, loadRecipeBuilderScope } from "@/lib/admin/recipe-builder-data";
+import { loadRecipePrepSections, loadRecipeBuilderCatalog, loadRecipeBuilderScope } from "@/lib/admin/recipe-builder-data";
 import type { Readiness } from "@/lib/readiness";
 import { RECIPE_WRITE_MIN } from "@/lib/recipes-shared";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
@@ -92,6 +92,7 @@ export default async function AdminRecipeDetailPage({
         scopeOptions={context.shops}
         allowGlobalScope={context.allowGlobal}
         outputItems={catalog.outputItems}
+        prepSections={await loadRecipePrepSections(auth)}
         recipe={recipe}
         skus={catalog.skus}
         items={catalog.items}

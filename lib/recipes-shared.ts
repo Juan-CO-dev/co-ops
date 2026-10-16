@@ -90,6 +90,8 @@ export interface RecipeView {
 }
 export interface RecipeListRow {
   id: string; name: string; recipeType: RecipeType; active: boolean;
+  /** Org-wide list disclosure for a shop-owned recipe; the shop name, never its id. */
+  onlyAtShopName?: string | null;
   outputNames: string[]; hasInputs: boolean; hasOutputs: boolean;
   batchYield: number | null;
   batchMode: boolean;

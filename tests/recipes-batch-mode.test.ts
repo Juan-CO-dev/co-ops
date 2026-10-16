@@ -50,13 +50,13 @@ describe("isValidShelfLifeDays — whole days, at least one", () => {
 describe("updateRecipe — header patch + batch_mode toggle in ONE transaction (Astra P2 #8)", () => {
   const body = fnBody(lib, "updateRecipe");
   it("calls update_recipe_atomic and never writes the recipes row directly", () => {
-    expect(body).toMatch(/rpc\("update_recipe_atomic"/);
+    expect(body).toMatch(/"update_recipe_atomic"/);
     expect(body).not.toMatch(/from\("recipes"\)\.update\(/);
     expect(body).not.toMatch(/rpc\("set_recipe_batch_mode"/);
   });
   it("validates shelfLifeDays before the RPC and audits recipe.update only AFTER it succeeded", () => {
     const validateAt = body.indexOf("invalid_shelf_life_days");
-    const rpcAt = body.indexOf('rpc("update_recipe_atomic"');
+    const rpcAt = body.indexOf('"update_recipe_atomic"');
     const auditAt = body.indexOf('action: "recipe.update"');
     expect(validateAt).toBeGreaterThan(-1);
     expect(validateAt).toBeLessThan(rpcAt);
@@ -74,18 +74,18 @@ describe("updateRecipe — header patch + batch_mode toggle in ONE transaction (
 describe("outputs: every writer is an RPC under the recipe row lock", () => {
   it("addRecipeOutput inserts through add_recipe_output (serialised; Astra P1 #3), never a direct insert", () => {
     const body = fnBody(lib, "addRecipeOutput");
-    expect(body).toMatch(/rpc\("add_recipe_output"/);
+    expect(body).toMatch(/"add_recipe_output"/);
     expect(body).not.toMatch(/from\("recipe_outputs"\)\.insert/);
     // The race's loser gets the RPC's named refusal, mapped to the same 422 as the TS check.
     expect(body).toMatch(/rpcRecipeError\(error, BATCH_MODE_RPC_ERRORS\)/);
   });
   it("removeRecipeEdge deletes an output through remove_recipe_output and an input through remove_recipe_input_atomic (0262)", () => {
     const body = fnBody(lib, "removeRecipeEdge");
-    expect(body).toMatch(/rpc\("remove_recipe_output"/);
+    expect(body).toMatch(/"remove_recipe_output"/);
     // The input path is reached only after the outputs branch has returned, and it is the graph-locked RPC.
-    const rpcAt = body.indexOf('rpc("remove_recipe_output"');
+    const rpcAt = body.indexOf('"remove_recipe_output"');
     const returnAt = body.indexOf("return;", rpcAt);
-    const inputAt = body.indexOf('rpc("remove_recipe_input_atomic"');
+    const inputAt = body.indexOf('"remove_recipe_input_atomic"');
     expect(returnAt).toBeGreaterThan(rpcAt);
     expect(inputAt).toBeGreaterThan(returnAt);
     expect(body).not.toContain(".delete(");

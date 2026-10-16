@@ -95,7 +95,7 @@ it.each([
 });
 it("retains ownership line position through the recipe-version mapper", () => {
   expect(() => recipeVersionErrorFromRpc("shop_owned:line_other_shop:2")).toThrowError(expect.objectContaining({
-    status: 400, code: "line_other_shop", line: { position: 2, reason: "line_other_shop" },
+    status: 400, code: "line_other_shop", line: { position: 2, reason: "line_other_shop", name: "Line 2" },
   }));
 });
 it.each([
