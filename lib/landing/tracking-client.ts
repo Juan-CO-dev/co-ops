@@ -57,20 +57,34 @@ type Pixel = ((...args: unknown[]) => void) & { queue?: unknown[][]; callMethod?
 declare global { interface Window { fbq?: Pixel; _fbq?: Pixel } }
 export function browserTransport(): TrackingTransport {
   let configuredPixelId:string|undefined;
+  let permitted=false;
+  function schedulePixel() {
+    const insert=()=>{
+      if (!permitted || document.getElementById('landing-meta-pixel')) return;
+      const script=document.createElement('script'); script.id='landing-meta-pixel'; script.async=true; script.src='https://connect.facebook.net/en_US/fbevents.js'; document.head.appendChild(script);
+    };
+    // Wait for the initial document/media load, then yield the main thread.
+    // No timeout forces the SDK onto a busy rendering path. Withdrawal is
+    // rechecked inside the callback, including the load/idle race.
+    const idle=()=>{ if(window.requestIdleCallback) window.requestIdleCallback(insert); else setTimeout(insert,200); };
+    if(document.readyState==='complete') idle();
+    else window.addEventListener('load',idle,{once:true});
+  }
   return {
     loadPixel(id) {
+      permitted=true;
       configuredPixelId=id;
       if (!window.fbq) {
         const pixel: Pixel = (...args) => { if (pixel.callMethod) pixel.callMethod(...args); else pixel.queue?.push(args); };
         pixel.queue=[]; pixel.push=pixel; pixel.loaded=true; pixel.version='2.0'; window.fbq=pixel; window._fbq=pixel;
       }
       window.fbq('consent','grant'); window.fbq('set','autoConfig',false,id); window.fbq('init',id);
-      if (!document.getElementById('landing-meta-pixel')) {
-        const script=document.createElement('script'); script.id='landing-meta-pixel'; script.async=true; script.src='https://connect.facebook.net/en_US/fbevents.js'; document.head.appendChild(script);
-      }
+      schedulePixel();
     },
-    revokePixel() { if(window.fbq?.queue) window.fbq.queue.length=0; window.fbq?.('consent','revoke'); },
+    revokePixel() { permitted=false; if(window.fbq?.queue) window.fbq.queue.length=0; window.fbq?.('consent','revoke'); },
     grantPixel() {
+      permitted=true;
+      schedulePixel();
       window.fbq?.('consent','grant');
       // Withdrawal drops queued events while a blocked/slow SDK is still loading.
       // Re-establish initialization if that queue was discarded before SDK execution.

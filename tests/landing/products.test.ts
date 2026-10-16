@@ -4,11 +4,11 @@ import { products, validateProducts } from '@/lib/landing/products';
 import { isLandingAsset } from '@/lib/landing/host-shared';
 
 describe('approved landing lineup', () => {
-  it('permits only approved lineup image paths through the host and optimizer', () => {
+  it('permits only approved lineup image paths through the host without the optimizer', () => {
     for (const product of products) {
       expect(isLandingAsset(product.image, new URLSearchParams())).toBe(true);
       expect(isLandingAsset(product.smallImage, new URLSearchParams())).toBe(true);
-      expect(isLandingAsset('/_next/image', new URLSearchParams({url:product.image}))).toBe(true);
+      expect(isLandingAsset('/_next/image', new URLSearchParams({url:product.image}))).toBe(false);
     }
     expect(isLandingAsset('/media/marisa-lineup-018.webp', new URLSearchParams())).toBe(false);
   });

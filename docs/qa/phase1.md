@@ -1,6 +1,8 @@
 # Landing Phase 1 release evidence — 2026-10-16
 
-Status: NOT RELEASE-READY. Dedicated clone `C:/Users/conta/co-ops-landing`, branch `feat/landing-p1`, base/HEAD `814e3a30`. All work is uncommitted; no push, merge, deploy, external resource, deployment environment change, domain/alias or production-data action. 0273 is unchanged and file-only.
+Latest verification: [Final fix round](../landing-final-fix-result.md). The older evidence below is historical; the final report supersedes its test counts and performance status.
+
+Status: NOT RELEASE-READY. Dedicated clone `C:/Users/conta/co-ops-landing`, branch `feat/landing-p1`, current-round base/HEAD `9aeb73a1` (fix-D, committed by CC). Earlier landing rounds are committed; FINAL FIX ROUND changes remain uncommitted; no push, merge, deploy, external resource, deployment environment change, domain/alias or production-data action. 0273 is unchanged and file-only.
 
 ## Source identities and derivation
 
@@ -11,7 +13,7 @@ Every real-photo entry and every raster under `/media/` requires `crop-resize-on
 1. **CC's chunk-C rulings:** lineup in client/server placement allowlists and typed OrderLink; CTA discovery regression includes all current sections and verifies reserved footer placement; lineup click browser proof with test flags enabled, both POST requests and queued Pixel ID; geometric no-JS/JS reachability; crop/resize/source/sidecar gates and forged A/B refusals; duplicate-byte check and hero/lineup reuse of one 014 output; narrower WebKit skip with hero and SUBDEX control-policy adapters; Field Guide scaffold/no-photo test; remove debug.log, ignore logs, exclude tmp/. Existing Chunk D had already corrected the historical chunk-C handoff wording.
 2. **Chunk E:** measured transfer-budget harness and stricter LHCI configuration/consent scenarios; 200% English/Spanish reflow fix; native lazy lineup images and smaller 480px exports (quality capped at 78, all sources/derivations reverified); brand-only OG card with existing wordmark and scoped theme metadata; E5 probe/workflow/failure fixtures; activation runbook, release checklist and one README PREVIEW section.
 
-Ordered binary patches are prepared locally in `tmp/landing-release-packet/01-chunk-c-rulings.patch` and `02-chunk-e.patch`. They are review artifacts, not commits. Apply to a clean copy of 814e3a30 in order, NOT over this modified worktree. These are not approval claims.
+Historical local-only binary patches were prepared in `tmp/landing-release-packet/01-chunk-c-rulings.patch` and `02-chunk-e.patch`. They are gitignored artifacts from the earlier 814e3a30 review, unavailable in a checkout and superseded by the committed rounds through 9aeb73a1. Do not apply them to the current worktree. These are not approval claims.
 
 ## Test-first evidence and findings
 

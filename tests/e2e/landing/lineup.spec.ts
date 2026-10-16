@@ -8,14 +8,18 @@ for (const javaScriptEnabled of [true, false]) test(`lineup is usable with JS ${
   await strip.scrollIntoViewIfNeeded();
   await expect(strip.locator('li')).toHaveCount(10);
   await expect(strip).not.toContainText('Marisa');
-  for (const source of await strip.locator('source').all()) {
+  // Enhanced pages only attach picture URLs once each card intersects the viewport.
+  // Scroll the card itself: off-screen images do not exist until then.
+  for (const card of await strip.locator('li').all()) {
+    await card.scrollIntoViewIfNeeded();
+    const source = card.locator('source');
+    const img = card.locator('img');
+    await expect(img).toHaveCount(1);
     await expect(source).toHaveAttribute('sizes','280px');
     await expect(source).toHaveAttribute('srcset', /480w, .*750w/);
-  }
-  for (const img of await strip.locator('img').all()) {
     await expect(img).toHaveAttribute('loading','lazy');
+    await expect(img).toHaveAttribute('fetchpriority','low');
     expect(await img.getAttribute('src')).not.toContain('/_next/image');
-    await img.scrollIntoViewIfNeeded();
     await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
   }
   await strip.locator('li').first().scrollIntoViewIfNeeded();

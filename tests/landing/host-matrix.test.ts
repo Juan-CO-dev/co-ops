@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { classifyLandingHost, parseAuthority, isLandingAsset, landingPathDecision } from '@/lib/landing/host-shared';
 
 const env = { LANDING_HOSTS: 'eat.example.test,preview.example.test', SITE_ORIGIN: 'https://eat.example.test', STAFF_ORIGIN: 'https://staff.example.test' };
@@ -26,13 +27,20 @@ describe('finite landing route boundary', () => {
   it.each(['/api/locations','/api/users/login-options','/order','/order/start','/verify','/reset-password','/api/auth/pin','/api/auth/password','/api/auth/logout','/api/auth/verify','/api/auth/password-reset-request','/api/auth/password-reset','/api/portal/test','/api/webhooks/test','/api/cron/test','/admin/a.png','/dashboard','/jobs','/icon.png','/apple-icon.png','/opengraph-image.png','/eat/extra'])('refuses %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('deny'));
   it.each(['/','/privacy'])('rewrites %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('rewrite'));
   it.each(['/eat','/eat/privacy'])('canonicalizes %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('redirect'));
-  it.each(['/api/landing/events','/api/landing/order-click','/_next/static/a.js','/brand/co-icon.png'])('allows %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('allow'));
-  it('only optimizes approved local images', () => {
-    expect(isLandingAsset('/_next/image', new URLSearchParams({url:'/brand/co-icon.png'}))).toBe(true);
-    for (const url of ['/admin/image.png','https://evil.test/a.png','//evil.test/a.png','/media/../icon.png','/brand/unknown.png','/brand/co-icon.png?x=1']) expect(isLandingAsset('/_next/image', new URLSearchParams({url}))).toBe(false);
+  it.each(['/api/landing/events','/api/landing/order-click','/_next/static/a.js','/brand/landing-icon.png'])('allows %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('allow'));
+  it('refuses the unused image optimizer even for approved images', () => {
+    expect(isLandingAsset('/_next/image', new URLSearchParams({url:'/brand/landing-icon.png'}))).toBe(false);
+    for (const url of ['/admin/image.png','https://evil.test/a.png','//evil.test/a.png','/media/../icon.png','/brand/unknown.png','/brand/landing-icon.png?x=1']) expect(isLandingAsset('/_next/image', new URLSearchParams({url}))).toBe(false);
   });
 });
 
 it('a mistakenly allowlisted staff canonical origin never enables landing redirects',()=> {
   expect(classifyLandingHost(headers('eat.example.test'),{...env,LANDING_HOSTS:'eat.example.test,staff.example.test',SITE_ORIGIN:'https://staff.example.test'})).toBe('staff');
+});
+
+it('permits the actual shared not-found wordmark on the landing host', () => {
+  const source = readFileSync('app/not-found.tsx', 'utf8');
+  const image = source.match(/<img src="([^"]+)"/);
+  expect(image).not.toBeNull();
+  expect(landingPathDecision(image![1]!, new URLSearchParams())).toBe('allow');
 });

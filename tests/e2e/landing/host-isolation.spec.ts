@@ -27,7 +27,7 @@ test('canonical redirects use configured origin, not supplied host', async ({ re
 });
 test('all host matrix rows and runtime headers', async ({ request }) => {
   for (const host of [`localhost:${portBase}`,'eat.example.test','preview.example.test']) {
-    for (const path of ['/', '/privacy', '/brand/co-icon.png', '/admin']) {
+    for (const path of ['/', '/privacy', '/brand/landing-icon.png', '/admin']) {
       const response = await request.get(path,{headers:{host,'x-forwarded-host':host}, maxRedirects:0});
       expect(response.status()).toBe(path === '/admin' ? 404 : 200);
       const csp = response.headers()['content-security-policy-report-only']!;
@@ -70,7 +70,7 @@ test('invalid or disagreeing hosts leave staff available and landing dormant', a
   }
 });
 test('local optimizer cannot bypass isolation', async ({ request }) => {
-  for(const target of ['/admin/a.png','/icon.png','https://evil.test/a.png','/brand/unknown.png']) {
+  for(const target of ['/admin/a.png','/icon.png','https://evil.test/a.png','/brand/unknown.png','/brand/landing-icon.png']) {
     const response=await request.get('/_next/image',{params:{url:target,w:64,q:75}}); expect(response.status()).toBe(404);
   }
 });
@@ -127,13 +127,26 @@ for (const [path, canonical] of [['/order/','/order'],['/admin/','/admin'],['/ap
   });
 }
 
-test('measurement routes enforce Origin; unconfigured CAPI is dormant and enabled counter fails closed without its database',async ({request})=>{
+test('measurement routes enforce Origin; dormant CAPI and enabled counter both succeed',async ({request})=>{
   const headers={origin:`https://localhost:${portBase}`,cookie:'landing_consent=accepted'};
   const event={event_name:'OrderClick',event_id:crypto.randomUUID(),event_time:Math.floor(Date.now()/1000),consent:'accepted',source_url:`https://localhost:${portBase}/`,store:'capitol-hill',ad:'unattributed',placement:'hero'};
   for(const [path,data] of [['/api/landing/events',event],['/api/landing/order-click',{store:'capitol-hill',ad:'unattributed'}]] as const) {
-    const accepted=await request.post(path,{headers,data});expect(accepted.status()).toBe(path.endsWith('order-click') ? 503 : 204);expect(accepted.headers()['set-cookie']).toBeUndefined();
+    const accepted=await request.post(path,{headers,data});expect(accepted.status()).toBe(204);expect(accepted.headers()['set-cookie']).toBeUndefined();
     expect((await request.post(path,{headers:{cookie:headers.cookie},data})).status()).toBe(403);
     expect((await request.post(path,{headers:{...headers,origin:'https://evil.test'},data})).status()).toBe(403);
     expect((await request.post(path,{headers:{...headers,dnt:'1'},data})).status()).toBe(403);
   }
+});
+
+
+test('enabled counter reaches the fixture RPC and fails closed with a dead Supabase URL', async ({request}) => {
+  const fixture = `http://127.0.0.1:${portBase + 2}/__fixture/counter`;
+  const before = (await (await request.get(fixture)).json()).capitolHillUnattributed;
+  const data = {store:'capitol-hill',ad:'unattributed'};
+  const response = await request.post('/api/landing/order-click', {headers:{origin:`https://localhost:${portBase}`,cookie:'landing_consent=accepted'},data});
+  expect(response.status()).toBe(204);
+  const after = await (await request.get(fixture)).json();
+  expect(after.capitolHillUnattributed).toBeGreaterThan(before);
+  const unavailable = await request.post(`http://localhost:${portBase + 3}/api/landing/order-click`, {headers:{origin:`https://localhost:${portBase + 3}`,cookie:'landing_consent=accepted'},data});
+  expect(unavailable.status()).toBe(503);
 });

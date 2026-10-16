@@ -55,7 +55,7 @@ describe('launch monitor', () => {
   });
   it('runs all destinations independently and signals broken orders', async () => {
     const targets = ['landing', 'order-a', 'order-b', 'catering', 'inquiry'].map(name => ({ ...target, name }));
-    const report = await monitor(targets, {}, { probe: async (t: { name: string }) => ({ name: t.name, ok: t.name !== 'order-a', status: 200 }) });
+    const report = await monitor(targets, {}, { probe: async (t: { name: string }) => ({ name: t.name, ok: t.name !== 'order-a', status: t.name === 'order-a' ? 503 : 200 }) });
     expect(report.results).toHaveLength(5);
     expect(report.pauseRequired).toBe(true);
   });
@@ -77,4 +77,49 @@ it('preserves the first landing 5xx to trigger minute incident rechecks', async 
  const result=await probe(target,{...rule,sha256:digest(ok)},async()=>{calls++;return calls===1?response('unavailable',503):response();});
  expect(result.status).toBe(503);
  expect(calls).toBe(1);
+});
+
+it.each(['redirect-review', 'response-drift', 'merchant-redirect-review', 'merchant-response-drift', 'baseline-required'])('alerts without pausing for %s', async reason => {
+ const report = await monitor([{ ...target, name: 'order-a' }], {}, { probe: async () => ({ name: 'order-a', ok: false, status: 200, reason }) });
+ expect(report).toMatchObject({ ok: false, pauseRequired: false, reviewRequired: true });
+});
+it.each(['challenge', 'branch-drift', 'missing-branch', 'timeout', 'host-drift'])('pauses hard order failure %s', async reason => {
+ const report = await monitor([{ ...target, name: 'order-a' }], {}, { probe: async () => ({ name: 'order-a', ok: false, status: 200, reason }) });
+ expect(report).toMatchObject({ ok: false, pauseRequired: true });
+});
+it('does not let a redirect hide a final 503', async () => {
+ const result = await probe(target, { ...rule, sha256: digest(ok) }, async input => String(input).endsWith('/moved') ? response('down', 503) : new Response('', { status: 302, headers: { location: '/moved' } }));
+ expect(result.reason).toBe('http-status');
+});
+
+it('checks merchant branch integrity even when the shell hash drifted', async () => {
+ const body = JSON.stringify({ branches: [{ id: 'absent' }] });
+ const schema = { arrayPath: ['branches'], idField: 'id', fields: ['id'] };
+ const baseline = { ...rule, sha256: digest(ok), data: { ...schema, url: 'https://example.com/data', hosts: ['example.com'], sha256: digest(body), branchSha256: '0'.repeat(64) } };
+ const result = await probe({ ...target, name: 'order-a', branchId: 'expected' }, baseline, async input => response(String(input).endsWith('/data') ? body : 'new shell'));
+ expect(result.reason).toBe('missing-branch');
+});
+it('reports raw merchant response changes as review when the selected branch fields agree', async () => {
+ const original = JSON.stringify({ branches: [{ id: 'expected' }], cosmetic: 'before' });
+ const changed = JSON.stringify({ branches: [{ id: 'expected' }], cosmetic: 'after' });
+ const schema = { arrayPath: ['branches'], idField: 'id', fields: ['id'] };
+ const baseline = { ...rule, sha256: digest(ok), data: { ...schema, url: 'https://example.com/data', hosts: ['example.com'], sha256: digest(original), branchSha256: branchDigest(JSON.parse(original), schema, 'expected') } };
+ const result = await probe({ ...target, name: 'order-a', branchId: 'expected' }, baseline, async input => response(String(input).endsWith('/data') ? changed : ok));
+ expect(result.reason).toBe('merchant-response-drift');
+});
+it('retains only the fixed timeout reason', async () => {
+ const result = await probe(target, { ...rule, sha256: digest(ok) }, async () => { throw new DOMException('private URL', 'TimeoutError'); });
+ expect(result.reason).toBe('timeout');
+ expect(JSON.stringify(result)).not.toContain('private URL');
+});
+it('does not request pause for review-only drift after an initial landing 503', async () => {
+ let time = 0, calls = 0;
+ const report = await monitor([target], {}, { now: () => time, sleep: async (ms: number) => { time += ms; }, probe: async () => calls++ === 0 ? { name: 'landing', ok: false, status: 503 } : { name: 'landing', ok: false, status: 200, reason: 'response-drift' } });
+ expect(report).toMatchObject({ ok: false, pauseRequired: false, reviewRequired: true });
+});
+it.each(['timeout', 'host-drift'])('pauses landing %s without an HTTP response status', async reason => {
+ for (const status of [undefined, null]) {
+  const report = await monitor([target], {}, { probe: async () => ({ name: 'landing', ok: false, status, reason }) });
+  expect(report).toMatchObject({ ok: false, pauseRequired: true });
+ }
 });

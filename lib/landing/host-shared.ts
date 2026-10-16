@@ -35,10 +35,9 @@ export function classifyLandingHost(headers: Pick<Headers, 'get'>, env: LandingH
 }
 // Finite approved public inventory; new assets must be explicitly added with provenance.
 export const LANDING_ASSETS = new Set(inventory.map(asset => asset.path));
-export function isLandingAsset(path: string, search: URLSearchParams): boolean {
+export function isLandingAsset(path: string, _search: URLSearchParams): boolean {
   if (LANDING_ASSETS.has(path)) return true;
   if (path.startsWith('/_next/static/') && !path.includes('..') && !path.includes('%')) return true;
-  if (path === '/_next/image') return search.getAll('url').length === 1 && /\.(?:png|webp)$/.test(search.get('url') ?? '') && LANDING_ASSETS.has(search.get('url') ?? '');
   return false;
 }
 export function landingPathDecision(path: string, search: URLSearchParams): 'rewrite' | 'redirect' | 'allow' | 'deny' {

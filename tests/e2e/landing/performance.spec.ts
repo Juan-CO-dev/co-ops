@@ -1,5 +1,7 @@
 import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import {test,expect} from '@playwright/test';
+import {products} from '../../../lib/landing/products';
+import {heroMedia} from '../../../lib/landing/media';
 import {checkTransferBudget} from '../../../scripts/check-transfer-budget.mjs';
 
 for(const consent of ['accepted','unset'])test(`cold initial and full-scroll transfer budgets (${consent}; offline Meta)`,async({page,context},testInfo)=>{
@@ -9,6 +11,8 @@ for(const consent of ['accepted','unset'])test(`cold initial and full-scroll tra
   if(consent==='accepted')await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
   await page.route('https://connect.facebook.net/**',route=>route.fulfill({contentType:'application/javascript',body:'/* landing-perf-offline-v1: NOT a representative Meta cost fixture */'}));
   await page.route('https://www.facebook.com/**',route=>route.fulfill({status:204}));
+  const requested:string[]=[];
+  page.on('request',request=>requested.push(request.url()));
   const records:{url:string;type:string;bytes:number}[]=[];
   const pending:Promise<void>[]=[];
   page.on('requestfinished',request=>{pending.push(request.sizes().then(sizes=>{records.push({url:request.url(),type:request.resourceType(),bytes:sizes.responseBodySize+sizes.responseHeadersSize});}));});
@@ -18,6 +22,9 @@ for(const consent of ['accepted','unset'])test(`cold initial and full-scroll tra
   await page.waitForLoadState('networkidle');
   await Promise.all(pending);
   const initial=[...records];
+  // A shared hero/lineup photo is expected; all other lineup URLs must wait for scroll.
+  const lineupOnly = new Set(products.flatMap(product=>[product.image,product.smallImage]).filter(path=>path!==heroMedia.poster));
+  expect(requested.filter(url=>lineupOnly.has(new URL(url).pathname))).toEqual([]);
   expect(initial.filter(item=>/\.(glb|gltf)(\?|$)/.test(item.url))).toEqual([]);
   // Video is interaction-triggered; poster must be all that loads initially.
   expect(initial.filter(item=>/\.(mp4|webm)(\?|$)/.test(item.url))).toEqual([]);
@@ -28,6 +35,7 @@ for(const consent of ['accepted','unset'])test(`cold initial and full-scroll tra
   const strip=page.locator('[data-lineup]');await strip.scrollIntoViewIfNeeded();
   for(const card of await strip.locator('li').all()){
     await card.evaluate(el=>{const parent=el.parentElement!;parent.scrollLeft=(el as HTMLElement).offsetLeft-parent.offsetLeft;});
+    await expect(card.locator('img')).toHaveCount(1);
     await expect.poll(()=>card.locator('img').evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
   }
   await page.waitForLoadState('networkidle');await Promise.all(pending);

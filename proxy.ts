@@ -45,7 +45,7 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     const target = req.nextUrl.clone();
     if (decision === 'rewrite') target.pathname = path === '/' ? '/eat' : '/eat/privacy';
     const icon = ['/favicon.ico', '/eat/icon.png', '/eat/apple-icon.png'].includes(path);
-    if (icon) target.pathname = '/brand/co-icon.png';
+    if (icon) target.pathname = '/brand/landing-icon.png';
     return finish(target.pathname !== path ? NextResponse.rewrite(target, { request: { headers } }) : NextResponse.next({ request: { headers } }), true, icon ? target.pathname : isLandingAsset(path, req.nextUrl.searchParams) || path.startsWith('/api/landing/') ? path : undefined);
   }
   if (path.startsWith('/eat') || path.startsWith('/api/landing') || path.startsWith('/media/')) return finish(new NextResponse(null, { status: 404 }), false);

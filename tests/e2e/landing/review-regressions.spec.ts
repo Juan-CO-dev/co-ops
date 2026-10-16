@@ -1,7 +1,7 @@
 import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import { test, expect } from '@playwright/test';
 
-for (const language of ['en','es']) test(`shop outage preserves a 200 landing page in ${language}`, async ({page}) => {
+for (const language of ['en','es']) test(`dead Supabase URL preserves a 200 landing page in ${language}`, async ({page}) => {
   const response = await page.goto(`http://localhost:${portBase + 3}/?lang=${language}`, {waitUntil:'domcontentloaded'});
   expect(response?.status()).toBe(200);
   for (const section of ['hero','lineup','catering']) await expect(page.locator(`#${section}`)).toBeVisible();
@@ -18,7 +18,7 @@ test('not-found chrome renders its wordmark on the landing host', async ({page})
 });
 
 test('production responses pin metadata, brand and API cache policy', async ({request}) => {
-  for (const path of ['/robots.txt','/sitemap.xml','/brand/co-wordmark.svg','/brand/co-icon.png','/eat/icon.png','/eat/apple-icon.png','/favicon.ico']) {
+  for (const path of ['/robots.txt','/sitemap.xml','/brand/co-wordmark.svg','/brand/landing-icon.png','/eat/icon.png','/eat/apple-icon.png','/favicon.ico']) {
     const response = await request.get(path);
     expect(response.status(),path).toBe(200);
     expect(response.headers()['cache-control'],path).toBe('public, max-age=300');

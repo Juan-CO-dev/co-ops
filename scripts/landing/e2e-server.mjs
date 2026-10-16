@@ -31,13 +31,31 @@ if (process.env.LANDING_E2E_USE_BUILD === '1') {
   const code = await new Promise(resolve => build.on('exit', resolve));
   if (code !== 0) process.exit(code ?? 1);
 }
-const fixtureDir = await prepareNearbyFixture(runtime);
+// Lighthouse measures the ordinary landing only. The separately compiled
+// nearby/not-found fixture remains mandatory for the complete browser suite.
+const fixtureDir = process.env.LANDING_PERF_CONSENT ? null : await prepareNearbyFixture(runtime);
 // Fictional public facts served through the real loader. No app test switch and no
-// production credential: refuse every other table, projection and write.
-const locations = createServer((req, res) => {
-  if (req.url.startsWith('/unavailable/')) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({message:'Fictional shop loader outage'})); return;
+// production credential: refuse every other table, projection and write except
+// the exact bounded counter RPC exercised by the production handler.
+let capitolHillUnattributed = 0;
+const locations = createServer(async (req, res) => {
+  if (req.method === 'GET' && req.url === '/__fixture/counter') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({capitolHillUnattributed})); return;
+  }
+  if (req.method === 'POST' && req.url === '/rest/v1/rpc/increment_landing_order_click') {
+    let body = '';
+    for await (const chunk of req) {
+      body += chunk;
+      if (body.length > 512) { res.writeHead(413); res.end(); return; }
+    }
+    let input;
+    try { input = JSON.parse(body); } catch { res.writeHead(400); res.end(); return; }
+    if (!input || Object.keys(input).length !== 2 || !['capitol-hill','dupont'].includes(input.p_store_key) || !['subsim-photo','unattributed'].includes(input.p_ad_code)) {
+      res.writeHead(400); res.end(); return;
+    }
+    if (input.p_store_key === 'capitol-hill' && input.p_ad_code === 'unattributed') capitolHillUnattributed++;
+    res.writeHead(204); res.end(); return;
   }
   const url = new URL(req.url, `http://127.0.0.1:${portBase + 2}`);
   if (req.method !== 'GET' || url.pathname !== '/rest/v1/locations' || url.searchParams.get('select') !== 'code,name,address,phone' || url.searchParams.get('active') !== 'eq.true') {
@@ -54,9 +72,10 @@ runtime.NEXT_PUBLIC_SUPABASE_URL = `http://127.0.0.1:${portBase + 2}`;
 runtime.SUPABASE_SERVICE_ROLE_KEY = 'landing-e2e-fictional-local-only';
 const active = run(['start', '-p', `${portBase}`, '-H', '0.0.0.0'], { ...runtime, LANDING_HOSTS: 'localhost,eat.example.test,preview.example.test', SITE_ORIGIN: `https://localhost:${portBase}`, STAFF_ORIGIN: `https://127.0.0.1:${portBase}`, NEXT_PUBLIC_META_PIXEL_ID: '123456789', LANDING_CAPI_ENABLED: 'true', LANDING_COUNTER_ENABLED: 'true' });
 const dormant = run(['start', '-p', `${portBase + 1}`, '-H', '0.0.0.0'], { ...runtime, SITE_ORIGIN: `https://localhost:${portBase + 1}`, STAFF_ORIGIN: `https://127.0.0.1:${portBase + 1}` });
-const unavailable = run(['start', '-p', `${portBase + 3}`, '-H', '0.0.0.0'], { ...runtime, NEXT_PUBLIC_SUPABASE_URL:`http://127.0.0.1:${portBase + 2}/unavailable`, LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 3}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 3}` });
-const nearby = run(['start', '-p', `${portBase + 5}`, '-H', '0.0.0.0'], {...runtime, LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 5}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 5}`, NEXT_PUBLIC_META_PIXEL_ID:'123456789', LANDING_CAPI_ENABLED:'true'}, fixtureDir);
-const children = [active,dormant,unavailable,nearby];
+// Nothing listens on +4: prove a genuine connection refusal, not an HTTP error stub.
+const unavailable = run(['start', '-p', `${portBase + 3}`, '-H', '0.0.0.0'], { ...runtime, NEXT_PUBLIC_SUPABASE_URL:`http://127.0.0.1:${portBase + 4}`, LANDING_COUNTER_ENABLED:'true', LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 3}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 3}` });
+const nearby = fixtureDir ? run(['start', '-p', `${portBase + 5}`, '-H', '0.0.0.0'], {...runtime, LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 5}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 5}`, NEXT_PUBLIC_META_PIXEL_ID:'123456789', LANDING_CAPI_ENABLED:'true'}, fixtureDir) : null;
+const children = [active,dormant,unavailable,...(nearby ? [nearby] : [])];
 writeFileSync(pidFile, JSON.stringify(children.map(child=>child.pid)));
 function stop(code) { for (const child of children) child.kill(); locations.close(); process.exit(code); }
 for (const child of children) child.on('exit', code => stop(code ?? 1));

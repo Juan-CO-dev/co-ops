@@ -52,8 +52,39 @@ npx vitest run tests/landing/monitor.test.ts --maxWorkers=3
 
 Default alert delivery is GitHub Actions failure email to the repository owner. Juan enables Actions notifications and confirms the recipient; after activation CC deliberately tests a bad baseline in a manual workflow run, records run URL, failure timestamp, receipt timestamp and recipient, then restores the reviewed baseline and verifies green. A failed workflow alone is not proof an alert reached anyone. No automatic outbound messaging or spend changes are implemented here.
 
-GitHub schedules may be delayed or dropped. An independently operated scheduler/heartbeat checker must inspect this workflow's latest **completed report** every minute and alert Juan if no completion occurs within 20 minutes, the runner is offline, the job is skipped, or no report exists. A job start or disabled/skipped workflow is not a healthy heartbeat. Record checker owner, tested stale-alert receipt, observed cron intervals and maximum delay before spend. If 15-minute cadence cannot be demonstrated, use an authorized external scheduler for these probes. Nothing in this repository alone can detect a GitHub scheduler outage while GitHub is not running it.
+The separate `landing-monitor-heartbeat.yml` workflow runs every 15 minutes on a GitHub-hosted runner, gated by the same OFF-by-default flag. `scripts/landing/check-monitor-heartbeat.mjs` reads the Actions API and alerts when no completed success/failure run has produced a non-expired `money-path-report` artifact in **two hours**. Skipped/running jobs and unrelated artifacts do not refresh the heartbeat. Failure reports prove the monitor ran, while the probe workflow still delivers their incident alert. API failures also alert; heartbeat failure sets `reviewRequired`, never `pauseRequired`. This catches a stalled US runner independently of that runner. Test with `npx vitest run tests/landing/monitor-heartbeat.test.ts --maxWorkers=3`. An independently operated scheduler can run the same CLI with read-only Actions access (`GITHUB_REPOSITORY`, `GITHUB_TOKEN`); never print the token. Record checker owner, tested stale-alert receipt, observed cron intervals and maximum delay before spend. GitHub schedules may be delayed or dropped; this check cannot detect a platform-wide scheduler outage while GitHub is not running it. External heartbeat coverage remains an activation gate.
 
-A broken order probe requests immediate spend pause by Juan. First observed landing 5xx initiates one-minute incident rechecks through more than ten minutes (11 rechecks); the initial failure remains an alert even if it recovers. A successful probe records recovery, while missing/blocked probes never imply recovery. An unresolved incident past ten minutes requests pause conservatively, including lost visibility. Pause immediately if existing external evidence already proves a >10-minute landing 5xx outage. Typical worst-case initial detection is 15 minutes plus scheduler delay and bounded probe time; these rechecks prevent waiting another 15 minutes after detection. Record actual delay, first failure, each recheck, recovery and Juan's action. An external faster monitor is required if that initial delay is unacceptable.
+Hard failures (5xx, challenge, wrong host, missing/changed branch or timeout) on an order/catering/inquiry probe request immediate spend pause by Juan. `redirect-review`, `response-drift` and their merchant equivalents set `reviewRequired: true`, `pauseRequired: false`: alert and inspect, without requesting a pause. Other unavailable evidence (missing baselines, unknown fetch/payload errors, ordinary 4xx) likewise requires review. Both pause and review incidents fail the workflow; the report tells Juan which action is requested. Hard merchant checks run before cosmetic shell/payload drift so a changed shell cannot hide a missing branch. Raw payload drift with identical reviewed branch fields requests review; a changed normalized branch digest requests pause.
+
+First observed landing 5xx initiates one-minute incident rechecks through more than ten minutes (11 rechecks); the initial failure remains an alert even if it recovers. A successful probe records recovery, while missing/blocked probes never imply recovery. An unresolved hard failure past ten minutes requests pause; a subsequent review-only response remains an alert without requesting pause. Landing challenge/wrong-host/timeout failures request pause immediately. Pause immediately if existing external evidence already proves a >10-minute landing 5xx outage. Typical worst-case initial detection is 15 minutes plus scheduler delay and bounded probe time. Record actual delay, first failure, each recheck, recovery and Juan's action. An external faster monitor is required if that initial delay is unacceptable.
 
 After a failure, Juan verifies fresh green probes, both real store/serving-option flows and landing HTTPS on a phone before resuming spend. Never auto-resume on a missing probe or a single successful workflow. Release evidence must link: reviewed baseline; merchant/manual store checks; US runner proof; successful external run; deliberate failure and email receipt; heartbeat test; measured cadence; named pause owner and recovery record. These activation proofs remain OPEN.
+
+## Generate the baseline file (CC, after merchant inspection)
+
+The workflow does not generate or approve its own baseline. Start from the JSON shape above in `tmp/landing-monitor-reviewed-input.json`, filling the reviewed origins, exact host allowlists, public merchant URL, schema, reviewer and review timestamp. Replace the illustrative `data` string with the actual object. On the authorized US runner, capture the five approved GET responses and the two merchant payloads as UTF-8 text files under `tmp/landing-monitor-captures/`. Use only anonymous public responses; inspect them for challenges and personal data before retaining them. Confirm a 200 with zero redirects, both configured branch IDs, and the actual `servingOptionType=a` flow. A redirect requires reviewing the destination first. Do not capture cookies, authorization headers or browser HARs.
+
+Name each shell `<probe-name>.txt` (the names from `destinations`) and each order payload `<probe-name>-data.txt`. These local-only captures must never be committed. Run this PowerShell command from the clone to calculate hashes and write the non-secret candidate file:
+
+```powershell
+@'
+import { readFile, writeFile } from 'node:fs/promises';
+import { destinations, digest, branchDigest } from './scripts/probe-money-path.mjs';
+const config = JSON.parse(await readFile('tmp/landing-monitor-reviewed-input.json', 'utf8'));
+if (!config.reviewedBy || !config.reviewedAt) throw Error('review-required');
+for (const target of destinations(config.landingOrigin, config.staffOrigin)) {
+  const rule = config.probes[target.name];
+  const body = await readFile(`tmp/landing-monitor-captures/${target.name}.txt`, 'utf8');
+  rule.sha256 = digest(body);
+  if (target.branchId) {
+    const payload = await readFile(`tmp/landing-monitor-captures/${target.name}-data.txt`, 'utf8');
+    rule.data.sha256 = digest(payload);
+    rule.data.branchSha256 = branchDigest(JSON.parse(payload), rule.data, target.branchId);
+  }
+}
+await writeFile('docs/landing-monitor-baseline.json', JSON.stringify(config, null, 2) + '\n');
+'@ | node --experimental-strip-types --input-type=module
+node --experimental-strip-types scripts/probe-money-path.mjs docs/landing-monitor-baseline.json
+```
+
+CC reads back the generated JSON, confirms it contains only reviewed non-secret fields, checks the diff and fresh probe report, and separately approves the baseline. Hash generation is not approval. Leave `LANDING_MONITOR_ENABLED` OFF until the external receipt/runner/merchant gates are complete. No baseline was generated by this code change.

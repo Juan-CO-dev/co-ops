@@ -7,6 +7,20 @@ const source = JSON.parse(readFileSync('assets/source-manifest.json', 'utf8'));
 const inventoryPath = '../../scripts/assets/inventory.mjs';
 const tools = await import(/* @vite-ignore */ inventoryPath);
 describe('landing asset provenance', () => {
+  it('ships a small square icon derived from the unchanged brand original', async () => {
+    const manifest = JSON.parse(readFileSync('assets/approved-media.json', 'utf8'));
+    const icon = manifest.media.find((entry: {id:string}) => entry.id === 'landing-icon');
+    const {default:sharp} = await import('sharp');
+    const bytes = readFileSync('public' + icon.publicPath);
+    const metadata = await sharp(bytes).metadata();
+    expect([metadata.width, metadata.height]).toEqual([180, 180]);
+    expect(bytes.length).toBeLessThan(15000);
+    expect(icon.bytes).toBe(bytes.length);
+    expect(icon.sourcePath).toBe('public/brand/co-icon.png');
+    expect(tools.sha256(icon.sourcePath)).toBe(icon.sourceSha256);
+    const derived = await sharp(icon.sourcePath).resize(180, 180, {fit:'contain', background:{r:0,g:0,b:0,alpha:0}}).png({compressionLevel:9,palette:true,colours:64}).toBuffer();
+    expect(bytes.equals(derived)).toBe(true);
+  });
   it('pins eleven identities and ten eligible representatives', () => {
     expect(source.products).toHaveLength(11);
     expect(source.products.filter((p: {eligible:boolean}) => p.eligible)).toHaveLength(10);

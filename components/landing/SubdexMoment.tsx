@@ -1,7 +1,7 @@
 import type { Language } from '@/lib/i18n/types';
 import { serverT } from '@/lib/i18n/server';
 import { subdexMedia } from '@/lib/landing/media';
-import { HeroMotion } from './HeroMotion';
+import { DeferredMotion as HeroMotion } from './DeferredMotion';
 
 export function SubdexMoment({language}:{language:Language}) {
   return <div className="mt-6 max-w-xl">

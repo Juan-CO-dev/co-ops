@@ -3,10 +3,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { shouldLoadMotion, shouldPlayMotion, type MotionState } from "@/lib/landing/media-policy-shared";
 
 /** The server-rendered real photo stays mounted through every failure path. */
-export function HeroMotion({ children, src, pauseLabel, playLabel, testId = "hero-motion" }: { children: ReactNode; src: string; pauseLabel: string; playLabel: string; testId?: string }) {
+export function HeroMotion({ children, src, pauseLabel, playLabel, testId = "hero-motion", initialTriggered = false }: { children: ReactNode; src: string; pauseLabel: string; playLabel: string; testId?: string; initialTriggered?: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
-  const [state, setState] = useState<MotionState>({ lcpReady:false, triggered:false, visible:false, documentVisible:false, reducedMotion:true, saveData:true, failed:false, paused:false });
+  const [state, setState] = useState<MotionState>({ lcpReady:false, triggered:initialTriggered, visible:false, documentVisible:false, reducedMotion:true, saveData:true, failed:false, paused:false });
   const [attached, setAttached] = useState(false);
   const [playing, setPlaying] = useState(false);
   useEffect(() => {

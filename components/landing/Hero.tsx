@@ -3,7 +3,7 @@ import type { Language } from "@/lib/i18n/types";
 import type { LandingConfig } from "@/lib/landing/config";
 import { heroMedia } from "@/lib/landing/media";
 import { SectionView } from "./SectionView";
-import { HeroMotion } from "./HeroMotion";
+import { DeferredMotion as HeroMotion } from "./DeferredMotion";
 import { OrderLink } from "./OrderLink";
 import { OfferCode } from "./OfferCode";
 

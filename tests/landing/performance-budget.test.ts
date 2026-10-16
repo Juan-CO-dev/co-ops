@@ -1,24 +1,28 @@
-import { it, expect } from 'vitest';
+import {it,expect} from 'vitest';
 import {checkTransferBudget,TRANSFER_LIMITS} from '../../scripts/check-transfer-budget.mjs';
-import { checkLandingReport, checkColdRuns, type LighthouseReport } from '@/scripts/landing/performance-report';
-const fixture = ():LighthouseReport => ({categories:{performance:{score:0.9},accessibility:{score:1}},audits:{'largest-contentful-paint':{numericValue:2000},'total-byte-weight':{numericValue:500000},'cumulative-layout-shift':{numericValue:0.05},'total-blocking-time':{numericValue:150}}});
-it('accepts measured scores and refuses deliberately over-budget or missing reports',()=> {
-  expect(checkLandingReport(fixture())).toEqual([]);
-  const tooLarge=fixture(); tooLarge.audits['total-byte-weight']={numericValue:500001};
-  expect(checkLandingReport(tooLarge)).toEqual(['total-byte-weight']);
-  const inaccessible=fixture(); inaccessible.categories.accessibility={score:0.94};
-  expect(checkLandingReport(inaccessible)).toEqual(['categories:accessibility']);
-  expect(checkLandingReport({categories:{},audits:{}})).toHaveLength(6);
+import {checkFirstPartyRuns,checkConsentRuns,summarizeRun} from '../../scripts/landing/performance-report.mjs';
+const fixture=(bytes=499999)=>({finalUrl:'http://localhost:44170/',categories:{performance:{score:0.9}},audits:{
+  'largest-contentful-paint':{numericValue:2000},'total-blocking-time':{numericValue:150},
+  'network-requests':{details:{items:[{url:'http://localhost:44170/a.js',transferSize:bytes},{url:'https://connect.facebook.net/pixel.js',transferSize:116000}]}}
+}});
+it('gates real first-party network bytes separately from the accepted Pixel',()=>{
+  expect(summarizeRun(fixture())).toMatchObject({firstParty:499999,thirdParty:116000,total:615999});
+  expect(checkFirstPartyRuns([fixture(),fixture(),fixture()])).toEqual([]);
+  expect(checkFirstPartyRuns([fixture(500001),fixture(),fixture()])).toEqual(['first-party-bytes']);
+  expect(checkFirstPartyRuns([fixture(),fixture()])).toEqual(['three-cold-runs-required']);
+  expect(checkFirstPartyRuns([fixture(),fixture(),{}])).toEqual(['incomplete-run']);
 });
 it('refuses missing or oversized compressed transfer measurements for every budget',()=>{
   expect(checkTransferBudget({...TRANSFER_LIMITS})).toEqual([]);
   for(const key of (Object.keys(TRANSFER_LIMITS) as (keyof typeof TRANSFER_LIMITS)[]))expect(checkTransferBudget({...TRANSFER_LIMITS,[key]:TRANSFER_LIMITS[key]+1})).toEqual([key]);
   expect(checkTransferBudget({})).toHaveLength(5);
 });
-it('requires three complete cold runs and gates the median without hiding individual reports',()=>{
-  expect(checkColdRuns([fixture(),fixture()])).toContain('three-cold-runs-required');
-  const slow=fixture();slow.audits['largest-contentful-paint']={numericValue:2500};
-  expect(checkColdRuns([slow,slow,fixture()])).toContain('largest-contentful-paint');
-  expect(checkColdRuns([slow,fixture(),fixture()])).toEqual([]);
-  expect(checkColdRuns([fixture(),fixture(),{categories:{},audits:{}}])).toContain('incomplete-run');
+it('refuses an accepted benchmark with an unfinished or missing real Pixel',()=>{
+  expect(checkConsentRuns([fixture(),fixture(),fixture()],'accepted')).toContain('pixel-transfer-unmeasured');
+  expect(checkConsentRuns([fixture(),fixture(),fixture()],'unset')).toContain('unexpected-third-party-request');
+  const measured=fixture();
+  Object.assign(measured.audits['network-requests'].details.items[1]!,{url:'https://connect.facebook.net/en_US/fbevents.js',statusCode:200,finished:true});
+  expect(checkConsentRuns([measured,measured,measured],'accepted')).toEqual([]);
+  Object.assign(measured.audits['network-requests'].details.items[1]!,{finished:false});
+  expect(checkConsentRuns([measured,measured,measured],'accepted')).toEqual(['pixel-transfer-unmeasured']);
 });

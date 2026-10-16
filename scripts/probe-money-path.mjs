@@ -68,10 +68,8 @@ export async function probe(target, baseline, fetcher = fetch) {
       } catch (error) { if (attempt) throw error; }
     }
     Object.assign(result, { status: page.status, finalHost: page.finalHost, sha256: page.sha256, redirects: page.redirects });
-    if (page.redirects) return { ...result, reason: 'redirect-review' };
-    if (page.status !== 200) return { ...result, reason: 'http-status' };
     if (/captcha|access denied|verify you are human|cf-chl/i.test(page.body)) return { ...result, reason: 'challenge' };
-    if (page.sha256 !== baseline.sha256) return { ...result, reason: 'response-drift' };
+    if (page.status !== 200) return { ...result, reason: 'http-status' };
     if (target.branchId) {
       const data = baseline.data;
       if (!data?.url || !hashPattern.test(data.sha256) || !hashPattern.test(data.branchSha256) || !Array.isArray(data.hosts)) return { ...result, reason: 'merchant-baseline-required' };
@@ -80,24 +78,35 @@ export async function probe(target, baseline, fetcher = fetch) {
       result.dataFinalHost = payload.finalHost;
       result.dataSha256 = payload.sha256;
       result.dataRedirects = payload.redirects;
-      if (payload.redirects) return { ...result, reason: 'merchant-redirect-review' };
+      if (/captcha|access denied|verify you are human|cf-chl/i.test(payload.body)) return { ...result, reason: 'challenge' };
       if (payload.status !== 200) return { ...result, reason: 'merchant-http-status' };
       const normalized = branchDigest(JSON.parse(payload.body), data, target.branchId);
       result.branchSha256 = normalized;
-      if (normalized !== data.branchSha256 || payload.sha256 !== data.sha256) return { ...result, reason: 'branch-drift' };
+      if (normalized !== data.branchSha256) return { ...result, reason: 'branch-drift' };
+      if (payload.redirects) return { ...result, reason: 'merchant-redirect-review' };
+      if (payload.sha256 !== data.sha256) return { ...result, reason: 'merchant-response-drift' };
     }
+    if (page.redirects) return { ...result, reason: 'redirect-review' };
+    if (page.sha256 !== baseline.sha256) return { ...result, reason: 'response-drift' };
     return { ...result, ok: true, reason: 'ok' };
-  } catch {
+  } catch (error) {
     // Never serialize an exception: fetch errors can embed URL/query/payload.
-    return { ...result, reason: 'unavailable-or-invalid-payload' };
+    const reason = ['host-drift', 'missing-branch'].includes(error?.message) ? error.message
+      : ['TimeoutError', 'AbortError'].includes(error?.name) ? 'timeout' : 'unavailable-or-invalid-payload';
+    return { ...result, reason };
   }
+}
+
+export function hardFailure(result) {
+  return !result.ok && (result.status >= 500 || result.dataStatus >= 500
+    || ['challenge', 'branch-drift', 'missing-branch', 'timeout', 'host-drift'].includes(result.reason));
 }
 
 export async function monitor(targets, baselines, options = {}) {
   const run = options.probe ?? probe, now = options.now ?? Date.now, wait = options.sleep ?? sleep;
   const started = now();
   const results = await Promise.all(targets.map(t => run(t, baselines[t.name])));
-  const report = { startedAt: new Date(started).toISOString(), results, incident: [], ok: results.every(r => r.ok), pauseRequired: results.some(r => r.name.startsWith('order-') && !r.ok), recoveredAt: null };
+  const report = { startedAt: new Date(started).toISOString(), results, incident: [], ok: results.every(r => r.ok), pauseRequired: results.some(r => r.name !== 'landing' && hardFailure(r)), reviewRequired: results.some(r => !r.ok && !hardFailure(r)), recoveredAt: null };
   const landing = results.find(r => r.name === 'landing');
   if (landing?.status >= 500) {
     report.firstFailureAt = new Date(now()).toISOString();
@@ -109,9 +118,11 @@ export async function monitor(targets, baselines, options = {}) {
       const next = await run(targets.find(t => t.name === 'landing'), baselines.landing);
       report.incident.push({ at: new Date(now()).toISOString(), ...next });
       if (next.ok) { report.recoveredAt = new Date(now()).toISOString(); break; }
-      if (now() - firstFailure > 600000) report.pauseRequired = true;
+      if (!hardFailure(next)) report.reviewRequired = true;
+      if (now() - firstFailure > 600000 && hardFailure(next)) report.pauseRequired = true;
     }
   }
+  if (landing && !(landing.status >= 500) && hardFailure(landing)) report.pauseRequired = true;
   report.finishedAt = new Date(now()).toISOString();
   return report;
 }

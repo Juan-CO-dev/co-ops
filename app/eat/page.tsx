@@ -17,8 +17,7 @@ import { OrderLink } from "@/components/landing/OrderLink";
 import { OfferCode } from "@/components/landing/OfferCode";
 import { captureAttribution } from "@/lib/landing/attribution-shared";
 import { SectionView } from "@/components/landing/SectionView";
-import { Reveal } from "@/components/portal/Reveal";
-import { FaqItem } from "@/components/portal/FaqItem";
+import { FaqItem } from "@/components/landing/FaqItem";
 
 export const dynamic = "force-dynamic";
 export default async function LandingPage({searchParams}:{searchParams:Promise<Record<string,string|string[]|undefined>>}) {
@@ -41,7 +40,7 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
           {key === "lineup" && <Lineup language={language}/>}
           {(key === "field-guide" || key === "lineup") && <div className="mt-6 flex flex-wrap items-center gap-3">{config.stores.map((store)=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-co-cta px-5 py-3 font-bold text-co-text">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
           {key === "field-guide" && config.stores.map((store) => <OfferCode key={store.key} ad={captureAttribution(queryString,config.attribution).ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}
-          {key === "field-guide" && <div className="mt-6"><Reveal><FaqItem q={serverT(language,"landing.faq.question")} a={serverT(language,"landing.faq.answer")}/></Reveal></div>}
+          {key === "field-guide" && <div className="mt-6"><FaqItem q={serverT(language,"landing.faq.question")} a={serverT(language,"landing.faq.answer")}/></div>}
           {key === "subdex" && <SubdexMoment language={language}/>}
           {key === "shops" && <Shops stores={stores} language={language} ad={captureAttribution(queryString,config.attribution).ad}/>}
           {key === "catering" && <Catering config={config} language={language}/>}

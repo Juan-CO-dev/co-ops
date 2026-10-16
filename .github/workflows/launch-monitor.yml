@@ -32,5 +32,5 @@ jobs:
       - name: Notify through workflow failure
         if: failure()
         run: |
-          echo '::error::Money path failed. Juan must inspect the report and pause spend for a broken order link or prolonged landing outage. Missing evidence is not recovery.'
+          echo '::error::Money path alert. Juan must inspect pauseRequired and reviewRequired in the report: only pauseRequired requests a spend pause; redirect/response drift requests review. Missing evidence is not recovery.'
           exit 1

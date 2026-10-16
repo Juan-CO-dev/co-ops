@@ -36,6 +36,8 @@ test("one MP4 starts after trigger, pauses by keyboard and offscreen, preserves 
  const frame=page.locator('[data-testid="hero-motion"]');const initial=await frame.boundingBox();
  await trigger(page);const video=page.locator("#hero video");
  await expect(video).toHaveCSS("opacity","1");
+ // Chromium (and native H.264 Safari) proves the actual request. The non-Darwin
+ // WebKit adapter above only exercises controls and does not initiate a decoder fetch.
  if (!decodeUnavailable) expect([...urls]).toEqual([new URL(heroMedia.spin, page.url()).href]);
  expect((await frame.boundingBox())?.height).toBe(initial?.height);
  const pause=page.getByRole("button",{name:"Pause spin"});await pause.focus();await page.keyboard.press("Enter");
