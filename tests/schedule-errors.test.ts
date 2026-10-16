@@ -21,6 +21,8 @@ describe("ScheduleErrorCode", () => {
       "unresolved_gaps",
       // CC chunk B ruling 3: the daily maximum shift is a HARD rule
       "shift_over_maximum",
+      // chunk D (0274): the SQL writers' payload refusal and the R6 roster rule
+      "invalid_payload", "roster_include_refused",
     ].sort());
   });
 

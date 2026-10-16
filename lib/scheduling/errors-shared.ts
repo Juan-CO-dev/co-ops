@@ -43,6 +43,9 @@ export const SCHEDULE_ERROR_CODES = [
   "unresolved_gaps",
   // CC chunk B ruling 3: a shift longer than the shop's daily maximum (limits.maxShiftH) — a HARD rule
   "shift_over_maximum",
+  // chunk D (0274): a malformed writer payload, and roster_include for a role that is never on the floor (R6)
+  "invalid_payload",
+  "roster_include_refused",
 ] as const;
 
 export type ScheduleErrorCode = (typeof SCHEDULE_ERROR_CODES)[number];
