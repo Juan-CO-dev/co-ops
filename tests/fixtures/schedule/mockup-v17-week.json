@@ -1,0 +1,2151 @@
+{
+ "_header": {
+  "source": "schedule-board.html",
+  "sha256": "6822676a5eb97d968f162b246344c768922249c735fce93c600202063b2c487a",
+  "exportedBy": "scripts/schedule-mockup-export.cjs",
+  "note": "Read-only vm export of mockup v17 (Scheduling Phase 2 Task 3). Regenerate only when Juan approves a new mockup, with a written reason."
+ },
+ "today": 2,
+ "days": [
+  "Mon",
+  "Tue",
+  "Wed",
+  "Thu",
+  "Fri",
+  "Sat",
+  "Sun"
+ ],
+ "shopDay": {
+  "prep": 7,
+  "prepDish": 8.5,
+  "service": 10.5,
+  "serviceClose": 20,
+  "outEarliest": 20.5,
+  "outLatest": 21
+ },
+ "scheduledOutQ": 83,
+ "checklistMinutes": 45,
+ "revenue": [
+  3700,
+  3900,
+  4250,
+  4300,
+  5000,
+  4700,
+  3650
+ ],
+ "defaultStructure": {
+  "slowBelow": 4000,
+  "busyAbove": 4800,
+  "overrides": [
+   "Auto",
+   "Auto",
+   "Auto",
+   "Auto",
+   "Auto",
+   "Auto",
+   "Auto"
+  ],
+  "weekend": [
+   false,
+   false,
+   false,
+   false,
+   false,
+   true,
+   true
+  ],
+  "catering": {
+   "day": 1,
+   "subs": 30,
+   "start": 8.5,
+   "end": 13,
+   "service": 12,
+   "extraPrepDish": 1
+  },
+  "crews": {
+   "Slow": {
+    "prep": 0,
+    "prepUntil": 15,
+    "prepDish": 1,
+    "setup": 2,
+    "setupTime": 9.5,
+    "service": 2,
+    "rush": 2,
+    "rushTime": 11.5,
+    "closeRegister": 1,
+    "closeWalk": 1,
+    "closeDish": 1
+   },
+   "Normal": {
+    "prep": 1,
+    "prepUntil": 15,
+    "prepDish": 1,
+    "setup": 2,
+    "setupTime": 9.5,
+    "service": 3,
+    "rush": 3,
+    "rushTime": 11.5,
+    "closeRegister": 1,
+    "closeWalk": 2,
+    "closeDish": 1
+   },
+   "Busy": {
+    "prep": 1,
+    "prepUntil": 16,
+    "prepDish": 1,
+    "setup": 3,
+    "setupTime": 9.5,
+    "service": 3,
+    "rush": 4,
+    "rushTime": 11.5,
+    "closeRegister": 1,
+    "closeWalk": 2,
+    "closeDish": 1
+   },
+   "Weekend": {
+    "prep": 1,
+    "prepUntil": 17,
+    "prepDish": 1,
+    "setup": 2,
+    "setupTime": 9.5,
+    "service": 3,
+    "rush": 3,
+    "rushTime": 11.5,
+    "closeRegister": 1,
+    "closeWalk": 2,
+    "closeDish": 1
+   }
+  },
+  "stations": {
+   "boi": {
+    "open": 9.5,
+    "trim": 14,
+    "close": 14,
+    "before": 1,
+    "after": 1
+   },
+   "third": {
+    "open": 9.5,
+    "trim": 15.5,
+    "close": 15.5,
+    "before": 1,
+    "after": 1
+   },
+   "walk": {
+    "open": 10.5,
+    "trim": 17,
+    "close": 21,
+    "before": 1,
+    "after": 1
+   },
+   "hybrid": {
+    "open": 10.5,
+    "trim": 17,
+    "close": 21,
+    "before": 1,
+    "after": 1
+   },
+   "expo": {
+    "open": 11.5,
+    "trim": 16,
+    "close": 20,
+    "before": 1,
+    "after": 1
+   },
+   "register": {
+    "open": 10.5,
+    "trim": 16,
+    "close": 21,
+    "before": 1,
+    "after": 1
+   },
+   "prep": {
+    "open": 7,
+    "trim": 15,
+    "close": 17,
+    "before": 1,
+    "after": 1
+   },
+   "prepDish": {
+    "open": 7,
+    "trim": 17,
+    "close": 21,
+    "before": 1,
+    "after": 1
+   }
+  },
+  "positionPriority": {
+   "prep": "prepDish",
+   "expo": "register",
+   "walk": "hybrid"
+  },
+  "allowedRoles": {
+   "boi": [
+    "Employee",
+    "Trainee",
+    "Trainer",
+    "Key Holder",
+    "Shift Lead",
+    "AGM",
+    "GM",
+    "Manager of Operations",
+    "Owner"
+   ],
+   "third": [
+    "Employee",
+    "Trainee",
+    "Trainer",
+    "Key Holder",
+    "Shift Lead",
+    "AGM",
+    "GM",
+    "Manager of Operations",
+    "Owner"
+   ],
+   "walk": [
+    "Employee",
+    "Trainee",
+    "Trainer",
+    "Key Holder",
+    "Shift Lead",
+    "AGM",
+    "GM",
+    "Manager of Operations",
+    "Owner"
+   ],
+   "hybrid": [
+    "Employee",
+    "Trainee",
+    "Trainer",
+    "Key Holder",
+    "Shift Lead",
+    "AGM",
+    "GM",
+    "Manager of Operations",
+    "Owner"
+   ],
+   "expo": [
+    "Employee",
+    "Trainee",
+    "Trainer",
+    "Key Holder",
+    "Shift Lead",
+    "AGM",
+    "GM",
+    "Manager of Operations",
+    "Owner"
+   ],
+   "register": [
+    "Employee",
+    "Trainee",
+    "Trainer",
+    "Key Holder",
+    "Shift Lead",
+    "AGM",
+    "GM",
+    "Manager of Operations",
+    "Owner"
+   ],
+   "prep": [
+    "Employee",
+    "Trainee",
+    "Trainer",
+    "Key Holder",
+    "Shift Lead",
+    "AGM",
+    "GM",
+    "Manager of Operations",
+    "Owner"
+   ],
+   "prepDish": [
+    "Employee",
+    "Trainee",
+    "Trainer"
+   ]
+  },
+  "leadership": {
+   "modRequired": true,
+   "closingRoles": [
+    "Key Holder",
+    "Shift Lead",
+    "AGM",
+    "GM",
+    "Manager of Operations",
+    "Owner"
+   ],
+   "roleDefaults": {
+    "Key Holder": "Closes only",
+    "Shift Lead": "Opens only",
+    "AGM": "Opens only",
+    "GM": "Opens only",
+    "Manager of Operations": "Mix",
+    "Owner": "Mix"
+   }
+  },
+  "limits": {
+   "managerFloor": 32,
+   "gmMinimum": 8,
+   "agmMinimum": 8,
+   "overtime": 40,
+   "minimumShift": 4,
+   "flexMinimum": 3,
+   "flexUses": 1,
+   "flexLength": 3,
+   "checklistMinutes": 45
+  }
+ },
+ "priorityPairs": {
+  "prep": [
+   "prepDish",
+   "prep"
+  ],
+  "expo": [
+   "register",
+   "expo"
+  ],
+  "walk": [
+   "hybrid",
+   "walk"
+  ]
+ },
+ "people": [
+  {
+   "id": "maya",
+   "role": "Trainer",
+   "workType": "FOH",
+   "alsoAllowed": [],
+   "off": [
+    5
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 6
+  },
+  {
+   "id": "leo",
+   "role": "Employee",
+   "workType": "FOH",
+   "alsoAllowed": [],
+   "off": [
+    6
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 0
+  },
+  {
+   "id": "sofia",
+   "role": "Trainer",
+   "workType": "BOH",
+   "alsoAllowed": [],
+   "off": [
+    6
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 0
+  },
+  {
+   "id": "ben",
+   "role": "Employee",
+   "workType": "FOH",
+   "alsoAllowed": [],
+   "off": [
+    3
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 4
+  },
+  {
+   "id": "dani",
+   "role": "Shift Lead",
+   "workType": "Management",
+   "alsoAllowed": [],
+   "off": [
+    0
+   ],
+   "leaderShift": "Opens only",
+   "coverPreferences": [
+    "register",
+    "expo"
+   ],
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 1
+  },
+  {
+   "id": "iris",
+   "role": "Key Holder",
+   "workType": "FOH",
+   "alsoAllowed": [],
+   "off": [
+    4
+   ],
+   "leaderShift": "Closes only",
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 5
+  },
+  {
+   "id": "omar",
+   "role": "Employee",
+   "workType": "BOH",
+   "alsoAllowed": [],
+   "off": [
+    1
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 2
+  },
+  {
+   "id": "kai",
+   "role": "Employee",
+   "workType": "BOH",
+   "alsoAllowed": [],
+   "off": [
+    2
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 3
+  },
+  {
+   "id": "tess",
+   "role": "Employee",
+   "workType": "FOH",
+   "alsoAllowed": [
+    "BOH"
+   ],
+   "off": [
+    1
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 2
+  },
+  {
+   "id": "nora",
+   "role": "Key Holder",
+   "workType": "FOH",
+   "alsoAllowed": [],
+   "off": [
+    2
+   ],
+   "leaderShift": "Closes only",
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 3
+  },
+  {
+   "id": "eli",
+   "role": "Trainee",
+   "workType": "FOH",
+   "alsoAllowed": [],
+   "off": [
+    4
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 5
+  },
+  {
+   "id": "riley",
+   "role": "Trainer",
+   "workType": "FOH",
+   "alsoAllowed": [
+    "BOH"
+   ],
+   "off": [
+    0
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 1
+  },
+  {
+   "id": "sam",
+   "role": "Employee",
+   "workType": "FOH",
+   "alsoAllowed": [],
+   "off": [
+    6
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 0
+  },
+  {
+   "id": "wren",
+   "role": "Employee",
+   "workType": "FOH",
+   "alsoAllowed": [],
+   "off": [
+    0,
+    1
+   ],
+   "leaderShift": null,
+   "coverPreferences": null,
+   "salaried": false,
+   "visitor": false,
+   "hourly": true,
+   "flexDay": 1
+  },
+  {
+   "id": "alex",
+   "role": "GM",
+   "workType": "Management",
+   "alsoAllowed": [],
+   "off": [
+    6
+   ],
+   "leaderShift": "Opens only",
+   "coverPreferences": [
+    "prep",
+    "expo",
+    "register"
+   ],
+   "salaried": true,
+   "visitor": false,
+   "hourly": false,
+   "flexDay": 0
+  },
+  {
+   "id": "jules",
+   "role": "AGM",
+   "workType": "Management",
+   "alsoAllowed": [],
+   "off": [
+    0
+   ],
+   "leaderShift": "Opens only",
+   "coverPreferences": [
+    "expo",
+    "register"
+   ],
+   "salaried": true,
+   "visitor": false,
+   "hourly": false,
+   "flexDay": 1
+  },
+  {
+   "id": "cristian",
+   "role": "Manager of Operations",
+   "workType": "Management",
+   "alsoAllowed": [],
+   "off": [],
+   "leaderShift": "Mix",
+   "coverPreferences": [
+    "expo"
+   ],
+   "salaried": false,
+   "visitor": true,
+   "hourly": false,
+   "flexDay": 1
+  },
+  {
+   "id": "pete",
+   "role": "Owner",
+   "workType": "Management",
+   "alsoAllowed": [],
+   "off": [],
+   "leaderShift": "Mix",
+   "coverPreferences": [
+    "prep"
+   ],
+   "salaried": false,
+   "visitor": true,
+   "hourly": false,
+   "flexDay": 1
+  }
+ ],
+ "shifts": [
+  {
+   "id": 0,
+   "day": 0,
+   "person": "alex",
+   "start": 28,
+   "end": 60,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "day": 0,
+   "person": "iris",
+   "start": 64,
+   "end": 83,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 64,
+     "end": 83
+    }
+   ],
+   "rule": "Closing crew rule",
+   "id": 1,
+   "flex": false,
+   "closingManager": true
+  },
+  {
+   "day": 0,
+   "person": "kai",
+   "start": 28,
+   "end": 68,
+   "position": "prepDish",
+   "segments": [
+    {
+     "position": "prepDish",
+     "start": 28,
+     "end": 68
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 2,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 0,
+   "person": "ben",
+   "start": 42,
+   "end": 64,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 42,
+     "end": 64
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 3,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 0,
+   "person": "tess",
+   "start": 42,
+   "end": 68,
+   "position": "hybrid",
+   "segments": [
+    {
+     "position": "hybrid",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 4,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 0,
+   "person": "omar",
+   "start": 28,
+   "end": 60,
+   "position": "prep",
+   "segments": [
+    {
+     "position": "prep",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 5,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 0,
+   "person": "maya",
+   "start": 38,
+   "end": 56,
+   "position": "boi",
+   "segments": [
+    {
+     "position": "boi",
+     "start": 38,
+     "end": 56
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 6,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 0,
+   "person": "eli",
+   "start": 38,
+   "end": 62,
+   "position": "third",
+   "segments": [
+    {
+     "position": "third",
+     "start": 38,
+     "end": 62
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 7,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 0,
+   "person": "nora",
+   "start": 46,
+   "end": 64,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 46,
+     "end": 64
+    }
+   ],
+   "rule": "Rush wave rule",
+   "id": 8,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "id": 9,
+   "day": 1,
+   "person": "alex",
+   "start": 28,
+   "end": 60,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 28,
+     "end": 42
+    },
+    {
+     "position": "walk",
+     "start": 42,
+     "end": 46,
+     "reason": "Covers Walk-ins 10:30a–11:30a — coverage short one; back to Manager on duty after (last-resort: outside preferred cover positions)"
+    },
+    {
+     "position": "mod",
+     "start": 46,
+     "end": 60
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "id": 10,
+   "day": 1,
+   "person": "jules",
+   "start": 34,
+   "end": 66,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 34,
+     "end": 66
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "day": 1,
+   "person": "iris",
+   "start": 64,
+   "end": 83,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 64,
+     "end": 83
+    }
+   ],
+   "rule": "Closing crew rule",
+   "id": 11,
+   "flex": false,
+   "closingManager": true
+  },
+  {
+   "day": 1,
+   "person": "kai",
+   "start": 28,
+   "end": 68,
+   "position": "prepDish",
+   "segments": [
+    {
+     "position": "prepDish",
+     "start": 28,
+     "end": 68
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 12,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 1,
+   "person": "ben",
+   "start": 42,
+   "end": 64,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 42,
+     "end": 64
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 13,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 1,
+   "person": "sofia",
+   "start": 28,
+   "end": 60,
+   "position": "prep",
+   "segments": [
+    {
+     "position": "prep",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 14,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 1,
+   "person": "maya",
+   "start": 38,
+   "end": 56,
+   "position": "boi",
+   "segments": [
+    {
+     "position": "boi",
+     "start": 38,
+     "end": 56
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 15,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 1,
+   "person": "leo",
+   "start": 38,
+   "end": 62,
+   "position": "third",
+   "segments": [
+    {
+     "position": "third",
+     "start": 38,
+     "end": 62
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 16,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 1,
+   "person": "sam",
+   "start": 42,
+   "end": 68,
+   "position": "hybrid",
+   "segments": [
+    {
+     "position": "hybrid",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 17,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 1,
+   "person": "nora",
+   "start": 46,
+   "end": 64,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 46,
+     "end": 64
+    }
+   ],
+   "rule": "Rush wave rule",
+   "id": 18,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 1,
+   "person": "eli",
+   "start": 46,
+   "end": 68,
+   "position": "walk",
+   "segments": [
+    {
+     "position": "walk",
+     "start": 46,
+     "end": 68
+    }
+   ],
+   "rule": "Rush wave rule",
+   "id": 19,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "id": 20,
+   "day": 2,
+   "person": "alex",
+   "start": 28,
+   "end": 60,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "id": 21,
+   "day": 2,
+   "person": "jules",
+   "start": 34,
+   "end": 66,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 34,
+     "end": 66
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "day": 2,
+   "person": "iris",
+   "start": 64,
+   "end": 83,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 64,
+     "end": 83
+    }
+   ],
+   "rule": "Closing crew rule",
+   "id": 22,
+   "flex": false,
+   "closingManager": true
+  },
+  {
+   "day": 2,
+   "person": "sofia",
+   "start": 28,
+   "end": 68,
+   "position": "prepDish",
+   "segments": [
+    {
+     "position": "prepDish",
+     "start": 28,
+     "end": 68
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 23,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 2,
+   "person": "ben",
+   "start": 42,
+   "end": 64,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 42,
+     "end": 64
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 24,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 2,
+   "person": "dani",
+   "start": 28,
+   "end": 60,
+   "position": "prep",
+   "segments": [
+    {
+     "position": "prep",
+     "start": 28,
+     "end": 60,
+     "reason": "Manager last-resort: outside preferred cover positions; BOH crew rule"
+    }
+   ],
+   "rule": "Manager last-resort: outside preferred cover positions; BOH crew rule",
+   "id": 25,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 2,
+   "person": "maya",
+   "start": 38,
+   "end": 56,
+   "position": "boi",
+   "segments": [
+    {
+     "position": "boi",
+     "start": 38,
+     "end": 56
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 26,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 2,
+   "person": "leo",
+   "start": 38,
+   "end": 62,
+   "position": "third",
+   "segments": [
+    {
+     "position": "third",
+     "start": 38,
+     "end": 62
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 27,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 2,
+   "person": "wren",
+   "start": 42,
+   "end": 68,
+   "position": "hybrid",
+   "segments": [
+    {
+     "position": "hybrid",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 28,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 2,
+   "person": "sam",
+   "start": 42,
+   "end": 68,
+   "position": "walk",
+   "segments": [
+    {
+     "position": "walk",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 29,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 2,
+   "person": "riley",
+   "start": 46,
+   "end": 64,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 46,
+     "end": 64
+    }
+   ],
+   "rule": "Rush wave rule",
+   "id": 30,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 2,
+   "person": "eli",
+   "start": 64,
+   "end": 80,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 64,
+     "end": 80
+    }
+   ],
+   "rule": "Station hours & head-count rule",
+   "id": 31,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "id": 32,
+   "day": 3,
+   "person": "alex",
+   "start": 28,
+   "end": 60,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "id": 33,
+   "day": 3,
+   "person": "jules",
+   "start": 34,
+   "end": 66,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 34,
+     "end": 66
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "day": 3,
+   "person": "iris",
+   "start": 64,
+   "end": 83,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 64,
+     "end": 83
+    }
+   ],
+   "rule": "Closing crew rule",
+   "id": 34,
+   "flex": false,
+   "closingManager": true
+  },
+  {
+   "day": 3,
+   "person": "sofia",
+   "start": 28,
+   "end": 68,
+   "position": "prepDish",
+   "segments": [
+    {
+     "position": "prepDish",
+     "start": 28,
+     "end": 68
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 35,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 3,
+   "person": "tess",
+   "start": 42,
+   "end": 64,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 42,
+     "end": 64
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 36,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 3,
+   "person": "omar",
+   "start": 28,
+   "end": 60,
+   "position": "prep",
+   "segments": [
+    {
+     "position": "prep",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 37,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 3,
+   "person": "maya",
+   "start": 38,
+   "end": 56,
+   "position": "boi",
+   "segments": [
+    {
+     "position": "boi",
+     "start": 38,
+     "end": 56
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 38,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 3,
+   "person": "leo",
+   "start": 38,
+   "end": 62,
+   "position": "third",
+   "segments": [
+    {
+     "position": "third",
+     "start": 38,
+     "end": 62
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 39,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 3,
+   "person": "wren",
+   "start": 42,
+   "end": 68,
+   "position": "hybrid",
+   "segments": [
+    {
+     "position": "hybrid",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 40,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 3,
+   "person": "sam",
+   "start": 42,
+   "end": 68,
+   "position": "walk",
+   "segments": [
+    {
+     "position": "walk",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 41,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 3,
+   "person": "dani",
+   "start": 46,
+   "end": 64,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 46,
+     "end": 64
+    }
+   ],
+   "rule": "Rush wave rule",
+   "id": 42,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 3,
+   "person": "riley",
+   "start": 64,
+   "end": 80,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 64,
+     "end": 80
+    }
+   ],
+   "rule": "Station hours & head-count rule",
+   "id": 43,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "id": 44,
+   "day": 4,
+   "person": "alex",
+   "start": 28,
+   "end": 60,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "id": 45,
+   "day": 4,
+   "person": "jules",
+   "start": 34,
+   "end": 66,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 34,
+     "end": 60
+    },
+    {
+     "position": "prep",
+     "start": 60,
+     "end": 64,
+     "reason": "Covers Prep 3p–4p — coverage short one; back to Manager on duty after (last-resort: outside preferred cover positions)"
+    },
+    {
+     "position": "mod",
+     "start": 64,
+     "end": 66
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "day": 4,
+   "person": "nora",
+   "start": 64,
+   "end": 83,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 64,
+     "end": 83
+    }
+   ],
+   "rule": "Closing crew rule",
+   "id": 46,
+   "flex": false,
+   "closingManager": true
+  },
+  {
+   "day": 4,
+   "person": "kai",
+   "start": 28,
+   "end": 68,
+   "position": "prepDish",
+   "segments": [
+    {
+     "position": "prepDish",
+     "start": 28,
+     "end": 68
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 47,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 4,
+   "person": "tess",
+   "start": 42,
+   "end": 64,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 42,
+     "end": 64
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 48,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 4,
+   "person": "wren",
+   "start": 42,
+   "end": 68,
+   "position": "hybrid",
+   "segments": [
+    {
+     "position": "hybrid",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 49,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 4,
+   "person": "sofia",
+   "start": 28,
+   "end": 60,
+   "position": "prep",
+   "segments": [
+    {
+     "position": "prep",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 50,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 4,
+   "person": "maya",
+   "start": 38,
+   "end": 56,
+   "position": "boi",
+   "segments": [
+    {
+     "position": "boi",
+     "start": 38,
+     "end": 56
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 51,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 4,
+   "person": "leo",
+   "start": 38,
+   "end": 62,
+   "position": "third",
+   "segments": [
+    {
+     "position": "third",
+     "start": 38,
+     "end": 62
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 52,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 4,
+   "person": "sam",
+   "start": 42,
+   "end": 68,
+   "position": "walk",
+   "segments": [
+    {
+     "position": "walk",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 53,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 4,
+   "person": "dani",
+   "start": 46,
+   "end": 64,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 46,
+     "end": 64
+    }
+   ],
+   "rule": "Rush wave rule",
+   "id": 54,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 4,
+   "person": "riley",
+   "start": 64,
+   "end": 80,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 64,
+     "end": 80
+    }
+   ],
+   "rule": "Station hours & head-count rule",
+   "id": 55,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "id": 56,
+   "day": 5,
+   "person": "alex",
+   "start": 28,
+   "end": 60,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "id": 57,
+   "day": 5,
+   "person": "jules",
+   "start": 34,
+   "end": 66,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 34,
+     "end": 66
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "day": 5,
+   "person": "nora",
+   "start": 64,
+   "end": 83,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 64,
+     "end": 83
+    }
+   ],
+   "rule": "Closing crew rule",
+   "id": 58,
+   "flex": false,
+   "closingManager": true
+  },
+  {
+   "day": 5,
+   "person": "kai",
+   "start": 28,
+   "end": 68,
+   "position": "prepDish",
+   "segments": [
+    {
+     "position": "prepDish",
+     "start": 28,
+     "end": 68
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 59,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 5,
+   "person": "ben",
+   "start": 42,
+   "end": 64,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 42,
+     "end": 64
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 60,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 5,
+   "person": "tess",
+   "start": 42,
+   "end": 68,
+   "position": "hybrid",
+   "segments": [
+    {
+     "position": "hybrid",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 61,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 5,
+   "person": "omar",
+   "start": 28,
+   "end": 60,
+   "position": "prep",
+   "segments": [
+    {
+     "position": "prep",
+     "start": 28,
+     "end": 60
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 62,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 5,
+   "person": "riley",
+   "start": 38,
+   "end": 56,
+   "position": "boi",
+   "segments": [
+    {
+     "position": "boi",
+     "start": 38,
+     "end": 56
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 63,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 5,
+   "person": "leo",
+   "start": 38,
+   "end": 62,
+   "position": "third",
+   "segments": [
+    {
+     "position": "third",
+     "start": 38,
+     "end": 62
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 64,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 5,
+   "person": "wren",
+   "start": 42,
+   "end": 68,
+   "position": "walk",
+   "segments": [
+    {
+     "position": "walk",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 65,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 5,
+   "person": "sam",
+   "start": 46,
+   "end": 64,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 46,
+     "end": 64
+    }
+   ],
+   "rule": "Rush wave rule",
+   "id": 66,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "id": 67,
+   "day": 6,
+   "person": "jules",
+   "start": 34,
+   "end": 66,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 34,
+     "end": 66
+    }
+   ],
+   "rule": "Manager on duty minimum"
+  },
+  {
+   "day": 6,
+   "person": "iris",
+   "start": 64,
+   "end": 83,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 64,
+     "end": 83
+    }
+   ],
+   "rule": "Closing crew rule",
+   "id": 68,
+   "flex": false,
+   "closingManager": true
+  },
+  {
+   "day": 6,
+   "person": "omar",
+   "start": 28,
+   "end": 68,
+   "position": "prepDish",
+   "segments": [
+    {
+     "position": "prepDish",
+     "start": 28,
+     "end": 68
+    }
+   ],
+   "rule": "BOH crew rule",
+   "id": 69,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 6,
+   "person": "ben",
+   "start": 42,
+   "end": 64,
+   "position": "register",
+   "segments": [
+    {
+     "position": "register",
+     "start": 42,
+     "end": 64
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 70,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 6,
+   "person": "tess",
+   "start": 42,
+   "end": 68,
+   "position": "hybrid",
+   "segments": [
+    {
+     "position": "hybrid",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 71,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 6,
+   "person": "dani",
+   "start": 28,
+   "end": 60,
+   "position": "prep",
+   "segments": [
+    {
+     "position": "prep",
+     "start": 28,
+     "end": 60,
+     "reason": "Manager last-resort: outside preferred cover positions; BOH crew rule"
+    }
+   ],
+   "rule": "Manager last-resort: outside preferred cover positions; BOH crew rule",
+   "id": 72,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 6,
+   "person": "riley",
+   "start": 38,
+   "end": 56,
+   "position": "boi",
+   "segments": [
+    {
+     "position": "boi",
+     "start": 38,
+     "end": 56
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 73,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 6,
+   "person": "wren",
+   "start": 38,
+   "end": 62,
+   "position": "third",
+   "segments": [
+    {
+     "position": "third",
+     "start": 38,
+     "end": 62
+    }
+   ],
+   "rule": "Setup wave rule",
+   "id": 74,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 6,
+   "person": "nora",
+   "start": 42,
+   "end": 68,
+   "position": "walk",
+   "segments": [
+    {
+     "position": "walk",
+     "start": 42,
+     "end": 68
+    }
+   ],
+   "rule": "At-service wave rule",
+   "id": 75,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 6,
+   "person": "eli",
+   "start": 46,
+   "end": 64,
+   "position": "expo",
+   "segments": [
+    {
+     "position": "expo",
+     "start": 46,
+     "end": 64
+    }
+   ],
+   "rule": "Rush wave rule",
+   "id": 76,
+   "flex": false,
+   "closingManager": false
+  },
+  {
+   "day": 1,
+   "person": "cristian",
+   "start": 44,
+   "end": 60,
+   "position": "mod",
+   "segments": [
+    {
+     "position": "mod",
+     "start": 44,
+     "end": 60
+    }
+   ],
+   "flex": false,
+   "id": 77,
+   "added": true,
+   "rule": "Manager on duty"
+  }
+ ],
+ "sampleProblems": [],
+ "controls": {
+  "short_pete": {
+   "added": [
+    {
+     "day": 2,
+     "person": "pete",
+     "start": 70,
+     "end": 72,
+     "position": "prepDish",
+     "segments": [
+      {
+       "position": "prepDish",
+       "start": 70,
+       "end": 72
+      }
+     ],
+     "rule": "Closing crew rule",
+     "id": 99999,
+     "flex": false,
+     "closingManager": true
+    }
+   ],
+   "messages": [
+    "Wed Pete 5:30p–6p: shift under 4 h minimum",
+    "Wed Pete 5:30p–6p: Owner is not allowed on Prep/Dishwasher",
+    "Wed Pete 5:30p–6p: manager on Prep/Dishwasher without call-out last resort",
+    "Wed Pete 5:30p–6p: manager covers Prep/Dishwasher outside preferred positions without last-resort reason"
+   ]
+  },
+  "g_dani": {
+   "list": [
+    {
+     "day": 2,
+     "person": "dani",
+     "start": 28,
+     "end": 83,
+     "position": "prep",
+     "segments": [
+      {
+       "position": "mod",
+       "start": 28,
+       "end": 83
+      }
+     ],
+     "rule": "Manager last-resort: outside preferred cover positions; BOH crew rule",
+     "id": 25,
+     "flex": false,
+     "closingManager": false
+    }
+   ],
+   "messages": [
+    "Wed Dani 7a–8:45p: leader setting Opens only violated"
+   ]
+  },
+  "h_without_primary": {
+   "removedIds": [
+    28
+   ],
+   "messages": [
+    "Wed Walk-ins 10:30a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 10:45a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 11a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 11:15a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 11:30a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 11:45a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 12p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 12:15p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 12:30p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 12:45p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 1p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 1:15p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 1:30p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 1:45p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 2p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 2:15p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 2:30p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 2:45p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 3p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 3:15p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 3:30p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 3:45p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 4p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 4:15p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 4:30p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 4:45p: secondary filled without Walk-ins / Online primary"
+   ]
+  },
+  "i_alex": {
+   "list": [
+    {
+     "id": 20,
+     "day": 2,
+     "person": "alex",
+     "start": 28,
+     "end": 60,
+     "position": "walk",
+     "segments": [
+      {
+       "position": "walk",
+       "start": 28,
+       "end": 60,
+       "reason": "Unmarked cover"
+      }
+     ],
+     "rule": "Manager on duty minimum"
+    }
+   ],
+   "messages": [
+    "Wed Alex 7a–3p: Walk-ins outside open–close window",
+    "Wed Alex 7a–3p: manager covers Walk-ins outside preferred positions without last-resort reason",
+    "Wed Walk-ins 7a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 7:15a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 7:30a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 7:45a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 8a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 8:15a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 8:30a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 8:45a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 9a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 9:15a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 9:30a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 9:45a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 10a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 10:15a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 10:30a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 10:45a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 11a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 11:15a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 11:30a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 11:45a: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 12p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 12:15p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 12:30p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 12:45p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 1p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 1:15p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 1:30p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 1:45p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 2p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 2:15p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 2:30p: secondary filled without Walk-ins / Online primary",
+    "Wed Walk-ins 2:45p: secondary filled without Walk-ins / Online primary"
+   ]
+  }
+ }
+}
