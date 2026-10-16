@@ -32,6 +32,7 @@
 import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
 // Receiving store/pending-item creation and resolution are shared catalog writes;
 // their receiving.* actions enter AuditAction through DESTRUCTIVE_ACTIONS.
+// Catalog swaps likewise enter through destructive sku_swap.start / sku_swap.end.
 
 /**
  * Emitted actions that are deliberately NOT destructive.
@@ -102,6 +103,17 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "opening.phase2.submit",
   "opening.snapshot_materialize",
   "pm_report.submit",
+  // Scheduling Phase 1 (Task 4 Step 5): a Sync now request, and the PM v2 copy acts. Like
+  // pm_report.submit, evaluations are an observation of people, not a change to the kitchen.
+  "sevenshifts.sync_requested",
+  "pm_report.copy_open",
+  "pm_report.copy_grade",
+  "pm_report.copy_note",
+  "pm_report.copy_position_add",
+  "pm_report.copy_window",
+  "pm_report.copy_done",
+  "pm_report.copy_reopen",
+  "pm_report.submit_v2",
   "prep.mid_day.item_saved",
   "prep.snapshot_drift",
   "prep.submit",

@@ -1433,6 +1433,162 @@ GMs and up change recipes and SKUs. Each shop can have its own version of a reci
 - **Leave it** saves nothing. **Show the** ones **you left** brings them back.
 - The recipe page has **Make it the default for everyone** too.
 
+### Linking people to 7shifts (GM)
+
+CO-OPS reads 7shifts: shifts, punches, time off and availability. It never changes anything in 7shifts. We never match people by name: you confirm each person.
+
+#### 1. Open the 7shifts page (not shown)
+
+**What to do** — Tap **Admin**, then **7shifts**. Pick your shop.
+
+**Worth knowing**
+
+- The top line says how 7shifts is doing. "7shifts is not connected yet" means Juan has not added the access token. Nothing is read until then.
+- "Syncing is switched off" means the same for you: nothing is read yet.
+- When it runs, the line says when it last synced and how many parts came through.
+- The Director of Operations links each shop to its 7shifts location first. Until then, your people list says to link the shop first.
+
+#### 2. Link a person (not shown)
+
+**What to do** — Under **People**, find the person in **Waiting to link**. Each row shows the 7shifts employee number, the name and the role. In **Link to…**, pick the same person in CO-OPS. Tap **Link**. Read the question and tap **Yes, link**. Type your password when the app asks.
+
+**Worth knowing**
+
+- Check the employee number, not just the name. Two people can share a name.
+- Once linked, their 7shifts shifts and punches count as theirs in CO-OPS.
+- A GM can link only people who work at the shop's 7shifts location. The Director of Operations can link anyone.
+- Linking and unlinking ask for your password every time.
+
+#### 3. Unlink a person (not shown)
+
+**What to do** — Under **Linked**, tap **Unlink** on the row. Tap **Yes, unlink**.
+
+**Worth knowing**
+
+- Their 7shifts shifts and punches stop counting as theirs right away. Nothing else changes.
+- Linked the wrong person? Unlink, then link the right one.
+
+#### 4. Sync now (Director of Operations) (not shown)
+
+**What to do** — Tap **Sync now** to read 7shifts now instead of waiting for the hourly sync.
+
+**Worth knowing**
+
+- It runs every hour by itself. Use this only when you just changed something in 7shifts.
+- If a sync is already running, the app says so. Try again in a minute.
+
+### Skills per position (GM)
+
+Each person has a skill for each position they work, from 0 to 1. The app learns it from what they already do in CO-OPS. There is no new form to fill in.
+
+#### 1. See a person's skills (not shown)
+
+**What to do** — Tap **Trends**, then **Team**. Tap a person. Open **Skills**. It says how many positions there are and how many you adjusted. Tap a position for the details.
+
+**Worth knowing**
+
+- The bar is the skill. **Strong**, **Solid** or **Building** says where it sits.
+- "based on … days" says how many days of evidence it uses. **Starting point** means there is not much evidence yet, so it leans on the starting rating.
+- The evidence comes from the positions they held on the board, closing lines done on time, prep batches on target, and the PM report grades for that position.
+- **Evidence** lists what counted. **History** lists every adjustment and starting rating, with who and why.
+- Positions with no evidence yet are under **Other positions**.
+
+#### 2. Adjust a skill (not shown)
+
+**What to do** — In the position's details, find **Adjust this skill**. Use **−** and **+** to move it in steps of 0.05. Pick a reason in **Pick a reason**. Tap **Save adjustment**.
+
+**Worth knowing**
+
+- Adjust when you saw something the data can't see: **Observed on the floor**, **Training completed** or a **Correction**. Pick **Other** and write a note when none fits.
+- The reason is required, so the next manager knows why the number moved.
+- An adjustment goes up to 0.30 either way. It shows as a chip on the skill and stays in **History**.
+- You can adjust only people below you. A GM can't adjust another GM.
+- No password is needed.
+- While you have changes you haven't saved, the section stays open and says **Unsaved changes**.
+
+#### 3. A new hire's starting rating (not shown)
+
+**What to do** — In **Set a starting rating**, use **−** and **+**, pick a reason, and tap **Save starting rating**.
+
+**Worth knowing**
+
+- With no rating, everyone starts in the middle (0.5). Your rating is where a new hire starts.
+- As real evidence builds up, the skill moves away from the starting rating on its own.
+
+#### 4. What staff see (not shown)
+
+**What to do** — Nothing. Each person sees **My skills** on their feedback page.
+
+**Worth knowing**
+
+- They see **Strong**, **Solid** or **Building** and the good things that count, like closing lines done on time.
+- They never see a number, a rank or your adjustment.
+
+### PM report copies (when your shop uses PM reports v2)
+
+When the Director of Operations switches PM reports v2 on for your shop, each manager on shift fills in their own copy of the night report. Until then, the PM report works as described above.
+
+#### 1. Open your copy (not shown)
+
+**What to do** — On the board, tap **PM report**. The top says **Your copy · only you can see it until the closing manager submits**.
+
+**Worth knowing**
+
+- Your copy is private. No other manager sees it before the closing manager submits, not even the owner. Others see only how many copies were started.
+- Under **My time on the floor**, check **From** and **To** and tap **Save my time**. The app fills in when you arrived. You need this before you mark your copy done.
+
+#### 2. Grade each person (not shown)
+
+**What to do** — Tap a person. For each position they worked, tap **Great**, **Good**, **Needs work** or **Didn't see** on each line. Each tap saves by itself. If you want, type in **Anything else? It stays with managers**, then tap outside the box to save it.
+
+**Worth knowing**
+
+- Each position has its own lines. Every position also has **Arrived ready (on time, in uniform)** and **Teamwork and attitude**.
+- **Didn't see** means you didn't watch that part. It does not count against them.
+- Did they work a position without tapping in? Tap **Worked somewhere else?**, pick the position, say why, and tap **Add position**. It opens that position in your copy only.
+- A person with something not saved yet stays open and says **Unsaved changes**.
+- Notes are for managers only. Staff never see them.
+
+#### 3. Mark your copy done (not shown)
+
+**What to do** — Tap **Mark my copy done**.
+
+**Worth knowing**
+
+- A done copy is read-only. To change it, tap **Reopen**.
+- If something didn't save, the app says so and keeps your copy open. Check the person marked **Unsaved changes** and try again.
+
+#### 4. Submit the day (closing manager) (not shown)
+
+**What to do** — Tap **Submit the day's report**. The app shows how many copies were started and marked done. Pick a **Shift MVP (optional)** if you want. Tap **Submit and lock**, or **Not yet**.
+
+**Worth knowing**
+
+- Submitting locks every copy, done or not.
+- Nobody gets a notice when you submit.
+
+#### 5. Read the results (not shown)
+
+**What to do** — After the submit, open the PM report. Tap **By person** or **Copies (2)**.
+
+**Worth knowing**
+
+- **By person** shows each person and position, the average for each line, and each manager's grade and time on the floor.
+- The average weighs each manager by how long they saw that person at that position. A manager who watched for two hours counts more than one who saw ten minutes.
+- **Coming up again** shows notes that keep coming up across managers and days.
+- The results are for that night's managers, the GM and up.
+- Staff see **Shift feedback by position** on their feedback page: Great, Good or Building for each line. No names, no numbers, no notes.
+
+#### 6. Change the lines managers grade (not shown)
+
+**What to do** — Tap **Admin**, then **PM report criteria**. Pick your shop. Open a position. Change the English and the Spanish and tap **Save**, or fill in **Add a criterion** and tap **Add**.
+
+**Worth knowing**
+
+- Changes ask for your password once for 15 minutes.
+- **Deactivate** stops a line from showing. Past grades are kept, and nothing is deleted. **Reactivate** brings it back.
+- If you cancel the password, your new line stays typed in.
+
 ### En español
 
 Estos son los trabajos y páginas que usas además de los reportes diarios.
@@ -1506,3 +1662,32 @@ Los gerentes generales y roles más altos cambian recetas y SKUs. Cada tienda pu
 8. **Novedades de recetas.** Toca **Admin** y luego **Novedades de recetas**. Lee cada nota y toca **Abrir la receta** para verla. Sale una nota cuando la tienda que copiaste cambia su receta, vuelve al predeterminado o su receta se vuelve el predeterminado, y cuando hay un predeterminado nuevo para todas las tiendas. En la página de la receta, **Tomar la actualización** te muestra qué cambia y luego copia su versión nueva. **Quedarme con la mía** deja la tuya como está; **Entendido** esconde una nota. La nota vuelve si la cambian otra vez. Si cambiaste tu copia, la nota lo dice: tomar la actualización reemplaza tus cambios. Tu comida nunca cambia si no dices que sí.
 9. **Precio, nombre y "se vende aquí".** En **Costeo del Menú**, abre un sándwich y toca **Abrir la página del sándwich**. Elige tu tienda. Escribe el **Precio aquí** o el **Nombre aquí**, o quita **Se vende en esta tienda**. Toca **Ver qué cambia** y luego **Guardar para** tu tienda. Deja el precio vacío para usar el precio de todas las tiendas. Un sándwich que no se vende aquí sale del costeo de tu tienda. Sin nombre en español, quienes usan la app en español ven el nombre en inglés. **Volver al menú global** vuelve a usar el precio y el nombre de todos.
 10. **Cambios de las tiendas (Director de Operaciones).** Toca **Admin** y luego **Cambios de las tiendas**. Lee lo que cambió cada tienda. Toca **Hacerlo el predeterminado** para dárselo a todas las tiendas, o **Dejarlo**. La vista previa muestra cada tienda que cambia; las que tienen su propia versión no cambian. La tienda de donde vino vuelve al predeterminado, y su comida sigue igual. En un sándwich puedes hacer de todos el precio o el nombre de una tienda. Si el nombre nuevo está solo en inglés, escribe un **Nombre en español (opcional)** antes de guardar; sin él, quienes usan la app en español ven el nombre en inglés. **Dejarlo** no guarda nada, y **Mostrar los que dejaste** los trae de vuelta. La página de la receta también tiene **Hacerla el predeterminado para todos**.
+
+#### Enlazar personas con 7shifts (gerente general)
+
+CO-OPS lee 7shifts: turnos, marcajes, tiempo libre y disponibilidad. Nunca cambia nada en 7shifts. Nunca enlazamos a nadie por el nombre: tú confirmas a cada persona.
+
+1. **Abre la página de 7shifts.** Toca **Admin** y luego **7shifts**. Elige tu tienda. La primera línea dice cómo va 7shifts. "7shifts aún no está conectado" quiere decir que Juan no ha agregado el token de acceso; no se lee nada hasta entonces. "La sincronización está apagada" es lo mismo para ti: todavía no se lee nada. El Director de Operaciones enlaza primero cada tienda con su ubicación de 7shifts.
+2. **Enlaza a una persona.** En **Personas**, busca a la persona en **Por enlazar**. Cada fila muestra el número de empleado de 7shifts, el nombre y el puesto. En **Enlazar con…**, elige a la misma persona en CO-OPS. Toca **Enlazar**, lee la pregunta y toca **Sí, enlazar**. Escribe tu contraseña cuando la app la pida. Revisa el número de empleado, no solo el nombre: dos personas pueden llamarse igual. Ya enlazada, sus turnos y marcajes de 7shifts cuentan como suyos en CO-OPS. Un gerente general solo enlaza a quien trabaja en la ubicación de 7shifts de la tienda; el Director de Operaciones puede enlazar a cualquiera. Enlazar y desenlazar piden tu contraseña cada vez.
+3. **Desenlaza a una persona.** En **Enlazadas**, toca **Desenlazar** en la fila y luego **Sí, desenlazar**. Sus turnos y marcajes de 7shifts dejan de contar como suyos en ese momento. ¿Enlazaste a la persona equivocada? Desenlaza y enlaza a la correcta.
+4. **Sincronizar ahora (Director de Operaciones).** Toca **Sincronizar ahora** para leer 7shifts ya, sin esperar la sincronización de cada hora. Úsalo solo si acabas de cambiar algo en 7shifts. Si ya hay una sincronización en curso, la app lo dice; intenta en un minuto.
+
+#### Habilidades por puesto (gerente general)
+
+Cada persona tiene una habilidad para cada puesto que trabaja, de 0 a 1. La app la aprende de lo que ya hace en CO-OPS. No hay un formulario nuevo.
+
+1. **Mira las habilidades de una persona.** Toca **Tendencias** y luego **Equipo**. Toca a una persona y abre **Habilidades**. Toca un puesto para ver los detalles. La barra es la habilidad; **Fuerte**, **Sólido** o **En progreso** dice dónde está. "basado en … días" dice cuántos días de evidencia usa. **Punto de partida** quiere decir que todavía hay poca evidencia y se apoya en la calificación inicial. La evidencia viene de los puestos que tuvo en el tablero, las líneas de cierre hechas a tiempo, las tandas de prep en meta y las calificaciones del reporte PM para ese puesto. **Evidencia** dice qué contó; **Historial** muestra cada ajuste y calificación inicial, con quién y por qué. Los puestos sin evidencia están en **Otros puestos**.
+2. **Ajusta una habilidad.** En los detalles del puesto, busca **Ajustar esta habilidad**. Usa **−** y **+** para moverla de 0.05 en 0.05. Elige un motivo en **Elige un motivo** y toca **Guardar ajuste**. Ajusta cuando viste algo que los datos no ven: **Observado en el piso**, **Capacitación completada** o una **Corrección**. Elige **Otro** y escribe una nota si ninguno sirve. El motivo es obligatorio para que el siguiente gerente sepa por qué se movió. Un ajuste llega hasta 0.30 para arriba o para abajo; sale como una etiqueta en la habilidad y se queda en el **Historial**. Solo ajustas a personas debajo de ti: un gerente general no ajusta a otro. No pide contraseña. Mientras tengas cambios sin guardar, la sección se queda abierta y dice **Cambios sin guardar**.
+3. **La calificación inicial de alguien nuevo.** En **Fija una calificación inicial**, usa **−** y **+**, elige un motivo y toca **Guardar calificación inicial**. Sin calificación, todos empiezan en el medio (0.5). Con más evidencia real, la habilidad se aleja sola de la calificación inicial.
+4. **Lo que ve el personal.** Cada persona ve **Mis habilidades** en su página de comentarios: **Fuerte**, **Sólido** o **En progreso** y lo bueno que cuenta, como las líneas de cierre a tiempo. Nunca ve un número, un lugar ni tu ajuste.
+
+#### Copias del reporte PM (cuando tu tienda usa el reporte PM v2)
+
+Cuando el Director de Operaciones activa el reporte PM v2 en tu tienda, cada gerente del turno llena su propia copia del reporte de la noche. Mientras tanto, el reporte PM funciona como antes.
+
+1. **Abre tu copia.** En el tablero, toca **Reporte PM**. Arriba dice **Tu copia · solo tú la ves hasta que el gerente de cierre la envíe**. Tu copia es privada: ningún otro gerente la ve antes del envío, ni el dueño. Los demás solo ven cuántas copias se empezaron. En **Mi tiempo en el piso**, revisa **Desde** y **Hasta** y toca **Guardar mi tiempo**. La app llena tu hora de llegada. Lo necesitas antes de marcar tu copia como terminada.
+2. **Califica a cada persona.** Toca a una persona. En cada puesto que trabajó, toca **Excelente**, **Bien**, **Necesita mejorar** o **No lo vi** en cada línea. Cada toque se guarda solo. Si quieres, escribe en **¿Algo más? Queda entre gerentes** y toca fuera del cuadro para guardarlo. Cada puesto tiene sus líneas, y todos tienen **Llegó listo (a tiempo, con uniforme)** y **Trabajo en equipo y actitud**. **No lo vi** quiere decir que no viste esa parte; no cuenta en su contra. ¿Trabajó en un puesto sin marcarlo? Toca **¿Trabajó en otro puesto?**, elige el puesto, di por qué y toca **Agregar puesto**; ese puesto se abre solo en tu copia. Una persona con algo sin guardar se queda abierta y dice **Cambios sin guardar**. Las notas son solo para gerentes; el personal nunca las ve.
+3. **Marca tu copia como terminada.** Toca **Marcar mi copia como terminada**. Una copia terminada es solo lectura; para cambiarla, toca **Reabrir**. Si algo no se guardó, la app te avisa y deja tu copia abierta: revisa a la persona marcada con **Cambios sin guardar** e inténtalo de nuevo.
+4. **Envía el día (gerente de cierre).** Toca **Enviar el reporte del día**. La app muestra cuántas copias se empezaron y cuántas se terminaron. Si quieres, elige un **MVP del turno (opcional)**. Toca **Enviar y cerrar**, o **Todavía no**. Al enviar se cierran todas las copias, terminadas o no. Nadie recibe un aviso cuando envías.
+5. **Lee los resultados.** Después del envío, abre el reporte PM y toca **Por persona** o **Copias (2)**. **Por persona** muestra a cada persona y puesto, el promedio de cada línea y la calificación y el tiempo en el piso de cada gerente. El promedio pesa a cada gerente según cuánto tiempo vio a esa persona en ese puesto: quien la vio dos horas cuenta más que quien la vio diez minutos. **Se repite** muestra comentarios que vuelven a salir entre gerentes y días. Los resultados son para los gerentes de esa noche, el gerente general y roles más altos. El personal ve **Comentarios del turno por puesto** en su página de comentarios: Excelente, Bien o En progreso por línea, sin nombres, sin números y sin notas.
+6. **Cambia las líneas que califican los gerentes.** Toca **Admin** y luego **Criterios del reporte PM**. Elige tu tienda y abre un puesto. Cambia el inglés y el español y toca **Guardar**, o llena **Agregar un criterio** y toca **Agregar**. Los cambios piden tu contraseña una vez por 15 minutos. **Desactivar** deja de mostrar una línea; las calificaciones anteriores se guardan y nada se borra. **Reactivar** la trae de vuelta. Si cancelas la contraseña, tu línea nueva sigue escrita.

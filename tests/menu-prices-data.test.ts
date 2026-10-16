@@ -90,7 +90,7 @@ describe("cache-only costing loader", () => {
 
 describe("price writer", () => {
   it("refuses lower levels and invalid prices before I/O", async () => {
-    await expect(updateMenuPrice({ user: { role: "gm" } } as AuthContext, id, 1, null)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(updateMenuPrice({ user: { role: "agm" } } as AuthContext, id, 1, null)).rejects.toMatchObject({ code: "forbidden" });
     await expect(updateMenuPrice(actor, id, "1", null)).rejects.toMatchObject({ code: "invalid_menu_price" });
     expect(mocks.client).not.toHaveBeenCalled();
   });
@@ -118,9 +118,9 @@ function request(body: unknown) {
   return PATCH(new NextRequest(`http://localhost/api/admin/menu-items/${id}/price`, { method: "PATCH", body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
 }
 describe("PATCH price", () => {
-  it("requires session, level 8, and the Tier E edit window", async () => {
+  it("requires session, GM floor, and the Tier E edit window", async () => {
     mocks.session.mockResolvedValue(new Response(null, { status: 401 })); expect((await request({ menuPrice: 1 })).status).toBe(401);
-    mocks.session.mockResolvedValue({ user: { role: "gm" } }); expect((await request({ menuPrice: 1 })).status).toBe(403);
+    mocks.session.mockResolvedValue({ user: { role: "agm" } }); expect((await request({ menuPrice: 1 })).status).toBe(403);
     mocks.session.mockResolvedValue(actor); mocks.step.mockReturnValue({ ok: false, code: "step_up_stale" });
     expect((await request({ menuPrice: 1 })).status).toBe(403);
     expect(mocks.step).toHaveBeenCalledWith(actor, "E"); expect(writes).toHaveLength(0);

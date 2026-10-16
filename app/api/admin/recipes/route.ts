@@ -1,3 +1,4 @@
+import { ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -17,6 +18,7 @@ export async function POST(req: NextRequest) {
   const b = parsed as Record<string, unknown>;
   try {
     const { id } = await createRecipe(ctx, {
+      ...(Object.hasOwn(b, "locationId") ? { locationId: b.locationId as string | null } : {}),
       name: b.name as string,
       nameEs: b.nameEs != null ? (b.nameEs as string) : undefined,
       recipeType: b.recipeType as import("@/lib/recipes").RecipeType,
@@ -29,6 +31,7 @@ export async function POST(req: NextRequest) {
     });
     return jsonOk({ id }, 201);
   } catch (e) {
+    if (e instanceof ShopOwnedError) return jsonError(e.status, e.code, e.line ? { line: e.line } : undefined);
     if (e instanceof RecipeError) return jsonError(e.status, e.code);
     throw e;
   }

@@ -119,12 +119,14 @@ export async function loadCateringMenuItems(actor: AuthContext, locationId: stri
       .select("id, name, name_es, section, menu_price, catering_only")
       .eq("active", true)
       .eq("catering_available", true)
+      .or(`location_id.is.null,location_id.eq.${locationId}`)
       .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean }>>(),
     sb
       .from("menu_items")
       .select("id, name, name_es, section, menu_price, catering_only, catering_portionable")
       .eq("active", true)
       .eq("catering_available", true)
+      .or(`location_id.is.null,location_id.eq.${locationId}`)
       .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean; catering_portionable: boolean }>>(),
   ]);
   if (iErr) throw new Error(`loadCateringMenuItems items: ${iErr.message}`);
@@ -183,17 +185,18 @@ export async function loadCateringPackagesForQuote(actor: AuthContext, locationI
   const itemMap = new Map<string, { name: string; priceCents: number }>();
   const menuMap = new Map<string, { name: string; priceCents: number }>();
   if (itemIds.length > 0) {
-    const { data: rows } = await sb.from("items").select("id, name, menu_price").in("id", itemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
+    const { data: rows } = await sb.from("items").select("id, name, menu_price").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", itemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
     for (const r of rows ?? []) itemMap.set(r.id, { name: r.name, priceCents: dollarsToCents(r.menu_price) });
   }
   if (menuItemIds.length > 0) {
-    const { data: rows } = await sb.from("menu_items").select("id, name, menu_price").in("id", menuItemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
+    const { data: rows } = await sb.from("menu_items").select("id, name, menu_price").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", menuItemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
     for (const r of rows ?? []) menuMap.set(r.id, { name: r.name, priceCents: dollarsToCents(r.menu_price) });
   }
 
   const byPackage = new Map<string, PackageLine[]>();
   for (const r of pkgItems) {
     const resolved = r.item_id ? itemMap.get(r.item_id) : r.menu_item_id ? menuMap.get(r.menu_item_id) : undefined;
+    if (!resolved) continue; // Hidden or missing references are not available choices.
     const label = (r.description && r.description.trim()) || resolved?.name || "Item";
     const arr = byPackage.get(r.package_id) ?? [];
     arr.push({ itemId: r.item_id, menuItemId: r.menu_item_id, label, quantity: Number(r.quantity), unitPriceCents: resolved?.priceCents ?? 0 });

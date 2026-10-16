@@ -73,7 +73,8 @@ export interface SkuFormProductOption {
  *  existing DB values are preserved for the legacy recipe-math reader. */
 export interface SkuFormValues {
   vendorId: string | null;
-  locationId: string | null;
+  /** Create sends this explicitly; edit omits it unless MoO shares globally. */
+  locationId?: string | null;
   name: string;
   packFormat: string;
   /** Optional since PR-B: SkuBuilder OMITS the flat pack trio (server-derived from
@@ -98,6 +99,29 @@ export interface SkuFormValues {
    *  OMITTED until the columns exist, so this form stays legal before GATE M1. */
   cushionClass?: string | null;
   parStep?: number | null;
+}
+
+const GLOBAL_LOCATION_CHOICE = "__global__";
+
+export function initialSkuLocationChoice(input: {
+  initialLocationId?: string | null;
+  creationScopes: readonly SkuFormLocationOption[];
+  canCreateGlobal: boolean;
+}): string {
+  if (input.initialLocationId !== undefined) return input.initialLocationId ?? GLOBAL_LOCATION_CHOICE;
+  if (input.creationScopes.length === 1) return input.creationScopes[0]!.id;
+  return input.canCreateGlobal ? GLOBAL_LOCATION_CHOICE : "";
+}
+
+export function skuLocationPayload(input: {
+  isEdit: boolean;
+  canMoveOwner: boolean;
+  initialLocationId?: string | null;
+  choice: string;
+}): { locationId?: string | null } {
+  const next = input.choice === GLOBAL_LOCATION_CHOICE ? null : input.choice;
+  if (input.isEdit && (!input.canMoveOwner || next !== null || next === (input.initialLocationId ?? null))) return {};
+  return { locationId: next };
 }
 
 const fieldCls =
@@ -169,6 +193,9 @@ export function SkuBuilder({
   parsFieldsReady = false,
   vendors,
   locations,
+  creationScopes = locations,
+  canCreateGlobal = false,
+  canMoveOwner = false,
   products,
   packFormats,
   measureUnits,
@@ -201,6 +228,11 @@ export function SkuBuilder({
   initialProductId?: string | null;
   vendors?: SkuFormVendorOption[];
   locations: SkuFormLocationOption[];
+  /** Authorized ownership choices for a NEW SKU; separate from full-list filters. */
+  creationScopes?: SkuFormLocationOption[];
+  canCreateGlobal?: boolean;
+  /** MoO+: an edit may share globally. Lower roles preserve the saved owner. */
+  canMoveOwner?: boolean;
   /** Products this SKU may join (0179). Empty/absent → no picker is rendered and
    *  no productId key is sent: products exist only where plurality does. */
   products?: SkuFormProductOption[];
@@ -241,9 +273,10 @@ export function SkuBuilder({
   const { t } = useTranslation();
   const isEdit = initial !== undefined;
   const hasChain = (initialChain?.length ?? 0) > 0;
+  const canEditOwnedPack = initial?.locationId != null && creationScopes.some((scope) => scope.id === initial.locationId);
   // CATALOG PHASE 2a (D5; sim QA): below MoO an EXISTING global pack is read-only here — the database
   // refuses the change anyway, so the screen says so plainly instead of a password prompt and a 403.
-  const globalPackLocked = isEdit && !canChangeGlobalPack(actorLevel, hasGlobalPack(initial!, initialChain?.length ?? 0));
+  const globalPackLocked = isEdit && !canEditOwnedPack && !canChangeGlobalPack(actorLevel, hasGlobalPack(initial!, initialChain?.length ?? 0));
   // Catalog Phase 2b: the read-only line points at the item page's pack job — THIS SHOP's version.
   const offerShopPackJob = shopPackJobOffered(globalPackLocked, canEditShopVersion);
 
@@ -251,7 +284,11 @@ export function SkuBuilder({
   const initialVendor =
     initial?.vendorId ?? (fixedVendorId !== undefined ? fixedVendorId : null);
   const [vendorId, setVendorId] = useState<string>(initialVendor ?? "");
-  const [locationId, setLocationId] = useState<string>(initial?.locationId ?? "");
+  const [locationId, setLocationId] = useState<string>(() => initialSkuLocationChoice({
+    initialLocationId: initial === undefined ? undefined : initial.locationId,
+    creationScopes,
+    canCreateGlobal,
+  }));
   // Product membership (0179). "" = no product = implicit singleton, and it is
   // NEVER defaulted to a product — plurality is declared, not assumed.
   const [productId, setProductId] = useState<string>(initialProductId ?? "");
@@ -324,11 +361,11 @@ export function SkuBuilder({
   // No products yet = nothing to join, so no picker AND no productId key on the
   // payload (the M1 gate: the column may not exist yet).
   const showProductPicker = products !== undefined && products.length > 0;
-  const canSubmit = name.trim() !== "" && !busy; // pack_format gate removed (design §1)
+  const canSubmit = name.trim() !== "" && locationId !== "" && !busy; // pack_format gate removed (design §1)
 
   const assembleValues = (): SkuFormValues => ({
     vendorId: showVendorDropdown ? (vendorId || null) : (fixedVendorId ?? null),
-    locationId: locationId || null,
+    ...skuLocationPayload({ isEdit, canMoveOwner, initialLocationId: initial?.locationId, choice: locationId }),
     name: name.trim(),
     // The flat pack fields are no longer authored in the UI — they are DERIVED
     // from the wizard's chain server-side on save (sync-on-save, PR-B). The trio
@@ -527,12 +564,23 @@ export function SkuBuilder({
         ) : null}
 
         <Labeled label={t("admin.skus.field.location")}>
-          <select className={fieldCls} value={locationId} disabled={busy} onChange={(e) => setLocationId(e.target.value)}>
-            <option value="">{t("admin.skus.global")}</option>
-            {locations.map((l) => (
+          {isEdit ? (
+            <>
+            <p className="mt-1 min-h-[44px] rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-base text-co-text">
+              {initial?.locationName ?? t("admin.skus.global")}
+            </p>
+            {canMoveOwner && initial?.locationId != null ? <button type="button" disabled={busy}
+              className={fieldCls} onClick={() => onSubmit({ ...assembleValues(), locationId: null }, null)}>
+              {t("admin.skus.share_all_shops")}
+            </button> : null}
+            </>
+          ) : <select className={fieldCls} value={locationId} disabled={busy} onChange={(e) => setLocationId(e.target.value)}>
+            {!isEdit && !canCreateGlobal && creationScopes.length > 1 ? <option value="" disabled>{t("admin.skus.choose_location")}</option> : null}
+            {canCreateGlobal ? <option value={GLOBAL_LOCATION_CHOICE}>{t("admin.skus.global")}</option> : null}
+            {creationScopes.map((l) => (
               <option key={l.id} value={l.id}>{l.name}</option>
             ))}
-          </select>
+          </select>}
         </Labeled>
 
         <Labeled label={t("admin.skus.field.item_number")}>

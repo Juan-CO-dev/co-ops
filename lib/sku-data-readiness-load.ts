@@ -26,7 +26,7 @@ const COLUMNS = {
   product_primaries: "id,product_id,primary_sku_id,location_id",
   vendor_deliveries: "id,location_id,vendor_id,created_at",
   vendor_delivery_items: "id,vendor_item_id,delivery_id,created_at",
-  recipes: "id,name,active,created_at,batch_yield",
+  recipes: "id,name,active,created_at,batch_yield,location_id",
   recipe_inputs: "id,recipe_id,quantity,unit,component_sku_id,component_item_id,component_product_id",
   recipe_outputs: "id,recipe_id,output_item_id,output_menu_item_id,yield",
   items: "id,name,oz_per_par_unit,default_par_unit",

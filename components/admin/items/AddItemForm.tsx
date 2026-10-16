@@ -22,14 +22,20 @@ export function AddItemForm({
   sections,
   units,
   actorLevel,
+  shops,
+  initialScope,
 }: {
   sections: PrepSectionDefn[];
   units: Array<{ label: string }>;
   actorLevel: number;
+  shops: Array<{ id: string; name: string }>;
+  initialScope: string | null;
 }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
+  const defaultScope = initialScope ?? (actorLevel >= 8 ? "global" : shops.length === 1 ? shops[0]!.id : "");
+  const [scope, setScope] = useState(defaultScope);
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -50,6 +56,7 @@ export function AddItemForm({
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
 
   const reset = () => {
+    setScope(defaultScope);
     setName("");
     setNameEs("");
     setSection(slugs[0] ?? "");
@@ -66,18 +73,20 @@ export function AddItemForm({
   const submit = async () => {
     if (submitting) return;
     setErrorMsg(null);
+    if (!scope) { setErrorMsg(t("admin.items.choose_shop")); return; }
     if (!name.trim()) { setErrorMsg(t(resolveErrorKey("invalid_label"))); return; }
     if ((await requestStepUp("B")) !== "ok") return;
     setSubmitting(true);
     const result = await postJson(
       `/api/admin/checklist-templates/registry`,
       {
+        locationId: scope === "global" ? null : scope,
         name: name.trim(),
         nameEs: nameEs.trim() || null,
         section,
         recommendedPar: par.trim() === "" ? null : Number(par),
         recommendedParUnit: parUnit.trim() || null,
-        isDefault,
+        isDefault: scope === "global" && isDefault,
         specialInstruction: specialInstruction.trim() || null,
         specialInstructionEs: specialInstructionEs.trim() || null,
         required,
@@ -86,7 +95,7 @@ export function AddItemForm({
       "POST",
     );
     setSubmitting(false);
-    if (result.ok) { reset(); setOpen(false); router.refresh(); }
+    if (result.ok) { reset(); setOpen(false); router.push(`/admin/items?view=registry&location=${encodeURIComponent(scope)}`); router.refresh(); }
     else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
@@ -97,15 +106,22 @@ export function AddItemForm({
         onClick={() => setOpen(true)}
         className="inline-flex min-h-[44px] items-center self-start rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
       >
-        {t("admin.templates.add_global_item")}
+        {t("admin.items.add_item")}
       </button>
     );
   }
 
   return (
     <div className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
-      <h3 className="text-sm font-extrabold text-co-text">{t("admin.templates.add_global_item_title")}</h3>
+      <h3 className="text-sm font-extrabold text-co-text">{t("admin.items.add_item")}</h3>
       <div className="mt-3 flex flex-col gap-3">
+        <Labeled label={t("admin.items.scope")}>
+          <select className={field} value={scope} onChange={e => { setScope(e.target.value); setIsDefault(false); }}>
+            <option value="" disabled>{t("admin.items.choose_shop")}</option>
+            {actorLevel >= 8 ? <option value="global">{t("readiness.scope.default")}</option> : null}
+            {shops.map(shop => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
+          </select>
+        </Labeled>
         <Labeled label={t("admin.templates.field.label_en")}>
           <input className={field} value={name} onChange={(e) => setName(e.target.value)} />
         </Labeled>
@@ -167,7 +183,7 @@ export function AddItemForm({
           </select>
         </Labeled>
         <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
-        <label className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
+        {scope === "global" ? <label className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
           <input
             type="checkbox"
             className="h-5 w-5 accent-co-gold"
@@ -175,8 +191,8 @@ export function AddItemForm({
             onChange={(e) => setIsDefault(e.target.checked)}
           />
           {t("admin.templates.add_global_is_default")}
-        </label>
-        <p className="text-xs text-co-text-muted">{t("admin.templates.global_blast_radius_note")}</p>
+        </label> : null}
+        <p className="text-xs text-co-text-muted">{t(scope === "global" ? "admin.templates.global_blast_radius_note" : "admin.items.shop_definition_note")}</p>
         {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         <div className="flex justify-end gap-2">
           <button

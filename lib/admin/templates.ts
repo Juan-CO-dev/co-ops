@@ -1,3 +1,6 @@
+import { creationScope, ownerWriteCheck, shareGate } from "@/lib/catalog/shop-owned-shared";
+import { assertScopeToken, catalogShopAllowed, type VersionScope } from "@/lib/sku-versions-shared";
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * Admin prep-template data layer (C.44 Module 3 slice 1).
  *
@@ -530,6 +533,7 @@ async function propagateItemDefinitionToLines(
   sb: ReturnType<typeof getServiceRoleClient>,
   itemId: string,
   changes: ItemDefinitionChanges,
+  owner: string | null = null,
 ): Promise<{ updated: number; skipped: number }> {
   // Nothing to propagate.
   const hasSi = changes.specialInstruction !== undefined;
@@ -550,7 +554,13 @@ async function propagateItemDefinitionToLines(
     .eq("active", true)
     .returns<TemplateItemRow[]>();
   if (lErr) throw new Error(`propagateItemDefinitionToLines lines read failed: ${lErr.message}`);
-  const rows = lines ?? [];
+  let rows = lines ?? [];
+  if (owner !== null && rows.length > 0) {
+    const { data: templates, error } = await sb.from("checklist_templates").select("id").eq("location_id", owner).returns<Array<{ id: string }>>();
+    if (error) throw new Error(`propagateItemDefinitionToLines owner read failed: ${error.message}`);
+    const allowed = new Set((templates ?? []).map(t => t.id));
+    rows = rows.filter(r => allowed.has(r.template_id));
+  }
   if (rows.length === 0) return { updated: 0, skipped: 0 };
 
   // Section convention source (only needed when re-deriving columns).
@@ -868,7 +878,7 @@ export async function updatePrepItemContent(
     itemUpdate.updated_by = actor.user.id;
     itemUpdate.updated_at = new Date().toISOString();
     const { error: itemErr } = await sb.from("items").update(itemUpdate).eq("id", item.itemId);
-    if (itemErr) throw new Error(`updatePrepItemContent item update: ${itemErr.message}`);
+    if (itemErr) throw catalogWriteError(itemErr, AdminTemplateError, "updatePrepItemContent item update");
   }
 
   if (Object.keys(after).length === 0) return; // nothing changed
@@ -1081,7 +1091,7 @@ export async function addPrepItem(
     })
     .select("id")
     .maybeSingle<{ id: string }>();
-  if (itemErr) throw new Error(`addPrepItem item insert failed: ${itemErr.message}`);
+  if (itemErr) throw catalogWriteError(itemErr, AdminTemplateError, "addPrepItem item insert failed");
   if (!itemRow) throw new Error(`addPrepItem item insert returned no row`);
   const itemId = itemRow.id;
 
@@ -1612,7 +1622,7 @@ export async function promotePrepLineItemToGlobal(
  * Promote a location-owned item to a GLOBAL definition (location_id → NULL), so
  * its name + recommended default_par apply company-wide. Existing
  * item_par_levels rows are left as-is — each location keeps its own override.
- * Route enforces MoO+ (≥8); this lib does not re-gate role beyond the IDOR bind.
+ * The library and route enforce MoO+; catalog access includes every active shop.
  *
  * IDOR: the item's current location_id must be in the actor's authorized
  * locations (all-locations grant bypasses). Missing/inactive → 404.
@@ -1621,6 +1631,8 @@ export async function promoteItemToGlobal(
   actor: AuthContext,
   args: { itemId: string },
 ): Promise<void> {
+  const gate = shareGate({ role: actor.user.role, level: ROLES[actor.user.role].level });
+  if (!gate.ok) throw new AdminTemplateError(gate.status, gate.code);
   const sb = getServiceRoleClient();
 
   const { data: item, error: rErr } = await sb
@@ -1634,16 +1646,22 @@ export async function promoteItemToGlobal(
     throw new AdminTemplateError(409, "already_global", "Item is already global");
   }
   // IDOR: actor must be authorized for the item's current location.
-  if (!lockLocationContext(actorLocationShape(actor), item.location_id)) {
+  if (!catalogShopAllowed({ level: ROLES[actor.user.role].level, locations: actor.locations }, item.location_id)) {
     throw new AdminTemplateError(404, "item_not_found", "Item not found");
   }
 
+  const { data: shop, error: shopError } = await sb.from("locations").select("id").eq("id", item.location_id).eq("active", true).maybeSingle();
+  if (shopError) throw new Error(`promoteItemToGlobal shop read failed: ${shopError.message}`);
+  if (!shop) throw new AdminTemplateError(404, "location_not_found");
+
   // All item columns (incl. menu_price, oz_per_par_unit, tracking_type, etc.) ride this in-place flip automatically — no explicit column list needed.
-  const { error: uErr } = await sb
+  const { error: uErr, count } = await sb
     .from("items")
-    .update({ location_id: null, updated_by: actor.user.id, updated_at: new Date().toISOString() })
-    .eq("id", args.itemId);
-  if (uErr) throw new Error(`promoteItemToGlobal update failed: ${uErr.message}`);
+    .update({ location_id: null, updated_by: actor.user.id, updated_at: new Date().toISOString() }, { count: "exact" })
+    .eq("id", args.itemId).eq("location_id", item.location_id).eq("active", true);
+  if (uErr) throw catalogWriteError(uErr, AdminTemplateError, "promoteItemToGlobal update failed");
+
+  if (count !== 1) throw new AdminTemplateError(409, "ownership_changed");
 
   await audit({
     actorId: actor.user.id,
@@ -1950,7 +1968,7 @@ export async function setItemDefault(
     .from("items")
     .update({ is_default: args.isDefault, updated_by: actor.user.id, updated_at: new Date().toISOString() })
     .eq("id", args.itemId);
-  if (uErr) throw new Error(`setItemDefault update failed: ${uErr.message}`);
+  if (uErr) throw catalogWriteError(uErr, AdminTemplateError, "setItemDefault update failed");
 
   let propagatedLocationIds: string[] = [];
   if (args.isDefault) {
@@ -2127,6 +2145,7 @@ export async function setItemOpeningVerify(
 }
 
 export interface AddRegistryItemInput {
+  locationId?: VersionScope;
   name: string;
   nameEs: string | null;
   section: PrepSection;
@@ -2142,17 +2161,25 @@ export interface AddRegistryItemInput {
 }
 
 /**
- * Create a GLOBAL registry item (location_id NULL). When
+ * Create a registry item in validated ownership scope. Only shared items can be defaults. When
  * isDefault, propagates it to every active location's am_prep template (same
- * path as setItemDefault(true)). Route enforces role.
+ * path as setItemDefault(true)). Both the route and library enforce role.
  */
 export async function addRegistryItem(
   actor: AuthContext,
   args: AddRegistryItemInput,
 ): Promise<{ itemId: string; propagatedLocationIds: string[] }> {
+  const scope = creationScope({ role: actor.user.role, level: ROLES[actor.user.role].level, locations: actor.locations }, args.locationId);
+  if (!scope.ok) throw new AdminTemplateError(scope.status, scope.code);
+  if (scope.scope !== null && args.isDefault) throw new AdminTemplateError(409, "not_global");
   const name = args.name.trim();
   if (!name) throw new AdminTemplateError(400, "invalid_label", "Name is required");
   const sb = getServiceRoleClient();
+  if (scope.scope !== null) {
+    const { data: shop, error } = await sb.from("locations").select("id").eq("id", scope.scope).eq("active", true).maybeSingle();
+    if (error) throw new Error(`addRegistryItem shop read failed: ${error.message}`);
+    if (!shop) throw new AdminTemplateError(404, "location_not_found");
+  }
   if (!isPrepSectionName(args.section, await loadActiveSectionSlugs(sb))) {
     throw new AdminTemplateError(400, "invalid_section", "Unknown section");
   }
@@ -2172,7 +2199,7 @@ export async function addRegistryItem(
   const { data: itemRow, error: iErr } = await sb
     .from("items")
     .insert({
-      location_id: null,
+      location_id: scope.scope,
       name,
       name_es: nameEs,
       section: args.section,
@@ -2189,7 +2216,7 @@ export async function addRegistryItem(
     })
     .select("id")
     .maybeSingle<{ id: string }>();
-  if (iErr) throw new Error(`addRegistryItem insert failed: ${iErr.message}`);
+  if (iErr) throw catalogWriteError(iErr, AdminTemplateError, "addRegistryItem insert failed");
   if (!itemRow) throw new Error(`addRegistryItem insert returned no row`);
   const itemId = itemRow.id;
 
@@ -2223,7 +2250,8 @@ export async function addRegistryItem(
     resourceTable: "items",
     resourceId: itemId,
     metadata: {
-      scope: "global",
+      scope: scope.scope === null ? "global" : "shop",
+      location_id: scope.scope,
       is_default: args.isDefault,
       item_id: itemId,
       propagated_location_ids: propagatedLocationIds,
@@ -2327,6 +2355,7 @@ export async function enableRegistryItemAtLocation(
 // ── 3-Tab admin aggregate view (Item/Inventory Spine 2B′) ──────────────────
 
 export interface ChecklistRegistryItem {
+  locationId?: string | null;
   itemId: string;
   name: string;
   nameEs: string | null;
@@ -2413,20 +2442,21 @@ export interface ItemQuestionView {
  * location's checklist for `subtype` (items + par context + which items it
  * runs). Reuses getPrepTemplateDetail per location (which IDOR-binds).
  */
-/** Registry = active GLOBAL items (location_id NULL), sorted by section + name.
+/** Registry = active shared items, plus owned items for an explicit shop, sorted by section + name.
  * Shared by the checklist admin view and the /admin/items central page. */
-export async function loadItemRegistry(sb: SupabaseClient): Promise<ChecklistRegistryItem[]> {
-  const { data: regRows, error: rErr } = await sb
+export async function loadItemRegistry(sb: SupabaseClient, scope: VersionScope = null): Promise<ChecklistRegistryItem[]> {
+  const query = sb
     .from("items")
-    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify, tracking_type, batch_yield, oz_per_par_unit, menu_price, sold_directly, sell_portion, sell_portion_unit")
-    .is("location_id", null)
+    .select("id, location_id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify, tracking_type, batch_yield, oz_per_par_unit, menu_price, sold_directly, sell_portion, sell_portion_unit")
     .eq("active", true)
     .order("section", { ascending: true })
-    .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean; tracking_type: string; batch_yield: number | string; oz_per_par_unit: number | string | null; menu_price: number | string | null; sold_directly: boolean | null; sell_portion: number | string | null; sell_portion_unit: string | null }>>();
+    .order("name", { ascending: true });
+  const scoped = scope === null ? query.is("location_id", null) : query.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+  const { data: regRows, error: rErr } = await scoped.returns<Array<{ id: string; location_id: string | null; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean; tracking_type: string; batch_yield: number | string; oz_per_par_unit: number | string | null; menu_price: number | string | null; sold_directly: boolean | null; sell_portion: number | string | null; sell_portion_unit: string | null }>>();
   if (rErr) throw new Error(`loadItemRegistry failed: ${rErr.message}`);
   return (regRows ?? []).map((r) => ({
     itemId: r.id,
+    locationId: r.location_id,
     name: r.name,
     nameEs: r.name_es,
     section: r.section,
@@ -2668,11 +2698,12 @@ export async function updateRegistryItemDefinition(
   const { data: item, error: rErr } = await sb
     .from("items")
     .select(
-      "id, active, name, name_es, section, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required, tracking_type, batch_yield, oz_per_par_unit, menu_price",
+      "id, location_id, active, name, name_es, section, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required, tracking_type, batch_yield, oz_per_par_unit, menu_price",
     )
     .eq("id", args.itemId)
     .maybeSingle<{
       id: string;
+      location_id: string | null;
       active: boolean;
       name: string;
       name_es: string | null;
@@ -2690,6 +2721,8 @@ export async function updateRegistryItemDefinition(
     }>();
   if (rErr) throw new Error(`updateRegistryItemDefinition read failed: ${rErr.message}`);
   if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
+  const gate = ownerWriteCheck({ role: actor.user.role, level: ROLES[actor.user.role].level, locations: actor.locations }, item.location_id);
+  if (!gate.ok) throw new AdminTemplateError(gate.status, gate.code);
 
   const update: Record<string, unknown> = {};
   const before: Record<string, unknown> = {};
@@ -2769,11 +2802,14 @@ export async function updateRegistryItemDefinition(
   if (Object.keys(update).length === 0) return; // nothing changed
   update.updated_by = actor.user.id;
   update.updated_at = new Date().toISOString();
-  const { error: uErr } = await sb.from("items").update(update).eq("id", args.itemId);
-  if (uErr) throw new Error(`updateRegistryItemDefinition update failed: ${uErr.message}`);
+  const query = sb.from("items").update(update, { count: "exact" }).eq("id", args.itemId).eq("active", true);
+  const { error: uErr, count } = await (item.location_id === null ? query.is("location_id", null) : query.eq("location_id", item.location_id));
+  if (uErr) throw catalogWriteError(uErr, AdminTemplateError, "updateRegistryItemDefinition update failed");
+
+  if (count !== 1) throw new AdminTemplateError(409, "ownership_changed");
 
   // Propagate the changed full-definition subset to every active line.
-  const propagated = await propagateItemDefinitionToLines(sb, args.itemId, changes);
+  const propagated = await propagateItemDefinitionToLines(sb, args.itemId, changes, item.location_id);
 
   await audit({
     actorId: actor.user.id,

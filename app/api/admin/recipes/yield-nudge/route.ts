@@ -1,3 +1,4 @@
+import { ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
 import type { NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";

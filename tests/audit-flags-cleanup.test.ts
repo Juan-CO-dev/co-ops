@@ -279,7 +279,7 @@ describe("menu_price — two writers, one floor, and no coincidence of literals"
     // recipes cluster (PR #298). Aligning means adopting it, not silently tightening one
     // of the two writers — which would 403 a level-7 client that merely SENDS the field.
     expect(srcOf("lib/recipes.ts")).toContain(
-      "if (input.menuPrice != null) requireLevel(actor, MENU_PRICE_MIN)",
+      "if (locationId === null && input.menuPrice != null) requireLevel(actor, MENU_PRICE_MIN)",
     );
   });
 });
@@ -401,7 +401,7 @@ describe("0187 / 0188 — authored, gated, and NOT called by shipped code", () =
 
   it("addRecipeOutput calls add_recipe_output (0187, latest definer 0215) and no longer inserts directly", () => {
     const body = bodyOf(srcOf("lib/recipes.ts"), "export async function addRecipeOutput");
-    expect(body).toContain('.rpc("add_recipe_output"');
+    expect(body).toContain('writeRecipeRpc(sb, input.recipeId, owner, "add_recipe_output"');
     expect(body).not.toContain('from("recipe_outputs").insert');
   });
 

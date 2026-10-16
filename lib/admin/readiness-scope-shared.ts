@@ -10,11 +10,12 @@ import type { TranslationParams } from "@/lib/i18n/types";
 export interface ScopeReadiness {
   scope: string | null;
   scopeName: string | null;
+  skuReadiness: ReadonlyMap<string, Readiness>;
   recipeReadiness: ReadonlyMap<string, Readiness>;
   itemReadiness: ReadonlyMap<string, Readiness>;
 }
 
-export interface ReadinessByScope { scope: string | null; scopeName: string | null; recipes: number; items: number }
+export interface ReadinessByScope { scope: string | null; scopeName: string | null; skus: number; recipes: number; items: number }
 
 /**
  * WHERE a hub "N at P Street" entry links (Astra 3a r4#2): that scope's list, on the view that SHOWS that scope's
@@ -32,19 +33,22 @@ export function itemsLandingView(params: { view?: string; location?: string }): 
   return params.location ? "registry" : "catalog";
 }
 
-export function attributeNotReady(perScope: readonly ScopeReadiness[]): { recipes: number; items: number; byScope: ReadinessByScope[] } {
+export function attributeNotReady(perScope: readonly ScopeReadiness[]): { skus: number; recipes: number; items: number; byScope: ReadinessByScope[] } {
   const bad = (m: ReadonlyMap<string, Readiness>) => [...m].filter(([, r]) => r.status !== "ready").map(([id]) => id);
   const allRecipes = new Set<string>();
   const allItems = new Set<string>();
+  const allSkus = new Set<string>();
   const byScope: ReadinessByScope[] = [];
   for (const s of perScope) {
+    const k = bad(s.skuReadiness);
     const r = bad(s.recipeReadiness);
     const i = bad(s.itemReadiness);
+    k.forEach((id) => allSkus.add(id));
     r.forEach((id) => allRecipes.add(id));
     i.forEach((id) => allItems.add(id));
-    if (r.length > 0 || i.length > 0) byScope.push({ scope: s.scope, scopeName: s.scopeName, recipes: r.length, items: i.length });
+    if (k.length > 0 || r.length > 0 || i.length > 0) byScope.push({ scope: s.scope, scopeName: s.scopeName, skus: k.length, recipes: r.length, items: i.length });
   }
-  return { recipes: allRecipes.size, items: allItems.size, byScope };
+  return { skus: allSkus.size, recipes: allRecipes.size, items: allItems.size, byScope };
 }
 
 /** One "where" entry under a hub card: its link, and its words — the default, or a shop by NAME (never a code). */
@@ -60,8 +64,8 @@ export interface ReadinessWhereEntry {
  * the default first when it has failures, then each shop with failures for this section, each linking to that
  * scope's list. The hub joins them with a dot.
  */
-export function readinessWhereEntries(sectionId: "recipes" | "items", href: string, byScope: readonly ReadinessByScope[]): ReadinessWhereEntry[] {
-  const count = (b: ReadinessByScope) => (sectionId === "recipes" ? b.recipes : b.items);
+export function readinessWhereEntries(sectionId: "skus" | "recipes" | "items", href: string, byScope: readonly ReadinessByScope[]): ReadinessWhereEntry[] {
+  const count = (b: ReadinessByScope) => sectionId === "skus" ? b.skus : sectionId === "recipes" ? b.recipes : b.items;
   return byScope.filter((b) => count(b) > 0).map((b): ReadinessWhereEntry => {
     const href_ = readinessScopeHref(sectionId, href, b.scope);
     return b.scope === null

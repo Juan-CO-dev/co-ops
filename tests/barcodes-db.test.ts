@@ -121,6 +121,13 @@ describe("lookupScan — normalise, then resolve, and never read a forgotten row
     expect(argsFor("vendor_items", "eq")).toEqual([["vendor_id", VENDOR], ["active", true]]);
   });
 
+  it("does not resolve a foreign-shop taught row or foreign twin candidate", async () => {
+    queue.push({ data: [{ ...taughtRow(), vendor_items: { vendor_id: VENDOR, product_id: PRODUCT_TURKEY, location_id: "other-shop" } }], error: null });
+    queue.push({ data: [{ id: SKU_TURKEY, product_id: PRODUCT_TURKEY, location_id: "other-shop" }], error: null });
+    await expect(lookupScan(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, lineSkuIds: [] }))
+      .resolves.toMatchObject({ kind: "unknown" });
+  });
+
   it("a code nobody has taught is `unknown` — not an error", async () => {
     queue.push({ data: [], error: null });
     queue.push({ data: [{ id: SKU_TURKEY, product_id: null }], error: null });
@@ -210,6 +217,15 @@ describe("teachBarcode — idempotent, never a silent rewrite", () => {
     primeTeach([], { id: SKU_TURKEY, vendor_id: OTHER_VENDOR, active: true });
     await expect(teachBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" }))
       .rejects.toMatchObject({ status: 400, code: "vendor_mismatch" });
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("refuses a foreign-shop owned SKU before reading or inserting barcode rows", async () => {
+    primeTeach([], { id: SKU_TURKEY, vendor_id: VENDOR, active: true, location_id: "other-shop" });
+    await expect(teachBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" }))
+      .rejects.toMatchObject({ status: 404, code: "sku_not_found" });
+    expect(argsFor("sku_barcodes", "select")).toEqual([]);
+    expect(argsFor("sku_barcodes", "insert")).toEqual([]);
     expect(audit).not.toHaveBeenCalled();
   });
 
@@ -308,6 +324,22 @@ describe("forgetBarcode — soft delete, audited, and it must actually have hit 
       .rejects.toMatchObject({ status: 400, code: "vendor_mismatch" });
     expect(argsFor("sku_barcodes", "update")).toEqual([]);
     expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("refuses a foreign-shop owned SKU before the forget update", async () => {
+    primeForget({ id: SKU_TURKEY, vendor_id: VENDOR, location_id: "other-shop" });
+    await expect(forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" }))
+      .rejects.toMatchObject({ status: 404, code: "sku_not_found" });
+    expect(argsFor("sku_barcodes", "update")).toEqual([]);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("still forgets a code on an inactive SKU owned by this shop", async () => {
+    primeForget({ id: SKU_TURKEY, vendor_id: VENDOR, location_id: LOCATION, active: false });
+    queue.push({ data: null, error: null, count: 1 });
+    await expect(forgetBarcode(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, skuId: SKU_TURKEY, level: "case" }))
+      .resolves.toBeUndefined();
+    expect(argsFor("sku_barcodes", "update")).toHaveLength(1);
   });
 
   it("refuses an unknown SKU with 404 sku_not_found", async () => {

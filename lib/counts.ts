@@ -552,10 +552,13 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   const skuIds = [...new Set(lines.map((l) => l.skuId))];
   // Feeds the active-SKU validation gate — a swallowed error rejects the whole event
   // as "SKU not found or inactive". Throw so the real cause surfaces.
-  const { data: activeSkus, error: asErr } = await sb.from("vendor_items").select("id").in("id", skuIds).eq("active", true).returns<Array<{ id: string }>>();
+  const { data: activeSkus, error: asErr } = await sb.from("vendor_items").select("id, location_id").in("id", skuIds).eq("active", true).returns<Array<{ id: string; location_id: string | null }>>();
   if (asErr) throw new Error(`createCountEvent active skus: ${asErr.message}`);
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new CountError(400, "invalid_sku", "A SKU is not found or inactive");
+  if ((activeSkus ?? []).some((sku) => sku.location_id != null && sku.location_id !== input.locationId)) {
+    throw new CountError(400, "invalid_sku", "A SKU is not found or inactive");
+  }
 
   // Resolve every line to its ANCHOR DIMENSION at write (council L3 + PR-C LOCK 1):
   // a weight line persists resolved_oz; a count-terminated (packaging/cleaning/misc)

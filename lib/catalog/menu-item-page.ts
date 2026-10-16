@@ -5,6 +5,7 @@
  * GATES LIVE HERE (house rule): menuShopWriteGate / menuPromoteGate take the ROLE (the social media manager
  * is refused) and the shop bind, before any I/O; the writers bind again.
  */
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -29,12 +30,12 @@ import type { MenuChangeRequest, MenuItemPageView } from "@/lib/catalog/recipe-i
 import { loadActiveShops } from "@/lib/catalog/recipe-item";
 
 type Sb = ReturnType<typeof getServiceRoleClient>;
-type MenuRow = { id: string; name: string; name_es: string | null; menu_price: number | string | null; section: string | null; active: boolean };
+type MenuRow = { id: string; name: string; name_es: string | null; menu_price: number | string | null; section: string | null; active: boolean; location_id: string | null };
 
 const num = (v: number | string | null): number | null => (v === null ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 
 async function loadItem(sb: Sb, menuItemId: string): Promise<MenuRow | null> {
-  const { data, error } = await sb.from("menu_items").select("id, name, name_es, menu_price, section, active").eq("id", menuItemId).maybeSingle<MenuRow>();
+  const { data, error } = await sb.from("menu_items").select("id, name, name_es, menu_price, section, active, location_id").eq("id", menuItemId).maybeSingle<MenuRow>();
   if (error) throw new Error(`menu item: ${error.message}`);
   return data && data.active ? data : null;
 }
@@ -52,7 +53,7 @@ export async function loadMenuItemPageView(actor: AuthContext, menuItemId: strin
   const shops = await loadActiveShops(sb);
   if (scope !== null && !shops.some((s) => s.id === scope)) throw new MenuShopError(404, "not_found");
   const item = await loadItem(sb, menuItemId);
-  if (!item) return null;
+  if (!item || !ownerVisible(item.location_id, scope)) return null;
   const setting = scope === null ? undefined : (await loadLiveMenuItemShopSettings(scope)).get(menuItemId);
   const here = resolveMenuItemForShop({ id: item.id, name: item.name, nameEs: item.name_es, menuPrice: num(item.menu_price) }, setting);
   const toastQuery = sb.from("toast_menu_map").select("id").eq("menu_item_id", menuItemId).eq("active", true).eq("match_status", "confirmed");
@@ -124,9 +125,10 @@ export async function computeMenuPreview(actor: AuthContext, menuItemId: string,
   // THE SCOPED DEPENDENCY SNAPSHOT FIRST (lead decision (a)): the item, its live shop rows, the active shops and
   // the cost closure at the scope whose cost is shown (a promote shows the default's: NIL_SCOPE, as the lib's
   // promote takes it). The token binds it with every number shown; the writer takes the same closure's locks.
-  const snapshot = await loadMenuChangeSnapshot(menuItemId, change.kind === "promote" ? NIL_SCOPE : change.shopId);
   const item = await loadItem(sb, menuItemId);
   if (!item) throw new MenuShopError(404, "menu_item_not_found");
+  if (!ownerVisible(item.location_id, change.kind === "promote" ? null : change.shopId)) throw new MenuShopError(404, "not_found");
+  const snapshot = await loadMenuChangeSnapshot(menuItemId, change.kind === "promote" ? NIL_SCOPE : change.shopId);
   const g = { id: item.id, name: item.name, nameEs: item.name_es, menuPrice: num(item.menu_price) };
 
   if (change.kind === "promote") {

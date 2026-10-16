@@ -15,16 +15,18 @@ import { getRoleLevel } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadRecipe, RECIPE_READ_MIN } from "@/lib/recipes";
 import { loadGraphReadiness } from "@/lib/admin/readiness-load";
-import { loadRecipeBuilderCatalog } from "@/lib/admin/recipe-builder-data";
+import { shopParamFor, searchParamValues } from "@/lib/shop-context-shared";
+import { loadRecipePrepSections, loadRecipeBuilderCatalog, loadRecipeBuilderScope } from "@/lib/admin/recipe-builder-data";
 import type { Readiness } from "@/lib/readiness";
 import { RECIPE_WRITE_MIN } from "@/lib/recipes-shared";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
 import { RecipeCateringFlags, type RecipeMenuOutputFlags } from "@/components/admin/recipes/RecipeCateringFlags";
 
 export default async function AdminRecipeDetailPage({
-  params,
+  params, searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
 
@@ -33,8 +35,11 @@ export default async function AdminRecipeDetailPage({
   if (level < RECIPE_READ_MIN) redirect("/dashboard");
 
   const sb = getServiceRoleClient();
-  const [recipe, catalog] = await Promise.all([loadRecipe(auth, id), loadRecipeBuilderCatalog()]);
+  const recipe = await loadRecipe(auth, id);
   if (!recipe) notFound();
+  const sp = await searchParams;
+  const context = await loadRecipeBuilderScope(auth, shopParamFor(`/admin/recipes/${id}`, searchParamValues(sp)), false, recipe.ownerLocationId);
+  const catalog = await loadRecipeBuilderCatalog(auth, context.scope, recipe.ownerLocationId ?? null);
 
   // Catering flags for this recipe's MENU_ITEM outputs (piece 2) — batch load
   // the current flag columns for every sub the recipe produces.
@@ -64,7 +69,7 @@ export default async function AdminRecipeDetailPage({
 
   let readiness: Readiness | null = null;
   try {
-    const g = await loadGraphReadiness(auth, null);
+    const g = await loadGraphReadiness(auth, context.scope);
     readiness = g.recipeReadiness.get(id) ?? null;
   } catch (e) {
     console.error("readiness load failed (rendering without banner)", e);
@@ -82,6 +87,12 @@ export default async function AdminRecipeDetailPage({
         <p className="min-w-0 break-words text-xs text-co-text-muted">{serverT(lang, "recipes.catalog_link_hint")}</p>
       </div>
       <RecipeBuilder
+        key={`${recipe.id}:${context.scope ?? "global"}`}
+        locationId={context.scope}
+        scopeOptions={context.shops}
+        allowGlobalScope={context.allowGlobal}
+        outputItems={catalog.outputItems}
+        prepSections={await loadRecipePrepSections(auth)}
         recipe={recipe}
         skus={catalog.skus}
         items={catalog.items}

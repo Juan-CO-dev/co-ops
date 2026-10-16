@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
 
   const input: CreateSkuInput = {
     vendorId: typeof b.vendorId === "string" ? b.vendorId : null,
-    locationId: typeof b.locationId === "string" ? b.locationId : null,
+    ...(b.locationId === undefined ? {} : { locationId: b.locationId as string | null }),
     name: b.name,
     packFormat: b.packFormat,
     unitsPerPack: typeof b.unitsPerPack === "number" ? b.unitsPerPack : null,

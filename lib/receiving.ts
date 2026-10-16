@@ -524,6 +524,11 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   if (missingExpected.length > 0 && !poId) {
     throw new ReceivingError(400, "missing_requires_po", "Missing-item shorts can only be filed against a purchase order");
   }
+  // Validate the entire missing-credit payload before the delivery header or any line is
+  // written. A forged foreign-shop SKU must leave no partial delivery behind.
+  const missingCreditDrafts = await prepareMissingExpectedCredits(
+    sb, input.vendorId, input.locationId, missingExpected, new Set(input.lines.map((l) => l.skuId)),
+  );
 
   // 0160 columns — apply 0160 BEFORE deploying this code (additive; old code unaffected).
   // The 0160 `note` columns are the brief-canonical fields; the legacy `notes`
@@ -565,8 +570,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   // right beside the lined credits so both halves of "what the vendor owes us for this
   // drop" land in the same write phase.
   const missingCreditCount = await insertMissingExpectedCredits(
-    sb, header.id, input.vendorId, input.locationId,
-    missingExpected, new Set(input.lines.map((l) => l.skuId)), actor.user.id,
+    sb, header.id, input.vendorId, input.locationId, missingCreditDrafts, actor.user.id,
   );
 
   const priced = resolved.priceLines;
@@ -774,7 +778,7 @@ async function validateAndResolveDeliveryLines(
   if (skuError) throw new Error(`validateAndResolveDeliveryLines skus: ${skuError.message}`);
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
-  if (sourceKind === "store" && (activeSkus ?? []).some((sku) => sku.location_id != null && sku.location_id !== deliveryLocationId)) {
+  if ((activeSkus ?? []).some((sku) => sku.location_id != null && sku.location_id !== deliveryLocationId)) {
     throw new ReceivingError(404, "not_found");
   }
 
@@ -936,16 +940,14 @@ async function deriveAndUpsertCredits(
  * A write failure THROWS (500 credit_write_failed) — mirroring deriveAndUpsertCredits,
  * because a swallowed credit is a real loss.
  */
-async function insertMissingExpectedCredits(
+async function prepareMissingExpectedCredits(
   sb: ServiceClient,
-  deliveryId: string,
   vendorId: string,
   locationId: string,
   missing: MissingExpectedLine[],
   deliveredSkuIds: Set<string>,
-  createdBy: string,
-): Promise<number> {
-  if (missing.length === 0) return 0;
+): Promise<ReturnType<typeof deriveMissingCreditDrafts>> {
+  if (missing.length === 0) return [];
   for (const m of missing) {
     if (typeof m.skuId !== "string" || m.skuId === "") throw new ReceivingError(400, "invalid_missing_sku", "A missing item named no SKU");
     if (!Number.isFinite(m.expectedQty) || m.expectedQty <= 0) throw new ReceivingError(400, "invalid_expected", "Expected qty must be greater than zero");
@@ -958,15 +960,18 @@ async function insertMissingExpectedCredits(
     if (!bySku.has(m.skuId)) bySku.set(m.skuId, m);
   }
   const usable = [...bySku.values()];
-  if (usable.length === 0) return 0;
+  if (usable.length === 0) return [];
 
   const skuIds = usable.map((m) => m.skuId);
   const { data: activeSkus, error: sErr } = await sb.from("vendor_items")
-    .select("id, vendor_id").in("id", skuIds).eq("active", true)
-    .returns<Array<{ id: string; vendor_id: string | null }>>();
+    .select("id, vendor_id, location_id").in("id", skuIds).eq("active", true)
+    .returns<Array<{ id: string; vendor_id: string | null; location_id: string | null }>>();
   if (sErr) throw new Error(`insertMissingExpectedCredits skus: ${sErr.message}`);
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
+  if ((activeSkus ?? []).some((sku) => sku.location_id != null && sku.location_id !== locationId)) {
+    throw new ReceivingError(404, "not_found");
+  }
 
   // Vendor binding (P3) — mirrors validateAndResolveDeliveryLines. A short credit is a
   // DEBT claim against `vendorId`; claiming another vendor's twin invents a debt the
@@ -976,7 +981,18 @@ async function insertMissingExpectedCredits(
     throw new ReceivingError(400, "sku_vendor_mismatch", "A missing item belongs to a different vendor than this delivery");
   }
 
-  const drafts = deriveMissingCreditDrafts(usable);
+  return deriveMissingCreditDrafts(usable);
+}
+
+async function insertMissingExpectedCredits(
+  sb: ServiceClient,
+  deliveryId: string,
+  vendorId: string,
+  locationId: string,
+  drafts: ReturnType<typeof deriveMissingCreditDrafts>,
+  createdBy: string,
+): Promise<number> {
+  if (drafts.length === 0) return 0;
   const { error: cErr } = await sb.from("vendor_credits").insert(
     drafts.map((d) => ({
       location_id: locationId, vendor_id: vendorId, delivery_id: deliveryId,

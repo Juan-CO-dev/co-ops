@@ -34,6 +34,8 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Tables whose rows belong to a shop (or are org-scope ONLY when their location column is null). */
 const TENANCY_SCOPED_TABLES = [
+  "sku_swaps",
+  "sku_swap_ends",
   "vendor_items",
   "location_sku_settings",
   "product_primaries",
@@ -89,6 +91,11 @@ const TENANCY_SCOPED_TABLES = [
  * location before dispatch. Listed so a future lib on FILES that calls them is held to the bind.
  */
 const TENANCY_SCOPED_RPCS = [
+  "create_catalog_sku",
+  "create_shop_sandwich",
+  "share_catalog_entity",
+  "start_sku_swap",
+  "end_sku_swap",
   "save_am_prep_draft",
   "save_phase2_item_atomic",
   "save_mid_day_phase2_item_atomic",
@@ -136,10 +143,18 @@ const BIND_PRIMITIVES = [
   // 2a: level ≥ 8 or a membership (D2) — and the owning-shop rule built on it.
   "catalogShopAllowed",
   "skuOwnerAllowed",
+  // Phase 4a: creation validates requested membership; version writes bind both scope and owner.
+  "creationScope",
+  "requireRecipeScope",
+  "requireShare",
 ];
 
 /** The audit's named surface. Widen deliberately, one file per follow-up PR. */
 const FILES = [
+  "lib/catalog/new-item.ts",
+  "lib/catalog/new-sandwich.ts",
+  "lib/catalog/share.ts",
+  "lib/catalog/swap-vendor.ts",
   "lib/receiving-stores.ts",
   "lib/admin/skus.ts",
   "lib/products.ts",
@@ -222,9 +237,12 @@ const WRITE_CALLS = [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("];
 function writesScopedTable(body: string): string | null {
   // 0217's stable date resolver is read-only; do not mistake its RPC for a write.
   body = body.replaceAll('.rpc("station_business_date",', '.readRpc("station_business_date",');
+  // The swap module wraps its database RPC; generic result types do not remove the bind requirement.
   for (const r of TENANCY_SCOPED_RPCS) {
+    if (new RegExp(`\\brpc(?:<[^\\n]*>)?\\("${r}"`).test(body)) return `rpc:${r}`;
     if (body.includes(`.rpc("${r}"`)) return `rpc:${r}`;
   }
+  if (body.includes("await apply(actor,")) return "delegated:share_catalog_entity";
   for (const t of TENANCY_SCOPED_TABLES) {
     if (body.includes(`.from("${t}")`) && WRITE_CALLS.some((w) => body.includes(w))) return t;
   }
@@ -257,6 +275,17 @@ describe("differential location-bind check — every actor-taking writer of a te
         });
       }
 
+      const catalogWriters: Record<string, string[]> = {
+        "lib/catalog/new-item.ts": ["createCatalogItem"],
+        "lib/catalog/new-sandwich.ts": ["createNewSandwich"],
+        "lib/catalog/share.ts": ["shareMenuItemWithAllShops", "shareRecipeWithAllShops", "shareSkuWithAllShops"],
+        "lib/catalog/swap-vendor.ts": ["endSkuSwap", "startSkuSwap"],
+      };
+      if (catalogWriters[rel]) {
+        it("detects every catalog job writer, including wrapped RPCs", () => {
+          expect(writers.map(({ f }) => f.name).sort()).toEqual(catalogWriters[rel]);
+        });
+      }
       if (rel === "lib/assignments.ts") {
         it("detects every station and task writer", () => {
           expect(writers.map(({ f }) => f.name).sort()).toEqual([
@@ -270,7 +299,10 @@ describe("differential location-bind check — every actor-taking writer of a te
       for (const { f, table } of writers) {
         const key = `${rel}#${f.name}`;
         it(`${f.name} writes ${table} → binds the actor to a location (or is an allowlisted debt)`, () => {
-          const binds = BIND_PRIMITIVES.some((p) => f.body.includes(p));
+          // Sandwich prepare is the common preview/save validation path; pin its gate before counting this delegation.
+          const sandwichBind = rel === "lib/catalog/new-sandwich.ts" && f.body.includes("await prepare(actor, raw)")
+            && /async function prepare[\s\S]*?creationScope\(/.test(source);
+          const binds = sandwichBind || BIND_PRIMITIVES.some((p) => f.body.includes(p));
           if (binds) {
             // A bound writer must not ALSO sit in the allowlist — retire the debt line.
             expect(ALLOWLIST[key], `${key} is bound now; remove its allowlist line`).toBeUndefined();

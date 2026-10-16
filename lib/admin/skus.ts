@@ -1,3 +1,4 @@
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * Admin SKU-catalog data layer (Item/Inventory Spine — vendor mini-arc, Slice C1).
  *
@@ -39,6 +40,7 @@ import type { AuthContext } from "@/lib/session";
 import { lockLocationContext, isAllLocationsAccess, type LocationActor } from "@/lib/locations";
 import type { MeasureDimension } from "@/lib/recipe-math";
 import { GLOBAL_VERSION_WRITE_MIN } from "@/lib/sku-versions-shared";
+import { creationScope } from "@/lib/catalog/shop-owned-shared";
 import type { SkuClass } from "@/lib/admin/catalog-shared";
 // SKU_CLASSES + isSkuClass live in the client-safe shared module (used by the
 // SKU form); re-export so server consumers keep importing from lib/admin/skus.
@@ -535,8 +537,9 @@ export async function addMeasureUnit(
 
 // ── Create (GM+) ───────────────────────────────────────────────────────────────
 export interface CreateSkuInput {
-  vendorId: string | null;
-  locationId: string | null;
+  vendorId?: string | null;
+  /** Omitted infers exactly one membership; null explicitly requests global creation. */
+  locationId?: string | null;
   name: string;
   packFormat: string;
   unitsPerPack?: number | null;
@@ -561,11 +564,9 @@ export interface CreateSkuInput {
 
 export async function createSku(actor: AuthContext, input: CreateSkuInput): Promise<{ id: string }> {
   requireLevel(actor, SKU_WRITE_MIN);
-  // A shop-scoped SKU may only be minted at a shop the actor holds; a GLOBAL SKU
-  // (locationId null) is org-scope and is not bound. Bind precedes validation + I/O.
-  if (input.locationId && !lockLocationContext(actorLoc(actor), input.locationId)) {
-    throw new AdminSkuError(404, "not_found", "Location not found");
-  }
+  const scope = creationScope({ role: actor.user.role, level: getRoleLevel(actor.user.role), locations: actor.locations }, input.locationId);
+  if (!scope.ok) throw new AdminSkuError(scope.status, scope.code, scope.code);
+  input = { ...input, locationId: scope.scope };
 
   const name = input.name.trim();
   if (!name) throw new AdminSkuError(400, "invalid_name", "SKU name is required");
@@ -609,7 +610,7 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
     })
     .select("id")
     .maybeSingle<{ id: string }>();
-  if (error) throw new Error(`createSku insert failed: ${error.message}`);
+  if (error) throw catalogWriteError(error, AdminSkuError, "createSku insert failed");
   if (!inserted) throw new Error("createSku insert returned no row");
 
   await audit({
@@ -805,6 +806,7 @@ export async function updateSku(
   const { changes } = args;
   const update: Record<string, unknown> = {};
   let currentSkuClass: string | null = null;
+  let expectedOwner: string | null = null;
 
   let packBefore: Record<string, unknown> = {};
   // The SKU is addressed by opaque id, so its shop has to be READ before it can be bound
@@ -824,8 +826,9 @@ export async function updateSku(
     if (curErr) throw new Error(`updateSku bind read failed: ${curErr.message}`);
     if (!cur) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
     currentSkuClass = cur.sku_class;
+    expectedOwner = cur.location_id ?? null;
     packBefore = cur;
-    if (cur.location_id !== null && !lockLocationContext(actorLoc(actor), cur.location_id)) {
+    if (cur.location_id != null && getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN && !lockLocationContext(actorLoc(actor), cur.location_id)) {
       throw new AdminSkuError(404, "not_found", "SKU not found");
     }
   }
@@ -834,15 +837,14 @@ export async function updateSku(
     if (changes.vendorId !== null) await assertVendorActive(changes.vendorId);
     update.vendor_id = changes.vendorId; // null allowed → manual / reassign-off
   }
-  if (changes.locationId !== undefined) {
-    if (changes.locationId !== null) {
-      // Reassignment TARGET: moving a SKU is a write against the destination shop too.
-      if (!lockLocationContext(actorLoc(actor), changes.locationId)) {
-        throw new AdminSkuError(404, "not_found", "Location not found");
-      }
-      await assertLocationActive(changes.locationId);
+  if (changes.locationId !== undefined && changes.locationId !== expectedOwner) {
+    if (getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN) {
+      throw new AdminSkuError(403, "global_requires_moo", "Only a Manager of Operations can share a SKU globally");
     }
-    update.location_id = changes.locationId;
+    if (changes.locationId !== null) {
+      throw new AdminSkuError(400, "owner_is_set_at_creation", "Ownership is set at creation; only sharing globally is supported");
+    }
+    update.location_id = null;
   }
   if (changes.name !== undefined) {
     const n = changes.name.trim();
@@ -903,7 +905,7 @@ export async function updateSku(
   // meanwhile — and a changed field must have been EMPTY (a first value), enforced again by the
   // UPDATE below as a compare-and-set on NULL. A GM changes how an item arrives on the item page.
   const changedPack: string[] = [];
-  if (getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN) {
+  if (expectedOwner === null && getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN) {
     for (const f of PACK_FIELDS) {
       if (!(f in update)) continue;
       if (samePackValue(update[f], packBefore[f])) { delete update[f]; continue; }
@@ -940,14 +942,15 @@ export async function updateSku(
 
   const sb = getServiceRoleClient();
   let q = sb.from("vendor_items").update(update, { count: "exact" }).eq("id", args.id);
+  q = expectedOwner === null ? q.is("location_id", null) : q.eq("location_id", expectedOwner);
   // The first-value rule rides the write itself: each newly set pack field must STILL be empty.
   for (const f of changedPack) q = q.is(f, null);
   const { error, count } = await q;
-  if (error) throw new Error(`updateSku failed: ${error.message}`);
+  if (error) throw catalogWriteError(error, AdminSkuError, "updateSku failed");
   if (count === 0) {
     throw changedPack.length > 0
       ? new AdminSkuError(403, "global_requires_moo", "Someone set this pack first — reload")
-      : new AdminSkuError(404, "sku_not_found", "SKU not found");
+      : new AdminSkuError(409, "ownership_changed", "SKU ownership changed — reload");
   }
 
   await audit({
@@ -981,19 +984,21 @@ export async function deactivateSku(
     .maybeSingle<{ id: string; location_id: string | null }>();
   if (curErr) throw new Error(`deactivateSku bind read failed: ${curErr.message}`);
   if (!cur) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
-  if (cur.location_id !== null && !lockLocationContext(actorLoc(actor), cur.location_id)) {
+  if (cur.location_id != null && getRoleLevel(actor.user.role) < GLOBAL_VERSION_WRITE_MIN && !lockLocationContext(actorLoc(actor), cur.location_id)) {
     throw new AdminSkuError(404, "not_found", "SKU not found");
   }
 
-  const { error, count } = await sb
+  let query = sb
     .from("vendor_items")
     .update(
       { active: args.active, updated_by: actor.user.id, updated_at: new Date().toISOString() },
       { count: "exact" },
     )
     .eq("id", args.id);
-  if (error) throw new Error(`deactivateSku failed: ${error.message}`);
-  if (count === 0) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
+  query = cur.location_id == null ? query.is("location_id", null) : query.eq("location_id", cur.location_id);
+  const { error, count } = await query;
+  if (error) throw catalogWriteError(error, AdminSkuError, "deactivateSku failed");
+  if (count === 0) throw new AdminSkuError(409, "ownership_changed", "SKU ownership changed — reload");
 
   await audit({
     actorId: actor.user.id,

@@ -8,6 +8,7 @@
  */
 
 import type { TranslationKey } from "@/lib/i18n/types";
+import { SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
 
 export { postJson } from "@/components/admin/users/shared";
 
@@ -52,6 +53,7 @@ const KNOWN = new Set([
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {
+  if (SHOP_OWNED_ERROR_CODES.some(value => value === code)) return `catalog.error.${code}` as TranslationKey;
   const key = KNOWN.has(code) ? code : "generic";
   return `admin.templates.error.${key}` as TranslationKey;
 }

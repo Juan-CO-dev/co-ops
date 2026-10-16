@@ -41,7 +41,7 @@ describe("who may change a GLOBAL pack from this screen", () => {
 describe("the editor opens read-only instead of offering a doomed save", () => {
   const src = readFileSync("components/admin/skus/SkuBuilder.tsx", "utf8");
   it("both branches (chained, and unchained with a flat pack) render the plain line in place of the edit trigger", () => {
-    expect(src).toContain("const globalPackLocked = isEdit && !canChangeGlobalPack(actorLevel, hasGlobalPack(initial!, initialChain?.length ?? 0));");
+    expect(src).toContain("const globalPackLocked = isEdit && !canEditOwnedPack && !canChangeGlobalPack(actorLevel, hasGlobalPack(initial!, initialChain?.length ?? 0));");
     expect(src.match(/\{t\("admin\.skus\.chain\.global_read_only"\)\}/g)).toHaveLength(2);
     // Catalog Phase 2b: the read-only line is followed by the item page's pack job for a shop-version writer.
     const lockedLine = String.raw`\{globalPackLocked \? \(\s+<>\s+<p role="note"[^>]*>\{t\("admin\.skus\.chain\.global_read_only"\)\}<\/p>\s+\{offerShopPackJob \? <ShopPackJobLink skuId=\{initial!\.id\} shopId=\{itemShopId\} \/> : null\}\s+<\/>\s+\)`;

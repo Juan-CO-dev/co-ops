@@ -52,7 +52,7 @@ function fixture() {
   return { service, orders, tables };
 }
 const common = { locationId: "shop", granularity: "day" as const, compare: false, today: "2026-10-07" };
-const viewer = { userId: "manager", level: 6, locations: ["shop"] };
+const viewer = { userId: "manager", role: "agm" as const, level: 6, locations: ["shop"] };
 
 it("counts distinct instance/items per contributor in roster, person and wrap-up while preserving notes", async () => {
   const { service, orders } = fixture();
@@ -71,7 +71,7 @@ it("counts distinct instance/items per contributor in roster, person and wrap-up
 it("excludes draft feedback and MVPs from both person and self views", async () => {
   const { service } = fixture();
   const detail = await loadPersonDetail(service, { ...common, viewer, personId: "employee" });
-  const self = await loadMyPerformance(service, { ...common, viewer: { ...viewer, userId: "employee", level: 3 } });
+  const self = await loadMyPerformance(service, { ...common, viewer: { ...viewer, userId: "employee", role: "employee" as const, level: 3 } });
   for (const result of [detail, self]) {
     expect(result?.gradientTally).toEqual({ great: 3, good: 6, needsWork: 3 });
     expect(result?.signals).toMatchObject({ mvpAwards: 3, flaggedToImprove: 3 });

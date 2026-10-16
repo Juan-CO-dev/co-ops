@@ -117,15 +117,16 @@ describe("hub readiness is attributed per scope (lead decision (c), Astra 3a r2#
     const bad: Readiness = { status: "incomplete", reasons: [] };
     const ok: Readiness = { status: "ready", reasons: [] };
     const r = attributeNotReady([
-      { scope: null, scopeName: null, recipeReadiness: new Map([["r-slaw", ok], ["r-old", bad]]), itemReadiness: new Map() },
-      { scope: LOC, scopeName: "Shop one", recipeReadiness: new Map([["r-slaw", bad], ["r-old", bad]]), itemReadiness: new Map([["i-slaw", bad]]) },
-      { scope: OTHER, scopeName: "Shop two", recipeReadiness: new Map([["r-slaw", ok]]), itemReadiness: new Map() },
+      { scope: null, scopeName: null, skuReadiness: new Map([["s-shared", ok]]), recipeReadiness: new Map([["r-slaw", ok], ["r-old", bad]]), itemReadiness: new Map() },
+      { scope: LOC, scopeName: "Shop one", skuReadiness: new Map([["s-shared", ok], ["s-owned", bad]]), recipeReadiness: new Map([["r-slaw", bad], ["r-old", bad]]), itemReadiness: new Map([["i-slaw", bad]]) },
+      { scope: OTHER, scopeName: "Shop two", skuReadiness: new Map([["s-shared", ok]]), recipeReadiness: new Map([["r-slaw", ok]]), itemReadiness: new Map() },
     ]);
+    expect(r.skus).toBe(1);
     expect(r.recipes).toBe(2); // r-old and r-slaw, each counted once
     expect(r.items).toBe(1);
     expect(r.byScope).toEqual([
-      { scope: null, scopeName: null, recipes: 1, items: 0 },
-      { scope: LOC, scopeName: "Shop one", recipes: 2, items: 1 },
+      { scope: null, scopeName: null, skus: 0, recipes: 1, items: 0 },
+      { scope: LOC, scopeName: "Shop one", skus: 1, recipes: 2, items: 1 },
     ]);
   });
   it("a shop's item warning lands on THAT shop's registry view, never the default catalog (Astra 3a r4#2)", () => {

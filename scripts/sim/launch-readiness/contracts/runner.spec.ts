@@ -2,6 +2,11 @@ import { test, expect, login } from "../playwright.config";
 import { SIM_LOCATIONS, personaByEmail } from "../../personas-shared";
 import { buildAssetsFromHtml } from "../build-identity"; // pure module: target.ts uses import.meta, which CJS-transpiled specs cannot load
 
+test("runner keeps catalog password out of browser workers", async ({ contract }) => {
+  contract.assertionIds.push("runner.catalog-secret-isolation");
+  expect(process.env.SIM_CATALOG_PASSWORD).toBeUndefined();
+});
+
 test("runner production identity", async ({ page, contract }) => {
   test.skip(process.env.LRA_DEV === "1", "Development mode is not production release evidence");
   contract.assertionIds.push("runner.production-identity");

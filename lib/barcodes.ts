@@ -120,7 +120,7 @@ interface TaughtRow {
   code: string;
   sku_id: string;
   level: Level;
-  vendor_items: { vendor_id: string | null; product_id: string | null };
+  vendor_items: { vendor_id: string | null; product_id: string | null; location_id: string | null };
 }
 
 /**
@@ -143,7 +143,7 @@ export async function lookupScan(
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb
     .from("sku_barcodes")
-    .select("code, sku_id, level, vendor_items!inner(vendor_id, product_id)")
+    .select("code, sku_id, level, vendor_items!inner(vendor_id, product_id, location_id)")
     .eq("code", normalized.code)
     .is("forgotten_at", null)
     .returns<TaughtRow[]>();
@@ -151,10 +151,10 @@ export async function lookupScan(
 
   const { data: skus, error: skuErr } = await sb
     .from("vendor_items")
-    .select("id, product_id")
+    .select("id, product_id, location_id")
     .eq("vendor_id", input.vendorId)
     .eq("active", true)
-    .returns<Array<{ id: string; product_id: string | null }>>();
+    .returns<Array<{ id: string; product_id: string | null; location_id: string | null }>>();
   if (skuErr) throw new BarcodeError(500, "lookup_failed", `Vendor SKU read failed: ${skuErr.message}`);
 
   const ctx: ScanContext = {
@@ -163,14 +163,15 @@ export async function lookupScan(
     // A vendor-less SKU (vendor_id is nullable — manual catalog entries) can never BE this
     // vendor's, and "" is a UUID no caller can supply, so the empty string is the honest
     // stand-in for "belongs to nobody" rather than a coincidence waiting to happen.
-    taught: (rows ?? []).map((r) => ({
+    taught: (rows ?? []).filter((r) => r.vendor_items.location_id == null || r.vendor_items.location_id === input.locationId).map((r) => ({
       code: r.code,
       skuId: r.sku_id,
       level: r.level,
       vendorId: r.vendor_items.vendor_id ?? "",
       productId: r.vendor_items.product_id,
     })),
-    vendorSkus: (skus ?? []).map((s) => ({ skuId: s.id, productId: s.product_id })),
+    vendorSkus: (skus ?? []).filter((s) => s.location_id == null || s.location_id === input.locationId)
+      .map((s) => ({ skuId: s.id, productId: s.product_id })),
   };
   return { ...resolveScan(normalized.code, ctx), normalized };
 }
@@ -199,14 +200,15 @@ export async function teachBarcode(
   const sb = getServiceRoleClient();
   const { data: sku, error: skuErr } = await sb
     .from("vendor_items")
-    .select("id, vendor_id, active")
+    .select("id, vendor_id, active, location_id")
     .eq("id", input.skuId)
-    .maybeSingle<{ id: string; vendor_id: string | null; active: boolean }>();
+    .maybeSingle<{ id: string; vendor_id: string | null; active: boolean; location_id: string | null }>();
   if (skuErr) throw new BarcodeError(500, "teach_failed", `SKU read failed: ${skuErr.message}`);
   // A deactivated SKU is refused with the same code as a missing one, on purpose: from the
   // receiver's side both mean "this is not an item you can teach a code onto", and the door
   // already refuses to RECEIVE an inactive SKU (lib/receiving.ts's `invalid_sku` gate).
   if (!sku || !sku.active) throw new BarcodeError(404, "sku_not_found", "Item not found");
+  if (sku.location_id != null && sku.location_id !== input.locationId) throw new BarcodeError(404, "sku_not_found", "Item not found");
   if (sku.vendor_id !== input.vendorId) {
     throw new BarcodeError(400, "vendor_mismatch", "That item belongs to a different vendor");
   }
@@ -316,11 +318,12 @@ export async function forgetBarcode(
   const sb = getServiceRoleClient();
   const { data: sku, error: skuErr } = await sb
     .from("vendor_items")
-    .select("id, vendor_id")
+    .select("id, vendor_id, location_id")
     .eq("id", input.skuId)
-    .maybeSingle<{ id: string; vendor_id: string | null }>();
+    .maybeSingle<{ id: string; vendor_id: string | null; location_id: string | null }>();
   if (skuErr) throw new BarcodeError(500, "forget_failed", `SKU read failed: ${skuErr.message}`);
   if (!sku) throw new BarcodeError(404, "sku_not_found", "Item not found");
+  if (sku.location_id != null && sku.location_id !== input.locationId) throw new BarcodeError(404, "sku_not_found", "Item not found");
   if (sku.vendor_id !== input.vendorId) {
     throw new BarcodeError(400, "vendor_mismatch", "That item belongs to a different vendor");
   }

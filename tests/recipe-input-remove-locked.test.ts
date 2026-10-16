@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 const rpc = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ rpc, from: () => { throw new Error("no direct table write expected"); } }) }));
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ rpc, from: (table: string) => { const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: table === "recipes" ? { id: "r", location_id: null } : { recipe_id: "r" }, error: null }) }; return q; } }) }));
 vi.mock("@/lib/audit", () => ({ audit: async () => {} }));
 import { removeRecipeEdge } from "@/lib/recipes";
 

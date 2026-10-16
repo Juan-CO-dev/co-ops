@@ -1,3 +1,4 @@
+import { ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
 /**
  * PATCH /api/admin/recipes/[id]/inputs/[inputId] — edit ONE recipe line in place (catalog
  * redesign Phase 1, 2026-10-15). Body: { line, expected } — the WHOLE new line and the line the
@@ -33,6 +34,7 @@ export async function PATCH(
     const result = await updateRecipeInput(ctx, { recipeId: id, inputId, line: edit.line, expected: edit.expected });
     return jsonOk({ ok: true, changed: result.changed });
   } catch (e) {
+    if (e instanceof ShopOwnedError) return jsonError(e.status, e.code, e.line ? { line: e.line } : undefined);
     if (e instanceof RecipeError) return jsonError(e.status, e.code);
     throw e;
   }

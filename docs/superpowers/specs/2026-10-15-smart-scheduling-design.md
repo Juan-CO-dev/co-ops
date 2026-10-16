@@ -171,6 +171,12 @@ Nothing structural is hard-coded. Each shop has a **Schedule structure** setting
 
 Any change shows "Settings changed — regenerate?". The rebuilt week stays inside the new rules, and every reason cites the rule it followed ("Busy Thursday → 2 Walk-ins at close (Closing crew rule)").
 
+### 5.8 Planning horizon (Juan, 2026-10-16)
+- The manager can build **next week, the next two weeks, the next N weeks, or the rest of the month / a whole month** in one go. Partial weeks at a month's edge are handled: "rest of October" builds from tomorrow through the 31st.
+- The automatic Wednesday proposal still covers next week. A longer horizon is built on request and shows a confidence note for the later weeks (forecast is weaker further out).
+- Weeks already built are not overwritten silently: rebuilding a range that includes an edited week asks first and shows "What changed" per week.
+- The hours budget (§5.2) is set per week or per month split into weeks, and the horizon uses each week's budget.
+
 ## 6. The scheduler
 
 ### 6.1 When it runs
@@ -180,7 +186,7 @@ Any change shows "Settings changed — regenerate?". The rebuilt week stays insi
 ### 6.2 What it builds
 - **Shift SHAPES from demand,** not fixed templates. It uses the busy curve, prep load, catering and closer needs, and respects people's timing. The manager approves or tweaks the shapes.
 - **Station close-down and trim times dictate the build:**
-  - At Capitol Hill: Crunchy Boi closes 2 PM, 3rd Party 3:30 PM, Register & Delivery trims 4 PM, Walk-ins / Online trims 5 PM.
+  - At Capitol Hill (Juan, corrected 2026-10-16): Crunchy Boi closes 2 PM, **3rd Party trims around 4 PM**, Register & Delivery trims 4 PM, and **Walk-ins / Online runs ALL DAY** (open to close, it never trims). Every open / trim / close time is a per-shop SETTING, not a constant.
   - A position segment ends exactly there; the person then moves to the next needed position or clocks out.
   - Closers' shifts run to shop close PLUS the closing checklist's real duration.
 - **MULTI-POSITION SHIFTS.** A shift is one block per person (clock-in → clock-out) split into ordered position segments. The proposal suggests the segments; the crew works out actual positions on the day. Coverage counts each segment toward its position, and also shows who else on shift could cover it.
@@ -195,8 +201,9 @@ Any change shows "Settings changed — regenerate?". The rebuilt week stays insi
 - **Manager on duty:** at every hour someone Shift Lead or above is the manager on duty; the board highlights them and flags any hour without one.
 - **Role rules:** e.g. Closing Manager requires Key Holder or above. Rules come from the role ladder (`lib/roles.ts`) and the station positions (`station_positions`).
 
-### 6.3 Call-outs (sick or unexpected days off)
-- **Input:** "Out sick…" for today only or N days.
+### 6.3 Call-outs: "Out" (any reason)
+- **Input:** "Out…" for today only or N days. It is "Out", never "Out sick" (Juan, 2026-10-16): a person can be out for any reason.
+- **The confirm pop-up** asks for the reason from a dropdown (Sick · Family · Emergency · Personal · Transportation · No-show · Other) plus an optional write-in. "Other" requires the write-in. The reasons list is a setting. The reason is visible to managers only, and it feeds the call-out pressure in §6.4.
 - The scheduler regenerates ONLY from today forward within the absence, and never touches days already passed.
 - Everyone else's existing shifts (hours and shapes) stay as they are. It only FILLS the absent person's shifts:
   1. salaried management floor time FIRST (no added hourly cost; within the floor limit and the manager's open/close setting);
@@ -211,6 +218,13 @@ Any change shows "Settings changed — regenerate?". The rebuilt week stays insi
   3. an AGM/GM hire ONLY when the managers' floor load is the problem.
 - It **always shows the math:** hours/week, sample cost, what it removes (gaps, overtime, flex uses, manager floor hours). Call-out pressure is included, e.g. "3 sick calls this month covered by managers for 11 floor h; one more Employee at 20 h/week ≈ $380/week would free them".
 - It reacts live as the manager edits.
+
+### 6.6 The labor-target card (Juan, 2026-10-16)
+An info card on the board, per day and per shift window, showing **the optimal number of people and hours that keeps great service without going over the labor target (default 28% of forecast sales; a per-shop setting).** The math, shown on the card:
+- **Max hourly labor $ = forecast sales × target %** (minus salaried cost when the target is total labor %).
+- **Max hours = max labor $ ÷ blended average wage** (from the people layer).
+- **Optimal heads per window** = those hours spread across the demand curve with the minimum crew per open position (§5.7) as the floor.
+- It shows the current draft against it ("Lunch: 5 on, optimal 4–5 · Close: 3 on, optimal 3") and turns amber when a window is over target or under its minimum crew.
 
 ### 6.5 Schedule rules validator (non-negotiable)
 One pure `checkScheduleRules(schedule, structure)` validator runs on every generated, regenerated, call-out-filled and manager-edited schedule, and in the test suite. It checks:
@@ -247,12 +261,18 @@ A fast 2D interactive board, not three.js; three.js only if a moment truly needs
 - **Manager on duty** lane and markers.
 - **Reason panel:** why this person, this shape, this segment, this budget, this flex use; their skill profile; who else could cover.
 - **The staffing recommendation panel** (§6.4).
-- **Out sick…**
+- **Out…** (reason dropdown + write-in, §6.3)
 - **Send to 7shifts as draft.**
 
 Every string is in English and Spanish, per house law.
 
 ## 8. The 7shifts loop
+
+### 8.0 Real people before 7shifts access: Toast first, then three-way verification (Juan, 2026-10-16)
+- **Until the 7shifts token exists,** Toast is the source of who really works: Toast time entries (0224, nightly) give who clocked in, when, and at which job; Toast employees are already linked to CO-OPS users (the employee-links review list). The scheduler's people and their real hours/patterns come from there.
+- **Once 7shifts is connected,** every person is checked THREE ways: the CO-OPS user account (the anchor), the Toast employee link, and the 7shifts user link. Both external links hang off the CO-OPS user; nothing links by name alone.
+- **A reconciliation view** shows each person with three ticks (CO-OPS · Toast · 7shifts) and flags any mismatch: someone clocking in on Toast with no CO-OPS user, a 7shifts user not linked, a scheduled shift with no matching punch, a punch with no shift. Toast stays the BACKUP source of actual hours if 7shifts punches are missing or disagree.
+
 
 - **Read sync (poll):** users and assignments, roles and stations, availability, time off, published shifts (after the manager publishes, CO-OPS pulls the final version), time punches, wages, labor settings.
 - **Write:** the reviewed proposal is sent as DRAFT shifts with `station_id` and notes (the position segments go in notes when 7shifts can only hold one station per shift). Writes are reconciled by stable ids; a shift the manager changed in 7shifts is never overwritten without resolving the conflict.
@@ -269,12 +289,14 @@ Every string is in English and Spanish, per house law.
 2. **Scheduler + board:**
    - hours budget + weekly suggestion (§5.2);
    - shapes from demand and trims, multi-position shifts, team strength, leader settings, presence (§5.3–5.4, §6.1–6.2);
-   - the Wednesday draft + Regenerate;
+   - the Wednesday draft + Regenerate, and the multi-week / month planning horizon (§5.8);
+   - the labor-target card (§6.6);
+   - Toast as the interim people source + the three-way reconciliation view (§8.0);
    - the live board (§7).
 3. **The loop:**
    - the push to 7shifts (§8 write) + forecast overrides;
    - two-way availability sync with the CO-OPS picker (§5.1);
-   - call-outs (§6.3);
+   - "Out" call-outs with reasons (§6.3);
    - promote-first staffing recommendations with the math (§6.4).
 
 Each phase gets its own build plan, written by the builder, reviewed by the other model family, and gated by CC.
@@ -285,3 +307,7 @@ Each phase gets its own build plan, written by the builder, reviewed by the othe
 - The closing checklist duration per shop (measure it from completion timestamps).
 - How the 7shifts role/station mapping handles our multi-segment shifts (notes vs splitting into consecutive draft shifts). Decide after a read-only look at CO's 7shifts setup.
 - Confirm the 7shifts plan tier (Pro assumed).
+
+## 11. Later phases (Juan, 2026-10-16) — recorded, not yet scheduled
+- **Demand anticipation hub:** a manager page that gathers the outside signals (weather, Toast sales velocity, known holidays / events / shutdowns, the Congress calendar, road closures and races like 5Ks from DC permits, traffic, news), with AI insights over it. It feeds ordering pars, prep pars and labor "pars" on top of the shop and catering depletion already used. Rule: each signal must show, on past data, that it improves the forecast before it gets a vote. First step: write up exactly how depletion and dynamic pars are computed today so Juan can examine and refine it.
+- **True menu-item cost:** labor and packaging become part of each menu item's cost — the sub wrapper, side containers, catering boxes as recipe lines; the carry-out bag allocated per order (average items per order); labor allocated per item.

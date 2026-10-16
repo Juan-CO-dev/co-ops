@@ -1,0 +1,31 @@
+{
+    "data": {
+        "locations": [
+            {
+                "id": 4569,
+                "name": "Restaurant"
+            }
+        ],
+        "departments": [
+            {
+                "id": 7890,
+                "company_id": 1234,
+                "location_id": 4569,
+                "name": "FOH"
+            }
+        ],
+        "roles": [
+            {
+                "id": 2583,
+                "company_id": 1234,
+                "location_id": 4569,
+                "department_id": 7890,
+                "name": "Host",
+                "is_primary": false,
+                "skill_level": 2,
+                "sort": 0
+            }
+        ]
+    },
+    "object": "assignments"
+}

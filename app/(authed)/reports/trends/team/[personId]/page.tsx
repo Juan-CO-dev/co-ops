@@ -12,11 +12,14 @@ import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor }
 import { operationalNow } from "@/lib/midshift";
 import type { TrendGranularity } from "@/lib/reports-trends";
 import { loadPersonDetail, loadPersonReportLocations, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
+import { canOpenPeopleViews, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { TrendControls } from "@/components/trends/TrendControls";
 import { PersonDetail } from "@/components/team/PersonDetail";
+import { SkillsSection } from "@/components/people/SkillsSection";
+import { loadSkills, PeopleSkillError } from "@/lib/people/skills";
 
 interface PageProps {
   params: Promise<{ personId: string }>;
@@ -33,7 +36,8 @@ export default async function PersonDetailPage({ params, searchParams }: PagePro
 
 async function renderPage(personId: string, paramsRange: Record<string, string | undefined>, allShops = false, personLocations?: string[]): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/reports/trends/team");
-  if (auth.level < TEAM_VIEW_LEVEL) redirect("/dashboard");
+  // Task 13 (R7): the people views refuse the social media manager by ROLE, before any read.
+  if (auth.level < TEAM_VIEW_LEVEL || !canOpenPeopleViews(peopleActorFromAuth(auth))) redirect("/dashboard");
   const { g } = paramsRange;
   let locationParam = paramsRange.location;
   if (!locationParam) redirect("/dashboard");
@@ -41,7 +45,7 @@ async function renderPage(personId: string, paramsRange: Record<string, string |
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   if (locationParam !== "all" && !canReadReportLocation(locActor, locationParam)) redirect("/dashboard");
   const sb = getServiceRoleClient();
-  const availableLocations = personLocations ?? await loadPersonReportLocations(sb, { userId: auth.user.id, level: auth.level, locations: auth.locations }, personId);
+  const availableLocations = personLocations ?? await loadPersonReportLocations(sb, { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations }, personId);
   if (availableLocations.length === 1) locationParam = availableLocations[0]!;
   paramsRange = { ...paramsRange, location: locationParam };
 
@@ -66,10 +70,17 @@ async function renderPage(personId: string, paramsRange: Record<string, string |
   }
 
   const detail = await loadPersonDetail(sb, {
-    viewer: { userId: auth.user.id, level: auth.level, locations: auth.locations },
+    viewer: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
     personId, locationId: locationParam, granularity, compare, today, range,
   });
 
+
+  // Task 17: the Skills section, after the existing sections. Its own gate (canViewPeople) runs in the lib;
+  // a refusal or a missing 0270 just leaves the section out or says it is not available.
+  const skills = detail ? await loadSkills(sb, { actor: peopleActorFromAuth(auth), locationId: locationParam, personId }).catch((e: unknown) => {
+    if (e instanceof PeopleSkillError) return null;
+    throw e;
+  }) : null;
 
   const Container = allShops ? "div" : "main";
   return (
@@ -77,6 +88,7 @@ async function renderPage(personId: string, paramsRange: Record<string, string |
       {!allShops && header}
       <div className="mt-4">
         {detail ? <PersonDetail context={context.toString()} detail={detail} locationId={locationParam} language={language} /> : <p>{serverT(language, "reports.not_available")}</p>}
+        {skills && (skills.available ? <SkillsSection view={skills.view} /> : <p className="mt-6 text-sm text-co-text-muted">{serverT(language, "people.skills.unavailable")}</p>)}
       </div>
     </Container>
   );

@@ -88,7 +88,8 @@ export function isMissingRetrainTable(error: { code?: string; message?: string }
 }
 
 /** Live batch headers at ONE location (optionally ONE item), inside the lookback. */
-async function loadBatches(sb: Sb, locationId: string, itemId: string | null, now: Date): Promise<YieldBatch[]> {
+/** Exported for the people-layer parity pin (tests/people-loader-schema-check.test.ts): the skill model reads the SAME rows. */
+export async function loadBatches(sb: Sb, locationId: string, itemId: string | null, now: Date): Promise<YieldBatch[]> {
   const since = new Date(now.getTime() - YIELD_LOOKBACK_DAYS * 86_400_000).toISOString();
   const rows = await selectAllRows<{ id: string; output_item_id: string; produced_at: string; made_by: string | null; batches_made: number | string | null; came_out_to: number | string | null; yield_at_time: number | string | null }>((from, to) => {
     let q = sb.from("productions")

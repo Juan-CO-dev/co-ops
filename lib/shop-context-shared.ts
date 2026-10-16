@@ -81,6 +81,8 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/stations": ["loc"],
   "/admin/stations": ["loc"],
   "/admin/toast-employees": ["loc"],
+  "/admin/sevenshifts": ["loc"], // Scheduling Phase 1 — the 7shifts links, per shop
+  "/admin/pm-criteria": ["loc"], // Scheduling Phase 1 — the PM v2 criteria editor, per shop
   "/assignments": ["location", "loc"],
   "/my-feedback": ["location", "loc"], // old ?loc= links keep working; the shared tabs use ?location=
   "/reports": ["location"],
@@ -98,6 +100,7 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/admin/catering/prep-demand": ["location"],
   "/admin/catering/lto": ["location"],
   "/admin/menu-costing": ["location"], // catalog Phase 2a — the costing board's shop switcher
+  "/admin/skus": ["location"], // hub SKU readiness scope; editor baselines remain global
   "/admin/catalog/notices": ["location"], // catalog Phase 3b — a GM's recipe updates for one shop
 };
 
@@ -110,6 +113,7 @@ const SHOP_PARAMS_BY_PREFIX: ReadonlyArray<readonly [string, readonly string[]]>
   // Catalog Phase 3b — the recipe and menu-item pages' shop switcher (?location=<shop> | global).
   // (The notices list is an exact route, "/admin/catalog/notices", declared in SHOP_PARAMS_BY_PATH with its page.)
   ["/admin/catalog/recipe/", ["location"]],
+  ["/admin/recipes/", ["location"]],
   ["/admin/catalog/menu-item/", ["location"]],
 ];
 

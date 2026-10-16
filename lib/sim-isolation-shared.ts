@@ -133,6 +133,7 @@ export function buildChildEnv(parentEnv: Env, simFile: Record<string, string>): 
   const providers = new Set<string>(PROVIDER_KEYS_CLOSED_INVENTORY);
   for (const [key, value] of Object.entries(parentEnv)) {
     if (value === undefined) continue;
+    if (key.toUpperCase() === "SIM_CATALOG_PASSWORD") continue; // Node-only F4 step-up control, including build children.
     // Case-insensitive to cover Windows environment names as well.
     // `STRIPE_` is a PREFIX match, unlike the exact-name provider list: per-location
     // credentials are named from the tenant's own location codes and can never be listed.

@@ -45,7 +45,7 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
   const { denied } = await searchParams;
   const deniedKey = denied && denied in DENIED_KEYS ? DENIED_KEYS[denied as keyof typeof DENIED_KEYS] : null;
   const lang = auth.user.language;
-  const sections = adminSectionsFor(auth.level);
+  const sections = adminSectionsFor(auth.level, auth.role);
 
   const wantsCounts = sections.some(
     (s) => s.id === "skus" || s.id === "recipes" || s.id === "items",
@@ -124,7 +124,7 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
                   </AlertPill>
                 ) : null}
               </a>
-              {(s.id === "recipes" || s.id === "items") && (counts[s.id] ?? 0) > 0 && byScope.length > 0 ? (
+              {(s.id === "skus" || s.id === "recipes" || s.id === "items") && (counts[s.id] ?? 0) > 0 && byScope.length > 0 ? (
                 // "1 in the default · 2 at P Street" (catalog Phase 3b lead decision): each shop by NAME, each entry
                 // linking to that scope's list; the row wraps at 375px.
                 <ul className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm" aria-label={serverT(lang, "readiness.hub.where")}>

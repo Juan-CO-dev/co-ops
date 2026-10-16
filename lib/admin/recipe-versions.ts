@@ -1,3 +1,5 @@
+import { ownedAwareRecipeGate, ownerWriteCheck, ownedRecipeScopeRefusal, shopOwnedErrorFromRpc, ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * RECIPE SHOP VERSIONS — the gated writers and the reads (catalog Phase 3a, 0262). SERVER-ONLY,
  * service role. THE LIB IS THE AUTHORITY (spec §2): every writer decides role and shop HERE, before any
@@ -42,6 +44,22 @@ function requireLocation(actor: AuthContext, scope: VersionScope): void {
   if (!gate.ok) throw new RecipeVersionError(gate.status, gate.code);
 }
 
+async function requireRecipeScope(actor: AuthContext, recipeId: string, scope: VersionScope): Promise<string | null> {
+  const gate = ownedAwareRecipeGate({ role: actor.user.role, level: actor.level, scope, scopeAllowed: scope !== null && catalogShopAllowed(actor, scope) });
+  if (!gate.ok) throw new RecipeVersionError(gate.status, gate.code);
+  const { data, error } = await getServiceRoleClient().from("recipes").select("location_id").eq("id", recipeId).maybeSingle<{ location_id: string | null }>();
+  if (error) throw new Error(`recipe scope owner: ${error.message}`);
+  if (!data) throw new RecipeVersionError(404, "recipe_not_found");
+  const owner = data.location_id ?? null;
+  const refusal = ownedRecipeScopeRefusal(owner, scope);
+  if (refusal) throw new RecipeVersionError(refusal.status, refusal.code);
+  if (owner !== null || scope === null) {
+    const write = ownerWriteCheck(actor, owner);
+    if (!write.ok) throw new RecipeVersionError(write.status, write.code);
+  }
+  return owner;
+}
+
 const RPC_STATUS: Record<string, number> = {
   version_changed: 409, not_live: 409, recipe_inactive: 409, dependencies_changed: 409, dependencies_busy: 409,
   global_cannot_retire: 400, invalid_lines: 400, invalid_payload: 400, invalid_source: 400, would_create_cycle: 400,
@@ -77,11 +95,17 @@ export async function loadRecipeChangeSnapshot(
   return data as RecipeChangeSnapshot;
 }
 
-/** Map an RPC P0001 refusal (`recipe_version:<code>`) to a typed error; anything else is a 500. */
-export function recipeVersionErrorFromRpc(message: string): never {
+/** Map recipe-version and catalog ownership refusals, plus missing-component FKs, to the route error class. Unknown failures remain 500s. */
+export function recipeVersionErrorFromRpc(message: string, dbCode?: string): never {
+  if (message.startsWith("shop_owned:")) {
+    try { shopOwnedErrorFromRpc(message); } catch (error) {
+      if (error instanceof ShopOwnedError) throw new RecipeVersionError(error.status, error.code, error.message, error.line ? { ...error.line, name: error.line.name ?? `Line ${error.line.position}` } : undefined);
+      throw error;
+    }
+  }
   const code = /recipe_version:([a-z_]+)/.exec(message)?.[1];
   if (code && RPC_STATUS[code]) throw new RecipeVersionError(RPC_STATUS[code]!, code);
-  throw new Error(`recipe-version rpc failed: ${message}`);
+  throw catalogWriteError({ message, code: dbCode }, RecipeVersionError, "recipe-version rpc failed");
 }
 
 /** A line's display name for a refusal: the SKU's, item's or product's name; the target key if it has none. */
@@ -95,14 +119,20 @@ async function lineName(f: RecipeLineFields): Promise<string> {
 }
 
 /** An RPC refusal that names a line (`recipe_version:<code>:<position>`, 0262) keeps WHICH line it was. */
-async function recipeVersionRpcRefusal(message: string, lines: readonly RecipeLineFields[]): Promise<never> {
+async function recipeVersionRpcRefusal(message: string, lines: readonly RecipeLineFields[], dbCode?: string): Promise<never> {
+  const owned = /^shop_owned:line_other_shop:([1-9][0-9]*)$/.exec(message);
+  if (owned) {
+    const position = Number(owned[1]);
+    const line = lines[position - 1];
+    if (line) throw new RecipeVersionError(400, "line_other_shop", undefined, { position, name: await lineName(line), reason: "line_other_shop" });
+  }
   const m = /recipe_version:([a-z_]+):(\d+)/.exec(message);
   const code = m?.[1];
   const line = m ? lines[Number(m[2]) - 1] : undefined;
   if (code && RPC_STATUS[code] && line) {
     throw new RecipeVersionError(RPC_STATUS[code]!, code, undefined, { position: Number(m![2]), name: await lineName(line), reason: code });
   }
-  return recipeVersionErrorFromRpc(message);
+  return recipeVersionErrorFromRpc(message, dbCode);
 }
 
 // ── The set a person sees ─────────────────────────────────────────────────────
@@ -207,7 +237,7 @@ async function loadVersionLineFields(versionId: string): Promise<RecipeLineField
  * compare-and-set, per-shop cycle law), then the audit row. Every 3a/3b recipe write goes through here.
  */
 export async function writeRecipeVersion(actor: AuthContext, input: WriteRecipeVersionInput): Promise<WriteRecipeVersionResult> {
-  requireLocation(actor, input.scope);
+  const owner = await requireRecipeScope(actor, input.recipeId, input.scope);
   // THE SAME LINE RULES AS AN ADD / UPDATE (Astra 3a r1#5) — for every line this save ADDS or CREATES (lead
   // decision (b)): the sent set, or the source a restore / adopt / promote copies, against the set this scope
   // resolves NOW. A line already there, unchanged, may stay even if it no longer passes (it is flagged on the page),
@@ -222,13 +252,18 @@ export async function writeRecipeVersion(actor: AuthContext, input: WriteRecipeV
   const positions = input.lines ? addedLinePositions(current, next) : next.map((_, i) => i + 1);
   for (const position of positions) await validateLine(next[position - 1]!, position);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.rpc("save_recipe_version", {
+  const { data, error } = owner !== null ? await sb.rpc("save_owned_recipe_version", {
+    p_recipe_id: input.recipeId, p_expected_owner: owner,
+    p_lines: input.lines ? rpcRecipeLines(input.lines) : null, p_expected_active_id: input.expectedVersionId,
+    p_actor: actor.user.id, p_expected_snapshot: input.snapshot, p_restored_from: input.restoredFromVersionId ?? null,
+    p_note: input.note ?? null,
+  }) : await sb.rpc("save_recipe_version", {
     p_recipe: input.recipeId, p_location: input.scope, p_lines: input.lines ? rpcRecipeLines(input.lines) : null,
     p_expected: input.expectedVersionId, p_based_on: input.basedOnVersionId, p_note: input.note ?? null, p_actor: actor.user.id,
     p_restored_from: input.restoredFromVersionId ?? null, p_adopted_from: input.adoptedFromVersionId ?? null,
     p_promoted_from: input.promotedFromVersionId ?? null, p_snapshot: input.snapshot,
   });
-  if (error) await recipeVersionRpcRefusal(error.message, next);
+  if (error) await recipeVersionRpcRefusal(error.message, next, error.code);
   const r = data as {
     version_id: string; retired_version_id: string | null; changed_shops: string[] | null;
     returned_shop?: string | null; returned_version_id?: string | null;
@@ -283,7 +318,7 @@ export async function saveRecipeLines(
   actor: AuthContext,
   input: SaveRecipeLinesInput,
 ): Promise<{ versionId: string | null; retiredVersionId: string | null; changed: boolean }> {
-  requireLocation(actor, input.scope);
+  await requireRecipeScope(actor, input.recipeId, input.scope);
   const live = await loadRecipeLiveSet(input.recipeId, input.scope);
   if (!live.recipeActive) throw new RecipeVersionError(409, "recipe_inactive");
   if (live.scopeVersionId !== input.expectedVersionId) throw new RecipeVersionError(409, "version_changed");
@@ -314,7 +349,7 @@ export async function restoreRecipeVersion(
     snapshot?: RecipeChangeSnapshot;
   },
 ): Promise<WriteRecipeVersionResult> {
-  requireLocation(actor, input.scope);
+  await requireRecipeScope(actor, input.recipeId, input.scope);
   const { data: from, error } = await getServiceRoleClient().from("recipe_versions").select("id, recipe_id, location_id")
     .eq("id", input.fromVersionId).maybeSingle<{ id: string; recipe_id: string; location_id: string | null }>();
   if (error) throw new Error(`restoreRecipeVersion source: ${error.message}`);
@@ -346,7 +381,7 @@ export async function retireShopRecipeVersion(
   const { error } = await sb.rpc("retire_recipe_version", {
     p_version: input.versionId, p_location: input.locationId, p_actor: actor.user.id, p_snapshot: snapshot,
   });
-  if (error) recipeVersionErrorFromRpc(error.message);
+  if (error) recipeVersionErrorFromRpc(error.message, error.code);
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "recipe_version.retire", resourceTable: "recipe_versions", resourceId: input.versionId,

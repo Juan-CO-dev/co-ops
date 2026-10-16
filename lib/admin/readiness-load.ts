@@ -7,6 +7,7 @@
  * Failure posture: pages call these inside try/catch and render WITHOUT
  * badges on error — nudges must never take down a working admin page.
  */
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import type { AuthContext } from "@/lib/session";
@@ -83,6 +84,7 @@ export async function loadSkuReadinessMaps(actor: AuthContext, scopes: readonly 
     const [prices, chainsBySku] = perScope[i]!;
     const out = new Map<string, Readiness>();
     for (const s of active) {
+      if (!ownerVisible(s.locationId, scope)) continue;
       const r = skuReadiness({
         active: true,
         packComplete: skuPackComplete(s, chainsBySku.get(s.id) ?? null, measuresByLabel, s.skuClass),
@@ -97,16 +99,23 @@ export async function loadSkuReadinessMaps(actor: AuthContext, scopes: readonly 
 }
 
 interface GraphRows {
-  recipes: Array<{ id: string; batch_yield: number | string | null; batch_mode?: boolean | null }>;
+  recipes: Array<{ id: string; batch_yield: number | string | null; batch_mode?: boolean | null; location_id?: string | null }>;
   inputs: Array<{ recipe_id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null; unit: string | null }>;
   outputs: Array<{ recipe_id: string; output_item_id: string | null; output_menu_item_id: string | null }>;
-  items: Array<{ id: string; oz_per_par_unit: number | string | null; sold_directly: boolean; sell_portion: number | string | null; sell_portion_unit: string | null; menu_price: number | string | null }>;
+  items: Array<{ id: string; location_id?: string | null; oz_per_par_unit: number | string | null; sold_directly: boolean; sell_portion: number | string | null; sell_portion_unit: string | null; menu_price: number | string | null }>;
 }
 
 /** Exported for tests/recipe-consumers-shop-scope.test.ts. */
 export async function loadGraphRows(scope: VersionScope): Promise<GraphRows> {
   const [base, inputs] = await Promise.all([loadGraphBaseRows(), loadResolvedRecipeInputs(scope)]);
-  return { ...base, inputs: toGraphInputs(inputs) };
+  return projectGraphRows({ ...base, inputs: toGraphInputs(inputs) }, scope);
+}
+
+function projectGraphRows(rows: GraphRows, scope: VersionScope): GraphRows {
+  const recipes = rows.recipes.filter(r => ownerVisible(r.location_id, scope));
+  const ids = new Set(recipes.map(r => r.id));
+  return { recipes, inputs: rows.inputs.filter(r => ids.has(r.recipe_id)),
+    outputs: rows.outputs.filter(r => ids.has(r.recipe_id)), items: rows.items.filter(r => ownerVisible(r.location_id, scope)) };
 }
 
 function toGraphInputs(rows: readonly ResolvedRecipeInput[]): GraphRows["inputs"] {
@@ -124,13 +133,13 @@ async function loadGraphBaseRows(): Promise<Omit<GraphRows, "inputs">> {
   // readiness. Order by the stable primary key `id` for deterministic ranging.
   const [recipes, outputs, items] = await Promise.all([
     selectAllRows<GraphRows["recipes"][number]>((from, to) =>
-      sb.from("recipes").select("id, batch_yield, batch_mode").eq("active", true)
+      sb.from("recipes").select("id, batch_yield, batch_mode, location_id").eq("active", true)
         .order("id", { ascending: true }).range(from, to)),
     selectAllRows<GraphRows["outputs"][number]>((from, to) =>
       sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id")
         .order("id", { ascending: true }).range(from, to)),
     selectAllRows<GraphRows["items"][number]>((from, to) =>
-      sb.from("items").select("id, oz_per_par_unit, sold_directly, sell_portion, sell_portion_unit, menu_price").eq("active", true)
+      sb.from("items").select("id, location_id, oz_per_par_unit, sold_directly, sell_portion, sell_portion_unit, menu_price").eq("active", true)
         .order("id", { ascending: true }).range(from, to)),
   ]);
   // The INPUTS are the scope's (catalog Phase 3a, lead decision 4: a shop's live version replaces its recipe's
@@ -150,9 +159,11 @@ export async function loadGraphReadiness(actor: AuthContext, scope: VersionScope
   recipeReadiness: Map<string, Readiness>;
   itemReadiness: Map<string, Readiness>;
 }> {
-  const [skuStatus, g, measureUnits] = await Promise.all([
+  const [skuStatus, loadedRows, measureUnits] = await Promise.all([
     pre.skuStatus ?? loadSkuReadinessMap(actor, scope), pre.rows ?? loadGraphRows(scope), pre.measureUnits ?? loadMeasureUnits(actor),
   ]);
+
+  const g = projectGraphRows(loadedRows, scope);
 
   // PRODUCT-pinned inputs (0179). Resolution is the SCOPE's (catalog Phase 3a: a shop's readiness
   // resolves products as that shop does; null = the global one, deviation D7), and a line is ready iff the product resolves to a member
@@ -333,18 +344,16 @@ export async function countNotReady(actor: AuthContext): Promise<{
   const [skuMaps, base, inputsByScope, measureUnits] = await Promise.all([
     loadSkuReadinessMaps(actor, ids), loadGraphBaseRows(), loadResolvedRecipeInputsByScope(ids), loadMeasureUnits(actor),
   ]);
-  const skuMap = skuMaps.get("global")!;
   const graphs = await Promise.all(scopes.map((s) => loadGraphReadiness(actor, s.id, {
     skuStatus: skuMaps.get(s.id ?? "global")!, measureUnits,
     rows: { ...base, inputs: toGraphInputs(inputsByScope.get(s.id ?? "global") ?? []) },
   })));
   const attributed = attributeNotReady(graphs.map((g, i) => ({
-    scope: scopes[i]!.id, scopeName: scopes[i]!.name, recipeReadiness: g.recipeReadiness, itemReadiness: g.itemReadiness,
+    scope: scopes[i]!.id, scopeName: scopes[i]!.name, skuReadiness: skuMaps.get(scopes[i]!.id ?? "global")!,
+    recipeReadiness: g.recipeReadiness, itemReadiness: g.itemReadiness,
   })));
-  const countBad = (m: Map<string, Readiness>) =>
-    [...m.values()].filter((r) => r.status !== "ready").length;
   return {
-    skus: countBad(skuMap),
+    skus: attributed.skus,
     recipes: attributed.recipes,
     items: attributed.items,
     byScope: attributed.byScope,

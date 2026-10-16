@@ -31,12 +31,12 @@ describe("trends loader scope and independent clipped windows", () => {
     const f = fake({ cash_reports: [{ over_short_cents: 9999 }] });
     await expect(loadTrendSeries(f.service, { ...args, viewer: { userId: "reader", level: 3, locations: ["mine"] } })).rejects.toThrow("Forbidden");
     for (const locations of [[], "all"] as const) {
-      const viewer = { userId: "reader", level: 7, locations };
+      const viewer = { userId: "reader", role: "gm" as const, level: 7, locations };
       await expect(loadTrendSeries(f.service, { ...args, viewer })).rejects.toThrow("Forbidden");
       expect(await loadTeamOperatingHealth(f.service, { ...args, viewer })).toBeNull();
       expect(await loadPersonDetail(f.service, { ...args, viewer, personId: "someone" })).toBeNull();
     }
-    expect(await loadTeamOperatingHealth(f.service, { ...args, viewer: { userId: "reader", level: 5, locations: ["mine"] } })).toBeNull();
+    expect(await loadTeamOperatingHealth(f.service, { ...args, viewer: { userId: "reader", role: "shift_lead", level: 5, locations: ["mine"] } })).toBeNull();
     expect(f.reads).toEqual([]);
   });
   it("does not merge overlapping month bucket keys or leak the other shop's cash", async () => {
@@ -85,8 +85,8 @@ it("person shops require active membership, active shop, and viewer scope", asyn
     {user_id:"person",location_id:"closed",active:true},
     {user_id:"other",location_id:"d",active:true},
   ],locations:[{id:"a",active:true},{id:"b",active:true},{id:"c",active:true},{id:"closed",active:false},{id:"d",active:true}]});
-  expect(await loadPersonReportLocations(f.service,{userId:"me",level:7,locations:["a","c","d"]},"person")).toEqual(["a"]);
-  expect(await loadPersonReportLocations(f.service,{userId:"me",level:8,locations:[]},"person")).toEqual(["a","b"]);
-  expect(await loadPersonReportLocations(f.service,{userId:"me",level:7,locations:[]},"person")).toEqual([]);
-  expect(await loadPersonReportLocations(f.service,{userId:"me",level:5,locations:["a"]},"person")).toEqual([]);
+  expect(await loadPersonReportLocations(f.service,{userId:"me",role:"gm",level:7,locations:["a","c","d"]},"person")).toEqual(["a"]);
+  expect(await loadPersonReportLocations(f.service,{userId:"me",role:"moo",level:8,locations:[]},"person")).toEqual(["a","b"]);
+  expect(await loadPersonReportLocations(f.service,{userId:"me",role:"gm",level:7,locations:[]},"person")).toEqual([]);
+  expect(await loadPersonReportLocations(f.service,{userId:"me",role:"shift_lead",level:5,locations:["a"]},"person")).toEqual([]);
 });

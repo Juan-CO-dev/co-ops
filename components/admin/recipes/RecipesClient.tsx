@@ -90,6 +90,11 @@ export function RecipesClient({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-co-text">{r.name}</span>
+                    {r.onlyAtShopName ? (
+                      <span className="text-xs font-semibold text-co-text-muted">
+                        {t("catalog.only_at_shop", { shop: r.onlyAtShopName })}
+                      </span>
+                    ) : null}
                     <span className="rounded bg-co-gold/20 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-co-text">
                       {r.recipeType === "production"
                         ? t(rk("recipes.type.production"))
