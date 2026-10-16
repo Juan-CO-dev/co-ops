@@ -127,16 +127,16 @@ export function etWallClockToUtcIso(dateYmd: string, time: string): string | nul
  * The UTC instant range [startIso, endExclusiveIso) covering one ET operational
  * day `dateYmd` (YYYY-MM-DD). Use for timestamptz range filters:
  *   .gte("created_at", startIso).lt("created_at", endExclusiveIso)
- * DST-correct: the offset is read at the day's own naive-UTC-midnight guess (DST
- * never flips within the ~4-5h correction), and the end is start + 24h so a
- * spring-forward/fall-back day still bounds its own rows without gap/overlap.
+ * DST-correct: resolve each ET midnight independently. The next midnight is
+ * 23, 24, or 25 hours later, so adjacent days have no gap or overlap.
  */
 export function operationalDayUtcRange(dateYmd: string): { startIso: string; endExclusiveIso: string } {
-  const naiveMidnightUtc = Date.parse(`${dateYmd}T00:00:00Z`);
-  const off = tzOffsetMs(new Date(naiveMidnightUtc));
-  const startMs = naiveMidnightUtc - off; // ET-midnight = UTC-midnight − offset
-  const endMs = startMs + 86_400_000;
-  return { startIso: new Date(startMs).toISOString(), endExclusiveIso: new Date(endMs).toISOString() };
+  const midnightIso = (ymd: string): string => {
+    const naiveMidnightUtc = Date.parse(`${ymd}T00:00:00Z`);
+    const off = tzOffsetMs(new Date(naiveMidnightUtc));
+    return new Date(naiveMidnightUtc - off).toISOString(); // ET midnight = UTC midnight − offset
+  };
+  return { startIso: midnightIso(dateYmd), endExclusiveIso: midnightIso(etYmdMinusDays(dateYmd, -1)) };
 }
 
 /**
