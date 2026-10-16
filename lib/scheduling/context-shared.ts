@@ -12,6 +12,7 @@
  * what changed since, separately — it never alters the original verdict.
  */
 import type { RoleCode } from "@/lib/roles";
+import { ScheduleError } from "./errors-shared";
 import type { CrewType, LeaderSetting, ScheduleStructure } from "./structure-shared";
 
 export type WorkType = "boh" | "foh" | "management";
@@ -125,6 +126,50 @@ export function digest64(text: string): string {
 
 /** The 0275 CHECK ceiling on a stored context. */
 export const CONTEXT_MAX_BYTES = 262144;
+/** CC chunk D ruling 3: the lib's own ceiling, a 32 KiB margin under the CHECK (refused by name past it). */
+export const CONTEXT_SAFE_MAX_BYTES = CONTEXT_MAX_BYTES - 32 * 1024;
+
+/** A JSON number as Postgres' numeric prints it: never in exponent form (1e-7 → 0.0000001, 1e21 → 1000…0). */
+function numericText(n: number): string {
+  const t = String(n);
+  const m = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(t);
+  if (!m) return t;
+  const [, sign, int, frac = "", expS] = m;
+  const exp = Number(expS);
+  const digits = int! + frac;
+  const point = int!.length + exp;
+  if (point <= 0) return `${sign}0.${"0".repeat(-point)}${digits}`;
+  if (point >= digits.length) return `${sign}${digits}${"0".repeat(point - digits.length)}`;
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
+}
+
+/**
+ * CC chunk D ruling 3: the byte length of `value::jsonb::text` — what 0275's CHECK `octet_length(context::text)` measures.
+ * jsonb's text form puts a space after every `:` and `,` and spells numbers out, so it is LONGER than the canonical JSON
+ * the digest reads. Object members with an `undefined` value are dropped, as JSON drops them. Pure; proved equal to
+ * Postgres on PGlite (tests/schedule-context-guard.test.ts).
+ */
+export function jsonbTextBytes(v: unknown): number {
+  const enc = new TextEncoder();
+  const walk = (x: unknown): number => {
+    if (x === null || x === undefined) return 4;
+    if (typeof x === "boolean") return x ? 4 : 5;
+    if (typeof x === "number") return Number.isFinite(x) ? numericText(x).length : 4;
+    if (typeof x === "string") return enc.encode(JSON.stringify(x)).length;
+    if (Array.isArray(x)) return 2 + x.reduce((n: number, e) => n + walk(e === undefined ? null : e), 0) + Math.max(0, x.length - 1) * 2;
+    const o = x as Record<string, unknown>;
+    const keys = Object.keys(o).filter((k) => o[k] !== undefined);
+    return 2 + keys.reduce((n, k) => n + enc.encode(JSON.stringify(k)).length + 2 + walk(o[k]), 0) + Math.max(0, keys.length - 1) * 2;
+  };
+  return walk(v);
+}
+
+/** The context a revision will store fits, well under the CHECK — else `context_too_large` (en + es), before any RPC. */
+export function assertContextFits(ctx: unknown): { bytes: number } {
+  const bytes = jsonbTextBytes(ctx);
+  if (bytes > CONTEXT_SAFE_MAX_BYTES) throw new ScheduleError("context_too_large", { params: { bytes, max: CONTEXT_SAFE_MAX_BYTES } });
+  return { bytes };
+}
 
 /**
  * The snapshot a revision stores: the canonical context, its digest and its size. The digest is for

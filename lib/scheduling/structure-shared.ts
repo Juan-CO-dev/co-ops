@@ -80,6 +80,13 @@ export interface ScheduleStructure {
      * (`minimumShiftQ`, 4 h) is unchanged and never above it.
      */
     maxShiftH: number;
+    /**
+     * CC chunk D rulings 1 + 2 (2026-10-16; default ON, Juan decides the final default): a salaried manager may STAY
+     * LONGER — their shift extended up to `maxShiftH` toward an adjacent need. It is a zero-HOURLY-cost fill (the money
+     * strip keeps salaried cost fixed); its floor time counts against `managerFloorH`; the board names it
+     * (`salaried_extension`). Off: a salaried shift is never extended.
+     */
+    salariedStayLonger: boolean;
   };
   catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number };
   labor: { targetPct: number; basis: "hourly" | "total"; strong: number; watch: number; budgetDeadbandH: number };
@@ -117,7 +124,7 @@ export const SCHEDULE_STRUCTURE_DEFAULTS: ScheduleStructure = {
   },
   limits: {
     minimumShiftQ: 16, flexMinimumQ: 12, flexUsesPer2w: 1, flexMaxQ: 12, overtimeH: 40,
-    managerFloorH: 32, gmMinimumH: 8, agmMinimumH: 8, closingMinutesOverride: null, segmentMinQ: 2, rushShiftMaxQ: 4, maxShiftH: 10.5,
+    managerFloorH: 32, gmMinimumH: 8, agmMinimumH: 8, closingMinutesOverride: null, segmentMinQ: 2, rushShiftMaxQ: 4, maxShiftH: 10.5, salariedStayLonger: true,
   },
   catering: { minHeadcount: 30, extraPrepDishHeads: 1, defaultStartQ: 34, defaultEndQ: 52, leadMinutes: 210 },
   labor: { targetPct: 28, basis: "total", strong: 0.8, watch: 0.65, budgetDeadbandH: 2 },
@@ -313,7 +320,7 @@ const TOP_KEYS = ["version", "shopDay", "dayTypes", "crews", "positions", "prior
 const SHOPDAY_KEYS = ["prepStartQ", "prepDishArrivalQ", "serviceStartQ", "serviceCloseQ", "outEarliestQ", "outLatestQ"] as const;
 const POSITION_KEYS = ["role", "openQ", "trimQ", "closeQ", "headsBefore", "headsAfter", "allowedRoles"] as const;
 const LIMIT_KEYS = ["minimumShiftQ", "flexMinimumQ", "flexUsesPer2w", "flexMaxQ", "overtimeH", "managerFloorH", "gmMinimumH",
-  "agmMinimumH", "closingMinutesOverride", "segmentMinQ", "rushShiftMaxQ", "maxShiftH"] as const;
+  "agmMinimumH", "closingMinutesOverride", "segmentMinQ", "rushShiftMaxQ", "maxShiftH", "salariedStayLonger"] as const;
 
 function checkShopDay(v: unknown): Problem {
   if (!isObj(v)) return "shopDay";
@@ -455,6 +462,7 @@ function checkLimits(v: unknown, shopDay: ScheduleStructure["shopDay"]): Problem
   if (v.closingMinutesOverride !== null && !isInt(v.closingMinutesOverride, 0, 240)) return "limits.closingMinutesOverride";
   if (!isInt(v.segmentMinQ, 1, 16)) return "limits.segmentMinQ";
   if (!isInt(v.rushShiftMaxQ, 0, 16)) return "limits.rushShiftMaxQ";
+  if (typeof v.salariedStayLonger !== "boolean") return "limits.salariedStayLonger";
   if (v.flexMinimumQ > v.minimumShiftQ || v.flexMinimumQ > v.flexMaxQ) return "limits.flexMinimumQ";
   // The mockup's guard: the longest required block fits the shop day.
   const span = shopDay.outLatestQ - shopDay.prepStartQ;

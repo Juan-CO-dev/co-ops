@@ -543,8 +543,11 @@ function uncoveredHoursFor(g: GapSubject, s: WeekSchedule, day: DayContext, ctx:
   return q4 / 4;
 }
 
-/** A run a salaried manager can take at ZERO hourly cost by relabelling their MoD segment (Astra chunk B P1-1). */
-export interface ZeroCostCover { userId: string; fromQ: number; toQ: number }
+/**
+ * A run a salaried manager can take at ZERO hourly cost: by relabelling their MoD segment (Astra chunk B P1-1), or —
+ * CC chunk D ruling 2 — by STAYING LONGER (`extend`: their shift grows after its end or before its start).
+ */
+export interface ZeroCostCover { userId: string; fromQ: number; toQ: number; extend?: "after" | "before" }
 
 /**
  * Every legal zero-hourly-cost fill of a coverage deficit: the quarters of the window that a SALARIED manager's MoD
@@ -586,6 +589,25 @@ export function zeroCostCovers(g: Pick<GapSubject, "date" | "positionId" | "from
         leftQ -= z - q;
         q = z;
       }
+    }
+    // CC chunk D rulings 1 + 2: a salaried manager STAYING LONGER is a zero-hourly-cost fill too — their shift extended
+    // straight into the window (after its end, or before its start), within the shop's daily maximum (their whole day),
+    // the weekly floor limit (what is left of it), their availability and leader setting over the merged span, never
+    // into another of their shifts, never a pinned shift or an untouchable day; only while the shop allows it.
+    if (!st.limits.salariedStayLonger || sh.pinned || p.untouchableDates.includes(g.date) || leftQ <= 0) continue;
+    const mine = shifts.filter((x) => x.userId === p.userId);
+    let roomQ = Math.min(leftQ, Math.round(st.limits.maxShiftH * 4) - mine.reduce((n, x) => n + (x.endQ - x.startQ), 0));
+    const free = (q: number) => !mine.some((x) => x.startQ <= q && x.endQ > q);
+    const legal = (from: number, to: number) => availableOn(p, g.date, from, to) && leaderSettingAllows(p, st, from, to);
+    if (roomQ > 0 && sh.endQ >= g.fromQ && sh.endQ < g.toQ) {
+      let z = sh.endQ;
+      while (z < g.toQ && z - sh.endQ < roomQ && ok(z) && free(z) && legal(sh.startQ, z + 1)) z++;
+      if (z > sh.endQ) { out.push({ userId: p.userId, fromQ: sh.endQ, toQ: z, extend: "after" }); roomQ -= z - sh.endQ; }
+    }
+    if (roomQ > 0 && sh.startQ > g.fromQ && sh.startQ <= g.toQ) {
+      let a = sh.startQ;
+      while (a > g.fromQ && sh.startQ - a < roomQ && ok(a - 1) && free(a - 1) && legal(a - 1, sh.endQ)) a--;
+      if (a < sh.startQ) out.push({ userId: p.userId, fromQ: a, toQ: sh.startQ, extend: "before" });
     }
   }
   return out;

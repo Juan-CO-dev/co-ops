@@ -21,7 +21,7 @@ import type { DayContext, RuleContext, RulePerson } from "../context-shared";
 import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../people-input-shared";
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
 import {
-  MOD, availableOn, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition, leaderSettingAllows, modCountsAt, shiftExtendsOver, zeroCostCovers,
+  MOD, availableOn, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition, isManagerRole, leaderSettingAllows, modCountsAt, shiftExtendsOver, zeroCostCovers,
   type DayRecord, type RuleProblem, type Segment, type Shift,
 } from "../rules-shared";
 import { isLineRole, isSecondary, positionLimit, primaryOf, type ScheduleStructure } from "../structure-shared";
@@ -451,7 +451,8 @@ export function fillRun(
   }
   if (budgetBlocked) {
     // Astra chunk B P1-1: a salaried manager's MoD block costs no hourly money — take it before the budget stops the fill.
-    if (opts.allowCover && !t.closingLead && carveZeroCostCovers(b, week, date, positionId, fromQ, toQ)) return "covered";
+    // (A salaried manager STAYING LONGER is taken later, in takeZeroCostFills, once the hourly fill has settled — CC chunk D ruling 2.)
+    if (opts.allowCover && !t.closingLead && carveZeroCostCovers(b, week, date, positionId, fromQ, toQ, { extend: false })) return "covered";
     // Astra chunk B ruling (hoursNeeded): extending an ESSENTIAL shift (it works the closing window) costs no
     // non-essential hour either — the budget certificate refuses while such an extension is legal, so take it.
     if (extendEssentialShift(b, week, date, positionId, fromQ, toQ)) return "placed";
@@ -530,18 +531,35 @@ export function coverWithManager(b: BuildCtx, week: WeekState, date: string, pos
  * (`zeroCostCovers` — the same predicate the budget certificate refuses on), guarded, until none is left. Returns
  * true when the run has no deficit left.
  */
-export function carveZeroCostCovers(b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number): boolean {
+export function carveZeroCostCovers(b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number, opts: { extend: boolean } = { extend: true }): boolean {
   const day = b.ctx.days[date]!;
   for (let round = 0; round < 8; round++) {
     const schedule = { locationId: b.ctx.locationId, weekStart: b.ctx.weekStart, shifts: allShifts(week), gaps: [], days: [] };
     const covers = zeroCostCovers({ date, positionId, fromQ, toQ }, schedule, b.ctx);
     let progress = false;
     for (const c of covers) {
+      if (c.extend && !opts.extend) continue;
       const p = b.people[c.userId];
       if (!p) continue;
       const rank = p.coverPositions.indexOf(positionId);
       const lastResort = rank < 0;
-      const r = lastResort ? reason("manager_cover_last_resort", { positionId, fromQ: c.fromQ, toQ: c.toQ }) : reason("manager_cover", { positionId, fromQ: c.fromQ, toQ: c.toQ, rank: rank + 1 });
+      const r = c.extend ? reason("salaried_extension", { positionId, fromQ: c.fromQ, toQ: c.toQ, userId: c.userId, lastResort })
+        : lastResort ? reason("manager_cover_last_resort", { positionId, fromQ: c.fromQ, toQ: c.toQ }) : reason("manager_cover", { positionId, fromQ: c.fromQ, toQ: c.toQ, rank: rank + 1 });
+      if (c.extend) {
+        // CC chunk D rulings 1 + 2: the manager STAYS LONGER — the shift grows by a segment on the position.
+        const ok = guarded(b, week, date, (next) => {
+          const sh = next.find((x) => x.userId === c.userId && (c.extend === "after" ? x.endQ === c.fromQ : x.startQ === c.toQ));
+          if (!sh || sh.pinned) return false;
+          const seg: GSegment = { positionId, startQ: c.fromQ, endQ: c.toQ, reasons: [r], ...(lastResort ? { lastResort: true } : {}) };
+          sh.segments = c.extend === "after" ? [...sh.segments, seg] : [seg, ...sh.segments];
+          sh.startQ = Math.min(sh.startQ, c.fromQ);
+          sh.endQ = Math.max(sh.endQ, c.toQ);
+          sh.reasons = [...sh.reasons, r];
+          return true;
+        });
+        if (ok) progress = true;
+        continue;
+      }
       const ok = guarded(b, week, date, (next) => {
         const sh = next.find((x) => x.userId === c.userId && x.segments.some((g) => g.positionId === MOD && g.startQ <= c.fromQ && g.endQ >= c.toQ));
         if (!sh) return false;
@@ -699,6 +717,8 @@ export function extendToCap(b: BuildCtx, week: WeekState, date: string, d: { cod
   for (const sh of [...shifts].sort(shiftOrder)) {
     const p = b.people[sh.userId];
     if (!p || !p.activeMember || p.presenceOnly || sh.pinned || p.untouchableDates.includes(date)) continue;
+    // CC chunk D ruling 1: a salaried manager is extended only while the shop allows it (default ON).
+    if (p.salaried && !s.limits.salariedStayLonger) continue;
     const forward = sh.endQ === d.fromQ;
     if (!forward && sh.startQ !== d.toQ) continue;
     const dayQ = shifts.filter((x) => x.userId === sh.userId).reduce((n, x) => n + (x.endQ - x.startQ), 0);
@@ -715,11 +735,17 @@ export function extendToCap(b: BuildCtx, week: WeekState, date: string, d: { cod
       else ok = eligibleForPosition(p, pos) && occupancy(shifts, d.positionId!, q) < positionLimit(pos!, q) && (!needsPrimary || occupancy(shifts, primary!, q) > 0);
     }
     if (!ok) continue;
-    const r = reason("extended_to_cap", { positionId: d.positionId ?? MOD, fromQ: a, toQ: z, userId: sh.userId, maxShiftQ: capQ });
+    // CC chunk D ruling 1: a salaried extension's floor time (a position, not the MoD) counts against the weekly floor limit.
+    if (p.salaried && d.code === "coverage_gap" && (floorQuarters(week, sh.userId) + (z - a)) / 4 > s.limits.managerFloorH) continue;
+    const r = p.salaried
+      ? reason("salaried_extension", { positionId: d.positionId ?? MOD, fromQ: a, toQ: z, userId: sh.userId, maxShiftQ: capQ })
+      : reason("extended_to_cap", { positionId: d.positionId ?? MOD, fromQ: a, toQ: z, userId: sh.userId, maxShiftQ: capQ });
     const mutate = (next: GShift[]) => {
       const mine = next.find((x) => x.userId === sh.userId && x.startQ === sh.startQ);
       if (!mine) return false;
-      const seg: GSegment = { positionId: d.positionId ?? MOD, startQ: a, endQ: z, reasons: [r] };
+      // A manager outside their preferred cover list takes the position only as a last resort (the reason says so).
+      const outside = !!d.positionId && isManagerRole(p.role) && !p.coverPositions.includes(d.positionId);
+      const seg: GSegment = { positionId: d.positionId ?? MOD, startQ: a, endQ: z, reasons: [r], ...(outside ? { lastResort: true } : {}) };
       mine.segments = forward ? [...mine.segments, seg] : [seg, ...mine.segments];
       mine.startQ = Math.min(mine.startQ, a);
       mine.endQ = Math.max(mine.endQ, z);

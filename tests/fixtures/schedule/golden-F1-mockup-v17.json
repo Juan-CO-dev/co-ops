@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.2. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.3. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -1027,7 +1027,7 @@
       }
      },
      {
-      "key": "extended_to_cap",
+      "key": "salaried_extension",
       "params": {
        "fromQ": 60,
        "maxShiftQ": 42,
@@ -1048,7 +1048,7 @@
      }
     },
     {
-     "key": "extended_to_cap",
+     "key": "salaried_extension",
      "params": {
       "fromQ": 60,
       "maxShiftQ": 42,
@@ -1542,7 +1542,7 @@
       }
      },
      {
-      "key": "extended_to_cap",
+      "key": "salaried_extension",
       "params": {
        "fromQ": 66,
        "maxShiftQ": 42,
@@ -1563,7 +1563,7 @@
      }
     },
     {
-     "key": "extended_to_cap",
+     "key": "salaried_extension",
      "params": {
       "fromQ": 66,
       "maxShiftQ": 42,
@@ -2137,7 +2137,7 @@
       }
      },
      {
-      "key": "extended_to_cap",
+      "key": "salaried_extension",
       "params": {
        "fromQ": 66,
        "maxShiftQ": 42,
@@ -2158,7 +2158,7 @@
      }
     },
     {
-     "key": "extended_to_cap",
+     "key": "salaried_extension",
      "params": {
       "fromQ": 66,
       "maxShiftQ": 42,
@@ -2764,7 +2764,7 @@
       }
      },
      {
-      "key": "extended_to_cap",
+      "key": "salaried_extension",
       "params": {
        "fromQ": 66,
        "maxShiftQ": 42,
@@ -2785,7 +2785,7 @@
      }
     },
     {
-     "key": "extended_to_cap",
+     "key": "salaried_extension",
      "params": {
       "fromQ": 66,
       "maxShiftQ": 42,
@@ -3375,7 +3375,7 @@
       }
      },
      {
-      "key": "extended_to_cap",
+      "key": "salaried_extension",
       "params": {
        "fromQ": 66,
        "maxShiftQ": 42,
@@ -3396,7 +3396,7 @@
      }
     },
     {
-     "key": "extended_to_cap",
+     "key": "salaried_extension",
      "params": {
       "fromQ": 66,
       "maxShiftQ": 42,
@@ -4014,7 +4014,7 @@
       }
      },
      {
-      "key": "extended_to_cap",
+      "key": "salaried_extension",
       "params": {
        "fromQ": 66,
        "maxShiftQ": 42,
@@ -4035,7 +4035,7 @@
      }
     },
     {
-     "key": "extended_to_cap",
+     "key": "salaried_extension",
      "params": {
       "fromQ": 66,
       "maxShiftQ": 42,
@@ -4568,7 +4568,7 @@
       }
      },
      {
-      "key": "extended_to_cap",
+      "key": "salaried_extension",
       "params": {
        "fromQ": 66,
        "maxShiftQ": 42,
@@ -4597,7 +4597,7 @@
      }
     },
     {
-     "key": "extended_to_cap",
+     "key": "salaried_extension",
      "params": {
       "fromQ": 66,
       "maxShiftQ": 42,

@@ -17,6 +17,8 @@ export const REASON_KEYS = [
   "essential_extension",
   // CC chunk C ruling 2: a shift extended up to the shop's daily maximum toward a need run longer than one shift.
   "extended_to_cap",
+  // CC chunk D rulings 1 + 2: a salaried manager stayed longer (up to the daily maximum) — a zero-hourly-cost fill.
+  "salaried_extension",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 import { buildDayNeed } from "@/lib/scheduling/need-shared";
 import { salariedBlocks, templatesFor } from "@/lib/scheduling/generator/templates-shared";
 import { buildWeek, type GeneratorOutput } from "@/lib/scheduling/generator/build-shared";
-import { checkScheduleRules, zeroCostCovers } from "@/lib/scheduling/rules-shared";
+import { checkCertificate, checkScheduleRules, zeroCostCovers } from "@/lib/scheduling/rules-shared";
+import { moneyStrip } from "@/lib/scheduling/board-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { enforcePriority, type BuildCtx, type GShift, type WeekState } from "@/lib/scheduling/generator/assign-shared";
 import { teamStrength } from "@/lib/scheduling/strength-shared";
@@ -343,12 +344,13 @@ describe("Task 7: budget, certificates and the repair search", () => {
     expect(out.stats.hourlyHours).toBe(0);
     const schedule = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts: out.shifts, gaps: out.gaps, days: out.days };
     for (const g of out.gaps) expect(zeroCostCovers(g, schedule, out.context)).toEqual([]);
-    // Astra chunk C P1 (legal placement witness): the hole left after the GM's 4 h block (2:00–3:00 PM) has NO legal
-    // 4 h block for the employee — Register is held by the GM until 2:00 and closes at 3:00 — so it is NOT a budget
-    // proof (before the fix it was, with an invented 4 h fill). It is the honest `unresolved_search`: a manager may
-    // extend the GM or swap them. Every remaining gap sits after the GM's block.
+    // Astra chunk C P1 (legal placement witness): the hole after the GM's 4 h block has NO legal 4 h block for the
+    // employee — Register is held by the GM and closes at 3:00 — so it is NOT a budget proof. CC chunk D ruling 2: the
+    // GM now STAYS LONGER at zero hourly cost (2:00 → 2:45 PM), but an opens-only GM must leave before service close
+    // (3:00), so the last 15 minutes stay the honest `unresolved_search`. Every remaining gap sits after the GM's shift.
+    expect([gm.startQ, gm.endQ]).toEqual([40, 59]);
     expect(out.gaps.every((g) => g.fromQ >= gm.endQ)).toBe(true);
-    expect(out.gaps.map((g) => [g.fromQ, g.toQ, g.cause])).toEqual([[56, 60, "unresolved_search"]]);
+    expect(out.gaps.map((g) => [g.fromQ, g.toQ, g.cause])).toEqual([[59, 60, "unresolved_search"]]);
   });
 
   it("Astra chunk B P1-2: KH-only roster, KH-as-MoD from noon — the afternoon gets a KH MoD block, no MoD certificate spans the boundary", () => {
@@ -679,5 +681,88 @@ describe("CC chunk C ruling 2: a cap-only gap — the generator fills up to the 
     const out = buildWeek(fixture({ structure: s, specs: [{ id: "u-e", role: "employee" }, { id: "u-f", role: "employee" }], days: [day(MON, {}, s)] }));
     expectClean(out);
     expect(out.gaps).toEqual([]);
+  });
+});
+
+describe("CC chunk D rulings 1 + 2: a salaried manager STAYS LONGER — a zero-hourly-cost fill within the cap and the floor limit", () => {
+  /** Register 10:00 AM – 9:00 PM (44 q) needs one head; the GM (any hours, Register in their cover list) is the only person. */
+  const longRegister = (over: (s: ScheduleStructure) => void = () => {}) => onePosition((s) => {
+    s.shopDay = { prepStartQ: 40, prepDishArrivalQ: 40, serviceStartQ: 40, serviceCloseQ: 84, outEarliestQ: 84, outLatestQ: 88 };
+    s.positions[I.$REG] = { ...s.positions[I.$REG]!, openQ: 40, trimQ: 84, closeQ: 84 };
+    for (const t of ["slow", "normal", "busy", "weekend"] as const) {
+      s.crews[t].prepUntilQ = 40;
+      s.crews[t].waves = { setup: { heads: 1, atQ: 40 }, service: { heads: 0 }, rush: { heads: 0, atQ: 48 } };
+    }
+    over(s);
+  });
+  const gmOnly: PersonSpec[] = [{ id: "u-gm", role: "gm", leader: "mix", cover: [I.$REG] }];
+  const floorQ = (out: GeneratorOutput, userId: string) => out.shifts.filter((x) => x.userId === userId).reduce((n, x) => n + x.segments.filter((g) => g.positionId !== "mod").reduce((m, g) => m + g.endQ - g.startQ, 0), 0);
+  const reasonKeys = (out: GeneratorOutput, userId: string) => Object.entries(out.reasons).filter(([k]) => k.includes(`|${userId}|`)).flatMap(([, r]) => r.shift.map((x) => x.key));
+
+  it("ON (the default): the GM stays up to the 10.5 h cap at zero hourly cost, the board names it, and only the cap's 30 minutes remain (max_shift)", () => {
+    const s = longRegister();
+    expect(s.limits.salariedStayLonger).toBe(true);
+    const out = buildWeek(fixture({ structure: s, specs: gmOnly, days: [day(MON, {}, s)] }));
+    expectClean(out);
+    const gm = out.shifts.filter((x) => x.userId === "u-gm");
+    expect(gm.map((x) => x.endQ - x.startQ)).toEqual([42]);
+    expect(out.stats.hourlyHours).toBe(0);
+    expect(reasonKeys(out, "u-gm")).toContain("salaried_extension");
+    expect(out.gaps).toHaveLength(1);
+    expect(out.gaps[0]).toMatchObject({ cause: "structure", certificate: { rule: "max_shift", detail: { shortQ: 2 } } });
+  });
+
+  it("OFF: the GM is never extended, and no stay-longer fill is offered to the certificates", () => {
+    const s = longRegister((x) => { x.limits.salariedStayLonger = false; });
+    const out = buildWeek(fixture({ structure: s, specs: gmOnly, days: [day(MON, {}, s)] }));
+    expectClean(out);
+    expect(out.shifts.filter((x) => x.userId === "u-gm").map((x) => x.endQ - x.startQ)).toEqual([16]);
+    expect(reasonKeys(out, "u-gm")).not.toContain("salaried_extension");
+    const schedule = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts: out.shifts, gaps: out.gaps, days: out.days };
+    for (const g of out.gaps) expect(zeroCostCovers(g, schedule, out.context).filter((c) => c.extend)).toEqual([]);
+  });
+
+  it("the extension's floor time counts against the WEEKLY floor limit (6 h → the GM's floor time stops at 24 q, no manager_floor_exceeded)", () => {
+    const s = longRegister((x) => { x.limits.managerFloorH = 6; });
+    const out = buildWeek(fixture({ structure: s, specs: gmOnly, days: [day(MON, {}, s)] }));
+    expectClean(out);
+    expect(floorQ(out, "u-gm")).toBe(24);
+    expect(out.problems.filter((p) => p.code === "manager_floor_exceeded")).toEqual([]);
+  });
+
+  it("budget 0: a GM who may stay to the close takes 2:00–3:00 PM at zero hourly cost — no gap, no hourly hour (an opens-only GM cannot: chunk B P1-1 above)", () => {
+    const s = onePosition();
+    const specs: PersonSpec[] = [{ id: "u-e", role: "employee", skills: { [I.$REG]: [0.9, 0.7] } }, { id: "u-gm", role: "gm", leader: "mix", cover: [I.$REG] }];
+    const out = buildWeek(fixture({ structure: s, specs, days: oneDay(s), budgetByDate: Object.fromEntries(DATES.map((d) => [d, d === MON ? 0 : null])) }));
+    expectClean(out);
+    expect(out.gaps).toEqual([]);
+    expect(out.stats.hourlyHours).toBe(0);
+    const gm = out.shifts.find((x) => x.userId === "u-gm")!;
+    expect([gm.startQ, gm.endQ]).toEqual([40, 60]);
+  });
+
+  it("the budget certificate is REFUSED while a stay-longer fill exists; zeroCostCovers names it; OFF → no such fill", () => {
+    const s = onePosition();
+    const specs: PersonSpec[] = [{ id: "u-e", role: "employee" }, { id: "u-gm", role: "gm", leader: "mix", cover: [I.$REG] }];
+    const out = buildWeek(fixture({ structure: s, specs, days: oneDay(s), budgetByDate: Object.fromEntries(DATES.map((d) => [d, d === MON ? 0 : null])) }));
+    // Hand-made: the GM leaves at 2:00 PM (56); 2:00–3:00 PM is open.
+    const shifts = [{ userId: "u-gm", date: MON, startQ: 40, endQ: 56, segments: [{ positionId: "mod", startQ: 40, endQ: 44 }, { positionId: I.$REG, startQ: 44, endQ: 56 }], closingManager: false, flex: false, pinned: false }];
+    const schedule = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts, gaps: [], days: out.days };
+    const subject = { code: "coverage_gap" as const, date: MON, positionId: I.$REG, fromQ: 56, toQ: 60 };
+    expect(zeroCostCovers(subject, schedule, out.context)).toEqual([{ userId: "u-gm", fromQ: 56, toQ: 60, extend: "after" }]);
+    const cert = { ...subject, cause: "budget" as const, certificate: { budgetedDates: [MON], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 4 } };
+    for (const hoursNeeded of [0, 1, 4]) expect(checkCertificate({ ...cert, certificate: { ...cert.certificate, hoursNeeded } }, schedule, out.context)).toBe(false);
+    const off = structuredClone(out.context);
+    off.days[MON]!.structure.limits.salariedStayLonger = false;
+    expect(zeroCostCovers(subject, schedule, off)).toEqual([]);
+  });
+
+  it("the money strip keeps salaried cost FIXED: the GM's extension adds no hourly hour and no hourly $", () => {
+    const s = longRegister();
+    const out = buildWeek(fixture({ structure: s, specs: gmOnly, days: [day(MON, {}, s)] }));
+    const strip = moneyStrip({ dates: out.context.dates, shifts: out.shifts, ctx: out.context, wageCentsByUser: { "u-gm": null }, forecastWeekCents: 1_000_000, salariedWeeklyCents: 150_000 }, { canSeeMoney: true });
+    expect(strip.hours.hourlyHours).toBe(0);
+    expect(strip.money).toMatchObject({ hourlyCostCents: 0, salariedFixedCents: 150_000 });
+    expect(strip.hours.managerFloorHours).toBe(floorQ(out, "u-gm") / 4);
   });
 });

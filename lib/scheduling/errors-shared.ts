@@ -48,6 +48,8 @@ export const SCHEDULE_ERROR_CODES = [
   "roster_include_refused",
   // chunk D (0275): a declared gap whose certificate is not even the shape of its cause
   "gap_certificate_invalid",
+  // CC chunk D ruling 3: the validation context a revision would store is past the lib's safe ceiling (well under 0275's CHECK)
+  "context_too_large",
 ] as const;
 
 export type ScheduleErrorCode = (typeof SCHEDULE_ERROR_CODES)[number];

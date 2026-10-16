@@ -3,6 +3,7 @@
 -- Provenance: Smart Scheduling Phase 2, Task 13 (docs/superpowers/plans/2026-10-16-scheduling-phase2-BUILD.md,
 --   "Migrations"), r2 (P2-7 date-scoped budgets, O1/O2/O6 settings), r3 (per-DATE budget precedence), CC chunk B
 --   ruling 3 + chunk C ruling 2 (limits.maxShiftH, default 10.5 h, inside the structure jsonb — no column).
+--   CC chunk D ruling 1 (limits.salariedStayLonger, boolean, default ON in the TS defaults — also inside the jsonb).
 --
 -- WHAT (every table deny-all RLS, SELECT-only for service_role — the definer writers below are the ONLY writers,
 --   the accepted Phase 1 posture of 0269/0270):
@@ -250,7 +251,8 @@ begin
   -- limits
   v_lim := p -> 'limits';
   if not public.schedule_json_exact_keys(v_lim, array['minimumShiftQ', 'flexMinimumQ', 'flexUsesPer2w', 'flexMaxQ', 'overtimeH', 'managerFloorH',
-                                                       'gmMinimumH', 'agmMinimumH', 'closingMinutesOverride', 'segmentMinQ', 'rushShiftMaxQ', 'maxShiftH']) then
+                                                       'gmMinimumH', 'agmMinimumH', 'closingMinutesOverride', 'segmentMinQ', 'rushShiftMaxQ', 'maxShiftH',
+                                                       'salariedStayLonger']) then
     return false;
   end if;
   if not public.schedule_json_int(v_lim -> 'minimumShiftQ', 1, 96) or not public.schedule_json_int(v_lim -> 'flexMinimumQ', 1, 96)
@@ -258,7 +260,9 @@ begin
      or not public.schedule_json_qhours(v_lim -> 'overtimeH', 0, 80) or not public.schedule_json_qhours(v_lim -> 'managerFloorH', 0, 80)
      or not public.schedule_json_qhours(v_lim -> 'gmMinimumH', 0, 24) or not public.schedule_json_qhours(v_lim -> 'agmMinimumH', 0, 24)
      or (jsonb_typeof(v_lim -> 'closingMinutesOverride') <> 'null' and not public.schedule_json_int(v_lim -> 'closingMinutesOverride', 0, 240))
-     or not public.schedule_json_int(v_lim -> 'segmentMinQ', 1, 16) or not public.schedule_json_int(v_lim -> 'rushShiftMaxQ', 0, 16) then
+     or not public.schedule_json_int(v_lim -> 'segmentMinQ', 1, 16) or not public.schedule_json_int(v_lim -> 'rushShiftMaxQ', 0, 16)
+     -- CC chunk D ruling 1: salaried managers may stay longer (default ON), a boolean
+     or jsonb_typeof(v_lim -> 'salariedStayLonger') is distinct from 'boolean' then
     return false;
   end if;
   if (v_lim ->> 'flexMinimumQ')::numeric > (v_lim ->> 'minimumShiftQ')::numeric
