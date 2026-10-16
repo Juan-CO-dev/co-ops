@@ -76,6 +76,17 @@ export const DESTRUCTIVE_ACTIONS = [
   "people.skill_tunables_update",
   "pm_criteria.create",
   "pm_criteria.update",
+  // Scheduling Phase 2 (plan 2026-10-16, Task 15; registered ahead of their emitters in chunk E). A human
+  // changing a shop's schedule configuration, a person's scheduling settings, a budget, a pin or a day type,
+  // approving a week, or confirming a rebuild that replaces manager edits — each changes the record.
+  "schedule.structure_update",
+  "schedule.shop_settings_update",
+  "schedule.person_settings_update",
+  "schedule.budget_set",
+  "schedule.regenerate_overwrite",
+  "schedule.week_approve",
+  "schedule.pin_set",
+  "schedule.day_type_set",
   "customer.consent_import", // 0234: a human imports the Toast marketing list (consent events appended).
   "customer.consent_import_cancel", // 0234 r1: a human cancels a half-applied import (its pending events never count).
   "customer.merge_confirm", // 0234: a manager merges two profiles into one person.
