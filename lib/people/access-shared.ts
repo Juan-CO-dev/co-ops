@@ -147,6 +147,14 @@ export function canLinkSevenShiftsUser(
   return subjectLocations.includes(locationId);
 }
 
+/**
+ * May this actor link or unlink 7shifts PEOPLE at this shop at all (Task 10)? GM own shop, MoO+ any.
+ * The front-door check, decided before any I/O; `canLinkSevenShiftsUser` then judges the subject.
+ */
+export function canManageSevenShiftsPeople(actor: PeopleActor, locationId: string): boolean {
+  return gmOwnOrMooAny(actor, locationId);
+}
+
 /** Sync now spends the shared rate budget: MoO+ only. */
 export function canSyncNow(actor: PeopleActor): boolean {
   return isMooPlus(actor);

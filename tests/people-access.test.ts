@@ -8,6 +8,7 @@ import {
   canEditPmCriteria,
   canEditSkillTunables,
   canLinkSevenShiftsUser,
+  canManageSevenShiftsPeople,
   canManageSevenShiftsShops,
   canMarkDone,
   canRateNewHire,
@@ -329,4 +330,25 @@ describe("canReadPmCopy — blind until submit, then authors, GM/Op-6 of the sho
       });
     });
   }
+});
+
+describe("canManageSevenShiftsPeople — the person-link screen's act gate: GM own shop, MoO+ any (Task 10)", () => {
+  for (const role of ALL_ROLES) {
+    for (const where of ["own", "other", "none"] as const) {
+      const want = expectGmOwnMooAny(role, where);
+      it(`${role} @ ${where} → ${want}`, () => {
+        expect(canManageSevenShiftsPeople(actor(role, where), shopFor(where))).toBe(want);
+      });
+    }
+  }
+  it("is never true for 'all' or an empty shop", () => {
+    expect(canManageSevenShiftsPeople(actor("owner"), "all")).toBe(false);
+    expect(canManageSevenShiftsPeople(actor("owner"), "")).toBe(false);
+  });
+  it("agrees with canLinkSevenShiftsUser for a subject who works there at a lower level", () => {
+    for (const role of ALL_ROLES) for (const where of ["own", "other", "none"] as const) {
+      const shop = shopFor(where);
+      expect(canManageSevenShiftsPeople(actor(role, where), shop)).toBe(canLinkSevenShiftsUser(actor(role, where), 0, [shop], shop));
+    }
+  });
 });

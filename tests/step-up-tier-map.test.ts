@@ -106,6 +106,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // 0233 Toast employee links: link/unlink is an attribution change (Tier B); its only client,
   // ToastEmployeeLinks, asks B proactively and retries on step_up_required/stale (joined by hand).
   "app/api/admin/toast-employees/route.ts": ["B"],
+  // Scheduling Phase 1: the 7shifts shop and person links (Tier B, the toast-employees precedent); Sync now takes none.
+  "app/api/admin/sevenshifts/route.ts": ["B"],
   // 0234 customer profiles: Tier A = reveal / lookup / dismiss / link catering; Tier B = merge, erase,
   // retention, consent import; exports Tier B.
   "app/api/admin/customers/route.ts": ["A"],
@@ -246,6 +248,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/catering/pipeline/TransferLead.tsx": ["B"],
   "components/assignments/StationsAdmin.tsx": ["B"],
   "components/admin/toast-employees/ToastEmployeeLinks.tsx": ["B"],
+  "components/admin/sevenshifts/SevenShiftsScreen.tsx": ["B"],
   "components/admin/customers/CancelImportButton.tsx": ["B"],
   "components/admin/customers/ConsentTools.tsx": ["A", "B"],
   "components/admin/customers/CustomerContactPanel.tsx": ["A", "B"],

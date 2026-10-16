@@ -33,6 +33,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "stations", i18nKey: "assignments.stations", href: "/admin/stations", minLevel: 7 },
   // 0233: Toast employee -> CO-OPS user links (GM own shop, level 8+ every shop).
   { id: "toast-employees", i18nKey: "toastLinks.title", href: "/admin/toast-employees", minLevel: 7 },
+  // Scheduling Phase 1 (0268–0269): the 7shifts connection, shop links (8+) and person links (GM own shop,
+  // 8+ every shop). The card shows from GM up; the operational level-6 managers can open the status by URL
+  // (the page binds every viewer through canViewSevenShiftsStatus, so the social media manager never can).
+  { id: "sevenshifts", i18nKey: "sevenshifts.title", href: "/admin/sevenshifts", minLevel: 7 },
   // 0234: customer profiles (stats GM+ own shop / 8+ every shop; contact + consent desk 9+).
   { id: "customers", i18nKey: "customers.title", href: "/admin/customers", minLevel: 7 },
   { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },

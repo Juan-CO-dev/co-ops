@@ -81,6 +81,7 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/stations": ["loc"],
   "/admin/stations": ["loc"],
   "/admin/toast-employees": ["loc"],
+  "/admin/sevenshifts": ["loc"], // Scheduling Phase 1 — the 7shifts links, per shop
   "/assignments": ["location", "loc"],
   "/my-feedback": ["location", "loc"], // old ?loc= links keep working; the shared tabs use ?location=
   "/reports": ["location"],

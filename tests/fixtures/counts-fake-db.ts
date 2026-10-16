@@ -203,6 +203,8 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
       order(col: string, opts?: { ascending?: boolean }) { orders.push({ col, asc: opts?.ascending !== false }); return q; },
       range(a: number, b: number) { rangeFrom = a; rangeTo = b; return q; },
       limit(n: number) { lim = n; return q; },
+      /** Accepted and ignored: the fake answers at once (a loader passes its deadline signal). */
+      abortSignal() { return q; },
       returns() { return q; },
       maybeSingle() { single = true; return q; },
       upsert(rows: Row[], opts: { onConflict?: string; ignoreDuplicates?: boolean } = {}) { upsertRows = rows; upsertOpts = opts; return q; },
