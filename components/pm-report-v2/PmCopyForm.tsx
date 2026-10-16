@@ -17,10 +17,12 @@
  * store above the person cards, with a saved baseline that moves on each successful save (so a saved note can be
  * cleared, and a collapse never loses a draft). A card holding unsaved work — a changed note, a pending or a
  * failed save — stays locked open with "Unsaved changes" (D10). Saves go through ONE queue per copy, in order;
- * the latest save of an answer wins. Done and Submit save any changed note, wait for every pending save, and
- * refuse with "pmv2.error.unsaved" when one failed. `initialNoteDrafts` exists for the SSR tests only.
+ * the latest save of an answer wins. Each note tracks its PENDING value beside the acknowledged one (Astra chunk G
+ * #1): blur compares with the latest of the two, and Done and Submit flush (`sync.flush()`, via settleSaves) until
+ * every draft equals its acknowledged persisted value, refusing with "pmv2.error.unsaved" when a save failed.
+ * `initialNoteDrafts` exists for the SSR tests only.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -28,10 +30,7 @@ import type { PmCopyPositionView, PmCopyView } from "@/lib/pm-report-v2";
 import { PM_GRADES, PM_V2_ERROR_CODES, wallTimeOf, type PmGrade } from "@/lib/pm-report-v2-shared";
 import { SaveStatus } from "@/components/ui/SaveStatus";
 import { disclosureIsOpen, toggleDisclosure } from "@/lib/disclosure-lock-shared";
-import {
-  answerKey, applyGradeResult, applyNoteResult, chooseGrade, createSaveQueue, dirtyNoteKeys, editNote, initialCopyDrafts,
-  noteKey, noteNeedsSave, personHasUnsaved, type CopyDrafts,
-} from "@/lib/pm-copy-drafts-shared";
+import { answerKey, createCopySync, initialCopyDrafts, noteKey, personHasUnsaved, type CopyDrafts } from "@/lib/pm-copy-drafts-shared";
 import type { SavePhase } from "@/lib/save-status-shared";
 
 const button = "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text disabled:opacity-60";
@@ -165,11 +164,7 @@ export function PmCopyForm({ view, prefillFrom = null, initiallyOpen = false, in
 /** The copy's ONE draft store and save queue (Astra chunk F #1/#2). Lives in the form, above every card. */
 type CopyStore = ReturnType<typeof useCopyStore>;
 function useCopyStore(view: PmCopyView, initialNoteDrafts?: Readonly<Record<string, string>>) {
-  const [drafts, setDrafts] = useState<CopyDrafts>(() => initialCopyDrafts(view, initialNoteDrafts));
   const [errors, setErrors] = useState<Readonly<Record<string, TranslationKey>>>({});
-  const draftsRef = useRef(drafts);
-  useEffect(() => { draftsRef.current = drafts; }, [drafts]);
-  const [queue] = useState(() => createSaveQueue((body: Record<string, unknown>) => post(body)));
   const scopeError = useCallback((scope: string, r: { ok: boolean; stale: boolean; code?: unknown }) => {
     if (r.stale) return;
     setErrors((e) => {
@@ -178,45 +173,37 @@ function useCopyStore(view: PmCopyView, initialNoteDrafts?: Readonly<Record<stri
       return next;
     });
   }, []);
-  const base = useCallback((subjectId: string, positionId: string | null) =>
-    ({ locationId: view.locationId, copyId: view.copy.id, subjectId, positionId }), [view.locationId, view.copy.id]);
+  // ONE sync per copy (Astra chunk G #1): it holds the drafts synchronously, tracks each note's PENDING value beside
+  // its acknowledged one, and flushes Done / Submit until every draft equals what the server acknowledged.
+  const [initial] = useState<CopyDrafts>(() => initialCopyDrafts(view, initialNoteDrafts));
+  const [drafts, setDrafts] = useState<CopyDrafts>(initial);
+  const [sync] = useState(() => {
+    const where = (key: string) => {
+      const [subjectId, positionId] = key.split("|");
+      return { locationId: view.locationId, copyId: view.copy.id, subjectId, positionId: positionId || null };
+    };
+    return createCopySync<Record<string, unknown>>({
+      initial,
+      send: (body) => post(body),
+      noteBody: (key, text) => ({ ...where(key), action: "note", note: text }),
+      gradeBody: (key, grade) => ({ ...where(key), action: "grade", criterionId: key.split("|")[2], grade }),
+      onChange: setDrafts,
+      onResult: (kind, key, r) => scopeError(kind === "note" ? key : key.split("|").slice(0, 2).join("|"), r),
+    });
+  });
 
   const choose = useCallback((subjectId: string, positionId: string | null, criterionId: string, grade: PmGrade | null) => {
-    const k = answerKey(subjectId, positionId, criterionId);
-    setDrafts((d) => chooseGrade(d, k, grade));
-    void queue.save(`g:${k}`, { ...base(subjectId, positionId), action: "grade", criterionId, grade }).then((r) => {
-      setDrafts((d) => applyGradeResult(d, k, grade, r));
-      scopeError(noteKey(subjectId, positionId), r);
-    });
-  }, [queue, base, scopeError]);
-
-  const saveNote = useCallback((k: string, subjectId: string, positionId: string | null, text: string) => {
-    return queue.save(`n:${k}`, { ...base(subjectId, positionId), action: "note", note: text }).then((r) => {
-      setDrafts((d) => applyNoteResult(d, k, text, r));
-      scopeError(k, r);
-    });
-  }, [queue, base, scopeError]);
-
+    void sync.choose(answerKey(subjectId, positionId, criterionId), grade);
+  }, [sync]);
   const typeNote = useCallback((subjectId: string, positionId: string | null, text: string) => {
-    setDrafts((d) => editNote(d, noteKey(subjectId, positionId), text));
-  }, []);
-  /** On blur: save the note when it differs from the SAVED baseline (a cleared note included). */
+    sync.type(noteKey(subjectId, positionId), text);
+  }, [sync]);
+  /** On blur: save the note when it differs from the latest of its PENDING and acknowledged values. */
   const blurNote = useCallback((subjectId: string, positionId: string | null, text: string) => {
-    const k = noteKey(subjectId, positionId);
-    if (!noteNeedsSave(editNote(draftsRef.current, k, text), k)) return;
-    void saveNote(k, subjectId, positionId, text);
-  }, [saveNote]);
-
-  /** Before Done / Submit: save every changed note, then wait for every pending save. False = one failed. */
-  const settleSaves = useCallback(async (): Promise<boolean> => {
-    const d = draftsRef.current;
-    for (const k of dirtyNoteKeys(d)) {
-      const subjectId = k.slice(0, k.indexOf("|"));
-      const positionId = k.slice(k.indexOf("|") + 1) || null;
-      void saveNote(k, subjectId, positionId, d.draft.notes[k] ?? "");
-    }
-    return (await queue.settle()).ok;
-  }, [queue, saveNote]);
+    void sync.blur(noteKey(subjectId, positionId), text);
+  }, [sync]);
+  /** Before Done / Submit: flush until every draft equals its acknowledged persisted value. False = a save failed. */
+  const settleSaves = useCallback(async (): Promise<boolean> => (await sync.flush()).ok, [sync]);
 
   return { drafts, errors, choose, typeNote, blurNote, settleSaves };
 }

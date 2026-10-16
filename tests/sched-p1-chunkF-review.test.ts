@@ -19,7 +19,7 @@ import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import {
   applyNoteResult, applyGradeResult, chooseGrade, createSaveQueue, editNote, initialCopyDrafts, noteNeedsSave,
-  notePendingSave, personHasUnsaved, answerKey, noteKey, type CopyDrafts,
+  notePendingSave, personHasUnsaved, answerKey, noteKey, queueNote, type CopyDrafts,
 } from "@/lib/pm-copy-drafts-shared";
 import { dirtyUnder, editorKey, withDirty } from "@/lib/disclosure-lock-shared";
 import { addFormAfter, criteriaWriteOutcome } from "@/lib/pm-criteria-shared";
@@ -63,10 +63,15 @@ describe("1. a saved note can be cleared; drafts survive a collapse", () => {
     expect(noteNeedsSave(d, k)).toBe(false);
   });
 
-  it("a stale note result never moves the baseline (a newer save of that note is on its way)", () => {
-    let d = editNote(initialCopyDrafts(view("first")), noteKey(EMP, P), "second");
-    d = applyNoteResult(d, noteKey(EMP, P), "second", { ok: true, stale: true });
-    expect(noteNeedsSave(d, noteKey(EMP, P))).toBe(true);
+  // Chunk G final round: saves are serialized, so a stale ok that was SENT is what the server holds and moves the
+  // acknowledged value; the newer save stays outstanding through its PENDING value (tests/sched-p1-final-fixes).
+  it("a stale note result never ends the pending state (a newer save of that note is on its way)", () => {
+    const k = noteKey(EMP, P);
+    let d = queueNote(editNote(initialCopyDrafts(view("first")), k, "second"), k, "second");
+    d = queueNote(editNote(d, k, "third"), k, "third");
+    d = applyNoteResult(d, k, "second", { ok: true, stale: true });
+    expect(d.pendingNotes[k]).toBe("third");
+    expect(personHasUnsaved(d, EMP)).toBe(true);
   });
 
   it("a person with an unsaved note draft, a pending or a failed save holds unsaved work", () => {
