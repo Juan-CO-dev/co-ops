@@ -73,6 +73,12 @@ export interface ScheduleStructure {
     segmentMinQ: number;
     /** r4: DISPLAY ONLY — a shaped rush further than this from its configured time is flagged in the reason; never alters heads. */
     rushShiftMaxQ: number;
+    /**
+     * CC chunk B ruling 3 (2026-10-16): the daily MAXIMUM shift length, in hours (default 10). A HARD rule in the
+     * validator (`shift_over_maximum`, error) and the generator (a longer run is split across people); the minimum
+     * (`minimumShiftQ`, 4 h) is unchanged and never above it.
+     */
+    maxShiftH: number;
   };
   catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number };
   labor: { targetPct: number; basis: "hourly" | "total"; strong: number; watch: number; budgetDeadbandH: number };
@@ -110,7 +116,7 @@ export const SCHEDULE_STRUCTURE_DEFAULTS: ScheduleStructure = {
   },
   limits: {
     minimumShiftQ: 16, flexMinimumQ: 12, flexUsesPer2w: 1, flexMaxQ: 12, overtimeH: 40,
-    managerFloorH: 32, gmMinimumH: 8, agmMinimumH: 8, closingMinutesOverride: null, segmentMinQ: 2, rushShiftMaxQ: 4,
+    managerFloorH: 32, gmMinimumH: 8, agmMinimumH: 8, closingMinutesOverride: null, segmentMinQ: 2, rushShiftMaxQ: 4, maxShiftH: 10,
   },
   catering: { minHeadcount: 30, extraPrepDishHeads: 1, defaultStartQ: 34, defaultEndQ: 52, leadMinutes: 210 },
   labor: { targetPct: 28, basis: "total", strong: 0.8, watch: 0.65, budgetDeadbandH: 2 },
@@ -306,7 +312,7 @@ const TOP_KEYS = ["version", "shopDay", "dayTypes", "crews", "positions", "prior
 const SHOPDAY_KEYS = ["prepStartQ", "prepDishArrivalQ", "serviceStartQ", "serviceCloseQ", "outEarliestQ", "outLatestQ"] as const;
 const POSITION_KEYS = ["role", "openQ", "trimQ", "closeQ", "headsBefore", "headsAfter", "allowedRoles"] as const;
 const LIMIT_KEYS = ["minimumShiftQ", "flexMinimumQ", "flexUsesPer2w", "flexMaxQ", "overtimeH", "managerFloorH", "gmMinimumH",
-  "agmMinimumH", "closingMinutesOverride", "segmentMinQ", "rushShiftMaxQ"] as const;
+  "agmMinimumH", "closingMinutesOverride", "segmentMinQ", "rushShiftMaxQ", "maxShiftH"] as const;
 
 function checkShopDay(v: unknown): Problem {
   if (!isObj(v)) return "shopDay";
@@ -454,6 +460,8 @@ function checkLimits(v: unknown, shopDay: ScheduleStructure["shopDay"]): Problem
   if (v.minimumShiftQ > span) return "limits.minimumShiftQ";
   if (v.gmMinimumH * 4 > span) return "limits.gmMinimumH";
   if (v.agmMinimumH * 4 > span) return "limits.agmMinimumH";
+  // CC chunk B ruling 3 (Astra chunk B): the daily maximum, quarter-hours ≤ 24 h, never below the hourly or salaried minimums.
+  if (!isQuarterHours(v.maxShiftH, 0, 24) || v.maxShiftH * 4 < v.minimumShiftQ || v.maxShiftH < v.gmMinimumH || v.maxShiftH < v.agmMinimumH) return "limits.maxShiftH";
   return null;
 }
 

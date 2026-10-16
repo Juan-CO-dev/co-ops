@@ -7068,5 +7068,6 @@
   "schedule.error.demand_unavailable": "Los datos de ventas no cargaron. Inténtalo otra vez. No se cambió nada.",
   "schedule.error.history_changed": "Cambió un día que se debía conservar. Los días pasados y conservados deben quedar tal cual.",
   "schedule.error.suggestion_unavailable": "Todavía no hay sugerencia de presupuesto: no hay una semana terminada para comparar.",
-  "schedule.error.unresolved_gaps": "Algunos huecos todavía necesitan a alguien. Llénalos, o rehaz el horario, antes de aprobar."
+  "schedule.error.unresolved_gaps": "Algunos huecos todavía necesitan a alguien. Llénalos, o rehaz el horario, antes de aprobar.",
+  "schedule.error.shift_over_maximum": "Ese turno es más largo que el turno máximo de esta tienda. Acórtalo o divídelo entre dos personas."
 }

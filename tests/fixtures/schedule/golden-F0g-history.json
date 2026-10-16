@@ -27,16 +27,72 @@
    "originRevisionId": null,
    "problems": [
     {
+     "code": "coverage_gap",
+     "day": "2026-10-27",
+     "inherited": false,
+     "params": {
+      "cause": "unresolved_search",
+      "fromQ": 38,
+      "proven": false,
+      "toQ": 56
+     },
+     "positionId": "5c000000-0000-4000-8000-000000000007",
+     "q": 38,
+     "severity": "gap"
+    },
+    {
+     "code": "coverage_gap",
+     "day": "2026-10-27",
+     "inherited": false,
+     "params": {
+      "cause": "unresolved_search",
+      "fromQ": 46,
+      "proven": false,
+      "toQ": 60
+     },
+     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "q": 46,
+     "severity": "gap"
+    },
+    {
+     "code": "coverage_gap",
+     "day": "2026-10-27",
+     "inherited": false,
+     "params": {
+      "cause": "unresolved_search",
+      "fromQ": 62,
+      "proven": false,
+      "toQ": 64
+     },
+     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "q": 62,
+     "severity": "gap"
+    },
+    {
+     "code": "coverage_gap",
+     "day": "2026-10-27",
+     "inherited": false,
+     "params": {
+      "cause": "unresolved_search",
+      "fromQ": 72,
+      "proven": false,
+      "toQ": 76
+     },
+     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "q": 72,
+     "severity": "gap"
+    },
+    {
      "code": "mod_missing",
      "day": "2026-10-27",
      "inherited": false,
      "params": {
       "cause": "unresolved_search",
-      "fromQ": 64,
+      "fromQ": 67,
       "proven": false,
       "toQ": 83
      },
-     "q": 64,
+     "q": 67,
      "severity": "gap"
     },
     {
@@ -44,7 +100,7 @@
      "day": "2026-10-27",
      "inherited": false,
      "params": {
-      "hours": 10.25,
+      "hours": 4,
       "max": 40,
       "min": 24
      },
@@ -56,7 +112,7 @@
      "day": "2026-10-27",
      "inherited": false,
      "params": {
-      "hours": 8.25,
+      "hours": 8,
       "max": 40,
       "min": 24
      },
@@ -68,7 +124,7 @@
      "day": "2026-10-27",
      "inherited": false,
      "params": {
-      "hours": 9,
+      "hours": 10.75,
       "max": 40,
       "min": 24
      },
@@ -80,7 +136,7 @@
      "day": "2026-10-27",
      "inherited": false,
      "params": {
-      "hours": 13.75,
+      "hours": 4,
       "max": 40,
       "min": 24
      },
@@ -92,7 +148,7 @@
      "day": "2026-10-27",
      "inherited": false,
      "params": {
-      "hours": 8,
+      "hours": 9.75,
       "max": 40,
       "min": 24
      },
@@ -104,7 +160,7 @@
      "day": "2026-10-27",
      "inherited": false,
      "params": {
-      "hours": 4.75,
+      "hours": 4,
       "max": 40,
       "min": 24
      },
@@ -116,7 +172,7 @@
      "day": "2026-10-27",
      "inherited": false,
      "params": {
-      "hours": 4.5,
+      "hours": 6.25,
       "max": 40,
       "min": 24
      },
@@ -140,7 +196,7 @@
      "day": "2026-10-27",
      "inherited": false,
      "params": {
-      "hours": 6,
+      "hours": 8,
       "max": 40,
       "min": 24
      },
@@ -191,6 +247,126 @@
    "cause": "unresolved_search",
    "certificate": {
     "candidateIds": [
+     "u-a-ana",
+     "u-b-bo",
+     "u-c-cy",
+     "u-f-finn",
+     "u-g-gus",
+     "u-h-hal",
+     "u-i-ivy",
+     "u-j-gm"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
+    },
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 7,
+     "steps": 200
+    }
+   },
+   "code": "coverage_gap",
+   "date": "2026-10-27",
+   "fromQ": 46,
+   "positionId": "5c000000-0000-4000-8000-000000000004",
+   "toQ": 60
+  },
+  {
+   "cause": "unresolved_search",
+   "certificate": {
+    "candidateIds": [
+     "u-a-ana",
+     "u-b-bo",
+     "u-c-cy",
+     "u-f-finn",
+     "u-g-gus",
+     "u-h-hal",
+     "u-i-ivy",
+     "u-j-gm"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
+    },
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 7,
+     "steps": 200
+    }
+   },
+   "code": "coverage_gap",
+   "date": "2026-10-27",
+   "fromQ": 62,
+   "positionId": "5c000000-0000-4000-8000-000000000004",
+   "toQ": 64
+  },
+  {
+   "cause": "unresolved_search",
+   "certificate": {
+    "candidateIds": [
+     "u-a-ana",
+     "u-b-bo",
+     "u-c-cy",
+     "u-f-finn",
+     "u-g-gus",
+     "u-h-hal",
+     "u-i-ivy",
+     "u-j-gm"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
+    },
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 7,
+     "steps": 200
+    }
+   },
+   "code": "coverage_gap",
+   "date": "2026-10-27",
+   "fromQ": 72,
+   "positionId": "5c000000-0000-4000-8000-000000000004",
+   "toQ": 76
+  },
+  {
+   "cause": "unresolved_search",
+   "certificate": {
+    "candidateIds": [
+     "u-a-ana",
+     "u-b-bo",
+     "u-c-cy",
+     "u-f-finn",
+     "u-g-gus",
+     "u-h-hal",
+     "u-i-ivy",
+     "u-j-gm"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
+    },
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 7,
+     "steps": 200
+    }
+   },
+   "code": "coverage_gap",
+   "date": "2026-10-27",
+   "fromQ": 38,
+   "positionId": "5c000000-0000-4000-8000-000000000007",
+   "toQ": 56
+  },
+  {
+   "cause": "unresolved_search",
+   "certificate": {
+    "candidateIds": [
      "u-g-gus",
      "u-j-gm"
     ],
@@ -201,13 +377,13 @@
     },
     "searched": {
      "chainDepth": 3,
-     "donorsTried": 1,
-     "steps": 5
+     "donorsTried": 7,
+     "steps": 200
     }
    },
    "code": "mod_missing",
    "date": "2026-10-27",
-   "fromQ": 64,
+   "fromQ": 67,
    "positionId": null,
    "toQ": 83
   }
@@ -258,18 +434,10 @@
     }
    ]
   },
-  "2026-10-27|u-a-ana|42": {
+  "2026-10-27|u-a-ana|67": {
    "alternates": [],
    "segments": [
     [
-     {
-      "key": "wave_arrival",
-      "params": {
-       "fromQ": 42,
-       "positionId": "5c000000-0000-4000-8000-000000000005",
-       "toQ": 67
-      }
-     },
      {
       "key": "extended_to_minimum",
       "params": {
@@ -295,22 +463,6 @@
       "fromQ": 80,
       "positionId": "5c000000-0000-4000-8000-000000000005",
       "toQ": 83
-     }
-    },
-    {
-     "key": "strongest_on_position",
-     "params": {
-      "positionId": "5c000000-0000-4000-8000-000000000005",
-      "skill": 0.9,
-      "userId": "u-a-ana"
-     }
-    },
-    {
-     "key": "wave_arrival",
-     "params": {
-      "fromQ": 42,
-      "positionId": "5c000000-0000-4000-8000-000000000005",
-      "toQ": 67
      }
     },
     {
@@ -330,84 +482,68 @@
     }
    ]
   },
-  "2026-10-27|u-b-bo|42": {
+  "2026-10-27|u-b-bo|38": {
    "alternates": [],
    "segments": [
     [
      {
-      "key": "wave_arrival",
+      "key": "repair_moved",
       "params": {
-       "fromQ": 42,
-       "positionId": "5c000000-0000-4000-8000-000000000003",
-       "toQ": 67
+       "fromPositionId": "5c000000-0000-4000-8000-000000000001",
+       "fromQ": 38,
+       "positionId": "5c000000-0000-4000-8000-000000000008",
+       "toQ": 62,
+       "userId": "u-b-bo"
       }
      }
     ]
    ],
    "shift": [
     {
-     "key": "wave_arrival",
+     "key": "repair_moved",
      "params": {
-      "fromQ": 42,
-      "positionId": "5c000000-0000-4000-8000-000000000003",
-      "toQ": 67
-     }
-    },
-    {
-     "key": "strongest_on_position",
-     "params": {
-      "positionId": "5c000000-0000-4000-8000-000000000003",
-      "skill": 0.9,
+      "fromPositionId": "5c000000-0000-4000-8000-000000000001",
+      "fromQ": 38,
+      "positionId": "5c000000-0000-4000-8000-000000000008",
+      "toQ": 62,
       "userId": "u-b-bo"
      }
     }
    ]
   },
-  "2026-10-27|u-c-cy|38": {
+  "2026-10-27|u-c-cy|42": {
    "alternates": [],
    "segments": [
     [
      {
-      "key": "wave_arrival",
+      "key": "repair_moved",
       "params": {
-       "fromQ": 38,
-       "positionId": "5c000000-0000-4000-8000-000000000007",
-       "toQ": 56
+       "fromPositionId": "5c000000-0000-4000-8000-000000000007",
+       "fromQ": 42,
+       "positionId": "5c000000-0000-4000-8000-000000000005",
+       "toQ": 67,
+       "userId": "u-c-cy"
       }
      }
     ]
    ],
    "shift": [
     {
-     "key": "wave_arrival",
+     "key": "repair_moved",
      "params": {
-      "fromQ": 38,
-      "positionId": "5c000000-0000-4000-8000-000000000007",
-      "toQ": 56
-     }
-    },
-    {
-     "key": "strongest_on_position",
-     "params": {
-      "positionId": "5c000000-0000-4000-8000-000000000007",
-      "skill": 0.9,
+      "fromPositionId": "5c000000-0000-4000-8000-000000000007",
+      "fromQ": 42,
+      "positionId": "5c000000-0000-4000-8000-000000000005",
+      "toQ": 67,
       "userId": "u-c-cy"
      }
     }
    ]
   },
-  "2026-10-27|u-d-dee|28": {
+  "2026-10-27|u-d-dee|67": {
    "alternates": [],
    "segments": [
     [
-     {
-      "key": "boh_crew",
-      "params": {
-       "fromQ": 28,
-       "positionId": "5c000000-0000-4000-8000-000000000002",
-       "toQ": 67
-      }
-     },
      {
       "key": "extended_to_minimum",
       "params": {
@@ -442,7 +578,24 @@
       "skill": 0.9,
       "userId": "u-d-dee"
      }
-    },
+    }
+   ]
+  },
+  "2026-10-27|u-e-eve|28": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "boh_crew",
+      "params": {
+       "fromQ": 28,
+       "positionId": "5c000000-0000-4000-8000-000000000002",
+       "toQ": 67
+      }
+     }
+    ]
+   ],
+   "shift": [
     {
      "key": "boh_crew",
      "params": {
@@ -455,79 +608,26 @@
      "key": "strongest_on_position",
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000002",
-      "skill": 0.9,
-      "userId": "u-d-dee"
-     }
-    }
-   ]
-  },
-  "2026-10-27|u-e-eve|28": {
-   "alternates": [],
-   "segments": [
-    [
-     {
-      "key": "wave_arrival",
-      "params": {
-       "fromQ": 28,
-       "positionId": "5c000000-0000-4000-8000-000000000001",
-       "toQ": 60
-      }
-     }
-    ]
-   ],
-   "shift": [
-    {
-     "key": "wave_arrival",
-     "params": {
-      "fromQ": 28,
-      "positionId": "5c000000-0000-4000-8000-000000000001",
-      "toQ": 60
-     }
-    },
-    {
-     "key": "strongest_on_position",
-     "params": {
-      "positionId": "5c000000-0000-4000-8000-000000000001",
-      "skill": 0.9,
+      "skill": 0.8,
       "userId": "u-e-eve"
      }
     }
    ]
   },
-  "2026-10-27|u-f-finn|64": {
+  "2026-10-27|u-f-finn|67": {
    "alternates": [],
    "segments": [
     [
      {
       "key": "extended_to_minimum",
       "params": {
-       "fromQ": 64,
-       "positionId": "5c000000-0000-4000-8000-000000000004",
-       "toQ": 72
-      }
-     },
-     {
-      "key": "repair_moved",
-      "params": {
-       "fromPositionId": "5c000000-0000-4000-8000-000000000006",
-       "fromQ": 72,
-       "positionId": "5c000000-0000-4000-8000-000000000004",
-       "toQ": 76,
-       "userId": "u-f-finn"
-      }
-     },
-     {
-      "key": "extended_to_minimum",
-      "params": {
-       "fromQ": 76,
-       "positionId": "5c000000-0000-4000-8000-000000000004",
+       "fromQ": 67,
+       "positionId": "5c000000-0000-4000-8000-000000000006",
        "toQ": 80
       }
-     }
-    ],
-    [
+     },
      {
-      "key": "wave_arrival",
+      "key": "closing_crew",
       "params": {
        "fromQ": 80,
        "positionId": "5c000000-0000-4000-8000-000000000006",
@@ -538,17 +638,7 @@
    ],
    "shift": [
     {
-     "key": "repair_moved",
-     "params": {
-      "fromPositionId": "5c000000-0000-4000-8000-000000000006",
-      "fromQ": 72,
-      "positionId": "5c000000-0000-4000-8000-000000000004",
-      "toQ": 76,
-      "userId": "u-f-finn"
-     }
-    },
-    {
-     "key": "wave_arrival",
+     "key": "closing_crew",
      "params": {
       "fromQ": 80,
       "positionId": "5c000000-0000-4000-8000-000000000006",
@@ -565,65 +655,30 @@
     }
    ]
   },
-  "2026-10-27|u-g-gus|46": {
+  "2026-10-27|u-g-gus|42": {
    "alternates": [],
    "segments": [
     [
      {
-      "key": "wave_arrival",
+      "key": "repair_moved",
       "params": {
-       "fromQ": 46,
-       "positionId": "5c000000-0000-4000-8000-000000000004",
-       "toQ": 60
-      }
-     },
-     {
-      "key": "extended_to_minimum",
-      "params": {
-       "fromQ": 60,
-       "positionId": "5c000000-0000-4000-8000-000000000004",
-       "toQ": 62
-      }
-     },
-     {
-      "key": "wave_arrival",
-      "params": {
-       "fromQ": 62,
-       "positionId": "5c000000-0000-4000-8000-000000000004",
-       "toQ": 64
+       "fromPositionId": "5c000000-0000-4000-8000-000000000004",
+       "fromQ": 42,
+       "positionId": "5c000000-0000-4000-8000-000000000003",
+       "toQ": 67,
+       "userId": "u-g-gus"
       }
      }
     ]
    ],
    "shift": [
     {
-     "key": "wave_arrival",
+     "key": "repair_moved",
      "params": {
-      "fromQ": 46,
-      "positionId": "5c000000-0000-4000-8000-000000000004",
-      "toQ": 60
-     }
-    },
-    {
-     "key": "strongest_on_position",
-     "params": {
-      "positionId": "5c000000-0000-4000-8000-000000000004",
-      "skill": 0.9,
-      "userId": "u-g-gus"
-     }
-    },
-    {
-     "key": "wave_arrival",
-     "params": {
-      "fromQ": 62,
-      "positionId": "5c000000-0000-4000-8000-000000000004",
-      "toQ": 64
-     }
-    },
-    {
-     "key": "under_soft_min",
-     "params": {
-      "hoursUnder": 20,
+      "fromPositionId": "5c000000-0000-4000-8000-000000000004",
+      "fromQ": 42,
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "toQ": 67,
       "userId": "u-g-gus"
      }
     }
@@ -670,34 +725,30 @@
     }
    ]
   },
-  "2026-10-27|u-i-ivy|38": {
+  "2026-10-27|u-i-ivy|28": {
    "alternates": [],
    "segments": [
     [
      {
-      "key": "wave_arrival",
+      "key": "repair_moved",
       "params": {
-       "fromQ": 38,
-       "positionId": "5c000000-0000-4000-8000-000000000008",
-       "toQ": 62
+       "fromPositionId": "5c000000-0000-4000-8000-000000000005",
+       "fromQ": 28,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
+       "toQ": 60,
+       "userId": "u-i-ivy"
       }
      }
     ]
    ],
    "shift": [
     {
-     "key": "wave_arrival",
+     "key": "repair_moved",
      "params": {
-      "fromQ": 38,
-      "positionId": "5c000000-0000-4000-8000-000000000008",
-      "toQ": 62
-     }
-    },
-    {
-     "key": "strongest_on_position",
-     "params": {
-      "positionId": "5c000000-0000-4000-8000-000000000008",
-      "skill": 0.9,
+      "fromPositionId": "5c000000-0000-4000-8000-000000000005",
+      "fromQ": 28,
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "toQ": 60,
       "userId": "u-i-ivy"
      }
     }
@@ -816,11 +867,91 @@
     {
      "endQ": 83,
      "positionId": "5c000000-0000-4000-8000-000000000005",
+     "startQ": 67
+    }
+   ],
+   "startQ": 67,
+   "userId": "u-a-ana"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-27",
+   "endQ": 62,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 62,
+     "positionId": "5c000000-0000-4000-8000-000000000008",
+     "startQ": 38
+    }
+   ],
+   "startQ": 38,
+   "userId": "u-b-bo"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-27",
+   "endQ": 67,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 67,
+     "positionId": "5c000000-0000-4000-8000-000000000005",
      "startQ": 42
     }
    ],
    "startQ": 42,
-   "userId": "u-a-ana"
+   "userId": "u-c-cy"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-27",
+   "endQ": 83,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 83,
+     "positionId": "5c000000-0000-4000-8000-000000000002",
+     "startQ": 67
+    }
+   ],
+   "startQ": 67,
+   "userId": "u-d-dee"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-27",
+   "endQ": 67,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 67,
+     "positionId": "5c000000-0000-4000-8000-000000000002",
+     "startQ": 28
+    }
+   ],
+   "startQ": 28,
+   "userId": "u-e-eve"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-27",
+   "endQ": 83,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 83,
+     "positionId": "5c000000-0000-4000-8000-000000000006",
+     "startQ": 67
+    }
+   ],
+   "startQ": 67,
+   "userId": "u-f-finn"
   },
   {
    "closingManager": false,
@@ -836,91 +967,6 @@
     }
    ],
    "startQ": 42,
-   "userId": "u-b-bo"
-  },
-  {
-   "closingManager": false,
-   "date": "2026-10-27",
-   "endQ": 56,
-   "flex": false,
-   "pinned": false,
-   "segments": [
-    {
-     "endQ": 56,
-     "positionId": "5c000000-0000-4000-8000-000000000007",
-     "startQ": 38
-    }
-   ],
-   "startQ": 38,
-   "userId": "u-c-cy"
-  },
-  {
-   "closingManager": false,
-   "date": "2026-10-27",
-   "endQ": 83,
-   "flex": false,
-   "pinned": false,
-   "segments": [
-    {
-     "endQ": 83,
-     "positionId": "5c000000-0000-4000-8000-000000000002",
-     "startQ": 28
-    }
-   ],
-   "startQ": 28,
-   "userId": "u-d-dee"
-  },
-  {
-   "closingManager": false,
-   "date": "2026-10-27",
-   "endQ": 60,
-   "flex": false,
-   "pinned": false,
-   "segments": [
-    {
-     "endQ": 60,
-     "positionId": "5c000000-0000-4000-8000-000000000001",
-     "startQ": 28
-    }
-   ],
-   "startQ": 28,
-   "userId": "u-e-eve"
-  },
-  {
-   "closingManager": false,
-   "date": "2026-10-27",
-   "endQ": 83,
-   "flex": false,
-   "pinned": false,
-   "segments": [
-    {
-     "endQ": 80,
-     "positionId": "5c000000-0000-4000-8000-000000000004",
-     "startQ": 64
-    },
-    {
-     "endQ": 83,
-     "positionId": "5c000000-0000-4000-8000-000000000006",
-     "startQ": 80
-    }
-   ],
-   "startQ": 64,
-   "userId": "u-f-finn"
-  },
-  {
-   "closingManager": false,
-   "date": "2026-10-27",
-   "endQ": 64,
-   "flex": false,
-   "pinned": false,
-   "segments": [
-    {
-     "endQ": 64,
-     "positionId": "5c000000-0000-4000-8000-000000000004",
-     "startQ": 46
-    }
-   ],
-   "startQ": 46,
    "userId": "u-g-gus"
   },
   {
@@ -942,17 +988,17 @@
   {
    "closingManager": false,
    "date": "2026-10-27",
-   "endQ": 62,
+   "endQ": 60,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 62,
-     "positionId": "5c000000-0000-4000-8000-000000000008",
-     "startQ": 38
+     "endQ": 60,
+     "positionId": "5c000000-0000-4000-8000-000000000001",
+     "startQ": 28
     }
    ],
-   "startQ": 38,
+   "startQ": 28,
    "userId": "u-i-ivy"
   },
   {
@@ -986,20 +1032,20 @@
  "stats": {
   "budgetHours": 0,
   "budgetedDates": [],
-  "essentialHours": 32.75,
-  "gaps": 1,
-  "hourlyCostCents": 138700,
-  "hourlyHours": 73,
+  "essentialHours": 16,
+  "gaps": 5,
+  "hourlyCostCents": 120175,
+  "hourlyHours": 63.25,
   "hourlyHoursByDate": {
    "2026-10-26": 11,
-   "2026-10-27": 62
+   "2026-10-27": 52.25
   },
   "repair": {
-   "accepted": 1,
-   "chainDepth": 2,
-   "donorsTried": 1,
+   "accepted": 23,
+   "chainDepth": 3,
+   "donorsTried": 7,
    "provenEarly": 0,
-   "steps": 5
+   "steps": 200
   },
   "salariedCoverHours": 3,
   "shifts": 13

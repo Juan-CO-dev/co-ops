@@ -314,6 +314,8 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
     if (o.closingLead && !closingManagerEligible(p, s)) continue;
     const fromQ = own ? Math.min(own.startQ, o.plan.startQ) : o.plan.startQ;
     const toQ = own ? Math.max(own.endQ, o.plan.endQ) : o.plan.endQ;
+    // CC chunk B ruling 3: the daily maximum is HARD — a placement that would make the shift longer is never a candidate.
+    if (toQ - fromQ > maxShiftQ(s)) continue;
     const w = p.availability[o.date];
     if (w === null || (w && (fromQ < w.fromQ || toQ > w.toQ))) continue;
     if (!leaderSettingAllows(p, s, fromQ, toQ)) continue;
@@ -392,6 +394,24 @@ export function fillRun(
   b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number, t: Pick<Template, "source" | "essential" | "closingLead">,
   order: readonly string[], opts: { allowCover: boolean; budgetStop: boolean },
 ): "placed" | "covered" | "budget" | "none" {
+  // CC chunk B ruling 3: a run longer than the daily maximum is split into the fewest near-equal parts that each fit
+  // (the earlier parts one quarter longer), filled in order — two people hold a 13.75 h Prep/Dishwasher day.
+  const maxQ = maxShiftQ(b.structure);
+  if (toQ - fromQ > maxQ) {
+    const parts = Math.ceil((toQ - fromQ) / maxQ);
+    const base = Math.floor((toQ - fromQ) / parts);
+    const extra = (toQ - fromQ) % parts;
+    const results: Array<"placed" | "covered" | "budget" | "none"> = [];
+    let a = fromQ;
+    for (let i = 0; i < parts; i++) {
+      const z = a + base + (i < extra ? 1 : 0);
+      results.push(fillRun(b, week, date, positionId, a, z, { ...t, closingLead: t.closingLead && z === toQ }, order, opts));
+      a = z;
+    }
+    if (results.includes("budget")) return "budget";
+    if (results.includes("none")) return "none";
+    return results.includes("placed") ? "placed" : "covered";
+  }
   const day = b.ctx.days[date]!;
   const budgeted = opts.budgetStop && !t.essential && b.budgetedDates.includes(date);
   const source = sourceReason(t.source, positionId, fromQ, toQ);
@@ -439,6 +459,11 @@ export function fillRun(
 export function sourceReason(source: Template["source"], positionId: string, fromQ: number, toQ: number): Reason {
   const key = source === "closing_crew" ? "closing_crew" : source === "boh_crew" ? "boh_crew" : source === "catering" ? "catering_prep" : "wave_arrival";
   return reason(key, { positionId, fromQ, toQ });
+}
+
+/** The daily maximum shift in quarters (CC chunk B ruling 3; `limits.maxShiftH`, default 10 h). */
+export function maxShiftQ(s: ScheduleStructure): number {
+  return Math.round(s.limits.maxShiftH * 4);
 }
 
 // ─── Manager cover ───────────────────────────────────────────────────────────

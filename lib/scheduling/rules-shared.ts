@@ -84,6 +84,8 @@ export const RULE_CODES = {
   person_overlap: "error",
   position_over_headcount: "error",
   shift_below_minimum: "error",
+  /** CC chunk B ruling 3: a shift longer than the shop's daily maximum (`limits.maxShiftH`, default 10 h). HARD. */
+  shift_over_maximum: "error",
   role_not_allowed: "error",
   manager_on_boh: "error",
   segment_outside_window: "error",
@@ -402,6 +404,17 @@ function capacityFor(S: readonly string[], g: GapSubject, s: WeekSchedule, day: 
   return { fromQ: g.fromQ, toQ: g.toQ, positionIds: sortIds([...S]), requiredHeads: required, peopleIds, people: peopleIds.length, shortBy: required - peopleIds.length };
 }
 
+/** At no quarter of the window are more heads of S uncovered than the bound proves (else the excess needs another cause). */
+function excessFits(c: CapacityCertificate, g: GapSubject, s: WeekSchedule, day: DayContext, ctx: RuleContext): boolean {
+  const cov = dayCoverage(shiftsOn(s, g.date), day, ctx);
+  for (let q = g.fromQ; q < g.toQ; q++) {
+    let uncovered = 0;
+    for (const p of c.positionIds) uncovered += uncoveredFrom(cov, "coverage_gap", p, day, q);
+    if (uncovered > c.shortBy) return false;
+  }
+  return true;
+}
+
 function subsetsContaining(all: readonly string[], must: string, maxSize: number): string[][] {
   const rest = all.filter((x) => x !== must);
   const out: string[][] = [];
@@ -419,6 +432,9 @@ function subsetsContaining(all: readonly string[], must: string, maxSize: number
  * the S with the largest `shortBy = min_q Σ need(S, q) − |N(S)|`, where N(S) = the members eligible for
  * at least one position of S and available at some quarter of the window (plus anyone placed on S).
  * At least `shortBy` heads of S are uncovered at every quarter in EVERY allocation. Null when no S is short.
+ * CC chunk B ruling 1: only a subset whose certificate VERIFIES competes (no quarter leaves more of S uncovered
+ * than the bound proves), so the bound returned is the strongest proof it supports and never one
+ * `checkCertificate` would refuse; ties keep the first in canonical order.
  */
 export function capacityBound(g: Pick<GapSubject, "date" | "positionId" | "fromQ" | "toQ">, s: WeekSchedule, ctx: RuleContext): CapacityCertificate | null {
   const day = ctx.days[g.date];
@@ -434,7 +450,7 @@ export function capacityBound(g: Pick<GapSubject, "date" | "positionId" | "fromQ
   let best: CapacityCertificate | null = null;
   for (const S of candidates) {
     const c = capacityFor(S, subject, s, day, ctx);
-    if (c && c.shortBy >= 1 && (!best || c.shortBy > best.shortBy)) best = c;
+    if (c && c.shortBy >= 1 && (!best || c.shortBy > best.shortBy) && excessFits(c, subject, s, day, ctx)) best = c;
   }
   return best;
 }
@@ -519,13 +535,7 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
       const re = capacityFor(c.positionIds, g, s, day, ctx);
       if (!re || canonicalJson(re) !== canonicalJson({ ...c, positionIds: sortIds([...c.positionIds]), peopleIds: sortIds([...c.peopleIds]) })) return false;
       if (c.shortBy < 1) return false;
-      const cov = dayCoverage(shiftsOn(s, g.date), day, ctx);
-      for (let q = g.fromQ; q < g.toQ; q++) {
-        let uncovered = 0;
-        for (const p of c.positionIds) uncovered += uncoveredFrom(cov, "coverage_gap", p, day, q);
-        if (uncovered > c.shortBy) return false; // the excess needs another cause
-      }
-      return true;
+      return excessFits(c, g, s, day, ctx); // the excess needs another cause
     }
     case "structure": {
       const found = structureRules(st, g, Object.values(ctx.people)).map((r) => r.rule);
@@ -657,6 +667,8 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext): RuleProbl
       const flexDay = sh.flex && p.flexDates.includes(date) && st.limits.flexUsesPer2w > 0;
       const minQ = flexDay ? st.limits.flexMinimumQ : st.limits.minimumShiftQ;
       if (sh.endQ - sh.startQ < minQ) push("shift_below_minimum", date, { userId: u, q: sh.startQ, params: { minutes: (sh.endQ - sh.startQ) * 15, minimumMinutes: minQ * 15 } });
+      const maxQ = Math.round(st.limits.maxShiftH * 4);
+      if (sh.endQ - sh.startQ > maxQ) push("shift_over_maximum", date, { userId: u, q: sh.startQ, params: { minutes: (sh.endQ - sh.startQ) * 15, maximumMinutes: maxQ * 15 } });
       if (sh.flex) push("flex_used", date, { userId: u, q: sh.startQ });
       const setting = leaderSettingOf(p, st);
       if (LEADER_ROLES.includes(p.role)

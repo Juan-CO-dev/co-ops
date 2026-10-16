@@ -64,6 +64,8 @@ function randomStructure(r: Rnd): ScheduleStructure {
         c.lineMinHeads = floors;
       }
       if (chance(r, 0.2)) x.limits.managerFloorH = pick(r, [8, 16, 24, 32]);
+      // CC chunk B ruling 3: the daily maximum varies too (never below the 8 h salaried minimums).
+      if (chance(r, 0.25)) x.limits.maxShiftH = pick(r, [8, 9.5, 12]);
     });
     if (validScheduleStructure(s).ok) return s;
   }
@@ -137,6 +139,11 @@ function assertProperties(input: GeneratorInput, out: GeneratorOutput, label: st
   }
   // (8)
   expect(out.stats.repair.steps).toBeLessThanOrEqual(REPAIR_LIMITS.REPAIR_MAX_STEPS);
+  // (9) CC chunk B ruling 3: no built shift is longer than the shop's daily maximum.
+  for (const x of out.shifts) {
+    if (out.days.find((d) => d.date === x.date)?.inherited) continue;
+    expect(x.endQ - x.startQ, `${label}: max shift ${x.date} ${x.userId}`).toBeLessThanOrEqual(input.structure.limits.maxShiftH * 4);
+  }
 }
 
 describe("the generator's properties over 300 random valid cases + an edge grid", () => {

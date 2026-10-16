@@ -27,7 +27,7 @@ describe("the severity table", () => {
     expect(by("error")).toEqual([
       "closing_manager_not_closing", "closing_manager_role", "closing_manager_setting", "cover_outside_preferences", "leader_setting", "manager_floor_exceeded",
       "manager_on_boh", "not_member", "person_overlap", "position_over_headcount", "role_not_allowed", "salaried_minimum",
-      "secondary_without_primary", "segment_outside_window", "segments_malformed", "shift_below_minimum", "uncertified_gap",
+      "secondary_without_primary", "segment_outside_window", "segments_malformed", "shift_below_minimum", "shift_over_maximum", "uncertified_gap",
       "undeclared_gap", "unknown_person", "untouchable_day", "work_type_not_allowed",
     ]);
   });
@@ -51,6 +51,21 @@ describe("every code: a positive and a negative case", () => {
   it("(c) shift_below_minimum — the 4 h minimum", () => {
     expect(of(run([shift(U.ben, WED, 44, 56, P.REG)]), "shift_below_minimum")).toHaveLength(1);
     expect(of(run([shift(U.ben, WED, 44, 60, P.REG)]), "shift_below_minimum")).toEqual([]);
+  });
+
+  it("shift_over_maximum — CC chunk B ruling 3: a HARD daily maximum, the per-shop setting limits.maxShiftH (default 10 h)", () => {
+    const over = of(run([shift(U.ben, WED, 42, 83, P.WALKON)]), "shift_over_maximum");
+    expect(over).toHaveLength(1);
+    expect(over[0]).toMatchObject({ severity: "error", userId: U.ben, q: 42, params: { minutes: 615, maximumMinutes: 600 } });
+    expect(of(run([shift(U.ben, WED, 42, 82, P.WALKON)]), "shift_over_maximum")).toEqual([]); // exactly 10 h is allowed
+    const twelve = context({ s: structure((s) => { s.limits.maxShiftH = 12; }) });
+    expect(of(run([shift(U.ben, WED, 42, 83, P.WALKON)], twelve), "shift_over_maximum")).toEqual([]);
+    // A multi-position shift counts whole; an inherited day is never re-judged.
+    const multi = shift(U.ben, WED, 42, 84, P.WALKON);
+    multi.segments = [{ positionId: P.REG, startQ: 42, endQ: 60 }, { positionId: P.WALKON, startQ: 60, endQ: 84 }];
+    expect(of(run([multi]), "shift_over_maximum")).toHaveLength(1);
+    const inheritedMon = [{ date: MON, originRevisionId: "rev-0", structureVersionId: "sv-1", inherited: true, problems: [] }];
+    expect(of(checkScheduleRules(week([shift(U.ben, MON, 42, 83, P.WALKON)], [], inheritedMon), context()), "shift_over_maximum")).toEqual([]);
   });
 
   it("(d) role_not_allowed and manager_on_boh — two codes; the call-out exemption is an inert branch", () => {
@@ -565,6 +580,33 @@ describe("Astra's chunk A review probes (failing first, fixed in the same commit
     expect(checkCertificate({ ...before, fromQ: 66, toQ: 83 }, week([]), ctx)).toBe(false);
     expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 66, toQ: 83 }, week([]), ctx)?.cause).not.toBe("structure");
     expect(checkCertificate({ ...before, fromQ: 66, toQ: 83 }, week([]), evening(null))).toBe(false); // Alex and Dani are members when OFF
+  });
+
+  it("CC chunk B ruling 1: capacityBound returns the LARGEST VERIFIABLE subset — never one the excess check refuses", () => {
+    // Register needs 2 (Maya on it), Expeditor needs 2 (Ben could work it but is not placed). {REG, EXPO} has the larger
+    // raw shortBy (4 − 2 = 2) but leaves 3 uncovered > 2, so it can never verify; {REG} (2 − 1 = 1, 1 uncovered) is the
+    // strongest proof the counting bound supports.
+    const s = structure((x) => {
+      x.positions[P.REG]!.headsBefore = 2; x.positions[P.REG]!.allowedRoles = ["trainer"];
+      x.positions[P.EXPO]!.headsBefore = 2; x.positions[P.EXPO]!.allowedRoles = ["employee"];
+    });
+    const ctx = context({ s });
+    setNeed(ctx, SUN, P.REG, 48, 52, 2);
+    setNeed(ctx, SUN, P.EXPO, 48, 52, 2);
+    const placed = [shift(U.maya, SUN, 44, 60, P.REG)];
+    const cert = capacityBound({ date: SUN, positionId: P.REG, fromQ: 48, toQ: 52 }, week(placed), ctx);
+    expect(cert).toEqual({ fromQ: 48, toQ: 52, positionIds: [P.REG], requiredHeads: 2, peopleIds: [U.maya], people: 1, shortBy: 1 });
+    const g: DeclaredGap = { code: "coverage_gap", date: SUN, positionId: P.REG, fromQ: 48, toQ: 52, cause: "capacity", certificate: cert! };
+    expect(checkCertificate(g, week(placed), ctx)).toBe(true);
+    // The larger subset's certificate is refused by the excess check (that is why it is never returned).
+    const big: DeclaredGap = { ...g, certificate: { fromQ: 48, toQ: 52, positionIds: [P.REG, P.EXPO].sort(), requiredHeads: 4, peopleIds: [U.ben, U.maya].sort(), people: 2, shortBy: 2 } };
+    expect(checkCertificate(big, week(placed), ctx)).toBe(false);
+    expect(proveGap({ code: "coverage_gap", date: SUN, positionId: P.REG, fromQ: 48, toQ: 52 }, week(placed), ctx)).toEqual({ cause: "capacity", certificate: cert });
+    // Every certificate capacityBound returns verifies (the property the ruling asks for), across the earlier fixtures too.
+    for (const pos of [P.REG, P.EXPO]) {
+      const c = capacityBound({ date: SUN, positionId: pos, fromQ: 48, toQ: 52 }, week(placed), ctx);
+      if (c) expect(checkCertificate({ ...g, positionId: pos, certificate: c }, week(placed), ctx)).toBe(true);
+    }
   });
 
   it("P2 capacity: duplicate position ids are rejected before the bound is recomputed", () => {

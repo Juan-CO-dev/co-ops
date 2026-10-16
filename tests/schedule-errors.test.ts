@@ -19,6 +19,8 @@ describe("ScheduleErrorCode", () => {
       "horizon_invalid", "horizon_too_long", "edit_off_grid", "edit_overlap", "edit_segments_malformed", "edit_below_segment_min",
       "pin_invalid", "inputs_unavailable", "wage_estimate_invalid", "demand_unavailable", "history_changed", "suggestion_unavailable",
       "unresolved_gaps",
+      // CC chunk B ruling 3: the daily maximum shift is a HARD rule
+      "shift_over_maximum",
     ].sort());
   });
 

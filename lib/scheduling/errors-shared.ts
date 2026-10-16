@@ -41,6 +41,8 @@ export const SCHEDULE_ERROR_CODES = [
   "suggestion_unavailable",
   // r3 (r4: every unresolved_search gap, inherited or not)
   "unresolved_gaps",
+  // CC chunk B ruling 3: a shift longer than the shop's daily maximum (limits.maxShiftH) — a HARD rule
+  "shift_over_maximum",
 ] as const;
 
 export type ScheduleErrorCode = (typeof SCHEDULE_ERROR_CODES)[number];

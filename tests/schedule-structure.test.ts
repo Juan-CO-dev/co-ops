@@ -27,6 +27,9 @@ describe("the shared structure case file against validScheduleStructure", () => 
     expect(SCHEDULE_STRUCTURE_DEFAULTS.labor.basis).toBe("total");
     expect(SCHEDULE_STRUCTURE_DEFAULTS.labor.targetPct).toBe(28);
     expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.managerFloorH).toBe(32);
+    // CC chunk B ruling 3: a daily maximum shift length, a per-shop setting, default 10 h (the minimum stays 4 h).
+    expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.maxShiftH).toBe(10);
+    expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.minimumShiftQ).toBe(16);
     expect(SCHEDULE_STRUCTURE_DEFAULTS.roster.excludedRoles).toEqual(["cgs", "social_media_mgr", "catering_mgr", "prep_mgr"]);
   });
 
@@ -37,7 +40,8 @@ describe("the shared structure case file against validScheduleStructure", () => 
       "flex minimum above the flex maximum", "GM minimum longer than the shop day (the mockup's guard)", "labor target 0%",
       "manager floor 80.25 h", "rush display flag 17 quarters", "line minimum above the head limits",
       "the wave profile under its floor after a trim to 0", "a priority pair of the same position", "a priority primary outside its pair",
-      "an unknown role code in allowed roles", "an unknown nested key", "a number sent as a string"]) {
+      "an unknown role code in allowed roles", "an unknown nested key", "a number sent as a string",
+      "max shift equal to the minimum shift", "max shift below the minimum shift", "max shift below the GM minimum", "max shift off the quarter grid", "max shift missing"]) {
       expect(names).toContain(n);
     }
     expect(cases.filter((c) => c.valid).length).toBeGreaterThan(10);

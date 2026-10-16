@@ -7068,5 +7068,6 @@
   "schedule.error.demand_unavailable": "Sales data didn't load. Try again. Nothing was changed.",
   "schedule.error.history_changed": "A kept day changed. Past and kept days must stay exactly as they were.",
   "schedule.error.suggestion_unavailable": "No budget suggestion yet: there's no finished week to compare against.",
-  "schedule.error.unresolved_gaps": "Some gaps still need a person. Fill them, or rebuild, before you approve."
+  "schedule.error.unresolved_gaps": "Some gaps still need a person. Fill them, or rebuild, before you approve.",
+  "schedule.error.shift_over_maximum": "That shift is longer than this shop's maximum shift. Shorten it or split it between two people."
 }

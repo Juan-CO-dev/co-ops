@@ -192,7 +192,9 @@ describe("Task 7: assignment rules, one per rule", () => {
   });
 
   it("the 4 h minimum by extension into the next needed position: a short window becomes a multi-position shift, the reason citing the close", () => {
-    const s = structure((x) => { x.positions[I.$BOI]!.openQ = 52; });
+    // The small shop's roster covers its 10.25 h line day one person per position only with shifts over 10 h; this test is
+    // about the multi-position segment, so the shop's cap is 12 h here (CC chunk B ruling 3 has its own tests below).
+    const s = structure((x) => { x.positions[I.$BOI]!.openQ = 52; x.limits.maxShiftH = 12; });
     const out = buildWeek(small({ structure: s, days: [day(MON, {}, s)] }));
     expectClean(out);
     const boi = out.shifts.find((x) => x.date === MON && x.segments.some((g) => g.positionId === I.$BOI));
@@ -548,5 +550,44 @@ describe("buildWeek smoke: the small shop builds a validator-clean week", () => 
     expect(out.shifts.filter((x) => x.date === MON && x.closingManager)).toHaveLength(1);
     const again = checkScheduleRules({ locationId: out.context.locationId, weekStart: out.context.weekStart, shifts: out.shifts, gaps: out.gaps, days: out.days }, out.context);
     expect(JSON.stringify(again)).toBe(JSON.stringify(out.problems));
+  });
+});
+
+describe("CC chunk B ruling 3: the daily maximum shift is HARD in the generator", () => {
+  const longest = (out: GeneratorOutput) => Math.max(...out.shifts.map((x) => x.endQ - x.startQ));
+
+  it("never produces a shift over limits.maxShiftH (default 10 h); a 13.75 h Prep/Dishwasher day is split across two people, covered", () => {
+    const s = structure((x) => { x.leadership.modRequired = false; });
+    const out = buildWeek(small({ structure: s, days: [day(MON, {}, s)] }));
+    expectClean(out);
+    expect(longest(out)).toBeLessThanOrEqual(40);
+    // Prep/Dishwasher is needed 7:00 → everyone out (28 → 83): no one person can hold it, so two people do, and it is covered.
+    const dish = out.shifts.filter((x) => x.date === MON && x.segments.some((g) => g.positionId === I.$DISH));
+    expect(new Set(dish.map((x) => x.userId)).size).toBeGreaterThanOrEqual(2);
+    expect(out.gaps.filter((g) => g.positionId === I.$DISH)).toEqual([]);
+  });
+
+  it("follows the setting: at 12 h the cap is 48 quarters; at 8 h it is 32; every output stays validator-clean", () => {
+    for (const h of [12, 8]) {
+      const s = structure((x) => { x.leadership.modRequired = false; x.limits.maxShiftH = h; });
+      const out = buildWeek(small({ structure: s, days: [day(MON, {}, s)] }));
+      expectClean(out);
+      expect(longest(out)).toBeLessThanOrEqual(h * 4);
+    }
+  });
+
+  it("a run longer than the cap is split into the fewest near-equal parts: Prep/Dishwasher 7:00 → 8:00 PM (no closing head) is 28–54 + 54–80", () => {
+    const s = structure((x) => { x.leadership.modRequired = false; for (const t of ["slow", "normal", "busy", "weekend"] as const) x.crews[t].close.prepDishHeads = 0; });
+    const out = buildWeek(small({ structure: s, days: [day(MON, {}, s)] }));
+    expectClean(out);
+    const dish = out.shifts.filter((x) => x.date === MON && x.segments.some((g) => g.positionId === I.$DISH)).map((x) => [x.startQ, x.endQ]);
+    expect(dish).toEqual([[28, 54], [54, 80]]);
+    expect(out.gaps.filter((g) => g.positionId === I.$DISH)).toEqual([]);
+  });
+
+  it("the whole sample week (the mockup's people, MoD on) has no shift over 10 h", () => {
+    const out = buildWeek(small({ days: DATES.map((d) => day(d)) }));
+    expectClean(out);
+    expect(longest(out)).toBeLessThanOrEqual(40);
   });
 });
