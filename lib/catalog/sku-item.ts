@@ -732,9 +732,10 @@ export async function setSkuPriceBasis(actor: AuthContext, skuId: string, basis:
   if (!row) throw new CatalogItemError(404, "sku_not_found");
   // THE BIND: a shop-owned SKU (a store copy) is that shop's (a membership, or MoO+ — D2).
   if (!skuOwnerAllowed(actor, row.location_id)) throw new CatalogItemError(404, "not_found");
-  if (actor.level < GLOBAL_VERSION_WRITE_MIN && row.price_basis !== null) throw new CatalogItemError(403, "global_requires_moo");
+  if (row.location_id == null && actor.level < GLOBAL_VERSION_WRITE_MIN && row.price_basis !== null) throw new CatalogItemError(403, "global_requires_moo");
   // Compare-and-set on the value just read: a concurrent change is 409 version_changed (the D5 posture).
-  const base = sb.from("vendor_items").update({ price_basis: basis }, { count: "exact" }).eq("id", skuId);
+  let base = sb.from("vendor_items").update({ price_basis: basis }, { count: "exact" }).eq("id", skuId);
+  base = row.location_id == null ? base.is("location_id", null) : base.eq("location_id", row.location_id);
   const { error: uErr, count } = await (row.price_basis === null ? base.is("price_basis", null) : base.eq("price_basis", row.price_basis));
   if (uErr) throw new Error(`setSkuPriceBasis update: ${uErr.message}`);
   if (count !== 1) throw new CatalogItemError(409, "version_changed");

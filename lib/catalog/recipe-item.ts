@@ -11,6 +11,7 @@
  * (recipeVersionWriteGate — the role rule refuses the social media manager, the shop bind runs before any I/O),
  * so a preview never shows a choice the save would refuse. The view takes the version-read rule (6+, by role).
  */
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -18,7 +19,7 @@ import type { AuthContext } from "@/lib/session";
 import { loadRecipeGraph, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { costPerOzFromGraph, rollupItemCost, rollupMenuItemCost } from "@/lib/menu-costing-shared";
-import { loadRecipeBuilderCatalog } from "@/lib/admin/recipe-builder-data";
+import { loadRecipeBuilderCatalog, type RecipeBuilderCatalog } from "@/lib/admin/recipe-builder-data";
 import { assertInputLineIsValidAgainst, RecipeError } from "@/lib/recipes";
 import { catalogShopAllowed, type VersionScope } from "@/lib/sku-versions-shared";
 import { lineFromRow, recipeLineKind, type RecipeLineFields, type RecipeLineRow } from "@/lib/recipe-line-shared";
@@ -173,10 +174,10 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
   const sb = getServiceRoleClient();
   const shops = await loadActiveShops(sb);
   if (scope !== null && !shops.some((s) => s.id === scope)) throw new RecipeVersionError(404, "not_found");
-  const { data: recipe, error: rErr } = await sb.from("recipes").select("id, name, name_es, recipe_type, active").eq("id", recipeId)
-    .maybeSingle<{ id: string; name: string; name_es: string | null; recipe_type: "production" | "consumer" | null; active: boolean | null }>();
+  const { data: recipe, error: rErr } = await sb.from("recipes").select("id, name, name_es, recipe_type, active, location_id").eq("id", recipeId)
+    .maybeSingle<{ id: string; name: string; name_es: string | null; recipe_type: "production" | "consumer" | null; active: boolean | null; location_id: string | null }>();
   if (rErr) throw new Error(`loadRecipeItemView recipe: ${rErr.message}`);
-  if (!recipe) return null;
+  if (!recipe || !ownerVisible(recipe.location_id, scope)) return null;
 
   const live = await loadRecipeLiveSet(recipeId, scope);
   const globalSet = scope === null || live.ridesDefault ? live : await loadRecipeLiveSet(recipeId, null);
@@ -225,7 +226,9 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
       yield: Number(o.yield), costHere: rollupMenuItemCost(graph, o.output_menu_item_id!, costPerOz).cost };
   });
 
-  const catalog = await loadRecipeBuilderCatalog();
+  const catalog: RecipeBuilderCatalog = gateFor(actor, scope).ok
+    ? await loadRecipeBuilderCatalog(actor, scope, recipe.location_id ?? null)
+    : { skus: [], items: [], products: [], outputItems: [], prices: new Map(), unitOptions: [], measures: new Map(), activeMeasureLabels: [] };
   // The SHOP's packs for the picker (Astra 3b r4#1): 2a's resolver, paged and chunked, as of now.
   const pickerPacks = await loadSkuPackResolution(catalog.skus.map((s) => s.id), scope);
   const canEditShop = scope !== null && gateFor(actor, scope).ok;
@@ -318,6 +321,10 @@ export async function computeRecipePreview(actor: AuthContext, recipeId: string,
   const gate = gateFor(actor, scope);
   if (!gate.ok) throw new RecipeVersionError(gate.status, gate.code);
   const sb = getServiceRoleClient();
+  const { data: owner, error: ownerError } = await sb.from("recipes").select("location_id").eq("id", recipeId)
+    .maybeSingle<{ location_id: string | null }>();
+  if (ownerError) throw new Error(`recipe preview owner: ${ownerError.message}`);
+  if (!owner || !ownerVisible(owner.location_id, scope)) throw new RecipeVersionError(404, "not_found");
   const live = await loadRecipeLiveSet(recipeId, scope);
   if (!live.recipeActive) throw new RecipeVersionError(409, "recipe_inactive");
   const before = live.lines.map((l) => l.fields);

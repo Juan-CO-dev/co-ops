@@ -10,6 +10,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadProductItemLinks } from "@/lib/admin/product-item-links";
 import type { RegistryLink } from "@/lib/admin/product-item-links-shared";
 import { getRoleLevel } from "@/lib/roles";
+import { catalogShopAllowed, type VersionScope } from "@/lib/sku-versions-shared";
 import type { AuthContext } from "@/lib/session";
 import type { PrepSectionDefn } from "@/lib/types";
 import { loadPrepSections } from "@/lib/prep-sections.server";
@@ -23,6 +24,9 @@ export const ITEMS_READ_MIN = 6; // AGM+ view; add GM+ / edit MoO+ enforced by t
 
 export interface ItemsAdminView {
   actorLevel: number;
+  shops: Array<{ id: string; name: string }>;
+  canCreate: boolean;
+  editableDefinitionIds: string[];
   registry: ChecklistRegistryItem[];
   /** Active prep sections (grouping + the section dropdown in the editor). */
   sections: PrepSectionDefn[];
@@ -37,20 +41,25 @@ export interface ItemsAdminView {
   relationshipsUnavailable: boolean;
 }
 
-export async function loadItemsAdminView(actor: AuthContext): Promise<ItemsAdminView> {
+export async function loadItemsAdminView(actor: AuthContext, scope: VersionScope = null): Promise<ItemsAdminView> {
   if (getRoleLevel(actor.user.role) < ITEMS_READ_MIN) {
     throw new Error("forbidden");
   }
   const sb = getServiceRoleClient();
+  const level = getRoleLevel(actor.user.role);
+  const { data: shopRows, error: shopError } = await sb.from("locations").select("id, name").eq("active", true).order("name").returns<Array<{ id: string; name: string }>>();
+  if (shopError) throw new Error(`items shops: ${shopError.message}`);
+  const shops = (shopRows ?? []).filter(shop => catalogShopAllowed({ level, locations: actor.locations }, shop.id));
+  if (scope !== null && !shops.some(shop => shop.id === scope)) throw new Error("not_found");
 
   const [registry, sectionMap, units, itemQuestions, relationships] = await Promise.all([
-    loadItemRegistry(sb),
+    loadItemRegistry(sb, scope),
     loadPrepSections(sb),
     loadUnits(sb),
     loadItemQuestions(sb),
     // Tolerated locally: a failed link read must not take down the item editors. The human
     // sees a "links couldn't load" notice (relationshipsUnavailable), never silently empty links.
-    loadProductItemLinks(actor).catch((e) => {
+    loadProductItemLinks(actor, scope).catch((e) => {
       console.error("product/item links load failed (rendering without links)", e);
       return null;
     }),
@@ -59,6 +68,9 @@ export async function loadItemsAdminView(actor: AuthContext): Promise<ItemsAdmin
 
   return {
     actorLevel: getRoleLevel(actor.user.role),
+    shops,
+    canCreate: level >= 7 && actor.user.role !== "social_media_mgr",
+    editableDefinitionIds: registry.filter(item => actor.user.role !== "social_media_mgr" && (level >= 8 || (level >= 7 && item.locationId != null && actor.locations.includes(item.locationId)))).map(item => item.itemId),
     registry,
     sections,
     units,

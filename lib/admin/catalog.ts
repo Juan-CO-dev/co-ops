@@ -122,6 +122,7 @@ function toCents(v: number | string | null): number | null {
 }
 
 interface ItemRow {
+  location_id: string | null;
   id: string; name: string; name_es: string | null; section: string | null;
   active: boolean; seasonal: boolean; sold_directly: boolean;
   catering_available: boolean; catering_only: boolean;
@@ -129,6 +130,7 @@ interface ItemRow {
   item_type: ItemType;
 }
 interface MenuItemRow {
+  location_id: string | null;
   id: string; name: string; name_es: string | null; section: string | null;
   active: boolean; seasonal: boolean; catering_available: boolean;
   catering_only: boolean; catering_portionable: boolean | null;
@@ -162,9 +164,8 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
     // item_type rides the STAGED 0157 migration — the same gate as seasonal
     // (0156, also staged): this loader reads staged columns; both merge with
     // their migrations in this PR.
-    sb.from("items").select("id, name, name_es, section, active, seasonal, sold_directly, catering_available, catering_only, serves, menu_price, item_type")
-      .is("location_id", null).returns<ItemRow[]>(),
-    sb.from("menu_items").select("id, name, name_es, section, active, seasonal, catering_available, catering_only, catering_portionable, serves, menu_price")
+    sb.from("items").select("id, name, name_es, section, active, seasonal, sold_directly, catering_available, catering_only, serves, menu_price, item_type, location_id").returns<ItemRow[]>(),
+    sb.from("menu_items").select("id, name, name_es, section, active, seasonal, catering_available, catering_only, catering_portionable, serves, menu_price, location_id")
       .returns<MenuItemRow[]>(),
     sb.from("catering_packages").select("id, label_en, label_es, location_id, active, seasonal, serves, pricing_mode, price_cents")
       .returns<PackageRow[]>(),
@@ -193,6 +194,12 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
   const items = itemRows ?? [];
   const menuItems = menuRows ?? [];
   const packages = pkgRows ?? [];
+  // The organization catalog remains complete. Each owned entity's graph is evaluated at its owner.
+  const ownerGraphs = new Map<string, typeof graph>();
+  await Promise.all([...new Set([...menuItems, ...items].map(m => m.location_id).filter((id): id is string => id != null))].map(async owner => {
+    ownerGraphs.set(owner, await loadRecipeGraph({ locationId: owner }));
+  }));
+  const entityGraph = (menu: { location_id: string | null }) => menu.location_id == null ? graph : ownerGraphs.get(menu.location_id)!;
   const locationNameById = new Map((locRows ?? []).map((l) => [l.id, l.name]));
   const recipeNameById = new Map((recipeRows ?? []).map((r) => [r.id, r.name]));
   const itemNameById = new Map(items.map((r) => [r.id, r.name]));
@@ -214,6 +221,12 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
   for (const [id, r] of (await loadGraphReadiness(actor, null)).itemReadiness) {
     if (r.status === "ready") readyItemIds.add(id);
   }
+  await Promise.all([...ownerGraphs.keys()].map(async owner => {
+    const readiness = await loadGraphReadiness(actor, owner);
+    for (const item of items.filter(i => i.location_id === owner)) {
+      if (readiness.itemReadiness.get(item.id)?.status === "ready") readyItemIds.add(item.id);
+    }
+  }));
   const isReady = (itemId: string) => readyItemIds.has(itemId);
 
   // ── Toast GUID counts per entity ──
@@ -289,6 +302,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
   const allRecipeNodes = [
     ...graph.byOutputItem.values(),
     ...graph.byOutputMenuItem.values(),
+    ...[...ownerGraphs.values()].flatMap(g => [...g.byOutputMenuItem.values(), ...g.byOutputItem.values()]),
   ];
   for (const node of allRecipeNodes) {
     if (seenRecipes.has(node.recipeId)) continue;
@@ -315,7 +329,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
   const perItemSkuKeys = new Map<string, string[]>();
   const allSkuIds = new Set<string>();
   for (const it of items) {
-    const keys = [...perUnitSkuOzForItemFromGraph(graph, it.id).keys()];
+    const keys = [...perUnitSkuOzForItemFromGraph(entityGraph(it), it.id).keys()];
     perItemSkuKeys.set(it.id, keys);
     for (const k of keys) allSkuIds.add(k);
   }
@@ -337,7 +351,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
 
   // Items
   for (const it of items) {
-    const producing = graph.byOutputItem.get(it.id) ?? null;
+    const producing = entityGraph(it).byOutputItem.get(it.id) ?? null;
     const hasRecipe = producing != null;
     const producedBy: CatalogEdgeRef[] = producing
       ? [{ id: producing.recipeId, name: recipeNameById.get(producing.recipeId) ?? "—" }]
@@ -361,6 +375,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
     });
     entities.push({
       key: `item:${it.id}`, kind: "item", id: it.id, name: it.name, nameEs: it.name_es,
+      onlyAtShopName: it.location_id ? (locationNameById.get(it.location_id) ?? null) : null,
       section: it.section, active: it.active, seasonal: it.seasonal,
       flags: { soldDirectly: it.sold_directly, cateringAvailable: it.catering_available, cateringOnly: it.catering_only, cateringPortionable: null },
       serves: num(it.serves), priceCents: toCents(it.menu_price),
@@ -377,12 +392,12 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
 
   // Menu items
   for (const mi of menuItems) {
-    const build = graph.byOutputMenuItem.get(mi.id) ?? null;
+    const build = entityGraph(mi).byOutputMenuItem.get(mi.id) ?? null;
     const hasRecipe = build != null;
     const buildRef: CatalogEdgeRef | null = build
       ? { id: build.recipeId, name: recipeNameById.get(build.recipeId) ?? "—" }
       : null;
-    const componentIds = [...firstLevelItemConsumption(graph, mi.id).keys()];
+    const componentIds = [...firstLevelItemConsumption(entityGraph(mi), mi.id).keys()];
     const componentItems: CatalogEdgeRef[] = componentIds.map((id) => ({ id, name: itemNameById.get(id) ?? "—" }));
     const pkgs = packageRefs(pkgsByMenuItem.get(mi.id));
     const toastGuids = toastByMenuItem.get(mi.id) ?? 0;
@@ -393,6 +408,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
     });
     entities.push({
       key: `menu_item:${mi.id}`, kind: "menu_item", id: mi.id, name: mi.name, nameEs: mi.name_es,
+      onlyAtShopName: mi.location_id ? (locationNameById.get(mi.location_id) ?? null) : null,
       section: mi.section, active: mi.active, seasonal: mi.seasonal,
       flags: { soldDirectly: false, cateringAvailable: mi.catering_available, cateringOnly: mi.catering_only, cateringPortionable: mi.catering_portionable },
       serves: num(mi.serves), priceCents: toCents(mi.menu_price),
@@ -420,6 +436,7 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
     });
     entities.push({
       key: `package:${p.id}`, kind: "package", id: p.id, name: p.label_en, nameEs: p.label_es,
+      onlyAtShopName: p.location_id ? (locationNameById.get(p.location_id) ?? null) : null,
       section: sectionLabel, active: p.active, seasonal: p.seasonal,
       flags: { soldDirectly: false, cateringAvailable: true, cateringOnly: false, cateringPortionable: null },
       serves: num(p.serves), priceCents: p.price_cents,

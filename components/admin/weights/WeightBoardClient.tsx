@@ -282,6 +282,11 @@ export function WeightBoardClient({ board, canWeigh }: { board: WeightBoard; can
           summary={
             <span className="flex min-w-0 flex-wrap items-baseline gap-2">
               <span className="text-sm font-bold text-co-text">{row.belief.name}</span>
+              {row.onlyAtShopName ? (
+                <span className="text-xs font-semibold text-co-text-muted">
+                  {t("catalog.only_at_shop", { shop: row.onlyAtShopName })}
+                </span>
+              ) : null}
               <span className="text-sm text-co-text">
                 {row.belief.valueOz == null
                   ? t("admin.weights.value_unknown")

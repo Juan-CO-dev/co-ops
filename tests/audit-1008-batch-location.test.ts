@@ -8,7 +8,7 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({
   getServiceRoleClient: () => ({ from: (table: string) => {
     const rows: Record<string, unknown> = {
-      recipes: [{ id: "recipe", batch_yield: 2 }],
+      recipes: [{ id: "recipe", batch_yield: 2, active: true, location_id: null }],
       recipe_inputs: [{ recipe_id: "recipe", quantity: 12, unit: "oz", component_sku_id: null, component_item_id: null, component_product_id: "product" }],
       recipe_outputs: [{ recipe_id: "recipe", output_item_id: "prep", output_menu_item_id: null, yield: 2 }],
       items: [{ id: "prep", oz_per_par_unit: 6, default_par_unit: "unit" }],

@@ -16,6 +16,28 @@ export const MENU_PRICE_MIN = 8;
 
 export type RecipeType = "production" | "consumer";
 
+/** Inline owned output; ownership and non-default status are supplied by the RPC. */
+export interface RecipeNewPrepItem {
+  name: string;
+  nameEs?: string | null;
+  section: string;
+  recommendedPar: number | null;
+  recommendedParUnit: string | null;
+  specialInstruction?: string | null;
+  specialInstructionEs?: string | null;
+  required?: boolean;
+  minRoleLevel?: number;
+}
+
+export interface RecipeDraftOutput {
+  outputItemId?: string | null;
+  outputMenuItemId?: string | null;
+  /** Exclusive with both existing identities. Only supported in an owned recipe. */
+  newItem?: RecipeNewPrepItem | null;
+  yield: number;
+  outputContainerLabel?: string | null;
+}
+
 /** Which of the THREE component targets a recipe line names (0179). */
 export type RecipeInputKind = "sku" | "item" | "product";
 
@@ -54,6 +76,7 @@ export interface RecipeOutputView {
   ozAllocShare: number | null; displayOrder: number;
 }
 export interface RecipeView {
+  ownerLocationId?: string | null;
   id: string; name: string; nameEs: string | null; recipeType: RecipeType;
   batchYield: number; directions: string | null; directionsEs: string | null;
   active: boolean; inputs: RecipeInputView[]; outputs: RecipeOutputView[];
@@ -67,6 +90,8 @@ export interface RecipeView {
 }
 export interface RecipeListRow {
   id: string; name: string; recipeType: RecipeType; active: boolean;
+  /** Org-wide list disclosure for a shop-owned recipe; the shop name, never its id. */
+  onlyAtShopName?: string | null;
   outputNames: string[]; hasInputs: boolean; hasOutputs: boolean;
   batchYield: number | null;
   batchMode: boolean;

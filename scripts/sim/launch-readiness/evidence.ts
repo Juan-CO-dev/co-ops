@@ -23,7 +23,7 @@ export function artifactComplete(bytes: Uint8Array): boolean { return bytes.byte
 export type Manifest = ReturnType<typeof newManifest>;
 export function newManifest(runId: string, fixtureId: string) {
   const startedAt = new Date().toISOString();
-  return { schemaVersion: 1, runId, candidateSha: "unavailable", dirty: true, dependencyLockHash: "unavailable", policyVersion: "f1-v1", buildId: "dev", fixture: { id: fixtureId, restore: "stub" as "stub" | "done" },
+  return { schemaVersion: 1, runId, candidateSha: "unavailable", dirty: true, dependencyLockHash: "unavailable", policyVersion: "f1-v1", buildId: "dev", fixture: { id: fixtureId, restore: "stub" as "stub" | "done" | "not-required" },
     personas: [] as { alias: string; role: string; level: number; language: string; locationCodes: string[] }[],
     etAnchor: new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date()), startedAt, finishedAt: null as string | null,
     tests: [] as { id: string; assertionIds: string[]; viewport: { width: number; height: number } | null; project: string; status: string; attempt: number }[],

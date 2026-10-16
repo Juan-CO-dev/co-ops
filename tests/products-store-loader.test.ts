@@ -75,13 +75,50 @@ describe("product loader store eligibility", () => {
       .toMatchObject({ active: true, vendorActive: false });
     expect(loaded.index.resolution.get("product")?.skuId).toBe("regular-sku");
   });
-  it("resolves regular members on inactive vendors and scoped to another shop as before", async () => {
+  // Chunk 1's intentional red contract; the common eligibility sweep lands in Chunk 3.
+  it("CHUNK 3: excludes foreign regular members even when their supplier retires", async () => {
     fixture.tables.vendors![0]!.active = false;
     fixture.tables.vendor_items![0]!.location_id = "south";
     fixture.tables.vendor_items![1]!.active = false;
     const loaded = await loadProductIndex(["product"], "north");
-    expect(loaded.index.resolution.get("product")?.skuId).toBe("regular-sku");
+    expect(loaded.index.resolution.get("product")?.skuId).toBeNull();
     expect(loaded.byProduct.get("product")?.members.find(m => m.skuId === "regular-sku"))
-      .toMatchObject({ active: true, vendorActive: false, sourceKind: "vendor" });
+      .toBeUndefined();
   });
+  it("preserves the store-copy exception at the global default", async () => {
+    fixture.tables.vendor_items![0]!.active = false;
+    const loaded = await loadProductIndex(["product"]);
+    expect(loaded.index.resolution.get("product")?.skuId).toBe("store-sku");
+  });
+  it("retains an ordinary owned member at its own shop", async () => {
+    fixture.tables.vendor_items![0]!.location_id = "north";
+    fixture.tables.vendor_items![1]!.active = false;
+    expect((await loadProductIndex(["product"], "north")).index.resolution.get("product")?.skuId).toBe("regular-sku");
+  });
+  it("CHUNK 3: the store-copy global exception never admits ordinary owned members", async () => {
+    fixture.tables.vendor_items![0]!.location_id = "north";
+    fixture.tables.vendor_items![1]!.active = false;
+    const loaded = await loadProductIndex(["product"]);
+    expect(loaded.index.resolution.get("product")?.skuId).toBeNull();
+    expect(loaded.byProduct.get("product")?.members.find(m => m.skuId === "regular-sku")).toBeUndefined();
+  });
+});
+
+ it("preview proposals use the common resolver without moving persisted membership", async () => {
+  fixture.tables.vendor_items!.push({ ...fixture.tables.vendor_items![0], id:"new-sku",product_id:null });
+  const proposal = { productId:"product", joinSkuIds:["new-sku"], primarySkuId:"new-sku" };
+  expect((await loadProductIndex(["product"],"north",{proposal})).index.resolution.get("product")?.skuId).toBe("new-sku");
+  expect(fixture.tables.vendor_items!.at(-1)!.product_id).toBeNull();
+  fixture.tables.vendor_items!.at(-1)!.location_id="south";
+  expect((await loadProductIndex(["product"],"north",{proposal})).index.resolution.get("product")?.skuId).not.toBe("new-sku");
+ });
+
+it("evaluates an explicit unsaved grouping through the same eligibility ladder", async () => {
+ fixture.tables.vendor_items = [fixture.tables.vendor_items![0]!].map(row=>({...row,product_id:null}));
+ const proposal={productId:"draft",joinSkuIds:["regular-sku"],primarySkuId:"regular-sku",draftProduct:{name:"Draft",unitOz:null}};
+ expect((await loadProductIndex(["draft"],"north",{proposal})).index.resolution.get("draft")?.skuId).toBe("regular-sku");
+ fixture.tables.vendor_items![0]!.pending_review=true;
+ expect((await loadProductIndex(["draft"],"north",{proposal})).index.resolution.get("draft")?.skuId).toBeNull();
+ expect(fixture.tables.products).toHaveLength(1);
+ await expect(loadProductIndex(["product"],"north",{proposal:{...proposal,productId:"product"}})).rejects.toThrow("Draft product identity already exists");
 });

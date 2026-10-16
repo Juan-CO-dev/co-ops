@@ -75,12 +75,14 @@ export async function loadPublicCateringMenu(locationId: string): Promise<Cateri
       .select("id, name, name_es, section, menu_price, catering_only, serves")
       .eq("active", true)
       .eq("catering_available", true)
+      .or(`location_id.is.null,location_id.eq.${locationId}`)
       .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean; serves: number | string | null }>>(),
     sb
       .from("menu_items")
       .select("id, name, name_es, section, menu_price, catering_only, catering_portionable, serves")
       .eq("active", true)
       .eq("catering_available", true)
+      .or(`location_id.is.null,location_id.eq.${locationId}`)
       .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean; catering_portionable: boolean; serves: number | string | null }>>(),
   ]);
   if (iErr) throw new Error(`loadPublicCateringMenu items: ${iErr.message}`);
@@ -158,17 +160,18 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
   const itemMap = new Map<string, { name: string; priceCents: number }>();
   const menuMap = new Map<string, { name: string; priceCents: number }>();
   if (itemIds.length > 0) {
-    const { data: rows } = await sb.from("items").select("id, name, menu_price").in("id", itemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
+    const { data: rows } = await sb.from("items").select("id, name, menu_price").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", itemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
     for (const r of rows ?? []) itemMap.set(r.id, { name: r.name, priceCents: dollarsToCents(r.menu_price) });
   }
   if (menuItemIds.length > 0) {
-    const { data: rows } = await sb.from("menu_items").select("id, name, menu_price").in("id", menuItemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
+    const { data: rows } = await sb.from("menu_items").select("id, name, menu_price").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", menuItemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
     for (const r of rows ?? []) menuMap.set(r.id, { name: r.name, priceCents: dollarsToCents(r.menu_price) });
   }
 
   const byPackage = new Map<string, PackageLine[]>();
   for (const r of pkgItems) {
     const resolved = r.item_id ? itemMap.get(r.item_id) : r.menu_item_id ? menuMap.get(r.menu_item_id) : undefined;
+    if (!resolved) continue; // Hidden or missing references are not available choices.
     const label = (r.description && r.description.trim()) || resolved?.name || "Item";
     const arr = byPackage.get(r.package_id) ?? [];
     arr.push({ itemId: r.item_id, menuItemId: r.menu_item_id, label, quantity: Number(r.quantity), unitPriceCents: resolved?.priceCents ?? 0 });
@@ -190,13 +193,14 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
     // Resolve names for any option refs not already in the fixed-line maps.
     const optItemIds = [...new Set((optRows ?? []).map((o) => o.item_id).filter((v): v is string => v != null && !itemMap.has(v)))];
     const optMenuIds = [...new Set((optRows ?? []).map((o) => o.menu_item_id).filter((v): v is string => v != null && !menuMap.has(v)))];
-    if (optItemIds.length > 0) { const { data } = await sb.from("items").select("id, name").in("id", optItemIds).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) itemMap.set(x.id, { name: x.name, priceCents: 0 }); }
-    if (optMenuIds.length > 0) { const { data } = await sb.from("menu_items").select("id, name").in("id", optMenuIds).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) menuMap.set(x.id, { name: x.name, priceCents: 0 }); }
+    if (optItemIds.length > 0) { const { data } = await sb.from("items").select("id, name").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", optItemIds).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) itemMap.set(x.id, { name: x.name, priceCents: 0 }); }
+    if (optMenuIds.length > 0) { const { data } = await sb.from("menu_items").select("id, name").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", optMenuIds).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) menuMap.set(x.id, { name: x.name, priceCents: 0 }); }
     const optionsByLine = new Map<string, PackageSlotOption[]>();
     for (const o of optRows ?? []) {
       const kind = o.menu_item_id ? ("menu_item" as const) : ("item" as const);
       const refId = (o.menu_item_id ?? o.item_id)!;
-      const name = kind === "menu_item" ? menuMap.get(refId)?.name ?? "Item" : itemMap.get(refId)?.name ?? "Item";
+      const name = kind === "menu_item" ? menuMap.get(refId)?.name : itemMap.get(refId)?.name;
+      if (!name) continue;
       const arr = optionsByLine.get(o.package_item_id) ?? []; arr.push({ kind, refId, name }); optionsByLine.set(o.package_item_id, arr);
     }
     for (const line of choiceLines) {

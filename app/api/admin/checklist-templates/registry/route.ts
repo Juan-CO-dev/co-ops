@@ -5,8 +5,7 @@ import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { addRegistryItem, AdminTemplateError, type AddRegistryItemInput } from "@/lib/admin/templates";
 
-// Add a NEW item to the GLOBAL registry (location_id NULL). When isDefault, it
-// propagates an enabled line to every location. GM+ (≥7), Tier B.
+// Create a scoped item. The library enforces ownership and global/default gates. Tier B.
 export async function POST(req: NextRequest) {
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
@@ -17,11 +16,13 @@ export async function POST(req: NextRequest) {
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
+  if (b.locationId !== undefined && b.locationId !== null && typeof b.locationId !== "string") return jsonError(400, "invalid_payload");
   if (typeof b.name !== "string" || !b.name.trim()) return jsonError(400, "invalid_label", { field: "name" });
   // Shape guard only; addRegistryItem validates the slug against the active
   // prep_sections set and throws invalid_section (slug list is runtime now).
   if (typeof b.section !== "string") return jsonError(400, "invalid_section", { field: "section" });
   const input: AddRegistryItemInput = {
+    locationId: b.locationId as string | null | undefined,
     name: b.name,
     nameEs: b.nameEs === null || typeof b.nameEs === "string" ? (b.nameEs as string | null) : null,
     section: b.section,

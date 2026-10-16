@@ -82,15 +82,16 @@ export default async function AdminVendorDetailPage({
     rhythmSchemaReady(sb),
     parsColumnsReady(),
     loadOrderGuide(id),
-    sb.from("vendor_items").select("id, name, item_number").eq("vendor_id", id).eq("active", true).order("name"),
+    sb.from("vendor_items").select("id, name, item_number, location_id, active").eq("vendor_id", id).order("name"),
   ]);
   if (!vendor) notFound();
 
   const guidePlaced = new Set<string>();
   for (const s of orderGuide?.sections ?? []) for (const l of s.lines) if (l.skuId) guidePlaced.add(l.skuId);
-  const guideSkuRows = (guideSkuRes.data ?? []) as Array<{ id: string; name: string; item_number: string | null }>;
+  const guideSkuRows = (guideSkuRes.data ?? []) as Array<{ id: string; name: string; item_number: string | null; location_id: string | null; active: boolean }>;
+  const ownership = Object.fromEntries(guideSkuRows.filter(r => r.location_id != null).map(r => [r.id, (locRes.data ?? []).find(l => l.id === r.location_id)?.name ?? r.location_id]));
   const skusNotOnGuide = guideSkuRows
-    .filter((r) => !guidePlaced.has(r.id))
+    .filter((r) => r.active !== false && !guidePlaced.has(r.id))
     .map((r) => ({ skuId: r.id, name: r.name, itemNumber: r.item_number }));
   const skuLocations = (locRes.data ?? []).map((r) => ({
     id: (r as { id: string }).id,
@@ -225,7 +226,7 @@ export default async function AdminVendorDetailPage({
         <OrderGuidePanel
           vendorId={vendor.id}
           vendorName={vendor.name}
-          initial={{ guide: orderGuide, skusNotOnGuide }}
+          initial={{ guide: orderGuide, skusNotOnGuide, ownership }}
           canEdit={level >= ORDER_GUIDE_EDIT_MIN}
         />
       </div>

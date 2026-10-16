@@ -2,9 +2,12 @@
  * Shared client helpers for the Recipes admin UI.
  * Re-exports postJson from vendors/shared and adds a recipe-scoped error resolver.
  */
+import { SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 export { postJson, type PostResult } from "@/components/admin/vendors/shared";
+
+const SHOP_ERROR_CODES: ReadonlySet<string> = new Set([...SHOP_OWNED_ERROR_CODES, "dependencies_busy"]);
 
 const KNOWN_ERROR_CODES = new Set([
   "forbidden",
@@ -45,6 +48,9 @@ const KNOWN_ERROR_CODES = new Set([
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {
+  if (SHOP_ERROR_CODES.has(code)) {
+    return `catalog.error.${code}` as TranslationKey;
+  }
   if (KNOWN_ERROR_CODES.has(code)) {
     return `recipes.error.${code}` as TranslationKey;
   }

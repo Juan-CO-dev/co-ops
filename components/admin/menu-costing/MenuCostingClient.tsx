@@ -77,7 +77,6 @@ export function MenuCostingClient({
   skuNames,
   itemNames,
   productNames,
-  canEditPrice = false,
   toastFetchedAt = null,
   toastUnavailable = false,
   toastNotices = [],
@@ -85,7 +84,6 @@ export function MenuCostingClient({
 }: {
   /** The board's scope: a shop id, null = all shops (the global menu), undefined = not known (the remembered shop). The drawer opens the menu item page for it (catalog Phase 3b). */
   scope?: string | null;
-  canEditPrice?: boolean;
   toastFetchedAt?: string | null;
   toastUnavailable?: boolean;
   toastNotices?: Array<{ locationName: string; reason: "unavailable" | "menu_missing" | "menu_not_set" }>;
@@ -203,6 +201,11 @@ export function MenuCostingClient({
                         <span className="block truncate text-sm font-semibold text-co-text">
                           {language === "es" && row.nameEs ? row.nameEs : row.name}
                         </span>
+                        {row.onlyAtShopName ? (
+                          <span className="block text-xs font-semibold text-co-text-muted">
+                            {t("catalog.only_at_shop", { shop: row.onlyAtShopName })}
+                          </span>
+                        ) : null}
                         <span className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 sm:flex sm:flex-wrap sm:gap-x-5">
                           <Metric
                             label={t("admin.menu_costing.col.price")}
@@ -229,7 +232,7 @@ export function MenuCostingClient({
                     }
                     badges={<>{row.priceFlag && <AlertPill tone="warn">{t("admin.menu_costing.price.flag", { amount: money((row.toastPriceCents ?? 0) / 100) })}</AlertPill>}<RowBadges row={row} t={t} /></>}
                   >
-                    {canEditPrice ? <MenuPriceEditor key={`${row.id}:${row.typedPrice}`} row={row} /> :
+                    {row.canEditPrice ? <MenuPriceEditor key={`${row.id}:${row.typedPrice}`} row={row} /> :
                       <p className="mb-2 text-xs text-co-text-muted">{t("admin.menu_costing.price.label")}: {row.includedInSubPrice ? t("admin.menu_costing.price.included") : money(row.menuPrice)}</p>}
                     <a href={menuItemPageHref(row.id, { shopId: scope })} className={drawerLinkCls}>{t("catalog.menu.open_page")}</a>
                     <RowDrawer

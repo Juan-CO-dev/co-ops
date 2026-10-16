@@ -4,6 +4,8 @@ import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { createRecipeFull, RecipeError, RECIPE_WRITE_MIN, type RecipeType } from "@/lib/recipes";
+import type { RecipeNewPrepItem } from "@/lib/recipes-shared";
+import { ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
 
 export async function POST(req: NextRequest) {
   const parsed = await parseJsonBody(req);
@@ -17,6 +19,7 @@ export async function POST(req: NextRequest) {
   const b = parsed as Record<string, unknown>;
   try {
     const draft = {
+      ...(Object.hasOwn(b, "locationId") ? { locationId: b.locationId as string | null } : {}),
       name: b.name as string,
       nameEs: b.nameEs != null ? (b.nameEs as string) : undefined,
       recipeType: b.recipeType as RecipeType,
@@ -38,13 +41,15 @@ export async function POST(req: NextRequest) {
       outputs: Array.isArray(b.outputs) ? (b.outputs as Array<Record<string, unknown>>).map((o) => ({
         outputItemId: o.outputItemId != null ? (o.outputItemId as string) : null,
         outputMenuItemId: o.outputMenuItemId != null ? (o.outputMenuItemId as string) : null,
+        newItem: o.newItem == null ? null : o.newItem as RecipeNewPrepItem,
         yield: Number(o.yield),
         outputContainerLabel: o.outputContainerLabel != null ? (o.outputContainerLabel as string) : null,
       })) : [],
     };
-    const { id } = await createRecipeFull(ctx, draft);
-    return jsonOk({ id }, 201);
+    const result = await createRecipeFull(ctx, draft);
+    return jsonOk(result, 201);
   } catch (e) {
+    if (e instanceof ShopOwnedError) return jsonError(e.status, e.code, e.line ? { line: e.line } : undefined);
     if (e instanceof RecipeError) return jsonError(e.status, e.code);
     throw e;
   }

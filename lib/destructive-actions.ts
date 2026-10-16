@@ -155,6 +155,9 @@ export const DESTRUCTIVE_ACTIONS = [
   //   Auto-derive destructive=true via isDestructive().
   "vendor_item.create",
   "vendor_item.update",
+  // Human changes to recipe lines and ordering membership; tier gates remain route-owned.
+  "sku_swap.start",
+  "sku_swap.end",
   "vendor_item.activate",
   "vendor_item.deactivate",
   "item_component.add",

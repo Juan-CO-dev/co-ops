@@ -644,7 +644,7 @@ export interface WalkerUnroutable {
  *  par'd-SKU universe: one column list, so the engine can never read a narrower SKU
  *  than the walker renders. */
 export const WALKER_SKU_COLUMNS =
-  "id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, product_id, inventory_only";
+  "id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, product_id, inventory_only, location_id";
 
 interface WalkerSkuRow {
   id: string; name: string; vendor_id: string | null; item_number: string | null; active: boolean;
@@ -652,6 +652,7 @@ interface WalkerSkuRow {
   each_container_label: string | null; units_per_pack: number | null;
   each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null;
   product_id: string | null;
+  location_id: string | null;
   /** Packaging / cleaning supplies — their pars were never recipe-derived. */
   inventory_only: boolean | null;
 }
@@ -695,7 +696,10 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     productUnroutable: 0, productRetired: 0, parReview: 0, reroutedToBackup: 0,
   };
   const storeVendorIds = await loadStoreVendorIds();
-  const orderingSkuRows = (skuRows ?? []).filter((s) => s.vendor_id == null || !storeVendorIds.has(s.vendor_id));
+  const orderingSkuRows = (skuRows ?? []).filter((s) =>
+    (s.location_id == null || s.location_id === locationId) &&
+    (s.vendor_id == null || !storeVendorIds.has(s.vendor_id)),
+  );
   const skus = orderingSkuRows.filter((s) => s.vendor_id != null); // a par'd SKU with no
   // vendor can't be ordered from anyone → excluded (schema allows null vendor_id, live
   // data has none today; defensive — and now counted rather than silently dropped).
@@ -718,7 +722,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // The two facts the par ledger does not carry, from rows this function already holds —
   // so the suggestion payload and the reason lane add no `vendor_items` read of their own.
   const parSkuIndex: ReadonlyMap<string, ParSkuIndexEntry> = new Map(
-    skus.map((s) => [s.id, { vendorId: s.vendor_id, name: s.name }]),
+    skus.map((s) => [s.id, { vendorId: s.vendor_id, name: s.name, locationId: s.location_id }]),
   );
   // THE WALK INSTANT (R3-A). The day-class comes from the ALREADY-DERIVED `weekend` flag,
   // never from a second derivation — etWalkDay() is the one home for the day rule, and a
@@ -1485,7 +1489,11 @@ export async function submitParPass(
     .returns<WalkerSkuRow[]>();
   if (sErr) throw new Error(`submitParPass skus: ${sErr.message}`);
   const storeVendorIds = await loadStoreVendorIds();
-  const skuById = new Map((skuRows ?? []).filter((s) => s.vendor_id == null || !storeVendorIds.has(s.vendor_id)).map((s) => [s.id, s]));
+  const eligibleSkuRows = (skuRows ?? []).filter((s) =>
+    (s.location_id == null || s.location_id === locationId) &&
+    (s.vendor_id == null || !storeVendorIds.has(s.vendor_id)),
+  );
+  const skuById = new Map(eligibleSkuRows.map((s) => [s.id, s]));
   for (const id of skuIds) if (!skuById.has(id)) throw new OrderingError(400, "invalid_sku", "A SKU is not found or inactive");
   // Reject two lines naming two MEMBERS of one product (0179), for the same reason
   // duplicate_sku exists: the walk shows ONE row per product, so two lines would
@@ -1494,7 +1502,7 @@ export async function submitParPass(
   // duplicate_sku. lib/purchase-orders.ts keeps its per-SKU identity check: a PO is
   // per-vendor and per-SKU by nature.
   const seenProducts = new Set<string>();
-  for (const s of skuRows ?? []) {
+  for (const s of eligibleSkuRows) {
     if (s.product_id == null) continue;
     if (seenProducts.has(s.product_id)) {
       throw new OrderingError(400, "duplicate_product", "Two items of the same product appear in one walk");

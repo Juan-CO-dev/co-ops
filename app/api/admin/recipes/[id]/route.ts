@@ -1,3 +1,4 @@
+import { ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -36,6 +37,7 @@ export async function PATCH(
     await updateRecipe(ctx, id, patch);
     return jsonOk({ ok: true });
   } catch (e) {
+    if (e instanceof ShopOwnedError) return jsonError(e.status, e.code, e.line ? { line: e.line } : undefined);
     if (e instanceof RecipeError) return jsonError(e.status, e.code);
     throw e;
   }
@@ -58,6 +60,7 @@ export async function DELETE(
     await deactivateRecipe(ctx, id);
     return jsonOk({ ok: true });
   } catch (e) {
+    if (e instanceof ShopOwnedError) return jsonError(e.status, e.code, e.line ? { line: e.line } : undefined);
     if (e instanceof RecipeError) return jsonError(e.status, e.code);
     throw e;
   }

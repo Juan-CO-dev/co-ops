@@ -8,10 +8,18 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 
 /** The minimum base schema the REAL 0258 → 0262 read and write (shared with scripts/sql-harness-0262.mjs). */
-const STUB = readFileSync("tests/fixtures/recipe-versions-pglite-stub.sql", "utf8");
+export const STUB = readFileSync("tests/fixtures/recipe-versions-pglite-stub.sql", "utf8");
 /** Every migration 0262 builds on, then 0262 and 0263 — as committed (0259–0261: the pack/price tables its snapshot reads). */
-const CHAIN = ["0258_recipe_input_write_atomic", "0259_sku_shop_versions", "0260_sku_pack_versions_finalize",
+export const CHAIN = ["0258_recipe_input_write_atomic", "0259_sku_shop_versions", "0260_sku_pack_versions_finalize",
   "0261_sku_pack_change_requests", "0262_recipe_shop_versions", "0263_menu_item_shop_settings"];
+
+/** Minimum production-shaped schema plus the real committed 0258-0263 chain, with no seed data. */
+export async function migratedCatalogDb(): Promise<PGlite> {
+  const db = new PGlite();
+  await db.exec(STUB);
+  for (const m of CHAIN) await db.exec(readFileSync(`supabase/migrations/${m}.sql`, "utf8"));
+  return db;
+}
 
 export const ID = {
   actor: "00000000-0000-4000-8000-0000000000a1",
@@ -24,9 +32,7 @@ export const ID = {
 
 /** Stub base tables → 0258 … 0262, as committed; one recipe (one SKU line), the source shop and four adopters. */
 export async function migratedRecipeDb(): Promise<PGlite> {
-  const db = new PGlite();
-  await db.exec(STUB);
-  for (const m of CHAIN) await db.exec(readFileSync(`supabase/migrations/${m}.sql`, "utf8"));
+  const db = await migratedCatalogDb();
   const shops = [ID.source, ...ID.adopters].map((id, i) => `('${id}', '${i === 0 ? "Source shop" : `Adopter ${i}`}', true)`).join(", ");
   await db.exec(`
     insert into public.users(id) values ('${ID.actor}');

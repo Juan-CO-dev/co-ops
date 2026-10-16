@@ -22,6 +22,7 @@ export interface RegistryLink {
   name: string;
   nameEs: string | null;
   vendorName: string | null;
+  locationId?: string;
 }
 export interface ProductItemLinks {
   madeFromByItem: Record<string, RegistryLink[]>;
@@ -42,8 +43,8 @@ export function productHref(productId: string): string {
   const id = encodeURIComponent(productId);
   return `/admin/products?product=${id}#${id}`;
 }
-export function prepItemHref(itemId: string): string {
-  return `/admin/items?view=registry#${encodeURIComponent(itemId)}`;
+export function prepItemHref(itemId: string, locationId?: string): string {
+  return `/admin/items?view=registry${locationId ? `&location=${encodeURIComponent(locationId)}` : ""}#${encodeURIComponent(itemId)}`;
 }
 
 /** A deep-link query param as ONE plain id (uuid or slug), else null. Arrays, blanks and anything else are ignored. */
@@ -54,7 +55,7 @@ export function readFocusParam(v: string | string[] | undefined): string | null 
 }
 
 export function registryLinkHref(link: RegistryLink): string {
-  if (link.kind === "item") return prepItemHref(link.id);
+  if (link.kind === "item") return prepItemHref(link.id, link.locationId);
   if (link.kind === "product") return productHref(link.id);
   return skuCatalogHref(link.id);
 }
@@ -67,13 +68,13 @@ export function mapProductItemLinks(data: {
   skus: LinkSku[];
   items: Array<LinkEntity & { location_id: string | null }>;
   vendors: Array<{ id: string; name: string }>;
-}): ProductItemLinks {
+}, scope: string | null = null): ProductItemLinks {
   const recipes = new Set(data.recipes.filter(r => r.active).map(r => r.id));
   const products = new Map(data.products.filter(p => p.active).map(p => [p.id, p]));
   const skus = new Map(data.skus.filter(s => s.active).map(s => [s.id, s]));
-  // /admin/items' prep registry contains active GLOBAL items only. Never link
-  // to a location-only item that the destination cannot render.
-  const items = new Map(data.items.filter(i => i.active && i.location_id === null).map(i => [i.id, i]));
+  // Default callers keep the global registry. An explicit shop view also links
+  // its owned definitions, carrying the owner so navigation can reopen them.
+  const items = new Map(data.items.filter(i => i.active && (i.location_id === null || (scope !== null && i.location_id === scope))).map(i => [i.id, i]));
   const vendors = new Map(data.vendors.map(v => [v.id, v.name]));
   const inputs = new Map<string, LinkInput[]>();
   for (const input of data.inputs) {
@@ -84,7 +85,9 @@ export function mapProductItemLinks(data: {
   }
   const result: ProductItemLinks = { madeFromByItem: {}, usedInByProduct: {}, producingRecipeByItem: {} };
   const link = (entity: LinkEntity, kind: RegistryLink["kind"], vendorName: string | null = null): RegistryLink =>
-    ({ id: entity.id, kind, name: entity.name, nameEs: entity.name_es ?? null, vendorName });
+    ({ id: entity.id, kind, name: entity.name, nameEs: entity.name_es ?? null, vendorName,
+      ...(kind === "item" && items.get(entity.id)?.location_id ? { locationId: items.get(entity.id)!.location_id! } : {}),
+    });
   const add = (map: Record<string, RegistryLink[]>, id: string, entry: RegistryLink) => {
     const list = map[id] ??= [];
     if (!list.some(x => x.kind === entry.kind && x.id === entry.id)) list.push(entry);

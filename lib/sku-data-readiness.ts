@@ -2,6 +2,7 @@
  * Journey rules extracted from scripts/parity-angel.ts:211-224 (r3).
  * Existing product/recipe Readiness semantics remain unchanged.
  */
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import { buildRecipeGraph, perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph, type GraphRecipe, type ProductIndex } from "@/lib/prep-consumption-graph";
 import {
   mergeResolvedInputs, pickLiveShopRecipeVersions, recipeLineReplacements, type RecipeVersionLineRow, type RecipeVersionRow, type ResolvedRecipeInput,
@@ -208,14 +209,14 @@ export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<stri
   const epochRows = tables.sku_pack_epochs ?? [];
   const epochFor = (shopId: string, skuId: string): number =>
     Number(epochRows.find((e) => e.location_id === shopId && e.sku_id === skuId)?.epoch ?? 0);
-  const graphRecipesFor = (shopInputs: readonly LiveRow[]): GraphRecipe[] => recipes.map(r => ({ recipeId: liveId(r), batchYield: liveNum(r.batch_yield),
+  const graphRecipesFor = (shopInputs: readonly LiveRow[], scope: string): GraphRecipe[] => recipes.filter(r => ownerVisible(liveText(r.location_id), scope)).map(r => ({ recipeId: liveId(r), batchYield: liveNum(r.batch_yield),
     inputs: shopInputs.filter(i => i.recipe_id === r.id).map(i => ({ quantity: Number(i.quantity), unit: liveText(i.unit), componentSkuId: liveText(i.component_sku_id), componentItemId: liveText(i.component_item_id), componentProductId: liveText(i.component_product_id) })),
     outputs: outputs.filter(o => o.recipe_id === r.id).map(o => ({ outputItemId: liveText(o.output_item_id), outputMenuItemId: liveText(o.output_menu_item_id), yield: Number(o.yield), ozPerParUnit: liveNum(items.get(String(o.output_item_id))?.oz_per_par_unit), parUnitLabel: liveText(items.get(String(o.output_item_id))?.default_par_unit) })) }));
   const report: Wave7ReadinessReport = { asOf, shops: [], counts: Object.fromEntries(Object.entries(tables).map(([table, rows]) => [table, rows.length])) };
   for (const shop of liveRows(tables, "locations").filter(r => r.active !== false && (!visibleShopIds || visibleShopIds.has(liveId(r))))) {
     const shopId = liveId(shop), overlays = liveRows(tables, "location_sku_settings").filter(r => r.location_id === shopId);
     const { bases, prices } = basesFor(shopId);
-    const graphRecipes = graphRecipesFor(resolvedInputsFor(shopId));
+    const graphRecipes = graphRecipesFor(resolvedInputsFor(shopId), shopId);
     const overlayFor = (id: string) => overlays.find(r => r.sku_id === id);
     // Main's per-shop scope applies to EVERY SKU (regular and store alike); keep it unchanged.
     const active = (sku: LiveRow) => (sku.location_id == null || sku.location_id === shopId) && resolveActive(overlayFor(liveId(sku))?.active_override as boolean | null | undefined, sku.active === true);

@@ -229,7 +229,7 @@ try {
     const hr = await head(R_X);
     check(removed.id === newId && hr.id !== h17.id && hr.created_by === ACTOR && await headEqualsInputs(R_X), "J9: remove_recipe_input_atomic deletes, returns the row, and journals with its actor");
     await refuses(async () => db.query("select public.remove_recipe_input_atomic($1, $2)", [newId, ACTOR]), "edge_not_found", "J9: removing it again");
-    const nr = (await one(`select public.create_recipe_full('{"name":"Made","recipe_type":"prep","batch_yield":1}'::jsonb,
+    const nr = (await one(`select public.create_recipe_full('{"name":"Made","recipe_type":"production","batch_yield":1}'::jsonb,
       $1::jsonb, '[]'::jsonb, $2) as id`, [JSON.stringify([{ component_sku_id: K1, quantity: 1, unit: "oz" }]), ACTOR])).id;
     const hn = await head(nr);
     check(hn.created_by === ACTOR && hn.valid_from.startsWith("2000-01-01") && await headEqualsInputs(nr), "J9: create_recipe_full journals the new recipe once, from 2000-01-01, naming its creator");
@@ -274,7 +274,7 @@ try {
     // C7 the output writers: Z consumes Dressing; in S2 Dressing consumes Q — a new output Q on Z loops only in S2.
     await refuses(async () => db.query("select public.add_recipe_output($1, $2, null, 1, null, $3)", [R_Z, I_Q, ACTOR]), /^would_create_cycle$/,
       "C7: add_recipe_output refuses an output reachable only through S2's lines");
-    await refuses(async () => db.query(`select public.create_recipe_full('{"name":"Loop","recipe_type":"prep","batch_yield":1}'::jsonb, $1::jsonb, $2::jsonb, $3)`,
+    await refuses(async () => db.query(`select public.create_recipe_full('{"name":"Loop","recipe_type":"production","batch_yield":1}'::jsonb, $1::jsonb, $2::jsonb, $3)`,
       [JSON.stringify([{ component_item_id: I_DRESS, quantity: 1, unit: "oz" }]), JSON.stringify([{ output_item_id: I_Q, yield: 1 }]), ACTOR]),
       /^would_create_cycle$/, "C7: create_recipe_full refuses the same loop");
     await db.exec("begin;");
@@ -348,7 +348,7 @@ try {
   }
   // W2 the product rule: a broken line the set ALREADY holds may stay (with multiplicity); a copy carries nothing.
   {
-    const r = (await one(`select public.create_recipe_full('{"name":"Ham sub","recipe_type":"menu","batch_yield":1}'::jsonb, $1::jsonb, '[]'::jsonb, $2) as id`,
+    const r = (await one(`select public.create_recipe_full('{"name":"Ham sub","recipe_type":"consumer","batch_yield":1}'::jsonb, $1::jsonb, '[]'::jsonb, $2) as id`,
       [JSON.stringify([{ component_product_id: P_OFF, quantity: 2, unit: "oz" }, { component_sku_id: K1, quantity: 1, unit: "oz" }]), ACTOR])).id;
     const base = await head(r);
     await asOwner(() => db.query("update public.products set active = false where id = $1", [P_OFF]));

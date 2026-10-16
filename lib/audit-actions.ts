@@ -32,6 +32,7 @@
 import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
 // Receiving store/pending-item creation and resolution are shared catalog writes;
 // their receiving.* actions enter AuditAction through DESTRUCTIVE_ACTIONS.
+// Catalog swaps likewise enter through destructive sku_swap.start / sku_swap.end.
 
 /**
  * Emitted actions that are deliberately NOT destructive.

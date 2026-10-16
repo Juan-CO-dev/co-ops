@@ -10,9 +10,9 @@ import { serverT } from "@/lib/i18n/server";
 const LOC = "6f1d2c3e-0000-4000-8000-00000000000a";
 const LOC2 = "6f1d2c3e-0000-4000-8000-00000000000b";
 const byScope = [
-  { scope: null, scopeName: null, recipes: 1, items: 0 },
-  { scope: LOC, scopeName: "P Street", recipes: 2, items: 3 },
-  { scope: LOC2, scopeName: "Capitol Hill", recipes: 0, items: 1 },
+  { scope: null, scopeName: null, skus: 0, recipes: 1, items: 0 },
+  { scope: LOC, scopeName: "P Street", skus: 2, recipes: 2, items: 3 },
+  { scope: LOC2, scopeName: "Capitol Hill", skus: 0, recipes: 0, items: 1 },
 ];
 const words = (lang: "en" | "es", section: "recipes" | "items", href: string) =>
   readinessWhereEntries(section, href, byScope).map((e) => serverT(lang, e.key, e.params)).join(" · ");
@@ -24,6 +24,8 @@ describe("hub readiness, attributed per shop", () => {
     expect(words("en", "items", "/admin/items")).toBe("3 at P Street · 1 at Capitol Hill");
   });
   it("each entry links to that scope's list", () => {
+    expect(readinessWhereEntries("skus", "/admin/skus", byScope).map((e) => e.href))
+      .toEqual([`/admin/skus?location=${LOC}`]);
     expect(readinessWhereEntries("recipes", "/admin/recipes", byScope).map((e) => e.href))
       .toEqual(["/admin/recipes?location=global", `/admin/recipes?location=${LOC}`]);
     expect(readinessWhereEntries("items", "/admin/items", byScope).map((e) => e.href))
