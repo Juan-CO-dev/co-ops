@@ -28,6 +28,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { operationalDayUtcRange } from "@/lib/operational-day";
 
 export type CapacitySignal =
   | "available"      // room for the requested covers
@@ -71,7 +72,7 @@ interface PolicyRow {
 function hoursUntilDate(eventDate: string, now: Date): number {
   // Event date start in the operational TZ (America/New_York — both CO locations are in DC).
   // Compare against now; a same-day or future date yields >= 0-ish, past dates negative.
-  const eventStart = new Date(`${eventDate}T00:00:00-05:00`).getTime();
+  const eventStart = Date.parse(operationalDayUtcRange(eventDate).startIso);
   return (eventStart - now.getTime()) / 3_600_000;
 }
 
