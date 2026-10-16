@@ -16,13 +16,13 @@ import type { RoleCode } from "@/lib/roles";
 import {
   type ActionCategory, type CategoryCounts, emptyCounts,
   scoreFromCounts, healthFromCounts, type Health,
-  activeDayStreak, onTimeStreak, personalBest,
+  activeDayStreak, longestStreak, onTimeStreak, personalBest,
 } from "@/lib/team-scoring";
 import { personCardLine, teamBannerNarrative, type NarrativeLine } from "@/lib/people-narrative";
 import { etCalendarDate } from "@/lib/operational-day";
 import type { TrendGranularity } from "@/lib/reports-trends";
 import {
-  inBounds, requireFamilies, type FactWindow, type OversightAuditRow, type PeopleFacts,
+  inBounds, requireFamilies, type FactWindow, type OversightAuditRow, type PeopleFacts, type ProfileFacts,
 } from "@/lib/people/facts-shared";
 
 export type { OversightAuditRow } from "@/lib/people/facts-shared";
@@ -437,4 +437,52 @@ export function personMetrics(
     gradientTally: { great, good, needsWork }, streaks,
     signals: { mvpAwards, flaggedToImprove, mostActiveDay, tenureDays, lastActive: c.lastActive },
   };
+}
+
+// ─── the public profile card (Task 12) ───────────────────────────────────────
+
+const VELOCITY_DAYS = 30;
+
+function addDays(yyyymmdd: string, n: number): string {
+  const d = new Date(`${yyyymmdd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The card's numbers (the legacy `loadPublicProfile` body). Needs-work grades are never returned. */
+export interface PublicProfileNumbers {
+  tenureDays: number;
+  mvpWins: number;
+  tasksAllTime: number;
+  gradient: { great: number; good: number };
+  streaks: { current: number; longest: number; personalBest: number };
+  /** Recent daily task counts, oldest→newest, length VELOCITY_DAYS. */
+  velocity: number[];
+}
+
+export function publicProfileNumbers(facts: ProfileFacts, args: { createdAt: string; today: string }): PublicProfileNumbers {
+  const tasksAllTime = facts.completions.length;
+  const dayCounts = new Map<string, number>();
+  for (const c of facts.completions) {
+    const d = etCalendarDate(c.completed_at);
+    dayCounts.set(d, (dayCounts.get(d) ?? 0) + 1);
+  }
+  const activeDates = [...dayCounts.keys()];
+  const streaks = {
+    current: activeDayStreak(activeDates, args.today),
+    longest: longestStreak(activeDates),
+    personalBest: personalBest([...dayCounts.values()]),
+  };
+  const velocity: number[] = [];
+  for (let i = VELOCITY_DAYS - 1; i >= 0; i--) {
+    velocity.push(dayCounts.get(addDays(args.today, -i)) ?? 0);
+  }
+  let great = 0, good = 0; // needsWork intentionally not tracked/returned
+  for (const e of facts.grades) {
+    for (const g of [e.arrived_ready, e.attitude, e.production, e.team_player]) {
+      if (g === "great") great++; else if (g === "good") good++;
+    }
+  }
+  const tenureDays = Math.max(0, Math.round((Date.parse(`${args.today}T00:00:00Z`) - Date.parse(args.createdAt)) / 86400000));
+  return { tenureDays, mvpWins: facts.mvpCount, tasksAllTime, gradient: { great, good }, streaks, velocity };
 }

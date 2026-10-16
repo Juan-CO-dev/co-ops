@@ -15,7 +15,7 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import {
   emptyPeopleFacts, type CashFact, type CompletionFact, type ConfirmationFact, type DatedReportFact, type FactFamily,
   type FactSubject, type FactWindow, type InstanceFact, type OversightFact, type PeopleFacts, type PmGradeFact,
-  type PmNoteFact, type PmReportFact,
+  type PmNoteFact, type PmReportFact, type ProfileFacts,
 } from "@/lib/people/facts-shared";
 import { OVERSIGHT_ACTIONS } from "@/lib/people/performance-shared";
 
@@ -217,4 +217,26 @@ export async function loadPeopleFacts(service: SupabaseClient, scope: PeopleFact
   }
 
   return { ...facts, loaded };
+}
+
+/**
+ * The public profile card's facts (Task 12): the target's live completions (all time, every shop),
+ * the live MVP count, and the target's live PM v1 grades — the queries moved verbatim from
+ * lib/profiles.ts `loadPublicProfile`, in the same order.
+ */
+export async function loadProfileFacts(service: SupabaseClient, targetUserId: string): Promise<ProfileFacts> {
+  const completions = await selectAllRows<{ completed_at: string }>(
+    (from, to) => service.from("checklist_completions").select("completed_at")
+      .eq("completed_by", targetUserId).is("superseded_at", null).is("revoked_at", null)
+      .order("completed_at", { ascending: true }).range(from, to),
+  );
+  const { count: mvpCount } = await service
+    .from("pm_reports").select("id", { count: "exact", head: true })
+    .eq("mvp_user_id", targetUserId).is("superseded_at", null);
+  const grades = await selectAllRows<ProfileFacts["grades"][number]>(
+    (from, to) => service.from("pm_employee_evals").select("arrived_ready, attitude, production, team_player")
+      .eq("employee_id", targetUserId).is("superseded_at", null)
+      .order("pm_report_id", { ascending: true }).range(from, to),
+  );
+  return { completions, mvpCount: mvpCount ?? 0, grades };
 }

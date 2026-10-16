@@ -133,3 +133,15 @@ export function inBounds(iso: string, bounds: { start: string; end: string }): b
   const t = Date.parse(iso);
   return t >= Date.parse(bounds.start) && t < Date.parse(bounds.end);
 }
+
+// ─── the public profile card (Task 12): company-wide, all-time ───────────────
+
+/**
+ * The public card's facts, read company-wide (the card's existing scope: the target's live
+ * completions, MVP count and PM v1 gradients across every shop). Not bound to a shop or a window.
+ */
+export interface ProfileFacts {
+  completions: Array<{ completed_at: string }>;
+  mvpCount: number;
+  grades: Array<{ arrived_ready: string; attitude: string; production: string; team_player: string }>;
+}
