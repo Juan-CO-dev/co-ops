@@ -244,6 +244,110 @@ describe("Task 21 — the day timeline", () => {
   });
 });
 
+describe("Task 22 — drag and keyboard → edit ops (pure; the real pointer walk is CC's browser sim)", () => {
+  const sh = { ref: { date: DATES[2]!, userId: "u", startQ: 40 }, startQ: 40, endQ: 64, segments: [{ positionId: "p1", startQ: 40, endQ: 50 }, { positionId: "p2", startQ: 50, endQ: 64 }] };
+  it("dragToOp turns pixels into 15-minute steps through the edit vocabulary; under half a step is no op", async () => {
+    const { dragToOp } = await import("@/components/schedule/use-drag-snap-shared");
+    const { isEditOp } = await import("@/lib/scheduling/edit-shared");
+    expect(dragToOp(32, 16, { kind: "move" }, sh)).toEqual({ kind: "move", shift: sh.ref, deltaQ: 2 });
+    expect(dragToOp(-16, 16, { kind: "start" }, sh)).toEqual({ kind: "start", shift: sh.ref, toQ: 39 });
+    expect(dragToOp(48, 16, { kind: "end" }, sh)).toEqual({ kind: "end", shift: sh.ref, toQ: 67 });
+    expect(dragToOp(-32, 16, { kind: "divider", index: 1 }, sh)).toEqual({ kind: "divider", shift: sh.ref, index: 1, toQ: 48 });
+    expect(dragToOp(7, 16, { kind: "move" }, sh)).toBeNull();
+    expect(dragToOp(32, 0, { kind: "move" }, sh)).toBeNull();
+    for (const op of [dragToOp(32, 16, { kind: "move" }, sh), dragToOp(-32, 16, { kind: "divider", index: 1 }, sh)]) expect(isEditOp(op)).toBe(true);
+  });
+  it("keyToOp: ArrowLeft / ArrowRight are −15 / +15 min on the bar, an edge or a divider; any other key is nothing", async () => {
+    const { keyToOp } = await import("@/components/schedule/use-drag-snap-shared");
+    expect(keyToOp("ArrowLeft", { kind: "move" }, sh)).toEqual({ kind: "move", shift: sh.ref, deltaQ: -1 });
+    expect(keyToOp("ArrowRight", { kind: "end" }, sh)).toEqual({ kind: "end", shift: sh.ref, toQ: 65 });
+    expect(keyToOp("ArrowRight", { kind: "divider", index: 1 }, sh)).toEqual({ kind: "divider", shift: sh.ref, index: 1, toQ: 51 });
+    expect(keyToOp("Enter", { kind: "move" }, sh)).toBeNull();
+  });
+  it("an accepted edit posts exactly {action: edit, locationId, weekStart, expectedHead, op}", async () => {
+    const { editBody } = await import("@/components/schedule/use-drag-snap-shared");
+    const { SCHEDULE_ACTIONS } = await import("@/lib/scheduling/route-shapes-shared");
+    const op = { kind: "move" as const, shift: sh.ref, deltaQ: 1 };
+    const body = editBody({ locationId: "L", weekStart: DATES[0]!, expectedHead: "h1" }, op);
+    expect(body).toEqual({ action: "edit", locationId: "L", weekStart: DATES[0]!, expectedHead: "h1", op });
+    expect(Object.keys(body).sort()).toEqual([...SCHEDULE_ACTIONS.edit!].sort());
+  });
+  it("the stale-response reducer: a response for an older head or an older request is DISCARDED; head_moved reloads with its notice; a refusal snaps back with its name", async () => {
+    const { editReducer, initialEditState } = await import("@/components/schedule/use-drag-snap-shared");
+    let s = initialEditState("h1");
+    s = editReducer(s, { type: "submit" });
+    expect(s.pending).toEqual({ expectedHead: "h1", seq: 1 });
+    // A late answer to an older request: ignored.
+    expect(editReducer(s, { type: "accepted", seq: 0, expectedHead: "h1", revisionId: "hX" })).toBe(s);
+    // An answer computed against another head: ignored.
+    expect(editReducer(s, { type: "accepted", seq: 1, expectedHead: "h0", revisionId: "hX" })).toBe(s);
+    const ok = editReducer(s, { type: "accepted", seq: 1, expectedHead: "h1", revisionId: "h2" });
+    expect(ok).toMatchObject({ head: "h2", pending: null, reload: true, error: null, notice: null });
+    const moved = editReducer(s, { type: "refused", seq: 1, expectedHead: "h1", code: "head_moved" });
+    expect(moved).toMatchObject({ pending: null, reload: true, notice: "head_moved" });
+    const refused = editReducer(s, { type: "refused", seq: 1, expectedHead: "h1", code: "edit_overlap" });
+    expect(refused).toMatchObject({ pending: null, reload: false, error: "edit_overlap", snapBack: s.snapBack + 1 });
+    expect(editReducer(moved, { type: "reloaded", head: "h9" })).toMatchObject({ head: "h9", reload: false, notice: "head_moved" });
+  });
+});
+
+describe("Task 22 — person rows, handles and the reason panel", () => {
+  const MULTI = { date: "2026-10-30", userId: "u-15-alex", startQ: 28 };
+  it("multi-segment bars: one segment button per segment, a divider between each pair, two edges; every handle is named", () => {
+    const h = renderBoard(ready(), "en", { initialDate: MULTI.date });
+    const bar = h.match(/<div[^>]*data-shift="2026-10-30\|u-15-alex\|28"[\s\S]*?data-shift-end="2026-10-30\|u-15-alex\|28"/)![0];
+    expect((bar.match(/data-segment="/g) ?? []).length).toBe(3);
+    expect((bar.match(/data-handle="divider"/g) ?? []).length).toBe(2);
+    expect((bar.match(/data-handle="(start|end)"/g) ?? []).length).toBe(2);
+    for (const b of h.match(/<button[^>]*data-handle="[^"]*"[^>]*>/g) ?? []) expect(b).toMatch(/aria-label="[^"]+"/);
+  });
+  it("a locked (past) day renders no handles at all", () => {
+    const h = renderBoard(ready({ today: DATES[6]! }), "en", { initialDate: MULTI.date });
+    expect(h).toMatch(/data-shift="2026-10-30\|u-15-alex\|28"/);
+    expect(h).not.toMatch(/data-handle=/);
+  });
+  it("the keyboard twin: the selected shift has −15 / +15 min buttons (44 px) for the bar, each edge and each divider", () => {
+    const h = renderBoard(ready(), "en", { initialDate: MULTI.date, initialSelected: MULTI });
+    const panel = h.match(/<section[^>]*data-section="reason"[\s\S]*?<\/section>/)![0];
+    const nudges = panel.match(/<button[^>]*data-nudge="[^"]+"[^>]*>/g) ?? [];
+    expect(nudges.length).toBe(2 * (1 + 2 + 2)); // move, start, end, two dividers × (−15, +15)
+    for (const b of nudges) { expect(b).toContain("min-h-[44px]"); expect(b).toContain("items-center"); }
+    expect(text(panel)).toContain("−15 min");
+    expect(text(panel)).toContain("+15 min");
+  });
+  it("the reason panel: why this person / shape / segment, the skill profile as bands, who else could cover, the flags — never a wage or a $", () => {
+    const h = renderBoard(ready(), "en", { initialDate: MULTI.date, initialSelected: MULTI });
+    const panel = h.match(/<section[^>]*data-section="reason"[\s\S]*?<\/section>/)![0];
+    const t = text(panel);
+    expect(t).toContain("Alex");
+    expect(t).toMatch(/Why this shift/);
+    expect(panel).toMatch(/data-reason="[a-z_]+"/);
+    expect(t).toMatch(/(Strong|Solid|Building|Starting point)/);
+    expect(t).toContain(en["schedule.board.flag.assumed_availability"]);
+    expect(panel).not.toContain("$");
+    expect(panel).not.toMatch(/wage|1900|19\.00/i);
+  });
+  it("CC chunk F GO: a fill found inside the budget shows its reason budget_fill on the board", () => {
+    const sel = { date: "2026-11-01", userId: "u-f-finn", startQ: 38 };
+    const view = ready({ today: "2026-10-26" }, "F11-budget-week-then-month");
+    const h = renderBoard(view, "en", { initialDate: sel.date, initialSelected: sel });
+    const panel = h.match(/<section[^>]*data-section="reason"[\s\S]*?<\/section>/)![0];
+    expect(panel).toContain('data-reason="budget_fill"');
+    expect(text(panel)).toContain(en["schedule.reason.budget_fill"]);
+    expect(text(renderBoard(view, "es", { initialDate: sel.date, initialSelected: sel }))).toContain(es["schedule.reason.budget_fill"]);
+  });
+  it("a refused edit names its refusal; head_moved says the view was updated", async () => {
+    const { EditNotice } = await import("@/components/schedule/PersonRow");
+    const { initialEditState } = await import("@/components/schedule/use-drag-snap-shared");
+    const r = (state: ReturnType<typeof initialEditState>, lang: "en" | "es" = "en") =>
+      renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: lang, children: createElement(EditNotice, { state }) }));
+    expect(text(r({ ...initialEditState("h"), error: "edit_overlap" }))).toContain(en["schedule.error.edit_overlap"]);
+    expect(text(r({ ...initialEditState("h"), notice: "head_moved" }))).toContain((en as Record<string, string>)["schedule.board.edit.head_moved"]!);
+    expect((en as Record<string, string>)["schedule.board.edit.head_moved"]).toBe("Someone else changed this week — your view is updated");
+    expect(text(r({ ...initialEditState("h"), notice: "head_moved" }, "es"))).toContain((es as Record<string, string>)["schedule.board.edit.head_moved"]!);
+  });
+});
+
 describe("Task 20 — the hub entry mirrors who may open the board", () => {
   it("GM, AGM, MoO and up see the Schedule card; the social media, catering and prep managers and a key holder never", async () => {
     const { adminSectionsFor } = await import("@/lib/admin/sections");

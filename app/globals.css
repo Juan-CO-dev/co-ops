@@ -85,6 +85,23 @@
   --role-key-holder:   #F59E0B;
   --role-trainer:      #EC4899;
 
+  /* Schedule board station colours (Scheduling Phase 2, chunk F) — Juan's mockup v17 station tokens, one pair per
+   * position ROLE (a fill for the bar, an edge for its border), never per position name. Text on a fill stays co-text. */
+  --co-station-prep: #DCEAF8;
+  --co-station-prep-edge: #3F73B9;
+  --co-station-prep-dish: #E1F2EE;
+  --co-station-prep-dish-edge: #277766;
+  --co-station-register: #FCE5CF;
+  --co-station-register-edge: #AA5C18;
+  --co-station-expo: #F9DDE9;
+  --co-station-expo-edge: #A34672;
+  --co-station-walk: #D9ECDD;
+  --co-station-walk-edge: #32794B;
+  --co-station-walk-online: #EAE3F8;
+  --co-station-walk-online-edge: #7150A4;
+  --co-station-line: #F5EFD9;
+  --co-station-line-edge: #7A6015;
+
   /* Direction C — warm-tinted elevation scale + card system. Shadows lean olive-
    * gold (not neutral grey) so they read intentional on the Mayo background. */
   /* --co-card-border is the `.co-card` 1px hairline ONLY and deliberately gets NO
@@ -134,6 +151,22 @@
   --color-co-success-surface: var(--co-success-surface);
   --color-co-warning-surface: var(--co-warning-surface);
   --color-co-danger-surface: var(--co-danger-surface);
+
+  /* Schedule board stations (chunk F) */
+  --color-co-station-prep: var(--co-station-prep);
+  --color-co-station-prep-edge: var(--co-station-prep-edge);
+  --color-co-station-prep-dish: var(--co-station-prep-dish);
+  --color-co-station-prep-dish-edge: var(--co-station-prep-dish-edge);
+  --color-co-station-register: var(--co-station-register);
+  --color-co-station-register-edge: var(--co-station-register-edge);
+  --color-co-station-expo: var(--co-station-expo);
+  --color-co-station-expo-edge: var(--co-station-expo-edge);
+  --color-co-station-walk: var(--co-station-walk);
+  --color-co-station-walk-edge: var(--co-station-walk-edge);
+  --color-co-station-walk-online: var(--co-station-walk-online);
+  --color-co-station-walk-online-edge: var(--co-station-walk-online-edge);
+  --color-co-station-line: var(--co-station-line);
+  --color-co-station-line-edge: var(--co-station-line-edge);
 
   /* Roles */
   --color-role-cgs: var(--role-cgs);

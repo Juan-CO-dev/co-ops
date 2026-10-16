@@ -6,24 +6,32 @@
  *
  * States: scheduling OFF for the shop ("Turn it on in schedule settings" for MoO+), NOT INSTALLED (the 503 line), and
  * READY: the week picker, banners, the live strip with the budget lines, the suggestion, the advisory, the rules badge,
- * the day tabs, the selected day (notes, gaps), and Generate / Regenerate. No email, no notification.
+ * the day tabs, the selected day (notes, gaps, the timeline with the person rows, the labor-target card, the reason
+ * panel), and Generate / Regenerate. Edits go one at a time through the stale-response reducer (`editReducer`): an answer
+ * for an older head or request is discarded; head_moved reloads the week and says so; a refusal snaps back, named.
+ * No email, no notification.
  */
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import { formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { BoardBanner, BoardView, GapLine } from "@/lib/scheduling/board-view-shared";
+import type { BoardBanner, BoardView, GapLine, ShiftView } from "@/lib/scheduling/board-view-shared";
+import type { EditOp } from "@/lib/scheduling/edit-shared";
+import type { PositionRole } from "@/lib/scheduling/structure-shared";
 import { addDays, formatQ } from "@/lib/scheduling/time-shared";
 import { BudgetSuggestion } from "./BudgetSuggestion";
 import { DayTabs } from "./DayTabs";
 import { DayTimeline } from "./DayTimeline";
 import { LaborTargetCard } from "./LaborTargetCard";
 import { MoneyStrip } from "./MoneyStrip";
+import { EditNotice, PersonRow, shiftKeyOf } from "./PersonRow";
+import { ReasonPanel } from "./ReasonPanel";
 import { RulesBadge } from "./RulesBadge";
 import { scheduleErrorKey } from "./schedule-errors";
 import { useBoardLine } from "./use-board-line";
+import { editBody, editReducer, initialEditState } from "./use-drag-snap-shared";
 
 export type BoardPageView = { state: "off"; canTurnOn: boolean; locationId?: string } | { state: "not_installed" } | ({ state: "ready" } & BoardView);
 
@@ -33,10 +41,12 @@ const BANNER_TONE: Record<BoardBanner["tone"], string> = {
   danger: "border-co-cta-text bg-co-danger-surface text-co-cta-text",
 };
 
-export function ScheduleBoard({ view, initialDate }: { view: BoardPageView; initialDate?: string }) {
+export interface SelectedShift { date: string; userId: string; startQ: number; segment?: number | null }
+
+export function ScheduleBoard({ view, initialDate, initialSelected }: { view: BoardPageView; initialDate?: string; initialSelected?: SelectedShift }) {
   if (view.state === "off") return <BoardOff canTurnOn={view.canTurnOn} locationId={view.locationId ?? null} />;
   if (view.state === "not_installed") return <BoardNotInstalled />;
-  return <ReadyBoard view={view} initialDate={initialDate} />;
+  return <ReadyBoard view={view} initialDate={initialDate ?? initialSelected?.date} initialSelected={initialSelected} />;
 }
 
 function BoardOff({ canTurnOn, locationId }: { canTurnOn: boolean; locationId: string | null }) {
@@ -77,7 +87,7 @@ function GapRow({ g, names, positions }: { g: GapLine; names: Record<string, str
   );
 }
 
-function ReadyBoard({ view, initialDate }: { view: BoardView; initialDate?: string }) {
+function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; initialDate?: string; initialSelected?: SelectedShift }) {
   const { t, language, line } = useBoardLine({ names: view.names, positions: view.positions });
   const router = useRouter();
   const post = useStepUpPost();
@@ -86,6 +96,30 @@ function ReadyBoard({ view, initialDate }: { view: BoardView; initialDate?: stri
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const day = view.days.find((d) => d.date === selected) ?? null;
+  const [picked, setPicked] = useState<{ key: string; segment: number | null } | null>(initialSelected
+    ? { key: `${initialSelected.date}|${initialSelected.userId}|${initialSelected.startQ}`, segment: initialSelected.segment ?? null } : null);
+  const head = view.week?.headRevisionId ?? "";
+  const [edit, dispatch] = useReducer(editReducer, head, initialEditState);
+  // A new head from the server (after an accepted edit, a reload, someone else's change): the during-render reset.
+  const [seenHead, setSeenHead] = useState(head);
+  if (head !== seenHead) { setSeenHead(head); dispatch({ type: "reloaded", head }); }
+  useEffect(() => { if (edit.reload) router.refresh(); }, [edit.reload, router]);
+  const roleOf = (id: string): PositionRole | "mod" => (id === "mod" ? "mod" : view.positions[id]?.role ?? "line_other");
+  const editable = !!view.week && view.perms.canEdit && !!day && !day.locked;
+  async function submitEdit(op: EditOp) {
+    if (!view.week || edit.pending) return;
+    const expectedHead = edit.head;
+    const seq = edit.seq + 1;
+    dispatch({ type: "submit" });
+    const r = await post("/api/schedule", editBody({ locationId: view.locationId, weekStart: view.weekStart, expectedHead }, op));
+    if (r.ok) {
+      const revisionId = String(((r.data as { result?: { revisionId?: string } }).result ?? {}).revisionId ?? "");
+      dispatch({ type: "accepted", seq, expectedHead, revisionId });
+    } else dispatch({ type: "refused", seq, expectedHead, code: r.code });
+  }
+  const pickedRow = day?.rows.find((r) => r.shifts.some((x) => shiftKeyOf(x) === picked?.key)) ?? null;
+  const pickedShift = pickedRow?.shifts.find((x) => shiftKeyOf(x) === picked?.key) ?? null;
+  const onSelect = (sh: ShiftView, segment: number | null) => setPicked({ key: shiftKeyOf(sh), segment });
   const weekHref = (w: string) => `/schedule?loc=${view.locationId}&week=${w}`;
 
   async function generate() {
@@ -136,7 +170,16 @@ function ReadyBoard({ view, initialDate }: { view: BoardView; initialDate?: stri
       {day ? (
         <section className="grid min-w-0 gap-2" aria-label={formatDateLabel(day.date, language)} data-day={day.date}>
           {day.notes.map((n, i) => <p key={i} className="text-sm text-co-text-muted">{line(n)}</p>)}
-          <DayTimeline day={day} names={view.names} positions={view.positions} />
+          <EditNotice state={edit} />
+          <DayTimeline key={`${day.date}|${edit.snapBack}`} day={day} names={view.names} positions={view.positions}
+            renderRows={(axis) => day.rows.map((row) => (
+              <PersonRow key={row.userId} row={row} axis={axis} editable={editable && !edit.pending} positions={view.positions} names={view.names}
+                roleOf={roleOf} selectedKey={picked?.key ?? null} onSelect={onSelect} onEdit={submitEdit} />
+            ))} />
+          {pickedRow && pickedShift ? (
+            <ReasonPanel row={pickedRow} shift={pickedShift} segment={picked?.segment ?? null} editable={editable && !pickedShift.locked && !edit.pending}
+              names={view.names} positions={view.positions} onEdit={submitEdit} />
+          ) : null}
           {day.labor ? <LaborTargetCard labor={day.labor} names={view.names} positions={view.positions} /> : null}
           {day.gaps.length > 0 ? (
             <ul className="grid gap-2" aria-label={t("schedule.board.gap.title", { n: day.gaps.length })}>
