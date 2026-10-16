@@ -1589,6 +1589,173 @@ When the Director of Operations switches PM reports v2 on for your shop, each ma
 - **Deactivate** stops a line from showing. Past grades are kept, and nothing is deleted. **Reactivate** brings it back.
 - If you cancel the password, your new line stays typed in.
 
+### The schedule board (GM)
+
+CO-OPS builds a draft of the week's schedule for you: who works, when, at which positions, with the reason for each choice. You adjust it and approve it. Nothing is sent to 7shifts yet: 7shifts stays the schedule your team sees. Nobody gets a notice when you build, edit or approve. Scheduling is off for each shop until the Director of Operations turns it on; until then the page says **Scheduling is off for this shop.**
+
+#### 1. Open the schedule (not shown)
+
+**What to do** — Tap **Admin**, then **Schedule**. Pick your shop. The arrows move between weeks.
+
+**Worth knowing**
+
+- The top shows the week at a glance: hours against the budget, labor cost and labor %, the salaried managers' cost, overtime risk and the managers' floor time.
+- An AGM sees hours and people, never dollars. The labor % and the costs are for the GM and up.
+- Until 7shifts availability syncs, the board says **Assumed from Toast punches · until availability syncs**: when someone can work is read from when they usually clock in at Toast. Someone with fewer than three weeks of punches is treated as available all day, and flagged.
+
+#### 2. Build or rebuild the week (not shown)
+
+**What to do** — Tap **Build this week**. Once a week exists, the button reads **Regenerate this week**.
+
+**Worth knowing**
+
+- Every Wednesday morning CO-OPS builds next week's draft by itself for a shop that is turned on. It never replaces a week you already have.
+- If you edited this week, **Regenerate this week** first says **You edited this week — rebuilding replaces your edits**. Tap **Keep my edits** to stop, or **Rebuild this week anyway (asks for your password)**. Cancelling the password changes nothing.
+- With no sales history yet, the week is built on the Normal crew, and the day says so.
+
+#### 3. Read a day (not shown)
+
+**What to do** — Tap a day. The timeline shows the sales curve, coverage per position (red short, amber over, green covered), the manager on duty, the closing manager and each person's shift. **Fit hours** squeezes the day onto your screen.
+
+**Worth knowing**
+
+- A gap always says why: not enough people available, the budget, the floor limit, or a gap the app could not fill. A gap the app could not fill is amber and lists who might cover it.
+- **Schedule rules: all checks pass** means every rule holds. Otherwise the badge counts the problems; tap it to see each one with the day, the person, the position and the time.
+- Past days say **Done** and can't change.
+
+#### 4. Move a shift (not shown)
+
+**What to do** — Drag a shift bar, its start or end, or the line between two positions. It moves in 15-minute steps. On the keyboard, use **−15 min** and **+15 min**.
+
+**Worth knowing**
+
+- Each change saves by itself. A change that breaks a rule is kept and shows the rule; an overlap is refused and the bar snaps back.
+- If someone else changed the week at the same time, the board says **Someone else changed this week — your view is updated** and shows their version. Make your change again.
+
+#### 5. Why this person? (not shown)
+
+**What to do** — Tap a shift. **Why this shift** gives the reasons; **Who else on shift could cover** lists the alternatives.
+
+**Worth knowing**
+
+- Skills show as words (Strong, Solid, Building, Starting point), never as numbers, and never a wage.
+
+#### 6. Approve the week (not shown)
+
+**What to do** — Tap **Approve this week**. Type your password. The board then says **Ready for 7shifts — sending comes in a later update.**
+
+**Worth knowing**
+
+- Approving asks for your password every time.
+- You can't approve while a gap the app could not fill is open. Fill it or change the week first.
+
+### Planning ahead (GM)
+
+#### 1. Build several weeks (not shown)
+
+**What to do** — Under **Plan ahead**, pick **Next week**, **The next few weeks**, **The rest of this month** or **A whole month**. Tap **Preview**. Read what changes for each week. Tap **Build these weeks**.
+
+**Worth knowing**
+
+- Nothing is saved until you tap **Build these weeks**.
+- A week you edited says **You edited this week — rebuilding replaces your edits**. Check **Rebuild this week anyway (asks for your password)** to include it; unchecked, it is skipped and named.
+- If something changed since the preview, the app says **Something changed — preview again**.
+
+### The hours budget (GM)
+
+#### 1. Set the budget (not shown)
+
+**What to do** — On the board, under **Hours budget**, pick **This week** or **The whole month**, type the **Hours** and tap **Save budget**.
+
+**Worth knowing**
+
+- With no budget at all, the board says **No budget set for this week.** with **Set one**, which jumps to this box.
+- A month budget is spread over its days by the sales forecast. The newest budget for a day wins.
+- The budget limits hourly crew hours only. Closing and prep shifts are never cut for the budget, but they still count in the cost.
+
+#### 2. The suggestion (not shown)
+
+**What to do** — When CO-OPS suggests hours for the week, read why, then tap **Accept 312 h** (your number) or **Keep my budget**.
+
+**Worth knowing**
+
+- The suggestion compares sales with an earlier finished week and names each change, like catering or new shop settings.
+
+### The labor target (GM)
+
+#### 1. Read the card (not shown)
+
+**What to do** — Each day has a **Labor target** card. It shows the math: max labor $ = forecast sales × target %, then max hours = max labor $ ÷ the average wage, then each part of the day with how many people are on and the optimal number.
+
+**Worth knowing**
+
+- The optimal number is never below the minimum crew for that part of the day.
+- **Check this day: a window has more people on than its optimal.** means a part of the day is over.
+- When the minimum crews alone cost more than the target allows, the card says so once for the day, with the numbers. Then the target can't be met without more sales or smaller minimums.
+- An AGM sees the people numbers, not the dollars.
+
+### Schedule settings (GM, Director of Operations)
+
+Scheduling is off for every shop until the Director of Operations turns it on. Set the structure with your GM first.
+
+#### 1. The schedule structure (not shown)
+
+**What to do** — On the board, tap **Schedule settings**. Open **Schedule structure**. Check the shop hours, each position's open, trim and close times, the crews, the limits and the labor target. Tap **Save**. Type your password when asked.
+
+**Worth knowing**
+
+- The password opens a 15-minute window for your changes. Cancel it and your changes stay typed in.
+- After a save the board offers to rebuild the week.
+- If the station admin changes a time later, the settings show it; nothing changes by itself.
+
+#### 2. Staff settings (not shown)
+
+**What to do** — Open **Staff settings**. Pick a person and set their work type, leader setting, the positions they prefer to cover (in order), their usual weekly hours and full-time status.
+
+#### 3. Who's in, and adding someone (not shown)
+
+**What to do** — Open **Presence and Add to schedule**. Mark when the Director of Operations or the owner is in. To put anyone on a day, pick the person, the time and the positions, and tap **Add to schedule**.
+
+**Worth knowing**
+
+- A collapsed section keeps what you typed.
+
+#### 4. Turn scheduling on (Director of Operations) (not shown)
+
+**What to do** — Open **This shop (MoO)**. Fill in the **Hourly wage estimate ($ / h)** and **Salaried managers' weekly cost ($)**. Turn on **Scheduling is on for this shop**. Choose **AGM access** (read only, or build and edit). Type your password.
+
+**Worth knowing**
+
+- Until the wage estimates are set, money on the board reads "—".
+- From then on, the Wednesday draft runs for this shop.
+
+### People across CO-OPS, Toast and 7shifts (GM)
+
+Each person has three records: their CO-OPS account, their Toast employee and their 7shifts user. This page lines them up for the last 14 days. Nothing here links people by name: you link them on the Toast employees and 7shifts pages.
+
+#### 1. Open the page (not shown)
+
+**What to do** — Tap **Admin**, then **People across CO-OPS, Toast and 7shifts**. Pick your shop. People with something to look at come first.
+
+**Worth knowing**
+
+- Each row shows three ticks: CO-OPS, Toast and 7shifts. "not linked" means the link is missing. **not connected** means 7shifts isn't connected yet.
+- Toast clock-ins that belong to nobody in CO-OPS are listed by first name. 7shifts people who aren't linked are listed with their employee number.
+
+#### 2. Fix a missing link (not shown)
+
+**What to do** — Tap the person. Tap **Open Toast employees** or **Open 7shifts links** and link them there.
+
+#### 3. Read a day (not shown)
+
+**What to do** — In the person's details, each day says what it is compared with: **Against the published 7shifts schedule**, or **Against the CO-OPS proposal (not published)**.
+
+**Worth knowing**
+
+- Only the published 7shifts schedule counts for "a shift with no punch" or "a punch with no shift". Someone who followed the published schedule is never flagged for working off the CO-OPS proposal.
+- Without a published schedule, differences are for information only, and the day says what is missing (7shifts not connected, the person not linked, nothing published).
+- When 7shifts and Toast disagree on hours by more than 15 minutes, the day says so. Toast stays the backup source of actual hours.
+
 ### En español
 
 Estos son los trabajos y páginas que usas además de los reportes diarios.
@@ -1691,3 +1858,44 @@ Cuando el Director de Operaciones activa el reporte PM v2 en tu tienda, cada ger
 4. **Envía el día (gerente de cierre).** Toca **Enviar el reporte del día**. La app muestra cuántas copias se empezaron y cuántas se terminaron. Si quieres, elige un **MVP del turno (opcional)**. Toca **Enviar y cerrar**, o **Todavía no**. Al enviar se cierran todas las copias, terminadas o no. Nadie recibe un aviso cuando envías.
 5. **Lee los resultados.** Después del envío, abre el reporte PM y toca **Por persona** o **Copias (2)**. **Por persona** muestra a cada persona y puesto, el promedio de cada línea y la calificación y el tiempo en el piso de cada gerente. El promedio pesa a cada gerente según cuánto tiempo vio a esa persona en ese puesto: quien la vio dos horas cuenta más que quien la vio diez minutos. **Se repite** muestra comentarios que vuelven a salir entre gerentes y días. Los resultados son para los gerentes de esa noche, el gerente general y roles más altos. El personal ve **Comentarios del turno por puesto** en su página de comentarios: Excelente, Bien o En progreso por línea, sin nombres, sin números y sin notas.
 6. **Cambia las líneas que califican los gerentes.** Toca **Admin** y luego **Criterios del reporte PM**. Elige tu tienda y abre un puesto. Cambia el inglés y el español y toca **Guardar**, o llena **Agregar un criterio** y toca **Agregar**. Los cambios piden tu contraseña una vez por 15 minutos. **Desactivar** deja de mostrar una línea; las calificaciones anteriores se guardan y nada se borra. **Reactivar** la trae de vuelta. Si cancelas la contraseña, tu línea nueva sigue escrita.
+
+#### El horario (gerente general)
+
+CO-OPS te arma un borrador del horario de la semana: quién trabaja, cuándo, en qué puestos y por qué. Tú lo ajustas y lo apruebas. Todavía no se envía nada a 7shifts: tu equipo sigue viendo el horario en 7shifts. Nadie recibe un aviso cuando armas, cambias o apruebas. El horario está apagado en cada tienda hasta que el Director de Operaciones lo enciende; mientras tanto la página dice **La programación de horarios está apagada para esta tienda.**
+
+1. **Abre el horario.** Toca **Admin** y luego **Horario**. Elige tu tienda; las flechas cambian de semana. Arriba ves la semana de un vistazo: horas contra el presupuesto, costo y % de mano de obra, el costo de los gerentes asalariados, el riesgo de horas extra y el tiempo en piso de los gerentes. Un AGM ve horas y personas, nunca dólares. Mientras no se sincronice la disponibilidad de 7shifts, el tablero dice **Según las marcas de Toast · hasta que se sincronice la disponibilidad**: cuándo puede trabajar alguien se toma de cuándo suele marcar en Toast; quien tiene menos de tres semanas de marcas cuenta como disponible todo el día, y se marca.
+2. **Arma o rehace la semana.** Toca **Hacer esta semana**. Cuando la semana ya existe, el botón dice **Rehacer esta semana**. Cada miércoles en la mañana CO-OPS arma solo el borrador de la próxima semana en una tienda encendida; nunca reemplaza una semana que ya tienes. Si editaste la semana, **Rehacer esta semana** primero dice **Editaste esta semana — rehacerla reemplaza tus cambios**: toca **Mantener mis cambios** para parar, o **Rehacer esta semana de todos modos (pide tu contraseña)**. Si cancelas la contraseña, no cambia nada. Sin historial de ventas, la semana se arma con el equipo Normal y el día lo dice.
+3. **Lee un día.** Toca un día. La línea de tiempo muestra la curva de ventas, la cobertura por puesto (rojo falta, ámbar sobra, verde cubierto), el gerente de turno, el gerente de cierre y el turno de cada persona. **Ajustar horas** acomoda el día en tu pantalla. Cada hueco dice por qué: no hay gente disponible, el presupuesto, el límite de piso, o un hueco que la app no pudo llenar (ámbar, con quién podría cubrirlo). **Reglas del horario: todo está bien** quiere decir que todas las reglas se cumplen; si no, toca el contador para ver cada problema con el día, la persona, el puesto y la hora. Los días pasados ya no cambian.
+4. **Mueve un turno.** Arrastra la barra de un turno, su inicio o su fin, o la línea entre dos puestos; se mueve de 15 en 15 minutos. Con el teclado usa **−15 min** y **+15 min**. Cada cambio se guarda solo. Un cambio que rompe una regla se guarda y muestra la regla; un traslape se rechaza y la barra regresa. Si alguien más cambió la semana al mismo tiempo, el tablero dice **Alguien más cambió esta semana — tu vista está actualizada** y muestra su versión: vuelve a hacer tu cambio.
+5. **¿Por qué esta persona?** Toca un turno. **Por qué este turno** da las razones; **Quién más en turno podría cubrir** muestra las opciones. Las habilidades salen como palabras, nunca como números, y nunca un salario.
+6. **Aprueba la semana.** Toca **Aprobar esta semana** y escribe tu contraseña. El tablero dice **Listo para 7shifts — el envío llega en una actualización posterior.** Aprobar pide tu contraseña cada vez. No puedes aprobar mientras haya un hueco que la app no pudo llenar.
+
+#### Planear con anticipación (gerente general)
+
+1. **Arma varias semanas.** En **Planear con anticipación**, elige **La próxima semana**, **Las próximas semanas**, **El resto de este mes** o **Un mes completo**. Toca **Vista previa**, lee qué cambia en cada semana y toca **Hacer estas semanas**. No se guarda nada antes. Una semana que editaste dice **Editaste esta semana — rehacerla reemplaza tus cambios**: marca **Rehacer esta semana de todos modos (pide tu contraseña)** para incluirla; sin marcar, se salta y se nombra. Si algo cambió desde la vista previa, la app dice **Algo cambió — vuelve a ver la vista previa**.
+
+#### El presupuesto de horas (gerente general)
+
+1. **Pon el presupuesto.** En el tablero, en **Presupuesto de horas**, elige **Esta semana** o **Todo el mes**, escribe las **Horas** y toca **Guardar presupuesto**. Sin ningún presupuesto, el tablero dice **No hay presupuesto para esta semana.** con **Ponle uno**, que te lleva a este cuadro. Un presupuesto del mes se reparte por día según el pronóstico de ventas; el presupuesto más nuevo de un día gana. El presupuesto limita solo las horas por hora del equipo: los turnos de cierre y de prep nunca se cortan por presupuesto, pero sí cuentan en el costo.
+2. **La sugerencia.** Cuando CO-OPS sugiere horas para la semana, lee por qué y toca **Aceptar 312 h** (tu número) o **Mantener mi presupuesto**. La sugerencia compara las ventas con una semana anterior terminada y nombra cada cambio, como catering o ajustes nuevos de la tienda.
+
+#### El objetivo de mano de obra (gerente general)
+
+1. **Lee la tarjeta.** Cada día tiene una tarjeta **Objetivo de mano de obra** con la cuenta: mano de obra máxima en $ = ventas pronosticadas × % objetivo; horas máximas = mano de obra máxima ÷ salario promedio; y cada parte del día con cuántas personas hay y el número óptimo. El óptimo nunca es menor que el equipo mínimo de esa parte del día. **Revisa este día: una franja tiene más personas que su óptimo.** quiere decir que una parte del día se pasa. Cuando solo los equipos mínimos ya cuestan más de lo que permite el objetivo, la tarjeta lo dice una vez para el día, con los números: no se puede cumplir sin más ventas o mínimos más chicos. Un AGM ve los números de personas, no los dólares.
+
+#### Ajustes del horario (gerente general, Director de Operaciones)
+
+El horario está apagado en todas las tiendas hasta que el Director de Operaciones lo enciende. Primero revisa la estructura con tu gerente general.
+
+1. **La estructura del horario.** En el tablero, toca **Ajustes del horario** y abre **Estructura del horario**. Revisa el horario de la tienda, la apertura, el recorte y el cierre de cada puesto, los equipos, los límites y el objetivo de mano de obra. Toca **Guardar** y escribe tu contraseña cuando la pida: abre una ventana de 15 minutos para tus cambios. Si la cancelas, tus cambios siguen escritos. Después de guardar, el tablero ofrece rehacer la semana. Si la administración de estaciones cambia una hora después, los ajustes lo muestran; nada cambia solo.
+2. **Ajustes del personal.** Abre **Ajustes del personal**, elige a una persona y pon su tipo de trabajo, su papel de líder, los puestos que prefiere cubrir (en orden), sus horas semanales usuales y si es de tiempo completo.
+3. **Quién está y agregar a alguien.** Abre **Presencia y agregar al horario**. Marca cuándo está el Director de Operaciones o el dueño. Para poner a alguien en un día, elige la persona, la hora y los puestos, y toca **Agregar al horario**. Una sección cerrada guarda lo que escribiste.
+4. **Enciende el horario (Director de Operaciones).** Abre **Esta tienda (MoO)**. Llena **Estimado de salario por hora ($ / h)** y **Costo semanal de gerentes asalariados ($)**. Enciende **La programación de horarios está activa en esta tienda** y elige el **Acceso del AGM** (solo ver, o armar y editar). Escribe tu contraseña. Mientras no haya estimados de salario, el dinero en el tablero dice "—". Desde ahí, el borrador del miércoles corre para esta tienda.
+
+#### Personas en CO-OPS, Toast y 7shifts (gerente general)
+
+Cada persona tiene tres registros: su cuenta de CO-OPS, su empleado de Toast y su usuario de 7shifts. Esta página los alinea en los últimos 14 días. Aquí nada enlaza a nadie por el nombre: tú los enlazas en las páginas de empleados de Toast y de 7shifts.
+
+1. **Abre la página.** Toca **Admin** y luego **Personas en CO-OPS, Toast y 7shifts**. Elige tu tienda; primero salen las personas con algo por revisar. Cada fila muestra tres marcas: CO-OPS, Toast y 7shifts. "sin enlazar" quiere decir que falta el enlace; **sin conectar** quiere decir que 7shifts aún no está conectado. Los marcajes de Toast que no son de nadie en CO-OPS salen con el nombre de pila; las personas de 7shifts sin enlazar salen con su número de empleado.
+2. **Arregla un enlace que falta.** Toca a la persona y luego **Abrir empleados de Toast** o **Abrir enlaces de 7shifts**, y enlázala ahí.
+3. **Lee un día.** En los detalles de la persona, cada día dice contra qué se compara: **Contra el horario publicado en 7shifts**, o **Contra la propuesta de CO-OPS (no publicada)**. Solo el horario publicado en 7shifts cuenta para "un turno sin marcaje" o "un marcaje sin turno": a quien siguió el horario publicado nunca se le marca por no seguir la propuesta de CO-OPS. Sin horario publicado, las diferencias son solo información y el día dice qué falta (7shifts sin conectar, la persona sin enlazar, nada publicado). Cuando 7shifts y Toast no coinciden en las horas por más de 15 minutos, el día lo dice: Toast sigue siendo la fuente de respaldo de las horas reales.
