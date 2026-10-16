@@ -83,3 +83,11 @@ scripts/guide-test/__pycache__/
 
 # Local scratch (shop-versions snapshot export, catalog Phase 2a)
 tmp/
+# Landing browser and performance output
+/test-results/
+/playwright-report/
+/.lighthouseci/
+/.npm-cache/
+/tmp-landing-*.log
+!/.env.example
+/tmp-landing-server-pids.json

@@ -12,7 +12,10 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "secrets:generate": "powershell -ExecutionPolicy Bypass -File scripts/generate-secrets.ps1",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:links": "tsx tests/live/landing-links.probe.ts",
+    "perf:ci": "npx --yes --package=@lhci/cli@0.15.1 lhci autorun"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",
@@ -45,6 +48,7 @@
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "axe-core": "4.11.3"
   }
 }

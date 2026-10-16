@@ -1,0 +1,72 @@
+name: Landing checks
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      landing: ${{ steps.paths.outputs.landing }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: paths
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-paths.txt
+          if grep -Eq '^(app/(eat|api/landing)/|components/(landing|portal)/|lib/(landing|i18n)/|config/tenant/|supabase/migrations/.*landing|public/(media|brand)/|app/(layout.tsx|globals.css)|proxy.ts|instrumentation.ts|lib/security-headers.ts|next.config.ts|package(-lock)?.json|tests/(landing|e2e/landing|live)/|tests/(security-headers|sim-isolation).test.ts|scripts/landing/|playwright.config.ts|lighthouserc.cjs|.github/workflows/landing-checks.yml)' changed-paths.txt; then
+            echo 'landing=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'landing=false' >> "$GITHUB_OUTPUT"
+          fi
+  landing:
+    needs: changes
+    if: needs.changes.outputs.landing == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit --incremental false
+      - run: npx vitest run tests/landing tests/security-headers.test.ts tests/sim-isolation.test.ts --pool=threads --no-cache --maxWorkers=3
+      - run: node --experimental-strip-types scripts/landing/order-click-sql-check.ts
+      - run: npx playwright install --with-deps chromium webkit
+      # webServer builds without landing env and starts both enabled and disabled hosts.
+      - run: npm run test:e2e
+      - run: npm run perf:ci
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: landing-reports
+          path: |
+            playwright-report/
+            test-results/
+            .lighthouseci/
+          if-no-files-found: ignore
+  landing-gate:
+    name: landing-gate
+    needs: [changes, landing]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          DETECTION: ${{ needs.changes.result }}
+          CHANGED: ${{ needs.changes.outputs.landing }}
+          CHECKS: ${{ needs.landing.result }}
+        run: |
+          test "$DETECTION" = success
+          if test "$CHANGED" = true; then
+            test "$CHECKS" = success
+          else
+            test "$CHANGED" = false
+            test "$CHECKS" = skipped
+          fi

@@ -1,0 +1,86 @@
+export type LandingAction = 'OrderClick' | 'CateringClick' | 'Lead';
+export interface ActionDetails { store?: string; ad?: string; placement: string; vendor?: string; fbc?: string; fbp?: string }
+export interface TrackerConfig { serverApproved: boolean; pixelId?: string; capiEnabled?: boolean; sourceUrl: string; allowedStores: readonly string[]; allowedAds: readonly string[]; allowedPlacements: readonly string[] }
+export interface TrackingTransport {
+  loadPixel(id: string): void;
+  revokePixel(): void;
+  grantPixel?(): void;
+  pixel(method: 'track' | 'trackCustom', name: string, params: Record<string,string>, id: string): void;
+  post(path: string, payload: Record<string, unknown>): void;
+  uuid(): string;
+  now(): number;
+}
+/** In-memory consented page lifetime, independently testable without browser globals. */
+export function createLandingTracker(config: TrackerConfig, transport: TrackingTransport) {
+  let consent = false, pixelLoaded = false, pageSent = false;
+  const sections = new Set<string>();
+  const hasPixel = !!config.pixelId && /^\d{1,32}$/.test(config.pixelId);
+  const safe = (action: () => void) => { try { action(); } catch { /* Analytics never affects a native action. */ } };
+  return {
+    setConsent(allowed: boolean) {
+      const next = config.serverApproved && allowed;
+      if (!consent && next && pixelLoaded) safe(() => transport.grantPixel?.());
+      if (consent && !next && pixelLoaded) safe(() => transport.revokePixel());
+      consent = next;
+      if (consent && hasPixel && !pixelLoaded) { pixelLoaded = true; safe(() => transport.loadPixel(config.pixelId!)); }
+    },
+    pageView() {
+      if (!consent || !hasPixel || pageSent) return;
+      pageSent = true; safe(() => transport.pixel('track','PageView',{},transport.uuid()));
+    },
+    sectionView(section: string) {
+      if (!consent || !hasPixel || sections.has(section) || !/^[a-z-]{1,40}$/.test(section)) return;
+      sections.add(section); safe(() => transport.pixel('track','ViewContent',{content_name:section},transport.uuid()));
+    },
+    dispatch(name: LandingAction, details: ActionDetails) {
+      if (!consent || !['OrderClick','CateringClick','Lead'].includes(name) || !config.allowedPlacements.includes(details.placement)) return;
+      if (details.store && !config.allowedStores.includes(details.store)) return;
+      if (name === 'OrderClick' && !details.store && !details.vendor) return;
+      const ad = details.ad && config.allowedAds.includes(details.ad) ? details.ad : 'unattributed';
+      const params: Record<string,string> = {ad,placement:details.placement};
+      if (details.store) params.store = details.store;
+      if (details.vendor) { if (name !== 'OrderClick' || details.placement !== 'footer' || !['ubereats','doordash'].includes(details.vendor)) return; params.vendor = details.vendor; }
+      const id = transport.uuid();
+      if (hasPixel) safe(() => transport.pixel(name === 'Lead' ? 'track' : 'trackCustom',name,params,id));
+      if (config.capiEnabled) {
+        const payload: Record<string,unknown> = {event_name:name,event_id:id,event_time:Math.floor(transport.now()/1000),consent:'accepted',source_url:config.sourceUrl,...params};
+        if (details.fbc && /^fb\.1\.\d{1,16}\.[A-Za-z0-9_-]{1,500}$/.test(details.fbc)) payload.fbc=details.fbc;
+        if (details.fbp && /^fb\.1\.\d{1,16}\.\d{1,30}$/.test(details.fbp)) payload.fbp=details.fbp;
+        safe(() => transport.post('/api/landing/events',payload));
+      }
+      if (name === 'OrderClick' && details.store && !details.vendor) safe(() => transport.post('/api/landing/order-click',{store:details.store,ad}));
+    },
+  };
+}
+
+type Pixel = ((...args: unknown[]) => void) & { queue?: unknown[][]; callMethod?: (...args:unknown[])=>void; push?: Pixel; loaded?: boolean; version?: string };
+declare global { interface Window { fbq?: Pixel; _fbq?: Pixel } }
+export function browserTransport(): TrackingTransport {
+  let configuredPixelId:string|undefined;
+  return {
+    loadPixel(id) {
+      configuredPixelId=id;
+      if (!window.fbq) {
+        const pixel: Pixel = (...args) => { if (pixel.callMethod) pixel.callMethod(...args); else pixel.queue?.push(args); };
+        pixel.queue=[]; pixel.push=pixel; pixel.loaded=true; pixel.version='2.0'; window.fbq=pixel; window._fbq=pixel;
+      }
+      window.fbq('consent','grant'); window.fbq('set','autoConfig',false,id); window.fbq('init',id);
+      if (!document.getElementById('landing-meta-pixel')) {
+        const script=document.createElement('script'); script.id='landing-meta-pixel'; script.async=true; script.src='https://connect.facebook.net/en_US/fbevents.js'; document.head.appendChild(script);
+      }
+    },
+    revokePixel() { if(window.fbq?.queue) window.fbq.queue.length=0; window.fbq?.('consent','revoke'); },
+    grantPixel() {
+      window.fbq?.('consent','grant');
+      // Withdrawal drops queued events while a blocked/slow SDK is still loading.
+      // Re-establish initialization if that queue was discarded before SDK execution.
+      if(configuredPixelId && window.fbq && !window.fbq.callMethod) {
+        window.fbq('set','autoConfig',false,configuredPixelId);
+        window.fbq('init',configuredPixelId);
+      }
+    },
+    pixel(method,name,params,id) { window.fbq?.(method,name,params,{eventID:id}); },
+    post(path,payload) { void fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),credentials:'same-origin',keepalive:true}).catch(()=>{}); },
+    uuid:()=>crypto.randomUUID(), now:()=>Date.now(),
+  };
+}
