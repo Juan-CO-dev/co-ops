@@ -45,6 +45,8 @@
     { "name": "line minimum on an unknown position", "base": "shop", "set": { "crews.slow.lineMinHeads.nope": 0 }, "valid": false, "key": "crews.slow.lineMinHeads.nope" },
     { "name": "the wave profile under its floor after a trim to 0", "base": "shop", "set": { "positions.$REG.headsAfter": 0, "positions.$EXPO.headsAfter": 0, "positions.$WALK.headsBefore": 0 }, "valid": false, "key": "crews.slow.waveProfile@16:00" },
     { "name": "a trim to 0 on a position with no floor", "base": "shop", "set": { "positions.$EXPO.headsAfter": 0 }, "valid": true },
+    { "name": "waves above the line capacity are clamped to it (the v17 defaults do this), valid", "base": "shop", "set": { "crews.busy.waves.rush.heads": 8, "crews.busy.waves.setup.heads": 8 }, "valid": true },
+    { "name": "zero waves: the floor is the target, valid", "base": "shop", "set": { "crews.normal.waves.setup.heads": 0, "crews.normal.waves.service.heads": 0, "crews.normal.waves.rush.heads": 0 }, "valid": true },
 
     { "name": "a priority pair of the same position", "base": "shop", "set": { "priority.1.pair": ["$REG", "$REG"] }, "valid": false, "key": "priority.1.pair" },
     { "name": "a priority pair naming an unknown position", "base": "shop", "set": { "priority.1.pair": ["$REG", "nope"] }, "valid": false, "key": "priority.1.pair" },
@@ -80,7 +82,7 @@
 
     { "name": "an unknown excluded role", "base": "defaults", "set": { "roster.excludedRoles": ["cgs", "intern"] }, "valid": false, "key": "roster.excludedRoles" },
 
-    { "name": "INFEASIBLE: heads on a window shorter than the minimum shift", "base": "shop", "set": { "positions.$BOI.openQ": 52 }, "valid": true, "infeasible": true },
+    { "name": "a window shorter than the minimum shift is VALID and FEASIBLE: the minimum applies to the whole shift, so it is filled as a segment of a multi-position shift (Astra chunk A P2-4)", "base": "shop", "set": { "positions.$BOI.openQ": 52 }, "valid": true },
     { "name": "INFEASIBLE: a secondary open while its primary's window is closed", "base": "shop", "set": { "positions.$EXPO.closeQ": 84, "positions.$REG.trimQ": 64, "positions.$REG.closeQ": 64 }, "valid": true, "infeasible": true }
   ]
 }

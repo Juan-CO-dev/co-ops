@@ -189,18 +189,87 @@ export function lineBounds(s: ScheduleStructure, dayType: CrewType): { minHeads:
   return { minHeads, maxHeads };
 }
 
+/** Line position ids in the canonical order every placement uses: primaries (not a pair's secondary) by id, then secondaries by id. */
+export function lineOrder(s: ScheduleStructure): string[] {
+  const line = positionIds(s).filter((id) => isLineRole(s.positions[id]!.role));
+  return [...line.filter((id) => !isSecondary(s, id)), ...line.filter((id) => isSecondary(s, id))];
+}
+
 /**
- * THE WAVE PROFILE W_q (plan step 3a): the line heads per quarter that the structure's templates
- * produce — r1's need grid, the mockup's `templatesFor`. Those templates are the closing crew, the
- * setup / service / rush waves, AND the per-position head-count fill ("every station head-count is a
- * rule, even when a wave alone cannot fill it"); the fill brings every open line position up to its
- * head limit over [open, trim) and [trim, close), and the need grid caps every position at that
- * limit. So, in closed form, W_q = Σ over line positions open at q of their head limit — the waves
- * decide WHO arrives WHEN (chunk B's templates), not how many heads the line carries. (Reported to CC
- * as a chunk A finding; the generator's templates may refine the arrival order, never this total.)
+ * Who closes on the walk side: the walk pair's primary (a pair whose members are both walk roles), else
+ * the first `walk_online` position; and the other walk-role positions, in id order. By id, never by name.
+ */
+export function walkClosers(s: ScheduleStructure): { primary: string | null; others: string[] } {
+  const isWalk = (id: string) => ["walk", "walk_online"].includes(s.positions[id]?.role ?? "");
+  const walkPair = s.priority.find((p) => p.pair.every(isWalk));
+  const line = lineOrder(s);
+  const primary = walkPair?.primary ?? line.find((id) => s.positions[id]!.role === "walk_online") ?? null;
+  return { primary, others: line.filter((id) => isWalk(id) && id !== primary) };
+}
+
+export type WaveSource = "closing_crew" | "setup" | "service" | "rush";
+export interface WaveSlot { positionId: string; fromQ: number; toQ: number; source: WaveSource }
+
+/**
+ * THE CONFIGURED WAVES, PLACED (CC's W ruling 2026-10-16; Astra chunk A P2-6): the mockup's
+ * `templatesFor` WITHOUT its head-count fill. In order: (1) the closing crew is reserved first —
+ * register heads, the walk pair's primary (min 1), the other walk position (the rest), primaries before
+ * secondaries, each from max(trim, service start) to its close, capped at `headsAfter`; (2) the setup,
+ * service and rush waves, each head on the MOST DEFICIENT open line position at the wave time (head
+ * limit at that time minus heads already placed; ties in canonical line order), ending at that
+ * position's TRIM — the mockup's rule for a wave head. The fill ("every station head-count is a rule")
+ * is gone: it was a mockup display convenience, not a staffing rule.
+ */
+export function waveSlots(s: ScheduleStructure, dayType: CrewType): WaveSlot[] {
+  const crew = s.crews[dayType];
+  const order = lineOrder(s);
+  const { serviceStartQ } = s.shopDay;
+  const slots: WaveSlot[] = [];
+  const walk = walkClosers(s);
+  for (const id of order) {
+    const p = s.positions[id]!;
+    let n = 0;
+    if (p.role === "register") n = crew.close.registerHeads;
+    else if (id === walk.primary) n = Math.min(1, crew.close.walkHeads);
+    else if (walk.others[0] === id) n = Math.max(0, crew.close.walkHeads - 1);
+    n = Math.min(n, p.headsAfter);
+    const from = Math.max(p.trimQ, serviceStartQ);
+    for (let i = 0; i < n && p.closeQ > from; i++) slots.push({ positionId: id, fromQ: from, toQ: p.closeQ, source: "closing_crew" });
+  }
+  const waves: Array<[WaveSource, number, number]> = [
+    ["setup", crew.waves.setup.heads, crew.waves.setup.atQ], ["service", crew.waves.service.heads, serviceStartQ], ["rush", crew.waves.rush.heads, crew.waves.rush.atQ],
+  ];
+  for (const [source, heads, a] of waves) {
+    for (let i = 0; i < heads; i++) {
+      let best: { id: string; deficit: number; b: number } | null = null;
+      for (const id of order) {
+        const p = s.positions[id]!;
+        const b = Math.min(p.trimQ, p.closeQ);
+        const limit = positionLimit(p, a);
+        if (b <= a || limit <= 0) continue;
+        const assigned = slots.filter((x) => x.positionId === id && x.fromQ <= a && x.toQ > a).length;
+        if (!best || limit - assigned > best.deficit) best = { id, deficit: limit - assigned, b };
+      }
+      if (best) slots.push({ positionId: best.id, fromQ: a, toQ: best.b, source });
+    }
+  }
+  return slots;
+}
+
+/**
+ * THE WAVE PROFILE W_q (plan step 3a): the line heads per quarter the configured waves and the closing
+ * crew produce (`waveSlots`), over the SERVICE period (before service close; 0 after it), clamped into
+ * [minHeads(q), maxHeads(q)] — the target can never exceed the positions' capacity nor fall below the
+ * floor (zero waves target the minimum crew; the v17 defaults ask more heads than positions and are
+ * capped). The structure validator therefore refuses only a floor above the capacity.
  */
 export function waveProfile(s: ScheduleStructure, dayType: CrewType): number[] {
-  return lineBounds(s, dayType).maxHeads;
+  const { minHeads, maxHeads } = lineBounds(s, dayType);
+  const end = s.shopDay.serviceCloseQ;
+  const w = new Array<number>(Q_PER_DAY).fill(0);
+  for (const slot of waveSlots(s, dayType)) for (let q = slot.fromQ; q < Math.min(slot.toQ, end, Q_PER_DAY); q++) w[q]!++;
+  for (let q = 0; q < Q_PER_DAY; q++) w[q] = q < end ? Math.min(maxHeads[q]!, Math.max(minHeads[q]!, w[q]!)) : 0;
+  return w;
 }
 
 // ─── The validator ───────────────────────────────────────────────────────────
@@ -408,12 +477,16 @@ function checkRoster(v: unknown): Problem {
   return checkRoleList(v.excludedRoles, "roster.excludedRoles");
 }
 
-/** r3: for every day type, minHeads(q) ≤ W_q ≤ maxHeads(q) at every quarter (the flat-curve precondition). */
+/**
+ * r3: for every day type, minHeads(q) ≤ W_q ≤ maxHeads(q) at every quarter of the service period (the
+ * flat-curve precondition). W is clamped into those bounds, so this fails exactly when the floor exceeds
+ * the capacity somewhere (a `lineMinHeads` floor on a position trimmed to 0 heads).
+ */
 function checkWaveBounds(s: ScheduleStructure): Problem {
   for (const t of CREW_TYPES) {
     const { minHeads, maxHeads } = lineBounds(s, t);
     const w = waveProfile(s, t);
-    for (let q = 0; q < Q_PER_DAY; q++) {
+    for (let q = 0; q < s.shopDay.serviceCloseQ; q++) {
       if (w[q]! < minHeads[q]! || w[q]! > maxHeads[q]!) return `crews.${t}.waveProfile@${qToWall(q)}`;
     }
   }

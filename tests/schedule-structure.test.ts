@@ -10,7 +10,7 @@ import {
 } from "../scripts/schedule-structure-cases.mjs";
 import {
   SCHEDULE_STRUCTURE_DEFAULTS, checklistFits, crewFor, lineBounds, positionLimit, primaryOf, scheduledOut,
-  secondaryOf, structureFromStations, structureProblem, validScheduleStructure, waveProfile, type ScheduleStructure,
+  secondaryOf, structureFromStations, structureProblem, validScheduleStructure, waveProfile, waveSlots, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
 
 interface StructureCase { name: string; valid: boolean; infeasible?: boolean; key?: string }
@@ -41,7 +41,7 @@ describe("the shared structure case file against validScheduleStructure", () => 
       expect(names).toContain(n);
     }
     expect(cases.filter((c) => c.valid).length).toBeGreaterThan(10);
-    expect(cases.filter((c) => c.infeasible && c.valid).length).toBe(2);
+    expect(cases.filter((c) => c.infeasible && c.valid).length).toBe(1);
   });
 
   for (const c of cases) {
@@ -106,10 +106,42 @@ describe("crews, the shop day, the line bounds", () => {
     // 7:00: no line position open.
     expect(b.maxHeads[28]).toBe(0);
     const w = waveProfile(s, "normal");
-    for (let q = 0; q < 96; q++) {
+    for (let q = 0; q < s.shopDay.serviceCloseQ; q++) {
       expect(w[q]).toBeGreaterThanOrEqual(b.minHeads[q]!);
       expect(w[q]).toBeLessThanOrEqual(b.maxHeads[q]!);
     }
+  });
+
+  it("Astra P2-6 / the W ruling: W is the configured waves placed as the mockup places them (no head-count fill), clamped to [floor, capacity] over the service period", () => {
+    // Zero waves → W is the floor (plus the closers from their trim), never the capacity: 10:30–16:00 reads 4, not 6.
+    const none = structuredClone(s);
+    for (const k of ["setup", "service", "rush"] as const) none.crews.normal.waves[k].heads = 0;
+    const b = lineBounds(none, "normal");
+    const w0 = waveProfile(none, "normal");
+    for (let q = 0; q < 64; q++) expect(w0[q]).toBe(b.minHeads[q]!);
+    expect([w0[46], b.maxHeads[46], w0[70], w0[80]]).toEqual([4, 6, 3, 0]);
+    expect(validScheduleStructure(none)).toEqual({ ok: true });
+    // Zero waves AND no closing crew → exactly the floor over the whole service period.
+    none.crews.normal.close = { registerHeads: 0, walkHeads: 0, prepDishHeads: 0 };
+    const bare = waveProfile(none, "normal");
+    for (let q = 0; q < 96; q++) expect(bare[q]).toBe(q < none.shopDay.serviceCloseQ ? b.minHeads[q]! : 0);
+    // The v17 normal crew (setup 2 @ 9:30, service 3 @ 10:30, rush 3 @ 11:30; closers register @ 16:00, walk pair @ 17:00):
+    //   9:30 setup → Crunchy Boi, 3rd Party (2) · 10:30 service → Register, Walk-ins / Online, Walk-ins (5) · 11:30 rush → Expeditor,
+    //   then 2nd heads on Register and Walk-ins / Online (raw 8, capacity 6 → 6) · 14:00 Boi closes (raw 7, cap 5 → 5) · 15:30 3rd
+    //   Party closes (raw 6, cap 4 → 4) · 16:00 the wave heads on Register / Expeditor end at the trim, the register closer starts
+    //   (raw 4) · 17:00 the Walk-ins / Online wave heads end, the walk-pair closers start (raw 3: Register, Walk-ins / Online, Walk-ins).
+    const w = waveProfile(s, "normal");
+    expect([38, 42, 46, 56, 62, 64, 68, 79, 80].map((q) => w[q])).toEqual([2, 5, 6, 5, 4, 4, 3, 3, 0]);
+    const slots = waveSlots(s, "normal");
+    expect(slots.filter((x) => x.source === "closing_crew").map((x) => [x.positionId, x.fromQ, x.toQ])).toEqual([[I.$REG, 64, 84], [I.$WALKON, 68, 84], [I.$WALK, 68, 84]]);
+    expect(slots.filter((x) => x.source === "setup").map((x) => x.positionId)).toEqual([I.$BOI, I.$THIRD]);
+    expect(slots.filter((x) => x.source === "service").map((x) => x.positionId)).toEqual([I.$REG, I.$WALKON, I.$WALK]);
+    expect(slots.filter((x) => x.source === "rush").map((x) => x.positionId)).toEqual([I.$EXPO, I.$REG, I.$WALKON]);
+    // Waves far above the capacity are clamped, never refused (the mockup's busy crew asks 10 heads of 6 positions).
+    const over = structuredClone(s);
+    over.crews.busy.waves.setup.heads = 8;
+    expect(validScheduleStructure(over)).toEqual({ ok: true });
+    expect(waveProfile(over, "busy")[46]).toBe(lineBounds(over, "busy").maxHeads[46]);
   });
 });
 

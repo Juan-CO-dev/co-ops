@@ -50,7 +50,12 @@ export interface FloorLimitCertificate { managerIds: string[]; floorHoursUsed: R
 export interface EligibilityCertificate { positionId: string | null; eligibleCount: 0 }
 export interface AvailabilityCertificate { eligibleIds: string[]; unavailableIds: string[] }
 export interface CapacityCertificate { fromQ: number; toQ: number; positionIds: string[]; requiredHeads: number; peopleIds: string[]; people: number; shortBy: number }
-export type StructureRule = "window_shorter_than_minimum" | "primary_window_closed" | "no_mod_member" | "no_closing_role";
+/**
+ * The configuration itself makes the need impossible. A position window shorter than the minimum shift is
+ * NOT one of them (Astra chunk A P2-4): the minimum applies to the whole SHIFT, and a short window is
+ * filled as a segment of a multi-position shift.
+ */
+export type StructureRule = "primary_window_closed" | "no_mod_member" | "no_closing_role";
 export interface StructureCertificate { rule: StructureRule; detail: Record<string, string | number> }
 export interface UnresolvedSearchCertificate {
   searched: { steps: number; donorsTried: number; chainDepth: number };
@@ -85,6 +90,8 @@ export const RULE_CODES = {
   closing_manager_role: "error",
   leader_setting: "error",
   closing_manager_setting: "error",
+  /** Astra chunk A P1: the Closing Manager flag on a shift that does not cover service close → everyone out. */
+  closing_manager_not_closing: "error",
   secondary_without_primary: "error",
   cover_outside_preferences: "error",
   segments_malformed: "error",
@@ -194,12 +201,27 @@ function closingManagerRequired(day: DayContext): boolean {
   return false;
 }
 
-/** One date's coverage, computed once: heads per position per quarter, managers on the clock, the Closing Manager. */
-interface DayCoverage { byPosition: Map<string, number[]>; managers: number[]; closingManager: boolean; closingRequired: boolean }
+/** Does this shift cover the whole closing window (service close → everyone out)? The Closing Manager's shift must. */
+export function coversClosingWindow(sh: Pick<Shift, "startQ" | "endQ">, day: Pick<DayContext, "structure" | "scheduledOutQ">): boolean {
+  return sh.startQ <= day.structure.shopDay.serviceCloseQ && sh.endQ >= day.scheduledOutQ;
+}
+
+/** May this person carry the Closing Manager role at all (an allowed closing role whose setting is not opens-only)? */
+export function closingManagerEligible(p: RulePerson, s: ScheduleStructure): boolean {
+  return p.activeMember && !p.presenceOnly && s.leadership.closingRoles.includes(p.role) && leaderSettingOf(p, s) !== "opens";
+}
+
+/**
+ * One date's coverage, computed once: heads per position per quarter, managers on the clock, and the
+ * quarters an ELIGIBLE flagged Closing Manager is actually on the clock (Astra chunk A P1: the flag on a
+ * shift that leaves before closing covers nothing).
+ */
+interface DayCoverage { byPosition: Map<string, number[]>; managers: number[]; closingManagerAt: Uint8Array; closingRequired: boolean }
 
 function dayCoverage(shifts: readonly Shift[], day: DayContext, ctx: RuleContext): DayCoverage {
   const byPosition = new Map<string, number[]>();
   const managers = new Array<number>(96).fill(0);
+  const closingManagerAt = new Uint8Array(96);
   for (const sh of shifts) {
     const p = ctx.people[sh.userId];
     const onClock = new Set<number>();
@@ -209,8 +231,9 @@ function dayCoverage(shifts: readonly Shift[], day: DayContext, ctx: RuleContext
       for (let q = Math.max(0, g.startQ); q < Math.min(96, g.endQ); q++) { arr[q]!++; onClock.add(q); }
     }
     if (p && isManagerRole(p.role)) for (const q of onClock) managers[q]!++;
+    if (sh.closingManager && p && closingManagerEligible(p, day.structure)) for (const q of onClock) closingManagerAt[q] = 1;
   }
-  return { byPosition, managers, closingManager: shifts.some((sh) => sh.closingManager), closingRequired: closingManagerRequired(day) };
+  return { byPosition, managers, closingManagerAt, closingRequired: closingManagerRequired(day) };
 }
 
 /** The heads still uncovered at q for one gap kind. */
@@ -225,7 +248,7 @@ function uncoveredFrom(cov: DayCoverage, code: GapCode, positionId: string | nul
     return (cov.managers[q] ?? 0) === 0 ? 1 : 0;
   }
   if (!cov.closingRequired || q < day.structure.shopDay.serviceCloseQ || q >= day.scheduledOutQ) return 0;
-  return cov.closingManager ? 0 : 1;
+  return cov.closingManagerAt[q] ? 0 : 1;
 }
 
 /** Non-mod ("floor") hours of a person over the whole week, inherited days included. */
@@ -235,11 +258,49 @@ function floorHours(s: WeekSchedule, userId: string): number {
   return q / 4;
 }
 
-/** Is the person free for a cover over [fromQ, toQ) on `date`? Hourly: no shift that day. Salaried: no floor segment then. */
-function freeFor(p: RulePerson, s: WeekSchedule, date: string, fromQ: number, toQ: number): boolean {
+/** The leader open / close setting allows a shift spanning [fromQ, toQ)? (opens: ends before service close; closes: starts at or after service start) */
+export function leaderSettingAllows(p: RulePerson, s: ScheduleStructure, fromQ: number, toQ: number): boolean {
+  if (!LEADER_ROLES.includes(p.role)) return true;
+  const setting = leaderSettingOf(p, s);
+  if (setting === "opens") return toQ < s.shopDay.serviceCloseQ;
+  if (setting === "closes") return fromQ >= s.shopDay.serviceStartQ;
+  return true;
+}
+
+/**
+ * Astra chunk A P1 (floor_limit): an hourly person with a shift that day is still FREE for a window when
+ * that shift can be EXTENDED over it — no overlap with the window, the merged span inside the shop day,
+ * their availability and their leader setting, and room (under the head limit) on the gap's position over
+ * any quarters bridging the shift and the window. A window INSIDE the shift (they are on another position
+ * then) is not an extension: that is the repair search's business.
+ */
+export function shiftExtendsOver(
+  p: RulePerson, sh: Pick<Shift, "startQ" | "endQ">, day: DayContext, date: string, fromQ: number, toQ: number,
+  roomAt: (q: number) => boolean,
+): boolean {
+  if (sh.endQ > fromQ && sh.startQ < toQ) return false;
+  const spanFrom = Math.min(sh.startQ, fromQ);
+  const spanTo = Math.max(sh.endQ, toQ);
+  const shop = shopWindow(day);
+  if (spanFrom < shop.fromQ || spanTo > shop.toQ) return false;
+  if (!availableOn(p, date, spanFrom, spanTo) || !leaderSettingAllows(p, day.structure, spanFrom, spanTo)) return false;
+  const [bridgeFrom, bridgeTo] = sh.endQ <= fromQ ? [sh.endQ, fromQ] : [toQ, sh.startQ];
+  for (let q = bridgeFrom; q < bridgeTo; q++) if (!roomAt(q)) return false;
+  return true;
+}
+
+/**
+ * Is the person free for a cover over [fromQ, toQ) on `date`? Hourly: no shift that day, OR a shift that
+ * day that extends over the window (above). Salaried: no floor segment then.
+ */
+function freeFor(p: RulePerson, s: WeekSchedule, date: string, fromQ: number, toQ: number, day: DayContext, positionId: string | null): boolean {
   const own = s.shifts.filter((sh) => sh.date === date && sh.userId === p.userId);
-  if (isHourly(p)) return own.length === 0;
-  return !own.some((sh) => sh.segments.some((g) => g.positionId !== MOD && g.startQ < toQ && g.endQ > fromQ));
+  if (!isHourly(p)) return !own.some((sh) => sh.segments.some((g) => g.positionId !== MOD && g.startQ < toQ && g.endQ > fromQ));
+  if (own.length === 0) return true;
+  const pos = positionId ? day.structure.positions[positionId] : undefined;
+  const occupied = (q: number) => shiftsOn(s, date).reduce((n, sh) => n + (sh.segments.some((g) => g.positionId === positionId && g.startQ <= q && g.endQ > q) ? 1 : 0), 0);
+  const roomAt = (q: number) => (pos ? occupied(q) < positionLimit(pos, q) : true);
+  return own.some((sh) => shiftExtendsOver(p, sh, day, date, fromQ, toQ, roomAt));
 }
 
 // ─── Budget arithmetic (r3 per-DATE budgets) ─────────────────────────────────
@@ -263,15 +324,22 @@ function budgetFacts(s: WeekSchedule, ctx: RuleContext) {
   return { budgetedDates, budgetHours, usedHours: usedQ / 4, essentialHours: essentialQ / 4, datesWithHourly: lastHourlyDate };
 }
 
+/**
+ * May budget excuse this deficit at all? Never for the MoD or the Closing Manager, and never for a coverage
+ * deficit that intersects the closing window: its fill is a shift working the closing window, which the
+ * essential-hours rule exempts from the budget (Astra chunk A P1).
+ */
+function budgetMayExcuse(g: GapSubject, ctx: RuleContext): boolean {
+  if (g.code !== "coverage_gap") return false;
+  const cw = ctx.closingWindowByDate[g.date];
+  return !cw || g.toQ <= cw.fromQ || g.fromQ >= cw.toQ;
+}
+
 // ─── Structure infeasibility (the `structure` cause) ─────────────────────────
 
 function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly RulePerson[]): Array<{ rule: StructureRule; detail: Record<string, string | number> }> {
   const out: Array<{ rule: StructureRule; detail: Record<string, string | number> }> = [];
   if (g.code === "coverage_gap" && g.positionId) {
-    const pos = st.positions[g.positionId];
-    if (pos && pos.closeQ - pos.openQ < st.limits.minimumShiftQ) {
-      out.push({ rule: "window_shorter_than_minimum", detail: { positionId: g.positionId, windowQ: pos.closeQ - pos.openQ, minimumShiftQ: st.limits.minimumShiftQ } });
-    }
     const primary = primaryOf(st, g.positionId);
     const pp = primary && primary !== g.positionId ? st.positions[primary] : undefined;
     if (pp && g.toQ > g.fromQ) {
@@ -290,9 +358,9 @@ function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly R
 }
 
 /**
- * The configuration itself makes the need impossible: heads on a position whose window is shorter
- * than the minimum shift; a priority secondary needed while its primary's window is closed; the MoD
- * required with no SL+ member (needs `roster`); a Closing Manager with no member able to close.
+ * The configuration itself makes the need impossible: a priority secondary needed while its primary's
+ * window is closed; the MoD required with no SL+ member (needs `roster`); a Closing Manager with no
+ * member able to close. (A short position window is NOT infeasible: Astra chunk A P2-4.)
  */
 export function structureInfeasible(structure: ScheduleStructure, date: string, g: GapSubject, roster: readonly RulePerson[] = []): boolean {
   void date;
@@ -379,6 +447,9 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
   const st = day.structure;
   switch (g.cause) {
     case "budget": {
+      // Astra chunk A P1: essential coverage is budget-exempt and can never be excused by budget — the MoD,
+      // the Closing Manager, and any coverage deficit whose fill would work the closing window.
+      if (!budgetMayExcuse(g, ctx)) return false;
       const c = g.certificate;
       const f = budgetFacts(s, ctx);
       if (!f.budgetedDates.includes(g.date) || !sameIds(c.budgetedDates, f.budgetedDates)) return false;
@@ -391,7 +462,7 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
       if (g.code !== "coverage_gap") return false;
       const c = g.certificate;
       if (c.limitH !== st.limits.managerFloorH) return false;
-      const free = eligibleMembers(g, day, ctx).filter((p) => availableOn(p, g.date, g.fromQ, g.toQ) && freeFor(p, s, g.date, g.fromQ, g.toQ));
+      const free = eligibleMembers(g, day, ctx).filter((p) => availableOn(p, g.date, g.fromQ, g.toQ) && freeFor(p, s, g.date, g.fromQ, g.toQ, day, g.positionId));
       if (free.length === 0 || free.some(isHourly)) return false;
       if (!sameIds(c.managerIds, free.map((p) => p.userId))) return false;
       const windowH = (g.toQ - g.fromQ) / 4;
@@ -414,6 +485,8 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
     case "capacity": {
       if (g.code !== "coverage_gap" || !g.positionId) return false;
       const c = g.certificate;
+      // Astra chunk A P2-5: a repeated id would manufacture a shortage; reject before recomputing the bound.
+      if (new Set(c.positionIds).size !== c.positionIds.length || new Set(c.peopleIds).size !== c.peopleIds.length) return false;
       if (!c.positionIds.includes(g.positionId) || c.fromQ !== g.fromQ || c.toQ !== g.toQ) return false;
       const re = capacityFor(c.positionIds, g, s, day, ctx);
       if (!re || canonicalJson(re) !== canonicalJson({ ...c, positionIds: sortIds([...c.positionIds]), peopleIds: sortIds([...c.peopleIds]) })) return false;
@@ -473,12 +546,13 @@ export function proveGap(subject: GapSubject, s: WeekSchedule, ctx: RuleContext)
   const av = tryCert({ ...subject, cause: "availability", certificate: { eligibleIds: ids, unavailableIds: ids } });
   if (av) return av;
   if (subject.code === "coverage_gap") {
-    const free = eligible.filter((p) => availableOn(p, subject.date, subject.fromQ, subject.toQ) && freeFor(p, s, subject.date, subject.fromQ, subject.toQ));
+    const free = eligible.filter((p) => availableOn(p, subject.date, subject.fromQ, subject.toQ) && freeFor(p, s, subject.date, subject.fromQ, subject.toQ, day, subject.positionId));
     const fl = tryCert({ ...subject, cause: "floor_limit", certificate: {
       managerIds: free.map((p) => p.userId), floorHoursUsed: Object.fromEntries(free.map((p) => [p.userId, floorHours(s, p.userId)])), limitH: day.structure.limits.managerFloorH,
     } });
     if (fl) return fl;
   }
+  if (!budgetMayExcuse(subject, ctx)) return null;
   const f = budgetFacts(s, ctx);
   return tryCert({ ...subject, cause: "budget", certificate: {
     budgetedDates: f.budgetedDates, budgetHours: f.budgetHours, usedHours: f.usedHours, essentialHours: f.essentialHours, hoursNeeded: hoursNeededFor(subject, s, day, ctx),
@@ -565,6 +639,9 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext): RuleProbl
         const canClose = st.leadership.closingRoles.includes(p.role);
         if (!canClose || setting === "opens") push("closing_manager_setting", date, { userId: u, q: sh.startQ, params: { setting } });
         if (!canClose) push("closing_manager_role", date, { userId: u, q: sh.startQ, params: { role: p.role } });
+        if (!coversClosingWindow(sh, day)) {
+          push("closing_manager_not_closing", date, { userId: u, q: sh.startQ, params: { serviceCloseQ, scheduledOutQ: day.scheduledOutQ } });
+        }
       }
       if (p.untouchableDates.includes(date)) push("untouchable_day", date, { userId: u, q: sh.startQ });
       if (!availableOn(p, date, sh.startQ, sh.endQ)) {

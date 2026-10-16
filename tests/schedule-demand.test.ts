@@ -56,7 +56,7 @@ describe("forecastDay over a DemandResult", () => {
 
   it("forecastWeek: no_history when no needed weekday was captured; ok otherwise (per-day kinds kept)", () => {
     const empty: SalesBaselineResult = { kind: "ok", raw: { capturedDays: [], hours: [] } };
-    expect(forecastWeek(empty, ["2026-10-26", "2026-10-27"], ASOF)).toEqual({ kind: "no_history" });
+    expect(forecastWeek(empty, ["2026-10-26", "2026-10-27"], ASOF)).toMatchObject({ kind: "no_history", days: [{ kind: "no_history", date: "2026-10-26" }, { kind: "no_history", date: "2026-10-27" }] });
     const wk = forecastWeek(ok, ["2026-10-29", "2026-10-31"], ASOF);
     if (wk.kind !== "ok") throw new Error(wk.kind);
     expect(wk.days.map((d) => d.kind)).toEqual(["ok", "no_history"]);
@@ -70,6 +70,18 @@ describe("forecastDay over a DemandResult", () => {
     expect(named.days[0]!.catering).toEqual([ev]);
     expect(named.days[1]!.catering).toEqual([]);
     expect(named.days.map((d) => (d.kind === "ok" ? d.dayCents : null))).toEqual(wk.days.map((d) => (d.kind === "ok" ? d.dayCents : null)));
+  });
+
+  it("Astra P2-7: with NO sales history at all, the dates and the booked catering survive (a 50-person event never disappears)", () => {
+    const empty: SalesBaselineResult = { kind: "ok", raw: { capturedDays: [], hours: [] } };
+    const wk = forecastWeek(empty, ["2026-10-29", "2026-10-30"], ASOF);
+    const ev = { id: "c-9", date: "2026-10-30", name: "Office lunch", headcount: 50, valueCents: 90000, eventQ: 48 };
+    const named = withCatering(wk, [ev]);
+    if (named.kind !== "no_history") throw new Error(named.kind);
+    expect(named.days.map((d) => d.date)).toEqual(["2026-10-29", "2026-10-30"]);
+    expect(named.days[1]!.catering).toEqual([ev]);
+    expect(named.days[0]!.catering).toEqual([]);
+    expect(named.days.every((d) => d.kind === "no_history")).toBe(true);
   });
 });
 

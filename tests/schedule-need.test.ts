@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { CASE_POSITION_IDS as I, shopBase } from "../scripts/schedule-structure-cases.mjs";
 import { buildDayNeed, needGrid, roundHalfUp, shapeFromCurve } from "@/lib/scheduling/need-shared";
-import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
+import { lineBounds, validScheduleStructure, waveProfile, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
 
 const zeros = () => new Array<number>(96).fill(0);
 /** Per-hour values over 11:00–15:00 (q 44–60) → a 96-quarter array (a STEP: 4 quarters per hour). */
@@ -195,5 +195,88 @@ describe("the need grid, per position id (mockup structure)", () => {
         expect(covered, `${p}@${q}`).toBe(v);
       });
     }
+  });
+});
+
+/**
+ * Astra P2-6 / the W ruling: F10, F14 and F15 re-derived through the REAL integration — a configured
+ * structure → `waveProfile` → `buildDayNeed` — not hand-supplied arrays.
+ *
+ * F10 / F14 structure: line 11:00–15:00; Walk-ins / Online (primary 1/1) and Register (primary 1/1)
+ * open 11:00–15:00; Walk-ins (secondary 1/1) and Expeditor (secondary 1/1) open 11:00, TRIM 14:00,
+ * close 15:00; floors 1/1/0/0 → minHeads 2, maxHeads 4 at every quarter (the limits are 1 before and
+ * after the trim). Waves: setup 2 @ 11:00, service 0, rush 1 @ 12:00; no closing crew.
+ *   setup 2 @ 11:00 → the two primaries (deficit 1 each; primaries first) → [11:00, 15:00) each;
+ *   rush 1 @ 12:00 → the first secondary by id (deficit 1; the primaries are at 0) → [12:00, 14:00),
+ *   ending at ITS TRIM, the mockup's rule for a wave head.
+ *   W per hour = 2 / 3 / 3 / 2 → ΣW = 4 × 10 = 40 quarter-heads → T = 10 h — the plan's F10 numbers.
+ * F15 structure: only the two secondaries, 11:00–15:00, trim 14:00, floors 0 → minHeads 0, maxHeads 2;
+ *   waves setup 0, service 0, rush 2 @ 12:00 → both secondaries [12:00, 14:00) → W = 0 / 2 / 2 / 0 →
+ *   ΣW = 16 → T = 4 h — the plan's F15 numbers.
+ */
+describe("F10 / F14 / F15 through the real integration (structure → waveProfile → buildDayNeed)", () => {
+  const WO = "5f000000-0000-4000-8000-000000000001";
+  const RG = "5f000000-0000-4000-8000-000000000002";
+  const WK = "5f000000-0000-4000-8000-000000000003";
+  const EX = "5f000000-0000-4000-8000-000000000004";
+  const roles = ["trainee", "employee", "trainer", "key_holder", "shift_lead", "agm", "gm", "moo", "owner"] as const;
+  const pos = (role: "walk_online" | "register" | "walk" | "expo", trimQ: number) => ({ role, openQ: 44, trimQ, closeQ: 60, headsBefore: 1, headsAfter: 1, allowedRoles: [...roles] });
+  const f10 = (onlySecondaries = false): ScheduleStructure => {
+    const st = structuredClone(shopBase()) as ScheduleStructure;
+    st.shopDay = { prepStartQ: 28, prepDishArrivalQ: 28, serviceStartQ: 44, serviceCloseQ: 60, outEarliestQ: 60, outLatestQ: 64 };
+    st.positions = onlySecondaries
+      ? { [WK]: pos("walk", 56), [EX]: pos("expo", 56) }
+      : { [WO]: pos("walk_online", 60), [RG]: pos("register", 60), [WK]: pos("walk", 56), [EX]: pos("expo", 56) };
+    st.priority = onlySecondaries ? [] : [{ pair: [WO, WK], primary: WO }, { pair: [RG, EX], primary: RG }];
+    for (const t of ["slow", "normal", "busy", "weekend"] as const) {
+      st.crews[t] = {
+        prepHeads: 0, prepUntilQ: 44, prepDishHeads: 0,
+        waves: { setup: { heads: onlySecondaries ? 0 : 2, atQ: 44 }, service: { heads: 0 }, rush: { heads: onlySecondaries ? 2 : 1, atQ: 48 } },
+        close: { registerHeads: 0, walkHeads: 0, prepDishHeads: 0 },
+        lineMinHeads: onlySecondaries ? { [WK]: 0, [EX]: 0 } : { [WO]: 1, [RG]: 1, [WK]: 0, [EX]: 0 },
+      };
+    }
+    return st;
+  };
+  const build = (st: ScheduleStructure, hourly: number[] | null) =>
+    buildDayNeed({ structure: st, dayType: "normal", scheduledOutQ: 60, hourlyCents: hourly, demandKind: hourly ? "ok" : "no_history", catering: [] });
+
+  it("the F10 structure is valid and its configured waves give W = 2/3/3/2 (T = 10 h) with minHeads 2 and maxHeads 4 at every quarter", () => {
+    const st = f10();
+    expect(validScheduleStructure(st)).toEqual({ ok: true });
+    expect(perHour(waveProfile(st, "normal"))).toEqual([2, 3, 3, 2]);
+    expect(waveProfile(st, "normal").reduce((a, b) => a + b, 0)).toBe(40);
+    const b = lineBounds(st, "normal");
+    expect([44, 48, 52, 56, 59].map((q) => [b.minHeads[q], b.maxHeads[q]])).toEqual([[2, 4], [2, 4], [2, 4], [2, 4], [2, 4]]);
+  });
+
+  it("(F10) Day A 2/4/2/2 (rush 12:00), Day B 2/2/4/2 (rush 13:00), flat 2/3/3/2 — 10 line hours each, through buildDayNeed", () => {
+    const st = f10();
+    const a = build(st, cents([20000, 40000, 20000, 20000]));
+    const b = build(st, cents([20000, 20000, 40000, 20000]));
+    const flat = build(st, null);
+    expect(perHour(a.need.lineTotal)).toEqual([2, 4, 2, 2]);
+    expect(perHour(b.need.lineTotal)).toEqual([2, 2, 4, 2]);
+    expect(perHour(flat.need.lineTotal)).toEqual([2, 3, 3, 2]);
+    expect([a.shape.rushQ, b.shape.rushQ, flat.shape.rushQ]).toEqual([48, 52, 48]);
+    expect([a.shape.lineHours, b.shape.lineHours, flat.shape.lineHours, a.shape.targetHours]).toEqual([10, 10, 10, 10]);
+    // The floor goes to the primaries; the extra heads to the secondaries (never over a limit of 1).
+    expect([WO, RG, WK, EX].map((p) => a.need.positions[p]![48])).toEqual([1, 1, 1, 1]);
+    expect([WO, RG, WK, EX].map((p) => a.need.positions[p]![44])).toEqual([1, 1, 0, 0]);
+  });
+
+  it("(F14) all-zero forecast on the F10 structure → 2/2/2/2, 8 line hours, zero_demand", () => {
+    const r = build(f10(), cents([0, 0, 0, 0]));
+    expect(perHour(r.need.lineTotal)).toEqual([2, 2, 2, 2]);
+    expect([r.shape.lineHours, r.shape.note, r.need.shapeNote]).toEqual([8, "zero_demand", "zero_demand"]);
+  });
+
+  it("(F15) only secondaries: W = 0/2/2/0 (T = 4 h); demand $400/0/0/$400 → an even split 1/1/1/1, zero_profile", () => {
+    const st = f10(true);
+    expect(validScheduleStructure(st)).toEqual({ ok: true });
+    expect(perHour(waveProfile(st, "normal"))).toEqual([0, 2, 2, 0]);
+    const r = build(st, cents([40000, 0, 0, 40000]));
+    expect(perHour(r.need.lineTotal)).toEqual([1, 1, 1, 1]);
+    expect([r.shape.lineHours, r.shape.targetHours, r.shape.note]).toEqual([4, 4, "zero_profile"]);
   });
 });

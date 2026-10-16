@@ -20,7 +20,7 @@
  */
 import type { DayNeed, NeedRun, NeedSource, ShapeNote } from "./context-shared";
 import {
-  isLineRole, isSecondary, lineBounds, positionIds, positionLimit, waveProfile, type CrewType, type ScheduleStructure,
+  isLineRole, isSecondary, lineBounds, positionIds, positionLimit, walkClosers, waveProfile, type CrewType, type ScheduleStructure,
 } from "./structure-shared";
 import { Q_PER_DAY } from "./time-shared";
 
@@ -158,9 +158,7 @@ export function needGrid(input: NeedGridInput): DayNeed {
   }
 
   // The closing crew in [service close, scheduled out): register; the walk pair, its primary first.
-  const walkPair = s.priority.find((p) => p.pair.every((id) => ["walk", "walk_online"].includes(s.positions[id]?.role ?? "")));
-  const walkPrimary = walkPair?.primary ?? lineIds.find((id) => s.positions[id]!.role === "walk_online") ?? null;
-  const walkOthers = lineIds.filter((id) => ["walk", "walk_online"].includes(s.positions[id]!.role) && id !== walkPrimary);
+  const { primary: walkPrimary, others: walkOthers } = walkClosers(s);
   for (let q = serviceCloseQ; q < out; q++) {
     for (const id of lineIds) {
       const role = s.positions[id]!.role;

@@ -34,7 +34,8 @@ export type DayForecast =
 export type DemandResult =
   | { kind: "ok"; days: DayForecast[] }
   | { kind: "unavailable"; cause: DemandUnavailableCause }
-  | { kind: "no_history" };
+  /** Astra chunk A P2-7: the dates and their booked catering survive a shop with no sales history at all. */
+  | { kind: "no_history"; days: DayForecast[] };
 
 /** Whole ISO weeks from the build day's week to D's week (0 = this week, 1 = next week …). */
 function weeksAheadOf(date: string, asOf: string): number {
@@ -68,17 +69,15 @@ export function forecastDay(baseline: SalesBaselineResult, date: string, asOf: s
 export function forecastWeek(baseline: SalesBaselineResult, dates: readonly string[], asOf: string): DemandResult {
   if (baseline.kind === "unavailable") return { kind: "unavailable", cause: baseline.cause };
   const days = dates.map((d) => forecastDay(baseline, d, asOf) as DayForecast);
-  if (days.every((d) => d.kind === "no_history")) return { kind: "no_history" };
+  if (days.every((d) => d.kind === "no_history")) return { kind: "no_history", days };
   return { kind: "ok", days };
 }
 
-/** Name the booked catering events on their dates. Never changes `dayCents` (named, never summed). */
+/** Name the booked catering events on their dates (with or without sales history). Never changes `dayCents` (named, never summed). */
 export function withCatering(result: DemandResult, events: readonly CateringEvent[]): DemandResult {
-  if (result.kind !== "ok") return result;
-  return {
-    kind: "ok",
-    days: result.days.map((d) => ({ ...d, catering: events.filter((e) => e.date === d.date).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) })),
-  };
+  if (result.kind === "unavailable") return result;
+  const days = result.days.map((d) => ({ ...d, catering: events.filter((e) => e.date === d.date).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) }));
+  return result.kind === "ok" ? { kind: "ok", days } : { kind: "no_history", days };
 }
 
 export type DayTypeOverride = "auto" | "slow" | "normal" | "busy";

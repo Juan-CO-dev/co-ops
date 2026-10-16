@@ -22,6 +22,13 @@ describe("closingDuration", () => {
     expect(closingDuration(facts, CLOSE_Q)).toEqual({ minutes: 45, samples: 8, basis: "measured" });
   });
 
+  it("Astra P2-8: fractional minutes are kept until the final ceil15 — eight closes at 45:30 give 60, not 45", () => {
+    const facts = days(8).map((d) => confirmed(d, 45.5));
+    expect(closingDuration(facts, CLOSE_Q)).toEqual({ minutes: 60, samples: 8, basis: "measured" });
+    // Exactly on the grid stays on the grid: 45:00 x 8 is 45.
+    expect(closingDuration(days(8).map((d) => confirmed(d, 45)), CLOSE_Q)).toEqual({ minutes: 45, samples: 8, basis: "measured" });
+  });
+
   it("fewer than 8 samples → no measurement", () => {
     expect(closingDuration(days(7).map((d) => confirmed(d, 40)), CLOSE_Q)).toEqual({ minutes: null, samples: 7, basis: "insufficient" });
   });

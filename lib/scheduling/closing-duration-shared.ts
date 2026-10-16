@@ -56,7 +56,8 @@ export function closingDuration(
     const closeQ = typeof serviceCloseQ === "number" ? serviceCloseQ : serviceCloseQ[date];
     if (!at || closeQ === undefined) continue;
     const close = etWallMinutesInstant(date, closeQ * Q_MINUTES).getTime();
-    finalized.push({ date, minutes: Math.max(0, Math.floor((Date.parse(at) - close) / 60000)) });
+    // Astra chunk A P2-8: fractional minutes are KEPT until the final ceil15 (45:30 × 8 is 60 min, not 45).
+    finalized.push({ date, minutes: Math.max(0, (Date.parse(at) - close) / 60000) });
   }
   const recent = finalized.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, window);
   if (recent.length < minSamples) return { minutes: null, samples: recent.length, basis: "insufficient" };
