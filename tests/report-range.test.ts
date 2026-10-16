@@ -12,6 +12,16 @@ describe("report contracts", () => {
     expect(parseReportRange({from:"2026-10-06",to:"2026-10-01"},"2026-10-07")).toMatchObject({from:"2026-10-01",to:"2026-10-01"});
     expect(reportTimestampBounds("2026-11-01","2026-11-01")).toEqual({start:"2026-11-01T04:00:00.000Z",end:"2026-11-02T05:00:00.000Z"});
   });
+  it("joins multi-day report windows across both DST transitions", () => {
+    for (const day of ["2026-11-01", "2027-03-14"]) {
+      const next = new Date(Date.parse(`${day}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+      expect(reportTimestampBounds(day, day).end).toBe(reportTimestampBounds(next, next).start);
+      expect(reportTimestampBounds(day, next)).toEqual({
+        start: reportTimestampBounds(day, day).start,
+        end: reportTimestampBounds(next, next).end,
+      });
+    }
+  });
   it("rejects normalized impossible dates and accepts leap days", () => { expect(validReportDate("2026-02-30")).toBe(false); expect(validReportDate("2024-02-29")).toBe(true); });
   it("caps day to 92 inclusive and compares disjoint equal periods", () => { const r = parseReportRange({from:"2020-01-01",to:"2026-10-07",cmp:"1"},"2026-10-07"); expect(r.from).toBe("2026-07-08"); expect(r.previous.to).toBe("2026-07-07"); expect(r.compare).toBe(true); });
   it("compares this month with prior month to date", () => { expect(parseReportRange({range:"this_month"},"2026-10-07").previous).toEqual({from:"2026-09-01",to:"2026-09-07"}); });

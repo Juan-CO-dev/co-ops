@@ -60,6 +60,17 @@ describe("capture catering coverage health", () => {
     // Today is never final: the same 4-hour-old run is stale for 10-07.
     expect(cateringCaptureRunError(afterClose, "2026-10-07", now)).toBe("capture_catering_stale");
   });
+  it("keeps the fall-back day open through its extra hour", () => {
+    const at = Date.parse("2026-11-02T05:10:00Z"); // 00:10 EST on Nov 2
+    const finished = { ...run, finished_at: "2026-11-02T04:30:00Z" }; // 23:30 EST on Nov 1
+    expect(cateringCaptureRunError(finished, "2026-11-01", at)).toBe("capture_catering_stale");
+    expect(cateringCaptureRunError({ ...finished, finished_at: "2026-11-02T05:00:00Z" }, "2026-11-01", at)).toBeNull();
+  });
+  it("closes the spring-forward day before the next day's first hour", () => {
+    const at = Date.parse("2027-03-15T04:50:00Z"); // 00:50 EDT on Mar 15
+    const finished = { ...run, finished_at: "2027-03-15T04:10:00Z" }; // 00:10 EDT on Mar 15
+    expect(cateringCaptureRunError(finished, "2027-03-14", at)).toBeNull();
+  });
 });
 
 describe("capture catering cancellation", () => {

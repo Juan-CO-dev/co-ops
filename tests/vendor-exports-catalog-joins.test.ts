@@ -12,7 +12,9 @@ const sku = (id: string, item_number: string | null, vendor = "PFG"): CatalogRow
 const line = (id: string, sku_id: string | null): SeedLine => ({ ...ev, id, sku_id, vendor: "PFG", item_number: "stale", label: id, section: "section", position: 1 });
 const row = (item_no: string, extra: Partial<ExportRow> = {}): ExportRow => ({ ...ev, vendor: "pfg", item_no, account_id: "a", list_name: "History", category: "", description: "item", brand: "", pack: "1/1 LB", pack_qty: 1, pack_size: 1, pack_unit: "LB", uom: "CS", price_cents: 200, price_per_lb_cents: null, last_purchase_qty: 2, last_purchase_uom: "CS", last_purchase_date: "2026-09-18", exported_at: "2026-09-18", ...extra });
 
-describe("real catalog guide joins and comparable units", () => {
+// Reads and joins the real exports; under a full-shard load on a 2-core machine it ran 27 s against the 30 s
+// default. 60 s per test (CC note 9). What it asserts is unchanged.
+describe("real catalog guide joins and comparable units", { timeout: 60_000 }, () => {
   it("uses linked SKU numbers, separates missing links/numbers, scopes vendor and counts each recent candidate once", () => {
     const catalog = [sku("a", "1"), sku("b", null), sku("c", "missing"), sku("d", "2", "Other"), sku("e", "3")];
     const lines = [line("one", "a"), line("two", "b"), line("three", "c"), line("four", null)];

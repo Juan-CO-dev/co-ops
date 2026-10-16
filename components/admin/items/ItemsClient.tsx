@@ -20,9 +20,12 @@ import { AddItemForm } from "./AddItemForm";
 export function ItemsClient({
   view,
   itemReadiness,
+  shopScope = null,
 }: {
   view: ItemsAdminView;
   itemReadiness: Record<string, Readiness>;
+  /** The shop this registry's readiness was read for (`?location=`), or null for the default (catalog Phase 3b). */
+  shopScope?: string | null;
 }) {
   const { t, language } = useTranslation();
   const canAdd = view.actorLevel >= 7;
@@ -79,6 +82,7 @@ export function ItemsClient({
                   readiness={itemReadiness[r.itemId] ?? null}
                   producingRecipeId={view.producingRecipeByItem[r.itemId] ?? null}
                   madeFrom={view.madeFromByItem[r.itemId] ?? []}
+                  shopScope={shopScope}
                 />
               ))}
             </div>

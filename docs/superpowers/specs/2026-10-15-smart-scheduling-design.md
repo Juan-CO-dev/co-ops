@@ -151,8 +151,19 @@ Nothing structural is hard-coded. Each shop has a **Schedule structure** setting
 - **Managers' time:**
   - Salaried GM/AGM have a **minimum on-the-clock per day**, tunable per position (default 8 h). This is a hard constraint, separate from the floor cap.
   - When a manager isn't needed at a station, their time is **"Manager on duty"**; two managers can both be on duty. Managers have manager work, but **service comes first**: they drop into a station only when coverage needs them.
+  - **Preferred cover positions per manager** (Shift Lead and up, tunable per person): an ordered list, e.g. Expeditor → Register & Delivery → Prep. When coverage is short, the scheduler pulls a manager into their preferred positions in order. It uses other positions only as a last resort, and the reason says so.
   - **The board never double-covers a position:** no manager on a station another person already covers.
+- **Positions:**
+  - **One person per position** at a time (default head count 1, tunable). When a station closes or trims, that person moves to another open position or clocks out. Two people never fill the same position at the same time; e.g. two walk-in closers fill Walk-ins and Walk-ins / Online.
+  - **Position priority per station** (a toggle):
+    - Prep → **Prep/Dishwasher** is primary over Prep;
+    - Expo → **Register & Delivery** is primary over Expeditor;
+    - Walk-ins → **Walk-ins / Online** is primary over Walk-ins.
+
+    When a station needs only one person, the primary is filled. The secondary is filled only when demand needs a second person. At a trim, the secondary goes first. This applies to build, regenerate, call-out fill and trims.
+  - **Allowed roles per position** (tunable). E.g. Prep/Dishwasher = Employee (optionally Key Holder) and **never a manager** except as a call-out last resort, with the reason stated.
 - **Limits:**
+  - **minimum shift length** (default 4 h; the flex-day short shift is a separate tunable exception);
   - manager floor-time cap (station coverage, a subset of their time on the clock);
   - overtime threshold (defaults from 7shifts labor settings);
   - flex-day rules (frequency, max length);
@@ -200,6 +211,19 @@ Any change shows "Settings changed — regenerate?". The rebuilt week stays insi
   3. an AGM/GM hire ONLY when the managers' floor load is the problem.
 - It **always shows the math:** hours/week, sample cost, what it removes (gaps, overtime, flex uses, manager floor hours). Call-out pressure is included, e.g. "3 sick calls this month covered by managers for 11 floor h; one more Employee at 20 h/week ≈ $380/week would free them".
 - It reacts live as the manager edits.
+
+### 6.5 Schedule rules validator (non-negotiable)
+One pure `checkScheduleRules(schedule, structure)` validator runs on every generated, regenerated, call-out-filled and manager-edited schedule, and in the test suite. It checks:
+- no person is double-booked;
+- no position is over its head count in any 15-minute slot;
+- every shift is at least the minimum length (or meets the flex exception);
+- each position is filled only by its allowed roles (managers on BOH only as a call-out last resort);
+- segments sit inside each position's open–trim–close window;
+- the Closing Manager role is carried by an allowed role;
+- a manager is on duty every hour when required;
+- salaried minimums are met.
+
+A generated schedule that fails is a bug: the generator must not emit it. A manager edit that fails is shown on the board with the rule it breaks.
 
 ## 7. The board (manager surface)
 

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { listReportsPage, loadReportDetail, listReportSkeleton, enrichReportItems, computeReportSignals, isFinalizedReport } from "@/lib/reports-hub";
 import { buildSearchCorpus } from "@/lib/reports-search";
 import { compareReportTuples } from "@/lib/report-pagination";
+import { loadMyFeedback } from "@/lib/pm-report";
 
 import * as maintenance from "@/lib/maintenance";
 import { reportIsFinalized } from "@/lib/report-summary";
@@ -45,6 +46,20 @@ const tables = () => ({
 });
 afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();});
 describe("operations loader data boundaries",()=>{
+  it("loads only the session employee's submitted feedback without selecting manager notes", async()=>{
+    const {client,reads}=fake({
+      pm_employee_evals:[
+        {id:"own",pm_report_id:"submitted",location_id:"shop",employee_id:"me",arrived_ready:"good",attitude:"good",production:"good",team_player:"good",area_to_improve:"Practice",note:"private"},
+        {id:"other",pm_report_id:"submitted",location_id:"shop",employee_id:"colleague",note:"other private"},
+        {id:"draft",pm_report_id:"open",location_id:"shop",employee_id:"me",note:"draft private"},
+      ],
+      pm_reports:[{id:"submitted",report_date:"2026-10-07",status:"submitted",mvp_user_id:null},{id:"open",report_date:"2026-10-07",status:"open",mvp_user_id:null}],
+    });
+    const feedback=await loadMyFeedback(client,{userId:"me"});
+    expect(feedback.map(row=>row.id)).toEqual(["own"]);
+    expect(JSON.stringify(feedback)).not.toContain("private");
+    expect(reads.find(read=>read.table==="pm_employee_evals")?.columns).not.toMatch(/\bnote\b/);
+  });
   it("shows the true confirmer on an employee's shared report", async () => {
     const data: Record<string,Row[]> = tables();
     data.checklist_instances![0] = {...instance, status:"confirmed", confirmed_by:"colleague", confirmed_at:"2026-10-06T21:00:00Z"};
@@ -160,7 +175,8 @@ describe("review regressions", () => {
     const data: Record<string,Row[]> = tables();
     data.pm_reports=[{id:"draft",location_id:"shop",report_date:instance.date,status:"open",mvp_note:"MVP praise"},{id:"today-draft",location_id:"shop",report_date:"2026-10-07",status:"open"},...["submitted","incomplete_confirmed","auto_finalized"].map(status=>({id:status,location_id:"shop",report_date:"2026-10-07",status,mvp_note:"MVP praise"}))];
     data.pm_employee_evals=data.pm_reports.map(r=>({id:`eval-${r.id}`,pm_report_id:r.id,employee_id:"me",area_to_improve:"own evaluation",note:"private manager note"}));
-    const {client}=fake(data);
+    data.pm_employee_evals.push({id:"colleague-eval",pm_report_id:"submitted",employee_id:"colleague",area_to_improve:"colleague evaluation",note:"colleague manager note"});
+    const {client,reads}=fake(data);
     const args={locationId:"shop",dateFrom:instance.date,dateTo:"2026-10-07",types:["pm" as const]};
     const employee=await listReportSkeleton(client,{...args,viewer});
     expect(employee.map(r=>r.id).sort()).toEqual(["auto_finalized","incomplete_confirmed","submitted"]);
@@ -174,10 +190,17 @@ describe("review regressions", () => {
       if(detail?.kind!=="pm") throw new Error("wrong detail");
       expect(detail.mvpNote).toBe("MVP praise");expect(detail.evals[0]?.note).toBeNull();
     }
+    expect(reads.filter(r=>r.table==="pm_employee_evals").every(r=>!/(^|,)\s*note\b/.test(r.columns))).toBe(true);
     const corpus=await buildSearchCorpus(client,{viewer:kh,locationId:"shop",items:employee});
     expect(JSON.stringify([...corpus])).toContain("MVP praise");expect(JSON.stringify([...corpus])).not.toContain("private manager note");
+    const readsBeforeEmployeeDetail=reads.length;
     const own=await loadReportDetail(client,{viewer,type:"pm",id:"submitted",locationId:"shop"});
     expect(own?.kind).toBe("pm");
-    if(own?.kind==="pm") expect(own.mvpNote).toBeNull();
+    if(own?.kind==="pm") {expect(own.mvpNote).toBeNull();expect(own.evals).toHaveLength(1);expect(own.evals[0]?.note).toBeNull();}
+    expect(reads.slice(readsBeforeEmployeeDetail).filter(r=>r.table==="pm_employee_evals").every(r=>!/(^|,)\s*note\b/.test(r.columns))).toBe(true);
+    const senior=await loadReportDetail(client,{viewer:{...viewer,level:5},type:"pm",id:"submitted",locationId:"shop"});
+    if(senior?.kind!=="pm") throw new Error("wrong detail");
+    expect(senior.evals[0]?.note).toBe("private manager note");
+    expect(reads.filter(r=>r.table==="pm_employee_evals").at(-1)?.columns).toMatch(/\bnote\b/);
   });
 });

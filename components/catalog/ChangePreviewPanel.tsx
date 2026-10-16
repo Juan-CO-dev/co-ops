@@ -9,6 +9,7 @@
  * person has seen what it does.
  */
 import { useTranslation } from "@/lib/i18n/provider";
+import { useRevealOnOpen } from "@/components/catalog/useRevealOnOpen";
 import { formatDateLabel, formatQuantity } from "@/lib/i18n/format";
 import { conversionKey, type PackPreview, type ParConversion, type PreviewParRow, type PricePreview } from "@/lib/catalog/change-preview-shared";
 
@@ -38,6 +39,7 @@ export function ChangePreviewPanel({
   busy: boolean;
 }) {
   const { t, language } = useTranslation();
+  const { panelRef, headingRef } = useRevealOnOpen<HTMLElement, HTMLHeadingElement>();
   const money = (n: number | null) => (n == null ? "—" : `$${n.toFixed(2)}`);
   const perOz = (n: number | null) => (n == null ? "—" : `$${n.toFixed(4)}/oz`);
   const oz = (n: number | null) => (n == null ? "—" : `${formatQuantity(n, language)} oz`);
@@ -84,8 +86,8 @@ export function ChangePreviewPanel({
   };
 
   return (
-    <section aria-label={t("catalog.preview.title")} className="mt-3 rounded-xl border-2 border-co-border-2 bg-co-surface-inset p-3">
-      <h3 className={groupLabel}>{t("catalog.preview.title")}</h3>
+    <section ref={panelRef} aria-label={t("catalog.preview.title")} className="mt-3 rounded-xl border-2 border-co-border-2 bg-co-surface-inset p-3">
+      <h3 ref={headingRef} tabIndex={-1} className={groupLabel}>{t("catalog.preview.title")}</h3>
       <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
         {isGlobal ? t("catalog.preview.target_global") : t("catalog.preview.target_shop", { shop: targetShopName })}
       </p>

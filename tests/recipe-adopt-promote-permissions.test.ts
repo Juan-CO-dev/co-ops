@@ -1,0 +1,389 @@
+/**
+ * Catalog Phase 3b — adopt binds the adopting shop; promote is MoO+; the notice answer binds the shop; the menu
+ * promote is MoO+ and carries the optional Spanish name. The gates hold INSIDE the lib, before any I/O (house rule:
+ * location bind + the social media manager refused live in the lib). Success paths run on the fixture with a
+ * recording rpc() stand-in and assert what was SENT and RETURNED — never "not an error of type X".
+ */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createFakeDb } from "./fixtures/counts-fake-db";
+import { buildRecipeVersionsFixture, LOC, OTHER } from "./fixtures/recipe-versions-fixture";
+import { adoptRecipeVersion, dismissRecipeNotice, promoteRecipeVersion, RecipeVersionError } from "@/lib/admin/recipe-versions";
+import { MenuShopError, promoteMenuItemShopSetting } from "@/lib/admin/menu-item-shop";
+import { NIL_SCOPE } from "@/lib/sku-versions-shared";
+import type { AuthContext } from "@/lib/session";
+import type { RoleCode } from "@/lib/roles";
+
+type Row = Record<string, unknown>;
+let current: ReturnType<typeof createFakeDb> | null = null;
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => {
+  if (!current) throw new Error("no fake db installed");
+  return current.client;
+} }));
+const audits: Array<Record<string, unknown>> = [];
+vi.mock("@/lib/audit", () => ({ audit: async (a: Record<string, unknown>) => { audits.push(a); } }));
+afterEach(() => { current = null; audits.length = 0; });
+
+const actor = (role: RoleCode, level: number, locations: string[]): AuthContext =>
+  ({ user: { id: "u1", role }, role, level, locations }) as unknown as AuthContext;
+const SNAP = { snap: "preview" };
+
+async function refused(p: Promise<unknown>): Promise<{ status: number; code: string }> {
+  try { await p; } catch (e) {
+    if (e instanceof RecipeVersionError || e instanceof MenuShopError) return { status: e.status, code: e.code };
+    throw e;
+  }
+  throw new Error("expected a refusal");
+}
+
+type RpcCall = { fn: string; args: Record<string, unknown> };
+/** The fixture plus a recording rpc() that answers each function with `answers[fn]`. */
+function install(tables: Record<string, Row[]>, answers: Record<string, (args: Record<string, unknown>) => unknown>): RpcCall[] {
+  current = createFakeDb(tables);
+  const calls: RpcCall[] = [];
+  (current.client as unknown as { rpc: unknown }).rpc = async (fn: string, args: Record<string, unknown>) => {
+    calls.push({ fn, args });
+    const a = answers[fn];
+    if (!a) return { data: null, error: { message: `no stand-in for ${fn}` } };
+    return { data: a(args), error: null };
+  };
+  return calls;
+}
+
+/** OTHER's live version of the slaw (60 oz lettuce + 16 oz mayo) — what LOC adopts / what a MoO promotes. */
+function withOtherSlaw(): Record<string, Row[]> {
+  const t = buildRecipeVersionsFixture();
+  t.recipe_versions!.push({
+    id: "sv-other-slaw", recipe_id: "r-slaw", location_id: OTHER, based_on_version_id: "rv-r-slaw-base", adopted_from_version_id: null,
+    promoted_from_version_id: null, adoption_ended_from_version_id: null, active: true, valid_from: "2026-10-10T00:00:00.000Z", valid_to: null,
+    note: null, created_at: "2026-10-10T00:00:00.000Z", created_by: null, retired_by: null,
+  });
+  for (const [i, [sku, qty]] of ([["s-lettuce", 60], ["s-mayo", 16]] as const).entries()) {
+    t.recipe_version_lines!.push({
+      id: `svl-${i}`, version_id: "sv-other-slaw", recipe_id: "r-slaw", location_id: OTHER, component_sku_id: sku, component_item_id: null,
+      component_product_id: null, quantity: qty, unit: "oz", each_container_label: null, portioned: false, display_order: i, source_line_id: null,
+    });
+  }
+  return t;
+}
+
+describe("adopt", () => {
+  it("a GM adopts only INTO its own shop (404 before any I/O); the social media manager is refused by role", async () => {
+    expect(await refused(adoptRecipeVersion(actor("gm", 7, [LOC]), { recipeId: "r-slaw", locationId: OTHER, sourceVersionId: "sv-x", expectedVersionId: null })))
+      .toEqual({ status: 404, code: "not_found" });
+    expect(await refused(adoptRecipeVersion(actor("social_media_mgr", 6, [LOC]), { recipeId: "r-slaw", locationId: LOC, sourceVersionId: "sv-x", expectedVersionId: null })))
+      .toEqual({ status: 403, code: "forbidden" });
+    expect(await refused(adoptRecipeVersion(actor("agm", 6, [LOC]), { recipeId: "r-slaw", locationId: LOC, sourceVersionId: "sv-x", expectedVersionId: null })))
+      .toEqual({ status: 403, code: "forbidden" });
+  });
+  it("the source must be ANOTHER shop's LIVE version of THIS recipe (invalid_source, named)", async () => {
+    install(withOtherSlaw(), {});
+    const gm = actor("gm", 7, [LOC]);
+    // the default's own version is not another shop's
+    expect(await refused(adoptRecipeVersion(gm, { recipeId: "r-slaw", locationId: LOC, sourceVersionId: "rv-r-slaw-base", expectedVersionId: null, snapshot: SNAP })))
+      .toEqual({ status: 400, code: "invalid_source" });
+    // another recipe's version
+    expect(await refused(adoptRecipeVersion(gm, { recipeId: "r-italian", locationId: LOC, sourceVersionId: "sv-other-slaw", expectedVersionId: null, snapshot: SNAP })))
+      .toEqual({ status: 400, code: "invalid_source" });
+    // no such version
+    expect(await refused(adoptRecipeVersion(gm, { recipeId: "r-slaw", locationId: LOC, sourceVersionId: "nope", expectedVersionId: null, snapshot: SNAP })))
+      .toEqual({ status: 404, code: "not_found" });
+  });
+  it("its own shop: the lines are copied IN SQL from the source, the preview's snapshot rides along, and the result is returned", async () => {
+    const calls = install(withOtherSlaw(), {
+      save_recipe_version: () => ({ version_id: "sv-loc-new", retired_version_id: null, changed_shops: [LOC] }),
+    });
+    const r = await adoptRecipeVersion(actor("gm", 7, [LOC]), { recipeId: "r-slaw", locationId: LOC, sourceVersionId: "sv-other-slaw", expectedVersionId: null, snapshot: SNAP });
+    expect(r).toEqual({ versionId: "sv-loc-new", retiredVersionId: null, changedShops: [LOC], returnedShop: null });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      fn: "save_recipe_version",
+      args: { p_recipe: "r-slaw", p_location: LOC, p_lines: null, p_expected: null, p_adopted_from: "sv-other-slaw", p_promoted_from: null, p_restored_from: null, p_actor: "u1", p_snapshot: SNAP },
+    });
+    expect(audits).toEqual([expect.objectContaining({ action: "recipe_version.adopt", resourceId: "sv-loc-new" })]);
+  });
+  it("a direct call (no preview) takes the scoped snapshot over the SOURCE's lines first", async () => {
+    const calls = install(withOtherSlaw(), {
+      recipe_change_snapshot: () => ({ snap: "now" }),
+      save_recipe_version: () => ({ version_id: "sv-loc-new", retired_version_id: null, changed_shops: [LOC] }),
+    });
+    await adoptRecipeVersion(actor("gm", 7, [LOC]), { recipeId: "r-slaw", locationId: LOC, sourceVersionId: "sv-other-slaw", expectedVersionId: null });
+    expect(calls.map((c) => c.fn)).toEqual(["recipe_change_snapshot", "save_recipe_version"]);
+    expect(calls[0]!.args).toMatchObject({ p_recipe: "r-slaw", p_location: LOC });
+    expect((calls[0]!.args.p_lines as Array<Record<string, unknown>>).map((l) => [l.component_sku_id, l.quantity])).toEqual([["s-lettuce", 60], ["s-mayo", 16]]);
+    expect(calls[1]!.args.p_snapshot).toEqual({ snap: "now" });
+  });
+});
+
+describe("promote", () => {
+  it("is the Director of Operations' act — a GM is refused before any I/O, by name", async () => {
+    expect(await refused(promoteRecipeVersion(actor("gm", 7, [LOC, OTHER]), { recipeId: "r-slaw", sourceVersionId: "v", expectedGlobalVersionId: "g" })))
+      .toEqual({ status: 403, code: "global_requires_moo" });
+    expect(await refused(promoteMenuItemShopSetting(actor("gm", 7, [LOC]), { menuItemId: "m-italian", settingId: "s", fields: ["price"], expected: { price: 12.5, name: "Italian", nameEs: "Italiano" } })))
+      .toEqual({ status: 403, code: "global_requires_moo" });
+    expect(await refused(promoteMenuItemShopSetting(actor("social_media_mgr", 6, [LOC]), { menuItemId: "m-italian", settingId: "s", fields: ["price"], expected: { price: 12.5, name: "Italian", nameEs: "Italiano" } })))
+      .toEqual({ status: 403, code: "forbidden" });
+  });
+  it("a MoO promotes a shop's LIVE version: copied in SQL, the source returns to the default (returnedShop)", async () => {
+    const calls = install(withOtherSlaw(), {
+      save_recipe_version: () => ({ version_id: "gv-new", retired_version_id: "rv-r-slaw-base", changed_shops: [LOC], returned_shop: OTHER, returned_version_id: "sv-other-slaw" }),
+    });
+    const r = await promoteRecipeVersion(actor("moo", 8, []), { recipeId: "r-slaw", sourceVersionId: "sv-other-slaw", expectedGlobalVersionId: "rv-r-slaw-base", snapshot: SNAP });
+    expect(r).toEqual({ versionId: "gv-new", retiredVersionId: "rv-r-slaw-base", changedShops: [LOC], returnedShop: OTHER });
+    expect(calls[0]).toMatchObject({ fn: "save_recipe_version", args: { p_location: null, p_lines: null, p_expected: "rv-r-slaw-base", p_promoted_from: "sv-other-slaw", p_adopted_from: null, p_snapshot: SNAP } });
+    expect(audits).toEqual([expect.objectContaining({ action: "recipe_version.promote", metadata: expect.objectContaining({ returned_shop: OTHER }) })]);
+  });
+  it("the global default's own version is not a shop's to promote", async () => {
+    install(withOtherSlaw(), {});
+    expect(await refused(promoteRecipeVersion(actor("moo", 8, []), { recipeId: "r-slaw", sourceVersionId: "rv-r-slaw-base", expectedGlobalVersionId: "rv-r-slaw-base", snapshot: SNAP })))
+      .toEqual({ status: 400, code: "invalid_source" });
+  });
+});
+
+describe("the notice answer", () => {
+  it("binds the shop; the social media manager is refused; an unknown kind is refused by name", async () => {
+    expect(await refused(dismissRecipeNotice(actor("gm", 7, [LOC]), { locationId: OTHER, recipeId: "r-slaw", kind: "new_default", seenVersionId: "g" })))
+      .toEqual({ status: 404, code: "not_found" });
+    expect(await refused(dismissRecipeNotice(actor("social_media_mgr", 6, [LOC]), { locationId: LOC, recipeId: "r-slaw", kind: "new_default", seenVersionId: "g" })))
+      .toEqual({ status: 403, code: "forbidden" });
+    expect(await refused(dismissRecipeNotice(actor("gm", 7, [LOC]), { locationId: LOC, recipeId: "r-slaw", kind: "bogus" as "new_default", seenVersionId: "g" })))
+      .toEqual({ status: 400, code: "invalid_payload" });
+  });
+  it("the seen version must be a version of THIS recipe", async () => {
+    current = createFakeDb(buildRecipeVersionsFixture());
+    expect(await refused(dismissRecipeNotice(actor("gm", 7, [LOC]), { locationId: LOC, recipeId: "r-slaw", kind: "new_default", seenVersionId: "rv-r-italian-base" })))
+      .toEqual({ status: 404, code: "not_found" });
+  });
+  it("its own shop writes ONE idempotent row (twice answered, once stored) and an audit row", async () => {
+    const t = buildRecipeVersionsFixture();
+    current = createFakeDb(t);
+    await dismissRecipeNotice(actor("gm", 7, [LOC]), { locationId: LOC, recipeId: "r-slaw", kind: "new_default", seenVersionId: "rv-r-slaw-base" });
+    await dismissRecipeNotice(actor("gm", 7, [LOC]), { locationId: LOC, recipeId: "r-slaw", kind: "new_default", seenVersionId: "rv-r-slaw-base" });
+    expect(t.recipe_notice_dismissals).toHaveLength(1);
+    expect(t.recipe_notice_dismissals![0]).toMatchObject({ location_id: LOC, recipe_id: "r-slaw", kind: "new_default", seen_version_id: "rv-r-slaw-base", created_by: "u1" });
+    expect(audits[0]).toMatchObject({ action: "recipe_version.notice_dismiss", resourceTable: "recipe_notice_dismissals", resourceId: "rv-r-slaw-base" });
+  });
+});
+
+describe("menu promote", () => {
+  function withShopSetting(over: Row = {}): Record<string, Row[]> {
+    const t = buildRecipeVersionsFixture();
+    t.menu_item_shop_settings!.push({
+      id: "ms-other", menu_item_id: "m-italian", location_id: OTHER, based_on_setting_id: null, price: 13.5, sold_here: true,
+      name_override: "Big Italian", name_override_es: null, valid_from: "2026-10-10T00:00:00.000Z", valid_to: null, active: true, note: null,
+      created_by: null, ...over,
+    });
+    return t;
+  }
+  const expected = { price: 12.5, name: "Italian", nameEs: "Italiano" };
+  const promoted = () => ({ changed_shops: [LOC], before: { menu_price: 12.5 }, returned_shop: OTHER, retired_setting_id: "ms-other", remaining_setting_id: null });
+  /** A realistic NIL-scope snapshot (0263 menu_item_change_snapshot): the item row, every LIVE shop row (by shop), the active shops, the costs. */
+  const nilSnap = (settings: Row[], item: Row = { id: "m-italian", name: "Italian", name_es: "Italiano", menu_price: 12.5 }) =>
+    ({ item, settings, active_shops: [LOC, OTHER], costs: [] });
+  const PREVIEW = nilSnap([{ id: "ms-other", location_id: OTHER, name_override: "Big Italian", name_override_es: null }]);
+  /** After the name save and NOTHING else: OTHER's live row is the new one this operation wrote. */
+  const AFTER_OWN_SAVE = nilSnap([{ id: "ms-other-2", location_id: OTHER, name_override: "Big Italian", name_override_es: "Italiano grande" }]);
+  /** The rpc answers: the NIL snapshot is the preview's until the shop save commits, then `after`. */
+  function stateful(after: Row = AFTER_OWN_SAVE, extra: Record<string, (args: Record<string, unknown>) => unknown> = {}) {
+    let saved = false;
+    return {
+      menu_item_change_snapshot: (a: Record<string, unknown>) => (a.p_location === NIL_SCOPE ? (saved ? after : PREVIEW) : { snap: "shop" }),
+      save_menu_item_shop_setting: () => { saved = true; return { setting_id: "ms-other-2", retired_setting_id: "ms-other" }; },
+      promote_menu_item_shop_setting: promoted,
+      ...extra,
+    };
+  }
+
+  it("price and name: the compare-and-set values and the snapshot go to SQL; the shops that change and the returned shop come back", async () => {
+    const calls = install(withShopSetting(), { promote_menu_item_shop_setting: promoted });
+    const r = await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["price", "name"], expected, snapshot: SNAP });
+    expect(r).toEqual({ changedShops: [LOC], returnedShop: OTHER, promotedSettingId: "ms-other" });
+    expect(calls).toEqual([{ fn: "promote_menu_item_shop_setting", args: {
+      p_setting: "ms-other", p_fields: ["price", "name"], p_expected_price: 12.5, p_expected_name: "Italian", p_expected_name_es: "Italiano", p_actor: "u1", p_snapshot: SNAP,
+    } }]);
+    expect(audits).toEqual([expect.objectContaining({ action: "menu_item.shop_setting_promote", resourceId: "m-italian" })]);
+  });
+  it("a setting of another menu item is not found", async () => {
+    install(withShopSetting(), {});
+    expect(await refused(promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-pickle-side", settingId: "ms-other", fields: ["price"], expected, snapshot: SNAP })))
+      .toEqual({ status: 404, code: "not_found" });
+  });
+  it("THE OPTIONAL SPANISH NAME (CC note 1 #2): set on the shop's row first, then that row is promoted — the pair is copied exactly", async () => {
+    const calls = install(withShopSetting(), stateful());
+    const r = await promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "  Italiano grande ", snapshot: PREVIEW,
+    });
+    expect(r).toEqual({ changedShops: [LOC], returnedShop: OTHER, promotedSettingId: "ms-other-2" });
+    expect(calls.map((c) => c.fn)).toEqual([
+      "menu_item_change_snapshot", // the preview's snapshot re-checked BEFORE anything is written
+      "menu_item_change_snapshot", // the shop save's own snapshot (its scope)
+      "save_menu_item_shop_setting",
+      "menu_item_change_snapshot", // re-taken after the save: it must be the preview's, moved ONLY by this save
+      "promote_menu_item_shop_setting",
+    ]);
+    expect(calls[2]!.args).toMatchObject({
+      p_menu_item: "m-italian", p_location: OTHER, p_price: 13.5, p_sold_here: true, p_name: "Big Italian", p_name_es: "Italiano grande", p_expected: "ms-other",
+    });
+    // The promote is bound to the PREVIEW'S baseline, adjusted only for this operation's own committed row.
+    expect(calls[4]!.args).toMatchObject({ p_setting: "ms-other-2", p_fields: ["name"], p_snapshot: AFTER_OWN_SAVE });
+  });
+  /**
+   * Astra full-branch review P2: between the name save and the promote (two transactions — 0263's promote takes no
+   * Spanish name, and 3b adds no migration) another shop's inheritance can change. The promote must then NOT reach
+   * shops the person never saw: it refuses dependencies_changed; the name save stands as the named partial result.
+   */
+  it("an inheritance change INTERLEAVED between the name save and the promote is refused; the promote never runs", async () => {
+    // LOC gained its own name between the two steps: it no longer inherits the name the preview said it would get.
+    const interleaved = nilSnap([
+      { id: "ms-loc-new", location_id: LOC, name_override: "Italiano de LOC", name_override_es: null },
+      { id: "ms-other-2", location_id: OTHER, name_override: "Big Italian", name_override_es: "Italiano grande" },
+    ]);
+    const calls = install(withShopSetting(), stateful(interleaved));
+    const err = await promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: PREVIEW,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MenuShopError);
+    expect(err).toMatchObject({ status: 409, code: "dependencies_changed", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+    expect(calls.map((c) => c.fn)).not.toContain("promote_menu_item_shop_setting");
+    expect(audits.map((a) => a.action)).toEqual(["menu_item.shop_setting_save"]); // the name save only
+  });
+  it("…and so is any other move after the save: the item row, a shop leaving, our row not being the one we wrote, our row gone", async () => {
+    const own = AFTER_OWN_SAVE.settings;
+    for (const after of [
+      nilSnap(own, { id: "m-italian", name: "Italian", name_es: "Italiano", menu_price: 13 }),
+      { ...nilSnap(own), active_shops: [OTHER] },
+      nilSnap([{ id: "ms-other-3", location_id: OTHER, name_override: "Big Italian", name_override_es: "Italiano grande" }]),
+      nilSnap([]),
+    ]) {
+      const calls = install(withShopSetting(), stateful(after as Row));
+      const err = await promoteMenuItemShopSetting(actor("moo", 8, []), {
+        menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: PREVIEW,
+      }).catch((e: unknown) => e);
+      expect(err, JSON.stringify(after)).toMatchObject({ status: 409, code: "dependencies_changed", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+      expect(calls.map((c) => c.fn)).not.toContain("promote_menu_item_shop_setting");
+    }
+  });
+  it("a direct call with no preview snapshot binds the one it takes BEFORE the save, the same way", async () => {
+    const interleaved = nilSnap([
+      { id: "ms-loc-new", location_id: LOC, name_override: "Italiano de LOC", name_override_es: null },
+      { id: "ms-other-2", location_id: OTHER, name_override: "Big Italian", name_override_es: "Italiano grande" },
+    ]);
+    let calls = install(withShopSetting(), stateful(interleaved));
+    expect(await refused(promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande",
+    }))).toEqual({ status: 409, code: "dependencies_changed" });
+    expect(calls.map((c) => c.fn)).not.toContain("promote_menu_item_shop_setting");
+    calls = install(withShopSetting(), stateful());
+    const r = await promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande",
+    });
+    expect(r.promotedSettingId).toBe("ms-other-2");
+    expect(calls.at(-1)).toMatchObject({ fn: "promote_menu_item_shop_setting", args: { p_snapshot: AFTER_OWN_SAVE } });
+  });
+  it("the Spanish name step refuses a moved preview BEFORE writing anything", async () => {
+    const calls = install(withShopSetting(), { menu_item_change_snapshot: () => ({ snap: "moved" }) });
+    expect(await refused(promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: SNAP,
+    }))).toEqual({ status: 409, code: "dependencies_changed" });
+    expect(calls.map((c) => c.fn)).toEqual(["menu_item_change_snapshot"]);
+  });
+  it("the literal Spanish name \"bad\" is a NAME, not an error sentinel (Astra chunk-1 review P3)", async () => {
+    const calls = install(withShopSetting(), stateful());
+    const r = await promoteMenuItemShopSetting(actor("moo", 8, []), {
+      menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "bad", snapshot: PREVIEW,
+    });
+    expect(r).toEqual({ changedShops: [LOC], returnedShop: OTHER, promotedSettingId: "ms-other-2" });
+    expect(calls[2]!.args).toMatchObject({ p_name_es: "bad" });
+    expect(calls[4]!.args).toMatchObject({ p_setting: "ms-other-2" });
+  });
+  it("a promote refused AFTER the Spanish name was saved says so (CC note 2 #3): the shop's label changed, the promote did not happen", async () => {
+    const calls: RpcCall[] = [];
+    current = createFakeDb(withShopSetting());
+    let saved = false;
+    (current.client as unknown as { rpc: unknown }).rpc = async (fn: string, args: Record<string, unknown>) => {
+      calls.push({ fn, args });
+      if (fn === "promote_menu_item_shop_setting") return { data: null, error: { message: "menu_item_shop:global_changed" } };
+      if (fn === "save_menu_item_shop_setting") { saved = true; return { data: { setting_id: "ms-other-2", retired_setting_id: "ms-other" }, error: null }; }
+      return { data: args.p_location === NIL_SCOPE ? (saved ? AFTER_OWN_SAVE : PREVIEW) : { snap: "shop" }, error: null };
+    };
+    let err: unknown;
+    try {
+      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: PREVIEW });
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(MenuShopError);
+    expect(err).toMatchObject({ status: 409, code: "global_changed", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+    expect(calls.map((c) => c.fn)).toContain("save_menu_item_shop_setting");
+    // a promote refused with NO Spanish-name step carries no such record
+    current = createFakeDb(withShopSetting());
+    (current.client as unknown as { rpc: unknown }).rpc = async () => ({ data: null, error: { message: "menu_item_shop:global_changed" } });
+    let plain: unknown;
+    try {
+      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, snapshot: SNAP });
+    } catch (e) { plain = e; }
+    expect(plain).toMatchObject({ code: "global_changed", spanishNameSaved: null });
+  });
+  /**
+   * EVERY failure after the Spanish name commits keeps the record (Astra chunk-2 review P2): the reload of the
+   * promote's snapshot, the promote call itself throwing, an un-named rpc error — all answer with the named partial
+   * result (name saved, not promoted), never a generic failure that hides the shop's changed label.
+   */
+  async function afterSave(fail: { reloadSnapshot?: boolean; promote?: "throws" | "unnamed" }): Promise<{ err: unknown; calls: string[] }> {
+    const calls: string[] = [];
+    let snapshots = 0;
+    let saved = false;
+    current = createFakeDb(withShopSetting());
+    (current.client as unknown as { rpc: unknown }).rpc = async (fn: string, args: Record<string, unknown>) => {
+      calls.push(fn);
+      if (fn === "save_menu_item_shop_setting") { saved = true; return { data: { setting_id: "ms-other-2", retired_setting_id: "ms-other" }, error: null }; }
+      if (fn === "promote_menu_item_shop_setting") {
+        if (fail.promote === "throws") throw new Error("fetch failed");
+        if (fail.promote === "unnamed") return { data: null, error: { message: "canceling statement due to statement timeout" } };
+        return { data: promoted(), error: null };
+      }
+      snapshots += 1;
+      // 1 = the preview's re-check, 2 = the shop save's own, 3 = the promote's reload AFTER the save
+      if (fail.reloadSnapshot && snapshots === 3) return { data: null, error: { message: "connection reset" } };
+      return { data: args.p_location === NIL_SCOPE ? (saved ? AFTER_OWN_SAVE : PREVIEW) : { snap: "shop" }, error: null };
+    };
+    let err: unknown;
+    try {
+      await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: PREVIEW });
+    } catch (e) { err = e; }
+    return { err, calls };
+  }
+  it("the snapshot RELOAD failing after the Spanish name saved answers with the named partial result", async () => {
+    const { err, calls } = await afterSave({ reloadSnapshot: true });
+    expect(err).toBeInstanceOf(MenuShopError);
+    expect(err).toMatchObject({ status: 500, code: "promote_not_done", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+    expect((err as Error).message).toBe("promote_not_done"); // the database's words never reach the page
+    expect(calls).toEqual(["menu_item_change_snapshot", "menu_item_change_snapshot", "save_menu_item_shop_setting", "menu_item_change_snapshot"]);
+  });
+  it("the promote call THROWING or answering an un-named error after the save: the same named partial result", async () => {
+    for (const promote of ["throws", "unnamed"] as const) {
+      const { err, calls } = await afterSave({ promote });
+      expect(err, promote).toBeInstanceOf(MenuShopError);
+      expect(err, promote).toMatchObject({ status: 500, code: "promote_not_done", spanishNameSaved: { settingId: "ms-other-2", locationId: OTHER } });
+      expect(calls, promote).toContain("promote_menu_item_shop_setting");
+    }
+  });
+  it("with NO Spanish-name step a failing promote is still the plain failure (nothing was saved)", async () => {
+    current = createFakeDb(withShopSetting());
+    (current.client as unknown as { rpc: unknown }).rpc = async () => ({ data: null, error: { message: "connection reset" } });
+    const err = await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, snapshot: SNAP })
+      .catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(MenuShopError);
+    expect(err).toBeInstanceOf(Error);
+  });
+  it("a blank or unchanged Spanish name is no extra step; a Spanish name with a price-only promote is refused by name; too long is invalid_name", async () => {
+    let calls = install(withShopSetting({ name_override_es: "Italiano grande" }), { promote_menu_item_shop_setting: promoted });
+    await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "Italiano grande", snapshot: SNAP });
+    expect(calls.map((c) => c.fn)).toEqual(["promote_menu_item_shop_setting"]);
+    calls = install(withShopSetting(), { promote_menu_item_shop_setting: promoted });
+    await promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "   ", snapshot: SNAP });
+    expect(calls.map((c) => c.fn)).toEqual(["promote_menu_item_shop_setting"]);
+    install(withShopSetting(), {});
+    expect(await refused(promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["price"], expected, nameEs: "Italiano", snapshot: SNAP })))
+      .toEqual({ status: 400, code: "invalid_payload" });
+    expect(await refused(promoteMenuItemShopSetting(actor("moo", 8, []), { menuItemId: "m-italian", settingId: "ms-other", fields: ["name"], expected, nameEs: "x".repeat(121), snapshot: SNAP })))
+      .toEqual({ status: 400, code: "invalid_name" });
+  });
+});

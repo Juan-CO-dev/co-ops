@@ -49,6 +49,7 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { EmptyState } from "@/components/EmptyState";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import { prepItemHref, productHref, skuCatalogHref } from "@/lib/admin/product-item-links-shared";
+import { menuItemPageHref } from "@/lib/catalog/recipe-item-shared";
 import {
   FOOD_COST_RED_THRESHOLD_PCT,
   type MenuCostRow,
@@ -80,7 +81,10 @@ export function MenuCostingClient({
   toastFetchedAt = null,
   toastUnavailable = false,
   toastNotices = [],
+  scope,
 }: {
+  /** The board's scope: a shop id, null = all shops (the global menu), undefined = not known (the remembered shop). The drawer opens the menu item page for it (catalog Phase 3b). */
+  scope?: string | null;
   canEditPrice?: boolean;
   toastFetchedAt?: string | null;
   toastUnavailable?: boolean;
@@ -227,6 +231,7 @@ export function MenuCostingClient({
                   >
                     {canEditPrice ? <MenuPriceEditor key={`${row.id}:${row.typedPrice}`} row={row} /> :
                       <p className="mb-2 text-xs text-co-text-muted">{t("admin.menu_costing.price.label")}: {row.includedInSubPrice ? t("admin.menu_costing.price.included") : money(row.menuPrice)}</p>}
+                    <a href={menuItemPageHref(row.id, { shopId: scope })} className={drawerLinkCls}>{t("catalog.menu.open_page")}</a>
                     <RowDrawer
                       row={row}
                       skuNames={skuNames}

@@ -54,16 +54,17 @@ export function etYmdMinusDays(ymd: string, days: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! - days)).toISOString().slice(0, 10);
 }
 
+const EASTERN_OFFSET_PARTS = new Intl.DateTimeFormat("en-US", {
+  timeZone: OPERATIONAL_TZ, hour12: false,
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+});
+
 /** The UTC offset (ms) of `instant` in the operational TZ. Negative west of UTC
  *  (ET is −4h EDT / −5h EST). Uses Intl to read the wall clock — DST-correct. */
 function tzOffsetMs(instant: Date): number {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: OPERATIONAL_TZ, hour12: false,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-  });
   const m: Record<string, string> = {};
-  for (const p of dtf.formatToParts(instant)) m[p.type] = p.value;
+  for (const p of EASTERN_OFFSET_PARTS.formatToParts(instant)) m[p.type] = p.value;
   const hour = m.hour === "24" ? 0 : Number(m.hour);
   const asUtc = Date.UTC(Number(m.year), Number(m.month) - 1, Number(m.day), hour, Number(m.minute), Number(m.second));
   return asUtc - instant.getTime();
@@ -127,16 +128,18 @@ export function etWallClockToUtcIso(dateYmd: string, time: string): string | nul
  * The UTC instant range [startIso, endExclusiveIso) covering one ET operational
  * day `dateYmd` (YYYY-MM-DD). Use for timestamptz range filters:
  *   .gte("created_at", startIso).lt("created_at", endExclusiveIso)
- * DST-correct: the offset is read at the day's own naive-UTC-midnight guess (DST
- * never flips within the ~4-5h correction), and the end is start + 24h so a
- * spring-forward/fall-back day still bounds its own rows without gap/overlap.
+ * DST-correct: resolve each ET midnight independently. The next midnight is
+ * 23, 24, or 25 hours later, so adjacent days have no gap or overlap.
+ * An impossible but well-formed date normalizes (2026-02-30 → 2026-03-02);
+ * callers receiving user input must validate the calendar date first.
  */
 export function operationalDayUtcRange(dateYmd: string): { startIso: string; endExclusiveIso: string } {
-  const naiveMidnightUtc = Date.parse(`${dateYmd}T00:00:00Z`);
-  const off = tzOffsetMs(new Date(naiveMidnightUtc));
-  const startMs = naiveMidnightUtc - off; // ET-midnight = UTC-midnight − offset
-  const endMs = startMs + 86_400_000;
-  return { startIso: new Date(startMs).toISOString(), endExclusiveIso: new Date(endMs).toISOString() };
+  const midnightIso = (ymd: string): string => {
+    const naiveMidnightUtc = Date.parse(`${ymd}T00:00:00Z`);
+    const off = tzOffsetMs(new Date(naiveMidnightUtc));
+    return new Date(naiveMidnightUtc - off).toISOString(); // ET midnight = UTC midnight − offset
+  };
+  return { startIso: midnightIso(dateYmd), endExclusiveIso: midnightIso(etYmdMinusDays(dateYmd, -1)) };
 }
 
 /**

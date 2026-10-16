@@ -11,11 +11,19 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import { assertScopeToken, catalogShopAllowed, catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
-import { menuShopWriteGate, type MenuItemShopSettingRow, type MenuShopPatch } from "@/lib/menu-item-shop-shared";
+import { assertScopeToken, catalogShopAllowed, catalogWriteRoleAllowed, NIL_SCOPE } from "@/lib/sku-versions-shared";
+import {
+  menuPromoteGate, menuShopWriteGate, parseOptionalMenuName, type MenuItemShopSettingRow, type MenuShopPatch,
+} from "@/lib/menu-item-shop-shared";
 import { MENU_SHOP_SETTING_COLUMNS } from "@/lib/menu-item-shop";
 
 export class MenuShopError extends Error {
+  /**
+   * A promote refused AFTER its optional Spanish name was already saved onto the source shop's own row (CC note 2
+   * #3): that label change stands (recorded in History) but the promote did not happen. The page says so plainly
+   * (`catalog.menu.promote.es_saved_not_promoted`). Null on every other refusal.
+   */
+  public spanishNameSaved: { settingId: string; locationId: string } | null = null;
   constructor(public status: number, public code: string, message?: string) {
     super(message ?? code);
     this.name = "MenuShopError";
@@ -154,4 +162,163 @@ export async function loadMenuItemShopHistory(actor: AuthContext, menuItemId: st
   if (uErr) throw new Error(`loadMenuItemShopHistory users: ${uErr.message}`);
   const nameBy = new Map((users ?? []).map((u) => [u.id, u.name]));
   return data.map((r) => ({ ...r, createdByName: r.created_by ? (nameBy.get(r.created_by) ?? null) : null }));
+}
+
+
+/** Key-order-independent JSON, for comparing two snapshot parts. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "undefined";
+}
+
+/**
+ * Did anything move between `before` (the promote's baseline) and `after` (re-taken after this operation's own
+ * shop save) OTHER than that save? 0263's snapshot is `{ item, settings: [live rows by shop], active_shops, costs }`;
+ * the save (0263 save_menu_item_shop_setting) touches only `settings` at its own shop — it closes the row the preview
+ * showed (`previousSettingId`) and opens `newSettingId`. So: every other part is unchanged, every other shop's live
+ * rows are unchanged, the shop had exactly the previewed row before and has exactly the new one after. Exported for
+ * tests.
+ */
+export function menuSnapshotMovedBeyondOwnSave(
+  before: MenuChangeSnapshot, after: MenuChangeSnapshot,
+  own: { locationId: string; previousSettingId: string; newSettingId: string },
+): boolean {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const k of keys) if (k !== "settings" && canonical(before[k]) !== canonical(after[k])) return true;
+  const rows = (s: MenuChangeSnapshot) => (Array.isArray(s.settings) ? (s.settings as Array<Record<string, unknown>>) : null);
+  const b = rows(before);
+  const a = rows(after);
+  if (b === null || a === null) return true;
+  const others = (xs: Array<Record<string, unknown>>) => xs.filter((x) => x.location_id !== own.locationId);
+  if (canonical(others(b)) !== canonical(others(a))) return true;
+  const mine = (xs: Array<Record<string, unknown>>) => xs.filter((x) => x.location_id === own.locationId).map((x) => x.id);
+  const bm = mine(b);
+  const am = mine(a);
+  return !(bm.length === 1 && bm[0] === own.previousSettingId && am.length === 1 && am[0] === own.newSettingId);
+}
+
+/**
+ * PROMOTE (MoO+): a shop's price and/or name becomes the global one (menu_items), under a compare-and-set on
+ * the global values the preview showed and the dependency snapshot of the global view alone (NIL_SCOPE; 0263
+ * takes the same). "Sold here" is never promoted. FIELD BY FIELD: a shop changes when it inherits ANY promoted
+ * field. In the same transaction the source shop returns to the default for the promoted fields (lead decision 5).
+ *
+ * THE NAME PAIR IS COPIED EXACTLY (CC note 1 #2, superseding the GO's promote bullet): 0263 writes the shop's
+ * name AND its Spanish name as they are — "no Spanish name" included, so an English-only rename never resurrects
+ * the old default's Spanish name; the app then shows the English name to Spanish users and the preview says so.
+ * THE OPTIONAL SPANISH NAME FIELD (`nameEs`): 0263's promote takes no Spanish-name parameter, so a typed Spanish
+ * name is first saved onto the source shop's own row (an ordinary audited shop save, compare-and-set on the row
+ * the preview showed), and THAT row is promoted — after re-checking that the preview's snapshot still held
+ * before anything was written. Two transactions: if the promote then refuses, the shop keeps its new Spanish
+ * name (its own label, recorded in History) and nothing else moved. The promote is held to the PREVIEWED baseline
+ * (Astra full-branch review P2): the snapshot re-taken after the save may differ only by that save's own row
+ * (`menuSnapshotMovedBeyondOwnSave`); anything else is `dependencies_changed` — a new preview — never a promote that
+ * reaches shops the person did not see. (One transaction would need the promote RPC to take the Spanish name — a
+ * migration, which 3b does not have.)
+ */
+export async function promoteMenuItemShopSetting(
+  actor: AuthContext,
+  input: {
+    menuItemId: string; settingId: string; fields: ReadonlyArray<"price" | "name">; expected: { price: number | null; name: string; nameEs: string | null };
+    /** The optional "Spanish name" field (blank = not typed); only with the name promoted. */
+    nameEs?: string | null;
+    snapshot?: MenuChangeSnapshot;
+  },
+): Promise<{ changedShops: string[]; returnedShop: string | null; promotedSettingId: string }> {
+  const gate = menuPromoteGate({ role: actor.user.role, level: actor.level });
+  if (!gate.ok) throw new MenuShopError(gate.status, gate.code);
+  // A discriminated result (Astra chunk-1 review P3): the literal name "bad" is a name, not an error.
+  const typed = parseOptionalMenuName(input.nameEs);
+  if (!typed.ok) throw new MenuShopError(400, "invalid_name");
+  const typedEs = typed.value;
+  if (typedEs !== null && !input.fields.includes("name")) throw new MenuShopError(400, "invalid_payload");
+  const sb = getServiceRoleClient();
+  type SourceRow = {
+    id: string; menu_item_id: string; location_id: string; price: number | string | null; sold_here: boolean;
+    name_override: string | null; name_override_es: string | null; active: boolean | null;
+  };
+  const { data: row, error: rErr } = await sb.from("menu_item_shop_settings")
+    .select("id, menu_item_id, location_id, price, sold_here, name_override, name_override_es, active")
+    .eq("id", input.settingId).maybeSingle<SourceRow>();
+  if (rErr) throw new Error(`promoteMenuItemShopSetting read: ${rErr.message}`);
+  if (!row || row.menu_item_id !== input.menuItemId) throw new MenuShopError(404, "not_found");
+  // The shop whose setting is promoted is bound like any write of it (MoO+ passes for every active shop).
+  requireLocation(actor, row.location_id);
+
+  let settingId = row.id;
+  let snapshot = input.snapshot;
+  /** Set the moment the Spanish name's own save COMMITS; from then on every failure says so (Astra chunk-2 review P2). */
+  let spanishNameSaved: { settingId: string; locationId: string } | null = null;
+  if (typedEs !== null && typedEs !== row.name_override_es) {
+    if (row.active === false) throw new MenuShopError(409, "not_live");
+    if (row.name_override === null) throw new MenuShopError(400, "nothing_to_promote");
+    // Nothing is written on a moved preview: its snapshot must still hold BEFORE the Spanish name is saved. A direct
+    // call with no preview binds the snapshot it takes now — the baseline the promote below is held to.
+    const now = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+    if (snapshot !== undefined && JSON.stringify(now) !== JSON.stringify(snapshot)) throw new MenuShopError(409, "dependencies_changed");
+    snapshot = now;
+    const price = row.price === null ? null : Number(row.price);
+    const saved = await writeSetting(actor, {
+      menuItemId: input.menuItemId, locationId: row.location_id, expectedSettingId: row.id,
+      patch: { price, soldHere: row.sold_here, nameOverride: row.name_override, nameOverrideEs: typedEs },
+      restoredFromSettingId: null, note: "Spanish name added to promote",
+    });
+    settingId = saved.settingId;
+    spanishNameSaved = { settingId, locationId: row.location_id };
+  }
+
+  // THE WHOLE POST-SAVE PATH (Astra chunk-2 review P2): the snapshot reload, the promote call and its answer. Once
+  // the Spanish name has committed, ANY failure here — a named refusal, an un-named rpc error, a thrown read — answers
+  // with the named partial result (the shop's label changed and is in History; the promote did not happen), never a
+  // generic failure. With no Spanish-name step nothing was written, so a failure stays what it was.
+  type PromoteResult = {
+    changed_shops: string[] | null; before: Record<string, unknown>;
+    returned_shop: string | null; retired_setting_id: string | null; remaining_setting_id: string | null;
+  };
+  let r: PromoteResult;
+  try {
+    if (spanishNameSaved !== null) {
+      // KEEP THE PREVIEWED BASELINE (Astra full-branch review P2). The name save and the promote are two
+      // transactions (0263's promote takes no Spanish name; one RPC would need a migration, and 3b has none), so the
+      // snapshot re-taken now may differ from the preview ONLY by this operation's own committed row. Anything else —
+      // another shop's inheritance, the item row, the active shops, a cost — moved between the two steps, and the
+      // promote could reach shops the person never saw: refuse, and the name save stands as the named partial result.
+      const after = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+      if (menuSnapshotMovedBeyondOwnSave(snapshot!, after, { locationId: row.location_id, previousSettingId: row.id, newSettingId: settingId })) {
+        throw new MenuShopError(409, "dependencies_changed");
+      }
+      snapshot = after;
+    } else if (snapshot === undefined) {
+      snapshot = await loadMenuChangeSnapshot(input.menuItemId, NIL_SCOPE);
+    }
+    const { data, error } = await sb.rpc("promote_menu_item_shop_setting", {
+      p_setting: settingId, p_fields: input.fields, p_expected_price: input.expected.price,
+      p_expected_name: input.expected.name, p_expected_name_es: input.expected.nameEs, p_actor: actor.user.id,
+      p_snapshot: snapshot,
+    });
+    if (error) menuShopErrorFromRpc(error.message);
+    r = data as PromoteResult;
+  } catch (e) {
+    if (spanishNameSaved === null) throw e;
+    // A named refusal keeps its own code (CC note 2 #3); anything else becomes the named `promote_not_done` — the
+    // database's words stay server-side (the cause), never on the page.
+    const named = e instanceof MenuShopError ? e : Object.assign(new MenuShopError(500, "promote_not_done"), { cause: e });
+    named.spanishNameSaved = spanishNameSaved;
+    throw named;
+  }
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "menu_item.shop_setting_promote", resourceTable: "menu_items", resourceId: input.menuItemId,
+    metadata: {
+      setting_id: settingId, location_id: row.location_id, fields: input.fields, before: r.before, changed_shops: r.changed_shops ?? [],
+      returned_shop: r.returned_shop, remaining_setting_id: r.remaining_setting_id,
+      spanish_name_saved_from_setting_id: settingId !== row.id ? row.id : null,
+    },
+    ipAddress: null, userAgent: null,
+  });
+  return { changedShops: r.changed_shops ?? [], returnedShop: r.returned_shop ?? null, promotedSettingId: settingId };
 }

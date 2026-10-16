@@ -431,3 +431,101 @@ export async function loadRecipeVersionHistory(
     lines: linesBy.get(v.id) ?? [],
   }));
 }
+
+// ── Adopt, promote, the notice answer (catalog Phase 3b) ──────────────────────
+
+/**
+ * The version a copy is taken from: ANOTHER shop's (`notShop` for an adopt) LIVE version of THIS recipe. A friendly,
+ * named refusal before the write; 0262 re-checks the same rule under its locks (`invalid_source`).
+ */
+async function requireShopSourceVersion(recipeId: string, sourceVersionId: string, notShop: string | null): Promise<void> {
+  const { data, error } = await getServiceRoleClient().from("recipe_versions").select("id, recipe_id, location_id, active")
+    .eq("id", sourceVersionId).maybeSingle<{ id: string; recipe_id: string; location_id: string | null; active: boolean | null }>();
+  if (error) throw new Error(`recipe version source read: ${error.message}`);
+  if (!data) throw new RecipeVersionError(404, "not_found");
+  if (data.recipe_id !== recipeId || data.location_id === null || data.location_id === notShop || data.active === false) {
+    throw new RecipeVersionError(400, "invalid_source");
+  }
+}
+
+/**
+ * ADOPT: this shop takes another shop's LIVE version as-is — a new version of THIS shop based on it
+ * (adopted_from recorded), its lines copied IN SQL (every copied line validated like an addition). A copy,
+ * never a live link: when the source changes later, this shop's GM is asked (computeRecipeNotices), and
+ * nothing changes without their yes. PROVENANCE FOLLOWS THE CONTENT (lead decision): editing the copy keeps
+ * the link (the notice adds "You've changed your copy since adopting it."); restoring pre-adoption history or
+ * going back to the default ends it (0262 records adoption_ended_from_version_id).
+ */
+export async function adoptRecipeVersion(
+  actor: AuthContext,
+  input: {
+    recipeId: string; locationId: string; sourceVersionId: string;
+    /** This shop's live version the person saw (null = it rode the default). */
+    expectedVersionId: string | null;
+    /** Kept for the change model's symmetry; 0262 makes an adopt's based_on the source itself. */
+    basedOnVersionId?: string | null;
+    /** The preview's dependency snapshot; absent = taken now (a direct call). */
+    snapshot?: RecipeChangeSnapshot;
+  },
+): Promise<WriteRecipeVersionResult> {
+  requireLocation(actor, input.locationId);
+  await requireShopSourceVersion(input.recipeId, input.sourceVersionId, input.locationId);
+  const snapshot = input.snapshot ?? await loadRecipeChangeSnapshot(input.recipeId, input.locationId, await loadVersionLineFields(input.sourceVersionId));
+  return writeRecipeVersion(actor, {
+    recipeId: input.recipeId, scope: input.locationId, expectedVersionId: input.expectedVersionId,
+    basedOnVersionId: input.basedOnVersionId ?? null, lines: null, adoptedFromVersionId: input.sourceVersionId, op: "adopt", snapshot,
+  });
+}
+
+/**
+ * PROMOTE (MoO+): a shop's live version becomes the new GLOBAL default (promoted_from recorded), its
+ * lines copied IN SQL into recipe_inputs and journaled — and, in the SAME transaction, the source shop
+ * RETURNS TO THE DEFAULT (lead decision 5): its version is retired (history kept), so later global edits
+ * reach it again; its food does not change today (the new default IS its lines). Every other shop riding
+ * the default changes; every other shop with its own version is untouched.
+ */
+export async function promoteRecipeVersion(
+  actor: AuthContext,
+  input: { recipeId: string; sourceVersionId: string; expectedGlobalVersionId: string | null; snapshot?: RecipeChangeSnapshot },
+): Promise<WriteRecipeVersionResult> {
+  // The GLOBAL gate (scope null): MoO+ passes; a GM is global_requires_moo; the social media manager forbidden.
+  requireLocation(actor, null);
+  await requireShopSourceVersion(input.recipeId, input.sourceVersionId, null);
+  const snapshot = input.snapshot ?? await loadRecipeChangeSnapshot(input.recipeId, null, await loadVersionLineFields(input.sourceVersionId));
+  return writeRecipeVersion(actor, {
+    recipeId: input.recipeId, scope: null, expectedVersionId: input.expectedGlobalVersionId,
+    basedOnVersionId: null, lines: null, promotedFromVersionId: input.sourceVersionId, op: "promote", snapshot,
+  });
+}
+
+export const RECIPE_NOTICE_DISMISS_KINDS = ["source_changed", "source_retired", "new_default"] as const;
+export type RecipeNoticeDismissKind = (typeof RECIPE_NOTICE_DISMISS_KINDS)[number];
+
+/**
+ * A GM's "Keep mine" / "Got it" on a read-time notice: one row for the version SEEN in the STATE seen
+ * (`source_changed` live, `source_retired` retired, `new_default`), idempotent on the 0262 unique index,
+ * so a later change — a new version id, or the same version's retirement — raises the notice again.
+ * Changes no food: the session, the GM floor, the role rule and the shop bind (requireLocation), no password.
+ */
+export async function dismissRecipeNotice(
+  actor: AuthContext,
+  input: { locationId: string; recipeId: string; kind: RecipeNoticeDismissKind; seenVersionId: string },
+): Promise<void> {
+  requireLocation(actor, input.locationId);
+  if (!(RECIPE_NOTICE_DISMISS_KINDS as readonly string[]).includes(input.kind)) throw new RecipeVersionError(400, "invalid_payload");
+  const sb = getServiceRoleClient();
+  const { data: seen, error: sErr } = await sb.from("recipe_versions").select("id, recipe_id")
+    .eq("id", input.seenVersionId).maybeSingle<{ id: string; recipe_id: string }>();
+  if (sErr) throw new Error(`dismissRecipeNotice read: ${sErr.message}`);
+  if (!seen || seen.recipe_id !== input.recipeId) throw new RecipeVersionError(404, "not_found");
+  const { error } = await sb.from("recipe_notice_dismissals").upsert(
+    [{ location_id: input.locationId, recipe_id: input.recipeId, kind: input.kind, seen_version_id: input.seenVersionId, created_by: actor.user.id }],
+    { onConflict: "location_id,recipe_id,kind,seen_version_id", ignoreDuplicates: true },
+  );
+  if (error) throw new Error(`dismissRecipeNotice: ${error.message}`);
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "recipe_version.notice_dismiss", resourceTable: "recipe_notice_dismissals", resourceId: input.seenVersionId,
+    metadata: { location_id: input.locationId, recipe_id: input.recipeId, kind: input.kind }, ipAddress: null, userAgent: null,
+  });
+}

@@ -28,6 +28,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { operationalDayUtcRange } from "@/lib/operational-day";
 
 export type CapacitySignal =
   | "available"      // room for the requested covers
@@ -67,12 +68,13 @@ interface PolicyRow {
   min_lead_time_hours: number | null;
 }
 
-/** Hours from `now` until the START of the event date (local midnight, operational TZ). */
-function hoursUntilDate(eventDate: string, now: Date): number {
+/** Whether the event's ET midnight meets the minimum lead time. */
+function meetsLeadTimeForDate(eventDate: string, now: Date, minLeadTimeHours: number): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) return false;
   // Event date start in the operational TZ (America/New_York — both CO locations are in DC).
   // Compare against now; a same-day or future date yields >= 0-ish, past dates negative.
-  const eventStart = new Date(`${eventDate}T00:00:00-05:00`).getTime();
-  return (eventStart - now.getTime()) / 3_600_000;
+  const eventStart = Date.parse(operationalDayUtcRange(eventDate).startIso);
+  return (eventStart - now.getTime()) / 3_600_000 >= minLeadTimeHours;
 }
 
 /**
@@ -163,7 +165,7 @@ export async function checkCateringCapacity(args: {
   const meetsLeadTime =
     policy?.min_lead_time_hours == null
       ? true
-      : hoursUntilDate(args.eventDate, now) >= policy.min_lead_time_hours;
+      : meetsLeadTimeForDate(args.eventDate, now, policy.min_lead_time_hours);
 
   const base = {
     mode: "A" as const,
