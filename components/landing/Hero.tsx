@@ -6,10 +6,11 @@ import { SectionView } from "./SectionView";
 import { DeferredMotion as HeroMotion } from "./DeferredMotion";
 import { OrderLink } from "./OrderLink";
 import { OfferCode } from "./OfferCode";
+import { preload } from "react-dom";
 
 export function Hero({language, config, ad}:{language:Language;config:LandingConfig;ad:string}) {
+  preload(heroMedia.poster, { as: 'image', imageSrcSet: heroMedia.srcSet, imageSizes: heroMedia.sizes, fetchPriority: 'high' });
   return <section id="hero" aria-labelledby="hero-title" className="rounded-3xl bg-[#FFE560] px-5 py-7 sm:px-8 sm:py-10">
-    <link rel="preload" as="image" href={heroMedia.poster} fetchPriority="high"/>
     <SectionView section="hero">
       <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-2">
         <div className="min-w-0 [overflow-wrap:anywhere]">
@@ -21,7 +22,7 @@ export function Hero({language, config, ad}:{language:Language;config:LandingCon
         <HeroMotion src={heroMedia.spin} pauseLabel={serverT(language,"landing.hero.pause")} playLabel={serverT(language,"landing.hero.play")}>
           {/* Original photo, crop/encode only; no image optimizer or alpha decoder dependency. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={heroMedia.poster} alt={serverT(language,"landing.hero.alt")} width={heroMedia.width} height={heroMedia.height} fetchPriority="high" loading="eager" className="block aspect-[2/3] max-h-[28rem] w-full object-contain"/>
+          <img src={heroMedia.poster} srcSet={heroMedia.srcSet} sizes={heroMedia.sizes} alt={serverT(language,"landing.hero.alt")} width={heroMedia.width} height={heroMedia.height} fetchPriority="high" loading="eager" className="block aspect-[2/3] max-h-[28rem] w-full object-contain"/>
         </HeroMotion>
       </div>
     </SectionView>

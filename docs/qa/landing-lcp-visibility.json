@@ -1,0 +1,1182 @@
+{
+  "before": [
+    {
+      "javaScriptEnabled": false,
+      "paint": [
+        {
+          "name": "first-paint",
+          "entryType": "paint",
+          "startTime": 384,
+          "duration": 0,
+          "navigationId": 5081,
+          "paintTime": 373.89999985694885,
+          "presentationTime": 384
+        },
+        {
+          "name": "first-contentful-paint",
+          "entryType": "paint",
+          "startTime": 384,
+          "duration": 0,
+          "navigationId": 5081,
+          "paintTime": 373.89999985694885,
+          "presentationTime": 384
+        }
+      ],
+      "title": {
+        "html": "<h1 id=\"hero-title\" class=\"max-w-xl text-4xl font-black tracking-tight sm:text-6xl\">Your next great lunch.</h1>",
+        "rect": {
+          "x": 40,
+          "y": 116,
+          "width": 295,
+          "height": 80,
+          "top": 116,
+          "right": 335,
+          "bottom": 196,
+          "left": 40
+        },
+        "chain": [
+          {
+            "tag": "H1",
+            "id": "hero-title",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "grid",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "SECTION",
+            "id": "hero",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "MAIN",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "BODY",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "flex",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "HTML",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          }
+        ]
+      },
+      "poster": {
+        "html": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "rect": {
+          "x": 40,
+          "y": 396,
+          "width": 295,
+          "height": 442.5,
+          "top": 396,
+          "right": 335,
+          "bottom": 838.5,
+          "left": 40
+        },
+        "chain": [
+          {
+            "tag": "IMG",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "grid",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "SECTION",
+            "id": "hero",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "MAIN",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "BODY",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "flex",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "HTML",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          }
+        ]
+      },
+      "decodeDurationsMs": [
+        7.143
+      ],
+      "tracePath": "tmp/lcp-round/visibility-before/no-js-trace.json"
+    },
+    {
+      "javaScriptEnabled": true,
+      "paint": [
+        {
+          "name": "first-paint",
+          "entryType": "paint",
+          "startTime": 224,
+          "duration": 0,
+          "navigationId": 2611,
+          "paintTime": 209.5,
+          "presentationTime": 224
+        },
+        {
+          "name": "first-contentful-paint",
+          "entryType": "paint",
+          "startTime": 224,
+          "duration": 0,
+          "navigationId": 2611,
+          "paintTime": 209.5,
+          "presentationTime": 224
+        }
+      ],
+      "lcp": [
+        {
+          "time": 224,
+          "url": "",
+          "element": "<h1 id=\"hero-title\" class=\"max-w-xl text-4xl font-black tracking-tight sm:text-6xl\">Your next great lunch.</h1>"
+        },
+        {
+          "time": 384,
+          "url": "http://localhost:44170/media/crunchy-boi-014-3566a724066c.webp",
+          "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">"
+        }
+      ],
+      "title": {
+        "html": "<h1 id=\"hero-title\" class=\"max-w-xl text-4xl font-black tracking-tight sm:text-6xl\">Your next great lunch.</h1>",
+        "rect": {
+          "x": 40,
+          "y": 116,
+          "width": 295,
+          "height": 80,
+          "top": 116,
+          "right": 335,
+          "bottom": 196,
+          "left": 40
+        },
+        "chain": [
+          {
+            "tag": "H1",
+            "id": "hero-title",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "grid",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "SECTION",
+            "id": "hero",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "MAIN",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "BODY",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "flex",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "HTML",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          }
+        ]
+      },
+      "poster": {
+        "html": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "rect": {
+          "x": 40,
+          "y": 396,
+          "width": 295,
+          "height": 442.5,
+          "top": 396,
+          "right": 335,
+          "bottom": 838.5,
+          "left": 40
+        },
+        "chain": [
+          {
+            "tag": "IMG",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "grid",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "SECTION",
+            "id": "hero",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "MAIN",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "BODY",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "flex",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "HTML",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          }
+        ]
+      },
+      "decodeDurationsMs": [
+        7.843
+      ],
+      "tracePath": "tmp/lcp-round/visibility-before/js-trace.json"
+    }
+  ],
+  "after": [
+    {
+      "javaScriptEnabled": false,
+      "paint": [
+        {
+          "name": "first-paint",
+          "entryType": "paint",
+          "startTime": 616,
+          "duration": 0,
+          "navigationId": 6766,
+          "paintTime": 599,
+          "presentationTime": 616
+        },
+        {
+          "name": "first-contentful-paint",
+          "entryType": "paint",
+          "startTime": 616,
+          "duration": 0,
+          "navigationId": 6766,
+          "paintTime": 599,
+          "presentationTime": 616
+        }
+      ],
+      "title": {
+        "html": "<h1 id=\"hero-title\" class=\"max-w-xl text-4xl font-black tracking-tight sm:text-6xl\">Your next great lunch.</h1>",
+        "rect": {
+          "x": 40,
+          "y": 116,
+          "width": 295,
+          "height": 80,
+          "top": 116,
+          "right": 335,
+          "bottom": 196,
+          "left": 40
+        },
+        "chain": [
+          {
+            "tag": "H1",
+            "id": "hero-title",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "grid",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "SECTION",
+            "id": "hero",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "MAIN",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "BODY",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "flex",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "HTML",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          }
+        ]
+      },
+      "poster": {
+        "html": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-640-60b196bce4cb.webp 640w, /media/crunchy-boi-014-960-3c7d6237a944.webp 960w\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "rect": {
+          "x": 40,
+          "y": 396,
+          "width": 295,
+          "height": 442.5,
+          "top": 396,
+          "right": 335,
+          "bottom": 838.5,
+          "left": 40
+        },
+        "chain": [
+          {
+            "tag": "IMG",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "grid",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "SECTION",
+            "id": "hero",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "MAIN",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "BODY",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "flex",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "HTML",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          }
+        ]
+      },
+      "decodeDurationsMs": [
+        1.93
+      ],
+      "tracePath": "tmp/lcp-round/visibility-after/no-js-trace.json"
+    },
+    {
+      "javaScriptEnabled": true,
+      "paint": [
+        {
+          "name": "first-paint",
+          "entryType": "paint",
+          "startTime": 192,
+          "duration": 0,
+          "navigationId": 4378,
+          "paintTime": 174.09999990463257,
+          "presentationTime": 192
+        },
+        {
+          "name": "first-contentful-paint",
+          "entryType": "paint",
+          "startTime": 192,
+          "duration": 0,
+          "navigationId": 4378,
+          "paintTime": 174.09999990463257,
+          "presentationTime": 192
+        }
+      ],
+      "lcp": [
+        {
+          "time": 192,
+          "url": "http://localhost:44170/brand/co-wordmark.svg",
+          "element": "<img src=\"/brand/co-wordmark.svg\" alt=\"Compliments Only\" width=\"1125\" height=\"140\" class=\"h-12 w-44 object-contain\">"
+        },
+        {
+          "time": 284,
+          "url": "http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp",
+          "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-640-60b196bce4cb.webp 640w, /media/crunchy-boi-014-960-3c7d6237a944.webp 960w\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">"
+        }
+      ],
+      "title": {
+        "html": "<h1 id=\"hero-title\" class=\"max-w-xl text-4xl font-black tracking-tight sm:text-6xl\">Your next great lunch.</h1>",
+        "rect": {
+          "x": 40,
+          "y": 116,
+          "width": 295,
+          "height": 80,
+          "top": 116,
+          "right": 335,
+          "bottom": 196,
+          "left": 40
+        },
+        "chain": [
+          {
+            "tag": "H1",
+            "id": "hero-title",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "grid",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "SECTION",
+            "id": "hero",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "MAIN",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "BODY",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "flex",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "HTML",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          }
+        ]
+      },
+      "poster": {
+        "html": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-640-60b196bce4cb.webp 640w, /media/crunchy-boi-014-960-3c7d6237a944.webp 960w\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "rect": {
+          "x": 40,
+          "y": 396,
+          "width": 295,
+          "height": 442.5,
+          "top": 396,
+          "right": 335,
+          "bottom": 838.5,
+          "left": 40
+        },
+        "chain": [
+          {
+            "tag": "IMG",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "grid",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "SECTION",
+            "id": "hero",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "MAIN",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "DIV",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "BODY",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "flex",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          },
+          {
+            "tag": "HTML",
+            "id": "",
+            "opacity": "1",
+            "visibility": "visible",
+            "display": "block",
+            "transform": "none",
+            "clip": "auto",
+            "clipPath": "none",
+            "animation": "none"
+          }
+        ]
+      },
+      "decodeDurationsMs": [
+        1.77
+      ],
+      "tracePath": "tmp/lcp-round/visibility-after/js-trace.json"
+    }
+  ]
+}

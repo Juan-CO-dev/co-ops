@@ -1,0 +1,132 @@
+{
+  "commit": "c8563eb8",
+  "applicationChanges": false,
+  "measurement": "existing production build before any application edit",
+  "pixelBlockedMechanism": "Lighthouse blockedUrlPatterns uses CDP Network.setBlockedURLs (request aborted)",
+  "states": {
+    "real-accepted": {
+      "state": "accepted",
+      "failures": [
+        "pixel-transfer-unmeasured"
+      ],
+      "runs": [
+        {
+          "performance": 0.96,
+          "lcp": 2659.7192000000005,
+          "tbt": 34.5,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.96,
+          "lcp": 2647.3497500000003,
+          "tbt": 87.5,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.97,
+          "lcp": 2577.57075,
+          "tbt": 56.5,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        }
+      ]
+    },
+    "real-unset": {
+      "state": "unset",
+      "failures": [],
+      "runs": [
+        {
+          "performance": 0.97,
+          "lcp": 2592.838,
+          "tbt": 38.5,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.97,
+          "lcp": 2572.5789999999997,
+          "tbt": 51,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.96,
+          "lcp": 2614.5814999999993,
+          "tbt": 75,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        }
+      ]
+    },
+    "blocked-accepted": {
+      "state": "accepted",
+      "failures": [
+        "pixel-transfer-unmeasured"
+      ],
+      "runs": [
+        {
+          "performance": 0.96,
+          "lcp": 2668.0345,
+          "tbt": 40.5,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.97,
+          "lcp": 2520.516125,
+          "tbt": 35.5,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.97,
+          "lcp": 2574.7655000000004,
+          "tbt": 82,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        }
+      ]
+    },
+    "blocked-unset": {
+      "state": "unset",
+      "failures": [],
+      "runs": [
+        {
+          "performance": 0.97,
+          "lcp": 2641.809875,
+          "tbt": 62.5,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.97,
+          "lcp": 2591.0229999999997,
+          "tbt": 66.5,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        },
+        {
+          "performance": 0.97,
+          "lcp": 2612.3548,
+          "tbt": 46,
+          "firstParty": 293921,
+          "thirdParty": 0,
+          "total": 293921
+        }
+      ]
+    }
+  }
+}

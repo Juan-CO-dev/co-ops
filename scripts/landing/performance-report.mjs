@@ -21,13 +21,23 @@ export function checkFirstPartyRuns(reports) {
     return runs.some(run=>run.firstParty>500000)?['first-party-bytes']:[];
   } catch {return ['incomplete-run'];}
 }
-export function checkConsentRuns(reports,state) {
+export function checkConsentRuns(reports,state,{blockPixel=false}={}) {
   if(reports.length!==3)return ['three-cold-runs-required'];
   for(const report of reports) {
     const origin=new URL(report.finalDisplayedUrl ?? report.finalUrl ?? report.requestedUrl).origin;
     const requests=report.audits['network-requests']?.details?.items ?? [];
     const external=requests.filter(item=>/^https?:/.test(item.url) && new URL(item.url).origin!==origin);
     if(state==='unset' && external.length)return ['unexpected-third-party-request'];
+    if(blockPixel) {
+      const patterns=report.configSettings?.blockedUrlPatterns ?? [];
+      if(!['*://connect.facebook.net/*','*://www.facebook.com/tr/*'].every(pattern=>patterns.includes(pattern)))return ['pixel-blocking-unverified'];
+      if(external.some(item=>!Number.isFinite(item.transferSize)||item.transferSize!==0||item.statusCode===200))return ['unexpected-third-party-transfer'];
+      if(external.some(item=>{
+        const url=new URL(item.url);
+        return url.hostname!=='connect.facebook.net' && !(url.hostname==='www.facebook.com' && url.pathname.startsWith('/tr/'));
+      }))return ['unexpected-third-party-request'];
+      continue;
+    }
     if(state==='accepted') {
       const pixel=external.find(item=>new URL(item.url).hostname==='connect.facebook.net' && new URL(item.url).pathname.endsWith('/fbevents.js'));
       if(!pixel || pixel.statusCode!==200 || pixel.transferSize<=0 || external.some(item=>item.finished!==true))return ['pixel-transfer-unmeasured'];

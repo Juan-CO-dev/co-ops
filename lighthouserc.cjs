@@ -1,3 +1,6 @@
+// Diagnostic opt-in only. Default runs still require completed real Pixel traffic.
+const blocked = process.env.LANDING_PERF_BLOCK_PIXEL === '1'
+  ? { blockedUrlPatterns: ['*://connect.facebook.net/*', '*://www.facebook.com/tr/*'] } : {};
 module.exports = {
   ci: {
     collect: { url: ['http://localhost:44170/'], numberOfRuns: 3,
@@ -5,7 +8,7 @@ module.exports = {
       // Match Playwright's local browser launch in restricted test environments.
       puppeteerLaunchOptions: { args: process.env.LANDING_PERF_NO_SANDBOX === '1' ? ['--no-sandbox'] : [] },
       startServerCommand: 'node scripts/landing/e2e-server.mjs', startServerReadyPattern: 'Ready', startServerReadyTimeout: 600000,
-      settings: { formFactor: 'mobile', throttlingMethod:'simulate', throttling:{rttMs:150,throughputKbps:1600,cpuSlowdownMultiplier:4}, screenEmulation: { mobile:true, width:375, height:812, deviceScaleFactor:1, disabled:false } } },
+      settings: { ...blocked, formFactor: 'mobile', throttlingMethod:'simulate', throttling:{rttMs:150,throughputKbps:1600,cpuSlowdownMultiplier:4}, screenEmulation: { mobile:true, width:375, height:812, deviceScaleFactor:1, disabled:false } } },
     assert: { assertions: {
       'categories:performance': ['error', { minScore:0.85, aggregationMethod:'median' }],
       'categories:accessibility': ['error', { minScore:0.95, aggregationMethod:'median' }],

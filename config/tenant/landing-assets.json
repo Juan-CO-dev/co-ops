@@ -102,5 +102,17 @@
   {
     "id": "subdex-poster",
     "path": "/media/subdex-poster-drawn-4f35ab463487.webp"
+  },
+  {
+    "id": "hero-poster-320",
+    "path": "/media/crunchy-boi-014-320-1c40aa3dc34f.webp"
+  },
+  {
+    "id": "hero-poster-640",
+    "path": "/media/crunchy-boi-014-640-60b196bce4cb.webp"
+  },
+  {
+    "id": "hero-poster-960",
+    "path": "/media/crunchy-boi-014-960-3c7d6237a944.webp"
   }
 ]

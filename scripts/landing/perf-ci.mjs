@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 import {checkFirstPartyRuns,checkConsentRuns,summarizeRun} from './performance-report.mjs';
 let failed=false;
+const blockPixel=process.env.LANDING_PERF_BLOCK_PIXEL==='1';
+const measurement=blockPixel?'first-party-only-pixel-blocked':'real-pixel';
 for(const state of ['accepted','unset']) {
   // A failed collect must never report a previous state's cached measurements.
   if(existsSync('.lighthouseci')) for(const file of readdirSync('.lighthouseci'))
@@ -15,12 +17,14 @@ for(const state of ['accepted','unset']) {
   // Preserve every raw run even when assertions fail, before the next collect clears it.
   if(existsSync('.lighthouseci')){
     mkdirSync(`tmp/landing-performance/raw-${state}`,{recursive:true});
+    for(const file of readdirSync(`tmp/landing-performance/raw-${state}`))
+      if(/^(lhr-|assertion-results).*\.(json|html)$/.test(file))unlinkSync(`tmp/landing-performance/raw-${state}/${file}`);
     for(const file of readdirSync('.lighthouseci'))if(/^(lhr-|assertion-results).*\.(json|html)$/.test(file))copyFileSync(`.lighthouseci/${file}`,`tmp/landing-performance/raw-${state}/${file}`);
     const reports=readdirSync('.lighthouseci').filter(file=>/^lhr-.*\.json$/.test(file)).map(file=>JSON.parse(readFileSync(`.lighthouseci/${file}`,'utf8')));
     const failures=checkFirstPartyRuns(reports);
-    if(!failures.includes('incomplete-run'))failures.push(...checkConsentRuns(reports,state));
+    if(!failures.includes('incomplete-run'))failures.push(...checkConsentRuns(reports,state,{blockPixel}));
     failed ||= failures.length>0;
-    const summary={state,failures,runs:failures.includes('incomplete-run')?[]:reports.map(summarizeRun)};
+    const summary={state,measurement,thirdPartyCostMeasured:!blockPixel&&state==='accepted'&&reports.length===3&&failures.length===0,failures,runs:failures.includes('incomplete-run')?[]:reports.map(summarizeRun)};
     writeFileSync(`tmp/landing-performance/${state}.json`,JSON.stringify(summary,null,2));
     console.log(JSON.stringify(summary));
   }

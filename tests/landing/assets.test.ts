@@ -7,6 +7,26 @@ const source = JSON.parse(readFileSync('assets/source-manifest.json', 'utf8'));
 const inventoryPath = '../../scripts/assets/inventory.mjs';
 const tools = await import(/* @vite-ignore */ inventoryPath);
 describe('landing asset provenance', () => {
+  it('registers three full-frame hero derivatives without replacing the lineup original', async () => {
+    const manifest = JSON.parse(readFileSync('assets/approved-media.json', 'utf8'));
+    const inventory = JSON.parse(readFileSync('config/tenant/landing-assets.json', 'utf8'));
+    const original = manifest.media.find((entry: {id:string}) => entry.id === 'hero-poster');
+    const {default:sharp} = await import('sharp');
+    for (const width of [320,640,960]) {
+      const entry = manifest.media.find((entry: {id:string}) => entry.id === `hero-poster-${width}`);
+      expect(entry).toMatchObject({sourceId:'014',classification:'real-photo',mode:'crop-resize-only',sourceSha256:original.sourceSha256,crop:original.crop,width});
+      const bytes = readFileSync('public' + entry.publicPath);
+      const meta = await sharp(bytes).metadata();
+      expect(meta.width).toBe(width);
+      // Sharp's JPEG shrink-on-load rounds the source's near-2:3 ratio by at most a pixel.
+      expect(Math.abs(meta.height! - width*1.5)).toBeLessThanOrEqual(1);
+      expect(entry.height).toBe(meta.height);
+      expect(entry.publicPath).toContain(entry.sha256.slice(0,12));
+      expect(inventory.find((item: {id:string}) => item.id === entry.id)?.path).toBe(entry.publicPath);
+      expect(JSON.parse(readFileSync(entry.sidecar,'utf8'))).toEqual(entry);
+    }
+    expect(original.width).toBe(750);
+  });
   it('ships a small square icon derived from the unchanged brand original', async () => {
     const manifest = JSON.parse(readFileSync('assets/approved-media.json', 'utf8'));
     const icon = manifest.media.find((entry: {id:string}) => entry.id === 'landing-icon');

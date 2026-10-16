@@ -794,6 +794,102 @@
         "width": 720,
         "height": 720
       }
+    },
+    {
+      "id": "hero-poster-320",
+      "sourceId": "014",
+      "publicPath": "/media/crunchy-boi-014-320-1c40aa3dc34f.webp",
+      "classification": "real-photo",
+      "mode": "crop-resize-only",
+      "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
+      "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+      "sha256": "1c40aa3dc34f08645d5b660c5b7194a5c7682c27389ed6d6453b96cda0d052ca",
+      "bytes": 11156,
+      "maxBytes": 100000,
+      "width": 320,
+      "height": 480,
+      "sidecar": "assets/provenance/hero-poster-320.json",
+      "crop": [
+        0,
+        0,
+        3707,
+        5560
+      ],
+      "steps": [
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "efbce1906b7142ac158834d1233f527249d1c8c9608908547947ec77acbb845d"
+      },
+      "command": "node scripts/assets/export-hero-sizes.mjs"
+    },
+    {
+      "id": "hero-poster-640",
+      "sourceId": "014",
+      "publicPath": "/media/crunchy-boi-014-640-60b196bce4cb.webp",
+      "classification": "real-photo",
+      "mode": "crop-resize-only",
+      "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
+      "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+      "sha256": "60b196bce4cb79d4b5232d0a07085a07770b825aad18bd97861f3383dc9ffb15",
+      "bytes": 33496,
+      "maxBytes": 100000,
+      "width": 640,
+      "height": 961,
+      "sidecar": "assets/provenance/hero-poster-640.json",
+      "crop": [
+        0,
+        0,
+        3707,
+        5560
+      ],
+      "steps": [
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "efbce1906b7142ac158834d1233f527249d1c8c9608908547947ec77acbb845d"
+      },
+      "command": "node scripts/assets/export-hero-sizes.mjs"
+    },
+    {
+      "id": "hero-poster-960",
+      "sourceId": "014",
+      "publicPath": "/media/crunchy-boi-014-960-3c7d6237a944.webp",
+      "classification": "real-photo",
+      "mode": "crop-resize-only",
+      "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
+      "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+      "sha256": "3c7d6237a94424a7dda636d637619084a1a0cf3d9575554f58b4aecdbcb778f1",
+      "bytes": 66754,
+      "maxBytes": 100000,
+      "width": 960,
+      "height": 1440,
+      "sidecar": "assets/provenance/hero-poster-960.json",
+      "crop": [
+        0,
+        0,
+        3707,
+        5560
+      ],
+      "steps": [
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "quality": 86,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "scriptSha256": "efbce1906b7142ac158834d1233f527249d1c8c9608908547947ec77acbb845d"
+      },
+      "command": "node scripts/assets/export-hero-sizes.mjs"
     }
   ]
 }
