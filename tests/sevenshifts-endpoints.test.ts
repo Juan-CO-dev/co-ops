@@ -5,10 +5,12 @@ import {
   SEVENSHIFTS_ENDPOINTS,
   SEVENSHIFTS_RESOURCES,
   LIST_PAGE_LIMIT,
+  requestPasses,
+  windowInstants,
   type SyncWindow,
 } from "@/lib/sevenshifts/endpoints-shared";
 
-const WINDOW: SyncWindow = { modifiedSince: "2026-10-12", from: "2026-07-16", to: "2026-10-15" };
+const WINDOW: SyncWindow = { modifiedSince: "2026-10-12T18:30:00.000Z", from: "2026-07-16", to: "2026-10-15" };
 
 describe("the endpoint table", () => {
   it("pins the API version in one constant", () => {
@@ -27,12 +29,11 @@ describe("the endpoint table", () => {
       const path = SEVENSHIFTS_ENDPOINTS[r].path("1234", { userId: "42" });
       expect(path.startsWith("/v2/")).toBe(true);
       expect(path).not.toMatch(/token|bearer|@|\?/i);
-      const qs = SEVENSHIFTS_ENDPOINTS[r].params(WINDOW).toString();
-      expect(qs).not.toMatch(/token|bearer|@/i);
+      for (const qs of requestPasses(r, WINDOW, "1234")) expect(qs.toString()).not.toMatch(/token|bearer|@/i);
     }
   });
 
-  it("builds the documented company-scoped paths", () => {
+  it("builds the documented paths", () => {
     const p = (r: (typeof SEVENSHIFTS_RESOURCES)[number]) => SEVENSHIFTS_ENDPOINTS[r].path("1234", { userId: "42" });
     expect(p("whoami")).toBe("/v2/whoami");
     expect(p("locations")).toBe("/v2/company/1234/locations");
@@ -42,22 +43,24 @@ describe("the endpoint table", () => {
     expect(p("assignments")).toBe("/v2/company/1234/users/42/assignments");
     expect(p("wages")).toBe("/v2/company/1234/users/42/wages");
     expect(p("availabilities")).toBe("/v2/company/1234/availabilities");
-    expect(p("time_off")).toBe("/v2/company/1234/time_off");
+    expect(p("time_off")).toBe("/v2/time_off");
     expect(p("shifts")).toBe("/v2/company/1234/shifts");
     expect(p("time_punches")).toBe("/v2/company/1234/time_punches");
     expect(p("labor_settings")).toBe("/v2/company/1234/labor_settings");
   });
 
-  it("refuses a company or user id that is not 1–18 digits (no path injection)", () => {
+  it("refuses a company or user id that is not 1–18 digits (no path or query injection)", () => {
     expect(() => SEVENSHIFTS_ENDPOINTS.users.path("12/../x")).toThrow("bad_id");
     expect(() => SEVENSHIFTS_ENDPOINTS.locations.path("")).toThrow("bad_id");
     expect(() => SEVENSHIFTS_ENDPOINTS.assignments.path("1234")).toThrow("bad_id");
     expect(() => SEVENSHIFTS_ENDPOINTS.wages.path("1234", { userId: "4 2" })).toThrow("bad_id");
+    expect(() => SEVENSHIFTS_ENDPOINTS.time_off.path("12&x=1")).toThrow("bad_id");
+    expect(() => SEVENSHIFTS_ENDPOINTS.time_off.params(WINDOW, "12&x=1")).toThrow("bad_id");
   });
 
   it("paginated resources ask for a page limit; singletons send no paging params", () => {
     for (const r of SEVENSHIFTS_RESOURCES) {
-      const params = SEVENSHIFTS_ENDPOINTS[r].params(WINDOW);
+      const params = SEVENSHIFTS_ENDPOINTS[r].params(WINDOW, "1234");
       if (SEVENSHIFTS_ENDPOINTS[r].shape === "paginated") expect(params.get("limit")).toBe(String(LIST_PAGE_LIMIT));
       else expect(params.has("limit")).toBe(false);
     }
@@ -65,29 +68,72 @@ describe("the endpoint table", () => {
     expect(LIST_PAGE_LIMIT).toBeLessThanOrEqual(500);
   });
 
-  it("windows: shifts and punches by range + modified_since, deleted rows included, drafts not", () => {
-    const shifts = SEVENSHIFTS_ENDPOINTS.shifts.params(WINDOW);
-    expect(shifts.get("start[gte]")).toBe("2026-07-16");
-    expect(shifts.get("start[lte]")).toBe("2026-10-15");
-    expect(shifts.get("modified_since")).toBe("2026-10-12");
+  it("windows: shifts and punches by instant range + instant modified_since, deleted shifts included, drafts not", () => {
+    const shifts = SEVENSHIFTS_ENDPOINTS.shifts.params(WINDOW, "1234");
+    expect(shifts.get("start[gte]")).toBe("2026-07-16T04:00:00Z");
+    expect(shifts.get("start[lte]")).toBe("2026-10-16T03:59:59Z");
+    expect(shifts.get("modified_since")).toBe("2026-10-12T18:30:00Z");
     expect(shifts.get("include_deleted")).toBe("true");
     expect(shifts.get("include_draft")).toBe("false");
-    const punches = SEVENSHIFTS_ENDPOINTS.time_punches.params(WINDOW);
-    expect(punches.get("clocked_in[gte]")).toBe("2026-07-16");
-    expect(punches.get("clocked_in[lte]")).toBe("2026-10-15");
-    expect(punches.get("modified_since")).toBe("2026-10-12");
-    expect(SEVENSHIFTS_ENDPOINTS.users.params(WINDOW).get("modified_since")).toBe("2026-10-12");
-    expect(SEVENSHIFTS_ENDPOINTS.availabilities.params(WINDOW).get("week_gte")).toBe("2026-07-16");
+    expect(shifts.get("consider_tz_in_ranges")).toBe("false");
+    const punches = SEVENSHIFTS_ENDPOINTS.time_punches.params(WINDOW, "1234");
+    expect(punches.get("clocked_in[gte]")).toBe("2026-07-16T04:00:00Z");
+    expect(punches.get("clocked_in[lte]")).toBe("2026-10-16T03:59:59Z");
+    expect(punches.get("modified_since")).toBe("2026-10-12T18:30:00Z");
+    // Users take a DATE: the ET date of the watermark instant.
+    expect(SEVENSHIFTS_ENDPOINTS.users.params(WINDOW, "1234").get("modified_since")).toBe("2026-10-12");
+    expect(SEVENSHIFTS_ENDPOINTS.users.params({ ...WINDOW, modifiedSince: "2026-10-13T02:00:00Z" }, "1234").get("modified_since")).toBe("2026-10-12");
+    expect(SEVENSHIFTS_ENDPOINTS.availabilities.params(WINDOW, "1234").get("week_gte")).toBe("2026-07-16");
   });
 
   it("a first run (no watermark) sends no modified_since", () => {
     const first: SyncWindow = { modifiedSince: null, from: "2026-07-16", to: "2026-10-15" };
-    expect(SEVENSHIFTS_ENDPOINTS.shifts.params(first).has("modified_since")).toBe(false);
-    expect(SEVENSHIFTS_ENDPOINTS.users.params(first).has("modified_since")).toBe(false);
+    expect(SEVENSHIFTS_ENDPOINTS.shifts.params(first, "1234").has("modified_since")).toBe(false);
+    expect(SEVENSHIFTS_ENDPOINTS.users.params(first, "1234").has("modified_since")).toBe(false);
   });
 
-  it("refuses a window date that is not YYYY-MM-DD", () => {
-    expect(() => SEVENSHIFTS_ENDPOINTS.shifts.params({ modifiedSince: "yesterday", from: "2026-07-16", to: "2026-10-15" })).toThrow("bad_window");
-    expect(() => SEVENSHIFTS_ENDPOINTS.shifts.params({ modifiedSince: null, from: "2026-7-16", to: "2026-10-15" })).toThrow("bad_window");
+  it("refuses a malformed window (date not YYYY-MM-DD, zoneless watermark, from after to)", () => {
+    const bad = (w: SyncWindow) => () => SEVENSHIFTS_ENDPOINTS.shifts.params(w, "1234");
+    expect(bad({ modifiedSince: "yesterday", from: "2026-07-16", to: "2026-10-15" })).toThrow("bad_window");
+    expect(bad({ modifiedSince: "2026-10-12", from: "2026-07-16", to: "2026-10-15" })).toThrow("bad_window");
+    expect(bad({ modifiedSince: "2026-10-12T10:00:00", from: "2026-07-16", to: "2026-10-15" })).toThrow("bad_window");
+    expect(bad({ modifiedSince: null, from: "2026-7-16", to: "2026-10-15" })).toThrow("bad_window");
+    expect(bad({ modifiedSince: null, from: "2026-10-16", to: "2026-10-15" })).toThrow("bad_window");
+  });
+});
+
+describe("chunk A review (Astra) — fixes pinned against the docs re-read 2026-10-15", () => {
+  it("#1 time off: GET /v2/time_off with company_id as a REQUIRED query parameter, to_date_gte, and no modified_since", () => {
+    const [qs] = requestPasses("time_off", WINDOW, "1234");
+    expect(`${SEVENSHIFTS_ENDPOINTS.time_off.path("1234")}?${qs!.toString()}`)
+      .toBe("/v2/time_off?limit=200&company_id=1234&to_date_gte=2026-07-16");
+  });
+
+  it("#2 deleted punches: two request passes, deleted=false then deleted=true, each with the same window", () => {
+    const passes = requestPasses("time_punches", WINDOW, "1234");
+    expect(passes.map((p) => p.get("deleted"))).toEqual(["false", "true"]);
+    for (const p of passes) {
+      expect(p.get("clocked_in[gte]")).toBe("2026-07-16T04:00:00Z");
+      expect(p.get("modified_since")).toBe("2026-10-12T18:30:00Z");
+    }
+    for (const r of SEVENSHIFTS_RESOURCES) if (r !== "time_punches") expect(requestPasses(r, WINDOW, "1234")).toHaveLength(1);
+  });
+
+  it("#4 ET business dates become DST-correct instants: the final day is covered to its last second", () => {
+    // EDT (UTC−4) on both ends.
+    expect(windowInstants({ modifiedSince: null, from: "2026-10-15", to: "2026-10-15" }))
+      .toEqual({ gte: "2026-10-15T04:00:00Z", lte: "2026-10-16T03:59:59Z" });
+    // EST (UTC−5) on both ends.
+    expect(windowInstants({ modifiedSince: null, from: "2026-12-01", to: "2026-12-01" }))
+      .toEqual({ gte: "2026-12-01T05:00:00Z", lte: "2026-12-02T04:59:59Z" });
+    // Across fall-back (2026-11-01): starts in EDT, ends in EST.
+    expect(windowInstants({ modifiedSince: null, from: "2026-10-31", to: "2026-11-02" }))
+      .toEqual({ gte: "2026-10-31T04:00:00Z", lte: "2026-11-03T04:59:59Z" });
+    // Across spring-forward (2026-03-08): starts in EST, ends in EDT.
+    expect(windowInstants({ modifiedSince: null, from: "2026-03-07", to: "2026-03-09" }))
+      .toEqual({ gte: "2026-03-07T05:00:00Z", lte: "2026-03-10T03:59:59Z" });
+    // A shift starting 11:30 PM ET on the fall-back day is inside the upper bound.
+    const lte = windowInstants({ modifiedSince: null, from: "2026-11-01", to: "2026-11-01" }).lte;
+    expect(Date.parse("2026-11-02T04:30:00Z")).toBeLessThanOrEqual(Date.parse(lte));
   });
 });

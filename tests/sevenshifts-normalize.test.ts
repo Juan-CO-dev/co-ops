@@ -67,7 +67,8 @@ const availability = {
 };
 const timeOff = {
   id: 4001, user_id: 501, from_date: "2026-10-20", to_date: "2026-10-21", partial: true,
-  partial_from: "09:00:00", partial_to: "13:00:00", status: 1, hours: 4, comments: PII.comment,
+  partial_from: "09:00:00", partial_to: "13:00:00", status: 1, amount_of_hours: 4,
+  hours: [{ date: "2026-10-20", hours: 4 }], company_id: 1234, created: "2026-10-01T00:00:00Z", comments: PII.comment,
   category: PII.reason, status_action_message: PII.statusMessage, modified: "2026-10-03T00:00:00Z",
 };
 const wagesJson = {
@@ -79,9 +80,12 @@ const wagesJson = {
 const labor = {
   object: "labor_settings",
   data: {
-    company_id: 1234, daily_ot_threshold: 8, weekly_ot_threshold: 40, premium_ot_threshold: 12,
+    // The documented payload (retrievecompanylaborsettings, re-read 2026-10-15).
+    company_id: 1234, daily_overtime_threshold: 8, weekly_overtime_threshold: 40, premium_overtime_threshold: 12,
     consecutive_days_threshold: 7, overtime_enabled: true, overtime_by_location_enabled: false,
-    daily_ot_multiplier: 1.5, weekly_ot_multiplier: 1.5, premium_ot_multiplier: 2, notes: PII.note,
+    consecutive_days_multiplier: 1.5, daily_overtime_multiplier: 1.5, weekly_overtime_multiplier: 1.5,
+    premium_overtime_multiplier: 2, regular_rate_of_pay_enabled: true, auto_break_hours: 8, jurisdiction: "california",
+    custom_min_wages: null, notes: PII.note,
   },
 };
 
@@ -213,9 +217,41 @@ describe("the list normalizers", () => {
     expect(normalizeLaborSettings(labor.data).rows).toEqual([{
       company_id: "1234", daily_ot_threshold: 8, weekly_ot_threshold: 40, premium_ot_threshold: 12,
       consecutive_days_threshold: 7, overtime_enabled: true, overtime_by_location_enabled: false,
-      multipliers: { daily_ot_multiplier: 1.5, premium_ot_multiplier: 2, weekly_ot_multiplier: 1.5 },
+      multipliers: { consecutive_days_multiplier: 1.5, daily_overtime_multiplier: 1.5, premium_overtime_multiplier: 2, weekly_overtime_multiplier: 1.5 },
     }]);
     expect(normalizeLaborSettings({ daily_ot_threshold: 8 }).rejected[0]!.reason).toBe("missing_field");
+  });
+});
+
+describe("chunk A review (Astra) — the documented field names", () => {
+  it("#3 labor thresholds: the documented 8 / 40 / 12 survive (they were null/null/null under the invented names)", () => {
+    const row = normalizeLaborSettings(labor.data).rows[0]!;
+    expect([row.daily_ot_threshold, row.weekly_ot_threshold, row.premium_ot_threshold]).toEqual([8, 40, 12]);
+    expect(normalizeLaborSettings(labor.data).rejected).toEqual([]);
+    // The old invented names are NOT read: a payload carrying only them yields nulls.
+    const legacy = normalizeLaborSettings({ company_id: 1234, daily_ot_threshold: 8, weekly_ot_threshold: 40 }).rows[0]!;
+    expect([legacy.daily_ot_threshold, legacy.weekly_ot_threshold]).toEqual([null, null]);
+  });
+
+  it("#5 a deleted break adds 0; a corrected punch with a retired AND a current break counts only the current", () => {
+    const onlyDeleted = normalizeTimePunches([{ ...punch, breaks: [{ id: 1, in: "2026-10-14T17:00:00Z", out: "2026-10-14T17:30:00Z", paid: false, deleted: true }] }]);
+    expect(onlyDeleted.rejected).toEqual([]);
+    expect(onlyDeleted.rows[0]!.break_minutes).toBe(0);
+    const corrected = normalizeTimePunches([{ ...punch, breaks: [
+      { id: 1, in: "2026-10-14T17:00:00Z", out: "2026-10-14T17:30:00Z", paid: false, deleted: true },
+      { id: 2, in: "2026-10-14T17:10:00Z", out: "2026-10-14T17:25:00Z", paid: false, deleted: false },
+    ] }]);
+    expect(corrected.rows[0]!.break_minutes).toBe(15);
+    expect(normalizeTimePunches([{ ...punch, breaks: [{ in: "2026-10-14T17:00:00Z", out: "2026-10-14T17:30:00Z", deleted: "yes" }] }]).rejected[0]!.reason).toBe("bad_value");
+  });
+
+  it("#2 a punch deleted in 7shifts normalizes with deleted: true (the deleted=true pass carries it to the mirror)", () => {
+    expect(normalizeTimePunches([{ ...punch, deleted: true }]).rows[0]!.deleted).toBe(true);
+  });
+
+  it("time off (docs re-read): hours come from amount_of_hours; the per-date hours array is not stored", () => {
+    expect(normalizeTimeOff([timeOff]).rows[0]!.hours).toBe(4);
+    expect(normalizeTimeOff([{ ...timeOff, amount_of_hours: undefined }]).rows[0]!.hours).toBeNull();
   });
 });
 

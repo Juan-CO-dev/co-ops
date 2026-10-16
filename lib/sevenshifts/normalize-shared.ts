@@ -260,6 +260,9 @@ function breakMinutes(o: Obj): number | null {
   let ms = 0;
   for (const b of o.breaks) {
     if (!isObj(b)) throw new Reject("bad_value");
+    // A break removed in 7shifts carries `deleted: true` (docs, update-time-punch-data, re-read
+    // 2026-10-15) and adds nothing (chunk A review #5).
+    if (optBool(b, "deleted") === true) continue;
     const from = optInstant(b, "in");
     const to = optInstant(b, "out");
     if (from !== null && to !== null) ms += Math.max(0, Date.parse(to) - Date.parse(from));
@@ -312,7 +315,10 @@ export function normalizeTimeOff(input: readonly unknown[]): Normalized<TimeOffR
     from_time: optTime(o, "partial_from"),
     to_time: optTime(o, "partial_to"),
     status: optInt(o, "status"),
-    hours: optNum(o, "hours"),
+    // Docs (gettimeofflist, re-read 2026-10-15): the total is `amount_of_hours`; `hours` is a
+    // per-date ARRAY, not stored.
+    hours: optNum(o, "amount_of_hours"),
+    // The documented item has no `modified` (only `created`); kept should 7shifts send one.
     source_modified_at: optInstant(o, "modified"),
   }));
 }
@@ -326,9 +332,11 @@ export function normalizeLaborSettings(data: Record<string, unknown>): Normalize
     }
     return {
       company_id: reqId(o, "company_id"),
-      daily_ot_threshold: optNum(o, "daily_ot_threshold"),
-      weekly_ot_threshold: optNum(o, "weekly_ot_threshold"),
-      premium_ot_threshold: optNum(o, "premium_ot_threshold"),
+      // Docs (retrievecompanylaborsettings, re-read 2026-10-15) spell them *_overtime_threshold;
+      // the mirror keeps its *_ot_threshold columns (chunk A review #3: Phase 2's overtime guard).
+      daily_ot_threshold: optNum(o, "daily_overtime_threshold"),
+      weekly_ot_threshold: optNum(o, "weekly_overtime_threshold"),
+      premium_ot_threshold: optNum(o, "premium_overtime_threshold"),
       consecutive_days_threshold: optInt(o, "consecutive_days_threshold"),
       overtime_enabled: optBool(o, "overtime_enabled"),
       overtime_by_location_enabled: optBool(o, "overtime_by_location_enabled"),
