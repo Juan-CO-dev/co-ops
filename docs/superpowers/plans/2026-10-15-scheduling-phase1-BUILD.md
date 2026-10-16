@@ -1321,7 +1321,7 @@ export interface SkillMatrix {
 
 1. CC: integration (merge main into the branch), the full suite, `tsc`, `next build`.
 2. CC: a sim walk at 375 px in en and es (the copy form, results, criteria editor, skills, 7shifts screen).
-3. CC, sim: apply **0268 → 0269 → 0270 → 0271** (0267 is already on prod; 0271's preflight refuses without it), run each migration header’s verification queries, then **`scripts/sim-0270-0271-lock-check.mjs`** (required before apply/enable; it refuses any non-sim URL).
+3. CC, sim: apply **0268 → 0269 → 0270 → 0271** (0267 is already on prod; 0271's preflight refuses without it), run each migration header’s verification queries, then **`scripts/sim-0270-0271-lock-check.mjs`** (required before apply/enable; its guard parses the URL and accepts only the sim direct host as `postgres` or an approved us-east-1 pooler host as `postgres.jepgzucrvklhqpthowsc`). Its retired fixture rows REMAIN on the sim (ruling 3): `pm_reports` with `format = 'v2'`, a 2099 `report_date` and `superseded_at` set, and — only if the shop had no shared criterion — an inactive `pm_criteria` row labelled `SIM lock check <epoch ms>`; the run prints their ids and fails if any is still live.
 4. CC: a prod rollback dry-run; then prod apply in the same order, **on Juan's word**; stamp each header `APPLIED TO PROD`.
 5. PR, CI green, merge (Juan clicks).
 6. Juan (any time): `SEVENSHIFTS_ACCESS_TOKEN` in Vercel. CC: `SEVENSHIFTS_SYNC=1` after 0268 + 0269 are on prod. Then link each shop (MoO) and its people (GMs) at `/admin/sevenshifts`.

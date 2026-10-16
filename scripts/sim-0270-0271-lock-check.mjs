@@ -2,12 +2,16 @@
  * Scheduling Phase 1 — the 0270 / 0271 LOCK proofs that PGlite (one session) cannot make. Run on the SIM ONLY, by CC,
  * after 0268 → 0271 are applied there and BEFORE they are applied to prod (CC's chunk F ruling (d), 2026-10-16):
  *
- *   SIM_DATABASE_URL='postgres://…jepgzucrvklhqpthowsc…' npx -y -p pg node scripts/sim-0270-0271-lock-check.mjs
+ *   SIM_DATABASE_URL='postgres://postgres:…@db.jepgzucrvklhqpthowsc.supabase.co:5432/postgres' \
+ *     npx -y -p pg node scripts/sim-0270-0271-lock-check.mjs
  *
  * Needs the `pg` client (not a project dependency): `npx -y -p pg node …`, or `npm i --no-save pg` first.
- * THE GUARD (same shape as scripts/sim-0262-busy-check.mjs, one notch stricter): it refuses to run without
- * SIM_DATABASE_URL, refuses a URL that names the PROD project, and refuses any URL that does not name the SIM project
- * (`jepgzucrvklhqpthowsc`, lib/sim-isolation-shared.ts SIM_PROJECT_REF — pinned equal by tests/sim-lock-check-guard.test.ts).
+ * THE GUARD (`simDatabaseTarget` in scripts/sim-0270-0271-lock-check-lib.mjs, Astra chunk G #2): it refuses to run
+ * without SIM_DATABASE_URL, refuses a URL that names the PROD project, and otherwise PARSES the URL and accepts ONLY
+ * the sim's effective destination — the direct host `db.jepgzucrvklhqpthowsc.supabase.co` as `postgres`, or an
+ * approved us-east-1 Supabase pooler host as the sim tenant `postgres.jepgzucrvklhqpthowsc` — on port 5432, database
+ * `postgres`, one host, no query override but `sslmode`. The client is built from that checked config, never from the
+ * raw string. The ref is lib/sim-isolation-shared.ts SIM_PROJECT_REF (pinned equal by tests/sim-lock-check-guard.test.ts).
  * It never runs from CI and the builder never ran it.
  *
  * Three real sessions: A and B race; W (the watcher) sets up, proves that the loser is WAITING ON A LOCK (pg_locks /
@@ -27,22 +31,28 @@
  * Checks 2 and 3 need COMMITTED fixture rows (a second session cannot see an uncommitted day). W commits them, tagged,
  * on far-future business dates (2099-…) at one sim shop, and RETIRES them at the end the append-only way — the fixture
  * days are superseded (`superseded_at`) and a criterion it had to create is deactivated (`active = false`). Nothing is
- * ever deleted. The ids are printed. Exit 0 = every check passed; 1 = a check failed; 2 = refused / not runnable.
+ * ever deleted. After retiring, it RE-QUERIES and prints any fixture id still live; a failed retirement (or a row
+ * still live) is a FAILURE (Astra chunk G #3). Exit 0 = every check passed; 1 = a check or the cleanup failed;
+ * 2 = refused / not runnable.
+ *
+ * THE RETIRED 2099 ROWS REMAIN on the sim (CC's chunk G ruling 3: the sim is disposable; they are retired the
+ * append-only way, never deleted). Recognise them as `pm_reports` rows with `format = 'v2'`, a `report_date` in 2099
+ * and `superseded_at` set (plus their copies and grades), and — only when the shop had no shared criterion — a
+ * `pm_criteria` row labelled `SIM lock check <epoch ms>`, sort 999, `active = false`. Every run prints their ids.
  */
-const URL = process.env.SIM_DATABASE_URL;
-const PROD_PROJECT = "bgcvurheqzylyfehqgzh";
-const SIM_PROJECT = "jepgzucrvklhqpthowsc";
-if (!URL) { console.error("SIM_DATABASE_URL is not set"); process.exit(2); }
-if (URL.includes(PROD_PROJECT)) { console.error("refusing: that URL names the PROD project — this check runs on the sim only"); process.exit(2); }
-if (!URL.includes(SIM_PROJECT)) { console.error("refusing: that URL does not name the SIM project — this check runs on the sim only"); process.exit(2); }
+import { retireLockFixture, simDatabaseTarget } from "./sim-0270-0271-lock-check-lib.mjs";
+
+const target = simDatabaseTarget(process.env.SIM_DATABASE_URL);
+if (!target.ok) { console.error(target.reason); process.exit(2); }
+console.log(`sim target: ${target.config.host} as ${target.config.user} (${target.via})`);
 
 let pg;
 try { pg = (await import("pg")).default; }
 catch { console.error("the `pg` client is missing — run with `npx -y -p pg node scripts/sim-0270-0271-lock-check.mjs`"); process.exit(2); }
 
-const a = new pg.Client({ connectionString: URL });
-const b = new pg.Client({ connectionString: URL });
-const w = new pg.Client({ connectionString: URL });
+const a = new pg.Client(target.config);
+const b = new pg.Client(target.config);
+const w = new pg.Client(target.config);
 let failures = 0;
 let refused = false;
 const check = (ok, what) => { if (!ok) { failures++; console.error(`FAIL ${what}`); } else console.log(`ok   ${what}`); };
@@ -214,16 +224,17 @@ try {
 } finally {
   await a.query("rollback").catch(() => {});
   await b.query("rollback").catch(() => {});
-  // Retire the fixture the append-only way: supersede the days, deactivate a criterion this run created. Never delete.
-  if (fixture.days.length) {
-    await w.query("update public.pm_reports set superseded_at = clock_timestamp() where id = any($1::uuid[]) and superseded_at is null", [fixture.days]).catch((e) => console.error(`cleanup (days): ${e.message}`));
-  }
-  if (fixture.criterion) {
-    await w.query("update public.pm_criteria set active = false, updated_at = clock_timestamp() where id = $1", [fixture.criterion]).catch((e) => console.error(`cleanup (criterion): ${e.message}`));
-  }
-  console.log(`fixture (retired): days ${JSON.stringify(fixture.days)}${fixture.criterion ? `, criterion ${fixture.criterion}` : ""}`);
+  // Retire the fixture the append-only way (supersede the days, deactivate a criterion this run created; never
+  // delete), then RE-QUERY: a failed retirement or a row still live fails the run, and is named.
+  const cleanup = await retireLockFixture(w, fixture);
+  for (const e of cleanup.errors) console.error(`FAIL ${e}`);
+  failures += cleanup.failures;
+  console.log(`fixture: days ${JSON.stringify(fixture.days)}${fixture.criterion ? `, criterion ${fixture.criterion}` : ""}`);
+  if (cleanup.stillLive.days.length || cleanup.stillLive.criterion) {
+    console.error(`FAIL fixture still LIVE after cleanup: days ${JSON.stringify(cleanup.stillLive.days)}${cleanup.stillLive.criterion ? `, criterion ${cleanup.stillLive.criterion}` : ""}`);
+  } else if (fixture.days.length || fixture.criterion) console.log("ok   fixture retired (re-queried: nothing still live)");
   await a.end(); await b.end(); await w.end();
 }
-if (refused) process.exitCode = 2;
-else if (failures > 0) { console.error(`\n${failures} check(s) FAILED`); process.exitCode = 1; }
+if (failures > 0) { console.error(`\n${failures} check(s) FAILED`); process.exitCode = 1; }
+else if (refused) process.exitCode = 2;
 else console.log("\nPASS 0270/0271 locks: first settings saves serialize; concurrent copy edits, late edits and double submits never corrupt a day");
