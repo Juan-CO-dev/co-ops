@@ -1,5 +1,7 @@
 -- Migration 0264_catalog_shop_owned
 -- AUTHORED 2026-10-15. NOT YET APPLIED — apply via MCP after review
+-- APPLIED TO SIM 2026-10-16 (schema_migrations version 20261016104415, name 'catalog_shop_owned')
+-- APPLIED TO PROD 2026-10-16 (schema_migrations version 20261016113052, name 'catalog_shop_owned')
 -- Catalog Phase 4a, chunk 2. FILE ONLY; executable proof uses in-memory PGlite.
 -- Existing recipes/menu_items remain shared; items/SKUs retain their existing owners.
 -- No new tables; 0262/0263 history ceilings remain unchanged.

@@ -1,5 +1,7 @@
 -- 0265_sku_swaps.sql
 -- AUTHORED 2026-10-16; FILE ONLY. Apply only after CC/Juan review.
+-- APPLIED TO SIM 2026-10-16 (schema_migrations version 20261016104417, name 'sku_swaps')
+-- APPLIED TO PROD 2026-10-16 (schema_migrations version 20261016113105, name 'sku_swaps')
 -- Authority is app-layer; SQL binds the preview, scope and graph integrity.
 begin;
 alter table public.product_primaries add column revision bigint not null default 0;
