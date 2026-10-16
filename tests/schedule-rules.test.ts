@@ -181,8 +181,9 @@ describe("every code: a positive and a negative case", () => {
     setNeed(ctx, WED, P.REG, 44, 48);
     expect(of(run([], ctx), "undeclared_gap")[0]).toMatchObject({ day: WED, positionId: P.REG, params: { gap: "coverage_gap", fromQ: 44, toQ: 48 } });
     ctx.budgetByDate[WED] = 0;
+    // A 1 h hole with no adjacent shift costs a 4 h block: hoursNeeded is the legal fill's hours (chunk B).
     const gap: DeclaredGap = { code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48, cause: "budget",
-      certificate: { budgetedDates: [WED], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 1 } };
+      certificate: { budgetedDates: [WED], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 4 } };
     const shown = run([], ctx, [gap]);
     expect(codes(shown)).toEqual(["coverage_gap"]);
     ctx.budgetByDate[WED] = 10;
@@ -240,10 +241,20 @@ describe("gap certificates, per cause", () => {
     setNeed(ctx, WED, P.REG, 44, 48);
     ctx.budgetByDate[WED] = 0;
     const g: DeclaredGap = { code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48, cause: "budget",
-      certificate: { budgetedDates: [WED], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 1 } };
+      certificate: { budgetedDates: [WED], budgetHours: 0, usedHours: 0, essentialHours: 0, hoursNeeded: 4 } };
     expect(checkCertificate(g, week([]), ctx)).toBe(true);
     ctx.budgetByDate[WED] = 10;
     expect(checkCertificate({ ...g, certificate: { ...g.certificate, budgetHours: 10 } as never }, week([]), ctx)).toBe(false);
+    // hoursNeeded is what a LEGAL fill adds: 4 h for the lone hole; exactly the hole when an eligible hourly shift is adjacent.
+    ctx.budgetByDate[WED] = 2;
+    const lone = proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx);
+    expect(lone).toMatchObject({ cause: "budget", certificate: { hoursNeeded: 4, budgetHours: 2 } });
+    ctx.budgetByDate[WED] = 6;
+    const beside = proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([shift(U.ben, WED, 48, 64, P.REG)]), ctx);
+    expect(beside).toBeNull(); // Ben (4 h) extends over the 1 h hole within the 6 h budget: the budget does not excuse it
+    ctx.budgetByDate[WED] = 4.5;
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([shift(U.ben, WED, 48, 64, P.REG)]), ctx))
+      .toMatchObject({ cause: "budget", certificate: { hoursNeeded: 1, usedHours: 4 } }); // 4 + 1 > 4.5: even the extension is unaffordable
   });
 
   it("floor_limit: only when every free eligible candidate is a salaried manager at the cap and no hourly person is free", () => {

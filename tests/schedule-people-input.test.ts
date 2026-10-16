@@ -139,7 +139,7 @@ describe("toSchedPeople: the roster the generator sees", () => {
 describe("SkillLookup (r2 P1-2): unproven is its own band", () => {
   const cell = (positionId: string, value: number, confidence: number, startingPoint: boolean, close: number | null = null) => ({
     positionId, learned: value, prior: 0.5, priorSource: "neutral" as const, adjustment: 0, value, band: "solid" as const, qualityDays: 3, workedDays: 3, minutesWorked: 600,
-    confidence, startingPoint, perKind: { pm: null, closeOnTime: close === null ? null : { mean: close, count: 2, days: 2, counted: true, equalWeights: false }, prepYield: null }, evidence: [],
+    confidence, startingPoint, perKind: { pm: null, closeOnTime: close === null ? null : { mean: close, count: 2, days: 2, counted: true, equalWeightFallback: false }, prepYield: null }, evidence: [],
   });
   const lookup = makeSkillLookup({ people: [
     { userId: "u-eli", role: "trainee", skills: [cell(I.$REG, 0.3, 0.6, false), cell(I.$WALK, 0.3, 0.1, false), cell(I.$BOI, 0.5, 0, true)] },

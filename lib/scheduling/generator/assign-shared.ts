@@ -1,0 +1,657 @@
+/**
+ * ASSIGNMENT — the generator's working state and every placement primitive (Scheduling Phase 2, Task 7;
+ * plan "The generator" steps 2–10).
+ *
+ * The rule that makes everything else safe: EVERY mutation of a day goes through `guarded`, which applies
+ * it to a copy, runs the real validator over that day (with the week's other shifts for the weekly totals)
+ * and keeps the change only when it adds NO error-class problem. Valid input therefore never produces an
+ * error-class problem by construction; the final `checkScheduleRules` in `buildWeek` is an invariant, not
+ * a hope. Gap-class problems are expected while building and are judged by the repair pass.
+ *
+ * Primitives, in the mockup's order: `planBlock` (a deficit run extended to the minimum shift inside the
+ * position's window, then into the next needed position — a multi-position segment), `rankCandidates`
+ * (skill-weighted with guardrails: the busiest windows by skill, elsewhere most-under-soft-min first;
+ * overtime skipped unless nobody else fits; full-timers below their minimum pulled forward; the pairing
+ * tie-break; ties to the lower userId), `fillRun` (insert a free person, or extend their own shift that
+ * day, else a salaried manager's cover carved out of their MoD block within the floor limit), the priority
+ * relabel, the Closing Manager, and the MoD lane fill. Determinism: no Date, no random, every iteration
+ * over sorted arrays, ids compared with `<`.
+ */
+import type { DayContext, RuleContext, RulePerson } from "../context-shared";
+import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../people-input-shared";
+import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
+import {
+  MOD, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition, leaderSettingAllows, modCountsAt,
+  type DayRecord, type RuleProblem, type Segment, type Shift,
+} from "../rules-shared";
+import { isLineRole, isSecondary, positionLimit, primaryOf, type ScheduleStructure } from "../structure-shared";
+import { Q_PER_DAY } from "../time-shared";
+import type { Template } from "./templates-shared";
+
+// ─── State ───────────────────────────────────────────────────────────────────
+
+export interface GSegment extends Segment { reasons: Reason[] }
+export type ShiftOrigin = "pin" | "salaried" | "hourly" | "inherited";
+export interface GShift extends Omit<Shift, "segments"> { segments: GSegment[]; reasons: Reason[]; origin: ShiftOrigin }
+
+/** The week being built: the built days' shifts (mutable) and the inherited shifts (fixed). */
+export interface WeekState { built: Record<string, GShift[]>; inherited: Shift[] }
+
+export interface BuildCtx {
+  ctx: RuleContext;
+  structure: ScheduleStructure;
+  people: Record<string, SchedPerson>;
+  lookup: SkillLookup;
+  budgetedDates: string[];
+  budgetHours: number;
+  /** Top-quartile demand quarters per built date (plus the closing window): the "busiest windows". */
+  busiest: Record<string, Set<number>>;
+  notes: BoardNote[];
+  /** Pins that may be carved for cover: shift key → the positions the pin allows ("any" = every eligible). */
+  pinCover: Record<string, string[] | "any">;
+}
+
+export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+export const sortIds = (ids: readonly string[]) => [...ids].sort(cmp);
+export const shiftOrder = (a: Shift, b: Shift) => cmp(a.date, b.date) || cmp(a.userId, b.userId) || a.startQ - b.startQ;
+
+export function cloneShift(s: GShift): GShift {
+  return { ...s, segments: s.segments.map((g) => ({ ...g, reasons: [...g.reasons] })), reasons: [...s.reasons] };
+}
+
+export function toShift(s: GShift): Shift {
+  return {
+    userId: s.userId, date: s.date, startQ: s.startQ, endQ: s.endQ, closingManager: s.closingManager, flex: s.flex, pinned: s.pinned,
+    segments: s.segments.map((g) => {
+      const seg: Segment = { positionId: g.positionId, startQ: g.startQ, endQ: g.endQ };
+      if (g.lastResort) seg.lastResort = true;
+      if (g.coverFor) seg.coverFor = g.coverFor;
+      if (g.reasonKey) seg.reasonKey = g.reasonKey;
+      return seg;
+    }),
+  };
+}
+
+export function allShifts(week: WeekState): Shift[] {
+  const out: Shift[] = [...week.inherited];
+  for (const date of Object.keys(week.built).sort()) for (const s of week.built[date]!) out.push(toShift(s));
+  return out;
+}
+
+// ─── Queries ─────────────────────────────────────────────────────────────────
+
+export function occupancy(shifts: readonly GShift[], positionId: string, q: number): number {
+  let n = 0;
+  for (const s of shifts) for (const g of s.segments) if (g.positionId === positionId && g.startQ <= q && g.endQ > q) n++;
+  return n;
+}
+
+export function needAt(day: DayContext, positionId: string, q: number): number {
+  return day.need.positions[positionId]?.[q] ?? 0;
+}
+
+export function deficitAt(shifts: readonly GShift[], day: DayContext, positionId: string, q: number): number {
+  return Math.max(0, needAt(day, positionId, q) - occupancy(shifts, positionId, q));
+}
+
+export function roomAt(shifts: readonly GShift[], day: DayContext, positionId: string, q: number): boolean {
+  const pos = day.structure.positions[positionId];
+  return !!pos && q < day.scheduledOutQ && occupancy(shifts, positionId, q) < positionLimit(pos, q);
+}
+
+export function weekQuarters(week: WeekState, userId: string): number {
+  let n = 0;
+  for (const s of allShifts(week)) if (s.userId === userId) n += s.endQ - s.startQ;
+  return n;
+}
+
+export function floorQuarters(week: WeekState, userId: string): number {
+  let n = 0;
+  for (const s of allShifts(week)) if (s.userId === userId) for (const g of s.segments) if (g.positionId !== MOD) n += g.endQ - g.startQ;
+  return n;
+}
+
+const isHourly = (p: RulePerson) => !p.salaried && !p.presenceOnly;
+
+/** Non-essential hourly hours on the budgeted dates (the budget stop's left-hand side). */
+export function budgetUsedHours(b: BuildCtx, week: WeekState): number {
+  let used = 0;
+  for (const s of allShifts(week)) {
+    const p = b.people[s.userId];
+    if (!p || !isHourly(p) || !b.budgetedDates.includes(s.date)) continue;
+    const cw = b.ctx.closingWindowByDate[s.date];
+    const essential = !!cw && s.segments.some((g) => g.positionId !== MOD && g.startQ < cw.toQ && g.endQ > cw.fromQ);
+    if (!essential) used += (s.endQ - s.startQ) / 4;
+  }
+  return used;
+}
+
+/** Does a block over [fromQ, toQ) on `date` work the closing window (and so count as essential)? */
+export function worksClosingWindow(b: BuildCtx, date: string, fromQ: number, toQ: number): boolean {
+  const cw = b.ctx.closingWindowByDate[date];
+  return !!cw && fromQ < cw.toQ && toQ > cw.fromQ;
+}
+
+/** Is a MoD on the clock at q (SL+ always; a KH only when the shop's setting allows it from that time)? */
+export function modOnClockAt(b: BuildCtx, shifts: readonly GShift[], q: number): boolean {
+  for (const s of shifts) {
+    const p = b.people[s.userId];
+    if (p && s.startQ <= q && s.endQ > q && modCountsAt(p, b.structure, q)) return true;
+  }
+  return false;
+}
+
+/** The eligible flagged Closing Manager on the clock at q? */
+export function closingManagerAt(b: BuildCtx, shifts: readonly GShift[], q: number): boolean {
+  return shifts.some((s) => s.closingManager && s.startQ <= q && s.endQ > q && !!b.people[s.userId] && closingManagerEligible(b.people[s.userId]!, b.structure));
+}
+
+export function closingRequired(day: DayContext): boolean {
+  for (const [id, arr] of Object.entries(day.need.positions)) {
+    const pos = day.structure.positions[id];
+    if (!pos || !isLineRole(pos.role)) continue;
+    for (let q = day.structure.shopDay.serviceCloseQ; q < day.scheduledOutQ; q++) if ((arr[q] ?? 0) > 0) return true;
+  }
+  return false;
+}
+
+/** Uncovered heads of a day: coverage (heads × quarters), MoD quarters, Closing Manager quarters — and the essential part. */
+export function uncoveredTotals(b: BuildCtx, date: string, shifts: readonly GShift[]): { total: number; essential: number } {
+  const day = b.ctx.days[date]!;
+  const { prepStartQ, serviceCloseQ } = day.structure.shopDay;
+  const out = day.scheduledOutQ;
+  let total = 0;
+  let essential = 0;
+  for (const id of Object.keys(day.need.positions).sort()) {
+    for (let q = 0; q < Q_PER_DAY; q++) {
+      const d = deficitAt(shifts, day, id, q);
+      total += d;
+      if (q >= serviceCloseQ && q < out) essential += d;
+    }
+  }
+  if (day.structure.leadership.modRequired) for (let q = prepStartQ; q < out; q++) if (!modOnClockAt(b, shifts, q)) { total++; essential++; }
+  if (closingRequired(day)) for (let q = serviceCloseQ; q < out; q++) if (!closingManagerAt(b, shifts, q)) { total++; essential++; }
+  return { total, essential };
+}
+
+// ─── The guard ───────────────────────────────────────────────────────────────
+
+const GAP_DISCIPLINE: ReadonlySet<string> = new Set(["undeclared_gap", "uncertified_gap"]);
+
+/** Error-class problems of ONE built day given the week (weekly totals see every shift); gap discipline excluded. */
+export function dayErrors(b: BuildCtx, week: WeekState, date: string, shifts: readonly GShift[]): string[] {
+  const others: Shift[] = [...week.inherited];
+  for (const d of Object.keys(week.built)) if (d !== date) for (const s of week.built[d]!) others.push(toShift(s));
+  const days: DayRecord[] = b.ctx.dates.filter((d) => d !== date).map((d) => ({ date: d, originRevisionId: null, structureVersionId: b.ctx.days[date]!.structureVersionId, inherited: true, problems: [] }));
+  const ctx: RuleContext = { ...b.ctx, days: { [date]: b.ctx.days[date]! } };
+  const problems = checkScheduleRules({ locationId: b.ctx.locationId, weekStart: b.ctx.weekStart, shifts: [...others, ...shifts.map(toShift)], gaps: [], days }, ctx);
+  return problems.filter((p) => p.severity === "error" && !GAP_DISCIPLINE.has(p.code) && !p.inherited).map(problemKey).sort();
+}
+
+function problemKey(p: RuleProblem): string {
+  return `${p.code}|${p.userId ?? ""}|${p.positionId ?? ""}|${p.q ?? ""}`;
+}
+
+/**
+ * Apply `mutate` to a COPY of the day's shifts; keep it only when it adds no error-class problem (and,
+ * when `check` is given, when `check` approves the result). Returns whether it was kept.
+ */
+export function guarded(b: BuildCtx, week: WeekState, date: string, mutate: (shifts: GShift[]) => boolean, check?: (next: GShift[]) => boolean): boolean {
+  const before = week.built[date]!;
+  const next = before.map(cloneShift);
+  if (!mutate(next)) return false;
+  if (check && !check(next)) return false;
+  const was = new Set(dayErrors(b, week, date, before));
+  const now = dayErrors(b, week, date, next);
+  if (now.some((k) => !was.has(k))) return false;
+  week.built[date] = next;
+  return true;
+}
+
+// ─── Block planning: the minimum shift, extension, the next needed position ──
+
+export interface PlannedSegment { positionId: string; startQ: number; endQ: number; kind: "core" | "extended" | "next_position" }
+export interface BlockPlan { segments: PlannedSegment[]; startQ: number; endQ: number }
+
+/**
+ * A block for a deficit run on `positionId`: the run itself, extended to `minimumShiftQ` first inside the
+ * position's window where the head limit has room (forward, then backward), then into the NEXT needed
+ * position (a position with a deficit, else room, at the block's edge) — a multi-position segment. Null
+ * when the minimum cannot be reached; the deficit is then the repair search's and the certificates'.
+ */
+export function planBlock(shifts: readonly GShift[], day: DayContext, positionId: string, fromQ: number, toQ: number, minQ: number, order: readonly string[]): BlockPlan | null {
+  const s = day.structure;
+  const pos = s.positions[positionId];
+  if (!pos) return null;
+  const lo = Math.max(s.shopDay.prepStartQ, 0);
+  const hi = Math.min(day.scheduledOutQ, Q_PER_DAY);
+  let a = fromQ;
+  let z = toQ;
+  while (z - a < minQ && z < hi && z < pos.closeQ && roomAt(shifts, day, positionId, z)) z++;
+  while (z - a < minQ && a > lo && a > pos.openQ && roomAt(shifts, day, positionId, a - 1)) a--;
+  const segments: PlannedSegment[] = [];
+  if (a < fromQ) segments.push({ positionId, startQ: a, endQ: fromQ, kind: "extended" });
+  segments.push({ positionId, startQ: fromQ, endQ: toQ, kind: "core" });
+  if (z > toQ) segments.push({ positionId, startQ: toQ, endQ: z, kind: "extended" });
+  if (z - a >= minQ) return { segments, startQ: a, endQ: z };
+  // Into the next needed position: forward first (a deficit at z, else room at z), then backward.
+  const pick = (q: number, prefer: "deficit" | "room") => order.find((id) => id !== positionId && (prefer === "deficit" ? deficitAt(shifts, day, id, q) > 0 : roomAt(shifts, day, id, q)));
+  for (const prefer of ["deficit", "room"] as const) {
+    if (z - a >= minQ) break;
+    const next = z < hi ? pick(z, prefer) : undefined;
+    if (next) {
+      let e = z;
+      while (e - a < minQ && e < hi && (prefer === "deficit" ? deficitAt(shifts, day, next, e) > 0 || roomAt(shifts, day, next, e) : roomAt(shifts, day, next, e))) e++;
+      if (e > z) { segments.push({ positionId: next, startQ: z, endQ: e, kind: "next_position" }); z = e; }
+    }
+    if (z - a >= minQ) break;
+    const prev = a > lo ? pick(a - 1, prefer) : undefined;
+    if (prev) {
+      let st = a;
+      while (z - st < minQ && st > lo && (prefer === "deficit" ? deficitAt(shifts, day, prev, st - 1) > 0 || roomAt(shifts, day, prev, st - 1) : roomAt(shifts, day, prev, st - 1))) st--;
+      if (st < a) { segments.unshift({ positionId: prev, startQ: st, endQ: a, kind: "next_position" }); a = st; }
+    }
+  }
+  return z - a >= minQ ? { segments, startQ: a, endQ: z } : null;
+}
+
+// ─── Candidates ──────────────────────────────────────────────────────────────
+
+export interface Candidate { person: SchedPerson; own: GShift | null; skill: number; key: Array<number | string> }
+
+export interface CandidateOpts {
+  date: string;
+  plan: BlockPlan;
+  /** The position the deficit is on (the one the skill and the pairing are judged on). */
+  positionId: string | null;
+  closingLead: boolean;
+  /** Allow a candidate whose week would exceed the overtime threshold (the last resort). */
+  allowOvertime: boolean;
+  /** MoD blocks: the candidate must count as the manager on duty from the plan's first quarter. */
+  mod: boolean;
+  /** Only people whose OWN shift that day is adjacent to the plan (an extension; the plan may be under the minimum). */
+  extensionOnly?: boolean;
+}
+
+/** A strong person on a LINE position overlapping the window on this day? (the pairing tie-break) */
+export function strongPartnerOnLine(b: BuildCtx, shifts: readonly GShift[], fromQ: number, toQ: number, except: string): boolean {
+  for (const s of shifts) {
+    if (s.userId === except) continue;
+    const p = b.people[s.userId];
+    if (!p) continue;
+    for (const g of s.segments) {
+      const pos = b.structure.positions[g.positionId];
+      if (pos && isLineRole(pos.role) && g.startQ < toQ && g.endQ > fromQ && p.strongPositions.includes(g.positionId)) return true;
+    }
+  }
+  return false;
+}
+
+/** Can this person's existing shift that day be extended by the plan (adjacent, no overlap)? */
+function extendsOwn(own: GShift, plan: BlockPlan): boolean {
+  return plan.startQ === own.endQ || plan.endQ === own.startQ;
+}
+
+/**
+ * Eligible hourly candidates for a planned block, ranked. Eligibility: an active hourly member, allowed on
+ * every planned position (role, work type, never a manager on Prep/Dishwasher), available over the whole
+ * span, their leader setting allows it, no untouchable day, a Closing Manager-eligible closer for the
+ * `closingLead`, free that day or extendable from their own adjacent shift, and not over the overtime
+ * threshold unless `allowOvertime`.
+ */
+export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GShift[], o: CandidateOpts): Candidate[] {
+  const s = b.structure;
+  const busiest = o.plan.segments.some((g) => { for (let q = g.startQ; q < g.endQ; q++) if (b.busiest[o.date]?.has(q)) return true; return false; })
+    || worksClosingWindow(b, o.date, o.plan.startQ, o.plan.endQ);
+  const out: Candidate[] = [];
+  for (const userId of Object.keys(b.people).sort(cmp)) {
+    const p = b.people[userId]!;
+    if (!isHourly(p) || !p.activeMember || p.untouchableDates.includes(o.date)) continue;
+    const own = shifts.find((x) => x.userId === userId) ?? null;
+    if (own && (own.pinned || !extendsOwn(own, o.plan))) continue;
+    if (o.extensionOnly && !own) continue;
+    if (o.mod ? !modCountsAt(p, s, o.plan.startQ) : !o.plan.segments.every((g) => eligibleForPosition(p, s.positions[g.positionId]))) continue;
+    if (o.closingLead && !closingManagerEligible(p, s)) continue;
+    const fromQ = own ? Math.min(own.startQ, o.plan.startQ) : o.plan.startQ;
+    const toQ = own ? Math.max(own.endQ, o.plan.endQ) : o.plan.endQ;
+    const w = p.availability[o.date];
+    if (w === null || (w && (fromQ < w.fromQ || toQ > w.toQ))) continue;
+    if (!leaderSettingAllows(p, s, fromQ, toQ)) continue;
+    const planQ = o.plan.endQ - o.plan.startQ;
+    const hours = (weekQuarters(week, userId) + planQ) / 4;
+    if (hours > s.limits.overtimeH && !o.allowOvertime) continue;
+    const skill = o.positionId ? skillOf(b.lookup, p, o.positionId, s.positions[o.positionId]).value : 0;
+    const underSoftMin = p.softMinH === null ? 0 : Math.max(0, p.softMinH - weekQuarters(week, userId) / 4);
+    const fullTimerFirst = p.fullTime && p.fullTimeMinH !== null && weekQuarters(week, userId) / 4 < p.fullTimeMinH ? 0 : 1;
+    const newer = !!o.positionId && p.newerPositions.includes(o.positionId);
+    const pairing = newer ? (strongPartnerOnLine(b, shifts, o.plan.startQ, o.plan.endQ, userId) ? -1 : 1) : 0;
+    out.push({ person: p, own, skill, key: [fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] });
+  }
+  out.sort((x, y) => {
+    for (let i = 0; i < x.key.length; i++) {
+      const a = x.key[i]!;
+      const c = y.key[i]!;
+      if (a === c) continue;
+      return typeof a === "number" && typeof c === "number" ? a - c : cmp(String(a), String(c));
+    }
+    return 0;
+  });
+  return out;
+}
+
+// ─── Placement ───────────────────────────────────────────────────────────────
+
+export interface PlaceOpts { date: string; plan: BlockPlan; sourceReason: Reason; closingLead: boolean; extraReasons?: Reason[] }
+
+function segmentsOf(plan: BlockPlan, source: Reason, positionId: string | null, people: Record<string, SchedPerson>, userId: string): GSegment[] {
+  void people;
+  void userId;
+  return plan.segments.map((g) => {
+    const reasons: Reason[] = [];
+    if (g.kind === "core") reasons.push(source);
+    else if (g.kind === "extended") reasons.push(reason("extended_to_minimum", { positionId: g.positionId, fromQ: g.startQ, toQ: g.endQ }));
+    else reasons.push(reason("next_position", { positionId: g.positionId, fromQ: g.startQ, toQ: g.endQ, after: positionId }));
+    return { positionId: g.positionId, startQ: g.startQ, endQ: g.endQ, reasons };
+  });
+}
+
+/** Place a candidate on a plan (a new shift, or an extension of their own adjacent shift) into `shifts`. */
+export function applyPlacement(shifts: GShift[], c: Candidate, o: PlaceOpts, people: Record<string, SchedPerson>, positionId: string | null): void {
+  const segs = segmentsOf(o.plan, o.sourceReason, positionId, people, c.person.userId);
+  const reasons = [o.sourceReason, ...(o.extraReasons ?? [])];
+  const idx = c.own ? shifts.findIndex((x) => x.userId === c.person.userId) : -1;
+  if (idx >= 0) {
+    const own = shifts[idx]!;
+    const merged: GShift = { ...own, startQ: Math.min(own.startQ, o.plan.startQ), endQ: Math.max(own.endQ, o.plan.endQ), reasons: [...own.reasons, ...reasons] };
+    merged.segments = o.plan.startQ >= own.endQ ? [...own.segments, ...segs] : [...segs, ...own.segments];
+    shifts[idx] = merged;
+  } else {
+    shifts.push({ userId: c.person.userId, date: o.date, startQ: o.plan.startQ, endQ: o.plan.endQ, segments: segs, closingManager: false, flex: false, pinned: false, reasons, origin: "hourly" });
+  }
+}
+
+/** The ranking reason for a chosen candidate (why this person). */
+export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, o: CandidateOpts): Reason[] {
+  const out: Reason[] = [];
+  if (c.key[0] === 0) out.push(reason("full_timer_minimum", { userId: c.person.userId }));
+  if (c.key[1] === 0 && o.positionId) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
+  else if (typeof c.key[1] === "number" && c.key[1] < 0) out.push(reason("under_soft_min", { userId: c.person.userId, hoursUnder: -c.key[1] }));
+  if (c.key[3] === -1) out.push(reason("beside_strong", { userId: c.person.userId, positionId: o.positionId }));
+  if (c.key[3] === 1) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
+  void b;
+  void shifts;
+  return out;
+}
+
+/**
+ * Fill one deficit run [fromQ, toQ) on a position: plan the block, rank the hourly candidates (two passes:
+ * within overtime, then overtime as a last resort), place the first the guard accepts; else a salaried
+ * manager's cover (never for the closing lead). Returns what happened.
+ */
+export function fillRun(
+  b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number, t: Pick<Template, "source" | "essential" | "closingLead">,
+  order: readonly string[], opts: { allowCover: boolean; budgetStop: boolean },
+): "placed" | "covered" | "budget" | "none" {
+  const day = b.ctx.days[date]!;
+  const budgeted = opts.budgetStop && !t.essential && b.budgetedDates.includes(date);
+  const source = sourceReason(t.source, positionId, fromQ, toQ);
+  let budgetBlocked = false;
+  // Two plans, in order: the bare run as an EXTENSION of someone's adjacent shift (their shift already meets the
+  // minimum), then a full block reaching the minimum (free people, or an extension when the run is long enough).
+  const corePlan: BlockPlan = { startQ: fromQ, endQ: toQ, segments: [{ positionId, startQ: fromQ, endQ: toQ, kind: "core" }] };
+  const fullPlan = planBlock(week.built[date]!, day, positionId, fromQ, toQ, b.structure.limits.minimumShiftQ, order);
+  const plans: Array<{ plan: BlockPlan; extensionOnly: boolean }> = [];
+  if (toQ - fromQ < b.structure.limits.minimumShiftQ) plans.push({ plan: corePlan, extensionOnly: true });
+  if (fullPlan) plans.push({ plan: fullPlan, extensionOnly: false });
+  for (const { plan, extensionOnly } of plans) {
+    for (const allowOvertime of [false, true]) {
+      const o: CandidateOpts = { date, plan, positionId, closingLead: t.closingLead, allowOvertime, mod: false, extensionOnly };
+      const ranked = rankCandidates(b, week, week.built[date]!, o);
+      for (const c of ranked.slice(0, 6)) {
+        const why = whyChosen(b, week.built[date]!, c, o);
+        if (allowOvertime) why.push(reason("overtime_last_resort", { userId: c.person.userId }));
+        const place = (shifts: GShift[]) => { applyPlacement(shifts, c, { date, plan, sourceReason: source, closingLead: t.closingLead, extraReasons: why }, b.people, positionId); return true; };
+        // The budget stop, judged on the validator's own accounting AFTER this placement (a whole shift working the
+        // closing window is essential; everything else counts): non-essential hourly hours on the budgeted dates ≤ budget.
+        if (budgeted && !worksClosingWindow(b, date, plan.startQ, plan.endQ)) {
+          const next = week.built[date]!.map(cloneShift);
+          place(next);
+          if (budgetUsedHours(b, { built: { ...week.built, [date]: next }, inherited: week.inherited }) > b.budgetHours) { budgetBlocked = true; continue; }
+        }
+        const ok = guarded(b, week, date, place);
+        if (ok) {
+          if (allowOvertime) b.notes.push({ code: "overtime_used", date, userId: c.person.userId, positionId, params: {} });
+          if (c.key[3] === 1) b.notes.push({ code: "pairing_unmet", date, userId: c.person.userId, positionId, params: { fromQ: plan.startQ, toQ: plan.endQ } });
+          return "placed";
+        }
+      }
+      if (ranked.length === 0 && allowOvertime) break;
+    }
+  }
+  if (budgetBlocked) {
+    b.notes.push({ code: "budget_stopped", date, userId: null, positionId, params: { fromQ, toQ, budgetHours: b.budgetHours } });
+    return "budget";
+  }
+  if (opts.allowCover && !t.closingLead && coverWithManager(b, week, date, positionId, fromQ, toQ)) return "covered";
+  return "none";
+}
+
+export function sourceReason(source: Template["source"], positionId: string, fromQ: number, toQ: number): Reason {
+  const key = source === "closing_crew" ? "closing_crew" : source === "boh_crew" ? "boh_crew" : source === "catering" ? "catering_prep" : "wave_arrival";
+  return reason(key, { positionId, fromQ, toQ });
+}
+
+// ─── Manager cover ───────────────────────────────────────────────────────────
+
+/**
+ * Cover a deficit run from a MoD block on the clock: a salaried manager (or a presence pin that lists the
+ * position) whose MoD segment spans the run, within `managerFloorH` for the week, allowed on the position
+ * (never Prep/Dishwasher), ordered by their preferred cover list (in the list first, by rank), then skill;
+ * outside the list only as a last resort (`lastResort: true`, the reason says so). The segment is carved
+ * out of the MoD block.
+ */
+export function coverWithManager(b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number): boolean {
+  const s = b.structure;
+  const pos = s.positions[positionId];
+  if (!pos) return false;
+  const shifts = week.built[date]!;
+  const lenQ = toQ - fromQ;
+  const candidates = shifts.filter((sh) => {
+    const p = b.people[sh.userId];
+    if (!p || !eligibleForPosition(p, pos)) return false;
+    const covers = sh.segments.some((g) => g.positionId === MOD && g.startQ <= fromQ && g.endQ >= toQ);
+    if (!covers) return false;
+    if (sh.pinned) {
+      const allowed = b.pinCover[`${sh.date}|${sh.userId}|${sh.startQ}`];
+      if (!allowed || (allowed !== "any" && !allowed.includes(positionId))) return false;
+      return true;
+    }
+    return p.salaried && (floorQuarters(week, sh.userId) + lenQ) / 4 <= s.limits.managerFloorH;
+  }).map((sh) => {
+    const p = b.people[sh.userId]!;
+    const rank = p.coverPositions.indexOf(positionId);
+    return { sh, p, rank, skill: skillOf(b.lookup, p, positionId, pos).value };
+  }).sort((x, y) => Number(x.rank < 0) - Number(y.rank < 0) || x.rank - y.rank || y.skill - x.skill || cmp(x.p.userId, y.p.userId));
+  for (const c of candidates) {
+    const lastResort = c.rank < 0;
+    const ok = guarded(b, week, date, (next) => {
+      const sh = next.find((x) => x.userId === c.p.userId)!;
+      const parts: GSegment[] = [];
+      for (const g of sh.segments) {
+        if (g.positionId !== MOD || g.endQ <= fromQ || g.startQ >= toQ) { parts.push(g); continue; }
+        if (g.startQ < fromQ) parts.push({ ...g, endQ: fromQ });
+        const r = lastResort ? reason("manager_cover_last_resort", { positionId, fromQ, toQ }) : reason("manager_cover", { positionId, fromQ, toQ, rank: c.rank + 1 });
+        parts.push({ positionId, startQ: fromQ, endQ: toQ, reasons: [r], ...(lastResort ? { lastResort: true } : {}) });
+        if (toQ < g.endQ) parts.push({ ...g, startQ: toQ });
+      }
+      sh.segments = parts;
+      sh.reasons = [...sh.reasons, lastResort ? reason("manager_cover_last_resort", { positionId, fromQ, toQ }) : reason("manager_cover", { positionId, fromQ, toQ, rank: c.rank + 1 })];
+      return true;
+    });
+    if (ok) return true;
+  }
+  return false;
+}
+
+// ─── Priority enforcement (the mockup's enforcePriority) ─────────────────────
+
+/** Wherever a secondary is filled without its primary, relabel the secondary segment to the primary when allowed and open. */
+export function enforcePriority(b: BuildCtx, week: WeekState, date: string): void {
+  const day = b.ctx.days[date]!;
+  const s = b.structure;
+  for (const pair of s.priority) {
+    const secondary = pair.pair[0] === pair.primary ? pair.pair[1] : pair.pair[0];
+    const primaryPos = s.positions[pair.primary];
+    if (!primaryPos) continue;
+    for (const sh of [...week.built[date]!].sort(shiftOrder)) {
+      const p = b.people[sh.userId];
+      if (!p || !eligibleForPosition(p, primaryPos)) continue;
+      for (const g of sh.segments) {
+        if (g.positionId !== secondary) continue;
+        let q = g.startQ;
+        while (q < g.endQ) {
+          const shifts = week.built[date]!;
+          const bad = (x: number) => occupancy(shifts, pair.primary, x) === 0 && roomAt(shifts, day, pair.primary, x);
+          if (!bad(q)) { q++; continue; }
+          let stop = q + 1;
+          while (stop < g.endQ && bad(stop)) stop++;
+          const [from, to] = [q, stop];
+          guarded(b, week, date, (next) => {
+            const mine = next.find((x) => x.userId === sh.userId)!;
+            const parts: GSegment[] = [];
+            for (const seg of mine.segments) {
+              if (seg.positionId !== secondary || seg.endQ <= from || seg.startQ >= to) { parts.push(seg); continue; }
+              if (seg.startQ < from) parts.push({ ...seg, endQ: from });
+              parts.push({ positionId: pair.primary, startQ: from, endQ: to, reasons: [reason("priority_cover", { positionId: pair.primary, secondary, fromQ: from, toQ: to })] });
+              if (to < seg.endQ) parts.push({ ...seg, startQ: to });
+            }
+            mine.segments = parts;
+            return true;
+          });
+          q = stop;
+        }
+      }
+    }
+  }
+}
+
+// ─── The Closing Manager ─────────────────────────────────────────────────────
+
+/**
+ * Among the closers whose shift covers service close → scheduled out on a line position, in an allowed
+ * closing role whose setting allows closing: the highest `closeOnTime` mean, else role rank, then userId.
+ * Flags exactly one; clears any other flag.
+ */
+export function assignClosingManager(b: BuildCtx, week: WeekState, date: string): void {
+  const day = b.ctx.days[date]!;
+  if (!closingRequired(day)) return;
+  const s = b.structure;
+  const { serviceCloseQ } = s.shopDay;
+  const shifts = week.built[date]!;
+  const eligible = shifts.filter((sh) => {
+    const p = b.people[sh.userId];
+    return !!p && closingManagerEligible(p, s) && coversClosingWindow(sh, day)
+      && sh.segments.some((g) => { const pos = s.positions[g.positionId]; return !!pos && isLineRole(pos.role) && g.startQ < day.scheduledOutQ && g.endQ > serviceCloseQ; });
+  }).sort((x, y) => {
+    const cx = closeScore(b.lookup, x.userId) ?? -1;
+    const cy = closeScore(b.lookup, y.userId) ?? -1;
+    return cy - cx || roleRank(b, y.userId) - roleRank(b, x.userId) || cmp(x.userId, y.userId);
+  });
+  const chosen = eligible[0]?.userId ?? null;
+  if (!chosen && !shifts.some((x) => x.closingManager)) return;
+  guarded(b, week, date, (next) => {
+    for (const sh of next) {
+      const flag = sh.userId === chosen;
+      if (flag && !sh.closingManager) sh.reasons = [...sh.reasons, reason("closing_manager", { userId: sh.userId, closeScore: closeScore(b.lookup, sh.userId) })];
+      sh.closingManager = flag;
+    }
+    return true;
+  });
+}
+
+function roleRank(b: BuildCtx, userId: string): number {
+  const role = b.people[userId]?.role;
+  return role === "owner" ? 5 : role === "moo" ? 4 : role === "gm" ? 3 : role === "agm" ? 2 : role === "shift_lead" ? 1 : 0;
+}
+
+// ─── The MoD lane fill ───────────────────────────────────────────────────────
+
+/** Quarters of the shop day with no manager on duty, as runs. */
+export function modHoles(b: BuildCtx, date: string, shifts: readonly GShift[]): Array<[number, number]> {
+  const day = b.ctx.days[date]!;
+  if (!day.structure.leadership.modRequired) return [];
+  const out: Array<[number, number]> = [];
+  for (let q = day.structure.shopDay.prepStartQ; q < day.scheduledOutQ; q++) {
+    if (modOnClockAt(b, shifts, q)) continue;
+    const last = out[out.length - 1];
+    if (last && last[1] === q) last[1] = q + 1;
+    else out.push([q, q + 1]);
+  }
+  return out;
+}
+
+/**
+ * Fill a MoD hole with an eligible hourly manager (SL+, or a KH after the shop's setting time) on a `mod`
+ * block reaching the minimum shift inside the shop day; their own adjacent shift may extend instead.
+ */
+export function fillModHole(b: BuildCtx, week: WeekState, date: string, fromQ: number, toQ: number): boolean {
+  const day = b.ctx.days[date]!;
+  const minQ = b.structure.limits.minimumShiftQ;
+  const lo = day.structure.shopDay.prepStartQ;
+  const hi = day.scheduledOutQ;
+  let a = fromQ;
+  let z = toQ;
+  while (z - a < minQ && z < hi) z++;
+  while (z - a < minQ && a > lo) a--;
+  if (z - a < minQ) return false;
+  const plan: BlockPlan = { startQ: a, endQ: z, segments: [{ positionId: MOD, startQ: a, endQ: z, kind: "core" }] };
+  for (const allowOvertime of [false, true]) {
+    const o: CandidateOpts = { date, plan, positionId: null, closingLead: false, allowOvertime, mod: true };
+    const ranked = rankCandidates(b, week, week.built[date]!, o);
+    for (const c of ranked.slice(0, 6)) {
+      const r = reason("mod_cover", { fromQ, toQ, userId: c.person.userId });
+      const ok = guarded(b, week, date, (shifts) => {
+        applyPlacement(shifts, c, { date, plan, sourceReason: r, closingLead: false, extraReasons: allowOvertime ? [reason("overtime_last_resort", { userId: c.person.userId })] : [] }, b.people, null);
+        return true;
+      }, (next) => modHoles(b, date, next).reduce((n, [f, t]) => n + (t - f), 0) < modHoles(b, date, week.built[date]!).reduce((n, [f, t]) => n + (t - f), 0));
+      if (ok) return true;
+    }
+  }
+  return false;
+}
+
+// ─── Merge + canonical form ──────────────────────────────────────────────────
+
+/** Merge adjacent same-position segments within each shift and sort everything canonically. */
+export function canonicalDay(shifts: GShift[]): GShift[] {
+  const out = shifts.map(cloneShift);
+  for (const sh of out) {
+    sh.segments.sort((a, b) => a.startQ - b.startQ);
+    const merged: GSegment[] = [];
+    for (const g of sh.segments) {
+      const prev = merged[merged.length - 1];
+      if (prev && prev.positionId === g.positionId && prev.endQ === g.startQ && !!prev.lastResort === !!g.lastResort && prev.coverFor === g.coverFor && prev.reasonKey === g.reasonKey) {
+        prev.endQ = g.endQ;
+        prev.reasons = [...prev.reasons, ...g.reasons];
+      } else merged.push({ ...g });
+    }
+    sh.segments = merged;
+    sh.startQ = merged[0]!.startQ;
+    sh.endQ = merged[merged.length - 1]!.endQ;
+  }
+  return out.sort(shiftOrder);
+}
+
+export function sortNotes(notes: BoardNote[]): BoardNote[] {
+  const seen = new Set<string>();
+  const out: BoardNote[] = [];
+  for (const n of [...notes].sort(noteOrder)) {
+    const key = JSON.stringify([n.code, n.date, n.userId, n.positionId, n.params]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(n);
+  }
+  return out;
+}
+
+export { isSecondary, primaryOf };

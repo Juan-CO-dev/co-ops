@@ -441,11 +441,27 @@ export function capacityBound(g: Pick<GapSubject, "date" | "positionId" | "fromQ
 
 // ─── Certificates ────────────────────────────────────────────────────────────
 
-function hoursNeededFor(g: GapSubject, s: WeekSchedule, day: DayContext, ctx: RuleContext): number {
+/** The uncovered head-hours of a deficit against THIS schedule. */
+function uncoveredHoursFor(g: GapSubject, s: WeekSchedule, day: DayContext, ctx: RuleContext): number {
   const cov = dayCoverage(shiftsOn(s, g.date), day, ctx);
   let q4 = 0;
   for (let q = g.fromQ; q < g.toQ; q++) q4 += uncoveredFrom(cov, g.code, g.positionId, day, q);
   return q4 / 4;
+}
+
+/**
+ * The hours a LEGAL fill of this deficit would add (the budget certificate's `hoursNeeded`): the uncovered
+ * head-hours when an eligible hourly person's shift that day is adjacent to the window (an extension fills
+ * exactly the hole), else at least the minimum shift — a 1 h hole with nobody beside it costs a 4 h block.
+ * The generator's budget stop and this certificate therefore agree on what the budget would have to pay.
+ */
+function hoursNeededFor(g: GapSubject, s: WeekSchedule, day: DayContext, ctx: RuleContext): number {
+  const uncovered = uncoveredHoursFor(g, s, day, ctx);
+  if (g.code !== "coverage_gap" || !g.positionId || uncovered <= 0) return uncovered;
+  const pos = day.structure.positions[g.positionId];
+  const adjacent = Object.values(ctx.people).some((p) => isHourly(p) && p.activeMember && eligibleForPosition(p, pos)
+    && shiftsOn(s, g.date).some((sh) => sh.userId === p.userId && (sh.endQ === g.fromQ || sh.startQ === g.toQ)));
+  return adjacent ? uncovered : Math.max(uncovered, day.structure.limits.minimumShiftQ / 4);
 }
 
 function eligibleMembers(g: GapSubject, day: DayContext, ctx: RuleContext): RulePerson[] {
