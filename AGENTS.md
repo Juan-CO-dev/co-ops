@@ -241,3 +241,12 @@ Read with the 3a section "Recipe and menu-item shop versions (0262–0263)". 3b 
 
 ### Disclosure doctrine (Juan-ratified 2026-07-28)
 - **Every admin/backend surface obeys `docs/DISCLOSURE_DOCTRINE.md` (10 laws, D1-D10):** summary rows + drawers; identity + alerts always visible; secondary content default-collapsed; i18n'd counts on collapsed headers; phone-first full-row toggles; useState-only disclosure state; a11y contract. New surfaces are born compliant; primitives = CollapsibleSection + the SummaryRow pattern.
+
+
+### Catalog Phase 4a job HTTP contracts (Chunk 7, 2026-10-16)
+
+- Job/setup/share/swap/Back writes use the catalog Tier E window; Toast mapping remains Tier A. Read-only previews and scoped swap journals do not unlock either clock. Registry writes retain Tier B. Libraries reauthorize ownership and scope; preview tokens are stale-state checks, never authority.
+- New-item responses include `replayed`. A replay returns the earlier committed item and does not apply later form edits. Show `catalog.new_item.replayed`; replace the `newItemFormRequest()` factory after an acknowledged success (including replay), keep it across uncertain failures/retries. Setup is separate from creation. `generic` with `lineSaved:null` means unconfirmed, not failed-to-save: refresh before retrying.
+- Swap audits are destructive `sku_swap.start` / `sku_swap.end` (human recipe/ordering changes); audit classification does not choose step-up. Preview ordering follows the replacement SKU at the selected scope; par values remain unchanged. Journal reads filter shop/item in SQL and query completion rows only for bounded matching IDs. Liveness derives from immutable starts minus appended ends.
+- Sharing a shop-only prep ingredient requires sharing its producing recipe. Share requests bind the expected owner, preview token and dependency identities; owned-entity creation and share authority is app-layer; SQL binds ownership and graph integrity. Owned write scope stays null while cost/visibility scope is the owner shop.
+- 0264/0265 remain file-only in this build. Guided-page rendering, post-create catalog redirects, 375 px browser proof and real PostgreSQL concurrency/release gates are not established by route/PGlite tests.
