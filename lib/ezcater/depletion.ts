@@ -4,7 +4,7 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { perUnitSkuAttributionsForItem } from "@/lib/prep-consumption-graph";
 import { selectSalesDepletion } from "@/lib/depletion-shared";
-import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
+import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 import { deriveCapturedSalesConsumption, loadSalesConsumptionContext, type SalesConsumptionContext } from "@/lib/catering/toast-sales";
 import { loadCapturedToastWindow } from "@/lib/toast/captured-window";
 import { loadSalesCoverageDisclosure, type EffectiveSalesWindow, type EffectiveSalesRow } from "@/lib/toast/effective-depletion";
@@ -51,15 +51,16 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
         .select("resource_id,occurred_at,metadata").eq("resource_table", "catering_pipeline")
         .in("resource_id", leadIds.slice(start, start + 100))
         .in("action", ["catering.pipeline.transfer_location", "ezcater.location_reassigned"])
-        .gte("occurred_at", `${etYmdMinusDays(window.fromDate, 1)}T00:00:00Z`).order("id").range(from, to), 250));
+        // Exact earliest ET day accepted by productionLocations(eventDate, transfers): eventDate - 1.
+        .gte("occurred_at", operationalDayUtcRange(etYmdMinusDays(window.fromDate, 1)).startIso).order("id").range(from, to), 250));
     }
     return rows;
   };
   const [links, leads, productions, transfers, locations] = await Promise.all([
     readLinks(), readLeads(),
     selectAllRows<ProductionEvidence>((from, to) => sb.from("productions").select("location_id,output_item_id,produced_at")
-      .is("revoked_at", null).is("superseded_at", null).gte("produced_at", `${etYmdMinusDays(window.fromDate, 2)}T00:00:00Z`)
-      .lt("produced_at", `${etYmdMinusDays(end, -1)}T00:00:00Z`).order("id").range(from, to), 250),
+      .is("revoked_at", null).is("superseded_at", null).gte("produced_at", operationalDayUtcRange(etYmdMinusDays(window.fromDate, 2)).startIso)
+      .lt("produced_at", operationalDayUtcRange(etYmdMinusDays(end, -1)).startIso).order("id").range(from, to), 250),
     readTransfers(),
     selectAllRows<{ id: string }>((from, to) => sb.from("locations").select("id").eq("active", true)
       .not("toast_restaurant_guid", "is", null).order("id").range(from, to)),

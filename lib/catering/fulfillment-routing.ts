@@ -6,6 +6,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { haversineMeters, isWithinRadius } from "@/lib/geo";
+import { operationalDayUtcRange } from "@/lib/operational-day";
 
 /** Stages that count against a node's daily capacity (a "booked" event). Matches W4a reserve-at-confirmed. */
 import {
@@ -85,6 +86,7 @@ async function passesCapacity(
   eventDate: string | null,
   headcount: number | null,
 ): Promise<boolean> {
+  if (eventDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) return false;
   const { data: policyRow, error: pErr } = await sb
     .from("catering_capacity_policy")
     .select("max_covers_per_day, max_events_per_day, min_lead_time_hours")
@@ -96,7 +98,7 @@ async function passesCapacity(
 
   // min_lead_time_hours (needs a date)
   if (policyRow.min_lead_time_hours != null && eventDate) {
-    const eventStart = new Date(`${eventDate}T00:00:00`).getTime();
+    const eventStart = Date.parse(operationalDayUtcRange(eventDate).startIso);
     const earliest = Date.now() + policyRow.min_lead_time_hours * 3_600_000;
     if (eventStart < earliest) return false;
   }

@@ -8,7 +8,7 @@
  */
 import { ROLES, isRoleCode } from "@/lib/roles";
 import type { Language } from "@/lib/i18n/types";
-import { etWallMinutesInstant } from "@/lib/operational-day";
+import { etWallMinutesInstant, operationalDayUtcRange } from "@/lib/operational-day";
 
 export type DigestKind = "gm_shop" | "unified" | "catering";
 export const DIGEST_KINDS: readonly DigestKind[] = ["gm_shop", "unified", "catering"];
@@ -111,7 +111,7 @@ export function etWallTime(day: string, minutes: number): Date {
  * misbuckets an hour on both transition days).
  */
 export function etDayRange(day: string): { startIso: string; endExclusiveIso: string } {
-  return { startIso: etWallTime(day, 0).toISOString(), endExclusiveIso: etWallTime(addDays(day, 1), 0).toISOString() };
+  return operationalDayUtcRange(day);
 }
 
 // ── Due decisions ───────────────────────────────────────────────────────────────────────────

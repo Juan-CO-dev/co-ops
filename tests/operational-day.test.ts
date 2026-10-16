@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { etCalendarDate, etDisplayDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
+import { etDayRange } from "@/lib/report-digests-shared";
 
 describe("etCalendarDate", () => {
   it("a late-evening ET instant belongs to the ET day, not the next UTC day", () => {
@@ -59,6 +60,18 @@ describe("operationalDayUtcRange", () => {
     const { startIso, endExclusiveIso } = operationalDayUtcRange("2026-07-10");
     const note = "2026-07-11T02:00:00.000Z"; // 22:00 EDT on the 10th
     expect(note >= startIso && note < endExclusiveIso).toBe(true);
+  });
+});
+
+describe("digest and operational ET day ranges", () => {
+  it.each([
+    ["2026-07-10", "2026-07-10T04:00:00.000Z", "2026-07-11T04:00:00.000Z"],
+    ["2026-01-14", "2026-01-14T05:00:00.000Z", "2026-01-15T05:00:00.000Z"],
+    ["2026-11-01", "2026-11-01T04:00:00.000Z", "2026-11-02T05:00:00.000Z"],
+    ["2027-03-14", "2027-03-14T05:00:00.000Z", "2027-03-15T04:00:00.000Z"],
+  ])("share exact bounds on %s", (day, startIso, endExclusiveIso) => {
+    expect(etDayRange(day)).toEqual({ startIso, endExclusiveIso });
+    expect(etDayRange(day)).toEqual(operationalDayUtcRange(day));
   });
 });
 

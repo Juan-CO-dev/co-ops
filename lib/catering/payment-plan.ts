@@ -10,6 +10,8 @@
  * Amounts are integer cents. Client + server both call this so the pay options never drift.
  */
 
+import { operationalDayUtcRange } from "@/lib/operational-day";
+
 export type PaymentMode = "deposit_required" | "deposit_optional" | "full_only";
 export type PaymentOptionKind = "deposit" | "full";
 
@@ -30,11 +32,10 @@ export interface PaymentPlan {
 
 export const DEPOSIT_LEAD_DAYS = 7; // "more than a week out" ⇒ deposit is available
 
-/** Whole days from `now` until the event date (local midnight), or null if no/invalid date. */
+/** Whole days from `now` until ET midnight on the event date, or null if no/invalid date. */
 function daysUntil(eventDate: string | null, now: number): number | null {
-  if (!eventDate) return null;
-  const t = Date.parse(`${eventDate}T00:00:00`);
-  if (Number.isNaN(t)) return null;
+  if (!eventDate || !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) return null;
+  const t = Date.parse(operationalDayUtcRange(eventDate).startIso);
   return Math.floor((t - now) / (24 * 60 * 60 * 1000));
 }
 
