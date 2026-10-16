@@ -1,0 +1,232 @@
+{
+  "version": 1,
+  "products": [
+    {
+      "id": "frex",
+      "name": "Frex",
+      "confirmedIds": [
+        "001",
+        "002",
+        "003",
+        "004"
+      ],
+      "representative": "001",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_001.JPG",
+      "sha256": "ccdb8337d0e48f41a3194e1964595b2640557c9159199d3589fa6008b61342a3",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "hot-pants",
+      "name": "Hot Pants",
+      "confirmedIds": [
+        "005",
+        "006",
+        "007",
+        "008"
+      ],
+      "representative": "005",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_005.JPG",
+      "sha256": "8509a69b5f513985e2b55f4f01a3cceec8f50c1346dcb6e328c825f882a56e8b",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "teamster",
+      "name": "The Teamster",
+      "confirmedIds": [
+        "009",
+        "010",
+        "011",
+        "012"
+      ],
+      "representative": "011",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_011.JPG",
+      "sha256": "c75a446a8d1769462a3cae0bcdf60b7b77c2550420919f535ed77921de21d9e1",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "crunchy-boi",
+      "name": "Crunchy Boi",
+      "confirmedIds": [
+        "014"
+      ],
+      "representative": "014",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
+      "sha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "marisa",
+      "name": "Marisa Tomei Eats Free",
+      "confirmedIds": [
+        "018",
+        "019",
+        "020",
+        "021"
+      ],
+      "representative": "018",
+      "eligible": false,
+      "hold": "legal",
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_018.JPG",
+      "sha256": "8e14b880fc7377ebafaa3a2d0915f28ebcb28907d1612866b9e59ca6a21c6451",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "sicky-wicky",
+      "name": "Sicky Wicky Club",
+      "confirmedIds": [
+        "022",
+        "023",
+        "024",
+        "025"
+      ],
+      "representative": "024",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_024.JPG",
+      "sha256": "4d820beb14edf64d274b2e559fe6de0b57cb619555380f3e73eee97a5982d739",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "never-been-cheddar",
+      "name": "Never Been Cheddar",
+      "confirmedIds": [
+        "026",
+        "027",
+        "028",
+        "029"
+      ],
+      "representative": "029",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_029.JPG",
+      "sha256": "d82d4c965f29c276547ff8ece9df8e7cc8f3d2c186ce73bb032e0d02436004a2",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "turkey-caesar",
+      "name": "Turkey Caesar",
+      "confirmedIds": [
+        "030",
+        "031",
+        "032",
+        "033"
+      ],
+      "representative": "033",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_033.JPG",
+      "sha256": "679a5d4ecd7070ce0a7bc60e65ec141953158754a72fa7e4b2cd2d50d3f7415a",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "farmers-market",
+      "name": "Farmers Market",
+      "confirmedIds": [
+        "034",
+        "035",
+        "036",
+        "037"
+      ],
+      "representative": "037",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_037.JPG",
+      "sha256": "5a8ca9d149000c519b1a23c0fae5fa7e93d190ac4f82c1e19d6f2362146cd555",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "french-dip",
+      "name": "French Dip",
+      "confirmedIds": [
+        "038",
+        "039",
+        "040",
+        "041",
+        "042",
+        "043",
+        "044"
+      ],
+      "representative": "040",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_040.JPG",
+      "sha256": "0fb2b11906fab361ad082a6011aaef7aab7092ce2b88377ad54d612979aecfbc",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    },
+    {
+      "id": "vesuvio",
+      "name": "Vesuvio II",
+      "confirmedIds": [
+        "045",
+        "046",
+        "047",
+        "048"
+      ],
+      "representative": "047",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_047.JPG",
+      "sha256": "6bc057e4df8c12d0b2ce08b83bc71435ea409f164d40372d8faabe6ec55b5c9c",
+      "evidence": "Lead correction; INTAKE 2026-10-05 groups 1-7; BUILD r5"
+    }
+  ],
+  "tools": {
+    "C:/Users/conta/co-scenes-fx-copy/tools/vfx-footage/fxv4/finish.py": "d4a81b2a72dd77ffed9ab4117a3a9f583bd23d03fb69a701148961d69098ec93",
+    "C:/Users/conta/co-3d/batch4/choose-fighter/scripts/finish_subs.py": "c08930e04bbf64cc7536d1d5ba926211d75241648e6986a800b392d3244cb674"
+  },
+  "drawnSources": [
+    {
+      "id": "subdex-frame-17-5",
+      "representative": "subdex-frame-17-5",
+      "confirmedIds": [
+        "subdex-frame-17-5"
+      ],
+      "classification": "drawn",
+      "eligible": true,
+      "hold": null,
+      "path": "assets/work/subdex-source-frame.png",
+      "sha256": "f1321be97625c1484cc0c41f40c22f23dd2cb44c19be3925cf80c8c72236ba7f",
+      "videoPath": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
+      "videoSha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82",
+      "cut": {
+        "start": 17.3,
+        "duration": 0.9,
+        "poster": 17.5,
+        "crop": [
+          0,
+          780,
+          1080,
+          1080
+        ],
+        "width": 720,
+        "height": 720
+      },
+      "evidence": "Existing approved AI-DRAWN SUBDEX source and Chunk D inspected cut; frame extraction only, no new generation; final phone/timecode acceptance remains open"
+    }
+  ],
+  "externalSources": [
+    {
+      "id": "hero-spin-original",
+      "path": "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
+      "sha256": "ebb277e24a3d8e7bc71b90081931af8d959680cca5f585c22173270b266c4127"
+    },
+    {
+      "id": "wordmark-original",
+      "path": "C:/Users/conta/co-3d/logo-pack/vector/co-wordmark.svg",
+      "sha256": "1170f72dc7e96e3e3f5910870023a71624ab08b50d1ff37c7af0ff53eabb2a45"
+    },
+    {
+      "id": "subdex-video-original",
+      "path": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
+      "sha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82"
+    }
+  ]
+}

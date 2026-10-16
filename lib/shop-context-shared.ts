@@ -103,6 +103,7 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/admin/catering/prep-demand": ["location"],
   "/admin/catering/lto": ["location"],
   "/admin/menu-costing": ["location"], // catalog Phase 2a — the costing board's shop switcher
+  "/admin/skus": ["location"], // hub SKU readiness scope; editor baselines remain global
   "/admin/catalog/notices": ["location"], // catalog Phase 3b — a GM's recipe updates for one shop
 };
 
@@ -115,6 +116,7 @@ const SHOP_PARAMS_BY_PREFIX: ReadonlyArray<readonly [string, readonly string[]]>
   // Catalog Phase 3b — the recipe and menu-item pages' shop switcher (?location=<shop> | global).
   // (The notices list is an exact route, "/admin/catalog/notices", declared in SHOP_PARAMS_BY_PATH with its page.)
   ["/admin/catalog/recipe/", ["location"]],
+  ["/admin/recipes/", ["location"]],
   ["/admin/catalog/menu-item/", ["location"]],
 ];
 

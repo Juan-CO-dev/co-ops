@@ -67,3 +67,17 @@ describe("the role rule and the named refusals", () => {
     for (const c of [...rpc.matchAll(/([a-z_]+):/g)].map((m) => m[1]!)) expect(MENU_ITEM_SHOP_ERROR_CODES as readonly string[], c).toContain(c);
   });
 });
+
+import { RPC_STATUS, SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
+import { menuShopErrorFromRpc } from "@/lib/admin/menu-item-shop";
+describe("ownership transport mapping", () => {
+ it.each(SHOP_OWNED_ERROR_CODES)("maps ownership %s from shared statuses", code => {
+  expect(() => menuShopErrorFromRpc(`shop_owned:${code}`)).toThrow(expect.objectContaining({ name: "MenuShopError", code, status: RPC_STATUS[code] }));
+ });
+ it("retains a one-based ownership line", () => {
+  expect(() => menuShopErrorFromRpc("shop_owned:line_other_shop:3")).toThrow(expect.objectContaining({ status: 400, line: expect.objectContaining({ position: 3, reason: "line_other_shop" }) }));
+ });
+ it("retains its native namespace", () => {
+  expect(() => menuShopErrorFromRpc("menu_item_shop:dependencies_busy")).toThrow(expect.objectContaining({ status: 409, code: "dependencies_busy" }));
+ });
+});

@@ -1,0 +1,1454 @@
+{
+  "before-real-accepted": {
+    "state": "accepted",
+    "failures": [
+      "pixel-transfer-unmeasured"
+    ],
+    "runs": [
+      {
+        "performance": 0.9,
+        "lcp": 3343.16,
+        "tbt": 151,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-real/raw-accepted/lhr-1792166879047.json",
+        "fetchTime": "2026-10-16T16:07:48.939Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 260.637
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 18.954000000000008
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 49.93799999999999
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 457.082
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 472.064,
+            "percent": "14%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 719.3652913011624,
+            "percent": "22%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 209.0954557296584,
+            "percent": "6%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1942.635252969179,
+            "percent": "58%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      },
+      {
+        "performance": 0.96,
+        "lcp": 2605.0150000000003,
+        "tbt": 73,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-real/raw-accepted/lhr-1792166892520.json",
+        "fetchTime": "2026-10-16T16:08:02.822Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 40.579
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 17.936
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 16.983000000000004
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 131.418
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 458.806,
+            "percent": "18%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 311.71019206674083,
+            "percent": "12%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 179.98267147024558,
+            "percent": "7%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1654.516136463014,
+            "percent": "64%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      },
+      {
+        "performance": 0.96,
+        "lcp": 2661.1900000000005,
+        "tbt": 96.5,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-real/raw-accepted/lhr-1792166905450.json",
+        "fetchTime": "2026-10-16T16:08:15.580Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 53.015
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 30.878
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 14.971000000000004
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 140.832
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 460.476,
+            "percent": "17%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 478.494543437423,
+            "percent": "18%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 158.6526448668585,
+            "percent": "6%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1563.566811695719,
+            "percent": "59%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      }
+    ],
+    "medianLcp": 2661.1900000000005
+  },
+  "before-real-unset": {
+    "state": "unset",
+    "failures": [],
+    "runs": [
+      {
+        "performance": 0.95,
+        "lcp": 2797.8675000000003,
+        "tbt": 85.5,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-real/raw-unset/lhr-1792166926017.json",
+        "fetchTime": "2026-10-16T16:08:35.695Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 314.4210002441406
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 18.8169997558594
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 51.899
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 286.82800000000003
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 470.747,
+            "percent": "17%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 920.5692427403617,
+            "percent": "33%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 212.28259883964097,
+            "percent": "8%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1194.2686584199976,
+            "percent": "43%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      },
+      {
+        "performance": 0.96,
+        "lcp": 2667.725,
+        "tbt": 111.5,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-real/raw-unset/lhr-1792166940292.json",
+        "fetchTime": "2026-10-16T16:08:50.202Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 60.042
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 65.297
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 10.275000000000006
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 167.88500000000002
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 452.29,
+            "percent": "17%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 654.8590774954598,
+            "percent": "25%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 84.88403750259977,
+            "percent": "3%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1475.6918850019404,
+            "percent": "55%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      },
+      {
+        "performance": 0.96,
+        "lcp": 2683.775,
+        "tbt": 102.5,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-real/raw-unset/lhr-1792166953287.json",
+        "fetchTime": "2026-10-16T16:09:03.083Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 35.324
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 54.23100000000001
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 15.72399999999999
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 155.60899999999998
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 464.71,
+            "percent": "17%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 463.03005788473666,
+            "percent": "17%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 155.27314204348068,
+            "percent": "6%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1600.7618000717828,
+            "percent": "60%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      }
+    ],
+    "medianLcp": 2683.775
+  },
+  "before-blocked-accepted": {
+    "state": "accepted",
+    "measurement": "first-party-only-pixel-blocked",
+    "thirdPartyCostMeasured": false,
+    "failures": [],
+    "runs": [
+      {
+        "performance": 0.93,
+        "lcp": 3219.7924999999996,
+        "tbt": 83,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-blocked/raw-accepted/lhr-1792167023425.json",
+        "fetchTime": "2026-10-16T16:10:13.493Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 256.281
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 17.56400000000002
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 52.387
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 279.5249999999999
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 471.91700000000003,
+            "percent": "15%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 990.2053711971886,
+            "percent": "31%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 271.90521157061494,
+            "percent": "8%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1485.764917232196,
+            "percent": "46%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      },
+      {
+        "performance": 0.94,
+        "lcp": 2783.5625,
+        "tbt": 145,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-blocked/raw-accepted/lhr-1792167043671.json",
+        "fetchTime": "2026-10-16T16:10:28.714Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 88.966
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 22.101
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 11.262
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 163.79899999999998
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 457.425,
+            "percent": "16%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 629.9843602319947,
+            "percent": "23%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 102.65388786634435,
+            "percent": "4%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1593.499251901661,
+            "percent": "57%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      },
+      {
+        "performance": 0.97,
+        "lcp": 2239.13,
+        "tbt": 145.5,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-blocked/raw-accepted/lhr-1792167056754.json",
+        "fetchTime": "2026-10-16T16:10:46.867Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 60.418
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 76.69999999999999
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 14.899000000000001
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 168.012
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 465.065,
+            "percent": "21%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 498.2123939627323,
+            "percent": "22%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 100.3319199441737,
+            "percent": "4%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1175.5206860930941,
+            "percent": "52%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      }
+    ],
+    "medianLcp": 2783.5625
+  },
+  "before-blocked-unset": {
+    "state": "unset",
+    "measurement": "first-party-only-pixel-blocked",
+    "thirdPartyCostMeasured": false,
+    "failures": [],
+    "runs": [
+      {
+        "performance": 0.94,
+        "lcp": 2845.87,
+        "tbt": 114,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-blocked/raw-unset/lhr-1792167077440.json",
+        "fetchTime": "2026-10-16T16:11:06.958Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 478.263
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 19.887
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 64.64300000000003
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 392.735
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 486.348,
+            "percent": "17%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 1000.4094609352637,
+            "percent": "35%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 189.42127465505632,
+            "percent": "7%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1169.69126440968,
+            "percent": "41%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      },
+      {
+        "performance": 0.96,
+        "lcp": 2608.6975,
+        "tbt": 77.5,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-blocked/raw-unset/lhr-1792167091223.json",
+        "fetchTime": "2026-10-16T16:11:21.409Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 44.141
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 44.705999999999996
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 7.972999999999999
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 136.547
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 457.479,
+            "percent": "18%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 542.6966500486624,
+            "percent": "21%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 82.12858223718229,
+            "percent": "3%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1526.3932677141556,
+            "percent": "59%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      },
+      {
+        "performance": 0.94,
+        "lcp": 2780.9049999999997,
+        "tbt": 146.5,
+        "firstParty": 293970,
+        "thirdParty": 0,
+        "total": 293970,
+        "file": "tmp/lcp-round/fresh-before-blocked/raw-unset/lhr-1792167104241.json",
+        "fetchTime": "2026-10-16T16:11:34.616Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 56.711999755859374
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 18.490000244140624
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 14.015
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 143.82299999999998
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 467.962,
+            "percent": "17%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 437.6578997818857,
+            "percent": "16%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 159.02136670969173,
+            "percent": "6%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1716.2637335084223,
+            "percent": "62%"
+          }
+        ],
+        "element": "<img src=\"/media/crunchy-boi-014-3566a724066c.webp\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      }
+    ],
+    "medianLcp": 2780.9049999999997
+  },
+  "after-real-accepted": {
+    "state": "accepted",
+    "measurement": "real-pixel",
+    "thirdPartyCostMeasured": false,
+    "failures": [
+      "pixel-transfer-unmeasured"
+    ],
+    "runs": [
+      {
+        "performance": 0.96,
+        "lcp": 2640.107,
+        "tbt": 100,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-real/raw-accepted/lhr-1792168454818.json",
+        "fetchTime": "2026-10-16T16:34:04.367Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 326.494
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 54.835999999999956
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 49.53399999999999
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 287.78800000000007
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 472.369,
+            "percent": "18%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 935.7355794366766,
+            "percent": "35%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 174.75758755803054,
+            "percent": "7%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1057.2448330052928,
+            "percent": "40%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      },
+      {
+        "performance": 0.97,
+        "lcp": 2480.7524999999996,
+        "tbt": 114.5,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-real/raw-accepted/lhr-1792168470719.json",
+        "fetchTime": "2026-10-16T16:34:20.245Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 54.125
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 28.992000000000004
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 9.670000000000002
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 152.787
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 465.101,
+            "percent": "19%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 379.99983569951746,
+            "percent": "15%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 92.21981983517253,
+            "percent": "4%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1543.4318444653095,
+            "percent": "62%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      },
+      {
+        "performance": 0.97,
+        "lcp": 2521.865,
+        "tbt": 94.5,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-real/raw-accepted/lhr-1792168483407.json",
+        "fetchTime": "2026-10-16T16:34:33.563Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 35.229
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 20.683999999999997
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 7.357000000000006
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 149.759
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 465.146,
+            "percent": "18%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 207.1769180144924,
+            "percent": "8%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 76.67556811603083,
+            "percent": "3%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1772.8665138694764,
+            "percent": "70%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      }
+    ],
+    "medianLcp": 2521.865
+  },
+  "after-real-unset": {
+    "state": "unset",
+    "measurement": "real-pixel",
+    "thirdPartyCostMeasured": false,
+    "failures": [],
+    "runs": [
+      {
+        "performance": 0.95,
+        "lcp": 2672.145,
+        "tbt": 121,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-real/raw-unset/lhr-1792168504583.json",
+        "fetchTime": "2026-10-16T16:34:54.317Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 375.255
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 49.218999999999994
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 53.839
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 463.33900000000006
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 475.715,
+            "percent": "18%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 730.2962653788741,
+            "percent": "27%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 151.3072471132691,
+            "percent": "6%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1314.8264875078569,
+            "percent": "49%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      },
+      {
+        "performance": 0.98,
+        "lcp": 2335.61,
+        "tbt": 52.5,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-real/raw-unset/lhr-1792168517785.json",
+        "fetchTime": "2026-10-16T16:35:08.466Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 39.632
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 39.29200000000001
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 8.113
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 109.11599999999999
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 456.244,
+            "percent": "20%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 492.07179187684255,
+            "percent": "21%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 88.04096755024,
+            "percent": "4%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1299.2532405729175,
+            "percent": "56%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      },
+      {
+        "performance": 0.98,
+        "lcp": 2288.056,
+        "tbt": 55,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-real/raw-unset/lhr-1792168529603.json",
+        "fetchTime": "2026-10-16T16:35:20.324Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 36.61499975585937
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 18.35300024414063
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 35.89699999999999
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 144.216
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 464.528,
+            "percent": "20%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 76.69791661583906,
+            "percent": "3%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 343.1680091451566,
+            "percent": "15%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1403.6620742390044,
+            "percent": "61%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": null
+      }
+    ],
+    "medianLcp": 2335.61
+  },
+  "after-blocked-accepted": {
+    "state": "accepted",
+    "measurement": "first-party-only-pixel-blocked",
+    "thirdPartyCostMeasured": false,
+    "failures": [],
+    "runs": [
+      {
+        "performance": 0.93,
+        "lcp": 3173.0730000000003,
+        "tbt": 81,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-blocked/raw-accepted/lhr-1792168574302.json",
+        "fetchTime": "2026-10-16T16:36:04.397Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 273.667
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 22.84200000000004
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 57.82900000000001
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 268.435
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 472.691,
+            "percent": "15%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 1051.5811786646088,
+            "percent": "33%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 281.10528770213614,
+            "percent": "9%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1367.6955336332553,
+            "percent": "43%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      },
+      {
+        "performance": 0.97,
+        "lcp": 2436.808,
+        "tbt": 70,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-blocked/raw-accepted/lhr-1792168587828.json",
+        "fetchTime": "2026-10-16T16:36:18.138Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 47.315
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 71.245
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 10.292000000000002
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 101.899
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 458.404,
+            "percent": "19%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 798.9729183700927,
+            "percent": "33%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 103.34344432108583,
+            "percent": "4%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1076.0876373088215,
+            "percent": "44%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      },
+      {
+        "performance": 0.98,
+        "lcp": 2406.5125,
+        "tbt": 41.5,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-blocked/raw-accepted/lhr-1792168599824.json",
+        "fetchTime": "2026-10-16T16:36:30.372Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 42.745
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 65.13900000000001
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 14.522999999999996
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 150.14300000000003
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 465.005,
+            "percent": "19%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 492.4964797793333,
+            "percent": "20%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 123.3056204584384,
+            "percent": "5%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1325.7053997622281,
+            "percent": "55%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      }
+    ],
+    "medianLcp": 2436.808
+  },
+  "after-blocked-unset": {
+    "state": "unset",
+    "measurement": "first-party-only-pixel-blocked",
+    "thirdPartyCostMeasured": false,
+    "failures": [],
+    "runs": [
+      {
+        "performance": 0.97,
+        "lcp": 2449.25,
+        "tbt": 48.5,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-blocked/raw-unset/lhr-1792168617823.json",
+        "fetchTime": "2026-10-16T16:36:47.955Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 255.539
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 14.733000000000004
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 51.299000000000035
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 272.62
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 470.9,
+            "percent": "19%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 653.3854332787506,
+            "percent": "27%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 201.22735973380236,
+            "percent": "8%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1123.737206987447,
+            "percent": "46%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      },
+      {
+        "performance": 0.98,
+        "lcp": 2345.99,
+        "tbt": 63.5,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-blocked/raw-unset/lhr-1792168631172.json",
+        "fetchTime": "2026-10-16T16:37:01.620Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 44.392
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 32.910999999999994
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 9.628
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 145.435
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 455.996,
+            "percent": "19%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 330.0660269516169,
+            "percent": "14%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 91.60190028923807,
+            "percent": "4%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1468.3260727591448,
+            "percent": "63%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      },
+      {
+        "performance": 0.98,
+        "lcp": 2417.2949999999996,
+        "tbt": 53.5,
+        "firstParty": 261072,
+        "thirdParty": 0,
+        "total": 261072,
+        "file": "tmp/lcp-round/fresh-after-blocked/raw-unset/lhr-1792168643172.json",
+        "fetchTime": "2026-10-16T16:37:13.723Z",
+        "observedPhases": [
+          {
+            "phase": "timeToFirstByte",
+            "label": "Time to first byte",
+            "duration": 35.655
+          },
+          {
+            "phase": "resourceLoadDelay",
+            "label": "Resource load delay",
+            "duration": 62.641999999999996
+          },
+          {
+            "phase": "resourceLoadDuration",
+            "label": "Resource load duration",
+            "duration": 7.972999999999999
+          },
+          {
+            "phase": "elementRenderDelay",
+            "label": "Element render delay",
+            "duration": 96.88000000000001
+          }
+        ],
+        "simulatedBreakdown": [
+          {
+            "phase": "TTFB",
+            "timing": 459.718,
+            "percent": "19%"
+          },
+          {
+            "phase": "Load Delay",
+            "timing": 722.1090092776392,
+            "percent": "30%"
+          },
+          {
+            "phase": "Load Time",
+            "timing": 82.68659940507655,
+            "percent": "3%"
+          },
+          {
+            "phase": "Render Delay",
+            "timing": 1152.7813913172838,
+            "percent": "48%"
+          }
+        ],
+        "element": "<img src=\"http://localhost:44170/media/crunchy-boi-014-320-1c40aa3dc34f.webp\" srcset=\"/media/crunchy-boi-014-320-1c40aa3dc34f.webp 320w, /media/crunchy-boi-014-…\" sizes=\"(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)\" alt=\"Crunchy Boi sub\" width=\"750\" height=\"1125\" fetchpriority=\"high\" loading=\"eager\" class=\"block aspect-[2/3] max-h-[28rem] w-full object-contain\">",
+        "blockedUrlPatterns": [
+          "*://connect.facebook.net/*",
+          "*://www.facebook.com/tr/*"
+        ]
+      }
+    ],
+    "medianLcp": 2417.2949999999996
+  }
+}

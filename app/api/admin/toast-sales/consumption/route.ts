@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { salesConsumption, listExclusions, AdminToastSalesError, TOAST_SALES_READ_MIN } from "@/lib/catering/toast-sales";
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import { listMappableEntities } from "@/lib/admin/toast-map";
 import { ToastApiError } from "@/lib/toast/client";
 
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
       listExclusions(ctx, locationId),
       listMappableEntities(ctx),
     ]);
-    return jsonOk({ report, exclusions, entities });
+    return jsonOk({ report, exclusions, entities: entities.filter(entity => ownerVisible(entity.locationId, locationId)) });
   } catch (e) {
     if (e instanceof AdminToastSalesError) return jsonError(e.status, e.code, { message: e.message });
     if (e instanceof ToastApiError) return jsonError(502, e.code, { message: e.message });

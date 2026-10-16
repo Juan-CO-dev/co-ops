@@ -414,3 +414,27 @@ describe("the GM's notices", () => {
     expect((await loadRecipeItemView(gm, "r-italian", LOC))!.notices.map((n) => n.kind)).toEqual(["source_changed"]);
   });
 });
+
+
+describe("owned page visibility", () => {
+  it.each([null, OTHER])("recipe and menu pages hide another shop's entity at %s", async scope => {
+    tables.recipes!.find(r => r.id === "r-italian")!.location_id = LOC;
+    tables.menu_items!.find(r => r.id === "m-italian")!.location_id = LOC;
+    expect(await loadRecipeItemView(moo, "r-italian", scope)).toBeNull();
+    expect(await loadMenuItemPageView(moo, "m-italian", scope)).toBeNull();
+  });
+  it("their owner's page remains visible", async () => {
+    tables.recipes!.find(r => r.id === "r-italian")!.location_id = LOC;
+    tables.menu_items!.find(r => r.id === "m-italian")!.location_id = LOC;
+    expect(await loadRecipeItemView(gm, "r-italian", LOC)).not.toBeNull();
+    expect(await loadMenuItemPageView(gm, "m-italian", LOC)).not.toBeNull();
+  });
+});
+
+
+it("direct previews refuse foreign owned recipe and menu targets", async () => {
+  tables.recipes!.find(r => r.id === "r-italian")!.location_id = LOC;
+  tables.menu_items!.find(r => r.id === "m-italian")!.location_id = LOC;
+  expect(await refused(computeRecipePreview(moo, "r-italian", { ...edit, target: { kind: "shop", shopId: OTHER } }))).toEqual({ status: 404, code: "not_found" });
+  expect(await refused(computeMenuPreview(moo, "m-italian", { kind: "back_to_default", shopId: OTHER }))).toEqual({ status: 404, code: "not_found" });
+});

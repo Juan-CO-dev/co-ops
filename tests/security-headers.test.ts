@@ -197,3 +197,14 @@ describe("next.config.ts ships the header set", () => {
     }
   });
 });
+
+import { LANDING_CSP_ORIGINS, LANDING_SECURITY_HEADERS } from '@/lib/security-headers';
+it('landing policy is separate and leaves staff origins unchanged', () => {
+  expect(buildContentSecurityPolicy(CSP_ORIGINS)).not.toContain('facebook');
+  expect(buildContentSecurityPolicy(LANDING_CSP_ORIGINS)).toContain('connect.facebook.net');
+  expect(buildContentSecurityPolicy(LANDING_CSP_ORIGINS)).not.toContain('graph.facebook.com');
+  // Request-time opt-in policy is tested in landing/geolocation-policy.test.ts.
+  // Missing verified shop coordinates leave the default permission denied.
+  expect(LANDING_SECURITY_HEADERS.find(h => h.key === 'Permissions-Policy')?.value).toBe('camera=(), microphone=(), geolocation=()');
+  expect(LANDING_SECURITY_HEADERS.filter(h=>h.key.toLowerCase().startsWith('content-security-policy'))).toHaveLength(1);
+});

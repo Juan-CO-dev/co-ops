@@ -9,6 +9,7 @@
  * this lib mirrors that so a toggle never lands an illegal combination.
  */
 
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
@@ -135,7 +136,7 @@ export async function setCateringFlags(
   }
 
   const { error, count } = await sb.from(table).update(update, { count: "exact" }).eq("id", id);
-  if (error) throw new Error(`setCateringFlags update: ${error.message}`);
+  if (error) throw catalogWriteError(error, AdminCateringMenuError, "setCateringFlags update");
   if (count === 0) throw new AdminCateringMenuError(404, "not_found", "Not found");
 
   void audit({

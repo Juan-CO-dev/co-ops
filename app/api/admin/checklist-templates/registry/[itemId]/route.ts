@@ -6,8 +6,7 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { updateRegistryItemDefinition, AdminTemplateError } from "@/lib/admin/templates";
 import type { PrepSection } from "@/lib/types";
 
-// Edit a registry item's GLOBAL definition (name / name_es / recommended par) by
-// item id — the Global tab. Affects every location. MoO+ (≥8), Tier B.
+// GM may edit an owned definition; shared definitions remain MoO in the library. Tier B.
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ itemId: string }> },
@@ -17,7 +16,7 @@ export async function PATCH(
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, `/api/admin/checklist-templates/registry/${itemId}`);
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < 8) return jsonError(403, "forbidden");
+  if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "B");
   if (!su.ok) return jsonError(403, su.code);
 

@@ -552,6 +552,8 @@ export interface CatalogEntity {
   id: string;
   name: string;
   nameEs: string | null;
+  /** Org-wide list disclosure for a shop-owned row; the location NAME, never its code/id. */
+  onlyAtShopName: string | null;
   /** grouping bucket: prep/menu section, or the package's location name. */
   section: string | null;
   active: boolean;

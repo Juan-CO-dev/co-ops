@@ -1,0 +1,33 @@
+{
+  "id": "hero-poster-320",
+  "sourceId": "014",
+  "publicPath": "/media/crunchy-boi-014-320-1c40aa3dc34f.webp",
+  "classification": "real-photo",
+  "mode": "resize-only",
+  "sourcePath": "source:014",
+  "sourceSha256": "aa41b3421c36f4ca029f99a4e0d77c60682240ce2a9dfc6ba092ee6d70c5b6b0",
+  "sha256": "1c40aa3dc34f08645d5b660c5b7194a5c7682c27389ed6d6453b96cda0d052ca",
+  "bytes": 11156,
+  "maxBytes": 100000,
+  "width": 320,
+  "height": 480,
+  "sidecar": "assets/provenance/hero-poster-320.json",
+  "crop": [
+    0,
+    0,
+    3707,
+    5560
+  ],
+  "steps": [
+    "EXIF auto-orientation (.rotate())",
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "quality": 86,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "scriptSha256": "57b17a8a9d1be36de339c2fbd2ce61615140414c1883b250af7159867725b29e"
+  },
+  "command": "node scripts/assets/export-hero-sizes.mjs"
+}

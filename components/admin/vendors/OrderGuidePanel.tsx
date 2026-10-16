@@ -41,6 +41,7 @@ export interface GuideBucketSku {
 export interface OrderGuideInitial {
   guide: GuideModel | null;
   skusNotOnGuide: GuideBucketSku[];
+  ownership?: Record<string, string>;
 }
 
 const fieldCls =
@@ -186,18 +187,14 @@ export function OrderGuidePanel({
     if (busy || !canEdit) return;
     setBusy(true);
     setErrorMsg(null);
-    let result;
     try {
-      result = await postJson(url, { create: true });
+      const result = await postJson(url, { create: true });
+      if (result.ok) {
+        if (!await reload()) setErrorMsg(t("admin.vendors.error.generic"));
+      } else setErrorMsg(t(resolveErrorKey(result.code)));
     } finally {
       setBusy(false);
     }
-    if (result.ok) {
-      const guide = result.data.guide as GuideModel;
-      setBaseline({ guide, skusNotOnGuide: baseline.skusNotOnGuide });
-      setModel(guide);
-      setDirty(false);
-    } else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
   /**
@@ -216,11 +213,8 @@ export function OrderGuidePanel({
     try {
       const result = await postJson(url, { model, expectedUpdatedAt: model.updatedAt });
       if (result.ok) {
-        const guide = result.data.guide as GuideModel;
-        setBaseline({ guide, skusNotOnGuide: bucket });
-        setModel(guide);
-        setDirty(false);
-        setNotice(t("admin.order_guide.saved"));
+        if (await reload()) setNotice(t("admin.order_guide.saved"));
+        else setErrorMsg(t("admin.vendors.error.generic"));
         return;
       }
       if (result.code === "guide_stale") {
@@ -342,7 +336,7 @@ export function OrderGuidePanel({
                   <li key={line.id} className="rounded-lg border-2 border-co-border bg-co-surface-inset p-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0 text-sm text-co-text">
-                        <span className="font-bold">{line.label}</span>
+                        <span className="font-bold">{line.label}{line.skuId && baseline.ownership?.[line.skuId] ? ` (${baseline.ownership[line.skuId]})` : ""}</span>
                         {line.itemNumber ? <span className="ml-2 text-co-text-muted">{line.itemNumber}</span> : null}
                         <span className="ml-2">
                           {line.skuId ? (
@@ -414,7 +408,7 @@ export function OrderGuidePanel({
                         <option value="">{t("admin.order_guide.needs_sku")}</option>
                         {bucket.map((s) => (
                           <option key={s.skuId} value={s.skuId}>
-                            {s.name}
+                            {s.name}{baseline.ownership?.[s.skuId] ? ` (${baseline.ownership[s.skuId]})` : ""}
                           </option>
                         ))}
                       </select>
@@ -455,7 +449,7 @@ export function OrderGuidePanel({
                 {bucket.map((s) => (
                   <li key={s.skuId} className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-sm text-co-text">
-                      {s.name}
+                      {s.name}{baseline.ownership?.[s.skuId] ? ` (${baseline.ownership[s.skuId]})` : ""}
                       {s.itemNumber ? <span className="ml-2 text-co-text-muted">{s.itemNumber}</span> : null}
                     </span>
                     {canEdit && model.sections.length > 0 ? (

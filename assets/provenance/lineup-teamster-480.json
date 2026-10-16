@@ -1,0 +1,34 @@
+{
+  "id": "lineup-teamster-480",
+  "sourceId": "011",
+  "publicPath": "/media/teamster-lineup-011-480-986e5e108a02.webp",
+  "classification": "real-photo",
+  "mode": "resize-only",
+  "sourcePath": "source:011",
+  "sourceSha256": "c75a446a8d1769462a3cae0bcdf60b7b77c2550420919f535ed77921de21d9e1",
+  "sha256": "986e5e108a025791e2defa4cde783413611c24ba5ee1bd812415d5ff4b4894e0",
+  "bytes": 15928,
+  "maxBytes": 100000,
+  "width": 480,
+  "height": 720,
+  "sidecar": "assets/provenance/lineup-teamster-480.json",
+  "crop": [
+    0,
+    0,
+    3901,
+    5852
+  ],
+  "steps": [
+    "EXIF auto-orientation (.rotate())",
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "quality": 78,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+  },
+  "command": "node scripts/assets/export.mjs",
+  "review": "Original framing retained, including any source-edge crops; phone approval pending"
+}

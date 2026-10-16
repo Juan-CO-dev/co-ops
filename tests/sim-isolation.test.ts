@@ -110,6 +110,11 @@ describe("sim isolation policy", () => {
     expect(child).toMatchObject({ NODE_ENV: "production", SIM_MODE: "1", TOAST_FIXTURES: "1", EZCATER_FIXTURES: "1", NEXT_TELEMETRY_DISABLED: "1", NEXT_PUBLIC_APP_URL: SIM_APP_ORIGIN, PORTAL_MAGIC_LINK_ALLOWLIST: SIM_PORTAL_ALLOWLIST, Path: "synthetic_path", HTTP_PROXY: "synthetic_proxy", NODE_OPTIONS: "synthetic_options" });
     expect(parent.AUTH_EXTRA).toBe("inherited");
   });
+  it.each(["SIM_CATALOG_PASSWORD", "sim_catalog_password"])("keeps Node-only catalog password %s out of app and build children", key => {
+    const parent = { [key]: "synthetic-private-control" };
+    expect(buildChildEnv(parent, fixture())).not.toHaveProperty(key);
+    expect(parent[key]).toBe("synthetic-private-control");
+  });
 });
 
 describe("transport decisions with stub transports (no network)", () => {
@@ -247,4 +252,15 @@ it("transitive launch-readiness imports never reach product-identity/harness.ts"
   }
   scan(resolve(root, "scripts/sim/launch-readiness"));
   expect(visited.size).toBeGreaterThan(3);
+});
+
+it('runtime landing configuration never changes build-time staff/sim headers', async () => {
+  vi.stubEnv('SIM_MODE', ''); vi.resetModules();
+  const before = await (await import('../next.config')).default.headers!();
+  vi.stubEnv('LANDING_HOSTS', 'eat.example.test');
+  vi.stubEnv('SITE_ORIGIN', 'https://eat.example.test');
+  vi.stubEnv('STAFF_ORIGIN', 'https://staff.example.test');
+  vi.resetModules();
+  expect(await (await import('../next.config')).default.headers!()).toEqual(before);
+  expect(JSON.stringify(before)).not.toContain('facebook');
 });

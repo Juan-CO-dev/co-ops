@@ -141,6 +141,8 @@ export interface InvoiceDrift {
 }
 
 export interface WeightBoardRow {
+  /** Org-wide audit disclosure for a shop-owned subject; the shop name, never its id. */
+  onlyAtShopName: string | null;
   belief: WeightBelief;
   provenance: WeightProvenance;
   /** Vendor label for a SKU row; member vendor labels for a product row. */
@@ -211,6 +213,7 @@ export interface WeightBoard {
 // ── Row shapes off PostgREST ─────────────────────────────────────────────────
 
 interface DbSkuRow {
+  location_id: string | null;
   id: string;
   name: string;
   vendor_id: string | null;
@@ -236,6 +239,7 @@ interface DbProductRow {
 }
 
 interface DbItemRow {
+  location_id: string | null;
   id: string;
   name: string;
   name_es: string | null;
@@ -274,12 +278,12 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
   const windowStartDate = windowStart.slice(0, 10);
 
   // ── Reads 1-6: the subjects, their labels, and the cost seam ───────────────
-  const [skuRows, vendorRes, productRes, itemRes, graph] = await Promise.all([
+  const [skuRows, vendorRes, productRes, itemRes, locationRes, graph] = await Promise.all([
     selectAllRows<DbSkuRow>((from, to) =>
       sb
         .from("vendor_items")
         .select(
-          "id, name, vendor_id, product_id, active, avg_oz_per_each, each_container_label, weight_class, weight_source_note, weight_established_at, weight_established_by",
+          "id, name, location_id, vendor_id, product_id, active, avg_oz_per_each, each_container_label, weight_class, weight_source_note, weight_established_at, weight_established_by",
         )
         .order("id", { ascending: true })
         .range(from, to)
@@ -294,20 +298,35 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
       .returns<DbProductRow[]>(),
     sb
       .from("items")
-      .select("id, name, name_es, default_par_unit, oz_per_par_unit, active")
+      .select("id, name, name_es, location_id, default_par_unit, oz_per_par_unit, active")
       .eq("active", true)
       .order("name")
       .returns<DbItemRow[]>(),
+    sb.from("locations").select("id, name").returns<Array<{ id: string; name: string }>>(),
     loadRecipeGraph(),
   ]);
 
   const vendorNames = new Map((vendorRes.data ?? []).map((v) => [v.id, v.name]));
+  if (locationRes.error) throw new Error(`loadWeightBoard locations: ${locationRes.error.message}`);
+  const locationNames = new Map((locationRes.data ?? []).map((l) => [l.id, l.name]));
   const productRows = productRes.data ?? [];
   const itemRows = itemRes.data ?? [];
   const skuIds = skuRows.map((s) => s.id);
 
   const prices = await loadCurrentSkuPrices(skuIds, null);
   const costPerOz = costPerOzFromGraph(graph, prices);
+  // This is an organization-wide audit, not a shop picker. Keep every subject,
+  // but cost owned subjects in their owner's scope. One graph per distinct shop,
+  // through the common resolver; never a private recipe resolution path.
+  const ownerScopes = [...new Set([...skuRows, ...itemRows].map(row => row.location_id).filter((id): id is string => id != null))];
+  const ownedCosts = new Map(await Promise.all(ownerScopes.map(async scope => {
+    const [ownedGraph, ownedPrices] = await Promise.all([
+      loadRecipeGraph({ locationId: scope }), loadCurrentSkuPrices(skuIds, scope),
+    ]);
+    return [scope, { graph: ownedGraph, costs: costPerOzFromGraph(ownedGraph, ownedPrices) }] as const;
+  })));
+  const subjectSkuCosts = new Map(skuRows.map(s => [s.id,
+    (s.location_id == null ? costPerOz : ownedCosts.get(s.location_id)!.costs).get(s.id) ?? null]));
 
   // ── Reads 7-11: usage, observation, drift evidence, provenance ─────────────
   const [salesRows, liveProductions, productionInputs, deliveryRows, auditRows, countLineRows] =
@@ -458,7 +477,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
   for (const s of skuRows) {
     if (s.active === false) continue; // a retired SKU's weight is history, not a suggestion
     const valueOz = num(s.avg_oz_per_each);
-    const cpo = costPerOz.get(s.id) ?? null;
+    const cpo = subjectSkuCosts.get(s.id) ?? null;
     const usage = usageOz.get(s.id) ?? null;
     const believedAt = s.weight_established_at ?? newestAudit.get(s.id)?.occurred_at ?? null;
 
@@ -474,6 +493,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
 
     const ruled = OPERATIONAL_SLICE_OZ[s.name];
     rows.push({
+      onlyAtShopName: s.location_id ? (locationNames.get(s.location_id) ?? null) : null,
       belief: {
         subjectKind: "sku",
         subjectId: s.id,
@@ -546,13 +566,14 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
     // product is priced when any member is, and the average is the honest
     // org-level replacement figure the costing board already prices at (D7).
     const memberCosts = activeMembers
-      .map((m) => costPerOz.get(m.skuId) ?? null)
+      .map((m) => subjectSkuCosts.get(m.skuId) ?? null)
       .filter((c): c is number => c != null);
     const memberUsage = activeMembers
       .map((m) => usageOz.get(m.skuId) ?? null)
       .filter((u): u is number => u != null);
 
     rows.push({
+      onlyAtShopName: null,
       belief: {
         subjectKind: "product",
         subjectId: p.id,
@@ -585,13 +606,14 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
     const valueOz = num(it.oz_per_par_unit);
     // $/par-unit from the flatten: Σ over the item's leaf SKUs of (oz per par unit
     // × that SKU's $/oz). Pure — the graph is already loaded, no query per item.
-    const legs = perUnitSkuOzForItemFromGraph(graph, it.id);
+    const ownerCost = it.location_id == null ? { graph, costs: costPerOz } : ownedCosts.get(it.location_id)!;
+    const legs = perUnitSkuOzForItemFromGraph(ownerCost.graph, it.id);
     let dollarsPerParUnit: number | null = null;
     if (legs.size > 0) {
       let acc = 0;
       let complete = true;
       for (const [skuId, oz] of legs) {
-        const c = costPerOz.get(skuId) ?? null;
+        const c = ownerCost.costs.get(skuId) ?? null;
         if (c == null) {
           complete = false;
           break;
@@ -604,6 +626,7 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
     }
 
     rows.push({
+      onlyAtShopName: it.location_id ? (locationNames.get(it.location_id) ?? null) : null,
       belief: {
         subjectKind: "item",
         subjectId: it.id,

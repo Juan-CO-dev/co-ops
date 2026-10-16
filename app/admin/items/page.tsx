@@ -7,7 +7,8 @@
  * catalog batch-loads once (loadRecipeGraph law).
  */
 
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { catalogShopAllowed } from "@/lib/sku-versions-shared";
 
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
@@ -38,13 +39,14 @@ export default async function AdminItemsPage({ searchParams }: {
   // the default — never the remembered shop: this view's scope is what the link asked for.
   const explicit = shopParamFor("/admin/items", searchParamValues(sp));
   const initialView = itemsLandingView({ view: sp.view, location: explicit });
-  const shops = await loadActiveShopsForReadiness();
+  const shops = (await loadActiveShopsForReadiness()).filter(shop => catalogShopAllowed({ level, locations: auth.locations }, shop.id));
+  if (explicit && explicit !== "global" && !shops.some(shop => shop.id === explicit)) notFound();
   const scope = explicit && explicit !== "global" && shops.some((s) => s.id === explicit)
     ? await resolveShopId(shops.map((s) => s.id), explicit) : null;
   const scopeName = scope ? shops.find((s) => s.id === scope)?.name ?? null : null;
 
   const [view, entities] = await Promise.all([
-    loadItemsAdminView(auth),
+    loadItemsAdminView(auth, scope),
     loadCatalogView(auth),
   ]);
 

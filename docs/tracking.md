@@ -1,0 +1,42 @@
+# Landing measurement — chunk A
+
+The browser Pixel, CAPI enhancement and independent direct-order counter have separate activation switches. All are host gated and honor first-party consent, DNT and GPC. Nothing here establishes purchases or unique people. The default configuration sends no Meta requests and makes no counter writes.
+
+## Event contract
+
+PageView and ViewContent are browser-only. Lead is the catering inquiry. OrderClick and CateringClick are custom events, using Pixel trackCustom. A real action generates one UUID shared by browser eventID and server event_id; a retry retains the same name/ID. The counter never retries and never receives the UUID. Source URLs contain only the configured landing HTTPS origin and the public document path, with no query or hash. The only initial ad code is `subsim-photo`; unknown counter codes collapse to `unattributed`. Direct shop keys are `capitol-hill` and `dupont`. No offer is activated by an ad code.
+
+## Server boundary and activation
+
+Both POST routes independently verify authoritative Host, forwarded-host agreement, exact configured HTTPS Origin and same authority. Missing/null/foreign Origin is refused even when dormant. The accepted first-party `landing_consent` preference is required, conflicting duplicate cookies are refused, and DNT=1 / Sec-GPC=1 override consent. CAPI also requires consent in the bounded JSON payload. Body limits are 4096 bytes for events and 512 for the counter, including bodies without Content-Length, with a two-second body-read limit. Unknown fields are rejected. No CORS wildcard is provided.
+
+CAPI requires `LANDING_CAPI_ENABLED=true`, numeric `META_PIXEL_ID`, server-only `META_CAPI_ACCESS_TOKEN`, `META_GRAPH_API_VERSION=v25.0`, `LANDING_META_UA_APPROVED=true`, legitimate consented fbc/fbp matching data and the WAF evidence below. Missing matching data yields a no-op 204, never a claim of delivery. No client IP is collected. User agent and advertising identifiers are personal data: Juan must approve their disclosure before activation. A production `META_TEST_EVENT_CODE` is refused. Preview test codes remain server-only. The Graph request has a two-second timeout, uses an Authorization header (never a credential in its URL), refuses redirects, and returns only an empty status. Upstream failures return 503 without retry, response reflection or logs. CAPI never imports the Supabase writer or writes an audit row.
+
+The independent counter requires `LANDING_COUNTER_ENABLED=true` only after migration 0273 is reviewed/applied by CC/Juan. This implementation authors the file only and never applies it. Its RPC computes the UTC day in PostgreSQL and atomically increments one bigint per day/store/ad. The table contains exactly those four fields. Anon/authenticated have no table or RPC privileges and deny-all RLS; service_role has SELECT plus RPC execution, no direct insert/update/delete/truncate. Unknown stores and oversized/null ad values are refused at the RPC too. There is no decrement, reset, backdate or deletion API.
+
+## WAF verification is deployment work
+
+`LANDING_WAF_STATE` is dormant (default), active, refused or unavailable. Active additionally requires operator-owned `LANDING_WAF_VERIFIED_AT` (YYYY-MM-DD) and `LANDING_WAF_RULE_IDS`. These env values are an attestation of external verification, not proof that dashboard rules exist and not an in-process rate limiter. No incoming client header can enable or bypass protection. `refused` produces 429; an active-protection outage recorded as `unavailable` produces 503. Missing or unverified evidence keeps CAPI dormant. The independent approximate counter can run without WAF and is therefore susceptible to anonymous inflation; it is not billing/conversion truth.
+
+Before CAPI activation E4 must record plan entitlement, dated rule IDs/config, scopes for exact landing hosts + POST + both API paths, 30 requests/minute per trusted client IP and 600/minute aggregate, cross-instance concurrent/burst enforcement, 429 behavior, spoof resistance, actual Vercel x-real-ip/XFF behavior, provider retention and disclosure. No app IP logs. WAF rejection happens before application code. Dashboard removal/outage cannot be inferred from a request header; the operator must disable CAPI / mark protection unavailable when protection is not verified. If the Vercel tier cannot supply these rules, launch verified PIXEL-ONLY. Missing CAPI does not block paid spend.
+
+## Meta references checked 2026-10-16
+
+The pinned Graph version is v25.0, matching Meta's current [official GTM CAPI template](https://github.com/facebookincubator/ConversionsAPI-Tag-for-GoogleTagManager/blob/main/template.tpl). Meta's [official sample](https://github.com/fbsamples/lead-ads-webhook-sample/blob/main/postman/FB%20Conversions%20API%20(Part%201%20-%20online).postman_collection.json) specifies website action_source, event_source_url and client_user_agent. Meta's [parameter builder](https://github.com/facebook/capi-param-builder/blob/main/nodejs/README.md) places fbc/fbp in user_data. Deduplication uses event_name plus event_id, shared with browser eventID.
+
+Direct reads of Meta's [server event reference](https://developers.facebook.com/docs/marketing-api/conversions-api/parameters/server-event), [customer information reference](https://developers.facebook.com/docs/marketing-api/conversions-api/parameters/customer-information-parameters) and [version availability](https://developers.facebook.com/docs/graph-api/changelog/versions) returned HTTP 429 during implementation. Refresh those official references, consent terms and version availability at activation; do not treat mocked tests as live Meta acceptance. Pete must record Test Events and the OrderClick custom conversion before spend. CAPI additionally needs same-ID dedup and match-quality evidence before enabling it.
+
+## Verification and reconciliation
+
+Run `npx vitest run tests/landing/meta-route.test.ts tests/landing/rate-limit.test.ts tests/landing/order-click.test.ts tests/landing/order-click-migration.test.ts --pool=threads --no-cache --maxWorkers=3` for injected boundary/schema/writer tests. These use no real credentials or DB. Run `npx tsx scripts/landing/order-click-sql-check.ts` for an isolated in-memory PostgreSQL WASM harness. It executes the file-only migration locally, checks real grants/RLS/function configuration, input validation, UTC day and 100 concurrently submitted increments. PGlite serializes its single connection: independent-session contention/load verification remains a separate authorized sim/deployment gate, not a claim of this harness.
+
+Daily compare per-UTC-day/store/ad aggregate counts with Meta OrderClick and actual Appfront/Toast orders. Record losses, blockers, retries (Meta only), attribution differences, unknown ads and suspected inflation. Neither clicks nor discrepant counts become purchases. The browser dispatch is best-effort keepalive; anchors navigate immediately without waiting. Counter success is independent of Pixel SDK or CAPI status; third-party footer ordering does not enter this direct-order KPI.
+
+
+## Remaining activation checks
+
+The browser `NEXT_PUBLIC_META_PIXEL_ID` and server `META_PIXEL_ID` must match; the route refuses split datasets. Footer vendor events accept only ubereats/doordash with footer placement and never infer a missing store. The independent counter receives none of those vendor events.
+
+Real SDK cookie behavior remains an E4 check. Our consent preference and attribution state are host-only. Meta's SDK may choose its own first-party cookie domain; intercepted tests do not establish that its cookies are host-only or prove deletion of parent-domain cookies. Inspect actual cookies and withdrawal on the approved host, confirm Events Manager settings and the current documented controls before activation. Do not delete unrelated parent-site cookies or invent a cookieDomain API. Meta's cookie-settings help page redirected to login/temporary block and the developer consent page returned 429 during this pass.
+
+On this Windows sandbox, `npx tsx scripts/landing/order-click-sql-check.ts` encountered `uv_os_get_passwd ENOMEM`. The installed Node 22 runner passed via `node --experimental-strip-types scripts/landing/order-click-sql-check.ts`: 25 checks and 100 concurrently submitted increments, entirely isolated in PGlite. The harmless module-type warning does not warrant changing the app package type.

@@ -95,9 +95,9 @@ describe("createSku binds a shop-scoped locationId before it validates the name"
     await expect(createSku(gmAtA as unknown as SkuActor, badPayload(LOCATION_A)))
       .rejects.toMatchObject({ name: "AdminSkuError", status: 400, code: "invalid_name" });
   });
-  it("a GLOBAL SKU (locationId null) is org-scope and is not bound", async () => {
+  it("a GLOBAL SKU (locationId null) requires MoO before payload validation", async () => {
     await expect(createSku(gmAtA as unknown as SkuActor, badPayload(null)))
-      .rejects.toMatchObject({ name: "AdminSkuError", status: 400, code: "invalid_name" });
+      .rejects.toMatchObject({ name: "AdminSkuError", status: 403, code: "global_requires_moo" });
   });
   it("lets an all-locations actor mint anywhere", async () => {
     await expect(createSku(ownerAnywhere as unknown as SkuActor, badPayload(LOCATION_B)))
@@ -105,7 +105,7 @@ describe("createSku binds a shop-scoped locationId before it validates the name"
   });
 });
 
-describe("updateSku binds BOTH the SKU's current shop and the reassignment target (opaque id → read first)", () => {
+describe("updateSku binds the current owner and refuses owner moves (opaque id → read first)", () => {
   const fn = fnSrc("updateSku");
   it("reads the current location_id, binds it, and only then UPDATEs", () => {
     const read = fn.indexOf("location_id");
@@ -116,12 +116,12 @@ describe("updateSku binds BOTH the SKU's current shop and the reassignment targe
     expect(bind).toBeGreaterThan(read);
     expect(update).toBeGreaterThan(bind);
   });
-  it("binds the reassignment TARGET too (changes.locationId), and refuses as not_found", () => {
-    // Two binds: the SKU's own shop (so a GM at A cannot move B's SKU) and the destination
-    // (so a GM at A cannot park a SKU at B). Moving a SKU is a write against both shops.
-    const binds = fn.split("lockLocationContext").length - 1;
-    expect(binds).toBeGreaterThanOrEqual(2);
-    expect(fn).toContain('AdminSkuError(404, "not_found"');
+  it("refuses every non-null owner change before the UPDATE (4a ownership is create-time only)", () => {
+    // Behavioral refusal and successful share are exercised by shop-owned-sku-writers.
+    const refusal = fn.indexOf('AdminSkuError(400, "owner_is_set_at_creation"');
+    expect(refusal).toBeGreaterThan(fn.indexOf("changes.locationId !== null"));
+    expect(refusal).toBeLessThan(fn.indexOf(".update("));
+    expect(fn).not.toContain("update.location_id = changes.locationId");
   });
 });
 

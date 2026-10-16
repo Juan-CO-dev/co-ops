@@ -1,0 +1,25 @@
+{
+  "id": "crunchy-boi-spin",
+  "publicPath": "/media/crunchy-boi-spin-drawn-dfb8c93fe64d.mp4",
+  "classification": "drawn",
+  "sourcePath": "source:hero-spin-original",
+  "sourceSha256": "ebb277e24a3d8e7bc71b90081931af8d959680cca5f585c22173270b266c4127",
+  "sha256": "dfb8c93fe64d4c2aac3380dab9762a74110423b93f3f545288425ac0b5a2645a",
+  "width": 720,
+  "height": 720,
+  "bytes": 562664,
+  "maxBytes": 1500000,
+  "sidecar": "assets/provenance/hero-spin.json",
+  "duration": 8,
+  "background": "#FFE560",
+  "codec": "h264",
+  "provenance": "DRAWN (AI REFERENCE), supplied approved spin; decode/composite/encode only",
+  "toolVersion": "ffmpeg 8.1.1",
+  "steps": [
+    "libvpx-vp9 alpha decode",
+    "RGBA composite over #FFE560",
+    "uniform resize; full 8-second loop",
+    "H264 CRF23 slow yuv420p faststart; audio removed"
+  ],
+  "verification": "assets/verification/hero/provenance.json"
+}

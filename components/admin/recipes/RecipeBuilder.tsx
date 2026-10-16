@@ -34,6 +34,7 @@ import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { Readiness } from "@/lib/readiness";
 import { RegistrySelect } from "@/components/admin/skus/RegistrySelect";
 import type { RecipeView, RecipeInputView, RecipeOutputView, RecipeType } from "@/lib/recipes-shared";
+import type { RecipeNewPrepItem } from "@/lib/recipes-shared";
 import { RECIPE_WRITE_MIN, RECIPE_DELETE_MIN } from "@/lib/recipes-shared";
 import { RECIPE_GLOBAL_WRITE_MIN } from "@/lib/recipe-versions-shared";
 import { recipeItemHref } from "@/lib/catalog/recipe-item-shared";
@@ -85,6 +86,7 @@ interface DraftInput {
   portioned: boolean;
 }
 interface DraftOutput {
+  newItem?: RecipeNewPrepItem | null;
   _key: number;
   kind: "item" | "menuItem";
   outputItemId: string | null;
@@ -106,6 +108,11 @@ export function RecipeBuilder({
   level,
   defaultType = "production",
   readiness = null,
+  locationId,
+  outputItems = items,
+  prepSections = [],
+  scopeOptions = [],
+  allowGlobalScope = false,
 }: {
   recipe: RecipeView | null;
   skus: RecipeBuilderSku[];
@@ -119,17 +126,24 @@ export function RecipeBuilder({
   level: number;
   defaultType?: RecipeType;
   readiness?: Readiness | null;
+  /** Authorized scope supplied by the server page; scope navigation is wired in Chunk 3/4. */
+  locationId?: string | null;
+  outputItems?: Array<{ id: string; name: string }>;
+  prepSections?: Array<{ slug: string; label: string }>;
+  scopeOptions?: Array<{ id: string; name: string }>;
+  allowGlobalScope?: boolean;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp, requestStepUpGrant } = useStepUp();
   const send = useStepUpPost();
-  const canEdit = level >= RECIPE_WRITE_MIN;
+  const [scopePending, setScopePending] = useState(false);
+  const canEdit = level >= RECIPE_WRITE_MIN && !scopePending;
   const canDelete = level >= RECIPE_DELETE_MIN;
   // Catalog Phase 3b (plan Task 11): a SAVED recipe's lines are the global default's, the Director of Operations'
   // (8+). A GM changes its shop's version on the catalog page, so here its lines are read-only with the way
   // forward. A NEW recipe (the draft) keeps its GM floor: creating a recipe is not versioned.
-  const canEditLines = recipe === null ? canEdit : level >= RECIPE_GLOBAL_WRITE_MIN;
+  const canEditLines = canEdit && (recipe === null || recipe.ownerLocationId != null || level >= RECIPE_GLOBAL_WRITE_MIN);
 
   // ── LIVE mode: header patch state ──
   const [patchError, setPatchError] = useState<string | null>(null);
@@ -289,6 +303,7 @@ export function RecipeBuilder({
     if ((await requestStepUp("E")) !== "ok") return;
     setSaveBusy(true);
     const result = await send("/api/admin/recipes/full", {
+      ...(locationId === undefined ? {} : { locationId }),
       name,
       nameEs: nameEsVal.trim() || null,
       recipeType: effectiveType,
@@ -316,6 +331,7 @@ export function RecipeBuilder({
       outputs: draftOutputs.map((out) => ({
         outputItemId: out.outputItemId ?? undefined,
         outputMenuItemId: out.outputMenuItemId ?? undefined,
+        newItem: out.newItem ?? undefined,
         yield: out.yield,
         outputContainerLabel: out.outputContainerLabel ?? undefined,
       })),
@@ -364,7 +380,21 @@ export function RecipeBuilder({
   return (
     // Focused width: the recipe editor is a form — keep it comfortable and
     // centered inside the wide admin container instead of stretching to full width.
-    <div className="mt-2 mx-auto w-full max-w-3xl">
+    <fieldset disabled={scopePending} className="mt-2 mx-auto w-full max-w-3xl min-w-0 border-0 p-0">
+      {scopeOptions.length > 0 || allowGlobalScope ? (
+        <label className="mb-3 block text-sm font-bold">
+          {t("catalog.item.shop_switcher")}
+          <select className={fieldCls} value={locationId ?? "global"} disabled={saveBusy || patchBusy || scopePending}
+            onChange={e => {
+              setScopePending(true);
+              const path = recipe ? `/admin/recipes/${recipe.id}` : "/admin/recipes/new";
+              router.push(`${path}?location=${encodeURIComponent(e.target.value)}${recipe ? "" : `&type=${defaultType}`}`);
+            }}>
+            {allowGlobalScope ? <option value="global">{t("catalog.item.shop_global")}</option> : null}
+            {scopeOptions.map(shop => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
+          </select>
+        </label>
+      ) : null}
       {/* ── LIVE mode: what's-missing banner ── */}
       {recipe !== null && readiness && readiness.status !== "ready" ? (
         <div className="mt-3 rounded-lg border-2 border-co-border bg-co-surface p-3">
@@ -548,7 +578,9 @@ export function RecipeBuilder({
         liveOutputs={liveOutputs}
         liveInputs={liveInputs}
         draftOutputs={draftOutputs}
-        items={items}
+        items={outputItems}
+        ownerLocationId={recipe ? recipe.ownerLocationId ?? null : locationId ?? null}
+        prepSections={prepSections}
         unitRegistryOptions={unitRegistryOptions}
         canEdit={canEdit}
         level={level}
@@ -565,7 +597,7 @@ export function RecipeBuilder({
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              disabled={saveBusy || !draftSaveEnabled}
+              disabled={scopePending || saveBusy || !draftSaveEnabled}
               onClick={() => void saveDraft()}
               className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-6 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
             >
@@ -640,7 +672,7 @@ export function RecipeBuilder({
         </CollapsibleSection>
         </div>
       ) : null}
-    </div>
+    </fieldset>
   );
 }
 
@@ -1014,6 +1046,8 @@ function DraftInputRow({
 // ── PRODUCES section ─────────────────────────────────────────────────────────
 function ProducesSection({
   recipeId,
+  ownerLocationId,
+  prepSections,
   recipeType,
   batchYield,
   liveOutputs,
@@ -1029,6 +1063,8 @@ function ProducesSection({
   onRemoveLive,
 }: {
   recipeId: string | null;
+  ownerLocationId: string | null;
+  prepSections: Array<{ slug: string; label: string }>;
   recipeType: "production" | "consumer";
   batchYield: number;
   liveOutputs: RecipeOutputView[];
@@ -1048,7 +1084,7 @@ function ProducesSection({
   const { requestStepUp } = useStepUp();
   const send = useStepUpPost();
 
-  const [addOpen, setAddOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(isDraft && ownerLocationId !== null && items.length === 0);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -1060,7 +1096,10 @@ function ProducesSection({
   const isOpen = sectionOpen || formInProgress;
 
   // Production output state
-  const [outputItemId, setOutputItemId] = useState("");
+  const [outputItemId, setOutputItemId] = useState(isDraft && ownerLocationId !== null && items.length === 0 ? "__new__" : "");
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemNameEs, setNewItemNameEs] = useState("");
+  const [newItemSection, setNewItemSection] = useState(prepSections[0]?.slug ?? "");
   const [outputYield, setOutputYield] = useState("1");
   const [outputContainerLabel, setOutputContainerLabel] = useState("");
 
@@ -1070,7 +1109,7 @@ function ProducesSection({
   const [menuItemYield, setMenuItemYield] = useState("1");
 
   const resetForms = () => {
-    setOutputItemId(""); setOutputYield("1"); setOutputContainerLabel("");
+    setOutputItemId(""); setNewItemName(""); setNewItemNameEs(""); setOutputYield("1"); setOutputContainerLabel("");
     setMenuItemName(""); setMenuItemPrice(""); setMenuItemYield("1");
     setErrorMsg(null);
   };
@@ -1079,6 +1118,11 @@ function ProducesSection({
     if (busy) return;
     setErrorMsg(null);
     const yld = Number(outputYield);
+    const newItem = outputItemId === "__new__" && isDraft && ownerLocationId !== null ? {
+      name: newItemName.trim(), nameEs: newItemNameEs.trim() || null, section: newItemSection,
+      recommendedPar: null, recommendedParUnit: null,
+    } : null;
+    if (newItem && (!newItem.name || !newItem.section)) { setErrorMsg(t(rk("recipes.error.invalid_name"))); return; }
     if (!outputItemId) { setErrorMsg(t(rk("recipes.error.invalid_output_item"))); return; }
     if (!Number.isFinite(yld) || yld <= 0) { setErrorMsg(t(rk("recipes.error.invalid_yield"))); return; }
     if ((await requestStepUp("E")) !== "ok") return;
@@ -1088,9 +1132,10 @@ function ProducesSection({
     if (isDraft) {
       onAddDraftOutput({
         kind: "item",
-        outputItemId,
+        outputItemId: newItem ? null : outputItemId,
+        newItem,
         outputMenuItemId: null,
-        outputName: itemObj?.name ?? outputItemId,
+        outputName: newItem?.name ?? itemObj?.name ?? outputItemId,
         yield: yld,
         outputContainerLabel: outputContainerLabel || null,
       });
@@ -1134,6 +1179,7 @@ function ProducesSection({
       const price = menuItemPrice.trim() ? Number(menuItemPrice) : null;
       const miResult = await send("/api/admin/menu-items", {
         name,
+        locationId: ownerLocationId,
         menuPrice: price,
       });
       if (!miResult.ok) { setBusy(false); setErrorMsg(t(resolveErrorKey(miResult.code))); return; }
@@ -1210,9 +1256,20 @@ function ProducesSection({
                   <span className="text-sm font-bold text-co-text">{t(rk("recipes.output.pick_item"))}</span>
                   <select className={fieldCls} value={outputItemId} disabled={busy} onChange={(e) => setOutputItemId(e.target.value)}>
                     <option value="">{t(rk("recipes.output.pick_item"))}</option>
+                    {isDraft && ownerLocationId !== null ? <option value="__new__">{t(rk("recipes.output.create_for_shop"))}</option> : null}
                     {items.map((i) => (<option key={i.id} value={i.id}>{i.name}</option>))}
                   </select>
                 </label>
+                {outputItemId === "__new__" ? <>
+                  <label className="block"><span className="text-sm font-bold">{t(rk("recipes.output.new_name"))}</span>
+                    <input className={fieldCls} value={newItemName} onChange={e => setNewItemName(e.target.value)} /></label>
+                  <label className="block"><span className="text-sm font-bold">{t(rk("recipes.output.new_name_es"))}</span>
+                    <input className={fieldCls} value={newItemNameEs} onChange={e => setNewItemNameEs(e.target.value)} /></label>
+                  <label className="block"><span className="text-sm font-bold">{t(rk("recipes.output.new_section"))}</span>
+                    <select className={fieldCls} value={newItemSection} onChange={e => setNewItemSection(e.target.value)}>
+                      {prepSections.map(section => <option key={section.slug} value={section.slug}>{section.label}</option>)}
+                    </select></label>
+                </> : null}
                 <label className="block">
                   <span className="text-sm font-bold text-co-text">{t(rk("recipes.output.yield"))}</span>
                   <input className={fieldCls} type="number" min={0.001} step="any" inputMode="decimal"

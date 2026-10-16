@@ -1,3 +1,4 @@
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * Recipe stage data layer (Derivation Spine #1). SERVER-ONLY, service-role;
  * authority re-checked per action (the lib is the authority). Two tiers via
@@ -8,6 +9,9 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { creationScope, ownerWriteCheck, shopOwnedErrorFromRpc } from "@/lib/catalog/shop-owned-shared";
+import type { RecipeDraftOutput } from "@/lib/recipes-shared";
+export type { RecipeDraftOutput } from "@/lib/recipes-shared";
 
 import {
   RECIPE_READ_MIN,
@@ -51,7 +55,7 @@ export class RecipeError extends Error {
   }
 }
 function requireLevel(actor: AuthContext, min: number): void {
-  if (getRoleLevel(actor.user.role) < min) throw new RecipeError(403, "forbidden");
+  if (actor.user.role === "social_media_mgr" || getRoleLevel(actor.user.role) < min) throw new RecipeError(403, "forbidden");
 }
 /**
  * Catalog Phase 3b (spec §3): the GLOBAL recipe's LINES are the Director of Operations' (8+). A GM's
@@ -62,6 +66,38 @@ function requireLevel(actor: AuthContext, min: number): void {
 function requireGlobalLineWriter(actor: AuthContext): void {
   const level = getRoleLevel(actor.user.role);
   if (level < RECIPE_GLOBAL_WRITE_MIN) throw new RecipeError(403, level >= RECIPE_WRITE_MIN ? "global_requires_moo" : "forbidden");
+}
+/** Ownership is read once; an owned mutation rechecks it under the SQL graph lock.
+ * Shared ownership cannot become private (0264), so legacy shared writers remain safe. */
+async function recipeWriteOwner(actor: AuthContext, recipeId: string, lines = false): Promise<string | null> {
+  const { data, error } = await getServiceRoleClient().from("recipes").select("id, location_id")
+    .eq("id", recipeId).maybeSingle<{ id: string; location_id: string | null }>();
+  if (error) throw new Error(`recipe owner: ${error.message}`);
+  if (!data) throw new RecipeError(404, "recipe_not_found");
+  const owner = data.location_id ?? null;
+  if (owner !== null) {
+    const gate = ownerWriteCheck({ role: actor.user.role, level: getRoleLevel(actor.user.role), locations: actor.locations }, owner);
+    if (!gate.ok) throw new RecipeError(gate.status, gate.code);
+  } else if (lines) requireGlobalLineWriter(actor);
+  return owner;
+}
+async function writeRecipeRpc(sb: ReturnType<typeof getServiceRoleClient>, recipeId: string, owner: string | null,
+  operation: string, payload: Record<string, unknown>, actorId: string) {
+  const result = owner === null ? await sb.rpc(operation, payload) : await sb.rpc("write_owned_recipe", {
+    p_recipe_id: recipeId, p_expected_owner: owner, p_operation: operation, p_payload: payload, p_actor: actorId,
+  });
+  if (result.error?.message?.startsWith("shop_owned:")) shopOwnedErrorFromRpc(result.error.message);
+  return result;
+}
+async function recipeCreationScope(actor: AuthContext, requested?: string | null): Promise<string | null> {
+  const gate = creationScope({ role: actor.user.role, level: getRoleLevel(actor.user.role), locations: actor.locations }, requested);
+  if (!gate.ok) throw new RecipeError(gate.status, gate.code);
+  if (gate.scope !== null) {
+    const { data, error } = await getServiceRoleClient().from("locations").select("id").eq("id", gate.scope).eq("active", true).maybeSingle();
+    if (error) throw new Error(`recipe creation shop: ${error.message}`);
+    if (!data) throw new RecipeError(404, "location_not_found");
+  }
+  return gate.scope;
 }
 function num(v: number | string | null): number | null {
   if (v === null) return null; const n = typeof v === "string" ? Number(v) : v;
@@ -245,14 +281,25 @@ const RECIPE_INPUT_RPC_ERRORS: Record<string, number> = {
 export async function loadRecipes(actor: AuthContext, type?: RecipeType): Promise<RecipeListRow[]> {
   requireLevel(actor, RECIPE_READ_MIN);
   const sb = getServiceRoleClient();
-  let q = sb.from("recipes").select("id, name, recipe_type, active, batch_yield, batch_mode").eq("active", true).order("name");
+  let q = sb.from("recipes").select("id, name, recipe_type, active, batch_yield, batch_mode, location_id").eq("active", true).order("name");
   if (type) q = q.eq("recipe_type", type);
-  const { data, error } = await q.returns<Array<{ id: string; name: string; recipe_type: RecipeType; active: boolean; batch_yield: number | string | null; batch_mode: boolean | null }>>();
+  const { data, error } = await q.returns<Array<{ id: string; name: string; recipe_type: RecipeType; active: boolean; batch_yield: number | string | null; batch_mode: boolean | null; location_id: string | null }>>();
   if (error) throw new Error(`loadRecipes: ${error.message}`);
   const ids = (data ?? []).map((r) => r.id);
+  const ownerIds = [...new Set((data ?? []).map((r) => r.location_id).filter((id): id is string => id != null))];
+  const locationNames = new Map<string, string>();
+  if (ownerIds.length > 0) {
+    const { data: locations, error: locationError } = await sb.from("locations").select("id, name").in("id", ownerIds)
+      .returns<Array<{ id: string; name: string }>>();
+    if (locationError) throw new Error(`loadRecipes locations: ${locationError.message}`);
+    for (const location of locations ?? []) locationNames.set(location.id, location.name);
+  }
   const outNames = await outputNamesByRecipe(ids);
   const hasIn = await recipeIdsWithInputs(ids);
-  return (data ?? []).map((r) => ({ id: r.id, name: r.name, recipeType: r.recipe_type, active: r.active, outputNames: outNames.get(r.id) ?? [], hasInputs: hasIn.has(r.id), hasOutputs: (outNames.get(r.id) ?? []).length > 0, batchYield: num(r.batch_yield), batchMode: r.batch_mode === true }));
+  return (data ?? []).map((r) => ({ id: r.id, name: r.name, recipeType: r.recipe_type, active: r.active,
+    onlyAtShopName: r.location_id ? (locationNames.get(r.location_id) ?? null) : null,
+    outputNames: outNames.get(r.id) ?? [], hasInputs: hasIn.has(r.id), hasOutputs: (outNames.get(r.id) ?? []).length > 0,
+    batchYield: num(r.batch_yield), batchMode: r.batch_mode === true }));
 }
 
 async function recipeIdsWithInputs(recipeIds: string[]): Promise<Set<string>> {
@@ -316,9 +363,10 @@ async function namesAndActiveById(
 export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<RecipeView | null> {
   requireLevel(actor, RECIPE_READ_MIN);
   const sb = getServiceRoleClient();
-  const { data: r } = await sb.from("recipes").select("id, name, name_es, recipe_type, batch_yield, directions, directions_es, active, batch_mode, shelf_life_days").eq("id", recipeId)
-    .maybeSingle<{ id: string; name: string; name_es: string | null; recipe_type: RecipeType; batch_yield: number | string; directions: string | null; directions_es: string | null; active: boolean; batch_mode: boolean | null; shelf_life_days: number | string | null }>();
+  const { data: r } = await sb.from("recipes").select("id, location_id, name, name_es, recipe_type, batch_yield, directions, directions_es, active, batch_mode, shelf_life_days").eq("id", recipeId)
+    .maybeSingle<{ id: string; location_id: string | null; name: string; name_es: string | null; recipe_type: RecipeType; batch_yield: number | string; directions: string | null; directions_es: string | null; active: boolean; batch_mode: boolean | null; shelf_life_days: number | string | null }>();
   if (!r) return null;
+  if (r.location_id != null && getRoleLevel(actor.user.role) < 8 && !actor.locations.includes(r.location_id)) return null;
   const { data: inRows } = await sb.from("recipe_inputs").select("*").eq("recipe_id", recipeId).order("display_order")
     .returns<Array<{ id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null; quantity: number | string; unit: string | null; each_container_label: string | null; portioned: boolean; display_order: number }>>();
   const { data: outRows } = await sb.from("recipe_outputs").select("*").eq("recipe_id", recipeId).order("display_order")
@@ -334,6 +382,7 @@ export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<
   const outItemNames = await namesById("items", (outRows ?? []).map((x) => x.output_item_id).filter((v): v is string => !!v));
   const outMenuNames = await namesById("menu_items", (outRows ?? []).map((x) => x.output_menu_item_id).filter((v): v is string => !!v));
   return {
+    ownerLocationId: r.location_id ?? null,
     id: r.id, name: r.name, nameEs: r.name_es, recipeType: r.recipe_type, batchYield: num(r.batch_yield) ?? 1,
     directions: r.directions, directionsEs: r.directions_es, active: r.active,
     batchMode: r.batch_mode === true, shelfLifeDays: num(r.shelf_life_days) ?? 5,
@@ -355,7 +404,7 @@ export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<
   };
 }
 
-export async function createRecipe(actor: AuthContext, input: { name: string; nameEs?: string | null; recipeType: RecipeType; batchYield: number; directions?: string | null; directionsEs?: string | null; shelfLifeDays?: number; batchMode?: boolean }): Promise<{ id: string }> {
+export async function createRecipe(actor: AuthContext, input: { locationId?: string | null; name: string; nameEs?: string | null; recipeType: RecipeType; batchYield: number; directions?: string | null; directionsEs?: string | null; shelfLifeDays?: number; batchMode?: boolean }): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   if (!normStr(input.name)) throw new RecipeError(400, "invalid_name");
   if (!Number.isFinite(input.batchYield) || input.batchYield <= 0) throw new RecipeError(400, "invalid_batch_yield");
@@ -364,18 +413,20 @@ export async function createRecipe(actor: AuthContext, input: { name: string; na
   // A header-only recipe has no output yet, and batch_mode needs exactly one (0215): the
   // flag is turned on afterwards, through updateRecipe → set_recipe_batch_mode.
   if (input.batchMode === true) throw new RecipeError(400, "batch_mode_requires_output");
+  const locationId = await recipeCreationScope(actor, input.locationId);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("recipes").insert({ name: normStr(input.name), name_es: normStr(input.nameEs), recipe_type: input.recipeType, batch_yield: input.batchYield, directions: normStr(input.directions), directions_es: normStr(input.directionsEs), active: true, created_by: actor.user.id, ...(input.shelfLifeDays !== undefined ? { shelf_life_days: input.shelfLifeDays } : {}) })
+  const { data, error } = await sb.from("recipes").insert({ location_id: locationId, name: normStr(input.name), name_es: normStr(input.nameEs), recipe_type: input.recipeType, batch_yield: input.batchYield, directions: normStr(input.directions), directions_es: normStr(input.directionsEs), active: true, created_by: actor.user.id, ...(input.shelfLifeDays !== undefined ? { shelf_life_days: input.shelfLifeDays } : {}) })
     .select("id").maybeSingle<{ id: string }>();
-  if (error) throw new Error(`createRecipe: ${error.message}`);
+  if (error) throw catalogWriteError(error, RecipeError, "createRecipe");
   if (!data) throw new Error("createRecipe returned no row");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: data.id, metadata: { name: input.name, recipe_type: input.recipeType, batch_yield: input.batchYield }, ipAddress: null, userAgent: null });
   return { id: data.id };
 }
 
 export interface RecipeDraftInput { componentSkuId?: string | null; componentItemId?: string | null; componentProductId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean; }
-export interface RecipeDraftOutput { outputItemId?: string | null; outputMenuItemId?: string | null; yield: number; outputContainerLabel?: string | null; }
 export interface RecipeDraft {
+  /** Explicit scope; omission resolves only a sole authorized membership. */
+  locationId?: string | null;
   name: string; nameEs?: string | null; recipeType: RecipeType; batchYield: number;
   directions?: string | null; directionsEs?: string | null;
   inputs: RecipeDraftInput[]; outputs: RecipeDraftOutput[];
@@ -437,7 +488,7 @@ async function activeProducerExists(
   return !!(active && active.length > 0);
 }
 
-export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): Promise<{ id: string }> {
+export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): Promise<{ id: string; outputItemIds: string[] }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   if (!normStr(draft.name)) throw new RecipeError(400, "invalid_name");
   if (!(draft.batchYield > 0)) throw new RecipeError(400, "invalid_batch_yield");
@@ -448,15 +499,27 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
     // The single-output rule (plan S r4 ruling H): a batch is ONE item's whole recipe. The
     // RPC re-checks under its row lock; this is the named-422 fast path.
     const only = draft.outputs.length === 1 ? draft.outputs[0] : null;
-    if (!only || (only.outputItemId ?? null) === null || !(only.yield > 0)) throw new RecipeError(422, "batch_mode_single_output");
+    if (!only || ((only.outputItemId ?? null) === null && only.newItem == null) || only.outputMenuItemId != null || !(only.yield > 0)) throw new RecipeError(422, "batch_mode_single_output");
   }
+  const locationId = await recipeCreationScope(actor, draft.locationId);
   for (const i of draft.inputs) {
     if (componentTargets(i).count !== 1) throw new RecipeError(400, "invalid_component");
     if (!(i.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
   }
   for (const o of draft.outputs) {
     const it = o.outputItemId ?? null, mi = o.outputMenuItemId ?? null;
-    if ((it === null) === (mi === null)) throw new RecipeError(400, "invalid_output");
+    if ([it, mi, o.newItem ?? null].filter(v => v !== null).length !== 1) throw new RecipeError(400, "invalid_output");
+    if (o.newItem != null && !locationId) throw new RecipeError(400, "invalid_output");
+    if (o.newItem != null) {
+      const item = o.newItem;
+      if (typeof item !== "object" || Array.isArray(item) || !normStr(item.name) || !normStr(item.section)
+        || [item.nameEs, item.recommendedParUnit, item.specialInstruction, item.specialInstructionEs].some(value => value != null && typeof value !== "string")
+        || (item.recommendedPar !== null && (!Number.isFinite(item.recommendedPar) || item.recommendedPar < 0))
+        || (item.required !== undefined && typeof item.required !== "boolean")
+        || (item.minRoleLevel !== undefined && (!Number.isInteger(item.minRoleLevel) || item.minRoleLevel < 0 || item.minRoleLevel > 10))) {
+        throw new RecipeError(400, "invalid_payload");
+      }
+    }
     if (!(o.yield > 0)) throw new RecipeError(400, "invalid_yield");
     if (it !== null) {
       for (const i of draft.inputs) {
@@ -478,13 +541,24 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
       throw new RecipeError(409, "duplicate_active_producer");
     }
   }
-  const { data, error } = await sb.rpc("create_recipe_full", {
+  const params = {
     p_header: { name: normStr(draft.name), name_es: normStr(draft.nameEs), recipe_type: draft.recipeType, batch_yield: draft.batchYield, directions: normStr(draft.directions), directions_es: normStr(draft.directionsEs), batch_mode: draft.batchMode === true, ...(draft.shelfLifeDays !== undefined ? { shelf_life_days: draft.shelfLifeDays } : {}) },
     p_inputs: draft.inputs.map((i, idx) => ({ component_sku_id: i.componentSkuId ?? null, component_item_id: i.componentItemId ?? null, component_product_id: i.componentProductId ?? null, quantity: i.quantity, unit: normStr(i.unit), each_container_label: normStr(i.eachContainerLabel), portioned: i.portioned ?? false, display_order: idx })),
-    p_outputs: draft.outputs.map((o, idx) => ({ output_item_id: o.outputItemId ?? null, output_menu_item_id: o.outputMenuItemId ?? null, yield: o.yield, output_container_label: normStr(o.outputContainerLabel), display_order: idx })),
+    p_outputs: draft.outputs.map((o, idx) => ({ output_item_id: o.outputItemId ?? null, output_menu_item_id: o.outputMenuItemId ?? null, yield: o.yield, output_container_label: normStr(o.outputContainerLabel), display_order: idx,
+      ...(o.newItem == null ? {} : { new_item: {
+        name: normStr(o.newItem.name), name_es: normStr(o.newItem.nameEs), section: o.newItem.section,
+        recommended_par: o.newItem.recommendedPar, recommended_par_unit: normStr(o.newItem.recommendedParUnit),
+        special_instructions: normStr(o.newItem.specialInstruction), special_instructions_es: normStr(o.newItem.specialInstructionEs),
+        required: o.newItem.required ?? false, ...(o.newItem.minRoleLevel === undefined ? {} : { min_role_level: o.newItem.minRoleLevel }),
+      } }),
+    })),
     p_created_by: actor.user.id,
-  });
+  };
+  const { data, error } = locationId
+    ? await sb.rpc("create_shop_recipe", { ...params, p_location_id: locationId })
+    : await sb.rpc("create_recipe_full", params);
   if (error) {
+    if (error.message?.startsWith("shop_owned:")) shopOwnedErrorFromRpc(error.message);
     // 0187's in-transaction backstop raises P0001 'duplicate_active_producer' when a
     // concurrent writer won the race the app-layer check above cannot see. Mapping it to
     // the SAME named 409 the app-layer check returns means the two guards are one answer
@@ -498,16 +572,21 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
     // invalid_shelf_life_days); same bridge, same reasoning as the line above.
     const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`createRecipeFull rpc: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "createRecipeFull rpc");
   }
   const id = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
   if (!id) throw new Error("createRecipeFull returned no id");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: id, metadata: { name: draft.name, recipe_type: draft.recipeType, batch_yield: draft.batchYield, batch_mode: draft.batchMode === true, shelf_life_days: draft.shelfLifeDays ?? null, input_count: draft.inputs.length, output_count: draft.outputs.length, component_product_ids: draft.inputs.map((i) => i.componentProductId ?? null).filter((v): v is string => v !== null), atomic: true }, ipAddress: null, userAgent: null });
-  return { id };
+  const outputItemIds = locationId
+    ? (data as { output_item_ids: string[] }).output_item_ids
+    : draft.outputs.flatMap(o => o.outputItemId ? [o.outputItemId] : []);
+  if (!Array.isArray(outputItemIds) || outputItemIds.some(itemId => typeof itemId !== "string")) throw new Error("createRecipeFull returned no output identities");
+  return { id, outputItemIds };
 }
 
 export async function updateRecipe(actor: AuthContext, id: string, patch: { name?: string; nameEs?: string | null; batchYield?: number; directions?: string | null; directionsEs?: string | null; shelfLifeDays?: number; batchMode?: boolean }): Promise<void> {
   requireLevel(actor, RECIPE_WRITE_MIN);
+  const owner = await recipeWriteOwner(actor, id);
   const upd: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: actor.user.id };
   if (patch.name !== undefined) { if (!normStr(patch.name)) throw new RecipeError(400, "invalid_name"); upd.name = normStr(patch.name); }
   if (patch.nameEs !== undefined) upd.name_es = normStr(patch.nameEs);
@@ -527,16 +606,16 @@ export async function updateRecipe(actor: AuthContext, id: string, patch: { name
   // timestamp/actor are stamped in SQL.
   const { updated_at: _ts, updated_by: _by, ...columns } = upd;
   void _ts; void _by;
-  const { error: rpcErr } = await sb.rpc("update_recipe_atomic", {
+  const { error: rpcErr } = await writeRecipeRpc(sb, id, owner, "update_recipe_atomic", {
     p_recipe_id: id,
     p_patch: columns,
     p_batch_mode: patch.batchMode === undefined ? null : patch.batchMode,
     p_actor: actor.user.id,
-  });
+  }, actor.user.id);
   if (rpcErr) {
     const named = rpcRecipeError(rpcErr, { ...BATCH_MODE_RPC_ERRORS, invalid_name: 400, invalid_batch_yield: 400 });
     if (named) throw named;
-    throw new Error(`updateRecipe update_recipe_atomic: ${rpcErr.message}`);
+    throw catalogWriteError(rpcErr, RecipeError, "updateRecipe update_recipe_atomic");
   }
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.update", resourceTable: "recipes", resourceId: id, metadata: { patch }, ipAddress: null, userAgent: null });
 }
@@ -546,14 +625,13 @@ export async function deactivateRecipe(actor: AuthContext, id: string): Promise<
   requireLevel(actor, RECIPE_DELETE_MIN);
   const sb = getServiceRoleClient();
   const { error, count } = await sb.from("recipes").update({ active: false, updated_at: new Date().toISOString(), updated_by: actor.user.id }, { count: "exact" }).eq("id", id);
-  if (error) throw new Error(`deactivateRecipe: ${error.message}`);
+  if (error) throw catalogWriteError(error, RecipeError, "deactivateRecipe");
   if (count === 0) throw new RecipeError(404, "recipe_not_found");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.deactivate", resourceTable: "recipes", resourceId: id, metadata: {}, ipAddress: null, userAgent: null });
 }
 
-export async function createMenuItem(actor: AuthContext, input: { name: string; nameEs?: string | null; menuPrice?: number | null }): Promise<{ id: string }> {
+export async function createMenuItem(actor: AuthContext, input: { locationId?: string | null; name: string; nameEs?: string | null; menuPrice?: number | null }): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
-  if (input.menuPrice != null) requireLevel(actor, MENU_PRICE_MIN);
   // The same NaN-serialises-to-null / CHECK-violation-becomes-a-500 pair as
   // setItemSoldDirectly below, against THIS table's own constraint — `menu_items.menu_price`
   // is `is null or >= 0` (migration 0103), so 0 stays legal here and only non-finite or
@@ -562,10 +640,12 @@ export async function createMenuItem(actor: AuthContext, input: { name: string; 
     throw new RecipeError(400, "invalid_menu_price");
   }
   if (!normStr(input.name)) throw new RecipeError(400, "invalid_name");
+  const locationId = await recipeCreationScope(actor, input.locationId);
+  if (locationId === null && input.menuPrice != null) requireLevel(actor, MENU_PRICE_MIN);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("menu_items").insert({ name: normStr(input.name), name_es: normStr(input.nameEs), menu_price: input.menuPrice ?? null, active: true, created_by: actor.user.id })
+  const { data, error } = await sb.from("menu_items").insert({ location_id: locationId, name: normStr(input.name), name_es: normStr(input.nameEs), menu_price: input.menuPrice ?? null, active: true, created_by: actor.user.id })
     .select("id").maybeSingle<{ id: string }>();
-  if (error) throw new Error(`createMenuItem: ${error.message}`);
+  if (error) throw catalogWriteError(error, RecipeError, "createMenuItem");
   if (!data) throw new Error("createMenuItem returned no row");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "menu_item.create", resourceTable: "menu_items", resourceId: data.id, metadata: { name: input.name }, ipAddress: null, userAgent: null });
   return { id: data.id };
@@ -615,7 +695,7 @@ async function outputWouldCycle(recipeId: string, childItemId: string): Promise<
 
 export async function addRecipeInput(actor: AuthContext, input: { recipeId: string; componentSkuId?: string | null; componentItemId?: string | null; componentProductId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean }): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
-  requireGlobalLineWriter(actor);
+  const owner = await recipeWriteOwner(actor, input.recipeId, true);
   const { skuId, itemId, productId } = componentTargets(input);
   const sb = getServiceRoleClient();
   await assertInputLineIsValid(sb, {
@@ -624,7 +704,7 @@ export async function addRecipeInput(actor: AuthContext, input: { recipeId: stri
   });
   // ONE transaction behind the recipe-graph lock (0258): the item-cycle check, the display order
   // and the INSERT can no longer interleave with another writer (Astra full-branch #3).
-  const { data: newId, error } = await sb.rpc("add_recipe_input_atomic", {
+  const { data: newId, error } = await writeRecipeRpc(sb, input.recipeId, owner, "add_recipe_input_atomic", {
     p_recipe_id: input.recipeId,
     p_component_sku_id: skuId,
     p_component_item_id: itemId,
@@ -634,11 +714,11 @@ export async function addRecipeInput(actor: AuthContext, input: { recipeId: stri
     p_each_container_label: normStr(input.eachContainerLabel),
     p_portioned: input.portioned ?? false,
     p_created_by: actor.user.id,
-  });
+  }, actor.user.id);
   if (error) {
     const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`addRecipeInput: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "addRecipeInput");
   }
   if (typeof newId !== "string") throw new Error("addRecipeInput returned no row");
   const data = { id: newId };
@@ -670,7 +750,7 @@ export async function updateRecipeInput(
   input: { recipeId: string; inputId: string; line: RecipeLineFields; expected: RecipeLineFields },
 ): Promise<{ changed: boolean }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
-  requireGlobalLineWriter(actor);
+  const owner = await recipeWriteOwner(actor, input.recipeId, true);
   const { line, expected } = input;
   if (componentTargets(expected).count !== 1) throw new RecipeError(400, "invalid_payload");
 
@@ -685,7 +765,7 @@ export async function updateRecipeInput(
   // ONE transaction behind the recipe-graph lock (0258, Astra full-branch #3): the item-cycle
   // check and the compare-and-set UPDATE (the FULL expected snapshot, null-safe) happen together;
   // 0 rows is line_changed (still on this recipe) or edge_not_found, named by the RPC.
-  const { data: written, error } = await sb.rpc("update_recipe_input_atomic", {
+  const { data: written, error } = await writeRecipeRpc(sb, input.recipeId, owner, "update_recipe_input_atomic", {
     p_input_id: input.inputId,
     p_recipe_id: input.recipeId,
     p_component_sku_id: next.component_sku_id,
@@ -704,11 +784,11 @@ export async function updateRecipeInput(
     p_expected_portioned: seen.portioned,
     // 0262's authorship overload (+ p_actor): the journal records WHO made the version this edit opens.
     p_actor: actor.user.id,
-  });
+  }, actor.user.id);
   if (error) {
     const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`updateRecipeInput: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "updateRecipeInput");
   }
   const row = (written as RecipeLineRow[] | null)?.[0];
   if (!row) throw new RecipeError(404, "edge_not_found");
@@ -728,6 +808,7 @@ export async function updateRecipeInput(
 
 export async function addRecipeOutput(actor: AuthContext, input: { recipeId: string; outputItemId?: string | null; outputMenuItemId?: string | null; yield: number; outputContainerLabel?: string | null }): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
+  const owner = await recipeWriteOwner(actor, input.recipeId);
   const itemId = input.outputItemId ?? null, menuId = input.outputMenuItemId ?? null;
   if ((itemId === null) === (menuId === null)) throw new RecipeError(400, "invalid_output");
   if (!(input.yield > 0)) throw new RecipeError(400, "invalid_yield");
@@ -744,14 +825,14 @@ export async function addRecipeOutput(actor: AuthContext, input: { recipeId: str
   // inserts output two). The fast-path checks above stay so the common case still answers
   // with a named status without an exception round-trip. The 0187 "no caller" pin is retired
   // with this wiring (tests/audit-flags-cleanup.test.ts).
-  const { data, error } = await sb.rpc("add_recipe_output", {
+  const { data, error } = await writeRecipeRpc(sb, input.recipeId, owner, "add_recipe_output", {
     p_recipe_id: input.recipeId, p_output_item_id: itemId, p_output_menu_item_id: menuId,
     p_yield: input.yield, p_output_container_label: normStr(input.outputContainerLabel), p_created_by: actor.user.id,
-  });
+  }, actor.user.id);
   if (error) {
     const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`addRecipeOutput: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "addRecipeOutput");
   }
   const newId = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
   if (!newId) throw new Error("addRecipeOutput returned no row");
@@ -769,14 +850,15 @@ export async function addRecipeOutput(actor: AuthContext, input: { recipeId: str
  */
 export async function updateRecipeOutputYield(actor: AuthContext, input: { recipeId: string; outputItemId: string; yield: number; context: { locationId: string; source: "yield_nudge"; observedSignedDrift: number; batchesInWindow: number } }): Promise<{ outputId: string; before: number | null; after: number }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
+  const owner = await recipeWriteOwner(actor, input.recipeId);
   if (!(typeof input.yield === "number" && Number.isFinite(input.yield) && input.yield > 0 && input.yield <= 100000)) throw new RecipeError(400, "invalid_yield");
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.rpc("update_recipe_output_yield", {
+  const { data, error } = await writeRecipeRpc(sb, input.recipeId, owner, "update_recipe_output_yield", {
     p_recipe_id: input.recipeId,
     p_output_item_id: input.outputItemId,
     p_yield: input.yield,
     p_actor: actor.user.id,
-  });
+  }, actor.user.id);
   if (error) {
     const named = rpcRecipeError(error, { recipe_not_found: 404, recipe_inactive: 409, not_batch_recipe: 409, edge_not_found: 404, ambiguous_output: 409, invalid_yield: 400 });
     if (named) throw named;
@@ -796,18 +878,21 @@ export async function updateRecipeOutputYield(actor: AuthContext, input: { recip
 
 export async function removeRecipeEdge(actor: AuthContext, args: { table: "recipe_inputs" | "recipe_outputs"; id: string }): Promise<void> {
   requireLevel(actor, RECIPE_WRITE_MIN);
-  if (args.table === "recipe_inputs") requireGlobalLineWriter(actor);
   const sb = getServiceRoleClient();
+  const { data: edge, error: edgeError } = await sb.from(args.table).select("recipe_id").eq("id", args.id).maybeSingle<{ recipe_id: string }>();
+  if (edgeError) throw new Error(`recipe edge owner: ${edgeError.message}`);
+  if (!edge) throw new RecipeError(404, "edge_not_found");
+  const owner = await recipeWriteOwner(actor, edge.recipe_id, args.table === "recipe_inputs");
   if (args.table === "recipe_outputs") {
     // 0215: an output leaves through remove_recipe_output, under the recipe row lock, so the
     // sole output of a batch_mode recipe cannot be pulled out from under the flag (the RPC
     // refuses with batch_mode_single_output; turn batch mode off first). It returns the
     // deleted row for the same `before` audit the direct delete wrote.
-    const { data: before, error } = await sb.rpc("remove_recipe_output", { p_output_id: args.id, p_actor: actor.user.id });
+    const { data: before, error } = await writeRecipeRpc(sb, edge.recipe_id, owner, "remove_recipe_output", { p_output_id: args.id, p_actor: actor.user.id }, actor.user.id);
     if (error) {
       const named = rpcRecipeError(error, BATCH_MODE_RPC_ERRORS);
       if (named) throw named;
-      throw new Error(`removeRecipeEdge: ${error.message}`);
+      throw catalogWriteError(error, RecipeError, "removeRecipeEdge");
     }
     await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.remove", resourceTable: args.table, resourceId: args.id, metadata: { before: (before as Record<string, unknown> | null) ?? null }, ipAddress: null, userAgent: null });
     return;
@@ -815,11 +900,11 @@ export async function removeRecipeEdge(actor: AuthContext, args: { table: "recip
   // 0262: a recipe line leaves through remove_recipe_input_atomic, under the recipe-graph lock, so its
   // commit-time journal (recipe_global_journal) never inverts the lock order against another graph
   // writer. It returns the deleted row for the same `before` audit the direct delete wrote.
-  const { data: before, error } = await sb.rpc("remove_recipe_input_atomic", { p_input_id: args.id, p_actor: actor.user.id });
+  const { data: before, error } = await writeRecipeRpc(sb, edge.recipe_id, owner, "remove_recipe_input_atomic", { p_input_id: args.id, p_actor: actor.user.id }, actor.user.id);
   if (error) {
     const named = rpcRecipeError(error, RECIPE_INPUT_RPC_ERRORS);
     if (named) throw named;
-    throw new Error(`removeRecipeEdge: ${error.message}`);
+    throw catalogWriteError(error, RecipeError, "removeRecipeEdge");
   }
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_input.remove", resourceTable: args.table, resourceId: args.id, metadata: { before: (before as Record<string, unknown> | null) ?? null }, ipAddress: null, userAgent: null });
 }

@@ -1,0 +1,11 @@
+# Landing review fixes and Chunk E work plan
+
+Latest verification: [Merge-gate round](landing-merge-gate-result.md). Older evidence below is historical.
+
+Custody (2026-10-16): branch `feat/landing-p1`, HEAD/base `21eeedde`, dedicated clone `C:/Users/conta/co-ops-landing`; clean before this round. Only this merge-gate/P3 round is UNCOMMITTED. Earlier rounds are committed. No push, merge, deploy, environment change or production write; 0273 remains file-only. Current evidence: [merge-gate result](landing-merge-gate-result.md).
+
+1. CC review change set: regression tests for client/server CTA placements, native lineup geometry, Field Guide hold, photo manifest shape and forged derivations; then placement/type fixes, source re-derivation and shared 014 output, narrow decode skip, housekeeping. Contracts: tracking vocabulary, provenance, browser harness. Run focused tests before/after.
+2. Chunk E: monitoring probe/workflow with failure fixtures, production performance evidence, accessibility/375px verification, activation runbook, one README PREVIEW section and release checklist. No resources, environment deployment changes, production writes or 0273 application.
+3. Verify landing tests, full suite --maxWorkers=3, tsc, build, Chromium/WebKit suite, lineup three repetitions and tracking/lineup two repetitions. Record actual LHCI result or registry block and reproducible commands.
+
+CC's supplied rulings and reviewed build plan are the implementation contract. The existing DRAWN SUBDEX poster needs an explicit approved source ID under the blanket raster rule. Register its existing video/frame identity separately from real photos, verify frame extraction locally, and require the same Sharp raster derivation; never permit a drawn source ID to be relabeled as a photo. Device/merchant/Meta/ingress/notification evidence remains external activation work, never reported as completed locally.

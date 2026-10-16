@@ -26,7 +26,7 @@ import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import type { VersionScope } from "@/lib/sku-versions-shared";
 
-export interface RosterSku { id: string; name: string; pack_format: string | null; vendor_id: string | null; product_id: string | null }
+export interface RosterSku { id: string; name: string; pack_format: string | null; vendor_id: string | null; product_id: string | null; location_id: string | null }
 export interface VendorRef { id: string; name: string; source_kind: "vendor" | "store"; active: boolean }
 
 export interface CountsReadRefs {
@@ -63,12 +63,13 @@ export function createCountsReadRefs(shopScope: VersionScope): CountsReadRefs {
     // (B9 r1): every tier now stands on this one read, so past 1000 active SKUs a truncated
     // page would decide WHICH SKUs exist for all of them; `id` breaks name ties so the order
     // is total and page boundaries are stable.
-    return selectAllRows<RosterSku>(async (from, to) => {
-      const { data, error } = await sb.from("vendor_items").select("id, name, pack_format, vendor_id, product_id").eq("active", true)
+    const rows = await selectAllRows<RosterSku>(async (from, to) => {
+      const { data, error } = await sb.from("vendor_items").select("id, name, pack_format, vendor_id, product_id, location_id").eq("active", true)
         .order("name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<RosterSku[]>();
       if (error) throw new Error(`counts roster (active SKUs): ${error.message}`);
       return { data };
     });
+    return rows.filter((sku) => sku.location_id == null || sku.location_id === shopScope);
   });
   const vendors = once(async () => {
     const sb = getServiceRoleClient();

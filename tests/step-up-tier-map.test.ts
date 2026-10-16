@@ -84,6 +84,15 @@ function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => bo
 
 // ── THE SERVER HALF: route file → the tiers it asserts ────────────────────────
 const SERVER_TIER_MAP: Record<string, string[]> = {
+  "app/api/admin/catalog/sku/[id]/share/route.ts": ["E"],
+  "app/api/admin/catalog/recipe/[id]/share/route.ts": ["E"],
+  "app/api/admin/catalog/menu-item/[id]/share/route.ts": ["E"],
+  "app/api/admin/catalog/jobs/new-item/route.ts": ["E"],
+  "app/api/admin/catalog/jobs/new-sandwich/route.ts": ["E"],
+  "app/api/admin/catalog/sku/[id]/setup/route.ts": ["E"],
+  "app/api/admin/catalog/sku/[id]/swap/route.ts": ["E"],
+  "app/api/admin/catalog/swaps/[swapId]/back-to-normal/route.ts": ["E"],
+  "app/api/admin/catalog/menu-item/[id]/toast/route.ts": ["A"],
   // Catalog Phase 2a — the shop-version routes run in the 15-minute edit window.
   "app/api/admin/catalog/sku/[id]/pack/route.ts": ["E"],
   "app/api/admin/catalog/sku/[id]/pack/back-to-default/route.ts": ["E"],

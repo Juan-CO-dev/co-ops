@@ -45,12 +45,14 @@ describe("GM writes only its own shops; MoO any shop and the global default", ()
       .toEqual({ status: 404, code: "not_found" });
   });
   it("an AGM cannot write any recipe version; a GM never edits the global recipe", async () => {
+    current = createFakeDb(buildRecipeVersionsFixture());
     expect(await refused(saveRecipeLines(actor("agm", 6, [LOC]), { recipeId: "r-slaw", scope: LOC, expectedVersionId: null, basedOnVersionId: null, op: ADD })))
       .toEqual({ status: 403, code: "forbidden" });
     expect(await refused(saveRecipeLines(actor("gm", 7, [LOC]), { recipeId: "r-slaw", scope: null, expectedVersionId: null, basedOnVersionId: null, op: ADD })))
       .toEqual({ status: 403, code: "global_requires_moo" });
   });
   it("back to default and restore bind the shop too", async () => {
+    current = createFakeDb(buildRecipeVersionsFixture());
     expect(await refused(retireShopRecipeVersion(actor("gm", 7, [LOC]), { recipeId: "r-slaw", versionId: "v", locationId: OTHER })))
       .toEqual({ status: 404, code: "not_found" });
     expect(await refused(restoreRecipeVersion(actor("gm", 7, [LOC]), { recipeId: "r-slaw", scope: null, fromVersionId: "v", expectedVersionId: null, basedOnVersionId: null })))
@@ -193,4 +195,18 @@ describe("every named refusal the writers can return has its own en + es message
     const validator = ["invalid_component", "invalid_quantity", "invalid_payload", "invalid_component_product", "product_line_needs_measure_unit"];
     for (const c of [...codes, ...validator]) expect(RECIPE_VERSION_ERROR_CODES as readonly string[], c).toContain(c);
   });
+});
+
+import { RPC_STATUS, SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
+import { recipeVersionErrorFromRpc } from "@/lib/admin/recipe-versions";
+describe("ownership transport mapping", () => {
+ it.each(SHOP_OWNED_ERROR_CODES)("maps ownership %s from shared statuses", code => {
+  expect(() => recipeVersionErrorFromRpc(`shop_owned:${code}`)).toThrow(expect.objectContaining({ name: "RecipeVersionError", code, status: RPC_STATUS[code] }));
+ });
+ it("retains a one-based ownership line", () => {
+  expect(() => recipeVersionErrorFromRpc("shop_owned:line_other_shop:3")).toThrow(expect.objectContaining({ status: 400, line: expect.objectContaining({ position: 3, reason: "line_other_shop" }) }));
+ });
+ it("retains its native namespace", () => {
+  expect(() => recipeVersionErrorFromRpc("recipe_version:dependencies_busy")).toThrow(expect.objectContaining({ status: 409, code: "dependencies_busy" }));
+ });
 });

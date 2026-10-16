@@ -1,0 +1,34 @@
+{
+  "id": "lineup-sicky-wicky",
+  "sourceId": "024",
+  "publicPath": "/media/sicky-wicky-lineup-024-918d9cc75ec4.webp",
+  "classification": "real-photo",
+  "mode": "resize-only",
+  "sourcePath": "source:024",
+  "sourceSha256": "4d820beb14edf64d274b2e559fe6de0b57cb619555380f3e73eee97a5982d739",
+  "sha256": "918d9cc75ec408bb343e7b55683e9eec8475c6128326831d06ef9fb0e3ae4058",
+  "bytes": 33098,
+  "maxBytes": 100000,
+  "width": 750,
+  "height": 1125,
+  "sidecar": "assets/provenance/lineup-sicky-wicky.json",
+  "crop": [
+    0,
+    0,
+    4000,
+    6000
+  ],
+  "steps": [
+    "EXIF auto-orientation (.rotate())",
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "quality": 86,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "scriptSha256": "addee4ed5fadfbf642b7d1cde50a29914ec49b7470b98c64186b447c50d1a3c9"
+  },
+  "command": "node scripts/assets/export.mjs",
+  "review": "Original framing retained, including any source-edge crops; phone approval pending"
+}

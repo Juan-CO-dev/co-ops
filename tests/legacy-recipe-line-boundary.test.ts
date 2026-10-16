@@ -10,7 +10,10 @@ import { jsx } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => { throw new Error("no database expected"); } }));
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ from: (table: string) => {
+  const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: table === "recipes" ? { id: "r", location_id: null } : { recipe_id: "r" }, error: null }) };
+  return q;
+}, rpc: () => { throw new Error("no mutation expected"); } }) }));
 vi.mock("@/lib/audit", () => ({ audit: async () => {} }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ requestStepUp: vi.fn(), requestStepUpGrant: vi.fn(), forgetStepUp: vi.fn(), noteStepUpConfirmed: vi.fn() }) }));
@@ -41,7 +44,7 @@ const html_ = (s: string) => s.replace(/'/g, "&#x27;");
 const render = (children: ReactNode, language: Language = "en") =>
   renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children }));
 
-describe("a GM never edits the global recipe's lines (lib, before any I/O)", () => {
+describe("a GM never edits the global recipe's lines (lib, after owner read and before mutation)", () => {
   it("add, update and remove of a LINE refuse a GM by name", async () => {
     await expect(addRecipeInput(gm, { recipeId: "r", componentSkuId: "s", quantity: 1, unit: "oz" })).rejects.toMatchObject({ status: 403, code: "global_requires_moo" });
     await expect(updateRecipeInput(gm, { recipeId: "r", inputId: "i", line: { ...line, quantity: 2 }, expected: line })).rejects.toMatchObject({ status: 403, code: "global_requires_moo" });
@@ -52,7 +55,7 @@ describe("a GM never edits the global recipe's lines (lib, before any I/O)", () 
     await expect(removeRecipeEdge(smm, { table: "recipe_inputs", id: "i" })).rejects.toMatchObject({ status: 403, code: "forbidden" });
   });
   it("an OUTPUT removal keeps its GM floor (it reaches the database)", async () => {
-    await expect(removeRecipeEdge(gm, { table: "recipe_outputs", id: "o" })).rejects.toThrow("no database expected");
+    await expect(removeRecipeEdge(gm, { table: "recipe_outputs", id: "o" })).rejects.toThrow("no mutation expected");
   });
   it("the builder names the reason, en + es", () => {
     expect(readFileSync("components/admin/recipes/shared.ts", "utf8")).toContain('"global_requires_moo"');

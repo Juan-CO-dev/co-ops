@@ -1,0 +1,34 @@
+{
+  "id": "lineup-turkey-caesar-480",
+  "sourceId": "033",
+  "publicPath": "/media/turkey-caesar-lineup-033-480-4faa0ad0b824.webp",
+  "classification": "real-photo",
+  "mode": "resize-only",
+  "sourcePath": "source:033",
+  "sourceSha256": "679a5d4ecd7070ce0a7bc60e65ec141953158754a72fa7e4b2cd2d50d3f7415a",
+  "sha256": "4faa0ad0b82426622a903b73991e9f17ac1e754375b883a64a227551681b6fa3",
+  "bytes": 40180,
+  "maxBytes": 100000,
+  "width": 480,
+  "height": 720,
+  "sidecar": "assets/provenance/lineup-turkey-caesar-480.json",
+  "crop": [
+    0,
+    0,
+    4000,
+    6000
+  ],
+  "steps": [
+    "EXIF auto-orientation (.rotate())",
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "quality": 78,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "scriptSha256": "2689c3c74332085863d4e49dc2903e8afe1ffcc83bd061724d28143c70c629e3"
+  },
+  "command": "node scripts/assets/export.mjs",
+  "review": "Original framing retained, including any source-edge crops; phone approval pending"
+}

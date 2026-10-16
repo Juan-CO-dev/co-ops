@@ -1,3 +1,4 @@
+import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 /**
  * MENU ITEMS PER SHOP — the gated writers and the history read (catalog Phase 3a, 0263). SERVER-ONLY,
  * service role. The lib is the authority (spec §2): a GM (7) writes only its own shops' overlay, MoO
@@ -41,11 +42,11 @@ const RPC_STATUS: Record<string, number> = {
   menu_item_not_found: 404, location_not_found: 404, not_found: 404,
 };
 
-export function menuShopErrorFromRpc(message: string): never {
+export function menuShopErrorFromRpc(message: string, dbCode?: string): never {
   // 'recipe_version:dependencies_busy' comes from 0262's closure locks, which the menu writers take too.
   const code = /(?:menu_item_shop|recipe_version):([a-z_]+)/.exec(message)?.[1];
   if (code && RPC_STATUS[code]) throw new MenuShopError(RPC_STATUS[code]!, code);
-  throw new Error(`menu-shop rpc failed: ${message}`);
+  throw catalogWriteError({ message, code: dbCode }, MenuShopError, "menu-shop rpc failed");
 }
 
 /**
@@ -81,7 +82,7 @@ async function writeSetting(
     p_expected: input.expectedSettingId, p_note: input.note, p_actor: actor.user.id, p_restored_from: input.restoredFromSettingId,
     p_snapshot: snapshot,
   });
-  if (error) menuShopErrorFromRpc(error.message);
+  if (error) menuShopErrorFromRpc(error.message, error.code);
   const r = data as { setting_id: string; retired_setting_id: string | null };
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
@@ -131,7 +132,7 @@ export async function retireMenuItemShopSetting(
   const { error } = await sb.rpc("retire_menu_item_shop_setting", {
     p_setting: input.settingId, p_location: input.locationId, p_actor: actor.user.id, p_snapshot: snapshot,
   });
-  if (error) menuShopErrorFromRpc(error.message);
+  if (error) menuShopErrorFromRpc(error.message, error.code);
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "menu_item.shop_setting_retire", resourceTable: "menu_item_shop_settings", resourceId: input.settingId,

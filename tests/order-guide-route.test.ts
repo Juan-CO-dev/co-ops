@@ -108,6 +108,7 @@ describe("GET — read is key-holder+, and the bucket is what is NOT on the guid
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       guide,
+      ownership: {},
       skusNotOnGuide: [{ skuId: SKU_OFF, name: "Turkey", itemNumber: null }],
     });
   });

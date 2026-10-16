@@ -1,3 +1,4 @@
+import { ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -32,6 +33,7 @@ export async function POST(
     });
     return jsonOk({ id: result.id }, 201);
   } catch (e) {
+    if (e instanceof ShopOwnedError) return jsonError(e.status, e.code, e.line ? { line: e.line } : undefined);
     if (e instanceof RecipeError) return jsonError(e.status, e.code);
     throw e;
   }

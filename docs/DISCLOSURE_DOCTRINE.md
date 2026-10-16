@@ -57,3 +57,12 @@ on the collapsed line) → W2 SkuCostPanel behind toggle (the ×163 fix) →
 W3 Packages rows (advice panel lazy-fetch = free perf) → W4 Menu section
 collapse (>6 items) → W5 RecipeBuilder sections (save bar OUTSIDE wrappers,
 LiveReadout → one-line summary, delete zone behind a Danger disclosure).
+
+
+## Catalog Phase 4a HTTP disclosure handoff (2026-10-16)
+
+Chunk 7 adds HTTP contracts, not guided-page layouts. The 4b consumer must keep replay, unknown-save, invalid-line and retained-edit notices visible under D2. Render the bilingual replay notice when `replayed:true`; do not announce a new creation or applied latest edits. A setup result with `lineSaved:null` requires the unconfirmed-save notice and a guide refresh before retry. Per-day ordering outcomes remain independent.
+
+Swap previews provide ordering/par consequence metadata alongside direct recipe changes, primary followers, refused positions and costs. Show the consequence before confirmation: ordering follows the replacement member in the selected scope, pars are unchanged, and the operator should check their suitability for the replacement pack. Back results describe restored and retained effects separately; never label retained edits as restored. Share blockers for a shop-only prep ingredient direct the operator to its producing recipe.
+
+These are payload/copy contracts verified by route, engine and i18n tests. D1-D10 still govern the future guided pages; no 375 px/browser acceptance is claimed by this chunk.
