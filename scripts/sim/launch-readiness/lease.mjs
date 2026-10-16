@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, rmSync, unlinkSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, rmSync, unlinkSync, renameSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { hostname } from "node:os";
 
@@ -80,4 +80,15 @@ export function release(runId, { dir = leaseDirectory() } = {}) {
   const owner = readOwner(dir);
   if (!owner || owner.runId !== runId) throw refused(owner);
   rmSync(dir, { recursive: true });
+}
+
+/** A failed DIRTY write must not become a reclaimable stale lease after exit.
+ * Keep the directory and original evidence, but remove its recognizable owner.
+ * Unknown owners fail closed in acquire; only CC may recover this quarantine.
+ */
+export function quarantine(runId, { dir = leaseDirectory() } = {}) {
+  const owner = readOwner(dir);
+  if (!owner || owner.runId !== runId) throw refused(owner);
+  renameSync(join(dir, "owner.json"), join(dir, "quarantined-owner.json"));
+  if (readOwner(dir) !== undefined) throw new Error("Lease quarantine verification failed");
 }

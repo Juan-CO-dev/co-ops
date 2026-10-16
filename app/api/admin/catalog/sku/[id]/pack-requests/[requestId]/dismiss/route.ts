@@ -3,6 +3,7 @@
  * Tier E. The report must belong to the SKU in the path (a report for another item is not found here).
  */
 import { type NextRequest } from "next/server";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { requireSession } from "@/lib/session";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
@@ -11,6 +12,8 @@ import { dismissPackChangeRequest, PackChangeRequestError } from "@/lib/pack-cha
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; requestId: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id, requestId } = await params;
   if (!UUID_RE.test(id) || !UUID_RE.test(requestId)) return jsonError(404, "not_found");
   const ctx = await requireSession(req, `/api/admin/catalog/sku/${id}/pack-requests/${requestId}/dismiss`);

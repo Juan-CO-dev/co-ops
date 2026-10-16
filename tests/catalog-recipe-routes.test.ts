@@ -37,7 +37,7 @@ const R = "7d0c1f2e-0000-4000-8000-000000000001";
 const SHOP = "6f1d2c3e-0000-4000-8000-00000000000a";
 const V = "7d0c1f2e-0000-4000-8000-0000000000aa";
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
-  new NextRequest(`${HOST}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  new NextRequest(`${HOST}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: HOST, ...headers }, body: JSON.stringify(body) });
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
 describe("source pins: previews are a read for those who may save", () => {

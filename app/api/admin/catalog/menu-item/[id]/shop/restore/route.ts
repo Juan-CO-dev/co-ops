@@ -3,6 +3,7 @@
  * (catalog Phase 3a). Body: { locationId: uuid, fromSettingId: uuid, expectedSettingId: uuid | null }.
  */
 import { type NextRequest } from "next/server";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { requireSession } from "@/lib/session";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -14,6 +15,8 @@ const optUuid = (v: unknown): string | null | undefined =>
   v === null || v === undefined ? null : typeof v === "string" && UUID_RE.test(v) ? v : undefined;
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   if (!UUID_RE.test(id)) return jsonError(404, "not_found");
   const parsed = await parseJsonBody(req);
