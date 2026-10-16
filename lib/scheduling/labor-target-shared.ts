@@ -7,8 +7,9 @@
  *               optimal = [minimum crew, max(minimum crew, ceil(spread))] — never below the minimum crew; the
  *               draft's heads on against it. AMBER only when the window is over its optimal AND above its minimum
  *               (CC chunk G: under the minimum is a coverage problem, red on the coverage row, named here plainly).
- *   per day:    when the minimum crews ALONE (Σ minimum heads × time over the day) cost more than the target allows,
- *               ONE note with its math line — never a per-window "already over the target" line (CC chunk G).
+ *   per day:    when the minimum crews ALONE cost more than the target allows, ONE note with its math line — never a
+ *               per-window "already over the target" line (CC chunk G). Only the minimum head-hours NOT covered by
+ *               salaried / presence people on the floor are priced, hourly, against the hourly allowance (Astra G P2-1).
  *
  * Every line is an i18n KEY + numeric params (`LABOR_LINE_KEYS`, closed; the en + es strings are Task 15's, as
  * for the rule and reason keys). Unknown forecast / wage are named states with their errand, never a 0. Without
@@ -99,6 +100,17 @@ function headsOn(shifts: readonly Shift[], q: number): number {
   return n;
 }
 
+/** Heads on the floor (non-MoD) at q whose hours cost nothing HOURLY: salaried managers and presence people (MoO / Owner). */
+function fixedCostHeadsOn(shifts: readonly Shift[], people: Record<string, RulePerson>, q: number): number {
+  let n = 0;
+  for (const sh of shifts) {
+    const p = people[sh.userId];
+    if (!p || isHourly(p)) continue;
+    if (sh.segments.some((g) => g.positionId !== MOD && g.startQ <= q && g.endQ > q)) n++;
+  }
+  return n;
+}
+
 export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolean }): LaborTarget {
   const d = input.demand;
   if (d.kind !== "ok" || d.dayCents <= 0) return { state: "no_forecast", errand: { key: "schedule.labor.errand.no_forecast" } };
@@ -163,9 +175,11 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
     };
   });
 
-  // The day's minimum crews alone: Σ over every quarter of the day of its minimum heads, in hours.
+  // The day's minimum crews alone, priced as HOURLY labor only where salaried / presence people on the floor do not
+  // already cover them (Astra chunk G P2-1): Σ over every quarter of max(0, minimum heads − salaried/presence heads on),
+  // in hours, against the HOURLY allowance (the salaried cost is already deducted from it on the TOTAL basis).
   let minQ = 0;
-  for (let q = 0; q < Q_PER_DAY; q++) minQ += floorAt(input.need, q);
+  for (let q = 0; q < Q_PER_DAY; q++) minQ += Math.max(0, floorAt(input.need, q) - fixedCostHeadsOn(input.shifts, input.people, q));
   const minHours = minQ / Q_PER_HOUR;
   const minimumsOver = minHours > maxHoursExact + 1e-9;
 

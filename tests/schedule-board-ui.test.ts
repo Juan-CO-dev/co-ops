@@ -283,7 +283,7 @@ describe("Task 21 — the day timeline", () => {
       ...d.labor.lines] } }) };
     const en1 = text(renderBoard(forced, "en", { initialDate: day.date }));
     expect(en1).toContain("At this day's forecast, the minimum crews alone are above 28%. The target can't be met without more sales or smaller minimums.");
-    expect(en1).toMatch(/Minimum crews: 60 h × \$[\d.,]+\/h = \$1,230, more than the \$1,204 the target allows\./);
+    expect(en1).toMatch(/Minimum-crew hours salaried managers don't cover: 60 h × \$[\d.,]+\/h = \$1,230, more than the \$1,204 the target allows\./);
     const es1 = text(renderBoard(forced, "es", { initialDate: day.date }));
     expect(es1).toContain(es["schedule.labor.minimums_over_target"].replace("{targetPct}", "28"));
   });

@@ -17,7 +17,8 @@
  *       location link, the live assignments there, those users (display name = first name + last initial, the full last
  *       name never leaves the server), the live person links, the mirrored shifts (`sevenshifts_shifts`, filtered to
  *       draft = false and not deleted in the pure rule) and punches at that location in the window.
- *  4. the pure `reconcile`. Actions deep-link to the existing link screens (`/admin/toast-employees?loc=`,
+ *  4. the pure `reconcile`, observed at the loader's `now` (open punches = on shift now; shifts not started = upcoming);
+ *     the 7shifts users assigned here but inactive in 7shifts are counted, never listed (Astra chunk G P3-5). Actions deep-link to the existing link screens (`/admin/toast-employees?loc=`,
  *     `/admin/sevenshifts?loc=`) — this view writes nothing.
  */
 import "server-only";
@@ -77,7 +78,8 @@ export async function loadReconciliation(deps: ReconcileDeps, args: { actor: Peo
   if (refusal) throw new ScheduleError(refusal);
   if (!UUID.test(locationId)) throw new ScheduleError("shop_not_allowed");
   const { service } = deps;
-  const today = operationalNow(deps.now ?? new Date()).date;
+  const nowDate = deps.now ?? new Date();
+  const today = operationalNow(nowDate).date;
   const dates = Array.from({ length: RECONCILE_WINDOW_DAYS }, (_, i) => addDays(today, i - (RECONCILE_WINDOW_DAYS - 1)));
   const from = dates[0]!;
   const to = dates[dates.length - 1]!;
@@ -133,6 +135,7 @@ export async function loadReconciliation(deps: ReconcileDeps, args: { actor: Peo
   let sevenUsersAtShop: SevenUserAtShop[] = [];
   let sevenShifts: SevenShiftRow[] = [];
   let sevenPunches: SevenPunch[] = [];
+  let sevenInactiveAtShop = 0;
   if (sevenStatus === "ready") {
     const link = await service.from("sevenshifts_location_links").select("sevenshifts_location_id").eq("location_id", locationId).eq("active", true).limit(1);
     if (link.error) throw new Error("reconciliation: 7shifts read failed");
@@ -150,7 +153,7 @@ export async function loadReconciliation(deps: ReconcileDeps, args: { actor: Peo
       for (const ids of chunks(atShop)) {
         for (const u of await selectAllRows<{ id: number | string; first_name: string | null; last_name: string | null; preferred_first_name: string | null; employee_id: string | null; active: boolean }>(
           (f, t) => service.from("sevenshifts_users").select("id, first_name, last_name, preferred_first_name, employee_id, active").in("id", ids).order("id", { ascending: true }).range(f, t))) {
-          if (!u.active) continue;
+          if (!u.active) { sevenInactiveAtShop++; continue; }
           sevenUsersAtShop.push({ sevenUserId: str(u.id), displayName: displayName({ firstName: u.first_name, lastName: u.last_name, preferredFirstName: u.preferred_first_name }), employeeId: u.employee_id });
         }
       }
@@ -175,6 +178,7 @@ export async function loadReconciliation(deps: ReconcileDeps, args: { actor: Peo
     dates, sevenStatus, shopLinkedToSeven, members, toastLinks, sevenLinks, sevenUsersAtShop,
     toastPunches14d: toastPunches, sevenPunches14d: sevenPunches, publishedSevenShifts14d: sevenShifts,
     coopsProposalShifts14d: proposal?.shifts ?? [], coopsProposalDates: proposal?.dates ?? [],
+    now: nowDate.toISOString(), sevenInactiveAtShop,
   });
   return {
     locationId, today, dates, sevenStatus, shopLinkedToSeven,

@@ -140,6 +140,42 @@ describe("laborTarget: the math, line by line", () => {
       .toBe("At this day's forecast, the minimum crews alone are above 28%. The target can't be met without more sales or smaller minimums.");
   });
 
+  it("Astra chunk G P2-1: the minimum-crew note prices ONLY the minimum head-hours salaried / presence people do not cover — her probe never claims infeasibility", () => {
+    // $1,000 forecast, $200 salaried that day (TOTAL basis): $280 − $200 = $80 hourly allowance. Minimum crew 2 heads
+    // over 8 h (16 head-hours), covered entirely by two salaried managers on the floor: actual labor 20% ≤ 28%.
+    const minHeads = zeros();
+    for (let q = 40; q < 72; q++) minHeads[q] = 2;
+    const n: DayNeed = { positions: {}, lineTotal: zeros(), minHeads, maxHeads: zeros(), sources: [], shapeNote: "normal" };
+    const base = input({
+      structure: structure(), need: n, windows: [{ key: "day", fromQ: 40, toQ: 72 }],
+      demand: { kind: "ok", hourlyCents: new Array<number>(24).fill(0).map((_, h) => (h >= 10 && h < 18 ? 12_500 : 0)), dayCents: 100_000 },
+      salariedWeeklyCents: 20_000, weekForecastCents: 100_000, shopEstimateHourlyCents: 1840,
+    }, 0);
+    const ctxPeople = { ...base.people, "u-gm2": { ...base.people[U.alex]!, userId: "u-gm2" } };
+    const probe = { ...base, people: ctxPeople, wageCentsByUser: {}, shifts: [shift(U.alex, THU, 40, 72, P.REG), shift("u-gm2", THU, 40, 72, P.EXPO)] };
+    const out = laborTarget(probe, { canSeeMoney: true });
+    if (out.state !== "ok") throw new Error(out.state);
+    expect(out.salariedDayCents).toBe(20_000);
+    expect(out.maxLaborCents).toBe(8_000);
+    expect(out.lines.some((l) => l.key.startsWith("schedule.labor.minimums_over_target"))).toBe(false);
+    // A presence person (MoO / Owner) covers the same way.
+    const pres = laborTarget({ ...probe, shifts: [shift(U.alex, THU, 40, 72, P.REG), shift(U.pete, THU, 40, 72, P.EXPO)] }, { canSeeMoney: true });
+    if (pres.state !== "ok") throw new Error(pres.state);
+    expect(pres.lines.some((l) => l.key.startsWith("schedule.labor.minimums_over_target"))).toBe(false);
+    // ONE salaried manager covers 8 of the 16 head-hours: the other 8 h × $18.40 = $147.20 > $80 → the note, with the
+    // UNCOVERED hours in its math.
+    const half = laborTarget({ ...probe, shifts: [shift(U.alex, THU, 40, 72, P.REG)] }, { canSeeMoney: true });
+    if (half.state !== "ok") throw new Error(half.state);
+    expect(half.lines.filter((l) => l.key.startsWith("schedule.labor.minimums_over_target"))).toEqual([
+      { key: "schedule.labor.minimums_over_target", params: { targetPct: 28 } },
+      { key: "schedule.labor.minimums_over_target_math", params: { minHours: 8, wageCents: 1840, minCostCents: 14_720, maxLaborCents: 8_000 } },
+    ]);
+    // A salaried manager on the MoD lane only is not on the floor: no cover.
+    const mod = laborTarget({ ...probe, shifts: [shift(U.alex, THU, 40, 72, "mod"), shift("u-gm2", THU, 40, 72, "mod")] }, { canSeeMoney: true });
+    if (mod.state !== "ok") throw new Error(mod.state);
+    expect(mod.lines.some((l) => l.key === "schedule.labor.minimums_over_target")).toBe(true);
+  });
+
   it("Astra chunk C P2: the tone comes from QUARTER-level shortages, never the window max — 5 on at 11:00, 2 leave at noon, minimum 4 to 2:00 → amber", () => {
     const base = input({}, 5);
     base.shifts = base.shifts.map((sh, i) => (i < 2 ? { ...sh, endQ: 48, segments: [{ ...sh.segments[0]!, endQ: 48 }] } : sh));

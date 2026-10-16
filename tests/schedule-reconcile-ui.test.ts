@@ -45,6 +45,7 @@ function page(over: Partial<ReconcileInput> = {}, extra: Partial<Page> = {}): Pa
     publishedSevenShifts14d: [{ sevenUserId: "701", startAt: at(D1, "11:00"), endAt: at(D1, "15:00"), draft: false, deleted: false },
       { sevenUserId: "703", startAt: at(D1, "07:00"), endAt: at(D1, "13:00"), draft: false, deleted: false }],
     coopsProposalShifts14d: [], coopsProposalDates: [D1],
+    now: "2026-10-20T12:00:00.000Z", sevenInactiveAtShop: 0,
     ...over,
   };
   return {
@@ -156,5 +157,47 @@ describe("en + es, the route, the hub", () => {
     const has = (level: number, role: Parameters<typeof adminSectionsFor>[1]) => adminSectionsFor(level, role).some((x) => x.id === "people-reconcile" && x.href === "/admin/people-reconcile");
     expect([has(7, "gm"), has(8, "moo"), has(9, "owner"), has(10, "cgs")]).toEqual([true, true, true, true]);
     expect([has(6, "agm"), has(6, "social_media_mgr"), has(6, "catering_mgr"), has(6, "prep_mgr"), has(4, "key_holder")]).toEqual([false, false, false, false, false]);
+  });
+});
+
+describe("Astra chunk G review on the page — on shift now, upcoming, informational, inactive (P2-2, P2-4, P3-5)", () => {
+  it("an informational-only row reads 'All good' (+ the detail for information), never an amber count; the people header has no amber count", () => {
+    const p = page({ sevenStatus: "not_connected", sevenLinks: [], sevenUsersAtShop: [], publishedSevenShifts14d: [], sevenPunches14d: [],
+      members: [{ userId: ANA, name: "Ana Ruiz" }], toastLinks: [{ employeeGuid: "tg-ana", userId: ANA }],
+      toastPunches14d: [{ employeeGuid: "tg-ana", firstName: "Ana", businessDate: D1, inAt: at(D1, "16:00"), outAt: at(D1, "18:00"), hours: null }],
+      coopsProposalShifts14d: [{ userId: ANA, date: D1, startQ: 44, endQ: 60 }], now: "2026-10-20T12:00:00.000Z" });
+    expect(p.view.counts.flagged).toBe(0);
+    for (const lang of ["en", "es"] as const) {
+      const L = lang === "en" ? en : es;
+      const html = render(p, lang, false);
+      const summary = html.match(/<button[^>]*data-person="[^"]+"[\s\S]*?<\/button>/)![0];
+      expect(text(summary)).toContain(L["schedule.reconcile.row.all_good"]);
+      expect(text(summary)).toContain(fill(L["schedule.reconcile.row.for_info"], { n: 1 }));
+      expect(summary).not.toContain("text-co-warning-text");
+      expect(text(html)).not.toContain(fill(L["schedule.reconcile.section.people_flagged"], { n: 1 }));
+      // The detail is still in the drawer.
+      expect(text(render(p, lang, true))).toContain(L["schedule.reconcile.flag.proposal_differs"].split("{date}")[1]!.trim().slice(0, 20));
+    }
+  });
+
+  it("an open punch on its shift reads 'On shift now'; a shift not started reads upcoming; both en + es", () => {
+    const p = page({ dates: [D1], now: at(D1, "12:00"),
+      toastPunches14d: [{ employeeGuid: "tg-ana", firstName: "Ana", businessDate: D1, inAt: at(D1, "10:55"), outAt: null, hours: null }],
+      sevenPunches14d: [],
+      publishedSevenShifts14d: [{ sevenUserId: "701", startAt: at(D1, "11:00"), endAt: at(D1, "15:00"), draft: false, deleted: false },
+        { sevenUserId: "703", startAt: at(D1, "16:00"), endAt: at(D1, "20:00"), draft: false, deleted: false }] });
+    for (const lang of ["en", "es"] as const) {
+      const L = lang === "en" ? en : es;
+      const t = text(render(p, lang, true));
+      expect(t).toContain(L["schedule.reconcile.day.on_shift_now"]);
+      expect(t).toContain(fill(L["schedule.reconcile.day.upcoming"], { n: 1 }));
+    }
+  });
+
+  it("the inactive 7shifts users hidden from the list are counted on the page (en + es)", () => {
+    const p = page({ sevenInactiveAtShop: 2 });
+    expect(text(render(p, "en", false))).toContain(fill(en["schedule.reconcile.seven_inactive_hidden"], { n: 2 }));
+    expect(text(render(p, "es", false))).toContain(fill(es["schedule.reconcile.seven_inactive_hidden"], { n: 2 }));
+    expect(text(render(page(), "en", false))).not.toContain("inactive 7shifts");
   });
 });

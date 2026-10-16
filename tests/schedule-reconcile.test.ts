@@ -33,6 +33,9 @@ function base(over: Partial<ReconcileInput> = {}): ReconcileInput {
     publishedSevenShifts14d: [],
     coopsProposalShifts14d: [],
     coopsProposalDates: [D1, D2],
+    // Observed well after the window: every record is completed attendance unless a test says otherwise.
+    now: "2026-10-20T12:00:00.000Z",
+    sevenInactiveAtShop: 0,
     ...over,
   };
 }
@@ -190,12 +193,91 @@ describe("order and vocabulary", () => {
     const out = reconcile(base({ toastLinks: [{ employeeGuid: "tg-ana", userId: ANA }, { employeeGuid: "tg-ana2", userId: ANA2 }] }));
     expect(out.rows.map((r) => r.userId)).toEqual([BEN, ANA, ANA2]);
     for (const r of out.rows) for (const f of r.flags) expect(RECONCILE_FLAG_CODES).toContain(f.code);
-    expect(out.counts).toEqual({ people: 3, flagged: 1, toastUnlinked: 0, sevenUnlinked: 0 });
+    expect(out.counts).toEqual({ people: 3, flagged: 1, toastUnlinked: 0, sevenUnlinked: 0, sevenInactiveHidden: 0 });
   });
 
   it("is pure and deterministic: the same input twice gives the same output, input order does not matter", () => {
     const a = base({ publishedSevenShifts14d: [published("701", D1, "11:00", "15:00"), published("703", D2, "07:00", "11:00")], toastPunches14d: [punch("tg-ana", D2, "11:00", "12:00")] });
     const b = { ...a, members: [...a.members].reverse(), publishedSevenShifts14d: [...a.publishedSevenShifts14d].reverse() };
     expect(reconcile(b)).toEqual(reconcile(a));
+  });
+});
+
+describe("Astra chunk G review — open and upcoming records, DST, informational flags, inactive 7shifts users", () => {
+  it("P2-2: her case — published 12:00–18:00, clock-in 11:55, no clock-out yet → 'on shift now', never punch_no_shift / shift_no_punch", () => {
+    const pub = [published("701", D1, "12:00", "18:00")];
+    for (const now of [at(D1, "13:00"), at(D1, "11:58"), at(D1, "17:59")]) {
+      const out = reconcile(base({ now, dates: [D1], publishedSevenShifts14d: pub, toastPunches14d: [punch("tg-ana", D1, "11:55", null)] }));
+      expect(row(out, ANA).flags).toEqual([]);
+      expect(row(out, ANA).days[0]).toMatchObject({ date: D1, basis: "published", onShiftNow: true });
+    }
+    // The same through a 7shifts punch still open.
+    const seven = reconcile(base({ now: at(D1, "13:00"), dates: [D1], publishedSevenShifts14d: pub, sevenPunches14d: [{ sevenUserId: "701", clockedIn: at(D1, "11:55"), clockedOut: null, breakMinutes: null }] }));
+    expect(row(seven, ANA).flags).toEqual([]);
+    expect(row(seven, ANA).days[0]!.onShiftNow).toBe(true);
+    // An open punch never makes the two sources "disagree" (one source has no hours yet).
+    const both = reconcile(base({ now: at(D1, "13:00"), dates: [D1], publishedSevenShifts14d: pub, toastPunches14d: [punch("tg-ana", D1, "11:55", null)], sevenPunches14d: [{ sevenUserId: "701", clockedIn: at(D1, "08:00"), clockedOut: at(D1, "10:00"), breakMinutes: 0 }] }));
+    expect(codes(row(both, ANA))).not.toContain("sources_disagree");
+    // A CLOSED punch on the same day is completed attendance: nothing open.
+    const closed = reconcile(base({ now: at(D1, "19:00"), dates: [D1], publishedSevenShifts14d: pub, toastPunches14d: [punch("tg-ana", D1, "11:55", "18:05")] }));
+    expect(row(closed, ANA).days[0]).toMatchObject({ onShiftNow: false, upcoming: 0 });
+    expect(row(closed, ANA).flags).toEqual([]);
+  });
+
+  it("P2-2: a shift that has not started yet is 'upcoming', never shift_no_punch (published and proposal alike)", () => {
+    const out = reconcile(base({ now: at(D1, "10:00"), dates: [D1], publishedSevenShifts14d: [published("703", D1, "12:00", "18:00"), published("701", D1, "07:00", "09:00")] }));
+    expect(row(out, BEN).flags).toEqual([]);
+    expect(row(out, BEN).days[0]).toMatchObject({ basis: "published", upcoming: 1, onShiftNow: false });
+    // A shift that already started with no punch is still a shift with no punch.
+    expect(codes(row(out, ANA))).toEqual(["shift_no_punch"]);
+    expect(row(out, ANA).days[0]!.upcoming).toBe(0);
+    // Not published: a proposal shift still to come is not a difference.
+    const prop = reconcile(base({ now: at(D1, "10:00"), dates: [D1], sevenStatus: "not_connected", sevenLinks: [], sevenUsersAtShop: [], coopsProposalShifts14d: [{ userId: ANA, date: D1, startQ: 48, endQ: 64 }] }));
+    expect(row(prop, ANA).flags).toEqual([]);
+    expect(row(prop, ANA).days[0]).toMatchObject({ basis: "proposal_not_published", upcoming: 1 });
+    // A later date is entirely upcoming.
+    const later = reconcile(base({ now: at(D1, "10:00"), publishedSevenShifts14d: [published("703", D2, "07:00", "11:00")] }));
+    expect(codes(row(later, BEN))).toEqual([]);
+    expect(row(later, BEN).days.find((d) => d.date === D2)!.upcoming).toBe(1);
+  });
+
+  it("P2-3: DST — on Sun Nov 1, 2026 (EDT → EST at 2 AM) a 07:00–11:00 proposal is 07:00–11:00 EST, so a 10:15–11:00 punch matches it", () => {
+    const NOV1 = "2026-11-01";
+    const out = reconcile(base({
+      now: "2026-11-02T12:00:00.000Z", dates: [NOV1], sevenStatus: "not_connected", sevenLinks: [], sevenUsersAtShop: [], coopsProposalDates: [NOV1],
+      coopsProposalShifts14d: [{ userId: ANA, date: NOV1, startQ: 28, endQ: 44 }],
+      // 10:15–11:00 EST = 15:15Z–16:00Z.
+      toastPunches14d: [{ employeeGuid: "tg-ana", firstName: "Ana", businessDate: NOV1, inAt: "2026-11-01T15:15:00.000Z", outAt: "2026-11-01T16:00:00.000Z", hours: null }],
+    }));
+    expect(row(out, ANA).flags).toEqual([]);
+    // And a punch at 06:15–06:45 EST (11:15Z–11:45Z) — outside 07:00–11:00 EST — IS a difference.
+    const off = reconcile(base({
+      now: "2026-11-02T12:00:00.000Z", dates: [NOV1], sevenStatus: "not_connected", sevenLinks: [], sevenUsersAtShop: [], coopsProposalDates: [NOV1],
+      coopsProposalShifts14d: [{ userId: ANA, date: NOV1, startQ: 28, endQ: 44 }],
+      toastPunches14d: [{ employeeGuid: "tg-ana", firstName: "Ana", businessDate: NOV1, inAt: "2026-11-01T11:15:00.000Z", outAt: "2026-11-01T11:45:00.000Z", hours: null }],
+    }));
+    expect(codes(row(off, ANA))).toEqual(["proposal_differs"]);
+  });
+
+  it("P2-4: informational flags stay visible as detail but never count as 'needs a look' — her flagged: 1 → 0", () => {
+    const out = reconcile(base({ coopsProposalShifts14d: [{ userId: ANA, date: D1, startQ: 44, endQ: 60 }] }));
+    expect(codes(row(out, ANA))).toEqual(["proposal_differs"]);
+    expect(row(out, ANA).lookAt).toBe(0);
+    expect(out.counts.flagged).toBe(0);
+    // Ordering: an informational-only row is not sorted ahead of others as if it needed a look.
+    expect(out.rows.map((r) => r.userId)).toEqual([ANA, ANA2, BEN]);
+    // A real flag still counts and sorts first.
+    const real = reconcile(base({ coopsProposalShifts14d: [{ userId: ANA, date: D1, startQ: 44, endQ: 60 }], toastLinks: [{ employeeGuid: "tg-ana", userId: ANA }, { employeeGuid: "tg-ana2", userId: ANA2 }] }));
+    expect(real.counts.flagged).toBe(1);
+    expect(real.rows[0]!.userId).toBe(BEN);
+    expect(row(real, BEN).lookAt).toBe(1);
+  });
+
+  it("P3-5: inactive 7shifts users at the shop are hidden from the unlinked list but counted separately", () => {
+    const out = reconcile(base({ sevenInactiveAtShop: 3 }));
+    expect(out.counts.sevenInactiveHidden).toBe(3);
+    expect(reconcile(base()).counts.sevenInactiveHidden).toBe(0);
+    // Not ready / shop not linked: nothing is read, nothing is counted.
+    expect(reconcile(base({ sevenStatus: "sync_off", sevenInactiveAtShop: 3 })).counts.sevenInactiveHidden).toBe(0);
   });
 });

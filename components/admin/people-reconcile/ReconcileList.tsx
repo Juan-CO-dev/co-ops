@@ -15,7 +15,7 @@ import { useId, useState, type ReactNode } from "react";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { ReconcileDay, ReconcileFlag, ReconcileRow, ReconcileView, SevenStatus } from "@/lib/scheduling/reconcile-shared";
+import { isActionableFlag, type ReconcileDay, type ReconcileFlag, type ReconcileRow, type ReconcileView, type SevenStatus } from "@/lib/scheduling/reconcile-shared";
 
 export interface ReconcilePageView {
   locationId: string;
@@ -97,6 +97,9 @@ export function ReconcileList({ page, initialOpen = false }: { page: ReconcilePa
           </div>
         ))}
       </Disclosure>
+      {v.counts.sevenInactiveHidden > 0
+        ? <p className="text-sm text-co-text-muted" data-seven-inactive-hidden={v.counts.sevenInactiveHidden}>{t("schedule.reconcile.seven_inactive_hidden", { n: v.counts.sevenInactiveHidden })}</p>
+        : null}
     </div>
   );
 }
@@ -125,9 +128,11 @@ function PersonRow({ row, page, initialOpen, flagText }: { row: ReconcileRow; pa
         className="grid min-h-[44px] w-full items-center gap-1 px-4 py-2 text-left">
         <span className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-bold text-co-text">{row.name}</span>
-          {row.flags.length > 0
-            ? <span className="text-xs font-bold text-co-warning-text">{t("schedule.reconcile.row.to_look_at", { n: row.flags.length })}</span>
-            : <span className="text-xs font-bold text-co-confirm-text">{t("schedule.reconcile.row.all_good")}</span>}
+          {/* Astra chunk G P2-4: informational flags are detail, never an amber count. */}
+          {row.lookAt > 0
+            ? <span className="text-xs font-bold text-co-warning-text">{t("schedule.reconcile.row.to_look_at", { n: row.lookAt })}</span>
+            : <span className="text-xs font-bold text-co-confirm-text">{t("schedule.reconcile.row.all_good")}
+              {row.flags.length > 0 ? <span className="ml-2 font-normal text-co-text-muted">{t("schedule.reconcile.row.for_info", { n: row.flags.length })}</span> : null}</span>}
         </span>
         <span className="flex flex-wrap gap-1">
           <Tick source="coops" state="linked" />
@@ -163,9 +168,11 @@ function DayBlock({ day, flagText }: { day: ReconcileDay; flagText: (f: Reconcil
       <span className="text-xs font-bold tracking-wide text-co-text-muted">{t(day.basis === "published" ? "schedule.reconcile.basis.published" : "schedule.reconcile.basis.proposal")}</span>
       {day.missing ? <span className="text-xs text-co-text-muted">{t(`schedule.reconcile.missing.${day.missing}` as TranslationKey, { date: formatDateLabel(day.date, language) })}</span> : null}
       <span className="text-xs text-co-text-muted">{t("schedule.reconcile.day.hours", { toast: hours(day.toastHours), seven: hours(day.sevenHours) })}</span>
+      {day.onShiftNow ? <span className="text-xs font-bold text-co-confirm-text" data-on-shift-now="true">{t("schedule.reconcile.day.on_shift_now")}</span> : null}
+      {day.upcoming > 0 ? <span className="text-xs text-co-text-muted" data-upcoming={day.upcoming}>{t("schedule.reconcile.day.upcoming", { n: day.upcoming })}</span> : null}
       {day.flags.length > 0 ? (
         <ul className="grid gap-1 text-sm">
-          {day.flags.map((f, i) => <li key={i} data-flag={f.code} className={f.code === "proposal_differs" ? "text-co-text" : "font-bold text-co-warning-text"}>{flagText(f)}</li>)}
+          {day.flags.map((f, i) => <li key={i} data-flag={f.code} className={isActionableFlag(f) ? "font-bold text-co-warning-text" : "text-co-text"}>{flagText(f)}</li>)}
         </ul>
       ) : null}
     </div>

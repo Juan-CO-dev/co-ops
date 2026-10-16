@@ -19,12 +19,22 @@
  *    (`seven_not_connected` · `shop_not_linked` · `person_not_linked` · `no_published_shifts`). A date with no CO-OPS
  *    proposal at all is not compared.
  *  - `sources_disagree`: 7shifts punch hours vs Toast hours differ by more than 15 min for the same person-day. Toast
- *    stays the backup source of actual hours.
+ *    stays the backup source of actual hours. Never while either source still has an open punch that day.
+ *  - OPEN AND UPCOMING RECORDS (Astra chunk G P2-2): the view is judged at an explicit observation instant `now` (the
+ *    loader's clock; this module reads none). An OPEN punch (no clock-out yet) runs on from its clock-in: it overlaps
+ *    every shift that ends after it began, so a person clocked in for their shift is "on shift now" (`onShiftNow`), never
+ *    `punch_no_shift` / `shift_no_punch`. A shift (published or proposed) that has not STARTED at `now` is "upcoming"
+ *    (`upcoming`), never `shift_no_punch` and never a proposal difference.
+ *  - DST (P2-3): a proposal's quarters are ET WALL-CLOCK; each endpoint is resolved on its own with
+ *    `etWallMinutesInstant` (never midnight + elapsed quarters, which is an hour off on a transition day).
+ *  - INFORMATIONAL flags (P2-4, `INFORMATIONAL_FLAGS`) stay on the row as detail but never count as "needs a look":
+ *    not in `lookAt`, not in `counts.flagged`, not in the ordering.
+ *  - Inactive 7shifts users at the shop are not listed as unlinked; their number is `counts.sevenInactiveHidden` (P3-5).
  *
  * Every flag is a code from the closed `RECONCILE_FLAG_CODES` (en + es under `schedule.reconcile.flag.*`); params are
  * raw (ISO instants, hours, dates) and the page formats them. Zero I/O; reads no clock; never throws on valid input.
  */
-import { etCalendarDate } from "@/lib/operational-day";
+import { etCalendarDate, etWallMinutesInstant } from "@/lib/operational-day";
 import { Q_MINUTES } from "./time-shared";
 
 export const RECONCILE_FLAG_CODES = [
@@ -70,6 +80,10 @@ export interface ReconcileInput {
   coopsProposalShifts14d: ProposalShift[];
   /** The dates a CO-OPS head revision covers (a proposal exists for them, even with no shift for a person). */
   coopsProposalDates: string[];
+  /** The observation instant (ISO): open punches run on past it, shifts starting at or after it are upcoming (P2-2). */
+  now: string;
+  /** 7shifts users assigned at the linked location but INACTIVE in 7shifts: hidden from the list, counted (P3-5). */
+  sevenInactiveAtShop: number;
 }
 
 export interface ReconcileFlag { code: ReconcileFlagCode; date?: string; params?: Record<string, string | number> }
@@ -82,6 +96,10 @@ export interface ReconcileDay {
   proposal: boolean;
   toastHours: number | null;
   sevenHours: number | null;
+  /** An open punch that day (clocked in, not out yet): on shift now. */
+  onShiftNow: boolean;
+  /** Shifts that day (published, else proposed) not started at `now`: upcoming, not judged. */
+  upcoming: number;
   flags: ReconcileFlag[];
 }
 export interface ReconcileRow {
@@ -89,6 +107,8 @@ export interface ReconcileRow {
   name: string;
   ticks: { coops: true; toast: "linked" | "missing"; seven: "linked" | "missing" | "not_connected" };
   flags: ReconcileFlag[];
+  /** How many of `flags` need a look (the informational ones excluded). */
+  lookAt: number;
   days: ReconcileDay[];
 }
 export interface ToastUnlinkedRow { employeeGuid: string; firstName: string | null; punchDays: number; flags: ReconcileFlag[] }
@@ -97,41 +117,33 @@ export interface ReconcileView {
   rows: ReconcileRow[];
   toastUnlinked: ToastUnlinkedRow[];
   sevenUnlinked: SevenUnlinkedRow[];
-  counts: { people: number; flagged: number; toastUnlinked: number; sevenUnlinked: number };
+  counts: { people: number; flagged: number; toastUnlinked: number; sevenUnlinked: number; sevenInactiveHidden: number };
 }
 
 /** Over 15 minutes apart, the two sources disagree. */
 export const SOURCES_DISAGREE_H = Q_MINUTES / 60;
-/** An open punch (no clock-out yet) is a one-minute instant for overlap. */
-const OPEN_PUNCH_MS = 60_000;
-
-/** An interval in ms, with the ISO instants it came from (flags carry those, never a re-derived Date). */
-interface Span { from: number; to: number; fromIso?: string; toIso?: string | null }
+/** An interval in ms, with the ISO instants it came from (flags carry those, never a re-derived Date). An open punch runs on. */
+interface Span { from: number; to: number; fromIso?: string; toIso?: string | null; open?: boolean }
 const overlaps = (a: Span, b: Span) => a.from < b.to && b.from < a.to;
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const byName = (a: string, b: string) => a.localeCompare(b, "en", { sensitivity: "base" });
 const isPublished = (s: SevenShiftRow) => s.draft === false && !s.deleted;
 
-/** The instant of an ET wall-clock quarter on a business date: the date's ET midnight (via the calendar) + quarters. */
-function quarterSpan(p: ProposalShift, etMidnightMs: (date: string) => number): Span {
-  const base = etMidnightMs(p.date);
-  return { from: base + p.startQ * Q_MINUTES * 60_000, to: base + p.endQ * Q_MINUTES * 60_000 };
-}
+/** Not an attendance question: shown as detail, never counted as "needs a look" (P2-4). */
+export const isActionableFlag = (f: ReconcileFlag) => !INFORMATIONAL_FLAGS.includes(f.code);
 
-/**
- * ET midnight of a business date, found without a clock: probe UTC 04:00 and 05:00 of that date (EDT / EST midnight)
- * and keep the one whose ET calendar date is the date at 00:00 ET. The shop day (7:00–21:00) never touches the DST hours.
- */
-function etMidnightMs(date: string): number {
-  const edt = Date.parse(`${date}T04:00:00.000Z`);
-  const est = Date.parse(`${date}T05:00:00.000Z`);
-  // 04:00Z is ET midnight under EDT; under EST it is 23:00 of the previous ET day.
-  return etCalendarDate(`${date}T04:00:00.000Z`) === date ? edt : est;
+/** A proposal shift as instants: EACH endpoint is an ET wall-clock time resolved on its own (DST-correct, P2-3). */
+function quarterSpan(p: ProposalShift): Span {
+  return {
+    from: etWallMinutesInstant(p.date, p.startQ * Q_MINUTES).getTime(),
+    to: etWallMinutesInstant(p.date, p.endQ * Q_MINUTES).getTime(),
+  };
 }
 
 export function reconcile(input: ReconcileInput): ReconcileView {
   const ready = input.sevenStatus === "ready";
+  const nowMs = Date.parse(input.now);
   const dates = [...new Set(input.dates)].sort(cmp);
   const inWindow = new Set(dates);
   const toastUser = new Map(input.toastLinks.map((l) => [l.employeeGuid, l.userId]));
@@ -168,9 +180,9 @@ export function reconcile(input: ReconcileInput): ReconcileView {
       continue;
     }
     const from = Date.parse(p.inAt);
-    const to = p.outAt === null ? from + OPEN_PUNCH_MS : Date.parse(p.outAt);
+    const to = p.outAt === null ? Infinity : Date.parse(p.outAt);
     const k = `${userId}|${p.businessDate}`;
-    add(punchSpans, k, { from, to, fromIso: p.inAt, toIso: p.outAt });
+    add(punchSpans, k, { from, to, fromIso: p.inAt, toIso: p.outAt, open: p.outAt === null });
     const h = p.hours !== null ? p.hours : p.outAt === null ? 0 : (to - from) / 3_600_000;
     toastH.set(k, (toastH.get(k) ?? 0) + h);
   }
@@ -179,15 +191,15 @@ export function reconcile(input: ReconcileInput): ReconcileView {
     const date = etCalendarDate(p.clockedIn);
     if (!userId || !inWindow.has(date)) continue;
     const from = Date.parse(p.clockedIn);
-    const to = p.clockedOut === null ? from + OPEN_PUNCH_MS : Date.parse(p.clockedOut);
+    const to = p.clockedOut === null ? Infinity : Date.parse(p.clockedOut);
     const k = `${userId}|${date}`;
-    add(punchSpans, k, { from, to, fromIso: p.clockedIn, toIso: p.clockedOut });
+    add(punchSpans, k, { from, to, fromIso: p.clockedIn, toIso: p.clockedOut, open: p.clockedOut === null });
     const h = p.clockedOut === null ? 0 : (to - from) / 3_600_000 - (p.breakMinutes ?? 0) / 60;
     sevenH.set(k, (sevenH.get(k) ?? 0) + Math.max(0, h));
   }
   const proposalBy = new Map<string, Span[]>();
   for (const s of input.coopsProposalShifts14d) {
-    if (inWindow.has(s.date)) add(proposalBy, `${s.userId}|${s.date}`, quarterSpan(s, etMidnightMs));
+    if (inWindow.has(s.date)) add(proposalBy, `${s.userId}|${s.date}`, quarterSpan(s));
   }
 
   const missingFor = (userId: string, date: string): ReconcileMissing | null => {
@@ -215,30 +227,37 @@ export function reconcile(input: ReconcileInput): ReconcileView {
       if (punches.length === 0 && pub.length === 0 && prop.length === 0) continue;
       const missing = missingFor(m.userId, date);
       const flags: ReconcileFlag[] = [];
+      // P2-2: a shift not started at `now` is upcoming (never judged); an open punch is on shift now.
+      const started = (sp: Span) => sp.from < nowMs;
+      const onShiftNow = punches.some((p) => p.open === true && p.from <= nowMs);
+      let upcoming = 0;
       if (missing === null) {
-        for (const s of pub) if (!punches.some((p) => overlaps(p, s))) {
+        upcoming = pub.filter((sp) => !started(sp)).length;
+        for (const s of pub) if (started(s) && !punches.some((p) => overlaps(p, s))) {
           flags.push({ code: "shift_no_punch", date, params: { startAt: s.fromIso!, endAt: s.toIso! } });
         }
         for (const p of punches) if (!pub.some((s) => overlaps(p, s))) {
           flags.push({ code: "punch_no_shift", date, params: { inAt: p.fromIso!, ...(p.toIso ? { outAt: p.toIso } : {}) } });
         }
       } else if (proposalDates.has(date)) {
-        const differs = prop.some((s) => !punches.some((p) => overlaps(p, s))) || punches.some((p) => !prop.some((s) => overlaps(p, s)));
+        upcoming = prop.filter((sp) => !started(sp)).length;
+        const differs = prop.some((s) => started(s) && !punches.some((p) => overlaps(p, s))) || punches.some((p) => !prop.some((s) => overlaps(p, s)));
         if (differs) flags.push({ code: "proposal_differs", date });
       }
       const tH = toastH.has(k) ? round2(toastH.get(k)!) : null;
       const sH = sevenH.has(k) ? round2(sevenH.get(k)!) : null;
-      if (tH !== null && sH !== null && Math.abs(tH - sH) > SOURCES_DISAGREE_H + 1e-9) flags.push({ code: "sources_disagree", date, params: { toastHours: tH, sevenHours: sH } });
-      days.push({ date, basis: missing === null ? "published" : "proposal_not_published", missing, proposal: proposalDates.has(date), toastHours: tH, sevenHours: sH, flags });
+      if (!onShiftNow && tH !== null && sH !== null && Math.abs(tH - sH) > SOURCES_DISAGREE_H + 1e-9) flags.push({ code: "sources_disagree", date, params: { toastHours: tH, sevenHours: sH } });
+      days.push({ date, basis: missing === null ? "published" : "proposal_not_published", missing, proposal: proposalDates.has(date), toastHours: tH, sevenHours: sH, onShiftNow, upcoming, flags });
     }
+    const flags = [...identity, ...days.flatMap((d) => d.flags)];
     return {
       userId: m.userId, name: m.name,
       ticks: { coops: true, toast: hasToast ? "linked" : "missing", seven: !ready ? "not_connected" : hasSeven ? "linked" : "missing" },
-      flags: [...identity, ...days.flatMap((d) => d.flags)],
+      flags, lookAt: flags.filter(isActionableFlag).length,
       days,
     };
   });
-  rows.sort((a, b) => Number(b.flags.length > 0) - Number(a.flags.length > 0) || byName(a.name, b.name) || cmp(a.userId, b.userId));
+  rows.sort((a, b) => Number(b.lookAt > 0) - Number(a.lookAt > 0) || byName(a.name, b.name) || cmp(a.userId, b.userId));
 
   const toastUnlinked: ToastUnlinkedRow[] = [...unlinkedToast]
     .map(([employeeGuid, u]) => ({ employeeGuid, firstName: u.firstName, punchDays: u.days.size, flags: [{ code: "toast_clockin_no_user" as const }] }))
@@ -251,6 +270,9 @@ export function reconcile(input: ReconcileInput): ReconcileView {
 
   return {
     rows, toastUnlinked, sevenUnlinked,
-    counts: { people: rows.length, flagged: rows.filter((r) => r.flags.length > 0).length, toastUnlinked: toastUnlinked.length, sevenUnlinked: sevenUnlinked.length },
+    counts: {
+      people: rows.length, flagged: rows.filter((r) => r.lookAt > 0).length, toastUnlinked: toastUnlinked.length, sevenUnlinked: sevenUnlinked.length,
+      sevenInactiveHidden: ready && input.shopLinkedToSeven ? Math.max(0, input.sevenInactiveAtShop) : 0,
+    },
   };
 }
