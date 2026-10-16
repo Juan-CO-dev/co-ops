@@ -545,3 +545,12 @@ describe("source shape — every shop-defaulting page uses the one resolver", ()
     expect(server).toMatch(/return isShopId\(value\) \? value : null/);
   });
 });
+
+// API scopes are explicit: this mixed Toast route is not a page/cookie preference resolver.
+it("catalog Toast GET declares the selected-shop location contract", () => {
+  const source = readFileSync("app/api/admin/catalog/menu-item/[id]/toast/route.ts", "utf8");
+  expect(source).toContain('export async function GET');
+  expect(source).toContain('req.nextUrl.searchParams.get("location")');
+  expect(source).toContain('if (!uuid(locationId))');
+  expect(source).toContain('loadToastLinkChoices(ctx, id, locationId)');
+});

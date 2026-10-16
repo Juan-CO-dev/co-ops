@@ -46,7 +46,7 @@ const readOnly = {
   'pack-requests/[requestId]/photo': 'GET',
   'pack-requests/[requestId]/additions/[additionId]/photo': 'GET',
 } as const;
-const mixedReads = { 'sku/[id]/swap': 'GET' } as const;
+const mixedReads = { 'sku/[id]/swap': 'GET', 'menu-item/[id]/toast': 'GET' } as const;
 const mocks = vi.hoisted(() => ({ session: vi.fn(), step: vi.fn(), db: vi.fn() }));
 vi.mock('@/lib/session', () => ({ requireSession: mocks.session }));
 vi.mock('@/lib/admin/step-up', () => ({ assertStepUp: mocks.step }));
@@ -60,7 +60,7 @@ beforeEach(() => {
   mocks.session.mockResolvedValue(Response.json({ code: 'unauthorized' }, { status: 401 }));
   mocks.db.mockImplementation(() => { throw new Error('Unexpected database access'); });
 });
-it('classifies every route file exactly once and pins 39 files / 40 handlers', async () => {
+it('classifies every route file exactly once and pins 39 files / 41 handlers', async () => {
   const files = readdirSync('app/api/admin/catalog', { recursive: true }).map(String)
     .map(p => p.replaceAll('\\', '/')).filter(p => p === 'route.ts' || p.endsWith('/route.ts')).sort();
   const listed = [...Object.keys(mutations), ...Object.keys(readOnly)];
@@ -77,7 +77,7 @@ it('classifies every route file exactly once and pins 39 files / 40 handlers', a
     expect(actual, path).toEqual(expected);
     handlers += actual.length;
   }
-  expect(handlers).toBe(40);
+  expect(handlers).toBe(41);
 });
 describe.each(Object.entries(mutations))('%s %s origin boundary', (path, method) => {
   it.each([undefined, 'https://attacker.invalid', 'null', 'not-a-url'])('refuses origin %s before session, body, or database', async origin => {

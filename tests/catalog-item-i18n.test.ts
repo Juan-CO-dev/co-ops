@@ -17,6 +17,14 @@ import { NEW_ITEM_ERROR_CODES } from "@/lib/catalog/new-item-shared";
 import { SWAP_ERROR_CODES } from "@/lib/catalog/swap-shared";
 
 const REQUIRED = [
+  // Catalog Phase 4b chunk 2: explicit job/Toast contract strings, including ARIA.
+  "catalog.jobs.toast.title", "catalog.jobs.toast.unavailable", "catalog.jobs.toast.empty",
+  "catalog.jobs.toast.choices", "catalog.jobs.toast.suggested", "catalog.jobs.toast.linked",
+  "catalog.jobs.toast.search", "catalog.jobs.toast.search_aria", "catalog.jobs.toast.select",
+  "catalog.jobs.toast.confirm", "catalog.jobs.toast.loading", "catalog.jobs.toast.load_error",
+  "catalog.jobs.toast.save_error", "catalog.jobs.toast.refresh", "catalog.jobs.toast.confirmation",
+  "catalog.jobs.setup.day_result_aria", "catalog.jobs.setup.saved", "catalog.jobs.setup.incomplete",
+  "catalog.jobs.setup.skipped", "catalog.jobs.setup.unconfirmed", "catalog.jobs.cost.partial",
   ...["exists", "section_name_taken", "sku_already_placed", "guide_stale", "section_not_found", "foreign_section", "foreign_line", "foreign_sku", "guide_not_found", "invalid_code", "vendor_mismatch", "level_differs", "teach_failed", "open_item_guid", "invalid_json"].map(code => `catalog.error.${code}`),
   "catalog.new_item.replayed",
   "catalog.swap.ordering_consequence", "catalog.setup.guide_unconfirmed",
