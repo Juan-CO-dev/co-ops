@@ -17,7 +17,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { SIM_PROJECT_REF } from "@/lib/sim-isolation-shared";
-// @ts-expect-error — a plain .mjs script module, no types
 import { retireLockFixture, simDatabaseTarget, SIM_PROJECT, SIM_POOLER_HOSTS } from "../scripts/sim-0270-0271-lock-check-lib.mjs";
 
 const SCRIPT = "scripts/sim-0270-0271-lock-check.mjs";
