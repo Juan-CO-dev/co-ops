@@ -54,16 +54,17 @@ export function etYmdMinusDays(ymd: string, days: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! - days)).toISOString().slice(0, 10);
 }
 
+const EASTERN_OFFSET_PARTS = new Intl.DateTimeFormat("en-US", {
+  timeZone: OPERATIONAL_TZ, hour12: false,
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+});
+
 /** The UTC offset (ms) of `instant` in the operational TZ. Negative west of UTC
  *  (ET is −4h EDT / −5h EST). Uses Intl to read the wall clock — DST-correct. */
 function tzOffsetMs(instant: Date): number {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: OPERATIONAL_TZ, hour12: false,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-  });
   const m: Record<string, string> = {};
-  for (const p of dtf.formatToParts(instant)) m[p.type] = p.value;
+  for (const p of EASTERN_OFFSET_PARTS.formatToParts(instant)) m[p.type] = p.value;
   const hour = m.hour === "24" ? 0 : Number(m.hour);
   const asUtc = Date.UTC(Number(m.year), Number(m.month) - 1, Number(m.day), hour, Number(m.minute), Number(m.second));
   return asUtc - instant.getTime();

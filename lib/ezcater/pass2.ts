@@ -4,7 +4,7 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { createDatedGraphs } from "@/lib/prep-consumption";
 import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { loadRawToastSalesRows } from "@/lib/toast/effective-depletion";
-import { etYmdMinusDays } from "@/lib/operational-day";
+import { etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 import { captureBudget } from "@/lib/toast/capture-runner";
 import { loadKnownToastOrderCodes, toastCodeSelectionKey } from "./toast-codes";
 import { loadPackageShadowContext } from "./shadow-package";
@@ -69,7 +69,7 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
   const transferAudit = await selectAllRows<TransferEvidence & { resource_id: string }>((from, to) => sb.from("audit_log")
     .select("resource_id,occurred_at,metadata").eq("resource_table", "catering_pipeline")
     .in("action", ["catering.pipeline.transfer_location", "ezcater.location_reassigned"])
-    .gte("occurred_at", `${etYmdMinusDays(fromDate, 1)}T00:00:00Z`).order("id").range(from, to).abortSignal(signal));
+    .gte("occurred_at", operationalDayUtcRange(etYmdMinusDays(fromDate, 1)).startIso).order("id").range(from, to).abortSignal(signal));
   // The observation shares an audit action with provider transfers but moved
   // nothing. Do not invent a transfer or fail the gate for its intentional shape.
   const transfers = transferAudit.filter((t) => !["manual_location_kept", "manual_location_conflict"].includes(t.metadata?.result ?? ""));
@@ -81,8 +81,8 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
     .select("id,toast_restaurant_guid").eq("active", true).order("id").range(from, to).abortSignal(signal));
   const productions = await selectAllRows<ProductionEvidence>((from, to) => sb.from("productions")
     .select("location_id,output_item_id,produced_at").is("revoked_at", null).is("superseded_at", null)
-    // Broad UTC boundary, then exact ET calendar filter in shadowAmounts (DST safe).
-    .gte("produced_at", `${etYmdMinusDays(fromDate, 2)}T00:00:00Z`).lt("produced_at", `${etYmdMinusDays(toDate, -2)}T00:00:00Z`)
+    // Padded ET-day boundary, then exact ET calendar filter in shadowAmounts.
+    .gte("produced_at", operationalDayUtcRange(etYmdMinusDays(fromDate, 2)).startIso).lt("produced_at", operationalDayUtcRange(etYmdMinusDays(toDate, -2)).startIso)
     .order("id").range(from, to).abortSignal(signal));
   const toastLeads = await selectAllRows<{ order_guid: string; lead_id: string | null; location_id: string }>((from, to) => sb.from("toast_catering_orders")
     .select("order_guid,lead_id,location_id").not("lead_id", "is", null).eq("voided", false)

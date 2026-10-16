@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { etDisplayDate } from "@/lib/operational-day";
+import { etDisplayDate, operationalDayUtcRange } from "@/lib/operational-day";
 import { FRIDGE_DEFAULT_SAFE_MAX_F, itemsOwnedBy, loadTempItemRegistry, type TempItemRegistry } from "@/lib/fridge-registry";
 
 export { FRIDGE_DEFAULT_SAFE_MAX_F };
@@ -243,7 +243,7 @@ export async function loadMaintenanceOverview(
     .select("id, note, other_label, created_by, created_at")
     .eq("location_id", args.locationId)
     .is("equipment_id", null)
-    .gte("created_at", `${args.sinceDate}T00:00:00Z`)
+    .gte("created_at", operationalDayUtcRange(args.sinceDate).startIso)
     .order("created_at", { ascending: false })
     .limit(20)
     .returns<Array<{ id: string; note: string; other_label: string | null; created_by: string | null; created_at: string }>>();
