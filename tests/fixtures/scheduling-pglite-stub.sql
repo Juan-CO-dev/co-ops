@@ -24,3 +24,10 @@ create table public.locations (
   name   text not null default 'stub',
   active boolean not null default true
 );
+-- public.user_locations (0001 lineage; 0269's helpers read the membership): the columns they use.
+create table public.user_locations (
+  user_id     uuid not null references public.users(id),
+  location_id uuid not null references public.locations(id),
+  active      boolean not null default true,
+  primary key (user_id, location_id)
+);
