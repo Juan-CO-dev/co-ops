@@ -2,7 +2,8 @@
 
 /**
  * RecipesClient — hub list for /admin/recipes. Client-side type filter
- * (Production | Consumer | All), row links to /admin/recipes/{id},
+ * (Production | Consumer | All), row links to /admin/recipes/{id} for MoO+ (the default's builder), else — and for any
+ * list read for one shop — the catalog recipe page (catalog Phase 3b: a GM edits its shop's version there),
  * and a "New recipe" link to /admin/recipes/new (GM+ only).
  */
 
@@ -12,6 +13,7 @@ import Link from "next/link";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { RecipeListRow, RecipeType } from "@/lib/recipes-shared";
 import { RECIPE_WRITE_MIN } from "@/lib/recipes-shared";
+import { readinessRecipeHref } from "@/lib/catalog/recipe-item-shared";
 import type { Readiness } from "@/lib/readiness";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -34,10 +36,13 @@ export function RecipesClient({
   recipes,
   level,
   readiness,
+  shopScope = null,
 }: {
   recipes: RecipeListRow[];
   level: number;
   readiness: Record<string, Readiness>;
+  /** The shop this list's readiness was read for (`?location=`), or null for the default. A shop's rows open that shop's version (catalog Phase 3b). */
+  shopScope?: string | null;
 }) {
   const { t } = useTranslation();
   const canWrite = level >= RECIPE_WRITE_MIN;
@@ -79,7 +84,7 @@ export function RecipesClient({
             return (
               <Link
                 key={r.id}
-                href={`/admin/recipes/${r.id}`}
+                href={readinessRecipeHref(r.id, shopScope, level)}
                 className="co-card co-card-interactive flex items-center justify-between px-4 py-3"
               >
                 <div className="min-w-0">

@@ -10,7 +10,13 @@ import type { TranslationKey } from "@/lib/i18n/types";
 /** Mutating-fetch result, narrowed by the caller. */
 export type PostResult =
   | { ok: true; data: Record<string, unknown> }
-  | { ok: false; code: string };
+  | {
+      ok: false;
+      code: string;
+      line?: { position: number; name: string; reason: string };
+      /** A menu promote refused AFTER its typed Spanish name saved (catalog Phase 3b, CC note 2 #3): the shop's own label changed. */
+      spanishNameSaved?: { settingId: string; locationId: string };
+    };
 
 /**
  * Mutating POST/PATCH/DELETE helper. Returns the parsed JSON body on success
@@ -39,13 +45,26 @@ export async function postJson(
       return { ok: true, data };
     }
     let code = "generic";
+    let line: { position: number; name: string; reason: string } | undefined;
+    let saved: { settingId: string; locationId: string } | undefined;
     try {
-      const parsed = (await res.json()) as { code?: string };
+      const parsed = (await res.json()) as {
+        code?: string; line?: { position?: unknown; name?: unknown; reason?: unknown }; spanishNameSaved?: { settingId?: unknown; locationId?: unknown };
+      };
       if (typeof parsed.code === "string") code = parsed.code;
+      // A refused recipe LINE (catalog Phase 3b, lead decision (b)): which one and why, for the page to name it.
+      const l = parsed.line;
+      if (l && typeof l.position === "number" && typeof l.name === "string" && typeof l.reason === "string") {
+        line = { position: l.position, name: l.name, reason: l.reason };
+      }
+      // A menu promote whose Spanish name saved but which did not happen (the menu page says so plainly).
+      const sv = parsed.spanishNameSaved;
+      if (sv && typeof sv.settingId === "string" && typeof sv.locationId === "string") saved = { settingId: sv.settingId, locationId: sv.locationId };
     } catch {
       // Non-JSON / opaque (e.g. 307 redirect) — fall through to generic.
     }
-    return { ok: false, code };
+    if (saved) return { ok: false, code, ...(line ? { line } : {}), spanishNameSaved: saved };
+    return line ? { ok: false, code, line } : { ok: false, code };
   } catch {
     return { ok: false, code: "generic" };
   }

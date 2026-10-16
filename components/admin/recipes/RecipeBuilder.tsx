@@ -35,6 +35,9 @@ import type { Readiness } from "@/lib/readiness";
 import { RegistrySelect } from "@/components/admin/skus/RegistrySelect";
 import type { RecipeView, RecipeInputView, RecipeOutputView, RecipeType } from "@/lib/recipes-shared";
 import { RECIPE_WRITE_MIN, RECIPE_DELETE_MIN } from "@/lib/recipes-shared";
+import { RECIPE_GLOBAL_WRITE_MIN } from "@/lib/recipe-versions-shared";
+import { recipeItemHref } from "@/lib/catalog/recipe-item-shared";
+import Link from "next/link";
 import type { RegistryOption } from "@/lib/admin/skus";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
@@ -123,6 +126,10 @@ export function RecipeBuilder({
   const send = useStepUpPost();
   const canEdit = level >= RECIPE_WRITE_MIN;
   const canDelete = level >= RECIPE_DELETE_MIN;
+  // Catalog Phase 3b (plan Task 11): a SAVED recipe's lines are the global default's, the Director of Operations'
+  // (8+). A GM changes its shop's version on the catalog page, so here its lines are read-only with the way
+  // forward. A NEW recipe (the draft) keeps its GM floor: creating a recipe is not versioned.
+  const canEditLines = recipe === null ? canEdit : level >= RECIPE_GLOBAL_WRITE_MIN;
 
   // ── LIVE mode: header patch state ──
   const [patchError, setPatchError] = useState<string | null>(null);
@@ -523,7 +530,8 @@ export function RecipeBuilder({
         measures={measures}
         activeMeasureLabels={activeMeasureLabels}
         unitRegistryOptions={unitRegistryOptions}
-        canEdit={canEdit}
+        canEdit={canEditLines}
+        shopVersionWay={recipe !== null && canEdit && !canEditLines}
         level={level}
         isDraft={recipe === null}
         onAddDraftInput={(di) => onAddDraftInput({ ...di, _key: nextKey() })}
@@ -655,6 +663,7 @@ function ConsumesSection({
   measures,
   activeMeasureLabels,
   canEdit,
+  shopVersionWay = false,
   isDraft,
   onAddDraftInput,
   onRemoveDraftInput,
@@ -673,6 +682,8 @@ function ConsumesSection({
   unitRegistryOptions: RegistryOption[];
   level: number;
   canEdit: boolean;
+  /** A GM on a SAVED recipe: the lines are read-only here; say so and link to its shop's version (no dead end). */
+  shopVersionWay?: boolean;
   isDraft: boolean;
   onAddDraftInput: (di: Omit<DraftInput, "_key">) => void;
   onRemoveDraftInput: (key: number) => void;
@@ -781,6 +792,17 @@ function ConsumesSection({
       onToggle={() => { if (!formInProgress) setSectionOpen((v) => !v); }}
     >
       <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.builder.consumes_subtitle"))}</p>
+      {shopVersionWay && recipeId ? (
+        <div className="mt-2 rounded-lg border-2 border-co-border bg-co-surface-inset p-3">
+          <p className="min-w-0 break-words text-sm text-co-text">{t("recipes.builder.lines_global_only")}</p>
+          <Link
+            href={recipeItemHref(recipeId)}
+            className="mt-2 inline-flex min-h-[44px] max-w-full items-center break-words rounded-lg border-2 border-co-gold-deep bg-co-surface px-3 text-sm font-bold text-co-text hover:border-co-text"
+          >
+            {t("recipes.builder.lines_change_shop")}
+          </Link>
+        </div>
+      ) : null}
 
       {/* Saved rows — each one edits in place */}
       {liveInputs.length > 0 ? (

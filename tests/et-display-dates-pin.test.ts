@@ -32,6 +32,12 @@ const FIXED_SITES = [
   "components/MidDayPhase2Form.tsx",
   "components/opening/OpeningPrepEntry.tsx",
   "lib/batch-prep-shared.ts",
+  // Catalog pages (2b SKU page fixed in 3b, CC note 9; the 3b pages were born on the ET helper).
+  "components/catalog/SkuItemClient.tsx",
+  "components/catalog/MenuItemClient.tsx",
+  "components/catalog/RecipeItemClient.tsx",
+  "components/catalog/ShopChangesClient.tsx",
+  "components/catalog/RecipeNoticesClient.tsx",
 ];
 
 const UTC_SLICE = /\.(?:slice|substring)\(\s*0\s*,\s*10\s*\)/;

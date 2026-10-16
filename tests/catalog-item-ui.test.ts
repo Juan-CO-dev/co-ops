@@ -1,4 +1,5 @@
 /** Catalog Phase 2b — the item page body: identity, version, connections, what's missing, sections, jobs, history (en + es). */
+import { readFileSync } from "node:fs";
 import { type ReactNode } from "react";
 import { jsx } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -144,3 +145,18 @@ describe("sim QA: no dead end at the global default", () => {
   });
 });
 
+
+describe("SkuItemClient dates are the operational (ET) day, never the UTC date (CC note 9)", () => {
+  const late = "2026-10-15T01:30:00Z"; // 9:30 PM on Oct 14 in DC
+  it("a door report filed late in the evening shows its ET day", () => {
+    const v: SkuItemView = { ...view, openRequests: [{ ...view.openRequests[0]!, filedAt: late, additions: [{ ...view.openRequests[0]!.additions[0]!, filedAt: late }] }] };
+    const html = render(jsx(SkuItemClient, { view: v, job: null, requestId: null }));
+    expect(html).toContain("Oct 14");
+    expect(html).not.toContain("Oct 15");
+  });
+  it("History's version and retire dates go through the same ET day helper (History mounts only when opened)", () => {
+    const src = readFileSync("components/catalog/SkuItemClient.tsx", "utf8");
+    expect(src).not.toContain("iso.slice(0, 10)");
+    expect(src).toContain("const day = (iso: string) => formatDateLabel(etDisplayDate(iso), language);");
+  });
+});

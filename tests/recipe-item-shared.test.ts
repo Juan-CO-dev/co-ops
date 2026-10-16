@@ -1,0 +1,318 @@
+/** Catalog Phase 3b — the recipe / menu-item pages' pure surface. */
+import { describe, expect, it } from "vitest";
+import {
+  historyLinkEndedSource, menuFormRevision, menuItemPageHref, noticesHref, pageClientKey, parseMenuChange, parseRecipeChange,
+  recipeChangeTarget, recipeItemHref, recipeVersionLabel, scopedPickerSkus, lineEditStale, SHOP_CHANGES_HREF,
+} from "@/lib/catalog/recipe-item-shared";
+import { shopParamNames } from "@/lib/shop-context-shared";
+import { ozForRecipeInput } from "@/lib/recipe-math";
+import { lineUnitChoices, lineUnitOptions } from "@/lib/recipe-line-shared";
+
+const R = "7d0c1f2e-0000-4000-8000-000000000001";
+const SHOP = "6f1d2c3e-0000-4000-8000-00000000000a";
+const V = "7d0c1f2e-0000-4000-8000-0000000000aa";
+const SKU = "7d0c1f2e-0000-4000-8000-000000000002";
+
+describe("links land on the item", () => {
+  it("recipe, menu item, notices, shop changes — plain, per shop, global", () => {
+    expect(recipeItemHref(R)).toBe(`/admin/catalog/recipe/${R}`);
+    expect(recipeItemHref(R, { shopId: SHOP })).toBe(`/admin/catalog/recipe/${R}?location=${SHOP}`);
+    expect(recipeItemHref(R, { shopId: null })).toBe(`/admin/catalog/recipe/${R}?location=global`);
+    expect(menuItemPageHref(R)).toBe(`/admin/catalog/menu-item/${R}`);
+    expect(menuItemPageHref(R, { shopId: SHOP })).toBe(`/admin/catalog/menu-item/${R}?location=${SHOP}`);
+    expect(noticesHref(SHOP)).toBe(`/admin/catalog/notices?location=${SHOP}`);
+    expect(noticesHref()).toBe("/admin/catalog/notices");
+    expect(SHOP_CHANGES_HREF).toBe("/admin/catalog/shop-changes");
+  });
+  it("the shop switcher's param is declared for both item pages and the notices page (Task 10, with its page)", () => {
+    expect(shopParamNames("/admin/catalog/notices")).toEqual(["location"]);
+    expect(shopParamNames(`/admin/catalog/recipe/${R}`)).toEqual(["location"]);
+    expect(shopParamNames(`/admin/catalog/menu-item/${R}`)).toEqual(["location"]);
+    // the bare prefix is not an item page
+    expect(shopParamNames("/admin/catalog/recipe/")).toEqual([]);
+  });
+  it("the client remounts per (kind, item, shop)", () => {
+    expect(pageClientKey("recipe", R, SHOP)).toBe(`recipe:${R}:${SHOP}`);
+    expect(pageClientKey("recipe", R, SHOP)).not.toBe(pageClientKey("recipe", R, null));
+    expect(pageClientKey("recipe", R, null)).not.toBe(pageClientKey("menu", R, null));
+  });
+  it("the menu form's revision moves with every committed change — back to default included (Astra 3b r1#6)", () => {
+    const item = { id: R, name: "Italian", nameEs: "Italiano", menuPrice: 12.5, section: "Subs" };
+    const own = { settingId: "s1", price: 13.5, soldHere: false, nameOverride: null, nameOverrideEs: null, name: "Italian", nameEs: "Italiano", typedPrice: 13.5 };
+    const back = { ...own, settingId: null, price: null, soldHere: true, typedPrice: 12.5 };
+    expect(menuFormRevision({ item, here: own })).not.toBe(menuFormRevision({ item, here: back }));
+    expect(menuFormRevision({ item, here: own })).toBe(menuFormRevision({ item, here: { ...own } }));
+    expect(menuFormRevision({ item: { ...item, menuPrice: 14 }, here: back })).not.toBe(menuFormRevision({ item, here: back }));
+    // a Spanish-only change moves it too
+    expect(menuFormRevision({ item, here: { ...own, nameOverrideEs: "Italiana" } })).not.toBe(menuFormRevision({ item, here: own }));
+  });
+});
+
+describe("what the header says", () => {
+  it("global, a shop on the default, a shop's own, a shop's adopted copy", () => {
+    expect(recipeVersionLabel({ scope: null, scopeName: null, hasOwn: false, adoptedFromShopName: null })).toEqual({ kind: "global" });
+    expect(recipeVersionLabel({ scope: SHOP, scopeName: "P Street", hasOwn: false, adoptedFromShopName: null })).toEqual({ kind: "shop_default", shop: "P Street" });
+    expect(recipeVersionLabel({ scope: SHOP, scopeName: "P Street", hasOwn: true, adoptedFromShopName: null })).toEqual({ kind: "shop_own", shop: "P Street" });
+    expect(recipeVersionLabel({ scope: SHOP, scopeName: "P Street", hasOwn: true, adoptedFromShopName: "Capitol Hill" })).toEqual({ kind: "shop_adopted", shop: "P Street", from: "Capitol Hill" });
+  });
+});
+
+describe("parseRecipeChange — the five recipe acts", () => {
+  const line = { componentSkuId: SKU, quantity: 5, unit: "oz" };
+  it("lines (shop or global), restore, back to default, adopt, promote", () => {
+    expect(parseRecipeChange({ kind: "lines", target: { kind: "shop", shopId: SHOP }, op: { kind: "add", line } })).toEqual({
+      ok: true,
+      change: {
+        kind: "lines", target: { kind: "shop", shopId: SHOP },
+        op: { kind: "add", line: { componentSkuId: SKU, componentItemId: null, componentProductId: null, quantity: 5, unit: "oz", eachContainerLabel: null, portioned: false } },
+      },
+    });
+    expect(parseRecipeChange({ kind: "lines", target: { kind: "global" }, op: { kind: "add", line } })).toMatchObject({ ok: true, change: { kind: "lines", target: { kind: "global" } } });
+    expect(parseRecipeChange({ kind: "restore", target: { kind: "shop", shopId: SHOP }, fromVersionId: V })).toEqual({ ok: true, change: { kind: "restore", target: { kind: "shop", shopId: SHOP }, fromVersionId: V } });
+    expect(parseRecipeChange({ kind: "back_to_default", shopId: SHOP })).toEqual({ ok: true, change: { kind: "back_to_default", shopId: SHOP } });
+    expect(parseRecipeChange({ kind: "adopt", shopId: SHOP, sourceVersionId: V })).toEqual({ ok: true, change: { kind: "adopt", shopId: SHOP, sourceVersionId: V } });
+    expect(parseRecipeChange({ kind: "promote", sourceVersionId: V })).toEqual({ ok: true, change: { kind: "promote", sourceVersionId: V } });
+  });
+  it("refuses an unknown kind, a non-uuid id, a bad target, a bad line — each with its own code", () => {
+    expect(parseRecipeChange(null)).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseRecipeChange([])).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseRecipeChange({ kind: "delete" })).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseRecipeChange({ kind: "adopt", shopId: "x", sourceVersionId: V })).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseRecipeChange({ kind: "promote", sourceVersionId: "x" })).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseRecipeChange({ kind: "restore", target: { kind: "shop", shopId: SHOP }, fromVersionId: "nope" })).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseRecipeChange({ kind: "lines", target: { kind: "elsewhere" }, op: { kind: "add", line } })).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseRecipeChange({ kind: "lines", target: { kind: "global" }, op: { kind: "add", line: { componentSkuId: SKU, quantity: -1 } } })).toEqual({ ok: false, code: "invalid_quantity" });
+    expect(parseRecipeChange({ kind: "lines", target: { kind: "global" }, op: { kind: "add", line: { quantity: 1 } } })).toEqual({ ok: false, code: "invalid_component" });
+  });
+  it("the save target of each act", () => {
+    expect(recipeChangeTarget({ kind: "back_to_default", shopId: SHOP })).toEqual({ kind: "shop", shopId: SHOP });
+    expect(recipeChangeTarget({ kind: "adopt", shopId: SHOP, sourceVersionId: V })).toEqual({ kind: "shop", shopId: SHOP });
+    expect(recipeChangeTarget({ kind: "promote", sourceVersionId: V })).toEqual({ kind: "global" });
+    expect(recipeChangeTarget({ kind: "restore", target: { kind: "global" }, fromVersionId: V })).toEqual({ kind: "global" });
+  });
+});
+
+describe("parseMenuChange — the four menu acts", () => {
+  it("save, back to default, restore, promote", () => {
+    expect(parseMenuChange({ kind: "save", shopId: SHOP, patch: { price: 13.5, soldHere: true } })).toEqual({ ok: true, change: { kind: "save", shopId: SHOP, patch: { price: 13.5, soldHere: true, nameOverride: null, nameOverrideEs: null } } });
+    expect(parseMenuChange({ kind: "back_to_default", shopId: SHOP })).toEqual({ ok: true, change: { kind: "back_to_default", shopId: SHOP } });
+    expect(parseMenuChange({ kind: "restore", shopId: SHOP, fromSettingId: V })).toEqual({ ok: true, change: { kind: "restore", shopId: SHOP, fromSettingId: V } });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["price"] })).toEqual({ ok: true, change: { kind: "promote", settingId: V, fields: ["price"] } });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["price", "name"] })).toEqual({ ok: true, change: { kind: "promote", settingId: V, fields: ["price", "name"] } });
+  });
+  it("refuses a promote of sold-here, an empty or repeated field list, a bad price, a bad name, an empty patch", () => {
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["sold_here"] })).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: [] })).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["price", "price"] })).toEqual({ ok: false, code: "invalid_payload" });
+    expect(parseMenuChange({ kind: "save", shopId: SHOP, patch: { price: -2, soldHere: true } })).toEqual({ ok: false, code: "invalid_menu_price" });
+    expect(parseMenuChange({ kind: "save", shopId: SHOP, patch: { nameOverride: 7 } })).toEqual({ ok: false, code: "invalid_name" });
+    expect(parseMenuChange({ kind: "save", shopId: SHOP, patch: { soldHere: true } })).toEqual({ ok: false, code: "empty_setting" });
+    expect(parseMenuChange({ kind: "save", shopId: "x", patch: { price: 13 } })).toEqual({ ok: false, code: "invalid_payload" });
+  });
+});
+
+describe("parseMenuChange — the promote's optional Spanish name (Astra chunk-1 review P2)", () => {
+  it("PRESERVES a typed Spanish name (trimmed) so it reaches preview and apply", () => {
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: "  Italiano grande " }))
+      .toEqual({ ok: true, change: { kind: "promote", settingId: V, fields: ["name"], nameEs: "Italiano grande" } });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["price", "name"], nameEs: "bad" }))
+      .toEqual({ ok: true, change: { kind: "promote", settingId: V, fields: ["price", "name"], nameEs: "bad" } });
+  });
+  it("blank or absent = not typed; over 120 characters or not text = invalid_name; with a price-only promote = invalid_payload", () => {
+    const blank = parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: "   " });
+    expect(blank).toEqual({ ok: true, change: { kind: "promote", settingId: V, fields: ["name"] } });
+    expect(blank.ok && blank.change.kind === "promote" && "nameEs" in blank.change).toBe(false);
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: "x".repeat(120) }).ok).toBe(true);
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: "x".repeat(121) })).toEqual({ ok: false, code: "invalid_name" });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["name"], nameEs: 7 })).toEqual({ ok: false, code: "invalid_name" });
+    expect(parseMenuChange({ kind: "promote", settingId: V, fields: ["price"], nameEs: "Italiano" })).toEqual({ ok: false, code: "invalid_payload" });
+  });
+  it("a shop save may use the literal name \"bad\" (the sentinel class of Astra's P3)", () => {
+    expect(parseMenuChange({ kind: "save", shopId: SHOP, patch: { nameOverride: "bad", nameOverrideEs: "bad" } }))
+      .toEqual({ ok: true, change: { kind: "save", shopId: SHOP, patch: { price: null, soldHere: true, nameOverride: "bad", nameOverrideEs: "bad" } } });
+  });
+});
+
+describe("an open edit keeps its baseline across a refresh (Astra 3b r5#1; lead decision: previews bind the change, Start over)", () => {
+  const seen = { componentSkuId: "s1", componentItemId: null, componentProductId: null, quantity: 4, unit: "oz", eachContainerLabel: null, portioned: false };
+  it("a changed line under the edit is stale; the same line is not", () => {
+    expect(lineEditStale(seen, { ...seen })).toBe(false);
+    expect(lineEditStale(seen, { ...seen, quantity: 5 })).toBe(true);
+    expect(lineEditStale(seen, { ...seen, unit: "lb" })).toBe(true);
+    expect(lineEditStale(seen, { ...seen, portioned: true })).toBe(true);
+  });
+});
+
+describe("History reads the RECORDED end of an adoption link (lead decision: adoption_ended_from_version_id only)", () => {
+  const byId = new Map<string, { locationId: string | null; adoptedFromVersionId: string | null }>([
+    ["src", { locationId: "shop-src", adoptedFromVersionId: null }],
+    ["copy", { locationId: "shop-here", adoptedFromVersionId: "src" }],
+    ["plain", { locationId: "shop-here", adoptedFromVersionId: null }],
+  ]);
+  it("a row that ended a link names the source shop; any other row names nothing", () => {
+    expect(historyLinkEndedSource({ adoptionEndedFromVersionId: "copy" }, byId)).toBe("shop-src");
+    expect(historyLinkEndedSource({ adoptionEndedFromVersionId: null }, byId)).toBeNull();
+    expect(historyLinkEndedSource({ adoptionEndedFromVersionId: "plain" }, byId)).toBeNull();
+    expect(historyLinkEndedSource({ adoptionEndedFromVersionId: "unknown" }, byId)).toBeNull();
+  });
+});
+
+describe("the picker speaks the SHOP's pack (Astra 3b r4#1)", () => {
+  const measures = new Map([["lb", { dimension: "weight" as const, toBaseFactor: 16 }]]);
+  const sku = { id: "s1", name: "Turkey", vendorName: null, packFormat: "case", eachContainerLabel: null, unitsPerPack: 1, eachSize: 30, eachMeasure: "lb", avgOzPerEach: null };
+  const caseOf = (lb: number, label = "case") => [{ id: "c", label, containsQty: lb, containsLevelId: null, containsMeasureUnit: "lb", displayOrdinal: 0 }];
+  it("the shop's 40 lb case converts to 640 oz in the editor where the default's 30 lb gives 480 — the numbers the preview uses", () => {
+    const [shop] = scopedPickerSkus([sku], new Map([["s1", { levels: caseOf(40) }]]));
+    const [global] = scopedPickerSkus([sku], new Map([["s1", { levels: caseOf(30) }]]));
+    expect(ozForRecipeInput(1, "case", shop!, measures)).toBe(640);
+    expect(ozForRecipeInput(1, "case", global!, measures)).toBe(480);
+    expect(scopedPickerSkus([sku], new Map())[0]!.packChain).toBeNull(); // no chain → the flat fields, as before
+    expect(scopedPickerSkus([sku], new Map([["s1", { levels: [] }]]))[0]!.packChain).toBeNull();
+  });
+  it("the shop's own container labels are the ones offered", () => {
+    const [shop] = scopedPickerSkus([sku], new Map([["s1", { levels: caseOf(40, "crate") }]]));
+    const choices = lineUnitChoices("sku", shop!, ["oz", "lb"], null);
+    expect(choices).toEqual(["crate", "lb", "oz"]);
+    expect(lineUnitChoices("sku", sku, ["oz", "lb"], null)).toEqual(["case", "lb", "oz"]); // unchained: the flat labels, unchanged
+    expect(lineUnitOptions("sku", shop!, ["oz", "lb"], new Set(), null, "crate").choices).toContain("crate");
+  });
+});
+
+describe("every refusal on the recipe page has its OWN message, never the generic one (house rule)", () => {
+  it("the page-scoped family first, else catalog.error.<code>; only an unknown code is generic", async () => {
+    const { recipeErrorKey } = await import("@/lib/catalog/recipe-item-shared");
+    const { RECIPE_VERSION_ERROR_CODES } = await import("@/lib/recipe-versions-shared");
+    const { RECIPE_PAGE_ERROR_CODES } = await import("@/lib/catalog/recipe-item-shared");
+    const en = (await import("@/lib/i18n/en.json")).default as Record<string, string>;
+    const es = (await import("@/lib/i18n/es.json")).default as Record<string, string>;
+    for (const code of [...RECIPE_VERSION_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES, "step_up_required", "step_up_stale"]) {
+      const key = recipeErrorKey(code);
+      expect(key, code).not.toBe("catalog.recipe.error.generic");
+      expect(en[key], `${code} → ${key} (en)`).toBeTruthy();
+      expect(es[key], `${code} → ${key} (es)`).toBeTruthy();
+    }
+    expect(recipeErrorKey("line_changed")).toBe("catalog.recipe.error.line_changed");
+    expect(recipeErrorKey("truncate_refused")).toBe("catalog.error.truncate_refused");
+    expect(recipeErrorKey("promote_not_done")).toBe("catalog.error.promote_not_done");
+    expect(recipeErrorKey("no_such_code")).toBe("catalog.recipe.error.generic");
+  });
+});
+
+describe("every refusal on the menu item page has its OWN message, never the generic one (house rule)", () => {
+  it("the page-scoped catalog.menu.error.* first, else catalog.error.<code>; only an unknown code is generic", async () => {
+    const { menuErrorKey, RECIPE_PAGE_ERROR_CODES } = await import("@/lib/catalog/recipe-item-shared");
+    const { MENU_ITEM_SHOP_ERROR_CODES } = await import("@/lib/menu-item-shop-shared");
+    const en = (await import("@/lib/i18n/en.json")).default as Record<string, string>;
+    const es = (await import("@/lib/i18n/es.json")).default as Record<string, string>;
+    for (const code of [...MENU_ITEM_SHOP_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES, "step_up_required", "step_up_stale"]) {
+      const key = menuErrorKey(code);
+      expect(key, code).not.toBe("catalog.menu.error.generic");
+      expect(en[key], `${code} → ${key} (en)`).toBeTruthy();
+      expect(es[key], `${code} → ${key} (es)`).toBeTruthy();
+    }
+    expect(menuErrorKey("global_changed")).toBe("catalog.menu.error.global_changed");
+    expect(menuErrorKey("invalid_price")).toBe("catalog.error.invalid_price");
+    expect(menuErrorKey("promote_not_done")).toBe("catalog.error.promote_not_done");
+    expect(menuErrorKey("nothing_changed")).toBe("catalog.error.nothing_changed");
+    expect(menuErrorKey("no_such_code")).toBe("catalog.menu.error.generic");
+  });
+});
+
+describe("the menu form's baseline (lead decision: a refresh keeps the draft's ORIGINAL baseline; if it moved, show it and offer Start over)", () => {
+  const was = { settingId: "ms1", price: 13.5, soldHere: true, nameOverride: null, nameOverrideEs: null };
+  it("the draft is the committed row as the form shows it", async () => {
+    const { menuDraftFrom } = await import("@/lib/catalog/recipe-item-shared");
+    expect(menuDraftFrom(was)).toEqual({ price: "13.5", soldHere: true, name: "", nameEs: "" });
+    expect(menuDraftFrom({ ...was, price: null, nameOverride: "Big", nameOverrideEs: "Grande" })).toEqual({ price: "", soldHere: true, name: "Big", nameEs: "Grande" });
+  });
+  it("names every field of the shop's row that moved — and nothing when only the row id changed", async () => {
+    const { menuRowMoves } = await import("@/lib/catalog/recipe-item-shared");
+    expect(menuRowMoves(was, { ...was, settingId: "ms2", price: 14, nameOverrideEs: "Grande" })).toEqual([
+      { field: "price", before: 13.5, after: 14 },
+      { field: "nameEs", before: null, after: "Grande" },
+    ]);
+    expect(menuRowMoves(was, { ...was, soldHere: false, nameOverride: "Big" })).toEqual([
+      { field: "soldHere", before: true, after: false },
+      { field: "name", before: null, after: "Big" },
+    ]);
+    expect(menuRowMoves(was, { ...was, settingId: "ms2" })).toEqual([]);
+  });
+  it("keeps the draft only when the person typed something AND the row moved under it; a save of their own always follows", async () => {
+    const { keepMenuDraft, menuDraftFrom } = await import("@/lib/catalog/recipe-item-shared");
+    const now = { ...was, settingId: "ms2", price: 14 };
+    const typed = { ...menuDraftFrom(was), name: "Big Italian" };
+    expect(keepMenuDraft({ draft: typed, was, now, follow: false })).toBe(true);
+    // untouched form → follow the new row (nothing of theirs is lost)
+    expect(keepMenuDraft({ draft: menuDraftFrom(was), was, now, follow: false })).toBe(false);
+    // the draft already IS the new row (e.g. their own save landed)
+    expect(keepMenuDraft({ draft: menuDraftFrom(now), was, now, follow: false })).toBe(false);
+    // their own act just saved (save, back to default, restore, promote) → always follow the committed row (Astra 3b r1#6)
+    expect(keepMenuDraft({ draft: typed, was, now, follow: true })).toBe(false);
+    // only the global values moved (the shop row did not) → the draft stays valid, no conflict to show
+    expect(keepMenuDraft({ draft: typed, was, now: { ...was }, follow: false })).toBe(false);
+    // whitespace is not a change
+    expect(keepMenuDraft({ draft: { ...menuDraftFrom(was), price: " 13.5 " }, was, now, follow: false })).toBe(false);
+  });
+});
+
+describe("one refusal-key map for both item pages (CC note 5 #3)", () => {
+  it("recipeErrorKey and menuErrorKey are the shared pageErrorKey; the same code reads in each page's own family", async () => {
+    const { pageErrorKey, recipeErrorKey, menuErrorKey } = await import("@/lib/catalog/recipe-item-shared");
+    const en = (await import("@/lib/i18n/en.json")).default as Record<string, string>;
+    const es = (await import("@/lib/i18n/es.json")).default as Record<string, string>;
+    for (const code of ["forbidden", "preview_stale", "dependencies_busy", "promote_not_done", "no_such_code"]) {
+      expect(recipeErrorKey(code)).toBe(pageErrorKey("recipe", code));
+      expect(menuErrorKey(code)).toBe(pageErrorKey("menu", code));
+    }
+    expect(pageErrorKey("recipe", "forbidden")).toBe("catalog.recipe.error.forbidden");
+    expect(pageErrorKey("menu", "forbidden")).toBe("catalog.menu.error.forbidden");
+    for (const key of [pageErrorKey("recipe", "x"), pageErrorKey("menu", "x")]) {
+      expect(en[key], key).toBeTruthy();
+      expect(es[key], key).toBeTruthy();
+    }
+  });
+});
+
+describe("a line keeps its identity across a shop save (Astra chunks 3-4 P2 #1: 0262 copies lines with NEW ids, source_line_id = the old)", () => {
+  it("lineLineage walks source_line_id back, nearest first, stopping at a line outside this shop (the default's input) or a loop", async () => {
+    const { lineLineage } = await import("@/lib/catalog/recipe-item-shared");
+    const sourceOf = new Map<string, string | null>([["v3-a", "v2-a"], ["v2-a", "v1-a"], ["v1-a", "ri-a"], ["loop-1", "loop-2"], ["loop-2", "loop-1"], ["fresh", null]]);
+    expect(lineLineage("v3-a", sourceOf)).toEqual(["v2-a", "v1-a", "ri-a"]);
+    expect(lineLineage("fresh", sourceOf)).toEqual([]);
+    expect(lineLineage("loop-1", sourceOf)).toEqual(["loop-2"]);
+    expect(lineLineage("unknown", sourceOf)).toEqual([]);
+  });
+  it("an edit opened on the old id still finds its line after another manager's save; the row key does not change", async () => {
+    const { recipeLineMatches, recipeLineKeys } = await import("@/lib/catalog/recipe-item-shared");
+    const before = [{ lineId: "v1-a", lineage: ["ri-a"] }, { lineId: "v1-b", lineage: ["ri-b"] }];
+    const after = [{ lineId: "v2-a", lineage: ["v1-a", "ri-a"] }, { lineId: "v2-b", lineage: ["v1-b", "ri-b"] }, { lineId: "v2-new", lineage: [] }];
+    expect(after.filter((l) => recipeLineMatches(l, "v1-a")).map((l) => l.lineId)).toEqual(["v2-a"]);
+    expect(recipeLineMatches(after[0]!, "v2-a")).toBe(true);
+    expect(recipeLineMatches(after[1]!, "v1-a")).toBe(false);
+    expect(recipeLineKeys(before)).toEqual(["ri-a", "ri-b"]);
+    expect(recipeLineKeys(after)).toEqual(["ri-a", "ri-b", "v2-new"]);
+    // a duplicated root never yields two equal keys
+    expect(recipeLineKeys([{ lineId: "x1", lineage: ["r"] }, { lineId: "x2", lineage: ["r"] }])).toEqual(["r", "x2"]);
+  });
+});
+
+describe("the Shop changes list: a preview belongs to the row as it was when previewed (mirrors the pages' Preview again)", () => {
+  it("a row's revision moves with anything the preview showed — the shop's lines, its price or names, the default it is compared with", async () => {
+    const { shopChangeRowRevision } = await import("@/lib/catalog/recipe-item-shared");
+    const menu = {
+      menuItemId: R, menuItemName: "Italian", settingId: "s1", shopId: SHOP, shopName: "P Street", validFrom: "2026-10-14T00:00:00Z",
+      createdByName: "Ana", price: 13.5, soldHere: true, nameOverride: null, nameOverrideEs: null, global: { price: 12.5, name: "Italian", nameEs: "Italiano" },
+    };
+    expect(shopChangeRowRevision(menu)).toBe(shopChangeRowRevision({ ...menu }));
+    expect(shopChangeRowRevision({ ...menu, global: { ...menu.global, price: 13 } })).not.toBe(shopChangeRowRevision(menu));
+    expect(shopChangeRowRevision({ ...menu, nameOverrideEs: "Grande" })).not.toBe(shopChangeRowRevision(menu));
+    const recipe = {
+      recipeId: R, recipeName: "Italian", versionId: V, shopId: SHOP, shopName: "P Street", validFrom: "2026-10-14T00:00:00Z",
+      createdByName: "Ana", adoptedFromShopName: null, changes: [], sameAsDefault: true,
+    };
+    const moved = { ...recipe, sameAsDefault: false, changes: [{ kind: "removed" as const, key: "sku:x", before: null, after: null }] };
+    expect(shopChangeRowRevision(moved)).not.toBe(shopChangeRowRevision(recipe));
+    // the name of who made it is not part of what a preview binds
+    expect(shopChangeRowRevision({ ...recipe, createdByName: "Bo" })).toBe(shopChangeRowRevision(recipe));
+  });
+});
