@@ -31,7 +31,16 @@ The finding-by-finding map is **"Changes from r1"** at the end.
 - **Budgets (P2).** Precedence is per date.
 - **Suggestions (P2).** Matched weekdays estimate a ratio only, applied to a complete 7-day base.
 
-The finding-by-finding map is **"Changes from r2"** at the very end.
+The finding-by-finding map is **"Changes from r2"** near the end.
+
+**r4 (2026-10-16) answers Astra's round 3** (CHANGES REQUESTED, narrow: 1 P1 + 3 P2 + 1 P3). Her independent recompute of the A/B/flat arithmetic passed. CC's rulings: `05-BRIDGE/from-cc/GO-coops-scheduling-p2-plan-r4-2026-10-16.md`. What changed:
+- **Every `unresolved_search` gap blocks Approve**, including inherited ones.
+- **The snapshot persists the complete derived quarter-hour need grid**, and replay makes no live reads.
+- **Suggestions:** unmatched dates keep their reference hours exactly, the ratio and negative deltas touch only matched dates, and matched dates are clamped at their minimum crew hours.
+- **Zero demand has a finite, exact rule:** an all-zero forecast gives the minimum crew; a zero weighted sum gives an even split.
+- **Stale examples reconciled:** `GapCause` lists all its causes, the 13:30 requirement is gone, and `rushShiftMaxQ` is display-only.
+
+The map is **"Changes from r3"** at the very end.
 
 
 **Goal.** CO-OPS proposes each shop's week and the manager tunes it on a phone-first board. Every number and every reason is in view, and nothing leaves CO-OPS: the push to 7shifts is Phase 3. Concretely:
@@ -89,7 +98,7 @@ The board shows none of these controls. The validator still carries the call-out
 - **Revisions, not mutations.** A week is a head pointer over append-only revisions. Each revision is a full snapshot of shifts, days (with their validation context) and declared gaps: generate, regenerate and edit each write one. Approval (r2) is a separate append-only fact naming a snapshot, so the snapshot contract has no exception. "What changed" is a pure diff of two snapshots. "Never silently overwrite an edited week" is enforced in SQL by the revision writer, not only in the UI.
 - **Deny-all DB, permissions in the lib.** Every new table has RLS on, no user policies, and a 0257 service-role ceiling. The stateful tables are SELECT-only and written by SECURITY DEFINER RPCs (the accepted Phase 1 posture). Shop bind and role rules live in `lib/scheduling/access-shared.ts` and run before any I/O. The SQL writers re-check actor, shop and subject.
 - **Dormant by default.** A per-shop switch `schedule_shop_settings.enabled` (default off) gates the board, the cron and every writer. No row means off.
-- **Original validation vs current inputs (r3, P2-4).** Each revision stores a compact JSON snapshot of the RuleContext inputs it actually used (`schedule_revision_contexts`): roster, work types, leader settings, cover lists, assumed availability, positions, per-date budgets, closing minutes and the demand kind. A digest alone is never enough. **Original validation** replays every day against the snapshot of that day's origin revision, so a saved revision validates identically forever. A separate **current-inputs advisory** (`contextAdvisory(snapshot, live)`) lists what changed since. Examples: "Tess is no longer a member", "Ana's Thursday availability changed", "the budget for Oct 28 changed 62 → 58 h", "a newly qualified person could now fill the eligibility gap Thu 2–6 PM — regenerate?". The advisory never alters the original verdict.
+- **Original validation vs current inputs (r3, P2-4).** Each revision stores a compact JSON snapshot of the RuleContext inputs it actually used (`schedule_revision_contexts`): roster, work types, leader settings, cover lists, assumed availability, positions, per-date budgets, closing minutes, the demand kind, and (r4) the complete derived quarter-hour need grid with the day type, its override source and the catering-derived need. A digest alone is never enough. **Original validation** replays every day against the snapshot of that day's origin revision, so a saved revision validates identically forever. A separate **current-inputs advisory** (`contextAdvisory(snapshot, live)`) lists what changed since. Examples: "Tess is no longer a member", "Ana's Thursday availability changed", "the budget for Oct 28 changed 62 → 58 h", "a newly qualified person could now fill the eligibility gap Thu 2–6 PM — regenerate?". The advisory never alters the original verdict.
 - **History is preserved, never re-judged (r2, P1-3).** A day before today is carried forward byte-identical along with the validation context it was saved under. Its problems are "inherited". Current eligibility (an active person, a live position) applies only to new or changed future assignments, in the lib AND in SQL.
 
 **Tech stack:** Next.js 16.2.4 App Router (page `params`/`searchParams` are Promises), React 19.2.4, TypeScript strict + `noUncheckedIndexedAccess`, Tailwind v4 tokens, Supabase (service role), vitest 4 (node env; UI tests render with `react-dom/server`), PGlite harnesses.
@@ -253,7 +262,7 @@ Step-up refusals reuse the shipped `step_up_required` / `step_up_stale`.
 | | | `schedule_revision_shifts` (`revision_id, location_id, user_id, business_date, start_q, end_q, segments jsonb CHECK valid_schedule_segments(segments, start_q, end_q), closing_manager bool, flex bool, pinned bool, reasons jsonb`; UNIQUE (revision_id, user_id, business_date, start_q); composite FK (revision_id, location_id)) | append-only (immutable) | SELECT |
 | | | **r2 (P1-3):** `schedule_revision_days` (`revision_id, location_id, business_date, origin_revision_id` = the revision in which this day's content was last CHANGED, `structure_version_id` = the context it was validated under at its origin, `inherited bool` (true when the day was copied unchanged from the head), `problems jsonb` = the COMPLETE problem list for that day under its origin context (not truncated); UNIQUE (revision_id, business_date)). | append-only (immutable) | SELECT |
 | | | **r2 (P2-5):** `schedule_revision_gaps` (`revision_id, location_id, business_date, code 'coverage_gap'/'mod_missing'/'closing_manager_missing', position_id uuid null, from_q, to_q, cause 'budget'/'floor_limit'/'eligibility'/'availability'/'capacity'/'structure'/'unresolved_search' (r3), certificate jsonb` (the cause-specific evidence, see "Gap certificates"), `origin_revision_id`; UNIQUE (revision_id, business_date, code, coalesce(position_id, nil uuid), from_q)). These are the complete `DeclaredGap[]`, independent of the 50-row display summary. | append-only (immutable) | SELECT |
-| | | **r3 (P2-4):** `schedule_revision_contexts` (`revision_id` PK, `location_id`, `context jsonb` CHECK object and ≤ 262144 bytes, `context_digest text`): the compact JSON snapshot of the RuleContext inputs ACTUALLY USED when that revision's changed days were validated — roster (userId, role, active member, work type, also-allowed, leader setting, cover positions, salaried, presenceOnly, roster_include), assumed availability per person × date (window + source), positions (id, active, station active, role, window, head limits, allowed roles), the per-date budgets with their composition, the closing minutes used, and the demand kind + day totals. A day's ORIGINAL validation replays against the context of its `origin_revision_id`. The digest is kept for quick comparison, never as a substitute. | append-only (immutable) | SELECT |
+| | | **r3 (P2-4):** `schedule_revision_contexts` (`revision_id` PK, `location_id`, `context jsonb` CHECK object and ≤ 262144 bytes, `context_digest text`): the compact JSON snapshot of the RuleContext inputs ACTUALLY USED when that revision's changed days were validated — roster (userId, role, active member, work type, also-allowed, leader setting, cover positions, salaried, presenceOnly, roster_include), assumed availability per person × date (window + source), positions (id, active, station active, role, window, head limits, allowed roles), the per-date budgets with their composition, the closing minutes used, and the demand kind + day totals. **r4 (P2): the COMPLETE derived quarter-hour need grid per changed date** — `need[positionId][q]` for every position, plus `lineTotal_q`, `minHeads(q)`, `maxHeads(q)`, and the provenance of each need (wave/shape, closing crew, BOH crew, catering) — together with the inputs that produced it: the hourly forecast `d_h` used, the day type AND its source (manager override / weekend / forecast thresholds), the override row id, the catering events used (id, headcount, event time or default window), and the shape note (normal / zero_demand / zero_profile). A day's ORIGINAL validation replays against the context of its `origin_revision_id` **using only the snapshot: no live read of demand, overrides, catering, structure or people**. The digest is kept for quick comparison, never as a substitute. | append-only (immutable) | SELECT |
 | | | **r2:** `schedule_week_approvals` (append-only: `week_id, location_id, revision_id` (the approved snapshot), `approved_by, approved_at`). `schedule_weeks.approved_revision_id` is the newest approval. Approval copies nothing because it is not a revision: it NAMES an existing full snapshot. | append-only | SELECT |
 | | | `commit_schedule_revision(p_actor, p_location, p_week_start, p_expected_head, p_kind, p_structure_version, p_shifts jsonb, p_days jsonb, p_gaps jsonb, p_context jsonb, p_meta jsonb)`, `approve_schedule_week(p_actor, p_location, p_week_start, p_expected_head)`, `valid_schedule_segments(jsonb, int, int)`, `valid_gap_certificate(text, jsonb)` | SECURITY DEFINER / immutable | — |
 | | | re-emit `claim_cron_route(text)` + `cron_route_leases_job_check` with `'schedule-draft'` | function | EXECUTE service_role only |
@@ -295,7 +304,8 @@ Step-up refusals reuse the shipped `step_up_required` / `step_up_stale`.
 -- 10. insert revision + shifts + days + gaps + context; update schedule_weeks.head_revision_id; return {revision_id, week_id, kind}
 --
 -- approve_schedule_week: lock as above; head = p_expected_head (head_moved); no day of the head has an error-class
---   problem that is NOT inherited (rules_failing); no non-inherited gap row has cause 'unresolved_search' (unresolved_gaps, r3);
+--   problem that is NOT inherited (rules_failing); r4 (P1): NO gap row of the head, inherited OR not, has cause
+--   'unresolved_search' (unresolved_gaps). The inherited-error exemption NEVER covers unresolved gaps;
 --   insert schedule_week_approvals; set approved_revision_id. No revision row.
 ```
 
@@ -363,7 +373,7 @@ I also confirmed the defaults the mockup ships:
 
 - **`unresolved_search` is shown AMBER on the board** ("No fill found within the search limit — you may find one: try {candidates}").
 - It is counted in "What changed" and listed in the rules badge as a gap needing a person.
-- **Approve refuses while one exists** (`unresolved_gaps`, en + es). This holds in the lib and in SQL: `approve_schedule_week` counts the head's gap rows with `cause = 'unresolved_search'` on non-inherited days.
+- **Approve refuses while one exists** (`unresolved_gaps`, en + es). This holds in the lib and in SQL. **r4 (P1):** `approve_schedule_week` counts ALL of the head's gap rows with `cause = 'unresolved_search'`, inherited or not. The inherited-error exemption (which lets an earlier rule break on a kept day pass Approve) never applies to an unresolved gap: someone must fill it, or a rebuild must prove it.
 - It is never an error, and it never throws.
 
 **"No feasible insertion into THIS allocation" ≠ "unfillable".** Before declaring any gap other than `eligibility`, `structure` or `capacity`, the generator runs the bounded repair search (generator step 9a). `checkCertificate` for `availability` / `floor_limit` re-checks against the FINAL allocation. A gap whose only blocker is a person who could be moved cannot certify as availability or floor limit: when search did not find the move, it is `unresolved_search`, not a false proof.
@@ -410,6 +420,9 @@ The phases mirror the mockup's `buildDay` / `templatesFor` / `enforcePriority`. 
    **The rule:**
    1. **Hourly → quarter is a STEP.** Each quarter q inherits its hour's demand `d_{h(q)}` (all four quarters of hour h take the same value). There is no interpolation, so a peak lands on an hour boundary (12:00, 13:00), never at 13:30. r2's "13:30 peak" fixture is corrected to whole-hour peaks.
    2. **Demand-weighted profile:** `c_q = W_q × d_{h(q)} / d̄`, where `d̄` = the mean of `d_h` over the hours the line is open that day. With `no_history`, `d_h` is flat.
+      - **r4 — zero mean demand.** When `DemandResult` is `ok` but every `d_h` in the open hours is 0 (`d̄ = 0`), no division runs: `heads_q = minHeads(q)` (the structural floor from `lineMinHeads`, i.e. the minimum crew). The board notes, en + es: "No sales forecast for this day: minimum crew" / "No hay pronóstico de ventas para este día: equipo mínimo" (shape note `zero_demand`).
+      - **r4 — zero weighted-profile sum.** When `d̄ > 0` but `Σ_q c_q = 0` (demand falls only where the wave profile is 0), no division by Σc runs: the target quarter-heads `T / 0.25` are spread EVENLY over the open line quarters, `heads_q = clamp(round_half_up((T / 0.25) / N_open), minHeads(q), maxHeads(q))` (shape note `zero_profile`).
+      - Both are finite for every valid input, never throw, and are pinned by exact fixtures (below).
    3. **Heads per quarter:** `heads_q = clamp(round_half_up(c_q / Σ_q c_q × T / 0.25), minHeads(q), maxHeads(q))`. The share is `c_q / Σc`, and `T / 0.25` converts target line hours into quarter-heads.
    4. **The flat-curve rule (stated, and tested exactly):** when `d_h` is constant, `c_q = W_q`, so `heads_q = round(W_q / ΣW × ΣW) = W_q`, which is within [min, max] by validation. **A flat curve reproduces the configured setup / service / rush waves exactly**, in counts and in arrival times, and so reproduces r1's grid.
    5. **Arrivals:** a wave arrives at every quarter where `heads_q` rises. Line heads leave where it falls: secondary positions first (§5.7), never below `minHeads`. The need grid holds `lineTotal_q = heads_q` plus each line position's [min, max]. The template step (5) still chooses WHICH line position takes each extra head (the mockup's most-deficient-position rule with priority), so the flat case is byte-identical to r1.
@@ -423,6 +436,10 @@ The phases mirror the mockup's `buildDay` / `templatesFor` / `enforcePriority`. 
    - **Day B:** `d/d̄` = 0.8 / 0.8 / 1.6 / 0.8 → `c` = 1.6 / 2.4 / 4.8 / 1.6 → Σc = 41.6 → 1.538 / 2.308 / 4.615 / 1.538 → round 2 / 2 / 5 / 2 → clamp = **2 / 2 / 4 / 2**.
    - **Flat:** `c = W` → **2 / 3 / 3 / 2** (the configured waves).
    - **Result:** A's rush (+2 heads) arrives at **12:00** and leaves at 13:00; B's arrives at **13:00** and leaves at 14:00. The two days have equal totals and different shapes. Line hours: A = 10, B = 10, flat = 10.
+
+   **The zero-demand fixtures, worked (r4; F14 and F15 are frozen only with these numbers):**
+   - **(F14) all-zero forecast:** the same setup as above (minHeads 2, maxHeads 4, W = 2/3/3/2), with demand `ok` and $0 / $0 / $0 / $0 → `d̄ = 0` → heads = **2 / 2 / 2 / 2** = minHeads. Line hours = 8 (< T = 10; the reason shows it), note `zero_demand`.
+   - **(F15) zero weighted-profile sum:** line window 11:00–15:00 with ONLY secondary positions open (Walk-ins 0/1, Expeditor 0/1 → minHeads 0, maxHeads 2). The wave profile is W = 0 / 2 / 2 / 0 per hour (ΣW = 16 quarter-heads, T = 4 h). Demand is $400 / $0 / $0 / $400 → d̄ = $200 > 0 → c = 0 / 0 / 0 / 0 → Σc = 0 → even split: (T / 0.25) / N_open = 16 / 16 = 1 → clamp [0, 2] = **1 / 1 / 1 / 1**. Line hours = 4 (= T), note `zero_profile`.
 
    Every shaped number becomes a reason param ("Rush at 12:00 — the busiest hour ($400 forecast)"). The need grid (Task 4) consumes the shaped totals.
 4. **The need grid** (`need-shared.ts`). Per position × 15-min slot it holds the required heads:
@@ -496,7 +513,10 @@ The panel also lists "who else could cover" (eligible members on shift, with ski
 - **The reference week** = the most recent ISO week that has fully ended before `asOf` and whose head revision covers all 7 days (a COMPLETE hours base: `refHoursByWeekday[1..7]`, the hourly hours scheduled per weekday). Its budget (if any) is shown for context only.
 - **The ratio.** `ρ = fcSales(M, target) / refSales(M, reference)`, where M = the weekdays captured in the reference (all 7 when fully captured; otherwise the matched captured weekdays, and the reason says "demand compared on Mon–Thu only").
   - Refused (`suggestion_unavailable`, with its errand) when `refSales(M) ≤ 0`, M is empty, demand is not `ok`, or the reference has no complete hours base.
-- **The ratio is applied to the COMPLETE weekly base** — never to the matched days alone. Per date: `suggested(d) = refHoursByWeekday[dow(d)] × ρ + cateringDelta(d) + structureDelta(d)`, rounded to 0.25 h. The week total is Σ over all 7 dates. **Unmatched days are never shrunk or removed: they carry their reference hours × ρ.**
+- **The suggestion is per date over the COMPLETE 7-day base, and (r4) ρ touches only MATCHED dates:**
+  - **matched date** d (its weekday is in M): `suggested(d) = max(refHoursByWeekday[dow(d)] × ρ + cateringDelta(d) + structureDelta(d), minCrewHours(d))`, where `minCrewHours(d)` = the hours of the structural minimum crew that day (BOH floor + `lineMinHeads` + closing crew + salaried-excluded). When the clamp binds, the reason says so: "Mon held at its minimum crew, 34 h";
+  - **unmatched date:** `suggested(d) = refHoursByWeekday[dow(d)] + max(0, cateringDelta(d)) + max(0, structureDelta(d))`. Its reference hours are kept EXACTLY; the ratio is never applied, and negative deltas are never applied (only additions, such as booked catering);
+  - every date is rounded to 0.25 h, and the week total is Σ over all 7 dates. When the reference was fully captured, every date is matched.
 - **Reference-relative deltas, per date:**
   - catering = the target date's catering-rule hours − the catering-rule hours that were on the same weekday of the reference (from that revision's reasons);
   - structure = the need-grid hours under the live structure − under the reference revision's `structure_version_id`, both over the target forecast.
@@ -504,6 +524,11 @@ The panel also lists "who else could cover" (eligible members on shift, with ski
 - **Deadband:** no suggestion when |suggested total − the target week's current budget total| < 2 h (a structure setting).
 - **Accept** writes a `week` entry with `source: accepted_suggestion`, the digest, and the per-date amounts. **Keep** writes a `schedule.budget_kept` audit row so that digest stays quiet.
 - **Test (r3):** unchanged demand (ρ = 1) with partial capture (Mon–Thu captured; reference hours Mon–Thu 160 h, Fri–Sun 120 h) → the suggestion is 280 h, NOT 160 h. Accepting it leaves Fri–Sun with 120 h of budget (the unmatched days' hours are kept).
+- **Fixture (r4, F16) — ρ = 0.8 through acceptance:**
+  - **Setup:** reference 40 h on each day (Mon–Thu matched 160 h, Fri–Sun unmatched 120 h); target matched sales = 0.8 × the reference matched sales → ρ = 0.8; zero deltas; Monday's minimum crew is 34 h, other days ≤ 32 h.
+  - **Suggestion:** Mon max(32, 34) = **34** (clamped, note) · Tue/Wed/Thu **32** each · Fri/Sat/Sun **40** each (exactly the reference) → **250 h** (r3's formula would have given 96 h for Fri–Sun).
+  - **Accept:** the persisted `schedule_budget_days` rows are 34 / 32 / 32 / 32 / 40 / 40 / 40, `apportioned_by = 'explicit'`, summing to the entry's 250 h; `budgetForDates` returns them.
+  - **Negative-delta variant:** a structure change of −4 h on every day → Mon stays 34 (clamp), Tue–Thu 28, Fri–Sun stay 40 (the negative delta is not applied to unmatched dates).
 
 **Labor-target card (§6.6)**, `laborTarget(day, window, …)`, with every line of math rendered:
 - `maxLabor$ = forecastSales × target%`, minus the salaried cost when `basis = 'total'` — **r2: the basis is a setting, default `'total'`** (Resolved R4), 28%;
@@ -603,7 +628,7 @@ export interface ScheduleStructure {
   limits: { minimumShiftQ: number; flexMinimumQ: number; flexUsesPer2w: number; flexMaxQ: number; overtimeH: number;
             managerFloorH: number /* 32, setting (R5) */; gmMinimumH: number /* 8 */; agmMinimumH: number /* 8 */;
             closingMinutesOverride: number | null /* r2: WINS over the measured value when set */; segmentMinQ: number /* 2 */;
-            rushShiftMaxQ: number /* 6 = ±90 min, r2 P2-4 */ };
+            rushShiftMaxQ: number /* r4: DISPLAY ONLY — a shaped rush more than this from its configured time is flagged in the reason; it never alters heads */ };
   catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number };
   labor: { targetPct: number /* 28 */; basis: "hourly" | "total" /* r2 default "total" (R4) */; strong: number; watch: number; budgetDeadbandH: number };
   roster: { excludedRoles: RoleCode[] /* default cgs, social_media_mgr, catering_mgr, prep_mgr; per-person roster_include (R6) */ };
@@ -615,7 +640,7 @@ export interface ScheduleStructure {
   - `weekDays("2026-10-19")` → Mon..Sun;
   - a DST week (2026-10-26 → 2026-11-01) has 7 days, and `etWallMinutesInstant` round-trips each day's 7:00 and 21:00;
   - defaults validate, and `labor.basis` defaults to `"total"`;
-  - **the shared case file** (valid and invalid, one row each): open ≤ trim ≤ close per position; heads ∈ 0..8 integers; `slowBelow < busyAbove`; quarter-integral times; out window within 0..96 and `outEarliest ≤ outLatest`; `flexMinimum ≤ minimumShift` and `≤ flexMax`; `max(minimumShift, gmMin, agmMin) ≤ outLatest − prepStart` (the mockup's guard); `targetPct ∈ (0, 100]`; `managerFloorH ∈ [0, 80]`; `rushShiftMaxQ ∈ 0..16` (kept as a display clamp only); **r3:** `lineMinHeads[p] ≤ the position's head limits`, and for every day type the configured wave profile `W_q` lies within [`minHeads(q)`, `maxHeads(q)`] at every quarter (the precondition of the flat-curve rule; the refusal names the day type and time); each priority pair is two DIFFERENT position keys present in `positions` and the primary is one of them; a role code is a real `RoleCode`; no unknown keys; numbers are JSON numbers (never strings). `validScheduleStructure` names the first failing key.
+  - **the shared case file** (valid and invalid, one row each): open ≤ trim ≤ close per position; heads ∈ 0..8 integers; `slowBelow < busyAbove`; quarter-integral times; out window within 0..96 and `outEarliest ≤ outLatest`; `flexMinimum ≤ minimumShift` and `≤ flexMax`; `max(minimumShift, gmMin, agmMin) ≤ outLatest − prepStart` (the mockup's guard); `targetPct ∈ (0, 100]`; `managerFloorH ∈ [0, 80]`; `rushShiftMaxQ ∈ 0..16` (display only, r4); **r3:** `lineMinHeads[p] ≤ the position's head limits`, and for every day type the configured wave profile `W_q` lies within [`minHeads(q)`, `maxHeads(q)`] at every quarter (the precondition of the flat-curve rule; the refusal names the day type and time); each priority pair is two DIFFERENT position keys present in `positions` and the primary is one of them; a role code is a real `RoleCode`; no unknown keys; numbers are JSON numbers (never strings). `validScheduleStructure` names the first failing key.
   - **Infeasible but VALID structures stay valid** (r2): e.g. heads on a position whose window is shorter than the minimum shift. The validator accepts them because the GENERATOR answers them with a `structure` gap certificate (Task 7). The case file marks them `valid: true, infeasible: true` so Task 8 can use them.
   - `structureFromStations`: a station `usually_closes_at 14:00` → that station's positions close 56; `usually_trims_at 16:00` → trim 64; missing → the defaults; a pre-noon trim time is next-day (station-schedule rule) and is REFUSED as a schedule time (`structure_invalid`, key named).
 - [ ] **Step 2:** implement. `crewFor(dayType)`; `scheduledOut(structure, closingMinutes)` = clamp(serviceClose + ceil15(closingMinutes), outEarliest, outLatest), plus `checklistFits`.
@@ -642,7 +667,7 @@ export interface ScheduleStructure {
 ```ts
 export interface Segment { positionId: string | "mod"; startQ: number; endQ: number; lastResort?: boolean; coverFor?: string; reasonKey?: string }
 export interface Shift { userId: string; date: string; startQ: number; endQ: number; segments: Segment[]; closingManager: boolean; flex: boolean; pinned: boolean }
-export type GapCause = "budget" | "floor_limit" | "eligibility" | "availability" | "structure";
+export type GapCause = "budget" | "floor_limit" | "eligibility" | "availability" | "capacity" | "structure" | "unresolved_search";
 export interface DeclaredGap { code: "coverage_gap" | "mod_missing" | "closing_manager_missing"; date: string; positionId: string | null;
   fromQ: number; toQ: number; cause: GapCause; certificate: GapCertificate /* discriminated by cause */ }
 export interface DayRecord { date: string; originRevisionId: string | null; structureVersionId: string; inherited: boolean; problems: RuleProblem[] }
@@ -661,9 +686,9 @@ export function structureInfeasible(structure: ScheduleStructure, date: string, 
     - `availability` fails when an eligible member is available and free;
     - `structure` certifies the case-file infeasible rows;
     - **`capacity` (r3):** two positions both needing 1 head over 11:00–2:00, ONE eligible and available person, an ample budget, valid windows → a `capacity` certificate with `requiredHeads 2, people 1, shortBy 1` certifies when exactly one head is uncovered per quarter, and fails when two are (the excess is not proven); the Hall-type search finds the binding subset S in a 3-position case where no single position is short;
-    - **`unresolved_search` (r3):** verifies only that the search counters hit a limit AND that no proven cause certifies; it is severity `gap` with `proven: false`; Approve refuses (`unresolved_gaps`) while one exists on a non-inherited day;
+    - **`unresolved_search` (r3):** verifies only that the search counters hit a limit AND that no proven cause certifies; it is severity `gap` with `proven: false`; Approve refuses (`unresolved_gaps`) while ANY exists, inherited or not (r4);
     - an uncovered deficit with no declared gap → `undeclared_gap`; a gap with a failing certificate → `uncertified_gap`;
-  - **original vs current (r3, P2-4):** validation reads `ctx` built from the stored context snapshot; the same revision validated after the live roster, availability and budget change gives the identical problem list, and `contextAdvisory` lists exactly the three changes;
+  - **original vs current (r3 P2-4, r4):** validation reads `ctx` built from the stored context snapshot, including the stored need grid (coverage and certificates read `need(p, q)` from the snapshot, never recompute it); the same revision validated after the live roster, availability and budget change gives the identical problem list, and `contextAdvisory` lists exactly the three changes;
   - **historical days (P1-3):**
     - a day with `inherited: true` is NOT re-judged: its `problems` are returned as-is with `inherited: true`, even when the person is no longer in `ctx.people` or the position is retired;
     - weekly totals count inherited hours;
@@ -706,11 +731,12 @@ export function structureInfeasible(structure: ScheduleStructure, date: string, 
   - result `{minutes: ceil15(p75) | null, samples, basis}`;
   - **tested:** an UNFINISHED instance with completions is excluded; the same instance once finalized is included; the latest instance per day only (`stationClosures`' rule).
 - [ ] **Step 5 (curve → shape, r2 P2-4, rewritten r3):** `shapeFromCurve` per "The generator", step 3a (the step function hour → quarter, the demand-weighted wave profile, distinct `minHeads` from `lineMinHeads` and `maxHeads` from the head limits). **The worked fixture's numbers are asserted exactly:** Day A 2/4/2/2, Day B 2/2/4/2, flat 2/3/3/2, rush arrival 12:00 vs 13:00, 10 line hours each.
-  - **Two days with equal totals and different peak hours** (peak 12:00 vs peak 13:30) get different rush arrival times AND different hourly line counts.
+  - **Two days with equal totals and different peak hours** (peak hour 12:00 vs peak hour 13:00; hourly input, so peaks land on hour boundaries) get different rush arrival times AND different hourly line counts.
   - A flat curve reproduces the configured waves exactly.
   - Every shaped count stays within [floor, limit] for each hour.
   - Rounding ties go to the earlier hour.
-  - The rush shift is clamped to `rushShiftMaxQ`.
+  - A shaped rush more than `rushShiftMaxQ` from its configured time is FLAGGED in the reason (display only); the heads are never changed by it.
+  - **Zero demand (r4):** the all-zero fixture gives exactly 2/2/2/2 with the note; the zero-profile fixture gives exactly 1/1/1/1; neither throws; every output is finite.
   - Determinism.
 - [ ] **Step 6 (need grid):**
   - with the mockup structure: Walk-ins / Online is needed open → close (no trim), 3rd Party ends at its trim, Crunchy Boi at 2 PM;
@@ -830,6 +856,9 @@ Why Fable here and only here: this chunk is a constrained assignment search with
   - **(F8) `partial-month`:** `rest_of_month` from 2026-10-27.
   - **(F9) `edited-head`:** a week with manager edits plus a locked Monday.
   - **(F10) `shifted-peaks` (r3, worked numerically in step 3a BEFORE freezing):** Day A peak hour 12:00, Day B peak hour 13:00 (hourly input; r2's 13:30 corrected), equal totals → line heads 2/4/2/2 vs 2/2/4/2; plus the flat day 2/3/3/2.
+  - **(F14) `zero-demand` and (F15) `zero-profile` (r4, worked in step 3a):** 2/2/2/2 with the `zero_demand` note, and 1/1/1/1 with `zero_profile`; neither throws.
+  - **(F16) `suggestion-rho-0.8` (r4, worked in the budget section):** 34/32/32/32/40/40/40 = 250 h through acceptance and the persisted day rows (used by Tasks 11 and 17).
+  - **(F17) `inherited-unresolved` (r4):** an `unresolved_search` gap on Sunday Nov 1, then a rest-of-month rebuild → the gap is inherited unchanged, and Approve is refused `unresolved_gaps`.
   - **(F11) `budget-week-then-month`, (F12) `budget-month-week-adjacent`, (F13) `budget-partial-week` (r3):** the per-date precedence cases from "Budget, labor target, horizon", run through the generator (the budget stop applies to budgeted dates only; Nov 1 keeps its week-entry budget in F11; F13's Nov 1 is unconstrained and flagged).
 - [ ] **Step 2: the golden.** `buildWeek` for each fixture → `{shifts, days, gaps, reasons}` JSON; `UPDATE_SCHEDULE_GOLDEN=1` writes it. Header: "Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION." Each golden is asserted **validator-clean**: zero NEW error-class problems, and every gap certified.
 - [ ] **Step 3: the property test** (no new dependency; mulberry32, fixed seeds, 300 cases per run + an edge grid):
@@ -904,6 +933,7 @@ Why Fable here and only here: this chunk is a constrained assignment search with
     - the reference week is the latest fully ended ISO week whose head revision covers all 7 days (the complete hours base); full capture uses all 7 days for the ratio;
     - else matched weekdays estimate the RATIO only, and the ratio is applied to the COMPLETE 7-day hours base (r3); "demand compared on Mon–Thu only";
     - **r3 test:** unchanged demand (ρ = 1), Mon–Thu captured, reference hours 160 (Mon–Thu) + 120 (Fri–Sun) → suggested 280 h, never 160; accepting writes per-date amounts and Fri–Sun keep 120 h;
+    - **r4 test (F16):** ρ = 0.8 → 34 / 32 / 32 / 32 / 40 / 40 / 40 = 250 h with the Monday clamp note; acceptance persists exactly those day rows (through the fake RPC, and in the 0274 harness as a written entry); the negative-delta variant leaves Fri–Sun at 40 and Mon at 34;
     - refused `suggestion_unavailable` when refSales ≤ 0, demand is not `ok`, or the reference has no hours;
     - the catering delta is target minus reference (a fixture whose reference week already had the same catering gives +0 h);
     - the structure delta is computed under both structure versions over the target forecast;
@@ -1017,7 +1047,7 @@ create index schedule_budget_days_by_date on public.schedule_budget_days (locati
 
 - [ ] **Step 1:** the preflight (0274; `claim_cron_route` is 0268's body).
 - [ ] **Step 2:** the tables + `valid_schedule_segments(jsonb, start_q, end_q)` (segments contiguous, span the shift, each ≥ 1 q, position = uuid or `"mod"`) + `valid_gap_certificate(cause, jsonb)` (the per-cause key set, numbers non-negative).
-- [ ] **Step 3:** `commit_schedule_revision` per the sketch; it accepts unchanged history and applies current eligibility only to new or changed future shifts. Then `approve_schedule_week`, which INSERTS into `schedule_week_approvals` and sets `approved_revision_id`, writes NO revision and copies no shift, and refuses `rules_failing` only on non-inherited error problems.
+- [ ] **Step 3:** `commit_schedule_revision` per the sketch; it accepts unchanged history and applies current eligibility only to new or changed future shifts. Then `approve_schedule_week`, which INSERTS into `schedule_week_approvals` and sets `approved_revision_id`, writes NO revision and copies no shift, and refuses `rules_failing` only on non-inherited error problems, and `unresolved_gaps` on ANY `unresolved_search` gap, inherited or not (r4).
 - [ ] **Step 4:** the `claim_cron_route` + CHECK re-emit with `'schedule-draft'` (line-subsequence pin against 0268).
 - [ ] **Step 5: the harness** (`PASS 0275:`), under the execution contract:
   - `head_moved`; `past_week`; `day_locked` (a changed past day refused, an identical one passes); `history_changed` (an inherited day row altered);
@@ -1028,7 +1058,7 @@ create index schedule_budget_days_by_date on public.schedule_budget_days (locati
     - (c) commit a new revision that carries Monday unchanged → ACCEPTED;
     - (d) the same revision with a NEW future shift for U → `person_not_at_shop`; one on P → `position_retired`;
     - (e) an unchanged FUTURE shift of U → accepted (flagged inherited by the lib);
-  - **gaps round-trip (P2-5):** `p_gaps` rows persist with certificates; a malformed certificate is refused; causes `capacity` and `unresolved_search` accepted; `approve_schedule_week` refuses `unresolved_gaps` while a non-inherited `unresolved_search` gap exists;
+  - **gaps round-trip (P2-5):** `p_gaps` rows persist with certificates; a malformed certificate is refused; causes `capacity` and `unresolved_search` accepted; `approve_schedule_week` refuses `unresolved_gaps` while ANY `unresolved_search` gap exists; **r4 (P1) case:** commit a week whose Sunday Nov 1 carries an `unresolved_search` gap → commit a partial rebuild (`rest_of_month`: Oct 28–31 rebuilt, Sunday inherited with its gap unchanged) → `approve_schedule_week` refuses `unresolved_gaps`;
   - **inheritance integrity (r3, P2-3):** with a FUTURE inherited day (a kept day of a horizon rebuild) and a past one, a payload that keeps each day record but (a) moves a future inherited shift to another active position of the shop, (b) changes a future inherited gap's `to_q`, (c) drops a past inherited gap → each refused `history_changed`; the unchanged payload is accepted;
   - **context (r3, P2-4):** `p_context` persisted, one row per revision; a non-object refused;
   - `person_not_at_shop`; `position_not_at_shop`; `position_retired`; `shop_not_enabled`;
@@ -1090,6 +1120,10 @@ It loads, for one shop and a set of weeks, with every query paged/chunked:
   - every act runs `access-shared` BEFORE any I/O (a spy proves zero queries on refusal);
   - `generateWeek` → `buildWeek` → validator-clean (no new error, all gaps certified) → `commit_schedule_revision(kind generated, expected null, p_days, p_gaps)`;
   - **round-trip parity (r2 P2-5, extended r3 P2-4):** generate → commit (fake RPC capturing the payload into an in-memory store) → reload through the loader → `checkScheduleRules` over the reloaded `{shifts, days, gaps}` with the STORED context gives EXACTLY the problems computed before commit. The display summary is truncated at 50 while the reload is complete (a fixture with 120 problems). **Between commit and reload the test changes membership (a person deactivated; a qualified person added to an `eligibility` gap's position), availability (a person's Thursday window) and the budget (a newer week entry)**: original validation is still identical, every certificate still verifies against the stored context, and the current-inputs advisory lists exactly those changes;
+  - **replay without live reads (r4, P2):** the replay runs with a loader stub that THROWS on any read of demand, day types, catering, structure or people, so it can only use the snapshot. Cases:
+    - **(a)** F10's equal-total shifted curves: Day A and Day B are committed, then the live forecast is swapped (A's curve given to B and B's to A) → the replayed coverage per position × quarter and the `capacity` / `budget` certificates are byte-identical to the originals;
+    - **(b)** a manager day-type override is added (Wed → busy) after commit → identical replay, and the advisory names the override;
+    - **(c)** a catering event is added and another cancelled after commit → identical replay (the catering-derived Prep/Dishwasher need is the snapshot's), and the advisory names both;
   - **demand (r2):** with `unavailable`, generate / preview / apply refuse `demand_unavailable`, nothing is committed, and an existing head is untouched;
   - `previewHorizon` returns per-week What changed + the token; `applyHorizon`:
     - `preview_stale` on any input drift (structure version, head id, inputs digest, demand kind);
@@ -1098,6 +1132,7 @@ It loads, for one shop and a set of weeks, with every query paged/chunked:
   - **history (r2, P1-3) end to end:** a Monday edit with a rule break → Tuesday regenerate succeeds, Monday's problem shown as inherited; a deactivated person's past shift → regenerate succeeds;
   - `saveEdit` applies an `edit-shared` op on the head and records the problems; a structural refusal maps to its code;
   - `approveWeek` refuses `rules_failing` on new errors only, writes an approval (no revision), and the route takes Tier B;
+  - **r4 (P1):** generate a week with an `unresolved_search` gap on Sunday → partial rebuild (rest of month; Sunday inherited with the gap) → `approveWeek` refuses `unresolved_gaps` before any RPC (lib), and the fake RPC mirrors the SQL refusal;
   - settings writers: Tier E for structure/shop, none for budgets/pins/day types/person settings; every write audited with before/after; the SMM refusal by role;
   - every refusal maps to a `ScheduleErrorCode` with an HTTP status (403/404/409/422/503).
 - [ ] **Step 2:** implement. **Step 3:** green. Commit.
@@ -1289,7 +1324,7 @@ The pure `reconcile({members, toastLinks, sevenLinks, sevenUsersAtShop, toastPun
 
 The law captures, at least:
 - the validator is non-negotiable;
-- gaps carry causes: the proven certificates (`budget`, `floor_limit`, `eligibility`, `availability`, `capacity`, `structure`) and the honest `unresolved_search` (amber, never a proof, blocks Approve); the bounded repair search runs before any non-proven gap; valid input never throws;
+- gaps carry causes: the proven certificates (`budget`, `floor_limit`, `eligibility`, `availability`, `capacity`, `structure`) and the honest `unresolved_search` (amber, never a proof, blocks Approve whether inherited or not); the bounded repair search runs before any non-proven gap; valid input never throws;
 - generator purity, determinism and permutation invariance; the goldens and `GENERATOR_VERSION`;
 - **unknown skill is not inexperience:** `unproven` is its own band, and pairing is a soft preference;
 - **the historical-preservation contract:** inherited days (past and future) keep their complete shift set, gap set, day record, original context and problems (`history_changed` otherwise); each revision stores its RuleContext snapshot for original validation, with a separate current-inputs advisory; current eligibility judges only new or changed future assignments, in the lib and in SQL;
@@ -1361,7 +1396,7 @@ Chunks A and C can run in parallel with B once Task 3's types are merged. D can 
    - current eligibility applies only to new or changed future assignments, in the lib and in SQL;
    - SQL accepts unchanged history after a person is deactivated or a position retired;
    - only structural edit failures (overlap, malformed segments, off grid, a locked day) are refused.
-7. **J7 (r2 P1-1, r3 P1) — Every gap carries a cause. Proven causes have a verified certificate:** `budget` (with the hours it would need), `floor_limit`, `eligibility`, `availability`, **`capacity`** (a per-window counting bound: required heads > eligible + available people, numbers shown), and `structure`. **Search exhaustion is NOT a proof:** it is declared `unresolved_search` (amber; Approve refuses while one exists). Before a non-proven gap is declared, the deterministic repair search runs with ejection chains of up to 3 links, 8 donors per link, and 200 moves per week. **Valid input never throws;** only an invariant violation (programmer error) throws.
+7. **J7 (r2 P1-1, r3 P1) — Every gap carries a cause. Proven causes have a verified certificate:** `budget` (with the hours it would need), `floor_limit`, `eligibility`, `availability`, **`capacity`** (a per-window counting bound: required heads > eligible + available people, numbers shown), and `structure`. **Search exhaustion is NOT a proof:** it is declared `unresolved_search` (amber; Approve refuses while ANY exists, inherited or not, r4). Before a non-proven gap is declared, the deterministic repair search runs with ejection chains of up to 3 links, 8 donors per link, and 200 moves per week. **Valid input never throws;** only an invariant violation (programmer error) throws.
 8. **J8 (r2, P2-9) — Closing checklist duration:**
    - the manager override WINS when set;
    - otherwise the p75 of (finalize instant − service close) over the last 28 FINALIZED closes, with at least 8 samples, rounded up to 15 min;
@@ -1398,8 +1433,9 @@ Chunks A and C can run in parallel with B once Task 3's types are merged. D can 
 
     The newest entry covering a DATE wins for that date. A week sums its dates. A date with no entry has no budget (never 0), and the generator's budget stop applies only to budgeted dates.
 23. **J23 (r2 P2-8, r3) — The budget suggestion uses an explicit completed reference with a COMPLETE 7-day hours base.**
-    - Matched weekdays (or all 7 when fully captured) estimate only the demand RATIO, which is applied per date to the complete base.
-    - Unmatched days are never shrunk or removed.
+    - Matched weekdays (or all 7 when fully captured) estimate only the demand RATIO, which applies ONLY to matched dates (r4).
+    - Unmatched dates keep their reference hours EXACTLY and take only positive deltas (r4).
+    - Matched dates clamp at their minimum crew hours, with a note (r4).
     - A zero or unavailable denominator is refused.
     - Catering and structure deltas are measured per date, relative to the reference.
 24. **J24 (r2, P2-11) — Reconciliation judges attendance only against the PUBLISHED 7shifts schedule.** Without it, the comparison is labelled "against the CO-OPS proposal (not published)" and the missing evidence is shown.
@@ -1471,7 +1507,7 @@ No question is left open for Juan. Each default above is one setting he can flip
 | P1-1 (J7) | A budget gap cannot satisfy "no one free"; greedy allocation can mis-declare a gap | Cause-specific CERTIFICATES (`budget` with `hoursNeeded`, `floor_limit`, `eligibility`, `availability`, `structure`), verified by `checkCertificate` / `structureInfeasible`. A deterministic, capped REPAIR pass (direct insertion → one-step reassignment → segment swap; `REPAIR_MAX_STEPS` 200, 3 donors) runs before any gap is declared. Fixed cause order. | Validator map ("Gap certificates"); Generator step 9a; 0275 `schedule_revision_gaps` + `valid_gap_certificate`; J7 | Task 3 per-cause certificate tests; Task 7 budget (0 / tight / loose), repair (Tess/Sam), cap; Task 8 fixtures F0a–F0e written and green BEFORE any golden is frozen; property (3), (8) |
 | P1-2 (J19 overturned) | Mandatory strong pairing blocks a cold-start roster | `unproven` is its own band. "Newer" needs real evidence (not starting point, confidence ≥ 0.3, value < building). Pairing is a soft tie-break; `pairing_unmet` is a board note. Strength never averages unproven minutes as 0. | Data reality; Generator step 6; Task 5 `SkillLookup`; J19 | Task 7 pairing (a)–(d), incl. **the whole roster with no evidence builds clean**; Task 8 F0f |
 | P1-3 (J6) | Regenerate re-judges preserved history; SQL rejects unchanged history after deactivation/retirement | The historical-preservation contract. Inherited / locked days carry their ORIGINAL context and problems (`schedule_revision_days`: origin revision, structure version, inherited flag, full problems). Current eligibility applies only to NEW or CHANGED future assignments in the lib and in SQL (commit step 8). SQL accepts unchanged history; `history_changed` refuses a tampered inherited day. | Architecture; Generator step 1; Migrations 0275; Task 3; Task 12 edits; J6 | Task 3 inherited tests; Task 7 history (a)–(d); Task 14 harness end to end (deactivate U, retire P, carry Monday → accepted; new shift → refused); Task 17 lib end to end; Task 8 F0g |
-| P2-4 | Shapes come from fixed waves, not the curve | `shapeFromCurve`: a deterministic curve → line arrivals and coverage counts, inside the structural floors and limits (rounding ties to the earlier hour, the rush shift clamped by `rushShiftMaxQ`, secondary first on taper) | "Where demand comes from"; Generator step 3a; Task 4 Step 5; Task 6 | Task 4: **equal-total days with peaks at 12:00 and 13:30 get different shapes**; flat curve = configured waves; Task 8 F10 |
+| P2-4 | Shapes come from fixed waves, not the curve | `shapeFromCurve`: a deterministic curve → line arrivals and coverage counts, inside the structural floors and limits (rounding ties to the earlier hour, the r2 rush clamp, superseded in r3 and made display-only in r4, secondary first on taper) | "Where demand comes from"; Generator step 3a; Task 4 Step 5; Task 6 | Task 4: **equal-total days with peaks at 12:00 and 13:30 get different shapes**; flat curve = configured waves; Task 8 F10 |
 | P2-5 | Declared gaps lost at persistence | The complete `DeclaredGap[]` + certificates persist in `schedule_revision_gaps`; full per-day problems in `schedule_revision_days`; `problems_summary` (50) is display-only | Migrations 0275; Task 14; Task 17 | Task 17 **generate → commit → reload → validate parity** (incl. a 120-problem fixture); Task 14 gap round-trip |
 | P2-6 | The pulse wrapper turns failures into "no history" | `fetchSalesBaseline` returns `ok \| unavailable(timeout/rpc_missing/rpc_error)`; the pulse wrapper maps to `null` exactly as today. Scheduling's `DemandResult = ok \| unavailable \| no_history`. `unavailable` never builds, never uses the Normal crew, never replaces a draft; the cron skips the shop. | "Where demand comes from"; Tasks 4, 16, 17, 19, 20 | Task 16 timeout / missing RPC / successful empty, separately, plus the pulse-unchanged test; Task 17 refusal leaves the head untouched; Task 19 skip |
 | P2-7 | Month-edge allocations replace whole-week budgets | `schedule_budget_entries` + date-scoped `schedule_budget_contributions`, composed per ISO week by `budgetForWeek`; the writer proves the contributions tile the entry | Budget section; Migrations 0274; Tasks 11, 13 | Task 11 and the 0274 harness: **adjacent months sharing a week, both entry orders** give the same composed budget |
@@ -1498,3 +1534,15 @@ No question is left open for Juan. Each default above is one setting he can flip
 | R2-4 (P2) | A digest could not reproduce validation after the inputs changed | `schedule_revision_contexts`: a compact JSON snapshot of the RuleContext inputs used (roster, work types, leader settings, cover lists, availability, positions, per-date budgets, closing minutes, demand kind). Original validation replays against the origin revision's snapshot; `contextAdvisory` reports the current-input changes separately. | Architecture; 0275 table + `p_context`; `context-shared.ts`; Tasks 3, 14, 17, 20 | Task 17 round-trip **with membership, availability and budget changed between commit and reload**: identical original validation, certificates still verify, the advisory lists exactly those changes; Task 3 the same at unit level |
 | R2-5 (P2) | A month entry could wipe an explicitly budgeted date in a shared week | Every entry is apportioned to DATES when written (forecast share, even when there is no forecast, explicit for accepted suggestions) into `schedule_budget_days`. **The newest entry covering a date wins for that date.** A week sums its dates; unbudgeted dates are flagged, not 0, and are not constrained by the budget stop. | Budget section; 0274 tables + writer; generator budget stop; Tasks 11, 13; J22 | **F11 week → month** (Nov 1 keeps its week row), **F12 month → week → adjacent month**, **F13 partially budgeted week**, in Task 11, the 0274 harness and through the generator (Task 8) |
 | R2-6 (P2) | Matched-weekday suggestions shrank the week to the matched days | Matched weekdays estimate the demand RATIO only. `suggested(d) = refHoursByWeekday × ρ + per-date deltas` over the COMPLETE 7-day base (the reference revision covers all 7 days); unmatched days are never shrunk or removed; acceptance stores per-date amounts | Budget section (suggestion); Task 11; J23 | Task 11: ρ = 1, Mon–Thu captured, 160 + 120 h → suggests 280 h (not 160); accepting keeps Fri–Sun's 120 h |
+
+---
+
+## Changes from r3 (Astra round 3: CHANGES REQUESTED, narrow — 1 P1 + 3 P2 + 1 P3; her A/B/flat recompute passed; CC accepted every finding)
+
+| # | Finding | Fix (as ruled) | Where | Test |
+|---|---|---|---|---|
+| R3-1 (P1) | An inherited `unresolved_search` gap bypassed Approve | EVERY `unresolved_search` gap blocks Approve, inherited or not, in the lib AND SQL. The inherited-error exemption never covers unresolved gaps. | Certificate notes; approve sketch; Tasks 3, 14, 17, 23; J7 | Lib (Task 17) and SQL harness (Task 14): generate with a Sunday `unresolved_search` → rest-of-month rebuild (Sunday inherited) → Approve refused `unresolved_gaps`; fixture F17 |
+| R3-2 (P2) | The snapshot held day totals, not the quarter-hour need | `schedule_revision_contexts` persists the COMPLETE derived need grid per changed date (need per position × quarter, line total, min/max, provenance), plus the hourly forecast used, the day type with its source (override / weekend / forecast), the catering events used and the shape note. Replay reads ONLY the snapshot. | Architecture; 0275 contexts row; Task 3; Task 17 | Task 17 replay with a loader that throws on any live read: (a) F10's A/B curves swapped live → identical coverage + certificates; (b) a day override added; (c) catering added/cancelled → identical, advisory names each |
+| R3-3 (P2) | ρ < 1 shrank unmatched days | ρ and negative deltas apply ONLY to matched dates. Unmatched dates keep their reference hours EXACTLY (+ positive deltas only). Matched dates clamp at their minimum crew hours, with a note. | Budget section (suggestion); Task 11; J23 | F16: ρ = 0.8 → 34/32/32/32/40/40/40 = 250 h (Monday clamped) through acceptance and the persisted `schedule_budget_days` rows; the negative-delta variant |
+| R3-4 (P2) | The curve transform was undefined for zero demand | All-zero forecast (`d̄ = 0`) → heads = `minHeads` (the `lineMinHeads` floor) + the en/es note "No sales forecast for this day: minimum crew". Zero weighted sum → an even split of `T/0.25` over the open quarters, clamped. Both are finite and never throw. | Generator step 3a (rule 2); Task 4 Step 5; Task 8 | F14 = 2/2/2/2 (8 line h); F15 = 1/1/1/1 (4 line h) |
+| R3-5 (P3) | Stale executable examples | `GapCause` includes `capacity` and `unresolved_search`; Task 4's 13:30 peak → peak hours 12:00 vs 13:00; `rushShiftMaxQ` is DISPLAY ONLY everywhere (it flags a moved rush in the reason and never alters heads) | Task 3 types; Task 4 Step 5; Task 1 structure + case file; r1 table note | Task 1 case file; Task 4 |
