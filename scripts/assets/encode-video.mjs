@@ -1,3 +1,4 @@
+import { fingerprintAssets } from './fingerprint.mjs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -81,3 +82,8 @@ const fixtureFiles=fixtureNames.map(name=>{
 });
 if(fixtureFiles.reduce((sum,file)=>sum+file.bytes,0)>5000000) throw new Error('Browser verification fixture budget exceeded');
 writeFileSync(fixtureRoot+'/provenance.json',JSON.stringify({...JSON.parse(readFileSync(work+'/verification.json','utf8')),fixtureFiles,note:'Derived verification fixtures only; never served publicly. Full master originals remain external.'},null,2)+'\n');
+
+const approved = JSON.parse(readFileSync('assets/approved-media.json', 'utf8'));
+approved.media = [...approved.media.filter(asset => asset.id !== entry.id), entry];
+writeFileSync('assets/approved-media.json', JSON.stringify(approved, null, 2) + '\n');
+fingerprintAssets();

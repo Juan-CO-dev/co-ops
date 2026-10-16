@@ -1,3 +1,4 @@
+import { fingerprintAssets } from './fingerprint.mjs';
 import sharp from 'sharp';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, statSync } from 'node:fs';
 import { sha256, safeOutput, approvedSource } from './inventory.mjs';
@@ -56,3 +57,5 @@ for (const product of source.products.filter(p => p.eligible)) {
 }
 writeFileSync('assets/approved-media.json',JSON.stringify(manifest,null,2)+'\n');
 writeFileSync('config/tenant/landing-products.json',JSON.stringify(lineup,null,2)+'\n');
+
+fingerprintAssets();

@@ -41,7 +41,7 @@ describe('landing asset provenance', () => {
       const output = join(root, 'public/media/test.webp');
       writeFileSync(original, 'original'); writeFileSync(output, 'export');
       const entry = { id: 'fixture', sourceId: '014', publicPath: '/media/test.webp', classification: 'real-photo', sourcePath: original, sourceSha256: tools.sha256(original), sha256: tools.sha256(output), bytes: 6, maxBytes: 100, width: 1, height: 1, sidecar: 'assets/provenance/fixture.json' };
-      writeFileSync(join(root, 'assets/source-manifest.json'), JSON.stringify({ products: [{ representative: '014', eligible: true, hold: null, path: original, sha256: entry.sourceSha256 }] }));
+      writeFileSync(join(root, 'assets/source-manifest.json'), JSON.stringify({ products: [{ representative: '014', confirmedIds: ['014'], eligible: true, hold: null, path: original, sha256: entry.sourceSha256 }] }));
       writeFileSync(join(root, 'assets/approved-media.json'), JSON.stringify({ media: [entry] }));
       writeFileSync(join(root, entry.sidecar), JSON.stringify(entry));
       await expect(tools.checkAssets(root, { sources: true })).resolves.toBe(1);

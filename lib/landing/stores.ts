@@ -9,9 +9,10 @@ export interface PublicLocation { code: string; name: string; address: string | 
 export function projectLandingStores(rows: readonly PublicLocation[], config: LandingConfig = loadLandingConfig()) {
   return config.stores.flatMap((store) => {
     const row = rows.find((location) => location.code === store.locationCode);
-    return row ? [{key:store.key, name:row.name, address:row.address, phone:row.phone, hours:store.hours, coordinates:store.coordinates, orderUrl:store.orderUrl}] : [];
+    return row ? [{key:store.key, name:row.name, orderLabel:store.orderLabel, address:row.address, phone:row.phone, hours:store.hours, coordinates:store.coordinates, orderUrl:store.orderUrl}] : [];
   });
 }
+export type LandingStore = ReturnType<typeof projectLandingStores>[number];
 /** Used by D2's full shop cards. Chunk A skeleton does not query live data. */
 export async function loadPublicLandingStores(config: LandingConfig = loadLandingConfig()) {
   const {data,error} = await getServiceRoleClient().from("locations").select(PUBLIC_LOCATION_COLUMNS).eq("active",true).in("code",config.stores.map((s)=>s.locationCode));

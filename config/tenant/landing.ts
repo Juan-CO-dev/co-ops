@@ -11,12 +11,13 @@ export interface LandingStoreConfig {
   hours: { en: string; es: string } | null;
   coordinates: { latitude: number; longitude: number } | null;
 }
+export type LandingFooterKey = "gift-cards" | "app" | "app-ios" | "app-android" | "instagram" | "facebook" | "uber-eats" | "doordash";
 export interface LandingTenantConfig {
   stores: readonly LandingStoreConfig[];
   cateringPortalLive: boolean;
   cateringUrl: string;
   inquiryUrl: string;
-  footerLinks: readonly { key: string; url: string }[];
+  footerLinks: readonly { key: LandingFooterKey; url: string }[];
   attribution: { ads: readonly string[]; utm: Record<string, readonly string[]> };
 }
 export const landingTenantConfig: LandingTenantConfig = {

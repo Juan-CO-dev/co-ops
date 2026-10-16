@@ -2,7 +2,7 @@
 
 Historical Chunk A base: approved r4 `051d5100`; reviewed implementation `df131fa7`. Current branch: `feat/landing-p1`.
 Worktree: `C:/Users/conta/co-ops-landing`.
-All implementation changes are UNCOMMITTED. No fetch, push, merge, deployment, resources, production reads/writes, or remote migration apply.
+Historical implementation committed by CC as `df131fa7`; this handoff records that delivery. Subsequent review fixes are tracked separately. No fetch, push, merge, deployment, resources, production reads/writes, or remote migration apply.
 
 ## Delivered scope
 

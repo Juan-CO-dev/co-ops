@@ -1,7 +1,7 @@
 # Landing Chunk C handoff
 
 Branch `feat/landing-p1`, base `de31dae4392640ffdbd09be7cca9f37fecff2c4b`.
-Workspace `C:/Users/conta/co-ops-landing`. All changes uncommitted. No push, merge, deployment, production data access, or migration application. 0273 unchanged and file-only.
+Workspace `C:/Users/conta/co-ops-landing`. Historical Chunk C delivery committed by CC as `51829f5e`; the outcomes below describe that delivery before commitment. Subsequent review fixes and Chunk D are tracked separately. No push, merge, deployment, production data access, or migration application. 0273 unchanged and file-only.
 
 ## Delivered
 

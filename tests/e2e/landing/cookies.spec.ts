@@ -6,10 +6,10 @@ test('valid staff JWT still cannot enter landing staff routes',async ({request})
   expect(result.status()).toBe(404); expect(result.headers()['set-cookie']).toBeUndefined();
 });
 test('all three staff cookies stay off landing requests',async ({context,page})=>{
-  await context.addCookies(['co_ops_session','co_ops_portal','co_shop'].map(name=>({name,value:'fixture',url:'http://127.0.0.1:43170',sameSite:'Lax' as const})));
+  await context.addCookies(['co_ops_session','co_ops_portal','co_shop'].map(name=>({name,value:'fixture',url:'http://127.0.0.1:44170',sameSite:'Lax' as const})));
   const seen:string[]=[];
   page.on('request',r=>{if(new URL(r.url()).hostname==='localhost') seen.push(r.headers().cookie??'');});
   await page.goto('/');
   expect(seen.length).toBeGreaterThan(0); expect(seen.every(c=>!c.includes('co_ops_')&&!c.includes('co_shop'))).toBe(true);
-  expect((await context.cookies('http://localhost:43170')).some(c=>c.name.startsWith('co_ops_')||c.name==='co_shop')).toBe(false);
+  expect((await context.cookies('http://localhost:44170')).some(c=>c.name.startsWith('co_ops_')||c.name==='co_shop')).toBe(false);
 });

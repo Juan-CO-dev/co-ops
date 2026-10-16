@@ -146,6 +146,6 @@ export const LANDING_CSP_ORIGINS: CspOrigins = {
 };
 export const LANDING_SECURITY_HEADERS: readonly SecurityHeader[] = SECURITY_HEADERS.map(header => {
   if (header.key === 'Content-Security-Policy-Report-Only') return { ...header, value: buildContentSecurityPolicy(LANDING_CSP_ORIGINS) };
-  if (header.key === 'Permissions-Policy') return { ...header, value: 'camera=(), microphone=(), geolocation=(self)' };
+  if (header.key === 'Permissions-Policy') return { ...header, value: 'camera=(), microphone=(), geolocation=()' };
   return header;
 });

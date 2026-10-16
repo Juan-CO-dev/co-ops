@@ -3,7 +3,7 @@
   "media": [
     {
       "id": "crunchy-boi-spin",
-      "publicPath": "/media/crunchy-boi-spin.mp4",
+      "publicPath": "/media/crunchy-boi-spin-drawn-dfb8c93fe64d.mp4",
       "classification": "drawn",
       "sourcePath": "C:/Users/conta/CO-Ads-Launch-2026-10/08 Crunchy Boi 360 Spin (asset)/Spin_1x1_transparent.webm",
       "sourceSha256": "ebb277e24a3d8e7bc71b90081931af8d959680cca5f585c22173270b266c4127",
@@ -21,7 +21,7 @@
     {
       "id": "hero-poster",
       "sourceId": "014",
-      "publicPath": "/media/crunchy-boi-014.webp",
+      "publicPath": "/media/crunchy-boi-014-3566a724066c.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
@@ -70,7 +70,7 @@
     {
       "id": "lineup-frex",
       "sourceId": "001",
-      "publicPath": "/media/frex-lineup-001.webp",
+      "publicPath": "/media/frex-lineup-001-c36000951c0c.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_001.JPG",
@@ -103,7 +103,7 @@
     {
       "id": "lineup-frex-480",
       "sourceId": "001",
-      "publicPath": "/media/frex-lineup-001-480.webp",
+      "publicPath": "/media/frex-lineup-001-480-90bf2e417db7.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_001.JPG",
@@ -136,7 +136,7 @@
     {
       "id": "lineup-hot-pants",
       "sourceId": "005",
-      "publicPath": "/media/hot-pants-lineup-005.webp",
+      "publicPath": "/media/hot-pants-lineup-005-93e4e8c18dbe.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_005.JPG",
@@ -169,7 +169,7 @@
     {
       "id": "lineup-hot-pants-480",
       "sourceId": "005",
-      "publicPath": "/media/hot-pants-lineup-005-480.webp",
+      "publicPath": "/media/hot-pants-lineup-005-480-1a636cebdb05.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_005.JPG",
@@ -202,7 +202,7 @@
     {
       "id": "lineup-teamster",
       "sourceId": "011",
-      "publicPath": "/media/teamster-lineup-011.webp",
+      "publicPath": "/media/teamster-lineup-011-895508296c97.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_011.JPG",
@@ -235,7 +235,7 @@
     {
       "id": "lineup-teamster-480",
       "sourceId": "011",
-      "publicPath": "/media/teamster-lineup-011-480.webp",
+      "publicPath": "/media/teamster-lineup-011-480-23a4cd92e4bd.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_011.JPG",
@@ -268,7 +268,7 @@
     {
       "id": "lineup-crunchy-boi",
       "sourceId": "014",
-      "publicPath": "/media/crunchy-boi-lineup-014.webp",
+      "publicPath": "/media/crunchy-boi-lineup-014-3566a724066c.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
@@ -301,7 +301,7 @@
     {
       "id": "lineup-crunchy-boi-480",
       "sourceId": "014",
-      "publicPath": "/media/crunchy-boi-lineup-014-480.webp",
+      "publicPath": "/media/crunchy-boi-lineup-014-480-62023e4bd14c.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_014.JPG",
@@ -334,7 +334,7 @@
     {
       "id": "lineup-sicky-wicky",
       "sourceId": "024",
-      "publicPath": "/media/sicky-wicky-lineup-024.webp",
+      "publicPath": "/media/sicky-wicky-lineup-024-918d9cc75ec4.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_024.JPG",
@@ -367,7 +367,7 @@
     {
       "id": "lineup-sicky-wicky-480",
       "sourceId": "024",
-      "publicPath": "/media/sicky-wicky-lineup-024-480.webp",
+      "publicPath": "/media/sicky-wicky-lineup-024-480-6e37a792a1c2.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_024.JPG",
@@ -400,7 +400,7 @@
     {
       "id": "lineup-never-been-cheddar",
       "sourceId": "029",
-      "publicPath": "/media/never-been-cheddar-lineup-029.webp",
+      "publicPath": "/media/never-been-cheddar-lineup-029-4efc33caa2de.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_029.JPG",
@@ -433,7 +433,7 @@
     {
       "id": "lineup-never-been-cheddar-480",
       "sourceId": "029",
-      "publicPath": "/media/never-been-cheddar-lineup-029-480.webp",
+      "publicPath": "/media/never-been-cheddar-lineup-029-480-7a3a828a2502.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_029.JPG",
@@ -466,7 +466,7 @@
     {
       "id": "lineup-turkey-caesar",
       "sourceId": "033",
-      "publicPath": "/media/turkey-caesar-lineup-033.webp",
+      "publicPath": "/media/turkey-caesar-lineup-033-650f5a6e02b4.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_033.JPG",
@@ -499,7 +499,7 @@
     {
       "id": "lineup-turkey-caesar-480",
       "sourceId": "033",
-      "publicPath": "/media/turkey-caesar-lineup-033-480.webp",
+      "publicPath": "/media/turkey-caesar-lineup-033-480-29582ee703c3.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_033.JPG",
@@ -532,7 +532,7 @@
     {
       "id": "lineup-farmers-market",
       "sourceId": "037",
-      "publicPath": "/media/farmers-market-lineup-037.webp",
+      "publicPath": "/media/farmers-market-lineup-037-b7e4f26b8aa1.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_037.JPG",
@@ -565,7 +565,7 @@
     {
       "id": "lineup-farmers-market-480",
       "sourceId": "037",
-      "publicPath": "/media/farmers-market-lineup-037-480.webp",
+      "publicPath": "/media/farmers-market-lineup-037-480-3caa1d0a65ae.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_037.JPG",
@@ -598,7 +598,7 @@
     {
       "id": "lineup-french-dip",
       "sourceId": "040",
-      "publicPath": "/media/french-dip-lineup-040.webp",
+      "publicPath": "/media/french-dip-lineup-040-33ff8db796a0.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_040.JPG",
@@ -631,7 +631,7 @@
     {
       "id": "lineup-french-dip-480",
       "sourceId": "040",
-      "publicPath": "/media/french-dip-lineup-040-480.webp",
+      "publicPath": "/media/french-dip-lineup-040-480-06427ec29381.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_040.JPG",
@@ -664,7 +664,7 @@
     {
       "id": "lineup-vesuvio",
       "sourceId": "047",
-      "publicPath": "/media/vesuvio-lineup-047.webp",
+      "publicPath": "/media/vesuvio-lineup-047-43c31e4810ad.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_047.JPG",
@@ -697,7 +697,7 @@
     {
       "id": "lineup-vesuvio-480",
       "sourceId": "047",
-      "publicPath": "/media/vesuvio-lineup-047-480.webp",
+      "publicPath": "/media/vesuvio-lineup-047-480-47dbcb3aa300.webp",
       "classification": "real-photo",
       "mode": "crop-resize-only",
       "sourcePath": "C:/Users/conta/co-chief-assets/shoot/Product/compliementsonly_073126_sm_047.JPG",
@@ -726,6 +726,86 @@
       },
       "command": "node scripts/assets/export.mjs",
       "review": "Original framing retained, including any source-edge crops; phone approval pending"
+    },
+    {
+      "id": "landing-icon",
+      "publicPath": "/brand/co-icon.png",
+      "classification": "brand",
+      "sourcePath": "public/brand/co-icon.png",
+      "sourceSha256": "dd72a09b805e4c24a53d7bf52739df8ddaf73f5b0fc7374eff06d6d0f293ef2e",
+      "sha256": "dd72a09b805e4c24a53d7bf52739df8ddaf73f5b0fc7374eff06d6d0f293ef2e",
+      "bytes": 100188,
+      "maxBytes": 150000,
+      "width": 805,
+      "height": 894,
+      "sidecar": "assets/provenance/landing-icon.json",
+      "steps": [
+        "Existing repository brand asset, unchanged from 51829f5e"
+      ]
+    },
+    {
+      "id": "subdex-catch",
+      "publicPath": "/media/subdex-catch-drawn-c539c9f5e05e.mp4",
+      "classification": "drawn",
+      "sourcePath": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
+      "sourceSha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82",
+      "sha256": "c539c9f5e05e67212f9c9ad8b091d8677096e63a30031a292e41a4aa04659b99",
+      "width": 720,
+      "height": 720,
+      "bytes": 63770,
+      "maxBytes": 1000000,
+      "sidecar": "assets/provenance/subdex-catch.json",
+      "duration": 0.9,
+      "codec": "h264",
+      "steps": [
+        "Existing AI-DRAWN source; no generation",
+        "Crop and uniform resize; metadata stripped",
+        "H264 CRF23 slow yuv420p faststart; audio removed"
+      ],
+      "cut": {
+        "start": 17.3,
+        "duration": 0.9,
+        "poster": 17.5,
+        "crop": [
+          0,
+          780,
+          1080,
+          1080
+        ],
+        "width": 720,
+        "height": 720
+      }
+    },
+    {
+      "id": "subdex-poster",
+      "publicPath": "/media/subdex-poster-drawn-1c61ffe1c9e8.webp",
+      "classification": "drawn",
+      "sourcePath": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
+      "sourceSha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82",
+      "sha256": "1c61ffe1c9e85b44b710db8bf5b810e638608650e74415f877c688ce63ea8300",
+      "width": 720,
+      "height": 720,
+      "bytes": 17576,
+      "maxBytes": 100000,
+      "sidecar": "assets/provenance/subdex-poster.json",
+      "steps": [
+        "Existing AI-DRAWN source; no generation",
+        "Crop and uniform resize; metadata stripped",
+        "WebP quality85"
+      ],
+      "cut": {
+        "start": 17.3,
+        "duration": 0.9,
+        "poster": 17.5,
+        "crop": [
+          0,
+          780,
+          1080,
+          1080
+        ],
+        "width": 720,
+        "height": 720
+      }
     }
   ]
 }

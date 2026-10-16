@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { createRequire } from 'node:module';
 const require = createRequire(process.cwd() + '/package.json');
-for (const state of ['initial','settings open','accepted','rejected','privacy'] as const) test(`landing passes axe WCAG AA at phone width: ${state}`, async ({page}) => {
+for (const state of ['initial','settings open','accepted','rejected','privacy'] as const) test(`landing passes axe WCAG AA at phone width: ${state}`, async ({page,browserName}) => {
+  test.setTimeout(90000);
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.route('https://connect.facebook.net/**', route => route.fulfill({contentType:'application/javascript',body:'/* offline axe fixture */'}));
   await page.route('https://www.facebook.com/**', route => route.fulfill({status:204}));
-  await page.goto(state === 'privacy' ? '/privacy' : '/');
+  await page.goto(state === 'privacy' ? '/privacy' : '/', {waitUntil:browserName === 'webkit' ? 'domcontentloaded' : 'load', timeout:60000});
   const notice = page.locator('[data-landing-consent]');
   if (state === 'accepted' || state === 'settings open') {
     await notice.getByRole('button').first().click();

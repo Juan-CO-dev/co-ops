@@ -1,0 +1,16 @@
+{
+  "id": "landing-icon",
+  "publicPath": "/brand/co-icon.png",
+  "classification": "brand",
+  "sourcePath": "public/brand/co-icon.png",
+  "sourceSha256": "dd72a09b805e4c24a53d7bf52739df8ddaf73f5b0fc7374eff06d6d0f293ef2e",
+  "sha256": "dd72a09b805e4c24a53d7bf52739df8ddaf73f5b0fc7374eff06d6d0f293ef2e",
+  "bytes": 100188,
+  "maxBytes": 150000,
+  "width": 805,
+  "height": 894,
+  "sidecar": "assets/provenance/landing-icon.json",
+  "steps": [
+    "Existing repository brand asset, unchanged from 51829f5e"
+  ]
+}

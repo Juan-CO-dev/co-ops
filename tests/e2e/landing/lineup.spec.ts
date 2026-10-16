@@ -21,7 +21,9 @@ for (const javaScriptEnabled of [true, false]) test(`lineup is usable with JS ${
   await strip.locator('li').first().scrollIntoViewIfNeeded();
   await strip.focus(); await page.keyboard.press('ArrowRight');
   await expect.poll(() => strip.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
-  await strip.locator('li').last().scrollIntoViewIfNeeded();
+  // Keyboard movement is pinned above. Reach the end without an actionability
+  // stability wait racing native scroll snap in Chromium's JS-disabled context.
+  await strip.evaluate(el => { el.scrollLeft = el.scrollWidth; });
   await expect(strip.locator('li').last()).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
   await expect(page.locator('#lineup').getByRole('link',{name:'Order Capitol Hill'})).toHaveAttribute('href',/appfront/);

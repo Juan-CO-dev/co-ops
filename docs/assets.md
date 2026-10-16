@@ -1,5 +1,13 @@
 # Landing asset provenance
 
+## Current review-fix / Chunk D inventory
+
+All `/media` paths now include the first 12 hex characters of their content SHA256. The current poster is `/media/crunchy-boi-014-3566a724066c.webp`; the drawn hero spin and SUBDEX filenames also contain `drawn`, with no visible classification label. Earlier path descriptions below are historical. `assets/approved-media.json` is authoritative; `scripts/assets/fingerprint.mjs` updates sidecars, the lineup roster and the public-only `config/tenant/landing-assets.json`. The proxy allowlist comes from that public inventory and tests pin equality to the approval manifest. Existing media bytes were renamed, not re-encoded.
+
+Ordinary CI refuses unlisted files under `public/media`, changed exports/sidecars, and real-photo/real-edited entries whose source ID is not an eligible confirmed representative with matching path/hash. `--sources` additionally checks the external originals at release. The existing landing icon now has an explicit unchanged-brand provenance entry.
+
+SUBDEX reproduction: `node scripts/assets/export-subdex.mjs` writes two hashed public exports, sidecars and `tmp/subdex-export/entries.json`. Reviewed entries must be included in the approval inventory, then run `node scripts/assets/fingerprint.mjs` to refresh the public routing list. It uses the pinned existing textless master, 17.3–18.2s, crop x0/y780/1080 square to 720 square; poster at 17.5s. Opaque H.264/yuv420p, no audio, 63,770 bytes; WebP still 17,576 bytes. All 27 frames were inspected without held-item cards, baked text or transition contamination. Source opacity is retained; no alpha compositing is required. Timecode and phone approval remain Juan's.
+
 The r5 whitelist has eleven confirmed identities and ten eligible representatives. Marisa is held; unconfirmed IDs and alternate representatives are refused. The source manifest records the exact source paths, SHA-256 hashes and lead/INTAKE evidence; those local paths never enter the client bundle. Sources and external v4 code are read-only.
 
 The hero poster is the real sm_014 frame, full-frame uniform resize from 3707x5560 to 750x1125, WebP quality 86, 44,380 bytes. No grading, generative edits or crop. Its neutral public path is /media/crunchy-boi-014.webp, classified real-photo in the private sidecar. Source metadata is stripped. Visual inspection of the exported frame confirms the complete sandwich and original backdrop; mobile composition approval remains a separate gate. Existing wordmark SVG copied byte-for-byte.

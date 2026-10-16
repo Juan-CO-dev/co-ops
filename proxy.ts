@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { verifyJwt } from './lib/auth';
 import { loadLandingConfig } from './lib/landing/config';
 import { resolveLandingLanguage } from './lib/landing/language-shared';
-import { classifyLandingHost, configuredOrigin, landingPathDecision } from './lib/landing/host-shared';
+import { classifyLandingHost, configuredOrigin, landingPathDecision, isLandingAsset } from './lib/landing/host-shared';
 import { LANDING_SECURITY_HEADERS, SECURITY_HEADERS } from './lib/security-headers';
 
 const PUBLIC_PATHS = new Set(['/', '/verify', '/reset-password', '/api/auth/pin', '/api/auth/password', '/api/auth/logout', '/api/auth/verify', '/api/auth/password-reset-request', '/api/auth/password-reset', '/api/locations', '/api/users/login-options', '/order']);
@@ -10,15 +10,18 @@ function isPublicPath(path: string): boolean {
   // The original matcher bypasses remain staff-only after the landing gate.
   return PUBLIC_PATHS.has(path) || ['/order/', '/api/portal/', '/api/webhooks/', '/api/cron/', '/brand/', '/_next/static', '/_next/image', '/favicon.ico'].some(prefix => path.startsWith(prefix)) || /\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$/.test(path);
 }
-function finish(response: NextResponse, landing: boolean): NextResponse {
+function finishResponse(response: NextResponse, landing: boolean, assetPath?: string, nearbyEnabled = false): NextResponse {
   for (const { key, value } of landing ? LANDING_SECURITY_HEADERS : SECURITY_HEADERS) response.headers.set(key, value);
-  if (landing) {
+  if (landing && !assetPath) {
     response.headers.set('Cache-Control', 'private, no-store');
   }
+  if (landing && assetPath?.startsWith('/media/')) response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  if (landing && nearbyEnabled) response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
   return response;
 }
 export async function proxy(req: NextRequest): Promise<NextResponse> {
   const landingConfig = loadLandingConfig();
+  const finish = (response: NextResponse, landing: boolean, assetPath?: string) => finishResponse(response, landing, assetPath, landingConfig.nearbyEnabled);
   const kind = classifyLandingHost(req.headers, landingConfig);
   const path = req.nextUrl.pathname;
   const headers = new Headers(req.headers);
@@ -35,14 +38,14 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
       target.search = req.nextUrl.search;
       return finish(NextResponse.redirect(target, 301), true);
     }
-    if (path === '/robots.txt') return finish(new NextResponse('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } }), true);
-    if (path === '/sitemap.xml') return finish(new NextResponse('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>', { headers: { 'Content-Type': 'application/xml' } }), true);
+    if (path === '/robots.txt') return finish(new NextResponse('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } }), true, path);
+    if (path === '/sitemap.xml') return finish(new NextResponse('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>', { headers: { 'Content-Type': 'application/xml' } }), true, path);
     const target = req.nextUrl.clone();
     if (decision === 'rewrite') target.pathname = path === '/' ? '/eat' : '/eat/privacy';
     if (['/favicon.ico', '/eat/icon.png', '/eat/apple-icon.png'].includes(path)) target.pathname = '/brand/co-icon.png';
-    return finish(target.pathname !== path ? NextResponse.rewrite(target, { request: { headers } }) : NextResponse.next({ request: { headers } }), true);
+    return finish(target.pathname !== path ? NextResponse.rewrite(target, { request: { headers } }) : NextResponse.next({ request: { headers } }), true, isLandingAsset(path, req.nextUrl.searchParams) || target.pathname.startsWith('/brand/') || path.startsWith('/api/landing/') ? path : undefined);
   }
-  if (path.startsWith('/eat') || path.startsWith('/api/landing')) return finish(new NextResponse(null, { status: 404 }), false);
+  if (path.startsWith('/eat') || path.startsWith('/api/landing') || path.startsWith('/media/')) return finish(new NextResponse(null, { status: 404 }), false);
   // Preserve the pre-chunk-A matcher bypass on staff, including static suffixes.
   if (isPublicPath(path)) return NextResponse.next();
   const jwt = req.cookies.get('co_ops_session')?.value;

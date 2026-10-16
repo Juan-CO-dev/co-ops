@@ -1,3 +1,4 @@
+import { heroMedia } from '../../../lib/landing/media';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -9,7 +10,7 @@ for (const subject of ['spin','control']) for (const color of ['yellow','ink']) 
   test(`decoder proof at 375px: ${subject} on ${color}`, async ({page,browserName}, testInfo) => {
     test.skip(browserName === 'webkit' && process.platform !== 'darwin', 'Playwright WebKit lacks H.264 decoding on this platform; real-iPhone Safari preview check required.');
     const videoPath = subject === 'spin' && color === 'yellow'
-      ? 'public/media/crunchy-boi-spin.mp4' : `assets/verification/hero/${subject}-${color}.mp4`;
+      ? 'public' + heroMedia.spin : `assets/verification/hero/${subject}-${color}.mp4`;
     const referencePath = `assets/verification/hero/${subject}-${color}-reference.png`;
     for(const path of [videoPath,referencePath]) {
       const expected=path.startsWith('public/')?proof.entry.sha256:proof.fixtureFiles.find(file=>file.path===path)?.sha256;
