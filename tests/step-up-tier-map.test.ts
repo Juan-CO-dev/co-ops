@@ -117,6 +117,13 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // 0233 Toast employee links: link/unlink is an attribution change (Tier B); its only client,
   // ToastEmployeeLinks, asks B proactively and retries on step_up_required/stale (joined by hand).
   "app/api/admin/toast-employees/route.ts": ["B"],
+  // Scheduling Phase 1: the 7shifts shop and person links (Tier B, the toast-employees precedent); Sync now takes none.
+  "app/api/admin/sevenshifts/route.ts": ["B"],
+  // Scheduling Phase 1 (Task 16): the people settings (skill tunables MoO+, shop settings) take the Tier E edit
+  // window; adjust / rate (/api/people/skills) take none (J8). Its one client is the PM v2 switch card (chunk G ruling 2).
+  "app/api/people/settings/route.ts": ["E"],
+  // Scheduling Phase 1 (Task 22, R10): the PM v2 criteria editor's writes take the Tier E edit window.
+  "app/api/pm-criteria/route.ts": ["E"],
   // 0234 customer profiles: Tier A = reveal / lookup / dismiss / link catering; Tier B = merge, erase,
   // retention, consent import; exports Tier B.
   "app/api/admin/customers/route.ts": ["A"],
@@ -257,12 +264,17 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/catalog/MenuItemClient.tsx": ["E"],
   // …and the Shop changes list (promote a shop's recipe or menu price / name; Leave writes nothing).
   "components/catalog/ShopChangesClient.tsx": ["E"],
+  // Scheduling Phase 1 (Task 22): the PM v2 criteria editor asks for the edit window before each write.
+  "components/pm-report-v2/PmCriteriaEditor.tsx": ["E"],
+  // Chunk G ruling 2: the per-shop PM v2 switch card asks for the edit window before POST /api/people/settings (E).
+  "components/people/PmV2SwitchCard.tsx": ["E"],
   "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],
   "components/catering/pipeline/TransferLead.tsx": ["B"],
   "components/assignments/StationsAdmin.tsx": ["B"],
   "components/admin/toast-employees/ToastEmployeeLinks.tsx": ["B"],
+  "components/admin/sevenshifts/SevenShiftsScreen.tsx": ["B"],
   "components/admin/customers/CancelImportButton.tsx": ["B"],
   "components/admin/customers/ConsentTools.tsx": ["A", "B"],
   "components/admin/customers/CustomerContactPanel.tsx": ["A", "B"],

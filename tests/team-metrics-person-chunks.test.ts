@@ -40,8 +40,8 @@ it("chunks person completion IDs and retains current activity on an older instan
   } } as unknown as SupabaseClient;
 
   const common = { locationId: "shop", granularity: "day" as const, compare: false, today: "2026-10-07" };
-  const self = await loadMyPerformance(service, { ...common, viewer: { userId: "employee", level: 3, locations: ["shop"] } });
-  const detail = await loadPersonDetail(service, { ...common, personId: "employee", viewer: { userId: "manager", level: 6, locations: ["shop"] } });
+  const self = await loadMyPerformance(service, { ...common, viewer: { userId: "employee", role: "employee", level: 3, locations: ["shop"] } });
+  const detail = await loadPersonDetail(service, { ...common, personId: "employee", viewer: { userId: "manager", role: "agm", level: 6, locations: ["shop"] } });
   expect(chunkSizes).toEqual([50, 50, 50, 50, 25, 50, 50, 50, 50, 25]);
   expect(self?.score).toBeGreaterThan(0);
   expect(detail?.counts.tasks).toBe(225);

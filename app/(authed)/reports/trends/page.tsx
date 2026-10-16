@@ -16,6 +16,7 @@ import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor }
 import { operationalNow } from "@/lib/midshift";
 import { loadTrendSeries } from "@/lib/reports-trends";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
+import { canViewPeople, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadYieldVariance, YIELD_STATS_READ_MIN } from "@/lib/yield-stats";
@@ -50,8 +51,9 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   for (const [key, value] of Object.entries(paramsRange)) if (value !== undefined && !["location", "loc", "g", "range", "from", "to", "compare", "cmp"].includes(key)) context.set(key, value);
   if (allShops) context.set("returnLocation", "all");
   const sb = getServiceRoleClient();
-  const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
-  const canSeeTeam = auth.level >= TEAM_VIEW_LEVEL;
+  const viewer = { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations };
+  // Task 13 (R7): the team read is canViewPeople for the selected shop — the social media manager never.
+  const canSeeTeam = auth.level >= TEAM_VIEW_LEVEL && canViewPeople(peopleActorFromAuth(auth), locationParam);
 
   const header = <>
       <ReportPageNav viewerLevel={auth.level} path="/reports/trends" params={{ ...paramsRange, location: allShops || (auth.level >= REPORT_ALL_LOCATIONS_LEVEL && paramsRange.returnLocation === "all") ? "all" : locationParam, returnLocation: undefined }} language={language} />

@@ -206,10 +206,10 @@ describe("the Shop changes list's writes", () => {
 describe("the admin hub card for Shop changes", () => {
   it("Shop changes is the Director of Operations' (MoO+, 8)", async () => {
     const { adminSectionsFor } = await import("@/lib/admin/sections");
-    const ids = (level: number) => adminSectionsFor(level).map((s) => s.id);
-    expect(ids(8)).toContain("shop-changes");
-    expect(ids(7)).not.toContain("shop-changes");
-    expect(adminSectionsFor(9).find((s) => s.id === "shop-changes")?.href).toBe("/admin/catalog/shop-changes");
+    const ids = (level: number, role: "moo" | "gm") => adminSectionsFor(level, role).map((s) => s.id);
+    expect(ids(8, "moo")).toContain("shop-changes");
+    expect(ids(7, "gm")).not.toContain("shop-changes");
+    expect(adminSectionsFor(9, "owner").find((s) => s.id === "shop-changes")?.href).toBe("/admin/catalog/shop-changes");
   });
 });
 
@@ -245,7 +245,7 @@ describe("the recipe updates (notices) page", () => {
   });
   it("the hub card: Recipe updates is the GM's (7)", async () => {
     const { adminSectionsFor } = await import("@/lib/admin/sections");
-    expect(adminSectionsFor(7).find((s) => s.id === "recipe-notices")?.href).toBe("/admin/catalog/notices");
-    expect(adminSectionsFor(6).map((s) => s.id)).not.toContain("recipe-notices");
+    expect(adminSectionsFor(7, "gm").find((s) => s.id === "recipe-notices")?.href).toBe("/admin/catalog/notices");
+    expect(adminSectionsFor(6, "agm").map((s) => s.id)).not.toContain("recipe-notices");
   });
 });

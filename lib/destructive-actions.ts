@@ -63,6 +63,19 @@ export const DESTRUCTIVE_ACTIONS = [
   "handoff.note_ack",
   "toast_employee_link.create", // 0233: a human links a Toast employee to a CO-OPS user (attribution).
   "toast_employee_link.deactivate", // 0233: a human unlinks one (attribution is cleared).
+  // Scheduling Phase 1 (plan 2026-10-15, Task 4 Step 5; registered ahead of their emitters).
+  // 7shifts links decide attribution (0269); people settings, skill adjustments, ratings and the
+  // tunables change how people are read; PM criteria are each shop's grading config.
+  "sevenshifts_location_link.create",
+  "sevenshifts_location_link.deactivate",
+  "sevenshifts_user_link.create",
+  "sevenshifts_user_link.deactivate",
+  "people.skill_adjust",
+  "people.skill_rating",
+  "people.shop_settings_update",
+  "people.skill_tunables_update",
+  "pm_criteria.create",
+  "pm_criteria.update",
   "customer.consent_import", // 0234: a human imports the Toast marketing list (consent events appended).
   "customer.consent_import_cancel", // 0234 r1: a human cancels a half-applied import (its pending events never count).
   "customer.merge_confirm", // 0234: a manager merges two profiles into one person.

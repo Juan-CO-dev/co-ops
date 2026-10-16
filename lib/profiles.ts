@@ -1,17 +1,17 @@
+/**
+ * THE PUBLIC PROFILE AND THE DIRECTORY.
+ *
+ * Scheduling Phase 1, Task 12: the card's numbers come from the ONE people layer — the company-wide
+ * facts through `loadProfileFacts` (lib/people/facts.ts) and the pure `publicProfileNumbers`
+ * (lib/people/performance-shared.ts). The visibility gate (a shared shop, or "all"), the leadership
+ * contact rule and the blurb rule stay HERE, in the wrapper. The directory keeps its two queries.
+ */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { ROLES, type RoleCode } from "@/lib/roles";
-import { etCalendarDate } from "@/lib/operational-day";
-import { activeDayStreak, longestStreak, personalBest } from "@/lib/team-scoring";
 import { selectAllRows } from "@/lib/supabase-paginate";
-
-function addDays(yyyymmdd: string, n: number): string {
-  const d = new Date(`${yyyymmdd}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-const VELOCITY_DAYS = 30;
+import { loadProfileFacts } from "@/lib/people/facts";
+import { publicProfileNumbers } from "@/lib/people/performance-shared";
 
 export interface PublicProfile {
   userId: string;
@@ -137,50 +137,13 @@ export async function loadPublicProfile(
   const locationScope: "all" | string[] | undefined =
     cardKind === "leadership" ? (level >= 9 || targetLocationIds.length === 0 ? "all" : locationCodes) : undefined;
 
-  const comps = await selectAllRows<{ completed_at: string }>(
-    (from, to) => service.from("checklist_completions").select("completed_at")
-      .eq("completed_by", args.targetUserId).is("superseded_at", null).is("revoked_at", null)
-      .order("completed_at", { ascending: true }).range(from, to),
+  const { tenureDays, mvpWins, tasksAllTime, gradient, streaks, velocity } = publicProfileNumbers(
+    await loadProfileFacts(service, args.targetUserId), { createdAt: u.created_at, today: args.today },
   );
-  const tasksAllTime = comps.length;
-  const dayCounts = new Map<string, number>();
-  for (const c of comps) {
-    const d = etCalendarDate(c.completed_at);
-    dayCounts.set(d, (dayCounts.get(d) ?? 0) + 1);
-  }
-  const activeDates = [...dayCounts.keys()];
-  const streaks = {
-    current: activeDayStreak(activeDates, args.today),
-    longest: longestStreak(activeDates),
-    personalBest: personalBest([...dayCounts.values()]),
-  };
-  const velocity: number[] = [];
-  for (let i = VELOCITY_DAYS - 1; i >= 0; i--) {
-    velocity.push(dayCounts.get(addDays(args.today, -i)) ?? 0);
-  }
-
-  const { count: mvpCount } = await service
-    .from("pm_reports").select("id", { count: "exact", head: true })
-    .eq("mvp_user_id", args.targetUserId).is("superseded_at", null);
-  const mvpWins = mvpCount ?? 0;
-
-  const evals = await selectAllRows<{ arrived_ready: string; attitude: string; production: string; team_player: string }>(
-    (from, to) => service.from("pm_employee_evals").select("arrived_ready, attitude, production, team_player")
-      .eq("employee_id", args.targetUserId).is("superseded_at", null)
-      .order("pm_report_id", { ascending: true }).range(from, to),
-  );
-  let great = 0, good = 0; // needsWork intentionally not tracked/returned
-  for (const e of evals) {
-    for (const g of [e.arrived_ready, e.attitude, e.production, e.team_player]) {
-      if (g === "great") great++; else if (g === "good") good++;
-    }
-  }
-
-  const tenureDays = Math.max(0, Math.round((Date.parse(`${args.today}T00:00:00Z`) - Date.parse(u.created_at)) / 86400000));
 
   return {
     userId: u.id, name: u.name, role: u.role, locationCodes, tenureDays,
-    mvpWins, tasksAllTime, gradient: { great, good }, streaks, velocity,
+    mvpWins, tasksAllTime, gradient, streaks, velocity,
     cardKind, contact, locationScope,
     blurb: level >= 6 ? (u.profile_blurb ?? null) : null,
   };

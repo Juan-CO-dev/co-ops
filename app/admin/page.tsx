@@ -45,7 +45,7 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
   const { denied } = await searchParams;
   const deniedKey = denied && denied in DENIED_KEYS ? DENIED_KEYS[denied as keyof typeof DENIED_KEYS] : null;
   const lang = auth.user.language;
-  const sections = adminSectionsFor(auth.level);
+  const sections = adminSectionsFor(auth.level, auth.role);
 
   const wantsCounts = sections.some(
     (s) => s.id === "skus" || s.id === "recipes" || s.id === "items",
