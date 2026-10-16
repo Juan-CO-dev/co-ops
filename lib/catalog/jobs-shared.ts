@@ -19,7 +19,13 @@ export interface JobVendorOptions {
   guides: Array<{ id: string; vendorId: string; name: string; updatedAt: string; sections: Array<{ id: string; name: string; position: number }> }>;
   rhythm: Array<{ id: string; vendorId: string; orderDow: number; leadDays: number }>;
 }
-export interface NewItemJobView extends JobScopeView, JobVendorOptions {}
+export interface NewItemRecipeChoice { id: string; name: string; activeVersionId: string | null; basedOnVersionId: string | null }
+export interface NewItemMeasureChoice { label: string; dimension: "weight" | "volume" | "count" }
+export interface NewItemJobView extends JobScopeView, JobVendorOptions {
+  measures: NewItemMeasureChoice[];
+  recipes: NewItemRecipeChoice[];
+  setupShops: Array<{ shopId: string; rhythm: JobVendorOptions["rhythm"]; recipes: NewItemRecipeChoice[] }>;
+}
 export interface NewSandwichJobView extends JobScopeView {
   catalog: {
     skus: RecipeBuilderSku[];
@@ -49,6 +55,48 @@ export interface ToastLinkChoices {
   linked: ToastLinkChoice[];
 }
 export interface CreatedJobItem { skuId: string; ownerLocationId: string | null; replayed: boolean }
+
+export type NewItemAttemptState =
+  | { status: "draft"; requestId: string }
+  | { status: "pending"; requestId: string }
+  | { status: "uncertain"; requestId: string }
+  | { status: "created"; requestId: string; item: CreatedJobItem };
+
+/** One request id belongs to one intentional creation until the server acknowledges an identity or replay. */
+export function createNewItemAttemptController(makeId: () => string = () => crypto.randomUUID(), expectedOwnerLocationId?: string | null) {
+  let requestId = makeId();
+  let state: NewItemAttemptState = { status: "draft", requestId };
+  const validCreated = (value: unknown): value is CreatedJobItem => {
+    if (!value || typeof value !== "object") return false;
+    const row = value as Record<string, unknown>;
+    const uuid = (v: unknown) => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+    return uuid(row.skuId) && (row.ownerLocationId === null || uuid(row.ownerLocationId))
+      && (expectedOwnerLocationId === undefined || row.ownerLocationId === expectedOwnerLocationId)
+      && typeof row.replayed === "boolean";
+  };
+  const acknowledge = (item: CreatedJobItem): NewItemAttemptState => {
+    state = { status: "created", requestId, item };
+    return state;
+  };
+  return {
+    getState: () => state,
+    request<T extends object>(fields: T): T & { request_id: string } {
+      if (state.status === "created") { requestId = makeId(); state = { status: "draft", requestId }; }
+      state = { status: "pending", requestId };
+      return { ...fields, request_id: requestId };
+    },
+    uncertain(): NewItemAttemptState { state = { status: "uncertain", requestId }; return state; },
+    acknowledge,
+    readResponse(value: unknown): NewItemAttemptState {
+      if (validCreated(value)) return acknowledge(value);
+      state = { status: "uncertain", requestId };
+      return state;
+    },
+  };
+}
+
+/** Unconfirmed may follow a committed write. It must be refreshed, never blindly retried. */
+export function canRetrySetupStep(state: SetupStepState): boolean { return state.status !== "unconfirmed"; }
 export type SetupDayOutcome = { orderDow: number; leadDays: number } & (
   { ok: true; pairId: string } | { ok: false; status: number; code: string; messageKey: string; refreshRequired: boolean }
 );
@@ -64,7 +112,8 @@ export type SetupState = Record<SetupStep["kind"], SetupStepState>;
 export type SetupEvent =
   | { kind: "result"; result: JobSetupResult }
   | { kind: "skip"; step: SetupStep["kind"] }
-  | { kind: "failed"; step: SetupStep["kind"]; code: string; uncertain: boolean };
+  | { kind: "failed"; step: SetupStep["kind"]; code: string; uncertain: boolean }
+  | { kind: "refreshed"; step: SetupStep["kind"] };
 
 export function initialSetupState(): SetupState {
   return Object.fromEntries(SETUP_STEP_KINDS.map(step => [step, { status: "incomplete", days: {}, errorKey: null, detail: {} }])) as SetupState;
@@ -79,7 +128,8 @@ function isDayOutcome(value: JobJson): value is SetupDayOutcome & { [key: string
 export function setupReducer(state: SetupState, event: SetupEvent): SetupState {
   const step = event.kind === "result" ? event.result.step : event.step;
   const previous = state[step];
-  if (event.kind === "skip") return { ...state, [step]: { ...previous, status: previous.status === "saved" ? "saved" : "skipped" } };
+  if (event.kind === "refreshed") return { ...state, [step]: { ...previous, status: previous.status === "unconfirmed" ? "incomplete" : previous.status, errorKey: null } };
+  if (event.kind === "skip") return { ...state, [step]: { ...previous, status: previous.status === "saved" || previous.status === "unconfirmed" ? previous.status : "skipped" } };
   if (event.kind === "failed") return { ...state, [step]: { ...previous, status: event.uncertain ? "unconfirmed" : "incomplete", errorKey: jobErrorKey(event.code) } };
   const { ok, detail } = event.result;
   const days = { ...previous.days };

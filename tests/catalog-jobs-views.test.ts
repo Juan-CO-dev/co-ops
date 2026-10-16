@@ -17,7 +17,7 @@ beforeEach(() => {
     vendor_order_guides: [{ id: "g", vendor_id: "v", name: "Guide", updated_at: "now" }], order_guide_sections: [{ id: "s", guide_id: "g", name: "Produce", position: 1 }],
     vendor_delivery_rhythm: [{ id: "r", vendor_id: "v", location_id: A, order_dow: 1, lead_days: 2, active: true }],
     vendor_items: [{ id: SKU, name: "Owned", location_id: A, vendor_id: "v", product_id: null, active: true, inventory_only: false }, { id: "shared", name: "Shared", location_id: null, vendor_id: "v", product_id: null, active: true, inventory_only: false }, { id: "foreign", name: "Foreign", location_id: B, active: true, inventory_only: false }],
-    sku_swaps: [], sku_swap_ends: [], location_sku_settings: [] };
+    measure_units: [], recipes: [], recipe_versions: [], sku_swaps: [], sku_swap_ends: [], location_sku_settings: [] };
   db = createFakeDb(tables);
   mocks.resolve.mockImplementation(async (ids: string[], requested?: string) => requested ?? ids[0] ?? null);
   mocks.builder.mockResolvedValue({ skus: [], items: [], products: [], outputItems: [], prices: new Map([[SKU, 2]]), measures: new Map([["oz", { dimension: "weight", toBaseFactor: 1 }]]), unitOptions: [], activeMeasureLabels: ["oz"] });
@@ -29,7 +29,7 @@ it("resolves only authorized shops and loads setup options in batches", async ()
   expect(view.vendors).toEqual([{ id: "v", name: "Vendor" }]);
   expect(view.guides[0]?.sections).toEqual([{ id: "s", name: "Produce", position: 1 }]);
   expect(view.rhythm).toEqual([{ id: "r", vendorId: "v", orderDow: 1, leadDays: 2 }]);
-  expect(db.log.length).toBe(7); expect(db.writes).toEqual([]);
+  expect(db.log.length).toBe(13); expect(db.writes).toEqual([]);
 });
 it("distinguishes explicit global from omission and binds builder owner", async () => {
   await expect(loadNewSandwichJobView(gm, null)).rejects.toMatchObject({ code: "global_requires_moo" });
@@ -49,7 +49,7 @@ it("refuses foreign, inactive, malformed and SMM requests instead of fallback", 
   await expect(loadNewItemJobView({ ...gm, user: { ...gm.user, role: "social_media_mgr" } })).rejects.toMatchObject({ code: "forbidden" });
   expect(db.log).toEqual([]);
 });
-it.each(["locations", "vendors", "categories", "order_types", "vendor_order_guides", "order_guide_sections", "vendor_delivery_rhythm"])("throws %s read errors", async table => {
+it.each(["locations", "vendors", "categories", "order_types", "vendor_order_guides", "order_guide_sections", "vendor_delivery_rhythm", "measure_units", "recipes", "recipe_versions"])("throws %s read errors", async table => {
   delete tables[table]; await expect(loadNewItemJobView(gm, A)).rejects.toThrow();
 });
 it("does not turn a builder error into an empty sandwich picker", async () => {
@@ -78,4 +78,30 @@ it("paginates vendor lists and batches section IDs, without per-vendor queries",
   expect(view.vendors).toHaveLength(1005); expect(view.guides).toHaveLength(1005);
   expect(view.guides.every(g => g.sections.length === 1)).toBe(true);
   expect(db.log.length).toBeLessThan(40);
+});
+
+it("projects correct owned, shared first-override and existing override baselines per authorized shop", async () => {
+  tables.recipes = [
+    { id: "owned", name: "Owned", location_id: A, active: true },
+    { id: "shared", name: "Shared", location_id: null, active: true },
+    { id: "foreign", name: "Foreign", location_id: B, active: true },
+    { id: "retired", name: "Retired", location_id: null, active: false },
+  ];
+  tables.recipe_versions = [
+    { id: "owned-global", recipe_id: "owned", location_id: null, active: true },
+    { id: "shared-global", recipe_id: "shared", location_id: null, active: true },
+    { id: "shared-B", recipe_id: "shared", location_id: B, active: true },
+  ];
+  const view = await loadNewItemJobView(gm, A);
+  expect(view.setupShops).toHaveLength(1);
+  expect(view.setupShops[0]?.recipes).toEqual([
+    { id: "owned", name: "Owned", activeVersionId: "owned-global", basedOnVersionId: null },
+    { id: "shared", name: "Shared", activeVersionId: null, basedOnVersionId: "shared-global" },
+  ]);
+  const global = await loadNewItemJobView(moo, null);
+  expect(global.scope).toBeNull();
+  expect(global.setupShops.find(s => s.shopId === B)?.recipes.find(r => r.id === "shared"))
+    .toMatchObject({ activeVersionId: "shared-B", basedOnVersionId: null });
+  expect(global.setupShops.find(s => s.shopId === B)?.recipes.some(r => r.id === "owned")).toBe(false);
+  expect(db.writes).toEqual([]);
 });

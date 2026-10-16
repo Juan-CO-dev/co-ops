@@ -83,9 +83,48 @@ async function vendorOptions(scope: string | null): Promise<JobVendorOptions> {
   };
 }
 
+/** Active global rows plus authorized shop rows, paginated and bounded by 100 shop IDs. */
+async function activeJobRows<T>(table: string, columns: string, shopIds: string[]): Promise<T[]> {
+  const sb = getServiceRoleClient();
+  const rows = await selectAllRows<T>((from, to) => sb.from(table).select(columns).eq("active", true)
+    .is("location_id", null).order("id").range(from, to).returns<T[]>());
+  for (let offset = 0; offset < shopIds.length; offset += 100) {
+    rows.push(...await selectAllRows<T>((from, to) => sb.from(table).select(columns).eq("active", true)
+      .in("location_id", shopIds.slice(offset, offset + 100)).order("id").range(from, to).returns<T[]>()));
+  }
+  return rows;
+}
 export async function loadNewItemJobView(actor: AuthContext, requested?: string | null): Promise<NewItemJobView> {
   const scope = await jobScope(actor, requested);
-  return { ...scope, ...await vendorOptions(scope.scope) };
+  const sb = getServiceRoleClient();
+  type Measure = { label: string; dimension: "weight" | "volume" | "count" };
+  type Recipe = { id: string; name: string; location_id: string | null };
+  type Version = { id: string; recipe_id: string; location_id: string | null };
+  type Rhythm = { id: string; vendor_id: string; location_id: string; order_dow: number; lead_days: number; active: boolean };
+  const shopIds = scope.shops.map(shop => shop.id);
+  const [options, measures, recipeRows, versions, rhythms] = await Promise.all([
+    vendorOptions(scope.scope),
+    selectAllRows<Measure>((from, to) => sb.from("measure_units").select("label,dimension").eq("active", true)
+      .order("label").range(from, to).returns<Measure[]>()),
+    activeJobRows<Recipe>("recipes", "id,name,location_id", shopIds),
+    activeJobRows<Version>("recipe_versions", "id,recipe_id,location_id", shopIds),
+    byIds<Rhythm>("vendor_delivery_rhythm", "id,vendor_id,location_id,order_dow,lead_days,active", "location_id", shopIds),
+  ]);
+  const heads = new Map(versions.map(v => [`${v.recipe_id}:${v.location_id ?? "global"}`, v.id]));
+  // Mirror loadRecipeLiveSet/saveRecipeLines: owned recipes write their default;
+  // a shared recipe's first shop override names a null shop head AND the global base.
+  const recipesAt = (shopId: string | null) => recipeRows.filter(r => ownerVisible(r.location_id, shopId))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).map(r => {
+      const writeScope = r.location_id !== null ? null : shopId;
+      const expected = heads.get(`${r.id}:${writeScope ?? "global"}`) ?? null;
+      return { id: r.id, name: r.name, activeVersionId: expected,
+        basedOnVersionId: writeScope !== null && expected === null ? heads.get(`${r.id}:global`) ?? null : null };
+    });
+  const vendorIds = new Set(options.vendors.map(v => v.id));
+  return { ...scope, ...options, measures, recipes: recipesAt(scope.scope),
+    setupShops: scope.shops.map(shop => ({ shopId: shop.id, recipes: recipesAt(shop.id),
+      rhythm: rhythms.filter(r => r.active && r.location_id === shop.id && vendorIds.has(r.vendor_id))
+        .map(r => ({ id: r.id, vendorId: r.vendor_id, orderDow: r.order_dow, leadDays: r.lead_days })) })) };
 }
 
 export async function loadNewSandwichJobView(actor: AuthContext, requested?: string | null): Promise<NewSandwichJobView> {

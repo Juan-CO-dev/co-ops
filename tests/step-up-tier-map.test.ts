@@ -256,6 +256,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
+  "components/catalog/jobs/NewItemJob.tsx": ["B", "E"],
   // Catalog Phase 2b — the item page asks for the 15-minute edit window only.
   "components/catalog/SkuItemClient.tsx": ["E"],
   // Catalog Phase 3b — the recipe page asks for the 15-minute edit window only (no one-shot grant).

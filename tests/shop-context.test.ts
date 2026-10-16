@@ -327,6 +327,7 @@ describe("review 2: a route that ignores the URL shop never moves the remembered
 
 const ROOT_FOR_AUDIT = path.resolve(__dirname, "..");
 const PAGE_ROUTES: Record<string, string> = {
+  "app/admin/catalog/new/item/page.tsx": "/admin/catalog/new/item",
   "app/(authed)/dashboard/page.tsx": "/dashboard",
   "app/(authed)/stations/page.tsx": "/stations",
   "app/admin/stations/page.tsx": "/admin/stations",
@@ -414,7 +415,12 @@ describe("route contract = what each resolver page's source actually reads (revi
       for (const entry of readdirSync(path.join(ROOT_FOR_AUDIT, dir), { withFileTypes: true })) {
         const rel = `${dir}/${entry.name}`;
         if (entry.isDirectory()) walk(rel);
-        else if (entry.name === "page.tsx" && /from "@\/lib\/shop-context"/.test(readFileSync(path.join(ROOT_FOR_AUDIT, rel), "utf8"))) pages.push(rel);
+        else if (entry.name === "page.tsx") {
+          const source = readFileSync(path.join(ROOT_FOR_AUDIT, rel), "utf8");
+          // Job loaders perform the authorized shop resolution on the page's behalf.
+          if (/from "@\/lib\/shop-context"/.test(source)
+            || /import \{ loadNewItemJobView \} from "@\/lib\/catalog\/jobs"/.test(source)) pages.push(rel);
+        }
       }
     };
     walk("app");
