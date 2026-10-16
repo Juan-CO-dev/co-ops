@@ -54,7 +54,16 @@ export interface ScheduleStructure {
   crews: Record<CrewType, CrewRow>;
   positions: Record<string, StructurePosition>;
   priority: Array<{ pair: [string, string]; primary: string }>;
-  leadership: { modRequired: boolean; closingRoles: RoleCode[]; leaderDefaults: Partial<Record<RoleCode, LeaderSetting>> };
+  leadership: {
+    modRequired: boolean; closingRoles: RoleCode[]; leaderDefaults: Partial<Record<RoleCode, LeaderSetting>>;
+    /**
+     * CC 2026-10-16: "KH may be manager on duty after <time>" — a quarter, or null = OFF (the default). When
+     * set, a key holder on the clock from that quarter on counts as the manager on duty (validator and
+     * generator). Juan's v17 finding (7 evening MoD holes behind opens-only managers and KH closers) is a
+     * toggle, not a rebuild.
+     */
+    keyHolderModAfterQ: number | null;
+  };
   limits: {
     minimumShiftQ: number; flexMinimumQ: number; flexUsesPer2w: number; flexMaxQ: number; overtimeH: number;
     /** R5: the weekly floor-time limit per salaried manager (32 h). */
@@ -97,6 +106,7 @@ export const SCHEDULE_STRUCTURE_DEFAULTS: ScheduleStructure = {
     modRequired: true,
     closingRoles: ["key_holder", "shift_lead", "agm", "gm", "moo", "owner"],
     leaderDefaults: { key_holder: "closes", shift_lead: "opens", agm: "opens", gm: "opens", moo: "mix", owner: "mix" },
+    keyHolderModAfterQ: null,
   },
   limits: {
     minimumShiftQ: 16, flexMinimumQ: 12, flexUsesPer2w: 1, flexMaxQ: 12, overtimeH: 40,
@@ -409,9 +419,10 @@ function checkPriority(v: unknown, positions: Record<string, StructurePosition>)
 
 function checkLeadership(v: unknown): Problem {
   if (!isObj(v)) return "leadership";
-  const k = exactKeys(v, ["modRequired", "closingRoles", "leaderDefaults"], "leadership.");
+  const k = exactKeys(v, ["modRequired", "closingRoles", "leaderDefaults", "keyHolderModAfterQ"], "leadership.");
   if (k) return k;
   if (typeof v.modRequired !== "boolean") return "leadership.modRequired";
+  if (v.keyHolderModAfterQ !== null && !isQuarter(v.keyHolderModAfterQ)) return "leadership.keyHolderModAfterQ";
   const r = checkRoleList(v.closingRoles, "leadership.closingRoles");
   if (r) return r;
   const d = v.leaderDefaults;

@@ -94,6 +94,7 @@ export function mockStructure(): ScheduleStructure {
       modRequired: d.leadership.modRequired,
       closingRoles: d.leadership.closingRoles.map((x) => ROLE[x]!),
       leaderDefaults: Object.fromEntries(Object.entries(d.leadership.roleDefaults).map(([r, v]) => [ROLE[r]!, SETTING[v]!])),
+      keyHolderModAfterQ: null, // the mockup has no such setting: OFF
     },
     limits: {
       minimumShiftQ: q(d.limits.minimumShift!), flexMinimumQ: q(d.limits.flexMinimum!), flexUsesPer2w: d.limits.flexUses!, flexMaxQ: q(d.limits.flexLength!),

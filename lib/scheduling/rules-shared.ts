@@ -141,6 +141,17 @@ export function isManagerRole(role: RoleCode): boolean {
   return getRoleLevel(role) >= 5;
 }
 
+/**
+ * Does this person COUNT as the manager on duty at quarter q? Shift lead and up always; a key holder only
+ * when the shop's setting "KH may be manager on duty after <time>" is ON and q is at or after that time
+ * (CC 2026-10-16; default OFF). Pinned MoO / Owner presence counts like any manager.
+ */
+export function modCountsAt(p: Pick<RulePerson, "role">, s: ScheduleStructure, q: number): boolean {
+  if (isManagerRole(p.role)) return true;
+  const after = s.leadership.keyHolderModAfterQ;
+  return p.role === "key_holder" && after !== null && q >= after;
+}
+
 export function leaderSettingOf(p: RulePerson, s: ScheduleStructure): LeaderSetting {
   return p.leaderSetting ?? s.leadership.leaderDefaults[p.role] ?? "mix";
 }
@@ -161,9 +172,10 @@ export function eligibleForPosition(p: RulePerson, pos: StructurePosition | unde
   return workTypeAllows(p, pos);
 }
 
-function eligibleFor(p: RulePerson, code: GapCode, positionId: string | null, s: ScheduleStructure): boolean {
+/** May this member be placed to fill a deficit of this kind (for MoD: from the window's first quarter on)? */
+export function eligibleFor(p: RulePerson, code: GapCode, positionId: string | null, s: ScheduleStructure, fromQ: number): boolean {
   if (!p.activeMember || p.presenceOnly) return false;
-  if (code === "mod_missing") return isManagerRole(p.role);
+  if (code === "mod_missing") return modCountsAt(p, s, fromQ);
   if (code === "closing_manager_missing") return s.leadership.closingRoles.includes(p.role) && leaderSettingOf(p, s) !== "opens";
   return positionId !== null && eligibleForPosition(p, s.positions[positionId]);
 }
@@ -230,7 +242,7 @@ function dayCoverage(shifts: readonly Shift[], day: DayContext, ctx: RuleContext
       if (!arr) { arr = new Array<number>(96).fill(0); byPosition.set(g.positionId, arr); }
       for (let q = Math.max(0, g.startQ); q < Math.min(96, g.endQ); q++) { arr[q]!++; onClock.add(q); }
     }
-    if (p && isManagerRole(p.role)) for (const q of onClock) managers[q]!++;
+    if (p) for (const q of onClock) if (modCountsAt(p, day.structure, q)) managers[q]!++;
     if (sh.closingManager && p && closingManagerEligible(p, day.structure)) for (const q of onClock) closingManagerAt[q] = 1;
   }
   return { byPosition, managers, closingManagerAt, closingRequired: closingManagerRequired(day) };
@@ -348,10 +360,10 @@ function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly R
       if (closed) out.push({ rule: "primary_window_closed", detail: { positionId: g.positionId, primaryId: primary! } });
     }
   }
-  if (g.code === "mod_missing" && !roster.some((p) => p.activeMember && !p.presenceOnly && isManagerRole(p.role))) {
+  if (g.code === "mod_missing" && !roster.some((p) => eligibleFor(p, "mod_missing", null, st, g.fromQ))) {
     out.push({ rule: "no_mod_member", detail: {} });
   }
-  if (g.code === "closing_manager_missing" && !roster.some((p) => eligibleFor(p, "closing_manager_missing", null, st))) {
+  if (g.code === "closing_manager_missing" && !roster.some((p) => eligibleFor(p, "closing_manager_missing", null, st, g.fromQ))) {
     out.push({ rule: "no_closing_role", detail: {} });
   }
   return out;
@@ -437,7 +449,7 @@ function hoursNeededFor(g: GapSubject, s: WeekSchedule, day: DayContext, ctx: Ru
 }
 
 function eligibleMembers(g: GapSubject, day: DayContext, ctx: RuleContext): RulePerson[] {
-  return Object.values(ctx.people).filter((p) => eligibleFor(p, g.code, g.positionId, day.structure))
+  return Object.values(ctx.people).filter((p) => eligibleFor(p, g.code, g.positionId, day.structure, g.fromQ))
     .sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
 }
 

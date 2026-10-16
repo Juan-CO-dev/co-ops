@@ -56,6 +56,12 @@
     { "name": "an unknown closing role", "base": "defaults", "set": { "leadership.closingRoles": ["key_holder", "boss"] }, "valid": false, "key": "leadership.closingRoles" },
     { "name": "a leader default that is not opens/closes/mix", "base": "defaults", "set": { "leadership.leaderDefaults.key_holder": "sometimes" }, "valid": false, "key": "leadership.leaderDefaults.key_holder" },
     { "name": "a leader default for an unknown role", "base": "defaults", "extra": { "path": "leadership.leaderDefaults.boss", "value": "mix" }, "valid": false, "key": "leadership.leaderDefaults.boss" },
+    { "name": "KH may be manager on duty after 17:30 (CC 2026-10-16 setting)", "base": "shop", "set": { "leadership.keyHolderModAfterQ": 70 }, "valid": true },
+    { "name": "KH-as-MoD off (null, the default)", "base": "shop", "set": { "leadership.keyHolderModAfterQ": null }, "valid": true },
+    { "name": "KH-as-MoD time past midnight", "base": "defaults", "set": { "leadership.keyHolderModAfterQ": 97 }, "valid": false, "key": "leadership.keyHolderModAfterQ" },
+    { "name": "KH-as-MoD time off the grid", "base": "defaults", "set": { "leadership.keyHolderModAfterQ": 70.5 }, "valid": false, "key": "leadership.keyHolderModAfterQ" },
+    { "name": "KH-as-MoD time sent as a string", "base": "defaults", "set": { "leadership.keyHolderModAfterQ": "17:30" }, "valid": false, "key": "leadership.keyHolderModAfterQ" },
+    { "name": "KH-as-MoD key missing", "base": "defaults", "set": { "leadership.keyHolderModAfterQ": "__drop__" }, "valid": false, "key": "leadership.keyHolderModAfterQ" },
 
     { "name": "flex minimum equal to the minimum shift", "base": "defaults", "set": { "limits.flexMinimumQ": 12, "limits.minimumShiftQ": 12 }, "valid": true },
     { "name": "flex minimum above the minimum shift", "base": "defaults", "set": { "limits.flexMinimumQ": 20 }, "valid": false, "key": "limits.flexMinimumQ" },

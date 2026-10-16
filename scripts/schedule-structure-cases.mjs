@@ -48,6 +48,7 @@ export const CASE_DEFAULTS = {
     modRequired: true,
     closingRoles: ["key_holder", "shift_lead", "agm", "gm", "moo", "owner"],
     leaderDefaults: { key_holder: "closes", shift_lead: "opens", agm: "opens", gm: "opens", moo: "mix", owner: "mix" },
+    keyHolderModAfterQ: null,
   },
   limits: {
     minimumShiftQ: 16, flexMinimumQ: 12, flexUsesPer2w: 1, flexMaxQ: 12, overtimeH: 40,

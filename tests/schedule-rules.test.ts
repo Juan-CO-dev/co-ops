@@ -535,6 +535,27 @@ describe("Astra's chunk A review probes (failing first, fixed in the same commit
     expect(run([multi, reg], ctx).filter((p) => p.severity !== "warning")).toEqual([]);
   });
 
+  it("CC ruling 2: 'KH may be manager on duty after <time>' is a SETTING, default OFF — OFF leaves the evening a MoD gap; ON lets the KH cover from that time", () => {
+    const evening = (after: number | null) => context({ s: structure((s) => { s.leadership.modRequired = true; s.leadership.keyHolderModAfterQ = after; }), built: [THU] });
+    // Pete (presence pin) holds MoD until 16:30; Iris, a key holder, closes on Register 16:00-20:45.
+    const shifts = [shift(U.pete, THU, 28, 66, "mod", { pinned: true }), shift(U.iris, THU, 64, 83, P.REG)];
+    const off = run(shifts, evening(null));
+    expect(of(off, "undeclared_gap").map((p) => p.params)).toEqual([{ gap: "mod_missing", fromQ: 66, toQ: 83 }]);
+    const on = run(shifts, evening(66));
+    expect(of(on, "undeclared_gap")).toEqual([]);
+    expect(of(on, "mod_missing")).toEqual([]);
+    const later = run(shifts, evening(72));
+    expect(of(later, "undeclared_gap").map((p) => p.params)).toEqual([{ gap: "mod_missing", fromQ: 66, toQ: 72 }]);
+    // Certificates follow the setting: with only a KH able to be MoD, the structure proof holds before the time and fails after it.
+    const ctx = evening(66);
+    for (const u of [U.alex, U.dani]) ctx.people[u]!.activeMember = false;
+    const before: DeclaredGap = { code: "mod_missing", date: THU, positionId: null, fromQ: 28, toQ: 66, cause: "structure", certificate: { rule: "no_mod_member", detail: {} } };
+    expect(checkCertificate(before, week([]), ctx)).toBe(true);
+    expect(checkCertificate({ ...before, fromQ: 66, toQ: 83 }, week([]), ctx)).toBe(false);
+    expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 66, toQ: 83 }, week([]), ctx)?.cause).not.toBe("structure");
+    expect(checkCertificate({ ...before, fromQ: 66, toQ: 83 }, week([]), evening(null))).toBe(false); // Alex and Dani are members when OFF
+  });
+
   it("P2 capacity: duplicate position ids are rejected before the bound is recomputed", () => {
     const s = structure((x) => { x.positions[P.REG]!.headsBefore = 2; x.positions[P.REG]!.allowedRoles = ["trainer", "employee"]; });
     const ctx = context({ s });

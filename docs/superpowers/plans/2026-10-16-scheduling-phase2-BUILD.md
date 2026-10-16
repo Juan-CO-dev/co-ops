@@ -625,7 +625,8 @@ export interface ScheduleStructure {
   // PositionRole maps the spec's named functions onto THIS shop's position ids, so code never matches names:
   // "prep" | "prep_dish" | "register" | "expo" | "walk" | "walk_online" | "line_other"
   priority: Array<{ pair: [string, string]; primary: string }>;   // default: prep_dish>prep, register>expo, walk_online>walk
-  leadership: { modRequired: boolean; closingRoles: RoleCode[]; leaderDefaults: Record<RoleCode, "opens" | "closes" | "mix"> };
+  leadership: { modRequired: boolean; closingRoles: RoleCode[]; leaderDefaults: Record<RoleCode, "opens" | "closes" | "mix">;
+                keyHolderModAfterQ: number | null /* CC 2026-10-16 (R8): "KH may be manager on duty after <time>"; null = OFF (default). ON: a key holder on the clock from that quarter counts as MoD, in the validator and the generator */ };
   limits: { minimumShiftQ: number; flexMinimumQ: number; flexUsesPer2w: number; flexMaxQ: number; overtimeH: number;
             managerFloorH: number /* 32, setting (R5) */; gmMinimumH: number /* 8 */; agmMinimumH: number /* 8 */;
             closingMinutesOverride: number | null /* r2: WINS over the measured value when set */; segmentMinQ: number /* 2 */;
@@ -1454,6 +1455,7 @@ Chunks A and C can run in parallel with B once Task 3's types are merged. D can 
 | R5 (O5) | Floor limit and daily minimum | **32 h/week** floor per salaried manager; **8 h/day** GM and AGM minimum | `limits.managerFloorH`, `gmMinimumH`, `agmMinimumH`; Task 1 |
 | R6 (O6) | Prep / catering managers on the floor schedule | **Excluded by default, addable per person** | `roster.excludedRoles` + `schedule_person_settings.roster_include`; Tasks 5, 13, 24 |
 | R7 (O7) | Keep Approve? | **Keep** ("Ready for 7shifts", Tier B) | Tasks 14, 17, 23 |
+| R8 (CC 2026-10-16, from chunk A's v17 finding: 7 evening windows with no SL+ on duty) | May a Key Holder be the manager on duty in the evening? | **OFF**: an hour with no SL+ is a validator finding, shown as a gap with its certificate; the rule is not relaxed | `structure.leadership.keyHolderModAfterQ` (null = off; a quarter = ON from that time), honoured by `modCountsAt` in the validator and the generator; Tasks 1, 7, 24 |
 
 No question is left open for Juan. Each default above is one setting he can flip.
 
