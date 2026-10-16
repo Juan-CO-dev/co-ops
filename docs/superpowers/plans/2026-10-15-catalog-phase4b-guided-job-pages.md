@@ -2,7 +2,23 @@
 
 ## Part 4b of 2 — the job pages, the Toast link on the sandwich, Share and Back to normal, en + es
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **2026-10-16 refresh against shipped 4a at `0ae19e22`:** This document is the historical product umbrella. Its task-by-task code snippets, ground-truth table and checkout/commit commands below are superseded, not executable instructions. Build from [the refreshed Phase 4b BUILD plan](2026-10-16-catalog-phase4b-BUILD.md), which carries the verified file:line drift table, exact wire contracts and eight chunks of 1–3 tests-first tasks. Work in `C:\Users\conta\co-ops-cat-p4b` on `feat/catalog-phase4b-job-pages`; leave the planning changes uncommitted. No fetch, push, merge, deployment, environment or DB action is authorized by this umbrella.
+
+### Current corrections (override every corresponding historical snippet below)
+
+| Topic | Shipped contract / build disposition |
+| --- | --- |
+| Share and Back previews | POST to separate `/share/preview` and `/back-to-normal/preview` endpoints with `{}`; response `{ preview }`. See BUILD drift table for each route anchor. |
+| Preview confirmation | Preview `token` becomes write `previewToken`. Share includes expected owner and required dependency arrays; swap sends normalized `preview.request` unchanged. |
+| Sandwich symbols and cost | Use `NewSandwichRequest` and `MenuCostRollup`, not nonexistent `SandwichDraft`/`SandwichCost`. Cost is `data.preview.cost`; derive margin/FC% from complete cost and draft price. |
+| Toast | Existing read is `loadSandwichToastChoices`; the existing route is POST-only. The GET choices/status adapter and pure DTO are explicit new work, not shipped `loadToastLinkChoices`/`ToastLinkChoices` APIs. |
+| Creation retry | CC ruled NO migration: session-held client attempt key plus exact shop/owner/name reconciliation, same creator and no older than ten minutes. Show an explicit bilingual open link. Different actor/older row gets normal `name_taken`. Durable replay is a later migration follow-up. |
+| Setup | HTTP success is not step success. Check inner `ok`, per-day outcomes and guide `lineSaved:null`; refresh unconfirmed writes before retry. |
+| Legacy ownership UI | Already shipped. Preserve selectors, scoped loader/keyed navigation and inline owned output. Build remaining catalog owned capabilities, post-create redirect and both reopen journeys only. |
+| 4a follow-ups | Family-wide older catalog write same-origin guards; allowlisted public preview DTO retaining internal freshness evidence; persistent DIRTY marker on sim cleanup failure. |
+| Acceptance | 375 px first, en + es in each chunk, untouched equivalence pins, final sim browser walk for each job. Real sim/release evidence remains CC-owned and pending execution. |
+
+The detailed corrections and anchors in the BUILD plan govern wherever this historical draft differs. The material below is retained only to trace the original product coverage and proposed layouts.
 
 **Goal:** Put Part 4a's engines in front of the people who use them (spec §5 jobs 2–4, "each starts from the item page and from wherever the problem first shows up, and ends with the same preview and save choices"):
 - **New item** (`/admin/catalog/new/item`) — what it is → vendor (pick, or add one inline) → name + vendor item number → how it arrives (2b's sentence editor) → price → **Create** → then par, order days, order-guide section, where it's used and barcode, each saved on its own line.
