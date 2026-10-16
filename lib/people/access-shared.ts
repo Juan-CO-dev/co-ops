@@ -231,8 +231,10 @@ export function pmDaySubmitted(status: PmDayStatus): boolean {
 
 /**
  * The refusal for one act on one copy, or null when allowed. Order: who (role floor, shop pairing,
- * authorship), then the copy's state against the transition table, then the day. `seal` is the
- * submit's act, so it is not the author's: the submitter's own gate is `canSubmitPmDay`.
+ * authorship), then the DAY, then the copy's state against the transition table — the same order as
+ * the 0271 RPCs (`pm_copy_lock`: … not_copy_author → report_already_submitted → copy_done/copy_sealed),
+ * so after a submit (a sealed copy on a submitted day) the lib and the database both name the day.
+ * `seal` is the submit's act, so it is not the author's: the submitter's own gate is `canSubmitPmDay`.
  */
 export function pmCopyActRefusal(act: PmCopyAct, actor: PeopleActor, copy: PmCopyRef, day: PmDayRef): PmCopyRefusal | null {
   if (copy.locationId !== day.locationId) return "forbidden";
@@ -242,13 +244,13 @@ export function pmCopyActRefusal(act: PmCopyAct, actor: PeopleActor, copy: PmCop
     if (isSmm(actor) || actor.level < KH_LEVEL) return "forbidden";
     if (copy.authorId !== actor.userId) return "not_author";
   }
+  if (pmDaySubmitted(day.status)) return "day_closed";
   const from: readonly PmCopyStatus[] = PM_COPY_TRANSITIONS[act].from;
   if (!from.includes(copy.status)) {
     if (copy.status === "sealed") return "copy_sealed";
     if (copy.status === "done") return "copy_done";
     return "copy_not_done"; // only reopen refuses an open copy
   }
-  if (pmDaySubmitted(day.status)) return "day_closed";
   return null;
 }
 
