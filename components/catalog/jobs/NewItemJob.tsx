@@ -14,6 +14,7 @@ import { levelsFromSentence, type SentenceDraft, type SentenceError } from "@/li
 import { createNewItemAttemptController, initialSetupState, jobErrorKey, setupReducer, canRetrySetupStep,
   type CreatedJobItem, type JobSetupResult, type NewItemJobView, type SetupStepState, type SetupEvent } from "@/lib/catalog/jobs-shared";
 import type { SetupStep } from "@/lib/catalog/new-item-shared";
+import { swapReturnHref } from "@/lib/catalog/swap-return-shared";
 
 const field = "min-h-[44px] w-full min-w-0 rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50";
 const button = "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-text px-4 text-sm font-extrabold text-co-surface disabled:opacity-50";
@@ -47,7 +48,7 @@ function useJobLock() {
   return { busy, run, alive };
 }
 
-export function NewItemJob({ view, readVersion }: { view: NewItemJobView; readVersion?: string }) {
+export function NewItemJob({ view, readVersion, swapFrom }: { view: NewItemJobView; readVersion?: string; swapFrom?: string | null }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp, forgetStepUp } = useStepUp();
@@ -67,7 +68,6 @@ export function NewItemJob({ view, readVersion }: { view: NewItemJobView; readVe
   const [vendorName, setVendorName] = useState(""); const [contactName, setContactName] = useState(""); const [ordering, setOrdering] = useState("");
   const [method, setMethod] = useState<string>("email");
   const [categoryId, setCategoryId] = useState(""); const [orderTypeId, setOrderTypeId] = useState("");
-  const [setupShopId, setSetupShopId] = useState(view.scope ?? view.shops[0]?.id ?? "");
   const [readAtVendorFailure, setReadAtVendorFailure] = useState<string | undefined>();
   // A committed refresh clears the previous read's uncertainty before rendering controls.
   if (vendorUnknown && readVersion !== readAtVendorFailure) setVendorUnknown(false);
@@ -90,7 +90,6 @@ export function NewItemJob({ view, readVersion }: { view: NewItemJobView; readVe
       const state = attempt.readResponse(result.data);
       if (state.status !== "created") { setError("catalog.jobs.new_item.uncertain"); return; }
       setCreated({ ...state.item, vendorId: fields.vendorId ?? "" }); setError(null);
-      if (state.item.ownerLocationId) setSetupShopId(state.item.ownerLocationId);
     }, () => { attempt.uncertain(); setError("catalog.jobs.new_item.uncertain"); });
   }
   async function addVendor() {
@@ -108,7 +107,6 @@ export function NewItemJob({ view, readVersion }: { view: NewItemJobView; readVe
       setAddedVendor({ id: result.data.id, name: payload.name }); setVendorId(result.data.id); setShowVendor(false); setError(null); router.refresh();
     }, () => { setVendorUnknown(true); setReadAtVendorFailure(readVersion); setError("catalog.jobs.new_item.vendor_uncertain"); });
   }
-  const shops = view.shops.filter(s => !created?.ownerLocationId || s.id === created.ownerLocationId);
   return <div className="flex w-full min-w-0 flex-col gap-4">
     <header><h1 className="text-2xl font-black text-co-text">{t("catalog.jobs.new_item.title")}</h1><p className="text-sm text-co-text-muted">{t("catalog.jobs.new_item.intro")}</p></header>
     {!created ? <fieldset disabled={lock.busy} className="flex min-w-0 flex-col gap-4 rounded-xl border-2 border-co-border bg-co-surface p-4" aria-busy={lock.busy}>
@@ -133,17 +131,40 @@ export function NewItemJob({ view, readVersion }: { view: NewItemJobView; readVe
       <label className={label}>{t("catalog.jobs.new_item.price")}<input aria-label={t("catalog.jobs.new_item.price")} className={field} inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} /></label>
       <label className={label}>{t("catalog.jobs.new_item.price_date")}<input aria-label={t("catalog.jobs.new_item.price_date")} className={field} type="date" value={priceDate} onChange={e => setPriceDate(e.target.value)} /></label>
       {error && <p role="alert" className="text-sm text-co-cta-text">{t(error)}</p>}
+      <section className="min-w-0 rounded-lg border-2 border-co-border p-3" aria-label={t("catalog.jobs.new_item.summary")}>
+        <h2 className="font-extrabold">{t("catalog.jobs.new_item.summary")}</h2>
+        <dl className="grid grid-cols-1 gap-2 break-words text-sm">
+          {([
+            [t("catalog.jobs.new_item.class"), t(`admin.skus.sku_class.${skuClass}`)],
+            [t("catalog.jobs.new_item.vendor"), vendors.find(v => v.id === vendorId)?.name ?? t("catalog.jobs.new_item.vendor_none")],
+            [t("catalog.jobs.new_item.name"), name || "\u2014"],
+            [t("catalog.jobs.new_item.number"), itemNumber || "\u2014"],
+            [t("catalog.jobs.new_item.arrives"), [...pack.containers.map(c => `${c.qty} ${c.label}`.trim()), `${pack.leafQty} ${pack.leafUnit}`.trim()].filter(Boolean).join(" / ") || "\u2014"],
+            [t("catalog.jobs.new_item.price"), price || "\u2014"],
+            [t("catalog.jobs.new_item.shop"), view.scope === null ? t("catalog.item.shop_global") : view.shops.find(shop => shop.id === view.scope)?.name ?? "\u2014"],
+          ] as const).map(([heading, value]) => <div key={heading}><dt className="font-bold">{heading}</dt><dd>{value}</dd></div>)}
+        </dl>
+      </section>
       <button className={button} type="button" disabled={lock.busy || !name.trim() || !price || !priceDate} onClick={submitCreate}>{t("catalog.jobs.new_item.create")}</button>
       <p className="text-sm text-co-text-muted">{t("catalog.jobs.new_item.setup.title")}: {(["par", "order_days", "guide_line", "use_in", "barcode"] as const).map(k => t(`catalog.jobs.new_item.setup.${k}`)).join(" / ")}</p>
-    </fieldset> : <>
-      <p role="status">{t(created.replayed ? "catalog.jobs.new_item.replayed" : "catalog.jobs.setup.saved")}</p>
-      <Link className={secondary} href={`/admin/catalog/sku/${encodeURIComponent(created.skuId)}?location=${encodeURIComponent(created.ownerLocationId ?? (setupShopId || "global"))}`}>{t("catalog.jobs.new_item.open")}</Link>
+    </fieldset> : <NewItemCreated view={view} readVersion={readVersion} created={created} swapFrom={swapFrom} />}
+  </div>;
+}
+
+/** The same post-create surface is rendered by the job and the server-render tests. */
+export function NewItemCreated({ view, readVersion, created, swapFrom }: { view: NewItemJobView; readVersion?: string; created: CreatedJobItem & { vendorId: string }; swapFrom?: string | null }) {
+  const { t } = useTranslation();
+  const [setupShopId, setSetupShopId] = useState(created.ownerLocationId ?? view.scope ?? view.shops[0]?.id ?? "");
+  const shops = view.shops.filter(s => !created.ownerLocationId || s.id === created.ownerLocationId);
+  return <>
+      <p role="status">{t(created.replayed ? "catalog.jobs.new_item.replayed" : "catalog.jobs.new_item.created")}</p>
+      {swapFrom && <Link className={secondary} href={swapReturnHref(swapFrom, view.scope, created.skuId)}>{t("catalog.jobs.swap.return")}</Link>}
+      <Link className={secondary} href={`/admin/catalog/sku/${encodeURIComponent(created.skuId)}?location=${encodeURIComponent(created.ownerLocationId ?? "global")}`}>{t("catalog.jobs.new_item.open")}</Link>
       {!created.replayed && <><h2 className="text-xl font-black">{t("catalog.jobs.new_item.setup.title")}</h2><p>{t("catalog.jobs.new_item.setup.saved")} {t("catalog.jobs.new_item.setup.resume")}</p>
         <label className={label}>{t("catalog.jobs.new_item.shop")}<select aria-label={t("catalog.jobs.new_item.shop")} className={field} value={setupShopId} onChange={e => setSetupShopId(e.target.value)}>{shops.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
         {shops.map(shop => <div key={shop.id} hidden={shop.id !== setupShopId}><SetupPanel view={view} readVersion={readVersion} shopId={shop.id} item={created} /></div>)}
       </>}
-    </>}
-  </div>;
+  </>;
 }
 
 /** A stable component identity preserves focus while typing; each shop has its own durable outcome ledger. */
@@ -199,6 +220,7 @@ function SetupPanel({ view, readVersion, shopId, item }: { view: NewItemJobView;
   const recipes = view.setupShops.find(s => s.shopId === shopId)?.recipes ?? [];
   const sections = view.guides.filter(g => g.vendorId === item.vendorId).flatMap(g => g.sections);
   async function save(step: SetupStep) {
+    if (step.kind === "barcode" && step.code.trim().length < 6) { dispatch({ kind: "failed", step: "barcode", code: "invalid_barcode", uncertain: false }); return; }
     if (!canRetrySetupStep(setup[step.kind]) || setup[step.kind].status === "saved") return;
     await lock.run(async () => {
       if (await requestStepUp("E") !== "ok" || !lock.alive.current) return;
@@ -224,7 +246,7 @@ function SetupPanel({ view, readVersion, shopId, item }: { view: NewItemJobView;
     {card("order_days", <><div className="flex flex-wrap gap-2">{[0,1,2,3,4,5,6].map(day => <label key={day} className="inline-flex min-h-[44px] items-center gap-2"><input aria-label={t(`catalog.jobs.new_item.setup.day.${day}` as TranslationKey)} type="checkbox" className="h-5 w-5" checked={days.includes(day)} onChange={e => setDays(previous => e.target.checked ? [...previous, day] : previous.filter(d => d !== day))} />{t(`catalog.jobs.new_item.setup.day.${day}` as TranslationKey)}</label>)}</div><label className={label}>{t("catalog.jobs.new_item.setup.lead")}<input aria-label={t("catalog.jobs.new_item.setup.lead")} className={field} inputMode="numeric" value={leadDays} onChange={e => setLeadDays(e.target.value)} /></label></>, () => void save({ kind: "order_days", days: days.filter(day => !setup.order_days.days[day]?.ok).map(day => ({ orderDow: day, leadDays: Number(leadDays) })) }), true)}
     {card("guide_line", <><label className={label}>{t("catalog.jobs.new_item.setup.section")}<select aria-label={t("catalog.jobs.new_item.setup.section")} className={field} value={sectionId} onChange={e => { setSectionId(e.target.value); setNewSection(""); }}><option value="">&mdash;</option>{sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label className={label}>{t("catalog.jobs.new_item.setup.new_section")}<input aria-label={t("catalog.jobs.new_item.setup.new_section")} className={field} value={newSection} onChange={e => { setNewSection(e.target.value); setSectionId(""); }} /></label></>, () => void save({ kind: "guide_line", sectionId: sectionId || null, newSectionName: newSection.trim() || null }), true)}
     {card("use_in", <><label className={label}>{t("catalog.jobs.new_item.setup.recipe")}<select aria-label={t("catalog.jobs.new_item.setup.recipe")} className={field} value={recipeId} onChange={e => setRecipeId(e.target.value)}><option value="">&mdash;</option>{recipes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label><label className={label}>{t("catalog.jobs.new_item.setup.quantity")}<input aria-label={t("catalog.jobs.new_item.setup.quantity")} className={field} inputMode="decimal" value={quantity} onChange={e => setQuantity(e.target.value)} /></label><label className={label}>{t("catalog.jobs.new_item.setup.unit")}<select aria-label={t("catalog.jobs.new_item.setup.unit")} className={field} value={unit} onChange={e => setUnit(e.target.value)}>{view.measures.map(m => <option key={m.label} value={m.label}>{m.label}</option>)}</select></label></>, () => { const r = recipes.find(r => r.id === recipeId); if (r) void save({ kind: "use_in", recipeId, quantity: Number(quantity), unit, expectedVersionId: r.activeVersionId, basedOnVersionId: r.basedOnVersionId }); })}
-    {card("barcode", <><label className={label}>{t("catalog.jobs.new_item.setup.code")}<input aria-label={t("catalog.jobs.new_item.setup.code")} className={field} inputMode="numeric" value={barcode} onChange={e => setBarcode(e.target.value)} /></label><label className={label}>{t("catalog.jobs.new_item.setup.level")}<select aria-label={t("catalog.jobs.new_item.setup.level")} className={field} value={barcodeLevel} onChange={e => setBarcodeLevel(e.target.value as "case" | "inner")}><option value="case">{t("catalog.jobs.new_item.setup.case")}</option><option value="inner">{t("catalog.jobs.new_item.setup.inner")}</option></select></label></>, () => void save({ kind: "barcode", code: barcode, level: barcodeLevel }), true)}
+    {card("barcode", <><label className={label}>{t("catalog.jobs.new_item.setup.code")}<input aria-label={t("catalog.jobs.new_item.setup.code")} className={field} inputMode="numeric" minLength={6} value={barcode} onChange={e => setBarcode(e.target.value)} /></label><label className={label}>{t("catalog.jobs.new_item.setup.level")}<select aria-label={t("catalog.jobs.new_item.setup.level")} className={field} value={barcodeLevel} onChange={e => setBarcodeLevel(e.target.value as "case" | "inner")}><option value="case">{t("catalog.jobs.new_item.setup.case")}</option><option value="inner">{t("catalog.jobs.new_item.setup.inner")}</option></select></label></>, () => void save({ kind: "barcode", code: barcode, level: barcodeLevel }), true)}
     <Link className={secondary} href={`/admin/catalog/sku/${encodeURIComponent(item.skuId)}?location=${encodeURIComponent(shopId)}#ordering`}>{t("catalog.jobs.new_item.setup.ordering")}</Link>
   </fieldset>;
 }

@@ -328,6 +328,7 @@ describe("review 2: a route that ignores the URL shop never moves the remembered
 const ROOT_FOR_AUDIT = path.resolve(__dirname, "..");
 const PAGE_ROUTES: Record<string, string> = {
   "app/admin/catalog/new/item/page.tsx": "/admin/catalog/new/item",
+  "app/admin/catalog/sku/[id]/swap/page.tsx": "/admin/catalog/sku/7d0c1f2e-0000-4000-8000-000000000001/swap",
   "app/admin/catalog/new/sandwich/page.tsx": "/admin/catalog/new/sandwich",
   "app/(authed)/dashboard/page.tsx": "/dashboard",
   "app/(authed)/stations/page.tsx": "/stations",
@@ -420,7 +421,7 @@ describe("route contract = what each resolver page's source actually reads (revi
           const source = readFileSync(path.join(ROOT_FOR_AUDIT, rel), "utf8");
           // Job loaders perform the authorized shop resolution on the page's behalf.
           if (/from "@\/lib\/shop-context"/.test(source)
-            || /import \{ loadNew(?:Item|Sandwich)JobView \} from "@\/lib\/catalog\/jobs"/.test(source)) pages.push(rel);
+            || jobLoaderImport.test(source)) pages.push(rel);
         }
       }
     };
@@ -560,4 +561,11 @@ it("catalog Toast GET declares the selected-shop location contract", () => {
   expect(source).toContain('req.nextUrl.searchParams.get("location")');
   expect(source).toContain('if (!uuid(locationId))');
   expect(source).toContain('loadToastLinkChoices(ctx, id, locationId)');
+});
+
+const jobLoaderImport = /import\s*\{[^}]*\bload(?:New(?:Item|Sandwich)|SwapVendor)JobView\b(?:\s+as\s+\w+)?[^}]*\}\s*from\s*["']@\/lib\/catalog\/jobs["']/;
+it("audits aliased job loader imports as shop-aware pages", () => {
+  expect(jobLoaderImport.test('import { loadNewItemJobView as load } from "@/lib/catalog/jobs"')).toBe(true);
+  expect(jobLoaderImport.test('import { loadNewSandwichJobView } from "@/lib/catalog/jobs"')).toBe(true);
+  expect(jobLoaderImport.test('import { unrelated } from "@/lib/catalog/jobs"')).toBe(false);
 });

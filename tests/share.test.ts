@@ -74,6 +74,9 @@ it("refuses a recipe that still consumes an owned prep item", async () => {
   const skuId = await newSku(); const producer = await newRecipe(skuId); const consumer = await newRecipe(skuId, producer.itemId);
   const preview = await previewShareRecipe(actor, consumer.recipeId);
   expect(preview.blockedBy).not.toHaveLength(0);
+  expect(preview.blockedBy.find(row => row.id === producer.itemId)).toMatchObject({
+    producers: [{ id: producer.recipeId, name: "Owned test prep", ownerLocationId: ID.shopA }],
+  });
   await expect(shareRecipeWithAllShops(actor, { recipeId: consumer.recipeId, expectedOwner: ID.shopA, previewToken: preview.token, shareSkuIds: [], shareItemIds: [consumer.itemId] })).rejects.toMatchObject({ status: 409 });
   expect(await owner("recipes", consumer.recipeId)).toBe(ID.shopA);
   expect(await owner("items", consumer.itemId)).toBe(ID.shopA);

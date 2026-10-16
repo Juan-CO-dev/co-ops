@@ -112,3 +112,18 @@ it("shared scope helper supports the jobs floor and remembered multi-membership 
   expect((await loadRecipeBuilderScope({ ...gm, locations: [A, B] }, undefined, true, undefined, { minimumLevel: 7, defaultToShop: true })).scope).toBe(B);
   await expect(loadRecipeBuilderScope({ ...gm, user: { ...gm.user, role: "agm" }, level: 6 }, A, true, undefined, { minimumLevel: 7, defaultToShop: true })).rejects.toMatchObject({ code: "forbidden" });
 });
+
+it("keeps recipe/version reads constant for one versus many rows", async () => {
+  const counts: number[] = [];
+  for (const size of [1, 12]) {
+    tables.recipes = Array.from({ length: size }, (_, i) => ({ id: `recipe-${i}`, name: `Recipe ${i}`, location_id: null, active: true }));
+    tables.recipe_versions = tables.recipes.map(r => ({ id: `version-${r.id}`, recipe_id: r.id, location_id: null, active: true }));
+    db.log.length = 0;
+    const view = await loadNewItemJobView(gm, A);
+    expect(view.recipes).toHaveLength(size);
+    expect(view.recipes.every(r => r.basedOnVersionId !== null)).toBe(true);
+    counts.push(db.log.length);
+    expect(db.writes).toEqual([]);
+  }
+  expect(counts).toEqual([13, 13]);
+});

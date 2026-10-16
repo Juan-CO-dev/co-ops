@@ -4,7 +4,7 @@ import type { SwapRequest } from "@/lib/catalog/swap-shared";
 import type { RecipeLineFields } from "@/lib/recipe-line-shared";
 
 type Named = { id: string; name: string };
-type Blocker = Named & { shopName: string | null; kind: "sku" | "item" };
+type Blocker = Named & { shopName: string | null; kind: "sku" | "item"; producers?: Array<Named & { ownerLocationId: string | null }> };
 export interface PublicSwapPreview {
   request: SwapRequest;
   oldSku: Named & { vendorName: string | null };
@@ -38,7 +38,8 @@ export interface PublicBackToNormalPreview {
   kept: Array<{ recipeId: string; recipeName: string }>; primary: "restore" | "changed_since"; token: string;
 }
 const named = ({ id, name }: Named): Named => ({ id, name });
-const blocker = ({ id, name, shopName, kind }: Blocker): Blocker => ({ id, name, shopName, kind });
+const blocker = ({ id, name, shopName, kind, producers }: Blocker): Blocker => ({ id, name, shopName, kind,
+  ...(producers ? { producers: producers.map(({ id: producerId, name: producerName, ownerLocationId }) => ({ id: producerId, name: producerName, ownerLocationId })) } : {}) });
 const line = ({ componentSkuId, componentItemId, componentProductId, quantity, unit, eachContainerLabel, portioned }: RecipeLineFields): RecipeLineFields =>
   ({ componentSkuId, componentItemId, componentProductId, quantity, unit, eachContainerLabel, portioned });
 const common = ({ name, ownerShopId, ownerShopName, token }: PublicShareCommon): PublicShareCommon => ({ name, ownerShopId, ownerShopName, token });

@@ -256,6 +256,9 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
+  "components/catalog/jobs/SwapVendorJob.tsx": ["E"],
+  "components/catalog/ShareWithEveryShop.tsx": ["E"],
+  "components/catalog/ItemJobsStrip.tsx": ["E"],
   "components/catalog/jobs/NewSandwichJob.tsx": ["E"],
   "components/catalog/ToastLinkSection.tsx": ["A"],
   "components/catalog/jobs/NewItemJob.tsx": ["B", "E"],

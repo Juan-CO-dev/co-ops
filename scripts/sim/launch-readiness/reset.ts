@@ -14,10 +14,12 @@ export const dirtyMarker = () => resolve("scripts/sim/launch-readiness/.private/
 const CATALOG_CLEARANCE = "Sim DIRTY; CC-owned catalog clearance required: verify complete catalog cleanup including swap-journal tables using the recorded prefix, then explicitly clear DIRTY and any quarantined lease. Ordinary fixture reset cannot clear this marker.";
 function assertResetMayClear() {
   if (!existsSync(dirtyMarker())) return;
-  let marker: { status?: string };
+  let marker: unknown;
   try { marker = JSON.parse(readFileSync(dirtyMarker(), "utf8")); }
   catch { throw new Error("Sim DIRTY; unreadable marker requires CC inspection before reset"); }
-  if (!marker || marker.status === "catalog-cleanup-failed") throw new Error(CATALOG_CLEARANCE);
+  // Malformed evidence still fails closed, without inventing a catalog status.
+  if (!marker || typeof marker !== "object" || Array.isArray(marker)) throw new Error("Sim DIRTY; unreadable marker requires CC inspection before reset");
+  if ((marker as { status?: unknown }).status === "catalog-cleanup-failed") throw new Error(CATALOG_CLEARANCE);
 }
 export function assertClean() {
   if (existsSync(dirtyMarker())) {

@@ -97,3 +97,18 @@ describe('catalog cleanup DIRTY boundary (no DB)', () => {
     expect(() => assertClean()).toThrow('swap-journal');
   });
 });
+
+describe('reset marker positive controls', () => {
+  it.each([undefined, JSON.stringify({ status: 'reset-failed' })])('ordinary marker %s reaches target validation', async marker => {
+    state.marker = marker;
+    await expect(resetFixture({ runId: 'reset', fixtureId: 'cold-empty', env: {}, schemaDigest: '' })).rejects.toThrow('invalid sim target');
+    expect(state.calls).toContain('marker');
+    expect(state.q).not.toHaveBeenCalled();
+  });
+  it.each(['null', 'false'])('malformed %s fails closed without inventing catalog quarantine', async marker => {
+    state.marker = marker;
+    await expect(resetFixture({ runId: 'reset', fixtureId: 'cold-empty', env: {}, schemaDigest: '' })).rejects.toThrow('unreadable marker requires CC inspection');
+    expect(state.marker).toBe(marker);
+    expect(state.calls).toEqual([]);
+  });
+});

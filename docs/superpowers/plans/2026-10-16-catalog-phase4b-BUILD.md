@@ -98,6 +98,8 @@ Acceptance: pure client import graph, no full cross-shop Toast map exposed, no s
 
 Acceptance: one committed SKU, setup can partially succeed without duplicate creation, replay never claims edited fields applied. Validate phone flow at final sim walk; no claim of real barcode capture until exercised.
 
+Implementation flow clarification (Aggie P3-1 / CC): the single pre-create form renders shop -> vendor -> name + item number -> what it is -> how it arrives -> price; a compact summary repeats those values and scope directly above Create. All remain pre-create.
+
 ## Chunk 4 — New sandwich and reconciliation (3 tasks)
 
 1. Tests first for the complete CC ruling above in proposed `tests/new-sandwich-reconcile.test.ts`, HTTP tests and pure attempt/transport tests. Implement optional attempt-key validation, read-only reconcile route/library helper and job-local typed transport handling. Reuse creation scope/role rules, exact DB owner/name predicates and server-clock age checks. Add reconcile to chunk 1's read allowlist and update counts here. Add the literal attempt-key code comment "correlation only, never replay". No migration, request-id column or audit-derived identity. Preserve `tests/new-sandwich.test.ts` create/preview guarantees.

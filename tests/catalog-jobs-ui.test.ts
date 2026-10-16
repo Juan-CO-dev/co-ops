@@ -13,7 +13,7 @@ vi.mock("@/components/admin/StepUpProvider", () => ({
 }));
 vi.mock("@/components/admin/useStepUpPost", () => ({ useStepUpPost: () => vi.fn() }));
 
-const { NewItemJob, postNewItem } = await import("@/components/catalog/jobs/NewItemJob");
+const { NewItemJob, NewItemCreated, postNewItem } = await import("@/components/catalog/jobs/NewItemJob");
 const { createNewItemAttemptController, initialSetupState, setupReducer, canRetrySetupStep } = await import("@/lib/catalog/jobs-shared");
 
 const SHOP = "10000000-0000-4000-8000-000000000001";
@@ -33,6 +33,17 @@ const view: NewItemJobView = {
 };
 
 const draft = (name: string) => ({ name, vendorId: VENDOR });
+
+it("offers the authorized swap return after creation without changing the item's scope link", () => {
+  const source = "30000000-0000-4000-8000-000000000001";
+  const skuId = "40000000-0000-4000-8000-000000000001";
+  const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(NewItemCreated, {
+    view, swapFrom: source, created: { skuId, ownerLocationId: SHOP, replayed: false, vendorId: VENDOR },
+  }) }));
+  expect(html).toContain(`/admin/catalog/sku/${source}/swap?location=${SHOP}&amp;replacement=${skuId}`);
+  expect(html).toContain(`/admin/catalog/sku/${skuId}?location=${SHOP}`);
+  expect(html).toContain(en["catalog.jobs.swap.return"]);
+});
 
 describe("new item attempt identity", () => {
   it("keeps one request id across pending, edits, a lost response and retry", async () => {
@@ -142,4 +153,30 @@ describe("NewItemJob", () => {
     state = setupReducer(state, { kind: "refreshed", step: "guide_line" });
     expect(canRetrySetupStep(state.guide_line)).toBe(true);
   });
+});
+
+describe('review fixes render coverage', () => {
+  for (const language of ['en', 'es'] as const) {
+    const dictionary = language === 'en' ? en : es;
+    it(`shows the summary before Create (${language})`, () => {
+      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: jsx(NewItemJob, { view }) }));
+      expect(html).toContain(dictionary['catalog.jobs.new_item.summary']);
+      expect(html.indexOf('<dl')).toBeGreaterThan(0);
+      expect(html.indexOf('<dl')).toBeLessThan(html.indexOf('>' + dictionary['catalog.jobs.new_item.create'] + '</button>'));
+      expect(html.match(/<dt/g)).toHaveLength(7);
+    });
+    it(`renders created status, five setup cards and touch controls (${language})`, () => {
+      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: jsx(NewItemCreated, { view, created: { skuId: 'sku', ownerLocationId: null, replayed: false, vendorId: VENDOR } }) }));
+      expect(html).toContain(dictionary['catalog.jobs.new_item.created']);
+      expect(html).toContain('/admin/catalog/sku/sku?location=global');
+      expect(html.match(/<section/g)).toHaveLength(5);
+      for (const key of ['par', 'order_days', 'guide_line', 'use_in', 'barcode'] as const) expect(html).toContain(dictionary[`catalog.jobs.new_item.setup.${key}`]);
+      expect(html).not.toMatch(/<(?:button|select)(?![^>]*min-h-\[44px\])[^>]*>/);
+      expect(html).not.toMatch(/<input(?![^>]*type="checkbox")(?![^>]*min-h-\[44px\])[^>]*>/);
+      expect(html.match(/<label class="inline-flex min-h-\[44px\]/g)).toHaveLength(7);
+      expect(html).toContain('minLength="6"');
+      expect(html).toContain('grid-cols-1');
+      expect(html).toContain('flex-col');
+    });
+  }
 });
