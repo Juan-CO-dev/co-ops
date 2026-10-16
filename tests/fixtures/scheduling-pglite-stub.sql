@@ -57,3 +57,25 @@ alter table public.stations enable row level security;
 alter table public.station_positions enable row level security;
 revoke all on public.stations, public.station_positions from public, anon, authenticated;
 revoke delete, truncate on public.stations, public.station_positions from service_role;
+-- public.station_events (0217 + 0219 position_id + 0228/0230/0233 reason_code, effective_at, prior_position_id):
+-- the columns 0271's `pm_subject_worked_position` and the people loaders read. Service role SELECT + INSERT (0217).
+create table public.station_events (
+  id                uuid primary key default gen_random_uuid(),
+  sequence          bigint generated always as identity unique,
+  location_id       uuid not null references public.locations(id),
+  business_date     date not null,
+  user_id           uuid not null references public.users(id),
+  station_id        uuid,
+  position_id       uuid references public.station_positions(id),
+  kind              text not null check (kind in ('assign','claim','move','release')),
+  actor_id          uuid references public.users(id),
+  at                timestamptz not null default clock_timestamp(),
+  source            text check (source in ('assigned','claimed')),
+  reason_code       text,
+  effective_at      timestamptz,
+  prior_position_id uuid references public.station_positions(id),
+  foreign key (station_id, location_id) references public.stations(id, location_id)
+);
+alter table public.station_events enable row level security;
+revoke all on public.station_events from public, anon, authenticated;
+revoke update, delete, truncate on public.station_events from service_role;
