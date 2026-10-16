@@ -8,7 +8,7 @@ export default function NotFound() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-co-bg px-6 text-center text-co-text">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/brand/co-wordmark.png" alt="Compliments Only" className="h-6 w-auto sm:h-7" />
+      <img src="/brand/co-wordmark.svg" alt="Compliments Only" className="h-6 w-auto sm:h-7" />
       <div className="max-w-sm">
         <p className="text-4xl font-extrabold tracking-tight text-co-gold-text">404</p>
         <h1 className="mt-2 text-xl font-bold">Page not found</h1>

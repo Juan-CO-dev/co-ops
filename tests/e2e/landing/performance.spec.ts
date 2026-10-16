@@ -1,3 +1,4 @@
+import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import {test,expect} from '@playwright/test';
 import {checkTransferBudget} from '../../../scripts/check-transfer-budget.mjs';
 
@@ -5,7 +6,7 @@ for(const consent of ['accepted','unset'])test(`cold initial and full-scroll tra
   test.setTimeout(60000);
   // A new Playwright context is a cold cache. This fixture proves local costs only;
   // live Meta + three throttled Lighthouse runs remain a distinct activation gate.
-  if(consent==='accepted')await context.addCookies([{name:'landing_consent',value:'accepted',url:'http://localhost:44170'}]);
+  if(consent==='accepted')await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
   await page.route('https://connect.facebook.net/**',route=>route.fulfill({contentType:'application/javascript',body:'/* landing-perf-offline-v1: NOT a representative Meta cost fixture */'}));
   await page.route('https://www.facebook.com/**',route=>route.fulfill({status:204}));
   const records:{url:string;type:string;bytes:number}[]=[];

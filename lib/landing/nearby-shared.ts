@@ -2,6 +2,9 @@ export interface Coordinates { latitude: number; longitude: number }
 export function validCoordinates(point: Coordinates | null | undefined): point is Coordinates {
   return !!point && Number.isFinite(point.latitude) && Number.isFinite(point.longitude) && Math.abs(point.latitude) <= 90 && Math.abs(point.longitude) <= 180;
 }
+export function nearbyEnabled(stores: readonly { coordinates: Coordinates | null }[]): boolean {
+  return stores.length >= 2 && stores.every(store => validCoordinates(store.coordinates));
+}
 /** Great-circle distance only: road routes and walking times are not known. */
 export function distanceKm(a: Coordinates, b: Coordinates): number {
   const rad = Math.PI / 180;

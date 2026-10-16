@@ -1,3 +1,4 @@
+import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import { test, expect } from '@playwright/test';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,11 +22,11 @@ test('canonical redirects use configured origin, not supplied host', async ({ re
   for (const [path, target] of [['/eat','/'], ['/eat/privacy','/privacy']]) {
     const response = await request.get(path!, {maxRedirects:0, headers:{host:'eat.example.test','x-forwarded-host':'eat.example.test'}});
     expect(response.status()).toBe(301);
-    expect(response.headers().location).toBe(`https://localhost:44170${target}`);
+    expect(response.headers().location).toBe(`https://localhost:${portBase}${target}`);
   }
 });
 test('all host matrix rows and runtime headers', async ({ request }) => {
-  for (const host of ['localhost:44170','eat.example.test','preview.example.test']) {
+  for (const host of [`localhost:${portBase}`,'eat.example.test','preview.example.test']) {
     for (const path of ['/', '/privacy', '/brand/co-icon.png', '/admin']) {
       const response = await request.get(path,{headers:{host,'x-forwarded-host':host}, maxRedirects:0});
       expect(response.status()).toBe(path === '/admin' ? 404 : 200);
@@ -38,21 +39,21 @@ test('all host matrix rows and runtime headers', async ({ request }) => {
       if(path === '/') { expect(response.headers()['cache-control']).toContain('no-store'); expect(response.headers()['cache-control']).toContain('private'); }
     }
   }
-  for (const host of ['127.0.0.1:44170','unlisted.vercel.app']) {
+  for (const host of [`127.0.0.1:${portBase}`,'unlisted.vercel.app']) {
     for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click']) {
       const response = await request.get(path,{headers:{host,'x-forwarded-host':host}, maxRedirects:0});
       expect(response.status()).toBe(404); expect(response.headers()['content-security-policy-report-only']).not.toContain('facebook');
     }
   }
-  for(const host of ['localhost:44171','eat.example.test']) for(const path of ['/eat','/api/landing/events']) {
-    const response=await request.get(`http://localhost:44171${path}`,{headers:{host,'x-forwarded-host':host},maxRedirects:0});
+  for(const host of [`localhost:${portBase + 1}`,'eat.example.test']) for(const path of ['/eat','/api/landing/events']) {
+    const response=await request.get(`http://localhost:${portBase + 1}${path}`,{headers:{host,'x-forwarded-host':host},maxRedirects:0});
     expect(response.status()).toBe(404); expect(response.headers()['content-security-policy-report-only']).not.toContain('facebook');
   }
 });
 test('invalid or disagreeing hosts leave staff available and landing dormant', async ({ request }) => {
   for(const headers of [
     {'x-forwarded-host':'evil.test'},
-    {'x-forwarded-host':'localhost:44171'},
+    {'x-forwarded-host':`localhost:${portBase + 1}`},
     {'x-forwarded-host':'localhost.,evil.test'},
     {host:'localhost.', 'x-forwarded-host':'localhost.'},
     {host:'user@localhost', 'x-forwarded-host':'user@localhost'},
@@ -74,7 +75,7 @@ test('local optimizer cannot bypass isolation', async ({ request }) => {
   }
 });
 test('staff root and empty-env root omit all trackers, even with accepted consent', async ({page,request})=>{
-  for(const url of ['http://127.0.0.1:44170/','http://localhost:44171/']) {
+  for(const url of [`http://127.0.0.1:${portBase}/`,`http://localhost:${portBase + 1}/`]) {
     const response=await request.get(url); expect(response.status()).toBe(200); expect(await response.text()).not.toContain('connect.facebook.net');
     const meta:string[]=[]; page.on('request',r=>{if(/facebook\.com|facebook\.net/.test(r.url()))meta.push(r.url());});
     await page.goto(url); await page.evaluate(()=>localStorage.setItem('landing-consent','accepted'));
@@ -91,7 +92,7 @@ test('HTML and RSC are private and no-store, with distinct content per host',asy
     expect(response.headers()['cache-control']).toContain('private');
     const landingContent = await response.text();
     expect(landingContent).toContain('Your next great lunch.');
-    const staff=await request.get('http://127.0.0.1:44170'+(rsc?'/?_rsc=fixture':'/'),{headers:rsc?{RSC:'1'}:{}});
+    const staff=await request.get(`http://127.0.0.1:${portBase}`+(rsc?'/?_rsc=fixture':'/'),{headers:rsc?{RSC:'1'}:{}});
     expect(staff.status()).toBe(200);
     const staffContent = await staff.text();
     expect(staffContent).not.toContain('Your next great lunch.');
@@ -127,8 +128,8 @@ for (const [path, canonical] of [['/order/','/order'],['/admin/','/admin'],['/ap
 }
 
 test('measurement routes enforce Origin; unconfigured CAPI is dormant and enabled counter fails closed without its database',async ({request})=>{
-  const headers={origin:'https://localhost:44170',cookie:'landing_consent=accepted'};
-  const event={event_name:'OrderClick',event_id:crypto.randomUUID(),event_time:Math.floor(Date.now()/1000),consent:'accepted',source_url:'https://localhost:44170/',store:'capitol-hill',ad:'unattributed',placement:'hero'};
+  const headers={origin:`https://localhost:${portBase}`,cookie:'landing_consent=accepted'};
+  const event={event_name:'OrderClick',event_id:crypto.randomUUID(),event_time:Math.floor(Date.now()/1000),consent:'accepted',source_url:`https://localhost:${portBase}/`,store:'capitol-hill',ad:'unattributed',placement:'hero'};
   for(const [path,data] of [['/api/landing/events',event],['/api/landing/order-click',{store:'capitol-hill',ad:'unattributed'}]] as const) {
     const accepted=await request.post(path,{headers,data});expect(accepted.status()).toBe(path.endsWith('order-click') ? 503 : 204);expect(accepted.headers()['set-cookie']).toBeUndefined();
     expect((await request.post(path,{headers:{cookie:headers.cookie},data})).status()).toBe(403);

@@ -19,6 +19,8 @@ for (const javaScriptEnabled of [true, false]) test(`lineup is usable with JS ${
     await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
   }
   await strip.locator('li').first().scrollIntoViewIfNeeded();
+  await strip.evaluate(el => { el.scrollLeft = 0; });
+  await expect.poll(() => strip.evaluate(el => el.scrollLeft)).toBe(0);
   await strip.focus(); await page.keyboard.press('ArrowRight');
   await expect.poll(() => strip.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
   // Keyboard movement is pinned above. Reach the end without an actionability

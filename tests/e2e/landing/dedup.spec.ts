@@ -1,6 +1,7 @@
+import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import {test,expect} from '@playwright/test';
 test('actual order actions share Pixel/CAPI IDs and count once per click',async({page,context})=>{
-  await context.addCookies([{name:'landing_consent',value:'accepted',url:'http://localhost:44170'}]);
+  await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
   await page.route('https://connect.facebook.net/**',route=>route.fulfill({contentType:'application/javascript',body:'/* offline pixel queue */'}));
   const events:Record<string,unknown>[]=[];const counts:Record<string,unknown>[]=[];
   await page.route('**/api/landing/events',route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});

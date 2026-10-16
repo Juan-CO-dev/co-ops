@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { distanceKm, nearestStores, validCoordinates } from '@/lib/landing/nearby-shared';
+import { distanceKm, nearestStores, nearbyEnabled, validCoordinates } from '@/lib/landing/nearby-shared';
 
 describe('opt-in shop distances', () => {
+  it('enables nearby only for two or more shops with valid coordinates', () => {
+    const valid = {coordinates:{latitude:0,longitude:0}};
+    for (const stores of [[], [valid], [valid,{coordinates:null}], [valid,{coordinates:{latitude:91,longitude:0}}]]) expect(nearbyEnabled(stores)).toBe(false);
+    expect(nearbyEnabled([valid,valid])).toBe(true);
+    expect(nearbyEnabled([valid,valid,valid])).toBe(true);
+  });
   it('rejects unavailable and out-of-range coordinates', () => {
     for (const point of [null, {latitude:91,longitude:0}, {latitude:0,longitude:181}, {latitude:NaN,longitude:0}]) expect(validCoordinates(point)).toBe(false);
     expect(validCoordinates({latitude:0,longitude:0})).toBe(true);

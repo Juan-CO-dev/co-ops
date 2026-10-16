@@ -1,3 +1,4 @@
+import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import {test,expect,type Page} from '@playwright/test';
 
 async function isolateMeta(page:Page) {
@@ -39,7 +40,7 @@ test('no Meta or attribution persistence before consent; equal keyboard consent 
 });
 
 for(const signal of ['dnt','gpc'])test(`${signal} overrides accepted consent and clears marketing storage`,async({page,context})=>{
-  await context.addCookies([{name:'landing_consent',value:'accepted',url:'http://localhost:44170'}]);
+  await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
   await page.addInitScript(kind=>{Object.defineProperty(navigator,kind==='dnt'?'doNotTrack':'globalPrivacyControl',{get:()=>kind==='dnt'?'1':true});sessionStorage.setItem('landing_attribution','{"ad":"subsim-photo","utm":{}}');},signal);
   const requests=await isolateMeta(page); await page.goto('/?ad=subsim-photo');
   await expect(page.locator('main')).toBeVisible();

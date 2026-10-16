@@ -34,7 +34,7 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
     <header className="flex flex-wrap items-center justify-between gap-4 py-5"><img src="/brand/co-wordmark.svg" alt={TENANT_NAME} width={1125} height={140} className="h-12 w-44 object-contain"/><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={config.attribution}/></header>
     <main>
       <Hero language={language} config={config} ad={captureAttribution(queryString,config.attribution).ad}/>
-      {sectionKeys.map(key=><section key={key} id={key} aria-labelledby={`${key}-title`} className="border-t border-co-border py-10 sm:py-14">
+      {sectionKeys.filter(key=>key !== "shops" || stores.length > 0).map(key=><section key={key} id={key} aria-labelledby={`${key}-title`} className="border-t border-co-border py-10 sm:py-14">
         <SectionView section={key}>
           <h2 id={`${key}-title`} className="text-3xl font-black tracking-tight">{serverT(language,`landing.${key}.title`)}</h2>
           <p className="mt-4 max-w-xl text-lg">{serverT(language,`landing.${key}.body`)}</p>

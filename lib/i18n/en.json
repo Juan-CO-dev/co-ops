@@ -1,7 +1,7 @@
 {
   "landing.shops.nearest": "Find my nearest shop",
   "landing.shops.locating": "Finding your nearest shop…",
-  "landing.shops.location-unavailable": "We could not find your location. You can still choose either shop below.",
+  "landing.shops.location-unavailable": "We could not find your location. You can still choose any of our shops below.",
   "landing.shops.straight-line": "Sorted by straight-line distance. Walking routes and times may differ.",
   "landing.shops.distance": "{distance} km away in a straight line",
   "landing.shops.call": "Call {shop}",

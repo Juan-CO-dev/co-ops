@@ -47,3 +47,12 @@ it('keeps every landing page and refused page private and no-store', async () =>
     expect((await proxy(request(path))).headers.get('cache-control')).toBe('private, no-store');
   }
 });
+
+it('pins short public caching for public metadata and brand, and no-store for APIs', async () => {
+  for (const path of ['/robots.txt', '/sitemap.xml', '/brand/co-wordmark.svg', '/brand/co-icon.png', '/eat/icon.png', '/eat/apple-icon.png', '/favicon.ico']) {
+    expect((await proxy(request(path))).headers.get('cache-control'), path).toBe('public, max-age=300');
+  }
+  for (const path of ['/api/landing/events', '/api/landing/order-click']) {
+    expect((await proxy(request(path))).headers.get('cache-control'), path).toBe('no-store');
+  }
+});

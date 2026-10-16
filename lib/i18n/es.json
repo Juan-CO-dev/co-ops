@@ -1,7 +1,7 @@
 {
   "landing.shops.nearest": "Encuentra tu tienda más cercana",
   "landing.shops.locating": "Buscando tu tienda más cercana…",
-  "landing.shops.location-unavailable": "No pudimos encontrar tu ubicación. Puedes elegir cualquiera de las dos tiendas abajo.",
+  "landing.shops.location-unavailable": "No pudimos encontrar tu ubicación. Puedes elegir cualquiera de nuestras tiendas abajo.",
   "landing.shops.straight-line": "Ordenadas por distancia en línea recta. Las rutas y los tiempos a pie pueden variar.",
   "landing.shops.distance": "A {distance} km en línea recta",
   "landing.shops.call": "Llama a {shop}",

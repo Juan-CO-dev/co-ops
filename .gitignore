@@ -97,3 +97,5 @@ tmp/
 /assets/work/
 /scripts/assets/__pycache__/
 /assets/.venv/
+
+/tmp-landing-server-pids-*.json

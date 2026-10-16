@@ -1,3 +1,4 @@
+import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import { test, expect } from '@playwright/test';
 import approved from '../../../assets/approved-media.json';
 
@@ -18,7 +19,7 @@ test('landing pages cannot cache; immutable media and framework chunks can', asy
     const response = await request.get(asset.publicPath);
     expect(response.status()).toBe(200);
     expect(response.headers()['cache-control']).toBe('public, max-age=31536000, immutable');
-    const staff = await request.get('http://127.0.0.1:44170' + asset.publicPath, { maxRedirects: 0 });
+    const staff = await request.get(`http://127.0.0.1:${portBase}` + asset.publicPath, { maxRedirects: 0 });
     expect(staff.status()).toBe(404);
     expect(staff.headers()['set-cookie']).toBeUndefined();
   }

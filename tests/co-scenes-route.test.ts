@@ -182,7 +182,7 @@ describe("the photo store (git-ignored, manifest-allowlisted)", () => {
       try { validateEntry(asset); if(asset.sourceId) approvedSource(sources, asset.sourceId, asset.classification); return true; }
       catch { return false; }
     }).map(asset => `public${asset.publicPath}`));
-    expect(tracked.filter((f) => existsSync(f) && /\.(png|jpe?g|webp|gif)$/i.test(f) && !f.startsWith("public/brand/") && !approvedLanding.has(f))).toEqual([]);
+    expect(tracked.filter((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) && !f.startsWith("public/brand/") && !approvedLanding.has(f))).toEqual([]);
     expect(tracked.filter((f) => f.startsWith("vendor/co-scenes/photos/"))).toEqual([]);
     // check-ignore exits 0 (no throw) only when the path IS ignored.
     expect(() => execFileSync("git", ["check-ignore", "-q", "--no-index", "vendor/co-scenes/photos/x.png"])).not.toThrow();

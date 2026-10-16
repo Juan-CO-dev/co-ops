@@ -1,7 +1,7 @@
 "use client";
 import { useState } from 'react';
 import type { LandingStore } from '@/lib/landing/stores';
-import { nearestStores, validCoordinates } from '@/lib/landing/nearby-shared';
+import { nearestStores, nearbyEnabled, validCoordinates } from '@/lib/landing/nearby-shared';
 import type { Language } from '@/lib/i18n/types';
 import { OrderLink } from './OrderLink';
 import { OfferCode } from './OfferCode';
@@ -10,7 +10,7 @@ export interface NearbyLabels {nearest:string;locating:string;unavailable:string
 export function NearbyShop({stores,language,labels,ad='unattributed'}:{stores:readonly LandingStore[];language:Language;labels:NearbyLabels;ad?:string}) {
   const [ordered,setOrdered]=useState(()=>stores.map(store=>({...store,distance:null as number|null})));
   const [status,setStatus]=useState<'idle'|'pending'|'ready'|'unavailable'>('idle');
-  const canLocate=stores.length>=2 && stores.every(store=>validCoordinates(store.coordinates));
+  const canLocate=nearbyEnabled(stores);
   const locate=()=>{
     if(status==='pending' || !canLocate) return;
     if(!navigator.geolocation) {setStatus('unavailable');return;}

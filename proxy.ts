@@ -16,6 +16,8 @@ function finishResponse(response: NextResponse, landing: boolean, assetPath?: st
     response.headers.set('Cache-Control', 'private, no-store');
   }
   if (landing && assetPath?.startsWith('/media/')) response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  if (landing && (assetPath?.startsWith('/brand/') || assetPath === '/robots.txt' || assetPath === '/sitemap.xml')) response.headers.set('Cache-Control', 'public, max-age=300');
+  if (landing && assetPath?.startsWith('/api/landing/')) response.headers.set('Cache-Control', 'no-store');
   if (landing && nearbyEnabled) response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
   return response;
 }
@@ -42,8 +44,9 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     if (path === '/sitemap.xml') return finish(new NextResponse('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>', { headers: { 'Content-Type': 'application/xml' } }), true, path);
     const target = req.nextUrl.clone();
     if (decision === 'rewrite') target.pathname = path === '/' ? '/eat' : '/eat/privacy';
-    if (['/favicon.ico', '/eat/icon.png', '/eat/apple-icon.png'].includes(path)) target.pathname = '/brand/co-icon.png';
-    return finish(target.pathname !== path ? NextResponse.rewrite(target, { request: { headers } }) : NextResponse.next({ request: { headers } }), true, isLandingAsset(path, req.nextUrl.searchParams) || target.pathname.startsWith('/brand/') || path.startsWith('/api/landing/') ? path : undefined);
+    const icon = ['/favicon.ico', '/eat/icon.png', '/eat/apple-icon.png'].includes(path);
+    if (icon) target.pathname = '/brand/co-icon.png';
+    return finish(target.pathname !== path ? NextResponse.rewrite(target, { request: { headers } }) : NextResponse.next({ request: { headers } }), true, icon ? target.pathname : isLandingAsset(path, req.nextUrl.searchParams) || path.startsWith('/api/landing/') ? path : undefined);
   }
   if (path.startsWith('/eat') || path.startsWith('/api/landing') || path.startsWith('/media/')) return finish(new NextResponse(null, { status: 404 }), false);
   // Preserve the pre-chunk-A matcher bypass on staff, including static suffixes.

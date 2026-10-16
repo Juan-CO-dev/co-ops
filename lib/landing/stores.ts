@@ -13,9 +13,15 @@ export function projectLandingStores(rows: readonly PublicLocation[], config: La
   });
 }
 export type LandingStore = ReturnType<typeof projectLandingStores>[number];
-/** Used by D2's full shop cards. Chunk A skeleton does not query live data. */
+/** Shop data is optional: a provider outage must not take down the landing page. */
 export async function loadPublicLandingStores(config: LandingConfig = loadLandingConfig()) {
-  const {data,error} = await getServiceRoleClient().from("locations").select(PUBLIC_LOCATION_COLUMNS).eq("active",true).in("code",config.stores.map((s)=>s.locationCode));
-  if (error) throw new Error("Public shop information unavailable");
-  return projectLandingStores((data ?? []) as PublicLocation[],config);
+  try {
+    const {data,error} = await getServiceRoleClient().from("locations").select(PUBLIC_LOCATION_COLUMNS).eq("active",true).in("code",config.stores.map((s)=>s.locationCode));
+    if (error) throw new Error("Public shop information unavailable");
+    return projectLandingStores((data ?? []) as PublicLocation[],config);
+  } catch {
+    // Fixed class/message only: provider errors can contain URLs, credentials or PII.
+    console.error("LandingStoreLoadError: Public shop information unavailable");
+    return [];
+  }
 }
