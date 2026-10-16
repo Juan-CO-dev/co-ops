@@ -35,7 +35,7 @@ async function setup() {
       insert into public.${table} values (1, 'before');
       alter table public.${table} enable row level security;
       grant select, insert, update, delete, truncate, references, trigger on public.${table} to anon, authenticated;
-      grant select, insert, update, delete on public.${table} to service_role;
+      grant all on public.${table} to service_role; -- Supabase's default: service_role holds ALL (the r1 false-green)
       create policy ${table}_read on public.${table} for select using (public.current_user_role_level() >= 3);`);
     for (const policy of policies) {
       const kind = policy.includes("update") ? "update" : "insert";
@@ -54,6 +54,13 @@ async function setup() {
     as 'begin insert into public.vendor_items (id, value) values (9, ''function''); end';
     revoke all on function public.write_vendor_items() from public, anon, authenticated;
     grant execute on function public.write_vendor_items() to service_role;`);
+  // A definer writer with NAMED arguments: a text signature built from identity arguments
+  // cannot be parsed by has_function_privilege — the class that aborted the real dry-runs.
+  await db.exec(`create function public.write_vendor_items_named(p_id integer, p_value text) returns void
+    language plpgsql security definer
+    as 'begin insert into public.vendor_items (id, value) values (p_id, p_value); end';
+    revoke all on function public.write_vendor_items_named(integer, text) from public, anon, authenticated;
+    grant execute on function public.write_vendor_items_named(integer, text) to service_role;`);
   return db;
 }
 

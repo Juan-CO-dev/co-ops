@@ -85,7 +85,11 @@ describe("0272 PostgREST write lockdown", () => {
     expect(sql).toContain("has_table_privilege(role_name, obj, 'DELETE, TRUNCATE, REFERENCES, TRIGGER')");
     expect(sql).toContain("create policy opening_setup_items_no_user_insert");
     expect(sql).toContain("lockdown_0272_reads");
-    expect(sql).toContain("has_function_privilege('authenticated', f.signature, 'EXECUTE')");
+    expect(sql).toContain("has_function_privilege('authenticated', f.oid, 'EXECUTE')");
+    expect(sql).toContain("has_function_privilege('anon', f.oid, 'EXECUTE')");
+    expect(sql).not.toContain("f.signature, 'EXECUTE'");
+    // Column ACLs survive a table-level REVOKE on real Postgres (PGlite cannot observe it), so pin the loop text.
+    expect(sql).toContain("revoke insert (%1$I), update (%1$I), references (%1$I) on table public.%2$I from public, anon, authenticated");
     expect(sql).toContain("rolbypassrls from pg_roles where rolname = 'service_role'");
     for (const kind of ["insert", "update", "delete"]) {
       expect(sql).toContain(`create policy opening_setup_verifications_no_user_${kind}`);
