@@ -182,16 +182,19 @@ begin
       end loop;
       return true;
     when 'floor_limit' then
-      -- CC chunk H4 / H5 (Astra H3 + H4 P1): the CONSERVATIVE certificate — the four limits, the eligible hourly people (none
-      -- free + available at any quarter of the window) and, per salaried manager, the condition
+      -- CC chunk H4 / H5 / H6 (Astra H3-H5 P1s): the CONSERVATIVE certificate — the four limits, the eligible hourly people (each
+      -- 'unavailable': at no quarter of the window) and, per salaried manager, the condition
       -- that excluded them (flex_exhausted / ineligible / unavailable / day_at_max) with their flex and floor hours; whether
       -- it still holds is checkCertificate's recomputation, not this shape.
       if not public.schedule_json_exact_keys(c, array['limitH', 'targetWeekH', 'salariedFlexH', 'maxShiftH', 'hourlyExcluded', 'excludedBy', 'flexHoursUsed', 'floorHoursUsed'])
-         or not public.schedule_json_strings(c -> 'hourlyExcluded')
+         or jsonb_typeof(c -> 'hourlyExcluded') <> 'object'
          or not public.schedule_json_nonneg(c -> 'limitH') or not public.schedule_json_nonneg(c -> 'targetWeekH')
          or not public.schedule_json_nonneg(c -> 'salariedFlexH') or not public.schedule_json_nonneg(c -> 'maxShiftH')
          or jsonb_typeof(c -> 'excludedBy') <> 'object' or jsonb_typeof(c -> 'flexHoursUsed') <> 'object'
          or jsonb_typeof(c -> 'floorHoursUsed') <> 'object' then return false; end if;
+      for k, v in select key, value from jsonb_each(c -> 'hourlyExcluded') loop
+        if jsonb_typeof(v) <> 'string' or (v #>> '{}') <> 'unavailable' then return false; end if;
+      end loop;
       for k, v in select key, value from jsonb_each(c -> 'excludedBy') loop
         if jsonb_typeof(v) <> 'string' or (v #>> '{}') not in ('flex_exhausted', 'ineligible', 'unavailable', 'day_at_max') then return false; end if;
       end loop;

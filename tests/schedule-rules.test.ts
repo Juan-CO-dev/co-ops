@@ -31,6 +31,8 @@ const codes = (ps: RuleProblem[]) => [...new Set(ps.map((p) => p.code))].sort();
 /** CC chunk H5: the eligible, active HOURLY people for a position on a date (what a floor_limit certificate lists as hourlyExcluded), id order. */
 const hourlyFor = (ctx: RuleContext, date: string, positionId: string) => Object.values(ctx.people)
   .filter((p) => !p.salaried && !p.presenceOnly && p.activeMember && eligibleForPosition(p, ctx.days[date]!.structure.positions[positionId])).map((p) => p.userId).sort();
+/** CC chunk H6: what a floor_limit certificate records about them — each "unavailable" (at no quarter of the window). */
+const hourlyOff = (ctx: RuleContext, date: string, positionId: string) => Object.fromEntries(hourlyFor(ctx, date, positionId).map((id) => [id, "unavailable" as const]));
 const of = (ps: RuleProblem[], code: RuleCode) => ps.filter((p) => p.code === code);
 
 describe("the severity table", () => {
@@ -303,7 +305,7 @@ describe("gap certificates, per cause", () => {
       ...[WED, FRI, SAT, SUN].map((d) => shift(U.alex, d, 28, 60, P.PREP)),
     ];
     const g: DeclaredGap = { code: "coverage_gap", date: THU, positionId: P.PREP, fromQ: 28, toQ: 44, cause: "floor_limit",
-      certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyFor(ctx, THU, P.PREP), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } };
+      certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyOff(ctx, THU, P.PREP), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } };
     expect(checkCertificate(g, week(shifts), ctx)).toBe(true);
     expect(proveGap(g, week(shifts), ctx)).toEqual({ cause: "floor_limit", certificate: g.certificate });
     // 31 h of station time: the GM on the MoD lane over the window has 1 h of base room for a relabel → not excluded, no proof.
@@ -316,7 +318,7 @@ describe("gap certificates, per cause", () => {
     setNeed(flexCtx, THU, P.REG, 44, 52);
     for (const u of [U.maya, U.ben, U.kai, U.iris, U.eli, U.dani]) flexCtx.people[u]!.availability[THU] = null;
     const regGap: DeclaredGap = { code: "coverage_gap", date: THU, positionId: P.REG, fromQ: 44, toQ: 52, cause: "floor_limit",
-      certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyFor(ctx, THU, P.REG), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } };
+      certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyOff(ctx, THU, P.REG), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } };
     expect(checkCertificate(regGap, week(shifts), flexCtx)).toBe(false);
     expect(proveGap(regGap, week(shifts), flexCtx)?.cause).not.toBe("floor_limit");
     const noFlex = context({ s: structure((x) => { x.limits.salariedFlexH = 0; }) });
@@ -540,7 +542,7 @@ describe("Astra's chunk A review probes (failing first, fixed in the same commit
     ];
     // Alex has 32 floor hours (Register, in his cover list; 8 h days meet the GM minimum): the 1 h window would take him to 33 > 32.
     const g: DeclaredGap = { code: "coverage_gap", date: THU, positionId: P.REG, fromQ: 64, toQ: 68, cause: "floor_limit",
-      certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyFor(ctx, THU, P.REG), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } };
+      certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyOff(ctx, THU, P.REG), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } };
     expect(checkCertificate(g, week(shifts), ctx)).toBe(false);
     expect(proveGap(g, week(shifts), ctx)?.cause).not.toBe("floor_limit");
     // Extending Ben to 17:00 is a clean fill.
@@ -549,11 +551,13 @@ describe("Astra's chunk A review probes (failing first, fixed in the same commit
     // When the extension is impossible (Ben's availability ends at 16:00), the floor-limit proof stands again.
     ctx.people[U.ben]!.availability[THU] = { fromQ: 40, toQ: 64, source: "toast_pattern" };
     expect(checkCertificate(g, week(shifts), ctx)).toBe(true);
-    // A gap INSIDE Ben's shift (he is on another position then) is not an extension: that is the repair search's business.
+    // A gap INSIDE Ben's shift (he is on another position then): CC chunk H6 — he is eligible and available, so no certificate
+    // either (a swap or a reassignment may reach it: the repair search's business, never a proof's).
     ctx.people[U.ben]!.availability[THU] = { fromQ: 40, toQ: 84, source: "toast_pattern" };
     setNeed(ctx, THU, P.WALKON, 52, 56);
     const inside: DeclaredGap = { ...g, positionId: P.WALKON, fromQ: 52, toQ: 56 };
-    expect(checkCertificate(inside, week(shifts), ctx)).toBe(true);
+    expect(checkCertificate(inside, week(shifts), ctx)).toBe(false);
+    expect(floorLimitCertificate(inside, week(shifts), ctx)).toBeNull();
   });
 
   it("P1 budget: essential coverage (the closing window, MoD, the Closing Manager) is budget-exempt and is never excused by budget", () => {
@@ -1085,7 +1089,7 @@ describe("Juan 2026-10-16 (decision 4): floor_limit also proves a manager whose 
     for (const u of [U.maya, U.ben, U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[SUN] = null;
     const five = [WED, THU, FRI, SAT].map((d) => shift(U.alex, d, 28, 68, "mod")); // 4 × 10 h of MoD = 40 h base, 0 h station
     const g: DeclaredGap = { code: "coverage_gap", date: SUN, positionId: P.PREP, fromQ: 28, toQ: 44, cause: "floor_limit",
-      certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyFor(ctx, SUN, P.PREP), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 0 } } };
+      certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyOff(ctx, SUN, P.PREP), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 0 } } };
     expect(checkCertificate(g, week(five), ctx)).toBe(true);
     expect(proveGap(g, week(five), ctx)?.cause).toBe("floor_limit");
     // 30 h of base week and 0 h of flex: no FILL can add a Sunday block (every added hour is flex); the base plan is a person's call.
@@ -1184,7 +1188,7 @@ describe("CC chunk H2 (2026-10-16): salaried flex may COVER A GAP with a new blo
     expect(proveGap(g, s, mk(0))).toMatchObject({ cause: "floor_limit", certificate: { excludedBy: { [U.alex]: "flex_exhausted" }, limitH: 32, salariedFlexH: 0 } });
     // With 10 h of flex the GM can cover it on a flex block → not floor_limit.
     expect(proveGap(g, s, mk(10))?.cause).not.toBe("floor_limit");
-    const at0 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: [], excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
+    const at0 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: {}, excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
     expect(checkCertificate(at0, s, mk(0))).toBe(true);
     expect(checkCertificate(at0, s, mk(10))).toBe(false);
   });
@@ -1236,8 +1240,9 @@ describe("CC chunk H3 / H4 (2026-10-16/17, Astra H2 + H3 P1): floor_limit is CON
   };
   /**
    * The same with a second eligible person who is BUSY: Dani (hourly shift lead) may work both stations but stands on Walk-ins /
-   * Online 10:30–16:30 that day — over EVERY quarter of the window, so she is free at none of them (CC chunk H5) — and the
-   * counting bound (capacity) has 2 people for 2 heads and does not fire.
+   * Online 10:30–16:30 that day, over EVERY quarter of the window. The counting bound (capacity) has 2 people for 2 heads and does
+   * not fire — and since CC chunk H6 her being eligible and AVAILABLE refuses every floor_limit certificate by itself (an eligible
+   * person busy elsewhere may be swapped or reassigned onto the gap), so this fixture never certifies floor_limit.
    */
   const competingPlus = (flexH = 10, over: (s: ScheduleStructure) => void = () => {}) => {
     const c = competing(flexH, over, ["gm", "shift_lead"]);
@@ -1261,7 +1266,7 @@ describe("CC chunk H3 / H4 (2026-10-16/17, Astra H2 + H3 P1): floor_limit is CON
   /** 10 h of flex spent Wed / Thu (Register after the Expo day), 32 h of base. */
   const twoDays = (endQ: number) => [WED, THU].map((d) => shift(U.alex, d, 28, endQ, P.EXPO, { segments: [{ positionId: P.EXPO, startQ: 28, endQ: 60 }, { positionId: P.REG, startQ: 60, endQ, reasonKey: FLEX }] }));
   const monTue = [MON, TUE].map((d) => shift(U.alex, d, 28, 60, P.EXPO));
-  const spent = () => week([...monTue, ...twoDays(80), dani]);
+  const spent = () => week([...monTue, ...twoDays(80)]);
 
   it("her H2 fixture, the GM free: the preferred fill labels Register, an Expo block over 46–64 is legal too (the FILL helper finds it) — and NO cause certifies either station", () => {
     const ctx = competing();
@@ -1276,7 +1281,7 @@ describe("CC chunk H3 / H4 (2026-10-16/17, Astra H2 + H3 P1): floor_limit is CON
     expect(floorExclusionOf(ctx.people[U.alex]!, expo, s, ctx)).toBeNull(); // flex left, eligible, around, the day empty
   });
 
-  it("once Register is taken, Expo is proven by the counting bound in her exact fixture (one GM, two GM-only heads) — and NOT by floor_limit: the GM still has 5.5 h of flex", () => {
+  it("once Register is taken, Expo is proven by the counting bound in her exact fixture (one GM, two GM-only heads) — and NOT by floor_limit: the GM still has 5.5 h of flex; with an eligible, available (busy) Dani nothing certifies", () => {
     const ctx = competing();
     const taken = takeRegister(base(), ctx);
     expect(flexBlockReaching(expo, taken, ctx)).toBeNull();
@@ -1287,6 +1292,11 @@ describe("CC chunk H3 / H4 (2026-10-16/17, Astra H2 + H3 P1): floor_limit is CON
     const takenPlus = takeRegister(base(dani), plus);
     expect(proveGap(expo, takenPlus, plus)).toBeNull();
     expect(floorExclusionOf(plus.people[U.alex]!, expo, takenPlus, plus)).toBeNull();
+    // CC chunk H6: even with the GM's flex spent, Dani — eligible, available, busy on Walk-ins / Online — refuses the certificate.
+    const spentPlus = week([...monTue, ...twoDays(80), dani]);
+    expect(floorExclusionOf(plus.people[U.alex]!, expo, spentPlus, plus)).toBe("flex_exhausted");
+    expect(floorLimitCertificate(expo, spentPlus, plus)).toBeNull();
+    expect(proveGap(expo, spentPlus, plus)).toBeNull();
   });
 
   it("Astra's H3 P1 — the mixed-position extension: the GM works Saturday 7:00–11:00 as MoD, Expo opens at 11:30 and needs them to 16:00; only the target-position shapes miss it, so NOTHING certifies (at 3d8f58aa: floor_limit)", () => {
@@ -1311,37 +1321,40 @@ describe("CC chunk H3 / H4 (2026-10-16/17, Astra H2 + H3 P1): floor_limit is CON
   });
 
   it("flex exhausted → a legitimate floor_limit (excluded by flex_exhausted, the 10 h shown spent); 4 h or 3 h left → never", () => {
-    const ctx = competingPlus();
+    const ctx = competing(); // GM-only stations: no eligible hourly person
     const s = spent();
     expect(salariedWeek(s, U.alex)).toEqual({ totalH: 42, flexH: 10, baseH: 32 });
     expect(flexLeftQ(s, U.alex, ctx.days[SAT]!.structure)).toBe(0);
     const g = certified(expo, s, ctx);
-    expect(g.certificate).toEqual({ limitH: 32, targetWeekH: 40, salariedFlexH: 10, maxShiftH: 10.5, hourlyExcluded: [U.dani], excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 10 }, floorHoursUsed: { [U.alex]: 32 } });
+    expect(g.certificate).toEqual({ limitH: 32, targetWeekH: 40, salariedFlexH: 10, maxShiftH: 10.5, hourlyExcluded: {}, excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 10 }, floorHoursUsed: { [U.alex]: 32 } });
     expect(checkCertificate(g, s, ctx)).toBe(true);
     // The week total at target + flex excludes too, even with flex quarters unspent (a 40 h base + 10 h of MoD, no flex marks): 50 h.
-    const full = week([...[MON, TUE, WED, THU].map((d) => shift(U.alex, d, 28, 68, P.EXPO)), shift(U.alex, FRI, 28, 68, "mod"), dani]);
+    const full = week([...[MON, TUE, WED, THU].map((d) => shift(U.alex, d, 28, 68, P.EXPO)), shift(U.alex, FRI, 28, 68, "mod")]);
     expect(salariedWeek(full, U.alex).totalH).toBe(50);
     expect(floorExclusionOf(ctx.people[U.alex]!, expo, full, ctx)).toBe("flex_exhausted");
     // 6 h spent (4 h left): no proof — a 4 h block reaches (the fill takes it). 7 h spent (3 h left, under the shift minimum): still no proof.
     for (const endQ of [72, 74]) {
-      const some = week([...monTue, ...twoDays(endQ), dani]);
+      const some = week([...monTue, ...twoDays(endQ)]);
       expect(floorExclusionOf(ctx.people[U.alex]!, expo, some, ctx)).toBeNull();
       expect(proveGap(expo, some, ctx)).toBeNull();
     }
   });
 
   it("each condition excludes with its reason: the GM's day at the maximum, an AGM unavailable, a salaried key holder ineligible; a MoD relabel room never excludes", () => {
-    const ctx = competingPlus();
+    const ctx = competing(); // GM-only stations: no eligible hourly person
     ctx.people["u-agm"] = { ...ctx.people[U.alex]!, userId: "u-agm", role: "agm", coverPositions: [P.REG, P.EXPO], availability: { [SAT]: null } };
     ctx.people["u-skh"] = { ...ctx.people[U.iris]!, userId: "u-skh", salaried: true, coverPositions: [P.REG, P.EXPO] }; // a salaried key holder: never the MoD before 19:00
     // The GM's Saturday is pinned to 10.5 h on Register (7:00–17:30): the day sits at the daily maximum.
-    const s = week([...base(dani).shifts, shift(U.alex, SAT, 28, 70, P.REG, { pinned: true })]);
+    const s = week([...base().shifts, shift(U.alex, SAT, 28, 70, P.REG, { pinned: true })]);
     expect(floorExclusionOf(ctx.people[U.alex]!, expo, s, ctx)).toBe("day_at_max");
     expect(floorExclusionOf(ctx.people["u-agm"]!, expo, s, ctx)).toBe("unavailable");
     expect(floorExclusionOf(ctx.people["u-skh"]!, expo, s, ctx)).toBe("ineligible");
-    const g = certified(expo, s, ctx);
+    // With the GM standing on Register, the counting bound (one eligible, available person for two GM-only heads) proves Expo
+    // FIRST in proveGap's order (CC chunk H6 ruling 2); the floor certificate still holds and verifies on its own.
+    expect(proveGap(expo, s, ctx)?.cause).toBe("capacity");
+    const g: DeclaredGap = { ...expo, cause: "floor_limit", certificate: floorLimitCertificate(expo, s, ctx)! };
     expect(g.certificate).toEqual({
-      limitH: 32, targetWeekH: 40, salariedFlexH: 10, maxShiftH: 10.5, hourlyExcluded: [U.dani],
+      limitH: 32, targetWeekH: 40, salariedFlexH: 10, maxShiftH: 10.5, hourlyExcluded: {},
       excludedBy: { [U.alex]: "day_at_max", "u-agm": "unavailable", "u-skh": "ineligible" },
       flexHoursUsed: { [U.alex]: 0, "u-agm": 0, "u-skh": 0 }, floorHoursUsed: { [U.alex]: 42.5, "u-agm": 0, "u-skh": 0 },
     });
@@ -1352,32 +1365,40 @@ describe("CC chunk H3 / H4 (2026-10-16/17, Astra H2 + H3 P1): floor_limit is CON
     expect(checkCertificate(g, s, ctx)).toBe(false); // the certificate no longer matches the inputs
     // The same GM day on the MoD lane instead of Register: a relabel onto Expo would cost no time → never excluded, whatever else holds.
     ctx.people["u-agm"]!.availability[SAT] = null;
-    const mod = week([...base(dani).shifts, shift(U.alex, SAT, 28, 70, "mod", { pinned: true })]);
+    const mod = week([...base().shifts, shift(U.alex, SAT, 28, 70, "mod", { pinned: true })]);
     expect(floorExclusionOf(ctx.people[U.alex]!, expo, mod, ctx)).toBeNull();
     expect(proveGap(expo, mod, ctx)).toBeNull();
   });
 
-  it("a stale certificate is refused: proven at 0 h of flex it FAILS at 10 h; proven with the flex spent it fails once the flex is given back", () => {
-    const s = base(dani);
-    const at0 = certified(expo, s, competingPlus(0));
-    expect(at0.certificate).toMatchObject({ salariedFlexH: 0, excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 } });
-    expect(checkCertificate(at0, s, competingPlus(0))).toBe(true);
-    expect(checkCertificate(at0, s, competingPlus(10))).toBe(false);
-    const ctx = competingPlus();
+  it("a stale certificate is refused: proven at 0 h of flex it FAILS at 10 h; proven with the flex spent it fails once the flex is given back; proven with Dani off it fails once she is available", () => {
+    const s = base();
+    const at0 = certified(expo, s, competing(0));
+    expect(at0.certificate).toMatchObject({ salariedFlexH: 0, hourlyExcluded: {}, excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 } });
+    expect(checkCertificate(at0, s, competing(0))).toBe(true);
+    expect(checkCertificate(at0, s, competing(10))).toBe(false);
+    const ctx = competing();
     const atSpent = certified(expo, spent(), ctx);
     expect(checkCertificate(atSpent, s, ctx)).toBe(false);
-    expect(checkCertificate(atSpent, week([...monTue, ...twoDays(72), dani]), ctx)).toBe(false);
+    expect(checkCertificate(atSpent, week([...monTue, ...twoDays(72)]), ctx)).toBe(false);
+    // CC chunk H6: with Dani eligible but OFF that day the certificate names her; the day she is available it fails.
+    const off = competingPlus();
+    off.people[U.dani]!.availability[SAT] = null;
+    const atOff = certified(expo, spent(), off);
+    expect(atOff.certificate).toMatchObject({ hourlyExcluded: { [U.dani]: "unavailable" } });
+    expect(checkCertificate(atOff, spent(), competingPlus())).toBe(false);
   });
 
-  it("a forged certificate is refused: another condition, the flex used, a limit, a manager added or left out, the H3 and H2 shapes", () => {
+  it("a forged certificate is refused: another condition, the flex used, a limit, a manager added or left out, the hourly map, the H5 / H3 / H2 shapes", () => {
     const ctx = competingPlus();
+    ctx.people[U.dani]!.availability[SAT] = null; // Dani eligible but off: she is named in the certificate
     const s = spent();
     const good = certified(expo, s, ctx);
     const forge = (over: Partial<FloorLimitCertificate>) => checkCertificate({ ...expo, cause: "floor_limit", certificate: { ...(good.certificate as FloorLimitCertificate), ...over } } as DeclaredGap, s, ctx);
     expect(forge({})).toBe(true);
     expect(forge({ excludedBy: { [U.alex]: "unavailable" } })).toBe(false);
-    expect(forge({ hourlyExcluded: [] })).toBe(false);
-    expect(forge({ hourlyExcluded: [U.dani, U.ben] })).toBe(false);
+    expect(forge({ hourlyExcluded: {} })).toBe(false);
+    expect(forge({ hourlyExcluded: { [U.dani]: "unavailable", [U.ben]: "unavailable" } })).toBe(false);
+    expect(forge({ hourlyExcluded: [U.dani] } as unknown as Partial<FloorLimitCertificate>)).toBe(false);
     expect(forge({ excludedBy: {} })).toBe(false);
     expect(forge({ excludedBy: { [U.alex]: "flex_exhausted", [U.dani]: "ineligible" } })).toBe(false);
     expect(forge({ flexHoursUsed: { [U.alex]: 4.5 } })).toBe(false);
@@ -1403,7 +1424,7 @@ describe("CC chunk H3 / H4 (2026-10-16/17, Astra H2 + H3 P1): floor_limit is CON
     expect(floorExclusionOf(ctx.people[U.alex]!, g, s, ctx)).toBe("flex_exhausted"); // the GM IS excluded …
     expect(floorLimitCertificate(g, s, ctx)).toBeNull(); // … but an hourly person is free and available at a quarter of the gap
     expect(proveGap(g, s, ctx)).toBeNull();
-    const h4 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyFor(ctx, SAT, P.REG), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
+    const h4 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyOff(ctx, SAT, P.REG), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
     expect(checkCertificate(h4, s, ctx)).toBe(false);
     // Her two shifts: zero findings, nobody displaced.
     const covered = [shift(U.ben, SAT, 44, 60, P.REG), shift(U.maya, SAT, 60, 76, P.REG)];
@@ -1418,14 +1439,62 @@ describe("CC chunk H3 / H4 (2026-10-16/17, Astra H2 + H3 P1): floor_limit is CON
     // Ben available 10:00–11:00 only (ends where the gap starts): nobody reaches it → floor_limit, the hourly people listed.
     ctx.people[U.ben]!.availability[SAT] = { fromQ: 40, toQ: 44, source: "toast_pattern" };
     const cert = floorLimitCertificate(g, s, ctx);
-    expect(cert).toMatchObject({ hourlyExcluded: hourlyFor(ctx, SAT, P.REG), excludedBy: { [U.alex]: "flex_exhausted" } });
-    expect(cert!.hourlyExcluded).toEqual(expect.arrayContaining([U.ben, U.maya]));
+    expect(cert).toMatchObject({ hourlyExcluded: hourlyOff(ctx, SAT, P.REG), excludedBy: { [U.alex]: "flex_exhausted" } });
+    expect(cert!.hourlyExcluded).toMatchObject({ [U.ben]: "unavailable", [U.maya]: "unavailable" });
     expect(proveGap(g, s, ctx)).toEqual({ cause: "floor_limit", certificate: cert });
-    // A free hourly person whose SHIFT that day extends over one quarter of the gap counts too: Ben 10:30–11:00 on Walk-ins / Online, available to 12:00.
+    // CC chunk H6: his shift that day is irrelevant — available at one quarter of the gap (to 12:00) is enough: Ben 10:30–11:00 on Walk-ins / Online.
     ctx.people[U.ben]!.availability[SAT] = { fromQ: 40, toQ: 48, source: "toast_pattern" };
     expect(floorLimitCertificate(g, week([...s.shifts, shift(U.ben, SAT, 42, 44, P.WALKON)]), ctx)).toBeNull();
     // Truly nobody: every hourly person off that day → floor_limit again (the GM is available, so it is not an availability gap).
     for (const u of [U.ben, U.maya]) ctx.people[u]!.availability[SAT] = null;
     expect(proveGap(g, s, ctx)?.cause).toBe("floor_limit");
+  });
+
+  it("CC chunk H6 (Astra H5 P1), the mixed-position hourly extension: Ben on Walk-ins 12–16 can go Walk-ins 16–17 then Register 17–20; eligible + available at a quarter of the gap → NO certificate (at 5ce8a938: floor_limit, Approve not refused)", () => {
+    const ctx = context({ built: [SAT], s: structure((s) => { s.limits.salariedFlexH = 0; s.priority = []; }) });
+    setNeed(ctx, SAT, P.REG, 48, 80);
+    setNeed(ctx, SAT, P.WALKON, 48, 80);
+    for (const u of [U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[SAT] = null;
+    const maya = shift(U.maya, SAT, 48, 80, P.REG, { segments: [{ positionId: P.REG, startQ: 48, endQ: 68 }, { positionId: P.WALKON, startQ: 68, endQ: 80 }] });
+    const s = week([...base().shifts, shift(U.ben, SAT, 48, 64, P.WALKON), maya]);
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.REG, fromQ: 68, toQ: 80 };
+    // Register is occupied over the 16:00–17:00 bridge, so the H5 per-quarter freeFor saw Ben as busy; H6 ignores his shift.
+    expect(floorExclusionOf(ctx.people[U.alex]!, g, s, ctx)).toBe("flex_exhausted");
+    expect(floorLimitCertificate(g, s, ctx)).toBeNull();
+    expect(proveGap(g, s, ctx)).toBeNull();
+    const h5 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, hourlyExcluded: hourlyOff(ctx, SAT, P.REG), excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
+    expect(checkCertificate(h5, s, ctx)).toBe(false);
+    // Her legal fill: Ben 12:00–20:00, Walk-ins / Online to 17:00 then Register — zero findings, Maya unchanged.
+    const ben = shift(U.ben, SAT, 48, 80, P.WALKON, { segments: [{ positionId: P.WALKON, startQ: 48, endQ: 68 }, { positionId: P.REG, startQ: 68, endQ: 80 }] });
+    expect(run([ben, maya], ctx).filter((p) => p.severity === "error" || p.severity === "gap")).toEqual([]);
+  });
+
+  it("CC chunk H6: an eligible person BUSY elsewhere over the whole gap → no certificate; nobody eligible-and-available (and the GM excluded) → floor_limit naming them", () => {
+    const ctx = context({ built: [SAT], s: structure((s) => { s.limits.salariedFlexH = 0; s.priority = []; }) });
+    setNeed(ctx, SAT, P.REG, 44, 60);
+    for (const u of [U.maya, U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[SAT] = null;
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.REG, fromQ: 44, toQ: 60 };
+    // Ben stands on Walk-ins / Online 10:30–16:30 — over every quarter of the gap — and is available: no certificate.
+    const busy = week([...base().shifts, shift(U.ben, SAT, 42, 66, P.WALKON)]);
+    expect(floorLimitCertificate(g, busy, ctx)).toBeNull();
+    expect(proveGap(g, busy, ctx)).toBeNull();
+    // Ben off that day: nobody eligible is available, the GM is at 0 h of flex → floor_limit, the hourly people recorded.
+    ctx.people[U.ben]!.availability[SAT] = null;
+    const got = proveGap(g, base(), ctx);
+    expect(got).toMatchObject({ cause: "floor_limit", certificate: { hourlyExcluded: hourlyOff(ctx, SAT, P.REG), excludedBy: { [U.alex]: "flex_exhausted" } } });
+    expect((got!.certificate as FloorLimitCertificate).hourlyExcluded).toMatchObject({ [U.ben]: "unavailable", [U.maya]: "unavailable" });
+    expect(checkCertificate({ ...g, ...got! } as DeclaredGap, base(), ctx)).toBe(true);
+  });
+
+  it("CC chunk H6 ruling 2: a real shortage still certifies through capacity, which proveGap tries BEFORE floor_limit", () => {
+    const ctx = context({ built: [SAT], s: structure((s) => { s.limits.salariedFlexH = 0; s.priority = []; }) });
+    setNeed(ctx, SAT, P.REG, 44, 60);
+    setNeed(ctx, SAT, P.WALKON, 44, 60);
+    for (const u of [U.maya, U.kai, U.iris, U.eli, U.dani, U.alex]) ctx.people[u]!.availability[SAT] = null; // the GM is off too
+    // Ben, the one eligible and available person, stands on Walk-ins / Online: Register's head is a counting shortage.
+    const s = week([...base().shifts, shift(U.ben, SAT, 44, 60, P.WALKON)]);
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.REG, fromQ: 44, toQ: 60 };
+    expect(floorLimitCertificate(g, s, ctx)).toBeNull(); // Ben is eligible and available: no floor certificate …
+    expect(proveGap(g, s, ctx)).toMatchObject({ cause: "capacity", certificate: { requiredHeads: 2, peopleIds: [U.ben], people: 1, shortBy: 1 } }); // … but the shortage is proven
   });
 });

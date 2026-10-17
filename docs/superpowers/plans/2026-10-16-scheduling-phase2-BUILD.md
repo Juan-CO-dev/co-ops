@@ -1595,7 +1595,7 @@ Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). 
 |---|---|---|
 | §5.2 hours budget per week / month, per date, with the suggestion | `budget-shared.ts`, `settings.ts` `setBudget`, `BudgetSetter.tsx`, `BudgetSuggestion.tsx` | `schedule-budget` (F11–F16, none_set), `schedule-board-ui` (Set one, exact body), 0274 harness |
 | §5.8 horizon, never silently overwrite an edited week | `horizon-shared.ts`, `schedules.ts`, `HorizonBuilder.tsx`, `runRegenerate` | `schedule-horizon`, `schedule-board-ui` (P2-3 both paths), 0275 harness `edited_week_unconfirmed` |
-| §6 generator: shapes, segments, skills, strength, leaders, presence, salaried cover, closing / MoD, 4 h min, priority, cover | `lib/scheduling/generator/*` | 27 goldens (p2.10), `schedule-generator`, property test |
+| §6 generator: shapes, segments, skills, strength, leaders, presence, salaried cover, closing / MoD, 4 h min, priority, cover | `lib/scheduling/generator/*` | 27 goldens (p2.11), `schedule-generator`, property test |
 | §6.5 the validator on every schedule; edits saved with their rule | `rules-shared.ts` `checkScheduleRules` | `schedule-rules`, mockup parity, `schedule-edit` |
 | Gap causes and certificates; budget_limited; unresolved_search blocks Approve | `rules-shared.ts`, 0275 `valid_gap_certificate` | `schedule-rules`, certificate-cases (both twins), F17 |
 | §6.6 labor target ≤ 28%, the math shown, no contradiction | `labor-target-shared.ts`, `LaborTargetCard.tsx` | `schedule-labor-target`, `schedule-board-ui` (one note, amber rule) |
@@ -1632,6 +1632,11 @@ Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). 
 
 - The hourly "nobody free" test required ONE person available for the ENTIRE gap; two free hourly people available for the two halves (two legal 4 h shifts) got `floor_limit`. Now: NO eligible, active hourly person free AND available at ANY quarter of the gap, else no certificate (`unresolved_search` unless another cause proves it). The certificate lists them (`hourlyExcluded`); TS / SQL twins + case file in parity. `flexBlockReaching`'s comment says what it is: a FILL helper that certifies nothing.
 - `GENERATOR_VERSION` p2.10; golden deltas by cause in the H5 handback.
+
+### Chunk H6 (2026-10-17): the hourly condition is ELIGIBILITY + AVAILABILITY only (Astra H5 P1)
+
+- `freeFor` / `shiftExtendsOver` wanted bridge room on the GAP's position, so a legal MIXED-position hourly extension (Walk-ins 16–17, then Register 17–20) still certified. Final simplification: NO active hourly person eligible for the position is available at ANY quarter of the gap — shifts ignored; an eligible, available person busy elsewhere means no certificate. `hourlyExcluded` is now `{ id → "unavailable" }` over the eligible hourly people (TS / SQL twins + case file in parity). Real shortages certify through `capacity`, tried before `floor_limit`.
+- `GENERATOR_VERSION` p2.11; golden deltas by cause in the H6 handback.
 
 ### Phase 3 list (unchanged from "Phase 3 backlog", plus what Phase 2 shows as coming)
 

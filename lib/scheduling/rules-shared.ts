@@ -67,9 +67,11 @@ export interface BudgetLimitedCertificate {
 /**
  * CC chunk H4 (2026-10-17, Astra H3 P1 — the CONSERVATIVE floor_limit, the end of the proof loop): `floor_limit` no longer
  * claims "no legal flex block exists" (enumerating every legal shape is combinatorial and failed twice). It claims only a
- * SIMPLE, CHECKABLE precondition: NO eligible, active hourly person is free AND available at ANY quarter of the window (CC
- * chunk H5, Astra H4 P1: two people covering two halves of a gap are two legal 4 h shifts, so a part is enough to refuse the
- * certificate), and EVERY salaried manager the flex search considers (`flexSearchManagers`) is excluded by the FIRST of
+ * SIMPLE, CHECKABLE precondition: NO active hourly person ELIGIBLE for the position is AVAILABLE at ANY quarter of the window
+ * (CC chunk H6, Astra H5 P1 — the final simplification of the hourly side: their current shifts, `freeFor` and
+ * `shiftExtendsOver` are ignored entirely; an eligible, available person, even one on another position just then, may reach
+ * the gap by an extension, a swap or a reassignment, so no certificate), and EVERY salaried manager the flex search considers
+ * (`flexSearchManagers`) is excluded by the FIRST of
  *   (a) `flex_exhausted` — the flex is spent (used ≥ `salariedFlexH`, or the week total ≥ target + flex);
  *   (b) `ineligible` — not eligible for the position and never the manager on duty over the window;
  *   (c) `unavailable` — unavailable at every quarter of [fromQ − maxShiftQ, toQ + maxShiftQ) that date;
@@ -84,8 +86,8 @@ export type FloorExclusion = "flex_exhausted" | "ineligible" | "unavailable" | "
 export const FLOOR_EXCLUSIONS: readonly FloorExclusion[] = ["flex_exhausted", "ineligible", "unavailable", "day_at_max"];
 export interface FloorLimitCertificate {
   limitH: number; targetWeekH: number; salariedFlexH: number; maxShiftH: number;
-  /** CC chunk H5: every eligible, active hourly person for the position (id order), each free + available at NO quarter of the window. */
-  hourlyExcluded: string[];
+  /** CC chunk H6: every active hourly person eligible for the position (id order) → why they are out: available at NO quarter of the window. */
+  hourlyExcluded: Record<string, "unavailable">;
   /** EVERY salaried manager considered → the first condition that excludes them. */
   excludedBy: Record<string, FloorExclusion>;
   flexHoursUsed: Record<string, number>;
@@ -460,9 +462,9 @@ export function shiftExtendsOver(
 /**
  * Is the person free for a cover over [fromQ, toQ) on `date`? Hourly: no shift that day, OR a shift that
  * day that extends over the window (above). Salaried: no BASE floor segment then (flex time is discretionary cover and does
- * not make them busy here). CC chunk H4: `floor_limit` uses this for the HOURLY test only (an hourly person free for the
- * window means the gap is not a floor matter); salaried managers are judged by the four conservative conditions of
- * `floorExclusionOf`, never by a search over their flex.
+ * not make them busy here). CC chunk H6: `floor_limit` no longer uses this at all — hourly people are judged by eligibility
+ * and availability only (`floorLimitCertificate`), salaried managers by the four conservative conditions of
+ * `floorExclusionOf`; it stays for the fills' bookkeeping.
  */
 function freeFor(p: RulePerson, s: WeekSchedule, date: string, fromQ: number, toQ: number, day: DayContext, positionId: string | null): boolean {
   const own = s.shifts.filter((sh) => sh.date === date && sh.userId === p.userId);
@@ -1336,9 +1338,8 @@ export function floorExclusionOf(p: RulePerson, g: Pick<GapSubject, "date" | "po
 }
 
 /**
- * The conservative floor_limit certificate of a coverage deficit, or null when it is not one: no eligible, active hourly
- * person FREE (`freeFor`: no shift that day, or a shift that extends over the quarter) and available at ANY quarter of the
- * window (CC chunk H5), at least one salaried
+ * The conservative floor_limit certificate of a coverage deficit, or null when it is not one: no active hourly person
+ * eligible for the position and available at ANY quarter of the window (CC chunk H6 — shifts ignored), at least one salaried
  * manager considered, and EVERY one of them excluded (`floorExclusionOf`). Deterministic; the verifier recomputes it and
  * demands byte equality, so the limits, each manager's condition and their flex / floor hours are all bound.
  */
@@ -1347,13 +1348,12 @@ export function floorLimitCertificate(g: Pick<GapSubject, "code" | "date" | "pos
   if (!day || g.code !== "coverage_gap" || !g.positionId || g.toQ <= g.fromQ) return null;
   const st = day.structure;
   const subject: GapSubject = { code: "coverage_gap", date: g.date, positionId: g.positionId, fromQ: g.fromQ, toQ: g.toQ };
-  // CC chunk H5 (Astra H4 P1): an hourly person free AND available at ANY quarter of the window (eligible there) could cover
-  // a part of it — two halves are two legal shifts — so no certificate. Judged quarter by quarter, never over the whole window.
+  // CC chunk H6 (Astra H5 P1): an active hourly person ELIGIBLE for the position and AVAILABLE at ANY quarter of the window
+  // means no certificate — whatever they are doing just then (an extension, a swap or a reassignment may reach the gap; no
+  // shift reasoning in the proof). Judged quarter by quarter, never over the whole window.
   const hourly = eligibleMembers(subject, day, ctx).filter((p) => isHourly(p) && p.activeMember);
   for (const p of hourly) {
-    for (let q = g.fromQ; q < g.toQ; q++) {
-      if (eligibleFor(p, "coverage_gap", g.positionId, st, q) && availableOn(p, g.date, q, q + 1) && freeFor(p, s, g.date, q, q + 1, day, g.positionId)) return null;
-    }
+    for (let q = g.fromQ; q < g.toQ; q++) if (eligibleFor(p, "coverage_gap", g.positionId, st, q) && availableOn(p, g.date, q, q + 1)) return null;
   }
   const managers = flexSearchManagers(g.date, ctx);
   if (managers.length === 0) return null;
@@ -1365,7 +1365,7 @@ export function floorLimitCertificate(g: Pick<GapSubject, "code" | "date" | "pos
   }
   return {
     limitH: st.limits.managerFloorH, targetWeekH: st.limits.salariedTargetWeekH, salariedFlexH: st.limits.salariedFlexH, maxShiftH: st.limits.maxShiftH,
-    hourlyExcluded: hourly.map((p) => p.userId),
+    hourlyExcluded: Object.fromEntries(hourly.map((p) => [p.userId, "unavailable" as const])),
     excludedBy,
     flexHoursUsed: Object.fromEntries(managers.map((p) => [p.userId, salariedWeek(s, p.userId).flexH])),
     floorHoursUsed: Object.fromEntries(managers.map((p) => [p.userId, floorHours(s, p.userId)])),
