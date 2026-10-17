@@ -73,7 +73,7 @@ for (const language of ['en', 'es'] as const) {
         const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 375, height: 812 }, deviceScaleFactor, reducedMotion });
         try {
           const page = await context.newPage();
-          // The original 750px file is also a legitimate no-JS lineup image.
+          // Only current P013 hero derivatives belong to this responsive request set.
           // Count hero-only derivatives; the SSR test rejects a second fallback preload.
           const posterPaths = inventory.filter(asset => /^v2-p013-\d+$/.test(asset.id)).map(asset => asset.path);
           const requests: string[] = [];
@@ -119,4 +119,6 @@ test('only the hero receives an image preload on the full page', async ({page}) 
  const hints=page.locator('link[rel="preload"][as="image"]');
  await expect(hints).toHaveCount(1);
  await expect(hints).toHaveAttribute('imagesrcset', /v2-p013/);
+ await expect(page.locator('.landing-v2-header img')).toHaveAttribute('loading','eager');
+ await expect(page.locator('.landing-v2-header img')).toHaveAttribute('fetchpriority','low');
 });

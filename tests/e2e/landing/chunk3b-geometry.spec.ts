@@ -9,11 +9,13 @@ for(const language of ['en','es']) for(const viewport of [{width:375,height:667}
     await expect(page.locator('.landing-v2')).toHaveAttribute('data-consent-flow','false');
     const geometry=await page.evaluate(()=>{
       const box=(selector:string)=>document.querySelector(selector)!.getBoundingClientRect().toJSON();
-      return {photo:box('#hero img'),actions:box('[data-hero-actions]'),copy:box('.landing-v2-hero-copy'),consent:box('.landing-v2-consent'),overflow:document.documentElement.scrollWidth>innerWidth};
+      return {photo:box('#hero img'),actions:box('[data-hero-actions]'),copy:box('.landing-v2-hero-copy'),copyBlocks:Array.from(document.querySelectorAll('.landing-v2-hero-copy > :not(#landing-consent-slot)')).map(element=>element.getBoundingClientRect().toJSON()),consent:box('.landing-v2-consent'),overflow:document.documentElement.scrollWidth>innerWidth};
     });
     const intersects=(a:typeof geometry.photo,b:typeof geometry.photo)=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
     expect(intersects(geometry.consent,geometry.photo)).toBe(false);
     expect(intersects(geometry.consent,geometry.actions)).toBe(false);
+    // Exclude every actual copy block, not the container's empty padding or consent slot.
+    for(const block of geometry.copyBlocks) expect(intersects(geometry.consent,block)).toBe(false);
     expect(geometry.consent.height).toBeLessThanOrEqual(120);
     expect(geometry.overflow).toBe(false);
     await expect(page.locator('#hero-title span')).toHaveCount(2);
@@ -35,7 +37,7 @@ for(const language of ['en','es']) for(const viewport of [{width:375,height:667}
       await link.focus();await expect(link).toBeFocused();
     }
     await page.evaluate(()=>{if(document.activeElement instanceof HTMLElement)document.activeElement.blur();});
-    await page.screenshot({path:`tmp/landing-v2/chunk3b/${info.project.name}-${language}-${viewport.width}x${viewport.height}.png`});
+    await page.screenshot({path:`tmp/landing-v2/fixround/${info.project.name}-${language}-${viewport.width}x${viewport.height}.png`});
     await info.attach('geometry.json',{body:JSON.stringify(geometry,null,2),contentType:'application/json'});
   });
 }

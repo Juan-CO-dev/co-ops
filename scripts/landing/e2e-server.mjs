@@ -1,3 +1,4 @@
+import { warmRoutes } from './e2e-readiness.mjs';
 import { portBase, pidFile } from './e2e-ports.cjs';
 import { writeFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -83,4 +84,13 @@ for (const signal of ['SIGTERM','SIGINT']) process.on(signal, () => stop(0));
 
 // Readiness belongs to these processes, never to another runner's open URL.
 await Promise.all(children.map(child=>child.ready));
+await warmRoutes([
+ `http://localhost:${portBase}/?lang=en`,
+ `http://localhost:${portBase}/?lang=es`,
+ `http://localhost:${portBase}/privacy`,
+ `http://127.0.0.1:${portBase}/`,
+ `http://127.0.0.1:${portBase + 1}/`,
+ `http://localhost:${portBase + 3}/`,
+ ...(nearby ? [`http://localhost:${portBase + 5}/`] : []),
+]);
 console.log('LANDING_E2E_READY');

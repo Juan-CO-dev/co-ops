@@ -5,6 +5,12 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {approvedSource,sha256,safeOutput,validateEntry,PHOTO_DETAILS,V2_RECIPES} from './inventory.mjs';
 
+/** An identical derivative keeps its review; changed bytes require a new review. */
+export function inspectionForDerivative(previous,hash) {
+ if(previous && previous.sha256!==hash)throw Error('Existing derivative differs; review before replacement');
+ return previous?.inspection??{verdict:'pending final visual inspection',reviewer:'Astra'};
+}
+
 // Full-frame delivery transforms only; always start from the pinned original.
 export async function exportLandingV2(root=process.cwd()) {
  const read=p=>JSON.parse(readFileSync(path.join(root,p),'utf8'));
@@ -25,8 +31,7 @@ export async function exportLandingV2(root=process.cwd()) {
   const record={id,...recipe,publicPath:`/media/${id}-${hash.slice(0,12)}.webp`,classification:'real-photo',mode:'resize-only',sourcePath:`source:${recipe.sourceId}`,sourceSha256:source.sha256,sha256:hash,bytes:bytes.length,height:dimensions.height,sidecar:`assets/provenance/${id}.json`,crop:{left:0,top:0,width:2667,height:4000},orientedSource:{width:2667,height:4000},steps:['EXIF auto-orientation (.rotate())','full-frame uniform resize','WebP encode; metadata stripped'],effort:6,tool,command:'node scripts/assets/export-landing-v2.mjs',inspection:{verdict:'pending final visual inspection',reviewer:'Astra'}};
   validateEntry(record);
   const previous=approved.media.find(e=>e.id===id);
-  if(previous && previous.sha256!==hash)throw Error('Existing derivative differs; review before replacement');
-  if(previous?.sha256===hash && previous.inspection)record.inspection=previous.inspection;
+  record.inspection=inspectionForDerivative(previous,hash);
   records.push({record,bytes});
  }
  // Validate every source again before any persistent writes.

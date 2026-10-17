@@ -18,6 +18,17 @@ describe('v2 bounded photo recipes', () => {
       expect(read(join(root,'config/tenant/landing-assets.json'))).toEqual(before);
     } finally {rmSync(root,{recursive:true,force:true});}
   });
+  it('preserves inspected verdicts for identical derivative bytes on every host', async () => {
+    const exporterPath='../../scripts/assets/export-landing-v2.mjs';
+    const {inspectionForDerivative}=await import(/* @vite-ignore */ exporterPath);
+    const inspected={sha256:'a'.repeat(64),inspection:{verdict:'approved',reviewer:'fixture reviewer'}};
+    expect(inspectionForDerivative(inspected,inspected.sha256)).toEqual(inspected.inspection);
+    expect(()=>inspectionForDerivative(inspected,'b'.repeat(64))).toThrow('Existing derivative differs');
+    expect(inspectionForDerivative(undefined,inspected.sha256)).toEqual({verdict:'pending final visual inspection',reviewer:'Astra'});
+    expect(inspectionForDerivative({sha256:inspected.sha256},inspected.sha256)).toEqual({verdict:'pending final visual inspection',reviewer:'Astra'});
+    // Pin use by the real exporter as well as the decision itself; no local photos required.
+    expect(readFileSync('scripts/assets/export-landing-v2.mjs','utf8')).toContain('record.inspection=inspectionForDerivative(previous,hash)');
+  });
   it.skipIf(!existsSync('C:/Users/conta/co-chief-assets/picks-full/P013.jpg'))('preserves inspected verdicts on a byte-identical exporter rerun', async () => {
     const root=mkdtempSync(join(tmpdir(),'landing-v2-rerun-'));
     try {

@@ -85,9 +85,16 @@ test('illustrated spin requests its source only after explicit Play',async({page
   await expect(page.locator('#hero video')).toHaveCount(0);
 });
 
-test('landing CSS remains absent from staff markup',async({page,baseURL})=>{
+test('landing CSS remains absent from staff markup and loaded stylesheets',async({page,baseURL})=>{
   await page.goto(new URL('/login',baseURL!.replace('localhost','127.0.0.1')).href);
   await expect(page.locator('.landing-v2,#hero')).toHaveCount(0);
+  const hrefs=await page.locator('link[rel="stylesheet"]').evaluateAll(links=>links.map(link=>(link as HTMLLinkElement).href));
+  expect(hrefs.length).toBeGreaterThan(0);
+  for(const href of hrefs) {
+    const response=await page.request.get(href);
+    expect(response.ok(),href).toBe(true);
+    expect(await response.text(),href).not.toContain('.landing-v2');
+  }
   await expect(page.locator('body')).toBeVisible();
 });
 

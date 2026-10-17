@@ -15,8 +15,9 @@ it('accepts every rendered CTA placement on both client and server', () => {
     const text = readFileSync(file, 'utf8');
     for (const m of text.matchAll(/placement=["']([^"']+)["']/g)) placements.add(m[1]!);
     if (text.includes('placement={key}')) {
-      const condition = text.match(/\{\(key === "([^"]+)" \|\| key === "([^"]+)"\)/)!;
-      placements.add(condition[1]!); placements.add(condition[2]!);
+      const condition = text.match(/\{\((key === "[^"]+"(?: \|\| key === "[^"]+")*)\) &&[^\n]*placement=\{key\}/);
+      expect(condition, file).not.toBeNull();
+      for (const match of condition![1]!.matchAll(/key === "([^"]+)"/g)) placements.add(match[1]!);
     }
   }
   expect([...placements].sort()).toEqual(['catering','crave','field-guide','footer','hero','lineup','shops','sticky','subdex']);

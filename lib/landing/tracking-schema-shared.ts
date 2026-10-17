@@ -34,7 +34,7 @@ export function validMetaCookie(value: unknown, kind: "fbc" | "fbp", now: number
 }
 /** The only shop-specific delivery destination is the verified Dupont Uber Eats link. */
 export function validVendorPlacement(vendor: unknown, placement: unknown, store: unknown): boolean {
-  return isAllowed(LANDING_VENDORS,vendor) && (placement === 'footer' || (vendor === 'ubereats' && placement === 'shops' && store === 'dupont'));
+  return isAllowed(LANDING_VENDORS,vendor) && ((placement === 'footer' && store === undefined) || (vendor === 'ubereats' && placement === 'shops' && store === 'dupont'));
 }
 export function parseLandingEvent(value: unknown, origin: string, now: number): LandingEvent | null {
   if (!isRecord(value) || Object.keys(value).some(key => !["event_name", "event_id", "event_time", "consent", "source_url", "store", "ad", "placement", "fbc", "fbp", "vendor"].includes(key))) return null;

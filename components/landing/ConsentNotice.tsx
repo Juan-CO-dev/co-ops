@@ -3,7 +3,8 @@ import {useEffect,useRef,useState} from 'react';
 import type {ConsentChoice} from '@/lib/landing/consent-shared';
 export interface ConsentLabels { notice:string; accept:string; reject:string; settings:string; withdraw:string; privacy:string }
 export function ConsentNotice({choice,labels,onChoose}:{choice:ConsentChoice;labels:ConsentLabels;onChoose:(choice:'accepted'|'rejected')=>void}) {
-  const [open,setOpen]=useState(false);
+  const [open,setOpen]=useState<boolean|null>(null);
+  const expanded=open??choice==='unknown';
   const [flow,setFlow]=useState(false);
   const ref=useRef<HTMLElement>(null);
   const probe=useRef<HTMLSpanElement>(null);
@@ -23,11 +24,12 @@ export function ConsentNotice({choice,labels,onChoose}:{choice:ConsentChoice;lab
     measure();window.addEventListener('resize',measure);window.visualViewport?.addEventListener('resize',measure);
     return ()=>{observer?.disconnect();window.removeEventListener('resize',measure);window.visualViewport?.removeEventListener('resize',measure);root?.style.removeProperty('--landing-dock-height');root?.removeAttribute('data-consent-flow');};
   },[]);
-  const content=<aside ref={ref} className="landing-v2-consent" data-flow={flow} data-expanded={open||choice==='unknown'} aria-label={labels.settings}>
+  const content=<aside ref={ref} className="landing-v2-consent" data-flow={flow} data-expanded={expanded} aria-label={labels.settings}>
     <span ref={probe} className="landing-v2-rem-probe" aria-hidden="true"/>
-    <button type="button" onClick={()=>setOpen(v=>!v)} aria-expanded={open||choice==='unknown'}>{labels.settings}</button>
-    {(open||choice==='unknown')&&<div data-landing-consent>
-      <p>{labels.notice} <a href="/privacy">{labels.privacy}</a></p>
+    <button type="button" onClick={()=>setOpen(!expanded)} aria-expanded={expanded}>{labels.settings}</button>
+    {expanded&&<div data-landing-consent>
+      <p>{labels.notice}</p>
+      <a href="/privacy">{labels.privacy}</a>
       <div className="landing-v2-consent-actions">
         <button type="button" onClick={()=>{onChoose('accepted');setOpen(false);}}>{labels.accept}</button>
         <button type="button" onClick={()=>{onChoose('rejected');setOpen(false);}}>{choice==='accepted'?labels.withdraw:labels.reject}</button>

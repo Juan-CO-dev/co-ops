@@ -59,7 +59,7 @@ for(const lang of ['en','es']) for(const viewport of [{width:375,height:667},{wi
   await clearRailPosition(page);
   await expect(page.locator('[data-sticky-order]')).toBeVisible();
   await expect(page.locator('[data-sticky-order]')).toBeVisible();
-  await page.screenshot({path:`tmp/landing-v2/chunk4/${info.project.name}-${lang}-${viewport.width}x${viewport.height}.png`});
+  await page.screenshot({path:`tmp/landing-v2/fixround/sticky/${info.project.name}-${lang}-${viewport.width}x${viewport.height}.png`});
   await expect(page.locator('[data-sticky-order]')).toBeVisible();
 });
 
