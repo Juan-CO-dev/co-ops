@@ -32,14 +32,14 @@ import { skillOf } from "../people-input-shared";
 import { teamStrength, type WindowStrength } from "../strength-shared";
 import { weekDays } from "../time-shared";
 import {
-  allShifts, applyFill, assignClosingManager, baseWeekQuarters, budgetUsedHours, canonicalDay, cmp, coverWithCateringManager, coverWithFlexBlock, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
+  allShifts, applyFill, assignClosingManager, baseWeekQuarters, budgetUsedHours, canonicalDay, cmp, coverWithCateringManager, coverWithFlexBlock, coverWithTargetFlexBlock, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
   type BuildCtx, type GShift, type WeekState,
 } from "./assign-shared";
 import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repair-shared";
 import { salariedBlocks, templatesFor, templateOrder } from "./templates-shared";
 
 /** Bumped whenever a golden changes; stored on the revision. */
-export const GENERATOR_VERSION = "p2.7";
+export const GENERATOR_VERSION = "p2.8";
 
 // ─── Input / output ──────────────────────────────────────────────────────────
 
@@ -376,9 +376,14 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
 
   // CC chunk H2 (2026-10-16): after EVERY other fill (hourly, zero-cost, the catering manager), before any gap is declared —
   // a salaried manager covers an otherwise-uncovered window on a FLEX block (no hourly cost). Bounded: each accepted block
-  // lowers the day's uncovered total.
+  // lowers the day's uncovered total. CC chunk H3: each round tries the PREFERRED fill first, then the TARGET-DIRECTED reach
+  // for every remaining coverage deficit (the same search the floor_limit proof re-runs), so a deficit the generator leaves
+  // is one no legal flex block reaches.
   for (const date of builtDates) {
-    for (let round = 0; round < 32; round++) if (!coverWithFlexBlock(b, week, date)) break;
+    for (let round = 0; round < 32; round++) {
+      if (coverWithFlexBlock(b, week, date)) continue;
+      if (!deficitsOf(b, date, week.built[date]!).some((d) => coverWithTargetFlexBlock(b, week, date, d))) break;
+    }
     enforcePriority(b, week, date);
     assignClosingManager(b, week, date);
   }

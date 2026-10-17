@@ -23,8 +23,8 @@ import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-share
 import type { FillPlan, FillStep } from "../rules-shared";
 import {
   CATERING_MANAGER_COVER, MOD, SALARIED_FLEX_REASON, availableOn, baseFloorRoomQ, cateringWindows, splitSalariedRelabel, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition,
-  flexLeftQ, generatorRefuses, isFlexSegment, isManagerRole, leaderSettingAllows, modCountsAt, modCountsOn, neverGenerated, salariedFlexBlocks, shiftExtendsOver, zeroCostCovers,
-  type DayRecord, type RuleProblem, type Segment, type Shift,
+  flexLeftQ, generatorRefuses, isFlexSegment, isManagerRole, leaderSettingAllows, modCountsAt, modCountsOn, neverGenerated, salariedFlexBlocks, flexBlockReaching, shiftExtendsOver, zeroCostCovers,
+  type DayRecord, type FlexBlock, type RuleProblem, type Segment, type Shift,
 } from "../rules-shared";
 import { isLineRole, isSecondary, positionLimit, primaryOf, type ScheduleStructure } from "../structure-shared";
 import { Q_PER_DAY } from "../time-shared";
@@ -928,28 +928,44 @@ export function coverWithCateringManager(b: BuildCtx, week: WeekState, date: str
 export function coverWithFlexBlock(b: BuildCtx, week: WeekState, date: string): boolean {
   const s = { locationId: b.ctx.locationId, weekStart: b.ctx.weekStart, shifts: allShifts(week), gaps: [], days: [] };
   const blocks = salariedFlexBlocks(date, s, b.ctx).map((blk, i) => ({ blk, i })).sort((x, y) => y.blk.gain - x.blk.gain || x.i - y.i).map((x) => x.blk);
-  const before = uncoveredTotals(b, date, week.built[date]!);
-  for (const blk of blocks) {
-    const r = reason("salaried_flex_cover", { userId: blk.userId, fromQ: blk.fromQ, toQ: blk.toQ, kind: blk.kind });
-    const segs: GSegment[] = blk.segments.map((g) => ({ ...g, reasons: [reason("salaried_flex_cover", { userId: blk.userId, positionId: g.positionId, fromQ: g.startQ, toQ: g.endQ })], reasonKey: SALARIED_FLEX_REASON }));
-    const done = guarded(b, week, date, (next) => {
-      if (blk.kind === "new_block") {
-        next.push({ userId: blk.userId, date, startQ: blk.fromQ, endQ: blk.toQ, segments: segs, closingManager: false, flex: false, pinned: false, reasons: [r], origin: "salaried" });
-        return true;
-      }
-      const sh = next.find((x) => x.userId === blk.userId && x.startQ === blk.shiftStartQ);
-      if (!sh || sh.pinned) return false;
-      if (blk.fromQ === sh.endQ) sh.segments = [...sh.segments, ...segs];
-      else if (blk.toQ === sh.startQ) sh.segments = [...segs, ...sh.segments];
-      else return false;
-      sh.startQ = Math.min(sh.startQ, blk.fromQ);
-      sh.endQ = Math.max(sh.endQ, blk.toQ);
-      sh.reasons = [...sh.reasons, r];
-      return true;
-    }, (next) => { const after = uncoveredTotals(b, date, next); return after.total < before.total && after.essential <= before.essential; });
-    if (done) return true;
-  }
+  for (const blk of blocks) if (placeFlexBlock(b, week, date, blk)) return true;
   return false;
+}
+
+/**
+ * CC chunk H3 (2026-10-16, Astra H2 P1): FILL and PROOF agree — after the preferred flex fill has nothing left, every remaining
+ * coverage deficit is put to the TARGET-DIRECTED reach (`flexBlockReaching`: any legal block ON THAT POSITION by any salaried
+ * manager, judged on the schedule as it stands). A block it finds does not conflict by construction (the real legality on
+ * the real state), so the generator TAKES it; a deficit no block reaches is what `floor_limit` then certifies. Returns
+ * whether a block was placed.
+ */
+export function coverWithTargetFlexBlock(b: BuildCtx, week: WeekState, date: string, d: { code: string; positionId: string | null; fromQ: number; toQ: number }): boolean {
+  if (d.code !== "coverage_gap" || !d.positionId) return false;
+  const s = { locationId: b.ctx.locationId, weekStart: b.ctx.weekStart, shifts: allShifts(week), gaps: [], days: [] };
+  const blk = flexBlockReaching({ code: "coverage_gap", date, positionId: d.positionId, fromQ: d.fromQ, toQ: d.toQ }, s, b.ctx);
+  return blk !== null && placeFlexBlock(b, week, date, blk);
+}
+
+/** One flex block (new or an extension) placed on the day, guarded; kept only when the uncovered total strictly falls and essential coverage never does. */
+function placeFlexBlock(b: BuildCtx, week: WeekState, date: string, blk: FlexBlock): boolean {
+  const before = uncoveredTotals(b, date, week.built[date]!);
+  const r = reason("salaried_flex_cover", { userId: blk.userId, fromQ: blk.fromQ, toQ: blk.toQ, kind: blk.kind });
+  const segs: GSegment[] = blk.segments.map((g) => ({ ...g, reasons: [reason("salaried_flex_cover", { userId: blk.userId, positionId: g.positionId, fromQ: g.startQ, toQ: g.endQ })], reasonKey: SALARIED_FLEX_REASON }));
+  return guarded(b, week, date, (next) => {
+    if (blk.kind === "new_block") {
+      next.push({ userId: blk.userId, date, startQ: blk.fromQ, endQ: blk.toQ, segments: segs, closingManager: false, flex: false, pinned: false, reasons: [r], origin: "salaried" });
+      return true;
+    }
+    const sh = next.find((x) => x.userId === blk.userId && x.startQ === blk.shiftStartQ);
+    if (!sh || sh.pinned) return false;
+    if (blk.fromQ === sh.endQ) sh.segments = [...sh.segments, ...segs];
+    else if (blk.toQ === sh.startQ) sh.segments = [...segs, ...sh.segments];
+    else return false;
+    sh.startQ = Math.min(sh.startQ, blk.fromQ);
+    sh.endQ = Math.max(sh.endQ, blk.toQ);
+    sh.reasons = [...sh.reasons, r];
+    return true;
+  }, (next) => { const after = uncoveredTotals(b, date, next); return after.total < before.total && after.essential <= before.essential; });
 }
 
 // ─── Priority enforcement (the mockup's enforcePriority) ─────────────────────

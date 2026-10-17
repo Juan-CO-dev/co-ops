@@ -69,8 +69,10 @@ export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
         && nonneg(c.budgetHours) && nonneg(c.usedHours) && nonneg(c.essentialHours) && isNum(c.remainingHours) && nonneg(c.fillHours)
         && Array.isArray(c.witness) && c.witness.length > 0 && c.witness.every(validFillStep);
     case "floor_limit":
-      return exact(c, ["managerIds", "floorHoursUsed", "limitH"]) && strings(c.managerIds) && isObj(c.floorHoursUsed)
-        && Object.values(c.floorHoursUsed).every(nonneg) && nonneg(c.limitH);
+      // CC chunk H3: the certificate binds the flex state (targetWeekH, salariedFlexH, every searched manager's flexHoursUsed).
+      return exact(c, ["managerIds", "floorHoursUsed", "limitH", "targetWeekH", "salariedFlexH", "flexHoursUsed"]) && strings(c.managerIds)
+        && isObj(c.floorHoursUsed) && Object.values(c.floorHoursUsed).every(nonneg) && nonneg(c.limitH)
+        && nonneg(c.targetWeekH) && nonneg(c.salariedFlexH) && isObj(c.flexHoursUsed) && Object.values(c.flexHoursUsed).every(nonneg);
     case "eligibility":
       return exact(c, ["positionId", "eligibleCount"]) && (typeof c.positionId === "string" || c.positionId === null) && c.eligibleCount === 0;
     case "availability":

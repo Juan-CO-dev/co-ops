@@ -64,7 +64,16 @@ export const REPAIR_LIMITS = { REPAIR_MAX_STEPS: 200, maxDonors: 8, maxChainDept
 export interface BudgetLimitedCertificate {
   budgetedDates: string[]; budgetHours: number; usedHours: number; essentialHours: number; remainingHours: number; fillHours: number; witness: FillStep[];
 }
-export interface FloorLimitCertificate { managerIds: string[]; floorHoursUsed: Record<string, number>; limitH: number }
+/**
+ * CC chunk H3 (2026-10-16, Astra H2 P1): a floor-limit certificate binds the FLEX STATE it was proven under — the limits
+ * (`limitH` floor, `targetWeekH`, `salariedFlexH`) and the flex hours used by EVERY salaried manager the flex search considers
+ * (`flexHoursUsed`, keyed by id; those with no flex left included). The verifier re-runs the target-directed reach
+ * (`flexBlockReaching`) on the current schedule, so a certificate proven at another flex state fails.
+ */
+export interface FloorLimitCertificate {
+  managerIds: string[]; floorHoursUsed: Record<string, number>; limitH: number;
+  targetWeekH: number; salariedFlexH: number; flexHoursUsed: Record<string, number>;
+}
 export interface EligibilityCertificate { positionId: string | null; eligibleCount: 0 }
 export interface AvailabilityCertificate { eligibleIds: string[]; unavailableIds: string[] }
 export interface CapacityCertificate { fromQ: number; toQ: number; positionIds: string[]; requiredHeads: number; peopleIds: string[]; people: number; shortBy: number }
@@ -433,9 +442,13 @@ export function shiftExtendsOver(
 
 /**
  * Is the person free for a cover over [fromQ, toQ) on `date`? Hourly: no shift that day, OR a shift that
- * day that extends over the window (above). Salaried: no BASE floor segment then — CC chunk H2: time a manager spends on
- * FLEX (`SALARIED_FLEX_REASON`) is discretionary cover, so it does not make them busy; `floor_limit` then still has to
- * show their floor / week target is reached and that no zero-cost fill and no flex block of theirs reaches the window.
+ * day that extends over the window (above). Salaried: no BASE floor segment then — CC chunk H2 / H3 (the final rule): time
+ * a manager spends on FLEX (`SALARIED_FLEX_REASON`) does not make them busy for THIS test, so they stay the named candidate
+ * of a `floor_limit` certificate (managerIds); whether their flex can still reach the window is the target-directed proof's
+ * business (`flexBlockReaching`), which judges the schedule AS IT STANDS — committed flex time is in the way there
+ * (`person_overlap`), so a manager on another station over those quarters is genuinely busy for a block, and only an
+ * extension of that very shift could reach. `floor_limit` then still has to show their floor / week target is reached and
+ * that no zero-cost fill and no legal flex block reaches the window.
  */
 function freeFor(p: RulePerson, s: WeekSchedule, date: string, fromQ: number, toQ: number, day: DayContext, positionId: string | null): boolean {
   const own = s.shifts.filter((sh) => sh.date === date && sh.userId === p.userId);
@@ -1043,20 +1056,32 @@ export function applyFlexBlock(s: WeekSchedule, date: string, blk: FlexBlock): W
  * minimum — never the GM / AGM 8 h minimum, a flex-only day is a cover); the manager's week stays inside the flex
  * (`limits.salariedFlexH`, total ≤ target + flex, base unchanged); and the day's uncovered head-quarters strictly fall.
  */
-function flexBlockIsLegal(blk: FlexBlock, date: string, s: WeekSchedule, ctx: RuleContext): boolean {
+function flexBlockIsLegal(blk: FlexBlock, date: string, s: WeekSchedule, ctx: RuleContext, base: FlexLegalityBase = flexLegalityBase(s, date, ctx)): boolean {
   const day = ctx.days[date]!;
   const st = day.structure;
   const applied = applyFlexBlock(s, date, blk);
   if (!applied) return false;
-  const dayCtx: RuleContext = { ...ctx, days: { [date]: day } };
-  const only = (w: WeekSchedule): WeekSchedule => ({ ...w, shifts: shiftsOn(w, date), gaps: [], days: [] });
-  const before = fillProblemCounts(checkScheduleRules(only(s), dayCtx));
-  const after = fillProblemCounts(checkScheduleRules(only(applied), dayCtx));
-  for (const [k, n] of after) if (n > (before.get(k) ?? 0)) return false;
+  const after = fillProblemCounts(checkScheduleRules(base.only(applied), base.dayCtx));
+  for (const [k, n] of after) if (n > (base.before.get(k) ?? 0)) return false;
   const w0 = salariedWeek(s, blk.userId);
   const w1 = salariedWeek(applied, blk.userId);
   if (w1.flexH > st.limits.salariedFlexH || w1.totalH > st.limits.salariedTargetWeekH + st.limits.salariedFlexH || w1.baseH !== w0.baseH) return false;
-  return uncoveredDayQ(shiftsOn(applied, date), day, ctx) < uncoveredDayQ(shiftsOn(s, date), day, ctx);
+  return uncoveredDayQ(shiftsOn(applied, date), day, ctx) < base.uncovered;
+}
+
+/** The schedule AS IT STANDS on `date`, judged once: the problem counts and the uncovered head-quarters every candidate is measured against. */
+interface FlexLegalityBase { dayCtx: RuleContext; only: (w: WeekSchedule) => WeekSchedule; before: Map<string, number>; uncovered: number }
+function flexLegalityBase(s: WeekSchedule, date: string, ctx: RuleContext): FlexLegalityBase {
+  const day = ctx.days[date]!;
+  const dayCtx: RuleContext = { ...ctx, days: { [date]: day } };
+  const only = (w: WeekSchedule): WeekSchedule => ({ ...w, shifts: shiftsOn(w, date), gaps: [], days: [] });
+  return { dayCtx, only, before: fillProblemCounts(checkScheduleRules(only(s), dayCtx)), uncovered: uncoveredDayQ(shiftsOn(s, date), day, ctx) };
+}
+
+/** The salaried managers the flex search considers on `date`: active, never `neverGenerated`, not on an untouchable day; id order. */
+export function flexSearchManagers(date: string, ctx: RuleContext): RulePerson[] {
+  return Object.values(ctx.people).filter((p) => p.salaried && p.activeMember && !neverGenerated(p) && !p.untouchableDates.includes(date))
+    .sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
 }
 
 /**
@@ -1098,9 +1123,8 @@ export function salariedFlexBlocks(date: string, s: WeekSchedule, ctx: RuleConte
   const hourly = Object.values(ctx.people).filter((x) => isHourly(x) && x.activeMember && !neverGenerated(x) && !x.untouchableDates.includes(date));
   const managersOnly = (id: string, q: number) => !hourly.some((x) => eligibleForPosition(x, st.positions[id]) && availableOn(x, date, q, q + 1));
   const out: FlexBlock[] = [];
-  const people = Object.values(ctx.people).filter((p) => p.salaried && p.activeMember && !neverGenerated(p) && !p.untouchableDates.includes(date))
-    .sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
-  for (const p of people) {
+  const base = flexLegalityBase(s, date, ctx);
+  for (const p of flexSearchManagers(date, ctx)) {
     const flexQ = flexLeftQ(s, p.userId, st);
     if (flexQ <= 0) continue;
     const label: Array<string | null> = new Array<string | null>(96).fill(null);
@@ -1162,16 +1186,91 @@ export function salariedFlexBlocks(date: string, s: WeekSchedule, ctx: RuleConte
         gain += (l !== MOD ? 1 : 0) + (modOk(p, q) ? 1 : 0);
       }
       const blk: FlexBlock = { userId: p.userId, ...c, segments, gain };
-      if (flexBlockIsLegal(blk, date, s, ctx)) out.push(blk);
+      if (flexBlockIsLegal(blk, date, s, ctx, base)) out.push(blk);
     }
   }
   return out;
 }
 
-/** Does any legal flex block reach this coverage deficit (a segment on its position inside its window)? */
-function flexBlockReaches(g: GapSubject, s: WeekSchedule, ctx: RuleContext): boolean {
-  if (g.code !== "coverage_gap" || !g.positionId) return false;
-  return salariedFlexBlocks(g.date, s, ctx).some((b) => b.segments.some((x) => x.positionId === g.positionId && x.startQ < g.toQ && x.endQ > g.fromQ));
+/**
+ * CC chunk H3 (2026-10-16, Astra H2 P1 — "search exhaustion is not proof"): the TARGET-DIRECTED reach. FILL and PROOF are
+ * separate: `salariedFlexBlocks` is the generator's PREFERRED fill (greedy labels, the best window); this asks, for ONE
+ * coverage deficit (position, date, window), whether ANY legal flex block by ANY salaried manager reaches it, on the
+ * schedule AS IT STANDS (a manager already on another station over those quarters is genuinely busy: `person_overlap`).
+ * For every salaried manager the flex search considers (`flexSearchManagers`) with flex left, eligible for the position
+ * and with it on their cover list, in id order:
+ *   (a) NO shift that day → a NEW block ON THAT POSITION over every window [a, z) that overlaps the deficit, with
+ *       minimumShiftQ ≤ z − a ≤ min(flex left, the daily maximum, the week room under target + flex), every quarter
+ *       inside the position's window and the shop day, under the head limit, inside their availability, the leader
+ *       setting over the window — in the order: most of the deficit covered, then the shortest, then the earliest;
+ *   (b) a shift that day (the shop allows staying longer, the shift unpinned) → an EXTENSION of it ONTO THAT POSITION,
+ *       after its end or before its start, quarter by quarter up to the same bounds, as far as it still reaches the deficit.
+ * Each candidate goes through the REAL `flexBlockIsLegal` on a copy; the first that passes is returned. Then, as insurance
+ * beyond that scope, the preferred fill's own blocks overlapping the deficit. Null = no legal block of these shapes reaches
+ * the deficit, which is what `floor_limit` certifies (and the verifier re-runs). The enumeration is bounded: at most
+ * (shop day) × (daily maximum) windows per manager, with the quarter-local rules pre-filtered (each implied by legality,
+ * so no legal candidate is dropped). Pure and deterministic.
+ */
+export function flexBlockReaching(g: Pick<GapSubject, "code" | "date" | "positionId" | "fromQ" | "toQ">, s: WeekSchedule, ctx: RuleContext): FlexBlock | null {
+  if (g.code !== "coverage_gap" || !g.positionId) return null;
+  const day = ctx.days[g.date];
+  if (!day || g.toQ <= g.fromQ) return null;
+  const st = day.structure;
+  const target = g.positionId;
+  const pos = st.positions[target];
+  if (!pos) return null;
+  const date = g.date;
+  const shifts = shiftsOn(s, date);
+  const cov = dayCoverage(shifts, day, ctx);
+  const shop = shopWindow(day);
+  const maxQ = Math.round(st.limits.maxShiftH * 4);
+  const minQ = st.limits.minimumShiftQ;
+  const lo = Math.max(shop.fromQ, pos.openQ);
+  const hi = Math.min(shop.toQ, pos.closeQ);
+  const occ = (q: number) => cov.byPosition.get(target)?.[q] ?? 0;
+  const base = flexLegalityBase(s, date, ctx);
+  type Cand = Pick<FlexBlock, "kind" | "shiftStartQ" | "fromQ" | "toQ">;
+  const overlap = (c: Cand) => Math.max(0, Math.min(c.toQ, g.toQ) - Math.max(c.fromQ, g.fromQ));
+  for (const p of flexSearchManagers(date, ctx)) {
+    if (!eligibleForPosition(p, pos) || !p.coverPositions.includes(target)) continue;
+    const flexQ = flexLeftQ(s, p.userId, st);
+    if (flexQ <= 0) continue;
+    const weekRoomQ = Math.round((st.limits.salariedTargetWeekH + st.limits.salariedFlexH) * 4) - Math.round(salariedWeek(s, p.userId).totalH * 4);
+    const mine = shifts.filter((x) => x.userId === p.userId).sort((a, b) => a.startQ - b.startQ);
+    const placeable = (q: number) => q >= lo && q < hi && occ(q) < positionLimit(pos, q) && availableOn(p, date, q, q + 1) && !mine.some((x) => x.startQ <= q && x.endQ > q);
+    const cands: Cand[] = [];
+    if (mine.length === 0) {
+      const cap = Math.min(flexQ, maxQ, weekRoomQ);
+      for (let a = Math.max(lo, g.fromQ - cap + 1); cap >= minQ && a < Math.min(hi, g.toQ); a++) {
+        if (!placeable(a)) continue;
+        let run = a;
+        while (run < hi && run - a < cap && placeable(run)) run++;
+        for (let z = Math.max(a + minQ, g.fromQ + 1); z <= run; z++) if (leaderSettingAllows(p, st, a, z)) cands.push({ kind: "new_block", shiftStartQ: null, fromQ: a, toQ: z });
+      }
+    } else if (st.limits.salariedStayLonger) {
+      const room = Math.min(flexQ, maxQ - mine.reduce((n, x) => n + (x.endQ - x.startQ), 0), weekRoomQ);
+      for (const sh of mine) {
+        if (sh.pinned || room <= 0) continue;
+        for (let z = sh.endQ; sh.endQ < g.toQ && z < hi && z - sh.endQ < room && placeable(z);) {
+          z++;
+          if (z > g.fromQ && leaderSettingAllows(p, st, sh.startQ, z)) cands.push({ kind: "extend", shiftStartQ: sh.startQ, fromQ: sh.endQ, toQ: z });
+        }
+        for (let a = sh.startQ; sh.startQ > g.fromQ && a > lo && sh.startQ - a < room && placeable(a - 1);) {
+          a--;
+          if (a < g.toQ && leaderSettingAllows(p, st, a, sh.endQ)) cands.push({ kind: "extend", shiftStartQ: sh.startQ, fromQ: a, toQ: sh.startQ });
+        }
+      }
+    }
+    // The order the fill takes them in: most of the deficit covered, then the shortest, then the earliest. (The proof needs any one.)
+    cands.sort((x, y) => overlap(y) - overlap(x) || (x.toQ - x.fromQ) - (y.toQ - y.fromQ) || x.fromQ - y.fromQ);
+    for (const c of cands) {
+      let gain = 0;
+      for (let q = c.fromQ; q < c.toQ; q++) gain += uncoveredFrom(cov, "coverage_gap", target, day, q) > 0 ? 1 : 0;
+      const blk: FlexBlock = { userId: p.userId, ...c, segments: [{ positionId: target, startQ: c.fromQ, endQ: c.toQ }], gain };
+      if (flexBlockIsLegal(blk, date, s, ctx, base)) return blk;
+    }
+  }
+  return salariedFlexBlocks(date, s, ctx).find((b) => b.segments.some((x) => x.positionId === target && x.startQ < g.toQ && x.endQ > g.fromQ)) ?? null;
 }
 
 /** The budget's remaining hourly hours on the budgeted dates: budget − (used − essential). */
@@ -1209,21 +1308,26 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
     case "floor_limit": {
       if (g.code !== "coverage_gap") return false;
       const c = g.certificate;
-      if (c.limitH !== st.limits.managerFloorH) return false;
+      if (c.limitH !== st.limits.managerFloorH || c.targetWeekH !== st.limits.salariedTargetWeekH || c.salariedFlexH !== st.limits.salariedFlexH) return false;
       const free = eligibleMembers(g, day, ctx).filter((p) => availableOn(p, g.date, g.fromQ, g.toQ) && freeFor(p, s, g.date, g.fromQ, g.toQ, day, g.positionId));
       if (free.length === 0 || free.some(isHourly)) return false;
-      if (!sameIds(c.managerIds, free.map((p) => p.userId))) return false;
+      if (!sameIds(c.managerIds, free.map((p) => p.userId)) || !sameIds(Object.keys(c.floorHoursUsed), c.managerIds)) return false;
+      // CC chunk H3: the certificate binds the FLEX STATE — every salaried manager the flex search considers, with the flex
+      // hours they have used as the week stands (a certificate proven at another flex state is stale and fails here).
+      const searched = flexSearchManagers(g.date, ctx);
+      if (!sameIds(Object.keys(c.flexHoursUsed), searched.map((p) => p.userId)) || searched.some((p) => c.flexHoursUsed[p.userId] !== salariedWeek(s, p.userId).flexH)) return false;
       const windowH = (g.toQ - g.fromQ) / 4;
       // Juan 2026-10-16 (decision 4): past the floor a station is reached only through FLEX (a zero-hourly-cost relabel or
       // staying longer) — the proof needs no such fill by these managers either. Flex never makes a new shift.
       // A manager whose BASE week target is reached cannot take a new block either (decision 4): the week limit proves too.
-      // CC chunk H2: and NO flex block (`salariedFlexBlocks`) by any salaried manager reaches the window — a gap is
-      // floor_limit only when nobody has the flex + the legality to cover it.
+      // CC chunk H3 (Astra H2 P1): and NO legal flex block by any salaried manager REACHES the window — the target-directed
+      // search (`flexBlockReaching`: every block shape on this position, the real legality on the schedule as it stands), not
+      // the preferred fill's choices. A gap is floor_limit only when that proof establishes impossibility.
       const flexFills = zeroCostCovers(g, s, ctx);
       return free.every((p) => c.floorHoursUsed[p.userId] === floorHours(s, p.userId)
         && (floorHours(s, p.userId) + windowH > c.limitH || salariedWeek(s, p.userId).baseH + windowH > st.limits.salariedTargetWeekH)
         && !flexFills.some((x) => x.userId === p.userId))
-        && !flexBlockReaches(g, s, ctx);
+        && flexBlockReaching(g, s, ctx) === null;
     }
     case "eligibility": {
       const c = g.certificate;
@@ -1305,6 +1409,8 @@ export function proveGap(subject: GapSubject, s: WeekSchedule, ctx: RuleContext)
     const free = eligible.filter((p) => availableOn(p, subject.date, subject.fromQ, subject.toQ) && freeFor(p, s, subject.date, subject.fromQ, subject.toQ, day, subject.positionId));
     const fl = tryCert({ ...subject, cause: "floor_limit", certificate: {
       managerIds: free.map((p) => p.userId), floorHoursUsed: Object.fromEntries(free.map((p) => [p.userId, floorHours(s, p.userId)])), limitH: day.structure.limits.managerFloorH,
+      targetWeekH: day.structure.limits.salariedTargetWeekH, salariedFlexH: day.structure.limits.salariedFlexH,
+      flexHoursUsed: Object.fromEntries(flexSearchManagers(subject.date, ctx).map((p) => [p.userId, salariedWeek(s, p.userId).flexH])),
     } });
     if (fl) return fl;
   }

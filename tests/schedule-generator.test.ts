@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { buildDayNeed } from "@/lib/scheduling/need-shared";
 import { salariedBlocks, templatesFor } from "@/lib/scheduling/generator/templates-shared";
 import { buildWeek, type GeneratorOutput, type Pin } from "@/lib/scheduling/generator/build-shared";
-import { CATERING_MANAGER_COVER, SALARIED_FLEX_REASON, checkCertificate, checkScheduleRules, zeroCostCovers } from "@/lib/scheduling/rules-shared";
+import { CATERING_MANAGER_COVER, SALARIED_FLEX_REASON, checkCertificate, checkScheduleRules, flexBlockReaching, salariedWeek, zeroCostCovers } from "@/lib/scheduling/rules-shared";
 import { moneyStrip } from "@/lib/scheduling/board-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { enforcePriority, type BuildCtx, type GShift, type WeekState } from "@/lib/scheduling/generator/assign-shared";
@@ -979,6 +979,24 @@ describe("CC chunk H2 (2026-10-16): salaried flex may COVER A GAP with a new blo
     expectClean(out);
     expect(out.shifts.filter((x) => x.userId === "u-j-gm" && (x.date === SAT || x.date === SUN))).toEqual([]);
     expect(out.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => [g.date, g.cause])).toEqual([[SAT, "floor_limit"], [SUN, "floor_limit"]]);
+  });
+
+  it("CC chunk H3: FILL and PROOF agree — no declared coverage gap of a built week is reached by any legal flex block (the generator took every one it could), and every floor_limit certificate binds the GM's flex as spent", () => {
+    for (const s of [gmExpo(10), gmExpo(4.5), gmExpo(2), gmExpo(10, (x) => { x.positions[I.$EXPO]!.openQ = 48; }), structure()]) {
+      const out = build(s);
+      expectClean(out);
+      const w = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts: out.shifts, gaps: out.gaps, days: out.days };
+      for (const g of out.gaps) {
+        if (g.code !== "coverage_gap") continue;
+        expect(flexBlockReaching(g, w, out.context), `${g.date} ${g.positionId} ${g.fromQ}-${g.toQ} ${g.cause}`).toBeNull();
+        if (g.cause !== "floor_limit") continue;
+        expect(g.certificate).toMatchObject({ targetWeekH: 40, salariedFlexH: s.limits.salariedFlexH, flexHoursUsed: { "u-j-gm": salariedWeek(w, "u-j-gm").flexH } });
+        expect(checkCertificate(g, w, out.context)).toBe(true);
+        // Stale under another flex state: the same certificate fails once the shop's flex setting moves.
+        const moved = { ...out.context, days: Object.fromEntries(Object.entries(out.context.days).map(([d, day]) => [d, { ...day, structure: { ...day.structure, limits: { ...day.structure.limits, salariedFlexH: day.structure.limits.salariedFlexH + 0.25 } } }])) };
+        expect(checkCertificate(g, w, moved)).toBe(false);
+      }
+    }
   });
 
   it("addendum B1: at 40 h the GM drops the LOWEST-demand days by forecast (tie → the later day), not Sat / Sun by order", () => {

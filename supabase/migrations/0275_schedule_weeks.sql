@@ -9,6 +9,8 @@
 --   Astra chunk D review + CC design ruling (2026-10-16): the budget cause is budget_limited (remaining R < the cheapest
 --   legal fill FOUND, W, with its witness — no minimality claim); valid_gap_certificate is TOTAL and admission requires
 --   IS TRUE; impossible calendar dates are invalid_payload; shift reasons are bound on inherited days.
+--   CC chunk H3 (2026-10-16, Astra H2 P1): a floor_limit certificate binds the flex state it was proven under
+--   (targetWeekH, salariedFlexH, flexHoursUsed per searched salaried manager) — the shape here, the re-run in the lib.
 --
 -- WHAT (every table deny-all RLS, SELECT-only for service_role; the definer writers are the ONLY writers):
 --   1. schedule_weeks: one row per (shop, ISO week) — the HEAD pointer (the newest revision) and the newest approval.
@@ -180,9 +182,17 @@ begin
       end loop;
       return true;
     when 'floor_limit' then
-      if not public.schedule_json_exact_keys(c, array['managerIds', 'floorHoursUsed', 'limitH']) or not public.schedule_json_strings(c -> 'managerIds')
-         or jsonb_typeof(c -> 'floorHoursUsed') <> 'object' or not public.schedule_json_nonneg(c -> 'limitH') then return false; end if;
+      -- CC chunk H3 (Astra H2 P1): the certificate binds the flex state it was proven under (targetWeekH, salariedFlexH and
+      -- every searched salaried manager's flexHoursUsed); whether it still holds is checkCertificate's re-run, not this shape.
+      if not public.schedule_json_exact_keys(c, array['managerIds', 'floorHoursUsed', 'limitH', 'targetWeekH', 'salariedFlexH', 'flexHoursUsed'])
+         or not public.schedule_json_strings(c -> 'managerIds')
+         or jsonb_typeof(c -> 'floorHoursUsed') <> 'object' or not public.schedule_json_nonneg(c -> 'limitH')
+         or not public.schedule_json_nonneg(c -> 'targetWeekH') or not public.schedule_json_nonneg(c -> 'salariedFlexH')
+         or jsonb_typeof(c -> 'flexHoursUsed') <> 'object' then return false; end if;
       for k, v in select key, value from jsonb_each(c -> 'floorHoursUsed') loop
+        if not public.schedule_json_nonneg(v) then return false; end if;
+      end loop;
+      for k, v in select key, value from jsonb_each(c -> 'flexHoursUsed') loop
         if not public.schedule_json_nonneg(v) then return false; end if;
       end loop;
       return true;
