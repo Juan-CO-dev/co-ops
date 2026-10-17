@@ -12,8 +12,8 @@ const stores=projectLandingStores([{code:'MEP',name:'Public shop',address:'Test 
 describe('remaining landing sections',()=>{
   it('renders only supplied shop facts, phone as selectable text, no fabricated hours or distances',()=>{
     const html=renderToStaticMarkup(createElement(Shops,{stores,language:'en'}));
-    expect(html).toContain('Test public address'); expect(html).toContain('202-555-0100');
-    expect(html).toContain('tel:2025550100'); expect(html).toContain('appfront.app');
+    expect(html).toContain('526 8th St SE Ste A'); expect(html).toContain('+12026218645');
+    expect(html).toContain('tel:+12026218645'); expect(html).toContain('appfront.app');
     expect(html).not.toContain('walking'); expect(html).not.toContain('Find my nearest');
   });
   it('retains Toast and inquiry destinations with translated buttons',()=>{
@@ -25,8 +25,8 @@ describe('remaining landing sections',()=>{
   });
   it('omits missing footer destinations and repeats only loaded addresses',()=>{
     const html=renderToStaticMarkup(createElement(Footer,{config,stores,language:'en'}));
-    expect(html).toContain('Test public address'); expect(html).toContain('/privacy?lang=en');
-    expect(html).not.toContain('DoorDash'); expect(html).not.toContain('Gift cards');
+    expect(html).toContain('526 8th St SE Ste A'); expect(html).toContain('/privacy?lang=en');
+    expect(html).toContain('DoorDash'); expect(html).not.toContain('Gift cards');
   });
   it('puts configured delivery links last and retains native non-order links',()=>{
     const html=renderToStaticMarkup(createElement(Footer,{config:{...config,footerLinks:[{key:'doordash',url:'https://example.test/delivery'},{key:'gift-cards',url:'https://example.test/gifts'},{key:'instagram',url:'https://example.test/social'}]},stores,language:'en'}));

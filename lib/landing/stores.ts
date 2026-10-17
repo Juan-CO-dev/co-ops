@@ -2,14 +2,14 @@ import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadLandingConfig, type LandingConfig } from "./config";
 
-/** Foundation §4.1 and lib/types.ts: coordinates are deferred, not columns.
- * Project public facts explicitly; never expose integration IDs or staff data. */
+/** Verified coordinates and structured facts belong to tenant config, not DB columns.
+ * Project public fields explicitly; never expose integration IDs or staff data. */
 export const PUBLIC_LOCATION_COLUMNS = "code,name,address,phone";
-export interface PublicLocation { code: string; name: string; address: string | null; phone: string | null }
+export interface PublicLocation { code: string; name: string; address: string | null; phone: string | null; active?: boolean }
 export function projectLandingStores(rows: readonly PublicLocation[], config: LandingConfig = loadLandingConfig()) {
   return config.stores.flatMap((store) => {
-    const row = rows.find((location) => location.code === store.locationCode);
-    return row ? [{key:store.key, name:row.name, orderLabel:store.orderLabel, address:row.address, phone:row.phone, hours:store.hours, coordinates:store.coordinates, orderUrl:store.orderUrl}] : [];
+    const row = rows.find((location) => location.code === store.locationCode && location.active !== false);
+    return row ? [{key:store.key, name:store.name, orderLabel:store.orderLabel, address:store.address, phone:store.phone, structuredAddress:store.structuredAddress, openingHours:store.openingHours, directionsUrl:`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(store.address)}`, hours:store.hours, coordinates:store.coordinates, orderUrl:store.orderUrl}] : [];
   });
 }
 export type LandingStore = ReturnType<typeof projectLandingStores>[number];
@@ -22,6 +22,6 @@ export async function loadPublicLandingStores(config: LandingConfig = loadLandin
   } catch {
     // Fixed class/message only: provider errors can contain URLs, credentials or PII.
     console.error("LandingStoreLoadError: Public shop information unavailable");
-    return [];
+    return projectLandingStores(config.stores.map(store => ({code:store.locationCode,name:store.name,address:store.address,phone:store.phone})), config);
   }
 }

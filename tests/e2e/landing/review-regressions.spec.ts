@@ -5,8 +5,8 @@ for (const language of ['en','es']) test(`dead Supabase URL preserves a 200 land
   const response = await page.goto(`http://localhost:${portBase + 3}/?lang=${language}`, {waitUntil:'domcontentloaded'});
   expect(response?.status()).toBe(200);
   for (const section of ['hero','lineup','catering']) await expect(page.locator(`#${section}`)).toBeVisible();
-  await expect(page.locator('#shops')).toHaveCount(0);
-  await expect(page.locator('#footer address')).toHaveCount(0);
+  await expect(page.locator('#shops [data-shop]')).toHaveCount(2);
+  await expect(page.locator('#footer address')).toHaveCount(2);
   await expect(page.locator('#footer a[href^="/privacy"]')).toBeVisible();
 });
 

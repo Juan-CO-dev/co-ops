@@ -9,9 +9,15 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
   await page.goto(baseURL!,{waitUntil:'domcontentloaded'});
   const shops=page.locator('#shops');await shops.scrollIntoViewIfNeeded();
   await expect(shops.locator('[data-shop]')).toHaveCount(2);
-  await expect(shops).toContainText('100 Test Street SE');await expect(shops).toContainText('200 Example Street NW');
-  await expect(shops.locator('a[href^="tel:"]')).toHaveCount(2);
-  await expect(shops.getByRole('button',{name:'Find my nearest shop'})).toHaveCount(0);
+  await expect(shops).toContainText('526 8th St SE Ste A');await expect(shops).toContainText('2029 P St NW Front 1');
+  await expect(shops.locator('a[href="tel:+12026218645"]')).toHaveCount(1);
+  await expect(shops.locator('a[href="tel:+12027944638"]')).toHaveCount(1);
+  await expect(shops).toContainText('Daily 10:30am–6pm');
+  await expect(shops).toContainText('Daily 10:30am–8pm');
+  await expect(shops.locator('[data-shop-map]')).toContainText('Schematic');
+  await expect(shops.locator('a[href*="google.com/maps"]')).toHaveCount(2);
+  await expect(shops.locator('a[href*="openstreetmap.org/copyright"]')).toHaveCount(1);
+  await expect(shops.getByRole('button',{name:'Find my nearest shop'})).toHaveCount(1);
   for(const link of await shops.getByRole('link').all()) expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(375);
   await page.locator('#subdex').scrollIntoViewIfNeeded();
@@ -24,8 +30,7 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
   expect(errors).toEqual([]);await context.close();
 });
 
-// Exercise the real client component with explicit test-only coordinates. Tenant
-// coordinates are intentionally absent, and this harness never changes production config.
+// Exercise the client with fictional coordinates, independently of the tenant facts.
 const fixtureSource=`import React from 'react';import {createRoot} from 'react-dom/client';import {NearbyShop} from './components/landing/NearbyShop';
 const root=document.createElement('div');root.id='nearby-fixture';document.body.append(root);
 createRoot(root).render(<NearbyShop language="en" labels={{nearest:'Find my nearest shop',locating:'Locating',unavailable:'You can still choose either shop',straightLine:'Sorted by straight-line distance',distance:'{distance} km away',offer:'Offer',call:{},order:{'capitol-hill':'Order far','dupont':'Order near'}}} stores={[{key:'capitol-hill',name:'Far fixture',orderLabel:'Far fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:2},orderUrl:'https://example.test/far'},{key:'dupont',name:'Near fixture',orderLabel:'Near fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:1},orderUrl:'https://example.test/near'}]}/>);`;

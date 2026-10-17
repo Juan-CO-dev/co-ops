@@ -10,6 +10,11 @@ for (const language of ["en","es"] as const) test(`every section and control ren
     await expect(page.locator(`#${section}-title`)).toHaveText(dictionary[`landing.${section}.title`]);
     await expect(page.locator(`#${section}`)).toContainText(dictionary[`landing.${section}.body`]);
   }
+  for (const card of await page.locator('[data-lineup] li').all()) {
+    await expect(card.locator('[data-ingredients]')).toContainText(language === 'es' ? 'pan para sub' : 'sub roll');
+  }
+  await expect(page.locator('#footer a[href*="spotapps.co"]')).toHaveText(dictionary['landing.footer.careers']);
+  await expect(page.locator('#footer a[href*="facebook"]')).toHaveCount(0);
   await expect(page.getByRole("navigation",{name:dictionary["landing.language"]})).toBeVisible();
   const held = page.locator('#field-guide');
   await expect(held).toContainText(dictionary['landing.field-guide.body']);

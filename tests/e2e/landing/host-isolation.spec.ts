@@ -15,7 +15,7 @@ for (const method of ['GET','HEAD','POST']) test(`landing refuses every staff/ex
     }
     expect(response.status(), path).toBe(404);
     expect(response.headers()['set-cookie'],path).toBeUndefined();
-    expect(response.headers()['permissions-policy']).toContain('geolocation=()');
+    expect(response.headers()['permissions-policy']).toContain('geolocation=(self)');
   }
 });
 test('canonical redirects use configured origin, not supplied host', async ({ request }) => {
@@ -34,7 +34,7 @@ test('all host matrix rows and runtime headers', async ({ request }) => {
       expect(csp.match(/default-src/g)).toHaveLength(1);
       expect(csp).toContain('connect.facebook.net');
       expect(csp).not.toContain('graph.facebook');
-      expect(response.headers()['permissions-policy']).toContain('geolocation=()');
+      expect(response.headers()['permissions-policy']).toContain('geolocation=(self)');
       expect(response.headers()['set-cookie']).toBeUndefined();
       if(path === '/') { expect(response.headers()['cache-control']).toContain('no-store'); expect(response.headers()['cache-control']).toContain('private'); }
     }

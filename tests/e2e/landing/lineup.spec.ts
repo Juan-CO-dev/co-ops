@@ -12,6 +12,7 @@ for (const javaScriptEnabled of [true, false]) test(`lineup is usable with JS ${
   // Scroll the card itself: off-screen images do not exist until then.
   for (const card of await strip.locator('li').all()) {
     await card.scrollIntoViewIfNeeded();
+    await expect(card.locator('[data-ingredients]')).toContainText('sub roll');
     const source = card.locator('source');
     const img = card.locator('img');
     await expect(img).toHaveCount(1);

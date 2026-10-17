@@ -9,6 +9,7 @@ export function Lineup({language}: {language: Language}) {
     {products.map(product => <li key={product.id} className="w-[280px] shrink-0 snap-start overflow-hidden rounded-xl border border-co-border bg-co-surface">
       <LineupPhoto src={product.image} small={product.smallImage} width={product.width} height={product.height} alt={serverT(language,'landing.lineup.photo',{name:product.name})}/>
       <h3 className="p-5 text-xl font-bold">{product.name}</h3>
+      <p data-ingredients className="px-5 pb-5">{serverT(language,product.ingredientsKey,{butter:serverT(language,'landing.lineup.butter')})}</p>
     </li>)}
   </ul>;
 }

@@ -6,7 +6,7 @@ import type { Language } from '@/lib/i18n/types';
 import { OrderLink } from './OrderLink';
 import { OfferCode } from './OfferCode';
 
-export interface NearbyLabels {nearest:string;locating:string;unavailable:string;straightLine:string;distance:string;offer:string;call:Record<string,string>;order:Record<string,string>}
+export interface NearbyLabels {nearest:string;locating:string;unavailable:string;straightLine:string;distance:string;offer:string;directions?:Record<string,string>;call:Record<string,string>;order:Record<string,string>}
 export function NearbyShop({stores,language,labels,ad='unattributed'}:{stores:readonly LandingStore[];language:Language;labels:NearbyLabels;ad?:string}) {
   const [ordered,setOrdered]=useState(()=>stores.map(store=>({...store,distance:null as number|null})));
   const [status,setStatus]=useState<'idle'|'pending'|'ready'|'unavailable'>('idle');
@@ -32,6 +32,7 @@ export function NearbyShop({stores,language,labels,ad='unattributed'}:{stores:re
         {store.address && <address className="mt-3 not-italic">{store.address}</address>}
         {store.hours && <p className="mt-3">{store.hours[language]}</p>}
         {store.phone && <a href={`tel:${store.phone.replace(/[^+\d]/g,'')}`} className="inline-flex min-h-11 min-w-11 items-center underline" aria-label={labels.call[store.key]}>{store.phone}</a>}
+        {store.directionsUrl && <a href={store.directionsUrl} className="flex min-h-11 items-center underline">{labels.directions?.[store.key]}</a>}
         {store.distance!==null && <p className="mt-2 text-sm">{labels.distance.replace('{distance}',new Intl.NumberFormat(language,{maximumFractionDigits:1}).format(store.distance))}</p>}
         <div className="mt-4"><OrderLink href={store.orderUrl} store={store.key} placement="shops">{labels.order[store.key]}</OrderLink></div>
         <OfferCode ad={ad} store={store.key} label={labels.offer}/>

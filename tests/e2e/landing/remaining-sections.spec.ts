@@ -8,7 +8,7 @@ test('remaining sections keep facts, destinations and translation honest',async(
   await expect(page.locator('#catering a').first()).toHaveAttribute('href',landingTenantConfig.cateringUrl);
   await expect(page.locator('#catering a').nth(1)).toHaveAttribute('href',landingTenantConfig.inquiryUrl);
   await expect(page.locator('#catering img,#catering form')).toHaveCount(0);
-  await expect(page.locator('#footer')).toContainText('100 Test Street SE');
+  await expect(page.locator('#footer')).toContainText('526 8th St SE Ste A');
   await expect(page.locator('#footer a[href^="https:"]')).toHaveCount(landingTenantConfig.footerLinks.length);
   await expect(page.locator('#footer a[href^="/privacy"]')).toHaveAttribute('href','/privacy?lang=es');
   await expect(page.locator('#subdex img')).toHaveAttribute('alt','Héroe de píxeles atrapando un sándwich');
