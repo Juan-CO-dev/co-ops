@@ -65,40 +65,36 @@ export interface BudgetLimitedCertificate {
   budgetedDates: string[]; budgetHours: number; usedHours: number; essentialHours: number; remainingHours: number; fillHours: number; witness: FillStep[];
 }
 /**
- * CC chunk H4 (2026-10-17, Astra H3 P1 — the CONSERVATIVE floor_limit, the end of the proof loop): `floor_limit` no longer
- * claims "no legal flex block exists" (enumerating every legal shape is combinatorial and failed twice). It claims only a
- * SIMPLE, CHECKABLE precondition: NO active hourly person ELIGIBLE for the position is AVAILABLE at ANY quarter of the window
- * (CC chunk H6, Astra H5 P1 — the final simplification of the hourly side: their current shifts, `freeFor` and
- * `shiftExtendsOver` are ignored entirely; an eligible, available person, even one on another position just then, may reach
- * the gap by an extension, a swap or a reassignment, so no certificate), and EVERY salaried manager the flex search considers
- * (`flexSearchManagers`) is excluded — CC chunk H7 (Astra H6 P1, the closing rule of the salaried side): a manager ELIGIBLE for
- * the position and ON SHIFT (any segment, station or MoD) at ANY quarter of the window is NEVER excluded (`on_shift_eligible`:
- * relabels and swaps among people already on shift can never be proven impossible cheaply — the AGM takes the Register, the GM
- * steps onto Expo), whatever their flex or day; a manager NOT on shift during the window is excluded by the FIRST of
- *   (a) `flex_exhausted` — the flex is spent (used ≥ `salariedFlexH`, or the week total ≥ target + flex);
- *   (b) `ineligible` — not eligible for the position and never the manager on duty over the window;
- *   (c) `unavailable` — unavailable at every quarter of [fromQ − maxShiftQ, toQ + maxShiftQ) that date;
- *   (d) `day_at_max` — their shifts that day already reach `maxShiftH`.
- * (The H4 MoD-relabel guard is subsumed: a manager on the MoD lane over the window is on shift.)
- * Any manager excluded by none → no `floor_limit` (the generator keeps filling; what stays is `unresolved_search`, which blocks
- * Approve). The certificate binds the limits and, per manager, the condition, their flex and floor hours; the verifier recomputes
- * all of it on the current inputs (stale / forged → refused).
+ * THE CONSERVATIVE floor_limit (CC chunks H4–H8, 2026-10-17, after Astra's H3–H7 P1s — the end of the proof loop): `floor_limit`
+ * never claims "no legal fill exists" (enumerating fills is combinatorial and missed one role or path per round: hourly shapes,
+ * a salaried swap, the catering manager's cover). It claims only a SIMPLE, CHECKABLE precondition over ONE candidate set,
+ * built from THE SAME eligibility the validator enforces (CC chunk H8): the CANDIDATES of a gap are every roster member who could
+ * LEGALLY hold its position at some quarter of the window by ANY path the validator accepts (`legalHoldersOf` — normal
+ * eligibility, a manager's cover list, the manager's marked last-resort cover, the catering manager's cover outside the booked
+ * catering windows); no role list lives in the proof. For each candidate (`floorCandidateStatus`):
+ *   - ON SHIFT at a quarter where they are legal → NO certificate (`on_shift_legal`: a relabel or a swap may cover it — the
+ *     AGM takes the Register so the GM steps onto Expo; the catering manager relabels their MoD hour);
+ *   - OFF SHIFT → excluded only if they cannot add hours there: hourly (`isHourly`) — `unavailable` at every quarter of the
+ *     window (shifts, `freeFor`, `shiftExtendsOver` ignored: an available person may be extended, swapped or reassigned);
+ *     a never-generated role (the catering / prep manager, presence-only people) — `never_generated`: their shifts come only
+ *     from pins; salaried — the FIRST of (a) `flex_exhausted` (used ≥ `salariedFlexH`, or the week total ≥ target + flex),
+ *     (c) `unavailable` (at every quarter of [fromQ − maxShiftQ, toQ + maxShiftQ)), (d) `day_at_max` (their shifts that day
+ *     reach `maxShiftH`);
+ *   - excluded by none → NO certificate.
+ * Any candidate without an exclusion → no `floor_limit` (the generator keeps filling; what stays is `unresolved_search`,
+ * which blocks Approve). The certificate binds the limits, EVERY candidate's reason and the salaried candidates' flex / floor
+ * hours; the verifier recomputes all of it on the current inputs through the same functions and demands byte equality
+ * (stale / forged → refused). `on_shift_legal` is deliberately NOT in the certificate's vocabulary: it can never verify.
  */
-export type FloorExclusion = "flex_exhausted" | "ineligible" | "unavailable" | "day_at_max";
-/** CC chunk H7: what `floorExclusionOf` says about a manager — an exclusion, or the reason there can be NO certificate. */
-export type FloorManagerStatus = FloorExclusion | "on_shift_eligible";
-export const FLOOR_EXCLUSIONS: readonly FloorExclusion[] = ["flex_exhausted", "ineligible", "unavailable", "day_at_max"];
-export const FLOOR_MANAGER_STATUSES: readonly FloorManagerStatus[] = [...FLOOR_EXCLUSIONS, "on_shift_eligible"];
+export type FloorReason = "unavailable" | "flex_exhausted" | "day_at_max" | "never_generated";
+export const FLOOR_REASONS: readonly FloorReason[] = ["unavailable", "flex_exhausted", "day_at_max", "never_generated"];
+/** What `floorCandidateStatus` says about a candidate: an exclusion, or the reason there can be NO certificate. */
+export type FloorCandidateStatus = FloorReason | "on_shift_legal";
 export interface FloorLimitCertificate {
   limitH: number; targetWeekH: number; salariedFlexH: number; maxShiftH: number;
-  /** CC chunk H6: every active hourly person eligible for the position (id order) → why they are out: available at NO quarter of the window. */
-  hourlyExcluded: Record<string, "unavailable">;
-  /**
-   * EVERY salaried manager considered → the first condition that excludes them. The vocabulary (TS / SQL twins) also names
-   * `on_shift_eligible` (CC chunk H7), but a manager with that status means NO certificate, so a verifying certificate never
-   * carries it: the verifier recomputes and demands byte equality.
-   */
-  excludedBy: Record<string, FloorManagerStatus>;
+  /** EVERY candidate (`legalHoldersOf` over the window, id order) → the reason they are excluded. */
+  excludedBy: Record<string, FloorReason>;
+  /** The SALARIED candidates' flex / base station hours as the week stands. */
   flexHoursUsed: Record<string, number>;
   floorHoursUsed: Record<string, number>;
 }
@@ -295,6 +291,57 @@ export function eligibleInWindow(p: RulePerson, code: GapCode, positionId: strin
   return false;
 }
 
+/**
+ * CC chunk H8 — THE ONE position-holding rule set, shared by the validator and the floor certificate. The problems a segment of
+ * `p` on `positionId` over [startQ, endQ) with these flags raises (the validator's rules d / i and decision 8), each with the
+ * validator's own params: `role_not_allowed` (the call-out exemption for a manager on Prep / Dishwasher and the catering manager's
+ * marked cover excepted), `catering_cover_in_catering_window`, `manager_on_boh` (call-out excepted), `cover_outside_preferences`
+ * (a manager outside their cover list unless marked last resort), `work_type_not_allowed`. Window, membership and the untouchable
+ * day are the shift-level rules beside it.
+ */
+export function segmentHoldProblems(
+  p: RulePerson, positionId: string, g: Pick<Segment, "startQ" | "endQ" | "lastResort" | "coverFor" | "reasonKey">,
+  day: Pick<DayContext, "structure" | "inputs">,
+): Array<{ code: RuleCode; params?: Record<string, string | number | boolean | null> }> {
+  const pos = day.structure.positions[positionId];
+  const manager = isManagerRole(p.role);
+  const out: Array<{ code: RuleCode; params?: Record<string, string | number | boolean | null> }> = [];
+  const callout = !!g.coverFor && g.reasonKey === CALLOUT_LAST_RESORT;
+  // Decision 8: a catering manager may cover a station (never Prep/Dishwasher) as a marked last resort.
+  const cateringCover = p.role === "catering_mgr" && !!g.lastResort && g.reasonKey === CATERING_MANAGER_COVER && !!pos && pos.role !== "prep_dish";
+  if (!pos?.allowedRoles.includes(p.role) && !(pos?.role === "prep_dish" && manager && callout) && !cateringCover) out.push({ code: "role_not_allowed", params: { role: p.role } });
+  if (cateringCover && cateringWindows(day).some(([a, z]) => g.startQ < z && g.endQ > a)) out.push({ code: "catering_cover_in_catering_window" });
+  if (pos?.role === "prep_dish" && manager && !callout) out.push({ code: "manager_on_boh" });
+  if (manager && !p.coverPositions.includes(positionId) && !g.lastResort) out.push({ code: "cover_outside_preferences" });
+  if (pos && !workTypeAllows(p, pos)) out.push({ code: "work_type_not_allowed", params: { workType: p.workType } });
+  return out;
+}
+
+/** The ways a person may hold a station: plainly, as a manager's marked last-resort cover, or as the catering manager's marked cover. */
+export type HoldPath = "eligible" | "last_resort" | "catering_cover";
+const HOLD_FLAGS: ReadonlyArray<[HoldPath, Pick<Segment, "lastResort" | "reasonKey">]> = [
+  ["eligible", {}], ["last_resort", { lastResort: true }], ["catering_cover", { lastResort: true, reasonKey: CATERING_MANAGER_COVER }],
+];
+
+/**
+ * CC chunk H8: may `p` LEGALLY hold `positionId` at quarter q on `date` by ANY path the validator accepts — an active member,
+ * not on an untouchable day, inside the position's window, and a segment [q, q+1) with one of the flag sets (plain · last resort ·
+ * the catering manager's cover) raising none of `segmentHoldProblems`? The path, or null. (A call-out — `coverFor` + the call-out
+ * reason — is a Phase 3 event about a real absent person, not a way to staff a gap, so it is not a path here.)
+ */
+export function legalHoldPath(p: RulePerson, positionId: string, day: Pick<DayContext, "structure" | "inputs">, date: string, q: number): HoldPath | null {
+  const pos = day.structure.positions[positionId];
+  if (!pos || !p.activeMember || p.untouchableDates.includes(date) || q < pos.openQ || q >= pos.closeQ) return null;
+  for (const [path, flags] of HOLD_FLAGS) if (segmentHoldProblems(p, positionId, { startQ: q, endQ: q + 1, ...flags }, day).length === 0) return path;
+  return null;
+}
+
+/** CC chunk H8: everyone on the roster who may legally hold `positionId` at quarter q on `date` (`legalHoldPath`), id order. */
+export function legalHoldersOf(positionId: string, day: Pick<DayContext, "structure" | "inputs">, date: string, q: number, ctx: Pick<RuleContext, "people">): RulePerson[] {
+  return Object.values(ctx.people).filter((p) => legalHoldPath(p, positionId, day, date, q) !== null)
+    .sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
+}
+
 /** Available over [fromQ, toQ) on `date`: no information = available; null = not that day. */
 export function availableOn(p: RulePerson, date: string, fromQ: number, toQ: number): boolean {
   const w = p.availability[date];
@@ -471,9 +518,8 @@ export function shiftExtendsOver(
 /**
  * Is the person free for a cover over [fromQ, toQ) on `date`? Hourly: no shift that day, OR a shift that
  * day that extends over the window (above). Salaried: no BASE floor segment then (flex time is discretionary cover and does
- * not make them busy here). CC chunk H6: `floor_limit` no longer uses this at all — hourly people are judged by eligibility
- * and availability only (`floorLimitCertificate`), salaried managers by the four conservative conditions of
- * `floorExclusionOf`; it stays for the fills' bookkeeping.
+ * not make them busy here). CC chunk H6 / H8: `floor_limit` no longer uses this at all — every candidate is judged by
+ * `floorCandidateStatus` (on shift → no certificate; off shift → availability / flex / day); it stays for the fills' bookkeeping.
  */
 function freeFor(p: RulePerson, s: WeekSchedule, date: string, fromQ: number, toQ: number, day: DayContext, positionId: string | null): boolean {
   const own = s.shifts.filter((sh) => sh.date === date && sh.userId === p.userId);
@@ -1313,32 +1359,40 @@ function eligibleMembers(g: GapSubject, day: DayContext, ctx: RuleContext): Rule
 
 // ─── CC chunk H4: the CONSERVATIVE floor_limit ─────────────────────────────────
 
+/** CC chunk H8: the quarters of the window at which `p` may legally hold the gap's position (`legalHoldPath`). */
+function legalQuartersOf(p: RulePerson, g: Pick<GapSubject, "date" | "positionId" | "fromQ" | "toQ">, day: DayContext): number[] {
+  const out: number[] = [];
+  if (!g.positionId) return out;
+  for (let q = g.fromQ; q < g.toQ; q++) if (legalHoldPath(p, g.positionId, day, g.date, q) !== null) out.push(q);
+  return out;
+}
+
 /**
- * A salaried manager's status for a coverage deficit on `date` over [fromQ, toQ) — see `FloorLimitCertificate`:
- * `on_shift_eligible` (CC chunk H7: eligible for the position and on shift at some quarter of the window — never excluded, so
- * NO certificate), else the FIRST of the four conservative exclusions, else null (off shift, with flex, could stand there, around,
- * the day with room: whether a legal block really exists is then the fills' business, never a proof's). Null and
- * `on_shift_eligible` both mean "no certificate"; the status says why.
+ * A candidate's status for a coverage deficit on `date` over [fromQ, toQ) — see `FloorLimitCertificate`. Null when they are
+ * not a candidate at all (no legal quarter), or when nothing excludes them (off shift, could add hours there: whether a legal
+ * fill really exists is the fills' business, never a proof's); `on_shift_legal` when they are on shift at a quarter where they
+ * could legally hold the position. Both mean "no certificate"; the status says why.
  */
-export function floorExclusionOf(p: RulePerson, g: Pick<GapSubject, "date" | "positionId" | "fromQ" | "toQ">, s: WeekSchedule, ctx: RuleContext): FloorManagerStatus | null {
+export function floorCandidateStatus(p: RulePerson, g: Pick<GapSubject, "date" | "positionId" | "fromQ" | "toQ">, s: WeekSchedule, ctx: RuleContext): FloorCandidateStatus | null {
   const day = ctx.days[g.date];
   if (!day || !g.positionId) return null;
+  const legalQ = legalQuartersOf(p, g, day);
+  if (legalQ.length === 0) return null;
   const st = day.structure;
-  const maxQ = Math.round(st.limits.maxShiftH * 4);
   const own = shiftsOn(s, g.date).filter((sh) => sh.userId === p.userId);
-  const eligible = eligibleForPosition(p, st.positions[g.positionId]);
-  // CC chunk H7 (Astra H6 P1): eligible and ON SHIFT (any segment — a station, the MoD lane, flex) at ANY quarter of the window →
-  // never excluded. Relabels and swaps among people already on shift (the AGM takes the Register so the GM can step onto Expo)
-  // add no time and no hourly hour, and cannot be proven impossible cheaply. This subsumes the H4 MoD-relabel guard.
-  if (eligible && own.some((sh) => sh.startQ < g.toQ && sh.endQ > g.fromQ)) return "on_shift_eligible";
-  const flexQ = flexLeftQ(s, p.userId, st);
+  // ON SHIFT at a quarter where they could legally hold the position (any segment: a station, the MoD lane, flex) → a relabel or a
+  // swap may cover it (the AGM takes the Register so the GM steps onto Expo; the catering manager relabels their MoD hour).
+  if (legalQ.some((q) => own.some((sh) => sh.startQ <= q && sh.endQ > q))) return "on_shift_legal";
+  // OFF SHIFT: excluded only if they cannot add hours there.
+  if (isHourly(p)) {
+    for (let q = g.fromQ; q < g.toQ; q++) if (availableOn(p, g.date, q, q + 1)) return null;
+    return "unavailable";
+  }
+  if (neverGenerated(p)) return "never_generated"; // the catering / prep manager, presence-only people: shifts come only from pins
+  const maxQ = Math.round(st.limits.maxShiftH * 4);
   // (a) flex exhausted: no flex left, or the week total already at target + flex (a new block or an extension is flex only).
   const wk = salariedWeek(s, p.userId);
-  if (flexQ <= 0 || wk.totalH >= st.limits.salariedTargetWeekH + st.limits.salariedFlexH) return "flex_exhausted";
-  // (b) ineligible for the position and never the manager on duty over the window.
-  let modAny = false;
-  for (let q = g.fromQ; q < g.toQ; q++) if (modCountsOn(p, day, q)) { modAny = true; break; }
-  if (!eligible && !modAny) return "ineligible";
+  if (flexLeftQ(s, p.userId, st) <= 0 || wk.totalH >= st.limits.salariedTargetWeekH + st.limits.salariedFlexH) return "flex_exhausted";
   // (c) unavailable at every quarter of [fromQ − maxShiftQ, toQ + maxShiftQ) that date.
   let availableAny = false;
   for (let q = Math.max(0, g.fromQ - maxQ); q < Math.min(96, g.toQ + maxQ); q++) if (availableOn(p, g.date, q, q + 1)) { availableAny = true; break; }
@@ -1348,38 +1402,38 @@ export function floorExclusionOf(p: RulePerson, g: Pick<GapSubject, "date" | "po
   return null;
 }
 
+/** CC chunk H8: the gap's CANDIDATES — everyone who may legally hold its position at some quarter of the window, id order. */
+export function floorCandidatesOf(g: Pick<GapSubject, "date" | "positionId" | "fromQ" | "toQ">, ctx: RuleContext): RulePerson[] {
+  const day = ctx.days[g.date];
+  if (!day || !g.positionId) return [];
+  return Object.values(ctx.people).filter((p) => legalQuartersOf(p, g, day).length > 0)
+    .sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
+}
+
 /**
- * The conservative floor_limit certificate of a coverage deficit, or null when it is not one: no active hourly person
- * eligible for the position and available at ANY quarter of the window (CC chunk H6 — shifts ignored), at least one salaried
- * manager considered, and EVERY one of them excluded (`floorExclusionOf`). Deterministic; the verifier recomputes it and
- * demands byte equality, so the limits, each manager's condition and their flex / floor hours are all bound.
+ * The conservative floor_limit certificate of a coverage deficit, or null when it is not one: at least one candidate
+ * (`floorCandidatesOf`), and EVERY candidate excluded (`floorCandidateStatus`, never `on_shift_legal`). Deterministic; the
+ * verifier recomputes it through the same functions and demands byte equality, so the limits, each candidate's reason and the
+ * salaried candidates' flex / floor hours are all bound.
  */
 export function floorLimitCertificate(g: Pick<GapSubject, "code" | "date" | "positionId" | "fromQ" | "toQ">, s: WeekSchedule, ctx: RuleContext): FloorLimitCertificate | null {
   const day = ctx.days[g.date];
   if (!day || g.code !== "coverage_gap" || !g.positionId || g.toQ <= g.fromQ) return null;
   const st = day.structure;
-  const subject: GapSubject = { code: "coverage_gap", date: g.date, positionId: g.positionId, fromQ: g.fromQ, toQ: g.toQ };
-  // CC chunk H6 (Astra H5 P1): an active hourly person ELIGIBLE for the position and AVAILABLE at ANY quarter of the window
-  // means no certificate — whatever they are doing just then (an extension, a swap or a reassignment may reach the gap; no
-  // shift reasoning in the proof). Judged quarter by quarter, never over the whole window.
-  const hourly = eligibleMembers(subject, day, ctx).filter((p) => isHourly(p) && p.activeMember);
-  for (const p of hourly) {
-    for (let q = g.fromQ; q < g.toQ; q++) if (eligibleFor(p, "coverage_gap", g.positionId, st, q) && availableOn(p, g.date, q, q + 1)) return null;
-  }
-  const managers = flexSearchManagers(g.date, ctx);
-  if (managers.length === 0) return null;
-  const excludedBy: Record<string, FloorManagerStatus> = {};
-  for (const p of managers) {
-    const why = floorExclusionOf(p, g, s, ctx);
-    if (!why || why === "on_shift_eligible") return null;
+  const candidates = floorCandidatesOf(g, ctx);
+  if (candidates.length === 0) return null;
+  const excludedBy: Record<string, FloorReason> = {};
+  for (const p of candidates) {
+    const why = floorCandidateStatus(p, g, s, ctx);
+    if (!why || why === "on_shift_legal") return null;
     excludedBy[p.userId] = why;
   }
+  const salaried = candidates.filter((p) => p.salaried);
   return {
     limitH: st.limits.managerFloorH, targetWeekH: st.limits.salariedTargetWeekH, salariedFlexH: st.limits.salariedFlexH, maxShiftH: st.limits.maxShiftH,
-    hourlyExcluded: Object.fromEntries(hourly.map((p) => [p.userId, "unavailable" as const])),
     excludedBy,
-    flexHoursUsed: Object.fromEntries(managers.map((p) => [p.userId, salariedWeek(s, p.userId).flexH])),
-    floorHoursUsed: Object.fromEntries(managers.map((p) => [p.userId, floorHours(s, p.userId)])),
+    flexHoursUsed: Object.fromEntries(salaried.map((p) => [p.userId, salariedWeek(s, p.userId).flexH])),
+    floorHoursUsed: Object.fromEntries(salaried.map((p) => [p.userId, floorHours(s, p.userId)])),
   };
 }
 
@@ -1601,7 +1655,6 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
         const w = p.availability[date];
         push("outside_assumed_availability", date, { userId: u, q: sh.startQ, params: { fromQ: w ? w.fromQ : null, toQ: w ? w.toQ : null, source: w ? w.source : null } });
       }
-      const manager = isManagerRole(p.role);
       let slots = personSlot.get(u);
       if (!slots) { slots = new Uint8Array(96); personSlot.set(u, slots); }
       for (const g of sh.segments) {
@@ -1615,20 +1668,8 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
         if (g.positionId === MOD) continue;
         const pos = st.positions[g.positionId];
         if (!pos || g.startQ < pos.openQ || g.endQ > pos.closeQ) push("segment_outside_window", date, { userId: u, positionId: g.positionId, q: g.startQ });
-        const callout = !!g.coverFor && g.reasonKey === CALLOUT_LAST_RESORT;
-        // Decision 8: a catering manager may cover a station (never Prep/Dishwasher) as a marked last resort.
-        const cateringCover = p.role === "catering_mgr" && !!g.lastResort && g.reasonKey === CATERING_MANAGER_COVER && !!pos && pos.role !== "prep_dish";
-        if (!pos?.allowedRoles.includes(p.role) && !(pos?.role === "prep_dish" && manager && callout) && !cateringCover) {
-          push("role_not_allowed", date, { userId: u, positionId: g.positionId, q: g.startQ, params: { role: p.role } });
-        }
-        if (cateringCover && cateringWindows(day).some(([a, z]) => g.startQ < z && g.endQ > a)) {
-          push("catering_cover_in_catering_window", date, { userId: u, positionId: g.positionId, q: g.startQ });
-        }
-        if (pos?.role === "prep_dish" && manager && !callout) push("manager_on_boh", date, { userId: u, positionId: g.positionId, q: g.startQ });
-        if (manager && !p.coverPositions.includes(g.positionId) && !g.lastResort) {
-          push("cover_outside_preferences", date, { userId: u, positionId: g.positionId, q: g.startQ });
-        }
-        if (pos && !workTypeAllows(p, pos)) push("work_type_not_allowed", date, { userId: u, positionId: g.positionId, q: g.startQ, params: { workType: p.workType } });
+        // CC chunk H8: the position-holding rules are THE ONE shared function (the floor certificate's candidate set is built from it).
+        for (const h of segmentHoldProblems(p, g.positionId, g, day)) push(h.code, date, { userId: u, positionId: g.positionId, q: g.startQ, ...(h.params ? { params: h.params } : {}) });
       }
     }
 

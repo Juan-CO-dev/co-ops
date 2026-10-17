@@ -182,22 +182,18 @@ begin
       end loop;
       return true;
     when 'floor_limit' then
-      -- CC chunk H4 / H5 / H6 (Astra H3-H5 P1s): the CONSERVATIVE certificate — the four limits, the eligible hourly people (each
-      -- 'unavailable': at no quarter of the window) and, per salaried manager, the condition
+      -- CC chunk H4–H8 (Astra H3–H7 P1s): the CONSERVATIVE certificate — the four limits, EVERY candidate (whoever may legally hold
+      -- the position by any path the validator accepts) → the reason (unavailable / flex_exhausted / day_at_max / never_generated) and,
+      -- for the salaried candidates, their flex and floor hours; 'on_shift_legal' is not a reason (it means no certificate). The condition
       -- that excluded them (flex_exhausted / ineligible / unavailable / day_at_max) with their flex and floor hours; whether
       -- it still holds is checkCertificate's recomputation, not this shape.
-      if not public.schedule_json_exact_keys(c, array['limitH', 'targetWeekH', 'salariedFlexH', 'maxShiftH', 'hourlyExcluded', 'excludedBy', 'flexHoursUsed', 'floorHoursUsed'])
-         or jsonb_typeof(c -> 'hourlyExcluded') <> 'object'
+      if not public.schedule_json_exact_keys(c, array['limitH', 'targetWeekH', 'salariedFlexH', 'maxShiftH', 'excludedBy', 'flexHoursUsed', 'floorHoursUsed'])
          or not public.schedule_json_nonneg(c -> 'limitH') or not public.schedule_json_nonneg(c -> 'targetWeekH')
          or not public.schedule_json_nonneg(c -> 'salariedFlexH') or not public.schedule_json_nonneg(c -> 'maxShiftH')
          or jsonb_typeof(c -> 'excludedBy') <> 'object' or jsonb_typeof(c -> 'flexHoursUsed') <> 'object'
          or jsonb_typeof(c -> 'floorHoursUsed') <> 'object' then return false; end if;
-      for k, v in select key, value from jsonb_each(c -> 'hourlyExcluded') loop
-        if jsonb_typeof(v) <> 'string' or (v #>> '{}') <> 'unavailable' then return false; end if;
-      end loop;
       for k, v in select key, value from jsonb_each(c -> 'excludedBy') loop
-        -- CC chunk H7: on_shift_eligible is in the vocabulary (the twin), though a verifying certificate never carries it.
-        if jsonb_typeof(v) <> 'string' or (v #>> '{}') not in ('flex_exhausted', 'ineligible', 'unavailable', 'day_at_max', 'on_shift_eligible') then return false; end if;
+        if jsonb_typeof(v) <> 'string' or (v #>> '{}') not in ('unavailable', 'flex_exhausted', 'day_at_max', 'never_generated') then return false; end if;
       end loop;
       for k, v in select key, value from jsonb_each(c -> 'flexHoursUsed') loop
         if not public.schedule_json_nonneg(v) then return false; end if;

@@ -1595,7 +1595,7 @@ Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). 
 |---|---|---|
 | §5.2 hours budget per week / month, per date, with the suggestion | `budget-shared.ts`, `settings.ts` `setBudget`, `BudgetSetter.tsx`, `BudgetSuggestion.tsx` | `schedule-budget` (F11–F16, none_set), `schedule-board-ui` (Set one, exact body), 0274 harness |
 | §5.8 horizon, never silently overwrite an edited week | `horizon-shared.ts`, `schedules.ts`, `HorizonBuilder.tsx`, `runRegenerate` | `schedule-horizon`, `schedule-board-ui` (P2-3 both paths), 0275 harness `edited_week_unconfirmed` |
-| §6 generator: shapes, segments, skills, strength, leaders, presence, salaried cover, closing / MoD, 4 h min, priority, cover | `lib/scheduling/generator/*` | 27 goldens (p2.11), `schedule-generator`, property test |
+| §6 generator: shapes, segments, skills, strength, leaders, presence, salaried cover, closing / MoD, 4 h min, priority, cover | `lib/scheduling/generator/*` | 27 goldens (p2.12), `schedule-generator`, property test |
 | §6.5 the validator on every schedule; edits saved with their rule | `rules-shared.ts` `checkScheduleRules` | `schedule-rules`, mockup parity, `schedule-edit` |
 | Gap causes and certificates; budget_limited; unresolved_search blocks Approve | `rules-shared.ts`, 0275 `valid_gap_certificate` | `schedule-rules`, certificate-cases (both twins), F17 |
 | §6.6 labor target ≤ 28%, the math shown, no contradiction | `labor-target-shared.ts`, `LaborTargetCard.tsx` | `schedule-labor-target`, `schedule-board-ui` (one note, amber rule) |
@@ -1642,6 +1642,11 @@ Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). 
 
 - A salaried SWAP certified a coverable gap: GM on Register, AGM on MoD, Expo (GM-only) open; the AGM relabels MoD → Register so the GM steps onto Expo — no flex, no hourly hour, zero findings — yet both were `flex_exhausted`. Closing rule of the salaried side: a manager eligible for the position and on shift at any quarter of the gap is never excluded (`on_shift_eligible`, no certificate); a manager off shift keeps the H4 exclusions (a)–(d). The hourly side stays as H6. The certificate's vocabulary names `on_shift_eligible` (TS / SQL twins + case file), though a verifying certificate never carries it.
 - `GENERATOR_VERSION` stays p2.11: no golden body changes (no fixture has an eligible manager on shift beside a floor_limit gap); proven in the H7 handback.
+
+### Chunk H8 (2026-10-17): ONE candidate set from the validator's own eligibility (Astra H7 P1)
+
+- The catering manager's cover (pinned on MoD, Expo cover allowed, no booked window) still certified: the proof enumerated roles (`flexSearchManagers`, the hourly path) and missed one per round. Structural end: `segmentHoldProblems` is the one position-holding rule set, pushed by the validator and the base of `legalHoldPath` / `legalHoldersOf`; the certificate's candidates are everyone legal at some quarter of the gap by any path the validator accepts. On shift at a legal quarter → no certificate; off shift → `unavailable` (hourly) / `never_generated` (pins-only roles) / the salaried a, c, d. `hourlyExcluded` is folded into `excludedBy`; `on_shift_legal` is not in the vocabulary. TS / SQL twins + case file in parity; a regression pins the certificate's candidate set to the validator-legal set across fixtures and goldens.
+- `GENERATOR_VERSION` p2.12; golden deltas by cause in the H8 handback.
 
 ### Phase 3 list (unchanged from "Phase 3 backlog", plus what Phase 2 shows as coming)
 

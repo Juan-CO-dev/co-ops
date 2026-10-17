@@ -59,7 +59,8 @@ function validFillStep(v: unknown): boolean {
 export const GAP_CAUSES = ["budget_limited", "floor_limit", "eligibility", "availability", "capacity", "structure", "unresolved_search"] as const;
 const STRUCTURE_RULES = ["primary_window_closed", "no_mod_member", "no_closing_role", "max_shift"];
 /** The floor_limit exclusions (rules-shared FloorExclusion), spelled here so the shape stays dependency-free like the SQL twin. */
-const FLOOR_EXCLUSIONS = ["flex_exhausted", "ineligible", "unavailable", "day_at_max", "on_shift_eligible"]; // CC chunk H7: the vocabulary; a verifying certificate never carries on_shift_eligible
+/** The floor_limit reasons (rules-shared FloorReason), spelled here so the shape stays dependency-free like the SQL twin. */
+const FLOOR_REASONS = ["unavailable", "flex_exhausted", "day_at_max", "never_generated"];
 
 /** A gap certificate's SHAPE per cause: the exact key set, strings where ids go, non-negative numbers where numbers go. */
 export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
@@ -71,13 +72,12 @@ export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
         && nonneg(c.budgetHours) && nonneg(c.usedHours) && nonneg(c.essentialHours) && isNum(c.remainingHours) && nonneg(c.fillHours)
         && Array.isArray(c.witness) && c.witness.length > 0 && c.witness.every(validFillStep);
     case "floor_limit":
-      // CC chunk H4 / H5 / H6: the CONSERVATIVE certificate — the four limits, the eligible hourly people (each "unavailable": at no
-      // quarter of the window), and per salaried manager the condition that excluded them (flex_exhausted / ineligible / unavailable /
-      // day_at_max) with their flex and floor hours.
-      return exact(c, ["limitH", "targetWeekH", "salariedFlexH", "maxShiftH", "hourlyExcluded", "excludedBy", "flexHoursUsed", "floorHoursUsed"])
+      // CC chunk H4–H8: the CONSERVATIVE certificate — the four limits, EVERY candidate (whoever may legally hold the position by any
+      // path the validator accepts) → the reason they are excluded (unavailable / flex_exhausted / day_at_max / never_generated), and
+      // the salaried candidates' flex and floor hours. "on_shift_legal" is not a reason: it means no certificate.
+      return exact(c, ["limitH", "targetWeekH", "salariedFlexH", "maxShiftH", "excludedBy", "flexHoursUsed", "floorHoursUsed"])
         && nonneg(c.limitH) && nonneg(c.targetWeekH) && nonneg(c.salariedFlexH) && nonneg(c.maxShiftH)
-        && isObj(c.hourlyExcluded) && Object.values(c.hourlyExcluded).every((v) => v === "unavailable")
-        && isObj(c.excludedBy) && Object.values(c.excludedBy).every((v) => typeof v === "string" && FLOOR_EXCLUSIONS.includes(v))
+        && isObj(c.excludedBy) && Object.values(c.excludedBy).every((v) => typeof v === "string" && FLOOR_REASONS.includes(v))
         && isObj(c.flexHoursUsed) && Object.values(c.flexHoursUsed).every(nonneg) && isObj(c.floorHoursUsed) && Object.values(c.floorHoursUsed).every(nonneg);
     case "eligibility":
       return exact(c, ["positionId", "eligibleCount"]) && (typeof c.positionId === "string" || c.positionId === null) && c.eligibleCount === 0;
