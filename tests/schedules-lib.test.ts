@@ -24,6 +24,7 @@ const settings = await import("@/lib/scheduling/settings");
 const { loadSchedulingInputs } = await import("@/lib/scheduling/inputs");
 const { SCHEDULE_ERROR_CODES, SCHEDULE_ERROR_STATUS, ScheduleError } = await import("@/lib/scheduling/errors-shared");
 const { checkCertificate } = await import("@/lib/scheduling/rules-shared");
+const { GENERATOR_VERSION } = await import("@/lib/scheduling/generator/build-shared");
 import type { PeopleActor } from "@/lib/people/access-shared";
 import type { SchedulingInputs } from "@/lib/scheduling/inputs-shared";
 import type { DayForecast } from "@/lib/scheduling/demand-shared";
@@ -85,7 +86,7 @@ describe("generate → buildWeek → commit_schedule_revision; round-trip parity
     expect(Object.keys(c[0]!.args).sort()).toEqual(["p_actor", "p_context", "p_days", "p_expected_head", "p_gaps", "p_kind", "p_location", "p_meta", "p_shifts", "p_structure_version", "p_week_start"]);
     expect(c[0]!.args).toMatchObject({ p_actor: GM, p_location: A, p_week_start: WEEK, p_expected_head: null, p_kind: "generated", p_structure_version: null });
     expect((c[0]!.args.p_days as unknown[]).length).toBe(7);
-    expect((c[0]!.args.p_meta as Record<string, unknown>)).toMatchObject({ actor_context: "user", generator_version: "p2.5" });
+    expect((c[0]!.args.p_meta as Record<string, unknown>)).toMatchObject({ actor_context: "user", generator_version: GENERATOR_VERSION });
     expect(vi.mocked(audit).mock.calls.some(([a]) => a.action === "schedule.generate")).toBe(true);
     expect(await code(lib.generateWeek(s.deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: null }))).toBe("head_moved");
   });
