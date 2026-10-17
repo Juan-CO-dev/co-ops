@@ -3,8 +3,8 @@
  * 7 days / 42 h because Phase 2 fed days-off [] and a new hire with < 3 observed weeks is assumed available every day.
  *  - The validator: `max_days_per_week` — an HOURLY person on more than `maxDaysPerWeek` dates (5) is a WARNING on any week
  *    (a manager's hand edit), and the generator keeps it HARD (`GENERATOR_HARD_WARNINGS`, the salaried-week pattern).
- *  - The proofs agree: an hourly person already on their 5th date cannot be added on another date, so for that date they are
- *    `unavailable` to every certificate (a floor_limit / availability / capacity proof is never refused by a sixth day).
+ *  - CC chunk H10 (P1, supersedes H9): the proofs IGNORE the cap — a person's other dates are mutable, so no certificate excludes
+ *    them for it; what the generator cannot fill under the cap is `unresolved_search`.
  *  - The generator's off days: the person's LOWEST-OBSERVED weekdays from punches (`observedDowShare`), else the
  *    LOWEST-DEMAND days, else a per-person rotation; preferred, relaxed only when nobody else fits; the 5-date cap never.
  * Untouchable / flex days stay inert (Phase 3).
@@ -56,12 +56,12 @@ describe("H9 fix 2: the validator's two-days-off rule", () => {
     expect(atDayCap(ctx.people[U.alex]!, week(DATES.slice(0, 5).map((d) => shift(U.alex, d, 30, 62, "mod"))), DATES[5]!)).toBe(false);
   });
 
-  it("a floor_limit candidate on their 5th date elsewhere is UNAVAILABLE for the 6th (the proof agrees with the cap)", () => {
+  it("CC chunk H10 (P1): a floor_limit candidate on their 5th date elsewhere is still a candidate for the 6th — the cap never proves a gap", () => {
     const ctx = context({ built: [...DATES] });
     setNeed(ctx, DATES[5]!, P.REG, 44, 52);
     const g = { date: DATES[5]!, positionId: P.REG, fromQ: 44, toQ: 52 };
     expect(floorCandidateStatus(ctx.people[U.ben]!, g, week([]), ctx)).toBeNull();
-    expect(floorCandidateStatus(ctx.people[U.ben]!, g, week(sixDays(U.ben).slice(0, 5)), ctx)).toBe("unavailable");
+    expect(floorCandidateStatus(ctx.people[U.ben]!, g, week(sixDays(U.ben).slice(0, 5)), ctx)).toBeNull();
   });
 });
 

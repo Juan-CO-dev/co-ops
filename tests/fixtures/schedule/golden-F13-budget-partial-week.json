@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.13. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.14. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -141,9 +141,9 @@
      "day": "2026-10-30",
      "inherited": false,
      "params": {
-      "cause": "capacity",
+      "cause": "unresolved_search",
       "fromQ": 28,
-      "proven": true,
+      "proven": false,
       "toQ": 83
      },
      "positionId": "5c000000-0000-4000-8000-000000000002",
@@ -177,9 +177,9 @@
      "day": "2026-10-31",
      "inherited": false,
      "params": {
-      "cause": "structure",
+      "cause": "unresolved_search",
       "fromQ": 28,
-      "proven": true,
+      "proven": false,
       "toQ": 41
      },
      "positionId": "5c000000-0000-4000-8000-000000000002",
@@ -259,9 +259,9 @@
      "day": "2026-11-01",
      "inherited": false,
      "params": {
-      "cause": "structure",
+      "cause": "unresolved_search",
       "fromQ": 28,
-      "proven": true,
+      "proven": false,
       "toQ": 41
      },
      "positionId": "5c000000-0000-4000-8000-000000000002",
@@ -581,17 +581,22 @@
    "toQ": 60
   },
   {
-   "cause": "capacity",
+   "cause": "unresolved_search",
    "certificate": {
-    "fromQ": 28,
-    "people": 0,
-    "peopleIds": [],
-    "positionIds": [
-     "5c000000-0000-4000-8000-000000000002"
+    "candidateIds": [
+     "u-d-dee",
+     "u-e-eve"
     ],
-    "requiredHeads": 1,
-    "shortBy": 1,
-    "toQ": 83
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
+    },
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 4,
+     "steps": 200
+    }
    },
    "code": "coverage_gap",
    "date": "2026-10-30",
@@ -632,23 +637,22 @@
    "toQ": 41
   },
   {
-   "cause": "structure",
+   "cause": "unresolved_search",
    "certificate": {
-    "detail": {
-     "availableQ": 55,
-     "coverableQ": 42,
-     "maxShiftQ": 42,
-     "peopleIds": [
-      "u-e-eve"
-     ],
-     "positionId": "5c000000-0000-4000-8000-000000000002",
-     "requiredQ": 55,
-     "runFromQ": 28,
-     "runQ": 55,
-     "runToQ": 83,
-     "shortQ": 13
+    "candidateIds": [
+     "u-d-dee",
+     "u-e-eve"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
     },
-    "rule": "max_shift"
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 4,
+     "steps": 200
+    }
    },
    "code": "coverage_gap",
    "date": "2026-10-31",
@@ -689,23 +693,22 @@
    "toQ": 60
   },
   {
-   "cause": "structure",
+   "cause": "unresolved_search",
    "certificate": {
-    "detail": {
-     "availableQ": 55,
-     "coverableQ": 42,
-     "maxShiftQ": 42,
-     "peopleIds": [
-      "u-d-dee"
-     ],
-     "positionId": "5c000000-0000-4000-8000-000000000002",
-     "requiredQ": 55,
-     "runFromQ": 28,
-     "runQ": 55,
-     "runToQ": 83,
-     "shortQ": 13
+    "candidateIds": [
+     "u-d-dee",
+     "u-e-eve"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
     },
-    "rule": "max_shift"
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 4,
+     "steps": 200
+    }
    },
    "code": "coverage_gap",
    "date": "2026-11-01",

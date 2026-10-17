@@ -375,8 +375,10 @@ export function workedDates(s: { readonly shifts: readonly Shift[] }, userId: st
 
 /**
  * CC chunk H9: may NOT be given a shift on `date` because of the two-days-off rule — an hourly person with no shift that date
- * who already works `limit` other dates. (Extending a shift they already have that date adds no date.) The fills treat it as
- * hard, and every proof treats such a person as unavailable for that date.
+ * who already works `limit` other dates. (Extending a shift they already have that date adds no date.) The FILLS treat it as hard.
+ * CC chunk H10 (P1, Astra H9): it is NEVER a proof — the other dates are mutable assignments ("B takes A's Monday, A takes
+ * Saturday"), so no certificate excludes or discounts a person for it; what the generator cannot fill under the cap is
+ * `unresolved_search`.
  */
 export function atDayCap(p: RulePerson, s: { readonly shifts: readonly Shift[] }, date: string, limit: number = MAX_DAYS_PER_WEEK): boolean {
   if (p.salaried || p.presenceOnly) return false;
@@ -666,8 +668,9 @@ export function capOnlyBound(g: GapSubject, s: WeekSchedule, ctx: RuleContext): 
   const placedAt = (p: RulePerson, q: number) => shifts.some((sh) => sh.userId === p.userId && (g.code === "coverage_gap"
     ? sh.segments.some((x) => x.positionId === g.positionId && x.startQ <= q && x.endQ > q)
     : sh.segments.some((x) => x.startQ <= q && x.endQ > q) && modCountsOn(p, day, q)));
-  // CC chunk H9: a person on their last allowed date elsewhere cannot be added that date (two days off).
-  const countsAt = (p: RulePerson, q: number) => (eligibleFor(p, g.code, g.positionId, st, q) && availableOn(p, g.date, q, q + 1) && !atDayCap(p, s, g.date, maxDaysPerWeek(st))) || placedAt(p, q);
+  // CC chunk H10 (P1): a person's OTHER assigned dates never reduce their availability here — they are mutable (the day cap is a
+  // generation rule, never a proof).
+  const countsAt = (p: RulePerson, q: number) => (eligibleFor(p, g.code, g.positionId, st, q) && availableOn(p, g.date, q, q + 1)) || placedAt(p, q);
   const people = Object.values(ctx.people).sort((x, y) => (x.userId < y.userId ? -1 : x.userId > y.userId ? 1 : 0));
   const avail = new Map<string, number>();
   let requiredQ = 0;
@@ -705,7 +708,8 @@ function capacityFor(S: readonly string[], g: GapSubject, s: WeekSchedule, day: 
     for (const p of S) need += day.need.positions[p]?.[q] ?? 0;
     required = Math.min(required, need);
     for (const person of Object.values(ctx.people)) {
-      const eligible = S.some((p) => eligibleForPosition(person, st.positions[p])) && availableOn(person, g.date, q, q + 1) && !atDayCap(person, s, g.date, maxDaysPerWeek(st));
+      // CC chunk H10 (P1): everyone available in the window counts, whatever their other dates.
+      const eligible = S.some((p) => eligibleForPosition(person, st.positions[p])) && availableOn(person, g.date, q, q + 1);
       // Anyone actually standing on S at q counts too (a presence pin, a manager cover).
       const placed = shifts.some((sh) => sh.userId === person.userId && sh.segments.some((x) => S.includes(x.positionId) && x.startQ <= q && x.endQ > q));
       if (eligible || placed) people.add(person.userId);
@@ -1420,8 +1424,7 @@ export function floorCandidateStatus(p: RulePerson, g: Pick<GapSubject, "date" |
   if (legalQ.some((q) => own.some((sh) => sh.startQ <= q && sh.endQ > q))) return "on_shift_legal";
   // OFF SHIFT: excluded only if they cannot add hours there.
   if (isHourly(p)) {
-    // CC chunk H9: on their last allowed date elsewhere they cannot be added this date (two days off) — unavailable.
-    if (atDayCap(p, s, g.date, maxDaysPerWeek(st))) return "unavailable";
+    // CC chunk H10 (P1): their OTHER assigned dates are mutable — the day cap never makes them unavailable here.
     for (let q = g.fromQ; q < g.toQ; q++) if (availableOn(p, g.date, q, q + 1)) return null;
     return "unavailable";
   }
@@ -1511,7 +1514,6 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
       for (const id of e) {
         const p = ctx.people[id]!;
         // Only the quarters at which the person COUNTS need them unavailable (Astra chunk B P1-2).
-        if (atDayCap(p, s, g.date, maxDaysPerWeek(st))) continue; // CC chunk H9: two days off — not addable this date
         for (let q = g.fromQ; q < g.toQ; q++) if (eligibleFor(p, g.code, g.positionId, st, q) && availableOn(p, g.date, q, q + 1)) return false;
       }
       return true;

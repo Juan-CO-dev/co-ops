@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.13. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.14. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -11,9 +11,9 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "cause": "structure",
+      "cause": "unresolved_search",
       "fromQ": 70,
-      "proven": true,
+      "proven": false,
       "toQ": 76
      },
      "q": 70,
@@ -213,24 +213,23 @@
  ],
  "gaps": [
   {
-   "cause": "structure",
+   "cause": "unresolved_search",
    "certificate": {
-    "detail": {
-     "availableQ": 62,
-     "coverableQ": 49,
-     "maxShiftQ": 42,
-     "peopleIds": [
-      "u-10-nora",
-      "u-15-alex"
-     ],
-     "positionId": "mod",
-     "requiredQ": 55,
-     "runFromQ": 28,
-     "runQ": 55,
-     "runToQ": 83,
-     "shortQ": 6
+    "candidateIds": [
+     "u-05-dani",
+     "u-15-alex",
+     "u-16-jules"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
     },
-    "rule": "max_shift"
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 3,
+     "steps": 27
+    }
    },
    "code": "mod_missing",
    "date": "2026-10-26",
