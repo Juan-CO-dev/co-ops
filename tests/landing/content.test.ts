@@ -33,3 +33,14 @@ describe("landing content and progressive enhancement contracts", () => {
     expect(read("app/(authed)/vault/vault-client.tsx")).not.toContain("@/components/portal/Reveal");
   });
 });
+
+it("keeps the pending butter wording behind one translated key", () => {
+ expect(en["landing.lineup.butter"]).toBe("butter");
+ expect(es["landing.lineup.butter"]).toBe("mantequilla");
+ for (const dictionary of [en,es]) {
+   expect(dictionary["landing.lineup.ingredients.turkey-caesar"]).toContain("{butter}");
+   for (const [key,value] of Object.entries(dictionary).filter(([key])=>key.startsWith("landing.lineup.ingredients."))) {
+     expect(value,key).not.toContain("?");
+   }
+ }
+});

@@ -114,5 +114,101 @@
   {
     "id": "hero-poster-960",
     "path": "/media/crunchy-boi-014-960-3c7d6237a944.webp"
+  },
+  {
+    "id": "v2-p013-320",
+    "path": "/media/v2-p013-320-0da6a08cf77b.webp",
+    "width": 320,
+    "height": 480
+  },
+  {
+    "id": "v2-p013-480",
+    "path": "/media/v2-p013-480-2956ce1ffc1d.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-p013-640",
+    "path": "/media/v2-p013-640-13b5f4142ade.webp",
+    "width": 640,
+    "height": 960
+  },
+  {
+    "id": "v2-p013-960",
+    "path": "/media/v2-p013-960-8271dfa0ca7d.webp",
+    "width": 960,
+    "height": 1440
+  },
+  {
+    "id": "v2-p013-1280",
+    "path": "/media/v2-p013-1280-870dc3083455.webp",
+    "width": 1280,
+    "height": 1920
+  },
+  {
+    "id": "v2-p016-480",
+    "path": "/media/v2-p016-480-70c16c1f977d.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-p016-720",
+    "path": "/media/v2-p016-720-8dce5f33b8f6.webp",
+    "width": 720,
+    "height": 1080
+  },
+  {
+    "id": "v2-p016-960",
+    "path": "/media/v2-p016-960-2ef06ce17068.webp",
+    "width": 960,
+    "height": 1440
+  },
+  {
+    "id": "v2-l083-480",
+    "path": "/media/v2-l083-480-9d4d188146e9.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-l083-720",
+    "path": "/media/v2-l083-720-ab0afcf3e22d.webp",
+    "width": 720,
+    "height": 1080
+  },
+  {
+    "id": "v2-l083-960",
+    "path": "/media/v2-l083-960-3c45c543b2af.webp",
+    "width": 960,
+    "height": 1440
+  },
+  {
+    "id": "touch-clay-bag",
+    "path": "/media/touch-clay-bag-861f328984ef.webp",
+    "width": 256,
+    "height": 326
+  },
+  {
+    "id": "touch-lowpoly-prop",
+    "path": "/media/touch-lowpoly-prop-af74d0fcd201.webp",
+    "width": 115,
+    "height": 120
+  },
+  {
+    "id": "touch-office-wave",
+    "path": "/media/touch-office-wave-f48cff95714f.webp",
+    "width": 256,
+    "height": 453
+  },
+  {
+    "id": "touch-doodle-chip",
+    "path": "/brand/touch-doodle-chip-1d7f6e74dcf9.svg",
+    "width": 48,
+    "height": 48
+  },
+  {
+    "id": "touch-mark-nod",
+    "path": "/brand/touch-mark-nod-4dbd4bc62726.svg",
+    "width": 805,
+    "height": 894
   }
 ]

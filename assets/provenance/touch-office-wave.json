@@ -1,0 +1,42 @@
+{
+  "id": "touch-office-wave",
+  "sourceId": "touch-office-wave",
+  "sourcePath": "source:touch-office-wave",
+  "sourceSha256": "6bb53ffade8eac181156fe3236d16a5d0ddd0931a67d3ba63eb9dcd3be9ee967",
+  "classification": "drawn",
+  "publicPath": "/media/touch-office-wave-f48cff95714f.webp",
+  "sidecar": "assets/provenance/touch-office-wave.json",
+  "sha256": "f48cff95714f4e6f4ce4eab377224b9468b4426c2c7a83fabfbe94853b213146",
+  "bytes": 18154,
+  "maxBytes": 45000,
+  "width": 256,
+  "height": 453,
+  "load": "lazy",
+  "mode": "crop-resize-only",
+  "crop": {
+    "left": 0,
+    "top": 0,
+    "width": 1536,
+    "height": 2720
+  },
+  "orientedSource": {
+    "width": 1536,
+    "height": 2720
+  },
+  "quality": 85,
+  "effort": 6,
+  "steps": [
+    "EXIF auto-orientation (.rotate())",
+    "integer crop in oriented-source coordinates",
+    "uniform resize without enlargement",
+    "WebP encode; metadata stripped"
+  ],
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "webp": "1.6.0"
+  },
+  "command": "node scripts/assets/export-landing-touches.mjs",
+  "inspection": "Approved: empty-handed clay worker; no food; one character slot",
+  "reviewer": "Astra visual inspection 2026-10-17"
+}

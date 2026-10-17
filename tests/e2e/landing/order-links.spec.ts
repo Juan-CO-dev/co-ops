@@ -1,11 +1,13 @@
+import { LANDING_PLACEMENTS } from "../../../lib/landing/tracking-schema-shared";
 import { test, expect } from "@playwright/test";
 import { landingTenantConfig } from "../../../config/tenant/landing";
 
 test("all direct and catering destinations match approved tenant config",async ({page})=>{
   await page.goto("/");
+  expect(await page.locator("[data-landing-placement]").evaluateAll(links=>[...new Set(links.map(link=>link.getAttribute("data-landing-placement")))].sort())).toEqual([...LANDING_PLACEMENTS].sort());
   for (const store of landingTenantConfig.stores) {
     const links = page.getByRole("link",{name:`Order ${store.orderLabel}`,exact:true});
-    await expect(links).toHaveCount(4);
+    await expect(links).toHaveCount(7);
     for (const link of await links.all()) {
       await expect(link).toHaveAttribute("href",store.orderUrl);
       await expect(link).toHaveAttribute("referrerpolicy","origin");

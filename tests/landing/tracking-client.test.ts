@@ -45,3 +45,12 @@ describe('landing dispatch', () => {
     expect(f.loadPixel).not.toHaveBeenCalled();expect(f.pixel).not.toHaveBeenCalled();
   });
 });
+
+it.each(['sticky','crave','subdex'])('keeps %s consent-gated with one dispatch per action',placement=>{
+  const pixel=vi.fn(),post=vi.fn();
+  const tracker=createLandingTracker({serverApproved:true,pixelId:'123',capiEnabled:true,sourceUrl:'https://eat.example/',allowedStores:['dupont'],allowedAds:[],allowedPlacements:[placement]}, {pixel,post,loadPixel:vi.fn(),revokePixel:vi.fn(),uuid:()=> 'action-id',now:()=>123000});
+  tracker.dispatch('OrderClick',{placement,store:'dupont'});expect(post).not.toHaveBeenCalled();
+  tracker.setConsent(true);tracker.dispatch('OrderClick',{placement,store:'dupont'});
+  expect(pixel).toHaveBeenCalledOnce();expect(post).toHaveBeenCalledTimes(2);
+  tracker.setConsent(false);tracker.dispatch('OrderClick',{placement,store:'dupont'});expect(post).toHaveBeenCalledTimes(2);
+});

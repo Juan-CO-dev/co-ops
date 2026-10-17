@@ -1,3 +1,4 @@
+import { textureMedia } from '../../../lib/landing/media';
 import { test, expect } from "@playwright/test";
 import en from "../../../lib/i18n/en.json";
 import es from "../../../lib/i18n/es.json";
@@ -10,14 +11,33 @@ for (const language of ["en","es"] as const) test(`every section and control ren
     await expect(page.locator(`#${section}-title`)).toHaveText(dictionary[`landing.${section}.title`]);
     await expect(page.locator(`#${section}`)).toContainText(dictionary[`landing.${section}.body`]);
   }
+  for (const card of await page.locator('[data-lineup] li').all()) {
+    await expect(card.locator('[data-ingredients]')).toContainText(language === 'es' ? 'pan para sub' : 'sub roll');
+  }
+  await expect(page.locator('#footer a[href*="spotapps.co"]')).toHaveText(dictionary['landing.footer.careers']);
+  await expect(page.locator('#footer a[href*="facebook"]')).toHaveCount(0);
   await expect(page.getByRole("navigation",{name:dictionary["landing.language"]})).toBeVisible();
   const held = page.locator('#field-guide');
   await expect(held).toContainText(dictionary['landing.field-guide.body']);
   await expect(held.locator('img,picture,video')).toHaveCount(0);
-  expect(await held.innerHTML()).not.toContain('/media/');
+  expect(await held.locator('noscript').textContent()).toContain(textureMedia.crossSection.src);
   await expect(page.getByRole("button",{name:dictionary["landing.consent.accept"],exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:dictionary["landing.consent.reject"],exact:true})).toBeVisible();
   expect((await page.context().cookies()).some(c=>/lang/i.test(c.name))).toBe(false);
+  await held.scrollIntoViewIfNeeded();
+  const photo=held.locator('[data-landing-photo] img');
+  // Exact section image inventory: one real photo and one decorative touch.
+  await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveCount(1);
+  await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveAttribute('alt','');
+  await expect(held.locator('img')).toHaveCount(2);
+  await expect(photo).toHaveCount(1);
+  await expect(photo).toHaveAttribute('src',textureMedia.crossSection.src);
+  await expect(photo).toHaveAttribute('srcset',textureMedia.crossSection.srcSet);
+  await expect(photo).toHaveAttribute('width','720');
+  await expect(photo).toHaveAttribute('height','1080');
+  await expect(photo).toHaveAttribute('alt',dictionary['landing.texture.cross-alt']);
+  await expect(held.locator('video')).toHaveCount(0);
+  await expect(held.locator('[data-field-ingredients]')).toHaveText(dictionary['landing.lineup.ingredients.crunchy-boi']);
 });
 
 test("query wins over language header and toggle drops unapproved query",async ({page})=>{

@@ -8,8 +8,13 @@ test('remaining sections keep facts, destinations and translation honest',async(
   await expect(page.locator('#catering a').first()).toHaveAttribute('href',landingTenantConfig.cateringUrl);
   await expect(page.locator('#catering a').nth(1)).toHaveAttribute('href',landingTenantConfig.inquiryUrl);
   await expect(page.locator('#catering img,#catering form')).toHaveCount(0);
-  await expect(page.locator('#footer')).toContainText('100 Test Street SE');
-  await expect(page.locator('#footer a[href^="https:"]')).toHaveCount(landingTenantConfig.footerLinks.length);
+  await expect(page.locator('#footer')).toContainText('526 8th St SE Ste A');
+  const footerDestinations=landingTenantConfig.footerLinks.filter(link=>link.key!=='uber-eats').map(link=>link.url).sort();
+  expect((await page.locator('#footer nav a').evaluateAll(links=>links.map(link=>link.getAttribute('href')))).sort()).toEqual(footerDestinations);
+  const uber=landingTenantConfig.footerLinks.find(link=>link.key==='uber-eats')!;
+  await expect(page.locator('#shops a[href="'+uber.url+'"]')).toHaveCount(1);
+  await expect(page.locator('[data-shop="dupont"] a[href="'+uber.url+'"]')).toBeVisible();
+  await expect(page.locator('#footer a[href="'+uber.url+'"]')).toHaveCount(0);
   await expect(page.locator('#footer a[href^="/privacy"]')).toHaveAttribute('href','/privacy?lang=es');
   await expect(page.locator('#subdex img')).toHaveAttribute('alt','Héroe de píxeles atrapando un sándwich');
   await expect(page.locator('#subdex img')).toHaveAttribute('src',subdexMedia.poster);
@@ -28,11 +33,15 @@ for(const preference of ['reduce','save-data'] as const)test(`SUBDEX ${preferenc
 });
 
 test('SUBDEX rejected playback retains the still in both engines',async({page})=>{
-  await page.addInitScript(()=>{HTMLMediaElement.prototype.play=()=>Promise.reject(new DOMException('blocked','NotAllowedError'));});
+  await page.addInitScript(()=>{HTMLMediaElement.prototype.play=function(){if(this.closest('[data-testid="subdex-motion"]'))Reflect.set(window,'subdexPlayAttempted',true);return Promise.reject(new DOMException('blocked','NotAllowedError'));};});
   await page.goto('/',{waitUntil:'domcontentloaded'});await page.locator('#subdex').scrollIntoViewIfNeeded();
   await page.evaluate(()=>window.dispatchEvent(new Event('scroll')));
   await expect(page.locator('#subdex img')).toBeVisible();
-  await expect(page.locator('#subdex video')).toHaveCount(0);await expect(page.locator('#subdex button')).toHaveCount(0);
+  await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'subdexPlayAttempted'))).toBe(true);
+  await expect(page.getByTestId('subdex-motion').locator('video,button')).toHaveCount(0);
+  await expect(page.locator('.landing-v2-spin video')).toHaveCount(0);
+  await expect(page.locator('.landing-v2-spin button')).toHaveCount(1);
+  await expect(page.locator('#subdex button')).toHaveCount(1);
 });
 
 test('SUBDEX single muted excerpt pauses by keyboard and on viewport exit',async({page,browserName})=>{

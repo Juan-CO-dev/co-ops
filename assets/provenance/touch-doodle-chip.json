@@ -1,0 +1,19 @@
+{
+  "id": "touch-doodle-chip",
+  "sourceId": "touch-doodle-chip",
+  "sourcePath": "source:touch-doodle-chip",
+  "sourceSha256": "1d7f6e74dcf9a333d0fa966e8b28ac9dfecaf261435fdd1b5e08e7562f515054",
+  "classification": "drawn",
+  "publicPath": "/brand/touch-doodle-chip-1d7f6e74dcf9.svg",
+  "sidecar": "assets/provenance/touch-doodle-chip.json",
+  "sha256": "1d7f6e74dcf9a333d0fa966e8b28ac9dfecaf261435fdd1b5e08e7562f515054",
+  "bytes": 280,
+  "maxBytes": 5000,
+  "width": 48,
+  "height": 48,
+  "load": "lazy",
+  "mode": "code-native",
+  "command": "node scripts/assets/export-landing-touches.mjs",
+  "inspection": "Approved: code-native illustrated outline and ridges; no photo input",
+  "reviewer": "Astra visual inspection 2026-10-17"
+}

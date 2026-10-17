@@ -1,3 +1,4 @@
+import { validVendorPlacement } from './tracking-schema-shared';
 export type LandingAction = 'OrderClick' | 'CateringClick' | 'Lead';
 export interface ActionDetails { store?: string; ad?: string; placement: string; vendor?: string; fbc?: string; fbp?: string }
 export interface TrackerConfig { serverApproved: boolean; pixelId?: string; capiEnabled?: boolean; sourceUrl: string; allowedStores: readonly string[]; allowedAds: readonly string[]; allowedPlacements: readonly string[] }
@@ -39,7 +40,7 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       const ad = details.ad && config.allowedAds.includes(details.ad) ? details.ad : 'unattributed';
       const params: Record<string,string> = {ad,placement:details.placement};
       if (details.store) params.store = details.store;
-      if (details.vendor) { if (name !== 'OrderClick' || details.placement !== 'footer' || !['ubereats','doordash'].includes(details.vendor)) return; params.vendor = details.vendor; }
+      if (details.vendor) { if (name !== 'OrderClick' || !validVendorPlacement(details.vendor,details.placement,details.store)) return; params.vendor = details.vendor; }
       const id = transport.uuid();
       if (hasPixel) safe(() => transport.pixel(name === 'Lead' ? 'track' : 'trackCustom',name,params,id));
       if (config.capiEnabled) {

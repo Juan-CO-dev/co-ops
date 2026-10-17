@@ -6,14 +6,28 @@ function mediaPath(id: string): string {
 }
 /** Only public metadata enters the application. */
 export const heroMedia = {
-  poster: mediaPath('hero-poster'), width: 750, height: 1125,
-  srcSet: [320, 640, 960].map(width => `${mediaPath(`hero-poster-${width}`)} ${width}w`).join(', '),
-  // 2:3 object-contain within the 28rem height cap; mobile has 5rem total gutters.
-  sizes: '(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)',
-  spin: mediaPath('crunchy-boi-spin'), background: '#FFE560',
+  poster: mediaPath('v2-p013-960'), width: 960, height: 1440,
+  srcSet: [320, 480, 640, 960, 1280].map(width => `${mediaPath(`v2-p013-${width}`)} ${width}w`).join(', '),
+  // Full-bleed mobile image; exactly half the viewport on desktop.
+  sizes: '(min-width: 768px) 50vw, 100vw',
+  spin: mediaPath('crunchy-boi-spin'), background: '#ed3308',
 } as const;
 
 export const subdexMedia = {
   poster: mediaPath('subdex-poster'), motion: mediaPath('subdex-catch'),
   width: 720, height: 720, background: '#FFE560',
 } as const;
+
+/** Shared real-photo candidates: identical sizes/URLs enable reuse in all three sections. */
+function texturePhoto(source:'p016'|'l083') {
+  return {src:mediaPath(`v2-${source}-720`),width:720,height:1080,
+    srcSet:[480,720,960].map(width=>`${mediaPath(`v2-${source}-${width}`)} ${width}w`).join(', '),
+    sizes:'(min-width: 768px) 480px, calc(100vw - 44px)'};
+}
+export const textureMedia={
+  texture:texturePhoto('p016'),crossSection:texturePhoto('l083'),
+  // Source 014 is a separately provenanced real photo, distinct from crave's L083.
+  catering:{src:mediaPath('hero-poster'),width:750,height:1125,
+    srcSet:[320,640,960].map(width=>`${mediaPath(`hero-poster-${width}`)} ${width}w`).join(', '),
+    sizes:'(min-width: 768px) 480px, calc(100vw - 44px)'},
+};

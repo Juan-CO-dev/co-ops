@@ -1,3 +1,4 @@
+import { warmRoutes } from './e2e-readiness.mjs';
 import { portBase, pidFile } from './e2e-ports.cjs';
 import { writeFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -58,13 +59,13 @@ const locations = createServer(async (req, res) => {
     res.writeHead(204); res.end(); return;
   }
   const url = new URL(req.url, `http://127.0.0.1:${portBase + 2}`);
-  if (req.method !== 'GET' || url.pathname !== '/rest/v1/locations' || url.searchParams.get('select') !== 'code,name,address,phone' || url.searchParams.get('active') !== 'eq.true') {
+  if (req.method !== 'GET' || url.pathname !== '/rest/v1/locations' || url.searchParams.get('select') !== 'code,name,address,phone,active' || url.searchParams.get('active') !== 'eq.true') {
     res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({code:'PGRST202',message:'Unsupported fixture request'})); return;
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify([
-    { code: 'MEP', name: 'Capitol Hill fixture shop', address: '100 Test Street SE', phone: '+12025550101' },
-    { code: 'EM', name: 'Dupont fixture shop', address: '200 Example Street NW', phone: '+12025550102' },
+    { code: 'MEP', name: 'Capitol Hill fixture shop', address: '100 Test Street SE', phone: '+12025550101', active:true },
+    { code: 'EM', name: 'Dupont fixture shop', address: '200 Example Street NW', phone: '+12025550102', active:true },
   ]));
 });
 await new Promise((resolve, reject) => { locations.once('error', reject); locations.listen(portBase + 2, '127.0.0.1', resolve); });
@@ -83,4 +84,13 @@ for (const signal of ['SIGTERM','SIGINT']) process.on(signal, () => stop(0));
 
 // Readiness belongs to these processes, never to another runner's open URL.
 await Promise.all(children.map(child=>child.ready));
+await warmRoutes([
+ `http://localhost:${portBase}/?lang=en`,
+ `http://localhost:${portBase}/?lang=es`,
+ `http://localhost:${portBase}/privacy`,
+ `http://127.0.0.1:${portBase}/`,
+ `http://127.0.0.1:${portBase + 1}/`,
+ `http://localhost:${portBase + 3}/`,
+ ...(nearby ? [`http://localhost:${portBase + 5}/`] : []),
+]);
 console.log('LANDING_E2E_READY');
