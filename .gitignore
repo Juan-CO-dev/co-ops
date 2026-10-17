@@ -29,6 +29,7 @@ scripts/sim/launch-readiness/.private/
 *.pem
 
 # debug
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -83,7 +84,22 @@ scripts/guide-test/__pycache__/
 
 # Local scratch (shop-versions snapshot export, catalog Phase 2a)
 tmp/
-
 # build scratch logs (agent handoffs)
 scratch/
 .tmp/
+
+# Landing browser and performance output
+/test-results/
+/playwright-report/
+/.lighthouseci/
+/.npm-cache/
+/tmp-landing-*.log
+!/.env.example
+/tmp-landing-server-pids.json
+
+# Landing private intermediates and Python environment
+/assets/work/
+/scripts/assets/__pycache__/
+/assets/.venv/
+
+/tmp-landing-server-pids-*.json

@@ -1,0 +1,5 @@
+# UNRESOLVED: v4 execution deliberately blocked pending a complete verified lock.
+# No dependency versions invented; no installs or model downloads authorized here.
+# Required: numpy, opencv-python-headless, pymatting, rembg[cpu], scipy, Pillow,
+# onnxruntime plus their transitive dependencies and local u2netp/birefnet models.
+# Default interpreter lacks required packages; see docs/assets.md.

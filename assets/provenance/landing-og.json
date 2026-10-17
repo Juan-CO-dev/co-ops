@@ -1,0 +1,17 @@
+{
+  "id": "landing-og",
+  "publicPath": "/brand/og-card.webp",
+  "classification": "brand",
+  "sourcePath": "public/brand/co-wordmark.svg",
+  "sourceSha256": "1170f72dc7e96e3e3f5910870023a71624ab08b50d1ff37c7af0ff53eabb2a45",
+  "sha256": "9b5998e9761b40e48673ed5d400e8a7c022d2149433dcb8f1c2f061f4d77bc11",
+  "bytes": 11956,
+  "maxBytes": 100000,
+  "width": 1200,
+  "height": 630,
+  "sidecar": "assets/provenance/landing-og.json",
+  "steps": [
+    "Existing approved wordmark, centered on brand Mayo background",
+    "Uniform width 1000; 1200x630 WebP quality90 effort6; no food"
+  ]
+}

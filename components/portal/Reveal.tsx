@@ -10,11 +10,16 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 export function Reveal({ children, className, delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [shown, setShown] = useState(false);
+  // SSR and the first hydration frame are always visible.
+  const [shown, setShown] = useState(true);
 
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (motion.matches) return;
+    if (el.getBoundingClientRect().top < window.innerHeight) return;
+    setShown(false);
     const io = new IntersectionObserver(
       (entries) => {
         const e = entries[0];
@@ -26,7 +31,9 @@ export function Reveal({ children, className, delay = 0 }: { children: ReactNode
       { threshold: 0.12, rootMargin: "0px 0px -48px 0px" },
     );
     io.observe(el);
-    return () => io.disconnect();
+    const revealOnReduction = () => { if (motion.matches) { setShown(true); io.disconnect(); } };
+    motion.addEventListener("change", revealOnReduction);
+    return () => { io.disconnect(); motion.removeEventListener("change", revealOnReduction); };
   }, []);
 
   return (

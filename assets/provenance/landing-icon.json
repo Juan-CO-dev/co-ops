@@ -1,0 +1,17 @@
+{
+  "id": "landing-icon",
+  "publicPath": "/brand/landing-icon.png",
+  "classification": "brand",
+  "sourcePath": "public/brand/co-icon.png",
+  "sourceSha256": "dd72a09b805e4c24a53d7bf52739df8ddaf73f5b0fc7374eff06d6d0f293ef2e",
+  "sha256": "007d12ccb60b8a50269e9df89634589ae4009a1ce64fcfabc29a29524a085c6f",
+  "bytes": 6135,
+  "maxBytes": 15000,
+  "width": 180,
+  "height": 180,
+  "sidecar": "assets/provenance/landing-icon.json",
+  "steps": [
+    "Uniform contain resize of existing repository brand asset to 180x180 with transparent padding",
+    "PNG compression level 9, 64-colour palette; original public/brand/co-icon.png unchanged"
+  ]
+}

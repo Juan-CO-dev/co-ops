@@ -1,0 +1,245 @@
+{
+  "id": "subdex-poster",
+  "publicPath": "/media/subdex-poster-drawn-4f35ab463487.webp",
+  "classification": "drawn",
+  "sourcePath": "assets/work/subdex-source-frame.png",
+  "sourceSha256": "f1321be97625c1484cc0c41f40c22f23dd2cb44c19be3925cf80c8c72236ba7f",
+  "sourceId": "subdex-frame-17-5",
+  "mode": "resize-only",
+  "quality": 85,
+  "sha256": "4f35ab4634873d62b3dcf2e1595c1fb10486796671790c40d1a06a0c72e8369d",
+  "width": 720,
+  "height": 720,
+  "bytes": 16874,
+  "maxBytes": 100000,
+  "sidecar": "assets/provenance/subdex-poster.json",
+  "steps": [
+    "Existing AI-DRAWN source; no generation",
+    "Crop and uniform resize; metadata stripped",
+    "Sharp rotate + uniform resize 720 + WebP quality85 effort6 from pinned drawn source frame"
+  ],
+  "cut": {
+    "start": 17.3,
+    "duration": 0.9,
+    "poster": 17.5,
+    "crop": [
+      0,
+      780,
+      1080,
+      1080
+    ],
+    "width": 720,
+    "height": 720
+  },
+  "alphaDependency": false,
+  "background": "Opaque gold rays retained from source; framed card, no transparent edges",
+  "originalUnchanged": true,
+  "sourceProbe": {
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+        "profile": "High",
+        "codec_type": "video",
+        "codec_tag_string": "avc1",
+        "codec_tag": "0x31637661",
+        "mime_codec_string": "avc1.640032",
+        "width": 1080,
+        "height": 1920,
+        "coded_width": 1080,
+        "coded_height": 1920,
+        "has_b_frames": 2,
+        "pix_fmt": "yuv420p",
+        "level": 50,
+        "color_range": "tv",
+        "color_space": "bt709",
+        "chroma_location": "left",
+        "field_order": "progressive",
+        "is_avc": "true",
+        "nal_length_size": "4",
+        "id": "0x1",
+        "r_frame_rate": "30/1",
+        "avg_frame_rate": "30/1",
+        "time_base": "1/15360",
+        "start_pts": 0,
+        "start_time": "0.000000",
+        "duration_ts": 384000,
+        "duration": "25.000000",
+        "bit_rate": "4978925",
+        "bits_per_raw_sample": "8",
+        "nb_frames": "750",
+        "extradata_size": 50,
+        "disposition": {
+          "default": 1,
+          "dub": 0,
+          "original": 0,
+          "comment": 0,
+          "lyrics": 0,
+          "karaoke": 0,
+          "forced": 0,
+          "hearing_impaired": 0,
+          "visual_impaired": 0,
+          "clean_effects": 0,
+          "attached_pic": 0,
+          "timed_thumbnails": 0,
+          "non_diegetic": 0,
+          "captions": 0,
+          "descriptions": 0,
+          "metadata": 0,
+          "dependent": 0,
+          "still_image": 0,
+          "multilayer": 0
+        },
+        "tags": {
+          "language": "und",
+          "handler_name": "VideoHandler",
+          "encoder": "Lavc62.28.101 libx264"
+        }
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "codec_long_name": "AAC (Advanced Audio Coding)",
+        "profile": "LC",
+        "codec_type": "audio",
+        "codec_tag_string": "mp4a",
+        "codec_tag": "0x6134706d",
+        "mime_codec_string": "mp4a.40.2",
+        "sample_fmt": "fltp",
+        "sample_rate": "48000",
+        "channels": 2,
+        "channel_layout": "stereo",
+        "bits_per_sample": 0,
+        "initial_padding": 0,
+        "id": "0x2",
+        "r_frame_rate": "0/0",
+        "avg_frame_rate": "0/0",
+        "time_base": "1/48000",
+        "start_pts": 0,
+        "start_time": "0.000000",
+        "duration_ts": 1200000,
+        "duration": "25.000000",
+        "bit_rate": "193785",
+        "nb_frames": "1173",
+        "extradata_size": 5,
+        "disposition": {
+          "default": 1,
+          "dub": 0,
+          "original": 0,
+          "comment": 0,
+          "lyrics": 0,
+          "karaoke": 0,
+          "forced": 0,
+          "hearing_impaired": 0,
+          "visual_impaired": 0,
+          "clean_effects": 0,
+          "attached_pic": 0,
+          "timed_thumbnails": 0,
+          "non_diegetic": 0,
+          "captions": 0,
+          "descriptions": 0,
+          "metadata": 0,
+          "dependent": 0,
+          "still_image": 0,
+          "multilayer": 0
+        },
+        "tags": {
+          "language": "und",
+          "handler_name": "SoundHandler"
+        }
+      }
+    ],
+    "format": {
+      "filename": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
+      "nb_streams": 2,
+      "nb_programs": 0,
+      "nb_stream_groups": 0,
+      "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+      "format_long_name": "QuickTime / MOV",
+      "start_time": "0.000000",
+      "duration": "25.000000",
+      "size": "16193221",
+      "bit_rate": "5181830",
+      "probe_score": 100,
+      "tags": {
+        "major_brand": "isom",
+        "minor_version": "512",
+        "compatible_brands": "isomiso2avc1mp41",
+        "encoder": "Lavf62.12.101"
+      }
+    }
+  },
+  "toolVersion": "ffmpeg version 8.1.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers\r",
+  "scriptSha256": "c23a7eb6a5f5d0a25f5c84d5bbe262f7d78890e8b01988b67cd28c165381fb77",
+  "commands": [
+    {
+      "tool": "ffprobe",
+      "args": [
+        "-v",
+        "error",
+        "-show_streams",
+        "-show_format",
+        "-of",
+        "json",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ss",
+        "17.3",
+        "-i",
+        "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
+        "-t",
+        "0.9",
+        "-an",
+        "-vf",
+        "crop=1080:1080:0:780,scale=720:720:flags=lanczos",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "slow",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-map_metadata",
+        "-1",
+        "C:\\Users\\conta\\co-ops-landing\\tmp\\subdex-export\\subdex-catch-drawn.mp4"
+      ]
+    },
+    {
+      "tool": "ffprobe",
+      "args": [
+        "-v",
+        "error",
+        "-show_streams",
+        "-show_format",
+        "-of",
+        "json",
+        "C:\\Users\\conta\\co-ops-landing\\tmp\\subdex-export\\subdex-catch-drawn.mp4"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-version"
+      ]
+    },
+    {
+      "tool": "ffmpeg",
+      "args": [
+        "-version"
+      ]
+    }
+  ],
+  "review": "All 27 frames inspected; no held item, baked text, or transition; Juan timecode approval pending"
+}

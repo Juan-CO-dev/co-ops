@@ -1,0 +1,192 @@
+{
+  "base": "ac4171f3",
+  "phase": "before-only; no application changes",
+  "sets": {
+    "ci": {
+      "unset": {
+        "runs": [
+          {
+            "raw": "tmp/ci-lhr-run4/raw-unset/lhr-1792183327534.json",
+            "lcp": 2755.1548000000003,
+            "observedLcp": 254,
+            "tbt": 35,
+            "performance": 0.96,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/ci-lhr-run4/raw-unset/lhr-1792183338907.json",
+            "lcp": 1725.2607,
+            "observedLcp": 98,
+            "tbt": 42,
+            "performance": 1,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/ci-lhr-run4/raw-unset/lhr-1792183349857.json",
+            "lcp": 2732.8741,
+            "observedLcp": 131,
+            "tbt": 32,
+            "performance": 0.96,
+            "cls": 0
+          }
+        ],
+        "medianLcp": 2732.8741,
+        "medianTbt": 35
+      },
+      "accepted": {
+        "runs": [
+          {
+            "raw": "tmp/ci-lhr-run4/raw-accepted/lhr-1792183442456.json",
+            "lcp": 1887.71,
+            "observedLcp": 224,
+            "tbt": 37.5,
+            "performance": 1,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/ci-lhr-run4/raw-accepted/lhr-1792183453745.json",
+            "lcp": 1682.2353,
+            "observedLcp": 82,
+            "tbt": 29.5,
+            "performance": 1,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/ci-lhr-run4/raw-accepted/lhr-1792183464492.json",
+            "lcp": 2152.51425,
+            "observedLcp": 128,
+            "tbt": 29,
+            "performance": 0.99,
+            "cls": 0
+          }
+        ],
+        "medianLcp": 1887.71,
+        "medianTbt": 29.5
+      }
+    },
+    "local": {
+      "unset": {
+        "runs": [
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-17-07.997Z-merge-dc7702bd/raw-unset/lhr-1792185501222.json",
+            "lcp": 2836.04,
+            "observedLcp": 1050,
+            "tbt": 132,
+            "performance": 0.94,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-17-07.997Z-merge-dc7702bd/raw-unset/lhr-1792185519832.json",
+            "lcp": 1920.2060000000001,
+            "observedLcp": 235,
+            "tbt": 148.0000000000001,
+            "performance": 0.98,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-17-07.997Z-merge-dc7702bd/raw-unset/lhr-1792185533226.json",
+            "lcp": 2192.1274999999996,
+            "observedLcp": 185,
+            "tbt": 128,
+            "performance": 0.98,
+            "cls": 0
+          }
+        ],
+        "medianLcp": 2192.1274999999996,
+        "medianTbt": 132
+      },
+      "accepted": {
+        "runs": [
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-17-07.997Z-merge-dc7702bd/raw-accepted/lhr-1792185561543.json",
+            "lcp": 3370.9049999999997,
+            "observedLcp": 836,
+            "tbt": 275,
+            "performance": 0.86,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-17-07.997Z-merge-dc7702bd/raw-accepted/lhr-1792185578773.json",
+            "lcp": 1986.0874999999999,
+            "observedLcp": 193,
+            "tbt": 117,
+            "performance": 0.98,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-17-07.997Z-merge-dc7702bd/raw-accepted/lhr-1792185595091.json",
+            "lcp": 3110.733,
+            "observedLcp": 284,
+            "tbt": 262,
+            "performance": 0.89,
+            "cls": 0
+          }
+        ],
+        "medianLcp": 3110.733,
+        "medianTbt": 262
+      }
+    },
+    "loaded": {
+      "unset": {
+        "runs": [
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-20-37.208Z-merge-9e1384a5/raw-unset/lhr-1792185662908.json",
+            "lcp": 3207.864,
+            "observedLcp": 1527,
+            "tbt": 161,
+            "performance": 0.91,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-20-37.208Z-merge-9e1384a5/raw-unset/lhr-1792185682733.json",
+            "lcp": 1799.542,
+            "observedLcp": 222,
+            "tbt": 240.00000000000045,
+            "performance": 0.95,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-20-37.208Z-merge-9e1384a5/raw-unset/lhr-1792185698176.json",
+            "lcp": 1969.656,
+            "observedLcp": 279,
+            "tbt": 246.5,
+            "performance": 0.95,
+            "cls": 0
+          }
+        ],
+        "medianLcp": 1969.656,
+        "medianTbt": 240.00000000000045
+      },
+      "accepted": {
+        "runs": [
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-20-37.208Z-merge-9e1384a5/raw-accepted/lhr-1792185733377.json",
+            "lcp": 3713.2459999999996,
+            "observedLcp": 1398,
+            "tbt": 443.00000000000045,
+            "performance": 0.78,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-20-37.208Z-merge-9e1384a5/raw-accepted/lhr-1792185759620.json",
+            "lcp": 2048.884,
+            "observedLcp": 519,
+            "tbt": 433.029,
+            "performance": 0.88,
+            "cls": 0
+          },
+          {
+            "raw": "tmp/landing-performance/2026-10-16T21-20-37.208Z-merge-9e1384a5/raw-accepted/lhr-1792185775426.json",
+            "lcp": 2140.87,
+            "observedLcp": 350,
+            "tbt": 346.0260000000004,
+            "performance": 0.91,
+            "cls": 0
+          }
+        ],
+        "medianLcp": 2140.87,
+        "medianTbt": 433.029
+      }
+    }
+  }
+}
