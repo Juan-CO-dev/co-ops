@@ -49,6 +49,7 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { EmptyState } from "@/components/EmptyState";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import { prepItemHref, productHref, skuCatalogHref } from "@/lib/admin/product-item-links-shared";
+import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 import { menuItemPageHref } from "@/lib/catalog/recipe-item-shared";
 import {
   FOOD_COST_RED_THRESHOLD_PCT,
@@ -77,12 +78,14 @@ export function MenuCostingClient({
   skuNames,
   itemNames,
   productNames,
+  canOpenSkuItem = false,
   toastFetchedAt = null,
   toastUnavailable = false,
   toastNotices = [],
   scope,
 }: {
   /** The board's scope: a shop id, null = all shops (the global menu), undefined = not known (the remembered shop). The drawer opens the menu item page for it (catalog Phase 3b). */
+  canOpenSkuItem?: boolean;
   scope?: string | null;
   toastFetchedAt?: string | null;
   toastUnavailable?: boolean;
@@ -236,6 +239,8 @@ export function MenuCostingClient({
                       <p className="mb-2 text-xs text-co-text-muted">{t("admin.menu_costing.price.label")}: {row.includedInSubPrice ? t("admin.menu_costing.price.included") : money(row.menuPrice)}</p>}
                     <a href={menuItemPageHref(row.id, { shopId: scope })} className={drawerLinkCls}>{t("catalog.menu.open_page")}</a>
                     <RowDrawer
+                      canOpenSkuItem={canOpenSkuItem}
+                      scope={scope}
                       row={row}
                       skuNames={skuNames}
                       itemNames={itemNames}
@@ -334,6 +339,8 @@ function RowBadges({
 }
 
 function RowDrawer({
+  canOpenSkuItem,
+  scope,
   row,
   skuNames,
   itemNames,
@@ -342,6 +349,8 @@ function RowDrawer({
   money,
   t,
 }: {
+  canOpenSkuItem?: boolean;
+  scope?: string | null;
   row: MenuCostRow;
   skuNames: Record<string, string>;
   itemNames: Record<string, { en: string; es: string | null }>;
@@ -384,7 +393,7 @@ function RowDrawer({
 
   /** The two prep-blocked drawers — same list, different errand. */
   const prepList = (ids: string[], labelKey: TranslationKey) =>
-    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item", prepItemHref);
+    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item", id => prepItemHref(id, scope ?? undefined));
 
   if (status === "no_recipe") {
     return <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.no_recipe_help")}</p>;
@@ -449,7 +458,7 @@ function RowDrawer({
           <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
             {unpricedSkuIds.map((id) => (
               <li key={id} className="text-xs font-medium text-co-text">
-                <a href={skuCatalogHref(id)} className={drawerLinkCls}>
+                <a href={canOpenSkuItem ? skuItemHref(id, { shopId: scope, job: "price" }) : skuCatalogHref(id)} className={drawerLinkCls}>
                   {skuNames[id] ?? t("admin.menu_costing.drawer.unknown_sku")}
                 </a>
               </li>

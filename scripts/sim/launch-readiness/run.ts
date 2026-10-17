@@ -8,11 +8,12 @@ import net from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { loadSimEnv } from "./env";
 import { Evidence } from "./evidence";
-import { acquire, assertHeld, release } from "./lease.mjs";
+import { acquire, assertHeld, release, quarantine } from "./lease.mjs";
 import { SIM_APP_ORIGIN, RUNNER_PRIVATE_KEYS } from "../../../lib/sim-isolation-shared";
 import { SIM_LOCATIONS, SIM_PERSONAS } from "../personas-shared";
 import * as driver from "../concurrency/driver.mjs";
 import { resetFixture, assertClean } from "./reset";
+import { CatalogDirtyWriteError } from "../../catalog-jobs/cleanup.mjs";
 import type { Catalog } from "./fixtures";
 import { startProduction, buildReceiptPath, buildAssetsFromHtml, type BuildReceipt } from "./target";
 
@@ -138,6 +139,7 @@ export async function main(args = process.argv.slice(2)) {
   mkdirSync(resolve("scripts/sim/launch-readiness/.artifacts", runId), { recursive: true });
   const heartbeat = setInterval(() => { try { writeFileSync(heartbeatFile, new Date().toISOString()); } catch { /* best effort */ } }, 30_000);
   heartbeat.unref?.();
+  let quarantineLease = false;
   let held = false, server: ChildProcess | undefined, playwright: ChildProcess | undefined, interrupted = false, stage = "lease", configFile: string | undefined;
   const signal = () => { interrupted = true; void stopped(playwright).catch(() => {}); void stopped(server).catch(() => {}); };
   process.on("SIGINT", signal); process.on("SIGTERM", signal);
@@ -325,6 +327,7 @@ export async function main(args = process.argv.slice(2)) {
       evidence.manifest.status = code === 0 && !interrupted ? "pass" : "fail"; evidence.manifest.reason = interrupted ? "interrupted" : code === 0 ? options.dev ? "contracts passed (development mode; not release evidence)" : "production contracts passed" : "Playwright failed";
     }
   } catch (error) {
+    quarantineLease = error instanceof CatalogDirtyWriteError;
     evidence.manifest.status = stage === "playwright" || stage === "identity" ? "fail" : "blocked";
     evidence.manifest.reason = stage === "fixture" ? "fixture reset/contract blocked; inspect fixtures/manifest.json and DIRTY marker" : `${stage} ${interrupted ? "interrupted" : "failed or blocked"}`;
     if (stage === "lease" && error instanceof Error) {
@@ -380,7 +383,10 @@ export async function main(args = process.argv.slice(2)) {
         evidence.write("manifest.json", evidence.manifest);
       } finally {
         try {
-          if (held) release(runId);
+          if (held) {
+            if (quarantineLease) quarantine(runId);
+            else release(runId);
+          }
         } catch {
           evidence.manifest.status = "fail"; evidence.manifest.reason = "lease release failed";
           evidence.write("manifest.json", evidence.manifest);

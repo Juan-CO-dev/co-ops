@@ -28,6 +28,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import {
   createEmptyGuide,
   loadOrderGuide,
+  loadGuideSkuShopNames,
   ORDER_GUIDE_EDIT_MIN,
   OrderGuideError,
   saveOrderGuide,
@@ -63,13 +64,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     .returns<Array<{ id: string; name: string; item_number: string | null; location_id?: string | null; active?: boolean }>>();
   if (error) return jsonError(500, "internal_error");
 
-  const ownerIds = [...new Set((skus ?? []).map(s => s.location_id).filter((id): id is string => id != null))];
-  const ownerRead = ownerIds.length ? await sb.from("locations").select("id, name").in("id", ownerIds).returns<Array<{id: string; name: string}>>() : {data: [], error: null};
-  if (ownerRead.error) return jsonError(500, "internal_error");
-  const names = new Map((ownerRead.data ?? []).map(s => [s.id, s.name]));
+  let onlyAt: Record<string, string>;
+  try {
+    onlyAt = await loadGuideSkuShopNames((skus ?? []).filter(s => scope === null || ownerVisible(s.location_id, scope)));
+  } catch {
+    return jsonError(500, "internal_error");
+  }
   return jsonOk({
     guide,
-    ownership: Object.fromEntries((skus ?? []).filter(s => s.location_id != null && (scope === null || ownerVisible(s.location_id, scope))).map(s => [s.id, names.get(s.location_id!) ?? s.location_id])),
+    ownership: onlyAt,
+    onlyAt,
     skusNotOnGuide: (skus ?? [])
       .filter((s) => s.active !== false && !placed.has(s.id) && (scope === null || ownerVisible(s.location_id, scope)))
       .map((s) => ({ skuId: s.id, name: s.name, itemNumber: s.item_number })),

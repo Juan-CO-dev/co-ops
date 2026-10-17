@@ -22,7 +22,7 @@ function session(role: string, level: number, stepUp: "fresh" | "none" = "fresh"
   } as never);
 }
 const req = (url: string, body: unknown) => new NextRequest(`https://example.test${url}`, {
-  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  method: "POST", headers: { origin: "https://example.test", "content-type": "application/json" }, body: JSON.stringify(body),
 });
 const accountant = { kind: "external", displayName: "Accountant", email: "", active: true, cateringDigest: false, shopDigest: false, locationIds: null, packages: ["cash"], cadence: "daily_close", formats: ["csv", "pdf"] };
 

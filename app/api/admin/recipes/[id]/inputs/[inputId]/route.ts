@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
 /**
  * PATCH /api/admin/recipes/[id]/inputs/[inputId] — edit ONE recipe line in place (catalog
@@ -18,6 +19,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; inputId: string }> },
 ) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id, inputId } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

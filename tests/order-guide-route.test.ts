@@ -24,7 +24,7 @@ import { NextRequest } from "next/server";
 import { GET, POST } from "@/app/api/admin/vendors/[id]/order-guide/route";
 import { requireSession } from "@/lib/session";
 import { assertSameOrigin } from "@/lib/portal/csrf";
-import { createEmptyGuide, loadOrderGuide, OrderGuideError, saveOrderGuide } from "@/lib/order-guides";
+import { createEmptyGuide, loadOrderGuide, loadGuideSkuShopNames, OrderGuideError, saveOrderGuide } from "@/lib/order-guides";
 import type { GuideModel } from "@/lib/order-guides-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { RoleCode } from "@/lib/roles";
@@ -39,6 +39,7 @@ vi.mock("@/lib/order-guides", async () => {
     OrderGuideError: shared.OrderGuideError,
     ORDER_GUIDE_EDIT_MIN: 7,
     loadOrderGuide: vi.fn(),
+    loadGuideSkuShopNames: vi.fn(),
     saveOrderGuide: vi.fn(),
     createEmptyGuide: vi.fn(),
   };
@@ -86,6 +87,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(assertSameOrigin).mockReturnValue(null);
   vi.mocked(loadOrderGuide).mockResolvedValue(guide);
+  vi.mocked(loadGuideSkuShopNames).mockResolvedValue({});
   stubSkus([
     { id: SKU_ON, name: "Eggs", item_number: "439686" },
     { id: SKU_OFF, name: "Turkey", item_number: null },
@@ -109,8 +111,22 @@ describe("GET — read is key-holder+, and the bucket is what is NOT on the guid
     expect(await res.json()).toEqual({
       guide,
       ownership: {},
+      onlyAt: {},
       skusNotOnGuide: [{ skuId: SKU_OFF, name: "Turkey", itemNumber: null }],
     });
+  });
+
+  it("reload returns owner labels from the common loader without dropping other shops' lines", async () => {
+    asActor("gm");
+    vi.mocked(loadGuideSkuShopNames).mockResolvedValue({ [SKU_ON]: "North", [SKU_OFF]: "South" });
+    const body = await (await GET(req(), { params })).json();
+    expect(body.onlyAt).toEqual({ [SKU_ON]: "North", [SKU_OFF]: "South" });
+    expect(body.guide).toEqual(guide);
+    expect(loadOrderGuide).toHaveBeenCalledWith(VENDOR, undefined);
+    expect(loadGuideSkuShopNames).toHaveBeenCalledWith([
+      { id: SKU_ON, name: "Eggs", item_number: "439686" },
+      { id: SKU_OFF, name: "Turkey", item_number: null },
+    ]);
   });
 
   it("serves a vendor with no guide at all: null guide, every active SKU in the bucket", async () => {

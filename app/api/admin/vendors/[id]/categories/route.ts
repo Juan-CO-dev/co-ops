@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -8,6 +9,8 @@ import { setVendorCategories, AdminVendorError } from "@/lib/admin/vendors";
 // PUT — replace the vendor's category set (GM+ ≥7, Tier A). Body {categoryIds:[]}.
 // ≥1 required; all ids must exist + be active (enforced in the lib).
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

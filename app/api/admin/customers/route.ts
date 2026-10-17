@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -12,6 +13,8 @@ import { requireSession } from "@/lib/session";
  * catering/ezCater orders (9+). The irreversible acts live on /api/admin/customers/confirm (Tier B).
  */
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/admin/customers");
   if (ctx instanceof Response) return ctx;
   if (!customerProfilesEnabled()) return jsonError(404, "not_enabled");

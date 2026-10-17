@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // POST /api/admin/report-recipients/settings — the digest switch (off | preview | live), the
 // catering digest time, the unified fallback time and the watch grace (0220 report_settings).
 // Level 9+ with a fresh Tier-B step-up.
@@ -10,6 +11,8 @@ import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/admin/report-recipients/settings");
   if (ctx instanceof Response) return ctx;
   if (ctx.level < RECIPIENTS_MANAGE_MIN) return jsonError(403, "role_insufficient");

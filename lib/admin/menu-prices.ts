@@ -11,7 +11,7 @@ export class MenuPriceError extends Error {
   constructor(public status: number, public code: string) { super(code); }
 }
 
-export async function updateMenuPrice(actor: AuthContext, id: string, value: unknown, expectedMenuPrice: unknown): Promise<void> {
+export async function updateMenuPrice(actor: AuthContext, id: string, value: unknown, expectedMenuPrice: unknown, expectedOwner?: string | null): Promise<void> {
   if (getRoleLevel(actor.user.role) < MENU_PRICE_WRITE_MIN) throw new MenuPriceError(403, "forbidden");
   // expected echoes what is STORED, and the column allows any price >= 0 — only the new value is held to the editor's rules.
   const expectedOk = expectedMenuPrice === null || (typeof expectedMenuPrice === "number" && Number.isFinite(expectedMenuPrice) && expectedMenuPrice >= 0);
@@ -22,6 +22,7 @@ export async function updateMenuPrice(actor: AuthContext, id: string, value: unk
     .maybeSingle<{ menu_price: number | string | null; catering_available: boolean; location_id: string | null }>();
   if (error) throw new MenuPriceError(500, "internal_error");
   if (!data) throw new MenuPriceError(404, "not_found");
+  if (expectedOwner !== undefined && (data.location_id ?? null) !== expectedOwner) throw new MenuPriceError(409, "ownership_changed");
   const gate = ownerWriteCheck({ role: actor.user.role, level: getRoleLevel(actor.user.role), locations: actor.locations }, data.location_id ?? null);
   if (!gate.ok) throw new MenuPriceError(gate.status, gate.code);
   const before = data.menu_price == null ? null : Number(data.menu_price);

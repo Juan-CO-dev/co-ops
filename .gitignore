@@ -84,6 +84,10 @@ scripts/guide-test/__pycache__/
 
 # Local scratch (shop-versions snapshot export, catalog Phase 2a)
 tmp/
+# build scratch logs (agent handoffs)
+scratch/
+.tmp/
+
 # Landing browser and performance output
 /test-results/
 /playwright-report/

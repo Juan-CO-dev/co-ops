@@ -37,7 +37,7 @@ const R = "7d0c1f2e-0000-4000-8000-000000000001";
 const SHOP = "6f1d2c3e-0000-4000-8000-00000000000a";
 const V = "7d0c1f2e-0000-4000-8000-0000000000aa";
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
-  new NextRequest(`${HOST}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  new NextRequest(`${HOST}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: HOST, ...headers }, body: JSON.stringify(body) });
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
 describe("source pins: previews are a read for those who may save", () => {
@@ -83,6 +83,26 @@ beforeEach(() => {
 
 describe("the recipe routes", () => {
   const change = { kind: "back_to_default", shopId: SHOP };
+  it("preserves owned target identity through preview and Tier E apply", async () => {
+    const owned = { kind: "restore", target: { kind: "owned", ownerLocationId: SHOP }, fromVersionId: V };
+    vi.mocked(computeRecipePreview).mockResolvedValue({ token: "owned" } as never);
+    expect((await recipePreview(post(`/api/admin/catalog/recipe/${R}/preview`, { change: owned }), params(R))).status).toBe(200);
+    expect(computeRecipePreview).toHaveBeenCalledWith(expect.anything(), R, owned);
+    expect(assertStepUp).not.toHaveBeenCalled();
+    vi.mocked(applyRecipeChange).mockResolvedValue({ versionId: V });
+    expect((await recipeApply(post(`/api/admin/catalog/recipe/${R}/apply`, { change: owned, previewToken: "owned" }), params(R))).status).toBe(201);
+    expect(applyRecipeChange).toHaveBeenCalledWith(expect.anything(), R, owned, "owned");
+    expect(assertStepUp).toHaveBeenCalledWith(expect.anything(), "E");
+  });
+  it("refuses missing owner identity before preview and preserves ownership-change refusal", async () => {
+    const owned = { kind: "restore", target: { kind: "owned", ownerLocationId: SHOP }, fromVersionId: V };
+    expect((await recipePreview(post(`/api/admin/catalog/recipe/${R}/preview`, { change: { ...owned, target: { kind: "owned" } } }), params(R))).status).toBe(400);
+    expect(computeRecipePreview).not.toHaveBeenCalled();
+    vi.mocked(applyRecipeChange).mockRejectedValue(new RecipeVersionError(409, "ownership_changed"));
+    const res = await recipeApply(post(`/api/admin/catalog/recipe/${R}/apply`, { change: owned, previewToken: "owned" }), params(R));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "ownership_changed" });
+  });
   it("preview: the parsed change reaches the lib and the preview comes back", async () => {
     vi.mocked(computeRecipePreview).mockResolvedValue({ token: "abcd1234" } as never);
     const res = await recipePreview(post(`/api/admin/catalog/recipe/${R}/preview`, { change }), params(R));

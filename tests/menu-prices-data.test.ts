@@ -115,7 +115,7 @@ describe("price writer", () => {
 });
 
 function request(body: unknown) {
-  return PATCH(new NextRequest(`http://localhost/api/admin/menu-items/${id}/price`, { method: "PATCH", body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
+  return PATCH(new NextRequest(`http://localhost/api/admin/menu-items/${id}/price`, { method: "PATCH", headers: { origin: "http://localhost" }, body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
 }
 describe("PATCH price", () => {
   it("requires session, GM floor, and the Tier E edit window", async () => {

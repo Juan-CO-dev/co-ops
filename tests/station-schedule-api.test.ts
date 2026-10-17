@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import type { NextRequest } from "next/server";
+import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({ session: vi.fn(), step: vi.fn(), save: vi.fn() }));
 vi.mock("@/lib/session", () => ({ requireSession: mocks.session }));
 vi.mock("@/lib/admin/step-up", () => ({ assertStepUp: mocks.step }));
@@ -7,7 +7,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({}) }));
 vi.mock("@/lib/assignments", () => ({ saveStationTiming: mocks.save, AssignmentError: class extends Error {} }));
 import { POST } from "@/app/api/admin/stations/route";
 const body = { operation: "timing", locationId: "shop", stationId: "station", usuallyClosesAt: "14:00", trims: [{ at: "13:00", to_count: 1 }] };
-const request = (data = body) => new Request("http://localhost/api/admin/stations", { method: "POST", body: JSON.stringify(data) }) as NextRequest;
+const request = (data = body) => new NextRequest("http://localhost/api/admin/stations", { method: "POST", headers: { origin: "http://localhost" }, body: JSON.stringify(data) });
 beforeEach(() => { vi.clearAllMocks(); mocks.session.mockResolvedValue({ user: { id: "gm" }, role: "gm", level: 7, locations: ["shop"] }); mocks.step.mockReturnValue({ ok: true }); mocks.save.mockResolvedValue({ id: "station" }); });
 it.each([3, 4, 5, 6])("rejects level %s before settings I/O", async level => {
   mocks.session.mockResolvedValue({ user: { id: "person" }, level });

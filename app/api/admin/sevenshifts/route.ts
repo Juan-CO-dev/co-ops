@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -27,6 +28,8 @@ const ACTIONS: Record<string, readonly string[]> = {
  * No email, no notification.
  */
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // Sync now's ONE absolute deadline starts here, before the session check (chunk C review, Astra P2).
   const routeStartedAt = Date.now();
   const ctx = await requireSession(req, "/api/admin/sevenshifts");

@@ -30,7 +30,7 @@ const SHOP = "11111111-1111-4111-8111-111111111111";
 const LINK = "22222222-2222-4222-8222-222222222222";
 const USER = "33333333-3333-4333-8333-333333333333";
 const post = (body: unknown) => POST(new NextRequest("http://localhost/api/admin/sevenshifts", {
-  method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" },
+  method: "POST", body: JSON.stringify(body), headers: { origin: "http://localhost", "content-type": "application/json" },
 }));
 
 beforeEach(() => {

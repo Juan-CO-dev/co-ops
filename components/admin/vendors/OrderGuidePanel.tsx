@@ -42,6 +42,7 @@ export interface OrderGuideInitial {
   guide: GuideModel | null;
   skusNotOnGuide: GuideBucketSku[];
   ownership?: Record<string, string>;
+  onlyAt?: Record<string, string>;
 }
 
 const fieldCls =
@@ -336,7 +337,8 @@ export function OrderGuidePanel({
                   <li key={line.id} className="rounded-lg border-2 border-co-border bg-co-surface-inset p-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0 text-sm text-co-text">
-                        <span className="font-bold">{line.label}{line.skuId && baseline.ownership?.[line.skuId] ? ` (${baseline.ownership[line.skuId]})` : ""}</span>
+                        <span className="font-bold">{line.label}</span>
+                        {line.skuId && baseline.onlyAt?.[line.skuId] ? <span className="block break-words text-xs text-co-text-muted">{t("catalog.only_at_shop", { shop: baseline.onlyAt[line.skuId]! })}</span> : null}
                         {line.itemNumber ? <span className="ml-2 text-co-text-muted">{line.itemNumber}</span> : null}
                         <span className="ml-2">
                           {line.skuId ? (
@@ -449,7 +451,8 @@ export function OrderGuidePanel({
                 {bucket.map((s) => (
                   <li key={s.skuId} className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-sm text-co-text">
-                      {s.name}{baseline.ownership?.[s.skuId] ? ` (${baseline.ownership[s.skuId]})` : ""}
+                      {s.name}
+                      {baseline.onlyAt?.[s.skuId] ? <span className="block break-words text-xs text-co-text-muted">{t("catalog.only_at_shop", { shop: baseline.onlyAt[s.skuId]! })}</span> : null}
                       {s.itemNumber ? <span className="ml-2 text-co-text-muted">{s.itemNumber}</span> : null}
                     </span>
                     {canEdit && model.sections.length > 0 ? (

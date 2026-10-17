@@ -5865,7 +5865,7 @@ Record the numbers and the report in the PR. Two outcomes are a STOP:
 
 ```bash
 curl -s -X POST http://localhost:3100/api/admin/catalog/sku/<SKU_ID>/pack \
-  -H "content-type: application/json" -H "cookie: <sim session cookie>" \
+  -H "Origin: http://localhost:3100" -H "content-type: application/json" -H "cookie: <sim session cookie>" \
   -d '{"locationId":"<SHOP_ID>","expectedLiveVersionId":null,"levels":[{"label":"case","containsQty":4,"containsIndex":1,"containsMeasureUnit":null},{"label":"bag","containsQty":10,"containsIndex":null,"containsMeasureUnit":"lb"}]}'
 ```
 

@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // POST confirm / reject / unmap one crosswalk row (GM+ >= 7, Tier A step-up).
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -7,6 +8,8 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { confirmMapping, rejectMapping, unmapConfirmed, AdminToastMapError, TOAST_MAP_MIN } from "@/lib/admin/toast-map";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

@@ -146,7 +146,7 @@ it("catering PATCH returns owned_not_catering as a named 400 through the real wr
   cateringState.from.mockReturnValue(chain);
   const response = await patchCatering(new NextRequest("http://localhost/api/admin/catering/menu/owned", {
     method: "PATCH", body: JSON.stringify({ kind: "menu_item", cateringAvailable: true }),
-    headers: { "content-type": "application/json" },
+    headers: { origin: "http://localhost", "content-type": "application/json" },
   }), { params: Promise.resolve({ id: "owned" }) });
   expect(chain.update).toHaveBeenCalledWith(expect.objectContaining({ catering_available: true }), { count: "exact" });
   expect(response.status).toBe(400);

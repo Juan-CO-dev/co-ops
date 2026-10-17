@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { extractIp, jsonError, parseJsonBody } from "@/lib/api-helpers";
@@ -11,6 +12,8 @@ import { listParamsInput, parseListParams } from "@/lib/customers/list-params-sh
  * META_AUDIENCE_EXPORT is off (Pete's OK pending). Nothing is uploaded anywhere: this is a download.
  */
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/admin/customers/export");
   if (ctx instanceof Response) return ctx;
   if (!customerProfilesEnabled()) return jsonError(404, "not_enabled");

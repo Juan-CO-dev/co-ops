@@ -20,6 +20,7 @@ import { MenuShopError } from "@/lib/admin/menu-item-shop";
 import { catalogShopAllowed } from "@/lib/sku-versions-shared";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { MenuItemClient } from "@/components/catalog/MenuItemClient";
+import { OwnedSandwichClient } from "@/components/catalog/OwnedSandwichClient";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Level 6+ reads the menu item page (operational managers and up), as the lib's view rule. */
@@ -66,7 +67,8 @@ export default async function CatalogMenuItemPage({
       <PageHeader title={lang === "es" && view.here.nameEs ? view.here.nameEs : view.here.name} subtitle={serverT(lang, "catalog.menu.kind")} />
       {/* ONE client per (menu item, shop): a ?location= switch REMOUNTS it, so no draft or preview from the previous
           shop survives into this one. */}
-      <MenuItemClient key={pageClientKey("menu", view.item.id, view.scope)} view={view} />
+      {view.owner ? <OwnedSandwichClient key={`${pageClientKey("menu", view.item.id, view.scope)}:${view.owner.locationId}`} view={view} />
+        : <MenuItemClient key={pageClientKey("menu", view.item.id, view.scope)} view={view} />}
     </div>
   );
 }

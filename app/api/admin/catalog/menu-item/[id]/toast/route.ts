@@ -1,3 +1,4 @@
+import { loadToastLinkChoices } from "@/lib/catalog/toast-link";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { assertStepUp } from "@/lib/admin/step-up";
@@ -34,4 +35,18 @@ export async function POST(req: NextRequest, { params }: {
     catch (error) {
         return catalogError(ctx, error);
     }
+}
+
+// A selected-shop read: session and operational role, never step-up or origin.
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const ctx = await requireSession(req, req.nextUrl.pathname);
+    if (ctx instanceof Response) return ctx;
+    if (ctx.level < 7 || ctx.user.role === "social_media_mgr") return catalogRefusal(ctx, 403, "forbidden");
+    const { id } = await params;
+    if (!uuid(id)) return catalogRefusal(ctx, 404, "not_found");
+    const locationId = req.nextUrl.searchParams.get("location");
+    if (!uuid(locationId)) return catalogRefusal(ctx, 400, "invalid_payload");
+    try {
+        return jsonOk({ ...await loadToastLinkChoices(ctx, id, locationId) });
+    } catch (error) { return catalogError(ctx, error); }
 }

@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -9,6 +10,8 @@ import { setProductUnitOz, ProductError } from "@/lib/products";
 // (GM+ ≥7, Tier E — mirrors a SKU edit). `unitOz: null` clears the belief, and
 // clearing also clears who/when: NULL is the honest value, never a placeholder.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

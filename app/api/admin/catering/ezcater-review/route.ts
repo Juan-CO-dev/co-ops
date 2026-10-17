@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -6,6 +7,8 @@ import { decideEzcaterCustomization, decideEzcaterMapping, decideEzcaterMappingD
 import { parseCustomizationDecision } from "@/lib/ezcater/customization-validation-shared";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const actor = await requireSession(req, "/api/admin/catering/ezcater-review");
   if (actor instanceof Response) return actor;
   const body = await parseJsonBody(req);

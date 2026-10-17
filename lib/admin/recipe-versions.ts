@@ -193,6 +193,8 @@ export async function loadRecipeLiveSet(recipeId: string, scope: VersionScope): 
 // ── The one writer ────────────────────────────────────────────────────────────
 
 export interface WriteRecipeVersionInput {
+  /** Owner captured by the catalog preview; never rebase an owned save after Share. */
+  expectedOwner?: string;
   recipeId: string;
   scope: VersionScope;
   /** This scope's live version the person saw (the shop's, null = riding the default; or the global head). */
@@ -238,6 +240,7 @@ async function loadVersionLineFields(versionId: string): Promise<RecipeLineField
  */
 export async function writeRecipeVersion(actor: AuthContext, input: WriteRecipeVersionInput): Promise<WriteRecipeVersionResult> {
   const owner = await requireRecipeScope(actor, input.recipeId, input.scope);
+  if (input.expectedOwner !== undefined && owner !== input.expectedOwner) throw new RecipeVersionError(409, "ownership_changed");
   // THE SAME LINE RULES AS AN ADD / UPDATE (Astra 3a r1#5) — for every line this save ADDS or CREATES (lead
   // decision (b)): the sent set, or the source a restore / adopt / promote copies, against the set this scope
   // resolves NOW. A line already there, unchanged, may stay even if it no longer passes (it is flagged on the page),
@@ -303,6 +306,7 @@ async function validateLine(line: RecipeLineFields, position: number): Promise<v
 }
 
 export interface SaveRecipeLinesInput {
+  expectedOwner?: string;
   recipeId: string;
   scope: VersionScope;
   expectedVersionId: string | null;
@@ -333,7 +337,7 @@ export async function saveRecipeLines(
     recipeId: input.recipeId, scope: input.scope, expectedVersionId: input.expectedVersionId,
     basedOnVersionId: live.ridesDefault ? live.globalVersionId : null, lines: applied.lines, note: input.note ?? null,
     op: input.op.kind, changes: diffRecipeLineSets(live.lines.map((l) => l.fields), applied.lines.map((l) => l.fields)),
-    snapshot,
+    snapshot, expectedOwner: input.expectedOwner,
   });
   return { versionId: r.versionId, retiredVersionId: r.retiredVersionId, changed: true };
 }
@@ -346,6 +350,7 @@ export async function restoreRecipeVersion(
   actor: AuthContext,
   input: {
     recipeId: string; scope: VersionScope; fromVersionId: string; expectedVersionId: string | null; basedOnVersionId: string | null;
+    expectedOwner?: string;
     snapshot?: RecipeChangeSnapshot;
   },
 ): Promise<WriteRecipeVersionResult> {
@@ -359,7 +364,7 @@ export async function restoreRecipeVersion(
   const snapshot = input.snapshot ?? await loadRecipeChangeSnapshot(input.recipeId, input.scope, await loadVersionLineFields(input.fromVersionId));
   return writeRecipeVersion(actor, {
     recipeId: input.recipeId, scope: input.scope, expectedVersionId: input.expectedVersionId,
-    basedOnVersionId: input.basedOnVersionId, lines: null, restoredFromVersionId: input.fromVersionId, op: "restore",
+    basedOnVersionId: input.basedOnVersionId, lines: null, restoredFromVersionId: input.fromVersionId, op: "restore", expectedOwner: input.expectedOwner,
     snapshot,
   });
 }

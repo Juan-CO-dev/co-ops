@@ -4,6 +4,7 @@
  * The version row is retired (valid_to stamped), never deleted. Tier E; the lib binds the shop.
  */
 import { type NextRequest } from "next/server";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { requireSession } from "@/lib/session";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -13,6 +14,8 @@ import { SHOP_VERSION_WRITE_MIN } from "@/lib/sku-versions-shared";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   if (!UUID_RE.test(id)) return jsonError(404, "not_found");
   const parsed = await parseJsonBody(req);

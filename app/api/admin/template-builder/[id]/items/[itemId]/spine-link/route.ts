@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // POST — SAME-DAY FILL: set the spine link (item_id OR vendor_item_id) on an
 // unlinked non-prep template line (Template Builder, spec §1/§4 — the needs-link
 // fill moved inside the builder). GM+ (>= 7), Tier A step-up. In-place additive,
@@ -13,6 +14,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; itemId: string }> },
 ) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id, itemId } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
