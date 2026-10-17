@@ -575,7 +575,15 @@ export function assertScheduleStructure(v: unknown): asserts v is ScheduleStruct
 
 // ─── Seeding from the station columns (J4) ───────────────────────────────────
 
-export interface SeedStation { id: string; active: boolean; usuallyClosesAt: string | null; trims: Array<{ at: string; to_count: number }> | null }
+export interface SeedStation {
+  id: string; active: boolean; usuallyClosesAt: string | null; trims: Array<{ at: string; to_count: number }> | null;
+  /**
+   * CC chunk H9 (spec §6.2): a station that is a ROLE, not a head (the Closing Manager — carried by one of the closers, checked by
+   * the validator's closing rule). Its positions are never seeded as staffed positions. Set by the loader from the station's
+   * system key; this module matches no name.
+   */
+  roleOnly?: boolean;
+}
 export interface SeedPosition { id: string; stationId: string; active: boolean; usuallyTrimsAt: string | null }
 export interface SeededFrom { close: "station" | "default"; trim: "position" | "station_trims" | "default" }
 
@@ -611,7 +619,7 @@ export function structureFromStations(
   s.positions = {};
   const seededFrom: Record<string, SeededFrom> = {};
   const stationById = new Map(stations.map((st) => [st.id, st]));
-  const live = positions.filter((p) => p.active && stationById.get(p.stationId)?.active === true)
+  const live = positions.filter((p) => p.active && stationById.get(p.stationId)?.active === true && stationById.get(p.stationId)?.roleOnly !== true)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   for (const p of live) {
     const st = stationById.get(p.stationId)!;

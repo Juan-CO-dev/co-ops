@@ -14,6 +14,13 @@
  */
 export const WALK_OUT_VERIFICATION_STATION = "Walk-Out Verification";
 
+/**
+ * The "Closing Manager" closing section (system key — ENGLISH, never translated). CC chunk H9 (2026-10-17, scheduling spec §6.2):
+ * the Closing Manager is a ROLE carried by one of the closers, not a head — the schedule's structure seed never makes a staffed
+ * position of this station (lib/scheduling/inputs `loadStationSeedRows` flags it role-only).
+ */
+export const CLOSING_MANAGER_STATION = "Closing Manager";
+
 /** Verdict of the closing lock-up gate. */
 export type LockUpGateResult =
   | { ok: true }
