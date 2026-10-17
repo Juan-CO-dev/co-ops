@@ -15,7 +15,7 @@ import { POST as operationPost } from "@/app/api/admin/customers/route";
 const SHOP = "11111111-1111-4111-8111-111111111111";
 const LINK = "22222222-2222-4222-8222-222222222222";
 const params = { search: "", page: 1, sort: "recent", locationId: null, filters: { guests: false } };
-const request = (body: unknown) => new NextRequest("http://localhost/api/admin/customers/export", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+const request = (body: unknown) => new NextRequest("http://localhost/api/admin/customers/export", { method: "POST", body: JSON.stringify(body), headers: { origin: "http://localhost", "content-type": "application/json" } });
 function session(level: number) {
   vi.mocked(requireSession).mockResolvedValue({ user: { id: "owner" }, role: "owner", level, locations: [SHOP] } as never);
 }

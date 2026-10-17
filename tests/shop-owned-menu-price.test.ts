@@ -20,7 +20,7 @@ beforeEach(() => {
   h.session.mockResolvedValue(gm); h.step.mockClear();
 });
 it("the owning GM writes a price through the route with Tier E", async () => {
-  const response = await PATCH(new NextRequest(`http://localhost/api/admin/menu-items/${ID}/price`, { method: "PATCH", body: JSON.stringify({ menuPrice: 12, expectedMenuPrice: 10 }) }), { params: Promise.resolve({ id: ID }) });
+  const response = await PATCH(new NextRequest(`http://localhost/api/admin/menu-items/${ID}/price`, { method: "PATCH", headers: { origin: "http://localhost" }, body: JSON.stringify({ menuPrice: 12, expectedMenuPrice: 10 }) }), { params: Promise.resolve({ id: ID }) });
   expect(response.status).toBe(200);
   expect(db.tables.menu_items![0]!.menu_price).toBe(12);
   expect(h.step).toHaveBeenCalledWith(gm, "E");

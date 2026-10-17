@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -9,6 +10,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; itemId: string }> },
 ) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id, itemId } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
@@ -47,6 +50,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; itemId: string }> },
 ) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id, itemId } = await params;
   const ctx = await requireSession(req, `/api/admin/checklist-templates/${id}/items/${itemId}`);
   if (ctx instanceof Response) return ctx;

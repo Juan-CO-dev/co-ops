@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -18,6 +19,8 @@ const LINE_INPUT_TYPES: readonly string[] = ["on_hand", "portioned", "line", "ye
  * section's shape to compare against. This route stays the ≥6 floor + shape guard.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

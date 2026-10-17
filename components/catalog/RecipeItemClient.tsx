@@ -549,7 +549,7 @@ export function RecipeItemClient({ view }: { view: RecipeItemView }) {
                 </li>
               ))}
               <li>
-                {canEditLines ? <Link href={`/admin/recipes/${view.recipe.id}?location=${encodeURIComponent(view.scope ?? "global")}`} className={linkRow}>{t("catalog.recipe.edit_outputs")}</Link> : <p className="text-sm text-co-text">{t("catalog.recipe.view_only")}</p>}
+                {canEditLines ? <Link href={`/admin/recipes/${view.recipe.id}?location=${encodeURIComponent(view.scope ?? "global")}`} className={linkRow}>{t("catalog.recipe.edit_outputs")}</Link> : <p className="text-sm text-co-text">{t(target !== null ? "catalog.recipe.error.recipe_inactive" : "catalog.recipe.view_only")}</p>}
               </li>
             </ul>
           </CollapsibleSection>

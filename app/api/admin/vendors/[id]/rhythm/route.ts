@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -22,6 +23,8 @@ import {
 // POST — author (or re-author) the pair for one (vendor, location, order day).
 // Body: { locationId: string, orderDow: 0..6, leadDays: 0..14 }.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
@@ -54,6 +57,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 // DELETE — retire one pair. Body: { rhythmId: string }. Append-only (active = false).
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

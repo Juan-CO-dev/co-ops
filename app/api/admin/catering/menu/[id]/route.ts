@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // PATCH catering flags on an item (GM+ >= 7). Tier E — the 15-minute catalog edit window: these
 // flags (seasonal included) are catalog edits the Items catalog and the recipe page make too, so
 // they ride the same clock (catalog Phase 1, Astra full-branch review #1).
@@ -9,6 +10,8 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { setCateringFlags, AdminCateringMenuError, MENU_ADMIN_MIN } from "@/lib/admin/catering/menu";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

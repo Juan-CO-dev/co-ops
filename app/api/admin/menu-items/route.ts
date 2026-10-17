@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -7,6 +8,8 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { createMenuItem, RecipeError, RECIPE_WRITE_MIN } from "@/lib/recipes";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/admin/menu-items");

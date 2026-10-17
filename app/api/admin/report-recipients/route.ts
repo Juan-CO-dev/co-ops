@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // POST /api/admin/report-recipients — create or update one override / external recipient row
 // (0220). Level 9+ with a fresh Tier-B step-up; the location bind is inside the lib writer.
 import type { NextRequest } from "next/server";
@@ -9,6 +10,8 @@ import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/admin/report-recipients");
   if (ctx instanceof Response) return ctx;
   if (ctx.level < RECIPIENTS_MANAGE_MIN) return jsonError(403, "role_insufficient");

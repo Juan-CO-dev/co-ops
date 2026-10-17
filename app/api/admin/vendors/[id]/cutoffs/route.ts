@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -9,6 +10,8 @@ import { addVendorCutoff, AdminVendorError } from "@/lib/admin/vendors";
 // the contacts POST (append = AGM+). Body: { orderDay: 0..6, cutoffTime: "HH:MM",
 // locationId?: string|null }. Append-only: deactivate is the DELETE below.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

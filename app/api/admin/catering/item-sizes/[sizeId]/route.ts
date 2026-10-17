@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // PATCH (edit) / DELETE (deactivate) a catering size (GM+ >= 7, Tier A step-up).
 import { type NextRequest, type NextResponse } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -18,6 +19,8 @@ async function gate(req: NextRequest, sizeId: string): Promise<AuthContext | Nex
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sizeId: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { sizeId } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
@@ -38,6 +41,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ si
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ sizeId: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { sizeId } = await params;
   const ctx = await gate(req, sizeId);
   if (ctx instanceof Response) return ctx;

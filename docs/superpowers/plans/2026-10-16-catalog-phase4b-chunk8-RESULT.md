@@ -181,6 +181,10 @@ screenshot or trace and fixture IDs. A missing walk is PENDING, never PASS.
    sandwich remains saved, no false linked status. Reopen and complete the link;
    confirmed state survives reload. Existing Catering Toast tab remains present.
 
+7. As SMM, New sandwich and Toast entries are absent. With a valid same-origin
+   request, New sandwich create/preview/reconcile POSTs and Toast POST return
+   403 forbidden; Toast GET is refused too. No write or identity disclosure.
+
 ### 3. Swap for now / for good and Back to normal
 
 1. From SKU A's item page choose Swap vendor (`/admin/catalog/sku/<id>/swap`)
@@ -204,6 +208,9 @@ screenshot or trace and fixture IDs. A missing walk is PENDING, never PASS.
 6. With a fresh fixture choose For good; review/confirm/reopen its permanent
    result. Verify there is no live temporary banner offering Back for that act.
 
+7. As SMM, Swap and Back to normal entries are absent; same-origin Swap and
+   Back preview/save POSTs return 403 forbidden. Swap GET is refused too.
+
 ### 4. Share
 
 1. As GM-A open owned SKU, recipe and menu pages: Share is absent. As MoO open
@@ -217,6 +224,9 @@ screenshot or trace and fixture IDs. A missing walk is PENDING, never PASS.
 4. Change ownership/dependency after preview in the second session. Old confirm
    must refuse with named freshness/ownership error, including for MoO. Check
    previous owner-scoped draft does not survive the ownership remount.
+
+5. As SMM, Share is absent on SKU, recipe and menu-item pages; same-origin
+   preview and save POSTs for EACH kind return 403 forbidden.
 
 ### 5. Owned pages and legacy reopen
 
@@ -498,3 +508,260 @@ failures, and CC's review plus the previously documented CC-owned authenticated
 browser/SIM gates. No browser/SIM run or new cross-family approval is claimed.
 All changes remain UNCOMMITTED; HEAD is still `0caa224b` on
 `feat/catalog-phase4b-job-pages`, worktree `C:\Users\conta\co-ops-cat-p4b`.
+
+## Final origin and P3 repair round (starting HEAD 3f4b616b)
+
+### Scope, plan and dispositions
+
+CC's supplied rulings authorize this bounded correction pass: enumerate every
+route in recipes/items/skus/products/menu-items plus every other admin route
+using assertStepUp; prove rejection before work with failing tests, add the
+existing guard first, correct retired-recipe copy, update the CC walkthrough,
+and run focused, boundary, type, lint and full-suite checks. The affected
+contract is rejection of missing/foreign Origin before session/body/I/O.
+The compatibility risk is synthetic or non-browser callers missing Origin.
+No schema, tier, grant, role, business writer or translation changes.
+
+- P2: **121 unguarded mutation handlers -> 0**, across 111 repaired
+  files. The five named families account for 24; the other step-up admin
+  routes account for 97. Explicit inventory: 142 files / 173 handlers,
+  including 153 mutations (32 already guarded) and 20 GET handlers.
+  Every added guard uses the existing assertSameOrigin helper, first in the
+  handler and immediately returned on refusal.
+- P3-1: the requested whole-branch whitespace check ALREADY passed at intake
+  on 3f4b616b; the older 0caa224b finding is not reproduced at this head.
+  The updated RESULT is written with exactly one terminal newline.
+- P3-2: walkthrough sections 2, 3 and 4 now explicitly require SMM entry
+  absence and 403 forbidden on New sandwich/Toast, Swap/Back and each Share
+  kind, including preview/reconcile and associated reads. These are CC-owned
+  walkthrough instructions, not claims that authenticated walks were run.
+- P3-3: RecipeItemClient's output section uses writable scope (target) to
+  select retirement versus view-only copy; inactive recipes retain no edit
+  link. Reuses the existing en/es recipe_inactive sentence.
+
+### Complete missing-guard list (before; all guarded after)
+
+Paths below are relative to app/api/admin/. Mixed read handlers are unchanged.
+
+| Route file | Mutation handlers repaired |
+|---|---|
+| `categories/route.ts` | POST |
+| `catering/capacity/[id]/route.ts` | PATCH |
+| `catering/capacity/route.ts` | POST |
+| `catering/faq/[id]/route.ts` | PATCH |
+| `catering/faq/route.ts` | POST |
+| `catering/fulfillment/route.ts` | PATCH |
+| `catering/item-sizes/[sizeId]/route.ts` | PATCH, DELETE |
+| `catering/lto/events/[id]/cancel/route.ts` | POST |
+| `catering/lto/events/route.ts` | POST |
+| `catering/menu/[id]/route.ts` | PATCH |
+| `catering/menu/[id]/sizes/route.ts` | POST |
+| `catering/packages/[id]/route.ts` | PATCH |
+| `catering/packages/route.ts` | POST |
+| `catering/pricing/[id]/route.ts` | PATCH |
+| `catering/pricing/route.ts` | POST |
+| `catering/rate-rules/[ruleId]/route.ts` | DELETE |
+| `catering/rate-rules/route.ts` | POST |
+| `catering/zones/[id]/route.ts` | PATCH |
+| `catering/zones/route.ts` | POST |
+| `checklist-templates/[id]/items/[itemId]/definition/route.ts` | PATCH |
+| `checklist-templates/[id]/items/[itemId]/input-type/route.ts` | PATCH |
+| `checklist-templates/[id]/items/[itemId]/min-role/route.ts` | PATCH |
+| `checklist-templates/[id]/items/[itemId]/par/route.ts` | PATCH |
+| `checklist-templates/[id]/items/[itemId]/promote/route.ts` | POST |
+| `checklist-templates/[id]/items/[itemId]/route.ts` | PATCH, DELETE |
+| `checklist-templates/[id]/items/[itemId]/section/route.ts` | PATCH |
+| `checklist-templates/[id]/items/[itemId]/unlink/route.ts` | POST |
+| `checklist-templates/[id]/items/route.ts` | POST |
+| `checklist-templates/enable/route.ts` | POST |
+| `checklist-templates/item-questions/[id]/route.ts` | PATCH, DELETE |
+| `checklist-templates/item-questions/route.ts` | POST |
+| `checklist-templates/needs-link/[lineId]/route.ts` | POST |
+| `checklist-templates/registry/[itemId]/default/route.ts` | PATCH |
+| `checklist-templates/registry/[itemId]/opening-verify/route.ts` | PATCH |
+| `checklist-templates/registry/[itemId]/route.ts` | PATCH |
+| `checklist-templates/registry/route.ts` | POST |
+| `checklist-templates/section-questions/[id]/route.ts` | PATCH, DELETE |
+| `checklist-templates/section-questions/route.ts` | POST |
+| `checklist-templates/sections/[slug]/disable/route.ts` | POST |
+| `checklist-templates/sections/[slug]/reorder/route.ts` | PATCH |
+| `checklist-templates/sections/[slug]/route.ts` | PATCH |
+| `checklist-templates/sections/[slug]/shape/route.ts` | PATCH |
+| `checklist-templates/sections/route.ts` | POST |
+| `checklist-templates/units/route.ts` | POST |
+| `customers/confirm/route.ts` | POST |
+| `customers/export/route.ts` | POST |
+| `customers/route.ts` | POST |
+| `ezcater/location/route.ts` | POST |
+| `items/[itemId]/sold-directly/route.ts` | PATCH |
+| `menu-items/[id]/price/route.ts` | PATCH |
+| `menu-items/route.ts` | POST |
+| `order-types/route.ts` | POST |
+| `products/[id]/active/route.ts` | POST |
+| `products/[id]/members/route.ts` | POST, DELETE |
+| `products/[id]/primary/route.ts` | POST |
+| `products/[id]/route.ts` | PATCH |
+| `products/route.ts` | POST |
+| `recipes/[id]/inputs/[inputId]/route.ts` | PATCH |
+| `recipes/[id]/inputs/route.ts` | POST |
+| `recipes/[id]/outputs/route.ts` | POST |
+| `recipes/[id]/route.ts` | PATCH, DELETE |
+| `recipes/edges/route.ts` | DELETE |
+| `recipes/full/route.ts` | POST |
+| `recipes/route.ts` | POST |
+| `report-recipients/route.ts` | POST |
+| `report-recipients/settings/route.ts` | POST |
+| `sevenshifts/route.ts` | POST |
+| `skus/[id]/location-settings/route.ts` | PUT |
+| `skus/[id]/pack-chain/route.ts` | POST |
+| `skus/[id]/price/route.ts` | POST |
+| `skus/[id]/route.ts` | PATCH |
+| `skus/measure-units/route.ts` | POST |
+| `skus/pack-formats/route.ts` | POST |
+| `skus/route.ts` | POST |
+| `stations/route.ts` | POST |
+| `template-builder/[id]/items/[itemId]/spine-link/route.ts` | POST |
+| `template-builder/[id]/items/[itemId]/translations/route.ts` | PATCH |
+| `template-builder/[id]/publish/route.ts` | POST |
+| `toast-employees/route.ts` | POST |
+| `toast-map/[id]/route.ts` | POST |
+| `toast-map/location/route.ts` | POST |
+| `toast-map/manual/route.ts` | POST |
+| `toast-map/match/route.ts` | POST |
+| `toast-sales/exclusions/[id]/route.ts` | POST |
+| `toast-sales/exclusions/route.ts` | POST |
+| `toast-sales/pull/route.ts` | POST |
+| `users/[id]/activate/route.ts` | POST |
+| `users/[id]/deactivate/route.ts` | POST |
+| `users/[id]/dormant/route.ts` | POST |
+| `users/[id]/locations/route.ts` | POST |
+| `users/[id]/reset-pin/route.ts` | POST |
+| `users/[id]/role/route.ts` | POST |
+| `users/[id]/route.ts` | PATCH |
+| `users/[id]/set-password/route.ts` | POST |
+| `users/[id]/wake/route.ts` | POST |
+| `users/route.ts` | POST |
+| `vendors/[id]/categories/route.ts` | PUT |
+| `vendors/[id]/contacts/[contactId]/route.ts` | PATCH, DELETE |
+| `vendors/[id]/contacts/route.ts` | POST |
+| `vendors/[id]/cutoffs/[cutoffId]/route.ts` | DELETE |
+| `vendors/[id]/cutoffs/route.ts` | POST |
+| `vendors/[id]/order-types/route.ts` | PUT |
+| `vendors/[id]/ordering-details/[detailId]/route.ts` | PATCH, DELETE |
+| `vendors/[id]/ordering-details/route.ts` | POST |
+| `vendors/[id]/rhythm/route.ts` | POST, DELETE |
+| `vendors/[id]/rhythm/skips/route.ts` | POST, DELETE |
+| `vendors/[id]/route.ts` | PATCH |
+| `vendors/[id]/schedule/route.ts` | PATCH |
+| `vendors/[id]/transmission/route.ts` | PATCH |
+| `vendors/route.ts` | POST |
+| `weights/route.ts` | POST |
+
+### Failing-first evidence
+
+The initial regression run on unchanged application code produced **282 passed /
+486 failed**: exactly 484 origin failures (121 handlers x four invalid-origin
+cases), plus the two en/es retired-recipe cases. No import or fixture error in
+that red run. Evidence: .tmp/final-origin-red.json.
+
+The first green run passed 1,105 tests across the two new suites plus catalog
+write inventory, read boundary, shop context and tier map. A subsequent addition
+to the inventory test also pins the first two statements of every mutation
+handler, preventing work from being inserted ahead of the guard.
+
+The inventory is explicit, compares discovery to its route list, and compares
+each module's HTTP exports to its listed methods. Each mutation executes four
+invalid-origin requests against the actual handler and asserts no session,
+body parsing, step-up or database call. Same-origin controls reach the existing
+session gate. The UI regression renders the actual output section in en/es,
+with both retired and active writable-shop cases.
+
+### Fixture compatibility and completed checks
+
+Fifteen existing test files construct browser requests without Origin. The
+isolated pre-update fixture run recorded 195 passed / 82 failed. Added only
+same-origin headers, and replaced station-schedule-api's plain Request cast with
+an actual NextRequest. All existing assertions remain unchanged. The complete
+focused rerun passes **1,535 tests / 21 files**, including:
+
+- admin-write-origin: 919 (142-file inventory; 153 mutations x six checks).
+- catalog-write-origin: 170; catalog-read-boundary: 8.
+- shop-context: 146; step-up-tier-map: 13; retired-recipe render: 2.
+- The 277 existing tests in the 15 fixture files all pass.
+
+A structural comparison strips precisely the added import and two statements
+from each repaired handler: all 111 route files then match HEAD (line endings
+normalized for comparison). No other route logic changed.
+
+Walkthrough probe against HEAD: sections 2/3/4 each lack the SMM 403 refusal
+step; the working copy passes all three. Both HEAD and working copy already
+have exactly one terminal newline. No false failing-first claim for P3-1.
+
+Commands (raw reports are local ignored .tmp files):
+
+```powershell
+# Fifteen fixture files plus these six boundary/regression suites:
+npx.cmd vitest run tests/catering-catalog-window.test.ts tests/step-up-grants.test.ts tests/sevenshifts-admin-route.test.ts tests/recipe-inline-output.test.ts tests/customer-pr2-routes.test.ts tests/report-recipients-api.test.ts tests/station-schedule-api.test.ts tests/shop-owned-write-errors.test.ts tests/shop-owned-full-route-pglite.test.ts tests/shop-owned-recipe-writes.test.ts tests/recipe-line-edit-server.test.ts tests/catalog-job-routes.test.ts tests/shop-owned-registry.test.ts tests/menu-prices-data.test.ts tests/shop-owned-menu-price.test.ts tests/admin-write-origin.test.ts tests/catalog-recipe-retired.test.ts tests/catalog-write-origin.test.ts tests/catalog-read-boundary.test.ts tests/shop-context.test.ts tests/step-up-tier-map.test.ts --pool=threads --maxWorkers=2 --reporter=json --outputFile=.tmp/final-origin-focused-final.json
+# PASS: 1,535 / 1,535; 21 files. Exact fixture paths are in the JSON report.
+
+npx.cmd next typegen
+npx.cmd tsc --noEmit --incremental false
+# Initial and final post-fixture runs: PASS, exit 0 for both.
+# Final logs: .tmp/final-origin-typegen-final.log and -tsc-final.log.
+
+node --max-old-space-size=1536 .tmp/final-origin-lint.cjs
+# Full repository comparison: 2,241 current / 2,178 main source files.
+# Both: 65 errors / 369 warnings; error delta 0, warning delta 0.
+# Re-linting the 15 updated fixtures plus the two new suites and replacing
+# those entries in the full report keeps the same totals and delta.
+# Evidence: final-origin-eslint-summary-final.json, -current-final.json,
+# -main.json and -recheck.json. Existing lint debt remains.
+
+git diff --check origin/main
+git diff --check d28ec084
+# PASS: both exit 0, including the tracked RESULT across the whole branch.
+```
+
+The first full-suite attempt was stopped before completion to repair the
+confirmed request fixtures. It is NOT a completed full-suite result. The final
+full run uses the completed code and fixtures, with no tests skipped or weakened.
+
+### Known tsx ENOMEM spawns (separate)
+
+- tests/people-chunkE-review.test.ts: starts scripts/check-boh-positions.ts.
+- tests/pm-criteria.test.ts: starts scripts/seed-pm-criteria.ts.
+
+Both reproduced independently in this round with NEXT_PUBLIC_SUPABASE_URL and
+SUPABASE_SERVICE_ROLE_KEY explicitly blank. Each child exited 1 before the
+script's expected missing-credentials exit 2; neither accessed a database.
+Evidence: .tmp/final-origin-tsx-startup.json.
+
+```text
+SystemError [ERR_SYSTEM_ERROR]: uv_os_get_passwd returned ENOMEM (not enough memory)
+code: ENOMEM; syscall: uv_os_get_passwd
+```
+
+### Final full-suite result and handoff (2026-10-17)
+
+```powershell
+npx.cmd vitest run --pool=threads --no-cache --maxWorkers=2 --testTimeout=60000 --reporter=json --outputFile=.tmp/final-origin-full-final.json
+# Exit 1: 753 files; 13,356 passed / 2 failed / 3 skipped; 13,361 total.
+# ONLY failures: people-chunkE-review.test.ts:130 and pm-criteria.test.ts:140,
+# the independently reproduced tsx ENOMEM startup failures above.
+```
+
+The full suite is explicitly NOT all-green. No application-test failure remains,
+and no test was skipped, suppressed or weakened by this repair. Final typegen
+and tsc both exit 0; final ESLint error/warning deltas are both zero. Separate
+`git diff --no-index --check -- /dev/null <file>` checks pass for both new tests,
+so the whitespace evidence also covers untracked deliverables.
+
+Changes: 111 route files, RecipeItemClient, this RESULT, 15 existing request
+fixture files, and two new suites (admin-write-origin, catalog-recipe-retired).
+All 130 files remain UNCOMMITTED on `feat/catalog-phase4b-job-pages` at
+`3f4b616b`, clone `C:\Users\conta\co-ops-cat-p4b`. No push or merge.
+
+Open limits: the two environment startup failures, pre-existing lint debt,
+CC's final cross-family review and the documented authenticated browser/SIM
+walkthroughs. This repair pass claims no new independent approval, live schema
+access, production write, or authenticated walkthrough execution.

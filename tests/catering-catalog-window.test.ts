@@ -32,7 +32,7 @@ const ctx = (catalogAt: string | null) => ({
   user: { id: "u-gm", role: "gm" },
   session: { id: "s-1", stepUpUnlocked: true, stepUpUnlockedAt: ago(1_000), catalogEditUnlockedAt: catalogAt },
 });
-const req = (url: string, body: unknown) => new NextRequest(url, { method: "PATCH", body: JSON.stringify(body) });
+const req = (url: string, body: unknown) => new NextRequest(url, { method: "PATCH", headers: { origin: "http://localhost" }, body: JSON.stringify(body) });
 const params = { params: Promise.resolve({ id: ID }) };
 
 beforeEach(() => {
