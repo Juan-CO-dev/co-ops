@@ -4,7 +4,7 @@ import {createTouchArbiter,TOUCHES,type TouchSlot} from '@/lib/landing/playful-t
 import {observeLandingViewport} from '@/lib/landing/scroll-controller';
 // One arbiter per mounted document; skipped competition never becomes delayed work.
 const arbiter=createTouchArbiter();
-export function PlayfulTouch({slot}:{slot:TouchSlot}){
+export function PlayfulTouch({slot,illustratedLabel}:{slot:TouchSlot;illustratedLabel?:string}){
  const item=TOUCHES.find(t=>t.slot===slot)!;
  const ref=useRef<HTMLDivElement>(null);const [loaded,setLoaded]=useState(false);const [playing,setPlaying]=useState(false);
  const ready=useRef(item.id==='checker-peek');const onReady=useRef(()=>{});
@@ -32,9 +32,9 @@ export function PlayfulTouch({slot}:{slot:TouchSlot}){
   });});
   return ()=>{disposed=true;cancelAnimationFrame(first);cancelAnimationFrame(second);unsubscribe?.();stop();section?.removeEventListener('pointerenter',intent);section?.removeEventListener('focusin',intent);};
  },[slot,item.duration]);
- return <div ref={ref} aria-hidden="true" data-playful-slot={slot} data-touch={item.id} data-playing={playing} className="landing-v2-touch-slot" style={{'--touch-duration':`${item.duration}ms`} as CSSProperties}>
+ return <div ref={ref} aria-hidden={item.id==='doodle-chip'?undefined:true} data-playful-slot={slot} data-touch={item.id} data-playing={playing} className="landing-v2-touch-slot" style={{'--touch-duration':`${item.duration}ms`} as CSSProperties}>
   <span className="landing-v2-touch-art">{item.id==='checker-peek'?<span className="landing-v2-touch-checker"/>:loaded&&item.path?
    // eslint-disable-next-line @next/next/no-img-element
-   <img src={item.path} alt="" width={item.width} height={item.height} decoding="async" onLoad={()=>onReady.current()}/>:null}</span>
+   <img src={item.path} alt={item.id==='doodle-chip'?illustratedLabel:''} width={item.width} height={item.height} decoding="async" onLoad={()=>onReady.current()}/>:null}</span>
  </div>;
 }

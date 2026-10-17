@@ -25,41 +25,40 @@ describe('sticky order eligibility and session preference',()=>{
   });
 });
 
-it('recovers after sustained clearance without requiring a scroll reversal',()=>{
-  const policy=createStickyVisibility();
-  const sample=(y:number,now:number,clearance:number,heroBottom=-10)=>policy.update({y,now,clearance,heroBottom,suppressed:false});
-  expect(sample(500,0,119).visible).toBe(false);
-  expect(sample(510,10,120).visible).toBe(false);
-  expect(sample(520,249,120).visible).toBe(false);
-  expect(sample(530,250,120).visible).toBe(true);
-  expect(sample(540,260,1).visible).toBe(true);
-  expect(sample(550,270,-1).visible).toBe(false);
-  expect(sample(1000,2000,500).visible).toBe(false);
-  expect(sample(1100,3000,500).visible).toBe(true);
-  expect(sample(970,4000,500).visible).toBe(true);
-  expect(sample(970,4240,500).visible).toBe(true);
-  expect(sample(0,4500,500,20).visible).toBe(false);
+const clear={clearance:Infinity,heroBottom:-121,suppressed:false};
+it('requires hero/footer hysteresis and sustained dwell, then stays visible between boundaries',()=>{
+ const policy=createStickyVisibility();
+ expect(policy.update({...clear,now:0,heroBottom:-1}).visible).toBe(false);
+ expect(policy.update({...clear,now:100}).visible).toBe(false);
+ expect(policy.update({...clear,now:499}).visible).toBe(false);
+ expect(policy.update({...clear,now:500}).visible).toBe(true);
+ expect(policy.update({...clear,now:1000,clearance:0,heroBottom:-1}).visible).toBe(true);
+ expect(policy.update({...clear,now:1100,clearance:-1}).visible).toBe(false);
+ expect(policy.update({...clear,now:1500,clearance:119}).visible).toBe(false);
+ expect(policy.update({...clear,now:1600}).visible).toBe(false);
+ expect(policy.update({...clear,now:2000}).visible).toBe(true);
+ expect(policy.update({...clear,now:2500,heroBottom:0}).visible).toBe(false);
 });
-
-it('returns after a transient suppression clears, at the same scroll position',()=>{
-  const policy=createStickyVisibility();
-  const base={y:600,clearance:200,heroBottom:-1,suppressed:false};
-  policy.update({...base,now:0});
-  expect(policy.update({...base,now:240}).visible).toBe(true);
-  expect(policy.update({...base,now:700,suppressed:true}).visible).toBe(false);
-  expect(policy.update({...base,now:800}).visible).toBe(false);
-  expect(policy.update({...base,now:1200}).visible).toBe(true);
+it('returns after transient suppression clears without a position change or latch',()=>{
+ const policy=createStickyVisibility();
+ policy.update({...clear,now:0});
+ expect(policy.update({...clear,now:400}).visible).toBe(true);
+ expect(policy.update({...clear,now:900,suppressed:true}).visible).toBe(false);
+ expect(policy.update({...clear,now:1000}).visible).toBe(false);
+ expect(policy.update({...clear,now:1399}).visible).toBe(false);
+ expect(policy.update({...clear,now:1400}).visible).toBe(true);
 });
-
-it('immediately suppresses unsafe geometry even during dwell',()=>{
+it('resets release dwell when hovering at either boundary',()=>{
+ for(const boundary of [{heroBottom:-119},{clearance:119}]){
   const policy=createStickyVisibility();
-  const base={y:600,clearance:200,heroBottom:-1,suppressed:false};
-  policy.update({...base,now:0});
-  expect(policy.update({...base,now:240}).visible).toBe(true);
-  expect(policy.update({...base,now:241,suppressed:true}).visible).toBe(false);
+  policy.update({...clear,now:0});
+  expect(policy.update({...clear,...boundary,now:399}).visible).toBe(false);
+  expect(policy.update({...clear,now:400}).visible).toBe(false);
+  expect(policy.update({...clear,now:799}).visible).toBe(false);
+  expect(policy.update({...clear,now:800}).visible).toBe(true);
+ }
 });
-
 it('keeps a restored in-memory preference when storage writes fail but old reads succeed',()=>{
-  const preference=createStickyPreference(()=>({getItem:()=> 'true',setItem:()=>{throw new Error('quota');}}));
-  expect(preference.read()).toBe(true);preference.write(false);expect(preference.read()).toBe(false);
+ const preference=createStickyPreference(()=>({getItem:()=> 'true',setItem:()=>{throw new Error('quota');}}));
+ expect(preference.read()).toBe(true);preference.write(false);expect(preference.read()).toBe(false);
 });

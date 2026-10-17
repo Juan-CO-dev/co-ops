@@ -9,6 +9,8 @@ export function validateTouchInventory(entries:typeof inventory){
    characters.add(entry.id);previousCharacter=entry.id;
   }
  }
+ const required=['hero','crave','lineup','field-guide','catering','shops'];
+ if(slots.size!==required.length||required.some(slot=>!slots.has(slot)))throw Error('Incomplete decorative slots');
  return entries;
 }
 export const TOUCHES=validateTouchInventory(inventory);

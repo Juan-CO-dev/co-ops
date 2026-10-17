@@ -14,7 +14,7 @@ export function StickyOrderBar({stores,labels}:Props) {
   const [minimized,setMinimized]=useState(false);
   useEffect(()=>{
     setMinimized(stickyPreference.read());
-    // Optional chrome stays inert when collision observation is unavailable.
+    // Optional chrome stays inert when boundary observation is unavailable.
     if(typeof IntersectionObserver==='undefined')return;
     const hero=document.querySelector('[data-hero-actions]');
     const rail=ref.current;
@@ -23,12 +23,11 @@ export function StickyOrderBar({stores,labels}:Props) {
     const notice=root.querySelector<HTMLElement>('.landing-v2-consent');
     const policy=createStickyVisibility();
     // The page's link/section inventory is static. No selector or layout reads on scroll.
-    const links=[...root.querySelectorAll<HTMLElement>('[data-landing-placement]')].filter(el=>!rail.contains(el));
+    const footer=root.querySelector<HTMLElement>('footer .landing-v2-orders');
     const sections=[...root.querySelectorAll<HTMLElement>('main section')];
-    const collisions=new Set<Element>(), approachingDown=new Set<Element>(), approachingUp=new Set<Element>();
-    let scrollingDown=true, previousY=scrollY;
+    let footerVisible=false, footerNear=false, heroClear=false;
     let heroPassed=false, noticeInView=false, settingsOpened=false;
-    let band:IntersectionObserver|undefined, guardDown:IntersectionObserver|undefined, guardUp:IntersectionObserver|undefined;
+
     let timer:ReturnType<typeof setTimeout>|undefined;
     const restoreFocus=()=>{
       // Only on focus evacuation, not on scroll: choose the section actually in view.
@@ -38,9 +37,8 @@ export function StickyOrderBar({stores,labels}:Props) {
     };
     const update=()=>{
       clearTimeout(timer);
-      const nearby=scrollingDown?approachingDown:approachingUp;
-      const next=policy.update({y:scrollY,now:performance.now(),clearance:collisions.size?-1:nearby.size?0:Infinity,heroBottom:heroPassed?-1:1,
-        suppressed:document.hidden||settingsOpened||(notice?.dataset.flow==='true'&&noticeInView)||(window.visualViewport?.height??innerHeight)<MIN_VISUAL_HEIGHT});
+      const next=policy.update({now:performance.now(),clearance:footerVisible?-1:footerNear?0:Infinity,heroBottom:heroPassed?(heroClear?-121:-1):1,
+        suppressed:document.hidden||(settingsOpened&&noticeInView)||(notice?.dataset.flow==='true'&&noticeInView)||(window.visualViewport?.height??innerHeight)<MIN_VISUAL_HEIGHT});
       if(!next.visible&&rail.contains(document.activeElement))restoreFocus();
       rail.dataset.visible=String(next.visible);rail.inert=!next.visible;rail.setAttribute('aria-hidden',String(!next.visible));
       setVisible(next.visible);
@@ -48,6 +46,12 @@ export function StickyOrderBar({stores,labels}:Props) {
     };
     const heroObserver=new IntersectionObserver(entries=>{for(const entry of entries)heroPassed=entry.boundingClientRect.bottom<0;update();},{threshold:0});
     heroObserver.observe(hero);
+    // Actual viewport boundaries hide immediately; release observers add 120 px hysteresis.
+    const heroGuard=new IntersectionObserver(entries=>{heroClear=entries[0]!.boundingClientRect.bottom < -120;update();},{rootMargin:'120px 0px 0px 0px'});
+    heroGuard.observe(hero);
+    const footerObserver=new IntersectionObserver(entries=>{footerVisible=entries.some(entry=>entry.isIntersecting);update();});
+    const footerGuard=new IntersectionObserver(entries=>{footerNear=entries.some(entry=>entry.isIntersecting);update();},{rootMargin:'120px 0px 120px 0px'});
+    if(footer){footerObserver.observe(footer);footerGuard.observe(footer);}
     const noticeObserver=new IntersectionObserver(entries=>{noticeInView=entries.some(entry=>entry.isIntersecting);update();});
     if(notice)noticeObserver.observe(notice);
     const measure=()=>{
@@ -58,19 +62,8 @@ export function StickyOrderBar({stores,labels}:Props) {
       root.style.setProperty('--landing-rail-height',`${desktop?0:height}px`);
       root.style.setProperty('--landing-header-rail-height',`${desktop?height:0}px`);
       root.style.setProperty('--landing-rail-bottom',`${desktop?0:dock+safeBottom}px`);
-      const box=rail.getBoundingClientRect();
-      band?.disconnect();guardDown?.disconnect();guardUp?.disconnect();collisions.clear();approachingDown.clear();approachingUp.clear();
-      const observeBand=(above:number,below:number,set:Set<Element>)=>{
-        // Look ahead in the scroll direction, without waiting behind departed links.
-        // Positive root margins preserve that look-ahead beyond the viewport edge.
-        const top=box.top-above,bottom=box.bottom+below;
-        const observer=new IntersectionObserver(entries=>{for(const entry of entries){if(entry.isIntersecting)set.add(entry.target);else set.delete(entry.target);}update();},
-          {rootMargin:`${-top}px 0px ${bottom-innerHeight}px 0px`,threshold:0});
-        links.forEach(link=>observer.observe(link));return observer;
-      };
-      band=observeBand(0,0,collisions);guardDown=observeBand(0,124,approachingDown);guardUp=observeBand(124,0,approachingUp);update();
+      update();
     };
-    const direction=()=>{const y=scrollY;if(y===previousY)return;const down=y>previousY;previousY=y;if(down!==scrollingDown){scrollingDown=down;update();}};
     const mutations=new MutationObserver(records=>{
       if(records.some(record=>record.attributeName==='data-expanded'))settingsOpened=notice?.dataset.expanded==='true';
       measure();
@@ -78,10 +71,8 @@ export function StickyOrderBar({stores,labels}:Props) {
     if(notice)mutations.observe(notice,{attributes:true,attributeFilter:['data-flow','data-expanded']});
     const resize=new ResizeObserver(measure);resize.observe(rail);if(notice)resize.observe(notice);
     window.addEventListener('resize',measure);window.addEventListener('pageshow',measure);
-    window.addEventListener('scroll',direction,{passive:true});
     document.addEventListener('visibilitychange',update);window.visualViewport?.addEventListener('resize',measure);measure();
-    return ()=>{clearTimeout(timer);band?.disconnect();guardDown?.disconnect();guardUp?.disconnect();heroObserver.disconnect();noticeObserver.disconnect();mutations.disconnect();resize.disconnect();
-      window.removeEventListener('scroll',direction);
+    return ()=>{clearTimeout(timer);heroGuard.disconnect();footerObserver.disconnect();footerGuard.disconnect();heroObserver.disconnect();noticeObserver.disconnect();mutations.disconnect();resize.disconnect();
       window.removeEventListener('resize',measure);window.removeEventListener('pageshow',measure);document.removeEventListener('visibilitychange',update);window.visualViewport?.removeEventListener('resize',measure);
       for(const name of ['--landing-rail-height','--landing-header-rail-height','--landing-rail-bottom'])root.style.removeProperty(name);
     };

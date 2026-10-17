@@ -1,6 +1,12 @@
 import {describe,it,expect} from 'vitest';
 import {createTouchArbiter,TOUCHES,validateTouchInventory} from '@/lib/landing/playful-touches-shared';
 describe('bounded playful touches',()=>{
+ it('requires exactly the six render slots and marks the chip illustrated',async()=>{
+  expect(()=>validateTouchInventory(TOUCHES.slice(1))).toThrow();
+  expect(()=>validateTouchInventory(TOUCHES.map(t=>({...t,slot:t.slot==='hero'?'unknown':t.slot})))).toThrow();
+  const {default:sidecar}=await import('../../assets/provenance/touch-doodle-chip.json');
+  expect(sidecar).toHaveProperty('illustrated',true);
+ });
  it('assigns distinct families and a single character with bounded durations',()=>{
   expect(new Set(TOUCHES.map(t=>t.id)).size).toBe(TOUCHES.length);
   expect(TOUCHES.filter(t=>t.character)).toHaveLength(1);

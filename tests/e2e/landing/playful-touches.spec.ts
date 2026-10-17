@@ -12,7 +12,11 @@ for(const language of ['en','es'])for(const width of [375,1440])for(const scale 
    }
    await slot.evaluate(element=>element.scrollIntoView());await page.waitForTimeout(100);
    if(await slot.getAttribute('data-touch')!=='checker-peek')await expect.soft(slot.locator('img')).toBeVisible();
-   await expect(slot).toHaveAttribute('aria-hidden','true');await expect(slot).toHaveCSS('pointer-events','none');
+   if(await slot.getAttribute('data-touch')==='doodle-chip'){
+    await expect(slot).not.toHaveAttribute('aria-hidden','true');
+    await expect(slot.getByRole('img',{name:language==='es'?'Papa frita ilustrada':'Illustrated chip'})).toBeVisible();
+   }else await expect(slot).toHaveAttribute('aria-hidden','true');
+   await expect(slot).toHaveCSS('pointer-events','none');
    expect(await slot.evaluate(node=>{
     const box=node.getBoundingClientRect();
     // The reserved box encloses ALL transform keyframes, stronger than one sampled pose.

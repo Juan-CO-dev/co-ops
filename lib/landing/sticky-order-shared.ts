@@ -23,21 +23,22 @@ export function createStickyPreference(storage: () => PreferenceStorage | undefi
 export const stickyPreference = createStickyPreference(() => window.sessionStorage);
 
 export const STICKY_SHOW_CLEARANCE = 120;
-export const STICKY_SHOW_DWELL_MS = 240;
+export const STICKY_SHOW_DWELL_MS = 400;
 export const STICKY_RECOVERY_MS = 400;
-/** Collisions hide immediately; sustained clearance starts another eligible appearance. */
+/** Hero/footer boundaries hide immediately; sustained boundary clearance permits release. */
 export function createStickyVisibility() {
   let visible=false, clearSince:number|null=null, hiddenAt=-Infinity;
   return {
-    update({now,clearance,heroBottom,suppressed}:{y:number;now:number;clearance:number;heroBottom:number;suppressed:boolean}) {
+    update({now,clearance,heroBottom,suppressed}:{now:number;clearance:number;heroBottom:number;suppressed:boolean}) {
+      const dwell=STICKY_SHOW_DWELL_MS;
       if(!heroActionsPassed(heroBottom)||suppressed||clearance<0) {
         if(visible)hiddenAt=now;
         visible=false;clearSince=null;
-      } else if(!visible && clearance>=STICKY_SHOW_CLEARANCE) {
+      } else if(!visible && clearance>=STICKY_SHOW_CLEARANCE && heroBottom<=-STICKY_SHOW_CLEARANCE) {
         clearSince??=now;
-        visible=now-clearSince>=STICKY_SHOW_DWELL_MS && now-hiddenAt>=STICKY_RECOVERY_MS;
+        visible=now-clearSince>=dwell && now-hiddenAt>=STICKY_RECOVERY_MS;
       } else if(!visible)clearSince=null;
-      const wait=!visible&&clearSince!==null?Math.max(0,STICKY_SHOW_DWELL_MS-(now-clearSince),STICKY_RECOVERY_MS-(now-hiddenAt)):null;
+      const wait=!visible&&clearSince!==null?Math.max(0,dwell-(now-clearSince),STICKY_RECOVERY_MS-(now-hiddenAt)):null;
       return {visible,wait};
     },
   };

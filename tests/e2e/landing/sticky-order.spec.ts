@@ -17,19 +17,8 @@ for(const lang of ['en','es']) for(const height of [667,812]) test(`sticky thres
   await page.evaluate(()=>window.scrollTo(0,document.querySelector('[data-hero-actions]')!.getBoundingClientRect().bottom+scrollY-1));
   await expect(bar).toBeHidden();
   await page.evaluate(()=>window.scrollBy(0,3));
-  const eligibility=await page.evaluate(()=>{
-    const rail=document.querySelector<HTMLElement>('[data-sticky-order]')!;
-    const a=rail.getBoundingClientRect();
-    const notice=document.querySelector('.landing-v2-consent')!.getBoundingClientRect();
-    const top=a.top-notice.height-34;
-    const obstructed=[...document.querySelectorAll('[data-landing-placement]')].some(el=>{
-      if(rail.contains(el))return false;const b=el.getBoundingClientRect();
-      return Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(top,b.top))>0;
-    });
-    return {heroBottom:document.querySelector('[data-hero-actions]')!.getBoundingClientRect().bottom,obstructed};
-  });
-  expect(eligibility.heroBottom).toBeLessThan(0);
-  if(eligibility.obstructed)await expect(bar).toBeHidden(); // Clearance and dwell may delay appearance beyond the hero threshold.
+  expect(await page.locator('[data-hero-actions]').evaluate(el=>el.getBoundingClientRect().bottom)).toBeLessThan(0);
+  // Release requires the hero buffer and dwell, not inline-link clearance.
   await clearRailPosition(page);await expect(bar).toBeVisible();
   const rail=(await bar.boundingBox())!,consent=(await page.locator('.landing-v2-consent').boundingBox())!;
   expect(rail.y+rail.height).toBeLessThanOrEqual(consent.y+1);
@@ -102,7 +91,7 @@ test('reduced motion is static and pageshow recomputes restored scroll',async({p
   await page.evaluate(()=>{window.scrollTo(0,0);window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));});await expect(bar).toBeHidden();
 });
 
-test('visible rail never intersects section CTAs during scroll and resize',async({page})=>{
+test('visible rail yields to hero and footer CTAs during scroll and resize',async({page})=>{
   await page.goto('/');
   for(const width of [375,1440]){
     await page.setViewportSize({width,height:900});
@@ -113,7 +102,7 @@ test('visible rail never intersects section CTAs during scroll and resize',async
         const rail=document.querySelector<HTMLElement>('[data-sticky-order]')!;
         if(rail.dataset.visible==='false')return false;
         const a=rail.getBoundingClientRect();
-        return [...document.querySelectorAll('[data-landing-placement]')].some(el=>{
+        return [...document.querySelectorAll('[data-hero-actions], footer .landing-v2-orders')].some(el=>{
           if(rail.contains(el))return false;
           const b=el.getBoundingClientRect();
           return Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top))>0;

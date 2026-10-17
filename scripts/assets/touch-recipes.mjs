@@ -185,6 +185,7 @@ export const TOUCH_RECIPES = Object.freeze({
       "id": "touch-doodle-chip",
       "sourceId": "touch-doodle-chip",
       "sourcePath": "source:touch-doodle-chip",
+  "illustrated": true,
       "sourceSha256": "1d7f6e74dcf9a333d0fa966e8b28ac9dfecaf261435fdd1b5e08e7562f515054",
       "classification": "drawn",
       "publicPath": "/brand/touch-doodle-chip-1d7f6e74dcf9.svg",

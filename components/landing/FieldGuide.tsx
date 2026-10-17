@@ -18,6 +18,6 @@ export function FieldGuide({language}:{language:Language}) {
       <TexturePhoto kind="crossSection" alt={serverT(language,'landing.texture.cross-alt')}/>
       <figcaption>{serverT(language,'landing.field-guide.caption')}</figcaption>
     </figure></div>
-    <PlayfulTouch slot="field-guide"/>
+    <PlayfulTouch slot="field-guide" illustratedLabel={serverT(language,'landing.touch.illustrated-chip')}/>
   </div>;
 }

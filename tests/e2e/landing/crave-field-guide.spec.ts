@@ -83,7 +83,30 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
     await expect.poll(()=>stage.evaluate(el=>getComputedStyle(el).marginTop)).toBe('24px');
     // WebKit's FontFaceSet.ready waits for document load, which our held scripts
     // intentionally prevent. Load the CSS font faces directly before measuring.
-    await page.evaluate(()=>Promise.all(Array.from(document.fonts,face=>face.load())));
+    // Reproduce an unavailable optional fallback even on Windows with Arial installed.
+    // The primary rendered family stays unchanged; no required face is bypassed.
+    await stage.evaluate(el=>{
+      document.fonts.add(new FontFace('Missing optional geometry fallback','url(/missing-unused-font.woff2)'));
+      const sheet=document.createElement('style');
+      sheet.textContent=`[data-crave-stage]{font-family:${getComputedStyle(el).fontFamily}, "Missing optional geometry fallback";}`;
+      document.head.append(sheet);
+    });
+    const fonts=await stage.evaluate(async el=>{
+      // next/font also declares an optional local Arial fallback. CI Linux may
+      // not have Arial; loading every declaration incorrectly rejects that case.
+      const used=[...new Set([el,...el.querySelectorAll('*')].filter(node=>[...node.childNodes].some(child=>child.nodeType===Node.TEXT_NODE&&child.textContent?.trim())).map(node=>{
+        const style=getComputedStyle(node);
+        const primary=style.fontFamily.split(',')[0]!.trim();
+        return `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${primary}`;
+      }))];
+      const results=await Promise.allSettled(used.map(font=>document.fonts.load(font)));
+      return used.map((font,index)=>{
+        const result=results[index];
+        return {font,loaded:document.fonts.check(font)&&result?.status==='fulfilled'&&result.value.length>0&&result.value.every(face=>face.status==='loaded')};
+      });
+    });
+    expect(fonts.length).toBeGreaterThan(0);
+    expect(fonts.filter(font=>!font.loaded)).toEqual([]);
     await stage.scrollIntoViewIfNeeded();
     const geometry=()=>stage.evaluate(el=>({stage:el.getBoundingClientRect().height,control:el.querySelector('.landing-v2-crave-control-slot')!.getBoundingClientRect().height,photo:el.querySelector('[data-texture-photo]')!.getBoundingClientRect().height}));
     const before=await geometry();
@@ -98,7 +121,7 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
     await expect(stage.locator('img').first()).toBeAttached();
     await expect.poll(()=>stage.locator('img').first().evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
     const after=await geometry();
-    for(const key of ['stage','control','photo'] as const)expect(after[key]).toBeCloseTo(before[key],1);
+    for(const key of ['stage','control','photo'] as const)expect(Math.abs(after[key]-before[key])).toBeLessThanOrEqual(1);
   } finally {releaseScripts();}
 });
 

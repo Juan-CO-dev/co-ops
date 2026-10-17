@@ -28,7 +28,7 @@ for (const language of ["en","es"] as const) test(`every section and control ren
   const photo=held.locator('[data-landing-photo] img');
   // Exact section image inventory: one real photo and one decorative touch.
   await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveCount(1);
-  await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveAttribute('alt','');
+  await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveAttribute('alt',dictionary['landing.touch.illustrated-chip']);
   await expect(held.locator('img')).toHaveCount(2);
   await expect(photo).toHaveCount(1);
   await expect(photo).toHaveAttribute('src',textureMedia.crossSection.src);
