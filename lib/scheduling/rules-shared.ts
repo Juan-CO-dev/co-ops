@@ -168,6 +168,11 @@ export const RULE_CODES = {
   salaried_base_over_target: "warning",
   /** Juan 2026-10-16 (decision 4): a salaried week over target + flex, or more flex quarters than the flex allows. A WARNING (addendum A); hard for the generator. */
   salaried_over_flex: "warning",
+  /**
+   * CC chunk H9 (2026-10-17, spec §5.1 "two days off"): an HOURLY person on more than `maxDaysPerWeek` dates of the week (5).
+   * A WARNING on a manager-edited week (a hand-scheduled sixth day is real practice); the GENERATOR keeps it hard.
+   */
+  max_days_per_week: "warning",
   /** Juan 2026-10-16 (decision 8): a catering manager's station cover inside a booked catering window. */
   catering_cover_in_catering_window: "error",
   /** A deficit with no declared gap. */
@@ -192,7 +197,7 @@ export type RuleCode = keyof typeof RULE_CODES;
  * rule — its guard, its fill legality and its final invariant treat these codes exactly like errors, so a generated week is
  * never over the 40 h target nor past the flex.
  */
-export const GENERATOR_HARD_WARNINGS: ReadonlySet<RuleCode> = new Set<RuleCode>(["salaried_base_over_target", "salaried_over_flex"]);
+export const GENERATOR_HARD_WARNINGS: ReadonlySet<RuleCode> = new Set<RuleCode>(["salaried_base_over_target", "salaried_over_flex", "max_days_per_week"]);
 /** Does the generator refuse this problem (an error, or a salaried-week warning it keeps hard)? */
 export const generatorRefuses = (p: Pick<RuleProblem, "code" | "severity">): boolean => p.severity === "error" || GENERATOR_HARD_WARNINGS.has(p.code);
 
@@ -348,6 +353,35 @@ export function availableOn(p: RulePerson, date: string, fromQ: number, toQ: num
   if (w === undefined) return true;
   if (w === null) return false;
   return fromQ >= w.fromQ && toQ <= w.toQ;
+}
+
+/**
+ * CC chunk H9 (2026-10-17, spec §5.1): everyone has two days off — an hourly person works at most this many dates a week.
+ * Interim: a constant (5). The shop setting `structure.limits.maxDaysPerWeek` needs a NEW migration (0274's
+ * `valid_schedule_structure` pins the limits keys exactly), so it lands with 0276; `maxDaysPerWeek` is the one read.
+ */
+export const MAX_DAYS_PER_WEEK = 5;
+export function maxDaysPerWeek(st: ScheduleStructure): number {
+  void st;
+  return MAX_DAYS_PER_WEEK;
+}
+
+/** The dates of the week `userId` has any shift on. */
+export function workedDates(s: { readonly shifts: readonly Shift[] }, userId: string): Set<string> {
+  const out = new Set<string>();
+  for (const sh of s.shifts) if (sh.userId === userId) out.add(sh.date);
+  return out;
+}
+
+/**
+ * CC chunk H9: may NOT be given a shift on `date` because of the two-days-off rule — an hourly person with no shift that date
+ * who already works `limit` other dates. (Extending a shift they already have that date adds no date.) The fills treat it as
+ * hard, and every proof treats such a person as unavailable for that date.
+ */
+export function atDayCap(p: RulePerson, s: { readonly shifts: readonly Shift[] }, date: string, limit: number = MAX_DAYS_PER_WEEK): boolean {
+  if (p.salaried || p.presenceOnly) return false;
+  const worked = workedDates(s, p.userId);
+  return !worked.has(date) && worked.size >= limit;
 }
 
 const sortIds = (a: string[]) => [...a].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
@@ -632,7 +666,8 @@ export function capOnlyBound(g: GapSubject, s: WeekSchedule, ctx: RuleContext): 
   const placedAt = (p: RulePerson, q: number) => shifts.some((sh) => sh.userId === p.userId && (g.code === "coverage_gap"
     ? sh.segments.some((x) => x.positionId === g.positionId && x.startQ <= q && x.endQ > q)
     : sh.segments.some((x) => x.startQ <= q && x.endQ > q) && modCountsOn(p, day, q)));
-  const countsAt = (p: RulePerson, q: number) => (eligibleFor(p, g.code, g.positionId, st, q) && availableOn(p, g.date, q, q + 1)) || placedAt(p, q);
+  // CC chunk H9: a person on their last allowed date elsewhere cannot be added that date (two days off).
+  const countsAt = (p: RulePerson, q: number) => (eligibleFor(p, g.code, g.positionId, st, q) && availableOn(p, g.date, q, q + 1) && !atDayCap(p, s, g.date, maxDaysPerWeek(st))) || placedAt(p, q);
   const people = Object.values(ctx.people).sort((x, y) => (x.userId < y.userId ? -1 : x.userId > y.userId ? 1 : 0));
   const avail = new Map<string, number>();
   let requiredQ = 0;
@@ -670,7 +705,7 @@ function capacityFor(S: readonly string[], g: GapSubject, s: WeekSchedule, day: 
     for (const p of S) need += day.need.positions[p]?.[q] ?? 0;
     required = Math.min(required, need);
     for (const person of Object.values(ctx.people)) {
-      const eligible = S.some((p) => eligibleForPosition(person, st.positions[p])) && availableOn(person, g.date, q, q + 1);
+      const eligible = S.some((p) => eligibleForPosition(person, st.positions[p])) && availableOn(person, g.date, q, q + 1) && !atDayCap(person, s, g.date, maxDaysPerWeek(st));
       // Anyone actually standing on S at q counts too (a presence pin, a manager cover).
       const placed = shifts.some((sh) => sh.userId === person.userId && sh.segments.some((x) => S.includes(x.positionId) && x.startQ <= q && x.endQ > q));
       if (eligible || placed) people.add(person.userId);
@@ -942,7 +977,7 @@ function fillCandidates(positionId: string, fromQ: number, toQ: number, date: st
       withPairs({ hours, steps: [{ kind: "extend", userId: p.userId, shiftStartQ: sh.startQ, positionId, fromQ: a, toQ: z, hours }] }, paired(a, z, p.userId));
     }
     // (3) a new block containing the window, with a legal placement witness.
-    if (blockQ > maxQ || dayQ(p.userId) + blockQ > maxQ) continue;
+    if (blockQ > maxQ || dayQ(p.userId) + blockQ > maxQ || atDayCap(p, s, date, maxDaysPerWeek(st))) continue;
     for (let a = Math.max(0, toQ - blockQ); a <= fromQ && a + blockQ <= 96; a++) {
       const z = a + blockQ;
       if (own.some((x) => x.startQ < z && x.endQ > a)) continue;
@@ -1192,7 +1227,7 @@ export function salariedFlexBlocks(date: string, s: WeekSchedule, ctx: RuleConte
   const modOk = (p: RulePerson, q: number) => uncoveredFrom(cov, "mod_missing", null, day, q) > 0 && modCountsOn(p, day, q);
   /** No hourly member could stand on this station at q (eligible, available, not untouchable): only a manager can cover it. */
   const hourly = Object.values(ctx.people).filter((x) => isHourly(x) && x.activeMember && !neverGenerated(x) && !x.untouchableDates.includes(date));
-  const managersOnly = (id: string, q: number) => !hourly.some((x) => eligibleForPosition(x, st.positions[id]) && availableOn(x, date, q, q + 1));
+  const managersOnly = (id: string, q: number) => !hourly.some((x) => eligibleForPosition(x, st.positions[id]) && availableOn(x, date, q, q + 1) && !atDayCap(x, s, date, maxDaysPerWeek(st)));
   const out: FlexBlock[] = [];
   const base = flexLegalityBase(s, date, ctx);
   for (const p of flexSearchManagers(date, ctx)) {
@@ -1385,6 +1420,8 @@ export function floorCandidateStatus(p: RulePerson, g: Pick<GapSubject, "date" |
   if (legalQ.some((q) => own.some((sh) => sh.startQ <= q && sh.endQ > q))) return "on_shift_legal";
   // OFF SHIFT: excluded only if they cannot add hours there.
   if (isHourly(p)) {
+    // CC chunk H9: on their last allowed date elsewhere they cannot be added this date (two days off) — unavailable.
+    if (atDayCap(p, s, g.date, maxDaysPerWeek(st))) return "unavailable";
     for (let q = g.fromQ; q < g.toQ; q++) if (availableOn(p, g.date, q, q + 1)) return null;
     return "unavailable";
   }
@@ -1474,6 +1511,7 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
       for (const id of e) {
         const p = ctx.people[id]!;
         // Only the quarters at which the person COUNTS need them unavailable (Astra chunk B P1-2).
+        if (atDayCap(p, s, g.date, maxDaysPerWeek(st))) continue; // CC chunk H9: two days off — not addable this date
         for (let q = g.fromQ; q < g.toQ; q++) if (eligibleFor(p, g.code, g.positionId, st, q) && availableOn(p, g.date, q, q + 1)) return false;
       }
       return true;
@@ -1773,6 +1811,9 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
     if (isHourly(p) && ((p.softMaxH !== null && hours > p.softMaxH) || (p.softMinH !== null && hours < p.softMinH))) {
       push("soft_range", last, { userId: u, params: { hours, min: p.softMinH, max: p.softMaxH } });
     }
+    // CC chunk H9 (spec §5.1): two days off — an hourly person on more dates than the limit (inherited dates count).
+    const dateCount = new Set(mine.map((x) => x.date)).size;
+    if (isHourly(p) && dateCount > maxDaysPerWeek(st)) push("max_days_per_week", last, { userId: u, params: { days: dateCount, limit: maxDaysPerWeek(st) } });
     if (p.salaried) {
       const floor = floorHours(s, u);
       const floorDays = [...new Set(mine.filter((x) => builtSet.has(x.date) && x.segments.some((g) => g.positionId !== MOD)).map((x) => x.date))].sort();

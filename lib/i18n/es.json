@@ -7227,6 +7227,7 @@
   "schedule.rule.overtime": "{hours} h esta semana — más que el límite de horas extra de {limit} h.",
   "schedule.rule.over_budget": "Las horas pasan del presupuesto.",
   "schedule.rule.soft_range": "{hours} h esta semana está fuera del rango normal de esta persona.",
+  "schedule.rule.max_days_per_week": "Trabaja {days} días esta semana — todos tienen dos días libres (máximo {limit} días).",
   "schedule.rule.outside_assumed_availability": "Fuera del horario normal de esta persona (según las marcas de Toast).",
   "schedule.rule.checklist_past_max": "La lista de cierre puede terminar después de la hora máxima de salida.",
   "schedule.rule.flex_used": "Se usa un día flexible.",

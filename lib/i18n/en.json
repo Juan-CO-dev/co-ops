@@ -7227,6 +7227,7 @@
   "schedule.rule.overtime": "{hours} h this week — over the {limit} h overtime line.",
   "schedule.rule.over_budget": "Hours are over the budget.",
   "schedule.rule.soft_range": "{hours} h this week is outside this person's usual range.",
+  "schedule.rule.max_days_per_week": "Works {days} days this week — everyone gets two days off (at most {limit} days).",
   "schedule.rule.outside_assumed_availability": "Outside this person's usual hours (assumed from Toast punches).",
   "schedule.rule.checklist_past_max": "The closing checklist may run past the latest out time.",
   "schedule.rule.flex_used": "A flex day is used.",

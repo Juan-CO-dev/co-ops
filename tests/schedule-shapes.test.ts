@@ -42,7 +42,8 @@ describe("what the generator emits has the persisted shape", () => {
       for (const s of j.shifts) { expect(validScheduleSegments(s.segments, s.startQ, s.endQ), `${f} ${s.userId} ${s.date}`).toBe(true); shifts++; }
       for (const g of j.gaps) { expect(validGapCertificateShape(g.cause, g.certificate), `${f} ${g.date} ${g.cause}`).toBe(true); gaps++; }
     }
-    expect(shifts).toBeGreaterThan(1000);
+    // CC chunk H9: two days off (5 dates per hourly person) took the 27 goldens from 1,065 shifts to fewer than 1,000.
+    expect(shifts).toBeGreaterThan(900);
     expect(gaps).toBeGreaterThan(50);
   });
 });

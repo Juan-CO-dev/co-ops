@@ -24,22 +24,22 @@ import { buildDayNeed, type NeedCatering } from "../need-shared";
 import type { SchedPerson, SkillLookup } from "../people-input-shared";
 import { reason, shiftKey, type BoardNote, type ReasonIndex, type ShiftReasons } from "../reasons-shared";
 import {
-  MOD, PROVEN_CAUSE_ORDER, REPAIR_LIMITS, checkScheduleRules, cheapestFill, eligibleFor, proveGap, type DayRecord, type DeclaredGap, type GapSubject, type RuleProblem, type Shift,
+  MOD, PROVEN_CAUSE_ORDER, REPAIR_LIMITS, checkScheduleRules, cheapestFill, closingManagerEligible, eligibleFor, proveGap, type DayRecord, type DeclaredGap, type GapSubject, type RuleProblem, type Shift,
 } from "../rules-shared";
-import { availableOn, eligibleForPosition, generatorRefuses, isManagerRole, leaderSettingAllows, modCountsOn, neverGenerated } from "../rules-shared";
+import { atDayCap, availableOn, eligibleForPosition, generatorRefuses, isManagerRole, leaderSettingAllows, maxDaysPerWeek, modCountsOn, neverGenerated, workedDates } from "../rules-shared";
 import { scheduledOut, type CrewType, type ScheduleStructure } from "../structure-shared";
 import { skillOf } from "../people-input-shared";
 import { teamStrength, type WindowStrength } from "../strength-shared";
-import { weekDays } from "../time-shared";
+import { isoDowOf, weekDays } from "../time-shared";
 import {
-  allShifts, applyFill, assignClosingManager, baseWeekQuarters, budgetUsedHours, canonicalDay, cmp, coverWithCateringManager, coverWithFlexBlock, coverWithTargetFlexBlock, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
-  type BuildCtx, type GShift, type WeekState,
+  RELAX_TIERS, allShifts, applyFill, assignClosingManager, baseWeekQuarters, budgetUsedHours, canonicalDay, cmp, coverWithCateringManager, coverWithFlexBlock, coverWithTargetFlexBlock, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
+  type BuildCtx, type GShift, type RelaxTier, type WeekState,
 } from "./assign-shared";
 import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repair-shared";
 import { salariedBlocks, templatesFor, templateOrder } from "./templates-shared";
 
 /** Bumped whenever a golden changes; stored on the revision. */
-export const GENERATOR_VERSION = "p2.12";
+export const GENERATOR_VERSION = "p2.13";
 
 // ─── Input / output ──────────────────────────────────────────────────────────
 
@@ -226,6 +226,9 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     }
   }
 
+  // CC chunk H9 (spec §5.1, two days off): each hourly person's OFF days among the built dates, chosen once, after the pins.
+  b.offPreferred = chooseOffDays(input.people, builtDates, allShifts(week), days, buildDays, s);
+
   // CC addendum B1 (2026-10-16): when a salaried manager's planned base blocks (after the pins, which are fixed first) would
   // pass the week target, they drop the LOWEST-demand day(s) by forecast (`dayCents`; a tie drops the later day) — never
   // simply the last days by iteration order. Leadership coverage must still hold: a day where nobody else could be the
@@ -291,7 +294,18 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
       if (!kept) notes.push({ code: "salaried_block_skipped", date, userId: blk.userId, positionId: null, params: { reason: "conflict" } });
     }
     for (const sk of skipped) notes.push({ code: "salaried_block_skipped", date, userId: sk.userId, positionId: null, params: { reason: sk.reason } });
-    // 5–7. Templates and assignment.
+    // 5–7. Templates and assignment — CC chunk H9: the FIRST tier only (nobody on a chosen off day, no overtime).
+    fillTemplates(date, [RELAX_TIERS[0]!], false);
+  }
+  // CC chunk H9 (spec §5.1, "Overtime is avoided"): each later tier runs over EVERY date before the next, so an early date never
+  // spends a later date's people (a chosen off day, then overtime as the last resort — with manager cover after it, as before).
+  for (let i = 1; i < RELAX_TIERS.length; i++) {
+    for (const date of builtDates) fillTemplates(date, [RELAX_TIERS[i]!], i === RELAX_TIERS.length - 1);
+  }
+
+  /** Templates and assignment for one built date at the given tiers, then priority, the Closing Manager and the MoD lane. */
+  function fillTemplates(date: string, tiers: readonly RelaxTier[], allowCover: boolean): void {
+    const day = days[date]!;
     for (const t of templatesFor(day.need, s)) {
       let q = t.fromQ;
       while (q < t.toQ) {
@@ -301,14 +315,14 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
         if (!open(q)) { q++; continue; }
         let stop = q + 1;
         while (stop < t.toQ && open(stop)) stop++;
-        fillRun(b, week, date, t.positionId, q, stop, t, order, { allowCover: true, budgetStop: true });
+        fillRun(b, week, date, t.positionId, q, stop, t, order, { allowCover, budgetStop: true, tiers });
         q = stop;
       }
     }
     // 8–10. Priority, the Closing Manager, the MoD lane.
     enforcePriority(b, week, date);
     assignClosingManager(b, week, date);
-    for (const [fromQ, toQ] of modHoles(b, date, week.built[date]!)) fillModHole(b, week, date, fromQ, toQ);
+    for (const [fromQ, toQ] of modHoles(b, date, week.built[date]!)) fillModHole(b, week, date, fromQ, toQ, tiers);
   }
 
   // 9a. The bounded repair search, per day in order (one cap for the week).
@@ -434,7 +448,7 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
       // untouchable day, their leader setting, the daily maximum (the shift is already within it), every segment.
       const alternates = Object.values(people).filter((p) => p.userId !== sh.userId && !p.salaried && !p.presenceOnly && p.activeMember
         && !week.built[date]!.some((x) => x.userId === p.userId) && availableOn(p, date, sh.startQ, sh.endQ)
-        && !p.untouchableDates.includes(date) && leaderSettingAllows(p, s, sh.startQ, sh.endQ)
+        && !p.untouchableDates.includes(date) && leaderSettingAllows(p, s, sh.startQ, sh.endQ) && !atDayCap(p, { shifts }, date, maxDaysPerWeek(s))
         && sh.segments.every((g) => g.positionId === MOD ? isManagerRole(p.role) : eligibleForPosition(p, s.positions[g.positionId])))
         .map((p) => ({ userId: p.userId, skill: Math.round(Math.max(...sh.segments.filter((g) => g.positionId !== MOD).map((g) => skillOf(input.skills, p, g.positionId, s.positions[g.positionId]).value), 0) * 1000) / 1000 }))
         .sort((x, y) => y.skill - x.skill || cmp(x.userId, y.userId)).slice(0, 3);
@@ -493,6 +507,59 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     hourlyCostCents: cost, budgetedDates, budgetHours: b.budgetHours, repair: counters, shifts: shifts.length, gaps: gaps.length,
   };
   return { version: GENERATOR_VERSION, shifts, days: dayRecords, gaps, reasons: sortKeys(reasons), notes: sortNotes(notes), stats, problems, context: ctx, strength };
+}
+
+/**
+ * CC chunk H9 (2026-10-17, spec §5.1 "two days off"): the OFF days of every active hourly person the generator places. A person
+ * whose open dates (built, available, not untouchable, no shift yet) exceed what the cap leaves (`maxDaysPerWeek` − the
+ * dates they already work: inherited days and pins) gets exactly that many off days, picked in this order:
+ *   1. their LOWEST-OBSERVED weekdays from Toast punches (`observedDowShare`; a weekday without evidence counts as 1);
+ *   1b. for a person who can carry a ROLE rule (the Closing Manager; the manager on duty, Shift Lead and up), the dates where
+ *      MORE such people are still open, so the role is never left with nobody on one date;
+ *   2. the LOWEST-DEMAND dates — the date's required head-quarters (the need grid) per person still open that date, so off days
+ *      spread instead of piling onto one date;
+ *   3. the date's forecast (`dayCents`, none = 0), then a per-person rotation of the weekday (deterministic, spreads ties).
+ * People go in id order; every input is canonical, so the result is permutation-invariant.
+ */
+function chooseOffDays(
+  people: readonly SchedPerson[], builtDates: readonly string[], shifts: readonly Shift[], days: Record<string, DayContext>, buildDays: readonly BuildDayInput[], s: ScheduleStructure,
+): Record<string, ReadonlySet<string>> {
+  const limit = maxDaysPerWeek(s);
+  const needQ: Record<string, number> = {};
+  for (const d of builtDates) needQ[d] = Object.values(days[d]!.need.positions).reduce((n, arr) => n + arr.reduce((a, x) => a + x, 0), 0);
+  const cents = (d: string) => buildDays.find((x) => x.date === d)?.dayCents ?? 0;
+  const eligible = people.filter((p) => !p.salaried && !p.presenceOnly && p.activeMember && !neverGenerated(p));
+  const openOf = (p: SchedPerson) => {
+    const worked = workedDates({ shifts }, p.userId);
+    return { worked, open: builtDates.filter((d) => !worked.has(d) && p.availability[d] !== null && !p.untouchableDates.includes(d)) };
+  };
+  const openCount: Record<string, number> = Object.fromEntries(builtDates.map((d) => [d, 0]));
+  const cmOpen: Record<string, number> = Object.fromEntries(builtDates.map((d) => [d, 0]));
+  const modOpen: Record<string, number> = Object.fromEntries(builtDates.map((d) => [d, 0]));
+  const isCm = (p: SchedPerson) => closingManagerEligible(p, s);
+  const isMod = (p: SchedPerson) => isManagerRole(p.role);
+  for (const p of eligible) for (const d of openOf(p).open) { openCount[d]!++; if (isCm(p)) cmOpen[d]!++; if (isMod(p)) modOpen[d]!++; }
+  const out: Record<string, ReadonlySet<string>> = {};
+  eligible.forEach((p, idx) => {
+    const { worked, open } = openOf(p);
+    const k = open.length - Math.max(0, limit - worked.size);
+    if (k <= 0) return;
+    const dowOf = (d: string) => builtDates.indexOf(d);
+    const share = (d: string) => p.observedDowShare?.[isoDowOf(d)] ?? 1;
+    const ranked = [...open].sort((a, z) => share(a) - share(z)
+      || (isCm(p) ? cmOpen[z]! - cmOpen[a]! : 0) || (isMod(p) ? modOpen[z]! - modOpen[a]! : 0)
+      || needQ[a]! / Math.max(1, openCount[a]!) - needQ[z]! / Math.max(1, openCount[z]!)
+      || cents(a) - cents(z)
+      || (dowOf(a) + idx) % 7 - (dowOf(z) + idx) % 7 || cmp(a, z));
+    const off = new Set(ranked.slice(0, k));
+    for (const d of off) {
+      openCount[d] = Math.max(0, openCount[d]! - 1);
+      if (isCm(p)) cmOpen[d] = Math.max(0, cmOpen[d]! - 1);
+      if (isMod(p)) modOpen[d] = Math.max(0, modOpen[d]! - 1);
+    }
+    out[p.userId] = off;
+  });
+  return out;
 }
 
 function sortKeys<T>(o: Record<string, T>): Record<string, T> {

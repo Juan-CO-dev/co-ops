@@ -193,6 +193,17 @@ export const SMALL_SPECS: PersonSpec[] = [
 
 export const small = (over: Partial<FixtureOpts> = {}) => fixture({ specs: SMALL_SPECS, ...over });
 
+/**
+ * CC chunk H9 (spec §5.1, two days off): with at most 5 dates per hourly person, the 10-person SMALL roster cannot staff a 7-day
+ * week (the p2.12 goldens had most of it on 7 days). Fixtures whose point is NOT a short roster add these four people.
+ */
+export const H9_EXTRA: PersonSpec[] = [
+  { id: "u-m-mia", role: "employee", skills: sk({ [R.REG]: 0.7, [R.WALKON]: 0.7, [R.WALK]: 0.7, [R.THIRD]: 0.7, [R.BOI]: 0.7 }) },
+  { id: "u-n-noe", role: "employee", skills: sk({ [R.REG]: 0.7, [R.WALKON]: 0.7, [R.WALK]: 0.7, [R.THIRD]: 0.7, [R.BOI]: 0.7 }) },
+  { id: "u-o-oz", role: "employee", workType: "boh", skills: sk({ [R.DISH]: 0.8, [R.PREP]: 0.8 }) },
+  { id: "u-p-pia", role: "key_holder", leader: "closes", close: 0.8, skills: sk({ [R.REG]: 0.75, [R.WALKON]: 0.75, [R.WALK]: 0.7 }) },
+];
+
 // ─── The constrained fixtures F0a–F0j (green BEFORE any golden is frozen) ────
 
 const ALL_ROLES: RoleCode[] = ["trainee", "employee", "trainer", "key_holder", "shift_lead", "agm", "gm", "moo", "owner"];
@@ -375,13 +386,17 @@ export const FIXTURES: Record<string, () => GeneratorInput> = {
   "F0b-tight-budget-essential-plus-6": () => small({ structure: noMod(), days: [day(WEEK, {}, noMod())], budgetByDate: { ...budgetAll(null), [WEEK]: 22 } }),
   "F0c-no-eligible": () => { const s = structure((x) => { x.leadership.modRequired = false; x.positions[I.$DISH]!.allowedRoles = ["trainer"]; }); return small({ structure: s, days: [day(WEEK, {}, s)] }); },
   "F0d-floor-capped": () => {
-    const s = structure((x) => { x.leadership.modRequired = false; x.limits.managerFloorH = 24; x.positions[I.$EXPO]!.allowedRoles = ["gm"]; x.positions[I.$EXPO]!.openQ = 40; x.positions[I.$EXPO]!.trimQ = 60; x.positions[I.$EXPO]!.closeQ = 60; });
-    return small({ structure: s, days: DATES.map((d) => day(d, {}, s)) });
+    const s = structure((x) => { x.leadership.modRequired = false; x.limits.managerFloorH = 16; x.limits.salariedFlexH = 8; x.positions[I.$EXPO]!.allowedRoles = ["gm"]; x.positions[I.$EXPO]!.openQ = 40; x.positions[I.$EXPO]!.trimQ = 60; x.positions[I.$EXPO]!.closeQ = 60; });
+    // CC chunk H9: with two days off (5 dates each) the 10-person roster cannot staff 7 days; F0d is about the GM's floor
+    // cap on the GM-only Expo, so the other stations get enough hourly people (H9_EXTRA), and the floor / flex (16 h / 8 h, were
+    // 24 h / 10 h) are set so the GM still runs out on the Sunday Expo — the floor_limit this fixture exists for.
+    return small({ structure: s, days: DATES.map((d) => day(d, {}, s)), specs: [...SMALL_SPECS, ...H9_EXTRA] });
   },
   "F0e-repair-needed": f0eRepairNeeded,
   "F0f-all-unproven": () => {
     const extra: PersonSpec[] = [{ id: "u-k-kim", role: "employee" }, { id: "u-l-lou", role: "employee", workType: "boh" }];
-    return small({ structure: noMod(), specs: [...SMALL_SPECS, ...extra].map((p) => ({ ...p, skills: undefined, close: undefined })) });
+    // CC chunk H9: two days off (5 dates each) — the roster gains H9_EXTRA so F0f still tests unknown skills, not a short roster.
+    return small({ structure: noMod(), specs: [...SMALL_SPECS, ...extra, ...H9_EXTRA].map((p) => ({ ...p, skills: undefined, close: undefined })) });
   },
   "F0g-history": () => {
     const retired = "5c000000-0000-4000-8000-00000000ff01";

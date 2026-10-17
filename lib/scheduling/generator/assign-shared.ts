@@ -22,7 +22,7 @@ import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../peop
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
 import type { FillPlan, FillStep } from "../rules-shared";
 import {
-  CATERING_MANAGER_COVER, MOD, SALARIED_FLEX_REASON, availableOn, baseFloorRoomQ, cateringWindows, splitSalariedRelabel, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition,
+  CATERING_MANAGER_COVER, MOD, SALARIED_FLEX_REASON, atDayCap, availableOn, maxDaysPerWeek, baseFloorRoomQ, cateringWindows, splitSalariedRelabel, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition,
   flexLeftQ, generatorRefuses, isFlexSegment, isManagerRole, leaderSettingAllows, modCountsAt, modCountsOn, neverGenerated, salariedFlexBlocks, flexBlockReaching, shiftExtendsOver, zeroCostCovers,
   type DayRecord, type FlexBlock, type RuleProblem, type Segment, type Shift,
 } from "../rules-shared";
@@ -51,6 +51,12 @@ export interface BuildCtx {
   notes: BoardNote[];
   /** Pins that may be carved for cover: shift key → the positions the pin allows ("any" = every eligible). */
   pinCover: Record<string, string[] | "any">;
+  /**
+   * CC chunk H9 (spec §5.1, two days off): per hourly person, the built dates chosen as their OFF days (`chooseOffDays`) — a fill
+   * gives them a NEW shift there only when nobody else fits (`RELAX_TIERS`); the 5-date cap itself is hard everywhere (the
+   * validator's `max_days_per_week`, kept hard by the generator).
+   */
+  offPreferred?: Record<string, ReadonlySet<string>>;
 }
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -291,6 +297,11 @@ export interface CandidateOpts {
   closingLead: boolean;
   /** Allow a candidate whose week would exceed the overtime threshold (the last resort). */
   allowOvertime: boolean;
+  /**
+   * CC chunk H9 (spec §5.1): `false` = never a NEW shift on one of the person's chosen off days (`BuildCtx.offPreferred`). The main
+   * fills pass false first and relax it only when nobody else fits; every other caller leaves it unset (allowed).
+   */
+  allowOffDay?: boolean;
   /** MoD blocks: the candidate must count as the manager on duty from `modFromQ` (the hole's first quarter; default the plan's). */
   mod: boolean;
   modFromQ?: number;
@@ -329,6 +340,7 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
   const busiest = o.plan.segments.some((g) => { for (let q = g.startQ; q < g.endQ; q++) if (b.busiest[o.date]?.has(q)) return true; return false; })
     || worksClosingWindow(b, o.date, o.plan.startQ, o.plan.endQ);
   const out: Candidate[] = [];
+  const all = allShifts({ built: { ...week.built, [o.date]: shifts as GShift[] }, inherited: week.inherited });
   for (const userId of Object.keys(b.people).sort(cmp)) {
     const p = b.people[userId]!;
     if (!isHourly(p) || neverGenerated(p) || !p.activeMember || p.untouchableDates.includes(o.date)) continue;
@@ -337,6 +349,9 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
     if (o.extensionOnly && !own) continue;
     if (o.mod ? !modCountsAt(p, s, o.modFromQ ?? o.plan.startQ) : !o.plan.segments.every((g) => eligibleForPosition(p, s.positions[g.positionId]))) continue;
     if (o.closingLead && !closingManagerEligible(p, s)) continue;
+    // CC chunk H9 (spec §5.1): two days off — never a new date past the cap (hard), and in the main fill never a chosen off day.
+    if (!own && atDayCap(p, { shifts: all }, o.date, maxDaysPerWeek(s))) continue;
+    if (!own && o.allowOffDay === false && b.offPreferred?.[userId]?.has(o.date) && !all.some((x) => x.userId === userId && x.date === o.date)) continue;
     const fromQ = own ? Math.min(own.startQ, o.plan.startQ) : o.plan.startQ;
     const toQ = own ? Math.max(own.endQ, o.plan.endQ) : o.plan.endQ;
     // CC chunk B ruling 3: the daily maximum is HARD — a placement that would make the shift longer is never a candidate.
@@ -417,7 +432,7 @@ export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, 
  */
 export function fillRun(
   b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number, t: Pick<Template, "source" | "essential" | "closingLead">,
-  order: readonly string[], opts: { allowCover: boolean; budgetStop: boolean },
+  order: readonly string[], opts: { allowCover: boolean; budgetStop: boolean; tiers?: readonly RelaxTier[] },
 ): "placed" | "covered" | "budget" | "none" {
   // CC chunk B ruling 3: a run longer than the daily maximum is split into the fewest near-equal parts that each fit
   // (the earlier parts one quarter longer), filled in order — two people hold a 13.75 h Prep/Dishwasher day.
@@ -449,8 +464,8 @@ export function fillRun(
   if (toQ - fromQ < b.structure.limits.minimumShiftQ) plans.push({ plan: corePlan, extensionOnly: true });
   if (fullPlan) plans.push({ plan: fullPlan, extensionOnly: false });
   for (const { plan, extensionOnly } of plans) {
-    for (const allowOvertime of [false, true]) {
-      const o: CandidateOpts = { date, plan, positionId, closingLead: t.closingLead, allowOvertime, mod: false, extensionOnly };
+    for (const { allowOvertime, allowOffDay } of opts.tiers ?? RELAX_TIERS) {
+      const o: CandidateOpts = { date, plan, positionId, closingLead: t.closingLead, allowOvertime, allowOffDay, mod: false, extensionOnly };
       const ranked = rankCandidates(b, week, week.built[date]!, o);
       for (const c of ranked.slice(0, 6)) {
         const why = whyChosen(b, week.built[date]!, c, o);
@@ -488,6 +503,19 @@ export function fillRun(
   if (opts.allowCover && !t.closingLead && coverWithManager(b, week, date, positionId, fromQ, toQ)) return "covered";
   return "none";
 }
+
+/**
+ * The candidate tiers, in order; a later tier is tried only when NO candidate of the earlier one was placed. CC chunk H9 (spec
+ * §5.1): first nobody on one of their chosen off days, then an off day; overtime is the last resort (a warning with its cost,
+ * `overtime_used`). `buildWeek` runs the first tier over EVERY date before any later tier (so an early date never spends a
+ * later date's people); the repair's insertions take all tiers in order.
+ */
+export interface RelaxTier { allowOvertime: boolean; allowOffDay: boolean }
+export const RELAX_TIERS: readonly RelaxTier[] = [
+  { allowOvertime: false, allowOffDay: false },
+  { allowOvertime: false, allowOffDay: true },
+  { allowOvertime: true, allowOffDay: true },
+];
 
 export function sourceReason(source: Template["source"], positionId: string, fromQ: number, toQ: number): Reason {
   const key = source === "closing_crew" ? "closing_crew" : source === "boh_crew" ? "boh_crew" : source === "catering" ? "catering_prep" : "wave_arrival";
@@ -1071,7 +1099,7 @@ export function modHoles(b: BuildCtx, date: string, shifts: readonly GShift[]): 
  * Fill a MoD hole with an eligible hourly manager (SL+, or a KH after the shop's setting time) on a `mod`
  * block reaching the minimum shift inside the shop day; their own adjacent shift may extend instead.
  */
-export function fillModHole(b: BuildCtx, week: WeekState, date: string, fromQ: number, toQ: number): boolean {
+export function fillModHole(b: BuildCtx, week: WeekState, date: string, fromQ: number, toQ: number, tiers: readonly RelaxTier[] = RELAX_TIERS): boolean {
   const day = b.ctx.days[date]!;
   const minQ = b.structure.limits.minimumShiftQ;
   const lo = day.structure.shopDay.prepStartQ;
@@ -1082,8 +1110,8 @@ export function fillModHole(b: BuildCtx, week: WeekState, date: string, fromQ: n
   while (z - a < minQ && a > lo) a--;
   if (z - a < minQ) return false;
   const plan: BlockPlan = { startQ: a, endQ: z, segments: [{ positionId: MOD, startQ: a, endQ: z, kind: "core" }] };
-  for (const allowOvertime of [false, true]) {
-    const o: CandidateOpts = { date, plan, positionId: null, closingLead: false, allowOvertime, mod: true, modFromQ: fromQ };
+  for (const { allowOvertime, allowOffDay } of tiers) {
+    const o: CandidateOpts = { date, plan, positionId: null, closingLead: false, allowOvertime, allowOffDay, mod: true, modFromQ: fromQ };
     const ranked = rankCandidates(b, week, week.built[date]!, o);
     for (const c of ranked.slice(0, 6)) {
       const r = reason("mod_cover", { fromQ, toQ, userId: c.person.userId });

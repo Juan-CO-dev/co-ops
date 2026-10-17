@@ -14,7 +14,7 @@ import { enforcePriority, type BuildCtx, type GShift, type WeekState } from "@/l
 import { teamStrength } from "@/lib/scheduling/strength-shared";
 import { canonicalJson } from "@/lib/scheduling/context-shared";
 import {
-  DATES, I, SMALL_SPECS, day, f0eRepairNeeded, f0iFourthDonor, f0jLongChain, fixture, person, repairShop, skillsOf, small, structure, type PersonSpec,
+  DATES, H9_EXTRA, I, SMALL_SPECS, day, f0eRepairNeeded, f0iFourthDonor, f0jLongChain, fixture, person, repairShop, skillsOf, small, structure, type PersonSpec,
 } from "./fixtures/schedule/fixtures";
 
 const [MON, TUE, WED, THU, FRI, SAT, SUN] = DATES as [string, string, string, string, string, string, string];
@@ -127,10 +127,11 @@ describe("Task 7: assignment rules, one per rule", () => {
 
   it("an overtime candidate is skipped while another fits, and used only when none fits (a warning, noted)", () => {
     const s = onePosition();
-    const headShifts = DATES.slice(1, 6).map((d) => ({ userId: "u-x", date: d, startQ: 44, endQ: 76, segments: [{ positionId: I.$REG, startQ: 44, endQ: 76 }], closingManager: false, flex: false, pinned: false }));
+    // CC chunk H9: 4 kept days of 10 h (not 5 × 8 h), so Monday is X's 5th date — two days off stays satisfied either way.
+    const headShifts = DATES.slice(1, 5).map((d) => ({ userId: "u-x", date: d, startQ: 44, endQ: 84, segments: [{ positionId: I.$REG, startQ: 44, endQ: 84 }], closingManager: false, flex: false, pinned: false }));
     const head = { revisionId: "rev-0", shifts: headShifts, days: [], gaps: [], closingWindowByDate: {} };
     const specs: PersonSpec[] = [{ id: "u-x", role: "employee", skills: { [I.$REG]: [0.95, 0.9] } }, { id: "u-y", role: "employee", skills: { [I.$REG]: [0.5, 0.9] } }];
-    // 5 × 8 h = 40 h already on kept days: another 4 h would be overtime, so Y takes Monday although X is stronger.
+    // 4 × 10 h = 40 h already on kept days: another 4 h would be overtime, so Y takes Monday although X is stronger.
     const out = buildWeek(fixture({ structure: s, specs, days: oneDay(s), head }));
     expectClean(out);
     expect(who(out)).toEqual(["u-y"]);
@@ -184,7 +185,8 @@ describe("Task 7: assignment rules, one per rule", () => {
     const s = structure((x) => { x.leadership.modRequired = false; });
     // 12 hourly people, every skill a starting point (an unproven 0.5): nobody is "newer", nothing blocks.
     const extra: PersonSpec[] = [{ id: "u-k-kim", role: "employee" }, { id: "u-l-lou", role: "employee", workType: "boh" }];
-    const specs: PersonSpec[] = [...SMALL_SPECS, ...extra].map((p) => ({ ...p, skills: undefined, close: undefined }));
+    // CC chunk H9: two days off (5 dates each) — the roster gains H9_EXTRA so this stays about unknown skills, not a short roster.
+    const specs: PersonSpec[] = [...SMALL_SPECS, ...extra, ...H9_EXTRA].map((p) => ({ ...p, skills: undefined, close: undefined }));
     const out = buildWeek(small({ structure: s, specs }));
     expectClean(out);
     expect(out.shifts.length).toBeGreaterThan(20);
@@ -427,41 +429,45 @@ describe("Task 7: budget, certificates and the repair search", () => {
   });
 
   it("floor_limit: salaried managers at 32 h; a position only the GM may work is covered until his floor is spent, then certified floor_limit", () => {
-    // Expeditor 10:00–15:00 (needed 10:30–15:00 = 4.5 h) inside the GM's 7:00–15:00 block, GM-only; the floor limit is the 24 h setting:
-    // Mon–Fri cover 22.5 h, Saturday's 4.5 h would make 27 > 24 → floor_limit on Sat and Sun.
+    // Expeditor 10:00–15:00 (needed 11:00–15:00 = 4 h) inside the GM's 7:00–15:00 block, GM-only. CC chunk H9: with two days off
+    // the roster gains H9_EXTRA, so the GM covers ONLY the Expo and the floor limit is set to 20 h: Mon–Fri cover 20 h,
+    // Saturday's 4 h would make 24 > 20 → floor_limit on Sat and Sun. (Before H9 a short roster also spent 4 h of the GM's
+    // floor on Prep / Crunchy Boi, so 24 h was the limit there.)
     // Juan 2026-10-16 (decision 4): past the floor a cover is FLEX — this case spends the floor with NO flex (0 h) so the
     // floor limit is the proof; the flex variant follows.
     const s = structure((x) => {
       x.leadership.modRequired = false;
-      x.limits.managerFloorH = 24;
+      x.limits.managerFloorH = 20;
       x.limits.salariedFlexH = 0;
       x.positions[I.$EXPO]!.allowedRoles = ["gm"];
       x.positions[I.$EXPO]!.openQ = 40; x.positions[I.$EXPO]!.trimQ = 60; x.positions[I.$EXPO]!.closeQ = 60;
     });
-    const out = buildWeek(small({ structure: s, days: DATES.map((d) => day(d, {}, s)) }));
+    // CC chunk H9: two days off — H9_EXTRA keeps the hourly stations staffed all week, so the GM's floor goes to the Expo.
+    const roster = [...SMALL_SPECS, ...H9_EXTRA];
+    const out = buildWeek(small({ structure: s, specs: roster, days: DATES.map((d) => day(d, {}, s)) }));
     expectClean(out);
     const covered = out.shifts.filter((x) => x.userId === "u-j-gm" && x.segments.some((g) => g.positionId === I.$EXPO));
     const coveredHours = covered.reduce((n, x) => n + x.segments.filter((g) => g.positionId === I.$EXPO).reduce((k, g) => k + (g.endQ - g.startQ), 0), 0) / 4;
     expect(covered.length).toBeGreaterThanOrEqual(4);
-    expect(coveredHours).toBeLessThanOrEqual(24);
+    expect(coveredHours).toBeLessThanOrEqual(20);
     expect(covered.every((x) => x.segments.every((g) => g.positionId !== I.$EXPO || !g.lastResort))).toBe(true);
     const floorGaps = out.gaps.filter((g) => g.positionId === I.$EXPO);
     expect(floorGaps.length).toBeGreaterThan(0);
     expect(floorGaps.every((g) => g.date > covered[covered.length - 1]!.date)).toBe(true);
     // The GM's BASE station time (any position, flex aside) is what the floor limit and its proof count.
     const baseFloor = out.shifts.filter((x) => x.userId === "u-j-gm").flatMap((x) => x.segments).filter((g) => g.positionId !== "mod" && g.reasonKey !== SALARIED_FLEX_REASON).reduce((n, g) => n + g.endQ - g.startQ, 0) / 4;
-    expect(baseFloor).toBeLessThanOrEqual(24);
+    expect(baseFloor).toBeLessThanOrEqual(20);
     for (const g of floorGaps) {
       expect(g.cause).toBe("floor_limit");
       if (g.cause !== "floor_limit") continue;
-      expect(g.certificate).toMatchObject({ limitH: 24, excludedBy: { "u-j-gm": "flex_exhausted" }, floorHoursUsed: { "u-j-gm": baseFloor } });
-      expect(baseFloor + (g.toQ - g.fromQ) / 4).toBeGreaterThan(24);
+      expect(g.certificate).toMatchObject({ limitH: 20, excludedBy: { "u-j-gm": "flex_exhausted" }, floorHoursUsed: { "u-j-gm": baseFloor } });
+      expect(baseFloor + (g.toQ - g.fromQ) / 4).toBeGreaterThan(20);
     }
     expect(out.problems.filter((p) => p.code === "manager_floor_exceeded")).toEqual([]);
-    // CC chunk H2: with the default 10 h of flex the GM (off at the weekend: the 40 h base week is reached on Friday) COVERS
-    // Saturday on a flex block (no hourly cost; the Thu / Fri relabels past the 24 h floor spent 5.5 h of the flex, so 4.5 h
-    // are left) — a flex-only day, every quarter marked; Sunday, with the flex spent, is floor_limit.
-    const flexed = buildWeek(small({ structure: { ...s, limits: { ...s.limits, salariedFlexH: 10 } }, days: DATES.map((d) => day(d, {}, s)) }));
+    // CC chunk H2: with flex the GM (off at the weekend: the 40 h base week is reached on Friday) COVERS Saturday on a flex block
+    // (no hourly cost) — a flex-only day, every quarter marked; Sunday, with the flex spent, is floor_limit. CC chunk H9: 4 h of
+    // flex (the Mon–Fri Expo now fits the 20 h floor, so no relabel spends flex before Saturday).
+    const flexed = buildWeek(small({ structure: { ...s, limits: { ...s.limits, salariedFlexH: 4 } }, specs: roster, days: DATES.map((d) => day(d, {}, s)) }));
     expectClean(flexed);
     expect(flexed.shifts.filter((x) => x.userId === "u-j-gm").map((x) => x.date)).toEqual([MON, TUE, WED, THU, FRI, SAT]);
     expect(flexed.shifts.filter((x) => x.userId === "u-j-gm" && x.date === SAT).every((x) => x.segments.every((g) => g.reasonKey === SALARIED_FLEX_REASON))).toBe(true);
@@ -927,7 +933,8 @@ describe("CC chunk H2 (2026-10-16): salaried flex may COVER A GAP with a new blo
     over(x);
   });
   // The GM covers the Expeditor only (their cover list), so each case is about that one station.
-  const specs = SMALL_SPECS.map((p) => (p.id === "u-j-gm" ? { ...p, cover: [I.$EXPO] } : p));
+  // CC chunk H9: two days off (5 dates each) — H9_EXTRA keeps the hourly stations staffed all week, so each case stays about the Expo.
+  const specs = [...SMALL_SPECS, ...H9_EXTRA].map((p) => (p.id === "u-j-gm" ? { ...p, cover: [I.$EXPO] } : p));
   const build = (s: ScheduleStructure) => buildWeek(small({ structure: s, specs, days: DATES.map((d) => day(d, {}, s)) }));
   const hourly = (out: GeneratorOutput) => canonicalJson(out.shifts.filter((x) => x.userId !== "u-j-gm"));
   const segReasons = (out: GeneratorOutput, date: string, userId: string) => {

@@ -171,6 +171,11 @@ export interface SchedPerson extends RulePerson {
   fullTimeMinH: number | null;
   /** The person was included although their role is excluded by default (R6). */
   rosterIncluded: boolean;
+  /**
+   * CC chunk H9 (spec §5.1): ISO weekday → the share of observed weeks the person worked it (Toast punches), ONLY for weekdays
+   * with at least `PATTERN_MIN_WEEKS` observed weeks. The generator's off days prefer the LOWEST shares. Absent = no evidence.
+   */
+  observedDowShare?: Record<number, number>;
 }
 
 export interface RosterNote { code: "cover_position_retired" | "excluded_role_included"; userId: string; positionId: string | null }
@@ -239,6 +244,12 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
       wageSource: salaried || presenceOnly ? null : wage !== undefined ? "sevenshifts" : input.wages.estimateHourlyCents !== null ? "estimate" : null,
       fullTime: st?.fullTime ?? false, fullTimeMinH: st?.fullTimeMinH ?? null, rosterIncluded: excluded,
     };
+    const share: Record<number, number> = {};
+    for (let dow = 1; dow <= 7; dow++) {
+      const dp = pattern?.byDow[dow];
+      if (dp && dp.weeksObserved >= PATTERN_MIN_WEEKS) share[dow] = Math.round(dp.share * 1000) / 1000;
+    }
+    if (Object.keys(share).length > 0) person.observedDowShare = share;
     if (input.skills) {
       for (const id of positionIds(structure)) {
         const sk = skillOf(input.skills, person, id, structure.positions[id]);

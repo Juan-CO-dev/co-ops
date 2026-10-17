@@ -213,7 +213,8 @@ try {
       for (const s of j.shifts) { shifts++; if (!(await db.query("select public.valid_schedule_segments($1::jsonb, $2, $3) as v", [JSON.stringify(s.segments), s.startQ, s.endQ])).rows[0].v) { bad++; console.error(`FAIL W3 ${f} segments ${s.userId} ${s.date}`); } }
       for (const g of j.gaps) { gaps++; if (!(await db.query("select public.valid_gap_certificate($1, $2::jsonb) as v", [g.cause, JSON.stringify(g.certificate)])).rows[0].v) { bad++; console.error(`FAIL W3 ${f} certificate ${g.date} ${g.cause}`); } }
     }
-    check(bad === 0 && shifts > 1000 && gaps > 50, `W3 every golden shift (${shifts}) and certificate (${gaps}) has the shape SQL accepts`);
+    // CC chunk H9: two days off (5 dates per hourly person) took the goldens below 1,000 shifts.
+    check(bad === 0 && shifts > 900 && gaps > 50, `W3 every golden shift (${shifts}) and certificate (${gaps}) has the shape SQL accepts`);
   }
 
   // ── fixtures (superuser) ──

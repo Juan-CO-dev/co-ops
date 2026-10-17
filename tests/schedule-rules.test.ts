@@ -44,7 +44,8 @@ describe("the severity table", () => {
     const by = (sev: string) => Object.entries(RULE_CODES).filter(([, s]) => s === sev).map(([c]) => c).sort();
     expect(by("gap")).toEqual(["closing_manager_missing", "coverage_gap", "mod_missing"]);
     // CC addendum A (2026-10-16): the 40 h week is a TARGET — the salaried week checks are warnings (never block Approve).
-    expect(by("warning")).toEqual(["checklist_past_max", "flex_used", "outside_assumed_availability", "over_budget", "overtime", "pairing_unmet", "salaried_base_over_target", "salaried_over_flex", "soft_range"]);
+    // CC chunk H9: two days off (max_days_per_week) is a warning too — hard for the generator, like the salaried week.
+    expect(by("warning")).toEqual(["checklist_past_max", "flex_used", "max_days_per_week", "outside_assumed_availability", "over_budget", "overtime", "pairing_unmet", "salaried_base_over_target", "salaried_over_flex", "soft_range"]);
     expect(by("error")).toEqual([
       "catering_cover_in_catering_window", "closing_manager_not_closing", "closing_manager_role", "closing_manager_setting", "cover_outside_preferences", "leader_setting", "manager_floor_exceeded",
       "manager_on_boh", "not_member", "person_overlap", "position_over_headcount", "role_not_allowed", "salaried_minimum",
