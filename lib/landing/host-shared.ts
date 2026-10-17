@@ -37,7 +37,8 @@ export function classifyLandingHost(headers: Pick<Headers, 'get'>, env: LandingH
 export const LANDING_ASSETS = new Set(inventory.map(asset => asset.path));
 export function isLandingAsset(path: string, _search: URLSearchParams): boolean {
   if (LANDING_ASSETS.has(path)) return true;
-  if (path.startsWith('/_next/static/') && !path.includes('..') && !path.includes('%')) return true;
+  // Turbopack hashes may contain adjacent dots; only dot path segments traverse.
+  if (path.startsWith('/_next/static/') && !path.includes('%') && !path.includes('\\') && !path.split('/').some(segment => segment === '.' || segment === '..')) return true;
   return false;
 }
 export function landingPathDecision(path: string, search: URLSearchParams): 'rewrite' | 'redirect' | 'allow' | 'deny' {

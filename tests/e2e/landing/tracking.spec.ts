@@ -63,3 +63,14 @@ test('accept initializes once and withdrawal prevents subsequent sends',async({p
   expect(await page.evaluate(()=>window.fbq?.queue?.at(-1))).toEqual(['consent','revoke']);
   expect(new URL(page.url()).searchParams.has('fbclid')).toBe(false);
 });
+
+test('secondary first-screen catering preserves CateringClick at hero placement',async({page})=>{
+  await isolateMeta(page);
+  const events:Record<string,unknown>[]=[];
+  await page.route('**/api/landing/events',route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});
+  await page.goto('/');await page.locator('[data-landing-consent]').getByRole('button').first().click();
+  const link=page.locator('header .landing-v2-catering-link');
+  await link.evaluate(el=>el.addEventListener('click',event=>event.preventDefault()));
+  await link.click();await expect.poll(()=>events.length).toBe(1);
+  expect(events[0]).toMatchObject({event_name:'CateringClick',placement:'hero'});
+});

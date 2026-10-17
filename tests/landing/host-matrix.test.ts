@@ -52,3 +52,12 @@ it('the serialized not-found fallback does not preload a hidden wordmark', () =>
  const html=renderToStaticMarkup(createElement(NotFound));
  expect(html).not.toMatch(/<link[^>]+as="image"/);
 });
+
+it.each(['/_next/static/chunks/0xk6mlf-qpr7..css','/_next/static/chunks/a..b.js'])('allows generated static filenames with adjacent dots: %s',path=>{
+  expect(isLandingAsset(path,new URLSearchParams())).toBe(true);
+  expect(landingPathDecision(path,new URLSearchParams())).toBe('allow');
+});
+it.each(['/_next/static/../server.js','/_next/static/chunks/./a.js','/_next/static/chunks/..','/_next/static/%2e%2e/server.js','/_next/static/%252e%252e/server.js','/_next/static/chunks\\..\\server.js'])('refuses actual static path traversal or encoded ambiguity: %s',path=>{
+  expect(isLandingAsset(path,new URLSearchParams())).toBe(false);
+  expect(landingPathDecision(path,new URLSearchParams())).toBe('deny');
+});

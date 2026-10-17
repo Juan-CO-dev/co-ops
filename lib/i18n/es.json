@@ -1,4 +1,12 @@
 {
+  "landing.sticky.name": "Pide en tu tienda",
+  "landing.sticky.minimize": "Minimiza la barra de pedidos",
+  "landing.sticky.restore": "Restaura la barra de pedidos",
+  "landing.sticky.hint1": "¿psst, almorzamos?",
+  "landing.sticky.hint2": "tu tienda está lista",
+  "landing.crave.title": "¿Un poco de crunch?",
+  "landing.crave.body": "Tu próximo almuerzo empieza aquí.",
+
   "landing.spin.illustrated": "Giro ilustrado del Crunchy Boi",
   "landing.lineup.ingredients.crunchy-boi": "Pavo, provolone, mayonesa de ajo, cebolla, pepinillos, lechuga iceberg, aceite y vinagre, papas fritas onduladas, pan para sub.",
   "landing.lineup.ingredients.farmers-market": "Salsa verde, pepino, cebolla, pimientos dulces, chiles picantes, lechuga iceberg, rúcula, aceite y vinagre, pan para sub.",

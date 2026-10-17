@@ -26,7 +26,7 @@ export function Hero({language, config, ad}:{language:Language;config:LandingCon
         </div>
         {/* Original P013, uniform object-cover crop. Copy never overlays it. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={heroMedia.poster} srcSet={heroMedia.srcSet} sizes={heroMedia.sizes} alt={serverT(language,"landing.hero.alt")} width={heroMedia.width} height={heroMedia.height} fetchPriority="high" loading="eager" className="landing-v2-hero-photo"/>
+        <img data-landing-photo src={heroMedia.poster} srcSet={heroMedia.srcSet} sizes={heroMedia.sizes} alt={serverT(language,"landing.hero.alt")} width={heroMedia.width} height={heroMedia.height} fetchPriority="high" loading="eager" className="landing-v2-hero-photo"/>
       </div>
     </SectionView>
   </section>;

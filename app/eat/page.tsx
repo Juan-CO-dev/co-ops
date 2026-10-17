@@ -1,3 +1,4 @@
+import { StickyOrderBar } from "@/components/landing/StickyOrderBar";
 import { IllustratedSpin } from "@/components/landing/IllustratedSpin";
 import { heroMedia } from "@/lib/landing/media";
 import { Lineup } from "@/components/landing/Lineup";
@@ -32,7 +33,7 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
   const stores = await loadPublicLandingStores(config);
   const publicStores = config.stores.filter(store=>stores.some(publicStore=>publicStore.key===store.key));
   const queryString = new URLSearchParams(Object.entries(query).flatMap(([key,value])=>typeof value === "string" ? [[key,value]] : Array.isArray(value) ? value.map((v)=>[key,v]) : [])).toString();
-  const sectionKeys = ["lineup","field-guide","subdex","catering","shops","footer"] as const;
+  const sectionKeys = ["crave","lineup","field-guide","subdex","catering","shops","footer"] as const;
   return <div lang={language} className="landing-v2-page">
     <header className="landing-v2-header"><img loading="lazy" src="/brand/co-wordmark.svg" alt={TENANT_NAME} width={1125} height={140} className="h-12 w-44 object-contain"/><CateringLink config={config} language={language}/><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={config.attribution}/></header>
     <main>
@@ -42,6 +43,8 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
           <h2 id={`${key}-title`} className="text-3xl font-black tracking-tight">{serverT(language,`landing.${key}.title`)}</h2>
           <p className="mt-4 max-w-xl text-lg">{serverT(language,`landing.${key}.body`)}</p>
           {key === "lineup" && <Lineup language={language}/>}
+          {key === "crave" && <div className="landing-v2-orders">{publicStores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement="crave" className="landing-v2-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
+          {key === "subdex" && <div className="landing-v2-orders">{publicStores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement="subdex" className="landing-v2-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
           {(key === "field-guide" || key === "lineup") && <div className="mt-6 flex flex-wrap items-center gap-3">{publicStores.map((store)=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-co-cta px-5 py-3 font-bold text-co-text">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
           {key === "field-guide" && publicStores.map((store) => <OfferCode key={store.key} ad={captureAttribution(queryString,config.attribution).ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}
           {key === "field-guide" && <div className="mt-6"><FaqItem q={serverT(language,"landing.faq.question")} a={serverT(language,"landing.faq.answer")}/></div>}
@@ -52,5 +55,6 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
         </SectionView>
       </section>)}
     </main>
+    <StickyOrderBar stores={publicStores.map(store=>({key:store.key,orderUrl:store.orderUrl,label:serverT(language,"landing.order",{shop:store.orderLabel})}))} labels={{name:serverT(language,"landing.sticky.name"),minimize:serverT(language,"landing.sticky.minimize"),restore:serverT(language,"landing.sticky.restore"),hints:[serverT(language,"landing.sticky.hint1"),serverT(language,"landing.sticky.hint2")]}}/>
   </div>;
 }

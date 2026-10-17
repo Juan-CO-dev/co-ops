@@ -69,3 +69,30 @@
   .landing-v2 .landing-v2-hero-photo { height: auto; }
   .landing-v2 .landing-v2-consent[data-flow="false"] { position: relative; right: auto; bottom: auto; margin: 8px 0; display: block; }
 }
+
+/* Chunk 4: measured chrome reservations. No entrance animation or urgency. */
+.landing-v2 { padding-bottom: calc(var(--landing-dock-height, 120px) + var(--landing-rail-height, 0px) + var(--landing-safe-bottom) + 16px); }
+.landing-v2 .landing-v2-consent[data-flow="false"] { bottom: calc(var(--landing-safe-bottom) + var(--landing-rail-height, 0px)); }
+.landing-v2 .landing-v2-sticky { position: fixed; z-index: 31; bottom: 0; left: 0; width: 100%; padding: 6px 12px var(--landing-safe-bottom); background: #fff9e4; color: #171712; border-top: 1px solid; }
+/* Visibility + inert keeps inactive chrome measurable without the native hidden reset. */
+.landing-v2 .landing-v2-sticky[data-visible="false"] { visibility: hidden; pointer-events: none; }
+.landing-v2 .landing-v2-sticky-heading[hidden] { display: none; }
+.landing-v2 .landing-v2-sticky-heading { display: flex; justify-content: space-between; align-items: center; font-size: .75rem; line-height: 20px; }
+.landing-v2 .landing-v2-cta-accessory { display: block; width: 20px; height: 20px; }
+.landing-v2 .landing-v2-sticky-links { display: flex; gap: 8px; }
+.landing-v2 .landing-v2-sticky-links button { flex-shrink: 0; min-width: 44px; min-height: 44px; border: 1px solid; font-size: 1.25rem; }
+.landing-v2 .landing-v2-sticky-links .landing-v2-order { flex: 1; }
+.landing-v2 [data-landing-placement] { scroll-margin-block: 110px 250px; }
+.landing-v2 #crave .landing-v2-orders, .landing-v2 #subdex .landing-v2-orders { margin-top: 24px; }
+@media (prefers-reduced-motion: no-preference) {
+  .landing-v2 [data-landing-placement], .landing-v2 .landing-v2-sticky button { transition: transform 120ms ease-out; }
+  .landing-v2 [data-landing-placement]:active, .landing-v2 .landing-v2-sticky button:active { transform: scale(.98); }
+}
+@media (min-width: 768px) {
+  .landing-v2 .landing-v2-sticky { top: 0; bottom: auto; padding: 6px 16px; display: flex; justify-content: space-between; align-items: center; gap: 24px; border-top: 0; border-bottom: 1px solid; }
+  .landing-v2 .landing-v2-sticky-links { min-width: 420px; margin-left: auto; }
+  .landing-v2 .landing-v2-consent[data-flow="false"] { bottom: max(calc(16px + var(--landing-safe-bottom)), calc(100svh - 52px - 740px + 16px)); }
+}
+@media (max-width: 329px), (max-height: 499px), (min-width: 768px) and (max-height: 799px) {
+  .landing-v2 .landing-v2-consent[data-flow="false"] { bottom: auto; }
+}
