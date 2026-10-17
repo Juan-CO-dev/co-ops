@@ -346,7 +346,8 @@ describe("Task 22 — drag and keyboard → edit ops (pure; the real pointer wal
     const ok = editReducer(s, { type: "accepted", seq: 1, expectedHead: "h1", revisionId: "h2" });
     expect(ok).toMatchObject({ head: "h2", pending: null, reload: true, error: null, notice: null });
     const moved = editReducer(s, { type: "refused", seq: 1, expectedHead: "h1", code: "head_moved" });
-    expect(moved).toMatchObject({ pending: null, reload: true, notice: "head_moved" });
+    // CC chunk H9: "loading the latest" until the reload brings a NEW head; then "your view is updated".
+    expect(moved).toMatchObject({ pending: null, reload: true, notice: "head_moving" });
     const refused = editReducer(s, { type: "refused", seq: 1, expectedHead: "h1", code: "edit_overlap" });
     expect(refused).toMatchObject({ pending: null, reload: false, error: "edit_overlap", snapBack: s.snapBack + 1 });
     expect(editReducer(moved, { type: "reloaded", head: "h9" })).toMatchObject({ head: "h9", reload: false, notice: "head_moved" });

@@ -7472,6 +7472,7 @@
   "schedule.board.labor_card.intro": "Las personas y horas que mantienen un gran servicio sin pasar el objetivo de mano de obra.",
   "schedule.board.labor_card.amber": "Revisa este día: una franja tiene más personas que su óptimo.",
   "schedule.board.edit.head_moved": "Alguien más cambió esta semana — tu vista está actualizada",
+  "schedule.board.edit.head_moving": "Alguien más cambió esta semana — cargando lo más reciente…",
   "schedule.board.row.week_hours": "{hours} h esta semana",
   "schedule.board.row.ot_risk": "Riesgo de horas extra",
   "schedule.board.row.cm": "Gte. cierre",

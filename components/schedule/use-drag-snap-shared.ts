@@ -9,7 +9,8 @@
  *  - `keyToOp(key, handle, shift)`: ArrowLeft / ArrowRight = −15 / +15 min on the same handles.
  *  - `editBody`: the exact `edit` body the route accepts (`SCHEDULE_ACTIONS.edit`).
  *  - `editReducer`: one edit in flight at a time; an answer to an older request (seq) or computed against another head
- *    is DISCARDED; `head_moved` reloads the head with "Someone else changed this week — your view is updated"; any
+ *    is DISCARDED; `head_moved` reloads the head — "Someone else changed this week — loading the latest…" until the reload brings a
+ *    NEW head, then "… your view is updated" (CC chunk H9: never claimed before the new head is on screen); any
  *    other refusal snaps the bar back and names itself.
  */
 import type { EditOp, ShiftRef } from "@/lib/scheduling/edit-shared";
@@ -54,8 +55,8 @@ export interface EditState {
   head: string;
   seq: number;
   pending: { expectedHead: string; seq: number } | null;
-  /** The head moved under us: the board reloads and says so. */
-  notice: "head_moved" | null;
+  /** The head moved under us: `head_moving` while the board reloads, `head_moved` once a NEW head arrived (CC chunk H9). */
+  notice: "head_moved" | "head_moving" | null;
   /** A named refusal (an `edit_*` / schedule code), shown until the next edit. */
   error: string | null;
   /** The board should reload the head (router.refresh()). */
@@ -82,12 +83,14 @@ export function editReducer(s: EditState, a: EditAction): EditState {
       // A stale answer — to an older request, or computed against a head that is no longer ours — is discarded.
       if (!s.pending || a.seq !== s.pending.seq || a.expectedHead !== s.head) return s;
       if (a.type === "accepted") return { ...s, head: a.revisionId, pending: null, reload: true, error: null, notice: null };
-      if (a.code === "head_moved") return { ...s, pending: null, reload: true, notice: "head_moved", error: null };
+      if (a.code === "head_moved") return { ...s, pending: null, reload: true, notice: "head_moving", error: null };
       return { ...s, pending: null, reload: false, error: a.code, snapBack: s.snapBack + 1 };
     }
     case "reloaded":
       // Astra chunk F P2-2: a NEW head replaces any request made against the old one. Its late answer is then discarded
       // (no pending), so the board is never left disabled. A reload to the same head keeps the request in flight.
-      return { ...s, head: a.head, reload: false, pending: s.pending && s.pending.expectedHead !== a.head ? null : s.pending };
+      // CC chunk H9: "your view is updated" only once the reload delivered a NEW head (the same head back = still loading).
+      return { ...s, head: a.head, reload: false, pending: s.pending && s.pending.expectedHead !== a.head ? null : s.pending,
+        notice: s.notice === "head_moving" && a.head !== s.head ? "head_moved" : s.notice };
   }
 }

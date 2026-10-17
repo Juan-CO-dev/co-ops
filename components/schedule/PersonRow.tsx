@@ -54,6 +54,7 @@ export function rowEditProps(editable: boolean, pending: boolean): { editable: b
 
 export function EditNotice({ state }: { state: EditState }) {
   const { t } = useTranslation();
+  if (state.notice === "head_moving") return <p role="status" className="rounded-lg border-2 border-co-warning bg-co-warning-surface p-2 text-sm font-bold text-co-warning-text">{t("schedule.board.edit.head_moving")}</p>;
   if (state.notice === "head_moved") return <p role="status" className="rounded-lg border-2 border-co-warning bg-co-warning-surface p-2 text-sm font-bold text-co-warning-text">{t("schedule.board.edit.head_moved")}</p>;
   if (state.error) return <p role="alert" className="text-sm font-bold text-co-cta-text">{t(scheduleErrorKey(state.error))}</p>;
   return null;
