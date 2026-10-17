@@ -620,17 +620,18 @@ describe("Task 20 — en + es parity, 44 px, no shop-code literal", () => {
   });
 });
 
-describe("Juan 2026-10-16 (decision 4): the strip names each salaried manager's week — \"40 h + X h flex used (keeps hourly labor down)\"", () => {
+describe("Juan 2026-10-16 (decision 4): the strip names each salaried manager's week — base + flex (CC chunk H9: and what the flex covered)", () => {
   it("en + es, AGM included (hours only, no money)", () => {
     const view = ready();
     const uid = Object.keys(view.names)[0]!;
     const strip0 = view.strip!;
-    const forced = { ...view, strip: { ...strip0, hours: { ...strip0.hours, salariedWeeks: [{ userId: uid, baseHours: 40, flexHours: 3.5, targetHours: 40, flexLimitHours: 10 }] } } };
+    const forced = { ...view, strip: { ...strip0, hours: { ...strip0.hours, salariedWeeks: [{ userId: uid, baseHours: 40, flexHours: 3.5, flexStationHours: 3.5, flexModHours: 0, flexSavedHours: 3.5, targetHours: 40, flexLimitHours: 10 }] } } };
     const fill = (s: string, p: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_m, k: string) => String(p[k]));
-    expect(en["schedule.board.money.salaried_week"]).toBe("{name}: {base} h + {flex} h flex used (keeps hourly labor down)");
+    expect(en["schedule.board.money.salaried_week_base"]).toBe("{name}: {base} h");
     for (const [lang, L] of [["en", en], ["es", es]] as const) {
       const strip = renderBoard(forced, lang).match(/<section[^>]*data-section="strip"[\s\S]*?<\/section>/)![0];
-      expect(text(strip)).toContain(fill(L["schedule.board.money.salaried_week"], { name: view.names[uid]!, base: 40, flex: 3.5 }));
+      expect(text(strip)).toContain(fill(L["schedule.board.money.salaried_week_base"], { name: view.names[uid]!, base: 40 }));
+      expect(text(strip)).toContain(fill(L["schedule.board.money.salaried_flex_station"], { hours: 3.5, saved: 3.5 }));
     }
   });
 });
@@ -640,13 +641,15 @@ describe("CC addendum A (2026-10-16): the 40 h is a target — a hand-scheduled 
     const view = ready();
     const uid = Object.keys(view.names)[0]!;
     const strip0 = view.strip!;
-    const forced = { ...view, strip: { ...strip0, hours: { ...strip0.hours, salariedWeeks: [{ userId: uid, baseHours: 48, flexHours: 0, targetHours: 40, flexLimitHours: 10 }] } } };
+    const forced = { ...view, strip: { ...strip0, hours: { ...strip0.hours, salariedWeeks: [{ userId: uid, baseHours: 48, flexHours: 0, flexStationHours: 0, flexModHours: 0, flexSavedHours: 0, targetHours: 40, flexLimitHours: 10 }] } } };
     const fill = (s: string, p: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_m, k: string) => String(p[k]));
     expect(en["schedule.board.money.salaried_over_target"]).toBe("{name}: {hours} h, {over} h over the {target} h target");
     for (const [lang, L] of [["en", en], ["es", es]] as const) {
       const strip = renderBoard(forced, lang).match(/<section[^>]*data-section="strip"[\s\S]*?<\/section>/)![0];
       expect(text(strip)).toContain(fill(L["schedule.board.money.salaried_over_target"], { name: view.names[uid]!, hours: 48, over: 8, target: 40 }));
-      expect(text(strip)).not.toContain(fill(L["schedule.board.money.salaried_week"], { name: view.names[uid]!, base: 48, flex: 0 }));
+      // CC chunk H9: the over-target line REPLACES the base + flex line (the li holds exactly it).
+      const li = strip.match(/<li[^>]*data-salaried-week[^>]*>([\s\S]*?)<\/li>/)![1]!;
+      expect(text(li).trim()).toBe(fill(L["schedule.board.money.salaried_over_target"], { name: view.names[uid]!, hours: 48, over: 8, target: 40 }));
     }
   });
 });

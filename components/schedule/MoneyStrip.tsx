@@ -86,7 +86,14 @@ export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimat
             // CC addendum A: the 40 h is a target — a week whose BASE passes it (a hand-scheduled 48 h week) says so plainly.
             <li key={w.userId} data-salaried-week={w.userId} data-over-target={w.baseHours > w.targetHours ? "true" : undefined}>{w.baseHours > w.targetHours
               ? t("schedule.board.money.salaried_over_target", { name: names[w.userId] ?? w.userId, hours: h1(w.baseHours + w.flexHours), over: h1(w.baseHours + w.flexHours - w.targetHours), target: h1(w.targetHours) })
-              : t("schedule.board.money.salaried_week", { name: names[w.userId] ?? w.userId, base: h1(w.baseHours), flex: h1(w.flexHours) })}</li>
+              // CC chunk H9: say what the flex covered — station time (and the hourly time it saved) vs manager-on-duty time.
+              : [
+                t("schedule.board.money.salaried_week_base", { name: names[w.userId] ?? w.userId, base: h1(w.baseHours) }),
+                w.flexStationHours > 0 ? (w.flexSavedHours > 0
+                  ? t("schedule.board.money.salaried_flex_station", { hours: h1(w.flexStationHours), saved: h1(w.flexSavedHours) })
+                  : t("schedule.board.money.salaried_flex_station_beside", { hours: h1(w.flexStationHours) })) : null,
+                w.flexModHours > 0 ? t("schedule.board.money.salaried_flex_mod", { hours: h1(w.flexModHours) }) : null,
+              ].filter((x): x is string => x !== null).join(" ")}</li>
           ))}
         </ul>
       ) : null}

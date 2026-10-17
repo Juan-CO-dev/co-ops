@@ -13,7 +13,7 @@
 import type { NarrativeLine } from "@/lib/people-narrative";
 import type { DayContext, RuleContext, RulePerson } from "./context-shared";
 import { skillOf, type SkillLookup } from "./people-input-shared";
-import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, modCountsOn, salariedWeek, type Shift } from "./rules-shared";
+import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, isFlexSegment, modCountsOn, salariedWeek, type Shift } from "./rules-shared";
 import { isLineRole, positionIds, positionLimit, type CrewType, type ScheduleStructure } from "./structure-shared";
 import { Q_PER_HOUR } from "./time-shared";
 
@@ -215,7 +215,11 @@ export interface MoneyStripHours {
    * Juan 2026-10-16 (decision 4): each salaried manager's week — the BASE hours (station + MoD, flex aside; the target is
    * 40 h) and the FLEX used by zero-hourly-cost fills ("40 h + X h flex used (keeps hourly labor down)"). Hours only.
    */
-  salariedWeeks: Array<{ userId: string; baseHours: number; flexHours: number; targetHours: number; flexLimitHours: number }>;
+  /**
+   * CC chunk H9: what each salaried manager's FLEX covered — station time (and the part of it no hourly person was also on: the
+   * hourly time it saved) vs manager-on-duty time, so the strip never claims a saving the flex did not make.
+   */
+  salariedWeeks: Array<{ userId: string; baseHours: number; flexHours: number; flexStationHours: number; flexModHours: number; flexSavedHours: number; targetHours: number; flexLimitHours: number }>;
 }
 export interface MoneyStripMoney { hourlyCostCents: number | null; hourlyPct: number | null; salariedFixedCents: number | null; totalPct: number | null }
 /** `notes`: board lines with no $ (shown to every viewer), e.g. "essential hours past budget: X h" (CC chunk C ruling 3). */
@@ -268,7 +272,27 @@ export function moneyStrip(input: MoneyStripInput, opts: { canSeeMoney: boolean 
   const firstStructure = structureFor(ctx, input.dates[0]!);
   const salariedWeeks = [...new Set(inWeek.filter((sh) => people[sh.userId]?.salaried).map((sh) => sh.userId))].sort().map((userId) => {
     const w = salariedWeek({ shifts: inWeek }, userId);
-    return { userId, baseHours: w.baseH, flexHours: w.flexH, targetHours: firstStructure?.limits.salariedTargetWeekH ?? 40, flexLimitHours: firstStructure?.limits.salariedFlexH ?? 10 };
+    let stationQ = 0;
+    let modFlexQ = 0;
+    let savedFlexQ = 0;
+    for (const sh of inWeek) {
+      if (sh.userId !== userId) continue;
+      const s = structureFor(ctx, sh.date);
+      const sameDay = inWeek.filter((x) => x.date === sh.date && isHourly(people[x.userId]));
+      for (const g of sh.segments) {
+        if (!isFlexSegment(g)) continue;
+        if (g.positionId === MOD) { modFlexQ += g.endQ - g.startQ; continue; }
+        stationQ += g.endQ - g.startQ;
+        const pos = s?.positions[g.positionId];
+        const lo = pos ? Math.max(g.startQ, pos.openQ) : g.startQ;
+        const hi = pos ? Math.min(g.endQ, pos.closeQ) : g.endQ;
+        for (let q = lo; q < hi; q++) if (!sameDay.some((x) => x.segments.some((y) => y.positionId === g.positionId && y.startQ <= q && y.endQ > q))) savedFlexQ++;
+      }
+    }
+    return {
+      userId, baseHours: w.baseH, flexHours: w.flexH, flexStationHours: stationQ / 4, flexModHours: modFlexQ / 4, flexSavedHours: savedFlexQ / 4,
+      targetHours: firstStructure?.limits.salariedTargetWeekH ?? 40, flexLimitHours: firstStructure?.limits.salariedFlexH ?? 10,
+    };
   });
   const hours: MoneyStripHours = {
     hourlyHours: hourlyQ / 4, hourlyHoursOnBudgetedDates: budgetedQ / 4, budgetHours, unbudgetedDates,

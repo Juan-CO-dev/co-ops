@@ -203,6 +203,8 @@ describe("Juan 2026-10-16 (decision 4): each salaried manager's week on the stri
       shift(U.maya, WED, 44, 60, P.REG),
     ].filter((sh, i) => i !== 0); // Wed is the flexed day
     const strip = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: {}, forecastWeekCents: null, salariedWeeklyCents: null }, { canSeeMoney: false });
-    expect(strip.hours.salariedWeeks).toEqual([{ userId: U.alex, baseHours: 40, flexHours: 2, targetHours: 40, flexLimitHours: 10 }]);
+    // CC chunk H9: the 2 h of flex are station time on the Register, beside Maya until 3:00 PM — 0 h of hourly time saved there
+    // (Maya leaves at 60, the flex runs 60–68: all of it saved).
+    expect(strip.hours.salariedWeeks).toEqual([{ userId: U.alex, baseHours: 40, flexHours: 2, flexStationHours: 2, flexModHours: 0, flexSavedHours: 2, targetHours: 40, flexLimitHours: 10 }]);
   });
 });
