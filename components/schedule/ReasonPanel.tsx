@@ -19,11 +19,13 @@ import { stepOp, type Handle } from "./use-drag-snap-shared";
 
 const BAND_KEY = { strong: "people.skills.band.strong", solid: "people.skills.band.solid", building: "people.skills.band.building", unproven: "schedule.board.strength.unknown" } as const;
 
-export function ReasonPanel({ row, shift, segment, editable, names, positions, onEdit }: {
+export function ReasonPanel({ row, shift, segment, editable, busy = false, names, positions, onEdit }: {
   row: PersonRowView;
   shift: ShiftView;
   segment: number | null;
   editable: boolean;
+  /** CC chunk H9 (a11y): an edit is in flight — the nudges stay MOUNTED (focus stays on them) but ignore presses. */
+  busy?: boolean;
   names: Record<string, string>;
   positions: Record<string, { name: string; nameEs: string | null }>;
   onEdit: (op: EditOp) => void;
@@ -40,7 +42,7 @@ export function ReasonPanel({ row, shift, segment, editable, names, positions, o
       {([-1, 1] as const).map((dq) => {
         const op = stepOp(dq, handle, shift);
         return (
-          <button key={dq} type="button" data-nudge={`${id}:${dq}`} disabled={!op} onClick={() => op && onEdit(op)}
+          <button key={dq} type="button" data-nudge={`${id}:${dq}`} disabled={!op} aria-disabled={busy || undefined} onClick={() => op && !busy && onEdit(op)}
             className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm font-bold tracking-[0.1em] text-co-text disabled:opacity-60">
             {dq < 0 ? t("schedule.board.nudge.earlier") : t("schedule.board.nudge.later")}
           </button>

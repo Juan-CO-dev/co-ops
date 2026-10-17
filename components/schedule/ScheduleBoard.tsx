@@ -30,7 +30,7 @@ import { ApproveBar, HorizonBuilder } from "./HorizonBuilder";
 import { regenerateBody, runRegenerate } from "./horizon-flow-shared";
 import { LaborTargetCard } from "./LaborTargetCard";
 import { BudgetLineItem, MoneyStrip } from "./MoneyStrip";
-import { EditNotice, PersonRow, shiftKeyOf } from "./PersonRow";
+import { EditNotice, PersonRow, barKeyOf, rowEditProps, shiftKeyOf, useFocusMemo } from "./PersonRow";
 import { ReasonPanel } from "./ReasonPanel";
 import { RulesBadge } from "./RulesBadge";
 import { scheduleErrorKey } from "./schedule-errors";
@@ -100,7 +100,8 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const day = view.days.find((d) => d.date === selected) ?? null;
-  const [picked, setPicked] = useState<{ key: string; segment: number | null } | null>(initialSelected
+  // CC chunk H9: the picked shift is followed by its IDENTITY too (`bar`), so a start / move nudge from the reason panel keeps it open.
+  const [picked, setPicked] = useState<{ key: string; segment: number | null; bar?: string } | null>(initialSelected
     ? { key: `${initialSelected.date}|${initialSelected.userId}|${initialSelected.startQ}`, segment: initialSelected.segment ?? null } : null);
   const head = view.week?.headRevisionId ?? "";
   const [edit, dispatch] = useReducer(editReducer, head, initialEditState);
@@ -121,9 +122,16 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
       dispatch({ type: "accepted", seq, expectedHead, revisionId });
     } else dispatch({ type: "refused", seq, expectedHead, code: r.code });
   }
-  const pickedRow = day?.rows.find((r) => r.shifts.some((x) => shiftKeyOf(x) === picked?.key)) ?? null;
-  const pickedShift = pickedRow?.shifts.find((x) => shiftKeyOf(x) === picked?.key) ?? null;
-  const onSelect = (sh: ShiftView, segment: number | null) => setPicked({ key: shiftKeyOf(sh), segment });
+  const byKey = (x: ShiftView) => shiftKeyOf(x) === picked?.key;
+  const byBar = (r: { shifts: ShiftView[] }) => (x: ShiftView) => !!picked?.bar && barKeyOf(x, r.shifts.indexOf(x)) === picked.bar;
+  const pickedRow = day?.rows.find((r) => r.shifts.some(byKey)) ?? day?.rows.find((r) => r.shifts.some(byBar(r))) ?? null;
+  const pickedShift = pickedRow ? pickedRow.shifts.find(byKey) ?? pickedRow.shifts.find(byBar(pickedRow)) ?? null : null;
+  const onSelect = (sh: ShiftView, segment: number | null) => {
+    const row = day?.rows.find((r) => r.shifts.includes(sh));
+    setPicked({ key: shiftKeyOf(sh), segment, bar: row ? barKeyOf(sh, row.shifts.indexOf(sh)) : undefined });
+  };
+  // CC chunk H9 (a11y): the handle a keyboard edit used is focused again after the re-render (PersonRow).
+  const focusMemo = useFocusMemo();
   const weekHref = (w: string) => `/schedule?loc=${view.locationId}&week=${w}`;
 
   // Astra chunk F P2-3: a week with manager edits is rebuilt only after the horizon's own warning, then Tier B, then
@@ -196,11 +204,11 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
           <EditNotice state={edit} />
           <DayTimeline key={`${day.date}|${edit.snapBack}`} day={day} names={view.names} positions={view.positions}
             renderRows={(axis) => day.rows.map((row) => (
-              <PersonRow key={row.userId} row={row} axis={axis} editable={editable && !edit.pending} positions={view.positions} names={view.names}
-                roleOf={roleOf} selectedKey={picked?.key ?? null} onSelect={onSelect} onEdit={submitEdit} />
+              <PersonRow key={row.userId} row={row} axis={axis} {...rowEditProps(editable, !!edit.pending)} focusMemo={focusMemo} positions={view.positions} names={view.names}
+                roleOf={roleOf} selectedKey={pickedShift ? shiftKeyOf(pickedShift) : null} onSelect={onSelect} onEdit={submitEdit} />
             ))} />
           {pickedRow && pickedShift ? (
-            <ReasonPanel row={pickedRow} shift={pickedShift} segment={picked?.segment ?? null} editable={editable && !pickedShift.locked && !edit.pending}
+            <ReasonPanel row={pickedRow} shift={pickedShift} segment={picked?.segment ?? null} editable={editable && !pickedShift.locked} busy={!!edit.pending}
               names={view.names} positions={view.positions} onEdit={submitEdit} />
           ) : null}
           {day.labor ? <LaborTargetCard labor={day.labor} names={view.names} positions={view.positions} /> : null}
