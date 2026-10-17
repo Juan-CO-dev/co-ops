@@ -39,7 +39,7 @@ import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repai
 import { salariedBlocks, templatesFor, templateOrder } from "./templates-shared";
 
 /** Bumped whenever a golden changes; stored on the revision. */
-export const GENERATOR_VERSION = "p2.14";
+export const GENERATOR_VERSION = "p2.15";
 
 // ─── Input / output ──────────────────────────────────────────────────────────
 
@@ -228,6 +228,9 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
 
   // CC chunk H9 (spec §5.1, two days off): each hourly person's OFF days among the built dates, chosen once, after the pins.
   b.offPreferred = chooseOffDays(input.people, builtDates, allShifts(week), days, buildDays, s);
+  // CC chunk H11: one repair budget for the week, from the first fill on (the partition backtrack counts its retries here).
+  const counters = newCounters();
+  b.counters = counters;
 
   // CC addendum B1 (2026-10-16): when a salaried manager's planned base blocks (after the pins, which are fixed first) would
   // pass the week target, they drop the LOWEST-demand day(s) by forecast (`dayCents`; a tie drops the later day) — never
@@ -325,8 +328,7 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     for (const [fromQ, toQ] of modHoles(b, date, week.built[date]!)) fillModHole(b, week, date, fromQ, toQ, tiers);
   }
 
-  // 9a. The bounded repair search, per day in order (one cap for the week).
-  const counters = newCounters();
+  // 9a. The bounded repair search, per day in order (one cap for the week; the counters started with the fill — CC chunk H11).
   for (const date of builtDates) {
     repairDay(b, week, date, counters);
     enforcePriority(b, week, date);

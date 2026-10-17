@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.14. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.15. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -5383,7 +5383,7 @@
    "chainDepth": 3,
    "donorsTried": 5,
    "provenEarly": 0,
-   "steps": 19
+   "steps": 22
   },
   "salariedCoverHours": 7.75,
   "shifts": 80

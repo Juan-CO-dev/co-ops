@@ -22,7 +22,7 @@ import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../peop
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
 import type { FillPlan, FillStep } from "../rules-shared";
 import {
-  CATERING_MANAGER_COVER, MOD, SALARIED_FLEX_REASON, atDayCap, availableOn, maxDaysPerWeek, baseFloorRoomQ, cateringWindows, splitSalariedRelabel, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition,
+  CATERING_MANAGER_COVER, MOD, REPAIR_LIMITS, SALARIED_FLEX_REASON, atDayCap, availableOn, maxDaysPerWeek, baseFloorRoomQ, cateringWindows, splitSalariedRelabel, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition,
   flexLeftQ, generatorRefuses, isFlexSegment, isManagerRole, leaderSettingAllows, modCountsAt, modCountsOn, neverGenerated, salariedFlexBlocks, flexBlockReaching, shiftExtendsOver, zeroCostCovers,
   type DayRecord, type FlexBlock, type RuleProblem, type Segment, type Shift,
 } from "../rules-shared";
@@ -57,6 +57,11 @@ export interface BuildCtx {
    * validator's `max_days_per_week`, kept hard by the generator).
    */
   offPreferred?: Record<string, ReadonlySet<string>>;
+  /**
+   * CC chunk H11: the week's repair counters (`newCounters`), shared from the start of the build so the partition backtrack
+   * (`splitRun`) counts its RETRIES against the same `REPAIR_MAX_STEPS` budget. Absent = no backtracking budget tracked.
+   */
+  counters?: { steps: number };
 }
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -307,6 +312,8 @@ export interface CandidateOpts {
    * fills pass false first and relax it only when nobody else fits; every other caller leaves it unset (allowed).
    */
   allowOffDay?: boolean;
+  /** CC chunk H11: people the partition backtrack has already tried for this part (skipped here). */
+  exclude?: ReadonlySet<string>;
   /** MoD blocks: the candidate must count as the manager on duty from `modFromQ` (the hole's first quarter; default the plan's). */
   mod: boolean;
   modFromQ?: number;
@@ -349,6 +356,7 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
   for (const userId of Object.keys(b.people).sort(cmp)) {
     const p = b.people[userId]!;
     if (!isHourly(p) || neverGenerated(p) || !p.activeMember || p.untouchableDates.includes(o.date)) continue;
+    if (o.exclude?.has(userId)) continue;
     const own = shifts.find((x) => x.userId === userId) ?? null;
     if (own && (own.pinned || !extendsOwn(own, o.plan))) continue;
     if (o.extensionOnly && !own) continue;
@@ -438,7 +446,7 @@ export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, 
  */
 export function fillRun(
   b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number, t: Pick<Template, "source" | "essential" | "closingLead">,
-  order: readonly string[], opts: { allowCover: boolean; budgetStop: boolean; tiers?: readonly RelaxTier[]; splitDepth?: number },
+  order: readonly string[], opts: { allowCover: boolean; budgetStop: boolean; tiers?: readonly RelaxTier[]; splitDepth?: number; exclude?: ReadonlySet<string> },
 ): "placed" | "covered" | "budget" | "none" {
   // CC chunk B ruling 3: a run longer than the daily maximum is split into the fewest near-equal parts that each fit
   // (the earlier parts one quarter longer), filled in order — two people hold a 13.75 h Prep/Dishwasher day.
@@ -473,7 +481,7 @@ export function fillRun(
   for (const tier of opts.tiers ?? RELAX_TIERS) {
     const { allowOvertime, allowOffDay, allowSoftMax } = tier;
     for (const { plan, extensionOnly } of plans) {
-      const o: CandidateOpts = { date, plan, positionId, closingLead: t.closingLead, allowOvertime, allowOffDay, allowSoftMax, mod: false, extensionOnly };
+      const o: CandidateOpts = { date, plan, positionId, closingLead: t.closingLead, allowOvertime, allowOffDay, allowSoftMax, mod: false, extensionOnly, exclude: opts.exclude };
       const ranked = rankCandidates(b, week, week.built[date]!, o);
       for (const c of ranked.slice(0, 6)) {
         const why = whyChosen(b, week.built[date]!, c, o);
@@ -499,7 +507,7 @@ export function fillRun(
     // CC chunk H9 (spec §6.2): nobody at this tier holds the WHOLE run — two people may hold its parts (an opener and a closer)
     // before any later tier passes someone's soft max or overtime. Each part is at least the minimum shift.
     if (!budgetBlocked && (opts.splitDepth ?? 0) < 2 && toQ - fromQ >= 2 * b.structure.limits.minimumShiftQ
-      && splitRun(b, week, date, positionId, fromQ, toQ, t, order, { budgetStop: opts.budgetStop, tier, splitDepth: (opts.splitDepth ?? 0) + 1 })) return "placed";
+      && splitRun(b, week, date, positionId, fromQ, toQ, t, order, { budgetStop: opts.budgetStop, tier, splitDepth: (opts.splitDepth ?? 0) + 1, exclude: opts.exclude })) return "placed";
   }
   if (budgetBlocked) {
     // Astra chunk B P1-1: a salaried manager's MoD block costs no hourly money — take it before the budget stops the fill.
@@ -542,9 +550,13 @@ export const RELAX_TIERS: readonly RelaxTier[] = [
  * is rolled back), nearest the middle first; only then, as before, the three nearest points for a PARTIAL fill (what is left
  * stays a deficit for the later tiers and the repair). True when anything was placed.
  */
+/** CC chunk H11: first-part picks tried per split point before the next point (bounded; retries count as repair steps). */
+export const SPLIT_BACKTRACK_N = 4;
+const canonicalShiftKey = (x: GShift) => JSON.stringify([x.startQ, x.endQ, x.segments.map((g) => [g.positionId, g.startQ, g.endQ])]);
+
 function splitRun(
   b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number, t: Pick<Template, "source" | "essential" | "closingLead">,
-  order: readonly string[], o: { budgetStop: boolean; tier: RelaxTier; splitDepth: number },
+  order: readonly string[], o: { budgetStop: boolean; tier: RelaxTier; splitDepth: number; exclude?: ReadonlySet<string> },
 ): boolean {
   const minQ = b.structure.limits.minimumShiftQ;
   const mid = fromQ + Math.floor((toQ - fromQ) / 2);
@@ -564,22 +576,45 @@ function splitRun(
     }
   }
   const valid = [...points].filter((q) => q - fromQ >= minQ && toQ - q >= minQ).sort((x, y) => Math.abs(x - mid) - Math.abs(y - mid) || x - y);
-  const opts = { allowCover: false, budgetStop: o.budgetStop, tiers: [o.tier], splitDepth: o.splitDepth };
-  const fillParts = (q: number) => {
-    const first = fillRun(b, week, date, positionId, fromQ, q, { ...t, closingLead: false }, order, opts) === "placed";
+  const opts = { allowCover: false, budgetStop: o.budgetStop, tiers: [o.tier], splitDepth: o.splitDepth, exclude: o.exclude };
+  const fillParts = (q: number, firstExclude: ReadonlySet<string> | undefined = o.exclude) => {
+    const first = fillRun(b, week, date, positionId, fromQ, q, { ...t, closingLead: false }, order, { ...opts, exclude: firstExclude }) === "placed";
     const second = fillRun(b, week, date, positionId, q, toQ, t, order, opts) === "placed";
     return first || second;
   };
-  // Pass 1 — a COMPLETE non-exceeding partition (the tier keeps every placement within its limits).
+  const complete = () => {
+    for (let x = fromQ; x < toQ; x++) if (deficitAt(week.built[date]!, day, positionId, x) > 0) return false;
+    return true;
+  };
+  // Pass 1 — a COMPLETE non-exceeding partition (the tier keeps every placement within its limits). CC chunk H11: at each point
+  // the FIRST part's candidates are backtracked jointly with the second — when the first part's pick leaves the second part
+  // unfillable, the first part is retried without that person (the ranking stays the order), up to SPLIT_BACKTRACK_N picks per
+  // point; each retry is one step of the week's repair budget.
   for (const q of valid) {
-    const saved = week.built[date]!.map(cloneShift);
-    const notes = b.notes.length;
-    fillParts(q);
-    let complete = true;
-    for (let x = fromQ; x < toQ && complete; x++) if (deficitAt(week.built[date]!, day, positionId, x) > 0) complete = false;
-    if (complete) return true;
-    week.built[date] = saved;
-    b.notes.length = notes;
+    const tried = new Set<string>(o.exclude ?? []);
+    for (let attempt = 0; attempt < SPLIT_BACKTRACK_N; attempt++) {
+      if (attempt > 0) {
+        if (b.counters && b.counters.steps >= REPAIR_LIMITS.REPAIR_MAX_STEPS) break;
+        if (b.counters) b.counters.steps++;
+      }
+      const saved = week.built[date]!.map(cloneShift);
+      const notes = b.notes.length;
+      fillParts(q, tried);
+      if (complete()) return true;
+      // Who took (part of) the first part this time: everyone whose shifts that date changed.
+      const before = new Map(saved.map((x) => [x.userId, canonicalShiftKey(x)]));
+      const changed = week.built[date]!.filter((x) => before.get(x.userId) !== canonicalShiftKey(x)).map((x) => x.userId).filter((u) => !tried.has(u));
+      week.built[date] = saved;
+      b.notes.length = notes;
+      if (changed.length === 0) break; // nobody new could take the first part: no further pair at this point
+      // A retry can only help when the SECOND part is fillable with the first part left open (the first pick took its person);
+      // when it is not, no first-part choice completes this point — move on without spending the budget.
+      const secondAlone = fillRun(b, week, date, positionId, q, toQ, t, order, opts) === "placed";
+      week.built[date] = saved.map(cloneShift);
+      b.notes.length = notes;
+      if (!secondAlone) break;
+      for (const u of changed) tried.add(u);
+    }
   }
   // Pass 2 — the H9 behaviour: a partial fill at one of the three points nearest the middle.
   for (const q of valid.slice(0, 3)) if (fillParts(q)) return true;
