@@ -6,6 +6,8 @@ import { browserTransport, createLandingTracker, type ActionDetails, type Landin
 import { ConsentNotice, type ConsentLabels } from './ConsentNotice';
 
 interface TrackingContextValue { dispatch: (name: LandingAction, details: ActionDetails) => void; sectionView: (section:string)=>void; allowed: boolean }
+const ConsentContext=createContext<ReactNode>(null);
+export function LandingConsentSlot() { return useContext(ConsentContext); }
 const TrackingContext=createContext<TrackingContextValue>({dispatch:()=>{},sectionView:()=>{},allowed:false});
 export const useLandingTracking=()=>useContext(TrackingContext);
 function signals() { return {doNotTrack:navigator.doNotTrack,globalPrivacyControl:(navigator as Navigator & {globalPrivacyControl?:boolean}).globalPrivacyControl}; }
@@ -73,5 +75,6 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
     },
     sectionView(section) { if(marketingAllowed(serverApproved,readConsent(document.cookie),signals())) tracker.current?.sectionView(section); },
   };
-  return <TrackingContext.Provider value={context}>{children}{serverApproved && <ConsentNotice choice={choice} labels={labels} onChoose={choose}/>}</TrackingContext.Provider>;
+  const notice=serverApproved?<ConsentNotice choice={choice} labels={labels} onChoose={choose}/>:null;
+  return <TrackingContext.Provider value={context}><ConsentContext.Provider value={notice}>{children}{new URL(sourceUrl).pathname !== '/' && notice}</ConsentContext.Provider></TrackingContext.Provider>;
 }

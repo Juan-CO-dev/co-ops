@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {readFileSync,writeFileSync,mkdtempSync,mkdirSync,rmSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdtempSync,mkdirSync,rmSync,cpSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const inventoryPath = '../../scripts/assets/inventory.mjs';
@@ -7,6 +7,30 @@ const tools = await import(/* @vite-ignore */ inventoryPath);
 const read = (p: string) => JSON.parse(readFileSync(p, 'utf8'));
 const fixture = {id:'fixture',sourceId:'P013',classification:'real-photo',mode:'crop-resize-only',quality:78,publicPath:'/media/fixture.webp',sourcePath:'source:P013',sourceSha256:'a'.repeat(64),sha256:'b'.repeat(64),bytes:10,maxBytes:100,width:20,height:30,sidecar:'assets/provenance/fixture.json',crop:{left:10,top:20,width:40,height:60},orientedSource:{width:100,height:120},effort:6,tool:{sharp:'0.34.5',vips:'8.17.3',webp:'1.6.0'},steps:['EXIF auto-orientation (.rotate())','integer crop in oriented-source coordinates','uniform resize without enlargement','WebP encode; metadata stripped']};
 describe('v2 bounded photo recipes', () => {
+  it('retains responsive runtime dimensions when fingerprinting again', async () => {
+    const root=mkdtempSync(join(tmpdir(),'landing-v2-fingerprint-'));
+    try {
+      for(const dir of ['assets','config/tenant','public/media']) cpSync(dir,join(root,dir),{recursive:true});
+      const before=read('config/tenant/landing-assets.json');
+      const modulePath='../../scripts/assets/fingerprint.mjs';
+      const {fingerprintAssets}=await import(/* @vite-ignore */ modulePath);
+      fingerprintAssets(root);
+      expect(read(join(root,'config/tenant/landing-assets.json'))).toEqual(before);
+    } finally {rmSync(root,{recursive:true,force:true});}
+  });
+  it.skipIf(!existsSync('C:/Users/conta/co-chief-assets/picks-full/P013.jpg'))('preserves inspected verdicts on a byte-identical exporter rerun', async () => {
+    const root=mkdtempSync(join(tmpdir(),'landing-v2-rerun-'));
+    try {
+      for(const dir of ['assets','config/tenant','scripts/assets']) cpSync(dir,join(root,dir),{recursive:true});
+      mkdirSync(join(root,'public/media'),{recursive:true});
+      const before=read('assets/approved-media.json').media.filter((e:{id:string})=>e.id.startsWith('v2-'));
+      const exporterPath='../../scripts/assets/export-landing-v2.mjs';
+      const {exportLandingV2}=await import(/* @vite-ignore */ exporterPath);
+      await exportLandingV2(root);
+      const after=read(join(root,'assets/approved-media.json')).media;
+      for(const entry of before) expect(after.find((e:{id:string})=>e.id===entry.id).inspection).toEqual(entry.inspection);
+    } finally {rmSync(root,{recursive:true,force:true});}
+  },30000);
   it('reconstructs a crop from an EXIF-oriented source and refuses recipe, identity and byte tampering', async () => {
     const root=mkdtempSync(join(tmpdir(),'landing-v2-crop-'));
     try {
@@ -94,6 +118,9 @@ describe('v2 bounded photo recipes', () => {
       expect(e).toMatchObject({sourceId:source.toUpperCase(),mode:'resize-only',classification:'real-photo',width,quality,load:source==='p013'?'initial':'lazy'});
       expect(e.publicPath).toBe(`/media/${id}-${e.sha256.slice(0,12)}.webp`);
       expect(read(e.sidecar)).toEqual(e);
+      expect(e.inspection.verdict).toMatch(/^PASS/);
+      expect(e.inspection.reviewer).toBeTruthy();
+      expect(e.inspection.date).toBeTruthy();
       const meta=await sharp(readFileSync('public'+e.publicPath)).metadata();
       expect([meta.width,meta.height]).toEqual([e.width,e.height]);
       // JPEG shrink-on-load can differ by one pixel from the rounded ideal height.

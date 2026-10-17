@@ -36,7 +36,12 @@ export function fingerprintAssets(root = process.cwd()) {
   writeFileSync(productsPath, JSON.stringify(products, null, 2) + '\n');
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
   // Only public paths enter the edge/client graph, never master paths or provenance.
-  writeFileSync(resolve(root, 'config/tenant/landing-assets.json'), JSON.stringify(manifest.media.map(e => ({ id: e.id, path: e.publicPath })), null, 2) + '\n');
+  const runtimePath = resolve(root, 'config/tenant/landing-assets.json');
+  const runtime = JSON.parse(readFileSync(runtimePath, 'utf8'));
+  // Dimensions are optional public metadata; retain them from the authoritative
+  // provenance entry whenever a runtime consumer already uses that shape.
+  const dimensioned = new Set(runtime.filter(e => e.width !== undefined || e.height !== undefined).map(e => e.id));
+  writeFileSync(runtimePath, JSON.stringify(manifest.media.map(e => ({ id: e.id, path: e.publicPath, ...(dimensioned.has(e.id) ? {width:e.width,height:e.height} : {}) })), null, 2) + '\n');
   return replacements;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) fingerprintAssets();

@@ -1,3 +1,4 @@
+import { ConsentNotice } from "@/components/landing/ConsentNotice";
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -7,6 +8,7 @@ import { heroMedia } from '@/lib/landing/media';
 import inventory from '@/config/tenant/landing-assets.json';
 
 vi.mock('@/components/landing/TrackingProvider', () => ({
+  LandingConsentSlot: () => null,
   useLandingTracking: () => ({ dispatch: vi.fn(), sectionView: vi.fn(), allowed: false }),
 }));
 
@@ -19,23 +21,27 @@ describe('server-rendered hero poster', () => {
     const html = renderToStaticMarkup(createElement(Hero, { language, config: loadLandingConfig({}), ad: 'unattributed' }));
     const images = html.match(/<img\b[^>]*>/g) ?? [];
     const preloads = (html.match(/<link\b[^>]*>/g) ?? []).filter(tag => attribute(tag, 'rel') === 'preload' && attribute(tag, 'as') === 'image');
+    expect(html).toContain('landing-v2-hero-copy');
+    expect(html).toContain('id="landing-consent-slot"');
+    expect(html).toContain('data-hero-actions');
+    expect(html).toContain(loadLandingConfig({}).cateringUrl.replaceAll('&', '&amp;'));
     expect(images).toHaveLength(1);
     expect(preloads).toHaveLength(1);
     const img = images[0]!;
     const preload = preloads[0]!;
-    const expectedSrcSet = [320, 640, 960].map(width => {
-      const asset = inventory.find(entry => entry.id === `hero-poster-${width}`);
+    const expectedSrcSet = [320, 480, 640, 960, 1280].map(width => {
+      const asset = inventory.find(entry => entry.id === `v2-p013-${width}`);
       expect(asset, `approved ${width}px derivative`).toBeDefined();
       return `${asset!.path} ${width}w`;
     }).join(', ');
     expect(attribute(img, 'srcSet')).toBe(expectedSrcSet);
     expect(attribute(preload, 'imageSrcSet')).toBe(expectedSrcSet);
-    const sizes = '(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)';
+    const sizes = '(min-width: 768px) 50vw, 100vw';
     expect(attribute(img, 'sizes')).toBe(sizes);
     expect(attribute(preload, 'imageSizes')).toBe(sizes);
     expect(attribute(img, 'src')).toBe(heroMedia.poster);
-    expect(attribute(img, 'width')).toBe('750');
-    expect(attribute(img, 'height')).toBe('1125');
+    expect(attribute(img, 'width')).toBe('960');
+    expect(attribute(img, 'height')).toBe('1440');
     expect(attribute(img, 'loading')).toBe('eager');
     expect(attribute(img, 'fetchPriority')).toBe('high');
     expect(attribute(preload, 'fetchPriority')).toBe('high');
@@ -44,3 +50,8 @@ describe('server-rendered hero poster', () => {
     expect(html).not.toMatch(/<video\b|opacity-0|visibility:\s*hidden|animate-/);
   });
 });
+
+ it('server-renders the ordinary consent dock without a hydration layout jump',()=>{
+   const html=renderToStaticMarkup(createElement(ConsentNotice,{choice:'unknown',labels:{notice:'Notice',accept:'Accept',reject:'Reject',settings:'Settings',withdraw:'Withdraw',privacy:'Privacy'},onChoose:()=>{}}));
+   expect(html).toContain('data-flow="false"');
+ });

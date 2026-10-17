@@ -1,73 +1,61 @@
-import { test, expect } from "@playwright/test";
-import { heroMedia } from "../../../lib/landing/media";
-async function trigger(page: import("@playwright/test").Page) {
- await page.locator('[data-testid="hero-motion"]').scrollIntoViewIfNeeded();
- await page.evaluate(()=>window.dispatchEvent(new Event("scroll")));
+import {test,expect,type Page} from '@playwright/test';
+import {heroMedia} from '../../../lib/landing/media';
+
+async function reachSpin(page:Page) {
+  await page.locator('.landing-v2-spin').scrollIntoViewIfNeeded();
 }
-for(const preference of ["reduce","save-data"] as const)test(`${preference} downloads no motion`,async({page})=>{
- if(preference==="reduce")await page.emulateMedia({reducedMotion:"reduce"});
- else await page.addInitScript(()=>Object.defineProperty(navigator,"connection",{value:{saveData:true,addEventListener(){},removeEventListener(){}}}));
- const requests:string[]=[];page.on("request",r=>{if(/\.(mp4|webm)/.test(r.url()))requests.push(r.url());});
- await page.goto("/");await trigger(page);await expect(page.locator("#hero img")).toBeVisible();await page.waitForTimeout(250);
- expect(requests).toEqual([]);await expect(page.locator("#hero video")).toHaveCount(0);
-});
-for(const failure of ["decode","autoplay"] as const)test(`${failure} retains the real poster`,async({page,browserName})=>{
- test.skip(failure === 'decode' && browserName === 'webkit' && process.platform !== 'darwin', 'Playwright WebKit lacks H.264 decoding on this platform; poster/fallback checks remain active.');
- let requested=false;
- if(failure==="decode")await page.route(`**${heroMedia.spin}`,route=>{requested=true;return route.fulfill({status:200,contentType:"video/mp4",body:"invalid video"});});
- else await page.addInitScript(()=>{HTMLMediaElement.prototype.play=()=>{Reflect.set(window,"motionPlayAttempted",true);return Promise.reject(new DOMException("blocked","NotAllowedError"));};});
- await page.goto("/");await trigger(page);await expect(page.locator("#hero img")).toBeVisible();
- if(failure==="decode")await expect.poll(()=>requested).toBe(true);else await expect.poll(()=>page.evaluate(()=>Reflect.get(window,"motionPlayAttempted"))).toBe(true);
- await expect(page.locator("#hero video")).toHaveCount(0);await expect(page.getByRole("button",{name:"Pause spin"})).toHaveCount(0);
-});
-test("one MP4 starts after trigger, pauses by keyboard and offscreen, preserves geometry",async({page,browserName})=>{
- const decodeUnavailable = browserName === 'webkit' && process.platform !== 'darwin';
- // Exercise control/visibility policy with a media adapter where H.264 is absent.
- // Actual decoding remains independently covered by video-proof and real Safari.
- if (decodeUnavailable) await page.addInitScript(() => {
-   const paused = new WeakMap<HTMLMediaElement, boolean>();
-   Object.defineProperty(HTMLMediaElement.prototype, 'paused', {get() { return paused.get(this) ?? true; }});
-   HTMLMediaElement.prototype.play = function () { paused.set(this, false); this.dispatchEvent(new Event('playing')); return Promise.resolve(); };
-   HTMLMediaElement.prototype.pause = function () { paused.set(this, true); };
-   document.addEventListener('error', event => { if (event.target instanceof HTMLMediaElement) event.stopImmediatePropagation(); }, true);
- });
- const urls=new Set<string>();page.on("request",r=>{if(/\.(mp4|webm)/.test(r.url()))urls.add(r.url());});
- await page.goto("/");expect(urls.size).toBe(0);
- const frame=page.locator('[data-testid="hero-motion"]');const initial=await frame.boundingBox();
- await trigger(page);const video=page.locator("#hero video");
- await expect(video).toHaveCSS("opacity","1");
- // Chromium (and native H.264 Safari) proves the actual request. The non-Darwin
- // WebKit adapter above only exercises controls and does not initiate a decoder fetch.
- if (!decodeUnavailable) expect([...urls]).toEqual([new URL(heroMedia.spin, page.url()).href]);
- expect((await frame.boundingBox())?.height).toBe(initial?.height);
- const pause=page.getByRole("button",{name:"Pause spin"});await pause.focus();await page.keyboard.press("Enter");
- await expect(page.getByRole("button",{name:"Play spin"})).toBeVisible();expect(await video.evaluate(v=>(v as HTMLVideoElement).paused)).toBe(true);
- await page.getByRole("button",{name:"Play spin"}).click();await expect(video).toHaveCSS("opacity","1");
- await page.locator("#footer").scrollIntoViewIfNeeded();await expect.poll(()=>video.evaluate(v=>(v as HTMLVideoElement).paused)).toBe(true);
- await trigger(page);await expect(video).toHaveCSS("opacity","1");
- await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{value:"hidden",configurable:true});document.dispatchEvent(new Event("visibilitychange"));});
- await expect.poll(()=>video.evaluate(v=>(v as HTMLVideoElement).paused)).toBe(true);
+
+for(const preference of ['reduce','save-data'] as const)test(`${preference} downloads no automatic motion`,async({page})=>{
+  if(preference==='reduce')await page.emulateMedia({reducedMotion:'reduce'});
+  else await page.addInitScript(()=>Object.defineProperty(navigator,'connection',{value:{saveData:true,addEventListener(){},removeEventListener(){}}}));
+  const requests:string[]=[];page.on('request',r=>{if(/\.(mp4|webm)/.test(r.url()))requests.push(r.url());});
+  await page.goto('/');await reachSpin(page);await page.waitForTimeout(250);
+  expect(requests).toEqual([]);
+  await expect(page.locator('.landing-v2-spin video')).not.toHaveAttribute('src',/./);
+  await expect(page.locator('#hero video')).toHaveCount(0);
+  await expect(page.locator('#hero img')).toBeVisible();
 });
 
-test("stalled playback keeps the photo and exposes no unusable control",async({page})=>{
- await page.addInitScript(()=>{HTMLMediaElement.prototype.play=()=>{Reflect.set(window,"motionPlayAttempted",true);return new Promise(()=>{});};});
- await page.goto("/");await trigger(page);
- await expect.poll(()=>page.evaluate(()=>Reflect.get(window,"motionPlayAttempted"))).toBe(true);
- await expect(page.locator("#hero img")).toBeVisible();await expect(page.getByRole("button",{name:"Pause spin"})).toHaveCount(0);
- await expect(page.locator("#hero video")).toHaveCount(0,{timeout:10000});
+for(const failure of ['decode','play-rejection'] as const)test(`${failure} retains the static hero and explicit retry control`,async({page,browserName})=>{
+  test.skip(failure==='decode' && browserName==='webkit' && process.platform!=='darwin','Playwright WebKit lacks H.264 decoding on this platform; native Safari evidence remains required.');
+  let requested=false;
+  if(failure==='decode')await page.route(`**${heroMedia.spin}`,route=>{requested=true;return route.fulfill({status:200,contentType:'video/mp4',body:'invalid video'});});
+  else await page.addInitScript(()=>{HTMLMediaElement.prototype.play=function(){if(this.closest('.landing-v2-spin'))Reflect.set(window,'spinPlayAttempted',true);return Promise.reject(new DOMException('blocked','NotAllowedError'));};});
+  await page.goto('/');await reachSpin(page);
+  const play=page.locator('.landing-v2-spin button');await play.click();
+  if(failure==='decode')await expect.poll(()=>requested).toBe(true);
+  else await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'spinPlayAttempted'))).toBe(true);
+  await expect(page.locator('#hero img')).toBeVisible();
+  await expect(page.locator('#hero video')).toHaveCount(0);
+  await expect(play).toBeEnabled();
+  await expect(page.locator('.landing-v2-spin video')).toHaveAttribute('controls','');
 });
 
-for (const stalledEvent of ["waiting", "stalled", "silent-freeze"] as const) test(`playing watchdog recovers from ${stalledEvent} despite repeated scroll`, async ({page}) => {
- await page.addInitScript(() => {
-  HTMLMediaElement.prototype.play = function () { this.dispatchEvent(new Event("playing")); return Promise.resolve(); };
- });
- await page.goto("/", {waitUntil:"domcontentloaded"}); await trigger(page);
- await expect(page.getByRole("button", {name:"Pause spin"})).toBeVisible();
- await page.locator("#hero video").evaluate((video, event) => { if(event !== "silent-freeze") video.dispatchEvent(new Event(event)); }, stalledEvent);
- const scrolling = await page.evaluate(() => window.setInterval(() => window.dispatchEvent(new Event("scroll")), 100));
- try {
-  await expect(page.locator("#hero video")).toHaveCount(0, {timeout:10000});
-  await expect(page.locator("#hero img")).toBeVisible();
-  await expect(page.getByRole("button", {name:"Pause spin"})).toHaveCount(0);
- } finally { await page.evaluate(id => clearInterval(id), scrolling); }
+test('keyboard Play attaches one source and preserves reserved geometry',async({page})=>{
+  await page.addInitScript(()=>{HTMLMediaElement.prototype.play=function(){if(this.closest('.landing-v2-spin'))Reflect.set(window,'spinPlayedSource',this.getAttribute('src'));return Promise.resolve();};});
+  await page.goto('/');await reachSpin(page);
+  const video=page.locator('.landing-v2-spin video');
+  const before=await video.boundingBox();await expect(video).not.toHaveAttribute('src',/./);
+  await page.locator('.landing-v2-spin button').focus();await page.keyboard.press('Enter');
+  await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'spinPlayedSource'))).toBe(heroMedia.spin);
+  await expect(video).toHaveAttribute('src',heroMedia.spin);
+  await expect(video).toHaveAttribute('controls','');
+  expect((await video.boundingBox())?.height).toBe(before?.height);
+  await expect(page.locator('#hero video')).toHaveCount(0);
+});
+
+test('pending manual playback leaves the hero and retry control usable',async({page})=>{
+  await page.addInitScript(()=>{HTMLMediaElement.prototype.play=function(){if(this.closest('.landing-v2-spin'))Reflect.set(window,'spinPlayAttempted',true);return new Promise(()=>{});};});
+  await page.goto('/');await reachSpin(page);await page.locator('.landing-v2-spin button').click();
+  await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'spinPlayAttempted'))).toBe(true);
+  await expect(page.locator('#hero img')).toBeVisible();
+  await expect(page.locator('.landing-v2-spin button')).toBeEnabled();
+  await expect(page.locator('.landing-v2-spin video')).toHaveAttribute('controls','');
+});
+
+for(const event of ['scroll','resize','visibilitychange'])test(`${event} never substitutes for explicit Play`,async({page})=>{
+  await page.goto('/');await reachSpin(page);
+  await page.evaluate(event=>{(event==='visibilitychange'?document:window).dispatchEvent(new Event(event));},event);
+  await expect(page.locator('.landing-v2-spin video')).not.toHaveAttribute('src',/./);
+  await expect(page.locator('#hero video')).toHaveCount(0);
 });

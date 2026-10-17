@@ -26,6 +26,7 @@ export async function exportLandingV2(root=process.cwd()) {
   validateEntry(record);
   const previous=approved.media.find(e=>e.id===id);
   if(previous && previous.sha256!==hash)throw Error('Existing derivative differs; review before replacement');
+  if(previous?.sha256===hash && previous.inspection)record.inspection=previous.inspection;
   records.push({record,bytes});
  }
  // Validate every source again before any persistent writes.

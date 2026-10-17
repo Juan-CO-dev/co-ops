@@ -1,4 +1,5 @@
 {
+  "landing.spin.illustrated": "Illustrated Crunchy Boi spin",
   "landing.lineup.ingredients.crunchy-boi": "Turkey, provolone, garlic mayo, onion, pickles, iceberg lettuce, oil & vinegar, ripple potato chips, sub roll.",
   "landing.lineup.ingredients.farmers-market": "Salsa verde, cucumber, onion, sweet peppers, hot peppers, iceberg lettuce, arugula, oil & vinegar, sub roll.",
   "landing.lineup.ingredients.hot-pants": "Capicola, pepperoni, Genoa salami, provolone, onion, sweet peppers, hot peppers, iceberg lettuce, arugula, oil & vinegar, sub roll.",
@@ -36,7 +37,7 @@
   "landing.subdex.play": "Play the graphics update",
   "landing.offer.code": "Use code {code} at checkout",
   "landing.language": "Choose your language",
-  "landing.hero.title": "Your next great lunch.",
+  "landing.hero.title": "Crunch, in motion.",
   "landing.hero.body": "Pick your shop and order directly.",
   "landing.field-guide.title": "The Field Guide",
   "landing.field-guide.body": "A closer look at your next favorite sub.",
@@ -61,7 +62,7 @@
   "landing.privacy.body": "Ordering happens on the ordering provider's site. This page has no customer form. Optional measurement starts only after you accept and is disabled by Do Not Track or Global Privacy Control. We count approximate order clicks by day, shop and approved ad code, not purchases or unique people. We do not save personal identifiers in that counter.",
   "landing.privacy.meta": "When enabled and accepted, Meta receives page and section views and outbound order or catering clicks. Approved ad attribution and a valid Facebook click identifier may be kept for this session. Meta may use its own browser identifiers. Server measurement may send the same click with its event ID and approved browser identifiers for deduplication. With your permission, server measurement may also send browser information (user agent) to Meta. Our application does not send your IP in server events or collect your name, email or phone here; Meta sees network information such as your IP when its browser Pixel connects. We do not store these browser identifiers or server-event payloads in our database or logs. Meta processes data under its own policies. You can reject or withdraw optional measurement here at any time.",
   "landing.privacy.back": "Back to lunch",
-  "landing.consent.notice": "Allow optional measurement? With your permission, we count order clicks and, when configured, share page views and clicks with Meta to understand our ads. Ordering works either way.",
+  "landing.consent.notice": "Optional measurement counts order clicks and shares visits and clicks with Meta. Ordering works either way.",
   "landing.consent.accept": "Accept measurement",
   "landing.consent.reject": "Reject measurement",
   "landing.consent.settings": "Privacy settings",

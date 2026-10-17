@@ -1,6 +1,6 @@
 # LANDING v2 — Chunk 1 result
 
-Scope: approved BUILD r2, Chunk 1 only. Branch `feat/landing-v2`, baseline HEAD `460d28b8ef4a28879419246462be7d39256edc87`, worktree `C:/Users/conta/co-ops-landing`. Changes remain UNCOMMITTED. No push, merge, deployment, migration, environment-file or database change.
+Scope: approved BUILD r2, Chunk 1 only. Branch `feat/landing-v2`, baseline HEAD `460d28b8ef4a28879419246462be7d39256edc87`, worktree `C:/Users/conta/co-ops-landing`. Historical handoff: subsequently committed at `21922b70` (chunk 1); chunk 2 followed at `392cfd1c`. No push, merge, deployment, migration, environment-file or database change.
 
 ## Changes
 
@@ -116,4 +116,4 @@ Final advisory run against the completed build: **command EXIT 1**, not a pass. 
 
 Final evidence: `tmp/landing-performance/2026-10-17T02-47-47.003Z-merge-aa92d469/{unset,accepted}.json`, both `raw-*` directories, and `tmp/landing-v2/chunk1-final-perf.log`. UNSET TBT samples: 451.39, 331, 358.72, 143.5, 176 ms. ACCEPTED: 427.5, 720, 427.433, 388, 484.765 ms. No sample was discarded, no threshold was changed, and no registry failure was substituted for a score. The performance difference from the baseline is observed but its cause is not established. These are unchanged-page first-party-only measurements, not real-Pixel launch evidence or the prototype's 818,778 B figure.
 
-CI is authoritative. No branch CI for this uncommitted revision was submitted or claimed; CC must arrange it before advancement. No Chunk 2 work. Registry failure is NOT a score. Cross-family implementation review, CC approval and resolution of the browser verification failures remain handoff gates. Browser responsive selection/preload/timing for the new assets belongs to the later page integration; these registered assets are not yet requested by the unchanged page. Tracked implementation diff and new-file inventory are archived at `tmp/landing-v2/chunk1-tracked.patch` and `tmp/landing-v2/chunk1-new-files.txt`.
+Historical chunk-1 gate record (before commit `21922b70`): CI is authoritative. No branch CI was submitted or claimed in that implementation turn; CC must arrange it before advancement. No Chunk 2 work. Registry failure is NOT a score. Cross-family implementation review, CC approval and resolution of the browser verification failures remain handoff gates. Browser responsive selection/preload/timing for the new assets belongs to the later page integration; these registered assets are not yet requested by the unchanged page. Tracked implementation diff and new-file inventory are archived at `tmp/landing-v2/chunk1-tracked.patch` and `tmp/landing-v2/chunk1-new-files.txt`.

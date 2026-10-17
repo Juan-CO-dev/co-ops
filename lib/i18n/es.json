@@ -1,4 +1,5 @@
 {
+  "landing.spin.illustrated": "Giro ilustrado del Crunchy Boi",
   "landing.lineup.ingredients.crunchy-boi": "Pavo, provolone, mayonesa de ajo, cebolla, pepinillos, lechuga iceberg, aceite y vinagre, papas fritas onduladas, pan para sub.",
   "landing.lineup.ingredients.farmers-market": "Salsa verde, pepino, cebolla, pimientos dulces, chiles picantes, lechuga iceberg, rúcula, aceite y vinagre, pan para sub.",
   "landing.lineup.ingredients.hot-pants": "Capicola, pepperoni, salami de Génova, provolone, cebolla, pimientos dulces, chiles picantes, lechuga iceberg, rúcula, aceite y vinagre, pan para sub.",
@@ -36,7 +37,7 @@
   "landing.subdex.play": "Reproduce la actualización gráfica",
   "landing.offer.code": "Usa el código {code} al pagar",
   "landing.language": "Elige tu idioma",
-  "landing.hero.title": "Tu próximo gran almuerzo.",
+  "landing.hero.title": "Cruje de verdad.",
   "landing.hero.body": "Elige tu tienda y pide directamente.",
   "landing.field-guide.title": "La guía del sub",
   "landing.field-guide.body": "Conoce de cerca tu próximo sub favorito.",
@@ -61,7 +62,7 @@
   "landing.privacy.body": "Los pedidos se hacen en el sitio del proveedor de pedidos. Esta página no tiene formularios para clientes. La medición opcional empieza solo si aceptas y se desactiva con Do Not Track o Global Privacy Control. Contamos clics aproximados por día, tienda y código de anuncio aprobado, no compras ni personas únicas. No guardamos identificadores personales en ese contador.",
   "landing.privacy.meta": "Si está habilitado y aceptas, Meta recibe visitas a la página y sus secciones y clics para pedidos o catering. La atribución aprobada del anuncio y un identificador válido de clic de Facebook pueden guardarse durante esta sesión. Meta puede usar sus propios identificadores del navegador. La medición del servidor puede enviar el mismo clic con su identificador de evento e identificadores aprobados del navegador para evitar duplicados. Con tu permiso, la medición del servidor también puede enviar a Meta información del navegador (agente de usuario). Nuestra aplicación no envía tu IP en eventos del servidor ni recoge aquí tu nombre, correo o teléfono; Meta recibe información de red como tu IP cuando se conecta su Pixel. No guardamos estos identificadores del navegador ni los eventos del servidor en nuestra base de datos o registros. Meta procesa los datos según sus propias políticas. Puedes rechazar o retirar tu permiso para la medición opcional aquí cuando quieras.",
   "landing.privacy.back": "Vuelve al almuerzo",
-  "landing.consent.notice": "¿Permites la medición opcional? Con tu permiso, contamos clics para pedidos y, si está configurado, compartimos visitas y clics con Meta para entender nuestros anuncios. Puedes pedir con cualquiera de las opciones.",
+  "landing.consent.notice": "La medición opcional cuenta clics de pedidos y comparte visitas y clics con Meta. Puedes pedir con cualquier opción.",
   "landing.consent.accept": "Aceptar medición",
   "landing.consent.reject": "Rechazar medición",
   "landing.consent.settings": "Opciones de privacidad",
