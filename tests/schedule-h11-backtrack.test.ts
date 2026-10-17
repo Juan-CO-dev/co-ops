@@ -3,8 +3,10 @@
  * split point, but each point filled the FIRST part greedily before looking at the second, so "every boundary" was not "every
  * complete non-exceeding partition". Astra's repro: one station 10 AM–8 PM; A available all day (soft max 6 h), B only 10 AM–2 PM
  * (soft max 4 h) → A 10 h / B 0 h, though B 10–2 + A 2–8 (6 / 4) validates clean. Now each point tries the first part's ranked
- * candidates in turn (bounded, counted against the repair budget) until the second part fills too; only when no complete
- * non-exceeding pair exists anywhere does it fall back to a partial fill and the relaxation tiers.
+ * candidates in turn (bounded, the retries counted against the repair budget) until the second part fills too. Only when no
+ * complete non-exceeding pair is found WITHIN THE BOUNDED SEARCH (SPLIT_BACKTRACK_N first-part picks per point) does it fall back
+ * — to a partial fill (Pass 2), then the later relaxation tiers, each placement there carrying its reason / note. The bound
+ * terminates the search; it does not make it complete.
  */
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "@/lib/scheduling/context-shared";
@@ -78,5 +80,28 @@ describe("H11: candidate backtracking inside each partition", () => {
     const b = buildWeek({ ...input, people: [...input.people].reverse() });
     expect(canonicalJson(b)).toBe(canonicalJson(a));
     expect(canonicalJson(buildWeek(input))).toBe(canonicalJson(a));
+  });
+});
+
+describe("H11b (Astra H11 P2): only a FIRST-half pick is excluded from the next first-half attempt", () => {
+  it("3 h minimum; A all day (soft max 6 h), B 10 AM–5 PM (soft max 4 h) → B 10–2, A 2–8: 6 / 4, no soft_range", () => {
+    const s = tenHourStation();
+    s.limits.minimumShiftQ = 12;
+    s.limits.flexMinimumQ = Math.min(s.limits.flexMinimumQ, 12);
+    const specs: PersonSpec[] = [{ id: "u-a", role: "employee", softMin: 0, softMax: 6 }, { id: "u-b", role: "employee", softMin: 0, softMax: 4, window: { fromQ: 40, toQ: 68 } }];
+    const out = buildWeek(fixture({ structure: s, specs, days: monday(s) }));
+    clean(out);
+    expect([monHours(out, "u-a"), monHours(out, "u-b")]).toEqual([6, 4]);
+  });
+});
+
+describe("H11b: the repair budget counts ONLY the backtrack retries (pinned on F2-busy)", () => {
+  it("F2-busy: 2 backtrack retries; the repair search itself reaches the 200-step cap on the re-partitioned week", async () => {
+    // Measured at H11b: with or without counting the 2 retries the week ends at 200 steps and 5 gaps — the extra steps are the
+    // REPAIR search's on a differently partitioned week (Thursday / Sunday), not the counting; p2.14 (H10) ended at 108.
+    const { FIXTURES } = await import("./fixtures/schedule/fixtures");
+    const out = buildWeek(FIXTURES["F2-busy"]!());
+    expect(out.stats.repair.steps).toBe(200);
+    expect(out.gaps.filter((g) => g.cause === "unresolved_search")).toHaveLength(5);
   });
 });

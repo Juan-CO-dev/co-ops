@@ -577,10 +577,18 @@ function splitRun(
   }
   const valid = [...points].filter((q) => q - fromQ >= minQ && toQ - q >= minQ).sort((x, y) => Math.abs(x - mid) - Math.abs(y - mid) || x - y);
   const opts = { allowCover: false, budgetStop: o.budgetStop, tiers: [o.tier], splitDepth: o.splitDepth, exclude: o.exclude };
+  /** Who a fill changed on this date (everyone whose shifts differ from `saved`). */
+  const changedSince = (saved: readonly GShift[]) => {
+    const before = new Map(saved.map((x) => [x.userId, canonicalShiftKey(x)]));
+    return week.built[date]!.filter((x) => before.get(x.userId) !== canonicalShiftKey(x)).map((x) => x.userId);
+  };
+  /** Fill both parts; returns whether anything was placed and WHO the FIRST part took (captured before the second runs). */
   const fillParts = (q: number, firstExclude: ReadonlySet<string> | undefined = o.exclude) => {
+    const saved = week.built[date]!.map(cloneShift);
     const first = fillRun(b, week, date, positionId, fromQ, q, { ...t, closingLead: false }, order, { ...opts, exclude: firstExclude }) === "placed";
+    const firstPicks = changedSince(saved);
     const second = fillRun(b, week, date, positionId, q, toQ, t, order, opts) === "placed";
-    return first || second;
+    return { placed: first || second, firstPicks };
   };
   const complete = () => {
     for (let x = fromQ; x < toQ; x++) if (deficitAt(week.built[date]!, day, positionId, x) > 0) return false;
@@ -589,7 +597,10 @@ function splitRun(
   // Pass 1 — a COMPLETE non-exceeding partition (the tier keeps every placement within its limits). CC chunk H11: at each point
   // the FIRST part's candidates are backtracked jointly with the second — when the first part's pick leaves the second part
   // unfillable, the first part is retried without that person (the ranking stays the order), up to SPLIT_BACKTRACK_N picks per
-  // point; each retry is one step of the week's repair budget.
+  // point; ONLY those retries are steps of the week's repair budget (CC chunk H11b). CC chunk H11b (Astra H11 P2): only the
+  // FIRST part's picks are excluded from the next first-part attempt — a person the second part used (even partially) is
+  // still a first-part candidate. The search is bounded, not complete: past SPLIT_BACKTRACK_N picks at every point it falls
+  // through to Pass 2's partial fills, then the later relaxation tiers (each placement there names its reason / note).
   for (const q of valid) {
     const tried = new Set<string>(o.exclude ?? []);
     for (let attempt = 0; attempt < SPLIT_BACKTRACK_N; attempt++) {
@@ -599,11 +610,10 @@ function splitRun(
       }
       const saved = week.built[date]!.map(cloneShift);
       const notes = b.notes.length;
-      fillParts(q, tried);
+      const { firstPicks } = fillParts(q, tried);
       if (complete()) return true;
-      // Who took (part of) the first part this time: everyone whose shifts that date changed.
-      const before = new Map(saved.map((x) => [x.userId, canonicalShiftKey(x)]));
-      const changed = week.built[date]!.filter((x) => before.get(x.userId) !== canonicalShiftKey(x)).map((x) => x.userId).filter((u) => !tried.has(u));
+      // Who took (part of) the FIRST part this time — captured before the second part ran (CC chunk H11b).
+      const changed = firstPicks.filter((u) => !tried.has(u));
       week.built[date] = saved;
       b.notes.length = notes;
       if (changed.length === 0) break; // nobody new could take the first part: no further pair at this point
@@ -617,7 +627,7 @@ function splitRun(
     }
   }
   // Pass 2 — the H9 behaviour: a partial fill at one of the three points nearest the middle.
-  for (const q of valid.slice(0, 3)) if (fillParts(q)) return true;
+  for (const q of valid.slice(0, 3)) if (fillParts(q).placed) return true;
   return false;
 }
 

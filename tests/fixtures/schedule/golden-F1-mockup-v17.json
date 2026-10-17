@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.15. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.16. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -205,7 +205,7 @@
     "searched": {
      "chainDepth": 3,
      "donorsTried": 3,
-     "steps": 30
+     "steps": 29
     }
    },
    "code": "mod_missing",
@@ -230,7 +230,7 @@
     "searched": {
      "chainDepth": 3,
      "donorsTried": 3,
-     "steps": 30
+     "steps": 29
     }
    },
    "code": "mod_missing",
@@ -255,7 +255,7 @@
     "searched": {
      "chainDepth": 3,
      "donorsTried": 3,
-     "steps": 30
+     "steps": 29
     }
    },
    "code": "mod_missing",
@@ -5501,7 +5501,7 @@
    "chainDepth": 3,
    "donorsTried": 3,
    "provenEarly": 0,
-   "steps": 30
+   "steps": 29
   },
   "salariedCoverHours": 16.75,
   "shifts": 79
