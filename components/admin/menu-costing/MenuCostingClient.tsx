@@ -48,7 +48,7 @@ import { AlertPill } from "@/components/ui/AlertPill";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { EmptyState } from "@/components/EmptyState";
 import { SummaryRow } from "@/components/ui/SummaryRow";
-import { prepItemHref, productHref } from "@/lib/admin/product-item-links-shared";
+import { prepItemHref, productHref, skuCatalogHref } from "@/lib/admin/product-item-links-shared";
 import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 import { menuItemPageHref } from "@/lib/catalog/recipe-item-shared";
 import {
@@ -78,12 +78,14 @@ export function MenuCostingClient({
   skuNames,
   itemNames,
   productNames,
+  canOpenSkuItem = false,
   toastFetchedAt = null,
   toastUnavailable = false,
   toastNotices = [],
   scope,
 }: {
   /** The board's scope: a shop id, null = all shops (the global menu), undefined = not known (the remembered shop). The drawer opens the menu item page for it (catalog Phase 3b). */
+  canOpenSkuItem?: boolean;
   scope?: string | null;
   toastFetchedAt?: string | null;
   toastUnavailable?: boolean;
@@ -237,6 +239,7 @@ export function MenuCostingClient({
                       <p className="mb-2 text-xs text-co-text-muted">{t("admin.menu_costing.price.label")}: {row.includedInSubPrice ? t("admin.menu_costing.price.included") : money(row.menuPrice)}</p>}
                     <a href={menuItemPageHref(row.id, { shopId: scope })} className={drawerLinkCls}>{t("catalog.menu.open_page")}</a>
                     <RowDrawer
+                      canOpenSkuItem={canOpenSkuItem}
                       scope={scope}
                       row={row}
                       skuNames={skuNames}
@@ -336,6 +339,7 @@ function RowBadges({
 }
 
 function RowDrawer({
+  canOpenSkuItem,
   scope,
   row,
   skuNames,
@@ -345,6 +349,7 @@ function RowDrawer({
   money,
   t,
 }: {
+  canOpenSkuItem?: boolean;
   scope?: string | null;
   row: MenuCostRow;
   skuNames: Record<string, string>;
@@ -453,7 +458,7 @@ function RowDrawer({
           <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
             {unpricedSkuIds.map((id) => (
               <li key={id} className="text-xs font-medium text-co-text">
-                <a href={skuItemHref(id, { shopId: scope, job: "price" })} className={drawerLinkCls}>
+                <a href={canOpenSkuItem ? skuItemHref(id, { shopId: scope, job: "price" }) : skuCatalogHref(id)} className={drawerLinkCls}>
                   {skuNames[id] ?? t("admin.menu_costing.drawer.unknown_sku")}
                 </a>
               </li>

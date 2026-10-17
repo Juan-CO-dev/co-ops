@@ -367,3 +367,134 @@ key; BC-063 44px floor plus centring. These are author checks, not an independen
 cross-family approval (BC-043). CC's final review and live/authenticated walks
 remain required. No live schema, real keyboard navigation or SIM write is claimed.
 
+
+
+## Final chunk 7 P3 correction round (starting HEAD 0caa224b)
+
+Changes remain UNCOMMITTED on `feat/catalog-phase4b-job-pages`, worktree
+`C:\Users\conta\co-ops-cat-p4b`. No push, merge, production access, migration or
+equivalence-pin change. The supplied Aggie review defines this bounded fix round.
+
+### Dispositions and files
+
+- P3-1: `docs/guides/manager-guide.md` quotes the shipped en/es swap choices,
+  Share title and Back preview/confirmation labels. Also corrected the Spanish
+  Swap title. Dictionary-driven assertions pin these quoted labels.
+- P3-2: `app/admin/items/page.tsx` and `app/admin/menu-costing/page.tsx` derive
+  `canOpenSkuItem` using the same `catalogWriteRoleAllowed` gate as the SKU-page
+  reader. `CatalogClient.tsx` and `MenuCostingClient.tsx` carry it to SKU links.
+  Eligible actors keep scoped item/price destinations; SMM gets the exact usable
+  list deep link (`?sku=<id>#<id>`). No reader or write authorization is relaxed.
+  Missing capability defaults to the list destination. Server tests cover SMM,
+  AGM, GM and MoO; render tests cover both destinations in en/es.
+- P3-3: `tests/catalog-entry-navigation.test.ts` adds the negative query assertion
+  for the GM/default recipe-list case, exact costing CTA href matching, and the
+  missing GM/All-shops costing case in en/es. Two independent temporary mutations
+  forced global queries: each failed exactly its two relevant bilingual cases.
+  Both source files were restored byte-for-byte in finally blocks.
+- P3-4: `app/admin/vendors/[id]/page.tsx` catches only the optional shop-name
+  lookup, omits labels and shows a quiet bilingual note. The loader and GET stay
+  strict. Added paired copy in `lib/i18n/en.json` and `es.json`.
+  `tests/catalog-vendor-page-labels.test.ts` executes the actual page and label
+  loader: lookup failure keeps the editor and available SKU, removes names and
+  shows the note; successful lookup retains names without a note, in en/es.
+
+The two source-link assertions in `tests/catalog-deep-links.test.ts` now pin the
+complete conditional including both destinations. No assertion was removed or
+weakened: existing eligible-user expectations remain, expanded with fallback,
+server capability and exact no-query assertions.
+
+### Failing-first and probe evidence
+
+`.tmp/final-p3-red-fixed-fixture.json`: 32 passed / 8 failed (four fallback
+cases, two guide-copy cases, two page failures from `loadGuideSkuShopNames:
+offline`). The first fixture attempt omitted an empty vendor_order_guides table;
+those fixture failures are not product evidence. Final correction run:
+`.tmp/final-p3-final-focused.json`, 58 passed / 0 failed across three files.
+Mutation evidence: `.tmp/final-p3-mutant-recipes.json` and
+`.tmp/final-p3-mutant-costing.json`, two expected failures each.
+
+The new vendor test fixture required TypeScript repairs to avoid instantiating
+Supabase's recursive generic builder in the spy, and the existing JSX runtime
+pattern to satisfy no-children-prop. Its narrow fake-query spy is now typed and
+lint-clean. Application code did not change for these fixture repairs.
+
+### Commands and results
+
+```powershell
+npx.cmd vitest run tests/catalog-entry-navigation.test.ts tests/catalog-vendor-page-labels.test.ts tests/catalog-deep-links.test.ts --maxWorkers=2 --reporter=json --outputFile=.tmp/final-p3-final-focused.json
+# PASS: 58 tests, 3 files.
+
+npx.cmd vitest run tests/catalog- tests/swap tests/share.test.ts tests/sku-swaps tests/order-guide tests/shop-owned tests/new-item tests/new-sandwich tests/shop-context.test.ts tests/step-up-tier-map.test.ts --pool=threads --no-cache --maxWorkers=2 --testTimeout=60000 --reporter=json --outputFile=.tmp/final-p3-focused.json
+# PASS: 1,960 tests. Includes inventory 170; read-boundary 8;
+# shop-context 146; tier-map 13. Final vendor fixture rechecked above.
+
+npx.cmd next typegen
+npx.cmd tsc --noEmit
+# PASS: final typegen succeeds, final tsc exit 0.
+
+node --max-old-space-size=1536 .tmp/final-p3-lint.cjs
+npx.cmd eslint tests/catalog-vendor-page-labels.test.ts --format json --output-file .tmp/final-p3-eslint-recheck.json
+# Fresh repository comparison: 2,239 current / 2,178 main source paths.
+# Replacing the corrected test's result yields 65 errors / 369 warnings
+# on both current and main: error delta 0, warning delta 0.
+# Existing lint debt remains. No suppression added.
+```
+
+Lint uses the same local origin/main and full-repository comparison method
+recorded earlier in this RESULT. Evidence: `.tmp/final-p3-eslint-current.json`,
+`-main.json`, `-recheck.json`, `-current-final.json`, `-summary-final.json`.
+Relevant bug-class checks: BC-004 both access directions, BC-017 shipped
+vocabulary, BC-040 optional-label failure path.
+
+The first full run recorded 12,433 passed / 4 failed / 3 skipped, 751 files.
+Besides the two known tsx startup failures, it found two text-assertion failures
+from CRLF introduced by Windows file writing (manager-guide-scheduling and
+step-up-edit-window-wiring). Restored LF in touched files without changing those
+assertions. Final targeted and full rerun evidence follows below.
+
+
+```powershell
+npx.cmd vitest run tests/manager-guide tests/step-up-edit-window-wiring.test.ts tests/catalog-entry-navigation.test.ts tests/catalog-vendor-page-labels.test.ts tests/catalog-deep-links.test.ts --maxWorkers=2 --reporter=json --outputFile=.tmp/final-p3-final-guide.json
+# PASS: 69 tests / 5 files after restoring LF.
+```
+
+### Known tsx ENOMEM spawns (separate from application findings)
+
+- `tests/people-chunkE-review.test.ts:130`: starts `scripts/check-boh-positions.ts`.
+- `tests/pm-criteria.test.ts:140`: starts `scripts/seed-pm-criteria.ts`.
+
+Both reproduced independently with NEXT_PUBLIC_SUPABASE_URL and
+SUPABASE_SERVICE_ROLE_KEY explicitly blank: child exit 1 before the scripts'
+expected missing-credentials exit 2. Neither accessed a database. Evidence:
+`.tmp/final-p3-tsx-startup.json`.
+
+```text
+SystemError [ERR_SYSTEM_ERROR]: uv_os_get_passwd returned ENOMEM (not enough memory)
+errno: -4057; syscall: uv_os_get_passwd
+```
+
+
+### Final full-suite outcome and handoff
+
+```powershell
+npx.cmd vitest run --pool=threads --no-cache --maxWorkers=2 --testTimeout=60000 --reporter=json --outputFile=.tmp/final-p3-full-final.json
+# Exit 1: 12,435 passed / 2 failed / 3 skipped, 751 files.
+# ONLY failures: people-chunkE-review.test.ts and pm-criteria.test.ts,
+# the independently reproduced tsx ENOMEM startup failures listed above.
+
+git diff --check
+# PASS.
+```
+
+The final full run includes the final fixture and restored LF files. Both earlier
+line-ending failures now pass. No application-test failure remains; the full
+suite is explicitly NOT reported all-green because the two environment startup
+failures remain. All requested focused/inventory/read-boundary/shop-context/
+tier-map checks passed; typegen then tsc passed; ESLint delta is zero.
+
+Open limits: existing repository lint debt, the two recorded environment startup
+failures, and CC's review plus the previously documented CC-owned authenticated
+browser/SIM gates. No browser/SIM run or new cross-family approval is claimed.
+All changes remain UNCOMMITTED; HEAD is still `0caa224b` on
+`feat/catalog-phase4b-job-pages`, worktree `C:\Users\conta\co-ops-cat-p4b`.

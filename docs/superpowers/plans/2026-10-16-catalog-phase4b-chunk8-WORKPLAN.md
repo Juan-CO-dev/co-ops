@@ -24,3 +24,16 @@ cross-family review specifies these corrections; no new feature scope is added.
 Risks: asynchronous refresh must not misclassify an own save as external drift;
 refusals must occur before snapshot/cost reads without exposing foreign owners.
 Live SIM and browser walks remain CC-owned, as explicitly directed.
+
+## Final chunk 7 P3 correction round (0caa224b)
+
+Implement the supplied cross-family review corrections: exact en/es guide labels;
+server-derived catalog role capability on CatalogClient/MenuCostingClient with
+SKU-list fallback; exact no-query GM creation assertions and mutation probes;
+vendor-page-only label lookup degradation with a bilingual quiet note.
+No read/write authorization contract changes, migrations or equivalence-pin edits.
+Tests first for navigation, guide copy and vendor page failure; keep successful
+label behavior and strict loader/API failure behavior. Run focused and named
+regression suites, typegen/tsc, repository ESLint delta and full suite. Main risk:
+losing the server capability along a client prop chain or masking guide failures
+beyond the optional label lookup. Leave changes uncommitted for CC review.

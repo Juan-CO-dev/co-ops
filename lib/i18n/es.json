@@ -1,4 +1,5 @@
 {
+  "admin.order_guide.shop_labels_unavailable": "No se pudieron cargar las etiquetas de tienda.",
   "catalog.error.invalid_barcode": "Introduce un código de barras de al menos 6 caracteres.",
   "catalog.jobs.swap.product_name": "Nombre del producto nuevo (opcional)",
   "catalog.jobs.swap.product_name_es": "Nombre del producto nuevo en español (opcional)",

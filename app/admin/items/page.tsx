@@ -8,7 +8,7 @@
  */
 
 import { notFound, redirect } from "next/navigation";
-import { catalogShopAllowed } from "@/lib/sku-versions-shared";
+import { catalogShopAllowed, catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
 
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
@@ -73,7 +73,7 @@ export default async function AdminItemsPage({ searchParams }: {
       <ItemsPageTabs
         key={initialView}
         initialView={initialView}
-        catalog={<CatalogClient entities={entities} actorLevel={level} shopScope={scope} />}
+        catalog={<CatalogClient canOpenSkuItem={catalogWriteRoleAllowed(auth.user.role, level)} entities={entities} actorLevel={level} shopScope={scope} />}
         registry={<ItemsClient view={view} itemReadiness={itemReadiness} shopScope={scope} />}
       />
     </div>

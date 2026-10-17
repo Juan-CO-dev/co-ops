@@ -91,7 +91,7 @@ describe("no catalog deep link lands on a whole list any more", () => {
   it("the items catalog links each SKU to its scoped item page", () => {
     const src = read("components/admin/catalog/CatalogClient.tsx");
     expect(src).not.toContain('href="/admin/skus"');
-    expect(src).toContain("href={skuItemHref(r.id, { shopId: shopScope })}");
+    expect(src).toContain("href={canOpenSkuItem ? skuItemHref(r.id, { shopId: shopScope }) : skuCatalogHref(r.id)}");
     expect(read("lib/admin/catalog-shared.ts")).toContain("skus: CatalogEdgeRef[];");
   });
 
@@ -102,7 +102,7 @@ describe("no catalog deep link lands on a whole list any more", () => {
 
   it("the costing drawer links every name it blames", () => {
     const src = read("components/admin/menu-costing/MenuCostingClient.tsx");
-    expect(src).toContain('href={skuItemHref(id, { shopId: scope, job: "price" })}');
+    expect(src).toContain('href={canOpenSkuItem ? skuItemHref(id, { shopId: scope, job: "price" }) : skuCatalogHref(id)}');
     expect(src).toContain("id => prepItemHref(id, scope ?? undefined)");
     // The CALL SITE, not the import line (the import also contains "productHref,").
     expect(src).toMatch(/"admin\.menu_costing\.drawer\.unknown_product",\s*productHref,\s*\)/);

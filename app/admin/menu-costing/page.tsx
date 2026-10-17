@@ -26,6 +26,7 @@ import { resolveShopId } from "@/lib/shop-context";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 
 import { requireSessionFromHeaders } from "@/lib/session";
+import { catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadMenuCostingBoard, MENU_COSTING_READ_MIN } from "@/lib/admin/menu-costing";
@@ -90,6 +91,7 @@ export default async function AdminMenuCostingPage({ searchParams }: { searchPar
       <ExportLinks className="mb-4" family="costing" language={lang} query={{ location: scope ?? "global" }}
         caption={serverT(lang, "admin.menu_costing.export_scope", { scope: scope === null ? serverT(lang, "admin.menu_costing.scope_all_short") : shops.find((s) => s.id === scope)?.name ?? "" })} />
       <MenuCostingClient
+        canOpenSkuItem={catalogWriteRoleAllowed(auth.user.role, level)}
         scope={scope}
         toastNotices={toastNotices}
         toastFetchedAt={toastFetchedAt}

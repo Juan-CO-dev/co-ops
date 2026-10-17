@@ -1,4 +1,5 @@
 {
+  "admin.order_guide.shop_labels_unavailable": "Shop labels could not be loaded.",
   "catalog.error.invalid_barcode": "Enter a barcode with at least 6 characters.",
   "catalog.jobs.swap.product_name": "New product name (optional)",
   "catalog.jobs.swap.product_name_es": "New product name in Spanish (optional)",

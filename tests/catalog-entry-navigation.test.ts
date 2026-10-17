@@ -1,4 +1,5 @@
-import { createElement, type ReactNode } from "react";
+import { readFileSync } from "node:fs";
+import { createElement, isValidElement, type ReactNode } from "react";
 import { jsx } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -7,10 +8,15 @@ import { adminSectionsFor } from "@/lib/admin/sections";
 import { RecipesClient } from "@/components/admin/recipes/RecipesClient";
 import { MenuCostingClient } from "@/components/admin/menu-costing/MenuCostingClient";
 import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
+import AdminItemsPage from "@/app/admin/items/page";
 import AdminMenuCostingPage from "@/app/admin/menu-costing/page";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import type { RoleCode } from "@/lib/roles";
+vi.mock("@/lib/admin/items", () => ({ ITEMS_READ_MIN: 6, loadItemsAdminView: async () => ({}) }));
+vi.mock("@/lib/admin/catalog", () => ({ loadCatalogView: async () => [] }));
+vi.mock("@/lib/admin/readiness-load", () => ({ loadActiveShopsForReadiness: async () => [{ id: "shop-a", name: "Shop A" }], loadGraphReadiness: async () => ({ itemReadiness: new Map() }) }));
+vi.mock("@/components/admin/items/ItemsClient", () => ({ ItemsClient: () => null }));
 const pageActor = vi.hoisted(() => ({ role: "gm" as RoleCode, language: "en" as "en" | "es" }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), useSearchParams: () => new URLSearchParams(), redirect: vi.fn() }));
 vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ noteStepUpConfirmed: vi.fn(), forgetStepUp: vi.fn() }) }));
@@ -38,15 +44,16 @@ describe("catalog job entries", () => {
         const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(RecipesClient, { recipes: [], readiness: {}, level, role: role as RoleCode, shopScope }) }));
         expect(html).toContain(`/admin/recipes/new?${shopScope === null && level < 8 ? "" : `location=${shopScope ?? "global"}&amp;`}type=production`);
         expect(html).toContain(`/admin/catalog/new/sandwich${shopScope === null && level < 8 ? "" : `?location=${shopScope ?? "global"}`}`);
+        if (shopScope === null && level < 8) expect(html).not.toContain("/admin/catalog/new/sandwich?");
         expect(html).toContain("flex-wrap");
         expect(html).not.toMatch(/<a(?![^>]*min-h-\[44px\])[^>]*>/);
       });
     }
-    it(`costing repair lands on exact SKU price job in ${language}`, () => {
-      const props = { scope: "shop-a", rows: [{ id: "menu", name: "Sandwich", rollup: { status: "unpriced", unpricedSkuIds: ["sku-a"], pricedLineCount: 0 }, canEditPrice: false }], totals: {}, skuNames: { "sku-a": "Item" }, itemNames: {}, productNames: {} } as unknown as Parameters<typeof MenuCostingClient>[0];
+    it.each([true, false])(`costing repair respects item-page access %s in ${language}`, (canOpenSkuItem) => {
+      const props = { canOpenSkuItem, scope: "shop-a", rows: [{ id: "menu", name: "Sandwich", rollup: { status: "unpriced", unpricedSkuIds: ["sku-a"], pricedLineCount: 0 }, canEditPrice: false }], totals: {}, skuNames: { "sku-a": "Item" }, itemNames: {}, productNames: {} } as unknown as Parameters<typeof MenuCostingClient>[0];
       const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostingClient, props) }));
-      expect(html).toContain('/admin/catalog/sku/sku-a?location=shop-a&amp;job=price');
-      expect(html).not.toContain('/admin/skus?sku=');
+      expect(html).toContain(canOpenSkuItem ? '/admin/catalog/sku/sku-a?location=shop-a&amp;job=price' : '/admin/skus?sku=sku-a#sku-a');
+      expect(html).not.toContain(canOpenSkuItem ? '/admin/skus?sku=' : '/admin/catalog/sku/');
     });
   }
   it("excludes SMM even with an elevated supplied level", () => {
@@ -60,21 +67,47 @@ describe("catalog job entries", () => {
       const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostingClient, props) }));
       expect(html).toContain('/admin/items?view=registry&amp;location=shop-a#prep-a');
     });
-    it(`catalog SKU edge preserves exact item and shop (${language})`, () => {
+    it.each([true, false])(`catalog SKU edge respects item-page access %s (${language})`, (canOpenSkuItem) => {
       const entity = { key: "item:a", id: "a", kind: "item", name: "Prep", issues: [], flags: {}, edges: { producedBy: [], skus: [{ id: "sku-a", name: "Ingredient" }], componentItems: [], usedInMenuItems: [], usedInItems: [], packages: [], checklists: [] } } as unknown as Parameters<typeof CatalogClient>[0]["entities"][number];
-      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(CatalogClient, { entities: [entity], actorLevel: 6, shopScope: "shop-a" }) }));
-      expect(html).toContain('/admin/catalog/sku/sku-a?location=shop-a');
-      expect(html).not.toContain('/admin/skus?sku=');
+      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(CatalogClient, { entities: [entity], canOpenSkuItem, actorLevel: 6, shopScope: "shop-a" }) }));
+      expect(html).toContain(canOpenSkuItem ? '/admin/catalog/sku/sku-a?location=shop-a' : '/admin/skus?sku=sku-a#sku-a');
+      expect(html).not.toContain(canOpenSkuItem ? '/admin/skus?sku=' : '/admin/catalog/sku/');
     });
-    it.each([["gm", "shop-a", "/admin/catalog/new/sandwich?location=shop-a"], ["moo", "global", "/admin/catalog/new/sandwich?location=global"], ["agm", "shop-a", null], ["social_media_mgr", "shop-a", null]] as const)(`costing page entry %s at %s (${language})`, async (role, location, expected) => {
+    it.each([["gm", "global", "/admin/catalog/new/sandwich"], ["gm", "shop-a", "/admin/catalog/new/sandwich?location=shop-a"], ["moo", "global", "/admin/catalog/new/sandwich?location=global"], ["agm", "shop-a", null], ["social_media_mgr", "shop-a", null]] as const)(`costing page entry %s at %s (${language})`, async (role, location, expected) => {
       pageActor.role = role; pageActor.language = language;
       const page = await AdminMenuCostingPage({ searchParams: Promise.resolve({ location }) });
       const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: page }));
       if (expected) {
-        expect(html).toContain(expected);
+        expect(html).toContain(`href="${expected}"`);
+        if (role === "gm" && location === "global") expect(html).not.toContain("/admin/catalog/new/sandwich?");
         expect(html).toContain(`+ ${(language === "es" ? es : en)["catalog.jobs.sandwich.title"]}`);
       }
       else expect(html).not.toContain('/admin/catalog/new/sandwich');
     });
   }
 });
+
+for (const [language, copy] of [["en", en], ["es", es]] as const) {
+  it(`manager guide quotes shipped job labels (${language})`, () => {
+    const guide = readFileSync("docs/guides/manager-guide.md", "utf8");
+    for (const key of ["catalog.jobs.swap.for_now", "catalog.jobs.swap.for_good", "catalog.jobs.share.title", "catalog.jobs.back.preview", "catalog.jobs.back.confirm"] as const) {
+      expect(guide).toContain(`**${copy[key]}**`);
+    }
+  });
+}
+
+function clientProps(node: unknown, target: unknown): Record<string, unknown> | undefined {
+  if (Array.isArray(node)) return node.map(n => clientProps(n, target)).find(Boolean);
+  if (!isValidElement<Record<string, unknown>>(node)) return undefined;
+  if (node.type === target) return node.props;
+  return clientProps(node.props.children, target) ?? clientProps(node.props.catalog, target);
+}
+for (const role of ["social_media_mgr", "agm", "gm", "moo"] as const) {
+  it(`server pages derive item-page capability for ${role}`, async () => {
+    pageActor.role = role;
+    const items = await AdminItemsPage({ searchParams: Promise.resolve({}) });
+    const costing = await AdminMenuCostingPage({ searchParams: Promise.resolve({}) });
+    expect(clientProps(items, CatalogClient)?.canOpenSkuItem).toBe(role !== "social_media_mgr");
+    expect(clientProps(costing, MenuCostingClient)?.canOpenSkuItem).toBe(role !== "social_media_mgr");
+  });
+}

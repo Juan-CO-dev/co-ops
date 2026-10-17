@@ -89,7 +89,15 @@ export default async function AdminVendorDetailPage({
   const guidePlaced = new Set<string>();
   for (const s of orderGuide?.sections ?? []) for (const l of s.lines) if (l.skuId) guidePlaced.add(l.skuId);
   const guideSkuRows = (guideSkuRes.data ?? []) as Array<{ id: string; name: string; item_number: string | null; location_id: string | null; active: boolean }>;
-  const onlyAt = await loadGuideSkuShopNames(guideSkuRows);
+  let onlyAt: Record<string, string> = {};
+  let shopLabelsUnavailable = false;
+  try {
+    onlyAt = await loadGuideSkuShopNames(guideSkuRows);
+  } catch {
+    // Optional display metadata: keep the full guide editable if names fail.
+    // The loader/API remain strict; no ownership authorization uses these labels.
+    shopLabelsUnavailable = true;
+  }
   const ownership = onlyAt;
   const skusNotOnGuide = guideSkuRows
     .filter((r) => r.active !== false && !guidePlaced.has(r.id))
@@ -224,6 +232,9 @@ export default async function AdminVendorDetailPage({
           follows. A sibling of the detail editor rather than a card inside it: the guide
           belongs to the vendor, not to any one of the editor's role-gated concerns. */}
       <div id="order-guide">
+        {shopLabelsUnavailable ? <p className="text-xs text-co-text-muted">
+          {serverT(lang, "admin.order_guide.shop_labels_unavailable")}
+        </p> : null}
         <OrderGuidePanel
           vendorId={vendor.id}
           vendorName={vendor.name}
