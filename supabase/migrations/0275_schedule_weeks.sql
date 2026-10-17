@@ -182,17 +182,21 @@ begin
       end loop;
       return true;
     when 'floor_limit' then
-      -- CC chunk H3 (Astra H2 P1): the certificate binds the flex state it was proven under (targetWeekH, salariedFlexH and
-      -- every searched salaried manager's flexHoursUsed); whether it still holds is checkCertificate's re-run, not this shape.
-      if not public.schedule_json_exact_keys(c, array['managerIds', 'floorHoursUsed', 'limitH', 'targetWeekH', 'salariedFlexH', 'flexHoursUsed'])
-         or not public.schedule_json_strings(c -> 'managerIds')
-         or jsonb_typeof(c -> 'floorHoursUsed') <> 'object' or not public.schedule_json_nonneg(c -> 'limitH')
-         or not public.schedule_json_nonneg(c -> 'targetWeekH') or not public.schedule_json_nonneg(c -> 'salariedFlexH')
-         or jsonb_typeof(c -> 'flexHoursUsed') <> 'object' then return false; end if;
-      for k, v in select key, value from jsonb_each(c -> 'floorHoursUsed') loop
-        if not public.schedule_json_nonneg(v) then return false; end if;
+      -- CC chunk H4 (Astra H3 P1): the CONSERVATIVE certificate — the four limits and, per salaried manager, the condition
+      -- that excluded them (flex_exhausted / ineligible / unavailable / day_at_max) with their flex and floor hours; whether
+      -- it still holds is checkCertificate's recomputation, not this shape.
+      if not public.schedule_json_exact_keys(c, array['limitH', 'targetWeekH', 'salariedFlexH', 'maxShiftH', 'excludedBy', 'flexHoursUsed', 'floorHoursUsed'])
+         or not public.schedule_json_nonneg(c -> 'limitH') or not public.schedule_json_nonneg(c -> 'targetWeekH')
+         or not public.schedule_json_nonneg(c -> 'salariedFlexH') or not public.schedule_json_nonneg(c -> 'maxShiftH')
+         or jsonb_typeof(c -> 'excludedBy') <> 'object' or jsonb_typeof(c -> 'flexHoursUsed') <> 'object'
+         or jsonb_typeof(c -> 'floorHoursUsed') <> 'object' then return false; end if;
+      for k, v in select key, value from jsonb_each(c -> 'excludedBy') loop
+        if jsonb_typeof(v) <> 'string' or (v #>> '{}') not in ('flex_exhausted', 'ineligible', 'unavailable', 'day_at_max') then return false; end if;
       end loop;
       for k, v in select key, value from jsonb_each(c -> 'flexHoursUsed') loop
+        if not public.schedule_json_nonneg(v) then return false; end if;
+      end loop;
+      for k, v in select key, value from jsonb_each(c -> 'floorHoursUsed') loop
         if not public.schedule_json_nonneg(v) then return false; end if;
       end loop;
       return true;

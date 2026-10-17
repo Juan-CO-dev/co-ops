@@ -1595,7 +1595,7 @@ Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). 
 |---|---|---|
 | §5.2 hours budget per week / month, per date, with the suggestion | `budget-shared.ts`, `settings.ts` `setBudget`, `BudgetSetter.tsx`, `BudgetSuggestion.tsx` | `schedule-budget` (F11–F16, none_set), `schedule-board-ui` (Set one, exact body), 0274 harness |
 | §5.8 horizon, never silently overwrite an edited week | `horizon-shared.ts`, `schedules.ts`, `HorizonBuilder.tsx`, `runRegenerate` | `schedule-horizon`, `schedule-board-ui` (P2-3 both paths), 0275 harness `edited_week_unconfirmed` |
-| §6 generator: shapes, segments, skills, strength, leaders, presence, salaried cover, closing / MoD, 4 h min, priority, cover | `lib/scheduling/generator/*` | 27 goldens (p2.8), `schedule-generator`, property test |
+| §6 generator: shapes, segments, skills, strength, leaders, presence, salaried cover, closing / MoD, 4 h min, priority, cover | `lib/scheduling/generator/*` | 27 goldens (p2.9), `schedule-generator`, property test |
 | §6.5 the validator on every schedule; edits saved with their rule | `rules-shared.ts` `checkScheduleRules` | `schedule-rules`, mockup parity, `schedule-edit` |
 | Gap causes and certificates; budget_limited; unresolved_search blocks Approve | `rules-shared.ts`, 0275 `valid_gap_certificate` | `schedule-rules`, certificate-cases (both twins), F17 |
 | §6.6 labor target ≤ 28%, the math shown, no contradiction | `labor-target-shared.ts`, `LaborTargetCard.tsx` | `schedule-labor-target`, `schedule-board-ui` (one note, amber rule) |
@@ -1621,6 +1621,12 @@ Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). 
 - **FILL and PROOF are separate.** `salariedFlexBlocks` (greedy labels, best window) stays the generator's preferred fill; the proof is the target-directed reach `flexBlockReaching` (`rules-shared.ts`): for one deficit, every salaried manager with flex left tries (a) a new block ON THAT POSITION over every legal window overlapping the deficit (≥ 4 h, ≤ flex left / daily max / week room, inside the position window, head limit, availability, leader setting) when they have no shift that day, else (b) an extension of their day onto that position; each through the real `flexBlockIsLegal` on the schedule as it stands. The generator runs the same reach after the preferred fill (`coverWithTargetFlexBlock`) and takes what it finds.
 - **The certificate binds the flex state** (`targetWeekH`, `salariedFlexH`, `flexHoursUsed` per searched manager; TS / SQL twins in parity); the verifier re-runs the reach. Her competing-station fixture: with the GM free neither station is `floor_limit`; once Register is taken the other station is proven (the counting bound first in her exact fixture, `floor_limit` with a second busy eligible person); the stale 0-flex certificate fails at 10 h; a flex-exhausted week is a legitimate `floor_limit`; forged states are refused.
 - `GENERATOR_VERSION` p2.8: 24 header-only goldens, 3 bodies (F0d, F7, F13: the `floor_limit` certificates' new fields only; every shift byte-identical).
+
+### Chunk H4 (2026-10-17): a CONSERVATIVE `floor_limit` (Astra H3 P1 — the end of the proof loop)
+
+- The target-directed proof only enumerated target-position shapes; a legal MIXED-position extension (Register / MoD 44–46, then Expo 46–64) reached the gap and `floor_limit` still certified it. CC's ruling: `floor_limit` no longer claims "no legal flex block exists". It claims a checkable precondition — no hourly person free for the window, and every salaried manager excluded by the first of `flex_exhausted` / `ineligible` / `unavailable` / `day_at_max` (never while a MoD relabel of theirs could reach the window). Otherwise the generator keeps filling (preferred + target-directed, the latter a FILL helper only) and what stays is `unresolved_search` (blocks Approve).
+- The certificate is `{ limitH, targetWeekH, salariedFlexH, maxShiftH, excludedBy, flexHoursUsed, floorHoursUsed }` (`floorLimitCertificate`); the verifier recomputes it and demands equality. TS / SQL twins + case file in parity.
+- `GENERATOR_VERSION` p2.9; golden deltas by cause in the H4 handback.
 
 ### Phase 3 list (unchanged from "Phase 3 backlog", plus what Phase 2 shows as coming)
 

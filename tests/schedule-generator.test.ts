@@ -454,7 +454,7 @@ describe("Task 7: budget, certificates and the repair search", () => {
     for (const g of floorGaps) {
       expect(g.cause).toBe("floor_limit");
       if (g.cause !== "floor_limit") continue;
-      expect(g.certificate).toMatchObject({ managerIds: ["u-j-gm"], limitH: 24, floorHoursUsed: { "u-j-gm": baseFloor } });
+      expect(g.certificate).toMatchObject({ limitH: 24, excludedBy: { "u-j-gm": "flex_exhausted" }, floorHoursUsed: { "u-j-gm": baseFloor } });
       expect(baseFloor + (g.toQ - g.fromQ) / 4).toBeGreaterThan(24);
     }
     expect(out.problems.filter((p) => p.code === "manager_floor_exceeded")).toEqual([]);
@@ -718,7 +718,7 @@ describe("CC chunk D rulings 1 + 2: a salaried manager STAYS LONGER — a zero-h
   const floorQ = (out: GeneratorOutput, userId: string) => out.shifts.filter((x) => x.userId === userId).reduce((n, x) => n + x.segments.filter((g) => g.positionId !== "mod").reduce((m, g) => m + g.endQ - g.startQ, 0), 0);
   const reasonKeys = (out: GeneratorOutput, userId: string) => Object.entries(out.reasons).filter(([k]) => k.includes(`|${userId}|`)).flatMap(([, r]) => r.shift.map((x) => x.key));
 
-  it("ON (the default): the GM stays up to the 10.5 h cap at zero hourly cost, the board names it, and only the cap's 30 minutes remain (max_shift)", () => {
+  it("ON (the default): the GM stays up to the 10.5 h cap at zero hourly cost, the board names it, and only the cap's 30 minutes remain (CC chunk H4: floor_limit, the GM's day at the maximum — it precedes the cap-only bound)", () => {
     const s = longRegister();
     expect(s.limits.salariedStayLonger).toBe(true);
     const out = buildWeek(fixture({ structure: s, specs: gmOnly, days: [day(MON, {}, s)] }));
@@ -728,7 +728,7 @@ describe("CC chunk D rulings 1 + 2: a salaried manager STAYS LONGER — a zero-h
     expect(out.stats.hourlyHours).toBe(0);
     expect(reasonKeys(out, "u-gm")).toContain("salaried_extension");
     expect(out.gaps).toHaveLength(1);
-    expect(out.gaps[0]).toMatchObject({ cause: "structure", certificate: { rule: "max_shift", detail: { shortQ: 2 } } });
+    expect(out.gaps[0]).toMatchObject({ cause: "floor_limit", certificate: { excludedBy: { "u-gm": "day_at_max" }, maxShiftH: 10.5 } });
   });
 
   it("OFF: the GM is never extended, and no stay-longer fill is offered to the certificates", () => {
@@ -953,15 +953,20 @@ describe("CC chunk H2 (2026-10-16): salaried flex may COVER A GAP with a new blo
     expect(out.problems.filter((p) => p.code === "salaried_base_over_target" || p.code === "salaried_over_flex" || p.code === "manager_floor_exceeded")).toEqual([]);
   });
 
-  it("flex exhausted → a gap: 4.5 h of flex covers Saturday; Sunday stays floor_limit (and its certificate verifies)", () => {
-    const out = build(gmExpo(4.5));
+  it("flex exhausted → a gap: 4 h of flex covers Saturday; Sunday is floor_limit (flex_exhausted, the certificate verifies); with 4.5 h the 30 min left make it unresolved_search (CC chunk H4: flex left is never a proof)", () => {
+    const out = build(gmExpo(4));
     expectClean(out);
-    expect(flexQ(out, "u-j-gm")).toBeLessThanOrEqual(18);
+    expect(flexQ(out, "u-j-gm")).toBe(16);
     expect(out.gaps.filter((g) => g.positionId === I.$EXPO && g.date === SAT)).toEqual([]);
     const sun = out.gaps.filter((g) => g.positionId === I.$EXPO && g.date === SUN);
     expect(sun.map((g) => g.cause)).toEqual(["floor_limit"]);
+    expect(sun[0]!.certificate).toMatchObject({ excludedBy: { "u-j-gm": "flex_exhausted" }, flexHoursUsed: { "u-j-gm": 4 }, salariedFlexH: 4 });
     const s = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts: out.shifts, gaps: out.gaps, days: out.days };
     expect(checkCertificate(sun[0]!, s, out.context)).toBe(true);
+    const half = build(gmExpo(4.5));
+    expectClean(half);
+    expect(flexQ(half, "u-j-gm")).toBe(16);
+    expect(half.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => [g.date, g.cause])).toEqual([[SUN, "unresolved_search"]]);
   });
 
   it("a flex block NEVER displaces an hourly person: every hourly shift is identical with flex 0 and flex 10", () => {
@@ -973,12 +978,12 @@ describe("CC chunk H2 (2026-10-16): salaried flex may COVER A GAP with a new blo
     expect(none.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => g.date)).toEqual([SAT, SUN]);
   });
 
-  it("a < 4 h flex need only extends an existing day: a 3 h Expo on the GM's days off stays a gap (floor_limit)", () => {
+  it("a < 4 h flex need only extends an existing day: a 3 h Expo on the GM's days off stays a gap — unresolved_search (CC chunk H4: the GM has flex, so no floor_limit; a person decides)", () => {
     const s = gmExpo(10, (x) => { x.positions[I.$EXPO]!.openQ = 48; });
     const out = build(s);
     expectClean(out);
     expect(out.shifts.filter((x) => x.userId === "u-j-gm" && (x.date === SAT || x.date === SUN))).toEqual([]);
-    expect(out.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => [g.date, g.cause])).toEqual([[SAT, "floor_limit"], [SUN, "floor_limit"]]);
+    expect(out.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => [g.date, g.cause])).toEqual([[SAT, "unresolved_search"], [SUN, "unresolved_search"]]);
   });
 
   it("CC chunk H3: FILL and PROOF agree — no declared coverage gap of a built week is reached by any legal flex block (the generator took every one it could), and every floor_limit certificate binds the GM's flex as spent", () => {
@@ -990,7 +995,7 @@ describe("CC chunk H2 (2026-10-16): salaried flex may COVER A GAP with a new blo
         if (g.code !== "coverage_gap") continue;
         expect(flexBlockReaching(g, w, out.context), `${g.date} ${g.positionId} ${g.fromQ}-${g.toQ} ${g.cause}`).toBeNull();
         if (g.cause !== "floor_limit") continue;
-        expect(g.certificate).toMatchObject({ targetWeekH: 40, salariedFlexH: s.limits.salariedFlexH, flexHoursUsed: { "u-j-gm": salariedWeek(w, "u-j-gm").flexH } });
+        expect(g.certificate).toMatchObject({ targetWeekH: 40, salariedFlexH: s.limits.salariedFlexH, maxShiftH: s.limits.maxShiftH, excludedBy: { "u-j-gm": "flex_exhausted" }, flexHoursUsed: { "u-j-gm": salariedWeek(w, "u-j-gm").flexH } });
         expect(checkCertificate(g, w, out.context)).toBe(true);
         // Stale under another flex state: the same certificate fails once the shop's flex setting moves.
         const moved = { ...out.context, days: Object.fromEntries(Object.entries(out.context.days).map(([d, day]) => [d, { ...day, structure: { ...day.structure, limits: { ...day.structure.limits, salariedFlexH: day.structure.limits.salariedFlexH + 0.25 } } }])) };

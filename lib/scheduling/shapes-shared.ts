@@ -58,6 +58,8 @@ function validFillStep(v: unknown): boolean {
 
 export const GAP_CAUSES = ["budget_limited", "floor_limit", "eligibility", "availability", "capacity", "structure", "unresolved_search"] as const;
 const STRUCTURE_RULES = ["primary_window_closed", "no_mod_member", "no_closing_role", "max_shift"];
+/** The floor_limit exclusions (rules-shared FloorExclusion), spelled here so the shape stays dependency-free like the SQL twin. */
+const FLOOR_EXCLUSIONS = ["flex_exhausted", "ineligible", "unavailable", "day_at_max"];
 
 /** A gap certificate's SHAPE per cause: the exact key set, strings where ids go, non-negative numbers where numbers go. */
 export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
@@ -69,10 +71,12 @@ export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
         && nonneg(c.budgetHours) && nonneg(c.usedHours) && nonneg(c.essentialHours) && isNum(c.remainingHours) && nonneg(c.fillHours)
         && Array.isArray(c.witness) && c.witness.length > 0 && c.witness.every(validFillStep);
     case "floor_limit":
-      // CC chunk H3: the certificate binds the flex state (targetWeekH, salariedFlexH, every searched manager's flexHoursUsed).
-      return exact(c, ["managerIds", "floorHoursUsed", "limitH", "targetWeekH", "salariedFlexH", "flexHoursUsed"]) && strings(c.managerIds)
-        && isObj(c.floorHoursUsed) && Object.values(c.floorHoursUsed).every(nonneg) && nonneg(c.limitH)
-        && nonneg(c.targetWeekH) && nonneg(c.salariedFlexH) && isObj(c.flexHoursUsed) && Object.values(c.flexHoursUsed).every(nonneg);
+      // CC chunk H4: the CONSERVATIVE certificate — the four limits, and per salaried manager the condition that excluded them
+      // (flex_exhausted / ineligible / unavailable / day_at_max) with their flex and floor hours.
+      return exact(c, ["limitH", "targetWeekH", "salariedFlexH", "maxShiftH", "excludedBy", "flexHoursUsed", "floorHoursUsed"])
+        && nonneg(c.limitH) && nonneg(c.targetWeekH) && nonneg(c.salariedFlexH) && nonneg(c.maxShiftH)
+        && isObj(c.excludedBy) && Object.values(c.excludedBy).every((v) => typeof v === "string" && FLOOR_EXCLUSIONS.includes(v))
+        && isObj(c.flexHoursUsed) && Object.values(c.flexHoursUsed).every(nonneg) && isObj(c.floorHoursUsed) && Object.values(c.floorHoursUsed).every(nonneg);
     case "eligibility":
       return exact(c, ["positionId", "eligibleCount"]) && (typeof c.positionId === "string" || c.positionId === null) && c.eligibleCount === 0;
     case "availability":
