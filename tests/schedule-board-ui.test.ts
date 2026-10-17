@@ -406,7 +406,8 @@ describe("Task 22 — person rows, handles and the reason panel", () => {
     expect(panel).not.toMatch(/wage|1900|19\.00/i);
   });
   it("CC chunk F GO: a fill found inside the budget shows its reason budget_fill on the board", () => {
-    const sel = { date: "2026-11-01", userId: "u-i-ivy", startQ: 38 }; // p2.6: Ivy (Finn before the 40 h salaried week moved the fills)
+    // CC chunk H9 (p2.13): two days off and the soft-range tiers moved the fills — the found-in-budget fill is now Ivy on Thursday.
+    const sel = { date: "2026-10-29", userId: "u-i-ivy", startQ: 38 };
     const view = ready({ today: "2026-10-26" }, "F11-budget-week-then-month");
     const h = renderBoard(view, "en", { initialDate: sel.date, initialSelected: sel });
     const panel = h.match(/<section[^>]*data-section="reason"[\s\S]*?<\/section>/)![0];
