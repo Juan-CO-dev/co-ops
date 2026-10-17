@@ -295,3 +295,9 @@ Plan: `docs/superpowers/plans/2026-10-15-scheduling-phase1-BUILD.md`; spec: `doc
 
 - Sandwich `attemptKey`: **correlation only, never replay**. The implementation carries this exact code comment too. No persistence, SQL signature change or durable idempotency is implied. Reconciliation queries the authenticated creator (`.eq('created_by', actor.id)` with the authenticated user, currently `ctx.user.id`), exact active owner/name and server-clock age 0-10 minutes; never a JS truthiness guard. NULL/unknown creators fail closed. Unmatched lost-response conflicts offer the submitted-name-prefiltered catalog link per the BUILD plan.
 - DEFERRED handoff: durable sandwich replay; vendor/item-number uniqueness beyond cooperating jobs; Catering Toast-tab retirement (lead decision 6). Keep the current tab.
+
+### Catalog Phase 4b guided job disclosures (chunk 7, 2026-10-16)
+
+- New-item creation and vendor creation are separate from the five independently saved setup steps. Unconfirmed is not failed: inspect refreshed state before retrying. The client-only item request identity does not survive reopening the form.
+- Share success must match the writer's response: SKU `{ shared: true }`, recipe `{ itemIds, skuIds }`, menu `{ recipeIds, skuIds, itemIds }`. Only then announce success and refresh. Swap optional English/Spanish product names use the existing request contract; edits invalidate the preview, and an omitted name uses the original SKU name. No new migration or engine behavior is implied.
+- Manager instructions for these jobs live in `docs/guides/manager-guide.md` in English and Spanish. Record fixture/browser evidence separately from live-sim acceptance. Sibling admin-family same-origin hardening remains a separate follow-up; catalog-family guards do not prove those families are covered.

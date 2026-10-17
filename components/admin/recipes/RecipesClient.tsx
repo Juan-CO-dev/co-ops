@@ -13,6 +13,8 @@ import Link from "next/link";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { RecipeListRow, RecipeType } from "@/lib/recipes-shared";
 import { RECIPE_WRITE_MIN } from "@/lib/recipes-shared";
+import type { RoleCode } from "@/lib/roles";
+import { newSandwichJobHref } from "@/lib/catalog/jobs-shared";
 import { readinessRecipeHref } from "@/lib/catalog/recipe-item-shared";
 import type { Readiness } from "@/lib/readiness";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
@@ -35,17 +37,21 @@ type FilterType = RecipeType | "all";
 export function RecipesClient({
   recipes,
   level,
+  role,
   readiness,
   shopScope = null,
 }: {
   recipes: RecipeListRow[];
   level: number;
+  role?: RoleCode;
   readiness: Record<string, Readiness>;
   /** The shop this list's readiness was read for (`?location=`), or null for the default. A shop's rows open that shop's version (catalog Phase 3b). */
   shopScope?: string | null;
 }) {
   const { t } = useTranslation();
-  const canWrite = level >= RECIPE_WRITE_MIN;
+  const canWrite = level >= RECIPE_WRITE_MIN && role !== "social_media_mgr";
+  const creationScope = shopScope === null && level < 8 ? undefined : shopScope;
+  const newRecipeHref = `/admin/recipes/new?${creationScope === undefined ? "" : `location=${encodeURIComponent(creationScope ?? "global")}&`}type=production`;
 
   const [filter, setFilter] = useState<FilterType>("all");
 
@@ -120,12 +126,15 @@ export function RecipesClient({
 
       {/* New recipe — link to dedicated page */}
       {canWrite ? (
-        <div className="mt-6">
+        <div className="mt-6 flex flex-wrap gap-2">
           <Link
-            href="/admin/recipes/new"
+            href={newRecipeHref}
             className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text hover:border-co-text transition"
           >
             {t(rk("recipes.create.open_button"))}
+          </Link>
+          <Link href={newSandwichJobHref(creationScope)} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text hover:border-co-text transition">
+            {t("catalog.jobs.sandwich.title")}
           </Link>
         </div>
       ) : null}

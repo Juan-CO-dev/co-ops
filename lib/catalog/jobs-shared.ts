@@ -152,7 +152,7 @@ export const swapVendorJobHref = (skuId: string, shopId?: string | null): string
 
 export const JOB_ERROR_CODES = [...new Set<string>([
   ...NEW_ITEM_ERROR_CODES, ...SHOP_OWNED_ERROR_CODES, ...SWAP_ERROR_CODES, ...RECIPE_VERSION_ERROR_CODES,
-  "step_up_required", "step_up_stale", "exists", "section_name_taken", "sku_already_placed", "guide_stale", "section_not_found",
+  "invalid_barcode", "step_up_required", "step_up_stale", "exists", "section_name_taken", "sku_already_placed", "guide_stale", "section_not_found",
   "foreign_section", "foreign_line", "foreign_sku", "guide_not_found", "invalid_code", "vendor_mismatch", "level_differs", "teach_failed", "open_item_guid", "invalid_json",
 ])];
 const jobErrors = new Set(JOB_ERROR_CODES);

@@ -60,3 +60,6 @@ describe("job contracts", () => {
     expect(controller.getState()).toEqual({ status: "failed", value: null });
   });
 });
+it("keeps barcode minimum-length refusal specific", () => {
+  expect(jobErrorKey("invalid_barcode")).toBe("catalog.error.invalid_barcode");
+});

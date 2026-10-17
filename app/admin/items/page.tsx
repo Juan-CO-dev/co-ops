@@ -73,7 +73,7 @@ export default async function AdminItemsPage({ searchParams }: {
       <ItemsPageTabs
         key={initialView}
         initialView={initialView}
-        catalog={<CatalogClient entities={entities} actorLevel={level} />}
+        catalog={<CatalogClient entities={entities} actorLevel={level} shopScope={scope} />}
         registry={<ItemsClient view={view} itemReadiness={itemReadiness} shopScope={scope} />}
       />
     </div>

@@ -31,6 +31,7 @@ import { serverT } from "@/lib/i18n/server";
 import { loadMenuCostingBoard, MENU_COSTING_READ_MIN } from "@/lib/admin/menu-costing";
 import { MenuCostingClient } from "@/components/admin/menu-costing/MenuCostingClient";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { newSandwichJobHref } from "@/lib/catalog/jobs-shared";
 import { ExportLinks } from "@/components/reports-export/ExportLinks";
 
 export default async function AdminMenuCostingPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -75,6 +76,9 @@ export default async function AdminMenuCostingPage({ searchParams }: { searchPar
         </Link>
       </nav>
       <p className="mb-4 text-sm text-co-text-muted">{scopeLabel}</p>
+      {level >= 7 && auth.user.role !== "social_media_mgr" ? <Link href={scope === null && level < 8 ? newSandwichJobHref() : newSandwichJobHref(scope)} className="mb-4 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border px-4 text-sm font-bold">
+        + {serverT(lang, "catalog.jobs.sandwich.title")}
+      </Link> : null}
       {notSoldHere.length > 0 ? (
         <p className="mb-4 text-sm text-co-text-muted">
           {serverT(lang, "admin.menu_costing.not_sold_here", {

@@ -1025,6 +1025,46 @@ Si ves **Esta lista ya está confirmada.** justo después de tu PIN, alguien ya 
 
 ---
 
+## Catalog jobs / Trabajos del catálogo
+
+### English
+
+**Start with the shop.** As a GM, you can add items for your shops. MoO and above can also choose the shared default. Open **New item** or **New sandwich** from Admin. The cost board also has **+ New sandwich**. The recipe list has **New recipe** and **New sandwich**. The old SKU form still asks a GM to pick a shop. Check the shop before you save. **Only at** names the shop that owns the item. It does not give you the right to change it. A problem link opens that item in the chosen shop.
+
+**New item.** Choose the vendor, name, vendor item number, pack, price and shop. Check the summary, then create. Adding a vendor is a save on its own. If you cancel the item, the vendor stays saved. Creating the item saves its name, pack and first price. Pars, order days, guide placement, use in a recipe and barcode each have their own Save. Finish or skip each step. Earlier saves stay saved. Each order day shows its own result. A barcode needs at least six characters.
+
+If the create reply is lost, keep the page open. Retry on that page. A replay opens the item from the first save. It does **not** apply your latest edits. If you leave and open a new form, that attempt is lost. Find the item before you try to create it again. **Not finished** or **Skipped for now** means there is work left. An unconfirmed save may have gone through. Refresh and check it before you retry. Open the item to finish setup. Do not create it again just to finish those steps.
+
+**New sandwich.** Choose the shop, names and price. Add the amounts of each ingredient. Review the cost and check the box to confirm. An unknown or partial cost is not the full cost. Create saves the sandwich and its recipe together. The Toast link is a **separate save**. Check the Toast item you picked or the one the app suggests. Then confirm the link. A suggestion alone does not link anything. If Toast has no choices, your sandwich stays saved. Go back to its page to finish the link. Other menu and recipe edits each have their own save.
+
+If the create result is unclear, re-read it before you create again. The app can find a match from the past ten minutes. It must be active, with the exact name you sent and the same owner shop or shared scope. Your account must have created it. **This sandwich was already created; open it** offers that match. It does not prove that your latest edits were saved. If you share a login, it can find the other person's work. If there is no match, use the link to find it in the catalog. The link searches the name you sent. Use it for attempts older than ten minutes too. A failed re-read still leaves the result unclear. Do not change the name and send again just to get past a conflict.
+
+**Swap vendor.** Open the old item and choose **Swap vendor** and the shop. Pick a new item, or add one. Adding an item is a save on its own. Then return to the swap. Choose **For now** at a shop, or **For good**. Review the recipe lines, blocked lines, costs and shops left as they are. Check the effect on orders too. If the swap makes a new product group, it uses the old item's name. You can change that name and add a Spanish name. Each edit needs a fresh preview. Confirm only the change you want. Orders follow the new item in that scope. Pars do not change. Check that they suit the new pack. If the result is unclear, open the old item and read its swap log before you retry.
+
+**Share with every shop.** An MoO or higher can share a shop-only item, recipe or sandwich. Review the shop that owns it. Check each item or recipe that must be shared with it. Share a shop-only prep item through the recipe that makes it. Follow the recipe link if it blocks you. Share has its own save. Wait for **Shared with every shop.** If the owner or a linked item changed, review again. Share does not save another edit you have open.
+
+**Back to normal.** Open the old item in a live, short-term swap. Review **Back to normal**, then confirm. This has its own save. Read which recipe lines were restored and which later edits were kept. Check the main item choice and group too. A kept edit was **not** restored. If the save is unclear, reload the swap log before you review again. Back does not undo the separate creation of the new item.
+
+### En español
+
+**Empieza por la tienda.** Como GM, puedes crear para tus tiendas autorizadas; los roles de MoO o superiores también pueden elegir el valor compartido. Abre Nuevo artículo o Nuevo sándwich desde Admin. El tablero de costos también abre Nuevo sándwich; la lista de recetas ofrece Nueva receta y Nuevo sándwich. El formulario anterior de SKU sigue pidiéndote que elijas una tienda autorizada. Revisa la tienda antes de guardar. “Solo en” nombra la tienda propietaria; no te da permiso para cambiar el registro. El enlace de un problema abre el artículo afectado en la tienda seleccionada para que lo corrijas ahí.
+
+**Nuevo artículo.** Elige proveedor, nombre, número del proveedor, paquete, precio y tienda. Revisa el resumen y crea el artículo. Agregar un proveedor se guarda por separado: cancelar el artículo no lo deshace. Crear el artículo guarda su identidad, paquete y precio inicial. Los pars, días de pedido, ubicación en la guía, uso en una receta y código de barras tienen su propio botón Guardar. Termina u omite cada paso; lo que ya guardaste se conserva. Cada día de pedido muestra su resultado. El código de barras debe tener al menos seis caracteres.
+
+Si se pierde la respuesta de creación, mantén abierta la página y vuelve a intentar ese envío. Una repetición abre el artículo anterior; **no** aplica tus últimos cambios. Al volver a abrir el formulario pierdes ese intento, así que busca el artículo antes de crearlo otra vez. “Sin terminar” u “Omitido por ahora” indica que falta configuración. Un guardado sin confirmar puede haber ocurrido: actualiza y revísalo antes de repetirlo. Abre el artículo para continuar; no lo crees otra vez para terminar la configuración.
+
+**Nuevo sándwich.** Elige la tienda, escribe los nombres y el precio, agrega las cantidades de ingredientes y revisa el costo y la confirmación. Un costo desconocido o parcial no es un costo completo. La creación guarda el sándwich y su receta juntos. Vincular con Toast es un **guardado separado**: revisa el artículo sugerido o elegido y confírmalo expresamente. Una sugerencia sola nunca crea el vínculo. Si no hay opciones de Toast disponibles, el sándwich sigue creado; vuelve a su página para terminar el vínculo. Los demás cambios del menú y de la receta también se guardan por separado.
+
+Si la creación queda sin confirmar, vuelve a consultar antes de crear otra vez. La app puede encontrar un sándwich activo con el nombre exacto enviado y la misma propiedad, creado por tu cuenta en los últimos diez minutos. “Este sándwich ya se creó; ábrelo” ofrece esa coincidencia; no prueba que se guardaron tus últimos cambios. Si compartes tu cuenta, puedes encontrar una creación de otra persona. Si no hay coincidencia, usa el enlace al catálogo filtrado por nombre, también para intentos de hace más de diez minutos. Si falla la consulta, el resultado sigue sin confirmar. No cambies el nombre y vuelvas a enviarlo solo para evitar un conflicto.
+
+**Cambiar proveedor.** Abre el artículo original, elige Cambiar proveedor y la tienda, y selecciona o agrega un reemplazo. Crear el reemplazo es un guardado separado; después vuelve al cambio original. Elige Por ahora en una tienda o Para siempre. Revisa las líneas de receta, rechazos, sándwiches afectados, tiendas sin cambios y consecuencias para pedidos. Si se crea un grupo de producto, su nombre empieza con el del artículo original; puedes escribir nombres en inglés y español. Si editas la propuesta, vuelve a revisarla. Confirma solo la propuesta que quieres aplicar. Los pedidos siguen al reemplazo en ese ámbito; los pars no cambian, así que revisa si sirven para el paquete nuevo. Si el resultado queda sin confirmar, abre el artículo original y revisa el historial de cambios antes de intentarlo otra vez.
+
+**Compartir con todas las tiendas.** En un artículo, receta o sándwich de una sola tienda, un MoO autorizado o un rol superior puede revisar Compartir. Lee la tienda propietaria y selecciona las dependencias expresamente. Un ingrediente de prep de una tienda se comparte mediante la receta que lo produce; sigue el enlace a esa receta si hay un bloqueo. Confirmar Compartir se guarda por separado. Espera el mensaje de éxito. Si cambió la propiedad o una dependencia, vuelve a revisar. Compartir no guarda otro cambio que tengas abierto.
+
+**Volver a lo normal.** Para un cambio temporal activo, abre el artículo original y revisa Volver a lo normal. Confírmalo por separado. Lee el resultado: las líneas restauradas, los cambios posteriores conservados, la opción principal y la agrupación pueden ser distintos. Los cambios que se conservan **no** se restauraron. Si el guardado queda sin confirmar, vuelve a cargar el historial antes de revisarlo otra vez. Volver a lo normal no deshace la creación separada del reemplazo.
+
+---
+
 ## Manager tools
 
 These are the jobs and pages you use beyond the daily reports.

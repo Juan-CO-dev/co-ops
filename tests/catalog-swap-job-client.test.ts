@@ -51,3 +51,20 @@ it("cancelling step-up leaves the reviewed preview and sends no write", async ()
   find(render(), "confirm")!.props.onClick(); await flush();
   expect(h.fetch).toHaveBeenCalledTimes(1); expect(find(render(), "confirm")).toBeDefined();
 });
+
+it("defaults a new product name, accepts bilingual edits and invalidates its preview", async () => {
+  const created = { ...preview, product: { kind: "create", name: "Original", nameEs: null } };
+  h.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ preview: created }) });
+  find(render(), "preview")!.props.onClick(); await flush();
+  expect(find(render(), "product-name")?.props.value).toBe("Original");
+  find(render(), "product-name")!.props.onChange({ target: { value: "Tomatoes" } });
+  expect(find(render(), "confirm")).toBeUndefined();
+  find(render(), "product-name-es")!.props.onChange({ target: { value: "Tomates" } });
+  find(render(), "preview")!.props.onClick(); await flush();
+  expect(JSON.parse(h.fetch.mock.calls[1]![1].body)).toMatchObject({ productName: "Tomatoes", productNameEs: "Tomates" });
+});
+it("does not offer product naming when the preview uses an existing product", async () => {
+  h.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ preview: { ...preview, product: { kind: "existing", id: "product", name: "Existing" } } }) });
+  find(render(), "preview")!.props.onClick(); await flush();
+  expect(find(render(), "product-name")).toBeUndefined();
+});

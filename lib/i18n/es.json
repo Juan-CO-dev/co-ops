@@ -1,4 +1,8 @@
 {
+  "catalog.error.invalid_barcode": "Introduce un código de barras de al menos 6 caracteres.",
+  "catalog.jobs.swap.product_name": "Nombre del producto nuevo (opcional)",
+  "catalog.jobs.swap.product_name_es": "Nombre del producto nuevo en español (opcional)",
+
   "admin.menu_costing.price.menu_not_set": "{name}: menú de Toast de la tienda sin configurar",
   "admin.menu_costing.price.catering_required": "Catering usa este precio, así que no puedes borrarlo. Ingresa el precio.",
   "admin.menu_costing.price.menu_missing": "{name}: no se encontró el menú de la tienda en Toast. Los precios de los modificadores siguen disponibles.",

@@ -21,7 +21,7 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { CatalogEntity, CatalogIssue, ItemType, RoleBadge } from "@/lib/admin/catalog-shared";
 import { ITEM_TYPES, deriveRoleBadges } from "@/lib/admin/catalog-shared";
-import { skuCatalogHref } from "@/lib/admin/product-item-links-shared";
+import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
 
@@ -57,7 +57,7 @@ function matchesLens(e: CatalogEntity, lens: Lens): boolean {
   }
 }
 
-export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntity[]; actorLevel: number }) {
+export function CatalogClient({ entities, actorLevel, shopScope }: { entities: CatalogEntity[]; actorLevel: number; shopScope?: string | null }) {
   const { t } = useTranslation();
   const router = useRouter();
   const urlQuery = useSearchParams().get("q") ?? "";
@@ -222,6 +222,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
             <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2 lg:items-start">
               {rows.map((e) => (
                 <CatalogRow
+                  shopScope={shopScope}
                   key={e.key}
                   e={e}
                   expanded={expanded.has(e.key)}
@@ -310,8 +311,10 @@ function RoleBadges({ e }: { e: CatalogEntity }) {
 }
 
 function CatalogRow({
+  shopScope,
   e, expanded, onToggle, canWriteSeasonal, canWriteItemType, busy, onSeasonal, onItemType,
 }: {
+  shopScope?: string | null;
   e: CatalogEntity;
   expanded: boolean;
   onToggle: () => void;
@@ -391,7 +394,7 @@ function CatalogRow({
             <EdgeList label={t("admin.catalog.edge.skus")}>
               {e.edges.skus.length > 0
                 ? e.edges.skus.map((r, i) => (
-                    <Link key={r.id} href={skuCatalogHref(r.id)} className={linkCls}>
+                    <Link key={r.id} href={skuItemHref(r.id, { shopId: shopScope })} className={linkCls}>
                       {r.name}{i < e.edges.skus.length - 1 ? "," : ""}
                     </Link>
                   ))

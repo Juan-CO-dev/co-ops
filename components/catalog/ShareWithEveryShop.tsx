@@ -52,7 +52,7 @@ function ShareBody({ kind, id }: Props) {
       // Any refusal/lost response needs a fresh review. Never replay a stale token.
       setPreview(null); setSkus([]); setItems([]);
       if (!result.ok) { setError(jobErrorKey(result.code)); return; }
-      const acknowledged = kind === "sku" ? result.data.ok === true
+      const acknowledged = kind === "sku" ? result.data.shared === true
         : Array.isArray(result.data.skuIds) && (kind === "recipe" ? Array.isArray(result.data.itemIds) : Array.isArray(result.data.recipeIds));
       if (!acknowledged) { setError(jobErrorKey("generic")); return; }
       setSaved(true); router.refresh();

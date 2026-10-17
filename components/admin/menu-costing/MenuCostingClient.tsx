@@ -48,7 +48,8 @@ import { AlertPill } from "@/components/ui/AlertPill";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { EmptyState } from "@/components/EmptyState";
 import { SummaryRow } from "@/components/ui/SummaryRow";
-import { prepItemHref, productHref, skuCatalogHref } from "@/lib/admin/product-item-links-shared";
+import { prepItemHref, productHref } from "@/lib/admin/product-item-links-shared";
+import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 import { menuItemPageHref } from "@/lib/catalog/recipe-item-shared";
 import {
   FOOD_COST_RED_THRESHOLD_PCT,
@@ -236,6 +237,7 @@ export function MenuCostingClient({
                       <p className="mb-2 text-xs text-co-text-muted">{t("admin.menu_costing.price.label")}: {row.includedInSubPrice ? t("admin.menu_costing.price.included") : money(row.menuPrice)}</p>}
                     <a href={menuItemPageHref(row.id, { shopId: scope })} className={drawerLinkCls}>{t("catalog.menu.open_page")}</a>
                     <RowDrawer
+                      scope={scope}
                       row={row}
                       skuNames={skuNames}
                       itemNames={itemNames}
@@ -334,6 +336,7 @@ function RowBadges({
 }
 
 function RowDrawer({
+  scope,
   row,
   skuNames,
   itemNames,
@@ -342,6 +345,7 @@ function RowDrawer({
   money,
   t,
 }: {
+  scope?: string | null;
   row: MenuCostRow;
   skuNames: Record<string, string>;
   itemNames: Record<string, { en: string; es: string | null }>;
@@ -384,7 +388,7 @@ function RowDrawer({
 
   /** The two prep-blocked drawers — same list, different errand. */
   const prepList = (ids: string[], labelKey: TranslationKey) =>
-    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item", prepItemHref);
+    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item", id => prepItemHref(id, scope ?? undefined));
 
   if (status === "no_recipe") {
     return <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.no_recipe_help")}</p>;
@@ -449,7 +453,7 @@ function RowDrawer({
           <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
             {unpricedSkuIds.map((id) => (
               <li key={id} className="text-xs font-medium text-co-text">
-                <a href={skuCatalogHref(id)} className={drawerLinkCls}>
+                <a href={skuItemHref(id, { shopId: scope, job: "price" })} className={drawerLinkCls}>
                   {skuNames[id] ?? t("admin.menu_costing.drawer.unknown_sku")}
                 </a>
               </li>

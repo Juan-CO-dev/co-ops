@@ -20,7 +20,7 @@ function find(tree: unknown, test: (node: Node) => boolean): Node | undefined {
   return test(node) ? node : find(node.props?.children, test);
 }
 function body(element: ReturnType<typeof ShareWithEveryShop>) { return element && typeof element.type === "function" ? element.type(element.props) : element; }
-function share() { h.cursor = 0; h.effects = []; return body(ShareWithEveryShop({ kind: "recipe", id: "recipe", canShare: true })); }
+function share(kind: "sku" | "recipe" | "menu-item" = "recipe") { h.cursor = 0; h.effects = []; return body(ShareWithEveryShop({ kind, id: "recipe", canShare: true })); }
 const view = { skuId: "old", name: "Original", scope: "shop", owner: { ownerLocationId: null, ownerShopName: null, writeScope: "shop", canEdit: true, canShare: false }, canSwap: true, liveSwaps: [{ swapId: "swap", oldSkuId: "old", newSkuId: "new", startedAt: "2026-10-16" }] };
 function strip() { h.cursor = 0; h.effects = []; return body(ItemJobsStrip({ view })); }
 const button = (tree: unknown, key: string) => find(tree, node => node.type === "button" && node.props.children === key)!;
@@ -77,4 +77,16 @@ it("an uncertain Back write requires journal reload before another review", asyn
   h.fetch.mockResolvedValue({ ok: true, json: async () => ({ swaps: [] }) });
   button(strip(), "catalog.jobs.back.reload").props.onClick!(); await flush();
   expect(find(strip(), n => n.type === "button" && n.props.children === "catalog.jobs.back.preview")).toBeUndefined();
+});
+
+it.each(["sku", "recipe", "menu-item"] as const)("acknowledges the real %s share response and refreshes", async kind => {
+  const p = kind === "sku" ? { skuId: "recipe", name: "SKU", ownerShopId: "shop", token: "token", usedIn: [] }
+    : { ...preview, recipeId: kind === "recipe" ? "recipe" : undefined, menuItemId: kind === "menu-item" ? "recipe" : undefined, shopOnlySkus: [], shopOnlyItems: [], ...(kind === "menu-item" ? { recipes: [], price: null } : {}) };
+  h.fetch.mockResolvedValue({ ok: true, json: async () => ({ preview: p }) });
+  h.post.mockResolvedValue({ ok: true, data: kind === "sku" ? { shared: true } : kind === "recipe" ? { itemIds: [], skuIds: [] } : { recipeIds: [], skuIds: [], itemIds: [] } });
+  button(share(kind), "catalog.jobs.share.preview").props.onClick!(); await flush();
+  button(share(kind), "catalog.jobs.share.confirm").props.onClick!(); await flush();
+  expect(find(share(kind), n => n.props?.role === "status")?.props.children).toBe("catalog.jobs.share.success");
+  expect(find(share(kind), n => n.props?.role === "alert")).toBeUndefined();
+  expect(h.refresh).toHaveBeenCalledOnce();
 });

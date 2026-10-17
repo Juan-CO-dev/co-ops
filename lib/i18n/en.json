@@ -1,4 +1,8 @@
 {
+  "catalog.error.invalid_barcode": "Enter a barcode with at least 6 characters.",
+  "catalog.jobs.swap.product_name": "New product name (optional)",
+  "catalog.jobs.swap.product_name_es": "New product name in Spanish (optional)",
+
   "admin.menu_costing.price.menu_not_set": "{name}: in-store Toast menu not set",
   "admin.menu_costing.price.catering_required": "Catering uses this price, so it can't be cleared. Type the price instead.",
   "admin.menu_costing.price.menu_missing": "{name}: in-store menu not found in Toast. Modifier prices are still available.",

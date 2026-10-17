@@ -26,7 +26,7 @@ import { loadSkuPackResolution } from "@/lib/prep-consumption";
 import { catalogShopAllowed, catalogWriteRoleAllowed, levelsBySku } from "@/lib/sku-versions-shared";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
-import { loadOrderGuide, ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";
+import { loadOrderGuide, loadGuideSkuShopNames, ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";
 import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
 import { OrderGuidePanel } from "@/components/admin/vendors/OrderGuidePanel";
 import { VendorImportPanel } from "@/components/admin/vendors/VendorImportPanel";
@@ -89,7 +89,8 @@ export default async function AdminVendorDetailPage({
   const guidePlaced = new Set<string>();
   for (const s of orderGuide?.sections ?? []) for (const l of s.lines) if (l.skuId) guidePlaced.add(l.skuId);
   const guideSkuRows = (guideSkuRes.data ?? []) as Array<{ id: string; name: string; item_number: string | null; location_id: string | null; active: boolean }>;
-  const ownership = Object.fromEntries(guideSkuRows.filter(r => r.location_id != null).map(r => [r.id, (locRes.data ?? []).find(l => l.id === r.location_id)?.name ?? r.location_id]));
+  const onlyAt = await loadGuideSkuShopNames(guideSkuRows);
+  const ownership = onlyAt;
   const skusNotOnGuide = guideSkuRows
     .filter((r) => r.active !== false && !guidePlaced.has(r.id))
     .map((r) => ({ skuId: r.id, name: r.name, itemNumber: r.item_number }));
@@ -226,7 +227,7 @@ export default async function AdminVendorDetailPage({
         <OrderGuidePanel
           vendorId={vendor.id}
           vendorName={vendor.name}
-          initial={{ guide: orderGuide, skusNotOnGuide, ownership }}
+          initial={{ guide: orderGuide, skusNotOnGuide, ownership, onlyAt }}
           canEdit={level >= ORDER_GUIDE_EDIT_MIN}
         />
       </div>

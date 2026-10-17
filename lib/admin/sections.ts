@@ -44,6 +44,8 @@ export interface AdminSection {
 // Order = display order, and it walks the derivation pipeline (Juan's model):
 // vendors → SKUs (source of truth) → recipes → items → checklists/reports.
 export const ADMIN_SECTIONS: AdminSection[] = [
+  { id: "new-item", i18nKey: "catalog.jobs.new_item.title", href: "/admin/catalog/new/item", minLevel: 7, onlyRoles: ["gm", "moo", "owner", "cgs"] },
+  { id: "new-sandwich", i18nKey: "catalog.jobs.sandwich.title", href: "/admin/catalog/new/sandwich", minLevel: 7, onlyRoles: ["gm", "moo", "owner", "cgs"] },
   { id: "stations", i18nKey: "assignments.stations", href: "/admin/stations", minLevel: 7 },
   // 0233: Toast employee -> CO-OPS user links (GM own shop, level 8+ every shop).
   { id: "toast-employees", i18nKey: "toastLinks.title", href: "/admin/toast-employees", minLevel: 7 },

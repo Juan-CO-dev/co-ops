@@ -41,6 +41,7 @@ export function SwapVendorJob({ view, replacementId }: { view: SwapVendorJobView
   const { t } = useTranslation(); const router = useRouter(); const { requestStepUp, forgetStepUp } = useStepUp();
   const [review] = useState(createSwapReview);
   const [draft, setDraft] = useState<SwapRequest>({ oldSkuId: view.jobs.skuId, newSkuId: view.replacements.some(row => row.id === replacementId) ? replacementId! : "", scope: view.scope, mode: view.scope === null ? "for_good" : "for_now", productName: null, productNameEs: null, note: null });
+  const [namingProduct, setNamingProduct] = useState(false);
   const [preview, setPreview] = useState<PublicSwapPreview | null>(null);
   const [error, setError] = useState<TranslationKey | null>(null);
   const [busy, setBusy] = useState(false), [navigating, setNavigating] = useState(false);
@@ -53,7 +54,7 @@ export function SwapVendorJob({ view, replacementId }: { view: SwapVendorJobView
   const scopeShops = sourceOwner === null ? view.shops : view.shops.filter(shop => shop.id === sourceOwner);
   const itemHref = `/admin/catalog/sku/${encodeURIComponent(view.jobs.skuId)}?location=${scope}`;
   function invalidate() { review.invalidate(); setPreview(null); setError(null); }
-  function change(patch: Partial<SwapRequest>) { invalidate(); setDraft({ ...draft, ...patch }); }
+  function change(patch: Partial<SwapRequest>) { invalidate(); if (patch.newSkuId !== undefined) { setNamingProduct(false); patch = { ...patch, productName: null, productNameEs: null }; } setDraft({ ...draft, ...patch }); }
   async function loadPreview() {
     if (pending.current || navigating || outcome) return;
     const parsed = parseSwapRequest(draft, view.jobs.skuId);
@@ -67,7 +68,7 @@ export function SwapVendorJob({ view, replacementId }: { view: SwapVendorJobView
       if (!next || typeof next.token !== "string" || !next.request || !Array.isArray(next.recipes) || !Array.isArray(next.refused) || !Array.isArray(next.costs) || !Array.isArray(next.followsPrimary) || !Array.isArray(next.untouchedShops) || !next.oldSku || !next.newSku || !next.product || !next.ordering || next.request.oldSkuId !== parsed.request.oldSkuId || next.request.newSkuId !== parsed.request.newSkuId || next.request.scope !== parsed.request.scope || next.request.mode !== parsed.request.mode) {
         setError("catalog.error.generic"); return;
       }
-      if (review.accept(ticket, next)) setPreview(next);
+      if (review.accept(ticket, next)) { setPreview(next); setNamingProduct(next.product.kind === "create"); }
     } finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   async function confirm() {
@@ -94,6 +95,10 @@ export function SwapVendorJob({ view, replacementId }: { view: SwapVendorJobView
         </select></label>
         <label className="block">{t("catalog.jobs.swap.replacement")}<select aria-label={t("catalog.jobs.swap.replacement")} data-testid="replacement" className={field} value={draft.newSkuId} onChange={event => change({ newSkuId: event.target.value })}><option value="">—</option>{view.replacements.map(row => <option key={row.id} value={row.id}>{row.name}{row.vendorName ? ` · ${row.vendorName}` : ""}</option>)}</select></label>
         <label className="block">{t("catalog.jobs.swap.title")}<select aria-label={t("catalog.jobs.swap.title")} data-testid="mode" className={field} value={draft.mode} onChange={event => change({ mode: event.target.value === "for_now" ? "for_now" : "for_good" })}>{view.scope !== null && <option value="for_now">{t("catalog.jobs.swap.for_now")}</option>}<option value="for_good">{t("catalog.jobs.swap.for_good")}</option></select></label>
+        {namingProduct && <>
+          <label className="block">{t("catalog.jobs.swap.product_name")}<input aria-label={t("catalog.jobs.swap.product_name")} data-testid="product-name" className={field} maxLength={120} value={draft.productName ?? view.jobs.name} onChange={event => change({ productName: event.target.value })}/></label>
+          <label className="block">{t("catalog.jobs.swap.product_name_es")}<input aria-label={t("catalog.jobs.swap.product_name_es")} data-testid="product-name-es" className={field} maxLength={120} value={draft.productNameEs ?? ""} onChange={event => change({ productNameEs: event.target.value })}/></label>
+        </>}
         <label className="block">{t("catalog.jobs.swap.note")}<input aria-label={t("catalog.jobs.swap.note")} className={field} maxLength={200} value={draft.note ?? ""} onChange={event => change({ note: event.target.value })}/></label>
       </fieldset>
       {!frozen && <Link className={button} href={`/admin/catalog/new/item?location=${scope}&swapFrom=${encodeURIComponent(view.jobs.skuId)}`}>{t("catalog.jobs.swap.add")}</Link>}
