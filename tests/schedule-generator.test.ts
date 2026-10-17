@@ -879,3 +879,33 @@ describe("Juan 2026-10-16 (chunk H): the salaried week and its flex (decisions 4
     });
   });
 });
+
+describe("Astra chunk H review (2026-10-16): the generator", () => {
+  it("P2-2: the catering manager's cover respects the pin's position allowlist (an Expo-only pin never covers the Register; an empty pin may)", () => {
+    const s = onePosition((x) => { x.limits.gmMinimumH = 4; });
+    const cat: PersonSpec = { id: "u-cat", role: "catering_mgr", leader: "mix" };
+    const pin = (positions: string[]): Pin => ({ id: "pin-cat", date: MON, userId: "u-cat", startQ: 40, endQ: 72, positions, kind: "added" });
+    const expoOnly = buildWeek(fixture({ structure: s, specs: [cat], days: oneDay(s), pins: [pin([I.$EXPO])] }));
+    expectClean(expoOnly);
+    expect(expoOnly.shifts.find((x) => x.userId === "u-cat")!.segments.filter((g) => g.positionId === I.$REG)).toEqual([]);
+    expect(expoOnly.gaps.some((g) => g.positionId === I.$REG)).toBe(true);
+    const any = buildWeek(fixture({ structure: s, specs: [cat], days: oneDay(s), pins: [pin([])] }));
+    expectClean(any);
+    expect(any.shifts.find((x) => x.userId === "u-cat")!.segments.some((g) => g.positionId === I.$REG && g.reasonKey === CATERING_MANAGER_COVER)).toBe(true);
+  });
+
+  it("P2-3: pinned hours are reserved FIRST — a Sunday 8 h GM pin survives a week whose generated blocks would otherwise reach 40 h", () => {
+    const s = onePosition((x) => {
+      x.limits.gmMinimumH = 8; x.limits.maxShiftH = 10.5; x.limits.salariedStayLonger = false; x.limits.managerFloorH = 80;
+      x.shopDay = { ...x.shopDay, prepStartQ: 28, outEarliestQ: 60, outLatestQ: 64 };
+    });
+    const specs: PersonSpec[] = [{ id: "u-e", role: "employee" }, { id: "u-gm", role: "gm", leader: "mix", cover: [I.$REG] }];
+    const pins: Pin[] = [{ id: "pin-sun", date: SUN, userId: "u-gm", startQ: 28, endQ: 60, positions: [], kind: "added" }];
+    const out = buildWeek(fixture({ structure: s, specs, days: DATES.map((d) => day(d, { scheduledOutQ: 60 }, s)), pins }));
+    expectClean(out);
+    expect(out.shifts.filter((x) => x.userId === "u-gm" && x.date === SUN).map((x) => [x.startQ, x.endQ, x.pinned])).toEqual([[28, 60, true]]);
+    expect(out.notes.filter((n) => n.code === "salaried_block_skipped" && n.params.reason === "pin_conflict")).toEqual([]);
+    const gmQ = out.shifts.filter((x) => x.userId === "u-gm").reduce((n, x) => n + x.endQ - x.startQ, 0);
+    expect(gmQ).toBeLessThanOrEqual(160);
+  });
+});

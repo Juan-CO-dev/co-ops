@@ -21,7 +21,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { diskReader, importClosure, listFiles, outboundViolations, sinkViolations, type Reader } from "./fixtures/schedule/no-notify-closure";
+import { diskReader, importClosure, importSpecifiers, listFiles, outboundViolations, sinkViolations, type Reader } from "./fixtures/schedule/no-notify-closure";
 
 function files(root: string, ext = /\.(ts|tsx)$/): string[] {
   if (!existsSync(root)) return [];
@@ -114,6 +114,21 @@ describe("Astra chunk G P3-6 — the no-notify pin covers sinks, transitive impo
           'import webpush from "web-push";',
           'import twilio from "twilio";',
         ]) {
+          const c = importClosure(SCHEDULING, overlay(withLine(target, line)));
+          expect(sinkViolations(c, SCHEDULING).length, `${target} + ${line}`).toBeGreaterThan(0);
+        }
+      }
+    });
+
+    it("Astra chunk H P3-5: discovery is SYNTAX-aware — compact, spaced dynamic, re-export and require forms are all found (and red)", () => {
+      expect(importSpecifiers('import{sendPoSms}from"@/lib/po-sms";')).toEqual(["@/lib/po-sms"]);
+      expect(importSpecifiers('const sender = import ("@/lib/po-sms");')).toEqual(["@/lib/po-sms"]);
+      expect(importSpecifiers('const s = import ( "@/lib/po-sms" );')).toEqual(["@/lib/po-sms"]);
+      expect(importSpecifiers('export { sendEmail } from "@/lib/email";\nexport * from "./x";')).toEqual(["@/lib/email", "./x"]);
+      expect(importSpecifiers('const t = require ( "twilio" );')).toEqual(["twilio"]);
+      expect(importSpecifiers('import type { X } from "@/lib/email";\n// import { y } from "@/lib/email";\nconst s = "import(\\"@/lib/email\\")";')).toEqual([]);
+      for (const target of [route, libFile, cron]) {
+        for (const line of ['import{sendPoSms}from"@/lib/po-sms";', 'const sender = import ("@/lib/po-sms");']) {
           const c = importClosure(SCHEDULING, overlay(withLine(target, line)));
           expect(sinkViolations(c, SCHEDULING).length, `${target} + ${line}`).toBeGreaterThan(0);
         }

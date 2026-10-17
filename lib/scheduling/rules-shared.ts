@@ -345,8 +345,11 @@ export function baseFloorRoomQ(s: Pick<WeekSchedule, "shifts">, userId: string, 
 /**
  * A salaried manager's MoD relabel over [fromQ, toQ) as segments: the first `baseRoomQ` quarters are BASE station time
  * (unmarked), the rest FLEX (`SALARIED_FLEX_REASON`) — decision 4: station time passes the floor only through flex.
+ * Astra chunk H P2-1: a relabel KEEPS each quarter's flex classification — when the host segment is already FLEX
+ * (`hostFlex`, e.g. a stay-longer MoD hour), the whole relabel stays flex and uses no base room.
  */
-export function splitSalariedRelabel(fromQ: number, toQ: number, baseRoomQ: number): Array<{ startQ: number; endQ: number; flex: boolean }> {
+export function splitSalariedRelabel(fromQ: number, toQ: number, baseRoomQ: number, hostFlex = false): Array<{ startQ: number; endQ: number; flex: boolean }> {
+  if (hostFlex) return toQ > fromQ ? [{ startQ: fromQ, endQ: toQ, flex: true }] : [];
   const mid = Math.min(toQ, fromQ + Math.max(0, baseRoomQ));
   const out: Array<{ startQ: number; endQ: number; flex: boolean }> = [];
   if (mid > fromQ) out.push({ startQ: fromQ, endQ: mid, flex: false });
@@ -664,16 +667,20 @@ export function zeroCostCovers(g: Pick<GapSubject, "date" | "positionId" | "from
     let flexQ = flexLeftQ(s, p.userId, st);
     for (const seg of sh.segments) {
       if (seg.positionId !== MOD) continue;
+      // Astra chunk H P2-1: relabelling a FLEX MoD segment stays flex — it uses neither the base room nor more flex.
+      const free = isFlexSegment(seg);
       let q = Math.max(g.fromQ, seg.startQ);
       const end = Math.min(g.toQ, seg.endQ);
-      while (q < end && floorRoomQ + flexQ > 0) {
+      while (q < end && (free || floorRoomQ + flexQ > 0)) {
         if (!ok(q)) { q++; continue; }
         let z = q + 1;
-        while (z < end && ok(z) && z - q < floorRoomQ + flexQ) z++;
+        while (z < end && ok(z) && (free || z - q < floorRoomQ + flexQ)) z++;
         out.push({ userId: p.userId, fromQ: q, toQ: z });
-        const base = Math.min(floorRoomQ, z - q);
-        floorRoomQ -= base;
-        flexQ -= z - q - base;
+        if (!free) {
+          const base = Math.min(floorRoomQ, z - q);
+          floorRoomQ -= base;
+          flexQ -= z - q - base;
+        }
         q = z;
       }
     }
@@ -873,7 +880,7 @@ export function applyFillSteps(s: WeekSchedule, date: string, steps: readonly Fi
       if (g !== host) { parts.push(g); continue; }
       if (g.startQ < st.fromQ) parts.push({ ...g, endQ: st.fromQ });
       if (salaried) {
-        for (const part of splitSalariedRelabel(st.fromQ, st.toQ, room.get(st.userId)!)) {
+        for (const part of splitSalariedRelabel(st.fromQ, st.toQ, room.get(st.userId)!, isFlexSegment(g))) {
           parts.push({ positionId: st.positionId, startQ: part.startQ, endQ: part.endQ, ...(part.flex ? flex : {}) });
           if (!part.flex) room.set(st.userId, room.get(st.userId)! - (part.endQ - part.startQ));
         }

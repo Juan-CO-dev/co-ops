@@ -102,6 +102,19 @@ describe("the structure editor", () => {
     expect((h.match(/data-crew-card="/g) ?? []).length).toBe(4);
     expect(h).toMatch(/name="limits.managerFloorH"[^>]*value="32"|value="32"[^>]*name="limits.managerFloorH"/);
     expect(h).toMatch(/name="limits.minimumShiftH"[^>]*value="4"|value="4"[^>]*name="limits.minimumShiftH"/);
+    // Astra chunk H P2-4: the salaried week target (0–80) and the flex hours (0–10), quarter-hour steppers, en/es labels.
+    const input = (name: string) => h.match(new RegExp(`<input[^>]*name="${name.replace(".", "\\.")}"[^>]*>`))?.[0] ?? "";
+    expect(input("limits.salariedTargetWeekH")).toMatch(/value="40"/);
+    expect(input("limits.salariedTargetWeekH")).toMatch(/step="0.25"/);
+    expect(input("limits.salariedTargetWeekH")).toMatch(/max="80"/);
+    expect(input("limits.salariedFlexH")).toMatch(/value="10"/);
+    expect(input("limits.salariedFlexH")).toMatch(/step="0.25"/);
+    expect(input("limits.salariedFlexH")).toMatch(/max="10"/);
+    expect(en["schedule.settings.managers.week_target"]).toBe("Manager weekly target");
+    expect(en["schedule.settings.managers.flex"]).toBe("Flex hours (to keep labor down)");
+    expect(t).toContain(en["schedule.settings.managers.week_target"]);
+    expect(t).toContain(en["schedule.settings.managers.flex"]);
+    expect(text(render(await view(), "es"))).toContain(es["schedule.settings.managers.flex" as keyof typeof es]);
     expect(t).toMatch(/measured ~\d+ min from \d+ finalized closes · override \(wins when set\)|not enough finalized closes yet · override \(wins when set\)/);
     expect(h).toMatch(/<option[^>]*value="total"[^>]*selected=""/);
     expect(t).toContain(en["schedule.settings.limits.flex_phase3"]);

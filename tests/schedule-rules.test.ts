@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   CALLOUT_LAST_RESORT, RULE_CODES, REPAIR_LIMITS, approvalRefusal, capacityBound, checkCertificate, checkScheduleRules,
   cheapestFill, fillIsLegal, proveGap, structureInfeasible, type DeclaredGap, type RuleCode, type RuleProblem,
-  SALARIED_FLEX_REASON, CATERING_MANAGER_COVER, cateringWindows, zeroCostCovers,
+  SALARIED_FLEX_REASON, CATERING_MANAGER_COVER, cateringWindows, zeroCostCovers, applyFillSteps, salariedWeek,
 } from "@/lib/scheduling/rules-shared";
 import { contextAdvisory, ruleContextFromSnapshot, toContextSnapshot, type RuleContext } from "@/lib/scheduling/context-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
@@ -1084,5 +1084,23 @@ describe("Juan 2026-10-16 (decision 4): floor_limit also proves a manager whose 
     // 30 h of base week: a 4 h window fits under the target — no proof.
     const thirty = [WED, THU, FRI].map((d) => shift(U.alex, d, 28, 68, "mod"));
     expect(checkCertificate(g, week(thirty), ctx)).toBe(false);
+  });
+});
+
+describe("Astra chunk H review (2026-10-16)", () => {
+  it("P2-1: a relabel keeps each quarter's flex classification — 40 h base + 2 h flex MoD relabelled onto Register stays 40 + 2", () => {
+    const flexMod = { positionId: "mod", startQ: 60, endQ: 68, reasonKey: SALARIED_FLEX_REASON };
+    const sun = shift(U.alex, SUN, 28, 68, "mod", { segments: [{ positionId: "mod", startQ: 28, endQ: 60 }, flexMod] });
+    const s = week([...[WED, THU, FRI, SAT].map((d) => shift(U.alex, d, 28, 60, "mod")), sun]);
+    expect(salariedWeek(s, U.alex)).toEqual({ totalH: 42, flexH: 2, baseH: 40 });
+    const ctx = context();
+    setNeed(ctx, SUN, P.REG, 60, 68);
+    const plan = cheapestFill({ date: SUN, positionId: P.REG, fromQ: 60, toQ: 68 }, s, ctx);
+    expect(plan).toMatchObject({ hours: 0, steps: [{ kind: "relabel", userId: U.alex, fromPositionId: "mod", positionId: P.REG, fromQ: 60, toQ: 68 }] });
+    const applied = applyFillSteps(s, SUN, plan!.steps, new Map([[U.alex, 32 * 4]]))!;
+    expect(salariedWeek(applied, U.alex)).toEqual({ totalH: 42, flexH: 2, baseH: 40 });
+    expect(applied.shifts.find((x) => x.date === SUN)!.segments.find((g) => g.positionId === P.REG)).toMatchObject({ startQ: 60, endQ: 68, reasonKey: SALARIED_FLEX_REASON });
+    expect(of(run(applied.shifts, ctx), "salaried_base_over_target")).toEqual([]);
+    expect(fillIsLegal({ date: SUN, positionId: P.REG, fromQ: 60, toQ: 68 }, s, ctx, plan!)).toBe(true);
   });
 });

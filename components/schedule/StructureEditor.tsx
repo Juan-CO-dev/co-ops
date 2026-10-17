@@ -220,6 +220,9 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
           <NumField name="limits.gmMinimumH" label={t("schedule.settings.managers.gm_min")} value={d.limits.gmMinimumH} step={0.25} onChange={(v) => edit((s) => { s.limits.gmMinimumH = num(v); })} />
           <NumField name="limits.agmMinimumH" label={t("schedule.settings.managers.agm_min")} value={d.limits.agmMinimumH} step={0.25} onChange={(v) => edit((s) => { s.limits.agmMinimumH = num(v); })} />
           <NumField name="limits.managerFloorH" label={t("schedule.settings.managers.floor")} value={d.limits.managerFloorH} step={0.25} onChange={(v) => edit((s) => { s.limits.managerFloorH = num(v); })} />
+          {/* Astra chunk H P2-4: the salaried week target (0–80 h) and the flex on top (0–10 h), quarter-hour steppers. */}
+          <NumField name="limits.salariedTargetWeekH" label={t("schedule.settings.managers.week_target")} value={d.limits.salariedTargetWeekH} step={0.25} max={80} onChange={(v) => edit((s) => { s.limits.salariedTargetWeekH = num(v); })} />
+          <NumField name="limits.salariedFlexH" label={t("schedule.settings.managers.flex")} value={d.limits.salariedFlexH} step={0.25} max={10} onChange={(v) => edit((s) => { s.limits.salariedFlexH = num(v); })} />
         </Fields>
         <Check label={t("schedule.settings.managers.stay_longer")} checked={d.limits.salariedStayLonger} onChange={(on) => edit((s) => { s.limits.salariedStayLonger = on; })} />
       </Section>

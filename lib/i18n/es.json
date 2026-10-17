@@ -7584,6 +7584,8 @@
   "schedule.settings.managers.agm_min": "Horas mínimas al día del AGM",
   "schedule.settings.managers.floor": "Límite de tiempo en piso por gerente (h / semana)",
   "schedule.settings.managers.stay_longer": "Un gerente asalariado puede quedarse más para cubrir un hueco",
+  "schedule.settings.managers.week_target": "Objetivo semanal del gerente",
+  "schedule.settings.managers.flex": "Horas flexibles (para mantener baja la mano de obra)",
   "schedule.settings.limits.min_shift": "Turno mínimo (h)",
   "schedule.settings.limits.max_shift": "Turno máximo (h al día)",
   "schedule.settings.limits.overtime": "Línea de horas extra (h / semana)",

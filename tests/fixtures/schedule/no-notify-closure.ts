@@ -4,11 +4,14 @@
  * sender import, a fake outbound POST) without touching the real tree.
  *
  * Resolution: `@/x` → `x`, relative paths from the importing file; each tried as `.ts`, `.tsx`, `/index.ts`,
- * `/index.tsx`. Anything else is a PACKAGE (recorded by name). `import type` / `export type` lines are skipped (they
- * never execute). Comments are stripped first so prose may name what code may not do.
+ * `/index.tsx`. Anything else is a PACKAGE (recorded by name). `import type` / `export type` are skipped (they never
+ * execute). Astra chunk H P3-5: discovery is SYNTAX-aware — the TypeScript compiler's own parse (an AST walk), so every
+ * form is found however it is spaced (`import{x}from"…"`, `import ( "…" )`, `export … from`, `require(…)`,
+ * `import x = require(…)`), and a comment or a string that merely names a module is not an import.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
+import ts from "typescript";
 
 export type Reader = (path: string) => string | null;
 
@@ -27,11 +30,27 @@ export function listFiles(root: string, ext = /\.(ts|tsx)$/): string[] {
 
 export const stripComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
-const SPEC = /(?:^|[\s;}])(?:import|export)\s+(?!type\s)(?:[^"';]*?\sfrom\s*)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)|require\(\s*["']([^"']+)["']\s*\)/g;
-
-export function importSpecifiers(src: string): string[] {
+/** Every module specifier the source EXECUTES, in source order (the TypeScript AST; type-only imports / exports skipped). */
+export function importSpecifiers(src: string, path = "x.tsx"): string[] {
+  const kind = path.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.TSX;
+  const sf = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, false, kind);
   const out: string[] = [];
-  for (const m of stripComments(src).matchAll(SPEC)) out.push((m[1] ?? m[2] ?? m[3])!);
+  const visit = (n: ts.Node): void => {
+    if (ts.isImportDeclaration(n)) {
+      if (!n.importClause?.isTypeOnly && ts.isStringLiteralLike(n.moduleSpecifier)) out.push(n.moduleSpecifier.text);
+    } else if (ts.isExportDeclaration(n)) {
+      if (!n.isTypeOnly && n.moduleSpecifier && ts.isStringLiteralLike(n.moduleSpecifier)) out.push(n.moduleSpecifier.text);
+    } else if (ts.isImportEqualsDeclaration(n)) {
+      if (!n.isTypeOnly && ts.isExternalModuleReference(n.moduleReference) && ts.isStringLiteralLike(n.moduleReference.expression)) out.push(n.moduleReference.expression.text);
+    } else if (ts.isCallExpression(n)) {
+      const callee = n.expression;
+      const dynamic = callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require");
+      const arg = n.arguments[0];
+      if (dynamic && arg && ts.isStringLiteralLike(arg)) out.push(arg.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
   return out;
 }
 
@@ -66,7 +85,7 @@ export function importClosure(entries: readonly string[], read: Reader = diskRea
     const src = read(f);
     if (src === null) continue;
     files.add(f);
-    for (const spec of importSpecifiers(src)) {
+    for (const spec of importSpecifiers(src, f)) {
       const r = resolve(spec, f, read);
       if (r === null) {
         if (!spec.startsWith("@/") && !spec.startsWith(".")) {

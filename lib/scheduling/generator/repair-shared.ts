@@ -19,7 +19,7 @@
  * Exhausting the search is never a throw and never a proof: what is left is declared by `buildWeek` with
  * the first proven cause, else `unresolved_search` carrying these counters.
  */
-import { REPAIR_LIMITS, eligibleForPosition, proveGap, type GapCode, type GapSubject } from "../rules-shared";
+import { REPAIR_LIMITS, SALARIED_FLEX_REASON, eligibleForPosition, isFlexSegment, proveGap, type GapCode, type GapSubject } from "../rules-shared";
 import { isLineRole } from "../structure-shared";
 import { reason } from "../reasons-shared";
 import { skillOf } from "../people-input-shared";
@@ -305,7 +305,8 @@ function tryRelabel(st: SearchState, d: Deficit): boolean {
         for (const seg of mine.segments) {
           if (seg !== mine.segments.find((x) => x.startQ === g.startQ && x.positionId === g.positionId)) { parts.push(seg); continue; }
           if (seg.startQ < from) parts.push({ ...seg, endQ: from });
-          parts.push({ positionId: d.positionId!, startQ: from, endQ: to, reasons: [reason("repair_relabelled", { positionId: d.positionId, fromPositionId: g.positionId, fromQ: from, toQ: to })] });
+          // Astra chunk H P2-1: a relabel keeps the host's flex classification.
+          parts.push({ positionId: d.positionId!, startQ: from, endQ: to, reasons: [reason("repair_relabelled", { positionId: d.positionId, fromPositionId: g.positionId, fromQ: from, toQ: to })], ...(isFlexSegment(seg) ? { reasonKey: SALARIED_FLEX_REASON } : {}) });
           if (to < seg.endQ) parts.push({ ...seg, startQ: to });
         }
         mine.segments = parts;

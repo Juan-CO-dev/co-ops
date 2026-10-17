@@ -7584,6 +7584,8 @@
   "schedule.settings.managers.agm_min": "AGM minimum hours a day",
   "schedule.settings.managers.floor": "Floor time limit per manager (h / week)",
   "schedule.settings.managers.stay_longer": "A salaried manager may stay longer to cover a gap",
+  "schedule.settings.managers.week_target": "Manager weekly target",
+  "schedule.settings.managers.flex": "Flex hours (to keep labor down)",
   "schedule.settings.limits.min_shift": "Minimum shift (h)",
   "schedule.settings.limits.max_shift": "Maximum shift (h a day)",
   "schedule.settings.limits.overtime": "Overtime line (h / week)",

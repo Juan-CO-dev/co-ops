@@ -534,7 +534,8 @@ export function coverWithManager(b: BuildCtx, week: WeekState, date: string, pos
         if (g.positionId !== MOD || g.endQ <= fromQ || g.startQ >= toQ) { parts.push(g); continue; }
         if (g.startQ < fromQ) parts.push({ ...g, endQ: fromQ });
         const r = lastResort ? reason("manager_cover_last_resort", { positionId, fromQ, toQ }) : reason("manager_cover", { positionId, fromQ, toQ, rank: c.rank + 1 });
-        parts.push({ positionId, startQ: fromQ, endQ: toQ, reasons: [r], ...(lastResort ? { lastResort: true } : {}) });
+        // Astra chunk H P2-1: a relabel keeps the host's flex classification.
+        parts.push({ positionId, startQ: fromQ, endQ: toQ, reasons: [r], ...(lastResort ? { lastResort: true } : {}), ...(isFlexSegment(g) ? { reasonKey: SALARIED_FLEX_REASON } : {}) });
         if (toQ < g.endQ) parts.push({ ...g, startQ: toQ });
       }
       sh.segments = parts;
@@ -590,7 +591,7 @@ export function carveZeroCostCovers(b: BuildCtx, week: WeekState, date: string, 
           if (g.positionId !== MOD || g.endQ <= c.fromQ || g.startQ >= c.toQ) { parts.push(g); continue; }
           if (g.startQ < c.fromQ) parts.push({ ...g, endQ: c.fromQ });
           // Decision 4: the base station room first (unmarked), then FLEX (marked).
-          for (const part of splitSalariedRelabel(c.fromQ, c.toQ, baseFloorRoomQ({ shifts: allShifts(week) }, c.userId, b.structure))) {
+          for (const part of splitSalariedRelabel(c.fromQ, c.toQ, baseFloorRoomQ({ shifts: allShifts(week) }, c.userId, b.structure), isFlexSegment(g))) {
             parts.push({ positionId, startQ: part.startQ, endQ: part.endQ, reasons: part.flex ? [r, flexWhy] : [r], ...(part.flex ? { reasonKey: SALARIED_FLEX_REASON } : {}), ...(lastResort ? { lastResort: true } : {}) });
           }
           if (c.toQ < g.endQ) parts.push({ ...g, startQ: c.toQ });
@@ -838,7 +839,7 @@ export function applyFill(b: BuildCtx, week: WeekState, date: string, plan: Fill
           if (g !== host) { parts.push(g); continue; }
           if (g.startQ < st.fromQ) parts.push({ ...g, endQ: st.fromQ });
           // Decision 4: a salaried relabel takes the base station room first, then FLEX.
-          for (const part of splitSalariedRelabel(st.fromQ, st.toQ, room)) {
+          for (const part of splitSalariedRelabel(st.fromQ, st.toQ, room, salaried && isFlexSegment(g))) {
             parts.push({ positionId: st.positionId, startQ: part.startQ, endQ: part.endQ, reasons: [r], ...last, ...(part.flex ? { reasonKey: SALARIED_FLEX_REASON } : {}) });
           }
           if (st.toQ < g.endQ) parts.push({ ...g, startQ: st.toQ });
@@ -873,6 +874,11 @@ export function coverWithCateringManager(b: BuildCtx, week: WeekState, date: str
   for (const sh of [...week.built[date]!].sort(shiftOrder)) {
     const p = b.people[sh.userId];
     if (!p || p.role !== "catering_mgr" || !p.activeMember) continue;
+    // Astra chunk H P2-2: the pin's position allowlist binds, exactly as in `coverWithManager` (no positions = any).
+    if (sh.pinned) {
+      const allowed = b.pinCover[`${sh.date}|${sh.userId}|${sh.startQ}`];
+      if (!allowed || (allowed !== "any" && !allowed.includes(positionId))) continue;
+    }
     for (const g of sh.segments) {
       if (g.positionId !== MOD) continue;
       const shifts = week.built[date]!;
@@ -935,7 +941,7 @@ export function enforcePriority(b: BuildCtx, week: WeekState, date: string): voi
             for (const seg of mine.segments) {
               if (seg.positionId !== secondary || seg.endQ <= from || seg.startQ >= to) { parts.push(seg); continue; }
               if (seg.startQ < from) parts.push({ ...seg, endQ: from });
-              parts.push({ positionId: pair.primary, startQ: from, endQ: to, reasons: [reason("priority_cover", { positionId: pair.primary, secondary, fromQ: from, toQ: to })] });
+              parts.push({ positionId: pair.primary, startQ: from, endQ: to, reasons: [reason("priority_cover", { positionId: pair.primary, secondary, fromQ: from, toQ: to })], ...(isFlexSegment(seg) ? { reasonKey: SALARIED_FLEX_REASON } : {}) });
               if (to < seg.endQ) parts.push({ ...seg, startQ: to });
             }
             mine.segments = parts;

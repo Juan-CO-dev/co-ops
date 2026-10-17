@@ -206,9 +206,10 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   const week: WeekState = { built: Object.fromEntries(builtDates.map((d) => [d, [] as GShift[]])), inherited: inheritedShifts };
   const order = templateOrder(s);
 
+  // 2. Pins first: fixed blocks; a pin that breaks a rule on its own is dropped and reported. Astra chunk H P2-3: EVERY built
+  // date's pins are placed before any generated block, so a future pin's hours are RESERVED against the salaried week target,
+  // the floor and the flex (every later check sees them) — an earlier generated day can never crowd a pin out.
   for (const date of builtDates) {
-    const day = days[date]!;
-    // 2. Pins first: fixed blocks; a pin that breaks a rule on its own is dropped and reported.
     for (const pin of input.pins.filter((p) => p.date === date)) {
       const p = people[pin.userId];
       if (!p || pin.endQ <= pin.startQ) continue;
@@ -223,6 +224,10 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
       if (kept) { if (positionId === MOD && (isManagerRole(p.role) || p.presenceOnly)) b.pinCover[shiftKey(date, pin.userId, pin.startQ)] = pin.positions.length ? pin.positions : "any"; }
       else notes.push({ code: "salaried_block_skipped", date, userId: pin.userId, positionId: null, params: { pinId: pin.id, reason: "pin_conflict" } });
     }
+  }
+
+  for (const date of builtDates) {
+    const day = days[date]!;
     // 3. Salaried on the clock.
     const { blocks, skipped } = salariedBlocks(input.people, s, date, day.scheduledOutQ);
     for (const blk of blocks) {
