@@ -71,10 +71,11 @@ export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
         && nonneg(c.budgetHours) && nonneg(c.usedHours) && nonneg(c.essentialHours) && isNum(c.remainingHours) && nonneg(c.fillHours)
         && Array.isArray(c.witness) && c.witness.length > 0 && c.witness.every(validFillStep);
     case "floor_limit":
-      // CC chunk H4: the CONSERVATIVE certificate — the four limits, and per salaried manager the condition that excluded them
-      // (flex_exhausted / ineligible / unavailable / day_at_max) with their flex and floor hours.
-      return exact(c, ["limitH", "targetWeekH", "salariedFlexH", "maxShiftH", "excludedBy", "flexHoursUsed", "floorHoursUsed"])
-        && nonneg(c.limitH) && nonneg(c.targetWeekH) && nonneg(c.salariedFlexH) && nonneg(c.maxShiftH)
+      // CC chunk H4 / H5: the CONSERVATIVE certificate — the four limits, the eligible hourly people (none free + available at any
+      // quarter), and per salaried manager the condition that excluded them (flex_exhausted / ineligible / unavailable / day_at_max)
+      // with their flex and floor hours.
+      return exact(c, ["limitH", "targetWeekH", "salariedFlexH", "maxShiftH", "hourlyExcluded", "excludedBy", "flexHoursUsed", "floorHoursUsed"])
+        && nonneg(c.limitH) && nonneg(c.targetWeekH) && nonneg(c.salariedFlexH) && nonneg(c.maxShiftH) && strings(c.hourlyExcluded)
         && isObj(c.excludedBy) && Object.values(c.excludedBy).every((v) => typeof v === "string" && FLOOR_EXCLUSIONS.includes(v))
         && isObj(c.flexHoursUsed) && Object.values(c.flexHoursUsed).every(nonneg) && isObj(c.floorHoursUsed) && Object.values(c.floorHoursUsed).every(nonneg);
     case "eligibility":

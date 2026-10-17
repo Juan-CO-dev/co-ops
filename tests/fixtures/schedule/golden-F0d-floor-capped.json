@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.9. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.10. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -213,9 +213,9 @@
      "day": "2026-11-01",
      "inherited": false,
      "params": {
-      "cause": "floor_limit",
+      "cause": "unresolved_search",
       "fromQ": 28,
-      "proven": true,
+      "proven": false,
       "toQ": 56
      },
      "positionId": "5c000000-0000-4000-8000-000000000001",
@@ -227,9 +227,9 @@
      "day": "2026-11-01",
      "inherited": false,
      "params": {
-      "cause": "floor_limit",
+      "cause": "unresolved_search",
       "fromQ": 38,
-      "proven": true,
+      "proven": false,
       "toQ": 62
      },
      "positionId": "5c000000-0000-4000-8000-000000000008",
@@ -698,21 +698,30 @@
    "toQ": 62
   },
   {
-   "cause": "floor_limit",
+   "cause": "unresolved_search",
    "certificate": {
-    "excludedBy": {
-     "u-j-gm": "flex_exhausted"
+    "candidateIds": [
+     "u-a-ana",
+     "u-b-bo",
+     "u-c-cy",
+     "u-d-dee",
+     "u-e-eve",
+     "u-f-finn",
+     "u-g-gus",
+     "u-h-hal",
+     "u-i-ivy",
+     "u-j-gm"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
     },
-    "flexHoursUsed": {
-     "u-j-gm": 10
-    },
-    "floorHoursUsed": {
-     "u-j-gm": 24
-    },
-    "limitH": 24,
-    "maxShiftH": 10.5,
-    "salariedFlexH": 10,
-    "targetWeekH": 40
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 8,
+     "steps": 200
+    }
    },
    "code": "coverage_gap",
    "date": "2026-11-01",
@@ -732,6 +741,7 @@
     "floorHoursUsed": {
      "u-j-gm": 24
     },
+    "hourlyExcluded": [],
     "limitH": 24,
     "maxShiftH": 10.5,
     "salariedFlexH": 10,
@@ -744,21 +754,28 @@
    "toQ": 60
   },
   {
-   "cause": "floor_limit",
+   "cause": "unresolved_search",
    "certificate": {
-    "excludedBy": {
-     "u-j-gm": "flex_exhausted"
+    "candidateIds": [
+     "u-a-ana",
+     "u-b-bo",
+     "u-c-cy",
+     "u-f-finn",
+     "u-g-gus",
+     "u-h-hal",
+     "u-i-ivy",
+     "u-j-gm"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
     },
-    "flexHoursUsed": {
-     "u-j-gm": 10
-    },
-    "floorHoursUsed": {
-     "u-j-gm": 24
-    },
-    "limitH": 24,
-    "maxShiftH": 10.5,
-    "salariedFlexH": 10,
-    "targetWeekH": 40
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 8,
+     "steps": 200
+    }
    },
    "code": "coverage_gap",
    "date": "2026-11-01",
