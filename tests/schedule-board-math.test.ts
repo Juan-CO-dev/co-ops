@@ -192,3 +192,17 @@ describe("labor % per hour, the demand curve, the day tabs", () => {
     expect(agm.every((t) => !("hourlyPct" in t))).toBe(true);
   });
 });
+
+describe("Juan 2026-10-16 (decision 4): each salaried manager's week on the strip — base + flex", () => {
+  it("base hours (station + MoD, flex aside) and the flex used, per salaried manager, sorted by id; hourly people never listed", () => {
+    const ctx = context();
+    const flexSeg = { positionId: P.REG, startQ: 60, endQ: 68, reasonKey: "schedule.reason.salaried_flex" };
+    const shifts = [
+      ...[WED, THU, "2026-10-23", "2026-10-24", SUN].map((d) => shift(U.alex, d, 28, 60, "mod")),
+      { ...shift(U.alex, WED, 28, 68, "mod"), segments: [{ positionId: "mod", startQ: 28, endQ: 60 }, flexSeg] },
+      shift(U.maya, WED, 44, 60, P.REG),
+    ].filter((sh, i) => i !== 0); // Wed is the flexed day
+    const strip = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: {}, forecastWeekCents: null, salariedWeeklyCents: null }, { canSeeMoney: false });
+    expect(strip.hours.salariedWeeks).toEqual([{ userId: U.alex, baseHours: 40, flexHours: 2, targetHours: 40, flexLimitHours: 10 }]);
+  });
+});

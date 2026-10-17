@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.5. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.6. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -11,10 +11,10 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "cause": "structure",
+      "cause": "unresolved_search",
       "fromQ": 70,
-      "proven": true,
-      "toQ": 83
+      "proven": false,
+      "toQ": 76
      },
      "q": 70,
      "severity": "gap"
@@ -26,84 +26,28 @@
    "date": "2026-10-27",
    "inherited": false,
    "originRevisionId": null,
-   "problems": [
-    {
-     "code": "mod_missing",
-     "day": "2026-10-27",
-     "inherited": false,
-     "params": {
-      "cause": "unresolved_search",
-      "fromQ": 76,
-      "proven": false,
-      "toQ": 83
-     },
-     "q": 76,
-     "severity": "gap"
-    }
-   ],
+   "problems": [],
    "structureVersionId": "sv-fixture-1"
   },
   {
    "date": "2026-10-28",
    "inherited": false,
    "originRevisionId": null,
-   "problems": [
-    {
-     "code": "mod_missing",
-     "day": "2026-10-28",
-     "inherited": false,
-     "params": {
-      "cause": "unresolved_search",
-      "fromQ": 76,
-      "proven": false,
-      "toQ": 83
-     },
-     "q": 76,
-     "severity": "gap"
-    }
-   ],
+   "problems": [],
    "structureVersionId": "sv-fixture-1"
   },
   {
    "date": "2026-10-29",
    "inherited": false,
    "originRevisionId": null,
-   "problems": [
-    {
-     "code": "mod_missing",
-     "day": "2026-10-29",
-     "inherited": false,
-     "params": {
-      "cause": "unresolved_search",
-      "fromQ": 76,
-      "proven": false,
-      "toQ": 83
-     },
-     "q": 76,
-     "severity": "gap"
-    }
-   ],
+   "problems": [],
    "structureVersionId": "sv-fixture-1"
   },
   {
    "date": "2026-10-30",
    "inherited": false,
    "originRevisionId": null,
-   "problems": [
-    {
-     "code": "mod_missing",
-     "day": "2026-10-30",
-     "inherited": false,
-     "params": {
-      "cause": "unresolved_search",
-      "fromQ": 76,
-      "proven": false,
-      "toQ": 83
-     },
-     "q": 76,
-     "severity": "gap"
-    }
-   ],
+   "problems": [],
    "structureVersionId": "sv-fixture-1"
   },
   {
@@ -117,23 +61,12 @@
      "inherited": false,
      "params": {
       "cause": "unresolved_search",
-      "fromQ": 76,
+      "fromQ": 66,
       "proven": false,
-      "toQ": 83
+      "toQ": 76
      },
-     "q": 76,
+     "q": 66,
      "severity": "gap"
-    },
-    {
-     "code": "overtime",
-     "day": "2026-10-31",
-     "inherited": false,
-     "params": {
-      "hours": 50.5,
-      "limit": 40
-     },
-     "severity": "warning",
-     "userId": "u-15-alex"
     }
    ],
    "structureVersionId": "sv-fixture-1"
@@ -149,43 +82,19 @@
      "inherited": false,
      "params": {
       "cause": "unresolved_search",
-      "fromQ": 28,
+      "fromQ": 70,
       "proven": false,
-      "toQ": 34
+      "toQ": 76
      },
-     "q": 28,
+     "q": 70,
      "severity": "gap"
-    },
-    {
-     "code": "mod_missing",
-     "day": "2026-11-01",
-     "inherited": false,
-     "params": {
-      "cause": "unresolved_search",
-      "fromQ": 76,
-      "proven": false,
-      "toQ": 83
-     },
-     "q": 76,
-     "severity": "gap"
-    },
-    {
-     "code": "overtime",
-     "day": "2026-11-01",
-     "inherited": false,
-     "params": {
-      "hours": 63,
-      "limit": 40
-     },
-     "severity": "warning",
-     "userId": "u-16-jules"
     },
     {
      "code": "soft_range",
      "day": "2026-11-01",
      "inherited": false,
      "params": {
-      "hours": 4,
+      "hours": 14.5,
       "max": 40,
       "min": 24
      },
@@ -222,29 +131,29 @@
  ],
  "gaps": [
   {
-   "cause": "structure",
+   "cause": "unresolved_search",
    "certificate": {
-    "detail": {
-     "availableQ": 55,
-     "coverableQ": 42,
-     "maxShiftQ": 42,
-     "peopleIds": [
-      "u-15-alex"
-     ],
-     "positionId": "mod",
-     "requiredQ": 55,
-     "runFromQ": 28,
-     "runQ": 55,
-     "runToQ": 83,
-     "shortQ": 13
+    "candidateIds": [
+     "u-05-dani",
+     "u-15-alex",
+     "u-16-jules"
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
     },
-    "rule": "max_shift"
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 0,
+     "steps": 7
+    }
    },
    "code": "mod_missing",
    "date": "2026-10-26",
    "fromQ": 70,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   },
   {
    "cause": "unresolved_search",
@@ -262,114 +171,14 @@
     "searched": {
      "chainDepth": 3,
      "donorsTried": 0,
-     "steps": 8
-    }
-   },
-   "code": "mod_missing",
-   "date": "2026-10-27",
-   "fromQ": 76,
-   "positionId": null,
-   "toQ": 83
-  },
-  {
-   "cause": "unresolved_search",
-   "certificate": {
-    "candidateIds": [
-     "u-05-dani",
-     "u-15-alex",
-     "u-16-jules"
-    ],
-    "limits": {
-     "REPAIR_MAX_STEPS": 200,
-     "maxChainDepth": 3,
-     "maxDonors": 8
-    },
-    "searched": {
-     "chainDepth": 3,
-     "donorsTried": 0,
-     "steps": 8
-    }
-   },
-   "code": "mod_missing",
-   "date": "2026-10-28",
-   "fromQ": 76,
-   "positionId": null,
-   "toQ": 83
-  },
-  {
-   "cause": "unresolved_search",
-   "certificate": {
-    "candidateIds": [
-     "u-05-dani",
-     "u-15-alex",
-     "u-16-jules"
-    ],
-    "limits": {
-     "REPAIR_MAX_STEPS": 200,
-     "maxChainDepth": 3,
-     "maxDonors": 8
-    },
-    "searched": {
-     "chainDepth": 3,
-     "donorsTried": 0,
-     "steps": 8
-    }
-   },
-   "code": "mod_missing",
-   "date": "2026-10-29",
-   "fromQ": 76,
-   "positionId": null,
-   "toQ": 83
-  },
-  {
-   "cause": "unresolved_search",
-   "certificate": {
-    "candidateIds": [
-     "u-05-dani",
-     "u-15-alex",
-     "u-16-jules"
-    ],
-    "limits": {
-     "REPAIR_MAX_STEPS": 200,
-     "maxChainDepth": 3,
-     "maxDonors": 8
-    },
-    "searched": {
-     "chainDepth": 3,
-     "donorsTried": 0,
-     "steps": 8
-    }
-   },
-   "code": "mod_missing",
-   "date": "2026-10-30",
-   "fromQ": 76,
-   "positionId": null,
-   "toQ": 83
-  },
-  {
-   "cause": "unresolved_search",
-   "certificate": {
-    "candidateIds": [
-     "u-05-dani",
-     "u-15-alex",
-     "u-16-jules"
-    ],
-    "limits": {
-     "REPAIR_MAX_STEPS": 200,
-     "maxChainDepth": 3,
-     "maxDonors": 8
-    },
-    "searched": {
-     "chainDepth": 3,
-     "donorsTried": 0,
-     "steps": 8
+     "steps": 7
     }
    },
    "code": "mod_missing",
    "date": "2026-10-31",
-   "fromQ": 76,
+   "fromQ": 66,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   },
   {
    "cause": "unresolved_search",
@@ -387,39 +196,14 @@
     "searched": {
      "chainDepth": 3,
      "donorsTried": 0,
-     "steps": 8
+     "steps": 7
     }
    },
    "code": "mod_missing",
    "date": "2026-11-01",
-   "fromQ": 28,
+   "fromQ": 70,
    "positionId": null,
-   "toQ": 34
-  },
-  {
-   "cause": "unresolved_search",
-   "certificate": {
-    "candidateIds": [
-     "u-05-dani",
-     "u-15-alex",
-     "u-16-jules"
-    ],
-    "limits": {
-     "REPAIR_MAX_STEPS": 200,
-     "maxChainDepth": 3,
-     "maxDonors": 8
-    },
-    "searched": {
-     "chainDepth": 3,
-     "donorsTried": 0,
-     "steps": 8
-    }
-   },
-   "code": "mod_missing",
-   "date": "2026-11-01",
-   "fromQ": 76,
-   "positionId": null,
-   "toQ": 83
+   "toQ": 76
   }
  ],
  "notes": [
@@ -468,6 +252,16 @@
    "userId": null
   },
   {
+   "code": "salaried_block_skipped",
+   "date": "2026-10-31",
+   "params": {
+    "limitH": 40,
+    "reason": "week_target"
+   },
+   "positionId": null,
+   "userId": "u-15-alex"
+  },
+  {
    "code": "unbudgeted_date",
    "date": "2026-10-31",
    "params": {},
@@ -482,6 +276,16 @@
    },
    "positionId": null,
    "userId": "u-15-alex"
+  },
+  {
+   "code": "salaried_block_skipped",
+   "date": "2026-11-01",
+   "params": {
+    "limitH": 40,
+    "reason": "week_target"
+   },
+   "positionId": null,
+   "userId": "u-16-jules"
   },
   {
    "code": "unbudgeted_date",
@@ -916,7 +720,9 @@
        "toQ": 60,
        "userId": "u-15-alex"
       }
-     },
+     }
+    ],
+    [
      {
       "key": "salaried_extension",
       "params": {
@@ -1431,7 +1237,9 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
-     },
+     }
+    ],
+    [
      {
       "key": "salaried_extension",
       "params": {
@@ -1972,7 +1780,9 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
-     },
+     }
+    ],
+    [
      {
       "key": "salaried_extension",
       "params": {
@@ -2511,7 +2321,9 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
-     },
+     }
+    ],
+    [
      {
       "key": "salaried_extension",
       "params": {
@@ -3008,7 +2820,9 @@
        "toQ": 66,
        "userId": "u-16-jules"
       }
-     },
+     }
+    ],
+    [
      {
       "key": "salaried_extension",
       "params": {
@@ -3044,10 +2858,6 @@
   },
   "2026-10-31|u-02-leo|38": {
    "alternates": [
-    {
-     "skill": 0.5,
-     "userId": "u-05-dani"
-    },
     {
      "skill": 0.5,
      "userId": "u-14-wren"
@@ -3091,10 +2901,6 @@
   "2026-10-31|u-04-ben|42": {
    "alternates": [
     {
-     "skill": 0.66,
-     "userId": "u-05-dani"
-    },
-    {
      "skill": 0.65,
      "userId": "u-14-wren"
     },
@@ -3130,6 +2936,31 @@
       "positionId": "5c000000-0000-4000-8000-000000000003",
       "skill": 0.92,
       "userId": "u-04-ben"
+     }
+    }
+   ]
+  },
+  "2026-10-31|u-05-dani|28": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "mod_cover",
+      "params": {
+       "fromQ": 28,
+       "toQ": 34,
+       "userId": "u-05-dani"
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "mod_cover",
+     "params": {
+      "fromQ": 28,
+      "toQ": 34,
+      "userId": "u-05-dani"
      }
     }
    ]
@@ -3358,10 +3189,6 @@
      "userId": "u-14-wren"
     },
     {
-     "skill": 0.72,
-     "userId": "u-05-dani"
-    },
-    {
      "skill": 0.64,
      "userId": "u-11-eli"
     }
@@ -3412,10 +3239,6 @@
      "userId": "u-14-wren"
     },
     {
-     "skill": 0.5,
-     "userId": "u-05-dani"
-    },
-    {
      "skill": 0.4,
      "userId": "u-11-eli"
     }
@@ -3453,10 +3276,6 @@
   },
   "2026-10-31|u-13-sam|46": {
    "alternates": [
-    {
-     "skill": 0.84,
-     "userId": "u-05-dani"
-    },
     {
      "skill": 0.78,
      "userId": "u-14-wren"
@@ -3505,43 +3324,8 @@
     }
    ]
   },
-  "2026-10-31|u-15-alex|28": {
-   "alternates": [
-    {
-     "skill": 0,
-     "userId": "u-05-dani"
-    }
-   ],
-   "segments": [
-    [
-     {
-      "key": "salaried_minimum",
-      "params": {
-       "fromQ": 28,
-       "toQ": 60,
-       "userId": "u-15-alex"
-      }
-     }
-    ]
-   ],
-   "shift": [
-    {
-     "key": "salaried_minimum",
-     "params": {
-      "fromQ": 28,
-      "toQ": 60,
-      "userId": "u-15-alex"
-     }
-    }
-   ]
-  },
   "2026-10-31|u-16-jules|34": {
-   "alternates": [
-    {
-     "skill": 0,
-     "userId": "u-05-dani"
-    }
-   ],
+   "alternates": [],
    "segments": [
     [
      {
@@ -3549,16 +3333,6 @@
       "params": {
        "fromQ": 34,
        "toQ": 66,
-       "userId": "u-16-jules"
-      }
-     },
-     {
-      "key": "salaried_extension",
-      "params": {
-       "fromQ": 66,
-       "maxShiftQ": 42,
-       "positionId": "mod",
-       "toQ": 76,
        "userId": "u-16-jules"
       }
      }
@@ -3570,16 +3344,6 @@
      "params": {
       "fromQ": 34,
       "toQ": 66,
-      "userId": "u-16-jules"
-     }
-    },
-    {
-     "key": "salaried_extension",
-     "params": {
-      "fromQ": 66,
-      "maxShiftQ": 42,
-      "positionId": "mod",
-      "toQ": 76,
       "userId": "u-16-jules"
      }
     }
@@ -3665,18 +3429,19 @@
     }
    ]
   },
-  "2026-11-01|u-05-dani|46": {
-   "alternates": [
-    {
-     "skill": 0.7,
-     "userId": "u-06-iris"
-    },
-    {
-     "skill": 0.61,
-     "userId": "u-09-tess"
-    }
-   ],
+  "2026-11-01|u-05-dani|28": {
+   "alternates": [],
    "segments": [
+    [
+     {
+      "key": "mod_cover",
+      "params": {
+       "fromQ": 28,
+       "toQ": 46,
+       "userId": "u-05-dani"
+      }
+     }
+    ],
     [
      {
       "key": "wave_arrival",
@@ -3692,6 +3457,18 @@
        "fromQ": 60,
        "positionId": "5c000000-0000-4000-8000-000000000004",
        "toQ": 62
+      }
+     }
+    ],
+    [
+     {
+      "key": "extended_to_cap",
+      "params": {
+       "fromQ": 62,
+       "maxShiftQ": 42,
+       "positionId": "mod",
+       "toQ": 70,
+       "userId": "u-05-dani"
       }
      }
     ]
@@ -3710,6 +3487,24 @@
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000004",
       "skill": 0.84,
+      "userId": "u-05-dani"
+     }
+    },
+    {
+     "key": "mod_cover",
+     "params": {
+      "fromQ": 28,
+      "toQ": 46,
+      "userId": "u-05-dani"
+     }
+    },
+    {
+     "key": "extended_to_cap",
+     "params": {
+      "fromQ": 62,
+      "maxShiftQ": 42,
+      "positionId": "mod",
+      "toQ": 70,
       "userId": "u-05-dani"
      }
     }
@@ -4017,51 +3812,6 @@
      }
     }
    ]
-  },
-  "2026-11-01|u-16-jules|34": {
-   "alternates": [],
-   "segments": [
-    [
-     {
-      "key": "salaried_minimum",
-      "params": {
-       "fromQ": 34,
-       "toQ": 66,
-       "userId": "u-16-jules"
-      }
-     },
-     {
-      "key": "salaried_extension",
-      "params": {
-       "fromQ": 66,
-       "maxShiftQ": 42,
-       "positionId": "mod",
-       "toQ": 76,
-       "userId": "u-16-jules"
-      }
-     }
-    ]
-   ],
-   "shift": [
-    {
-     "key": "salaried_minimum",
-     "params": {
-      "fromQ": 34,
-      "toQ": 66,
-      "userId": "u-16-jules"
-     }
-    },
-    {
-     "key": "salaried_extension",
-     "params": {
-      "fromQ": 66,
-      "maxShiftQ": 42,
-      "positionId": "mod",
-      "toQ": 76,
-      "userId": "u-16-jules"
-     }
-    }
-   ]
   }
  },
  "shifts": [
@@ -4217,9 +3967,15 @@
    "pinned": false,
    "segments": [
     {
-     "endQ": 70,
+     "endQ": 60,
      "positionId": "mod",
      "startQ": 28
+    },
+    {
+     "endQ": 70,
+     "positionId": "mod",
+     "reasonKey": "schedule.reason.salaried_flex",
+     "startQ": 60
     }
    ],
    "startQ": 28,
@@ -4398,9 +4154,15 @@
    "pinned": false,
    "segments": [
     {
-     "endQ": 76,
+     "endQ": 66,
      "positionId": "mod",
      "startQ": 34
+    },
+    {
+     "endQ": 76,
+     "positionId": "mod",
+     "reasonKey": "schedule.reason.salaried_flex",
+     "startQ": 66
     }
    ],
    "startQ": 34,
@@ -4574,9 +4336,15 @@
    "pinned": false,
    "segments": [
     {
-     "endQ": 76,
+     "endQ": 66,
      "positionId": "mod",
      "startQ": 34
+    },
+    {
+     "endQ": 76,
+     "positionId": "mod",
+     "reasonKey": "schedule.reason.salaried_flex",
+     "startQ": 66
     }
    ],
    "startQ": 34,
@@ -4744,9 +4512,15 @@
    "pinned": false,
    "segments": [
     {
-     "endQ": 76,
+     "endQ": 66,
      "positionId": "mod",
      "startQ": 34
+    },
+    {
+     "endQ": 76,
+     "positionId": "mod",
+     "reasonKey": "schedule.reason.salaried_flex",
+     "startQ": 66
     }
    ],
    "startQ": 34,
@@ -4936,9 +4710,15 @@
    "pinned": false,
    "segments": [
     {
-     "endQ": 76,
+     "endQ": 66,
      "positionId": "mod",
      "startQ": 34
+    },
+    {
+     "endQ": 76,
+     "positionId": "mod",
+     "reasonKey": "schedule.reason.salaried_flex",
+     "startQ": 66
     }
    ],
    "startQ": 34,
@@ -4975,6 +4755,22 @@
    ],
    "startQ": 42,
    "userId": "u-04-ben"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-31",
+   "endQ": 44,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 44,
+     "positionId": "mod",
+     "startQ": 28
+    }
+   ],
+   "startQ": 28,
+   "userId": "u-05-dani"
   },
   {
    "closingManager": true,
@@ -5096,28 +4892,12 @@
   {
    "closingManager": false,
    "date": "2026-10-31",
-   "endQ": 60,
+   "endQ": 66,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 60,
-     "positionId": "mod",
-     "startQ": 28
-    }
-   ],
-   "startQ": 28,
-   "userId": "u-15-alex"
-  },
-  {
-   "closingManager": false,
-   "date": "2026-10-31",
-   "endQ": 76,
-   "flex": false,
-   "pinned": false,
-   "segments": [
-    {
-     "endQ": 76,
+     "endQ": 66,
      "positionId": "mod",
      "startQ": 34
     }
@@ -5160,17 +4940,27 @@
   {
    "closingManager": false,
    "date": "2026-11-01",
-   "endQ": 62,
+   "endQ": 70,
    "flex": false,
    "pinned": false,
    "segments": [
     {
+     "endQ": 46,
+     "positionId": "mod",
+     "startQ": 28
+    },
+    {
      "endQ": 62,
      "positionId": "5c000000-0000-4000-8000-000000000004",
      "startQ": 46
+    },
+    {
+     "endQ": 70,
+     "positionId": "mod",
+     "startQ": 62
     }
    ],
-   "startQ": 46,
+   "startQ": 28,
    "userId": "u-05-dani"
   },
   {
@@ -5268,48 +5058,32 @@
    ],
    "startQ": 42,
    "userId": "u-14-wren"
-  },
-  {
-   "closingManager": false,
-   "date": "2026-11-01",
-   "endQ": 76,
-   "flex": false,
-   "pinned": false,
-   "segments": [
-    {
-     "endQ": 76,
-     "positionId": "mod",
-     "startQ": 34
-    }
-   ],
-   "startQ": 34,
-   "userId": "u-16-jules"
   }
  ],
  "stats": {
   "budgetHours": 0,
   "budgetedDates": [],
   "essentialHours": 127.75,
-  "gaps": 8,
-  "hourlyCostCents": 701575,
-  "hourlyHours": 369.25,
+  "gaps": 3,
+  "hourlyCostCents": 721525,
+  "hourlyHours": 379.75,
   "hourlyHoursByDate": {
    "2026-10-26": 52.75,
    "2026-10-27": 52.75,
    "2026-10-28": 52.75,
    "2026-10-29": 52.75,
    "2026-10-30": 52.75,
-   "2026-10-31": 52.75,
-   "2026-11-01": 52.75
+   "2026-10-31": 56.75,
+   "2026-11-01": 59.25
   },
   "repair": {
    "accepted": 0,
    "chainDepth": 1,
    "donorsTried": 0,
    "provenEarly": 0,
-   "steps": 8
+   "steps": 7
   },
   "salariedCoverHours": 0,
-  "shifts": 75
+  "shifts": 74
  }
 }

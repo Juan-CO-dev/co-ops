@@ -57,7 +57,9 @@ export interface ScheduleStructure {
   leadership: {
     modRequired: boolean; closingRoles: RoleCode[]; leaderDefaults: Partial<Record<RoleCode, LeaderSetting>>;
     /**
-     * CC 2026-10-16: "KH may be manager on duty after <time>" — a quarter, or null = OFF (the default). When
+     * CC 2026-10-16: "KH may be manager on duty after <time>" — a quarter, or null = OFF. Juan 2026-10-16 (decision 6): the
+     * default is the 7:00 PM quarter (76) for both shops — "their MOD duties are only 7pm to close"; before it an SL+ is
+     * still required. When
      * set, a key holder on the clock from that quarter on counts as the manager on duty (validator and
      * generator). Juan's v17 finding (7 evening MoD holes behind opens-only managers and KH closers) is a
      * toggle, not a rebuild.
@@ -87,6 +89,18 @@ export interface ScheduleStructure {
      * (`salaried_extension`). Off: a salaried shift is never extended.
      */
     salariedStayLonger: boolean;
+    /**
+     * Juan 2026-10-16 (decision 4): a salaried manager's TOTAL week (station + MoD) in the BASE plan, in hours (default 40).
+     * The generator never plans past it; the validator calls a base week over it an error (`salaried_base_over_target`).
+     */
+    salariedTargetWeekH: number;
+    /**
+     * Juan 2026-10-16 (decision 4): the FLEX on top of the target, in hours (0–10, default 10; his band is 5–10). Used ONLY by
+     * zero-hourly-cost fills (a salaried manager staying longer, or covering a station from the MoD lane, in place of hourly
+     * hours), never by the base plan; flex quarters carry `SALARIED_FLEX_REASON` on their segment. Station time passes
+     * `managerFloorH` only through flex. Over target + flex (or flex over this) = `salaried_over_flex` (error).
+     */
+    salariedFlexH: number;
   };
   catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number };
   labor: { targetPct: number; basis: "hourly" | "total"; strong: number; watch: number; budgetDeadbandH: number };
@@ -120,15 +134,16 @@ export const SCHEDULE_STRUCTURE_DEFAULTS: ScheduleStructure = {
     modRequired: true,
     closingRoles: ["key_holder", "shift_lead", "agm", "gm", "moo", "owner"],
     leaderDefaults: { key_holder: "closes", shift_lead: "opens", agm: "opens", gm: "opens", moo: "mix", owner: "mix" },
-    keyHolderModAfterQ: null,
+    keyHolderModAfterQ: 76,
   },
   limits: {
     minimumShiftQ: 16, flexMinimumQ: 12, flexUsesPer2w: 1, flexMaxQ: 12, overtimeH: 40,
     managerFloorH: 32, gmMinimumH: 8, agmMinimumH: 8, closingMinutesOverride: null, segmentMinQ: 2, rushShiftMaxQ: 4, maxShiftH: 10.5, salariedStayLonger: true,
+    salariedTargetWeekH: 40, salariedFlexH: 10,
   },
   catering: { minHeadcount: 30, extraPrepDishHeads: 1, defaultStartQ: 34, defaultEndQ: 52, leadMinutes: 210 },
   labor: { targetPct: 28, basis: "total", strong: 0.8, watch: 0.65, budgetDeadbandH: 2 },
-  roster: { excludedRoles: ["cgs", "social_media_mgr", "catering_mgr", "prep_mgr"] },
+  roster: { excludedRoles: ["cgs", "social_media_mgr"] },
 };
 
 const FLOOR_ROLES: RoleCode[] = ["trainee", "employee", "trainer", "key_holder", "shift_lead", "agm", "gm", "moo", "owner"];
@@ -320,7 +335,7 @@ const TOP_KEYS = ["version", "shopDay", "dayTypes", "crews", "positions", "prior
 const SHOPDAY_KEYS = ["prepStartQ", "prepDishArrivalQ", "serviceStartQ", "serviceCloseQ", "outEarliestQ", "outLatestQ"] as const;
 const POSITION_KEYS = ["role", "openQ", "trimQ", "closeQ", "headsBefore", "headsAfter", "allowedRoles"] as const;
 const LIMIT_KEYS = ["minimumShiftQ", "flexMinimumQ", "flexUsesPer2w", "flexMaxQ", "overtimeH", "managerFloorH", "gmMinimumH",
-  "agmMinimumH", "closingMinutesOverride", "segmentMinQ", "rushShiftMaxQ", "maxShiftH", "salariedStayLonger"] as const;
+  "agmMinimumH", "closingMinutesOverride", "segmentMinQ", "rushShiftMaxQ", "maxShiftH", "salariedStayLonger", "salariedTargetWeekH", "salariedFlexH"] as const;
 
 function checkShopDay(v: unknown): Problem {
   if (!isObj(v)) return "shopDay";
@@ -463,6 +478,9 @@ function checkLimits(v: unknown, shopDay: ScheduleStructure["shopDay"]): Problem
   if (!isInt(v.segmentMinQ, 1, 16)) return "limits.segmentMinQ";
   if (!isInt(v.rushShiftMaxQ, 0, 16)) return "limits.rushShiftMaxQ";
   if (typeof v.salariedStayLonger !== "boolean") return "limits.salariedStayLonger";
+  // Juan 2026-10-16 (decision 4): the salaried week target (quarter-hours, 0–80) and its flex (quarter-hours, 0–10).
+  if (!isQuarterHours(v.salariedTargetWeekH, 0, 80)) return "limits.salariedTargetWeekH";
+  if (!isQuarterHours(v.salariedFlexH, 0, 10)) return "limits.salariedFlexH";
   if (v.flexMinimumQ > v.minimumShiftQ || v.flexMinimumQ > v.flexMaxQ) return "limits.flexMinimumQ";
   // The mockup's guard: the longest required block fits the shop day.
   const span = shopDay.outLatestQ - shopDay.prepStartQ;

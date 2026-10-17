@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.5. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.6. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -769,12 +769,23 @@
        "positionId": "5c000000-0000-4000-8000-000000000008",
        "toQ": 60
       }
-     },
+     }
+    ],
+    [
      {
       "key": "salaried_extension",
       "params": {
        "fromQ": 60,
        "lastResort": true,
+       "positionId": "5c000000-0000-4000-8000-000000000008",
+       "toQ": 62,
+       "userId": "u-j-gm"
+      }
+     },
+     {
+      "key": "salaried_flex",
+      "params": {
+       "fromQ": 60,
        "positionId": "5c000000-0000-4000-8000-000000000008",
        "toQ": 62,
        "userId": "u-j-gm"
@@ -924,10 +935,17 @@
      "startQ": 38
     },
     {
-     "endQ": 62,
+     "endQ": 60,
      "lastResort": true,
      "positionId": "5c000000-0000-4000-8000-000000000008",
      "startQ": 56
+    },
+    {
+     "endQ": 62,
+     "lastResort": true,
+     "positionId": "5c000000-0000-4000-8000-000000000008",
+     "reasonKey": "schedule.reason.salaried_flex",
+     "startQ": 60
     }
    ],
    "startQ": 28,

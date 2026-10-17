@@ -72,6 +72,8 @@ export const AGM_BOARD_PATHS: readonly string[] = [
   ".strip.hours.budgetHours", ".strip.hours.essentialHoursOnBudgetedDates", ".strip.hours.essentialPastBudgetHours", ".strip.hours.flexAvailable",
   ".strip.hours.flexUsed", ".strip.hours.hourlyHours", ".strip.hours.hourlyHoursOnBudgetedDates", ".strip.hours.hourlySavedBySalaried",
   ".strip.hours.managerFloorHours", ".strip.hours.managerModHours", ".strip.hours.otRiskCount", ".strip.hours.remainingHours",
+  ".strip.hours.salariedWeeks[].baseHours", ".strip.hours.salariedWeeks[].flexHours", ".strip.hours.salariedWeeks[].flexLimitHours",
+  ".strip.hours.salariedWeeks[].targetHours", ".strip.hours.salariedWeeks[].userId",
   ".strip.hours.unbudgetedDates[]", ".suggestion", ".tabs[].date", ".tabs[].dayType",
   ".tabs[].locked", ".today", ".week.approved", ".week.edited",
   ".week.headRevisionId", ".weeksAhead", ".weekStart",

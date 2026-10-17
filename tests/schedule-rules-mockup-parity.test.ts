@@ -100,6 +100,8 @@ describe("1. the clean fixture", () => {
     const ctx = mockContext();
     for (const d of Object.values(ctx.days)) {
       d.structure.leadership.modRequired = false;
+      // Nor a salaried week target (Juan 2026-10-16, decision 4): the mockup never checks one.
+      d.structure.limits.salariedTargetWeekH = 80;
       for (const arr of Object.values(d.need.positions)) arr.fill(0);
     }
     const ps = checkScheduleRules(mockWeek(), ctx);
@@ -109,13 +111,26 @@ describe("1. the clean fixture", () => {
   it("under the full Phase 2 rules, no mockup check fails; the only errors are the undeclared deficits the mockup never checks (pinned finding)", () => {
     const ps = checkScheduleRules(mockWeek(), mockContext());
     expect(mockupView(ps)).toEqual([]);
-    const errors = ps.filter((p) => p.severity === "error");
+    // Juan 2026-10-16 (decision 4) — a finding on the v17 sample week itself: the GM (Alex) and the AGM (Jules) are planned
+    // 48 h each (6 × 8 h), over the 40 h base week with no flex reason → salaried_base_over_target (error). Before chunk H
+    // these were the two hourly-style "overtime" warnings; a salaried week is now judged by its target + flex instead.
+    expect(ps.filter((p) => p.code === "salaried_base_over_target").map((p) => [p.userId, p.params.hours, p.params.limit])).toEqual([["alex", 48, 40], ["jules", 48, 40]]);
+    const errors = ps.filter((p) => p.severity === "error" && p.code !== "salaried_base_over_target");
     expect([...new Set(errors.map((p) => p.code))]).toEqual(["undeclared_gap"]);
     const byKind = (gap: string) => errors.filter((p) => p.params.gap === gap).map((p) => `${MOCK.days[Object.values(DAY_LABEL).indexOf(DAY_LABEL[p.day]!)]} ${p.positionId ?? "MoD"} ${p.params.fromQ}-${p.params.toQ}`);
     // The evening MoD lane is empty every day (the closers are Key Holders; every manager opens).
     expect(byKind("mod_missing")).toEqual(["Mon MoD 60-83", "Tue MoD 66-83", "Wed MoD 66-83", "Thu MoD 66-83", "Fri MoD 66-83", "Sat MoD 66-83", "Sun MoD 66-83"]);
     expect(errors.filter((p) => p.params.gap === "coverage_gap")).toHaveLength(32);
-    expect(ps.filter((p) => p.severity === "warning").map((p) => p.code)).toEqual(["overtime", "overtime"]);
+    expect(ps.filter((p) => p.severity === "warning").map((p) => p.code)).toEqual([]);
+  });
+
+  it("Juan 2026-10-16 (decision 6): with the Key Holder as manager on duty from 19:00 (the new default), the v17 evening MoD holes end at 19:00", () => {
+    const ctx = mockContext();
+    for (const d of Object.values(ctx.days)) d.structure.leadership.keyHolderModAfterQ = 76;
+    const errors = checkScheduleRules(mockWeek(), ctx).filter((p) => p.code === "undeclared_gap" && p.params.gap === "mod_missing");
+    const byDay = errors.map((p) => `${MOCK.days[Object.values(DAY_LABEL).indexOf(DAY_LABEL[p.day]!)]} ${p.params.fromQ}-${p.params.toQ}`);
+    // Before 19:00 an SL+ is still required: the holes keep their start; the KH closers carry 19:00 to close.
+    expect(byDay).toEqual(["Mon 60-76", "Tue 66-76", "Wed 66-76", "Thu 66-76", "Fri 66-76", "Sat 66-76", "Sun 66-76"]);
   });
 });
 

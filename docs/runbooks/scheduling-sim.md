@@ -48,7 +48,7 @@ Check after `--apply` (SQL on the sim):
 - `select count(*) from toast_time_entries where time_entry_guid like 'sim-sched-%' and user_id is not null` → every row
   (the 0233 trigger filled `user_id`);
 - `select location_id, enabled, estimated_hourly_cents, estimated_salaried_weekly_cents, agm_access from schedule_shop_settings`
-  → both shops `true, 1800, 120000, 'read'` (SIM values; prod starts blank).
+  → both shops `true, 1840, 120000, 'read'` (SIM values; prod: hourly $18.40 default, salaried blank).
 
 Demand: the seed synthesizes no Toast order captures. A shop with no sales history builds the **Normal crew** with
 "No sales history — built on the Normal crew. Set the day type if it is wrong." (`schedule.note.no_history`). That is the expected sim state.

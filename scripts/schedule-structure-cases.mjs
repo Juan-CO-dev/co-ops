@@ -48,15 +48,16 @@ export const CASE_DEFAULTS = {
     modRequired: true,
     closingRoles: ["key_holder", "shift_lead", "agm", "gm", "moo", "owner"],
     leaderDefaults: { key_holder: "closes", shift_lead: "opens", agm: "opens", gm: "opens", moo: "mix", owner: "mix" },
-    keyHolderModAfterQ: null,
+    keyHolderModAfterQ: 76,
   },
   limits: {
     minimumShiftQ: 16, flexMinimumQ: 12, flexUsesPer2w: 1, flexMaxQ: 12, overtimeH: 40,
     managerFloorH: 32, gmMinimumH: 8, agmMinimumH: 8, closingMinutesOverride: null, segmentMinQ: 2, rushShiftMaxQ: 4, maxShiftH: 10.5, salariedStayLonger: true,
+    salariedTargetWeekH: 40, salariedFlexH: 10,
   },
   catering: { minHeadcount: 30, extraPrepDishHeads: 1, defaultStartQ: 34, defaultEndQ: 52, leadMinutes: 210 },
   labor: { targetPct: 28, basis: "total", strong: 0.8, watch: 0.65, budgetDeadbandH: 2 },
-  roster: { excludedRoles: ["cgs", "social_media_mgr", "catering_mgr", "prep_mgr"] },
+  roster: { excludedRoles: ["cgs", "social_media_mgr"] },
 };
 
 const I = CASE_POSITION_IDS;

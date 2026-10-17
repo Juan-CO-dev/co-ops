@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.5. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.6. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -42,7 +42,7 @@
       "cause": "unresolved_search",
       "fromQ": 28,
       "proven": false,
-      "toQ": 83
+      "toQ": 76
      },
      "q": 28,
      "severity": "gap"
@@ -104,7 +104,7 @@
       "cause": "unresolved_search",
       "fromQ": 67,
       "proven": false,
-      "toQ": 83
+      "toQ": 76
      },
      "q": 67,
      "severity": "gap"
@@ -166,7 +166,7 @@
       "cause": "unresolved_search",
       "fromQ": 67,
       "proven": false,
-      "toQ": 83
+      "toQ": 76
      },
      "q": 67,
      "severity": "gap"
@@ -228,7 +228,7 @@
       "cause": "unresolved_search",
       "fromQ": 67,
       "proven": false,
-      "toQ": 83
+      "toQ": 76
      },
      "q": 67,
      "severity": "gap"
@@ -290,7 +290,7 @@
       "cause": "unresolved_search",
       "fromQ": 67,
       "proven": false,
-      "toQ": 83
+      "toQ": 76
      },
      "q": 67,
      "severity": "gap"
@@ -325,7 +325,7 @@
       "cause": "unresolved_search",
       "fromQ": 28,
       "proven": false,
-      "toQ": 83
+      "toQ": 76
      },
      "q": 28,
      "severity": "gap"
@@ -387,7 +387,7 @@
       "cause": "unresolved_search",
       "fromQ": 67,
       "proven": false,
-      "toQ": 83
+      "toQ": 76
      },
      "q": 67,
      "severity": "gap"
@@ -593,7 +593,7 @@
    "date": "2026-10-26",
    "fromQ": 28,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   },
   {
    "cause": "unresolved_search",
@@ -699,7 +699,7 @@
    "date": "2026-10-27",
    "fromQ": 67,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   },
   {
    "cause": "unresolved_search",
@@ -805,7 +805,7 @@
    "date": "2026-10-28",
    "fromQ": 67,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   },
   {
    "cause": "unresolved_search",
@@ -911,7 +911,7 @@
    "date": "2026-10-29",
    "fromQ": 67,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   },
   {
    "cause": "unresolved_search",
@@ -1017,7 +1017,7 @@
    "date": "2026-10-30",
    "fromQ": 67,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   },
   {
    "cause": "unresolved_search",
@@ -1071,7 +1071,7 @@
    "date": "2026-10-31",
    "fromQ": 28,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   },
   {
    "cause": "unresolved_search",
@@ -1177,7 +1177,7 @@
    "date": "2026-11-01",
    "fromQ": 67,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   }
  ],
  "notes": [

@@ -1,8 +1,8 @@
 "use client";
 /**
- * The MoO's per-shop card (plan Task 24; R1, R2): the scheduling switch for the shop, the wage estimates (BLANK by
- * default — money stays "—" until set; a blank stays blank, never $0) and the AGM's access (read only, or build and
- * edit). MoO+ only (the loader sends it to no one else); Tier E before the post; a cancelled prompt keeps the form.
+ * The MoO's per-shop card (plan Task 24; R1, R2): the scheduling switch for the shop, the wage estimates (the hourly one
+ * opens at the DC minimum wage, $18.40/h, with its dated note — Juan 2026-10-16, decision 2; the salaried one BLANK —
+ * money stays "—" until set; a blank stays blank, never $0) and the AGM's access (read only, or build and edit). MoO+ only (the loader sends it to no one else); Tier E before the post; a cancelled prompt keeps the form.
  */
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -15,7 +15,7 @@ import { runGuarded } from "./horizon-flow-shared";
 import { scheduleErrorKey } from "./schedule-errors";
 import { BUTTON, Check, Fields, SelectField } from "./settings-fields";
 
-const toDollars = (c: number | null) => (c === null ? "" : String(Math.round(c) / 100));
+const toDollars = (c: number | null) => (c === null ? "" : (Math.round(c) / 100).toFixed(2));
 const INPUT = "min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-2 text-sm text-co-text";
 
 export function ShopSettingsCard({ locationId, shop }: { locationId: string; shop: ScheduleShopSettings }) {
@@ -59,6 +59,7 @@ export function ShopSettingsCard({ locationId, shop }: { locationId: string; sho
         <SelectField name="agmAccess" label={t("schedule.settings.shop.agm_access")} value={agm} onChange={(v) => setAgm(v === "edit" ? "edit" : "read")}
           options={[{ value: "read", label: t("schedule.settings.shop.agm_read") }, { value: "edit", label: t("schedule.settings.shop.agm_edit") }]} />
       </Fields>
+      <p className="text-xs text-co-text-muted" data-note="dc-minimum-wage">{t("schedule.settings.shop.dc_minimum_wage_note")}</p>
       <p className="text-xs text-co-text-muted">{t("schedule.settings.shop.estimates_note")}</p>
       {error ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(scheduleErrorKey(error))}</p> : null}
       {saved ? <p role="status" className="text-sm font-bold text-co-confirm-text">{t("schedule.settings.saved")}</p> : null}

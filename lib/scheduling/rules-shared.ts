@@ -33,6 +33,17 @@ import type { ScheduleErrorCode } from "./errors-shared";
 export const MOD = "mod";
 /** The reason key that marks the call-out last resort (rule d's exemption; Phase 2 never emits it). */
 export const CALLOUT_LAST_RESORT = "schedule.reason.callout_last_resort";
+/**
+ * Juan 2026-10-16 (decision 4): the segment marker of a salaried manager's FLEX quarters — a zero-hourly-cost fill (staying
+ * longer, or covering a station from the MoD lane in place of hourly hours). Flex quarters are outside the BASE week
+ * (`limits.salariedTargetWeekH`, station time `limits.managerFloorH`) and inside the flex pool (`limits.salariedFlexH`).
+ */
+export const SALARIED_FLEX_REASON = "schedule.reason.salaried_flex";
+/**
+ * Juan 2026-10-16 (decision 8): the segment marker of a catering manager covering a station — ONLY as a last resort
+ * (`lastResort: true`), never on Prep/Dishwasher, and never inside a booked catering window (`cateringWindows`).
+ */
+export const CATERING_MANAGER_COVER = "schedule.reason.catering_manager_cover";
 
 export interface Segment { positionId: string; startQ: number; endQ: number; lastResort?: boolean; coverFor?: string; reasonKey?: string }
 export interface Shift { userId: string; date: string; startQ: number; endQ: number; segments: Segment[]; closingManager: boolean; flex: boolean; pinned: boolean }
@@ -115,6 +126,12 @@ export const RULE_CODES = {
   manager_floor_exceeded: "error",
   work_type_not_allowed: "error",
   untouchable_day: "error",
+  /** Juan 2026-10-16 (decision 4): a salaried manager's BASE week (station + MoD, flex quarters aside) over the target (40 h). */
+  salaried_base_over_target: "error",
+  /** Juan 2026-10-16 (decision 4): a salaried week over target + flex, or more flex quarters than the flex allows. */
+  salaried_over_flex: "error",
+  /** Juan 2026-10-16 (decision 8): a catering manager's station cover inside a booked catering window. */
+  catering_cover_in_catering_window: "error",
   /** A deficit with no declared gap. */
   undeclared_gap: "error",
   /** A declared gap whose certificate does not verify. */
@@ -178,9 +195,18 @@ export function workTypeAllows(p: RulePerson, pos: StructurePosition): boolean {
   return p.workType === "foh" || p.alsoAllowed.includes("foh");
 }
 
+/**
+ * Juan 2026-10-16 (decision 8): the catering manager is ON the roster but the generator never plans them: their own shifts
+ * come only from a manager pin or the presence settings, and a station sees them only as the last-resort cover outside the
+ * booked catering windows (`CATERING_MANAGER_COVER`). So they are never "eligible" for a placement, a fill or a proof.
+ */
+export function neverGenerated(p: Pick<RulePerson, "role" | "presenceOnly">): boolean {
+  return p.presenceOnly || p.role === "catering_mgr";
+}
+
 /** May this person be placed on this position at all (role, Prep/Dishwasher never for a manager, work type)? */
 export function eligibleForPosition(p: RulePerson, pos: StructurePosition | undefined): boolean {
-  if (!pos || !p.activeMember || p.presenceOnly) return false;
+  if (!pos || !p.activeMember || neverGenerated(p)) return false;
   if (!pos.allowedRoles.includes(p.role)) return false;
   if (pos.role === "prep_dish" && isManagerRole(p.role)) return false;
   return workTypeAllows(p, pos);
@@ -188,7 +214,7 @@ export function eligibleForPosition(p: RulePerson, pos: StructurePosition | unde
 
 /** May this member be placed to fill a deficit of this kind (for MoD: from the window's first quarter on)? */
 export function eligibleFor(p: RulePerson, code: GapCode, positionId: string | null, s: ScheduleStructure, fromQ: number): boolean {
-  if (!p.activeMember || p.presenceOnly) return false;
+  if (!p.activeMember || neverGenerated(p)) return false;
   if (code === "mod_missing") return modCountsAt(p, s, fromQ);
   if (code === "closing_manager_missing") return s.leadership.closingRoles.includes(p.role) && leaderSettingOf(p, s) !== "opens";
   return positionId !== null && eligibleForPosition(p, s.positions[positionId]);
@@ -287,11 +313,60 @@ function uncoveredFrom(cov: DayCoverage, code: GapCode, positionId: string | nul
   return cov.closingManagerAt[q] ? 0 : 1;
 }
 
-/** Non-mod ("floor") hours of a person over the whole week, inherited days included. */
-function floorHours(s: WeekSchedule, userId: string): number {
+export const isFlexSegment = (g: Pick<Segment, "reasonKey">) => g.reasonKey === SALARIED_FLEX_REASON;
+
+/**
+ * BASE non-mod ("floor", station) hours of a person over the whole week, inherited days included — flex quarters aside
+ * (Juan 2026-10-16, decision 4: station time passes `managerFloorH` only through flex).
+ */
+export function floorHours(s: Pick<WeekSchedule, "shifts">, userId: string): number {
   let q = 0;
-  for (const sh of s.shifts) if (sh.userId === userId) for (const g of sh.segments) if (g.positionId !== MOD) q += segLenQ(g);
+  for (const sh of s.shifts) if (sh.userId === userId) for (const g of sh.segments) if (g.positionId !== MOD && !isFlexSegment(g)) q += segLenQ(g);
   return q / 4;
+}
+
+/** A salaried week, in hours: total (station + MoD), flex (marked quarters) and base (total − flex). Inherited days included. */
+export function salariedWeek(s: Pick<WeekSchedule, "shifts">, userId: string): { totalH: number; flexH: number; baseH: number } {
+  let total = 0;
+  let flex = 0;
+  for (const sh of s.shifts) {
+    if (sh.userId !== userId) continue;
+    total += sh.endQ - sh.startQ;
+    for (const g of sh.segments) if (isFlexSegment(g)) flex += segLenQ(g);
+  }
+  return { totalH: total / 4, flexH: flex / 4, baseH: (total - flex) / 4 };
+}
+
+/** The quarters of BASE station time a salaried manager has left under `managerFloorH` this week. */
+export function baseFloorRoomQ(s: Pick<WeekSchedule, "shifts">, userId: string, st: ScheduleStructure): number {
+  return Math.max(0, Math.round(st.limits.managerFloorH * 4) - Math.round(floorHours(s, userId) * 4));
+}
+
+/**
+ * A salaried manager's MoD relabel over [fromQ, toQ) as segments: the first `baseRoomQ` quarters are BASE station time
+ * (unmarked), the rest FLEX (`SALARIED_FLEX_REASON`) — decision 4: station time passes the floor only through flex.
+ */
+export function splitSalariedRelabel(fromQ: number, toQ: number, baseRoomQ: number): Array<{ startQ: number; endQ: number; flex: boolean }> {
+  const mid = Math.min(toQ, fromQ + Math.max(0, baseRoomQ));
+  const out: Array<{ startQ: number; endQ: number; flex: boolean }> = [];
+  if (mid > fromQ) out.push({ startQ: fromQ, endQ: mid, flex: false });
+  if (toQ > mid) out.push({ startQ: mid, endQ: toQ, flex: true });
+  return out;
+}
+
+/** The quarters of flex a salaried manager has left this week (decision 4). */
+export function flexLeftQ(s: Pick<WeekSchedule, "shifts">, userId: string, st: ScheduleStructure): number {
+  return Math.max(0, Math.round(st.limits.salariedFlexH * 4) - Math.round(salariedWeek(s, userId).flexH * 4));
+}
+
+/**
+ * The BOOKED catering windows of a built date (decision 8), from the booked-catering input: [event − lead, event) for an
+ * event with a time, else the structure's default catering window — every booked event, whatever its headcount.
+ */
+export function cateringWindows(day: Pick<DayContext, "structure" | "inputs">): Array<[number, number]> {
+  const c = day.structure.catering;
+  return [...day.inputs.cateringEvents].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((ev): [number, number] =>
+    ev.eventQ === null ? [c.defaultStartQ, c.defaultEndQ] : [Math.max(0, ev.eventQ - c.leadMinutes / 15), ev.eventQ]);
 }
 
 /** The leader open / close setting allows a shift spanning [fromQ, toQ)? (opens: ends before service close; closes: starts at or after service start) */
@@ -583,20 +658,26 @@ export function zeroCostCovers(g: Pick<GapSubject, "date" | "positionId" | "from
   for (const sh of ordered) {
     const p = ctx.people[sh.userId];
     if (!p || !p.salaried || !p.activeMember || p.presenceOnly || !eligibleForPosition(p, pos)) continue;
-    let leftQ = Math.floor((st.limits.managerFloorH - floorHours(s, p.userId)) * 4);
+    // Juan 2026-10-16 (decisions 4 + 5): the MoD relabel adds no time — it takes what is left of the BASE station limit
+    // first, then the FLEX pool; staying longer adds time, so it draws from the FLEX pool only.
+    let floorRoomQ = baseFloorRoomQ(s, p.userId, st);
+    let flexQ = flexLeftQ(s, p.userId, st);
     for (const seg of sh.segments) {
       if (seg.positionId !== MOD) continue;
       let q = Math.max(g.fromQ, seg.startQ);
       const end = Math.min(g.toQ, seg.endQ);
-      while (q < end && leftQ > 0) {
+      while (q < end && floorRoomQ + flexQ > 0) {
         if (!ok(q)) { q++; continue; }
         let z = q + 1;
-        while (z < end && ok(z) && z - q < leftQ) z++;
+        while (z < end && ok(z) && z - q < floorRoomQ + flexQ) z++;
         out.push({ userId: p.userId, fromQ: q, toQ: z });
-        leftQ -= z - q;
+        const base = Math.min(floorRoomQ, z - q);
+        floorRoomQ -= base;
+        flexQ -= z - q - base;
         q = z;
       }
     }
+    const leftQ = flexQ;
     // CC chunk D rulings 1 + 2: a salaried manager STAYING LONGER is a zero-hourly-cost fill too — their shift extended
     // straight into the window (after its end, or before its start), within the shop's daily maximum (their whole day),
     // the weekly floor limit (what is left of it), their availability and leader setting over the merged span, never
@@ -763,8 +844,9 @@ function fillCandidates(positionId: string, fromQ: number, toQ: number, date: st
  * splits its host segment, an extension adds an adjacent segment, a new block adds a shift. Null when any step cannot
  * apply (no such shift, a pinned shift, no host segment, a non-adjacent extension).
  */
-export function applyFillSteps(s: WeekSchedule, date: string, steps: readonly FillStep[]): WeekSchedule | null {
+export function applyFillSteps(s: WeekSchedule, date: string, steps: readonly FillStep[], salariedRoom: ReadonlyMap<string, number> = new Map()): WeekSchedule | null {
   const shifts = s.shifts.map((x) => ({ ...x, segments: x.segments.map((g) => ({ ...g })) }));
+  const room = new Map(salariedRoom);
   for (const st of steps) {
     if (st.kind === "new_block") {
       shifts.push({ userId: st.userId, date, startQ: st.fromQ, endQ: st.toQ, segments: [{ positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ }], closingManager: false, flex: false, pinned: false });
@@ -772,8 +854,11 @@ export function applyFillSteps(s: WeekSchedule, date: string, steps: readonly Fi
     }
     const sh = shifts.find((x) => x.date === date && x.userId === st.userId && x.startQ === st.shiftStartQ);
     if (!sh || sh.pinned) return null;
+    // Decision 4: a salaried manager's extension is FLEX; their relabel takes the base station room first, then flex.
+    const salaried = room.has(st.userId);
+    const flex = salaried ? { reasonKey: SALARIED_FLEX_REASON } : {};
     if (st.kind === "extend") {
-      const seg: Segment = { positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ };
+      const seg: Segment = { positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ, ...flex };
       if (st.fromQ === sh.endQ) sh.segments = [...sh.segments, seg];
       else if (st.toQ === sh.startQ) sh.segments = [seg, ...sh.segments];
       else return null;
@@ -787,7 +872,12 @@ export function applyFillSteps(s: WeekSchedule, date: string, steps: readonly Fi
     for (const g of sh.segments) {
       if (g !== host) { parts.push(g); continue; }
       if (g.startQ < st.fromQ) parts.push({ ...g, endQ: st.fromQ });
-      parts.push({ positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ });
+      if (salaried) {
+        for (const part of splitSalariedRelabel(st.fromQ, st.toQ, room.get(st.userId)!)) {
+          parts.push({ positionId: st.positionId, startQ: part.startQ, endQ: part.endQ, ...(part.flex ? flex : {}) });
+          if (!part.flex) room.set(st.userId, room.get(st.userId)! - (part.endQ - part.startQ));
+        }
+      } else parts.push({ positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ });
       if (st.toQ < g.endQ) parts.push({ ...g, startQ: st.toQ });
     }
     sh.segments = parts;
@@ -827,7 +917,8 @@ function uncoveredHeadQuarters(shifts: readonly Shift[], day: DayContext, ctx: R
 export function fillIsLegal(g: Pick<GapSubject, "date" | "positionId" | "fromQ" | "toQ">, s: WeekSchedule, ctx: RuleContext, plan: FillPlan): boolean {
   const day = ctx.days[g.date];
   if (!day || !g.positionId || plan.steps.length === 0) return false;
-  const applied = applyFillSteps(s, g.date, plan.steps);
+  const room = new Map(plan.steps.map((x) => x.userId).filter((id) => ctx.people[id]?.salaried).map((id) => [id, baseFloorRoomQ(s, id, day.structure)] as const));
+  const applied = applyFillSteps(s, g.date, plan.steps, room);
   if (!applied) return false;
   const dayCtx: RuleContext = { ...ctx, days: { [g.date]: day } };
   const only = (w: WeekSchedule): WeekSchedule => ({ ...w, shifts: shiftsOn(w, g.date), gaps: [], days: [] });
@@ -837,6 +928,8 @@ export function fillIsLegal(g: Pick<GapSubject, "date" | "positionId" | "fromQ" 
   const limitH = day.structure.limits.managerFloorH;
   for (const id of new Set(plan.steps.map((x) => x.userId))) {
     if (ctx.people[id]?.salaried && floorHours(applied, id) > limitH && floorHours(applied, id) > floorHours(s, id)) return false;
+    // Decision 4: a salaried fill is flex; it never passes the flex pool.
+    if (ctx.people[id]?.salaried && salariedWeek(applied, id).flexH > day.structure.limits.salariedFlexH && salariedWeek(applied, id).flexH > salariedWeek(s, id).flexH) return false;
   }
   const covB = dayCoverage(shiftsOn(s, g.date), day, ctx);
   const covA = dayCoverage(shiftsOn(applied, g.date), day, ctx);
@@ -900,7 +993,13 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
       if (free.length === 0 || free.some(isHourly)) return false;
       if (!sameIds(c.managerIds, free.map((p) => p.userId))) return false;
       const windowH = (g.toQ - g.fromQ) / 4;
-      return free.every((p) => c.floorHoursUsed[p.userId] === floorHours(s, p.userId) && floorHours(s, p.userId) + windowH > c.limitH);
+      // Juan 2026-10-16 (decision 4): past the floor a station is reached only through FLEX (a zero-hourly-cost relabel or
+      // staying longer) — the proof needs no such fill by these managers either. Flex never makes a new shift.
+      // A manager whose BASE week target is reached cannot take a new block either (decision 4): the week limit proves too.
+      const flexFills = zeroCostCovers(g, s, ctx);
+      return free.every((p) => c.floorHoursUsed[p.userId] === floorHours(s, p.userId)
+        && (floorHours(s, p.userId) + windowH > c.limitH || salariedWeek(s, p.userId).baseH + windowH > st.limits.salariedTargetWeekH)
+        && !flexFills.some((x) => x.userId === p.userId));
     }
     case "eligibility": {
       const c = g.certificate;
@@ -1109,8 +1208,13 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext): RuleProbl
         const pos = st.positions[g.positionId];
         if (!pos || g.startQ < pos.openQ || g.endQ > pos.closeQ) push("segment_outside_window", date, { userId: u, positionId: g.positionId, q: g.startQ });
         const callout = !!g.coverFor && g.reasonKey === CALLOUT_LAST_RESORT;
-        if (!pos?.allowedRoles.includes(p.role) && !(pos?.role === "prep_dish" && manager && callout)) {
+        // Decision 8: a catering manager may cover a station (never Prep/Dishwasher) as a marked last resort.
+        const cateringCover = p.role === "catering_mgr" && !!g.lastResort && g.reasonKey === CATERING_MANAGER_COVER && !!pos && pos.role !== "prep_dish";
+        if (!pos?.allowedRoles.includes(p.role) && !(pos?.role === "prep_dish" && manager && callout) && !cateringCover) {
           push("role_not_allowed", date, { userId: u, positionId: g.positionId, q: g.startQ, params: { role: p.role } });
+        }
+        if (cateringCover && cateringWindows(day).some(([a, z]) => g.startQ < z && g.endQ > a)) {
+          push("catering_cover_in_catering_window", date, { userId: u, positionId: g.positionId, q: g.startQ });
         }
         if (pos?.role === "prep_dish" && manager && !callout) push("manager_on_boh", date, { userId: u, positionId: g.positionId, q: g.startQ });
         if (manager && !p.coverPositions.includes(g.positionId) && !g.lastResort) {
@@ -1209,7 +1313,8 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext): RuleProbl
     if (!last) continue;
     const st = ctx.days[last]!.structure;
     const hours = mine.reduce((n, x) => n + (x.endQ - x.startQ), 0) / 4;
-    if (hours > st.limits.overtimeH) push("overtime", last, { userId: u, params: { hours, limit: st.limits.overtimeH } });
+    // Decision 4: a salaried week is governed by its target + flex (below), never the hourly overtime warning.
+    if (!p.salaried && hours > st.limits.overtimeH) push("overtime", last, { userId: u, params: { hours, limit: st.limits.overtimeH } });
     if (isHourly(p) && ((p.softMaxH !== null && hours > p.softMaxH) || (p.softMinH !== null && hours < p.softMinH))) {
       push("soft_range", last, { userId: u, params: { hours, min: p.softMinH, max: p.softMaxH } });
     }
@@ -1218,6 +1323,13 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext): RuleProbl
       const floorDays = [...new Set(mine.filter((x) => builtSet.has(x.date) && x.segments.some((g) => g.positionId !== MOD)).map((x) => x.date))].sort();
       const at = floorDays[floorDays.length - 1];
       if (at && floor > st.limits.managerFloorH) push("manager_floor_exceeded", at, { userId: u, params: { hours: floor, limit: st.limits.managerFloorH } });
+      // Juan 2026-10-16 (decision 4): the BASE week ≤ the target; flex only on top, within the flex.
+      const w = salariedWeek(s, u);
+      const target = st.limits.salariedTargetWeekH;
+      if (w.baseH > target) push("salaried_base_over_target", last, { userId: u, params: { hours: w.baseH, limit: target } });
+      if (w.flexH > st.limits.salariedFlexH || w.totalH > target + st.limits.salariedFlexH) {
+        push("salaried_over_flex", last, { userId: u, params: { hours: w.totalH, flexHours: w.flexH, flexLimit: st.limits.salariedFlexH, limit: target } });
+      }
     }
   }
   const f = budgetFacts(s, ctx);

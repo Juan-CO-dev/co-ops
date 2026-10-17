@@ -32,14 +32,14 @@ import { skillOf } from "../people-input-shared";
 import { teamStrength, type WindowStrength } from "../strength-shared";
 import { weekDays } from "../time-shared";
 import {
-  allShifts, applyFill, assignClosingManager, budgetUsedHours, canonicalDay, cmp, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
+  allShifts, applyFill, assignClosingManager, baseWeekQuarters, budgetUsedHours, canonicalDay, cmp, coverWithCateringManager, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
   type BuildCtx, type GShift, type WeekState,
 } from "./assign-shared";
 import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repair-shared";
 import { salariedBlocks, templatesFor, templateOrder } from "./templates-shared";
 
 /** Bumped whenever a golden changes; stored on the revision. */
-export const GENERATOR_VERSION = "p2.5";
+export const GENERATOR_VERSION = "p2.6";
 
 // ─── Input / output ──────────────────────────────────────────────────────────
 
@@ -226,6 +226,11 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     // 3. Salaried on the clock.
     const { blocks, skipped } = salariedBlocks(input.people, s, date, day.scheduledOutQ);
     for (const blk of blocks) {
+      // Juan 2026-10-16 (decision 4): the BASE plan never takes a salaried manager past the week target (40 h).
+      if ((baseWeekQuarters(week, blk.userId) + blk.endQ - blk.startQ) / 4 > s.limits.salariedTargetWeekH) {
+        notes.push({ code: "salaried_block_skipped", date, userId: blk.userId, positionId: null, params: { reason: "week_target", limitH: s.limits.salariedTargetWeekH } });
+        continue;
+      }
       const r = reason("salaried_minimum", { userId: blk.userId, fromQ: blk.startQ, toQ: blk.endQ });
       const kept = guarded(b, week, date, (shifts) => {
         if (shifts.some((x) => x.userId === blk.userId)) return false;
@@ -303,6 +308,16 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
         if (applyFill(b, week, date, plan)) { progress = true; break; }
       }
       if (!progress) break;
+    }
+    enforcePriority(b, week, date);
+    assignClosingManager(b, week, date);
+  }
+
+  // Juan 2026-10-16 (decision 8): the LAST resort — a catering manager on a pinned shift covers a station outside the booked
+  // catering windows. Bounded: each accepted cover lowers the day's uncovered total.
+  for (const date of builtDates) {
+    for (let round = 0; round < 32; round++) {
+      if (!deficitsOf(b, date, week.built[date]!).some((d) => d.code === "coverage_gap" && !!d.positionId && coverWithCateringManager(b, week, date, d.positionId, d.fromQ, d.toQ))) break;
     }
     enforcePriority(b, week, date);
     assignClosingManager(b, week, date);

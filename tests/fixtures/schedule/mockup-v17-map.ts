@@ -100,6 +100,7 @@ export function mockStructure(): ScheduleStructure {
       minimumShiftQ: q(d.limits.minimumShift!), flexMinimumQ: q(d.limits.flexMinimum!), flexUsesPer2w: d.limits.flexUses!, flexMaxQ: q(d.limits.flexLength!),
       overtimeH: d.limits.overtime!, managerFloorH: d.limits.managerFloor!, gmMinimumH: d.limits.gmMinimum!, agmMinimumH: d.limits.agmMinimum!,
       closingMinutesOverride: d.limits.checklistMinutes!, segmentMinQ: 2, rushShiftMaxQ: 4, maxShiftH: 10, salariedStayLonger: true, // the mockup has no maximum; its sample week's longest shift is exactly 10 h; no stay-longer rule either (the default)
+      salariedTargetWeekH: 40, salariedFlexH: 10, // the mockup has no salaried week rule: Juan's 2026-10-16 defaults (decision 4)
     },
     catering: { minHeadcount: d.catering.subs, extraPrepDishHeads: d.catering.extraPrepDish, defaultStartQ: q(d.catering.start), defaultEndQ: q(d.catering.end), leadMinutes: Math.round((d.catering.service - d.catering.start) * 60) },
     labor: { targetPct: 28, basis: "total", strong: 0.8, watch: 0.65, budgetDeadbandH: 2 },

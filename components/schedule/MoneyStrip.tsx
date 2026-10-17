@@ -80,6 +80,13 @@ export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimat
         <Metric label={t("schedule.board.money.manager_floor")} value={t("schedule.board.money.floor_value", { floor: h1(hrs.managerFloorHours), saved: h1(hrs.hourlySavedBySalaried) })}
           sub={`${t("schedule.board.money.manager_mod")}: ${t("schedule.board.money.hours_only", { hours: h1(hrs.managerModHours) })}`} />
       </div>
+      {hrs.salariedWeeks.length > 0 ? (
+        <ul className="grid gap-1 text-sm text-co-text" data-section="salaried-weeks">
+          {hrs.salariedWeeks.map((w) => (
+            <li key={w.userId} data-salaried-week={w.userId}>{t("schedule.board.money.salaried_week", { name: names[w.userId] ?? w.userId, base: h1(w.baseHours), flex: h1(w.flexHours) })}</li>
+          ))}
+        </ul>
+      ) : null}
       {!money ? <p className="text-xs text-co-text-muted">{t("schedule.board.money.hidden")}</p> : null}
       {moneyBlank ? (
         <p className="text-sm font-bold text-co-warning-text">

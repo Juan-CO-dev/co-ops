@@ -6,8 +6,8 @@
 import { describe, expect, it } from "vitest";
 import { buildDayNeed } from "@/lib/scheduling/need-shared";
 import { salariedBlocks, templatesFor } from "@/lib/scheduling/generator/templates-shared";
-import { buildWeek, type GeneratorOutput } from "@/lib/scheduling/generator/build-shared";
-import { checkCertificate, checkScheduleRules, zeroCostCovers } from "@/lib/scheduling/rules-shared";
+import { buildWeek, type GeneratorOutput, type Pin } from "@/lib/scheduling/generator/build-shared";
+import { CATERING_MANAGER_COVER, SALARIED_FLEX_REASON, checkCertificate, checkScheduleRules, zeroCostCovers } from "@/lib/scheduling/rules-shared";
 import { moneyStrip } from "@/lib/scheduling/board-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { enforcePriority, type BuildCtx, type GShift, type WeekState } from "@/lib/scheduling/generator/assign-shared";
@@ -428,9 +428,12 @@ describe("Task 7: budget, certificates and the repair search", () => {
   it("floor_limit: salaried managers at 32 h; a position only the GM may work is covered until his floor is spent, then certified floor_limit", () => {
     // Expeditor 10:00–15:00 (needed 10:30–15:00 = 4.5 h) inside the GM's 7:00–15:00 block, GM-only; the floor limit is the 24 h setting:
     // Mon–Fri cover 22.5 h, Saturday's 4.5 h would make 27 > 24 → floor_limit on Sat and Sun.
+    // Juan 2026-10-16 (decision 4): past the floor a cover is FLEX — this case spends the floor with NO flex (0 h) so the
+    // floor limit is the proof; the flex variant follows.
     const s = structure((x) => {
       x.leadership.modRequired = false;
       x.limits.managerFloorH = 24;
+      x.limits.salariedFlexH = 0;
       x.positions[I.$EXPO]!.allowedRoles = ["gm"];
       x.positions[I.$EXPO]!.openQ = 40; x.positions[I.$EXPO]!.trimQ = 60; x.positions[I.$EXPO]!.closeQ = 60;
     });
@@ -444,13 +447,22 @@ describe("Task 7: budget, certificates and the repair search", () => {
     const floorGaps = out.gaps.filter((g) => g.positionId === I.$EXPO);
     expect(floorGaps.length).toBeGreaterThan(0);
     expect(floorGaps.every((g) => g.date > covered[covered.length - 1]!.date)).toBe(true);
+    // The GM's BASE station time (any position, flex aside) is what the floor limit and its proof count.
+    const baseFloor = out.shifts.filter((x) => x.userId === "u-j-gm").flatMap((x) => x.segments).filter((g) => g.positionId !== "mod" && g.reasonKey !== SALARIED_FLEX_REASON).reduce((n, g) => n + g.endQ - g.startQ, 0) / 4;
+    expect(baseFloor).toBeLessThanOrEqual(24);
     for (const g of floorGaps) {
       expect(g.cause).toBe("floor_limit");
       if (g.cause !== "floor_limit") continue;
-      expect(g.certificate).toMatchObject({ managerIds: ["u-j-gm"], limitH: 24, floorHoursUsed: { "u-j-gm": coveredHours } });
-      expect(coveredHours + (g.toQ - g.fromQ) / 4).toBeGreaterThan(24);
+      expect(g.certificate).toMatchObject({ managerIds: ["u-j-gm"], limitH: 24, floorHoursUsed: { "u-j-gm": baseFloor } });
+      expect(baseFloor + (g.toQ - g.fromQ) / 4).toBeGreaterThan(24);
     }
     expect(out.problems.filter((p) => p.code === "manager_floor_exceeded")).toEqual([]);
+    // With the default 10 h of flex the weekend is still floor_limit: the GM is off then (the 40 h base week is reached on
+    // Friday) and flex never makes a NEW shift — it only lets a manager already on the clock cover or stay longer.
+    const flexed = buildWeek(small({ structure: { ...s, limits: { ...s.limits, salariedFlexH: 10 } }, days: DATES.map((d) => day(d, {}, s)) }));
+    expectClean(flexed);
+    expect(flexed.shifts.filter((x) => x.userId === "u-j-gm").map((x) => x.date)).toEqual([MON, TUE, WED, THU, FRI]);
+    expect(flexed.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => [g.date, g.cause])).toEqual([[SAT, "floor_limit"], [SUN, "floor_limit"]]);
   });
 
   it("manager cover: in preference order (rank), outside the list only as lastResort, never Prep/Dishwasher", () => {
@@ -726,12 +738,14 @@ describe("CC chunk D rulings 1 + 2: a salaried manager STAYS LONGER — a zero-h
     for (const g of out.gaps) expect(zeroCostCovers(g, schedule, out.context).filter((c) => c.extend)).toEqual([]);
   });
 
-  it("the extension's floor time counts against the WEEKLY floor limit (6 h → the GM's floor time stops at 24 q, no manager_floor_exceeded)", () => {
-    const s = longRegister((x) => { x.limits.managerFloorH = 6; });
+  it("Juan 2026-10-16 (decision 5): the extension draws from the FLEX pool, not the floor limit (flex 2 h → 8 q of flex; floor 6 h binds only BASE station time)", () => {
+    const s = longRegister((x) => { x.limits.managerFloorH = 6; x.limits.salariedFlexH = 2; });
     const out = buildWeek(fixture({ structure: s, specs: gmOnly, days: [day(MON, {}, s)] }));
     expectClean(out);
-    expect(floorQ(out, "u-gm")).toBe(24);
-    expect(out.problems.filter((p) => p.code === "manager_floor_exceeded")).toEqual([]);
+    const flex = out.shifts.filter((x) => x.userId === "u-gm").flatMap((x) => x.segments).filter((g) => g.reasonKey === SALARIED_FLEX_REASON).reduce((n, g) => n + g.endQ - g.startQ, 0);
+    expect(flex).toBe(8);
+    expect(floorQ(out, "u-gm") - flex).toBeLessThanOrEqual(24);
+    expect(out.problems.filter((p) => p.code === "manager_floor_exceeded" || p.code === "salaried_over_flex")).toEqual([]);
   });
 
   it("budget 0: a GM who may stay to the close takes 2:00–3:00 PM at zero hourly cost — no gap, no hourly hour (an opens-only GM cannot: chunk B P1-1 above)", () => {
@@ -768,5 +782,100 @@ describe("CC chunk D rulings 1 + 2: a salaried manager STAYS LONGER — a zero-h
     expect(strip.hours.hourlyHours).toBe(0);
     expect(strip.money).toMatchObject({ hourlyCostCents: 0, salariedFixedCents: 150_000 });
     expect(strip.hours.managerFloorHours).toBe(floorQ(out, "u-gm") / 4);
+  });
+});
+
+describe("Juan 2026-10-16 (chunk H): the salaried week and its flex (decisions 4 + 5), KH-as-MoD at 19:00 (6), the catering manager (8)", () => {
+  const weekQ = (out: GeneratorOutput, userId: string) => out.shifts.filter((x) => x.userId === userId).reduce((n, x) => n + x.endQ - x.startQ, 0);
+  const flexQ = (out: GeneratorOutput, userId: string) => out.shifts.filter((x) => x.userId === userId)
+    .reduce((n, x) => n + x.segments.filter((g) => g.reasonKey === SALARIED_FLEX_REASON).reduce((m, g) => m + g.endQ - g.startQ, 0), 0);
+
+  it("decision 4: the BASE plan never takes a salaried manager past 40 h — a GM available all week gets five 8 h days, the rest named", () => {
+    const s = onePosition((x) => { x.limits.gmMinimumH = 8; x.limits.maxShiftH = 10.5; x.shopDay = { ...x.shopDay, prepStartQ: 28, outEarliestQ: 60, outLatestQ: 64 }; });
+    const specs: PersonSpec[] = [{ id: "u-e", role: "employee" }, { id: "u-gm", role: "gm", leader: "mix", cover: [I.$REG] }];
+    const out = buildWeek(fixture({ structure: s, specs, days: DATES.map((d) => day(d, { scheduledOutQ: 60 }, s)) }));
+    expectClean(out);
+    expect(weekQ(out, "u-gm") - flexQ(out, "u-gm")).toBeLessThanOrEqual(160);
+    expect(out.shifts.filter((x) => x.userId === "u-gm" && x.segments.some((g) => g.reasonKey !== SALARIED_FLEX_REASON))).toHaveLength(5);
+    const skipped = out.notes.filter((n) => n.code === "salaried_block_skipped" && n.userId === "u-gm");
+    expect(skipped.map((n) => [n.date, n.params.reason])).toEqual([[SAT, "week_target"], [SUN, "week_target"]]);
+    expect(out.problems.filter((p) => p.code === "salaried_base_over_target" || p.code === "salaried_over_flex")).toEqual([]);
+  });
+
+  it("decisions 4 + 5: staying longer draws from the FLEX pool — every such quarter is marked, never past limits.salariedFlexH", () => {
+    const longRegister = (over: (s: ScheduleStructure) => void = () => {}) => onePosition((s) => {
+      s.shopDay = { prepStartQ: 40, prepDishArrivalQ: 40, serviceStartQ: 40, serviceCloseQ: 84, outEarliestQ: 84, outLatestQ: 88 };
+      s.positions[I.$REG] = { ...s.positions[I.$REG]!, openQ: 40, trimQ: 84, closeQ: 84 };
+      for (const t of ["slow", "normal", "busy", "weekend"] as const) {
+        s.crews[t].prepUntilQ = 40;
+        s.crews[t].waves = { setup: { heads: 1, atQ: 40 }, service: { heads: 0 }, rush: { heads: 0, atQ: 48 } };
+      }
+      over(s);
+    });
+    const gmOnly: PersonSpec[] = [{ id: "u-gm", role: "gm", leader: "mix", cover: [I.$REG] }];
+    const out = buildWeek(fixture({ structure: longRegister(), specs: gmOnly, days: [day(MON, {}, longRegister())] }));
+    expectClean(out);
+    // 16 q of base (the 4 h block, relabelled within the floor) + 26 q of flex: the cap (42 q) binds before the 40 q flex pool.
+    expect([weekQ(out, "u-gm"), flexQ(out, "u-gm")]).toEqual([42, 26]);
+    const two = longRegister((x) => { x.limits.salariedFlexH = 2; });
+    const capped = buildWeek(fixture({ structure: two, specs: gmOnly, days: [day(MON, {}, two)] }));
+    expectClean(capped);
+    expect(flexQ(capped, "u-gm")).toBe(8);
+    expect(weekQ(capped, "u-gm")).toBe(24);
+    const none = longRegister((x) => { x.limits.salariedFlexH = 0; });
+    const zero = buildWeek(fixture({ structure: none, specs: gmOnly, days: [day(MON, {}, none)] }));
+    expectClean(zero);
+    expect(flexQ(zero, "u-gm")).toBe(0);
+  });
+
+  it("decision 6: a Key Holder is the manager on duty from 19:00 to close by default; before 19:00 an SL+ is still required", () => {
+    const s = structure((x) => { x.leadership.modRequired = true; });
+    expect(s.leadership.keyHolderModAfterQ).toBe(76);
+    const specs: PersonSpec[] = [
+      { id: "u-kh", role: "key_holder", leader: "closes", window: { fromQ: 60, toQ: 84 } },
+      { id: "u-sl", role: "shift_lead", leader: "opens", window: { fromQ: 28, toQ: 76 } },
+    ];
+    const out = buildWeek(fixture({ structure: s, specs, days: [day(MON, {}, s)] }));
+    expectClean(out);
+    const modGaps = out.gaps.filter((g) => g.code === "mod_missing" && g.date === MON);
+    for (const g of modGaps) expect(g.toQ <= 76 || g.fromQ >= out.context.days[MON]!.scheduledOutQ).toBe(true);
+    // With the setting OFF (null) the KH never counts: the evening is a gap.
+    const off = structure((x) => { x.leadership.modRequired = true; x.leadership.keyHolderModAfterQ = null; });
+    const offOut = buildWeek(fixture({ structure: off, specs, days: [day(MON, {}, off)] }));
+    expectClean(offOut);
+    expect(offOut.gaps.some((g) => g.code === "mod_missing" && g.date === MON && g.toQ > 76)).toBe(true);
+  });
+
+  describe("decision 8: the catering manager", () => {
+    const s = onePosition((x) => { x.limits.gmMinimumH = 4; });
+    const cat: PersonSpec = { id: "u-cat", role: "catering_mgr", leader: "mix" };
+    const pin = (date: string, startQ: number, endQ: number): Pin => ({ id: `pin-${date}`, date, userId: "u-cat", startQ, endQ, positions: [], kind: "added" });
+
+    it("on the roster but NEVER generated: no pin → no shift; a pin → exactly the pinned shift", () => {
+      const out = buildWeek(fixture({ structure: s, specs: [{ id: "u-e", role: "employee" }, cat], days: oneDay(s) }));
+      expectClean(out);
+      expect(out.shifts.filter((x) => x.userId === "u-cat")).toEqual([]);
+      const pinned = buildWeek(fixture({ structure: s, specs: [{ id: "u-e", role: "employee" }, cat], days: oneDay(s), pins: [pin(MON, 40, 60)] }));
+      expectClean(pinned);
+      expect(pinned.shifts.filter((x) => x.userId === "u-cat").map((x) => [x.startQ, x.endQ, x.pinned])).toEqual([[40, 60, true]]);
+      // Nobody else on the roster: never a station primary — but the last-resort cover outside catering takes the Register.
+      const alone = buildWeek(fixture({ structure: s, specs: [cat], days: oneDay(s), pins: [pin(MON, 40, 60)] }));
+      expectClean(alone);
+      const c = alone.shifts.find((x) => x.userId === "u-cat")!;
+      const cover = c.segments.filter((g) => g.positionId === I.$REG);
+      expect(cover.length).toBeGreaterThan(0);
+      for (const g of cover) expect(g).toMatchObject({ lastResort: true, reasonKey: CATERING_MANAGER_COVER });
+      const keys = Object.values(alone.reasons).flatMap((r) => r.segments.flat().map((x) => x.key));
+      expect(keys).toContain("catering_manager_cover");
+    });
+
+    it("never inside a booked catering window (from the booked-catering input)", () => {
+      // An event at 15:00 → its window 11:30–15:00 covers the whole Register need (11:00–15:00 is 44–60; window 46–60).
+      const days = [day(MON, { scheduledOutQ: 60, catering: [{ id: "ev-1", headcount: 10, eventQ: 60 }] }, s)];
+      const out = buildWeek(fixture({ structure: s, specs: [cat], days, pins: [pin(MON, 40, 60)] }));
+      expectClean(out);
+      const c = out.shifts.find((x) => x.userId === "u-cat")!;
+      for (const g of c.segments.filter((x) => x.positionId === I.$REG)) expect(g.endQ <= 46).toBe(true);
+    });
   });
 });

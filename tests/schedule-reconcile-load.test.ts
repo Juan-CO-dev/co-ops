@@ -130,14 +130,14 @@ describe("Astra chunk G review — the loader passes its clock and counts the in
   it("an inactive 7shifts user assigned at the shop is not listed but counted; an open punch now is on shift, a later shift upcoming", async () => {
     const s = shop((t) => {
       sevenTables(t);
-      t.sevenshifts_user_assignments.push({ id: "as3", user_id: 703, location_id: 9001, active: true });
-      t.sevenshifts_users.push({ id: 703, first_name: "Old", last_name: "Timer", preferred_first_name: null, employee_id: "E703", active: false });
+      t.sevenshifts_user_assignments!.push({ id: "as3", user_id: 703, location_id: 9001, active: true });
+      t.sevenshifts_users!.push({ id: 703, first_name: "Old", last_name: "Timer", preferred_first_name: null, employee_id: "E703", active: false });
       // Wed Oct 28, published 11:00–15:00 and 16:00–20:00; clocked in 10:55, still open at noon ET (NOW).
-      t.sevenshifts_shifts.push(
+      t.sevenshifts_shifts!.push(
         { id: 3, user_id: 701, location_id: 9001, start_at: at("2026-10-28", "11:00"), end_at: at("2026-10-28", "15:00"), draft: false, deleted: false },
         { id: 4, user_id: 701, location_id: 9001, start_at: at("2026-10-28", "16:00"), end_at: at("2026-10-28", "20:00"), draft: false, deleted: false },
       );
-      t.toast_time_entries.push({ location_id: A, time_entry_guid: "e6", business_date: "2026-10-28", employee_guid: "tg-kai", employee_first_name: "Kai", user_id: KH, in_at: at("2026-10-28", "10:55"), out_at: null, hours: null, deleted: false });
+      t.toast_time_entries!.push({ location_id: A, time_entry_guid: "e6", business_date: "2026-10-28", employee_guid: "tg-kai", employee_first_name: "Kai", user_id: KH, in_at: at("2026-10-28", "10:55"), out_at: null, hours: null, deleted: false });
     });
     const page = await loadReconciliation(s.deps, { actor: gm, locationId: A }, READY);
     expect(page.view.sevenUnlinked.map((u) => u.sevenUserId)).toEqual(["702"]);

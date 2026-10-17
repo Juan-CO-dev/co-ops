@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.5. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.6. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -56,7 +56,7 @@
       "cause": "structure",
       "fromQ": 28,
       "proven": true,
-      "toQ": 83
+      "toQ": 76
      },
      "q": 28,
      "severity": "gap"
@@ -285,7 +285,7 @@
    "date": "2026-10-26",
    "fromQ": 28,
    "positionId": null,
-   "toQ": 83
+   "toQ": 76
   }
  ],
  "notes": [

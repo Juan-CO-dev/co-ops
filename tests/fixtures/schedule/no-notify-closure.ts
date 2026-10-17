@@ -12,7 +12,12 @@ import { dirname, join, normalize } from "node:path";
 
 export type Reader = (path: string) => string | null;
 
-export const diskReader: Reader = (p) => (existsSync(p) && statSync(p).isFile() ? readFileSync(p, "utf8") : null);
+const cache = new Map<string, string | null>();
+/** The real tree, read once per path (the mutation tests walk the closure many times). */
+export const diskReader: Reader = (p) => {
+  if (!cache.has(p)) cache.set(p, existsSync(p) && statSync(p).isFile() ? readFileSync(p, "utf8") : null);
+  return cache.get(p)!;
+};
 
 export function listFiles(root: string, ext = /\.(ts|tsx)$/): string[] {
   if (!existsSync(root)) return [];

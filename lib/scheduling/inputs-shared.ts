@@ -35,8 +35,15 @@ export const sqlStructureVersion = (id: string): string | null => (id === STRUCT
 export const tsStructureVersion = (id: string | null): string => id ?? STRUCTURE_DEFAULTS_ID;
 
 export interface ScheduleShopSettings { enabled: boolean; estimatedHourlyCents: number | null; estimatedSalariedWeeklyCents: number | null; agmAccess: "read" | "edit" }
-/** No row = OFF, money blank (R2), AGM read-only (R1). */
-export const DEFAULT_SCHEDULE_SHOP_SETTINGS: ScheduleShopSettings = Object.freeze({ enabled: false, estimatedHourlyCents: null, estimatedSalariedWeeklyCents: null, agmAccess: "read" });
+/**
+ * Juan 2026-10-16 (decision 2): every hourly employee is at the DC minimum wage, so the shop's hourly estimate starts at
+ * $18.40/h (both shops) — the DC rate since Jul 1, 2026; DOES adjusts it every July 1 (the settings card says so, dated).
+ * The MoO may edit it; 7shifts wages, once synced, override it per person. The salaried estimate stays BLANK (R2).
+ */
+export const DC_MINIMUM_WAGE_CENTS = 1840;
+export const DC_MINIMUM_WAGE_SINCE = "2026-07-01";
+/** No row = OFF, the hourly estimate at the DC minimum wage (decision 2), salaried blank (R2), AGM read-only (R1). */
+export const DEFAULT_SCHEDULE_SHOP_SETTINGS: ScheduleShopSettings = Object.freeze({ enabled: false, estimatedHourlyCents: DC_MINIMUM_WAGE_CENTS, estimatedSalariedWeeklyCents: null, agmAccess: "read" });
 
 export interface MemberRow { userId: string; name: string; role: RoleCode; memberSince: string | null }
 export interface DayTypeRow { id: string; date: string; dayType: DayTypeOverride; createdAt: string }

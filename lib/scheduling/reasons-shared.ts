@@ -21,6 +21,10 @@ export const REASON_KEYS = [
   "salaried_extension",
   // CC chunk D design ruling: a fill the budget search found within what is left of the budget (it is never a budget gap).
   "budget_fill",
+  // Juan 2026-10-16 (decisions 4 + 5): a zero-hourly-cost fill on a salaried manager's FLEX time (keeps hourly labor down).
+  "salaried_flex",
+  // Juan 2026-10-16 (decision 8): the catering manager covers a station as a last resort, outside booked catering.
+  "catering_manager_cover",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

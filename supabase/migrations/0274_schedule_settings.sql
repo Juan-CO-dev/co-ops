@@ -4,11 +4,16 @@
 --   "Migrations"), r2 (P2-7 date-scoped budgets, O1/O2/O6 settings), r3 (per-DATE budget precedence), CC chunk B
 --   ruling 3 + chunk C ruling 2 (limits.maxShiftH, default 10.5 h, inside the structure jsonb — no column).
 --   CC chunk D ruling 1 (limits.salariedStayLonger, boolean, default ON in the TS defaults — also inside the jsonb).
+--   Juan 2026-10-16 (chunk H): limits.salariedTargetWeekH (quarter-hours 0-80, default 40) and limits.salariedFlexH
+--   (quarter-hours 0-10, default 10) inside the structure jsonb (decision 4); the hourly estimate's column default 1840
+--   (decision 2). The KH-as-MoD 19:00 default and the roster exclusions are TS defaults inside the jsonb (no SQL change).
 --
 -- WHAT (every table deny-all RLS, SELECT-only for service_role — the definer writers below are the ONLY writers,
 --   the accepted Phase 1 posture of 0269/0270):
 --   1. schedule_shop_settings: one row per shop — the switch `enabled` (OFF by default; no row = off), the wage
---      estimates (NULL by default = money blank until the MoO sets them, R2) and `agm_access` ('read' default, R1).
+--      estimates (the hourly one defaults to the DC minimum wage, 1840 cents = $18.40/h since Jul 1, 2026 — Juan
+--      2026-10-16, decision 2, MoO-editable, re-checked every July 1; the salaried one NULL = blank until the MoO sets
+--      it, R2) and `agm_access` ('read' default, R1).
 --   2. schedule_structures: the schedule structure, one VERSION per row (append-only); the live structure is the
 --      newest row per shop. The jsonb is CHECKed by valid_schedule_structure, the SQL twin of the TS
 --      validScheduleStructure (lib/scheduling/structure-shared.ts) — BOTH pinned against the one shared case file
@@ -252,7 +257,7 @@ begin
   v_lim := p -> 'limits';
   if not public.schedule_json_exact_keys(v_lim, array['minimumShiftQ', 'flexMinimumQ', 'flexUsesPer2w', 'flexMaxQ', 'overtimeH', 'managerFloorH',
                                                        'gmMinimumH', 'agmMinimumH', 'closingMinutesOverride', 'segmentMinQ', 'rushShiftMaxQ', 'maxShiftH',
-                                                       'salariedStayLonger']) then
+                                                       'salariedStayLonger', 'salariedTargetWeekH', 'salariedFlexH']) then
     return false;
   end if;
   if not public.schedule_json_int(v_lim -> 'minimumShiftQ', 1, 96) or not public.schedule_json_int(v_lim -> 'flexMinimumQ', 1, 96)
@@ -262,7 +267,9 @@ begin
      or (jsonb_typeof(v_lim -> 'closingMinutesOverride') <> 'null' and not public.schedule_json_int(v_lim -> 'closingMinutesOverride', 0, 240))
      or not public.schedule_json_int(v_lim -> 'segmentMinQ', 1, 16) or not public.schedule_json_int(v_lim -> 'rushShiftMaxQ', 0, 16)
      -- CC chunk D ruling 1: salaried managers may stay longer (default ON), a boolean
-     or jsonb_typeof(v_lim -> 'salariedStayLonger') is distinct from 'boolean' then
+     or jsonb_typeof(v_lim -> 'salariedStayLonger') is distinct from 'boolean'
+     -- Juan 2026-10-16 (decision 4): the salaried week target (quarter-hours 0-80) and its flex (quarter-hours 0-10)
+     or not public.schedule_json_qhours(v_lim -> 'salariedTargetWeekH', 0, 80) or not public.schedule_json_qhours(v_lim -> 'salariedFlexH', 0, 10) then
     return false;
   end if;
   if (v_lim ->> 'flexMinimumQ')::numeric > (v_lim ->> 'minimumShiftQ')::numeric
@@ -333,7 +340,7 @@ end $$;
 create table public.schedule_shop_settings (
   location_id                     uuid        primary key references public.locations(id),
   enabled                         boolean     not null default false,
-  estimated_hourly_cents          integer,
+  estimated_hourly_cents          integer default 1840,
   estimated_salaried_weekly_cents integer,
   agm_access                      text        not null default 'read',
   updated_by                      uuid        not null references public.users(id),
@@ -344,7 +351,7 @@ create table public.schedule_shop_settings (
   constraint schedule_shop_settings_agm_access check (agm_access in ('read', 'edit'))
 );
 comment on table public.schedule_shop_settings is
-  '0274: one row per shop — the scheduling switch (OFF by default; no row = off), the wage estimates (NULL = money blank, R2) and agm_access (read default, R1). Written only by save_schedule_shop_settings (MoO+). Deny-all RLS.';
+  '0274: one row per shop — the scheduling switch (OFF by default; no row = off), the wage estimates (hourly default 1840 = the DC minimum wage since 2026-07-01, decision 2; salaried NULL = blank, R2) and agm_access (read default, R1). Written only by save_schedule_shop_settings (MoO+). Deny-all RLS.';
 
 create table public.schedule_structures (
   id          uuid        primary key default gen_random_uuid(),

@@ -31,7 +31,22 @@ describe("the shared structure case file against validScheduleStructure", () => 
     // the default is 10.5 h (pending Juan) — 10 h was below the v17 line day (10:30 → 20:45 = 10.25 h).
     expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.maxShiftH).toBe(10.5);
     expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.minimumShiftQ).toBe(16);
-    expect(SCHEDULE_STRUCTURE_DEFAULTS.roster.excludedRoles).toEqual(["cgs", "social_media_mgr", "catering_mgr", "prep_mgr"]);
+    // Juan 2026-10-16 (decision 8): no prep manager role is in use and the catering manager is ON the roster by default.
+    expect(SCHEDULE_STRUCTURE_DEFAULTS.roster.excludedRoles).toEqual(["cgs", "social_media_mgr"]);
+  });
+
+  it("Juan 2026-10-16: the salaried week (decision 4), KH-as-MoD from 7:00 PM (decision 6)", () => {
+    // 40 h total target (station + MoD) and a 10 h flex used ONLY by zero-hourly-cost fills; the 32 h station limit stays.
+    expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.salariedTargetWeekH).toBe(40);
+    expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.salariedFlexH).toBe(10);
+    expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.managerFloorH).toBe(32);
+    expect(SCHEDULE_STRUCTURE_DEFAULTS.limits.salariedStayLonger).toBe(true);
+    // A Key Holder counts as the manager on duty from the 7:00 PM quarter to close, both shops.
+    expect(SCHEDULE_STRUCTURE_DEFAULTS.leadership.keyHolderModAfterQ).toBe(76);
+    for (const n of ["salaried flex 0 h", "salaried flex 10 h", "salaried flex 10.25 h", "salaried flex negative", "salaried flex off the grid",
+      "salaried flex missing", "salaried week target 80.25 h", "salaried week target missing", "salaried week target sent as a string"]) {
+      expect(cases.map((c) => c.name)).toContain(n);
+    }
   });
 
   it("every rule in the plan has a valid AND an invalid row", () => {

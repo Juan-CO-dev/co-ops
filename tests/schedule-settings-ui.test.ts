@@ -73,10 +73,17 @@ describe("the loader: permissions first, sections by role", () => {
     if (ae.state !== "ready") throw new Error("not ready");
     expect(ae.perms).toMatchObject({ structure: false, people: true, presence: true });
   });
-  it("Include on the schedule is offered only for a role excluded by default — the prep manager — never for the CGS", async () => {
+  it("Include on the schedule is offered only for a role the structure excludes — none by default now (Juan 2026-10-16, decision 8) — never for the CGS", async () => {
     const g = await loadScheduleSettings(shop().deps, { actor: gm, locationId: A });
     if (g.state !== "ready") throw new Error("not ready");
-    expect(g.members.find((m) => m.userId === PREP_MGR)!.includeOffered).toBe(true);
+    // Decision 8: the prep / catering managers are ON the roster by default — nothing to include.
+    expect(g.members.find((m) => m.userId === PREP_MGR)!.includeOffered).toBe(false);
+    // A shop that excludes the role again offers Include for it.
+    const excluded = structuredClone(g.structure!.value);
+    excluded.roster.excludedRoles = [...excluded.roster.excludedRoles, "prep_mgr"];
+    const x = await loadScheduleSettings(shop((t) => { t.schedule_structures!.push({ id: "sv-x", location_id: A, structure: excluded, created_at: "2026-10-01T00:00:00Z" }); }).deps, { actor: gm, locationId: A });
+    if (x.state !== "ready") throw new Error("not ready");
+    expect(x.members.find((m) => m.userId === PREP_MGR)!.includeOffered).toBe(true);
     expect(g.members.some((m) => m.userId === CGS)).toBe(false);
     expect(g.members.some((m) => m.userId === SMM)).toBe(false);
     expect(g.members.find((m) => m.userId === STAFF[0])!.includeOffered).toBe(false);
@@ -149,7 +156,8 @@ describe("staff settings, presence, Add to schedule", () => {
     const buttons = withCover.match(/<button[^>]*data-cover-act="(up|down|remove)"[^>]*>/g) ?? [];
     expect(buttons.length).toBe(6);
     for (const b of buttons) { expect(b).toContain("min-h-[44px]"); expect(b).toContain("min-w-[44px]"); expect(b).toContain("items-center"); }
-    expect(text(render(v, "en", { initialPerson: PREP_MGR }))).toContain(en["schedule.settings.staff.include"]);
+    const offered = { ...v, members: v.members.map((m) => (m.userId === PREP_MGR ? { ...m, includeOffered: true } : m)) };
+    expect(text(render(offered, "en", { initialPerson: PREP_MGR }))).toContain(en["schedule.settings.staff.include"]);
     const { personBody } = await import("@/lib/scheduling/settings-view-shared");
     const { SCHEDULE_ACTIONS } = await import("@/lib/scheduling/route-shapes-shared");
     expect(Object.keys(personBody(A, emptySettings(KH))).sort()).toEqual([...SCHEDULE_ACTIONS.person!].sort());
@@ -249,5 +257,25 @@ describe("Astra chunk F P2-5: collapsing a section HIDES it and never unmounts i
     const src = readFileSync("components/schedule/ScheduleSettings.tsx", "utf8");
     expect(src).not.toMatch(/\{isOpen \? <div/);
     for (const id of ["structure", "staff", "presence", "shop", "tunables", "prep"]) expect(src).toContain(`<Section id="${id}"`);
+  });
+});
+
+describe("Juan 2026-10-16 (decision 2): the hourly estimate defaults to the DC minimum wage, $18.40/h, both shops", () => {
+  it("no settings row yet → the MoO's card opens on $18.40 (editable), with the dated DC note in en + es; salaried stays blank", async () => {
+    const { DEFAULT_SCHEDULE_SHOP_SETTINGS, DC_MINIMUM_WAGE_CENTS, DC_MINIMUM_WAGE_SINCE } = await import("@/lib/scheduling/inputs-shared");
+    expect(DC_MINIMUM_WAGE_CENTS).toBe(1840);
+    expect(DC_MINIMUM_WAGE_SINCE).toBe("2026-07-01");
+    expect(DEFAULT_SCHEDULE_SHOP_SETTINGS).toEqual({ enabled: false, estimatedHourlyCents: 1840, estimatedSalariedWeeklyCents: null, agmAccess: "read" });
+    const m = await loadScheduleSettings(shop((t) => { t.schedule_shop_settings = []; }).deps, { actor: moo, locationId: A });
+    if (m.state !== "ready") throw new Error("x");
+    expect(m.shop).toEqual({ enabled: false, estimatedHourlyCents: 1840, estimatedSalariedWeeklyCents: null, agmAccess: "read" });
+    const h = render(m);
+    expect(h).toMatch(/name="estimatedHourly"[^>]*value="18.40"|value="18.40"[^>]*name="estimatedHourly"/);
+    expect(h).toMatch(/name="estimatedSalaried"[^>]*value=""|value=""[^>]*name="estimatedSalaried"/);
+    expect(text(h)).toContain(en["schedule.settings.shop.dc_minimum_wage_note"]);
+    expect(en["schedule.settings.shop.dc_minimum_wage_note"]).toBe("DC minimum wage $18.40 since Jul 1, 2026; check every July 1.");
+    expect(es["schedule.settings.shop.dc_minimum_wage_note"]).toMatch(/18\.40.*1 de julio/);
+    // 0274 seeds the same value as the column default.
+    expect(readFileSync("supabase/migrations/0274_schedule_settings.sql", "utf8")).toMatch(/estimated_hourly_cents\s+integer default 1840/);
   });
 });

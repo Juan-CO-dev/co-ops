@@ -19,7 +19,7 @@ export const PROD_PROJECT_REF = "bgcvurheqzylyfehqgzh";
 export const SEED_WEEKS = 8;
 export const CREW_PER_SHOP = 15;
 /** The sim-only wage estimates (prod starts BLANK, R2). */
-export const SIM_ESTIMATED_HOURLY_CENTS = 1800;
+export const SIM_ESTIMATED_HOURLY_CENTS = 1840; // the DC minimum wage default (Juan 2026-10-16, decision 2)
 export const SIM_ESTIMATED_SALARIED_WEEKLY_CENTS = 120000;
 
 export interface SeedArgs { apply: boolean; captures: boolean; today: string | null }

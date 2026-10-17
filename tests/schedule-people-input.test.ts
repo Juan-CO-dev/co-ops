@@ -105,16 +105,23 @@ describe("toSchedPeople: the roster the generator sees", () => {
     wages: { byUserCents: { "u-ben": 2100 }, estimateHourlyCents: 1900 },
   });
 
-  it("drops excluded roles and levels < 2 unless rosterInclude (never cgs / SMM); MoO / Owner are presence-only; canonical order", () => {
+  it("Juan 2026-10-16 (decision 8): the prep and catering managers are ON the roster by default; levels < 2 dropped (never cgs / SMM); MoO / Owner presence-only; canonical order", () => {
     const { people, notes } = base();
-    expect(people.map((p) => p.userId)).toEqual(["u-alex", "u-ben", "u-dani", "u-pete", "u-prep", "u-tess"]);
+    expect(people.map((p) => p.userId)).toEqual(["u-alex", "u-ben", "u-cat", "u-dani", "u-pete", "u-prep", "u-tess"]);
     expect(people.find((p) => p.userId === "u-pete")).toMatchObject({ presenceOnly: true, salaried: false, wageCents: null });
-    expect(people.find((p) => p.userId === "u-prep")).toMatchObject({ rosterIncluded: true, workType: "boh" });
+    // The catering manager: on the roster, neither salaried nor presence-only (their own shifts come from pins only — the generator's rule).
+    expect(people.find((p) => p.userId === "u-cat")).toMatchObject({ rosterIncluded: false, salaried: false, presenceOnly: false });
+    expect(people.find((p) => p.userId === "u-prep")).toMatchObject({ rosterIncluded: false, workType: "boh" });
     expect(people.find((p) => p.userId === "u-tess")?.activeMember).toBe(false);
-    expect(notes).toEqual([
-      { code: "cover_position_retired", userId: "u-dani", positionId: "retired-position" },
-      { code: "excluded_role_included", userId: "u-prep", positionId: null },
-    ]);
+    expect(notes).toEqual([{ code: "cover_position_retired", userId: "u-dani", positionId: "retired-position" }]);
+  });
+
+  it("a shop that excludes a role again drops it unless rosterInclude (the setting still works)", () => {
+    const x = { ...S, roster: { excludedRoles: ["cgs", "social_media_mgr", "catering_mgr", "prep_mgr"] } } as ScheduleStructure;
+    const { people, notes } = toSchedPeople({ members, settings, dates, structure: x, shopDay: SHOP, skills: null, patterns: {}, wages: { byUserCents: {}, estimateHourlyCents: 1900 } });
+    expect(people.map((p) => p.userId)).toEqual(["u-alex", "u-ben", "u-dani", "u-pete", "u-prep", "u-tess"]);
+    expect(people.find((p) => p.userId === "u-prep")).toMatchObject({ rosterIncluded: true, workType: "boh" });
+    expect(notes).toContainEqual({ code: "excluded_role_included", userId: "u-prep", positionId: null });
   });
 
   it("role defaults apply and person settings override; retired cover positions are dropped (de-duplicated); salaried = gm / agm; wage source", () => {

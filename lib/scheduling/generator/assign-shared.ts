@@ -22,7 +22,8 @@ import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../peop
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
 import type { FillPlan, FillStep } from "../rules-shared";
 import {
-  MOD, availableOn, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition, isManagerRole, leaderSettingAllows, modCountsAt, shiftExtendsOver, zeroCostCovers,
+  CATERING_MANAGER_COVER, MOD, SALARIED_FLEX_REASON, availableOn, baseFloorRoomQ, cateringWindows, splitSalariedRelabel, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition,
+  flexLeftQ, isFlexSegment, isManagerRole, leaderSettingAllows, modCountsAt, neverGenerated, shiftExtendsOver, zeroCostCovers,
   type DayRecord, type RuleProblem, type Segment, type Shift,
 } from "../rules-shared";
 import { isLineRole, isSecondary, positionLimit, primaryOf, type ScheduleStructure } from "../structure-shared";
@@ -106,10 +107,27 @@ export function weekQuarters(week: WeekState, userId: string): number {
   return n;
 }
 
+/** BASE station quarters of the week (flex quarters aside — Juan 2026-10-16, decision 4). */
 export function floorQuarters(week: WeekState, userId: string): number {
   let n = 0;
-  for (const s of allShifts(week)) if (s.userId === userId) for (const g of s.segments) if (g.positionId !== MOD) n += g.endQ - g.startQ;
+  for (const s of allShifts(week)) if (s.userId === userId) for (const g of s.segments) if (g.positionId !== MOD && !isFlexSegment(g)) n += g.endQ - g.startQ;
   return n;
+}
+
+/** BASE quarters of the week (station + MoD, flex quarters aside) — the salaried week target's left-hand side (decision 4). */
+export function baseWeekQuarters(week: WeekState, userId: string): number {
+  let n = 0;
+  for (const s of allShifts(week)) {
+    if (s.userId !== userId) continue;
+    n += s.endQ - s.startQ;
+    for (const g of s.segments) if (isFlexSegment(g)) n -= g.endQ - g.startQ;
+  }
+  return n;
+}
+
+/** The flex quarters a salaried manager has left this week (decision 4: every zero-hourly-cost fill draws from them). */
+export function flexLeft(b: BuildCtx, week: WeekState, userId: string): number {
+  return flexLeftQ({ shifts: allShifts(week) }, userId, b.structure);
 }
 
 const isHourly = (p: RulePerson) => !p.salaried && !p.presenceOnly;
@@ -308,7 +326,7 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
   const out: Candidate[] = [];
   for (const userId of Object.keys(b.people).sort(cmp)) {
     const p = b.people[userId]!;
-    if (!isHourly(p) || !p.activeMember || p.untouchableDates.includes(o.date)) continue;
+    if (!isHourly(p) || neverGenerated(p) || !p.activeMember || p.untouchableDates.includes(o.date)) continue;
     const own = shifts.find((x) => x.userId === userId) ?? null;
     if (own && (own.pinned || !extendsOwn(own, o.plan))) continue;
     if (o.extensionOnly && !own) continue;
@@ -453,7 +471,8 @@ export function fillRun(
   if (budgetBlocked) {
     // Astra chunk B P1-1: a salaried manager's MoD block costs no hourly money — take it before the budget stops the fill.
     // (A salaried manager STAYING LONGER is taken later, in takeZeroCostFills, once the hourly fill has settled — CC chunk D ruling 2.)
-    if (opts.allowCover && !t.closingLead && carveZeroCostCovers(b, week, date, positionId, fromQ, toQ, { extend: false })) return "covered";
+    // Juan 2026-10-16 (decision 4): the base plan's cover (within the floor limit) first, then a FLEX carve.
+    if (opts.allowCover && !t.closingLead && (coverWithManager(b, week, date, positionId, fromQ, toQ) || carveZeroCostCovers(b, week, date, positionId, fromQ, toQ, { extend: false }))) return "covered";
     // Astra chunk B ruling (the budget search): extending an ESSENTIAL shift (it works the closing window) costs no
     // non-essential hour either — the budget certificate refuses while such an extension is legal, so take it.
     if (extendEssentialShift(b, week, date, positionId, fromQ, toQ)) return "placed";
@@ -546,12 +565,14 @@ export function carveZeroCostCovers(b: BuildCtx, week: WeekState, date: string, 
       const lastResort = rank < 0;
       const r = c.extend ? reason("salaried_extension", { positionId, fromQ: c.fromQ, toQ: c.toQ, userId: c.userId, lastResort })
         : lastResort ? reason("manager_cover_last_resort", { positionId, fromQ: c.fromQ, toQ: c.toQ }) : reason("manager_cover", { positionId, fromQ: c.fromQ, toQ: c.toQ, rank: rank + 1 });
+      // Juan 2026-10-16 (decisions 4 + 5): a zero-hourly-cost fill is FLEX time — the segment says so, and so does its reason.
+      const flexWhy = reason("salaried_flex", { positionId, fromQ: c.fromQ, toQ: c.toQ, userId: c.userId });
       if (c.extend) {
         // CC chunk D rulings 1 + 2: the manager STAYS LONGER — the shift grows by a segment on the position.
         const ok = guarded(b, week, date, (next) => {
           const sh = next.find((x) => x.userId === c.userId && (c.extend === "after" ? x.endQ === c.fromQ : x.startQ === c.toQ));
           if (!sh || sh.pinned) return false;
-          const seg: GSegment = { positionId, startQ: c.fromQ, endQ: c.toQ, reasons: [r], ...(lastResort ? { lastResort: true } : {}) };
+          const seg: GSegment = { positionId, startQ: c.fromQ, endQ: c.toQ, reasons: [r, flexWhy], reasonKey: SALARIED_FLEX_REASON, ...(lastResort ? { lastResort: true } : {}) };
           sh.segments = c.extend === "after" ? [...sh.segments, seg] : [seg, ...sh.segments];
           sh.startQ = Math.min(sh.startQ, c.fromQ);
           sh.endQ = Math.max(sh.endQ, c.toQ);
@@ -568,7 +589,10 @@ export function carveZeroCostCovers(b: BuildCtx, week: WeekState, date: string, 
         for (const g of sh.segments) {
           if (g.positionId !== MOD || g.endQ <= c.fromQ || g.startQ >= c.toQ) { parts.push(g); continue; }
           if (g.startQ < c.fromQ) parts.push({ ...g, endQ: c.fromQ });
-          parts.push({ positionId, startQ: c.fromQ, endQ: c.toQ, reasons: [r], ...(lastResort ? { lastResort: true } : {}) });
+          // Decision 4: the base station room first (unmarked), then FLEX (marked).
+          for (const part of splitSalariedRelabel(c.fromQ, c.toQ, baseFloorRoomQ({ shifts: allShifts(week) }, c.userId, b.structure))) {
+            parts.push({ positionId, startQ: part.startQ, endQ: part.endQ, reasons: part.flex ? [r, flexWhy] : [r], ...(part.flex ? { reasonKey: SALARIED_FLEX_REASON } : {}), ...(lastResort ? { lastResort: true } : {}) });
+          }
           if (c.toQ < g.endQ) parts.push({ ...g, startQ: c.toQ });
         }
         sh.segments = parts;
@@ -724,9 +748,13 @@ export function extendToCap(b: BuildCtx, week: WeekState, date: string, d: { cod
     if (!forward && sh.startQ !== d.toQ) continue;
     const dayQ = shifts.filter((x) => x.userId === sh.userId).reduce((n, x) => n + (x.endQ - x.startQ), 0);
     const room = capQ - dayQ;
-    if (room <= 0 || room >= d.toQ - d.fromQ) continue; // only where the cap binds (a whole extension is the fill's business)
-    const a = forward ? sh.endQ : d.toQ - room;
-    const z = forward ? sh.endQ + room : d.toQ;
+    // Juan 2026-10-16 (decision 5): a salaried manager STAYING LONGER as the manager on duty has no other fill (the MoD lane
+    // fill places hourly managers) — so it is taken whole here, up to the cap and what is left of their FLEX.
+    const salariedMod = p.salaried && d.code === "mod_missing";
+    const take = salariedMod ? Math.min(room, d.toQ - d.fromQ, flexLeft(b, week, sh.userId)) : room;
+    if (room <= 0 || take <= 0 || (!salariedMod && room >= d.toQ - d.fromQ)) continue; // else only where the cap binds (a whole extension is the fill's business)
+    const a = forward ? sh.endQ : d.toQ - take;
+    const z = forward ? sh.endQ + take : d.toQ;
     const spanFrom = Math.min(sh.startQ, a);
     const spanTo = Math.max(sh.endQ, z);
     if (!availableOn(p, date, spanFrom, spanTo) || !leaderSettingAllows(p, s, spanFrom, spanTo)) continue;
@@ -736,8 +764,8 @@ export function extendToCap(b: BuildCtx, week: WeekState, date: string, d: { cod
       else ok = eligibleForPosition(p, pos) && occupancy(shifts, d.positionId!, q) < positionLimit(pos!, q) && (!needsPrimary || occupancy(shifts, primary!, q) > 0);
     }
     if (!ok) continue;
-    // CC chunk D ruling 1: a salaried extension's floor time (a position, not the MoD) counts against the weekly floor limit.
-    if (p.salaried && d.code === "coverage_gap" && (floorQuarters(week, sh.userId) + (z - a)) / 4 > s.limits.managerFloorH) continue;
+    // Juan 2026-10-16 (decision 5): a salaried manager staying longer draws from the FLEX pool (never the base week).
+    if (p.salaried && flexLeft(b, week, sh.userId) < z - a) continue;
     const r = p.salaried
       ? reason("salaried_extension", { positionId: d.positionId ?? MOD, fromQ: a, toQ: z, userId: sh.userId, maxShiftQ: capQ })
       : reason("extended_to_cap", { positionId: d.positionId ?? MOD, fromQ: a, toQ: z, userId: sh.userId, maxShiftQ: capQ });
@@ -746,7 +774,7 @@ export function extendToCap(b: BuildCtx, week: WeekState, date: string, d: { cod
       if (!mine) return false;
       // A manager outside their preferred cover list takes the position only as a last resort (the reason says so).
       const outside = !!d.positionId && isManagerRole(p.role) && !p.coverPositions.includes(d.positionId);
-      const seg: GSegment = { positionId: d.positionId ?? MOD, startQ: a, endQ: z, reasons: [r], ...(outside ? { lastResort: true } : {}) };
+      const seg: GSegment = { positionId: d.positionId ?? MOD, startQ: a, endQ: z, reasons: [r], ...(outside ? { lastResort: true } : {}), ...(p.salaried ? { reasonKey: SALARIED_FLEX_REASON } : {}) };
       mine.segments = forward ? [...mine.segments, seg] : [seg, ...mine.segments];
       mine.startQ = Math.min(mine.startQ, a);
       mine.endQ = Math.max(mine.endQ, z);
@@ -784,7 +812,9 @@ export function applyFill(b: BuildCtx, week: WeekState, date: string, plan: Fill
   return guarded(b, week, date, (next) => {
     for (const st of plan.steps) {
       const r = why(st);
-      const last = label(st.userId, st.positionId) ? { lastResort: true } : {};
+      // Decision 4: a salaried manager's step is a zero-hourly-cost fill — flex time.
+      const salaried = !!b.people[st.userId]?.salaried && st.kind !== "new_block";
+      const last = { ...(label(st.userId, st.positionId) ? { lastResort: true } : {}), ...(salaried && st.kind === "extend" ? { reasonKey: SALARIED_FLEX_REASON } : {}) };
       if (st.kind === "new_block") {
         next.push({ userId: st.userId, date, startQ: st.fromQ, endQ: st.toQ, segments: [{ positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ, reasons: [r], ...last }],
           closingManager: false, flex: false, pinned: false, reasons: [r], origin: "hourly" });
@@ -803,10 +833,14 @@ export function applyFill(b: BuildCtx, week: WeekState, date: string, plan: Fill
         const host = sh.segments.find((g) => g.positionId === st.fromPositionId && g.startQ <= st.fromQ && g.endQ >= st.toQ);
         if (!host) return false;
         const parts: GSegment[] = [];
+        const room = salaried ? baseFloorRoomQ({ shifts: [...allShifts({ built: { ...week.built, [date]: next }, inherited: week.inherited })] }, st.userId, b.structure) : Infinity;
         for (const g of sh.segments) {
           if (g !== host) { parts.push(g); continue; }
           if (g.startQ < st.fromQ) parts.push({ ...g, endQ: st.fromQ });
-          parts.push({ positionId: st.positionId, startQ: st.fromQ, endQ: st.toQ, reasons: [r], ...last });
+          // Decision 4: a salaried relabel takes the base station room first, then FLEX.
+          for (const part of splitSalariedRelabel(st.fromQ, st.toQ, room)) {
+            parts.push({ positionId: st.positionId, startQ: part.startQ, endQ: part.endQ, reasons: [r], ...last, ...(part.flex ? { reasonKey: SALARIED_FLEX_REASON } : {}) });
+          }
           if (st.toQ < g.endQ) parts.push({ ...g, startQ: st.toQ });
         }
         sh.segments = parts;
@@ -819,6 +853,57 @@ export function applyFill(b: BuildCtx, week: WeekState, date: string, plan: Fill
     const after = uncoveredTotals(b, date, next);
     return after.total < before.total && after.essential <= before.essential;
   });
+}
+
+/**
+ * Juan 2026-10-16 (decision 8): the CATERING MANAGER as the LAST-RESORT cover of a station — never Prep/Dishwasher, never
+ * a primary planned for them: only the quarters of their own (pinned) shift's MoD time that fall OUTSIDE every booked
+ * catering window (`cateringWindows`, from the booked-catering input), carved onto the position as a last resort with the
+ * reason `catering_manager_cover` (`CATERING_MANAGER_COVER` on the segment). Guarded; kept only when the day's uncovered
+ * total strictly falls. Runs after every other fill, before any gap is declared.
+ */
+export function coverWithCateringManager(b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number): boolean {
+  const day = b.ctx.days[date]!;
+  const pos = b.structure.positions[positionId];
+  if (!pos || pos.role === "prep_dish") return false;
+  const windows = cateringWindows(day);
+  const inWindow = (q: number) => windows.some(([a, z]) => q >= a && q < z);
+  const primary = primaryOf(b.structure, positionId);
+  const needsPrimary = primary !== null && primary !== positionId;
+  for (const sh of [...week.built[date]!].sort(shiftOrder)) {
+    const p = b.people[sh.userId];
+    if (!p || p.role !== "catering_mgr" || !p.activeMember) continue;
+    for (const g of sh.segments) {
+      if (g.positionId !== MOD) continue;
+      const shifts = week.built[date]!;
+      const ok = (q: number) => !inWindow(q) && deficitAt(shifts, day, positionId, q) > 0 && occupancy(shifts, positionId, q) < positionLimit(pos, q)
+        && (!needsPrimary || occupancy(shifts, primary!, q) > 0) && q >= pos.openQ && q < pos.closeQ;
+      let a = Math.max(fromQ, g.startQ);
+      const end = Math.min(toQ, g.endQ);
+      while (a < end && !ok(a)) a++;
+      if (a >= end) continue;
+      let z = a + 1;
+      while (z < end && ok(z)) z++;
+      const r = reason("catering_manager_cover", { positionId, fromQ: a, toQ: z, userId: sh.userId });
+      const before = uncoveredTotals(b, date, shifts);
+      const done = guarded(b, week, date, (next) => {
+        const mine = next.find((x) => x.userId === sh.userId && x.startQ === sh.startQ);
+        if (!mine) return false;
+        const parts: GSegment[] = [];
+        for (const seg of mine.segments) {
+          if (seg.positionId !== MOD || seg.endQ <= a || seg.startQ >= z) { parts.push(seg); continue; }
+          if (seg.startQ < a) parts.push({ ...seg, endQ: a });
+          parts.push({ positionId, startQ: a, endQ: z, reasons: [r], lastResort: true, reasonKey: CATERING_MANAGER_COVER });
+          if (z < seg.endQ) parts.push({ ...seg, startQ: z });
+        }
+        mine.segments = parts;
+        mine.reasons = [...mine.reasons, r];
+        return true;
+      }, (next) => uncoveredTotals(b, date, next).total < before.total);
+      if (done) return true;
+    }
+  }
+  return false;
 }
 
 // ─── Priority enforcement (the mockup's enforcePriority) ─────────────────────

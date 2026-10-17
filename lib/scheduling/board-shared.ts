@@ -13,7 +13,7 @@
 import type { NarrativeLine } from "@/lib/people-narrative";
 import type { DayContext, RuleContext, RulePerson } from "./context-shared";
 import { skillOf, type SkillLookup } from "./people-input-shared";
-import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, modCountsAt, type Shift } from "./rules-shared";
+import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, modCountsAt, salariedWeek, type Shift } from "./rules-shared";
 import { isLineRole, positionIds, positionLimit, type CrewType, type ScheduleStructure } from "./structure-shared";
 import { Q_PER_HOUR } from "./time-shared";
 
@@ -210,6 +210,11 @@ export interface MoneyStripHours {
    */
   essentialHoursOnBudgetedDates: number;
   essentialPastBudgetHours: number | null;
+  /**
+   * Juan 2026-10-16 (decision 4): each salaried manager's week — the BASE hours (station + MoD, flex aside; the target is
+   * 40 h) and the FLEX used by zero-hourly-cost fills ("40 h + X h flex used (keeps hourly labor down)"). Hours only.
+   */
+  salariedWeeks: Array<{ userId: string; baseHours: number; flexHours: number; targetHours: number; flexLimitHours: number }>;
 }
 export interface MoneyStripMoney { hourlyCostCents: number | null; hourlyPct: number | null; salariedFixedCents: number | null; totalPct: number | null }
 /** `notes`: board lines with no $ (shown to every viewer), e.g. "essential hours past budget: X h" (CC chunk C ruling 3). */
@@ -259,12 +264,18 @@ export function moneyStrip(input: MoneyStripInput, opts: { canSeeMoney: boolean 
     }
   }
   const budgetHours = budgetedDates.length ? budgetedDates.reduce((n, d) => n + (ctx.budgetByDate[d] ?? 0), 0) : null;
+  const firstStructure = structureFor(ctx, input.dates[0]!);
+  const salariedWeeks = [...new Set(inWeek.filter((sh) => people[sh.userId]?.salaried).map((sh) => sh.userId))].sort().map((userId) => {
+    const w = salariedWeek({ shifts: inWeek }, userId);
+    return { userId, baseHours: w.baseH, flexHours: w.flexH, targetHours: firstStructure?.limits.salariedTargetWeekH ?? 40, flexLimitHours: firstStructure?.limits.salariedFlexH ?? 10 };
+  });
   const hours: MoneyStripHours = {
     hourlyHours: hourlyQ / 4, hourlyHoursOnBudgetedDates: budgetedQ / 4, budgetHours, unbudgetedDates,
     remainingHours: budgetHours === null ? null : budgetHours - budgetedQ / 4, otRiskCount, flexUsed: 0, flexAvailable: false,
     managerFloorHours: floorQ / 4, hourlySavedBySalaried: savedQ / 4, managerModHours: modQ / 4,
     essentialHoursOnBudgetedDates: essentialQ / 4,
     essentialPastBudgetHours: budgetHours === null ? null : Math.max(0, Math.min(essentialQ / 4, budgetedQ / 4 - budgetHours)),
+    salariedWeeks,
   };
   const notes: NarrativeLine[] = [];
   if (hours.essentialPastBudgetHours !== null && hours.essentialPastBudgetHours > 0) {

@@ -406,7 +406,7 @@ describe("Task 22 — person rows, handles and the reason panel", () => {
     expect(panel).not.toMatch(/wage|1900|19\.00/i);
   });
   it("CC chunk F GO: a fill found inside the budget shows its reason budget_fill on the board", () => {
-    const sel = { date: "2026-11-01", userId: "u-f-finn", startQ: 38 };
+    const sel = { date: "2026-11-01", userId: "u-i-ivy", startQ: 38 }; // p2.6: Ivy (Finn before the 40 h salaried week moved the fills)
     const view = ready({ today: "2026-10-26" }, "F11-budget-week-then-month");
     const h = renderBoard(view, "en", { initialDate: sel.date, initialSelected: sel });
     const panel = h.match(/<section[^>]*data-section="reason"[\s\S]*?<\/section>/)![0];
@@ -616,5 +616,20 @@ describe("Task 20 — en + es parity, 44 px, no shop-code literal", () => {
   });
   it("never keys on a shop code", () => {
     expect(readdirSync("components/schedule").map((f) => readFileSync(`components/schedule/${f}`, "utf8")).join("\n")).not.toMatch(/["'](EM|MEP)["']/);
+  });
+});
+
+describe("Juan 2026-10-16 (decision 4): the strip names each salaried manager's week — \"40 h + X h flex used (keeps hourly labor down)\"", () => {
+  it("en + es, AGM included (hours only, no money)", () => {
+    const view = ready();
+    const uid = Object.keys(view.names)[0]!;
+    const strip0 = view.strip!;
+    const forced = { ...view, strip: { ...strip0, hours: { ...strip0.hours, salariedWeeks: [{ userId: uid, baseHours: 40, flexHours: 3.5, targetHours: 40, flexLimitHours: 10 }] } } };
+    const fill = (s: string, p: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_m, k: string) => String(p[k]));
+    expect(en["schedule.board.money.salaried_week"]).toBe("{name}: {base} h + {flex} h flex used (keeps hourly labor down)");
+    for (const [lang, L] of [["en", en], ["es", es]] as const) {
+      const strip = renderBoard(forced, lang).match(/<section[^>]*data-section="strip"[\s\S]*?<\/section>/)![0];
+      expect(text(strip)).toContain(fill(L["schedule.board.money.salaried_week"], { name: view.names[uid]!, base: 40, flex: 3.5 }));
+    }
   });
 });
