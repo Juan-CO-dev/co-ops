@@ -110,7 +110,7 @@ describe("the legacy builder — a GM's way to change the lines is its shop's ve
 describe("the legacy recipe page points at the shop-version page", () => {
   it("a banner with the catalog link, en + es", () => {
     const page = readFileSync("app/admin/recipes/[id]/page.tsx", "utf8");
-    expect(page).toContain("recipeItemHref(recipe.id)");
+    expect(page).toContain("recipeItemHref(recipe.id, { shopId: context.scope })");
     expect(page).toContain('serverT(lang, "recipes.catalog_link")');
     expect(page).toContain('serverT(lang, "recipes.catalog_link_hint")');
     expect(page).not.toMatch(/"EM"|"MEP"/);

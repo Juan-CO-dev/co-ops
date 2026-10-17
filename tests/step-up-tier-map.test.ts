@@ -72,11 +72,11 @@ function tiersIn(src: string, fn: "assertStepUp" | "requestStepUp"): string[] {
   return [...new Set([...literals, ...vars])].sort();
 }
 
-function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => boolean) {
+function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => boolean, files = filesUnder("app", "components"), readSource = read) {
   const map: Record<string, string[]> = {};
-  for (const rel of filesUnder("app", "components")) {
+  for (const rel of files) {
     if (!keep(rel)) continue;
-    const tiers = tiersIn(read(rel), fn);
+    const tiers = tiersIn(readSource(rel), fn);
     if (tiers.length > 0) map[rel] = tiers;
   }
   return map;
@@ -268,6 +268,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/catalog/RecipeItemClient.tsx": ["E"],
   // …and the menu item page, the same (save, back to the global menu, restore, promote).
   "components/catalog/MenuItemClient.tsx": ["E"],
+  "components/catalog/OwnedSandwichClient.tsx": ["E"],
   // …and the Shop changes list (promote a shop's recipe or menu price / name; Leave writes nothing).
   "components/catalog/ShopChangesClient.tsx": ["E"],
   // Scheduling Phase 1 (Task 22): the PM v2 criteria editor asks for the edit window before each write.
@@ -447,5 +448,5 @@ describe("step-up grant map", () => {
 
 it.each(["requestStepUp('A')", 'requestStepUp("A")', 'requestStepUp(`A`)'])("extracts quoted tier and rejects an unpinned call: %s", source => {
   expect(tiersIn(source, "requestStepUp")).toEqual(["A"]);
-  expect({ "unlisted.tsx": tiersIn(source, "requestStepUp") }).not.toEqual({});
+  expect(extract("requestStepUp", () => true, ["unlisted.tsx"], () => source)).toEqual({ "unlisted.tsx": ["A"] });
 });

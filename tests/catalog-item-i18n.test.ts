@@ -17,6 +17,8 @@ import { NEW_ITEM_ERROR_CODES } from "@/lib/catalog/new-item-shared";
 import { SWAP_ERROR_CODES } from "@/lib/catalog/swap-shared";
 
 const REQUIRED = [
+  "catalog.error.menu_price_changed", "catalog.error.menu_price_catering_required",
+  "recipes.output.edit_yield", "recipes.error.ambiguous_output",
   // Phase 4b review fixes and Swap / Share / Back.
   "catalog.jobs.new_item.summary",
   "catalog.jobs.new_item.created",

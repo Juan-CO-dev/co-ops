@@ -549,7 +549,7 @@ export function RecipeItemClient({ view }: { view: RecipeItemView }) {
                 </li>
               ))}
               <li>
-                <Link href={`/admin/recipes/${view.recipe.id}`} className={linkRow}>{t("catalog.recipe.edit_outputs")}</Link>
+                <Link href={`/admin/recipes/${view.recipe.id}?location=${encodeURIComponent(view.scope ?? "global")}`} className={linkRow}>{t("catalog.recipe.edit_outputs")}</Link>
               </li>
             </ul>
           </CollapsibleSection>

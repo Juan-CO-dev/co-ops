@@ -7273,5 +7273,9 @@
   "catalog.jobs.back.outcome_kept": "Kept",
   "catalog.jobs.back.outcome_retired": "Temporary grouping retired",
   "catalog.jobs.back.outcome_none": "No change",
-  "catalog.jobs.back.outcome_unknown": "Outcome could not be confirmed; reload."
+  "catalog.jobs.back.outcome_unknown": "Outcome could not be confirmed; reload.",
+  "catalog.error.menu_price_changed": "The price changed while you were editing. Reload and review the new price.",
+  "catalog.error.menu_price_catering_required": "Set a price before offering this item for catering.",
+  "recipes.output.edit_yield": "Change yield",
+  "recipes.error.ambiguous_output": "This recipe has more than one matching output. Reload and review its outputs."
 }

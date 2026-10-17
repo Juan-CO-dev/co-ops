@@ -127,3 +127,18 @@ it("keeps recipe/version reads constant for one versus many rows", async () => {
   }
   expect(counts).toEqual([13, 13]);
 });
+
+it("explicit owner wins over the remembered creation shop and narrows choices", async () => {
+  const { loadRecipeBuilderScope } = await import("@/lib/admin/recipe-builder-data");
+  mocks.resolve.mockResolvedValue(B);
+  expect(await loadRecipeBuilderScope({ ...gm, locations: [A, B] }, undefined, true, A, { defaultToShop: true }))
+    .toEqual({ scope: A, shops: [{ id: A, name: "One" }], allowGlobal: false });
+  expect(mocks.resolve).not.toHaveBeenCalled();
+});
+it.each(["foreign", "inactive"])("does not bypass an explicit %s owner with the remembered shop", async kind => {
+  const { loadRecipeBuilderScope } = await import("@/lib/admin/recipe-builder-data");
+  if (kind === "inactive") tables.locations![1]!.active = false;
+  await expect(loadRecipeBuilderScope(kind === "inactive" ? { ...gm, locations: [A, B] } : gm, undefined, true, B, { defaultToShop: true }))
+    .rejects.toMatchObject({ code: "not_found", status: 404 });
+  expect(mocks.resolve).not.toHaveBeenCalled();
+});

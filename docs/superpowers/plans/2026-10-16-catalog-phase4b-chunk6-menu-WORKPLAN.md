@@ -1,0 +1,3 @@
+# Chunk 6 menu implementation
+
+Reviewed BUILD r2 chunk 6, menu page/preview/apply, owner gates, `updateMenuPrice`, Share/Toast components, and Next's local page guide. Add tests first for owning/foreign/SMM capabilities, owner-shop costing, owned price preview/apply, and ownership changes between preview/save. Add an explicit owned-price request using the existing price writer with expected-owner compare-and-set. Keep shared 3b preview tokens and menu forms unchanged. Render a separate owned body with server-approved price, recipe, Toast and Share actions; preserve the edit baseline across refreshes. No migration. Main risk: null direct-write scope must never become global visibility; owner scope governs reads and costs.

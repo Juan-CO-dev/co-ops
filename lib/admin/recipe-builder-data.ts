@@ -147,15 +147,15 @@ export async function loadRecipeBuilderScope(actor: AuthContext, requested: stri
   if (actor.user.role === "social_media_mgr" || level < (options.minimumLevel ?? 6)) throw new ShopOwnedError(403, "forbidden");
   const data = await selectAllRows<{ id: string; name: string }>((from, to) => getServiceRoleClient().from("locations").select("id,name").eq("active", true).order("name").order("id").range(from, to).returns<Array<{id: string; name: string}>>());
   const shops = data.filter(s => catalogShopAllowed({ level, locations: actor.locations }, s.id));
+  if (owner != null) {
+    if (!shops.some(s => s.id === owner)) throw new ShopOwnedError(404, "not_found");
+    return { scope: owner, shops: shops.filter(s => s.id === owner), allowGlobal: false };
+  }
   if (creation && requested === undefined && options.defaultToShop) {
     const { resolveShopId } = await import("@/lib/shop-context");
     const scope = await resolveShopId(shops.map(s => s.id), undefined);
     if (scope === null) throw new ShopOwnedError(400, "location_required");
     return { scope, shops, allowGlobal: level >= 8 };
-  }
-  if (owner != null) {
-    if (!shops.some(s => s.id === owner)) throw new ShopOwnedError(404, "not_found");
-    return { scope: owner, shops: shops.filter(s => s.id === owner), allowGlobal: false };
   }
   const allowGlobal = !creation || level >= 8;
   if (creation) {

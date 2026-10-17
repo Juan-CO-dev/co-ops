@@ -845,12 +845,18 @@ export async function addRecipeOutput(actor: AuthContext, input: { recipeId: str
  * the Tier-B step-up (the recipe-edit gate). The write goes through update_recipe_output_yield —
  * the recipe row lock first, then the output row — so it serialises with every other recipe and
  * output writer (update_recipe_atomic, add_recipe_output, remove_recipe_output, 0215). Called ONLY
- * from a human tap on the yield-drift nudge (lib/yield-stats.ts); nothing changes a card on its
- * own. Audited recipe_output.update (destructive) only after the RPC succeeded.
+ * from a human tap on the yield-drift nudge (Tier B) or an owned recipe's explicit output edit
+ * (Tier E, captured owner required); nothing changes a card on its own. Audited only after success.
  */
-export async function updateRecipeOutputYield(actor: AuthContext, input: { recipeId: string; outputItemId: string; yield: number; context: { locationId: string; source: "yield_nudge"; observedSignedDrift: number; batchesInWindow: number } }): Promise<{ outputId: string; before: number | null; after: number }> {
+export async function updateRecipeOutputYield(actor: AuthContext, input: { recipeId: string; outputItemId: string; yield: number; context:
+  | { locationId: string; source: "yield_nudge"; observedSignedDrift: number; batchesInWindow: number }
+  | { source: "recipe_builder"; expectedOwner: string }
+}): Promise<{ outputId: string; before: number | null; after: number }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   const owner = await recipeWriteOwner(actor, input.recipeId);
+  if (input.context.source === "recipe_builder" && (owner === null || owner !== input.context.expectedOwner)) {
+    throw new RecipeError(409, "ownership_changed");
+  }
   if (!(typeof input.yield === "number" && Number.isFinite(input.yield) && input.yield > 0 && input.yield <= 100000)) throw new RecipeError(400, "invalid_yield");
   const sb = getServiceRoleClient();
   const { data, error } = await writeRecipeRpc(sb, input.recipeId, owner, "update_recipe_output_yield", {
@@ -870,7 +876,9 @@ export async function updateRecipeOutputYield(actor: AuthContext, input: { recip
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_output.update",
     resourceTable: "recipe_outputs", resourceId: row.output_id,
-    metadata: { recipe_id: input.recipeId, output_item_id: input.outputItemId, before: { yield: before }, after: { yield: input.yield }, source: input.context.source, location_id: input.context.locationId, observed_signed_drift: input.context.observedSignedDrift, batches_in_window: input.context.batchesInWindow },
+    metadata: { recipe_id: input.recipeId, output_item_id: input.outputItemId, before: { yield: before }, after: { yield: input.yield }, source: input.context.source,
+      ...(input.context.source === "yield_nudge" ? { location_id: input.context.locationId, observed_signed_drift: input.context.observedSignedDrift, batches_in_window: input.context.batchesInWindow }
+        : { location_id: owner }) },
     ipAddress: null, userAgent: null,
   });
   return { outputId: row.output_id, before, after: input.yield };

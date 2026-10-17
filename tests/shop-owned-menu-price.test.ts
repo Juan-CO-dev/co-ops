@@ -42,3 +42,9 @@ it.each([null, A])("owner changed after authorization (%s) refuses the update", 
   expect(db.tables.menu_items![0]!.menu_price).toBe(10);
   expect(db.writes.every(w => w.matched === 0)).toBe(true);
 });
+
+it("a price preview cannot become a shared write after sharing, even for the owner role", async () => {
+  db.tables.menu_items![0]!.location_id = null;
+  await expect(updateMenuPrice(owner, ID, 12, 10, A)).rejects.toMatchObject({ status: 409, code: "ownership_changed" });
+  expect(db.writes).toEqual([]);
+});

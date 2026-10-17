@@ -11,7 +11,7 @@
  * (recipeVersionWriteGate — the role rule refuses the social media manager, the shop bind runs before any I/O),
  * so a preview never shows a choice the save would refuse. The view takes the version-read rule (6+, by role).
  */
-import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
+import { ownerVisible, ownerWriteCheck, shareGate, linesOwnedElsewhere } from "@/lib/catalog/shop-owned-shared";
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -178,10 +178,14 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
     .maybeSingle<{ id: string; name: string; name_es: string | null; recipe_type: "production" | "consumer" | null; active: boolean | null; location_id: string | null }>();
   if (rErr) throw new Error(`loadRecipeItemView recipe: ${rErr.message}`);
   if (!recipe || !ownerVisible(recipe.location_id, scope)) return null;
-
-  const live = await loadRecipeLiveSet(recipeId, scope);
+  const owner = recipe.location_id ?? null;
+  if (owner !== null && !catalogShopAllowed(actor, owner)) return null;
+  // An owned default is stored at null, but its food, prices and picker exist at its owner shop.
+  const writeScope = owner === null ? scope : null;
+  const editOwned = owner !== null && ownerWriteCheck(actor, owner).ok;
+  const live = await loadRecipeLiveSet(recipeId, writeScope);
   const globalSet = scope === null || live.ridesDefault ? live : await loadRecipeLiveSet(recipeId, null);
-  const all = await loadRecipeVersionHistory(actor, recipeId, scope, { allShops: true });
+  const all = await loadRecipeVersionHistory(actor, recipeId, writeScope, { allShops: owner === null });
   const shopName = (id: string | null) => (id === null ? null : (shops.find((s) => s.id === id)?.name ?? null));
   const byId = new Map(all.map((v) => [v.id, v]));
   const ownLive = scope === null ? null : all.find((v) => v.locationId === scope && v.active) ?? null;
@@ -226,12 +230,12 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
       yield: Number(o.yield), costHere: rollupMenuItemCost(graph, o.output_menu_item_id!, costPerOz).cost };
   });
 
-  const catalog: RecipeBuilderCatalog = gateFor(actor, scope).ok
+  const catalog: RecipeBuilderCatalog = (owner === null ? gateFor(actor, scope).ok : editOwned)
     ? await loadRecipeBuilderCatalog(actor, scope, recipe.location_id ?? null)
     : { skus: [], items: [], products: [], outputItems: [], prices: new Map(), unitOptions: [], measures: new Map(), activeMeasureLabels: [] };
   // The SHOP's packs for the picker (Astra 3b r4#1): 2a's resolver, paged and chunked, as of now.
   const pickerPacks = await loadSkuPackResolution(catalog.skus.map((s) => s.id), scope);
-  const canEditShop = scope !== null && gateFor(actor, scope).ok;
+  const canEditShop = owner === null && scope !== null && gateFor(actor, scope).ok;
   const notices = canEditShop && scope !== null
     ? (await computeShopNotices(sb, scope, new Date().toISOString())).filter((n) => n.recipeId === recipeId)
     : [];
@@ -241,9 +245,11 @@ export async function loadRecipeItemView(actor: AuthContext, recipeId: string, s
   const sourceOf = scope !== null && !live.ridesDefault ? await shopLineSources(sb, recipeId, scope) : new Map<string, string | null>();
 
   return {
+    owner: owner === null ? null : { locationId: owner, name: shopName(owner) ?? "" },
     recipe: { id: recipe.id, name: recipe.name, nameEs: recipe.name_es, recipeType: recipe.recipe_type === "production" ? "production" : "consumer", active: recipe.active !== false },
     shops, scope, scopeName: shopName(scope),
-    can: { editShop: canEditShop, editGlobal: gateFor(actor, null).ok, shopsToEdit: shops.filter((s) => gateFor(actor, s.id).ok) },
+    can: { editShop: canEditShop, editGlobal: owner === null && gateFor(actor, null).ok, editOwned,
+      share: owner !== null && shareGate(actor).ok, shopsToEdit: owner === null ? shops.filter((s) => gateFor(actor, s.id).ok) : [] },
     version: {
       scopeVersionId: live.scopeVersionId, globalVersionId: live.globalVersionId, ridesDefault: live.ridesDefault,
       adoptedFromShopName: adoptedFrom ? shopName(adoptedFrom.locationId) : null,
@@ -318,13 +324,20 @@ export async function judgeLines(
 export async function computeRecipePreview(actor: AuthContext, recipeId: string, change: RecipeChangeRequest): Promise<RecipePreview> {
   const target = recipeChangeTarget(change);
   const scope: VersionScope = target.kind === "shop" ? target.shopId : null;
-  const gate = gateFor(actor, scope);
+  const visibilityScope = target.kind === "owned" ? target.ownerLocationId : scope;
+  const gate = target.kind === "owned" ? ownerWriteCheck(actor, target.ownerLocationId) : gateFor(actor, scope);
   if (!gate.ok) throw new RecipeVersionError(gate.status, gate.code);
   const sb = getServiceRoleClient();
   const { data: owner, error: ownerError } = await sb.from("recipes").select("location_id").eq("id", recipeId)
     .maybeSingle<{ location_id: string | null }>();
   if (ownerError) throw new Error(`recipe preview owner: ${ownerError.message}`);
-  if (!owner || !ownerVisible(owner.location_id, scope)) throw new RecipeVersionError(404, "not_found");
+  if (!owner) throw new RecipeVersionError(404, "not_found");
+  if (target.kind === "owned") {
+    if (owner.location_id !== target.ownerLocationId) throw new RecipeVersionError(409, "ownership_changed");
+  } else {
+    if (!ownerVisible(owner.location_id, scope)) throw new RecipeVersionError(404, "not_found");
+    if (owner.location_id != null) throw new RecipeVersionError(409, "shop_owned_edit_here");
+  }
   const live = await loadRecipeLiveSet(recipeId, scope);
   if (!live.recipeActive) throw new RecipeVersionError(409, "recipe_inactive");
   const before = live.lines.map((l) => l.fields);
@@ -382,8 +395,8 @@ export async function computeRecipePreview(actor: AuthContext, recipeId: string,
   const shops = await loadActiveShops(sb);
   let reachedScopes: VersionScope[];
   let untouched: RecipePreview["untouched"] = [];
-  if (scope !== null) {
-    reachedScopes = [scope];
+  if (visibilityScope !== null) {
+    reachedScopes = [visibilityScope];
   } else {
     // Paged and ordered like every read of these tables (at most one live version per shop, but no exception needed).
     const own = await selectAllRows<{ id: string; location_id: string }>(async (from, to) => {
@@ -430,6 +443,22 @@ export async function computeRecipePreview(actor: AuthContext, recipeId: string,
   const added = new Set(change.kind === "lines" ? addedLinePositions(before, after)
     : change.kind === "back_to_default" ? [] : after.map((_, i) => i + 1));
   const flagged = await judgeLines(sb, after, added, names);
+  if (target.kind === "owned") {
+    // SQL validates every owned line under its lock. Preview the same ownership refusal,
+    // using bounded reads, rather than offering a save that can never succeed.
+    type OwnedRow = { id: string; location_id: string | null };
+    const ids = (field: "componentSkuId" | "componentItemId") => [...new Set(after.flatMap(l => l[field] === null ? [] : [l[field]!]))];
+    const [skus, items] = await Promise.all([
+      rowsByIds<OwnedRow>(ids("componentSkuId"), "preview sku owners", (c, from, to) =>
+        sb.from("vendor_items").select("id, location_id").in("id", c).order("id").range(from, to).returns<OwnedRow[]>()),
+      rowsByIds<OwnedRow>(ids("componentItemId"), "preview item owners", (c, from, to) =>
+        sb.from("items").select("id, location_id").in("id", c).order("id").range(from, to).returns<OwnedRow[]>()),
+    ]);
+    const owners = (rows: OwnedRow[]) => new Map(rows.flatMap(r => r.location_id === null ? [] : [[r.id, r.location_id] as const]));
+    const position = linesOwnedElsewhere(after, { skus: owners(skus), items: owners(items) }, visibilityScope)[0];
+    if (position !== undefined) throw new RecipeVersionError(400, "line_other_shop", undefined,
+      { position, name: names[recipeLineTargetKey(after[position - 1]!)] ?? "", reason: "line_other_shop" });
+  }
   const itemNames = outItemIds.length
     ? await sb.from("items").select("id, name").in("id", outItemIds).returns<Named[]>()
     : await none<Named>();
@@ -495,11 +524,13 @@ export async function applyRecipeChange(
   const snapshot = preview.snapshot;
   switch (change.kind) {
     case "lines": {
-      const r = await saveRecipeLines(actor, { recipeId, scope, expectedVersionId: preview.expectedVersionId, basedOnVersionId: preview.basedOnVersionId, op: change.op, snapshot });
+      const r = await saveRecipeLines(actor, { recipeId, scope, expectedVersionId: preview.expectedVersionId, basedOnVersionId: preview.basedOnVersionId, op: change.op, snapshot,
+        ...(preview.target.kind === "owned" ? { expectedOwner: preview.target.ownerLocationId } : {}) });
       return { versionId: r.versionId };
     }
     case "restore": {
-      const r = await restoreRecipeVersion(actor, { recipeId, scope, fromVersionId: change.fromVersionId, expectedVersionId: preview.expectedVersionId, basedOnVersionId: preview.basedOnVersionId, snapshot });
+      const r = await restoreRecipeVersion(actor, { recipeId, scope, fromVersionId: change.fromVersionId, expectedVersionId: preview.expectedVersionId, basedOnVersionId: preview.basedOnVersionId, snapshot,
+        ...(preview.target.kind === "owned" ? { expectedOwner: preview.target.ownerLocationId } : {}) });
       return { versionId: r.versionId };
     }
     case "back_to_default": {

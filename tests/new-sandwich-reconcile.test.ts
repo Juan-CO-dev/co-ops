@@ -59,8 +59,13 @@ it("pins creator inside the query and exact-name/owner restrictions as a subset 
   expect(source).toContain('.is("location_id", null)');
   const migration = readFileSync("supabase/migrations/0264_catalog_shop_owned.sql", "utf8");
   expect(migration).toContain("lower(btrim");
-  // Exact trimmed name equality implies the case-insensitive trimmed collision predicate.
-  for (const name of ["Sandwich", "A&B", "Ñandú"]) expect(name.trim().toLowerCase()).toBe(name.toLowerCase());
+
+});
+it.each(["Sandwich", "A&B", "\u00d1and\u00fa"])("reconciles trimmed input using exact persisted name: %s", async name => {
+  seed({ name });
+  expect(await reconcileNewSandwich(actor, { ...request, name: `  ${name}  ` })).toEqual({ matched: true, menuItemId: id(3) });
+  seed({ name: name.toLowerCase() });
+  await expect(reconcileNewSandwich(actor, { ...request, name })).rejects.toMatchObject({ code: "name_taken" });
 });
 it("validates an optional correlation-only attempt key on create without breaking old callers", () => {
   const draft = { name: "Sandwich", menuPrice: 12, inputs: [{ componentSkuId: id(7), quantity: 1, unit: "oz" }] };

@@ -64,6 +64,8 @@ function ToastLinkBody({ menuItemId, shopId, initial }: Props) {
         let cancelled = false;
         if (!seeded.current)
             queueMicrotask(() => { if (!cancelled) void refresh(); });
+        // Identity changes remount this body via the menuItemId:shopId key above;
+        // alive blocks late responses from that old instance, cancelled blocks queued reads.
         return () => { cancelled = true; alive.current = false; };
     }, [refresh]); // Initial props seed only this identity's mount.
     async function save() {
