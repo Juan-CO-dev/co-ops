@@ -765,3 +765,63 @@ Open limits: the two environment startup failures, pre-existing lint debt,
 CC's final cross-family review and the documented authenticated browser/SIM
 walkthroughs. This repair pass claims no new independent approval, live schema
 access, production write, or authenticated walkthrough execution.
+
+## Aggie security-review repair (2026-10-17, base 110ab5aa)
+
+Scope follows Aggie's reviewed remediation: fix the ezCater POST boundary, classify every admin route, pin the three inert stubs, and update manual gates and the deployment contract. No schema, step-up, or CSRF-host implementation changes.
+
+- P2-1: ezcater-review POST starts with assertSameOrigin and immediate refusal. Its valid fixtures now send the same-host Origin; four refusal cases prove authentication and body parsing are not reached.
+- P2-2: admin-write-origin discovers every route.ts/tsx/js/jsx/mts under app/api/admin, requires an explicit disjoint classification, and verifies exported methods. It covers 167 files: 146 mutation-bearing files (157 mutation handlers), 18 read routes, and three inert stubs. POST read exceptions reuse the reviewed read-boundary check. The existing order-guide parameter destructuring has a single exact source exception before its guard; invalid requests still cannot parse a body or authenticate. Multipart import fixtures now reach its existing session gate.
+- P3-1: the inventory test has an explicit 120,000 ms timeout.
+- P3-4: locations, pars, and vendors/[id]/items are explicit non-mutations because they return a constant 501 without I/O; tests pin their imports, constant response, and handler bodies so implementation requires reclassification.
+- P3-3: the three manual curl gates in the phase 1 / 2a / 3a plans send Origin: http://localhost:3100 and use that request host.
+- P3-2: AGENTS.md records nextUrl.host semantics, the established Vercel production evidence, and mandatory authenticated custom-domain/alias smoke testing. lib/portal/csrf.ts is unchanged.
+
+Failing-first evidence (ignored local .tmp reports):
+
+- aggie-ezcater-red.json: 20 pass / 4 fail on the pre-fix handler; all four refusal cases returned 400 instead of 403.
+- aggie-inventory-red-final.json: 951 pass / 5 fail before adding the guard, all five on ezcater-review (source ordering plus four runtime Origin refusals). An initial run also exposed the multipart fixture mismatch; that fixture was corrected before this final red run.
+- aggie-unlisted-probe.json: five temporary unlisted route files, one per requested extension, made discovery fail (172 discovered vs 167 classified). All probe files were removed before final verification.
+
+Focused verification: 1,571 passed / 0 failed across 37 files, including admin-write-origin (956), catalog-write-origin, catalog-read-boundary, step-up-tier-map, and all ezcater-matching suites. No timeout override.
+
+Verification commands and remaining outcomes follow below.
+
+```powershell
+npx.cmd vitest run tests/admin-write-origin.test.ts tests/catalog-write-origin.test.ts tests/catalog-read-boundary.test.ts tests/step-up-tier-map.test.ts ezcater --pool=threads --maxWorkers=2 --reporter=json --outputFile=.tmp/aggie-focused.json
+# PASS: 1,571 tests, 37 files.
+npx.cmd next typegen
+npx.cmd tsc --noEmit --incremental false
+# PASS: exit 0, zero TypeScript diagnostics. Logs: aggie-typegen.log / aggie-tsc.log.
+node --max-old-space-size=1536 .tmp/aggie-lint.cjs
+# PASS: node exit 0. ESLint compares all three changed code/test files with HEAD.
+# Current 0 errors / 0 warnings; HEAD 0 / 0; both deltas 0.
+# Unchanged files have no delta. Reports: aggie-eslint.json / aggie-lint-final.log.
+```
+
+### Known tsx ENOMEM spawns (separate, reproduced this pass)
+
+- tests/people-chunkE-review.test.ts: scripts/check-boh-positions.ts.
+- tests/pm-criteria.test.ts: scripts/seed-pm-criteria.ts.
+
+Both were independently invoked with NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY blank; each exited 1 before the expected missing-credentials exit 2. No database access. Evidence: .tmp/aggie-tsx-startup.json.
+
+```text
+SystemError [ERR_SYSTEM_ERROR]: uv_os_get_passwd returned ENOMEM (not enough memory)
+code: ENOMEM; syscall: uv_os_get_passwd
+```
+
+### Completed full-suite run and handoff
+
+```powershell
+npx.cmd vitest run --pool=threads --no-cache --maxWorkers=2 --reporter=json --outputFile=.tmp/aggie-full.json
+# Exit 1: 753 files; 13397 passed / 2 failed / 3 skipped; 13402 total.
+# Only failures: the two independently reproduced tsx ENOMEM startup tests above.
+# Default repository timeout retained; inventory has its explicit 120-second timeout.
+```
+
+The full suite is NOT all-green. No other test failed; no test was skipped, suppressed, or weakened by this repair. Final whitespace verification: git diff --check.
+
+Eight changed files remain UNCOMMITTED: AGENTS.md, the ezcater-review route, admin-write-origin and ezcater-mapping-review-route tests, the phase 1/2a/3a manual-gate plans, and this chunk 8 RESULT. Branch: feat/catalog-phase4b-job-pages; HEAD remains 110ab5aa66ce6d0a918080aba30e7b6c0c30de09. Clone: C:/Users/conta/co-ops-cat-p4b. No commit, push, merge, deployment, or production write.
+
+Open limits: the two reproduced environment startup failures; CC/Aggie's final cross-family re-review; authenticated custom-domain/alias smoke remains a deployment gate and was not performed here.

@@ -11,7 +11,7 @@ vi.mock("@/lib/admin/ezcater-review", () => ({ decideEzcaterMapping: vi.fn(), de
 const actor = { user: { id: "actor", role: "catering_mgr" } };
 function request(body: unknown) {
   return new NextRequest("https://example.test/api/admin/catering/ezcater-review", {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    method: "POST", headers: { "content-type": "application/json", origin: "https://example.test" }, body: JSON.stringify(body),
   });
 }
 beforeEach(() => {
@@ -22,6 +22,19 @@ beforeEach(() => {
 });
 
 describe("ezCater mapping review route", () => {
+  it.each([undefined, "https://attacker.invalid", "null", "not-a-url"])("refuses Origin %s before authentication or body parsing", async origin => {
+    const req = new NextRequest("https://example.test/api/admin/catering/ezcater-review", {
+      method: "POST", body: "{", headers: origin === undefined ? {} : { origin },
+    });
+    const json = vi.spyOn(req, "json");
+    const response = await POST(req);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "bad_origin" });
+    expect(requireSession).not.toHaveBeenCalled();
+    expect(json).not.toHaveBeenCalled();
+    expect(decideEzcaterMapping).not.toHaveBeenCalled();
+    expect(decideEzcaterCustomization).not.toHaveBeenCalled();
+  });
   it.each([["approve", "target"], ["ignore", null]] as const)("delegates %s with the exact session path", async (decision, targetId) => {
     const response = await POST(request({ reviewId: "review", decision, targetId }));
     expect(requireSession).toHaveBeenCalledWith(expect.anything(), "/api/admin/catering/ezcater-review");

@@ -1,11 +1,16 @@
+import { readBoundaryViolations } from "./helpers/catalog-read-boundary";
 import { readdirSync, readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import ts from "typescript";
 
-// All files in the five legacy catalog families, plus every admin route using step-up.
+// Every admin route is explicitly classified: mutations, reads, or inert stubs.
 // List every exported HTTP method explicitly; additions require deliberate classification.
-const inventory: Record<string, string> = {
+const mutationRoutes: Record<string, string> = {
+  "catering/ezcater-review/route.ts": "POST",
+  "vendors/[id]/import/route.ts": "POST",
+  "vendors/[id]/order-guide/route.ts": "GET POST",
+  "catalog/recipe/[id]/notices/dismiss/route.ts": "POST",
   "catalog/item-type/[id]/route.ts": "PATCH",
   "catalog/jobs/new-item/route.ts": "POST",
   "catalog/jobs/new-sandwich/route.ts": "POST",
@@ -150,6 +155,37 @@ const inventory: Record<string, string> = {
   "weights/route.ts": "POST"
 };
 
+const readOnlyRoutes: Record<string, string> = {
+  "checklist-templates/route.ts": "GET",
+  "checklist-templates/[id]/route.ts": "GET",
+  // Read-time classifier: driftReport may audit confirmed-to-stale observations; no operator mutation.
+  "toast-map/drift/route.ts": "GET",
+  "toast-sales/consumption/route.ts": "GET",
+  "catalog/jobs/new-sandwich/preview/route.ts": "POST",
+  "catalog/jobs/new-sandwich/reconcile/route.ts": "POST",
+  "catalog/menu-item/[id]/preview/route.ts": "POST",
+  "catalog/pack-requests/[requestId]/photo/route.ts": "GET",
+  "catalog/recipe/[id]/preview/route.ts": "POST",
+  "catalog/sku/[id]/preview/route.ts": "POST",
+  "catering/packages/[id]/recommend/route.ts": "GET",
+  "vendors/[id]/import/[batchId]/route.ts": "GET",
+  "catalog/menu-item/[id]/share/preview/route.ts": "POST",
+  "catalog/recipe/[id]/share/preview/route.ts": "POST",
+  "catalog/sku/[id]/share/preview/route.ts": "POST",
+  "catalog/sku/[id]/swap/preview/route.ts": "POST",
+  "catalog/swaps/[swapId]/back-to-normal/preview/route.ts": "POST",
+  "catalog/pack-requests/[requestId]/additions/[additionId]/photo/route.ts": "GET"
+};
+
+// Phase 5 placeholders: constant 501 responses, no authentication, body parsing, or I/O.
+// Implementing any of these requires reclassification; their exact bodies are pinned below.
+const stubRoutes: Record<string, string> = {
+  "locations/route.ts": "GET POST",
+  "pars/route.ts": "GET POST",
+  "vendors/[id]/items/route.ts": "GET POST"
+};
+const inventory = { ...mutationRoutes, ...readOnlyRoutes, ...stubRoutes };
+
 const mocks = vi.hoisted(() => ({ session: vi.fn(), step: vi.fn(), db: vi.fn() }));
 vi.mock('@/lib/session', () => ({ requireSession: mocks.session }));
 vi.mock('@/lib/admin/step-up', () => ({ assertStepUp: mocks.step }));
@@ -157,30 +193,36 @@ vi.mock('@/lib/supabase-server', () => ({ getServiceRoleClient: mocks.db }));
 const id = '11111111-1111-4111-8111-111111111111';
 const params = { params: Promise.resolve({ id, itemId: id, inputId: id, sizeId: id, ruleId: id, contactId: id, cutoffId: id, detailId: id, batchId: id, requestId: id, swapId: id, slug: 'test' }) };
 type Handler = (req: NextRequest, context: typeof params) => Promise<Response>;
-const load = async (path: string): Promise<Record<string, Handler>> => import(/* @vite-ignore */ '../app/api/admin/' + path.replace(/\.ts$/, ''));
+const load = async (path: string): Promise<Record<string, Handler>> => import(/* @vite-ignore */ '../app/api/admin/' + path);
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.session.mockResolvedValue(Response.json({ code: 'unauthorized' }, { status: 401 }));
   mocks.db.mockImplementation(() => { throw new Error('Unexpected database access'); });
 });
-it('classifies every scoped route and every exported HTTP handler, including mixed reads', async () => {
+it('classifies every admin route and every exported HTTP handler, including mixed reads', async () => {
   const files = readdirSync('app/api/admin', { recursive: true }).map(String).map(p => p.replaceAll('\\', '/'))
-    .filter(p => p.endsWith('/route.ts') || p === 'route.ts')
-    .filter(p => /^(recipes|items|skus|products|menu-items)\//.test(p) || /\bassertStepUp\b/.test(readFileSync('app/api/admin/' + p, 'utf8'))).sort();
+    .filter(p => /(^|\/)route\.(ts|tsx|js|jsx|mts)$/.test(p)).sort();
+  const classified = [...Object.keys(mutationRoutes), ...Object.keys(readOnlyRoutes), ...Object.keys(stubRoutes)];
+  expect(new Set(classified).size).toBe(classified.length);
   expect(files).toEqual(Object.keys(inventory).sort());
   for (const path of files) {
     const route = await load(path);
     expect(Object.keys(route).filter(k => /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(k)).sort(), path)
       .toEqual(inventory[path]!.split(' ').sort());
   }
-});
-const mutations = Object.entries(inventory).flatMap(([path, methods]) => methods.split(' ')
+}, 120_000);
+const mutations = Object.entries(mutationRoutes).flatMap(([path, methods]) => methods.split(' ')
   .filter(method => /^(POST|PUT|PATCH|DELETE)$/.test(method)).map(method => ({ path, method })));
 describe.each(mutations)('$path $method', ({ path, method }) => {
   it('starts with the origin guard and immediate refusal before any other statement', () => {
     const source = ts.createSourceFile(path, readFileSync('app/api/admin/' + path, 'utf8'), ts.ScriptTarget.Latest, true);
     const handler = source.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === method) as ts.FunctionDeclaration;
-    expect(handler.body!.statements.slice(0, 2).map(n => n.getText(source))).toEqual([
+    const statements = handler.body!.statements.map(n => n.getText(source));
+    // Existing pure parameter resolution is allowed only at this reviewed site.
+    if (path === 'vendors/[id]/order-guide/route.ts') {
+      expect(statements.shift()).toBe('const { id } = await params;');
+    }
+    expect(statements.slice(0, 2)).toEqual([
       'const origin = assertSameOrigin(req);', 'if (origin) return origin;',
     ]);
   });
@@ -188,20 +230,44 @@ describe.each(mutations)('$path $method', ({ path, method }) => {
     const route = await load(path);
     const request = new NextRequest('http://localhost/api/admin/' + path, { method, body: '{', headers: origin === undefined ? {} : { origin } });
     const body = vi.spyOn(request, 'json');
+    const form = vi.spyOn(request, 'formData');
     const response = await route[method]!(request, params);
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: 'bad_origin' });
     expect(mocks.session).not.toHaveBeenCalled();
     expect(body).not.toHaveBeenCalled();
+    expect(form).not.toHaveBeenCalled();
     expect(mocks.step).not.toHaveBeenCalled();
     expect(mocks.db).not.toHaveBeenCalled();
   });
   it('lets a same-origin request reach the existing session gate', async () => {
     const route = await load(path);
-    const response = await route[method]!(new NextRequest('http://localhost/api/admin/' + path, { method, body: '{}', headers: { origin: 'http://localhost' } }), params);
+    const form = new FormData();
+    form.set('file', new File(['test'], 'test.csv', { type: 'text/csv' }));
+    const response = await route[method]!(new NextRequest('http://localhost/api/admin/' + path, {
+      method, body: path === 'vendors/[id]/import/route.ts' ? form : '{}', headers: { origin: 'http://localhost' },
+    }), params);
     expect(response.status).toBe(401);
     expect(mocks.session).toHaveBeenCalledOnce();
     expect(mocks.step).not.toHaveBeenCalled();
     expect(mocks.db).not.toHaveBeenCalled();
   });
+});
+
+it.each(Object.keys(stubRoutes))('%s remains an inert 501 placeholder', path => {
+  const source = ts.createSourceFile(path, readFileSync('app/api/admin/' + path, 'utf8'), ts.ScriptTarget.Latest, true);
+  expect(source.statements).toHaveLength(4);
+  expect(source.statements[0]!.getText(source)).toBe('import { NextResponse } from "next/server";');
+  expect(source.statements[1]!.getText(source)).toMatch(/^const NOT_IMPLEMENTED = NextResponse\.json\(\s*\{ error: "[^"\n]+" \},\s*\{ status: 501 \},?\s*\);$/);
+  for (const statement of source.statements.slice(2)) {
+    expect(ts.isFunctionDeclaration(statement)).toBe(true);
+    const handler = statement as ts.FunctionDeclaration;
+    expect(handler.parameters).toHaveLength(0);
+    expect(handler.body!.statements.map(n => n.getText(source))).toEqual(['return NOT_IMPLEMENTED;']);
+  }
+});
+
+// POST previews are exceptions only while their reviewed read boundary remains intact.
+it.each(Object.entries(readOnlyRoutes).filter(([, methods]) => methods.includes("POST")))('%s is a reviewed read-only POST', path => {
+  expect(readBoundaryViolations(readFileSync('app/api/admin/' + path, 'utf8'))).toEqual([]);
 });
