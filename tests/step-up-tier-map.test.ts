@@ -122,6 +122,11 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // Scheduling Phase 1 (Task 16): the people settings (skill tunables MoO+, shop settings) take the Tier E edit
   // window; adjust / rate (/api/people/skills) take none (J8). Its one client is the PM v2 switch card (chunk G ruling 2).
   "app/api/people/settings/route.ts": ["E"],
+  // Scheduling Phase 2 (Task 18): the board acts — Tier B for approve and for a rebuild that overwrites a CONFIRMED edited week
+  // (asserted in the route before the lib; SQL sees only the confirmation flag, J12); every other act takes none.
+  "app/api/schedule/route.ts": ["B"],
+  // Scheduling Phase 2 (Task 18): the schedule structure and the shop switch / wage estimates take the Tier E edit window.
+  "app/api/schedule/settings/route.ts": ["E"],
   // Scheduling Phase 1 (Task 22, R10): the PM v2 criteria editor's writes take the Tier E edit window.
   "app/api/pm-criteria/route.ts": ["E"],
   // 0234 customer profiles: Tier A = reveal / lookup / dismiss / link catering; Tier B = merge, erase,
@@ -275,6 +280,15 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/pm-report-v2/PmCriteriaEditor.tsx": ["E"],
   // Chunk G ruling 2: the per-shop PM v2 switch card asks for the edit window before POST /api/people/settings (E).
   "components/people/PmV2SwitchCard.tsx": ["E"],
+  // Scheduling Phase 2, chunk F: the schedule settings ask for the edit window before each write (structure, the MoO's
+  // shop card, the skill tunables, the prep position); the board asks Tier B for Approve and a confirmed overwrite.
+  "components/schedule/StructureEditor.tsx": ["E"],
+  "components/schedule/ShopSettingsCard.tsx": ["E"],
+  "components/people/SkillTunablesEditor.tsx": ["E"],
+  "components/people/PrepPositionCard.tsx": ["E"],
+  "components/schedule/HorizonBuilder.tsx": ["B"],
+  // Astra chunk F P2-3: the board's own Regenerate on an edited week asks Tier B after the warning (confirmEdited: true).
+  "components/schedule/ScheduleBoard.tsx": ["B"],
   "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],

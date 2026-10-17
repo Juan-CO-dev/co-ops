@@ -13,7 +13,7 @@ export const BASELINE_TTL_MS = 6 * 60 * 60 * 1000;
 const baselineCache = new Map<string, { value: BaselineRaw; expires: number }>();
 export function clearBaselineCache(): void { baselineCache.clear(); }
 type TodayRaw = Pick<DailyRaw, "classes" | "discounts" | "refunds" | "captured_days"> & { captured_at: string | null };
-type BaselineRaw = { hours: BreakdownRaw[]; captured_days: string[] };
+export type BaselineRaw = { hours: BreakdownRaw[]; captured_days: string[] };
 
 async function rpc<T>(client: SupabaseClient, name: string, args: Record<string, unknown>): Promise<T> {
   const { data, error } = await client.rpc(name, args);
@@ -25,29 +25,53 @@ async function rpc<T>(client: SupabaseClient, name: string, args: Record<string,
   return data as T;
 }
 
-/** Independent deadline: even a client that ignores abort cannot hold today's result hostage. */
-async function baseline(client: SupabaseClient, args: Record<string, unknown>): Promise<BaselineRaw | null> {
+export type SalesBaselineFetch =
+  | { kind: "ok"; raw: BaselineRaw }
+  | { kind: "unavailable"; cause: "timeout" | "rpc_missing" | "rpc_error" };
+
+/**
+ * The ONE call of RPC `pulse_sales_baseline` (0242) for the 28 days before `asOf`, with the independent deadline (even a
+ * client that ignores abort cannot hold a caller hostage). DISCRIMINATED (Scheduling Phase 2, r2 P2-6): a timeout, a
+ * missing RPC (PGRST202 / 42883) and any other RPC error are named, never conflated with a successful empty history.
+ * The pulse maps every non-ok to null exactly as before (`baseline`); scheduling keeps the cause.
+ */
+export async function fetchSalesBaseline(client: SupabaseClient, args: { locationId: string; asOf: string }): Promise<SalesBaselineFetch> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const call = async (): Promise<SalesBaselineFetch> => {
+    try {
+      const { data, error } = await withAbort(client, controller.signal).rpc("pulse_sales_baseline",
+        { p_location_id: args.locationId, p_from: shiftReportDate(args.asOf, -28), p_to: shiftReportDate(args.asOf, -1) });
+      if (error) return { kind: "unavailable", cause: error.code === "PGRST202" || error.code === "42883" ? "rpc_missing" : "rpc_error" };
+      if (!data) return { kind: "unavailable", cause: "rpc_error" };
+      return { kind: "ok", raw: data as BaselineRaw };
+    } catch {
+      return { kind: "unavailable", cause: "rpc_error" };
+    }
+  };
   try {
     return await Promise.race([
-      rpc<BaselineRaw>(withAbort(client, controller.signal), "pulse_sales_baseline", args),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => { controller.abort(); resolve(null); }, BASELINE_DEADLINE_MS);
+      call(),
+      new Promise<SalesBaselineFetch>((resolve) => {
+        timer = setTimeout(() => { controller.abort(); resolve({ kind: "unavailable", cause: "timeout" }); }, BASELINE_DEADLINE_MS);
       }),
     ]);
-  } catch {
-    return null;
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** The pulse's view of the baseline: every non-ok result is null, exactly as before the split. */
+async function baseline(client: SupabaseClient, locationId: string, date: string): Promise<BaselineRaw | null> {
+  const r = await fetchSalesBaseline(client, { locationId, asOf: date });
+  return r.kind === "ok" ? r.raw : null;
 }
 
 async function cachedBaseline(client: SupabaseClient, locationId: string, date: string): Promise<BaselineRaw | null> {
   const key = `${locationId}:${date}`;
   const hit = baselineCache.get(key);
   if (hit && hit.expires > Date.now()) return hit.value;
-  const value = await baseline(client, { p_location_id: locationId, p_from: shiftReportDate(date, -28), p_to: shiftReportDate(date, -1) });
+  const value = await baseline(client, locationId, date);
   if (value) baselineCache.set(key, { value, expires: Date.now() + BASELINE_TTL_MS });
   return value;
 }

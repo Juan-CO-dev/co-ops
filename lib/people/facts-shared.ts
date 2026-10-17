@@ -43,6 +43,12 @@ export type FactFamily =
   | "positionIntervals"
   /** The shop's closing instances in the window, their template lines (with station) and live completions. */
   | "closingLines"
+  /**
+   * Scheduling Phase 2 (Task 16, r2 P2-9), OPT-IN: for the closing instances `closingLines` loaded, their status and
+   * confirmation instant, and which of them carry a final-confirmation submission — the facts the measured closing
+   * duration reads. Requires `closingLines`; `closingLines` itself is unchanged.
+   */
+  | "closingFinalization"
   /** `productions` at the shop in the bounds, EXACTLY lib/yield-stats.ts loadBatches' columns and filters. */
   | "productionFacts"
   /** people_skill_adjustments at the shop (all time; the latest per person × position is current). */
@@ -150,6 +156,8 @@ export interface StationEventFact {
 export interface ClosingInstanceFact { id: string; date: string; template_id: string; shift_start_at: string | null; triggered_at: string | null }
 export interface ClosingItemFact { id: string; template_id: string; station: string | null; active: boolean }
 export interface ClosingCompletionFact { id: string; instance_id: string; template_item_id: string; completed_by: string | null; completed_at: string }
+/** A closing instance's finalization facts (Scheduling Phase 2): status, confirmation instant, a final-confirmation submission. */
+export interface ClosingStatusFact { id: string; status: string; confirmed_at: string | null; final_confirmation: boolean }
 /** One `productions` row in lib/yield-stats-shared's `YieldBatch` shape (numbers parsed). */
 export interface ProductionFact { id: string; itemId: string; producedAt: string; madeBy: string | null; batchesMade: number; cameOutTo: number; yieldAtTime: number }
 export interface SkillAdjustmentFact { id: string; user_id: string; position_id: string; delta: number; reason_code: string; reason_note: string | null; actor_id: string; created_at: string }
@@ -162,6 +170,8 @@ export interface SkillFacts {
   closingInstances: ClosingInstanceFact[];
   closingItems: ClosingItemFact[];
   closingCompletions: ClosingCompletionFact[];
+  /** Loaded only with the opt-in `closingFinalization` family (Scheduling Phase 2). */
+  closingStatus: ClosingStatusFact[];
   productions: ProductionFact[];
   adjustments: SkillAdjustmentFact[];
   ratings: SkillRatingFact[];
@@ -172,7 +182,7 @@ export interface SkillFacts {
 
 export function emptySkillFacts(): SkillFacts {
   return {
-    stations: [], positions: [], stationEvents: [], closingInstances: [], closingItems: [], closingCompletions: [],
+    stations: [], positions: [], stationEvents: [], closingInstances: [], closingItems: [], closingCompletions: [], closingStatus: [],
     productions: [], adjustments: [], ratings: [], tunables: { company: null, shop: null }, settings: null,
   };
 }

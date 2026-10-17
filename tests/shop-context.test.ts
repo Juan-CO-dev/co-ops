@@ -336,6 +336,9 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/admin/toast-employees/page.tsx": "/admin/toast-employees",
   "app/admin/sevenshifts/page.tsx": "/admin/sevenshifts",
   "app/admin/pm-criteria/page.tsx": "/admin/pm-criteria",
+  "app/(authed)/schedule/page.tsx": "/schedule", // Scheduling Phase 2, chunk F — the board, per shop
+  "app/(authed)/schedule/settings/page.tsx": "/schedule/settings", // Scheduling Phase 2, chunk F — the settings, per shop
+  "app/admin/people-reconcile/page.tsx": "/admin/people-reconcile", // Scheduling Phase 2, Task 25 — the reconciliation, per shop
   "app/(authed)/assignments/page.tsx": "/assignments",
   "app/(authed)/my-feedback/page.tsx": "/my-feedback",
   "app/(authed)/reports/page.tsx": "/reports",

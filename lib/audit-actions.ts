@@ -114,6 +114,16 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "pm_report.copy_done",
   "pm_report.copy_reopen",
   "pm_report.submit_v2",
+  // Scheduling Phase 2 (Task 15; emitters in chunk E): building / rebuilding a draft and an edit are proposals in
+  // CO-OPS (7shifts stays the schedule people follow); keeping a suggestion changes nothing; the Wednesday draft and
+  // its skips are system observations; a generator invariant failure is a system observation (never committed).
+  "schedule.generate",
+  "schedule.regenerate",
+  "schedule.edit",
+  "schedule.budget_kept",
+  "schedule.draft_auto",
+  "schedule.draft_skipped",
+  "schedule.generator_invalid",
   "prep.mid_day.item_saved",
   "prep.snapshot_drift",
   "prep.submit",

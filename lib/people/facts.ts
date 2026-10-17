@@ -398,6 +398,24 @@ async function loadSkillFamilies(
     loaded.add("closingLines");
   }
 
+  // Scheduling Phase 2 (Task 16): OPT-IN, over the closing instances closingLines loaded — never read by a legacy number.
+  if (want.has("closingFinalization")) {
+    if (!want.has("closingLines")) throw new Error("loadPeopleFacts: closingFinalization requires closingLines");
+    const ids = s.closingInstances.map((i) => i.id);
+    const status: Array<{ id: string; status: string; confirmed_at: string | null }> = [];
+    const finals = new Set<string>();
+    for (const part of chunk(ids, ID_CHUNK)) {
+      status.push(...await selectAllRows<{ id: string; status: string; confirmed_at: string | null }>((from, to) => service
+        .from("checklist_instances").select("id, status, confirmed_at").in("id", part)
+        .order("id", { ascending: true }).range(from, to)));
+      for (const r of await selectAllRows<{ instance_id: string }>((from, to) => service
+        .from("checklist_submissions").select("instance_id").in("instance_id", part).eq("is_final_confirmation", true)
+        .order("instance_id", { ascending: true }).range(from, to))) finals.add(r.instance_id);
+    }
+    s.closingStatus = status.map((r) => ({ id: r.id, status: r.status, confirmed_at: r.confirmed_at, final_confirmation: finals.has(r.id) }));
+    loaded.add("closingFinalization");
+  }
+
   if (want.has("productionFacts")) {
     // r1 P2-6: productions ALONE (no prep_batch_sessions join), EXACTLY loadBatches' columns and filters;
     // one row = one observation. Every maker's rows (a no-maker row is counted as evidence).
