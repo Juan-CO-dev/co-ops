@@ -17,3 +17,11 @@ export const subdexMedia = {
   poster: mediaPath('subdex-poster'), motion: mediaPath('subdex-catch'),
   width: 720, height: 720, background: '#FFE560',
 } as const;
+
+/** Shared real-photo candidates: identical sizes/URLs enable reuse in all three sections. */
+function texturePhoto(source:'p016'|'l083') {
+  return {src:mediaPath(`v2-${source}-720`),width:720,height:1080,
+    srcSet:[480,720,960].map(width=>`${mediaPath(`v2-${source}-${width}`)} ${width}w`).join(', '),
+    sizes:'(min-width: 768px) 480px, calc(100vw - 44px)'};
+}
+export const textureMedia={texture:texturePhoto('p016'),crossSection:texturePhoto('l083')};

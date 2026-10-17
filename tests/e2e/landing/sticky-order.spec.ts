@@ -1,14 +1,6 @@
 import {test,expect,type Page} from '@playwright/test';
 
-async function clearRailPosition(page:Page) {
-  for(let y=1200;y<=3000;y+=100){
-    await page.evaluate(y=>window.scrollTo(0,y),y);
-    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-    if(await page.locator('[data-sticky-order]').isVisible())return;
-  }
-  await expect(page.locator('[data-sticky-order]')).toBeVisible();
-}
-
+import {clearRailPosition} from './helpers/sticky';
 
 for(const lang of ['en','es']) for(const height of [667,812]) test(`sticky threshold and consent ${lang} 375x${height}`,async({page})=>{
   await page.setViewportSize({width:375,height});await page.goto(`/?lang=${lang}`);
@@ -32,11 +24,11 @@ for(const lang of ['en','es']) for(const height of [667,812]) test(`sticky thres
     return {heroBottom:document.querySelector('[data-hero-actions]')!.getBoundingClientRect().bottom,obstructed};
   });
   expect(eligibility.heroBottom).toBeLessThan(0);
-  if(eligibility.obstructed)await expect(bar).toBeHidden();else await expect(bar).toBeVisible();
+  if(eligibility.obstructed)await expect(bar).toBeHidden(); // Clearance and dwell may delay appearance beyond the hero threshold.
   await clearRailPosition(page);await expect(bar).toBeVisible();
   const rail=(await bar.boundingBox())!,consent=(await page.locator('.landing-v2-consent').boundingBox())!;
-  expect(consent.y+consent.height).toBeLessThanOrEqual(rail.y+1);
-  expect(rail.y-consent.y-consent.height).toBeGreaterThanOrEqual(33.9);
+  expect(rail.y+rail.height).toBeLessThanOrEqual(consent.y+1);
+  expect(consent.y-rail.y-rail.height).toBeGreaterThanOrEqual(-1); // Rail sits above the stationary dock.
   await page.evaluate(()=>window.scrollTo(0,0));await expect(bar).toBeHidden();
 });
 
@@ -58,9 +50,7 @@ for(const lang of ['en','es']) for(const viewport of [{width:375,height:667},{wi
   await page.evaluate(()=>document.fonts.ready);await page.locator('#crave').scrollIntoViewIfNeeded();
   await clearRailPosition(page);
   await expect(page.locator('[data-sticky-order]')).toBeVisible();
-  await expect(page.locator('[data-sticky-order]')).toBeVisible();
-  await page.screenshot({path:`tmp/landing-v2/fixround/sticky/${info.project.name}-${lang}-${viewport.width}x${viewport.height}.png`});
-  await expect(page.locator('[data-sticky-order]')).toBeVisible();
+  await page.screenshot({path:`tmp/landing-v2/chunk5/sticky-${info.project.name}-${lang}-${viewport.width}x${viewport.height}.png`});
 });
 
 test('storage denial preserves minimize through scroll; safe inset and enlarged text remain usable',async({page})=>{

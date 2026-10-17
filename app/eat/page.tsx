@@ -1,3 +1,5 @@
+import { CraveScene } from "@/components/landing/CraveScene";
+import { FieldGuide } from "@/components/landing/FieldGuide";
 import { StickyOrderBar } from "@/components/landing/StickyOrderBar";
 import { IllustratedSpin } from "@/components/landing/IllustratedSpin";
 import { heroMedia } from "@/lib/landing/media";
@@ -39,9 +41,11 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
     <main>
       <Hero language={language} config={{...config,stores:publicStores}} ad={captureAttribution(queryString,config.attribution).ad}/>
       {sectionKeys.filter(key=>key !== "shops" || stores.length > 0).map(key=><section key={key} id={key} aria-labelledby={`${key}-title`} className="landing-v2-section">
-        <SectionView section={key}>
+        <SectionView section={key} observationTargetId={key === "crave" ? "crave-title" : undefined}>
           <h2 id={`${key}-title`} className="text-3xl font-black tracking-tight">{serverT(language,`landing.${key}.title`)}</h2>
           <p className="mt-4 max-w-xl text-lg">{serverT(language,`landing.${key}.body`)}</p>
+          {key === "crave" && <CraveScene textureAlt={serverT(language,"landing.texture.alt")} crossAlt={serverT(language,"landing.texture.cross-alt")} stillLabel={serverT(language,"landing.texture.still")} motionLabel={serverT(language,"landing.texture.motion")}/>}
+          {key === "field-guide" && <FieldGuide language={language}/>}
           {key === "lineup" && <Lineup language={language}/>}
           {(key === "crave" || key === "subdex" || key === "field-guide" || key === "lineup") && <div className="landing-v2-inline-orders">{publicStores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="landing-v2-inline-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
           {key === "field-guide" && publicStores.map((store) => <OfferCode key={store.key} ad={captureAttribution(queryString,config.attribution).ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}

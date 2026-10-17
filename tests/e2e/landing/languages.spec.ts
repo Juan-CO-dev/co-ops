@@ -1,3 +1,4 @@
+import { textureMedia } from '../../../lib/landing/media';
 import { test, expect } from "@playwright/test";
 import en from "../../../lib/i18n/en.json";
 import es from "../../../lib/i18n/es.json";
@@ -19,10 +20,19 @@ for (const language of ["en","es"] as const) test(`every section and control ren
   const held = page.locator('#field-guide');
   await expect(held).toContainText(dictionary['landing.field-guide.body']);
   await expect(held.locator('img,picture,video')).toHaveCount(0);
-  expect(await held.innerHTML()).not.toContain('/media/');
+  expect(await held.locator('noscript').textContent()).toContain(textureMedia.crossSection.src);
   await expect(page.getByRole("button",{name:dictionary["landing.consent.accept"],exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:dictionary["landing.consent.reject"],exact:true})).toBeVisible();
   expect((await page.context().cookies()).some(c=>/lang/i.test(c.name))).toBe(false);
+  await held.scrollIntoViewIfNeeded();
+  await expect(held.locator('img')).toHaveCount(1);
+  await expect(held.locator('img')).toHaveAttribute('src',textureMedia.crossSection.src);
+  await expect(held.locator('img')).toHaveAttribute('srcset',textureMedia.crossSection.srcSet);
+  await expect(held.locator('img')).toHaveAttribute('width','720');
+  await expect(held.locator('img')).toHaveAttribute('height','1080');
+  await expect(held.locator('img')).toHaveAttribute('alt',dictionary['landing.texture.cross-alt']);
+  await expect(held.locator('video')).toHaveCount(0);
+  await expect(held.locator('[data-field-ingredients]')).toHaveText(dictionary['landing.lineup.ingredients.crunchy-boi']);
 });
 
 test("query wins over language header and toggle drops unapproved query",async ({page})=>{

@@ -1,3 +1,4 @@
+import {clearRailPosition} from './helpers/sticky';
 import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import {test,expect} from '@playwright/test';
 test('actual order actions share Pixel/CAPI IDs and count once per click',async({page,context})=>{
@@ -27,11 +28,7 @@ for(const placement of ['sticky','crave','subdex']) test(`${placement} hover and
   await page.route('**/api/landing/order-click',route=>{counters.push(route.request().postDataJSON());return route.fulfill({status:204});});
   await page.goto('/');await page.locator('[data-landing-consent]').getByRole('button').first().click();
   await page.evaluate(()=>document.addEventListener('click',event=>{if((event.target as Element).closest('a[href*="appfront"]'))event.preventDefault();},true));
-  if(placement==='sticky')for(let y=1200;y<=3000;y+=100){
-    await page.evaluate(y=>window.scrollTo(0,y),y);
-    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-    if(await page.locator('[data-sticky-order]').isVisible())break;
-  }
+  if(placement==='sticky')await clearRailPosition(page);
   const link=page.locator(`[data-landing-placement="${placement}"]`).first();
   await link.hover();await link.focus();await page.waitForTimeout(1100);
   await link.dispatchEvent('pointerdown',{button:0});await link.dispatchEvent('pointerup',{button:0});

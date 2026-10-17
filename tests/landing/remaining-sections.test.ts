@@ -1,3 +1,4 @@
+import { textureMedia } from '@/lib/landing/media';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -42,7 +43,14 @@ describe('remaining landing sections',()=>{
     const html=renderToStaticMarkup(createElement(Catering,{config,language:'es'}));
     expect(config.cateringPortalLive).toBe(false);
     expect(html).toContain(config.cateringUrl); expect(html).toContain(config.inquiryUrl);
-    expect(html).not.toContain('<form'); expect(html).not.toContain('<img');
+    expect(html).not.toContain('<form');
+    // Chunk 5 deliberately adds the approved shared L083 photograph.
+    expect(html.match(/<img /g)).toHaveLength(1);
+    expect(html).toContain(`src="${textureMedia.crossSection.src}"`);
+    expect(html).toContain(`srcSet="${textureMedia.crossSection.srcSet}"`);
+    expect(html).toContain('width="720" height="1080"');
+    expect(html).toContain('loading="lazy"');
+    expect(html).toContain('<noscript>');
     expect(html).not.toContain('Start a catering order');
   });
   it('omits missing footer destinations and repeats only loaded addresses',()=>{

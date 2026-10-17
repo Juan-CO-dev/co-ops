@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {heroActionsPassed,createStickyPreference} from '@/lib/landing/sticky-order-shared';
+import {heroActionsPassed,createStickyPreference,createStickyVisibility} from '@/lib/landing/sticky-order-shared';
 
 describe('sticky order eligibility and session preference',()=>{
   it('waits for the entire hero group to pass above the viewport, including reverse scroll',()=>{
@@ -23,6 +23,30 @@ describe('sticky order eligibility and session preference',()=>{
     preference.write(true);expect(preference.read()).toBe(true);
     preference.write(false);expect(preference.read()).toBe(false);
   });
+});
+
+it('uses clear-space hysteresis, dwell and a per-direction collision latch',()=>{
+  const policy=createStickyVisibility();
+  const sample=(y:number,now:number,clearance:number,heroBottom=-10)=>policy.update({y,now,clearance,heroBottom,suppressed:false});
+  expect(sample(500,0,119).visible).toBe(false);
+  expect(sample(510,10,120).visible).toBe(false);
+  expect(sample(520,249,120).visible).toBe(false);
+  expect(sample(530,250,120).visible).toBe(true);
+  expect(sample(540,260,1).visible).toBe(true);
+  expect(sample(550,270,-1).visible).toBe(false);
+  expect(sample(1000,2000,500).visible).toBe(false);
+  expect(sample(1100,3000,500).visible).toBe(false);
+  expect(sample(970,4000,500).visible).toBe(false);
+  expect(sample(970,4240,500).visible).toBe(true);
+  expect(sample(0,4500,500,20).visible).toBe(false);
+});
+
+it('immediately suppresses unsafe geometry even during dwell',()=>{
+  const policy=createStickyVisibility();
+  const base={y:600,clearance:200,heroBottom:-1,suppressed:false};
+  policy.update({...base,now:0});
+  expect(policy.update({...base,now:240}).visible).toBe(true);
+  expect(policy.update({...base,now:241,suppressed:true}).visible).toBe(false);
 });
 
 it('keeps a restored in-memory preference when storage writes fail but old reads succeed',()=>{
