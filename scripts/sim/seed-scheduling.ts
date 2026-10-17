@@ -23,7 +23,9 @@
  * Re-running is safe: existing users, links and entries are kept; the settings row is saved again with the same values.
  */
 import { createClient } from "@supabase/supabase-js";
+import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import bcrypt from "bcryptjs";
 import { operationalNow } from "../../lib/midshift-shared";
 import { saveShopSettingsCall } from "../../lib/scheduling/rpc-args-shared";
 import { SIM_LOCATIONS, SIM_PERSONAS } from "./personas-shared";
@@ -60,7 +62,7 @@ export async function main(): Promise<void> {
       if (found.data) { ids[c.email] = found.data.id; continue; }
       console.log(`  + user ${c.email} (${c.role}, ${c.pattern})`);
       if (!apply) continue;
-      const ins = await sb.from("users").insert({ email: c.email, name: c.name, role: c.role, language: c.language, active: true, pin_hash: null, password_hash: null })
+      const ins = await sb.from("users").insert({ email: c.email, name: c.name, role: c.role, language: c.language, active: true, pin_hash: await unusablePinHash(), password_hash: null })
         .select("id").maybeSingle<{ id: string }>();
       if (ins.error || !ins.data) throw new Error(`${c.email}: users insert failed (${ins.error?.code ?? "no row"})`);
       ids[c.email] = ins.data.id;
@@ -94,6 +96,12 @@ export async function main(): Promise<void> {
     }
   }
   console.log(apply ? "\ndone." : "\ndry run: nothing written. Re-run with --apply.");
+}
+
+// users.pin_hash is NOT NULL. A seeded roster person never signs in, so their hash is bcrypt of 32 random bytes,
+// discarded at once and never peppered: no 4-digit PIN (pepper + PIN) can verify against it.
+async function unusablePinHash(): Promise<string> {
+  return bcrypt.hash(randomBytes(32).toString("hex"), 12);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
