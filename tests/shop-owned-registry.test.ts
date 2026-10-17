@@ -105,19 +105,19 @@ it("registry keeps old global callers global and includes owner items for explic
   expect((await loadItemRegistry(sb, A)).map(x => x.itemId)).toEqual(["item", "global"]);
 });
 it("registry POST forwards explicit ownership rather than silently inferring another shop", async () => {
-  const req = new NextRequest("http://localhost/api/admin/checklist-templates/registry", { method: "POST", body: JSON.stringify({ ...input, locationId: B }) });
+  const req = new NextRequest("http://localhost/api/admin/checklist-templates/registry", { method: "POST", headers: { origin: "http://localhost" }, body: JSON.stringify({ ...input, locationId: B }) });
   const res = await POST(req);
   expect(res.status).toBe(404);
   expect(await res.json()).toMatchObject({ code: "not_found" });
   expect(state.writes).toEqual([]);
 });
 it("registry POST validates malformed ownership", async () => {
-  const req = new NextRequest("http://localhost/api/admin/checklist-templates/registry", { method: "POST", body: JSON.stringify({ ...input, locationId: 1 }) });
+  const req = new NextRequest("http://localhost/api/admin/checklist-templates/registry", { method: "POST", headers: { origin: "http://localhost" }, body: JSON.stringify({ ...input, locationId: 1 }) });
   expect((await POST(req)).status).toBe(400);
   expect(state.writes).toEqual([]);
 });
 it("registry PATCH admits owning GM definition edits", async () => {
-  const req = new NextRequest("http://localhost/api/admin/checklist-templates/registry/item", { method: "PATCH", body: JSON.stringify({ name: "From route" }) });
+  const req = new NextRequest("http://localhost/api/admin/checklist-templates/registry/item", { method: "PATCH", headers: { origin: "http://localhost" }, body: JSON.stringify({ name: "From route" }) });
   expect((await PATCH(req, { params: Promise.resolve({ itemId: "item" }) })).status).toBe(200);
   expect(state.rows.items![0]!.name).toBe("From route");
 });

@@ -11,6 +11,7 @@ import { MENU_ITEM_SHOP_ERROR_CODES, parseMenuShopPatch, parseOptionalMenuName, 
 import type { RecipeNotice } from "@/lib/catalog/recipe-notices-shared";
 import type { RecipeBuilderProduct, RecipeBuilderSku } from "@/components/admin/recipes/RecipeBuilder";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import { SHOP_OWNED_ERROR_CODES } from "@/lib/catalog/shop-owned-shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (v: unknown): v is string => typeof v === "string" && UUID_RE.test(v);
@@ -154,7 +155,8 @@ export function recipeVersionLabel(input: { scope: string | null; scopeName: str
 
 // ── Change requests ───────────────────────────────────────────────────────────
 
-export type RecipeTarget = { kind: "shop"; shopId: string } | { kind: "global" };
+export type RecipeTarget = { kind: "shop"; shopId: string } | { kind: "global" }
+  | { kind: "owned"; ownerLocationId: string };
 
 export type RecipeChangeRequest =
   | { kind: "lines"; target: RecipeTarget; op: RecipeLineOp }
@@ -169,6 +171,7 @@ function parseTarget(raw: unknown): RecipeTarget | null {
   if (typeof raw !== "object" || raw === null) return null;
   const t = raw as Record<string, unknown>;
   if (t.kind === "global") return { kind: "global" };
+  if (t.kind === "owned" && isUuid(t.ownerLocationId)) return { kind: "owned", ownerLocationId: t.ownerLocationId };
   if (t.kind === "shop" && isUuid(t.shopId)) return { kind: "shop", shopId: t.shopId };
   return null;
 }
@@ -212,6 +215,7 @@ export function recipeChangeTarget(c: RecipeChangeRequest): RecipeTarget {
 
 export type MenuPromoteField = "price" | "name";
 export type MenuChangeRequest =
+  | { kind: "owned_price"; expectedOwner: string; expectedPrice: number | null; price: number | null }
   | { kind: "save"; shopId: string; patch: MenuShopPatch }
   | { kind: "back_to_default"; shopId: string }
   | { kind: "restore"; shopId: string; fromSettingId: string }
@@ -223,6 +227,11 @@ export function parseMenuChange(raw: unknown): ChangeParse<MenuChangeRequest> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { ok: false, code: "invalid_payload" };
   const b = raw as Record<string, unknown>;
   switch (b.kind) {
+    case "owned_price": {
+      const price = (v: unknown): v is number | null => v === null || (typeof v === "number" && Number.isFinite(v) && v >= 0);
+      if (!isUuid(b.expectedOwner) || !price(b.expectedPrice) || !price(b.price)) return { ok: false, code: "invalid_payload" };
+      return { ok: true, change: { kind: "owned_price", expectedOwner: b.expectedOwner, expectedPrice: b.expectedPrice, price: b.price } };
+    }
     case "save": {
       if (!isUuid(b.shopId)) return { ok: false, code: "invalid_payload" };
       const p = parseMenuShopPatch(b.patch);
@@ -269,12 +278,14 @@ export interface RecipeLineView {
 }
 
 export interface RecipeItemView {
+  /** Immutable identity; scope remains the shop used for visibility, costs and pickers. */
+  owner?: { locationId: string; name: string } | null;
   recipe: { id: string; name: string; nameEs: string | null; recipeType: "production" | "consumer"; active: boolean };
   shops: Array<{ id: string; name: string }>;
   scope: string | null;
   scopeName: string | null;
   /** `shopsToEdit`: every shop this actor may change the recipe for — the way forward a read-only view offers ("Change it for <shop>"; no dead ends). */
-  can: { editShop: boolean; editGlobal: boolean; shopsToEdit: Array<{ id: string; name: string }> };
+  can: { editShop: boolean; editGlobal: boolean; editOwned?: boolean; share?: boolean; shopsToEdit: Array<{ id: string; name: string }> };
   version: {
     scopeVersionId: string | null;
     globalVersionId: string | null;
@@ -309,6 +320,7 @@ export interface RecipeItemView {
 }
 
 export interface MenuItemPageView {
+  owner?: { locationId: string; name: string } | null;
   item: { id: string; name: string; nameEs: string | null; menuPrice: number | null; section: string | null };
   shops: Array<{ id: string; name: string }>;
   scope: string | null;
@@ -318,7 +330,7 @@ export interface MenuItemPageView {
    * `shopsToEdit`: every shop this actor may change the item for — the way forward a read-only view offers
    * ("Change it for <shop>"; no dead ends).
    */
-  can: { editShop: boolean; promote: boolean; shopsToEdit: Array<{ id: string; name: string }> };
+  can: { editShop: boolean; promote: boolean; editOwned?: boolean; share?: boolean; shopsToEdit: Array<{ id: string; name: string }> };
   here: {
     settingId: string | null; price: number | null; soldHere: boolean; nameOverride: string | null; nameOverrideEs: string | null;
     name: string; nameEs: string | null; typedPrice: number | null;
@@ -351,7 +363,7 @@ const PAGE_ERROR_FAMILIES = {
       "dependencies_changed", "dependencies_busy", "product_line_invalid",
     ]),
     // 3a's restore_source_out_of_scope, readback_failed, global_cannot_retire, truncate_refused; promote_not_done → catalog.error.*
-    named: new Set<string>([...RECIPE_VERSION_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES]),
+    named: new Set<string>([...RECIPE_VERSION_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES, ...SHOP_OWNED_ERROR_CODES]),
   },
   menu: {
     scoped: new Set<string>([
@@ -360,7 +372,8 @@ const PAGE_ERROR_FAMILIES = {
       "menu_item_not_found", "location_not_found", "global_requires_moo", "dependencies_changed", "dependencies_busy",
     ]),
     // 3a's invalid_price; the 3b page codes nothing_changed, promote_not_done → catalog.error.*
-    named: new Set<string>([...MENU_ITEM_SHOP_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES]),
+    named: new Set<string>([...MENU_ITEM_SHOP_ERROR_CODES, ...RECIPE_PAGE_ERROR_CODES, ...SHOP_OWNED_ERROR_CODES,
+      "menu_price_changed", "menu_price_catering_required"]),
   },
 } as const;
 export type CatalogPage = keyof typeof PAGE_ERROR_FAMILIES;

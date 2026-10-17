@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -7,6 +8,8 @@ import { addVendorOrderingDetail, AdminVendorError } from "@/lib/admin/vendors";
 
 // POST — append an ordering detail to a vendor (AGM+ ≥6, Tier A).
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

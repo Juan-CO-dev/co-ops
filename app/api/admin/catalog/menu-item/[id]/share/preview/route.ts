@@ -1,3 +1,4 @@
+import { publicShareMenuItemPreview } from "@/lib/catalog/job-preview-shared";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest, { params }: {
     if (!objectBody(raw))
         return catalogRefusal(ctx, 400, "invalid_payload");
     try {
-        return jsonOk({ preview: await previewShareMenuItem(ctx, id) });
+        return jsonOk({ preview: publicShareMenuItemPreview(await previewShareMenuItem(ctx, id)) });
     }
     catch (error) {
         return catalogError(ctx, error);

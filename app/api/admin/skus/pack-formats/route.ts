@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -8,6 +9,8 @@ import { addPackFormat, AdminSkuError } from "@/lib/admin/skus";
 // Add a SKU pack format (Case/Box/Bag…) to the registry. Global — affects every
 // SKU's pack-format dropdown. MoO+ (≥8), Tier B. Label is the unique key.
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/admin/skus/pack-formats");

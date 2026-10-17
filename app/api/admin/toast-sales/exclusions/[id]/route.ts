@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // POST deactivate an ingest exclusion (GM+ >= 7, Tier A step-up). Append-only active-flag.
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -7,6 +8,8 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { deactivateExclusion, AdminToastSalesError, TOAST_SALES_WRITE_MIN } from "@/lib/catering/toast-sales";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

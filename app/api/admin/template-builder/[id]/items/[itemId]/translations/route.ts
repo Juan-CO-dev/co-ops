@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // PATCH — SAME-DAY FILL: Spanish translation fields on a non-prep template item
 // (Template Builder, spec §1/§2). GM+ (>= 7), Tier A step-up. In-place, no
 // version (data-completeness only). Mirror rows reject with mirror_item_readonly.
@@ -16,6 +17,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; itemId: string }> },
 ) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id, itemId } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

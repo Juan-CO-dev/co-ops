@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -7,6 +8,8 @@ import { LINK_ADMIN_MIN_LEVEL, LinkError, linkToastEmployee, unlinkToastEmployee
 
 /** 0233: link / unlink a Toast employee. GM+ own shop, level 8+ all shops (bound in the lib); step-up B. */
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/admin/toast-employees");
   if (ctx instanceof Response) return ctx;
   if (!whosHereEnabled()) return jsonError(404, "not_enabled");

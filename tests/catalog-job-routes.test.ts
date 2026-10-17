@@ -15,7 +15,7 @@ beforeEach(() => {
   db = createFakeDb(tables);
   h.session.mockResolvedValue({ user: { id: "gm", role: "gm" }, locations: [A], level: 7 });
 });
-const post = (scope: Record<string, unknown>) => POST(new NextRequest("http://localhost/api/admin/skus", { method: "POST", body: JSON.stringify({ name: "New SKU", packFormat: "case", ...scope }) }));
+const post = (scope: Record<string, unknown>) => POST(new NextRequest("http://localhost/api/admin/skus", { method: "POST", headers: { origin: "http://localhost" }, body: JSON.stringify({ name: "New SKU", packFormat: "case", ...scope }) }));
 it("omitted scope survives route parsing and infers the sole shop", async () => {
   const response = await post({});
   expect(response.status).toBe(201);

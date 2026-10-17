@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // POST — link an existing count-line to a master-list item, a SKU, or a piece of
 // EQUIPMENT (The Master List, spec §2; the third target added by migration 0181).
 // GM+ (>= 7), Tier A step-up. In-place additive; id + label kept.
@@ -12,6 +13,8 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { linkTemplateItem, AdminNeedsLinkError, NEEDS_LINK_WRITE_MIN } from "@/lib/admin/needs-link";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ lineId: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { lineId } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

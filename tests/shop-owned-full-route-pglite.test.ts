@@ -52,7 +52,7 @@ it("creates inline prep through HTTP and real SQL, then edits and costs its owne
   await db.query("select save_sku_global_price($1,8,'2020-01-01',$2,false)", [ID.sharedSku, ID.actor]);
   await db.query("select save_sku_shop_price($1,$2,24,'2020-01-01',$3,'manual',null)", [ID.sharedSku, ID.shopA, ID.actor]);
   snapshot = createFakeDb(await persistedCatalogRows(db));
-  const response = await POST(new NextRequest("http://localhost/api/admin/recipes/full", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+  const response = await POST(new NextRequest("http://localhost/api/admin/recipes/full", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({
     locationId: ID.shopA, name: "Owned preparation", recipeType: "production", batchYield: 1, batchMode: true,
     inputs: [{ componentSkuId: ID.sharedSku, quantity: 2, unit: "oz" }],
     outputs: [{ newItem: { name: "New owned output", nameEs: "Preparado", section: "prep", recommendedPar: null, recommendedParUnit: null }, yield: 1 }],

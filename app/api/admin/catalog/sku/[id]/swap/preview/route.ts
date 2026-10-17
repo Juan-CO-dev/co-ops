@@ -1,3 +1,4 @@
+import { publicSwapPreview } from "@/lib/catalog/job-preview-shared";
 import { serverT } from "@/lib/i18n/server";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -28,7 +29,8 @@ export async function POST(req: NextRequest, { params }: {
         if (!parsed.ok)
             return catalogRefusal(ctx, 400, "invalid_payload", { field: parsed.field });
         const result = await previewSkuSwap(ctx, parsed.request);
-        return jsonOk({ preview: { ...result, ordering: { ...result.ordering, message: serverT(ctx.user.language, result.ordering.messageKey) } } });
+        const preview = publicSwapPreview(result);
+        return jsonOk({ preview: { ...preview, ordering: { ...preview.ordering, message: serverT(ctx.user.language, preview.ordering.messageKey) } } });
     }
     catch (error) {
         return catalogError(ctx, error);

@@ -20,7 +20,7 @@ beforeEach(() => {
   h.session.mockResolvedValue(gm); h.step.mockClear();
 });
 it("the owning GM writes a price through the route with Tier E", async () => {
-  const response = await PATCH(new NextRequest(`http://localhost/api/admin/menu-items/${ID}/price`, { method: "PATCH", body: JSON.stringify({ menuPrice: 12, expectedMenuPrice: 10 }) }), { params: Promise.resolve({ id: ID }) });
+  const response = await PATCH(new NextRequest(`http://localhost/api/admin/menu-items/${ID}/price`, { method: "PATCH", headers: { origin: "http://localhost" }, body: JSON.stringify({ menuPrice: 12, expectedMenuPrice: 10 }) }), { params: Promise.resolve({ id: ID }) });
   expect(response.status).toBe(200);
   expect(db.tables.menu_items![0]!.menu_price).toBe(12);
   expect(h.step).toHaveBeenCalledWith(gm, "E");
@@ -41,4 +41,10 @@ it.each([null, A])("owner changed after authorization (%s) refuses the update", 
   await expect(updateMenuPrice(owner, ID, 12, 10)).rejects.toMatchObject({ status: 409 });
   expect(db.tables.menu_items![0]!.menu_price).toBe(10);
   expect(db.writes.every(w => w.matched === 0)).toBe(true);
+});
+
+it("a price preview cannot become a shared write after sharing, even for the owner role", async () => {
+  db.tables.menu_items![0]!.location_id = null;
+  await expect(updateMenuPrice(owner, ID, 12, 10, A)).rejects.toMatchObject({ status: 409, code: "ownership_changed" });
+  expect(db.writes).toEqual([]);
 });

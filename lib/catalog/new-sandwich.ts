@@ -90,3 +90,44 @@ export async function createNewSandwich(actor: AuthContext, raw: unknown): Promi
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "menu_item.create", resourceTable: "menu_items", resourceId: result.menu_item_id, metadata, ipAddress: null, userAgent: null });
   return { recipeId: result.id, menuItemId: result.menu_item_id };
 }
+
+/** Read-only lost-response heuristic. The attempt key is correlation only, never replay.
+ * Exact active name/owner is a subset of 0264's normalized-name collision predicate;
+ * creator and server age narrow it further. No audit row is used as identity evidence.
+ */
+export async function reconcileNewSandwich(actor: AuthContext, raw: unknown): Promise<{ matched: true; menuItemId: string }> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new ShopOwnedError(400, "invalid_payload");
+  const body = raw as Record<string, unknown>;
+  const uuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  if (!uuid(body.attemptKey) || !uuid(body.shopId) || (body.ownerLocationId !== null && !uuid(body.ownerLocationId))) throw new ShopOwnedError(400, "invalid_payload");
+  if (typeof body.name !== "string" || !body.name.trim() || body.name.trim().length > 120) throw new ShopOwnedError(400, "invalid_name");
+  const name = body.name.trim();
+  const gateActor = { role: actor.user.role, level: getRoleLevel(actor.user.role), locations: actor.locations };
+  const shop = creationScope(gateActor, body.shopId);
+  if (!shop.ok) throw new ShopOwnedError(shop.status, shop.code);
+  const owner = creationScope(gateActor, body.ownerLocationId);
+  if (!owner.ok) throw new ShopOwnedError(owner.status, owner.code);
+  if (owner.scope !== null && owner.scope !== shop.scope) throw new ShopOwnedError(404, "not_found");
+  const sb = getServiceRoleClient();
+  const location = await sb.from("locations").select("id").eq("id", body.shopId).eq("active", true).maybeSingle();
+  if (location.error) throw new Error(`sandwich reconciliation shop: ${location.error.message}`);
+  if (!location.data) throw new ShopOwnedError(404, "location_not_found");
+  let query = sb.from("menu_items").select("id,created_at").eq("active", true).eq("name", name).eq("created_by", actor.user.id);
+  query = owner.scope === null ? query.is("location_id", null) : query.eq("location_id", owner.scope);
+  // Two rows suffice to reject ambiguity; do not let a row cap select an arbitrary match.
+  const candidates = await query.order("id").limit(2);
+  if (candidates.error) throw new Error(`sandwich reconciliation menu: ${candidates.error.message}`);
+  if (candidates.data?.length !== 1) throw new ShopOwnedError(409, "name_taken");
+  const candidate = candidates.data[0]!;
+  const age = Date.now() - Date.parse(candidate.created_at);
+  if (!Number.isFinite(age) || age < 0 || age > 10 * 60_000) throw new ShopOwnedError(409, "name_taken");
+  const outputs = await sb.from("recipe_outputs").select("recipe_id").eq("output_menu_item_id", candidate.id).order("id").limit(2);
+  if (outputs.error) throw new Error(`sandwich reconciliation output: ${outputs.error.message}`);
+  if (outputs.data?.length !== 1) throw new ShopOwnedError(409, "name_taken");
+  let recipeQuery = sb.from("recipes").select("id").eq("id", outputs.data[0]!.recipe_id).eq("active", true);
+  recipeQuery = owner.scope === null ? recipeQuery.is("location_id", null) : recipeQuery.eq("location_id", owner.scope);
+  const recipe = await recipeQuery.maybeSingle();
+  if (recipe.error) throw new Error(`sandwich reconciliation recipe: ${recipe.error.message}`);
+  if (!recipe.data) throw new ShopOwnedError(409, "name_taken");
+  return { matched: true, menuItemId: candidate.id };
+}

@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -25,6 +26,8 @@ import { upsertLocationSkuSettings, AdminSkuError, SKU_WRITE_MIN } from "@/lib/a
 // writer resolves its columns through. This route keeps its own Tier-A step-up; only the
 // walker's accept/dismiss/revert drop it (plan D2).
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

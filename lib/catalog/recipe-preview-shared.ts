@@ -117,7 +117,7 @@ export function normalizeMenuPatch(p: { price: number | null; soldHere: boolean;
 }
 
 export interface MenuPreview {
-  kind: "save" | "back_to_default" | "restore" | "promote";
+  kind: "save" | "back_to_default" | "restore" | "promote" | "owned_price";
   menuItemId: string;
   /** null = everyone (promote). */
   shopId: string | null;

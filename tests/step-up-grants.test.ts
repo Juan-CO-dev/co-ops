@@ -66,7 +66,7 @@ function ctx(role = "gm", sessionId = SESSION): AuthContext {
   } as unknown as AuthContext;
 }
 const grants = () => h.db.tables.step_up_grants as Array<Record<string, unknown>>;
-const json = (url: string, method: string, body: unknown) => new NextRequest(url, { method, body: JSON.stringify(body) });
+const json = (url: string, method: string, body: unknown) => new NextRequest(url, { method, headers: { origin: new URL(url).origin }, body: JSON.stringify(body) });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -135,7 +135,7 @@ describe("the destructive routes demand the grant — a fresh edit window is not
   it("delete a recipe: a grant for ANOTHER recipe is refused; the right one works", async () => {
     h.session.mockResolvedValue(ctx("moo"));
     await mintStepUpGrant({ sessionId: SESSION, userId: USER, purpose: { action: "recipe.delete", targetId: T2 } });
-    const call = () => recipeDELETE(new NextRequest(`http://localhost/api/admin/recipes/${T}`, { method: "DELETE" }), params(T));
+    const call = () => recipeDELETE(new NextRequest(`http://localhost/api/admin/recipes/${T}`, { method: "DELETE", headers: { origin: "http://localhost" } }), params(T));
     expect((await call()).status).toBe(403);
     await mintStepUpGrant({ sessionId: SESSION, userId: USER, purpose: { action: "recipe.delete", targetId: T } });
     expect((await call()).status).toBe(200);
@@ -209,7 +209,7 @@ describe("a malformed target id is a 400 before any grant is touched", () => {
 
   it("delete a recipe", async () => {
     h.session.mockResolvedValue(ctx("moo"));
-    const res = await recipeDELETE(new NextRequest(`http://localhost/api/admin/recipes/${BAD}`, { method: "DELETE" }), params(BAD));
+    const res = await recipeDELETE(new NextRequest(`http://localhost/api/admin/recipes/${BAD}`, { method: "DELETE", headers: { origin: "http://localhost" } }), params(BAD));
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("invalid_id");
     expect(updates()).toEqual([]);

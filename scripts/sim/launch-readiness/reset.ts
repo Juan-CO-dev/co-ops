@@ -11,7 +11,22 @@ import { planConfig, type SchemaMeta } from "./schema-order";
 
 export const DEFAULT_SNAPSHOT_DIR = "scripts/sim/launch-readiness/.private/snapshot";
 export const dirtyMarker = () => resolve("scripts/sim/launch-readiness/.private/DIRTY");
-export function assertClean() { if (existsSync(dirtyMarker())) throw new Error("Sim DIRTY; full reset required"); }
+const CATALOG_CLEARANCE = "Sim DIRTY; CC-owned catalog clearance required: verify complete catalog cleanup including swap-journal tables using the recorded prefix, then explicitly clear DIRTY and any quarantined lease. Ordinary fixture reset cannot clear this marker.";
+function assertResetMayClear() {
+  if (!existsSync(dirtyMarker())) return;
+  let marker: unknown;
+  try { marker = JSON.parse(readFileSync(dirtyMarker(), "utf8")); }
+  catch { throw new Error("Sim DIRTY; unreadable marker requires CC inspection before reset"); }
+  // Malformed evidence still fails closed, without inventing a catalog status.
+  if (!marker || typeof marker !== "object" || Array.isArray(marker)) throw new Error("Sim DIRTY; unreadable marker requires CC inspection before reset");
+  if ((marker as { status?: unknown }).status === "catalog-cleanup-failed") throw new Error(CATALOG_CLEARANCE);
+}
+export function assertClean() {
+  if (existsSync(dirtyMarker())) {
+    assertResetMayClear();
+    throw new Error("Sim DIRTY; CC must inspect reset evidence and run a verified fixture restore before reuse");
+  }
+}
 export async function assertAppStopped() {
   // Cover both loopback families; a stale listener must never be reset underneath.
   for (const host of ["127.0.0.1", "::1"]) await new Promise<void>((ok, fail) => {
@@ -61,6 +76,7 @@ export async function resetFixture(options: {
   // Unleased callers cannot mutate even the shared dirty marker.
   const owner = assertHeld(runId);
   if (owner.pid !== process.pid) throw new Error("Only the parent lease owner may reset");
+  assertResetMayClear(); // Outside catch: a refusal must never replace catalog evidence.
   const startedAt = new Date().toISOString();
   try {
     assertSimTarget(env.NEXT_PUBLIC_SUPABASE_URL);
@@ -154,6 +170,7 @@ export async function resetFixture(options: {
       await response.body?.cancel();
     }
     // Persist BEFORE the first mutation, so process termination also leaves DIRTY.
+    assertResetMayClear();
     writeVerified(dirtyMarker(), { runId, fixtureId, startedAt, status: "reset-in-progress" });
     for (const stage of plan.deleteStages) {
       const before = await read(stage.child);
@@ -258,9 +275,11 @@ export async function resetFixture(options: {
     };
     writeVerified(resolve("scripts/sim/launch-readiness/.private", runId, "receipt.json"), receipt);
     writeVerified(resolve("scripts/sim/launch-readiness/.artifacts", runId, "fixture.json"), { fixtureId, counts, fingerprint: receipt.fingerprint });
+    assertResetMayClear();
     unlinkSync(dirtyMarker()); assertClean();
     return receipt;
   } catch (error) {
+    assertResetMayClear();
     writeVerified(dirtyMarker(), { runId, fixtureId, startedAt, status: "reset-failed" });
     throw error;
   }

@@ -67,14 +67,14 @@ describe("owned inline output payload", () => {
     expect(state.rpc).toHaveBeenCalledWith("create_shop_recipe", expect.objectContaining({ p_location_id: SHOP }));
   });
   it("keeps the full HTTP id key and adds committed output identities", async () => {
-    const response = await POST(new NextRequest("http://localhost/api/admin/recipes/full", { method: "POST", body: JSON.stringify(draft()), headers: { "content-type": "application/json" } }));
+    const response = await POST(new NextRequest("http://localhost/api/admin/recipes/full", { method: "POST", body: JSON.stringify(draft()), headers: { origin: "http://localhost", "content-type": "application/json" } }));
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ id: "recipe-created", outputItemIds: ["item-created"] });
     expect(state.rpc).toHaveBeenCalledWith("create_shop_recipe", expect.objectContaining({ p_outputs: [expect.objectContaining({ new_item: expect.objectContaining({ name: "Prep output" }) })] }));
   });
   it("preserves positional ownership refusals through HTTP", async () => {
     state.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "shop_owned:line_other_shop:1" } });
-    const response = await POST(new NextRequest("http://localhost/api/admin/recipes/full", { method: "POST", body: JSON.stringify(draft()), headers: { "content-type": "application/json" } }));
+    const response = await POST(new NextRequest("http://localhost/api/admin/recipes/full", { method: "POST", body: JSON.stringify(draft()), headers: { origin: "http://localhost", "content-type": "application/json" } }));
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "line_other_shop", line: { position: 1, reason: "line_other_shop" } });
   });
@@ -87,7 +87,7 @@ it.each([
 ] as const)("maps %s / %s through the full recipe HTTP route", async (dbCode, message, status, code) => {
   state.rpc.mockResolvedValue({ data: null, error: { code: dbCode, message } });
   const response = await POST(new NextRequest("http://localhost/api/admin/recipes/full", {
-    method: "POST", body: JSON.stringify(draft()), headers: { "content-type": "application/json" },
+    method: "POST", body: JSON.stringify(draft()), headers: { origin: "http://localhost", "content-type": "application/json" },
   }));
   expect(response.status).toBe(status);
   expect(await response.json()).toMatchObject({ code });
@@ -97,6 +97,6 @@ it("rethrows an unrelated FK with its constraint for server logging and a framew
   const message = 'insert or update violates foreign key constraint "recipes_created_by_fkey"';
   state.rpc.mockResolvedValue({ data: null, error: { code: "23503", message } });
   await expect(POST(new NextRequest("http://localhost/api/admin/recipes/full", {
-    method: "POST", body: JSON.stringify(draft()), headers: { "content-type": "application/json" },
+    method: "POST", body: JSON.stringify(draft()), headers: { origin: "http://localhost", "content-type": "application/json" },
   }))).rejects.toThrow(`createRecipeFull rpc: ${message}`);
 });

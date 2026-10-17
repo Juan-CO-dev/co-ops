@@ -6808,7 +6808,7 @@ Record the numbers in the PR. A non-zero `items_in_a_loop` is a STOP (report the
 
 ```bash
 curl -s -X POST http://localhost:3100/api/admin/catalog/recipe/<RECIPE_ID>/lines \
-  -H "content-type: application/json" -H "cookie: <sim session cookie>" \
+  -H "Origin: http://localhost:3100" -H "content-type: application/json" -H "cookie: <sim session cookie>" \
   -d '{"locationId":"<GM_SHOP_ID>","expectedVersionId":null,"basedOnVersionId":"<GLOBAL_HEAD_ID>","op":{"kind":"update","lineId":"<RECIPE_INPUT_ID>","line":{"componentSkuId":"<SKU_ID>","quantity":5,"unit":"oz"},"expected":{"componentSkuId":"<SKU_ID>","quantity":4,"unit":"oz"}}}'
 ```
 

@@ -14,7 +14,7 @@ type Kind = "sku" | "recipe" | "menu_item";
 type Named = { id: string; name: string };
 type Owned = Named & { location_id: string | null; active: boolean; name_es?: string | null; menu_price?: number | string | null };
 type Output = { id: string; recipe_id: string; output_item_id: string | null; output_menu_item_id: string | null };
-type Blocker = Named & { shopName: string | null; kind: "sku" | "item" };
+type Blocker = Named & { shopName: string | null; kind: "sku" | "item"; producers?: Array<Named & { ownerLocationId: string | null }> };
 type Snapshot = Record<string, unknown>;
 interface CommonPreview {
   name: string; ownerShopId: string; ownerShopName: string | null;
@@ -101,7 +101,13 @@ async function recipePreview(actor: AuthContext, kind: "recipe" | "menu_item", i
   const ownedSkus = skus.filter(row => skuIds.has(row.id) && row.location_id !== null);
   const blockedBy: Blocker[] = [
     ...ownedSkus.filter(row => row.location_id !== common.ownerShopId).map(row => ({ id: row.id, name: row.name, kind: "sku" as const, shopName: names.get(row.location_id!) ?? null })),
-    ...items.filter(row => itemIds.has(row.id) && row.location_id !== null).map(row => ({ id: row.id, name: row.name, kind: "item" as const, shopName: names.get(row.location_id!) ?? null })),
+    ...items.filter(row => itemIds.has(row.id) && row.location_id !== null).map(row => ({
+      id: row.id, name: row.name, kind: "item" as const, shopName: names.get(row.location_id!) ?? null,
+      // These rows were already read for the MoO-only preview. Preserve the producer's
+      // owner scope in the link; the output item's id is not a recipe id.
+      producers: recipes.filter(recipe => recipe.active !== false && outputs.some(output => output.output_item_id === row.id && output.recipe_id === recipe.id))
+        .map(recipe => ({ id: recipe.id, name: recipe.name, ownerLocationId: recipe.location_id })),
+    })),
   ];
   return { target, common, recipes: named(recipes.filter(row => recipeIds.has(row.id))),
     shopOnlyItems: named(items.filter(row => madeItems.has(row.id) && row.location_id === common.ownerShopId)),
