@@ -196,7 +196,8 @@ begin
         if jsonb_typeof(v) <> 'string' or (v #>> '{}') <> 'unavailable' then return false; end if;
       end loop;
       for k, v in select key, value from jsonb_each(c -> 'excludedBy') loop
-        if jsonb_typeof(v) <> 'string' or (v #>> '{}') not in ('flex_exhausted', 'ineligible', 'unavailable', 'day_at_max') then return false; end if;
+        -- CC chunk H7: on_shift_eligible is in the vocabulary (the twin), though a verifying certificate never carries it.
+        if jsonb_typeof(v) <> 'string' or (v #>> '{}') not in ('flex_exhausted', 'ineligible', 'unavailable', 'day_at_max', 'on_shift_eligible') then return false; end if;
       end loop;
       for k, v in select key, value from jsonb_each(c -> 'flexHoursUsed') loop
         if not public.schedule_json_nonneg(v) then return false; end if;

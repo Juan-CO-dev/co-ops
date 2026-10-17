@@ -71,25 +71,34 @@ export interface BudgetLimitedCertificate {
  * (CC chunk H6, Astra H5 P1 — the final simplification of the hourly side: their current shifts, `freeFor` and
  * `shiftExtendsOver` are ignored entirely; an eligible, available person, even one on another position just then, may reach
  * the gap by an extension, a swap or a reassignment, so no certificate), and EVERY salaried manager the flex search considers
- * (`flexSearchManagers`) is excluded by the FIRST of
+ * (`flexSearchManagers`) is excluded — CC chunk H7 (Astra H6 P1, the closing rule of the salaried side): a manager ELIGIBLE for
+ * the position and ON SHIFT (any segment, station or MoD) at ANY quarter of the window is NEVER excluded (`on_shift_eligible`:
+ * relabels and swaps among people already on shift can never be proven impossible cheaply — the AGM takes the Register, the GM
+ * steps onto Expo), whatever their flex or day; a manager NOT on shift during the window is excluded by the FIRST of
  *   (a) `flex_exhausted` — the flex is spent (used ≥ `salariedFlexH`, or the week total ≥ target + flex);
  *   (b) `ineligible` — not eligible for the position and never the manager on duty over the window;
  *   (c) `unavailable` — unavailable at every quarter of [fromQ − maxShiftQ, toQ + maxShiftQ) that date;
- *   (d) `day_at_max` — their shifts that day already reach `maxShiftH`;
- * and never while a MoD relabel of theirs could reach the window (a MoD segment over it with base station room under
- * `limitH` or flex left — the one zero-cost fill that adds no time, which none of the four conditions speaks to).
+ *   (d) `day_at_max` — their shifts that day already reach `maxShiftH`.
+ * (The H4 MoD-relabel guard is subsumed: a manager on the MoD lane over the window is on shift.)
  * Any manager excluded by none → no `floor_limit` (the generator keeps filling; what stays is `unresolved_search`, which blocks
  * Approve). The certificate binds the limits and, per manager, the condition, their flex and floor hours; the verifier recomputes
  * all of it on the current inputs (stale / forged → refused).
  */
 export type FloorExclusion = "flex_exhausted" | "ineligible" | "unavailable" | "day_at_max";
+/** CC chunk H7: what `floorExclusionOf` says about a manager — an exclusion, or the reason there can be NO certificate. */
+export type FloorManagerStatus = FloorExclusion | "on_shift_eligible";
 export const FLOOR_EXCLUSIONS: readonly FloorExclusion[] = ["flex_exhausted", "ineligible", "unavailable", "day_at_max"];
+export const FLOOR_MANAGER_STATUSES: readonly FloorManagerStatus[] = [...FLOOR_EXCLUSIONS, "on_shift_eligible"];
 export interface FloorLimitCertificate {
   limitH: number; targetWeekH: number; salariedFlexH: number; maxShiftH: number;
   /** CC chunk H6: every active hourly person eligible for the position (id order) → why they are out: available at NO quarter of the window. */
   hourlyExcluded: Record<string, "unavailable">;
-  /** EVERY salaried manager considered → the first condition that excludes them. */
-  excludedBy: Record<string, FloorExclusion>;
+  /**
+   * EVERY salaried manager considered → the first condition that excludes them. The vocabulary (TS / SQL twins) also names
+   * `on_shift_eligible` (CC chunk H7), but a manager with that status means NO certificate, so a verifying certificate never
+   * carries it: the verifier recomputes and demands byte equality.
+   */
+  excludedBy: Record<string, FloorManagerStatus>;
   flexHoursUsed: Record<string, number>;
   floorHoursUsed: Record<string, number>;
 }
@@ -1305,22 +1314,24 @@ function eligibleMembers(g: GapSubject, day: DayContext, ctx: RuleContext): Rule
 // ─── CC chunk H4: the CONSERVATIVE floor_limit ─────────────────────────────────
 
 /**
- * The FIRST of the four conservative conditions that excludes a salaried manager from covering a coverage deficit on
- * `date` over [fromQ, toQ) — see `FloorLimitCertificate`; null when none holds (they have flex, could stand there, are
- * around, and their day has room: whether a legal block really exists is then the fills' business, never a proof's).
+ * A salaried manager's status for a coverage deficit on `date` over [fromQ, toQ) — see `FloorLimitCertificate`:
+ * `on_shift_eligible` (CC chunk H7: eligible for the position and on shift at some quarter of the window — never excluded, so
+ * NO certificate), else the FIRST of the four conservative exclusions, else null (off shift, with flex, could stand there, around,
+ * the day with room: whether a legal block really exists is then the fills' business, never a proof's). Null and
+ * `on_shift_eligible` both mean "no certificate"; the status says why.
  */
-export function floorExclusionOf(p: RulePerson, g: Pick<GapSubject, "date" | "positionId" | "fromQ" | "toQ">, s: WeekSchedule, ctx: RuleContext): FloorExclusion | null {
+export function floorExclusionOf(p: RulePerson, g: Pick<GapSubject, "date" | "positionId" | "fromQ" | "toQ">, s: WeekSchedule, ctx: RuleContext): FloorManagerStatus | null {
   const day = ctx.days[g.date];
   if (!day || !g.positionId) return null;
   const st = day.structure;
   const maxQ = Math.round(st.limits.maxShiftH * 4);
   const own = shiftsOn(s, g.date).filter((sh) => sh.userId === p.userId);
   const eligible = eligibleForPosition(p, st.positions[g.positionId]);
+  // CC chunk H7 (Astra H6 P1): eligible and ON SHIFT (any segment — a station, the MoD lane, flex) at ANY quarter of the window →
+  // never excluded. Relabels and swaps among people already on shift (the AGM takes the Register so the GM can step onto Expo)
+  // add no time and no hourly hour, and cannot be proven impossible cheaply. This subsumes the H4 MoD-relabel guard.
+  if (eligible && own.some((sh) => sh.startQ < g.toQ && sh.endQ > g.fromQ)) return "on_shift_eligible";
   const flexQ = flexLeftQ(s, p.userId, st);
-  // The one zero-cost fill that ADDS NO TIME: a MoD relabel (decision 4: base station room first, then flex). A manager on
-  // the MoD lane over the window with either kind of room is never excluded — none of the four conditions speaks to it.
-  const modOverWindow = own.some((sh) => sh.segments.some((x) => x.positionId === MOD && x.startQ < g.toQ && x.endQ > g.fromQ));
-  if (eligible && modOverWindow && (baseFloorRoomQ(s, p.userId, st) > 0 || flexQ > 0)) return null;
   // (a) flex exhausted: no flex left, or the week total already at target + flex (a new block or an extension is flex only).
   const wk = salariedWeek(s, p.userId);
   if (flexQ <= 0 || wk.totalH >= st.limits.salariedTargetWeekH + st.limits.salariedFlexH) return "flex_exhausted";
@@ -1357,10 +1368,10 @@ export function floorLimitCertificate(g: Pick<GapSubject, "code" | "date" | "pos
   }
   const managers = flexSearchManagers(g.date, ctx);
   if (managers.length === 0) return null;
-  const excludedBy: Record<string, FloorExclusion> = {};
+  const excludedBy: Record<string, FloorManagerStatus> = {};
   for (const p of managers) {
     const why = floorExclusionOf(p, g, s, ctx);
-    if (!why) return null;
+    if (!why || why === "on_shift_eligible") return null;
     excludedBy[p.userId] = why;
   }
   return {

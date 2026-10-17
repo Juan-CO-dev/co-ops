@@ -59,7 +59,7 @@ function validFillStep(v: unknown): boolean {
 export const GAP_CAUSES = ["budget_limited", "floor_limit", "eligibility", "availability", "capacity", "structure", "unresolved_search"] as const;
 const STRUCTURE_RULES = ["primary_window_closed", "no_mod_member", "no_closing_role", "max_shift"];
 /** The floor_limit exclusions (rules-shared FloorExclusion), spelled here so the shape stays dependency-free like the SQL twin. */
-const FLOOR_EXCLUSIONS = ["flex_exhausted", "ineligible", "unavailable", "day_at_max"];
+const FLOOR_EXCLUSIONS = ["flex_exhausted", "ineligible", "unavailable", "day_at_max", "on_shift_eligible"]; // CC chunk H7: the vocabulary; a verifying certificate never carries on_shift_eligible
 
 /** A gap certificate's SHAPE per cause: the exact key set, strings where ids go, non-negative numbers where numbers go. */
 export function validGapCertificateShape(cause: unknown, c: unknown): boolean {

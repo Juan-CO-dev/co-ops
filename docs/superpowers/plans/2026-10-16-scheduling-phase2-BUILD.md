@@ -1638,6 +1638,11 @@ Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). 
 - `freeFor` / `shiftExtendsOver` wanted bridge room on the GAP's position, so a legal MIXED-position hourly extension (Walk-ins 16–17, then Register 17–20) still certified. Final simplification: NO active hourly person eligible for the position is available at ANY quarter of the gap — shifts ignored; an eligible, available person busy elsewhere means no certificate. `hourlyExcluded` is now `{ id → "unavailable" }` over the eligible hourly people (TS / SQL twins + case file in parity). Real shortages certify through `capacity`, tried before `floor_limit`.
 - `GENERATOR_VERSION` p2.11; golden deltas by cause in the H6 handback.
 
+### Chunk H7 (2026-10-17): an on-shift eligible manager blocks the floor certificate (Astra H6 P1)
+
+- A salaried SWAP certified a coverable gap: GM on Register, AGM on MoD, Expo (GM-only) open; the AGM relabels MoD → Register so the GM steps onto Expo — no flex, no hourly hour, zero findings — yet both were `flex_exhausted`. Closing rule of the salaried side: a manager eligible for the position and on shift at any quarter of the gap is never excluded (`on_shift_eligible`, no certificate); a manager off shift keeps the H4 exclusions (a)–(d). The hourly side stays as H6. The certificate's vocabulary names `on_shift_eligible` (TS / SQL twins + case file), though a verifying certificate never carries it.
+- `GENERATOR_VERSION` stays p2.11: no golden body changes (no fixture has an eligible manager on shift beside a floor_limit gap); proven in the H7 handback.
+
 ### Phase 3 list (unchanged from "Phase 3 backlog", plus what Phase 2 shows as coming)
 
 - The push to 7shifts as DRAFT shifts (the board's "Ready for 7shifts — sending comes in a later update"), reconciled by stable ids; forecast interval overrides; the station-mapping screen.
