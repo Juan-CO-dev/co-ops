@@ -1,5 +1,7 @@
 -- Migration 0274_schedule_settings
 -- AUTHORED 2026-10-16. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0272 and BEFORE 0275).
+-- APPLIED TO SIM 2026-10-17 (schema_migrations version 20261017085138, name 'schedule_settings')
+-- APPLIED TO PROD 2026-10-17 (schema_migrations version 20261017203629, name 'schedule_settings')
 -- Provenance: Smart Scheduling Phase 2, Task 13 (docs/superpowers/plans/2026-10-16-scheduling-phase2-BUILD.md,
 --   "Migrations"), r2 (P2-7 date-scoped budgets, O1/O2/O6 settings), r3 (per-DATE budget precedence), CC chunk B
 --   ruling 3 + chunk C ruling 2 (limits.maxShiftH, default 10.5 h, inside the structure jsonb — no column).

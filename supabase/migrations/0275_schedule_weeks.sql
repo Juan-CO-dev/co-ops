@@ -1,5 +1,7 @@
 -- Migration 0275_schedule_weeks
 -- AUTHORED 2026-10-16. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0274).
+-- APPLIED TO SIM 2026-10-17 (schema_migrations version 20261017085200, name 'schedule_weeks')
+-- APPLIED TO PROD 2026-10-17 (schema_migrations version 20261017203642, name 'schedule_weeks')
 -- Provenance: Smart Scheduling Phase 2, Task 14 (docs/superpowers/plans/2026-10-16-scheduling-phase2-BUILD.md,
 --   "Migrations" and the commit / approve sketch), r2 (P1-3 the historical-preservation contract, P2-5 the complete
 --   gap set, J11 approval as a separate fact, J12 the overwrite confirmation), r3 (P1 unresolved_search, P2-3
