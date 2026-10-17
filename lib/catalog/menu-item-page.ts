@@ -152,6 +152,7 @@ export async function computeMenuPreview(actor: AuthContext, menuItemId: string,
   const item = await loadItem(sb, menuItemId);
   if (!item) throw new MenuShopError(404, "menu_item_not_found");
   if (!ownerVisible(item.location_id, change.kind === "promote" ? null : change.shopId)) throw new MenuShopError(404, "not_found");
+  if (item.location_id != null) throw new MenuShopError(409, "menu_item_has_no_shop_settings");
   const snapshot = await loadMenuChangeSnapshot(menuItemId, change.kind === "promote" ? NIL_SCOPE : change.shopId);
   const g = { id: item.id, name: item.name, nameEs: item.name_es, menuPrice: num(item.menu_price) };
 

@@ -14,7 +14,7 @@ import { MenuPreviewPanel } from "@/components/catalog/MenuPreviewPanel";
 import { ShareWithEveryShop } from "@/components/catalog/ShareWithEveryShop";
 import { ToastLinkSection } from "@/components/catalog/ToastLinkSection";
 
-const control = "min-h-[44px] max-w-full rounded-lg border-2 border-co-border px-3 py-2 text-sm font-bold disabled:opacity-50";
+const control = "inline-flex items-center min-h-[44px] max-w-full rounded-lg border-2 border-co-border px-3 py-2 text-sm font-bold disabled:opacity-50";
 
 /** Own identity uses its default price; ownership is separate from the immutable edit baseline. */
 export function OwnedSandwichClient({ view }: { view: MenuItemPageView }) {
@@ -61,7 +61,8 @@ export function OwnedSandwichClient({ view }: { view: MenuItemPageView }) {
       if (!alive.current || mine !== ticket.current) return;
       setPreview(null);
       if (!result.ok) setError(result.code);
-      // Refresh never silently replaces the captured baseline. Rebase is explicit after any committed move.
+      // Only our acknowledged write advances the captured baseline; external moves still require rebase.
+      if (result.ok && preview.change.kind === "owned_price") setBaseline(preview.change.price);
       router.refresh();
     } catch { if (alive.current) { setPreview(null); setError("generic"); } }
     finally { pending.current = false; if (alive.current) setBusy(false); }

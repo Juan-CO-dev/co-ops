@@ -86,3 +86,23 @@ it("server capabilities gate price, Toast and Share and recipe links retain owne
   expect(find(tree, n => n.type === ShareWithEveryShop)?.props.canShare).toBe(false);
   expect(find(tree, n => n.props.href === "/admin/catalog/recipe/recipe?location=shop")).toBeDefined();
 });
+
+it("own successful save advances the baseline; a later external move still needs rebase", async () => {
+  find(await preview(), panel)!.props.onSave(); await flush();
+  const committed = { ...view, item: { ...view.item, menuPrice: 12 } };
+  expect(find(render(committed), button("catalog.menu.edit_rebase"))).toBeUndefined();
+  expect(find(render(committed), input)?.props.value).toBe("12");
+  find(render(committed), button("catalog.menu.preview.title"))!.props.onClick(); await flush();
+  expect(h.read).toHaveBeenLastCalledWith(expect.any(String), { change: { kind: "owned_price", expectedOwner: "shop", expectedPrice: 12, price: 12 } });
+  expect(find(render({ ...committed, item: { ...committed.item, menuPrice: 13 } }), button("catalog.menu.edit_rebase"))).toBeDefined();
+});
+it("owned recipe link, preview and rebase controls centre their 44px targets", () => {
+  for (const tree of [render(), render({ ...view, item: { ...view.item, menuPrice: 11 } })]) {
+    for (const predicate of [(n: Node) => typeof n.props.href === "string", (n: Node) => n.type === "button"]) {
+      const control = find(tree, predicate)!;
+      expect(control.props.className).toContain("min-h-[44px]");
+      expect(control.props.className).toContain("items-center");
+      expect(control.props.className).toMatch(/(?:^| )inline-flex(?: |$)/);
+    }
+  }
+});

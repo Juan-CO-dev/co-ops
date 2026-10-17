@@ -62,3 +62,14 @@ it("a moved price refuses the captured baseline without invoking a writer", asyn
   await expect(computeMenuPreview(gm, ID, change)).rejects.toMatchObject({ code: "menu_price_changed" });
   expect(h.write).not.toHaveBeenCalled();
 });
+
+it.each([
+  { kind: "save", shopId: A, patch: { price: 12, soldHere: true, nameOverride: null, nameOverrideEs: null } },
+  { kind: "restore", shopId: A, fromSettingId: ID },
+  { kind: "back_to_default", shopId: A },
+] as const)("owned item refuses $kind preview and apply before settings/cost reads", async request => {
+  await expect(computeMenuPreview(gm, ID, request)).rejects.toMatchObject({ status: 409, code: "menu_item_has_no_shop_settings" });
+  await expect(applyMenuChange(gm, ID, request, "old-token")).rejects.toMatchObject({ status: 409, code: "menu_item_has_no_shop_settings" });
+  expect(h.graph).not.toHaveBeenCalled();
+  expect(h.write).not.toHaveBeenCalled();
+});
