@@ -23,7 +23,7 @@ import type { AdvisoryItem, DayContext, RuleContext, RulePerson } from "./contex
 import { laborTarget, type LaborTarget } from "./labor-target-shared";
 import { skillOf, type SchedSkillBand, type SkillLookup } from "./people-input-shared";
 import { shiftKey, type Reason, type ShiftReasons } from "./reasons-shared";
-import { MOD, approvalRefusal, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
+import { MOD, approvalRefusal, modCountsOn, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
 import { strengthWindows, teamStrength, type WindowStrength } from "./strength-shared";
 import type { CrewType, PositionRole } from "./structure-shared";
 import { positionIds } from "./structure-shared";
@@ -111,7 +111,14 @@ export interface GapLine {
   candidateIds: string[];
 }
 
-export interface SegmentView { positionId: string; startQ: number; endQ: number; mod: boolean; lastResort: boolean; reasons: Reason[] }
+export interface SegmentView {
+  positionId: string; startQ: number; endQ: number; mod: boolean; lastResort: boolean; reasons: Reason[];
+  /**
+   * CC chunk H9: on a MoD-lane segment the person does NOT count on from its start (a key holder before the shop's KH time): the
+   * first quarter they do count (null = none of it). Absent = the whole segment is manager-on-duty time (or a station).
+   */
+  modFromQ?: number | null;
+}
 export interface ShiftView {
   ref: { date: string; userId: string; startQ: number };
   startQ: number;
@@ -261,6 +268,18 @@ function assumed(p: RulePerson | undefined, date: string): boolean {
   return !!w && (w.source === "toast_pattern" || w.source === "insufficient_history");
 }
 
+/**
+ * CC chunk H9 (P Street Monday: a key holder's MoD block read "Manager on duty 5:00 PM–9:00 PM" with the KH time at 7 PM): the first
+ * quarter of a MoD-lane segment at which the person COUNTS as the manager on duty (`modCountsOn`, the lane's and the validator's
+ * rule) when that is not its start; null when they never count on it; undefined for a station, an unknown person or day, or a
+ * segment that is manager-on-duty time throughout.
+ */
+export function modFromQOf(p: RulePerson | undefined, day: Pick<DayContext, "structure" | "inputs"> | null, g: { positionId: string; startQ: number; endQ: number }): number | null | undefined {
+  if (g.positionId !== MOD || !p || !day) return undefined;
+  for (let q = g.startQ; q < g.endQ; q++) if (modCountsOn(p, day, q)) return q === g.startQ ? undefined : q;
+  return null;
+}
+
 function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: DayContext | null, weekQ: Map<string, number>, wages: Record<string, number | null>): PersonRowView[] {
   void wages;
   const locked = date < src.today;
@@ -275,7 +294,10 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
       const r = storedReasons(week.reasons[shiftKey(sh.date, sh.userId, sh.startQ)]);
       return {
         ref: { date: sh.date, userId: sh.userId, startQ: sh.startQ }, startQ: sh.startQ, endQ: sh.endQ, closingManager: sh.closingManager, flex: sh.flex, pinned: sh.pinned, locked,
-        segments: sh.segments.map((g, i) => ({ positionId: g.positionId, startQ: g.startQ, endQ: g.endQ, mod: g.positionId === MOD, lastResort: !!g.lastResort, reasons: r.segments[i] ?? [] })),
+        segments: sh.segments.map((g, i) => {
+          const mf = modFromQOf(p, ctx, g);
+          return { positionId: g.positionId, startQ: g.startQ, endQ: g.endQ, mod: g.positionId === MOD, lastResort: !!g.lastResort, reasons: r.segments[i] ?? [], ...(mf !== undefined ? { modFromQ: mf } : {}) };
+        }),
         reasons: r.shift,
         alternates: r.alternates.map((a) => {
           const ap = week.people[a.userId];

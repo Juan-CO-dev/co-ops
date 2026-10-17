@@ -114,7 +114,7 @@ function ShiftBar({ barKey, busy, focusMemo, shift, axis, editable, positions, n
   pxPerQ: () => number;
   personName: string;
 }) {
-  const { t, language, position } = useBoardLine({ names, positions });
+  const { t, language, position, segment } = useBoardLine({ names, positions });
   const drag = useDragSnap(shift, pxPerQ, onEdit, editable && !busy);
   const box = useRef<HTMLDivElement>(null);
   // CC chunk H9: after every render, put focus back on the handle the last keyboard edit used — only when focus was lost
@@ -167,9 +167,9 @@ function ShiftBar({ barKey, busy, focusMemo, shift, axis, editable, positions, n
           ) : null}
           <button type="button" data-segment={i} data-focus-id={`segment-${i}`} onBlur={leave}
             className={`inline-flex min-h-[44px] min-w-0 flex-1 items-center truncate px-1 text-left text-[11px] font-bold text-co-text ${g.mod ? "bg-co-surface-2" : ""} ${editable ? "cursor-grab" : ""}`}
-            aria-label={t("schedule.board.handle.segment", { position: position(g.positionId), range: `${formatQ(g.startQ, language)}–${formatQ(g.endQ, language)}` })}
+            aria-label={t("schedule.board.handle.segment", { position: segment(g), range: `${formatQ(g.startQ, language)}–${formatQ(g.endQ, language)}` })}
             onClick={() => onSelect(shift, i)} onPointerDown={editable ? drag.onPointerDown({ kind: "move" }) : undefined} onKeyDown={onKey({ kind: "move" }, `segment-${i}`)}>
-            {position(g.positionId)}
+            {segment(g)}
           </button>
         </span>
       ))}

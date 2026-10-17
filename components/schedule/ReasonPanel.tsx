@@ -30,7 +30,7 @@ export function ReasonPanel({ row, shift, segment, editable, busy = false, names
   positions: Record<string, { name: string; nameEs: string | null }>;
   onEdit: (op: EditOp) => void;
 }) {
-  const { t, language, name, position } = useBoardLine({ names, positions });
+  const { t, language, name, position, segment: label } = useBoardLine({ names, positions });
   const reason = (r: Reason, i: number) => (
     <li key={i} data-reason={r.key}>{t(`schedule.reason.${r.key}` as TranslationKey)}</li>
   );
@@ -58,13 +58,13 @@ export function ReasonPanel({ row, shift, segment, editable, busy = false, names
       </h3>
       <p className="text-sm text-co-text-muted">
         {t("schedule.board.reason.shape", { hours: (shift.endQ - shift.startQ) / 4, n: shift.segments.length })}{" "}
-        {shift.segments.map((g) => `${position(g.positionId)} ${range(g.startQ, g.endQ)}`).join(" → ")}
+        {shift.segments.map((g) => `${label(g)} ${range(g.startQ, g.endQ)}`).join(" → ")}
       </p>
       {shift.reasons.length > 0 ? <ul className="grid list-disc gap-1 pl-5 text-sm text-co-text">{shift.reasons.map(reason)}</ul> : null}
       <ul className="grid gap-2">
         {shift.segments.map((g, i) => (
           <li key={i} className={`grid gap-0.5 rounded-lg border p-2 text-sm ${segment === i ? "border-co-text" : "border-co-border"}`}>
-            <span className="font-bold text-co-text">{position(g.positionId)} · {range(g.startQ, g.endQ)}{g.lastResort ? ` · ${t("schedule.board.reason.last_resort")}` : ""}</span>
+            <span className="font-bold text-co-text">{label(g)} · {range(g.startQ, g.endQ)}{g.lastResort ? ` · ${t("schedule.board.reason.last_resort")}` : ""}</span>
             {g.reasons.length > 0 ? <ul className="grid list-disc gap-0.5 pl-5 text-co-text-muted">{g.reasons.map(reason)}</ul> : null}
           </li>
         ))}

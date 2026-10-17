@@ -7396,6 +7396,8 @@
   "schedule.page.off": "La programación de horarios está apagada para esta tienda.",
   "schedule.page.off_moo": "Actívala en los ajustes del horario.",
   "schedule.board.mod_short": "Gerente de turno",
+  "schedule.board.mod_from": "En turno · gerente de turno desde las {time}",
+  "schedule.board.mod_not_counted": "En turno · no es gerente de turno",
   "schedule.board.position_unknown": "Un puesto retirado",
   "schedule.board.person_unknown": "Alguien que ya no está en la lista",
   "schedule.board.scope.week": "Semana",

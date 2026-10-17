@@ -7396,6 +7396,8 @@
   "schedule.page.off": "Scheduling is off for this shop.",
   "schedule.page.off_moo": "Turn it on in schedule settings.",
   "schedule.board.mod_short": "Manager on duty",
+  "schedule.board.mod_from": "On the clock · manager on duty from {time}",
+  "schedule.board.mod_not_counted": "On the clock · not manager on duty",
   "schedule.board.position_unknown": "A retired position",
   "schedule.board.person_unknown": "Someone no longer listed",
   "schedule.board.scope.week": "Week",
