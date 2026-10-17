@@ -8,7 +8,7 @@
  *   Header fields (name/nameEs/batchYield/directions/directionsEs) + recipe_type
  *   are local state. Inputs + outputs are draft arrays. A single Save button
  *   POSTs the entire draft to /api/admin/recipes/full after requestStepUp("E"),
- *   then navigates to /admin/recipes/{id}.
+ *   then navigates to the returned catalog recipe identity at the committed shop scope.
  *
  * LIVE mode (recipe != null):
  *   Header fields PATCH on blur. Inputs/outputs add immediately via POST.
@@ -113,6 +113,7 @@ export function RecipeBuilder({
   prepSections = [],
   scopeOptions = [],
   allowGlobalScope = false,
+  canWrite = true,
 }: {
   recipe: RecipeView | null;
   skus: RecipeBuilderSku[];
@@ -132,14 +133,16 @@ export function RecipeBuilder({
   prepSections?: Array<{ slug: string; label: string }>;
   scopeOptions?: Array<{ id: string; name: string }>;
   allowGlobalScope?: boolean;
+  /** Additional server capability; a readable owned recipe is not necessarily writable. */
+  canWrite?: boolean;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp, requestStepUpGrant } = useStepUp();
   const send = useStepUpPost();
   const [scopePending, setScopePending] = useState(false);
-  const canEdit = level >= RECIPE_WRITE_MIN && !scopePending;
-  const canDelete = level >= RECIPE_DELETE_MIN;
+  const canEdit = canWrite && level >= RECIPE_WRITE_MIN && !scopePending;
+  const canDelete = canWrite && level >= RECIPE_DELETE_MIN;
   // Catalog Phase 3b (plan Task 11): a SAVED recipe's lines are the global default's, the Director of Operations'
   // (8+). A GM changes its shop's version on the catalog page, so here its lines are read-only with the way
   // forward. A NEW recipe (the draft) keeps its GM floor: creating a recipe is not versioned.
@@ -340,7 +343,7 @@ export function RecipeBuilder({
     if (result.ok) {
       const id = result.data["id"] as string | undefined;
       if (id) {
-        router.push(`/admin/recipes/${id}`);
+        router.push(recipeItemHref(id, { shopId: locationId ?? null }));
       } else {
         router.push("/admin/recipes");
       }
@@ -514,7 +517,7 @@ export function RecipeBuilder({
             <button
               type="button"
               onClick={() => setDirectionsOpen((v) => !v)}
-              className="flex items-center gap-1.5 text-sm font-bold text-co-text-muted hover:text-co-text"
+              className="flex min-h-[44px] items-center gap-1.5 text-sm font-bold text-co-text-muted hover:text-co-text"
             >
               <span aria-hidden>{directionsOpen ? "▾" : "▸"}</span>
               {t(rk("recipes.builder.directions_toggle"))}
@@ -580,6 +583,7 @@ export function RecipeBuilder({
         draftOutputs={draftOutputs}
         items={outputItems}
         ownerLocationId={recipe ? recipe.ownerLocationId ?? null : locationId ?? null}
+        canEditYield={recipe?.batchMode === true && recipe.ownerLocationId != null}
         prepSections={prepSections}
         unitRegistryOptions={unitRegistryOptions}
         canEdit={canEdit}
@@ -1047,6 +1051,7 @@ function DraftInputRow({
 function ProducesSection({
   recipeId,
   ownerLocationId,
+  canEditYield,
   prepSections,
   recipeType,
   batchYield,
@@ -1064,6 +1069,7 @@ function ProducesSection({
 }: {
   recipeId: string | null;
   ownerLocationId: string | null;
+  canEditYield: boolean;
   prepSections: Array<{ slug: string; label: string }>;
   recipeType: "production" | "consumer";
   batchYield: number;
@@ -1085,6 +1091,7 @@ function ProducesSection({
   const send = useStepUpPost();
 
   const [addOpen, setAddOpen] = useState(isDraft && ownerLocationId !== null && items.length === 0);
+  const [yieldEditing, setYieldEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -1092,7 +1099,7 @@ function ProducesSection({
   // the add-form is in progress so the dirty draft stays mounted). Uncontrolled-
   // style toggle otherwise (lift open state + force true while form open).
   const [sectionOpen, setSectionOpen] = useState(true);
-  const formInProgress = addOpen === true;
+  const formInProgress = addOpen || yieldEditing;
   const isOpen = sectionOpen || formInProgress;
 
   // Production output state
@@ -1195,6 +1202,16 @@ function ProducesSection({
     }
   };
 
+  const saveOutputYield = async (outputItemId: string, value: number): Promise<{ ok: boolean; error?: string }> => {
+    if (!canEdit || !canEditYield || !recipeId || !ownerLocationId) return { ok: false };
+    if (await requestStepUp("E") !== "ok") return { ok: false };
+    const result = await send(`/api/admin/recipes/${recipeId}/outputs`, {
+      outputItemId, yield: value, expectedOwner: ownerLocationId,
+    }, "PATCH");
+    if (result.ok) { router.refresh(); return { ok: true }; }
+    return { ok: false, error: t(resolveErrorKey(result.code)) };
+  };
+
   return (
     <div className="mt-4">
     <CollapsibleSection
@@ -1214,7 +1231,9 @@ function ProducesSection({
       {liveOutputs.length > 0 ? (
         <div className="mt-3 flex flex-col gap-2">
           {liveOutputs.map((out) => (
-            <RecipeOutputRow key={out.id} output={out} canEdit={canEdit} onRemove={onRemoveLive} />
+            <RecipeOutputRow key={out.id} output={out} canEdit={canEdit} onRemove={onRemoveLive}
+              onEditingChange={setYieldEditing}
+              onSaveYield={canEditYield && out.outputItemId ? value => saveOutputYield(out.outputItemId!, value) : undefined} />
           ))}
         </div>
       ) : null}

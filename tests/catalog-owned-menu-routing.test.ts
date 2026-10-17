@@ -1,0 +1,26 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import { fakeSupabase } from "./fake-supabase";
+import type { MenuItemPageView } from "@/lib/catalog/recipe-item-shared";
+const h = vi.hoisted(() => ({ load: vi.fn() }));
+vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => ({ user: { role: "gm", language: "en" }, level: 7, locations: ["shop", "other"] }) }));
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => fakeSupabase({ locations: [{ id: "shop", active: true }, { id: "other", active: true }] }).client }));
+vi.mock("@/lib/shop-context", () => ({ resolveShopId: async (_mine: string[], explicit: string) => explicit }));
+vi.mock("@/lib/catalog/menu-item-page", () => ({ loadMenuItemPageView: h.load }));
+vi.mock("next/navigation", () => ({ notFound: () => { throw new Error("notFound"); }, redirect: () => { throw new Error("redirect"); } }));
+vi.mock("@/components/catalog/OwnedSandwichClient", () => ({ OwnedSandwichClient: () => null }));
+vi.mock("@/components/catalog/MenuItemClient", () => ({ MenuItemClient: () => null }));
+import Page from "@/app/admin/catalog/menu-item/[id]/page";
+import { OwnedSandwichClient } from "@/components/catalog/OwnedSandwichClient";
+import { MenuItemClient } from "@/components/catalog/MenuItemClient";
+import { pageClientKey } from "@/lib/catalog/recipe-item-shared";
+const id = "33333333-3333-4333-8333-333333333333";
+beforeEach(() => vi.clearAllMocks());
+it.each(["shop", "other", null])("page chooses the correct client and ownership-bound key for %s", async owner => {
+  const view = { item: { id }, scope: "shop", owner: owner ? { locationId: owner } : null, here: { name: "Sandwich" } } as MenuItemPageView;
+  h.load.mockResolvedValue(view);
+  const tree = await Page({ params: Promise.resolve({ id }), searchParams: Promise.resolve({ location: "shop" }) });
+  const client = tree.props.children[1];
+  expect(client.type).toBe(owner ? OwnedSandwichClient : MenuItemClient);
+  expect(client.key).toBe(pageClientKey("menu", id, "shop") + (owner ? `:${owner}` : ""));
+  expect(client.props.view).toBe(view);
+});

@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // PATCH fee/labels (GM+ ≥7, Tier A) · PATCH active (GM+ ≥7, Tier B) — one concern per PATCH
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -19,6 +20,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

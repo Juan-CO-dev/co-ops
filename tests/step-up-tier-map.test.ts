@@ -63,7 +63,7 @@ const read = (rel: string) => readFileSync(join(ROOT, ...rel.split("/")), "utf8"
 /** Distinct, sorted tier tokens in a source string for one call shape. */
 function tiersIn(src: string, fn: "assertStepUp" | "requestStepUp"): string[] {
   const args = fn === "assertStepUp" ? String.raw`\s*ctx\s*,\s*` : String.raw`\s*`;
-  const literals = [...src.matchAll(new RegExp(`${fn}\\(${args}"([ABE])"`, "g"))].map((m) => m[1] as string);
+  const literals = [...src.matchAll(new RegExp(`${fn}\\(${args}([\'"\`])([ABE])\\1`, "g"))].map((m) => m[2] as string);
   // A tier passed through a variable is recorded as `VAR:<name>` rather than dropped —
   // an unrecorded dynamic tier is exactly the hole a tier map exists to close.
   const vars = [...src.matchAll(new RegExp(`${fn}\\(${args}(?!")([A-Za-z_$][\\w$]*)`, "g"))].map(
@@ -72,11 +72,11 @@ function tiersIn(src: string, fn: "assertStepUp" | "requestStepUp"): string[] {
   return [...new Set([...literals, ...vars])].sort();
 }
 
-function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => boolean) {
+function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => boolean, files = filesUnder("app", "components"), readSource = read) {
   const map: Record<string, string[]> = {};
-  for (const rel of filesUnder("app", "components")) {
+  for (const rel of files) {
     if (!keep(rel)) continue;
-    const tiers = tiersIn(read(rel), fn);
+    const tiers = tiersIn(readSource(rel), fn);
     if (tiers.length > 0) map[rel] = tiers;
   }
   return map;
@@ -256,12 +256,19 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
+  "components/catalog/jobs/SwapVendorJob.tsx": ["E"],
+  "components/catalog/ShareWithEveryShop.tsx": ["E"],
+  "components/catalog/ItemJobsStrip.tsx": ["E"],
+  "components/catalog/jobs/NewSandwichJob.tsx": ["E"],
+  "components/catalog/ToastLinkSection.tsx": ["A"],
+  "components/catalog/jobs/NewItemJob.tsx": ["B", "E"],
   // Catalog Phase 2b — the item page asks for the 15-minute edit window only.
   "components/catalog/SkuItemClient.tsx": ["E"],
   // Catalog Phase 3b — the recipe page asks for the 15-minute edit window only (no one-shot grant).
   "components/catalog/RecipeItemClient.tsx": ["E"],
   // …and the menu item page, the same (save, back to the global menu, restore, promote).
   "components/catalog/MenuItemClient.tsx": ["E"],
+  "components/catalog/OwnedSandwichClient.tsx": ["E"],
   // …and the Shop changes list (promote a shop's recipe or menu price / name; Leave writes nothing).
   "components/catalog/ShopChangesClient.tsx": ["E"],
   // Scheduling Phase 1 (Task 22): the PM v2 criteria editor asks for the edit window before each write.
@@ -437,4 +444,9 @@ describe("step-up grant map", () => {
       grantsIn(/action:\s*"(product\.retire|recipe\.delete|sku\.deactivate)"/g, (r) => r.endsWith(".tsx")),
     ).toEqual(GRANT_CLIENT_MAP);
   });
+});
+
+it.each(["requestStepUp('A')", 'requestStepUp("A")', 'requestStepUp(`A`)'])("extracts quoted tier and rejects an unpinned call: %s", source => {
+  expect(tiersIn(source, "requestStepUp")).toEqual(["A"]);
+  expect(extract("requestStepUp", () => true, ["unlisted.tsx"], () => source)).toEqual({ "unlisted.tsx": ["A"] });
 });

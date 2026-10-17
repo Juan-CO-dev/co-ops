@@ -21,6 +21,8 @@ import { catalogShopAllowed } from "@/lib/sku-versions-shared";
 import { readFocusParam } from "@/lib/admin/product-item-links-shared";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SkuItemClient } from "@/components/catalog/SkuItemClient";
+import { loadItemJobsStrip } from "@/lib/catalog/jobs";
+import { ShopOwnedError } from "@/lib/catalog/shop-owned-shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -51,10 +53,14 @@ export default async function CatalogSkuPage({
   const explicit = shopParamFor(`/admin/catalog/sku/${id}`, searchParamValues(sp));
   const scope = explicit === "global" ? null : await resolveShopId(shops.map((s) => s.id), explicit ?? null);
 
-  let view;
+  let view, jobs;
   try {
     view = await loadSkuItemView(auth, id, scope, shops);
+    // Owned pack/price defaults may be global; jobs still belong to the owner shop.
+    jobs = view.sku.active ? await loadItemJobsStrip(auth, id, sku.location_id ?? scope) : undefined;
   } catch (e) {
+    if (e instanceof ShopOwnedError && e.status === 404) notFound();
+    if (e instanceof ShopOwnedError && e.status === 403) redirect("/dashboard");
     if (e instanceof CatalogItemError && e.status === 404) notFound();
     if (e instanceof CatalogItemError && e.status === 403) redirect("/dashboard");
     throw e;
@@ -64,7 +70,7 @@ export default async function CatalogSkuPage({
       <PageHeader title={view.sku.name} subtitle={serverT(auth.user.language, "catalog.item.kind_bought")} />
       {/* ONE client per (SKU, shop): a ?location= switch REMOUNTS it, so no draft, preview or chosen
           conversion from the previous shop survives into this one (Astra 2b#5). */}
-      <SkuItemClient key={itemClientKey(view.sku.id, view.scope)} view={view} job={readJobParam(sp.job)} requestId={readFocusParam(sp.request)} />
+      <SkuItemClient key={itemClientKey(view.sku.id, view.scope)} view={view} jobs={jobs} job={readJobParam(sp.job)} requestId={readFocusParam(sp.request)} />
     </div>
   );
 }

@@ -2,6 +2,8 @@
 import { normLineText, parseRecipeLinePatch, type RecipeLineFields } from "@/lib/recipe-line-shared";
 
 export interface NewSandwichRequest {
+  /** correlation only, never replay */
+  attemptKey?: string;
   locationId?: string | null;
   name: string;
   nameEs: string | null;
@@ -17,6 +19,7 @@ const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}
 export function parseNewSandwichRequest(raw: unknown): NewSandwichParse {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, code: "invalid_payload" };
   const b = raw as Record<string, unknown>;
+  if (b.attemptKey !== undefined && !uuid(b.attemptKey)) return { ok: false, code: "invalid_payload" };
   if (b.locationId != null && !uuid(b.locationId)) return { ok: false, code: "invalid_payload" };
   if (typeof b.name !== "string" || !b.name.trim() || b.name.trim().length > 120) return { ok: false, code: "invalid_name" };
   for (const key of ["nameEs", "section", "directions", "directionsEs"] as const) {
@@ -33,6 +36,7 @@ export function parseNewSandwichRequest(raw: unknown): NewSandwichParse {
     inputs.push(parsed.line);
   }
   return { ok: true, request: {
+    ...(b.attemptKey === undefined ? {} : { attemptKey: b.attemptKey as string }),
     locationId: b.locationId as string | null | undefined, name: b.name.trim(), nameEs: normLineText(b.nameEs as string | null),
     menuPrice: b.menuPrice, section: normLineText(b.section as string | null), directions: normLineText(b.directions as string | null),
     directionsEs: normLineText(b.directionsEs as string | null), inputs,

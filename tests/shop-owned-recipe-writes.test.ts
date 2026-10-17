@@ -75,14 +75,14 @@ it("requires explicit global full recipe creation for a multi-shop MoO", async (
 });
 
 it.each([recipePost, menuPost])("preserves explicit global refusal through HTTP", async post => {
-  const response = await post(new NextRequest("http://localhost/api/admin/recipes", { method: "POST", headers: { "content-type": "application/json" },
+  const response = await post(new NextRequest("http://localhost/api/admin/recipes", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" },
     body: JSON.stringify({ name: "Global denied", recipeType: "production", batchYield: 1, locationId: null }) }));
   expect(response.status).toBe(403);
   expect(await response.json()).toMatchObject({ code: "global_requires_moo" });
   expect(fake.writes).toEqual([]);
 });
 it.each([recipePost, menuPost])("commits explicit owned creation through HTTP", async post => {
-  const response = await post(new NextRequest("http://localhost/api/admin/recipes", { method: "POST", headers: { "content-type": "application/json" },
+  const response = await post(new NextRequest("http://localhost/api/admin/recipes", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" },
     body: JSON.stringify({ name: "Owned created", recipeType: "production", batchYield: 1, locationId: SHOP }) }));
   expect(response.status).toBe(201);
   expect(await response.json()).toEqual({ id: expect.any(String) });

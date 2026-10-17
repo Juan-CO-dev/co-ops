@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // POST pull one location+business-date of Toast sales into the ledger (GM+ >= 7, Tier A step-up).
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -10,6 +11,8 @@ import { ToastApiError } from "@/lib/toast/client";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/admin/toast-sales/pull");

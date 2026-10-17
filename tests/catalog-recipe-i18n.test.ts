@@ -3,11 +3,19 @@ import { describe, expect, it } from "vitest";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { PHASE3B_KEYS } from "./catalog-phase3b-keys";
+import { menuErrorKey, recipeErrorKey } from "@/lib/catalog/recipe-item-shared";
 
 const E = en as Record<string, string>;
 const S = es as Record<string, string>;
 
 describe("catalog Phase 3b strings", () => {
+  it.each(["ownership_changed", "line_other_shop", "menu_price_changed", "menu_price_catering_required"])("owned refusal %s has named bilingual copy", code => {
+    const key = code.startsWith("menu_price") ? menuErrorKey(code) : recipeErrorKey(code);
+    expect(key).toBe(`catalog.error.${code}`);
+    expect(E[key]).toBeTruthy();
+    expect(S[key]).toBeTruthy();
+    expect(S[key]).not.toMatch(/\busted(es)?\b/i);
+  });
   it.each(PHASE3B_KEYS)("%s exists in en and es", (key) => {
     expect(E[key], `en ${key}`).toBeTruthy();
     expect(S[key], `es ${key}`).toBeTruthy();

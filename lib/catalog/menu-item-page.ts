@@ -5,7 +5,9 @@
  * GATES LIVE HERE (house rule): menuShopWriteGate / menuPromoteGate take the ROLE (the social media manager
  * is refused) and the shop bind, before any I/O; the writers bind again.
  */
-import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
+import { ownerVisible, ownerWriteCheck, shareGate } from "@/lib/catalog/shop-owned-shared";
+import { updateMenuPrice, MenuPriceError } from "@/lib/admin/menu-prices";
+import { isValidMenuPrice } from "@/lib/toast/in-store-prices-shared";
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -54,7 +56,10 @@ export async function loadMenuItemPageView(actor: AuthContext, menuItemId: strin
   if (scope !== null && !shops.some((s) => s.id === scope)) throw new MenuShopError(404, "not_found");
   const item = await loadItem(sb, menuItemId);
   if (!item || !ownerVisible(item.location_id, scope)) return null;
-  const setting = scope === null ? undefined : (await loadLiveMenuItemShopSettings(scope)).get(menuItemId);
+  const owner = item.location_id ?? null;
+  if (owner !== null && !catalogShopAllowed(actor, owner)) return null;
+  const ownedActor = { role: actor.user.role, level: actor.level, locations: actor.locations };
+  const setting = scope === null || owner !== null ? undefined : (await loadLiveMenuItemShopSettings(scope)).get(menuItemId);
   const here = resolveMenuItemForShop({ id: item.id, name: item.name, nameEs: item.name_es, menuPrice: num(item.menu_price) }, setting);
   const toastQuery = sb.from("toast_menu_map").select("id").eq("menu_item_id", menuItemId).eq("active", true).eq("match_status", "confirmed");
   const [{ data: outs, error: oErr }, toast] = await Promise.all([
@@ -69,16 +74,18 @@ export async function loadMenuItemPageView(actor: AuthContext, menuItemId: strin
         .returns<Array<{ id: string; name: string }>>()
     : { data: [] as Array<{ id: string; name: string }>, error: null };
   if (rErr) throw new Error(`menu item recipes: ${rErr.message}`);
-  const history = scope === null ? [] : await loadMenuItemShopHistory(actor, menuItemId, scope);
+  const history = scope === null || owner !== null ? [] : await loadMenuItemShopHistory(actor, menuItemId, scope);
   return {
+    owner: owner === null ? null : { locationId: owner, name: shops.find(s => s.id === owner)?.name ?? "" },
     item: { id: item.id, name: item.name, nameEs: item.name_es, menuPrice: num(item.menu_price), section: item.section },
     shops, scope, scopeName: scope === null ? null : (shops.find((s) => s.id === scope)?.name ?? null),
     can: {
-      editShop: scope !== null && writeGate(actor, scope),
+      editShop: owner === null && scope !== null && writeGate(actor, scope),
+      ...(owner !== null ? { editOwned: ownerWriteCheck(ownedActor, owner).ok, share: shareGate(ownedActor).ok } : {}),
       // Promote is everyone's (MoO+), the role rule included — the same gate computeMenuPreview runs.
-      promote: menuPromoteGate({ role: actor.user.role, level: actor.level }).ok,
+      promote: owner === null && menuPromoteGate({ role: actor.user.role, level: actor.level }).ok,
       // No dead ends: the shops this actor may change the item for, offered wherever this view is read-only.
-      shopsToEdit: shops.filter((s) => writeGate(actor, s.id)),
+      shopsToEdit: owner === null ? shops.filter((s) => writeGate(actor, s.id)) : [],
     },
     here: {
       settingId: setting?.id ?? null, price: num(setting?.price ?? null), soldHere: setting?.sold_here ?? true,
@@ -112,6 +119,23 @@ function side(r: ResolvedMenuItem): MenuPreviewSide {
 }
 
 export async function computeMenuPreview(actor: AuthContext, menuItemId: string, change: MenuChangeRequest): Promise<MenuPreview> {
+  if (change.kind === "owned_price") {
+    const gate = ownerWriteCheck({ role: actor.user.role, level: actor.level, locations: actor.locations }, change.expectedOwner);
+    if (!gate.ok) throw new MenuShopError(gate.status, gate.code);
+    if (!isValidMenuPrice(change.price)) throw new MenuShopError(400, "invalid_menu_price");
+    const item = await loadItem(getServiceRoleClient(), menuItemId);
+    if (!item) throw new MenuShopError(404, "not_found");
+    if (item.location_id !== change.expectedOwner) throw new MenuShopError(409, "ownership_changed");
+    if (num(item.menu_price) !== change.expectedPrice) throw new MenuShopError(409, "menu_price_changed");
+    const before: MenuPreviewSide = { name: item.name, nameEs: item.name_es, price: num(item.menu_price), soldHere: true, inherits: { price: false, name: false } };
+    const after = { ...before, price: change.price };
+    const cost = await costAt(menuItemId, change.expectedOwner);
+    const math = menuPreviewMath({ before: before.price, after: after.price, cost });
+    return { kind: "owned_price", menuItemId, shopId: change.expectedOwner, before, after, cost, ...math,
+      changedShops: [], returnedShop: null, spanishFallsBackToEnglish: item.name_es === null,
+      snapshot: {}, expectedSettingId: null, expectedGlobal: null,
+      token: menuPreviewToken({ kind: change.kind, menuItemId, owner: change.expectedOwner, before, after, cost, ...math }) };
+  }
   if (change.kind === "promote") {
     const gate = menuPromoteGate({ role: actor.user.role, level: actor.level });
     if (!gate.ok) throw new MenuShopError(gate.status, gate.code);
@@ -128,6 +152,7 @@ export async function computeMenuPreview(actor: AuthContext, menuItemId: string,
   const item = await loadItem(sb, menuItemId);
   if (!item) throw new MenuShopError(404, "menu_item_not_found");
   if (!ownerVisible(item.location_id, change.kind === "promote" ? null : change.shopId)) throw new MenuShopError(404, "not_found");
+  if (item.location_id != null) throw new MenuShopError(409, "menu_item_has_no_shop_settings");
   const snapshot = await loadMenuChangeSnapshot(menuItemId, change.kind === "promote" ? NIL_SCOPE : change.shopId);
   const g = { id: item.id, name: item.name, nameEs: item.name_es, menuPrice: num(item.menu_price) };
 
@@ -225,6 +250,10 @@ export async function applyMenuChange(actor: AuthContext, menuItemId: string, ch
   // The snapshot the matching token was computed on; SQL re-takes it under the menu item row lock.
   const snapshot = preview.snapshot;
   switch (change.kind) {
+    case "owned_price":
+      try { await updateMenuPrice(actor, menuItemId, change.price, change.expectedPrice, change.expectedOwner); }
+      catch (error) { if (error instanceof MenuPriceError) throw new MenuShopError(error.status, error.code); throw error; }
+      break;
     case "save":
       await saveMenuItemShopSetting(actor, { menuItemId, locationId: change.shopId, expectedSettingId: preview.expectedSettingId, patch: change.patch, snapshot });
       break;

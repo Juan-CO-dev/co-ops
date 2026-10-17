@@ -12,7 +12,7 @@
  */
 import { useMemo, useState, useRef, useCallback } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -22,6 +22,7 @@ import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { CatalogEntity, CatalogIssue, ItemType, RoleBadge } from "@/lib/admin/catalog-shared";
 import { ITEM_TYPES, deriveRoleBadges } from "@/lib/admin/catalog-shared";
 import { skuCatalogHref } from "@/lib/admin/product-item-links-shared";
+import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
 
@@ -57,12 +58,16 @@ function matchesLens(e: CatalogEntity, lens: Lens): boolean {
   }
 }
 
-export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntity[]; actorLevel: number }) {
+export function CatalogClient({ entities, actorLevel, shopScope, canOpenSkuItem = false }: { entities: CatalogEntity[]; actorLevel: number; canOpenSkuItem?: boolean; shopScope?: string | null }) {
   const { t } = useTranslation();
   const router = useRouter();
+  const urlQuery = useSearchParams().get("q") ?? "";
 
   const [lens, setLens] = useState<Lens>("all");
-  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState({ urlQuery, query: urlQuery });
+  // A new recovery link replaces the search; unrelated navigation preserves typing.
+  if (search.urlQuery !== urlQuery) setSearch({ urlQuery, query: urlQuery });
+  const query = search.urlQuery === urlQuery ? search.query : urlQuery;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
@@ -201,7 +206,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
           aria-label={t("admin.catalog.search_label")}
           placeholder={t("admin.catalog.search_placeholder")}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => setSearch({ urlQuery, query: e.target.value })}
           className={inputCls}
         />
         <span className="text-xs text-co-text-muted">{t("admin.catalog.count", { n: String(filtered.length) })}</span>
@@ -218,6 +223,8 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
             <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2 lg:items-start">
               {rows.map((e) => (
                 <CatalogRow
+                  canOpenSkuItem={canOpenSkuItem}
+                  shopScope={shopScope}
                   key={e.key}
                   e={e}
                   expanded={expanded.has(e.key)}
@@ -306,8 +313,12 @@ function RoleBadges({ e }: { e: CatalogEntity }) {
 }
 
 function CatalogRow({
+  canOpenSkuItem,
+  shopScope,
   e, expanded, onToggle, canWriteSeasonal, canWriteItemType, busy, onSeasonal, onItemType,
 }: {
+  canOpenSkuItem: boolean;
+  shopScope?: string | null;
   e: CatalogEntity;
   expanded: boolean;
   onToggle: () => void;
@@ -387,7 +398,7 @@ function CatalogRow({
             <EdgeList label={t("admin.catalog.edge.skus")}>
               {e.edges.skus.length > 0
                 ? e.edges.skus.map((r, i) => (
-                    <Link key={r.id} href={skuCatalogHref(r.id)} className={linkCls}>
+                    <Link key={r.id} href={canOpenSkuItem ? skuItemHref(r.id, { shopId: shopScope }) : skuCatalogHref(r.id)} className={linkCls}>
                       {r.name}{i < e.edges.skus.length - 1 ? "," : ""}
                     </Link>
                   ))

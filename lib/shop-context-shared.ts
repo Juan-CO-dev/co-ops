@@ -77,6 +77,8 @@ export function pickShop<T extends { id: string }>(args: PickShopArgs<T>): T | n
  * this table, both ways.
  */
 const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
+  "/admin/catalog/new/item": ["location"],
+  "/admin/catalog/new/sandwich": ["location"],
   "/dashboard": ["loc"],
   "/stations": ["loc"],
   "/admin/stations": ["loc"],

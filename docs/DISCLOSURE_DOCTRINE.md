@@ -65,4 +65,10 @@ Chunk 7 adds HTTP contracts, not guided-page layouts. The 4b consumer must keep 
 
 Swap previews provide ordering/par consequence metadata alongside direct recipe changes, primary followers, refused positions and costs. Show the consequence before confirmation: ordering follows the replacement member in the selected scope, pars are unchanged, and the operator should check their suitability for the replacement pack. Back results describe restored and retained effects separately; never label retained edits as restored. Share blockers for a shop-only prep ingredient direct the operator to its producing recipe.
 
-These are payload/copy contracts verified by route, engine and i18n tests. D1-D10 still govern the future guided pages; no 375 px/browser acceptance is claimed by this chunk.
+Those Phase 4a checks established payload/copy contracts, not browser acceptance.
+
+## Catalog Phase 4b guided jobs (2026-10-16)
+
+The New item, New sandwich, Swap, Share and Back components now render these notices. Creation and each setup step report their own outcome; per-day partial saves remain visible. A sandwich match is offered as a link, not proof that the current draft was saved. Toast requires a separate explicit confirmation. Swap edits invalidate the reviewed proposal; optional new-product names use the existing English/Spanish request fields. Share acknowledges each route's actual response, including the SKU's `shared:true`, before announcing success and refreshing.
+
+Identity and ownership remain visible. Existing `catalog.only_at_shop` labels identify ownership; they do not grant write authority. Repair links must open the affected item in its authorized shop. D1-D10 continue to apply. Component/fixture checks do not establish a live authenticated sim walk; record browser evidence and its limits in the chunk result.

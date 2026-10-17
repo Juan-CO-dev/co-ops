@@ -37,6 +37,8 @@ import { conversionKey, type PackPreview, type PreviewTarget, type PricePreview 
 import { createRequestGuard } from "@/lib/catalog/request-guard-shared";
 import type { DataErrandCode } from "@/lib/sku-data-readiness";
 import { skuCatalogHref } from "@/lib/admin/product-item-links-shared";
+import { ItemJobsStrip } from "@/components/catalog/ItemJobsStrip";
+import type { ItemJobsStripView } from "@/lib/catalog/jobs-shared";
 
 const btn =
   "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text hover:border-co-text disabled:opacity-50";
@@ -57,7 +59,11 @@ const errorKey = (code: string): TranslationKey =>
 
 type SectionState = Record<ItemSection, boolean>;
 
-export function SkuItemClient({ view, job, requestId }: { view: SkuItemView; job: ItemJob | null; requestId: string | null }) {
+type SkuItemProps = { view: SkuItemView; job: ItemJob | null; requestId: string | null; jobs?: ItemJobsStripView };
+export function SkuItemClient(props: SkuItemProps) {
+  return <>{props.jobs && <ItemJobsStrip view={props.jobs} />}<SkuItemBody {...props} /></>;
+}
+function SkuItemBody({ view, job, requestId }: SkuItemProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { assertClean } from '../launch-readiness/reset';
+import { markCatalogDirty, CatalogDirtyWriteError } from '../../catalog-jobs/cleanup.mjs';
 import * as driver from '../concurrency/driver.mjs';
 import { createManagementClient, SIM_REF, lit, one, joined } from '../../catalog-jobs/management-api.mjs';
 import { runCatalogApiEvidence } from '../../catalog-jobs/concurrency.mjs';
@@ -8,6 +10,7 @@ export async function runCatalogContracts(options: {
   assertLease: () => void; verifiedServer: boolean; pin: string; password: string;
 }) {
   options.assertLease();
+  assertClean();
   if (!options.verifiedServer || !/^\d{4}$/.test(options.pin) || !options.password) throw new Error('Catalog private controls missing');
   const report = driver.makeReport('Catalog Phase 4a');
   const q = createManagementClient({ ref: SIM_REF, assertLease: options.assertLease, verifiedServer: options.verifiedServer });
@@ -31,11 +34,22 @@ export async function runCatalogContracts(options: {
     await runCatalogApiEvidence({ q, actor: user.id, shop: driver.LOC.EM, check: report.check,
       primaryRequest: (product: string, primarySkuId: string) => session.call('POST', `/api/admin/products/${product}/primary`, { locationId: driver.LOC.EM, primarySkuId }) });
   } catch (error) {
+    if (error instanceof CatalogDirtyWriteError) throw error;
     const code = error instanceof Error ? error.message.match(/(?:shop_owned|recipe_version|swap):[a-z_]+/)?.[0] : undefined;
     report.check('catalog.scenarios-completed', false, code ?? 'scenario or retirement failed');
   } finally {
-    const retired = await q(`update vendor_items set active=false where name=${lit(prefix)}`);
-    report.check('catalog.http-fixture-retired', retired.ok);
+    try {
+      const retired = await q(`update vendor_items set active=false where name=${lit(prefix)}`);
+      report.check('catalog.http-fixture-retired', retired.ok);
+      if (!retired.ok) throw new Error('Catalog HTTP retirement failed');
+      const active = await one(q, `select count(*)::int n from vendor_items where active and name=${lit(prefix)}`);
+      const verified = Number(active.n) === 0;
+      report.check('catalog.http-fixture-no-active-identities', verified);
+      if (!verified) throw new Error('Catalog HTTP retirement verification failed');
+    } catch {
+      report.check('catalog.http-fixture-cleanup', false, 'retirement or verification failed');
+      markCatalogDirty(prefix);
+    }
   }
   return report.done();
 }

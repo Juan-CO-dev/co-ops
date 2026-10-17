@@ -48,6 +48,9 @@ const KNOWN_ERROR_CODES = new Set([
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {
+  if (code === "not_batch_recipe") return "yield.error.not_batch_recipe";
+  if (code === "ambiguous_output") return "recipes.error.ambiguous_output";
+  if (code === "recipe_inactive") return "catalog.error.recipe_inactive";
   if (SHOP_ERROR_CODES.has(code)) {
     return `catalog.error.${code}` as TranslationKey;
   }

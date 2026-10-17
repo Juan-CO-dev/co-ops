@@ -20,6 +20,7 @@ import { loadRecipePrepSections, loadRecipeBuilderCatalog, loadRecipeBuilderScop
 import type { Readiness } from "@/lib/readiness";
 import { RECIPE_WRITE_MIN } from "@/lib/recipes-shared";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
+import { ShareWithEveryShop } from "@/components/catalog/ShareWithEveryShop";
 import { RecipeCateringFlags, type RecipeMenuOutputFlags } from "@/components/admin/recipes/RecipeCateringFlags";
 
 export default async function AdminRecipeDetailPage({
@@ -77,15 +78,16 @@ export default async function AdminRecipeDetailPage({
 
   const lang = auth.user.language;
   return (
-    <div>
+    <div key={recipe.ownerLocationId ?? "shared"}>
       {/* Catalog Phase 3b: each shop's own ingredients and amounts live on the catalog recipe page; a GM changes
           its shop's version there (the lines below are the default's, the Director of Operations'). */}
       <div className="mx-auto mt-2 w-full max-w-3xl rounded-lg border-2 border-co-border bg-co-surface p-3">
-        <Link href={recipeItemHref(recipe.id)} className="inline-flex min-h-[44px] max-w-full items-center break-words text-sm font-bold text-co-text underline">
+        <Link href={recipeItemHref(recipe.id, { shopId: context.scope })} className="inline-flex min-h-[44px] max-w-full items-center break-words text-sm font-bold text-co-text underline">
           {serverT(lang, "recipes.catalog_link")}
         </Link>
         <p className="min-w-0 break-words text-xs text-co-text-muted">{serverT(lang, "recipes.catalog_link_hint")}</p>
       </div>
+      <ShareWithEveryShop kind="recipe" id={recipe.id} canShare={recipe.ownerLocationId != null && level >= 8} />
       <RecipeBuilder
         key={`${recipe.id}:${context.scope ?? "global"}`}
         locationId={context.scope}

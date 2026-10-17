@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // POST — PUBLISH a new template version (Template Builder, spec §1/§10 PR-3). Every
 // publish MINTS a new checklist_templates version (fresh item rows) effective NEXT
 // OPERATIONAL DAY, or TODAY when apply_now (Tier-A step-up + gated on no open
@@ -19,6 +20,8 @@ import {
 import type { GatePredicate } from "@/lib/types";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

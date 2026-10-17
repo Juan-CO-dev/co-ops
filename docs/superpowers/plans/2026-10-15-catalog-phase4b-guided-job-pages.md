@@ -2,7 +2,28 @@
 
 ## Part 4b of 2 — the job pages, the Toast link on the sandwich, Share and Back to normal, en + es
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **2026-10-16 r2 refresh at `b9263c2e` (shipped source `0ae19e22`):** This document is the historical product umbrella. Its task-by-task code snippets, ground-truth table and checkout/commit commands below are superseded, not executable instructions. Build from [the refreshed Phase 4b BUILD plan](2026-10-16-catalog-phase4b-BUILD.md), which carries the verified file:line drift table, exact wire contracts and eight chunks of 1–3 tests-first tasks. Work in `C:\Users\conta\co-ops-cat-p4b` on `feat/catalog-phase4b-job-pages`; leave the planning changes uncommitted. No fetch, push, merge, deployment, environment or DB action is authorized by this umbrella.
+
+### Current corrections (override every corresponding historical snippet below)
+
+| Topic | Shipped contract / build disposition |
+| --- | --- |
+| Share and Back previews | POST to separate `/share/preview` and `/back-to-normal/preview` endpoints with `{}`; response `{ preview }`. See BUILD drift table for each route anchor. |
+| Preview confirmation | Preview `token` becomes write `previewToken`. Share includes expected owner and required dependency arrays; swap sends normalized `preview.request` unchanged. |
+| Sandwich symbols and cost | Use `NewSandwichRequest` and `MenuCostRollup`, not nonexistent `SandwichDraft`/`SandwichCost`. Cost is `data.preview.cost`; derive margin/FC% from complete cost and draft price. |
+| Toast | Existing read is `loadSandwichToastChoices`; the existing route is POST-only. The GET choices/status adapter and pure DTO are explicit new work, not shipped `loadToastLinkChoices`/`ToastLinkChoices` APIs. |
+| Creation retry | NO migration. `attemptKey` is **correlation only, never replay** (code comment + AGENTS contract). Query exact shop/owner/name AND `.eq('created_by', actor.id)` using the authenticated user; never a JS truthiness guard. NULL creator, unknown actor, other actor or >10-minute row returns `name_taken`. A lost-response retry that cannot reconcile shows EN "You may have already added this sandwich. Find it in the catalog" / ES "Puede que ya hayas añadido este sándwich. Búscalo en el catálogo", with `/admin/items?view=catalog&q=<encoded submitted name>`. Chunk 4 adds/tests client prefill of the existing search box; chunk 8 walks recovery after >10 minutes. Matched identity gets an explicit bilingual open link, never an exact-attempt claim. |
+| Setup | HTTP success is not step success. Check inner `ok`, per-day outcomes and guide `lineSaved:null`; refresh unconfirmed writes before retry. |
+| Legacy ownership UI | Already shipped. Preserve selectors, scoped loader/keyed navigation and inline owned output. Build remaining catalog owned capabilities, post-create redirect and both reopen journeys only. |
+| 4a follow-ups | BUILD chunk 1 pins explicit allowlists: 39 files = 28 mutation-bearing + 11 read-only (9 POST previews + 2 photo GETs); mixed swap GET adds a twelfth read handler. All 18 unguarded mutations become guarded, zero remain, including item-type PATCH and menu shop/restore/back-to-default. Unknown file/method fails the test. Preserve the 10 existing guards; update read counts for Toast GET in chunk 2 and reconcile POST in chunk 4. Correct item-type's Tier A comment to actual Tier E. Minimal public preview DTOs retain internal evidence; cleanup failure persists DIRTY. |
+| Page registration order | Chunks 3/4 register new-item/new-sandwich in `SHOP_PARAMS_BY_PATH` AND `PAGE_ROUTES`, with `tests/shop-context.test.ts` passing in that chunk. Chunk 5 registers the dynamic swap page in `PAGE_ROUTES` and verifies its existing `/admin/catalog/sku/` prefix mapping; never add a literal `[id]` to the static-path table. Use canonical `shopParamFor(path, searchParamValues(sp))`. Do not postpone registration until chunk 7. |
+| Only-at display | `CatalogClient.tsx:332` already renders `catalog.only_at_shop`: no second chip or new key. Reuse that key elsewhere. Chunk 7 explicitly adds `loadGuideSkuShopNames` and `OrderGuidePanel.onlyAt`, wiring initial vendor-page load and order-guide GET reload, labels for guide and unplaced SKUs, and tests preserving full-guide saves. |
+| Costing blocker destination | Chunk 7 replaces `MenuCostingClient.tsx:452`'s legacy-list `skuCatalogHref` with `skuItemHref` for the exact SKU, authorized shop and `job: "price"`, with navigation coverage. |
+| Migration provenance | 0264/0265 headers record SIM/PROD application on 2026-10-16; commit `0ae19e22` stamps 0266 applied to both after #489 READY. Correct stale AGENTS file-only/future-only wording; chunk 8 verifies current sim readiness, never reapplies these migrations. No live DB check was performed for this plan. |
+| Deferred handoff | Durable sandwich replay; vendor/item-number uniqueness beyond cooperating jobs; Catering Toast-tab retirement **DEFERRED (lead decision 6)**. The tab stays in place for packages, add-ons, assortments and unlinking. Sibling admin-family same-origin hardening is a separate follow-up. |
+| Acceptance | 375 px first, en + es in each chunk, untouched equivalence pins, final sim browser walk for each job. Real sim/release evidence remains CC-owned and pending execution. |
+
+The detailed corrections and anchors in the BUILD plan govern wherever this historical draft differs. The material below is retained only to trace the original product coverage and proposed layouts.
 
 **Goal:** Put Part 4a's engines in front of the people who use them (spec §5 jobs 2–4, "each starts from the item page and from wherever the problem first shows up, and ends with the same preview and save choices"):
 - **New item** (`/admin/catalog/new/item`) — what it is → vendor (pick, or add one inline) → name + vendor item number → how it arrives (2b's sentence editor) → price → **Create** → then par, order days, order-guide section, where it's used and barcode, each saved on its own line.
@@ -980,7 +1001,6 @@ Run: `npx vitest run tests/catalog-jobs-i18n.test.ts` → expected: FAIL (the ke
   "catalog.share.preview_sku_keeps": "Every shop will be able to order {name}. {shop} keeps its own pack and price.",
   "catalog.share.confirm": "Share it",
   "catalog.share.done": "Shared with every shop.",
-  "catalog.owned.only_at": "Only at {shop}",
   "catalog.owned.price": "Price at {shop}",
   "catalog.owned.price_save": "Save price",
   "catalog.owned.cost": "Cost at {shop}: {cost}",
@@ -1207,7 +1227,6 @@ Run: `npx vitest run tests/catalog-jobs-i18n.test.ts` → expected: FAIL (the ke
   "catalog.share.preview_sku_keeps": "Todas las tiendas podrán pedir {name}. {shop} se queda con su propio empaque y precio.",
   "catalog.share.confirm": "Compartirlo",
   "catalog.share.done": "Compartido con todas las tiendas.",
-  "catalog.owned.only_at": "Solo en {shop}",
   "catalog.owned.price": "Precio en {shop}",
   "catalog.owned.price_save": "Guardar precio",
   "catalog.owned.cost": "Costo en {shop}: {cost}",
@@ -2135,6 +2154,8 @@ export function NewSandwichJob({ view }: { view: NewSandwichJobView }) {
       }));
       return;
     }
+    // r2: historical sketch only; lost-response name_taken needs the bilingual
+    // notice and submitted-name-prefiltered catalog link (BUILD chunk 4).
     setMessage(t(jobErrorKey(r.code)));
   };
 
@@ -2611,7 +2632,7 @@ export function ItemJobsStrip({ strip }: { strip: ItemJobsStripView }) {
       {strip.owner || strip.swapHref ? (
         <div className="flex flex-wrap items-center gap-2">
           {strip.owner ? (
-            <span className="rounded-full border-2 border-co-gold-deep px-3 py-1 text-xs font-bold text-co-text">{t("catalog.owned.only_at", { shop: strip.owner.shopName })}</span>
+            <span className="rounded-full border-2 border-co-gold-deep px-3 py-1 text-xs font-bold text-co-text">{t("catalog.only_at_shop", { shop: strip.owner.shopName })}</span>
           ) : null}
           {strip.swapHref ? <Link className={btn} href={strip.swapHref}>{t("catalog.swap.open")}</Link> : null}
           {strip.canShare ? <ShareWithEveryShop kind="sku" id={strip.skuId} /> : null}
@@ -2739,7 +2760,7 @@ export function OwnedSandwichClient({ view }: { view: OwnedSandwichView }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full border-2 border-co-gold-deep px-3 py-1 text-xs font-bold text-co-text">{t("catalog.owned.only_at", { shop: view.owner.shopName })}</span>
+        <span className="rounded-full border-2 border-co-gold-deep px-3 py-1 text-xs font-bold text-co-text">{t("catalog.only_at_shop", { shop: view.owner.shopName })}</span>
         {view.canShare ? <ShareWithEveryShop kind="menu_item" id={view.menuItem.id} /> : null}
       </div>
       <section className={card}>
@@ -2813,7 +2834,7 @@ with
       {view.owner ? (
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <span className="rounded-full border-2 border-co-gold-deep px-3 py-1 text-xs font-bold text-co-text">
-            {serverT(lang, "catalog.owned.only_at", { shop: view.owner.shopName ?? "" })}
+            {serverT(lang, "catalog.only_at_shop", { shop: view.owner.shopName ?? "" })}
           </span>
           {level >= SHARE_MIN ? <ShareWithEveryShop kind="recipe" id={view.recipe.id} /> : null}
         </div>
@@ -3012,31 +3033,18 @@ Replace `      <RecipeBuilder\n` (the element's first line) with
 2. Replace `            <option value="">{t("admin.skus.global")}</option>` with `            <option value="" disabled={needsShop}>{needsShop ? t("admin.skus.pick_your_shop") : t("admin.skus.global")}</option>`.
 3. Replace `  const canSubmit = name.trim() !== "" && !busy; // pack_format gate removed (design §1)` with `  const canSubmit = name.trim() !== "" && !busy && !(needsShop && locationId === ""); // pack_format gate removed (design §1); a GM's new item names its shop (4a)`.
 
-- [ ] **Step 5: The catalog list's badge (`components/admin/catalog/CatalogClient.tsx`)** — replace
-
-```tsx
-          <TypeBadge e={e} />
-          <RoleBadges e={e} />
-```
-
-with
-
-```tsx
-          <TypeBadge e={e} />
-          <RoleBadges e={e} />
-          {e.onlyAtShopName ? (
-            <span className="rounded-full border border-co-gold-deep px-2 py-0.5 text-[11px] font-bold text-co-text">{t("catalog.owned.only_at", { shop: e.onlyAtShopName })}</span>
-          ) : null}
-```
+- [x] **Step 5: The catalog list's badge already shipped** (`components/admin/catalog/CatalogClient.tsx:332-334`, key `catalog.only_at_shop`). Preserve it; do not add a second chip or a new key. Chunk 7 tests its continued display.
 
 - [ ] **Step 5b: The vendor's guide editor names a shop's own lines (decision (b), Astra round 1)** — it keeps the whole guide (a filtered save would delete lines) and labels each shop's own SKU "Only at <shop>":
+First implement `loadGuideSkuShopNames` in `lib/order-guides.ts` (it does not exist at the r2 baseline), with bounded reads and tests; then wire the `onlyAt` field through initial load and post-save GET reload, preserving the full guide.
+
 1. `app/admin/vendors/[id]/page.tsx`: replace `import { loadOrderGuide, ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";` with `import { loadGuideSkuShopNames, loadOrderGuide, ORDER_GUIDE_EDIT_MIN } from "@/lib/order-guides";`; in the `Promise.all` destructuring replace `    orderGuide,\n    guideSkuRes,` with `    orderGuide,\n    guideOnlyAt,\n    guideSkuRes,` and in its array `    loadOrderGuide(id),` with `    loadOrderGuide(id),\n    loadGuideSkuShopNames(id),`; replace `          initial={{ guide: orderGuide, skusNotOnGuide }}` with `          initial={{ guide: orderGuide, skusNotOnGuide, onlyAt: guideOnlyAt }}`.
 2. `app/api/admin/vendors/[id]/order-guide/route.ts`: add `  loadGuideSkuShopNames,` to its `@/lib/order-guides` import list; replace `  const guide = await loadOrderGuide(id);` with `  const [guide, onlyAt] = await Promise.all([loadOrderGuide(id), loadGuideSkuShopNames(id)]);` and, in the GET's `return jsonOk({`, `    guide,` with `    guide,\n    onlyAt,`.
 3. `components/admin/vendors/OrderGuidePanel.tsx`: in `export interface OrderGuideInitial {` after `  skusNotOnGuide: GuideBucketSku[];` add `  /** skuId → the one shop that owns it (decision (b)): its line says "Only at <shop>". Absent = none. */\n  onlyAt?: Record<string, string>;`; directly after `                        {line.itemNumber ? <span className="ml-2 text-co-text-muted">{line.itemNumber}</span> : null}` add
 
 ```tsx
                         {line.skuId && baseline.onlyAt?.[line.skuId] ? (
-                          <span className="ml-2 rounded-full border border-co-gold-deep px-2 py-0.5 text-[11px] font-bold text-co-text">{t("catalog.owned.only_at", { shop: baseline.onlyAt[line.skuId]! })}</span>
+                          <span className="ml-2 rounded-full border border-co-gold-deep px-2 py-0.5 text-[11px] font-bold text-co-text">{t("catalog.only_at_shop", { shop: baseline.onlyAt[line.skuId]! })}</span>
                         ) : null}
 ```
 
@@ -3044,7 +3052,7 @@ and directly after the bucket's `{s.itemNumber ? <span className="ml-2 text-co-t
 
 ```tsx
                       {baseline.onlyAt?.[s.skuId] ? (
-                        <span className="ml-2 rounded-full border border-co-gold-deep px-2 py-0.5 text-[11px] font-bold text-co-text">{t("catalog.owned.only_at", { shop: baseline.onlyAt[s.skuId]! })}</span>
+                        <span className="ml-2 rounded-full border border-co-gold-deep px-2 py-0.5 text-[11px] font-bold text-co-text">{t("catalog.only_at_shop", { shop: baseline.onlyAt[s.skuId]! })}</span>
                       ) : null}
 ```
 
@@ -3131,9 +3139,9 @@ describe("every way in", () => {
     expect(src("app/admin/catalog/recipe/[id]/page.tsx")).toContain('<ShareWithEveryShop kind="recipe" id={view.recipe.id} />');
     expect(src("components/admin/skus/SkuBuilder.tsx")).toContain("const needsShop = !isEdit && actorLevel < 8;");
     expect(src("components/admin/catering/menu/ToastTab.tsx")).not.toContain("catalog."); // the Catering Toast tab stays as it is (lead decision 6)
-    expect(src("components/admin/catalog/CatalogClient.tsx")).toContain('t("catalog.owned.only_at", { shop: e.onlyAtShopName })');
+    expect(src("components/admin/catalog/CatalogClient.tsx")).toContain('t("catalog.only_at_shop", { shop: e.onlyAtShopName })');
     // decision (b): the vendor's guide editor labels each shop's own line
-    expect(src("components/admin/vendors/OrderGuidePanel.tsx")).toContain('t("catalog.owned.only_at", { shop: baseline.onlyAt[line.skuId]! })');
+    expect(src("components/admin/vendors/OrderGuidePanel.tsx")).toContain('t("catalog.only_at_shop", { shop: baseline.onlyAt[line.skuId]! })');
     expect(src("app/admin/vendors/[id]/page.tsx")).toContain("initial={{ guide: orderGuide, skusNotOnGuide, onlyAt: guideOnlyAt }}");
     for (const code of ["ownership_changed", "line_other_shop", "shop_owned_edit_here"]) {
       expect(src("components/catalog/RecipeItemClient.tsx")).toContain(`"${code}"`);
@@ -3169,7 +3177,7 @@ describe("every way in", () => {
 
 - [ ] **Step 3: Run, then commit**
 
-Run: `npx vitest run tests/catalog-jobs-ui.test.ts tests/step-up-tier-map.test.ts tests/shop-context-routes.test.ts` (the last is whichever existing test audits `declaredShopRoutes()` against page sources — `grep -l declaredShopRoutes tests/` names it) → expected: PASS.
+Run: `npx vitest run tests/catalog-jobs-ui.test.ts tests/step-up-tier-map.test.ts tests/shop-context.test.ts` (also run in each page-creating chunk, not only here) → expected: PASS.
 
 ```bash
 git add tests/catalog-jobs-ui.test.ts tests/step-up-tier-map.test.ts

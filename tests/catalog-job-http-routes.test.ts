@@ -187,7 +187,14 @@ describe("positive route contracts",()=>{
  ] as const;
  it.each(cases)("%s delegates a valid normalized request",async(path,body,name,status,preview)=>{
   const engine=mocks.extra[name];
-  const result=name==="setup"?{step:"par",ok:true,detail:{}}:name==="swapPreview"?{ordering:{scope:shop,primarySkuId:shop,parsChanged:false,messageKey:"catalog.swap.ordering_consequence"}}:{marker:true};
+  const common = {name:"Item",ownerShopId:shop,ownerShopName:"Shop",token:"token"};
+  const result=name==="setup"?{step:"par",ok:true,detail:{}}
+   :name==="previewSku"?{...common,skuId:id,usedIn:[],ownerKeepsOwnPack:true,ownerKeepsOwnPrice:true}
+   :name==="previewRecipe"?{...common,recipeId:id,shopOnlyItems:[],shopOnlySkus:[],makesSandwich:null,blockedBy:[]}
+   :name==="previewMenu"?{...common,menuItemId:id,nameEs:null,price:12,recipes:[],shopOnlyItems:[],shopOnlySkus:[],blockedBy:[]}
+   :name==="backPreview"?{swapId:id,oldSku:{id,name:"Old"},newSku:{id:shop,name:"New"},shopId:shop,shopName:"Shop",startedAt:"2026-10-16",goingBack:[],kept:[],primary:"restore",token:"token"}
+   :name==="swapPreview"?{request:{oldSkuId:id,newSkuId:shop,scope:shop,mode:"for_now",productName:null,productNameEs:null,note:null},oldSku:{id,name:"Old",vendorName:null},newSku:{id:shop,name:"New",vendorName:null},scopeName:"Shop",product:{kind:"existing",id,name:"Product"},recipes:[],refused:[],followsPrimary:[],untouchedShops:[],costs:[],token:"token",ordering:{scope:shop,primarySkuId:shop,parsChanged:false,messageKey:"catalog.swap.ordering_consequence"}}
+   :{marker:true};
   engine.mockResolvedValue(result);
   const route=await routeImports[path]();
   const response=await route.POST(req({...body,id:shop},path),{params:Promise.resolve({id,swapId:id})});
@@ -268,4 +275,66 @@ it("localizes malformed JSON without exposing parser details",async()=>{
  mocks.session.mockResolvedValue({...actor,user:{...actor.user,language:"es"}});
  const response=await POST(new NextRequest("http://localhost/api/admin/catalog/jobs/new-item",{method:"POST",body:"{",headers:{origin:"http://localhost"}}));
  expect(response.status).toBe(400);expect(await response.json()).toMatchObject({code:"invalid_json",error:serverT("es","catalog.error.invalid_json")});
+});
+
+// Older mutation family: valid same-origin requests retain the existing Tier E,
+// role floor, explicit shop and library refusal contracts.
+const legacyWrite = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/admin/catalog', async original => ({ ...await original<typeof import('@/lib/admin/catalog')>(), setItemType: legacyWrite }));
+vi.mock('@/lib/admin/sku-versions', async original => ({ ...await original<typeof import('@/lib/admin/sku-versions')>(), saveSkuPackVersion: legacyWrite, restoreSkuPackVersion: legacyWrite, retireShopPackVersion: legacyWrite, saveSkuPrice: legacyWrite, retireShopPriceLane: legacyWrite }));
+vi.mock('@/lib/catalog/sku-item', async original => ({ ...await original<typeof import('@/lib/catalog/sku-item')>(), applyPackChange: legacyWrite, applyPriceChange: legacyWrite, setSkuPriceBasis: legacyWrite }));
+vi.mock('@/lib/pack-change-requests', async original => ({ ...await original<typeof import('@/lib/pack-change-requests')>(), dismissPackChangeRequest: legacyWrite }));
+vi.mock('@/lib/admin/recipe-versions', async original => ({ ...await original<typeof import('@/lib/admin/recipe-versions')>(), saveRecipeLines: legacyWrite, restoreRecipeVersion: legacyWrite, retireShopRecipeVersion: legacyWrite }));
+vi.mock('@/lib/catalog/recipe-item', async original => ({ ...await original<typeof import('@/lib/catalog/recipe-item')>(), applyRecipeChange: legacyWrite }));
+vi.mock('@/lib/admin/menu-item-shop', async original => ({ ...await original<typeof import('@/lib/admin/menu-item-shop')>(), saveMenuItemShopSetting: legacyWrite, restoreMenuItemShopSetting: legacyWrite, retireMenuItemShopSetting: legacyWrite }));
+vi.mock('@/lib/catalog/menu-item-page', async original => ({ ...await original<typeof import('@/lib/catalog/menu-item-page')>(), applyMenuChange: legacyWrite }));
+const levels = [{label:'case',containsQty:16,containsIndex:null,containsMeasureUnit:'oz'}];
+const target = {kind:'shop',shopId:shop};
+const legacy = [
+ ['item-type/[id]', 'PATCH', {itemType:'prepped'}],
+ ['menu-item/[id]/apply','POST',{change:{kind:'back_to_default',shopId:shop},previewToken:'12345678'}],
+ ['menu-item/[id]/shop','POST',{locationId:shop,expectedSettingId:null,price:12,soldHere:true,nameOverride:null,nameOverrideEs:null}],
+ ['menu-item/[id]/shop/restore','POST',{locationId:shop,fromSettingId:id,expectedSettingId:null}],
+ ['menu-item/[id]/shop/back-to-default','POST',{locationId:shop,settingId:id}],
+ ['recipe/[id]/apply','POST',{change:{kind:'back_to_default',shopId:shop},previewToken:'12345678'}],
+ ['recipe/[id]/back-to-default','POST',{locationId:shop,versionId:id}],
+ ['recipe/[id]/lines','POST',{locationId:shop,expectedVersionId:null,basedOnVersionId:null,op:{kind:'add',line:{componentSkuId:id,componentItemId:null,componentProductId:null,quantity:1,unit:'oz',eachContainerLabel:null,portioned:false}}}],
+ ['recipe/[id]/restore','POST',{locationId:shop,fromVersionId:id,expectedVersionId:null,basedOnVersionId:null}],
+ ['sku/[id]/pack','POST',{locationId:shop,levels,expectedLiveVersionId:null}],
+ ['sku/[id]/pack/apply','POST',{target,levels,conversions:[],previewToken:'12345678'}],
+ ['sku/[id]/pack/restore','POST',{locationId:shop,fromVersionId:id,expectedLiveVersionId:null}],
+ ['sku/[id]/pack/back-to-default','POST',{locationId:shop,versionId:id}],
+ ['sku/[id]/price','POST',{locationId:shop,unitPrice:12,effectiveDate:'2026-10-16'}],
+ ['sku/[id]/price/apply','POST',{target,unitPrice:12,effectiveDate:'2026-10-16',previewToken:'12345678'}],
+ ['sku/[id]/price/back-to-default','POST',{locationId:shop}],
+ ['sku/[id]/price-basis','POST',{basis:'per_case'}],
+ ['sku/[id]/pack-requests/[requestId]/dismiss','POST',{}],
+] as const;
+describe.each(legacy)('%s existing mutation contract', (path, method, body) => {
+ const invoke = async (origin = 'http://localhost') => {
+  const route = await import(/* @vite-ignore */ `../app/api/admin/catalog/${path}/route`);
+  return route[method](new NextRequest(`http://localhost/api/admin/catalog/${path}`,{method,body:JSON.stringify(body),headers:{origin}}),{params:Promise.resolve({id,requestId:id})}) as Promise<Response>;
+ };
+ it('refuses a bad origin even with a valid unlocked payload',async()=>{
+  legacyWrite.mockResolvedValue({versionId:id,settingId:id,changed:true});
+  expect((await invoke('https://attacker.invalid')).status).toBe(403);
+  expect(legacyWrite).not.toHaveBeenCalled();expect(mocks.session).not.toHaveBeenCalled();
+ });
+ it('passes an authorized same-origin save and its exact actor/shop to the library',async()=>{
+  legacyWrite.mockResolvedValue({versionId:id,settingId:id,changed:true});
+  const response=await invoke();
+  expect(response.status).toBeLessThan(300);expect(response.status).toBeGreaterThanOrEqual(200);
+  expect(mocks.step).toHaveBeenCalledWith(actor,'E');
+  expect(legacyWrite).toHaveBeenCalledOnce();expect(legacyWrite.mock.calls[0]?.[0]).toEqual(actor);
+  if ('locationId' in body || 'target' in body || 'change' in body) expect(JSON.stringify(legacyWrite.mock.calls[0]?.slice(1))).toContain(shop);
+ });
+ it('preserves the role floor before step-up or writes',async()=>{
+  mocks.session.mockResolvedValue({...actor,level:3,user:{...actor.user,role:'employee'}});
+  expect((await invoke()).status).toBe(403);expect(mocks.step).not.toHaveBeenCalled();expect(legacyWrite).not.toHaveBeenCalled();
+ });
+ it('preserves stale Tier E refusal',async()=>{
+  mocks.step.mockReturnValue({ok:false,code:'step_up_stale'});
+  const response=await invoke();expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({code:'step_up_stale'});expect(legacyWrite).not.toHaveBeenCalled();
+ });
 });

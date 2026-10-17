@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { markCatalogDirty } from './cleanup.mjs';
 import { randomUUID } from 'node:crypto';
 import { collide, lit, json, one, joined } from './management-api.mjs';
 
@@ -154,22 +155,32 @@ export async function runCatalogApiEvidence({ q, actor, shop, check, primaryRequ
     const after = await one(q, `select l.quantity::float qty from recipe_versions v join recipe_version_lines l on l.version_id=v.id where v.recipe_id=${lit(busy.recipe)} and v.location_id=${lit(shop)} and v.active`);
     check('dependencies-busy.released-positive-control', after.qty === 7);
   } finally {
-    // Every request above is awaited before retirement; never delete journal evidence.
-    const live = await q(`select s.id from sku_swaps s join vendor_items v on v.id=s.old_sku_id where v.name like ${lit(`${prefix}%`)} and not exists(select 1 from sku_swap_ends e where e.swap_id=s.id)`);
-    if (!live.ok) throw new Error('Catalog live swap cleanup read failed');
-    for (const swap of live.rows) {
-      const ended = await q(`select end_sku_swap(${lit(swap.id)},${lit(actor)}) result`);
-      check('fixture.pending-swap-ended', ended.ok);
-      if (!ended.ok) throw new Error('Catalog pending swap cleanup failed');
+    try {
+      // Every request above is awaited before retirement; never delete journal evidence.
+      const live = await q(`select s.id from sku_swaps s join vendor_items v on v.id=s.old_sku_id where v.name like ${lit(`${prefix}%`)} and not exists(select 1 from sku_swap_ends e where e.swap_id=s.id)`);
+      if (!live.ok) throw new Error('Catalog live swap cleanup read failed');
+      for (const swap of live.rows) {
+        const ended = await q(`select end_sku_swap(${lit(swap.id)},${lit(actor)}) result`);
+        check('fixture.pending-swap-ended', ended.ok);
+        if (!ended.ok) throw new Error('Catalog pending swap cleanup failed');
+      }
+      const cleanup = await q(retireSql(prefix));
+      check('fixture.retired', cleanup.ok);
+      if (!cleanup.ok) throw new Error('Catalog fixture retirement failed');
+      const active = await one(q, `select (select count(*) from vendor_items where active and name like ${lit(`${prefix}%`)})+
+        (select count(*) from recipes where active and name like ${lit(`${prefix}%`)})+
+        (select count(*) from menu_items where active and name like ${lit(`${prefix}%`)})+
+        (select count(*) from products where active and name like ${lit(`${prefix}%`)})+
+        (select count(*) from items where active and name like ${lit(`${prefix}%`)}) as n,
+        (select count(*) from sku_swaps s join vendor_items v on v.id=s.old_sku_id where v.name like ${lit(`${prefix}%`)}
+          and not exists(select 1 from sku_swap_ends e where e.swap_id=s.id)) as pending`);
+      check('fixture.no-active-identities', Number(active.n) === 0);
+      check('fixture.no-pending-swaps', Number(active.pending) === 0);
+      if (Number(active.n) !== 0 || Number(active.pending) !== 0) throw new Error('Catalog retirement verification failed');
+    } catch (error) {
+      check('fixture.cleanup', false);
+      markCatalogDirty(prefix);
+      throw error;
     }
-    const cleanup = await q(retireSql(prefix));
-    check('fixture.retired', cleanup.ok);
-    if (!cleanup.ok) throw new Error('Catalog fixture retirement failed');
-    const active = await one(q, `select (select count(*) from vendor_items where active and name like ${lit(`${prefix}%`)})+
-      (select count(*) from recipes where active and name like ${lit(`${prefix}%`)})+
-      (select count(*) from menu_items where active and name like ${lit(`${prefix}%`)})+
-      (select count(*) from products where active and name like ${lit(`${prefix}%`)})+
-      (select count(*) from items where active and name like ${lit(`${prefix}%`)}) as n`);
-    check('fixture.no-active-identities', Number(active.n) === 0);
   }
 }

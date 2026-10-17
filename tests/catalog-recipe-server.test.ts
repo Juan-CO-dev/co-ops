@@ -14,7 +14,7 @@ import { buildRecipeVersionsFixture, LOC, OTHER } from "./fixtures/recipe-versio
 import { applyRecipeChange, computeRecipePreview, loadRecipeItemView } from "@/lib/catalog/recipe-item";
 import { applyMenuChange, computeMenuPreview, loadMenuItemPageView } from "@/lib/catalog/menu-item-page";
 import { loadShopChanges, loadShopNotices } from "@/lib/catalog/shop-changes";
-import { RecipeVersionError } from "@/lib/admin/recipe-versions";
+import { RecipeVersionError, writeRecipeVersion } from "@/lib/admin/recipe-versions";
 import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 
@@ -45,6 +45,78 @@ const smm = actor("social_media_mgr", 6, [LOC]);
 const turkey = (qty: number) => ({ componentSkuId: "s-turkey", componentItemId: null, componentProductId: null, quantity: qty, unit: "case", eachContainerLabel: null, portioned: false });
 const edit = { kind: "lines", target: { kind: "shop", shopId: LOC },
   op: { kind: "update", lineId: "ri-03", line: turkey(0.025), expected: turkey(0.0125) } } as const;
+
+describe("owned recipe reopen and preview boundaries", () => {
+  const ownedEdit = { ...edit, target: { kind: "owned", ownerLocationId: LOC } } as const;
+  function ownRecipe() {
+    tables.recipes!.find(r => r.id === "r-italian")!.location_id = LOC;
+    tables.menu_items!.find(r => r.id === "m-italian")!.location_id = LOC;
+    tables.recipe_versions = tables.recipe_versions!.filter(r => r.id !== "ov-italian");
+  }
+  it("projects owned capability and null version head with owner-shop picker visibility", async () => {
+    ownRecipe();
+    tables.vendor_items!.find(r => r.id === "s-turkey")!.location_id = LOC;
+    tables.vendor_items!.find(r => r.id === "s-turkey")!.inventory_only = false;
+    tables.vendor_items!.push({ ...tables.vendor_items![0], id: "foreign-input", location_id: OTHER });
+    const view = (await loadRecipeItemView(gm, "r-italian", LOC))!;
+    expect(view.owner).toEqual({ locationId: LOC, name: "Shop one" });
+    expect(view.scope).toBe(LOC);
+    expect(view.can).toMatchObject({ editOwned: true, share: false, editGlobal: false, editShop: false, shopsToEdit: [] });
+    expect(view.version).toMatchObject({ scopeVersionId: "rv-r-italian-base", ridesDefault: false });
+    expect(view.picker.skus.map(s => s.id)).toContain("s-turkey");
+    expect(view.picker.skus.map(s => s.id)).not.toContain("foreign-input");
+    expect(view.otherShopVersions).toEqual([]);
+    expect(view.notices).toEqual([]);
+    expect((await loadRecipeItemView(moo, "r-italian", LOC))!.can.share).toBe(true);
+  });
+  it("does not use null write scope as global read visibility, or foreign scope as authority", async () => {
+    ownRecipe();
+    expect(await loadRecipeItemView(gm, "r-italian", null)).toBeNull();
+    expect(await loadRecipeItemView(gm, "r-italian", OTHER)).toBeNull();
+    expect(await loadRecipeItemView(actor("gm", 7, [OTHER]), "r-italian", LOC)).toBeNull();
+    await expect(loadRecipeItemView(smm, "r-italian", LOC)).rejects.toMatchObject({ code: "forbidden" });
+  });
+  it("previews only the owner shop and saves the null head through the owner-bound writer", async () => {
+    ownRecipe();
+    const calls = recordRpc({ save_owned_recipe_version: () => ({ version_id: "owned-next", retired_version_id: "rv-r-italian-base" }) });
+    const preview = await computeRecipePreview(gm, "r-italian", ownedEdit);
+    expect(preview.reached.map(r => r.scope)).toEqual([LOC]);
+    expect(preview.expectedVersionId).toBe("rv-r-italian-base");
+    expect(preview.basedOnVersionId).toBeNull();
+    expect(await applyRecipeChange(gm, "r-italian", ownedEdit, preview.token)).toEqual({ versionId: "owned-next" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ fn: "save_owned_recipe_version", args: { p_expected_owner: LOC, p_expected_active_id: "rv-r-italian-base" } });
+  });
+  it("refuses a share between preview and save, including for MoO", async () => {
+    ownRecipe();
+    const calls = recordRpc({});
+    const preview = await computeRecipePreview(moo, "r-italian", ownedEdit);
+    tables.recipes!.find(r => r.id === "r-italian")!.location_id = null;
+    await expect(applyRecipeChange(moo, "r-italian", ownedEdit, preview.token)).rejects.toMatchObject({ code: "ownership_changed" });
+    expect(calls).toEqual([]);
+  });
+  it("owned target cannot bypass shared-default, owner, or role gates", async () => {
+    await expect(computeRecipePreview(gm, "r-italian", ownedEdit)).rejects.toMatchObject({ code: "ownership_changed" });
+    ownRecipe();
+    await expect(computeRecipePreview(actor("gm", 7, [OTHER]), "r-italian", ownedEdit)).rejects.toMatchObject({ code: "not_found" });
+    await expect(computeRecipePreview(smm, "r-italian", ownedEdit)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(computeRecipePreview(gm, "r-italian", edit)).rejects.toMatchObject({ code: "shop_owned_edit_here" });
+  });
+  it("writer never switches an expected owned save onto the shared RPC after Share", async () => {
+    const calls = recordRpc({});
+    await expect(writeRecipeVersion(moo, { recipeId: "r-italian", scope: null, expectedOwner: LOC,
+      expectedVersionId: "rv-r-italian-base", basedOnVersionId: null, lines: [], op: "update", snapshot: {} }))
+      .rejects.toMatchObject({ code: "ownership_changed" });
+    expect(calls).toEqual([]);
+  });
+  it("owned preview refuses foreign input with its position and name", async () => {
+    ownRecipe();
+    tables.vendor_items!.find(r => r.id === "s-turkey")!.location_id = OTHER;
+    await expect(computeRecipePreview(gm, "r-italian", ownedEdit)).rejects.toMatchObject({
+      code: "line_other_shop", line: { position: 1, name: "Turkey", reason: "line_other_shop" },
+    });
+  });
+});
 
 type RpcCall = { fn: string; args: Record<string, unknown> };
 /** A recording rpc() on the fake db: each function answers with `answers[fn]`. */

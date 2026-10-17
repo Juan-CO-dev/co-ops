@@ -56,6 +56,27 @@ type GuideRow = { id: string; vendor_id: string; name: string; updated_at: strin
 type SectionRow = { id: string; guide_id: string; name: string; position: number };
 type LineRow = { id: string; section_id: string; position: number; sku_id: string | null; label: string; item_number: string | null; note: string | null };
 
+/** Label already-loaded SKUs without changing the guide's complete edit model.
+ * Include retired shops; absent metadata has no label. Bound each request URL. */
+export async function loadGuideSkuShopNames(
+  skus: ReadonlyArray<{ id: string; location_id?: string | null }>,
+): Promise<Record<string, string>> {
+  const ids = [...new Set(skus.flatMap(s => s.location_id ? [s.location_id] : []))];
+  if (!ids.length) return {};
+  const sb = getServiceRoleClient();
+  const names = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await sb.from("locations").select("id, name")
+      .in("id", ids.slice(i, i + 100)).returns<Array<{ id: string; name: string }>>();
+    if (error) throw new Error(`loadGuideSkuShopNames: ${error.message}`);
+    for (const shop of data ?? []) names.set(shop.id, shop.name);
+  }
+  return Object.fromEntries(skus.flatMap(s => {
+    const name = s.location_id ? names.get(s.location_id) : undefined;
+    return name ? [[s.id, name]] : [];
+  }));
+}
+
 /** The vendor's guide, or null when none exists yet. */
 export async function loadOrderGuide(vendorId: string, scope?: string): Promise<GuideModel | null> {
   if ((await loadStoreVendorIds()).has(vendorId)) return null;

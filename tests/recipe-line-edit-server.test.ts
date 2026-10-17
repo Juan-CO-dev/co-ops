@@ -169,7 +169,7 @@ describe("recipe_input.update is a human change to the kitchen", () => {
 describe("PATCH /api/admin/recipes/[id]/inputs/[inputId]", () => {
   const call = (body: unknown) =>
     PATCH(
-      new NextRequest(`http://localhost/api/admin/recipes/${R}/inputs/${LINE}`, { method: "PATCH", body: JSON.stringify(body) }),
+      new NextRequest(`http://localhost/api/admin/recipes/${R}/inputs/${LINE}`, { method: "PATCH", headers: { origin: "http://localhost" }, body: JSON.stringify(body) }),
       { params: Promise.resolve({ id: R, inputId: LINE }) },
     );
   const body = { line: { componentSkuId: "sku-ham", quantity: 5, unit: "oz" }, expected: { componentSkuId: "sku-ham", quantity: 4, unit: "oz", eachContainerLabel: null, portioned: false } };

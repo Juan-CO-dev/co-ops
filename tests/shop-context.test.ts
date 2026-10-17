@@ -327,6 +327,9 @@ describe("review 2: a route that ignores the URL shop never moves the remembered
 
 const ROOT_FOR_AUDIT = path.resolve(__dirname, "..");
 const PAGE_ROUTES: Record<string, string> = {
+  "app/admin/catalog/new/item/page.tsx": "/admin/catalog/new/item",
+  "app/admin/catalog/sku/[id]/swap/page.tsx": "/admin/catalog/sku/7d0c1f2e-0000-4000-8000-000000000001/swap",
+  "app/admin/catalog/new/sandwich/page.tsx": "/admin/catalog/new/sandwich",
   "app/(authed)/dashboard/page.tsx": "/dashboard",
   "app/(authed)/stations/page.tsx": "/stations",
   "app/admin/stations/page.tsx": "/admin/stations",
@@ -414,7 +417,12 @@ describe("route contract = what each resolver page's source actually reads (revi
       for (const entry of readdirSync(path.join(ROOT_FOR_AUDIT, dir), { withFileTypes: true })) {
         const rel = `${dir}/${entry.name}`;
         if (entry.isDirectory()) walk(rel);
-        else if (entry.name === "page.tsx" && /from "@\/lib\/shop-context"/.test(readFileSync(path.join(ROOT_FOR_AUDIT, rel), "utf8"))) pages.push(rel);
+        else if (entry.name === "page.tsx") {
+          const source = readFileSync(path.join(ROOT_FOR_AUDIT, rel), "utf8");
+          // Job loaders perform the authorized shop resolution on the page's behalf.
+          if (/from "@\/lib\/shop-context"/.test(source)
+            || jobLoaderImport.test(source)) pages.push(rel);
+        }
       }
     };
     walk("app");
@@ -544,4 +552,20 @@ describe("source shape — every shop-defaulting page uses the one resolver", ()
     expect(server).toMatch(/import "server-only"/);
     expect(server).toMatch(/return isShopId\(value\) \? value : null/);
   });
+});
+
+// API scopes are explicit: this mixed Toast route is not a page/cookie preference resolver.
+it("catalog Toast GET declares the selected-shop location contract", () => {
+  const source = readFileSync("app/api/admin/catalog/menu-item/[id]/toast/route.ts", "utf8");
+  expect(source).toContain('export async function GET');
+  expect(source).toContain('req.nextUrl.searchParams.get("location")');
+  expect(source).toContain('if (!uuid(locationId))');
+  expect(source).toContain('loadToastLinkChoices(ctx, id, locationId)');
+});
+
+const jobLoaderImport = /import\s*\{[^}]*\bload(?:New(?:Item|Sandwich)|SwapVendor)JobView\b(?:\s+as\s+\w+)?[^}]*\}\s*from\s*["']@\/lib\/catalog\/jobs["']/;
+it("audits aliased job loader imports as shop-aware pages", () => {
+  expect(jobLoaderImport.test('import { loadNewItemJobView as load } from "@/lib/catalog/jobs"')).toBe(true);
+  expect(jobLoaderImport.test('import { loadNewSandwichJobView } from "@/lib/catalog/jobs"')).toBe(true);
+  expect(jobLoaderImport.test('import { unrelated } from "@/lib/catalog/jobs"')).toBe(false);
 });

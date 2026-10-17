@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -13,6 +14,8 @@ import {
 //   MoO+ (>=8), Tier B (financial). locationId from the query string.
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ ruleId: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { ruleId } = await params;
   const ctx = await requireSession(req, `/api/admin/catering/rate-rules/${ruleId}`);
   if (ctx instanceof Response) return ctx;

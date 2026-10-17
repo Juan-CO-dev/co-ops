@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 // GET list (GM+ ≥7, no step-up) · POST create (GM+ ≥7, Tier B)
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -27,6 +28,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/admin/catering/zones");
