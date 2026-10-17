@@ -3,6 +3,8 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { Hero } from '@/components/landing/Hero';
+import { CateringLink } from '@/components/landing/CateringLink';
+import { serverT } from '@/lib/i18n/server';
 import { loadLandingConfig } from '@/lib/landing/config';
 import { heroMedia } from '@/lib/landing/media';
 import inventory from '@/config/tenant/landing-assets.json';
@@ -24,7 +26,10 @@ describe('server-rendered hero poster', () => {
     expect(html).toContain('landing-v2-hero-copy');
     expect(html).toContain('id="landing-consent-slot"');
     expect(html).toContain('data-hero-actions');
-    expect(html).toContain(loadLandingConfig({}).cateringUrl.replaceAll('&', '&amp;'));
+    // The same first-screen catering action now lives in the header.
+    const catering = renderToStaticMarkup(createElement(CateringLink, {config:loadLandingConfig({}),language}));
+    expect(catering).toContain(loadLandingConfig({}).cateringUrl.replaceAll('&', '&amp;'));
+    expect(catering).toContain(serverT(language,'landing.catering.short'));
     expect(images).toHaveLength(1);
     expect(preloads).toHaveLength(1);
     const img = images[0]!;
@@ -46,7 +51,12 @@ describe('server-rendered hero poster', () => {
     expect(attribute(img, 'fetchPriority')).toBe('high');
     expect(attribute(preload, 'fetchPriority')).toBe('high');
     expect(attribute(img, 'alt')).toBeTruthy();
-    expect(html).toMatch(/<h1\b[^>]*id="hero-title"[^>]*>[^<]+<\/h1>/);
+    const lines=serverT(language,'landing.hero.title').split('\n');
+    expect(lines).toHaveLength(2);
+    expect(html).toContain(`<h1 id="hero-title"><span>${lines[0]}</span><span>\n${lines[1]}</span></h1>`);
+    expect(html).toContain(serverT(language,'landing.hero.eyebrow'));
+    expect(html).toContain(serverT(language,'landing.hero.body'));
+    expect(html).toContain(serverT(language,'landing.hero.foot'));
     expect(html).not.toMatch(/<video\b|opacity-0|visibility:\s*hidden|animate-/);
   });
 });

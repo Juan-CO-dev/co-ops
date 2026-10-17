@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { products, validateProducts } from '@/lib/landing/products';
+import roster from '@/config/tenant/landing-products.json';
 import { isLandingAsset } from '@/lib/landing/host-shared';
 
 describe('approved landing lineup', () => {
+  it('fails closed when the roster itself contains a missing translation key',async()=>{
+    vi.resetModules();
+    vi.doMock('@/config/tenant/landing-products.json',()=>({default:roster.map((product,index)=>index===0?{...product,ingredientsKey:'landing.lineup.ingredients.typo'}:product)}));
+    try {
+      await expect(import('@/lib/landing/products')).rejects.toThrow('Missing lineup ingredient translation');
+    } finally { vi.doUnmock('@/config/tenant/landing-products.json');vi.resetModules(); }
+  });
   it('permits only approved lineup image paths through the host without the optimizer', () => {
     for (const product of products) {
       expect(isLandingAsset(product.image, new URLSearchParams())).toBe(true);

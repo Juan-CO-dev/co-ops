@@ -5,13 +5,25 @@ async function reachSpin(page:Page) {
   await page.locator('.landing-v2-spin').scrollIntoViewIfNeeded();
 }
 
+for (const consent of ['unset','accepted','rejected'] as const) test(`initial hero is image-only before scroll with ${consent} consent`,async({page,context,baseURL})=>{
+  if(consent!=='unset') await context.addCookies([{name:'landing_consent',value:consent,url:baseURL!}]);
+  const requests:string[]=[];
+  page.on('request',request=>{if(/\.(mp4|webm)(\?|$)/.test(request.url()))requests.push(request.url());});
+  await page.goto('/');
+  await expect(page.locator('#hero img')).toBeVisible();
+  await expect(page.locator('#hero video')).toHaveCount(0);
+  await expect(page.locator('.landing-v2-spin video')).toHaveCount(0);
+  expect(await page.evaluate(()=>scrollY)).toBe(0);
+  expect(requests).toEqual([]);
+});
+
 for(const preference of ['reduce','save-data'] as const)test(`${preference} downloads no automatic motion`,async({page})=>{
   if(preference==='reduce')await page.emulateMedia({reducedMotion:'reduce'});
   else await page.addInitScript(()=>Object.defineProperty(navigator,'connection',{value:{saveData:true,addEventListener(){},removeEventListener(){}}}));
   const requests:string[]=[];page.on('request',r=>{if(/\.(mp4|webm)/.test(r.url()))requests.push(r.url());});
   await page.goto('/');await reachSpin(page);await page.waitForTimeout(250);
   expect(requests).toEqual([]);
-  await expect(page.locator('.landing-v2-spin video')).not.toHaveAttribute('src',/./);
+  await expect(page.locator('.landing-v2-spin video')).toHaveCount(0);
   await expect(page.locator('#hero video')).toHaveCount(0);
   await expect(page.locator('#hero img')).toBeVisible();
 });
@@ -35,7 +47,7 @@ test('keyboard Play attaches one source and preserves reserved geometry',async({
   await page.addInitScript(()=>{HTMLMediaElement.prototype.play=function(){if(this.closest('.landing-v2-spin'))Reflect.set(window,'spinPlayedSource',this.getAttribute('src'));return Promise.resolve();};});
   await page.goto('/');await reachSpin(page);
   const video=page.locator('.landing-v2-spin video');
-  const before=await video.boundingBox();await expect(video).not.toHaveAttribute('src',/./);
+  const before=await page.locator('.landing-v2-spin-placeholder').boundingBox();await expect(video).toHaveCount(0);
   await page.locator('.landing-v2-spin button').focus();await page.keyboard.press('Enter');
   await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'spinPlayedSource'))).toBe(heroMedia.spin);
   await expect(video).toHaveAttribute('src',heroMedia.spin);
@@ -56,6 +68,6 @@ test('pending manual playback leaves the hero and retry control usable',async({p
 for(const event of ['scroll','resize','visibilitychange'])test(`${event} never substitutes for explicit Play`,async({page})=>{
   await page.goto('/');await reachSpin(page);
   await page.evaluate(event=>{(event==='visibilitychange'?document:window).dispatchEvent(new Event(event));},event);
-  await expect(page.locator('.landing-v2-spin video')).not.toHaveAttribute('src',/./);
+  await expect(page.locator('.landing-v2-spin video')).toHaveCount(0);
   await expect(page.locator('#hero video')).toHaveCount(0);
 });

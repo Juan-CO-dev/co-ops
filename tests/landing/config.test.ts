@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { loadLandingConfig } from "@/lib/landing/config";
 import { getLandingLinks } from "@/lib/landing/links";
+import { landingTenantConfig } from '@/config/tenant/landing';
 
 describe("central landing configuration", () => {
+  it('filters config-inactive shops before deriving public links or geolocation',()=>{
+    const config=loadLandingConfig({}, {...landingTenantConfig,stores:landingTenantConfig.stores.map(store=>({...store,active:store.key==='capitol-hill'}))});
+    expect(config.stores.map(store=>store.key)).toEqual(['capitol-hill']);
+    expect(config.nearbyEnabled).toBe(false);
+  });
   it("has distinct official branch links without guessed promotion parameters", () => {
     const config = loadLandingConfig({});
     expect(config.landingHosts).toEqual([]);
@@ -31,6 +37,7 @@ describe("central landing configuration", () => {
  {key:"doordash",url:"https://order.online/business/compliments-only-11187127"},
  {key:"uber-eats",url:"https://www.ubereats.com/store/compliments-only-dupont-circle/gEXGz9LhW5K7vNG69G9aDQ"}
  ]);
+    expect(config.stores.map(store=>[store.active,store.phoneDisplay])).toEqual([[true,'(202) 621-8645'],[true,'(202) 794-4638']]);
     expect(config.stores.map(s=>[s.phone,s.openingHours,s.coordinates])).toEqual([
  ["+12026218645",{days:["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],opens:"10:30",closes:"18:00"},{latitude:38.8817492,longitude:-76.9947597}],
  ["+12027944638",{days:["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],opens:"10:30",closes:"20:00"},{latitude:38.9098292,longitude:-77.0462506}]

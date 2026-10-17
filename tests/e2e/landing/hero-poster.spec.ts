@@ -41,15 +41,24 @@ for (const width of [320, 640, 768, 1024]) {
         await document.fonts.ready;
         const image = element as HTMLImageElement;
         const box = image.getBoundingClientRect();
-        // object-contain can paint narrower than its full-width element box.
-        const paintedWidth = Math.min(box.width, box.height * 960 / 1440);
+        // Full-bleed object-cover paints the entire element, with uniform cropping.
+        const paintedWidth = box.width;
         const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
         return { paintedWidth, height: box.height, rem, sizes: image.sizes };
       });
       const declaredWidth = width >= 768 ? width / 2 : width;
       expect(geometry.sizes).toBe('(min-width: 768px) 50vw, 100vw');
       expect(Math.abs(geometry.paintedWidth - declaredWidth)).toBeLessThan(1);
-      expect(geometry.height).toBeGreaterThan(0);
+      // Full-bleed replacement for r2 P3-F's obsolete 28rem contained-poster cap:
+      // desktop is the prototype's 740px stage; mobile reserves header/copy/consent.
+      if (width >= 768) expect(geometry.height).toBe(740);
+      else if (width >= 330) {
+        expect(geometry.height).toBeGreaterThanOrEqual(360);
+        expect(geometry.height).toBeLessThanOrEqual(900 - 52 - 120);
+      } else {
+        // Narrow accessibility fallback preserves the original 2:3 image ratio.
+        expect(geometry.height).toBe(width * 1.5);
+      }
     } finally {
       await context.close();
     }

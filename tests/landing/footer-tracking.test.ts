@@ -3,9 +3,12 @@ import { expect, it, vi } from 'vitest';
 import { Footer } from '@/components/landing/Footer';
 import { OrderLink } from '@/components/landing/OrderLink';
 import { loadLandingConfig } from '@/lib/landing/config';
+import { NearbyShop } from '@/components/landing/NearbyShop';
+import { projectLandingStores } from '@/lib/landing/stores';
 const {dispatch} = vi.hoisted(() => ({dispatch:vi.fn()}));
 vi.mock('@/components/landing/TrackingProvider', () => ({useLandingTracking:()=>({dispatch})}));
-it('delivery links invoke the tracked footer OrderLink with the canonical vendor and no invented store', () => {
+vi.mock('react',async importOriginal=>({...await importOriginal<typeof import('react')>(),useState:(initial:unknown)=>[typeof initial==='function'?initial():initial,vi.fn()]}));
+it('DoorDash invokes the tracked footer link while Uber Eats is scoped to Dupont', () => {
   const config = {...loadLandingConfig(), footerLinks:[{key:'uber-eats' as const,url:'https://example.test/uber'},{key:'doordash' as const,url:'https://example.test/dash'}]};
   const links: ReturnType<typeof OrderLink>[] = [];
   function walk(node:ReactNode) {
@@ -15,10 +18,15 @@ it('delivery links invoke the tracked footer OrderLink with the canonical vendor
     else walk(node.props.children);
   }
   walk(Footer({config,stores:[],language:'en'}));
-  expect(links).toHaveLength(2);
+  expect(links).toHaveLength(1);
   for (const link of links) link.props.onClick();
   expect(dispatch.mock.calls).toEqual([
-    ['OrderClick',{store:undefined,placement:'footer',vendor:'ubereats'}],
     ['OrderClick',{store:undefined,placement:'footer',vendor:'doordash'}],
   ]);
+  const stores=projectLandingStores([{code:'MEP',name:'',address:null,phone:null},{code:'EM',name:'',address:null,phone:null}],config);
+  walk(NearbyShop({stores,language:'en',labels:{nearest:'Nearest',locating:'Locating',unavailable:'Unavailable',straightLine:'Straight line',distance:'{distance} miles',offer:'Offer',call:{},order:{},uberEats:'Uber Eats (Dupont)'}}));
+  const uber=links.filter(link=>link.props.href==='https://example.test/uber');
+  expect(uber).toHaveLength(1);
+  uber[0]!.props.onClick();
+  expect(dispatch).toHaveBeenLastCalledWith('OrderClick',{store:'dupont',placement:'shops',vendor:'ubereats'});
 });

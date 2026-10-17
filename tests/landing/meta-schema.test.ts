@@ -20,6 +20,12 @@ describe("landing CAPI schema edge contracts", () => {
     for (const patch of [{ vendor: "unknown", placement: "footer" }, { vendor: "ubereats", placement: "hero" }, { vendor: "ubereats", event_name: "Lead", placement: "footer" }]) expect(parseLandingEvent({ ...event, ...patch }, env.SITE_ORIGIN, event.event_time * 1000)).toBeNull();
     expect(parseLandingEvent({ ...event, store: undefined }, env.SITE_ORIGIN, event.event_time * 1000)).toBeNull();
   });
+  it('accepts only the verified Dupont Uber Eats shop placement',()=>{
+    expect(parseLandingEvent({...event,vendor:'ubereats',placement:'shops'},env.SITE_ORIGIN,event.event_time*1000)).not.toBeNull();
+    for(const patch of [{store:undefined},{store:'capitol-hill'},{vendor:'doordash'},{placement:'hero'},{event_name:'Lead'}]) {
+      expect(parseLandingEvent({...event,vendor:'ubereats',placement:'shops',...patch},env.SITE_ORIGIN,event.event_time*1000)).toBeNull();
+    }
+  });
   it("rejects malformed, wrong-media and declared-oversize JSON", async () => {
     for (const [body, headers, status] of [["{", { "content-type": "application/json" }, 400], ["{}", { "content-type": "text/plain" }, 415], ["{}", { "content-type": "application/json", "content-length": "999999" }, 413]] as const) {
       const result = await boundedJson(new Request("https://eat.example.com", { method: "POST", headers, body }));

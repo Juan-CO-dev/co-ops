@@ -16,7 +16,8 @@ for(const language of ['en','es']) for(const height of [667,812]) test(`static A
   expect(boxes.dock.top).toBeGreaterThanOrEqual(height-234);
   expect(boxes.dock.top-boxes.actions.bottom).toBeGreaterThanOrEqual(41);
   expect(boxes.overflow).toBe(false);
-  const links=page.locator('[data-hero-actions] a');
+  // Catering remains above the fold in the header; both shop links stay in hero.
+  const links=page.locator('[data-hero-actions] a, .landing-v2-header .landing-v2-catering-link');
   await expect(links).toHaveCount(3);
   for(const link of await links.all()) {
     const b=(await link.boundingBox())!;
@@ -74,11 +75,11 @@ for(const consent of ['unset','accepted']) for(const dpr of [1,2,3]) test(`initi
 test('illustrated spin requests its source only after explicit Play',async({page})=>{
   await page.goto('/');
   const video=page.locator('.landing-v2-spin video');
-  await expect(video).not.toHaveAttribute('src',/./);
-  await video.scrollIntoViewIfNeeded();
-  await expect(video).not.toHaveAttribute('src',/./);
-  await expect(video).toHaveAttribute('aria-label','Illustrated Crunchy Boi spin');
+  await expect(video).toHaveCount(0);
+  await page.locator('.landing-v2-spin').scrollIntoViewIfNeeded();
+  await expect(video).toHaveCount(0);
   await page.locator('.landing-v2-spin button').click();
+  await expect(video).toHaveAttribute('aria-label','Illustrated Crunchy Boi spin');
   await expect(video).toHaveAttribute('src',/\.mp4$/);
   await expect(video).toHaveAttribute('controls','');
   await expect(page.locator('#hero video')).toHaveCount(0);

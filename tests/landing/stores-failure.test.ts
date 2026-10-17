@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { loadPublicLandingStores } from '@/lib/landing/stores';
+import { loadLandingConfig } from '@/lib/landing/config';
 
 const { query, client } = vi.hoisted(() => ({ query: vi.fn(), client: vi.fn() }));
 vi.mock('@/lib/supabase-server', () => ({ getServiceRoleClient: client }));
@@ -24,4 +25,24 @@ it("honors successful empty and partial active reads", async () => {
  expect(await loadPublicLandingStores()).toEqual([]);
  query.mockResolvedValue({data:[{code:"EM",name:"old",address:null,phone:null}],error:null});
  expect((await loadPublicLandingStores()).map(s=>s.key)).toEqual(["dupont"]);
+});
+
+it.each(['outage','live'] as const)('never advertises a config-inactive shop during %s', async mode=>{
+ const config=loadLandingConfig({});
+ const disabled={...config,stores:config.stores.map(store=>({...store,active:store.key!=='dupont'}))};
+ vi.spyOn(console,'error').mockImplementation(()=>{});
+ client.mockReturnValue({from:()=>({select:()=>({eq:()=>({in:query})})})});
+ query.mockResolvedValue(mode==='outage'?{data:null,error:{message:'unavailable'}}:{data:[{code:'MEP',active:true},{code:'EM',active:true}],error:null});
+ expect((await loadPublicLandingStores(disabled)).map(store=>store.key)).toEqual(['capitol-hill']);
+ expect(query).toHaveBeenLastCalledWith('code',['MEP']);
+});
+
+it('selects active and rejects a deactivated database row on the loader path', async()=>{
+ const select=vi.fn(),eq=vi.fn();
+ select.mockReturnValue({eq});eq.mockReturnValue({in:query});
+ client.mockReturnValue({from:()=>({select})});
+ query.mockResolvedValue({data:[{code:'MEP',active:false},{code:'EM',active:true}],error:null});
+ expect((await loadPublicLandingStores()).map(store=>store.key)).toEqual(['dupont']);
+ expect(select).toHaveBeenCalledWith('code,name,address,phone,active');
+ expect(eq).toHaveBeenCalledWith('active',true);
 });

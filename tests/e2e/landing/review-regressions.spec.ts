@@ -42,24 +42,24 @@ test('fixture coordinates produce exactly one merged Permissions-Policy on landi
   await expect(page.getByRole('button',{name:'Find my nearest shop'})).toBeVisible();
 });
 
-test('configured footer delivery clicks send vendor events without a fictional shop counter', async ({page}) => {
+test('configured delivery clicks retain their actual placement without a shop counter', async ({page}) => {
   const events: Record<string,unknown>[] = [], counters:unknown[] = [];
   await page.route('https://connect.facebook.net/**', route=>route.fulfill({contentType:'application/javascript',body:'/* offline pixel */'}));
   await page.route('**/api/landing/events', route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});
   await page.route('**/api/landing/order-click', route=>{counters.push(route.request().postDataJSON());return route.fulfill({status:204});});
   await page.goto(`http://localhost:${portBase + 5}/`, {waitUntil:'domcontentloaded'});
   await page.locator('[data-landing-consent]').getByRole('button').first().click();
-  for (const [name,vendor] of [['Order on Uber Eats','ubereats'],['Order on DoorDash','doordash']]) {
-    const link = page.locator('#footer').getByRole('link',{name});
+  for (const [name,vendor,placement,store,selector] of [['Uber Eats (Dupont)','ubereats','shops','dupont','#shops [data-shop="dupont"]'],['Order on DoorDash','doordash','footer',undefined,'#footer']] as const) {
+    const link = page.locator(selector).getByRole('link',{name,exact:true});
     await link.evaluate(el=>el.addEventListener('click',event=>event.preventDefault()));
     await link.click();
     expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await expect.poll(()=>events.some(event=>event.vendor===vendor)).toBe(true);
     const event = events.find(event=>event.vendor===vendor)!;
-    expect(event).toMatchObject({event_name:'OrderClick',placement:'footer',vendor});
-    expect(event.store).toBeUndefined();
+    expect(event).toMatchObject({event_name:'OrderClick',placement,vendor});
+    expect(event.store).toBe(store);
     const queued = await page.evaluate(v=>window.fbq?.queue?.find(args=>args[1]==='OrderClick' && (args[2] as Record<string,string>).vendor===v),vendor);
-    expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement:'footer',vendor},{eventID:event.event_id}]);
+    expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement,vendor,...(store?{store}:{})},{eventID:event.event_id}]);
   }
   expect(events).toHaveLength(2); expect(counters).toEqual([]);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(375);

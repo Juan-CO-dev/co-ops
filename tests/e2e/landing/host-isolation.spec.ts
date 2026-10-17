@@ -43,11 +43,13 @@ test('all host matrix rows and runtime headers', async ({ request }) => {
     for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click']) {
       const response = await request.get(path,{headers:{host,'x-forwarded-host':host}, maxRedirects:0});
       expect(response.status()).toBe(404); expect(response.headers()['content-security-policy-report-only']).not.toContain('facebook');
+      expect(response.headers()['permissions-policy']).toContain('geolocation=()');
     }
   }
   for(const host of [`localhost:${portBase + 1}`,'eat.example.test']) for(const path of ['/eat','/api/landing/events']) {
     const response=await request.get(`http://localhost:${portBase + 1}${path}`,{headers:{host,'x-forwarded-host':host},maxRedirects:0});
     expect(response.status()).toBe(404); expect(response.headers()['content-security-policy-report-only']).not.toContain('facebook');
+    expect(response.headers()['permissions-policy']).toContain('geolocation=()');
   }
 });
 test('invalid or disagreeing hosts leave staff available and landing dormant', async ({ request }) => {
@@ -60,7 +62,7 @@ test('invalid or disagreeing hosts leave staff available and landing dormant', a
   ] as Record<string, string>[]) {
     const root = await request.get('/', {headers, maxRedirects:0});
     expect(root.status()).toBe(200);
-    expect(await root.text()).not.toContain('Your next great lunch.');
+    expect(await root.text()).not.toContain('CRUNCH,');
     expect(root.headers()['content-security-policy-report-only']).not.toContain('facebook');
     const admin = await request.get('/admin', {headers, maxRedirects:0});
     expect(admin.status()).toBe(307);
@@ -91,11 +93,11 @@ test('HTML and RSC are private and no-store, with distinct content per host',asy
     expect(response.headers()['cache-control']).toContain('no-store');
     expect(response.headers()['cache-control']).toContain('private');
     const landingContent = await response.text();
-    expect(landingContent).toContain('Your next great lunch.');
+    expect(landingContent).toContain('CRUNCH,');
     const staff=await request.get(`http://127.0.0.1:${portBase}`+(rsc?'/?_rsc=fixture':'/'),{headers:rsc?{RSC:'1'}:{}});
     expect(staff.status()).toBe(200);
     const staffContent = await staff.text();
-    expect(staffContent).not.toContain('Your next great lunch.');
+    expect(staffContent).not.toContain('CRUNCH,');
     expect(staffContent).not.toBe(landingContent);
     expect(staff.headers()['content-security-policy-report-only']).not.toContain('facebook');
   }

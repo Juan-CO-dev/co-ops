@@ -12,6 +12,11 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
   await expect(shops).toContainText('526 8th St SE Ste A');await expect(shops).toContainText('2029 P St NW Front 1');
   await expect(shops.locator('a[href="tel:+12026218645"]')).toHaveCount(1);
   await expect(shops.locator('a[href="tel:+12027944638"]')).toHaveCount(1);
+  await expect(shops.locator('a[href="tel:+12026218645"]')).toHaveText('(202) 621-8645');
+  await expect(shops.locator('a[href="tel:+12027944638"]')).toHaveText('(202) 794-4638');
+  await expect(shops.locator('[data-shop="dupont"] a[href*="ubereats.com"]')).toHaveText('Uber Eats (Dupont)');
+  await expect(shops.locator('[data-shop="capitol-hill"] a[href*="ubereats.com"]')).toHaveCount(0);
+  await expect(page.locator('footer a[href*="ubereats.com"]')).toHaveCount(0);
   await expect(shops).toContainText('Daily 10:30am–6pm');
   await expect(shops).toContainText('Daily 10:30am–8pm');
   await expect(shops.locator('[data-shop-map]')).toContainText('Schematic');
@@ -33,7 +38,7 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
 // Exercise the client with fictional coordinates, independently of the tenant facts.
 const fixtureSource=`import React from 'react';import {createRoot} from 'react-dom/client';import {NearbyShop} from './components/landing/NearbyShop';
 const root=document.createElement('div');root.id='nearby-fixture';document.body.append(root);
-createRoot(root).render(<NearbyShop language="en" labels={{nearest:'Find my nearest shop',locating:'Locating',unavailable:'You can still choose either shop',straightLine:'Sorted by straight-line distance',distance:'{distance} km away',offer:'Offer',call:{},order:{'capitol-hill':'Order far','dupont':'Order near'}}} stores={[{key:'capitol-hill',name:'Far fixture',orderLabel:'Far fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:2},orderUrl:'https://example.test/far'},{key:'dupont',name:'Near fixture',orderLabel:'Near fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:1},orderUrl:'https://example.test/near'}]}/>);`;
+createRoot(root).render(<NearbyShop language="en" labels={{nearest:'Find my nearest shop',locating:'Locating',unavailable:'You can still choose either shop',straightLine:'Sorted by straight-line distance',distance:'{distance} miles away',offer:'Offer',call:{},order:{'capitol-hill':'Order far','dupont':'Order near'}}} stores={[{key:'capitol-hill',name:'Far fixture',orderLabel:'Far fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:2},orderUrl:'https://example.test/far'},{key:'dupont',name:'Near fixture',orderLabel:'Near fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:1},orderUrl:'https://example.test/near'}]}/>);`;
 
 for(const outcome of ['granted','denied','timeout','unavailable'] as const)test(`nearest shop is click-only and preserves links: ${outcome}`,async({page})=>{
   await page.emulateMedia({reducedMotion:'reduce'});
@@ -55,7 +60,7 @@ for(const outcome of ['granted','denied','timeout','unavailable'] as const)test(
   if(outcome==='granted'){
     await expect(fixture.locator('article').first()).toContainText('Near fixture');
     await expect(fixture).toContainText('straight-line distance');
-    await expect(fixture).toContainText('111.2 km');
+    await expect(fixture).toContainText('69.1 miles');
   }else{
     await expect(fixture.locator('article').first()).toContainText('Far fixture');
     await expect(fixture.getByRole('status')).toContainText('You can still choose either shop');

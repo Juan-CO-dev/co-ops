@@ -58,13 +58,13 @@ const locations = createServer(async (req, res) => {
     res.writeHead(204); res.end(); return;
   }
   const url = new URL(req.url, `http://127.0.0.1:${portBase + 2}`);
-  if (req.method !== 'GET' || url.pathname !== '/rest/v1/locations' || url.searchParams.get('select') !== 'code,name,address,phone' || url.searchParams.get('active') !== 'eq.true') {
+  if (req.method !== 'GET' || url.pathname !== '/rest/v1/locations' || url.searchParams.get('select') !== 'code,name,address,phone,active' || url.searchParams.get('active') !== 'eq.true') {
     res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({code:'PGRST202',message:'Unsupported fixture request'})); return;
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify([
-    { code: 'MEP', name: 'Capitol Hill fixture shop', address: '100 Test Street SE', phone: '+12025550101' },
-    { code: 'EM', name: 'Dupont fixture shop', address: '200 Example Street NW', phone: '+12025550102' },
+    { code: 'MEP', name: 'Capitol Hill fixture shop', address: '100 Test Street SE', phone: '+12025550101', active:true },
+    { code: 'EM', name: 'Dupont fixture shop', address: '200 Example Street NW', phone: '+12025550102', active:true },
   ]));
 });
 await new Promise((resolve, reject) => { locations.once('error', reject); locations.listen(portBase + 2, '127.0.0.1', resolve); });

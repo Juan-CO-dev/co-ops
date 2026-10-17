@@ -12,17 +12,18 @@ export function ConsentNotice({choice,labels,onChoose}:{choice:ConsentChoice;lab
     const measure=()=>{
       const rem=parseFloat(getComputedStyle(document.documentElement).fontSize);
       const viewport=window.visualViewport;
-      const expanded=rem>=24 || innerWidth<330 || (viewport?.scale??1)>1.5 || (viewport?.height??innerHeight)<500;
+      const expanded=rem>=24 || innerWidth<330 || (viewport?.scale??1)>1.5 || (viewport?.height??innerHeight)<500 || (innerWidth>=768 && (viewport?.height??innerHeight)<800);
       setFlow(expanded);
-      root?.style.setProperty('--landing-dock-height',expanded?'0px':`${(ref.current?.getBoundingClientRect().height??0)+34}px`);
+      root?.style.setProperty('--landing-dock-height',expanded?'0px':`${ref.current?.getBoundingClientRect().height??0}px`);
+      root?.setAttribute('data-consent-flow',String(expanded));
     };
     const observer=typeof ResizeObserver==='undefined'?undefined:new ResizeObserver(measure);
     if(ref.current)observer?.observe(ref.current);
     if(probe.current)observer?.observe(probe.current);
     measure();window.addEventListener('resize',measure);window.visualViewport?.addEventListener('resize',measure);
-    return ()=>{observer?.disconnect();window.removeEventListener('resize',measure);window.visualViewport?.removeEventListener('resize',measure);root?.style.removeProperty('--landing-dock-height');};
+    return ()=>{observer?.disconnect();window.removeEventListener('resize',measure);window.visualViewport?.removeEventListener('resize',measure);root?.style.removeProperty('--landing-dock-height');root?.removeAttribute('data-consent-flow');};
   },[]);
-  const content=<aside ref={ref} className="landing-v2-consent" data-flow={flow} aria-label={labels.settings}>
+  const content=<aside ref={ref} className="landing-v2-consent" data-flow={flow} data-expanded={open||choice==='unknown'} aria-label={labels.settings}>
     <span ref={probe} className="landing-v2-rem-probe" aria-hidden="true"/>
     <button type="button" onClick={()=>setOpen(v=>!v)} aria-expanded={open||choice==='unknown'}>{labels.settings}</button>
     {(open||choice==='unknown')&&<div data-landing-consent>
