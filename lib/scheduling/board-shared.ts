@@ -13,7 +13,7 @@
 import type { NarrativeLine } from "@/lib/people-narrative";
 import type { DayContext, RuleContext, RulePerson } from "./context-shared";
 import { skillOf, type SkillLookup } from "./people-input-shared";
-import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, modCountsAt, salariedWeek, type Shift } from "./rules-shared";
+import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, modCountsOn, salariedWeek, type Shift } from "./rules-shared";
 import { isLineRole, positionIds, positionLimit, type CrewType, type ScheduleStructure } from "./structure-shared";
 import { Q_PER_HOUR } from "./time-shared";
 
@@ -118,7 +118,8 @@ export function modLane(input: BoardDayInput): ModLaneHour[] {
       let any = false;
       for (const sh of shifts) {
         const p = input.people[sh.userId];
-        if (p && onClockAt(sh, q) && modCountsAt(p, s, q)) { ids.add(p.userId); any = true; }
+        // CC addendum B3: a pinned catering manager is the manager on duty only outside booked catering windows.
+        if (p && onClockAt(sh, q) && modCountsOn(p, day, q)) { ids.add(p.userId); any = true; }
       }
       if (!any && q >= prepStartQ && q < day.scheduledOutQ) hole = true;
     }

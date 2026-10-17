@@ -354,7 +354,8 @@ I also confirmed the defaults the mockup ships:
 | spec §6.5: salaried minimums | `salaried_minimum` | error | |
 | mockup harness: a Closing Manager each open day | `closing_manager_missing` | gap | certificate required; satisfied only by an ELIGIBLE flagged shift that is on the clock over the closing window (Astra chunk A P1) |
 | the Closing Manager flag on a shift that does not cover service close → everyone out | `closing_manager_not_closing` | error | Astra chunk A P1 (a KH 10:30–14:30 flagged CM fails) |
-| spec §5.7 floor cap | `manager_floor_exceeded` | error | `limits.managerFloorH` (32, a setting) |
+| spec §5.7 floor cap | `manager_floor_exceeded` | error (warning on a manager-edited week, CC addendum A) | `limits.managerFloorH` (32, a setting); BASE station time (flex aside) |
+| Juan 2026-10-16 decision 4: the salaried week target / the flex | `salaried_base_over_target`, `salaried_over_flex` | warning (CC addendum A: the 40 h is a target); hard for the generator | `limits.salariedTargetWeekH` (40), `limits.salariedFlexH` (10); a flex-only day is a cover (no GM / AGM daily minimum), chunk H2 |
 | spec §5.5 work type | `work_type_not_allowed` | error | |
 | spec §5.1 untouchable day | `untouchable_day` | error | inert until Phase 3 |
 | coverage below need | `coverage_gap` | gap | certificate required |
@@ -1594,7 +1595,7 @@ Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). 
 |---|---|---|
 | §5.2 hours budget per week / month, per date, with the suggestion | `budget-shared.ts`, `settings.ts` `setBudget`, `BudgetSetter.tsx`, `BudgetSuggestion.tsx` | `schedule-budget` (F11–F16, none_set), `schedule-board-ui` (Set one, exact body), 0274 harness |
 | §5.8 horizon, never silently overwrite an edited week | `horizon-shared.ts`, `schedules.ts`, `HorizonBuilder.tsx`, `runRegenerate` | `schedule-horizon`, `schedule-board-ui` (P2-3 both paths), 0275 harness `edited_week_unconfirmed` |
-| §6 generator: shapes, segments, skills, strength, leaders, presence, salaried cover, closing / MoD, 4 h min, priority, cover | `lib/scheduling/generator/*` | 27 goldens (p2.5), `schedule-generator`, property test |
+| §6 generator: shapes, segments, skills, strength, leaders, presence, salaried cover, closing / MoD, 4 h min, priority, cover | `lib/scheduling/generator/*` | 27 goldens (p2.7), `schedule-generator`, property test |
 | §6.5 the validator on every schedule; edits saved with their rule | `rules-shared.ts` `checkScheduleRules` | `schedule-rules`, mockup parity, `schedule-edit` |
 | Gap causes and certificates; budget_limited; unresolved_search blocks Approve | `rules-shared.ts`, 0275 `valid_gap_certificate` | `schedule-rules`, certificate-cases (both twins), F17 |
 | §6.6 labor target ≤ 28%, the math shown, no contradiction | `labor-target-shared.ts`, `LaborTargetCard.tsx` | `schedule-labor-target`, `schedule-board-ui` (one note, amber rule) |
@@ -1606,6 +1607,14 @@ Tasks 25–28, plus CC's chunk G board fixes and Astra's chunk F review (5 P2). 
 | Files-only migrations, deny-all RLS, definer writers | 0274, 0275 | `sql-harness-0274/0275`, the two loader schema checks |
 | The sim seed and walk | `scripts/sim/*scheduling*`, runbook | `schedule-sim-seed-guard` |
 | The law and the guide | AGENTS.md "Scheduling Phase 2", `docs/guides/manager-guide.md` | `manager-guide-scheduling` |
+
+### Chunk H2 (2026-10-16): the salaried flex block, the 40 h as a target, CC's answers, Astra's chunk H review
+
+- **Salaried flex may cover a gap** (`salariedFlexBlocks` in `rules-shared.ts`, `coverWithFlexBlock` in the generator, the last fill before gaps are declared): a new block ≥ 4 h, or an extension of the manager's day, over otherwise-uncovered quarters only, inside the flex left, the daily maximum, availability, leader setting, the cover list or the MoD lane; the GM / AGM 8 h minimum does not apply to a flex-only day; reason `salaried_flex_cover`. `floor_limit` requires that no flex block reaches the gap; flex time does not make a manager busy for it.
+- **The 40 h is a target** (addendum A): `salaried_base_over_target` / `salaried_over_flex` are warnings, hard only for the generator; `manager_floor_exceeded` warns on a manager-edited week; the strip names an over-target week ("{name}: 48 h, 8 h over the 40 h target").
+- **CC's answers** (addendum B): the GM drops the lowest-demand day(s) by forecast at 40 h (tie → later; leadership coverage first); the prep manager is never generated; a pinned catering manager is the manager on duty only outside booked catering windows.
+- **Astra's chunk H review:** relabels keep flex; the catering cover respects the pin allowlist; pins are placed (reserved) before any generated block; StructureEditor controls for the target and the flex; the no-notify closure discovers imports through the TypeScript AST.
+- `GENERATOR_VERSION` p2.7; golden deltas by cause in the H2 handback.
 
 ### Phase 3 list (unchanged from "Phase 3 backlog", plus what Phase 2 shows as coming)
 

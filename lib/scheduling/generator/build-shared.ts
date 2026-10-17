@@ -26,20 +26,20 @@ import { reason, shiftKey, type BoardNote, type ReasonIndex, type ShiftReasons }
 import {
   MOD, PROVEN_CAUSE_ORDER, REPAIR_LIMITS, checkScheduleRules, cheapestFill, eligibleFor, proveGap, type DayRecord, type DeclaredGap, type GapSubject, type RuleProblem, type Shift,
 } from "../rules-shared";
-import { availableOn, eligibleForPosition, isManagerRole, leaderSettingAllows } from "../rules-shared";
+import { availableOn, eligibleForPosition, generatorRefuses, isManagerRole, leaderSettingAllows, modCountsOn, neverGenerated } from "../rules-shared";
 import { scheduledOut, type CrewType, type ScheduleStructure } from "../structure-shared";
 import { skillOf } from "../people-input-shared";
 import { teamStrength, type WindowStrength } from "../strength-shared";
 import { weekDays } from "../time-shared";
 import {
-  allShifts, applyFill, assignClosingManager, baseWeekQuarters, budgetUsedHours, canonicalDay, cmp, coverWithCateringManager, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
+  allShifts, applyFill, assignClosingManager, baseWeekQuarters, budgetUsedHours, canonicalDay, cmp, coverWithCateringManager, coverWithFlexBlock, deficitAt, enforcePriority, extendToCap, fillRun, guarded, modHoles, fillModHole, shiftOrder, sortNotes, takeZeroCostFills, toShift,
   type BuildCtx, type GShift, type WeekState,
 } from "./assign-shared";
 import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repair-shared";
 import { salariedBlocks, templatesFor, templateOrder } from "./templates-shared";
 
 /** Bumped whenever a golden changes; stored on the revision. */
-export const GENERATOR_VERSION = "p2.6";
+export const GENERATOR_VERSION = "p2.7";
 
 // ─── Input / output ──────────────────────────────────────────────────────────
 
@@ -226,13 +226,59 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     }
   }
 
+  // CC addendum B1 (2026-10-16): when a salaried manager's planned base blocks (after the pins, which are fixed first) would
+  // pass the week target, they drop the LOWEST-demand day(s) by forecast (`dayCents`; a tie drops the later day) — never
+  // simply the last days by iteration order. Leadership coverage must still hold: a day where nobody else could be the
+  // manager on duty (an SL+, a KH from the shop's KH time, a pinned manager, another salaried manager's kept block) is
+  // dropped only after every day where someone could.
+  const weekTargetDrop = new Set<string>();
+  {
+    const targetQ = Math.round(s.limits.salariedTargetWeekH * 4);
+    const planned = new Map<string, Array<{ date: string; startQ: number; endQ: number }>>();
+    for (const date of builtDates) {
+      for (const blk of salariedBlocks(input.people, s, date, days[date]!.scheduledOutQ).blocks) {
+        if (week.built[date]!.some((x) => x.userId === blk.userId)) continue; // a pin holds that day
+        planned.set(blk.userId, [...(planned.get(blk.userId) ?? []), { date, startQ: blk.startQ, endQ: blk.endQ }]);
+      }
+    }
+    const cents = (date: string) => buildDays.find((d) => d.date === date)?.dayCents ?? 0;
+    const holdsWithout = (userId: string, date: string): boolean => {
+      const day = days[date]!;
+      if (!s.leadership.modRequired) return true;
+      for (let q = s.shopDay.prepStartQ; q < day.scheduledOutQ; q++) {
+        const someone = input.people.some((p) => {
+          if (p.userId === userId || !p.activeMember || !modCountsOn(p, day, q)) return false;
+          if (week.built[date]!.some((x) => x.userId === p.userId && x.startQ <= q && x.endQ > q)) return true; // pinned there
+          if (neverGenerated(p) || p.untouchableDates.includes(date)) return false;
+          if (p.salaried) return !weekTargetDrop.has(`${p.userId}|${date}`) && (planned.get(p.userId) ?? []).some((x) => x.date === date && x.startQ <= q && x.endQ > q);
+          return availableOn(p, date, q, q + 1);
+        });
+        if (!someone) return false;
+      }
+      return true;
+    };
+    for (const userId of [...planned.keys()].sort()) {
+      const mine = planned.get(userId)!;
+      let total = baseWeekQuarters(week, userId) + mine.reduce((n, x) => n + (x.endQ - x.startQ), 0);
+      if (total <= targetQ) continue;
+      const order = mine.map((x) => ({ ...x, holds: holdsWithout(userId, x.date) }))
+        .sort((a, b2) => Number(!a.holds) - Number(!b2.holds) || cents(a.date) - cents(b2.date) || cmp(b2.date, a.date));
+      for (const x of order) {
+        if (total <= targetQ) break;
+        weekTargetDrop.add(`${userId}|${x.date}`);
+        total -= x.endQ - x.startQ;
+      }
+    }
+  }
+
   for (const date of builtDates) {
     const day = days[date]!;
     // 3. Salaried on the clock.
     const { blocks, skipped } = salariedBlocks(input.people, s, date, day.scheduledOutQ);
     for (const blk of blocks) {
-      // Juan 2026-10-16 (decision 4): the BASE plan never takes a salaried manager past the week target (40 h).
-      if ((baseWeekQuarters(week, blk.userId) + blk.endQ - blk.startQ) / 4 > s.limits.salariedTargetWeekH) {
+      // Juan 2026-10-16 (decision 4): the BASE plan never takes a salaried manager past the week target (40 h) — the days
+      // dropped are chosen above (addendum B1); the running check stays as the invariant.
+      if (weekTargetDrop.has(`${blk.userId}|${date}`) || (baseWeekQuarters(week, blk.userId) + blk.endQ - blk.startQ) / 4 > s.limits.salariedTargetWeekH) {
         notes.push({ code: "salaried_block_skipped", date, userId: blk.userId, positionId: null, params: { reason: "week_target", limitH: s.limits.salariedTargetWeekH } });
         continue;
       }
@@ -328,6 +374,15 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     assignClosingManager(b, week, date);
   }
 
+  // CC chunk H2 (2026-10-16): after EVERY other fill (hourly, zero-cost, the catering manager), before any gap is declared —
+  // a salaried manager covers an otherwise-uncovered window on a FLEX block (no hourly cost). Bounded: each accepted block
+  // lowers the day's uncovered total.
+  for (const date of builtDates) {
+    for (let round = 0; round < 32; round++) if (!coverWithFlexBlock(b, week, date)) break;
+    enforcePriority(b, week, date);
+    assignClosingManager(b, week, date);
+  }
+
   // 11. Merge, canonicalise, declare, verify.
   for (const date of builtDates) week.built[date] = canonicalDay(week.built[date]!);
   const builtShifts = allShifts({ built: week.built, inherited: [] });
@@ -355,7 +410,8 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   }
   gaps.sort((a, b2) => cmp(a.date, b2.date) || cmp(a.code, b2.code) || cmp(a.positionId ?? "", b2.positionId ?? "") || a.fromQ - b2.fromQ);
   const problems = checkScheduleRules({ ...schedule, gaps }, ctx);
-  const invalid = problems.filter((p) => !p.inherited && p.severity === "error");
+  // CC addendum A: the generator never outputs an over-target or past-flex salaried week either (warnings for a person, hard here).
+  const invalid = problems.filter((p) => !p.inherited && generatorRefuses(p));
   if (invalid.length > 0) {
     throw new ScheduleError("generator_invalid_output", { params: { count: invalid.length, first: canonicalJson(invalid[0]) } });
   }

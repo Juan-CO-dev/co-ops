@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.6. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.7. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -166,7 +166,7 @@
       "cause": "unresolved_search",
       "fromQ": 28,
       "proven": false,
-      "toQ": 56
+      "toQ": 42
      },
      "positionId": "5c000000-0000-4000-8000-000000000001",
      "q": 28,
@@ -191,12 +191,12 @@
      "day": "2026-10-31",
      "inherited": false,
      "params": {
-      "cause": "floor_limit",
+      "cause": "unresolved_search",
       "fromQ": 44,
-      "proven": true,
-      "toQ": 60
+      "proven": false,
+      "toQ": 56
      },
-     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "positionId": "5c000000-0000-4000-8000-000000000001",
      "q": 44,
      "severity": "gap"
     }
@@ -633,24 +633,39 @@
    "date": "2026-10-31",
    "fromQ": 28,
    "positionId": "5c000000-0000-4000-8000-000000000001",
-   "toQ": 56
+   "toQ": 42
   },
   {
-   "cause": "floor_limit",
+   "cause": "unresolved_search",
    "certificate": {
-    "floorHoursUsed": {
-     "u-j-gm": 24
-    },
-    "limitH": 24,
-    "managerIds": [
+    "candidateIds": [
+     "u-a-ana",
+     "u-b-bo",
+     "u-c-cy",
+     "u-d-dee",
+     "u-e-eve",
+     "u-f-finn",
+     "u-g-gus",
+     "u-h-hal",
+     "u-i-ivy",
      "u-j-gm"
-    ]
+    ],
+    "limits": {
+     "REPAIR_MAX_STEPS": 200,
+     "maxChainDepth": 3,
+     "maxDonors": 8
+    },
+    "searched": {
+     "chainDepth": 3,
+     "donorsTried": 8,
+     "steps": 200
+    }
    },
    "code": "coverage_gap",
    "date": "2026-10-31",
    "fromQ": 44,
-   "positionId": "5c000000-0000-4000-8000-000000000004",
-   "toQ": 60
+   "positionId": "5c000000-0000-4000-8000-000000000001",
+   "toQ": 56
   },
   {
    "cause": "unresolved_search",
@@ -3306,6 +3321,44 @@
     }
    ]
   },
+  "2026-10-31|u-j-gm|42": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "salaried_flex_cover",
+      "params": {
+       "fromQ": 42,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
+       "toQ": 44,
+       "userId": "u-j-gm"
+      }
+     }
+    ],
+    [
+     {
+      "key": "salaried_flex_cover",
+      "params": {
+       "fromQ": 44,
+       "positionId": "5c000000-0000-4000-8000-000000000004",
+       "toQ": 60,
+       "userId": "u-j-gm"
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "salaried_flex_cover",
+     "params": {
+      "fromQ": 42,
+      "kind": "new_block",
+      "toQ": 60,
+      "userId": "u-j-gm"
+     }
+    }
+   ]
+  },
   "2026-11-01|u-a-ana|44": {
    "alternates": [],
    "segments": [
@@ -4592,6 +4645,29 @@
   },
   {
    "closingManager": false,
+   "date": "2026-10-31",
+   "endQ": 60,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 44,
+     "positionId": "5c000000-0000-4000-8000-000000000001",
+     "reasonKey": "schedule.reason.salaried_flex",
+     "startQ": 42
+    },
+    {
+     "endQ": 60,
+     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "reasonKey": "schedule.reason.salaried_flex",
+     "startQ": 44
+    }
+   ],
+   "startQ": 42,
+   "userId": "u-j-gm"
+  },
+  {
+   "closingManager": false,
    "date": "2026-11-01",
    "endQ": 60,
    "flex": false,
@@ -4763,7 +4839,7 @@
    "provenEarly": 0,
    "steps": 200
   },
-  "salariedCoverHours": 29.5,
-  "shifts": 62
+  "salariedCoverHours": 34,
+  "shifts": 63
  }
 }

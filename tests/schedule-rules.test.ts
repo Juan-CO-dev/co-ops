@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   CALLOUT_LAST_RESORT, RULE_CODES, REPAIR_LIMITS, approvalRefusal, capacityBound, checkCertificate, checkScheduleRules,
   cheapestFill, fillIsLegal, proveGap, structureInfeasible, type DeclaredGap, type RuleCode, type RuleProblem,
-  SALARIED_FLEX_REASON, CATERING_MANAGER_COVER, cateringWindows, zeroCostCovers, applyFillSteps, salariedWeek,
+  SALARIED_FLEX_REASON, CATERING_MANAGER_COVER, cateringWindows, zeroCostCovers, applyFillSteps, salariedWeek, salariedFlexBlocks, neverGenerated,
 } from "@/lib/scheduling/rules-shared";
 import { contextAdvisory, ruleContextFromSnapshot, toContextSnapshot, type RuleContext } from "@/lib/scheduling/context-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
@@ -33,10 +33,11 @@ describe("the severity table", () => {
   it("errors, gaps and warnings are exactly the plan's map", () => {
     const by = (sev: string) => Object.entries(RULE_CODES).filter(([, s]) => s === sev).map(([c]) => c).sort();
     expect(by("gap")).toEqual(["closing_manager_missing", "coverage_gap", "mod_missing"]);
-    expect(by("warning")).toEqual(["checklist_past_max", "flex_used", "outside_assumed_availability", "over_budget", "overtime", "pairing_unmet", "soft_range"]);
+    // CC addendum A (2026-10-16): the 40 h week is a TARGET — the salaried week checks are warnings (never block Approve).
+    expect(by("warning")).toEqual(["checklist_past_max", "flex_used", "outside_assumed_availability", "over_budget", "overtime", "pairing_unmet", "salaried_base_over_target", "salaried_over_flex", "soft_range"]);
     expect(by("error")).toEqual([
       "catering_cover_in_catering_window", "closing_manager_not_closing", "closing_manager_role", "closing_manager_setting", "cover_outside_preferences", "leader_setting", "manager_floor_exceeded",
-      "manager_on_boh", "not_member", "person_overlap", "position_over_headcount", "role_not_allowed", "salaried_base_over_target", "salaried_minimum", "salaried_over_flex",
+      "manager_on_boh", "not_member", "person_overlap", "position_over_headcount", "role_not_allowed", "salaried_minimum",
       "secondary_without_primary", "segment_outside_window", "segments_malformed", "shift_below_minimum", "shift_over_maximum", "uncertified_gap",
       "undeclared_gap", "unknown_person", "untouchable_day", "work_type_not_allowed",
     ]);
@@ -979,8 +980,8 @@ describe("Juan 2026-10-16 — the salaried week (decision 4) and the catering ma
   });
   const FIVE = [WED, THU, FRI, SAT, SUN];
 
-  it("salaried_base_over_target — the base week (station + MoD, flex quarters aside) over limits.salariedTargetWeekH (40) is an ERROR", () => {
-    expect(RULE_CODES.salaried_base_over_target).toBe("error");
+  it("salaried_base_over_target — the base week (station + MoD, flex quarters aside) over limits.salariedTargetWeekH (40) is a WARNING (addendum A)", () => {
+    expect(RULE_CODES.salaried_base_over_target).toBe("warning");
     const over = FIVE.map((d) => shift(U.alex, d, 28, 61, "mod")); // 5 × 8.25 h = 41.25 h, no flex reason
     const ps = of(run(over), "salaried_base_over_target");
     expect(ps).toHaveLength(1);
@@ -990,9 +991,9 @@ describe("Juan 2026-10-16 — the salaried week (decision 4) and the catering ma
     expect(of(run(FIVE.map((d) => shift(U.maya, d, 28, 61, P.PREP))), "salaried_base_over_target")).toEqual([]);
   });
 
-  it("flex quarters (SALARIED_FLEX_REASON) take a salaried week past 40 legally, up to 40 + limits.salariedFlexH; past it → salaried_over_flex (ERROR)", () => {
+  it("flex quarters (SALARIED_FLEX_REASON) take a salaried week past 40 legally, up to 40 + limits.salariedFlexH; past it → salaried_over_flex (WARNING, addendum A)", () => {
     expect(SALARIED_FLEX_REASON).toBe("schedule.reason.salaried_flex");
-    expect(RULE_CODES.salaried_over_flex).toBe("error");
+    expect(RULE_CODES.salaried_over_flex).toBe("warning");
     // 40 h base + 2 h of stay-longer flex on Register.
     const week40 = FIVE.map((d, i) => (i === 0 ? segs(U.alex, d, [["mod", 28, 60], [P.REG, 60, 68, SALARIED_FLEX_REASON]]) : shift(U.alex, d, 28, 60, "mod")));
     const ok = run(week40);
@@ -1087,6 +1088,7 @@ describe("Juan 2026-10-16 (decision 4): floor_limit also proves a manager whose 
   });
 });
 
+
 describe("Astra chunk H review (2026-10-16)", () => {
   it("P2-1: a relabel keeps each quarter's flex classification — 40 h base + 2 h flex MoD relabelled onto Register stays 40 + 2", () => {
     const flexMod = { positionId: "mod", startQ: 60, endQ: 68, reasonKey: SALARIED_FLEX_REASON };
@@ -1102,5 +1104,107 @@ describe("Astra chunk H review (2026-10-16)", () => {
     expect(applied.shifts.find((x) => x.date === SUN)!.segments.find((g) => g.positionId === P.REG)).toMatchObject({ startQ: 60, endQ: 68, reasonKey: SALARIED_FLEX_REASON });
     expect(of(run(applied.shifts, ctx), "salaried_base_over_target")).toEqual([]);
     expect(fillIsLegal({ date: SUN, positionId: P.REG, fromQ: 60, toQ: 68 }, s, ctx, plan!)).toBe(true);
+  });
+});
+
+describe("CC chunk H2 (2026-10-16): salaried flex may COVER A GAP with a new block; addendum A (the 40 h is a target) and B2 / B3", () => {
+  const FLEX = SALARIED_FLEX_REASON;
+  const segs = (userId: string, date: string, parts: Array<[string, number, number, string?]>) => shift(userId, date, parts[0]![1], parts[parts.length - 1]![2], parts[0]![0], {
+    segments: parts.map(([positionId, startQ, endQ, reasonKey]) => ({ positionId, startQ, endQ, ...(reasonKey ? { reasonKey } : {}) })),
+  });
+  const satCtx = (over: (s: ScheduleStructure) => void = () => {}) => context({ built: [SAT], s: structure(over) });
+
+  it("a flex-only day is a COVER: the GM / AGM 8 h daily minimum does not apply, the 4 h shift minimum does; unmarked it is a scheduled day", () => {
+    const ctx = satCtx();
+    const cover = run([segs(U.alex, SAT, [[P.REG, 44, 60, FLEX]])], ctx);
+    expect(of(cover, "salaried_minimum")).toEqual([]);
+    expect(of(cover, "shift_below_minimum")).toEqual([]);
+    // The same 4 h WITHOUT the flex reason: a scheduled GM day below the 8 h minimum.
+    expect(of(run([shift(U.alex, SAT, 44, 60, P.REG)], ctx), "salaried_minimum")).toHaveLength(1);
+    // A 3 h flex block standing alone: below the 4 h shift minimum (both minimums name it).
+    const short = run([segs(U.alex, SAT, [[P.REG, 44, 56, FLEX]])], ctx);
+    expect(of(short, "shift_below_minimum")).toHaveLength(1);
+    expect(of(short, "salaried_minimum")).toHaveLength(1);
+  });
+
+  it("salariedFlexBlocks: a NEW block over an otherwise-uncovered window, inside the remaining flex, ≥ 4 h, on the cover list", () => {
+    const ctx = satCtx();
+    setNeed(ctx, SAT, P.REG, 44, 64);
+    expect(salariedFlexBlocks(SAT, week([]), ctx)).toEqual([
+      { userId: U.alex, kind: "new_block", shiftStartQ: null, fromQ: 44, toQ: 64, segments: [{ positionId: P.REG, startQ: 44, endQ: 64 }], gain: 20 },
+    ]);
+    // Covered by an hourly person already: nothing to cover (a flex block never displaces anyone).
+    expect(salariedFlexBlocks(SAT, week([shift(U.ben, SAT, 44, 64, P.REG)]), ctx)).toEqual([]);
+    // 2 h of flex: a 5 h window cannot stand alone in 2 h.
+    const two = satCtx((s) => { s.limits.salariedFlexH = 2; });
+    setNeed(two, SAT, P.REG, 44, 64);
+    expect(salariedFlexBlocks(SAT, week([]), two)).toEqual([]);
+    // Flex spent elsewhere in the week (10 h of flex quarters Wed–Thu): nothing.
+    const spent = [WED, THU].map((d) => segs(U.alex, d, [["mod", 28, 60], [P.REG, 60, 80, FLEX]]));
+    expect(salariedFlexBlocks(SAT, week(spent), ctx)).toEqual([]);
+    // Not on the cover list → no block (Walk-in is not one of Alex's).
+    const walk = satCtx();
+    setNeed(walk, SAT, P.WALK, 44, 64);
+    expect(salariedFlexBlocks(SAT, week([]), walk)).toEqual([]);
+  });
+
+  it("a < 4 h flex need only EXTENDS an existing day; it never stands alone", () => {
+    const ctx = satCtx();
+    setNeed(ctx, SAT, P.REG, 44, 56);
+    expect(salariedFlexBlocks(SAT, week([]), ctx)).toEqual([]);
+    // Alex works 7:00–15:00 that day: a 2 h need right after it is an extension (staying longer on flex).
+    const after = satCtx();
+    setNeed(after, SAT, P.REG, 60, 68);
+    expect(salariedFlexBlocks(SAT, week([]), after)).toEqual([]);
+    expect(salariedFlexBlocks(SAT, week([shift(U.alex, SAT, 28, 60, "mod")]), after)).toEqual([
+      { userId: U.alex, kind: "extend", shiftStartQ: 28, fromQ: 60, toQ: 68, segments: [{ positionId: P.REG, startQ: 60, endQ: 68 }], gain: 8 },
+    ]);
+  });
+
+  it("floor_limit accounts for the remaining flex: proven only when NO salaried manager has flex + legality to cover the gap", () => {
+    const mk = (flexH: number) => {
+      // Expeditor GM-only and not a priority secondary here (so the proof is about the GM alone).
+      const c = satCtx((s) => { s.positions[P.EXPO]!.allowedRoles = ["gm"]; s.priority = []; s.limits.salariedFlexH = flexH; });
+      setNeed(c, SAT, P.EXPO, 46, 64);
+      return c;
+    };
+    // 32 h of base station time Mon–Thu: the floor is spent.
+    const s = week([MON, TUE, WED, THU].map((d) => shift(U.alex, d, 28, 60, P.EXPO)));
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.EXPO, fromQ: 46, toQ: 64 };
+    expect(proveGap(g, s, mk(0))).toMatchObject({ cause: "floor_limit", certificate: { managerIds: [U.alex], limitH: 32 } });
+    // With 10 h of flex the GM can cover it on a flex block → not floor_limit.
+    expect(proveGap(g, s, mk(10))?.cause).not.toBe("floor_limit");
+    const forged = { ...g, cause: "floor_limit", certificate: { managerIds: [U.alex], floorHoursUsed: { [U.alex]: 32 }, limitH: 32 } } as DeclaredGap;
+    expect(checkCertificate(forged, s, mk(0))).toBe(true);
+    expect(checkCertificate(forged, s, mk(10))).toBe(false);
+  });
+
+  it("addendum A: manager_floor_exceeded is an ERROR on a generated week and a WARNING on a manager-edited one; a 48 h hand week warns only", () => {
+    const station = [WED, THU, FRI, SAT, SUN].map((d) => shift(U.alex, d, 28, 56, P.PREP));
+    expect(of(run(station), "manager_floor_exceeded")[0]).toMatchObject({ severity: "error" });
+    expect(of(checkScheduleRules(week(station), context(), { managerEdited: true }), "manager_floor_exceeded")[0]).toMatchObject({ severity: "warning" });
+    const hand = [WED, THU, FRI, SAT].map((d) => shift(U.alex, d, 28, 76, "mod"));
+    const ps = checkScheduleRules(week(hand), context(), { managerEdited: true });
+    expect(of(ps, "salaried_base_over_target")[0]).toMatchObject({ severity: "warning", params: { hours: 48, limit: 40 } });
+    expect(ps.filter((p) => p.code.startsWith("salaried_") && p.severity === "error")).toEqual([]);
+  });
+
+  it("addendum B2: a prep manager is never generated (pins / presence only), like the catering manager", () => {
+    expect(neverGenerated({ role: "prep_mgr", presenceOnly: false })).toBe(true);
+    expect(neverGenerated({ role: "catering_mgr", presenceOnly: false })).toBe(true);
+    expect(neverGenerated({ role: "gm", presenceOnly: false })).toBe(false);
+  });
+
+  it("addendum B3: a pinned catering manager counts as the manager on duty OUTSIDE booked catering windows, never inside one", () => {
+    const ctx = context({ built: [WED], s: structure((x) => { x.leadership.modRequired = true; x.leadership.keyHolderModAfterQ = null; }) });
+    ctx.people["u-cat"] = { ...ctx.people[U.dani]!, userId: "u-cat", role: "catering_mgr", leaderSetting: "mix", coverPositions: [] };
+    const day = ctx.days[WED]!;
+    const from = day.structure.shopDay.prepStartQ;
+    const pinned = [{ ...shift("u-cat", WED, from, day.scheduledOutQ, "mod"), pinned: true }];
+    const holes = (ps: RuleProblem[]) => of(ps, "undeclared_gap").filter((p) => p.params.gap === "mod_missing").map((p) => [p.params.fromQ, p.params.toQ]);
+    expect(holes(run(pinned, ctx))).toEqual([]);
+    day.inputs.cateringEvents = [{ id: "ev-1", headcount: 12, eventQ: 52 }];
+    expect(cateringWindows(day)).toEqual([[38, 52]]);
+    expect(holes(run(pinned, ctx))).toEqual([[38, 52]]);
   });
 });

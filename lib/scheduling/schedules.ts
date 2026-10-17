@@ -337,7 +337,8 @@ export async function replayWeek(deps: ScheduleDeps, args: { actor: PeopleActor;
   await gate(deps.service, args.actor, args.locationId, "view");
   const w = (await loadWeekHeads(deps.service, args.locationId, [args.weekStart]).catch(missingTables))[args.weekStart];
   if (!w?.head) throw new ScheduleError("week_not_found");
-  const replayed = checkScheduleRules({ locationId: args.locationId, weekStart: args.weekStart, shifts: w.head.shifts, gaps: w.head.gaps, days: w.head.days.map((d) => (d.inherited ? d : { ...d, problems: [] })) }, w.head.context);
+  // CC addendum A: an edited head was validated as a manager's edit (the station floor warns) — replay it the same way.
+  const replayed = checkScheduleRules({ locationId: args.locationId, weekStart: args.weekStart, shifts: w.head.shifts, gaps: w.head.gaps, days: w.head.days.map((d) => (d.inherited ? d : { ...d, problems: [] })) }, w.head.context, { managerEdited: w.edited });
   const recorded = headProblems(w);
   const key = (ps: RuleProblem[]) => canonicalJson([...ps].map((p) => ({ ...p, inherited: false })).sort((a, b) => (canonicalJson(a) < canonicalJson(b) ? -1 : 1)));
   return { recorded, replayed, identical: key(recorded) === key(replayed) };

@@ -112,16 +112,18 @@ describe("1. the clean fixture", () => {
     const ps = checkScheduleRules(mockWeek(), mockContext());
     expect(mockupView(ps)).toEqual([]);
     // Juan 2026-10-16 (decision 4) — a finding on the v17 sample week itself: the GM (Alex) and the AGM (Jules) are planned
-    // 48 h each (6 × 8 h), over the 40 h base week with no flex reason → salaried_base_over_target (error). Before chunk H
+    // 48 h each (6 × 8 h), over the 40 h base week with no flex reason → salaried_base_over_target (a warning since addendum A). Before chunk H
     // these were the two hourly-style "overtime" warnings; a salaried week is now judged by its target + flex instead.
     expect(ps.filter((p) => p.code === "salaried_base_over_target").map((p) => [p.userId, p.params.hours, p.params.limit])).toEqual([["alex", 48, 40], ["jules", 48, 40]]);
-    const errors = ps.filter((p) => p.severity === "error" && p.code !== "salaried_base_over_target");
+    // CC addendum A: the 40 h is a TARGET — Juan's own 48 h weeks WARN (never block Approve), they are not errors.
+    expect(ps.filter((p) => p.code === "salaried_base_over_target").every((p) => p.severity === "warning")).toBe(true);
+    const errors = ps.filter((p) => p.severity === "error");
     expect([...new Set(errors.map((p) => p.code))]).toEqual(["undeclared_gap"]);
     const byKind = (gap: string) => errors.filter((p) => p.params.gap === gap).map((p) => `${MOCK.days[Object.values(DAY_LABEL).indexOf(DAY_LABEL[p.day]!)]} ${p.positionId ?? "MoD"} ${p.params.fromQ}-${p.params.toQ}`);
     // The evening MoD lane is empty every day (the closers are Key Holders; every manager opens).
     expect(byKind("mod_missing")).toEqual(["Mon MoD 60-83", "Tue MoD 66-83", "Wed MoD 66-83", "Thu MoD 66-83", "Fri MoD 66-83", "Sat MoD 66-83", "Sun MoD 66-83"]);
     expect(errors.filter((p) => p.params.gap === "coverage_gap")).toHaveLength(32);
-    expect(ps.filter((p) => p.severity === "warning").map((p) => p.code)).toEqual([]);
+    expect(ps.filter((p) => p.severity === "warning").map((p) => p.code)).toEqual(["salaried_base_over_target", "salaried_base_over_target"]);
   });
 
   it("Juan 2026-10-16 (decision 6): with the Key Holder as manager on duty from 19:00 (the new default), the v17 evening MoD holes end at 19:00", () => {

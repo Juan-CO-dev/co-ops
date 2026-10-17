@@ -177,14 +177,15 @@ export function applyEdit(schedule: WeekSchedule, op: EditOp, ctx: RuleContext, 
   const keptGaps = schedule.gaps.filter((g) => g.date !== date);
   const probe = { locationId: schedule.locationId, weekStart: schedule.weekStart, shifts, gaps: keptGaps, days: others };
   const gaps: DeclaredGap[] = [];
-  for (const p of checkScheduleRules(probe, vctx)) {
+  // CC addendum A: a manager's edit — the station floor (32 h) warns, never blocks.
+  for (const p of checkScheduleRules(probe, vctx, { managerEdited: true })) {
     if (p.code !== "undeclared_gap" || p.day !== date) continue;
     const subject = { code: p.params.gap as GapCode, date, positionId: p.positionId ?? null, fromQ: Number(p.params.fromQ), toQ: Number(p.params.toQ) };
     const proof = proveGap(subject, probe, vctx);
     if (proof) gaps.push({ ...subject, cause: proof.cause, certificate: proof.certificate } as DeclaredGap);
   }
   const allGaps = [...keptGaps, ...gaps].sort((a, b) => cmp(a.date, b.date) || cmp(a.code, b.code) || cmp(a.positionId ?? "", b.positionId ?? "") || a.fromQ - b.fromQ);
-  const problems = checkScheduleRules({ ...probe, gaps: allGaps }, vctx).filter((p) => p.day === date && !p.inherited);
+  const problems = checkScheduleRules({ ...probe, gaps: allGaps }, vctx, { managerEdited: true }).filter((p) => p.day === date && !p.inherited);
   const day: DayRecord = { date, originRevisionId: opts.newRevisionId, structureVersionId: dayCtx!.structureVersionId, inherited: false, problems };
   const days = ctx.dates.map((d) => (d === date ? day : schedule.days.find((r) => r.date === d))).filter((r): r is DayRecord => !!r);
   return { schedule: { ...schedule, shifts, gaps: allGaps, days }, day, problems, gaps };

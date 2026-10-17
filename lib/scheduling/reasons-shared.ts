@@ -25,6 +25,8 @@ export const REASON_KEYS = [
   "salaried_flex",
   // Juan 2026-10-16 (decision 8): the catering manager covers a station as a last resort, outside booked catering.
   "catering_manager_cover",
+  // CC chunk H2 (2026-10-16): a salaried manager covers an otherwise-uncovered window on a FLEX block (no hourly cost).
+  "salaried_flex_cover",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

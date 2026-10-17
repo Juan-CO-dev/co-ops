@@ -633,3 +633,19 @@ describe("Juan 2026-10-16 (decision 4): the strip names each salaried manager's 
     }
   });
 });
+
+describe("CC addendum A (2026-10-16): the 40 h is a target — a hand-scheduled week past it reads \"{name}: 48 h, 8 h over the 40 h target\"", () => {
+  it("en + es; a week at or under the target keeps the flex line", () => {
+    const view = ready();
+    const uid = Object.keys(view.names)[0]!;
+    const strip0 = view.strip!;
+    const forced = { ...view, strip: { ...strip0, hours: { ...strip0.hours, salariedWeeks: [{ userId: uid, baseHours: 48, flexHours: 0, targetHours: 40, flexLimitHours: 10 }] } } };
+    const fill = (s: string, p: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_m, k: string) => String(p[k]));
+    expect(en["schedule.board.money.salaried_over_target"]).toBe("{name}: {hours} h, {over} h over the {target} h target");
+    for (const [lang, L] of [["en", en], ["es", es]] as const) {
+      const strip = renderBoard(forced, lang).match(/<section[^>]*data-section="strip"[\s\S]*?<\/section>/)![0];
+      expect(text(strip)).toContain(fill(L["schedule.board.money.salaried_over_target"], { name: view.names[uid]!, hours: 48, over: 8, target: 40 }));
+      expect(text(strip)).not.toContain(fill(L["schedule.board.money.salaried_week"], { name: view.names[uid]!, base: 48, flex: 0 }));
+    }
+  });
+});

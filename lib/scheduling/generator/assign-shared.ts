@@ -23,7 +23,7 @@ import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-share
 import type { FillPlan, FillStep } from "../rules-shared";
 import {
   CATERING_MANAGER_COVER, MOD, SALARIED_FLEX_REASON, availableOn, baseFloorRoomQ, cateringWindows, splitSalariedRelabel, checkScheduleRules, closingManagerEligible, coversClosingWindow, eligibleForPosition,
-  flexLeftQ, isFlexSegment, isManagerRole, leaderSettingAllows, modCountsAt, neverGenerated, shiftExtendsOver, zeroCostCovers,
+  flexLeftQ, generatorRefuses, isFlexSegment, isManagerRole, leaderSettingAllows, modCountsAt, modCountsOn, neverGenerated, salariedFlexBlocks, shiftExtendsOver, zeroCostCovers,
   type DayRecord, type RuleProblem, type Segment, type Shift,
 } from "../rules-shared";
 import { isLineRole, isSecondary, positionLimit, primaryOf, type ScheduleStructure } from "../structure-shared";
@@ -155,7 +155,9 @@ export function worksClosingWindow(b: BuildCtx, date: string, fromQ: number, toQ
 export function modOnClockAt(b: BuildCtx, shifts: readonly GShift[], q: number): boolean {
   for (const s of shifts) {
     const p = b.people[s.userId];
-    if (p && s.startQ <= q && s.endQ > q && modCountsAt(p, b.structure, q)) return true;
+    // CC addendum B3: a (pinned) catering manager counts only outside the date's booked catering windows.
+    const day = b.ctx.days[s.date];
+    if (p && s.startQ <= q && s.endQ > q && (day ? modCountsOn(p, day, q) : modCountsAt(p, b.structure, q))) return true;
   }
   return false;
 }
@@ -197,14 +199,17 @@ export function uncoveredTotals(b: BuildCtx, date: string, shifts: readonly GShi
 
 const GAP_DISCIPLINE: ReadonlySet<string> = new Set(["undeclared_gap", "uncertified_gap"]);
 
-/** Error-class problems of ONE built day given the week (weekly totals see every shift); gap discipline excluded. */
+/**
+ * Error-class problems of ONE built day given the week (weekly totals see every shift); gap discipline excluded. CC addendum A:
+ * the salaried-week WARNINGS (over the 40 h target, past the flex) count here too — the generator keeps them hard.
+ */
 export function dayErrors(b: BuildCtx, week: WeekState, date: string, shifts: readonly GShift[]): string[] {
   const others: Shift[] = [...week.inherited];
   for (const d of Object.keys(week.built)) if (d !== date) for (const s of week.built[d]!) others.push(toShift(s));
   const days: DayRecord[] = b.ctx.dates.filter((d) => d !== date).map((d) => ({ date: d, originRevisionId: null, structureVersionId: b.ctx.days[date]!.structureVersionId, inherited: true, problems: [] }));
   const ctx: RuleContext = { ...b.ctx, days: { [date]: b.ctx.days[date]! } };
   const problems = checkScheduleRules({ locationId: b.ctx.locationId, weekStart: b.ctx.weekStart, shifts: [...others, ...shifts.map(toShift)], gaps: [], days }, ctx);
-  return problems.filter((p) => p.severity === "error" && !GAP_DISCIPLINE.has(p.code) && !p.inherited).map(problemKey).sort();
+  return problems.filter((p) => generatorRefuses(p) && !GAP_DISCIPLINE.has(p.code) && !p.inherited).map(problemKey).sort();
 }
 
 function problemKey(p: RuleProblem): string {
@@ -908,6 +913,41 @@ export function coverWithCateringManager(b: BuildCtx, week: WeekState, date: str
       }, (next) => uncoveredTotals(b, date, next).total < before.total);
       if (done) return true;
     }
+  }
+  return false;
+}
+
+/**
+ * CC chunk H2 (2026-10-16): the LAST-RESORT fill, after every hourly fill, the zero-cost extensions / relabels and the catering
+ * manager's cover, before any gap is declared — a salaried manager COVERS an otherwise-uncovered window on a FLEX block
+ * (`salariedFlexBlocks`: a new block ≥ 4 h, or an extension of their day; inside the remaining flex, the daily maximum,
+ * availability, leader setting, cover list or the MoD lane; never over anyone). The block that fills the most uncovered
+ * head-quarters wins (ties: the canonical order). Every quarter carries `SALARIED_FLEX_REASON` and the reason
+ * `salaried_flex_cover`. Guarded; kept only when the day's uncovered total strictly falls and essential coverage never does.
+ */
+export function coverWithFlexBlock(b: BuildCtx, week: WeekState, date: string): boolean {
+  const s = { locationId: b.ctx.locationId, weekStart: b.ctx.weekStart, shifts: allShifts(week), gaps: [], days: [] };
+  const blocks = salariedFlexBlocks(date, s, b.ctx).map((blk, i) => ({ blk, i })).sort((x, y) => y.blk.gain - x.blk.gain || x.i - y.i).map((x) => x.blk);
+  const before = uncoveredTotals(b, date, week.built[date]!);
+  for (const blk of blocks) {
+    const r = reason("salaried_flex_cover", { userId: blk.userId, fromQ: blk.fromQ, toQ: blk.toQ, kind: blk.kind });
+    const segs: GSegment[] = blk.segments.map((g) => ({ ...g, reasons: [reason("salaried_flex_cover", { userId: blk.userId, positionId: g.positionId, fromQ: g.startQ, toQ: g.endQ })], reasonKey: SALARIED_FLEX_REASON }));
+    const done = guarded(b, week, date, (next) => {
+      if (blk.kind === "new_block") {
+        next.push({ userId: blk.userId, date, startQ: blk.fromQ, endQ: blk.toQ, segments: segs, closingManager: false, flex: false, pinned: false, reasons: [r], origin: "salaried" });
+        return true;
+      }
+      const sh = next.find((x) => x.userId === blk.userId && x.startQ === blk.shiftStartQ);
+      if (!sh || sh.pinned) return false;
+      if (blk.fromQ === sh.endQ) sh.segments = [...sh.segments, ...segs];
+      else if (blk.toQ === sh.startQ) sh.segments = [...segs, ...sh.segments];
+      else return false;
+      sh.startQ = Math.min(sh.startQ, blk.fromQ);
+      sh.endQ = Math.max(sh.endQ, blk.toQ);
+      sh.reasons = [...sh.reasons, r];
+      return true;
+    }, (next) => { const after = uncoveredTotals(b, date, next); return after.total < before.total && after.essential <= before.essential; });
+    if (done) return true;
   }
   return false;
 }

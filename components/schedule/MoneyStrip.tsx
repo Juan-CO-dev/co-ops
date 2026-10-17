@@ -83,7 +83,10 @@ export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimat
       {hrs.salariedWeeks.length > 0 ? (
         <ul className="grid gap-1 text-sm text-co-text" data-section="salaried-weeks">
           {hrs.salariedWeeks.map((w) => (
-            <li key={w.userId} data-salaried-week={w.userId}>{t("schedule.board.money.salaried_week", { name: names[w.userId] ?? w.userId, base: h1(w.baseHours), flex: h1(w.flexHours) })}</li>
+            // CC addendum A: the 40 h is a target — a week whose BASE passes it (a hand-scheduled 48 h week) says so plainly.
+            <li key={w.userId} data-salaried-week={w.userId} data-over-target={w.baseHours > w.targetHours ? "true" : undefined}>{w.baseHours > w.targetHours
+              ? t("schedule.board.money.salaried_over_target", { name: names[w.userId] ?? w.userId, hours: h1(w.baseHours + w.flexHours), over: h1(w.baseHours + w.flexHours - w.targetHours), target: h1(w.targetHours) })
+              : t("schedule.board.money.salaried_week", { name: names[w.userId] ?? w.userId, base: h1(w.baseHours), flex: h1(w.flexHours) })}</li>
           ))}
         </ul>
       ) : null}

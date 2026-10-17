@@ -12,6 +12,7 @@ import { moneyStrip } from "@/lib/scheduling/board-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { enforcePriority, type BuildCtx, type GShift, type WeekState } from "@/lib/scheduling/generator/assign-shared";
 import { teamStrength } from "@/lib/scheduling/strength-shared";
+import { canonicalJson } from "@/lib/scheduling/context-shared";
 import {
   DATES, I, SMALL_SPECS, day, f0eRepairNeeded, f0iFourthDonor, f0jLongChain, fixture, person, repairShop, skillsOf, small, structure, type PersonSpec,
 } from "./fixtures/schedule/fixtures";
@@ -457,12 +458,14 @@ describe("Task 7: budget, certificates and the repair search", () => {
       expect(baseFloor + (g.toQ - g.fromQ) / 4).toBeGreaterThan(24);
     }
     expect(out.problems.filter((p) => p.code === "manager_floor_exceeded")).toEqual([]);
-    // With the default 10 h of flex the weekend is still floor_limit: the GM is off then (the 40 h base week is reached on
-    // Friday) and flex never makes a NEW shift — it only lets a manager already on the clock cover or stay longer.
+    // CC chunk H2: with the default 10 h of flex the GM (off at the weekend: the 40 h base week is reached on Friday) COVERS
+    // Saturday on a flex block (no hourly cost; the Thu / Fri relabels past the 24 h floor spent 5.5 h of the flex, so 4.5 h
+    // are left) — a flex-only day, every quarter marked; Sunday, with the flex spent, is floor_limit.
     const flexed = buildWeek(small({ structure: { ...s, limits: { ...s.limits, salariedFlexH: 10 } }, days: DATES.map((d) => day(d, {}, s)) }));
     expectClean(flexed);
-    expect(flexed.shifts.filter((x) => x.userId === "u-j-gm").map((x) => x.date)).toEqual([MON, TUE, WED, THU, FRI]);
-    expect(flexed.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => [g.date, g.cause])).toEqual([[SAT, "floor_limit"], [SUN, "floor_limit"]]);
+    expect(flexed.shifts.filter((x) => x.userId === "u-j-gm").map((x) => x.date)).toEqual([MON, TUE, WED, THU, FRI, SAT]);
+    expect(flexed.shifts.filter((x) => x.userId === "u-j-gm" && x.date === SAT).every((x) => x.segments.every((g) => g.reasonKey === SALARIED_FLEX_REASON))).toBe(true);
+    expect(flexed.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => [g.date, g.cause])).toEqual([[SUN, "floor_limit"]]);
   });
 
   it("manager cover: in preference order (rank), outside the list only as lastResort, never Prep/Dishwasher", () => {
@@ -907,5 +910,108 @@ describe("Astra chunk H review (2026-10-16): the generator", () => {
     expect(out.notes.filter((n) => n.code === "salaried_block_skipped" && n.params.reason === "pin_conflict")).toEqual([]);
     const gmQ = out.shifts.filter((x) => x.userId === "u-gm").reduce((n, x) => n + x.endQ - x.startQ, 0);
     expect(gmQ).toBeLessThanOrEqual(160);
+  });
+});
+
+describe("CC chunk H2 (2026-10-16): salaried flex may COVER A GAP with a new block (salariedFlexBlock); addendum A / B1 / B2", () => {
+  const FLEX = SALARIED_FLEX_REASON;
+  const weekQ = (out: GeneratorOutput, userId: string) => out.shifts.filter((x) => x.userId === userId).reduce((n, x) => n + x.endQ - x.startQ, 0);
+  const flexQ = (out: GeneratorOutput, userId: string) => out.shifts.filter((x) => x.userId === userId)
+    .reduce((n, x) => n + x.segments.filter((g) => g.reasonKey === FLEX).reduce((m, g) => m + g.endQ - g.startQ, 0), 0);
+  /** Expeditor 10:00–15:00 (needed 10:30–15:00 = 4.5 h), GM-only — the floor_limit case of Task 7 with the default 32 h floor. */
+  const gmExpo = (flexH: number, over: (s: ScheduleStructure) => void = () => {}) => structure((x) => {
+    x.leadership.modRequired = false;
+    x.limits.salariedFlexH = flexH;
+    x.positions[I.$EXPO]!.allowedRoles = ["gm"];
+    x.positions[I.$EXPO]!.openQ = 40; x.positions[I.$EXPO]!.trimQ = 60; x.positions[I.$EXPO]!.closeQ = 60;
+    over(x);
+  });
+  // The GM covers the Expeditor only (their cover list), so each case is about that one station.
+  const specs = SMALL_SPECS.map((p) => (p.id === "u-j-gm" ? { ...p, cover: [I.$EXPO] } : p));
+  const build = (s: ScheduleStructure) => buildWeek(small({ structure: s, specs, days: DATES.map((d) => day(d, {}, s)) }));
+  const hourly = (out: GeneratorOutput) => canonicalJson(out.shifts.filter((x) => x.userId !== "u-j-gm"));
+  const segReasons = (out: GeneratorOutput, date: string, userId: string) => {
+    const sh = out.shifts.find((x) => x.date === date && x.userId === userId)!;
+    return out.reasons[`${date}|${userId}|${sh.startQ}`]!.segments.flat().map((r) => r.key);
+  };
+
+  it("the Sunday-cover case: the GM is off at the 40 h target, so Sat / Sun Expo is covered on FLEX blocks (no hourly cost), not left a gap", () => {
+    const out = build(gmExpo(10));
+    expectClean(out);
+    expect(out.gaps.filter((g) => g.positionId === I.$EXPO)).toEqual([]);
+    for (const d of [SAT, SUN]) {
+      const sh = out.shifts.filter((x) => x.userId === "u-j-gm" && x.date === d);
+      expect(sh).toHaveLength(1);
+      expect(sh[0]!.segments.every((g) => g.reasonKey === FLEX)).toBe(true);
+      expect(sh[0]!.segments.some((g) => g.positionId === I.$EXPO && g.startQ <= 44 && g.endQ >= 60)).toBe(true);
+      expect(sh[0]!.endQ - sh[0]!.startQ).toBeGreaterThanOrEqual(16); // the 4 h shift minimum holds; the GM 8 h minimum does not apply
+      expect(segReasons(out, d, "u-j-gm")).toContain("salaried_flex_cover");
+    }
+    // Addendum A: the GENERATOR never produces an over-target week — base ≤ 40 h, flex ≤ limits.salariedFlexH.
+    expect(weekQ(out, "u-j-gm") - flexQ(out, "u-j-gm")).toBeLessThanOrEqual(160);
+    expect(flexQ(out, "u-j-gm")).toBeLessThanOrEqual(40);
+    expect(out.problems.filter((p) => p.code === "salaried_base_over_target" || p.code === "salaried_over_flex" || p.code === "manager_floor_exceeded")).toEqual([]);
+  });
+
+  it("flex exhausted → a gap: 4.5 h of flex covers Saturday; Sunday stays floor_limit (and its certificate verifies)", () => {
+    const out = build(gmExpo(4.5));
+    expectClean(out);
+    expect(flexQ(out, "u-j-gm")).toBeLessThanOrEqual(18);
+    expect(out.gaps.filter((g) => g.positionId === I.$EXPO && g.date === SAT)).toEqual([]);
+    const sun = out.gaps.filter((g) => g.positionId === I.$EXPO && g.date === SUN);
+    expect(sun.map((g) => g.cause)).toEqual(["floor_limit"]);
+    const s = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts: out.shifts, gaps: out.gaps, days: out.days };
+    expect(checkCertificate(sun[0]!, s, out.context)).toBe(true);
+  });
+
+  it("a flex block NEVER displaces an hourly person: every hourly shift is identical with flex 0 and flex 10", () => {
+    const none = build(gmExpo(0));
+    const ten = build(gmExpo(10));
+    expectClean(none);
+    expectClean(ten);
+    expect(hourly(ten)).toBe(hourly(none));
+    expect(none.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => g.date)).toEqual([SAT, SUN]);
+  });
+
+  it("a < 4 h flex need only extends an existing day: a 3 h Expo on the GM's days off stays a gap (floor_limit)", () => {
+    const s = gmExpo(10, (x) => { x.positions[I.$EXPO]!.openQ = 48; });
+    const out = build(s);
+    expectClean(out);
+    expect(out.shifts.filter((x) => x.userId === "u-j-gm" && (x.date === SAT || x.date === SUN))).toEqual([]);
+    expect(out.gaps.filter((g) => g.positionId === I.$EXPO).map((g) => [g.date, g.cause])).toEqual([[SAT, "floor_limit"], [SUN, "floor_limit"]]);
+  });
+
+  it("addendum B1: at 40 h the GM drops the LOWEST-demand days by forecast (tie → the later day), not Sat / Sun by order", () => {
+    const s = onePosition((x) => { x.limits.gmMinimumH = 8; x.limits.maxShiftH = 10.5; x.shopDay = { ...x.shopDay, prepStartQ: 28, outEarliestQ: 60, outLatestQ: 64 }; });
+    const cents = [500, 100, 300, 100, 400, 900, 800];
+    const specs: PersonSpec[] = [{ id: "u-e", role: "employee" }, { id: "u-gm", role: "gm", leader: "mix", cover: [I.$REG] }];
+    const out = buildWeek(fixture({ structure: s, specs, days: DATES.map((d, i) => day(d, { scheduledOutQ: 60, dayCents: cents[i]! }, s)) }));
+    expectClean(out);
+    const skipped = out.notes.filter((n) => n.code === "salaried_block_skipped" && n.userId === "u-gm");
+    expect(skipped.map((n) => [n.date, n.params.reason])).toEqual([[TUE, "week_target"], [THU, "week_target"]]);
+    expect(out.shifts.filter((x) => x.userId === "u-gm" && x.segments.some((g) => g.reasonKey !== FLEX)).map((x) => x.date)).toEqual([MON, WED, FRI, SAT, SUN]);
+  });
+
+  it("addendum B1: leadership coverage still holds — a low day where the GM is the only manager is kept; the next-lowest is dropped", () => {
+    const s = onePosition((x) => {
+      x.leadership.modRequired = true;
+      x.limits.gmMinimumH = 8; x.limits.maxShiftH = 10.5; x.shopDay = { ...x.shopDay, prepStartQ: 28, outEarliestQ: 60, outLatestQ: 64 };
+    });
+    const cents = [500, 100, 300, 100, 400, 900, 800];
+    // The shift lead is OFF on Tuesday: without the GM, Tuesday would have no manager on duty.
+    const specs: PersonSpec[] = [{ id: "u-e", role: "employee" }, { id: "u-sl", role: "shift_lead", leader: "mix", off: [2] }, { id: "u-gm", role: "gm", leader: "mix", cover: [I.$REG] }];
+    const out = buildWeek(fixture({ structure: s, specs, days: DATES.map((d, i) => day(d, { scheduledOutQ: 60, dayCents: cents[i]! }, s)) }));
+    expectClean(out);
+    const skipped = out.notes.filter((n) => n.code === "salaried_block_skipped" && n.userId === "u-gm");
+    expect(skipped.map((n) => [n.date, n.params.reason])).toEqual([[WED, "week_target"], [THU, "week_target"]]);
+    expect(out.gaps.filter((g) => g.code === "mod_missing" && g.date === TUE)).toEqual([]);
+  });
+
+  it("addendum B2: a prep manager is never generated — no pin, no shift", () => {
+    // The Register allows the prep manager and it is on their cover list: only "never generated" keeps them off it.
+    const s = onePosition((x) => { x.positions[I.$REG]!.allowedRoles.push("prep_mgr"); });
+    const out = buildWeek(fixture({ structure: s, specs: [{ id: "u-pm", role: "prep_mgr", leader: "mix", cover: [I.$REG] }], days: oneDay(s) }));
+    expectClean(out);
+    expect(out.shifts.filter((x) => x.userId === "u-pm")).toEqual([]);
   });
 });
