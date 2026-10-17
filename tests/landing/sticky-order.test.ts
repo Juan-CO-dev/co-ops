@@ -25,7 +25,7 @@ describe('sticky order eligibility and session preference',()=>{
   });
 });
 
-it('uses clear-space hysteresis, dwell and a per-direction collision latch',()=>{
+it('recovers after sustained clearance without requiring a scroll reversal',()=>{
   const policy=createStickyVisibility();
   const sample=(y:number,now:number,clearance:number,heroBottom=-10)=>policy.update({y,now,clearance,heroBottom,suppressed:false});
   expect(sample(500,0,119).visible).toBe(false);
@@ -35,10 +35,20 @@ it('uses clear-space hysteresis, dwell and a per-direction collision latch',()=>
   expect(sample(540,260,1).visible).toBe(true);
   expect(sample(550,270,-1).visible).toBe(false);
   expect(sample(1000,2000,500).visible).toBe(false);
-  expect(sample(1100,3000,500).visible).toBe(false);
-  expect(sample(970,4000,500).visible).toBe(false);
+  expect(sample(1100,3000,500).visible).toBe(true);
+  expect(sample(970,4000,500).visible).toBe(true);
   expect(sample(970,4240,500).visible).toBe(true);
   expect(sample(0,4500,500,20).visible).toBe(false);
+});
+
+it('returns after a transient suppression clears, at the same scroll position',()=>{
+  const policy=createStickyVisibility();
+  const base={y:600,clearance:200,heroBottom:-1,suppressed:false};
+  policy.update({...base,now:0});
+  expect(policy.update({...base,now:240}).visible).toBe(true);
+  expect(policy.update({...base,now:700,suppressed:true}).visible).toBe(false);
+  expect(policy.update({...base,now:800}).visible).toBe(false);
+  expect(policy.update({...base,now:1200}).visible).toBe(true);
 });
 
 it('immediately suppresses unsafe geometry even during dwell',()=>{

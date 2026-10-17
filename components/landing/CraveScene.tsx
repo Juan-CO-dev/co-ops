@@ -5,7 +5,7 @@ import {canAnimateCrave,craveProgress} from '@/lib/landing/crave-motion-shared';
 import {observeLandingViewport} from '@/lib/landing/scroll-controller';
 
 /** Attach after 10% enters view; a sliver below the desktop hero is not a media request. */
-export function TexturePhoto({kind,alt}:{kind:'texture'|'crossSection';alt:string}) {
+export function TexturePhoto({kind,alt}:{kind:keyof typeof textureMedia;alt:string}) {
   const ref=useRef<HTMLDivElement>(null);
   const [loaded,setLoaded]=useState(false);
   useEffect(()=>{
@@ -36,9 +36,10 @@ export function CraveScene({textureAlt,crossAlt,stillLabel,motionLabel}:{texture
       if(!enabled)element.style.removeProperty('--crave-progress');
     },{offscreen:true});
   },[still]);
-  return <div ref={ref} data-crave-stage data-motion="false" className="landing-v2-crave-stage">
+  return <div ref={ref} data-crave-stage data-motion="pending" className="landing-v2-crave-stage">
+    <noscript><style>{`.landing-v2 .landing-v2-crave-stage[data-motion="pending"] { height:auto; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v2-crave-sticky { position:static; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v2-crave-window { width:100%; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v2-crave-track { display:grid; transform:none; }`}</style></noscript>
     <div className="landing-v2-crave-sticky">
-      {enhanced&&<button type="button" aria-pressed={still} onClick={()=>setStill(value=>!value)} className="landing-v2-crave-control">{still?motionLabel:stillLabel}</button>}
+      <div className="landing-v2-crave-control-slot">{enhanced?<button type="button" aria-pressed={still} onClick={()=>setStill(value=>!value)} className="landing-v2-crave-control">{still?motionLabel:stillLabel}</button>:<span aria-hidden="true" style={{visibility:'hidden'}} className="landing-v2-crave-control">{stillLabel}</span>}</div>
       <div className="landing-v2-crave-window"><div className="landing-v2-crave-track">
         <TexturePhoto kind="texture" alt={textureAlt}/><TexturePhoto kind="crossSection" alt={crossAlt}/>
       </div></div>

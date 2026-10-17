@@ -11,10 +11,8 @@ test("eight-section skeleton stays useful without JavaScript", async ({browser,b
   await page.locator("summary").click();
   await expect(page.locator("details p")).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  for (const link of await page.locator("main a,header a,summary,aside a").all()) {
-    const box = await link.boundingBox();
-    expect(box?.height,(await link.textContent())??"unnamed target").toBeGreaterThanOrEqual(44);
-  }
+  const targets=await page.locator("main a,header a,summary,aside a").evaluateAll(nodes=>nodes.map(node=>({height:node.getBoundingClientRect().height,label:node.textContent??"unnamed target"})));
+  for(const {height,label} of targets)expect(height,label).toBeGreaterThanOrEqual(44);
   await context.close();
 });
 

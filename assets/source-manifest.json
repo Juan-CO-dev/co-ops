@@ -269,5 +269,67 @@
       "sha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
       "evidence": "LANDING v2 BUILD r2; approved Chunk 1 full-frame delivery recipes"
     }
+  ],
+  "decorativeSources": [
+    {
+      "representative": "touch-clay-bag",
+      "confirmedIds": [
+        "touch-clay-bag"
+      ],
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-3d/kid-again/03-hero/alts/prop-clay-to-go-bag-blank-AI-DRAWN.png",
+      "sha256": "4e7620fba7611ee487d70198e2df431d06d49c06bd34addb73bfa2ea3cd787dd",
+      "classification": "drawn",
+      "inspection": "Approved: opaque stylized empty bag; bottom AI tag excluded by crop; no food"
+    },
+    {
+      "representative": "touch-lowpoly-prop",
+      "confirmedIds": [
+        "touch-lowpoly-prop"
+      ],
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-3d/lowpoly-bank/pilgrim/rgba/pilgrim-idle-rgba-AI-DRAWN.png",
+      "sha256": "b256b954b55652c31529719ad775720fd0893e55ed89af5504844653827dae96",
+      "classification": "drawn",
+      "inspection": "Approved: isolated upper staff head only, no face/body/food"
+    },
+    {
+      "representative": "touch-office-wave",
+      "confirmedIds": [
+        "touch-office-wave"
+      ],
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-3d/clay-bank/office-worker/office-worker-wave-rgba-AI-DRAWN.png",
+      "sha256": "6bb53ffade8eac181156fe3236d16a5d0ddd0931a67d3ba63eb9dcd3be9ee967",
+      "classification": "drawn",
+      "inspection": "Approved: empty-handed clay worker; no food; one character slot"
+    },
+    {
+      "representative": "touch-doodle-chip",
+      "confirmedIds": [
+        "touch-doodle-chip"
+      ],
+      "eligible": true,
+      "hold": null,
+      "path": "assets/sources/touch-doodle-chip.svg",
+      "sha256": "1d7f6e74dcf9a333d0fa966e8b28ac9dfecaf261435fdd1b5e08e7562f515054",
+      "classification": "drawn",
+      "inspection": "Approved: code-native illustrated outline and ridges; no photo input"
+    },
+    {
+      "representative": "touch-mark-nod",
+      "confirmedIds": [
+        "touch-mark-nod"
+      ],
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-3d/logo-pack/vector/co-icon-flat.svg",
+      "sha256": "3284208f063cbee2b71aef6efa2bb46102f3746f46d17ff17629fa559f3f3f8e",
+      "classification": "brand",
+      "inspection": "Approved: authentic original mark; original paths and cutouts retained; bounded subpixel vector simplification, no redraw"
+    }
   ]
 }

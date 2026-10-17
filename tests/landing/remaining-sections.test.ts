@@ -1,4 +1,5 @@
 import { textureMedia } from '@/lib/landing/media';
+import cateringProvenance from '../../assets/provenance/hero-poster.json';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -44,11 +45,13 @@ describe('remaining landing sections',()=>{
     expect(config.cateringPortalLive).toBe(false);
     expect(html).toContain(config.cateringUrl); expect(html).toContain(config.inquiryUrl);
     expect(html).not.toContain('<form');
-    // Chunk 5 deliberately adds the approved shared L083 photograph.
+    // CC's chunk-5 review requires a distinct approved real photo when available.
     expect(html.match(/<img /g)).toHaveLength(1);
-    expect(html).toContain(`src="${textureMedia.crossSection.src}"`);
-    expect(html).toContain(`srcSet="${textureMedia.crossSection.srcSet}"`);
-    expect(html).toContain('width="720" height="1080"');
+    expect(html).toContain(`src="${textureMedia.catering.src}"`);
+    expect(html).toContain(`srcSet="${textureMedia.catering.srcSet}"`);
+    expect(html).toContain('width="750" height="1125"');
+    expect(textureMedia.catering.src).not.toBe(textureMedia.crossSection.src);
+    expect(cateringProvenance).toMatchObject({sourceId:'014',publicPath:textureMedia.catering.src,classification:'real-photo',mode:'resize-only'});
     expect(html).toContain('loading="lazy"');
     expect(html).toContain('<noscript>');
     expect(html).not.toContain('Start a catering order');

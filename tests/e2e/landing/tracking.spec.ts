@@ -41,9 +41,10 @@ test('no Meta or attribution persistence before consent; equal keyboard consent 
 
 for(const signal of ['dnt','gpc'])test(`${signal} overrides accepted consent and clears marketing storage`,async({page,context})=>{
   await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
-  await page.addInitScript(kind=>{Object.defineProperty(navigator,kind==='dnt'?'doNotTrack':'globalPrivacyControl',{get:()=>kind==='dnt'?'1':true});sessionStorage.setItem('landing_attribution','{"ad":"subsim-photo","utm":{}}');},signal);
+  await page.addInitScript(kind=>{const key=kind==='dnt'?'doNotTrack':'globalPrivacyControl';Object.defineProperty(Navigator.prototype,key,{get:()=>kind==='dnt'?'1':true,configurable:true});sessionStorage.setItem('landing_attribution','{"ad":"subsim-photo","utm":{}}');},signal);
   const requests=await isolateMeta(page); await page.goto('/?ad=subsim-photo');
   await expect(page.locator('main')).toBeVisible();
+  await expect.poll(()=>page.evaluate(kind=>kind==='dnt'?navigator.doNotTrack:(navigator as Navigator & {globalPrivacyControl?:boolean}).globalPrivacyControl,signal)).toBe(signal==='dnt'?'1':true);
   await expect.poll(()=>page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();
   expect(requests).toEqual([]); await expect(page.locator('#landing-meta-pixel')).toHaveCount(0);
 });

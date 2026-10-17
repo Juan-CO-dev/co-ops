@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { FRAME_ID, FRAME_PATH, SOURCE_SHA256, SOURCE, CUT } from './subdex-source.mjs';
+import { TOUCH_RECIPES } from './touch-recipes.mjs';
 export const sha256 = p => createHash('sha256').update(readFileSync(p)).digest('hex');
 // Reviewed r2 recipes. Manifest data cannot award itself a larger delivery budget.
 export const PHOTO_DETAILS = Object.freeze({
@@ -26,12 +27,15 @@ export function approvedSource(manifest, id, classification='real-photo') {
    seen.add(identity);
   }
  }
- const candidates=classification==='real-photo' ? [...lists[0],...lists[1]] : classification==='drawn' ? lists[2] : [];
+ const candidates=classification==='real-photo' ? [...lists[0],...lists[1]] : classification==='drawn' ? [...lists[2],...lists[3]] : classification==='brand'?lists[3]:[];
  const p=candidates.find(p=>p.representative===id);
  if (!p || !p.eligible || p.hold || !p.confirmedIds?.includes(id)) throw new Error('Source is not an eligible representative');
  if((p.classification ?? 'real-photo')!==classification)throw Error('Source classification mismatch');
  if(lists[1].includes(p) && (!Object.hasOwn(PHOTO_DETAILS,id) || p.sha256!==PHOTO_DETAILS[id] || p.path!==`C:/Users/conta/co-chief-assets/picks-full/${id}.jpg` || p.classification!=='real-photo'))throw Error('Unapproved photo detail source');
- if(p.classification === 'drawn' && (p.representative !== FRAME_ID || p.path !== FRAME_PATH || p.videoSha256 !== SOURCE_SHA256 || p.videoPath !== SOURCE || JSON.stringify(p.cut) !== JSON.stringify(CUT))) throw Error('Unapproved drawn source recipe');
+ if(lists[3].includes(p)){
+  const pin=TOUCH_RECIPES[id]?.source;
+  if(!pin || Object.keys(pin).some(key=>JSON.stringify(p[key])!==JSON.stringify(pin[key])))throw Error('Unapproved decorative source');
+ } else if(p.classification === 'drawn' && (p.representative !== FRAME_ID || p.path !== FRAME_PATH || p.videoSha256 !== SOURCE_SHA256 || p.videoPath !== SOURCE || JSON.stringify(p.cut) !== JSON.stringify(CUT))) throw Error('Unapproved drawn source recipe');
  return p;
 }
 export function safeOutput(root, relative) {
@@ -51,6 +55,10 @@ function validateCrop(e) {
  if(e.width>c.width || e.height>c.height || Math.abs(e.height-Math.round(e.width*c.height/c.width))>1)throw Error('Crop must resize uniformly without enlargement');
 }
 export function validateEntry(e) {
+ if((typeof e.id==='string' && e.id.startsWith('touch-')) || (typeof e.sourceId==='string' && e.sourceId.startsWith('touch-')) || /^\/(?:media|brand)\/touch-/.test(e.publicPath??'')){
+  const pin=TOUCH_RECIPES[e.sourceId??e.id]?.entry;
+  if(!pin || Object.keys(pin).some(key=>JSON.stringify(e[key])!==JSON.stringify(pin[key])))throw Error('Unapproved decorative recipe');
+ }
  for (const k of ['id','publicPath','sourcePath','sidecar']) if(typeof e[k]!=='string'||!e[k]) throw new Error('Missing '+k);
  if (/^(?:[A-Za-z]:[\\/]|[\\/])/.test(e.sourcePath)) throw Error('Absolute source path');
  for (const k of ['sourceSha256','sha256']) if (!/^[a-f0-9]{64}$/.test(e[k]??'')) throw new Error('Missing hash');
@@ -89,6 +97,7 @@ export async function checkAssets(root, {sources=false}={}) {
   const file=safeOutput(root,'public'+e.publicPath), side=safeOutput(root,e.sidecar);
   if(sha256(file)!==e.sha256 || statSync(file).size!==e.bytes) throw new Error('Export hash/size changed');
   const record=JSON.parse(readFileSync(side,'utf8'));
+  if(e.id.startsWith('touch-') && JSON.stringify(record)!==JSON.stringify(e))throw Error('Decorative sidecar mismatch');
   const compared=['sourceSha256','sha256','classification','sourceId','mode','quality'];
   if(requiresRasterDerivation(e))compared.push('sourcePath','crop','orientedSource','width','height','steps','tool','effort','publicPath','bytes','maxBytes','load','command','inspection');
   for(const key of compared)if(JSON.stringify(record[key])!==JSON.stringify(e[key]))throw new Error('Sidecar mismatch');
@@ -97,6 +106,10 @@ export async function checkAssets(root, {sources=false}={}) {
   if(!sourceRef)throw Error('Unknown source reference');
   const sourcePath=path.resolve(root,sourceRef);
   if(sources && sha256(sourcePath)!==e.sourceSha256) throw new Error('Original source changed');
+  if(sources && e.id==='touch-mark-nod'){
+   const {deriveMarkSvg}=await import('./mark-source.mjs');
+   if(createHash('sha256').update(deriveMarkSvg(readFileSync(sourcePath),e.vectorTolerance)).digest('hex')!==e.sha256)throw Error('Mark derivation mismatch');
+  }
   if(sources && requiresRasterDerivation(e)) {
    const {default:sharp}=await import('sharp');
    if(e.mode==='crop-resize-only' && ['sharp','vips','webp'].some(k=>e.tool[k]!==sharp.versions[k]))throw Error('Crop encoder version mismatch');

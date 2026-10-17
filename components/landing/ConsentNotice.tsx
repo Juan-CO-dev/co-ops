@@ -1,7 +1,7 @@
 "use client";
 import {useEffect,useRef,useState} from 'react';
 import type {ConsentChoice} from '@/lib/landing/consent-shared';
-export interface ConsentLabels { notice:string; accept:string; reject:string; settings:string; withdraw:string; privacy:string }
+export interface ConsentLabels { notice:string; accept:string; reject:string; settings:string; withdraw:string; privacy:string; language:'en'|'es' }
 export function ConsentNotice({choice,labels,onChoose}:{choice:ConsentChoice;labels:ConsentLabels;onChoose:(choice:'accepted'|'rejected')=>void}) {
   const [open,setOpen]=useState<boolean|null>(null);
   const expanded=open??choice==='unknown';
@@ -29,7 +29,7 @@ export function ConsentNotice({choice,labels,onChoose}:{choice:ConsentChoice;lab
     <button type="button" onClick={()=>setOpen(!expanded)} aria-expanded={expanded}>{labels.settings}</button>
     {expanded&&<div data-landing-consent>
       <p>{labels.notice}</p>
-      <a href="/privacy">{labels.privacy}</a>
+      <a href={`/privacy?lang=${labels.language}`}>{labels.privacy}</a>
       <div className="landing-v2-consent-actions">
         <button type="button" onClick={()=>{onChoose('accepted');setOpen(false);}}>{labels.accept}</button>
         <button type="button" onClick={()=>{onChoose('rejected');setOpen(false);}}>{choice==='accepted'?labels.withdraw:labels.reject}</button>

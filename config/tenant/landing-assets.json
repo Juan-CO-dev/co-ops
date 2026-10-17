@@ -180,5 +180,35 @@
     "path": "/media/v2-l083-960-3c45c543b2af.webp",
     "width": 960,
     "height": 1440
+  },
+  {
+    "id": "touch-clay-bag",
+    "path": "/media/touch-clay-bag-861f328984ef.webp",
+    "width": 256,
+    "height": 326
+  },
+  {
+    "id": "touch-lowpoly-prop",
+    "path": "/media/touch-lowpoly-prop-af74d0fcd201.webp",
+    "width": 115,
+    "height": 120
+  },
+  {
+    "id": "touch-office-wave",
+    "path": "/media/touch-office-wave-f48cff95714f.webp",
+    "width": 256,
+    "height": 453
+  },
+  {
+    "id": "touch-doodle-chip",
+    "path": "/brand/touch-doodle-chip-1d7f6e74dcf9.svg",
+    "width": 48,
+    "height": 48
+  },
+  {
+    "id": "touch-mark-nod",
+    "path": "/brand/touch-mark-nod-4dbd4bc62726.svg",
+    "width": 805,
+    "height": 894
   }
 ]

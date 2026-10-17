@@ -27,14 +27,18 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
   await page.waitForLoadState('networkidle');
   expect(textures).toEqual([]);
   const stage=page.locator('[data-crave-stage]');
+  // Measure the reserved photo box BEFORE IntersectionObserver attaches its image.
+  const beforePhotoHeight=await stage.locator('[data-texture-photo]').first().evaluate(el=>el.getBoundingClientRect().height);
   await stage.scrollIntoViewIfNeeded();
   await expect(stage.locator('img').first()).toBeVisible();
   await expect.poll(()=>stage.locator('img').first().evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
-  expect(await stage.locator('[data-texture-photo]').first().evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThan(0);
+  expect(beforePhotoHeight).toBeGreaterThan(0);
+  expect(await stage.locator('[data-texture-photo]').first().evaluate(el=>el.getBoundingClientRect().height)).toBeCloseTo(beforePhotoHeight,1);
   await page.locator('#field-guide').scrollIntoViewIfNeeded();
   await expect(page.locator('#field-guide h3')).toHaveText('Crunchy Boi');
   await expect(page.locator('[data-field-ingredients]')).toHaveText((language==='en'?en:es)['landing.lineup.ingredients.crunchy-boi']);
   await expect(page.locator('[data-anatomy-label]')).toHaveCount(6);
+  await expect(page.getByRole('group',{name:(language==='en'?en:es)['landing.field-guide.labels']})).toBeVisible();
   const intersections=await page.locator('#field-guide').evaluate(section=>{
     const photo=section.querySelector('[data-landing-photo]')!.getBoundingClientRect();
     return [...section.querySelectorAll('[data-anatomy-label],h3,[data-field-ingredients],[data-landing-placement]')].map(el=>{
@@ -43,7 +47,9 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
   });
   expect(intersections.every(area=>area===0)).toBe(true);
   await assertGuideGeometry(page);
-  await expect.poll(()=>page.locator('#field-guide img').evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
+  const guidePhoto=page.locator('#field-guide [data-landing-photo] img');
+  await expect(guidePhoto).toHaveCount(1);
+  await expect.poll(()=>guidePhoto.evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
   await mkdir('tmp/landing-v2/chunk5',{recursive:true});
   await page.locator('#field-guide h3').evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-16));
   await page.screenshot({path:`tmp/landing-v2/chunk5/${testInfo.project.name}-${size.width}x${size.height}-${language}-guide.png`});
@@ -63,6 +69,50 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
     if(progress===.5)await page.screenshot({path:`tmp/landing-v2/chunk5/${testInfo.project.name}-${size.width}x${size.height}-${language}-texture.png`});
   }
 
+});
+
+for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,height:900}])test(`hydration and photo attachment preserve reserved geometry (${size.width}x${size.height})`,async({page})=>{
+  await page.setViewportSize(size);
+  let releaseScripts!:()=>void;
+  const scriptsReady=new Promise<void>(resolve=>{releaseScripts=resolve;});
+  await page.route('**/_next/static/**/*.js',async route=>{await scriptsReady;await route.continue();});
+  try {
+    await page.goto('/',{waitUntil:'commit'});
+    const stage=page.locator('[data-crave-stage]');
+    await expect(stage).toHaveAttribute('data-motion','pending');
+    await expect.poll(()=>stage.evaluate(el=>getComputedStyle(el).marginTop)).toBe('24px');
+    // WebKit's FontFaceSet.ready waits for document load, which our held scripts
+    // intentionally prevent. Load the CSS font faces directly before measuring.
+    await page.evaluate(()=>Promise.all(Array.from(document.fonts,face=>face.load())));
+    await stage.scrollIntoViewIfNeeded();
+    const geometry=()=>stage.evaluate(el=>({stage:el.getBoundingClientRect().height,control:el.querySelector('.landing-v2-crave-control-slot')!.getBoundingClientRect().height,photo:el.querySelector('[data-texture-photo]')!.getBoundingClientRect().height}));
+    const before=await geometry();
+    const scroll=await page.evaluate(()=>scrollY);
+    expect(before.stage).toBeGreaterThan(0);
+    expect(before.control).toBeGreaterThanOrEqual(44);
+    expect(before.photo).toBeGreaterThan(0);
+    await expect(stage.locator('img')).toHaveCount(0);
+    releaseScripts();
+    await expect(stage).toHaveAttribute('data-motion','true');
+    await page.evaluate(y=>scrollTo(0,y),scroll);
+    await expect(stage.locator('img').first()).toBeAttached();
+    await expect.poll(()=>stage.locator('img').first().evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
+    const after=await geometry();
+    for(const key of ['stage','control','photo'] as const)expect(after[key]).toBeCloseTo(before[key],1);
+  } finally {releaseScripts();}
+});
+
+for(const language of ['en','es'] as const)test(`no-JS enlarged text has an independent readable legend (${language})`,async({browser,baseURL})=>{
+  const context=await browser.newContext({baseURL,javaScriptEnabled:false,viewport:{width:1440,height:900}});
+  const page=await context.newPage();
+  await page.goto(`/?lang=${language}`);
+  // Protocol evaluation simulates text enlargement without enabling page JS;
+  // addStyleTag's completion event never arrives in the JS-disabled contexts.
+  await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});
+  await expect(page.locator('html')).toHaveCSS('font-size','32px');
+  await page.locator('#field-guide').scrollIntoViewIfNeeded();
+  await assertGuideGeometry(page);
+  await context.close();
 });
 
 for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,height:900}])for(const language of ['en','es'] as const)test(`enlarged text keeps Field Guide labels readable and food clear (${size.width}x${size.height}; ${language})`,async({page},testInfo)=>{
@@ -116,14 +166,28 @@ test('native scroll reverses, still removes runway, resize keeps both images ava
   await expect(stage.locator('[data-texture-photo]')).toHaveCount(2);
 });
 
-for(const mode of ['reduce','no-js'] as const)test(`${mode} retains complete real photos and ingredients without a runway`,async({browser,baseURL})=>{
-  const context=await browser.newContext({baseURL,javaScriptEnabled:mode!=='no-js',reducedMotion:'reduce',viewport:{width:375,height:667}});
+for(const mode of ['reduce','no-js','no-js-full-motion'] as const)test(`${mode} retains complete real photos and ingredients without a runway`,async({browser,baseURL})=>{
+  const context=await browser.newContext({baseURL,javaScriptEnabled:mode==='reduce',reducedMotion:mode==='no-js-full-motion'?'no-preference':'reduce',viewport:{width:375,height:667}});
   const page=await context.newPage();
   await page.goto('/');
-  await expect(page.locator('[data-crave-stage]')).toHaveAttribute('data-motion','false');
+  await expect(page.locator('[data-crave-stage]')).toHaveAttribute('data-motion',mode==='reduce'?'false':'pending');
+  await expect(page.locator('.landing-v2-crave-track')).toHaveCSS('display','grid');
+  await expect(page.locator('.landing-v2-crave-track')).toHaveCSS('transform','none');
+  await expect(page.locator('.landing-v2-crave-sticky')).toHaveCSS('position','static');
   await page.locator('#crave').scrollIntoViewIfNeeded();
   for(const photo of await page.locator('#crave [data-texture-photo]').all()){await photo.scrollIntoViewIfNeeded();await expect(photo.locator('img')).toHaveCount(1);}
-  await expect(page.locator('#crave img')).toHaveCount(2);
+  await expect(page.locator('#crave [data-landing-photo] img')).toHaveCount(2);
+  const touch=page.locator('#crave [data-playful-slot="crave"]');
+  if(mode==='reduce'){
+    await touch.scrollIntoViewIfNeeded();
+    await expect(touch.locator('img')).toHaveCount(1);
+    await expect(touch.locator('img')).toHaveAttribute('alt','');
+    await expect(touch).toHaveAttribute('data-playing','false');
+    await expect(page.locator('#crave img')).toHaveCount(3);
+  }else{
+    await expect(touch.locator('img')).toHaveCount(0);
+    await expect(page.locator('#crave img')).toHaveCount(2);
+  }
   await page.locator('#field-guide').scrollIntoViewIfNeeded();
   await expect(page.locator('#field-guide h3')).toHaveText('Crunchy Boi');
   await expect(page.locator('[data-field-ingredients]')).toHaveText(en['landing.lineup.ingredients.crunchy-boi']);

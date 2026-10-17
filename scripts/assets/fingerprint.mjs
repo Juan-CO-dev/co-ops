@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from 
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { sha256, safeOutput } from './inventory.mjs';
+import { TOUCH_RECIPES } from './touch-recipes.mjs';
 
 /** Content addressing is required before publishing any immutable landing media. */
 export function fingerprintAssets(root = process.cwd()) {
@@ -14,7 +15,9 @@ export function fingerprintAssets(root = process.cwd()) {
     const file = safeOutput(root, 'public' + oldPath);
     if (sha256(file) !== entry.sha256) throw new Error('Cannot fingerprint changed bytes');
     let stem = oldPath.replace(/\.[^.]+$/, '').replace(/-[a-f0-9]{12}$/, '');
-    if (entry.classification === 'drawn' && !stem.endsWith('-drawn')) stem += '-drawn';
+    // Reviewed touch filenames have an exact recipe; classification stays in
+    // provenance rather than inserting a second suffix on a repeat run.
+    if (entry.classification === 'drawn' && !Object.hasOwn(TOUCH_RECIPES, entry.id) && !stem.endsWith('-drawn')) stem += '-drawn';
     const next = `${stem}-${entry.sha256.slice(0, 12)}${oldPath.slice(oldPath.lastIndexOf('.'))}`;
     if (next !== oldPath) {
       const dest = safeOutput(root, 'public' + next);

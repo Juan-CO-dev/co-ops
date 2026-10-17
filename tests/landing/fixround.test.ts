@@ -7,7 +7,7 @@ import {formatDistanceMiles} from '@/lib/landing/nearby-shared';
 
 it('keeps permission, conditional sharing and advertising purpose in both consent notices',()=>{
   for(const phrase of ['With your permission','when configured','to understand our ads','Ordering works either way']) expect(en['landing.consent.notice']).toContain(phrase);
-  for(const phrase of ['Con tu permiso','cuando se configure','para entender nuestros anuncios','Puedes pedir con cualquier opción']) expect(es['landing.consent.notice']).toContain(phrase);
+  for(const phrase of ['Con tu permiso','si está configurado','para entender nuestros anuncios','Puedes pedir con cualquier opción']) expect(es['landing.consent.notice']).toContain(phrase);
 });
 it('never invents a store on a footer vendor event',()=>{
   for(const vendor of ['ubereats','doordash']) {

@@ -1,3 +1,4 @@
+import { PlayfulTouch } from "@/components/landing/PlayfulTouch";
 import { CraveScene } from "@/components/landing/CraveScene";
 import { FieldGuide } from "@/components/landing/FieldGuide";
 import { StickyOrderBar } from "@/components/landing/StickyOrderBar";
@@ -44,7 +45,7 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
         <SectionView section={key} observationTargetId={key === "crave" ? "crave-title" : undefined}>
           <h2 id={`${key}-title`} className="text-3xl font-black tracking-tight">{serverT(language,`landing.${key}.title`)}</h2>
           <p className="mt-4 max-w-xl text-lg">{serverT(language,`landing.${key}.body`)}</p>
-          {key === "crave" && <CraveScene textureAlt={serverT(language,"landing.texture.alt")} crossAlt={serverT(language,"landing.texture.cross-alt")} stillLabel={serverT(language,"landing.texture.still")} motionLabel={serverT(language,"landing.texture.motion")}/>}
+          {key === "crave" && <><CraveScene textureAlt={serverT(language,"landing.texture.alt")} crossAlt={serverT(language,"landing.texture.cross-alt")} stillLabel={serverT(language,"landing.texture.still")} motionLabel={serverT(language,"landing.texture.motion")}/><PlayfulTouch slot="crave"/></>}
           {key === "field-guide" && <FieldGuide language={language}/>}
           {key === "lineup" && <Lineup language={language}/>}
           {(key === "crave" || key === "subdex" || key === "field-guide" || key === "lineup") && <div className="landing-v2-inline-orders">{publicStores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="landing-v2-inline-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
@@ -57,6 +58,6 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
         </SectionView>
       </section>)}
     </main>
-    <StickyOrderBar stores={publicStores.map(store=>({key:store.key,orderUrl:store.orderUrl,label:serverT(language,"landing.order",{shop:store.orderLabel})}))} labels={{name:serverT(language,"landing.sticky.name"),minimize:serverT(language,"landing.sticky.minimize"),restore:serverT(language,"landing.sticky.restore"),hints:[serverT(language,"landing.sticky.hint1"),serverT(language,"landing.sticky.hint2")]}}/>
+    <StickyOrderBar stores={publicStores.map(store=>({key:store.key,orderUrl:store.orderUrl,label:serverT(language,"landing.order",{shop:store.orderLabel})}))} labels={{name:serverT(language,"landing.sticky.name"),minimize:serverT(language,"landing.sticky.minimize"),restore:serverT(language,"landing.sticky.restore"),hint:serverT(language,"landing.sticky.hint1")}}/>
   </div>;
 }

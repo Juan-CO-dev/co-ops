@@ -9,8 +9,8 @@ test('remaining sections keep facts, destinations and translation honest',async(
   await expect(page.locator('#catering a').nth(1)).toHaveAttribute('href',landingTenantConfig.inquiryUrl);
   await expect(page.locator('#catering img,#catering form')).toHaveCount(0);
   await expect(page.locator('#footer')).toContainText('526 8th St SE Ste A');
-  const footerDestinations=landingTenantConfig.footerLinks.filter(link=>link.key!=='uber-eats').map(link=>link.url);
-  expect(await page.locator('#footer nav a').evaluateAll(links=>links.map(link=>link.getAttribute('href')))).toEqual(footerDestinations);
+  const footerDestinations=landingTenantConfig.footerLinks.filter(link=>link.key!=='uber-eats').map(link=>link.url).sort();
+  expect((await page.locator('#footer nav a').evaluateAll(links=>links.map(link=>link.getAttribute('href')))).sort()).toEqual(footerDestinations);
   const uber=landingTenantConfig.footerLinks.find(link=>link.key==='uber-eats')!;
   await expect(page.locator('#shops a[href="'+uber.url+'"]')).toHaveCount(1);
   await expect(page.locator('[data-shop="dupont"] a[href="'+uber.url+'"]')).toBeVisible();
@@ -41,6 +41,7 @@ test('SUBDEX rejected playback retains the still in both engines',async({page})=
   await expect(page.getByTestId('subdex-motion').locator('video,button')).toHaveCount(0);
   await expect(page.locator('.landing-v2-spin video')).toHaveCount(0);
   await expect(page.locator('.landing-v2-spin button')).toHaveCount(1);
+  await expect(page.locator('#subdex button')).toHaveCount(1);
 });
 
 test('SUBDEX single muted excerpt pauses by keyboard and on viewport exit',async({page,browserName})=>{

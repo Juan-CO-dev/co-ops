@@ -85,7 +85,6 @@
 .landing-v2 .landing-v2-sticky-links button { flex-shrink: 0; min-width: 44px; min-height: 44px; border: 1px solid; font-size: 1.25rem; }
 .landing-v2 .landing-v2-sticky-links .landing-v2-order { flex: 1; }
 .landing-v2 [data-landing-placement] { scroll-margin-block: 110px 250px; }
-.landing-v2 #crave .landing-v2-orders, .landing-v2 #subdex .landing-v2-orders { margin-top: 24px; }
 @media (prefers-reduced-motion: no-preference) {
   .landing-v2 [data-landing-placement], .landing-v2 .landing-v2-sticky button { transition: transform 120ms ease-out; }
   .landing-v2 [data-landing-placement]:active, .landing-v2 .landing-v2-sticky button:active { transform: scale(.98); }
@@ -103,44 +102,51 @@
 .landing-v2 .landing-v2-texture-photo { width: 100%; aspect-ratio: 2 / 3; background: #fff9e4; }
 .landing-v2 .landing-v2-texture-photo img { display: block; width: 100%; height: auto; aspect-ratio: 2 / 3; object-fit: contain; }
 .landing-v2 .landing-v2-crave-stage { margin-top: 24px; }
-.landing-v2 .landing-v2-crave-control { display: block; min-height: 44px; padding: 8px 0; text-decoration: underline; margin-bottom: 12px; }
+.landing-v2 .landing-v2-crave-control-slot { min-height: 44px; margin-bottom: 12px; }
+.landing-v2 .landing-v2-crave-control { display: block; min-height: 44px; padding: 8px 0; text-decoration: underline; }
 .landing-v2 .landing-v2-crave-window { max-width: 480px; overflow: hidden; }
 .landing-v2 .landing-v2-crave-track { display: grid; gap: 16px; }
-.landing-v2 .landing-v2-crave-stage[data-motion="true"] { height: 175svh; view-timeline-name: --crave; view-timeline-axis: block; }
-.landing-v2 .landing-v2-crave-stage[data-motion="true"] .landing-v2-crave-sticky { position: sticky; top: 76px; }
-.landing-v2 .landing-v2-crave-stage[data-motion="true"] .landing-v2-crave-window { width: min(100%, 480px, 45svh); }
-.landing-v2 .landing-v2-crave-stage[data-motion="true"] .landing-v2-crave-track { display: flex; gap: 0; transform: translateX(calc(var(--crave-progress, 0) * -100%)); }
-.landing-v2 .landing-v2-crave-stage[data-motion="true"] .landing-v2-crave-track > div { flex: 0 0 100%; }
+/* Reserve the same runway before hydration; reduced motion starts static in CSS. */
+@media (prefers-reduced-motion: no-preference) and (min-height: 500px) {
+  .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) { height: 175svh; view-timeline-name: --crave; view-timeline-axis: block; }
+  .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-sticky { position: sticky; top: 76px; }
+  .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-window { width: min(100%, 480px, 45svh); }
+  .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-track { display: flex; gap: 0; transform: translateX(calc(var(--crave-progress, 0) * -100%)); }
+  .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-track > div { flex: 0 0 100%; }
+}
 @keyframes landing-v2-crave-slide { from { transform: translateX(0); } to { transform: translateX(-100%); } }
 @supports (animation-timeline: view()) {
   .landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="css"] .landing-v2-crave-track { animation: landing-v2-crave-slide linear both; animation-timeline: --crave; animation-range: contain; }
   .landing-v2 .landing-v2-crave-stage[data-active="false"] .landing-v2-crave-track { animation-play-state: paused; }
 }
 .landing-v2 .landing-v2-field-guide { margin-top: 28px; }
+.landing-v2 .landing-v2-anatomy-frame { container: landing-anatomy / inline-size; min-width: 0; }
 .landing-v2 .landing-v2-field-guide h3 { font-size: clamp(2.5rem,6vw,5rem); font-weight: 900; letter-spacing: -.06em; line-height: 1.05; }
 .landing-v2 [data-field-ingredients] { max-width: 42rem; margin: 16px 0 28px; font-size: 1.125rem; }
 .landing-v2 .landing-v2-anatomy { display: grid; grid-template-columns: 110px minmax(0,480px); max-width: 606px; gap: 16px; margin: 0; }
 .landing-v2 .landing-v2-anatomy-labels { position: relative; font-size: .75rem; font-weight: 800; }
-.landing-v2 .landing-v2-anatomy-labels span { position: absolute; right: 0; max-width: 100%; transform: translateY(-50%); padding-right: 12px; text-align: right; }
-.landing-v2 .landing-v2-anatomy-labels span::after { content: ''; position: absolute; right: -12px; top: 50%; width: 16px; border-top: 1px solid; }
+.landing-v2 .landing-v2-anatomy-labels [data-anatomy-label] { position: absolute; right: 0; max-width: 100%; transform: translateY(-50%); padding-right: 12px; text-align: right; }
+.landing-v2 .landing-v2-anatomy-labels [data-anatomy-label]::after { content: ''; position: absolute; right: -12px; top: 50%; width: 16px; border-top: 1px solid; }
 .landing-v2 .landing-v2-anatomy figcaption { grid-column: 1 / -1; font-size: .875rem; }
 .landing-v2 .landing-v2-catering-photo { margin-top: 24px; max-width: 480px; }
 @media (max-width: 499px) {
   .landing-v2 .landing-v2-anatomy { grid-template-columns: minmax(0,1fr); gap: 12px; }
   .landing-v2 .landing-v2-anatomy-labels { display: flex; flex-wrap: wrap; gap: 8px 16px; }
-  .landing-v2 .landing-v2-anatomy-labels span { position: static; transform: none; padding: 0; text-align: left; }
-  .landing-v2 .landing-v2-anatomy-labels span::after { display: none; }
+  .landing-v2 .landing-v2-anatomy-labels [data-anatomy-label] { position: static; transform: none; padding: 0; text-align: left; }
+  .landing-v2 .landing-v2-anatomy-labels [data-anatomy-label]::after { display: none; }
 }
 @media (prefers-reduced-motion: reduce), (max-height: 499px) {
   .landing-v2 .landing-v2-crave-stage[data-motion="true"] { height: auto; }
   .landing-v2 .landing-v2-crave-stage[data-motion="true"] .landing-v2-crave-sticky { position: static; }
   .landing-v2 .landing-v2-crave-stage[data-motion="true"] .landing-v2-crave-track { display: grid; transform: none; animation: none; }
 }
-/* Enlarged text uses the same readable, external ingredient legend as narrow screens. */
-.landing-v2[data-consent-flow="true"] .landing-v2-anatomy { grid-template-columns: minmax(0,1fr); gap: 12px; }
-.landing-v2[data-consent-flow="true"] .landing-v2-anatomy-labels { display: flex; flex-wrap: wrap; gap: 8px 16px; }
-.landing-v2[data-consent-flow="true"] .landing-v2-anatomy-labels span { position: static; transform: none; padding: 0; text-align: left; }
-.landing-v2[data-consent-flow="true"] .landing-v2-anatomy-labels span::after { display: none; }
+/* Own available width in rem controls the legend, including JS-off text enlargement. */
+@container landing-anatomy (max-width: 32rem) {
+  .landing-v2 .landing-v2-anatomy { grid-template-columns: minmax(0,1fr); gap: 12px; }
+  .landing-v2 .landing-v2-anatomy-labels { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+  .landing-v2 .landing-v2-anatomy-labels [data-anatomy-label] { position: static; transform: none; padding: 0; text-align: left; }
+  .landing-v2 .landing-v2-anatomy-labels [data-anatomy-label]::after { display: none; }
+}
 
 /* Desktop editorial composition: copy and food have separate columns. */
 @media (min-width: 1024px) {
@@ -152,5 +158,22 @@
   .landing-v2 .landing-v2-field-guide { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,606px); column-gap: 48px; align-items: start; }
   .landing-v2 .landing-v2-field-guide h3 { grid-column: 1; grid-row: 1; }
   .landing-v2 .landing-v2-field-guide [data-field-ingredients] { grid-column: 1; grid-row: 2; }
-  .landing-v2 .landing-v2-field-guide .landing-v2-anatomy { grid-column: 2; grid-row: 1 / 4; }
+  .landing-v2 .landing-v2-field-guide .landing-v2-anatomy-frame { grid-column: 2; grid-row: 1 / 4; }
 }
+
+/* Bounded accent envelopes: this normal-flow band owns all transformed pixels. */
+.landing-v2 .landing-v2-touch-slot { height:80px; width:80px; margin:8px 0; display:grid; place-items:center; pointer-events:none; overflow:hidden; contain:layout paint; }
+.landing-v2 .landing-v2-touch-art { display:grid; place-items:center; width:48px; height:48px; transform-origin:center; }
+.landing-v2 .landing-v2-touch-art img { display:block; width:auto; height:auto; max-width:40px; max-height:48px; object-fit:contain; }
+.landing-v2 .landing-v2-touch-checker { width:48px; height:32px; background:conic-gradient(#141414 25%,#fff7df 0 50%,#141414 0 75%,#fff7df 0); background-size:16px 16px; }
+.landing-v2 [data-playing="true"] .landing-v2-touch-art { animation:landing-touch-nod var(--touch-duration) ease-in-out 1; }
+.landing-v2 [data-touch="doodle-chip"][data-playing="true"] .landing-v2-touch-art { animation-name:landing-touch-hop; }
+.landing-v2 [data-touch="checker-peek"][data-playing="true"] .landing-v2-touch-art { animation-name:landing-touch-peek; }
+.landing-v2 [data-touch="lowpoly-prop"][data-playing="true"] .landing-v2-touch-art { animation-name:landing-touch-turn; }
+@keyframes landing-touch-nod { 0%,100% { transform:none } 45% { transform:translateY(-3px) rotate(8deg) } }
+@keyframes landing-touch-hop { 0%,100% { transform:none } 45% { transform:translateY(-7px) rotate(-6deg) } }
+@keyframes landing-touch-peek { 0%,100% { transform:none } 45% { transform:translateX(6px) } }
+@keyframes landing-touch-turn { 0%,100% { transform:none } 50% { transform:rotate(90deg) } }
+@media (prefers-reduced-motion:reduce) { .landing-v2 [data-playing] .landing-v2-touch-art { animation:none; transform:none; } }
+/* The phone hero has no safe gutter above its dock; BUILD permits omitting T1. */
+@media (max-width:767px) { .landing-v2 [data-playful-slot="hero"] { display:none; } }

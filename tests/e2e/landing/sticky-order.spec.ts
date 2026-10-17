@@ -4,7 +4,12 @@ import {clearRailPosition} from './helpers/sticky';
 
 for(const lang of ['en','es']) for(const height of [667,812]) test(`sticky threshold and consent ${lang} 375x${height}`,async({page})=>{
   await page.setViewportSize({width:375,height});await page.goto(`/?lang=${lang}`);
-  await page.evaluate(()=>document.querySelector<HTMLElement>('.landing-v2')!.style.setProperty('--landing-safe-bottom','34px'));
+  await page.evaluate(()=>{
+    document.querySelector<HTMLElement>('.landing-v2')!.style.setProperty('--landing-safe-bottom','34px');
+    // Simulate the viewport event accompanying an inset change, including an
+    // already-hydrated rail. Changing a custom property alone emits no resize.
+    window.dispatchEvent(new Event('resize'));
+  });
   const bar=page.locator('[data-sticky-order]');
   await expect(bar).toBeHidden();
   expect(await bar.evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
@@ -17,7 +22,7 @@ for(const lang of ['en','es']) for(const height of [667,812]) test(`sticky thres
     const a=rail.getBoundingClientRect();
     const notice=document.querySelector('.landing-v2-consent')!.getBoundingClientRect();
     const top=a.top-notice.height-34;
-    const obstructed=[...document.querySelectorAll('[data-landing-photo], [data-landing-placement]')].some(el=>{
+    const obstructed=[...document.querySelectorAll('[data-landing-placement]')].some(el=>{
       if(rail.contains(el))return false;const b=el.getBoundingClientRect();
       return Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(top,b.top))>0;
     });
@@ -50,7 +55,30 @@ for(const lang of ['en','es']) for(const viewport of [{width:375,height:667},{wi
   await page.evaluate(()=>document.fonts.ready);await page.locator('#crave').scrollIntoViewIfNeeded();
   await clearRailPosition(page);
   await expect(page.locator('[data-sticky-order]')).toBeVisible();
-  await page.screenshot({path:`tmp/landing-v2/chunk5/sticky-${info.project.name}-${lang}-${viewport.width}x${viewport.height}.png`});
+  await page.screenshot({path:`tmp/landing-v2/chunk6/sticky-${info.project.name}-${lang}-${viewport.width}x${viewport.height}.png`});
+  // Full-page capture does not visit lazy sections by itself. Exercise their
+  // normal viewport loading path, then prove every protected photo is decoded.
+  await page.evaluate(async()=>{
+    const ready=async(element:Element)=>{
+      const deadline=performance.now()+5000;
+      while(performance.now()<deadline){
+        const image=element instanceof HTMLImageElement?element:element.querySelector('img');
+        if(image?.complete&&image.naturalWidth>0){await image.decode();return;}
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      throw new Error(`Capture image did not load: ${element.getAttribute('data-touch')??element.getAttribute('data-texture-photo')??element.tagName}`);
+    };
+    for(const photo of document.querySelectorAll('main [data-landing-photo]')){
+      photo.scrollIntoView({block:'center',inline:'nearest'});await ready(photo);
+    }
+    document.querySelector('[data-lineup]')!.scrollLeft=0;
+    for(const slot of document.querySelectorAll('[data-playful-slot]')){
+      if(!slot.getClientRects().length)continue;
+      slot.scrollIntoView();await new Promise(resolve=>setTimeout(resolve,150));
+      if(slot.getAttribute('data-touch')!=='checker-peek')await ready(slot);
+    }
+  });
+  await page.screenshot({path:`tmp/landing-v2/chunk6/page-${info.project.name}-${lang}-${viewport.width}x${viewport.height}.png`,fullPage:true,animations:'disabled'});
 });
 
 test('storage denial preserves minimize through scroll; safe inset and enlarged text remain usable',async({page})=>{
@@ -74,7 +102,7 @@ test('reduced motion is static and pageshow recomputes restored scroll',async({p
   await page.evaluate(()=>{window.scrollTo(0,0);window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));});await expect(bar).toBeHidden();
 });
 
-test('visible rail never intersects real photos or section CTAs during scroll and resize',async({page})=>{
+test('visible rail never intersects section CTAs during scroll and resize',async({page})=>{
   await page.goto('/');
   for(const width of [375,1440]){
     await page.setViewportSize({width,height:900});
@@ -85,7 +113,7 @@ test('visible rail never intersects real photos or section CTAs during scroll an
         const rail=document.querySelector<HTMLElement>('[data-sticky-order]')!;
         if(rail.dataset.visible==='false')return false;
         const a=rail.getBoundingClientRect();
-        return [...document.querySelectorAll('[data-landing-photo], [data-landing-placement]')].some(el=>{
+        return [...document.querySelectorAll('[data-landing-placement]')].some(el=>{
           if(rail.contains(el))return false;
           const b=el.getBoundingClientRect();
           return Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top))>0;

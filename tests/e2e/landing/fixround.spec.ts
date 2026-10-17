@@ -10,6 +10,8 @@ for(const language of ['en','es']) test(`consent target and first-visit toggle $
   expect(box.height).toBeGreaterThanOrEqual(44);
   expect(box.width).toBeGreaterThanOrEqual(44);
   await expect(privacy).toHaveCSS('align-items','center');
+  await expect(privacy).toHaveCSS('justify-content','center');
+  await expect(privacy).toHaveAttribute('href',`/privacy?lang=${language}`);
   const toggle=notice.locator(':scope > button');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded','false');

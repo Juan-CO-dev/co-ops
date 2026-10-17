@@ -7,6 +7,7 @@ import { SectionView } from "./SectionView";
 import { OrderLink } from "./OrderLink";
 import { OfferCode } from "./OfferCode";
 import { preload } from "react-dom";
+import { PlayfulTouch } from './PlayfulTouch';
 
 export function Hero({language, config, ad}:{language:Language;config:LandingConfig;ad:string}) {
   preload(heroMedia.poster, { as: 'image', imageSrcSet: heroMedia.srcSet, imageSizes: heroMedia.sizes, fetchPriority: 'high' });
@@ -28,6 +29,7 @@ export function Hero({language, config, ad}:{language:Language;config:LandingCon
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img data-landing-photo src={heroMedia.poster} srcSet={heroMedia.srcSet} sizes={heroMedia.sizes} alt={serverT(language,"landing.hero.alt")} width={heroMedia.width} height={heroMedia.height} fetchPriority="high" loading="eager" className="landing-v2-hero-photo"/>
       </div>
+      <PlayfulTouch slot="hero"/>
     </SectionView>
   </section>;
 }

@@ -25,12 +25,17 @@ for (const language of ["en","es"] as const) test(`every section and control ren
   await expect(page.getByRole("button",{name:dictionary["landing.consent.reject"],exact:true})).toBeVisible();
   expect((await page.context().cookies()).some(c=>/lang/i.test(c.name))).toBe(false);
   await held.scrollIntoViewIfNeeded();
-  await expect(held.locator('img')).toHaveCount(1);
-  await expect(held.locator('img')).toHaveAttribute('src',textureMedia.crossSection.src);
-  await expect(held.locator('img')).toHaveAttribute('srcset',textureMedia.crossSection.srcSet);
-  await expect(held.locator('img')).toHaveAttribute('width','720');
-  await expect(held.locator('img')).toHaveAttribute('height','1080');
-  await expect(held.locator('img')).toHaveAttribute('alt',dictionary['landing.texture.cross-alt']);
+  const photo=held.locator('[data-landing-photo] img');
+  // Exact section image inventory: one real photo and one decorative touch.
+  await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveCount(1);
+  await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveAttribute('alt','');
+  await expect(held.locator('img')).toHaveCount(2);
+  await expect(photo).toHaveCount(1);
+  await expect(photo).toHaveAttribute('src',textureMedia.crossSection.src);
+  await expect(photo).toHaveAttribute('srcset',textureMedia.crossSection.srcSet);
+  await expect(photo).toHaveAttribute('width','720');
+  await expect(photo).toHaveAttribute('height','1080');
+  await expect(photo).toHaveAttribute('alt',dictionary['landing.texture.cross-alt']);
   await expect(held.locator('video')).toHaveCount(0);
   await expect(held.locator('[data-field-ingredients]')).toHaveText(dictionary['landing.lineup.ingredients.crunchy-boi']);
 });

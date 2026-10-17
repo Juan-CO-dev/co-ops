@@ -24,4 +24,10 @@ function texturePhoto(source:'p016'|'l083') {
     srcSet:[480,720,960].map(width=>`${mediaPath(`v2-${source}-${width}`)} ${width}w`).join(', '),
     sizes:'(min-width: 768px) 480px, calc(100vw - 44px)'};
 }
-export const textureMedia={texture:texturePhoto('p016'),crossSection:texturePhoto('l083')};
+export const textureMedia={
+  texture:texturePhoto('p016'),crossSection:texturePhoto('l083'),
+  // Source 014 is a separately provenanced real photo, distinct from crave's L083.
+  catering:{src:mediaPath('hero-poster'),width:750,height:1125,
+    srcSet:[320,640,960].map(width=>`${mediaPath(`hero-poster-${width}`)} ${width}w`).join(', '),
+    sizes:'(min-width: 768px) 480px, calc(100vw - 44px)'},
+};

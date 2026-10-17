@@ -24,3 +24,13 @@ Part A fixes the sticky rail with hysteresis/dwell, constant consent position, s
 Final checks: 354 landing tests pass; 40 assets/source reconstructions pass; tsc and build pass. FULL Chromium + WebKit: 347 passed, 5 existing Windows decoder skips, 0 failed (10.5m). Rail: exactly 2 toggles and invariant consent top at all 3 sizes in both engines. Full unit suite (`--maxWorkers=3`): 12,189 passed, 3 skipped, 2 unchanged tsx `uv_os_get_passwd` ENOMEM startup failures; not an overall full-suite pass.
 
 Local `perf:ci` exits 1: five runs per state, performance medians 0.94 both; LCP 3053.178ms unset / 3092.990ms accepted fails the 2500ms limit; TBT 77/59ms, accessibility 1.00, CLS 0.002750/0.052699 and 298,966B first-party per run pass. All raw evidence is retained; no thresholds changed. Authoritative CI for this exact revision and CC review remain pending and block advancement.
+
+## Part A / chunk 6 - 2026-10-17
+
+See [the complete chunk-6 RESULT](landing-v2-chunk6-RESULT.md) for every changed assertion, provenance, failures, reruns and artifact paths. Uncommitted on `feat/landing-v2`, base `d16a7468`, dedicated clone `C:/Users/conta/co-ops-landing`; no push, merge, deploy or database work.
+
+Implements the queued consent/review fixes, observer-based recovering rail, independent text-zoom legend, reserved crave geometry, distinct approved catering photo and six varied bounded touch assignments (mobile checker omitted under the reviewed safe-gutter exception). Five new image derivatives total 56,295B, including the faithful 27,463B mark within its original budget.
+
+365 landing tests, 45 assets, tsc and build pass. Full unit suite (`--maxWorkers=3`): 13,764 passed, 3 skipped, two existing tsx `uv_os_get_passwd` ENOMEM startup failures. Latest full Chromium/WebKit run: 369 passed, 14 WebKit failures, five existing decoder skips; all 14 failed cases pass in the isolated one-worker rerun. This is NOT a clean concurrent full-suite pass. The saved passing rail measurements span 70.68%-86.07% visibility with >=400ms / >=120px transition spacing. All 24 requested viewport/full-page en/es screenshots and six rail JSON files are indexed under `tmp/landing-v2/chunk6/`.
+
+Advisory local performance completes five cold runs per consent state and exits 1 for LCP: medians 3088.846ms unset / 3091.573ms accepted, performance 0.93 both, TBT 105.5/95ms, first-party 301,361B every run. Raw evidence and all failed runs remain linked in the RESULT. Concurrent WebKit timing, authoritative CI and CC cross-family review remain open handoff risks; no thresholds were relaxed.
