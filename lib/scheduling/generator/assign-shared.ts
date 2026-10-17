@@ -298,6 +298,11 @@ export interface CandidateOpts {
   /** Allow a candidate whose week would exceed the overtime threshold (the last resort). */
   allowOvertime: boolean;
   /**
+   * CC chunk H9 (spec §6.2 "each person's soft range is respected"): allow a candidate whose week would pass their SOFT MAX.
+   * Unset = `allowOvertime` (an overtime tier allows it too). The fills try it only after nobody fits within it.
+   */
+  allowSoftMax?: boolean;
+  /**
    * CC chunk H9 (spec §5.1): `false` = never a NEW shift on one of the person's chosen off days (`BuildCtx.offPreferred`). The main
    * fills pass false first and relax it only when nobody else fits; every other caller leaves it unset (allowed).
    */
@@ -362,6 +367,7 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
     const planQ = o.plan.endQ - o.plan.startQ;
     const hours = (weekQuarters(week, userId) + planQ) / 4;
     if (hours > s.limits.overtimeH && !o.allowOvertime) continue;
+    if (p.softMaxH !== null && hours > p.softMaxH && !(o.allowSoftMax ?? o.allowOvertime)) continue;
     const skill = o.positionId ? skillOf(b.lookup, p, o.positionId, s.positions[o.positionId]).value : 0;
     const underSoftMin = p.softMinH === null ? 0 : Math.max(0, p.softMinH - weekQuarters(week, userId) / 4);
     const fullTimerFirst = p.fullTime && p.fullTimeMinH !== null && weekQuarters(week, userId) / 4 < p.fullTimeMinH ? 0 : 1;
@@ -432,7 +438,7 @@ export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, 
  */
 export function fillRun(
   b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number, t: Pick<Template, "source" | "essential" | "closingLead">,
-  order: readonly string[], opts: { allowCover: boolean; budgetStop: boolean; tiers?: readonly RelaxTier[] },
+  order: readonly string[], opts: { allowCover: boolean; budgetStop: boolean; tiers?: readonly RelaxTier[]; splitDepth?: number },
 ): "placed" | "covered" | "budget" | "none" {
   // CC chunk B ruling 3: a run longer than the daily maximum is split into the fewest near-equal parts that each fit
   // (the earlier parts one quarter longer), filled in order — two people hold a 13.75 h Prep/Dishwasher day.
@@ -463,13 +469,17 @@ export function fillRun(
   const plans: Array<{ plan: BlockPlan; extensionOnly: boolean }> = [];
   if (toQ - fromQ < b.structure.limits.minimumShiftQ) plans.push({ plan: corePlan, extensionOnly: true });
   if (fullPlan) plans.push({ plan: fullPlan, extensionOnly: false });
-  for (const { plan, extensionOnly } of plans) {
-    for (const { allowOvertime, allowOffDay } of opts.tiers ?? RELAX_TIERS) {
-      const o: CandidateOpts = { date, plan, positionId, closingLead: t.closingLead, allowOvertime, allowOffDay, mod: false, extensionOnly };
+  // CC chunk H9: the TIERS are the outer loop (a later tier only after nobody fits the earlier one on EITHER plan or a split).
+  for (const tier of opts.tiers ?? RELAX_TIERS) {
+    const { allowOvertime, allowOffDay, allowSoftMax } = tier;
+    for (const { plan, extensionOnly } of plans) {
+      const o: CandidateOpts = { date, plan, positionId, closingLead: t.closingLead, allowOvertime, allowOffDay, allowSoftMax, mod: false, extensionOnly };
       const ranked = rankCandidates(b, week, week.built[date]!, o);
       for (const c of ranked.slice(0, 6)) {
         const why = whyChosen(b, week.built[date]!, c, o);
-        if (allowOvertime) why.push(reason("overtime_last_resort", { userId: c.person.userId }));
+        // CC chunk H9: named overtime only when THIS placement takes the week past the threshold (a tier allows it; it is not a claim).
+        const overtime = allowOvertime && (weekQuarters(week, c.person.userId) + plan.endQ - plan.startQ) / 4 > b.structure.limits.overtimeH;
+        if (overtime) why.push(reason("overtime_last_resort", { userId: c.person.userId }));
         const place = (shifts: GShift[]) => { applyPlacement(shifts, c, { date, plan, sourceReason: source, closingLead: t.closingLead, extraReasons: why }, b.people, positionId); return true; };
         // The budget stop, judged on the validator's own accounting AFTER this placement (a whole shift working the
         // closing window is essential; everything else counts): non-essential hourly hours on the budgeted dates ≤ budget.
@@ -480,13 +490,16 @@ export function fillRun(
         }
         const ok = guarded(b, week, date, place);
         if (ok) {
-          if (allowOvertime) b.notes.push({ code: "overtime_used", date, userId: c.person.userId, positionId, params: {} });
+          if (overtime) b.notes.push({ code: "overtime_used", date, userId: c.person.userId, positionId, params: {} });
           if (c.key[3] === 1) b.notes.push({ code: "pairing_unmet", date, userId: c.person.userId, positionId, params: { fromQ: plan.startQ, toQ: plan.endQ } });
           return "placed";
         }
       }
-      if (ranked.length === 0 && allowOvertime) break;
-    }
+  }
+    // CC chunk H9 (spec §6.2): nobody at this tier holds the WHOLE run — two people may hold its parts (an opener and a closer)
+    // before any later tier passes someone's soft max or overtime. Each part is at least the minimum shift.
+    if (!budgetBlocked && (opts.splitDepth ?? 0) < 2 && toQ - fromQ >= 2 * b.structure.limits.minimumShiftQ
+      && splitRun(b, week, date, positionId, fromQ, toQ, t, order, { budgetStop: opts.budgetStop, tier, splitDepth: (opts.splitDepth ?? 0) + 1 })) return "placed";
   }
   if (budgetBlocked) {
     // Astra chunk B P1-1: a salaried manager's MoD block costs no hourly money — take it before the budget stops the fill.
@@ -506,16 +519,45 @@ export function fillRun(
 
 /**
  * The candidate tiers, in order; a later tier is tried only when NO candidate of the earlier one was placed. CC chunk H9 (spec
- * §5.1): first nobody on one of their chosen off days, then an off day; overtime is the last resort (a warning with its cost,
- * `overtime_used`). `buildWeek` runs the first tier over EVERY date before any later tier (so an early date never spends a
- * later date's people); the repair's insertions take all tiers in order.
+ * §5.1, §6.2 "each person's soft range is respected", "Overtime is avoided"): first nobody on one of their chosen off days and
+ * nobody past their soft max or overtime; then an off day; then past a soft max (never overtime); overtime is the LAST resort
+ * (a warning with its cost, `overtime_used`). `buildWeek` runs each tier over EVERY date before the next (so an early date
+ * never spends a later date's people); the repair's insertions take all tiers in order.
  */
-export interface RelaxTier { allowOvertime: boolean; allowOffDay: boolean }
+export interface RelaxTier { allowOvertime: boolean; allowOffDay: boolean; allowSoftMax: boolean }
 export const RELAX_TIERS: readonly RelaxTier[] = [
-  { allowOvertime: false, allowOffDay: false },
-  { allowOvertime: false, allowOffDay: true },
-  { allowOvertime: true, allowOffDay: true },
+  { allowOvertime: false, allowOffDay: false, allowSoftMax: false },
+  { allowOvertime: false, allowOffDay: true, allowSoftMax: false },
+  { allowOvertime: false, allowOffDay: true, allowSoftMax: true },
+  { allowOvertime: true, allowOffDay: true, allowSoftMax: true },
 ];
+
+/**
+ * CC chunk H9 (spec §6.2): a run nobody at this tier can hold whole, as TWO blocks — split at the point nearest the middle among
+ * the middle itself and the edges of the hourly people's availability windows that leave both parts at least the minimum shift
+ * (at most three points tried). Each part is filled at the SAME tier, no manager cover; the part ending at the run's end keeps
+ * the closing lead. True when at least one part was placed (what is left stays a deficit for the later tiers and the repair).
+ */
+function splitRun(
+  b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number, t: Pick<Template, "source" | "essential" | "closingLead">,
+  order: readonly string[], o: { budgetStop: boolean; tier: RelaxTier; splitDepth: number },
+): boolean {
+  const minQ = b.structure.limits.minimumShiftQ;
+  const mid = fromQ + Math.floor((toQ - fromQ) / 2);
+  const points = new Set<number>([mid]);
+  for (const userId of Object.keys(b.people).sort(cmp)) {
+    const w = b.people[userId]!.availability[date];
+    if (w) for (const q of [w.fromQ, w.toQ]) points.add(q);
+  }
+  const ordered = [...points].filter((q) => q - fromQ >= minQ && toQ - q >= minQ).sort((a, z) => Math.abs(a - mid) - Math.abs(z - mid) || a - z).slice(0, 3);
+  const opts = { allowCover: false, budgetStop: o.budgetStop, tiers: [o.tier], splitDepth: o.splitDepth };
+  for (const z of ordered) {
+    const first = fillRun(b, week, date, positionId, fromQ, z, { ...t, closingLead: false }, order, opts) === "placed";
+    const second = fillRun(b, week, date, positionId, z, toQ, t, order, opts) === "placed";
+    if (first || second) return true;
+  }
+  return false;
+}
 
 export function sourceReason(source: Template["source"], positionId: string, fromQ: number, toQ: number): Reason {
   const key = source === "closing_crew" ? "closing_crew" : source === "boh_crew" ? "boh_crew" : source === "catering" ? "catering_prep" : "wave_arrival";
@@ -1110,13 +1152,14 @@ export function fillModHole(b: BuildCtx, week: WeekState, date: string, fromQ: n
   while (z - a < minQ && a > lo) a--;
   if (z - a < minQ) return false;
   const plan: BlockPlan = { startQ: a, endQ: z, segments: [{ positionId: MOD, startQ: a, endQ: z, kind: "core" }] };
-  for (const { allowOvertime, allowOffDay } of tiers) {
-    const o: CandidateOpts = { date, plan, positionId: null, closingLead: false, allowOvertime, allowOffDay, mod: true, modFromQ: fromQ };
+  for (const { allowOvertime, allowOffDay, allowSoftMax } of tiers) {
+    const o: CandidateOpts = { date, plan, positionId: null, closingLead: false, allowOvertime, allowOffDay, allowSoftMax, mod: true, modFromQ: fromQ };
     const ranked = rankCandidates(b, week, week.built[date]!, o);
     for (const c of ranked.slice(0, 6)) {
       const r = reason("mod_cover", { fromQ, toQ, userId: c.person.userId });
       const ok = guarded(b, week, date, (shifts) => {
-        applyPlacement(shifts, c, { date, plan, sourceReason: r, closingLead: false, extraReasons: allowOvertime ? [reason("overtime_last_resort", { userId: c.person.userId })] : [] }, b.people, null);
+        const overtime = allowOvertime && (weekQuarters(week, c.person.userId) + plan.endQ - plan.startQ) / 4 > b.structure.limits.overtimeH;
+        applyPlacement(shifts, c, { date, plan, sourceReason: r, closingLead: false, extraReasons: overtime ? [reason("overtime_last_resort", { userId: c.person.userId })] : [] }, b.people, null);
         return true;
       }, (next) => modHoles(b, date, next).reduce((n, [f, t]) => n + (t - f), 0) < modHoles(b, date, week.built[date]!).reduce((n, [f, t]) => n + (t - f), 0));
       if (ok) return true;

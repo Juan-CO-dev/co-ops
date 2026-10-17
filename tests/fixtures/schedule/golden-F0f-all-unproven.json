@@ -46,7 +46,7 @@
      "day": "2026-10-31",
      "inherited": false,
      "params": {
-      "hours": 43,
+      "hours": 42,
       "limit": 40
      },
      "severity": "warning",
@@ -57,7 +57,7 @@
      "day": "2026-10-31",
      "inherited": false,
      "params": {
-      "hours": 43,
+      "hours": 42,
       "max": 40,
       "min": 24
      },
@@ -96,6 +96,17 @@
      "userId": "u-l-lou"
     },
     {
+     "code": "overtime",
+     "day": "2026-11-01",
+     "inherited": false,
+     "params": {
+      "hours": 42.75,
+      "limit": 40
+     },
+     "severity": "warning",
+     "userId": "u-o-oz"
+    },
+    {
      "code": "soft_range",
      "day": "2026-11-01",
      "inherited": false,
@@ -118,6 +129,18 @@
      },
      "severity": "warning",
      "userId": "u-l-lou"
+    },
+    {
+     "code": "soft_range",
+     "day": "2026-11-01",
+     "inherited": false,
+     "params": {
+      "hours": 42.75,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-o-oz"
     }
    ],
    "structureVersionId": "sv-fixture-1"
@@ -190,6 +213,13 @@
    "params": {},
    "positionId": null,
    "userId": null
+  },
+  {
+   "code": "overtime_used",
+   "date": "2026-11-01",
+   "params": {},
+   "positionId": "5c000000-0000-4000-8000-000000000001",
+   "userId": "u-o-oz"
   },
   {
    "code": "salaried_block_skipped",
@@ -2486,7 +2516,25 @@
       "params": {
        "fromQ": 28,
        "positionId": "5c000000-0000-4000-8000-000000000002",
-       "toQ": 67
+       "toQ": 47
+      }
+     }
+    ],
+    [
+     {
+      "key": "boh_crew",
+      "params": {
+       "fromQ": 47,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
+       "toQ": 60
+      }
+     },
+     {
+      "key": "extended_to_minimum",
+      "params": {
+       "fromQ": 60,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
+       "toQ": 63
       }
      }
     ]
@@ -2495,9 +2543,25 @@
     {
      "key": "boh_crew",
      "params": {
+      "fromQ": 47,
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "toQ": 60
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "skill": 0.5,
+      "userId": "u-e-eve"
+     }
+    },
+    {
+     "key": "boh_crew",
+     "params": {
       "fromQ": 28,
       "positionId": "5c000000-0000-4000-8000-000000000002",
-      "toQ": 67
+      "toQ": 47
      }
     },
     {
@@ -2704,7 +2768,17 @@
        "fromQ": 28,
        "positionId": "5c000000-0000-4000-8000-000000000001",
        "rank": 1,
-       "toQ": 60
+       "toQ": 47
+      }
+     }
+    ],
+    [
+     {
+      "key": "salaried_minimum",
+      "params": {
+       "fromQ": 28,
+       "toQ": 60,
+       "userId": "u-j-gm"
       }
      }
     ]
@@ -2724,7 +2798,7 @@
       "fromQ": 28,
       "positionId": "5c000000-0000-4000-8000-000000000001",
       "rank": 1,
-      "toQ": 60
+      "toQ": 47
      }
     }
    ]
@@ -2803,10 +2877,18 @@
     }
    ]
   },
-  "2026-10-30|u-o-oz|67": {
+  "2026-10-30|u-o-oz|47": {
    "alternates": [],
    "segments": [
     [
+     {
+      "key": "boh_crew",
+      "params": {
+       "fromQ": 47,
+       "positionId": "5c000000-0000-4000-8000-000000000002",
+       "toQ": 67
+      }
+     },
      {
       "key": "extended_to_minimum",
       "params": {
@@ -2832,6 +2914,22 @@
       "fromQ": 80,
       "positionId": "5c000000-0000-4000-8000-000000000002",
       "toQ": 83
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000002",
+      "skill": 0.5,
+      "userId": "u-o-oz"
+     }
+    },
+    {
+     "key": "boh_crew",
+     "params": {
+      "fromQ": 47,
+      "positionId": "5c000000-0000-4000-8000-000000000002",
+      "toQ": 67
      }
     },
     {
@@ -3226,6 +3324,14 @@
       "params": {
        "fromQ": 28,
        "positionId": "5c000000-0000-4000-8000-000000000001",
+       "toQ": 44
+      }
+     },
+     {
+      "key": "boh_crew",
+      "params": {
+       "fromQ": 44,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
        "toQ": 60
       }
      }
@@ -3236,6 +3342,22 @@
      "key": "boh_crew",
      "params": {
       "fromQ": 28,
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "toQ": 44
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "skill": 0.5,
+      "userId": "u-l-lou"
+     }
+    },
+    {
+     "key": "boh_crew",
+     "params": {
+      "fromQ": 44,
       "positionId": "5c000000-0000-4000-8000-000000000001",
       "toQ": 60
      }
@@ -3703,6 +3825,14 @@
       "params": {
        "fromQ": 28,
        "positionId": "5c000000-0000-4000-8000-000000000001",
+       "toQ": 44
+      }
+     },
+     {
+      "key": "boh_crew",
+      "params": {
+       "fromQ": 44,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
        "toQ": 60
       }
      }
@@ -3714,6 +3844,22 @@
      "params": {
       "fromQ": 28,
       "positionId": "5c000000-0000-4000-8000-000000000001",
+      "toQ": 44
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "skill": 0.5,
+      "userId": "u-o-oz"
+     }
+    },
+    {
+     "key": "boh_crew",
+     "params": {
+      "fromQ": 44,
+      "positionId": "5c000000-0000-4000-8000-000000000001",
       "toQ": 60
      }
     },
@@ -3722,6 +3868,12 @@
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000001",
       "skill": 0.5,
+      "userId": "u-o-oz"
+     }
+    },
+    {
+     "key": "overtime_last_resort",
+     "params": {
       "userId": "u-o-oz"
      }
     }
@@ -4697,14 +4849,19 @@
   {
    "closingManager": false,
    "date": "2026-10-30",
-   "endQ": 67,
+   "endQ": 63,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 67,
+     "endQ": 47,
      "positionId": "5c000000-0000-4000-8000-000000000002",
      "startQ": 28
+    },
+    {
+     "endQ": 63,
+     "positionId": "5c000000-0000-4000-8000-000000000001",
+     "startQ": 47
     }
    ],
    "startQ": 28,
@@ -4782,9 +4939,14 @@
    "pinned": false,
    "segments": [
     {
-     "endQ": 60,
+     "endQ": 47,
      "positionId": "5c000000-0000-4000-8000-000000000001",
      "startQ": 28
+    },
+    {
+     "endQ": 60,
+     "positionId": "mod",
+     "startQ": 47
     }
    ],
    "startQ": 28,
@@ -4832,10 +4994,10 @@
     {
      "endQ": 83,
      "positionId": "5c000000-0000-4000-8000-000000000002",
-     "startQ": 67
+     "startQ": 47
     }
    ],
-   "startQ": 67,
+   "startQ": 47,
    "userId": "u-o-oz"
   },
   {
@@ -5203,16 +5365,16 @@
  "stats": {
   "budgetHours": 0,
   "budgetedDates": [],
-  "essentialHours": 192.25,
+  "essentialHours": 197.25,
   "gaps": 0,
-  "hourlyCostCents": 892050,
-  "hourlyHours": 469.5,
+  "hourlyCostCents": 899650,
+  "hourlyHours": 473.5,
   "hourlyHoursByDate": {
    "2026-10-26": 69.25,
    "2026-10-27": 69.25,
    "2026-10-28": 65.25,
    "2026-10-29": 69.25,
-   "2026-10-30": 61.25,
+   "2026-10-30": 65.25,
    "2026-10-31": 69.25,
    "2026-11-01": 66
   },
@@ -5223,7 +5385,7 @@
    "provenEarly": 0,
    "steps": 19
   },
-  "salariedCoverHours": 11,
+  "salariedCoverHours": 7.75,
   "shifts": 80
  }
 }

@@ -53,7 +53,7 @@
      "day": "2026-10-30",
      "inherited": false,
      "params": {
-      "hours": 43,
+      "hours": 42,
       "limit": 40
      },
      "severity": "warning",
@@ -64,7 +64,7 @@
      "day": "2026-10-30",
      "inherited": false,
      "params": {
-      "hours": 43,
+      "hours": 42,
       "max": 40,
       "min": 24
      },
@@ -130,7 +130,7 @@
      "day": "2026-11-01",
      "inherited": false,
      "params": {
-      "hours": 40.5,
+      "hours": 45.5,
       "limit": 40
      },
      "severity": "warning",
@@ -164,7 +164,7 @@
      "day": "2026-11-01",
      "inherited": false,
      "params": {
-      "hours": 40.5,
+      "hours": 45.5,
       "max": 40,
       "min": 24
      },
@@ -200,19 +200,7 @@
      "day": "2026-11-01",
      "inherited": false,
      "params": {
-      "hours": 32,
-      "max": 28,
-      "min": 20
-     },
-     "severity": "warning",
-     "userId": "u-11-eli"
-    },
-    {
-     "code": "soft_range",
-     "day": "2026-11-01",
-     "inherited": false,
-     "params": {
-      "hours": 26.25,
+      "hours": 32.25,
       "max": 26,
       "min": 18
      },
@@ -265,8 +253,8 @@
     },
     "searched": {
      "chainDepth": 3,
-     "donorsTried": 6,
-     "steps": 51
+     "donorsTried": 3,
+     "steps": 27
     }
    },
    "code": "mod_missing",
@@ -290,8 +278,8 @@
     },
     "searched": {
      "chainDepth": 3,
-     "donorsTried": 6,
-     "steps": 51
+     "donorsTried": 3,
+     "steps": 27
     }
    },
    "code": "mod_missing",
@@ -1943,7 +1931,25 @@
       "params": {
        "fromQ": 28,
        "positionId": "5c000000-0000-4000-8000-000000000002",
-       "toQ": 67
+       "toQ": 47
+      }
+     }
+    ],
+    [
+     {
+      "key": "boh_crew",
+      "params": {
+       "fromQ": 47,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
+       "toQ": 60
+      }
+     },
+     {
+      "key": "extended_to_minimum",
+      "params": {
+       "fromQ": 60,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
+       "toQ": 63
       }
      }
     ]
@@ -1952,9 +1958,25 @@
     {
      "key": "boh_crew",
      "params": {
+      "fromQ": 47,
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "toQ": 60
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "skill": 0.96,
+      "userId": "u-03-sofia"
+     }
+    },
+    {
+     "key": "boh_crew",
+     "params": {
       "fromQ": 28,
       "positionId": "5c000000-0000-4000-8000-000000000002",
-      "toQ": 67
+      "toQ": 47
      }
     },
     {
@@ -2047,10 +2069,18 @@
     }
    ]
   },
-  "2026-10-29|u-07-omar|67": {
+  "2026-10-29|u-07-omar|47": {
    "alternates": [],
    "segments": [
     [
+     {
+      "key": "boh_crew",
+      "params": {
+       "fromQ": 47,
+       "positionId": "5c000000-0000-4000-8000-000000000002",
+       "toQ": 67
+      }
+     },
      {
       "key": "extended_to_minimum",
       "params": {
@@ -2076,6 +2106,22 @@
       "fromQ": 80,
       "positionId": "5c000000-0000-4000-8000-000000000002",
       "toQ": 83
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000002",
+      "skill": 0.81,
+      "userId": "u-07-omar"
+     }
+    },
+    {
+     "key": "boh_crew",
+     "params": {
+      "fromQ": 47,
+      "positionId": "5c000000-0000-4000-8000-000000000002",
+      "toQ": 67
      }
     },
     {
@@ -2374,7 +2420,17 @@
        "fromQ": 28,
        "positionId": "5c000000-0000-4000-8000-000000000001",
        "rank": 1,
-       "toQ": 60
+       "toQ": 47
+      }
+     }
+    ],
+    [
+     {
+      "key": "salaried_minimum",
+      "params": {
+       "fromQ": 28,
+       "toQ": 60,
+       "userId": "u-15-alex"
       }
      }
     ]
@@ -2394,7 +2450,7 @@
       "fromQ": 28,
       "positionId": "5c000000-0000-4000-8000-000000000001",
       "rank": 1,
-      "toQ": 60
+      "toQ": 47
      }
     }
    ]
@@ -3997,10 +4053,10 @@
     }
    ]
   },
-  "2026-11-01|u-11-eli|28": {
+  "2026-11-01|u-11-eli|44": {
    "alternates": [
     {
-     "skill": 0.5,
+     "skill": 0.64,
      "userId": "u-05-dani"
     }
    ],
@@ -4010,10 +4066,18 @@
       "key": "repair_moved",
       "params": {
        "fromPositionId": "5c000000-0000-4000-8000-000000000008",
-       "fromQ": 28,
-       "positionId": "5c000000-0000-4000-8000-000000000001",
-       "toQ": 68,
+       "fromQ": 44,
+       "positionId": "5c000000-0000-4000-8000-000000000005",
+       "toQ": 56,
        "userId": "u-11-eli"
+      }
+     },
+     {
+      "key": "extended_to_minimum",
+      "params": {
+       "fromQ": 56,
+       "positionId": "5c000000-0000-4000-8000-000000000005",
+       "toQ": 60
       }
      }
     ]
@@ -4023,9 +4087,9 @@
      "key": "repair_moved",
      "params": {
       "fromPositionId": "5c000000-0000-4000-8000-000000000008",
-      "fromQ": 28,
-      "positionId": "5c000000-0000-4000-8000-000000000001",
-      "toQ": 68,
+      "fromQ": 44,
+      "positionId": "5c000000-0000-4000-8000-000000000005",
+      "toQ": 56,
       "userId": "u-11-eli"
      }
     }
@@ -4069,43 +4133,39 @@
     }
    ]
   },
-  "2026-11-01|u-14-wren|44": {
+  "2026-11-01|u-14-wren|28": {
    "alternates": [
     {
-     "skill": 0.64,
+     "skill": 0.5,
      "userId": "u-05-dani"
     }
    ],
    "segments": [
     [
      {
-      "key": "repair_moved",
+      "key": "boh_crew",
       "params": {
-       "fromPositionId": "5c000000-0000-4000-8000-000000000006",
-       "fromQ": 44,
-       "positionId": "5c000000-0000-4000-8000-000000000005",
-       "toQ": 56,
-       "userId": "u-14-wren"
-      }
-     },
-     {
-      "key": "extended_to_minimum",
-      "params": {
-       "fromQ": 56,
-       "positionId": "5c000000-0000-4000-8000-000000000005",
-       "toQ": 60
+       "fromQ": 28,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
+       "toQ": 68
       }
      }
     ]
    ],
    "shift": [
     {
-     "key": "repair_moved",
+     "key": "boh_crew",
      "params": {
-      "fromPositionId": "5c000000-0000-4000-8000-000000000006",
-      "fromQ": 44,
-      "positionId": "5c000000-0000-4000-8000-000000000005",
-      "toQ": 56,
+      "fromQ": 28,
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "toQ": 68
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "skill": 0.5,
       "userId": "u-14-wren"
      }
     }
@@ -4710,14 +4770,19 @@
   {
    "closingManager": false,
    "date": "2026-10-29",
-   "endQ": 67,
+   "endQ": 63,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 67,
+     "endQ": 47,
      "positionId": "5c000000-0000-4000-8000-000000000002",
      "startQ": 28
+    },
+    {
+     "endQ": 63,
+     "positionId": "5c000000-0000-4000-8000-000000000001",
+     "startQ": 47
     }
    ],
    "startQ": 28,
@@ -4754,10 +4819,10 @@
     {
      "endQ": 83,
      "positionId": "5c000000-0000-4000-8000-000000000002",
-     "startQ": 67
+     "startQ": 47
     }
    ],
-   "startQ": 67,
+   "startQ": 47,
    "userId": "u-07-omar"
   },
   {
@@ -4853,9 +4918,14 @@
    "pinned": false,
    "segments": [
     {
-     "endQ": 60,
+     "endQ": 47,
      "positionId": "5c000000-0000-4000-8000-000000000001",
      "startQ": 28
+    },
+    {
+     "endQ": 60,
+     "positionId": "mod",
+     "startQ": 47
     }
    ],
    "startQ": 28,
@@ -5419,17 +5489,17 @@
   {
    "closingManager": false,
    "date": "2026-11-01",
-   "endQ": 68,
+   "endQ": 60,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 68,
-     "positionId": "5c000000-0000-4000-8000-000000000001",
-     "startQ": 28
+     "endQ": 60,
+     "positionId": "5c000000-0000-4000-8000-000000000005",
+     "startQ": 44
     }
    ],
-   "startQ": 28,
+   "startQ": 44,
    "userId": "u-11-eli"
   },
   {
@@ -5451,44 +5521,44 @@
   {
    "closingManager": false,
    "date": "2026-11-01",
-   "endQ": 60,
+   "endQ": 68,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 60,
-     "positionId": "5c000000-0000-4000-8000-000000000005",
-     "startQ": 44
+     "endQ": 68,
+     "positionId": "5c000000-0000-4000-8000-000000000001",
+     "startQ": 28
     }
    ],
-   "startQ": 44,
+   "startQ": 28,
    "userId": "u-14-wren"
   }
  ],
  "stats": {
   "budgetHours": 0,
   "budgetedDates": [],
-  "essentialHours": 166.25,
+  "essentialHours": 171.25,
   "gaps": 3,
-  "hourlyCostCents": 823650,
-  "hourlyHours": 433.5,
+  "hourlyCostCents": 831250,
+  "hourlyHours": 437.5,
   "hourlyHoursByDate": {
    "2026-10-26": 48.75,
    "2026-10-27": 56.75,
    "2026-10-28": 65.25,
-   "2026-10-29": 61.25,
+   "2026-10-29": 65.25,
    "2026-10-30": 66.25,
    "2026-10-31": 67.25,
    "2026-11-01": 68
   },
   "repair": {
-   "accepted": 9,
+   "accepted": 4,
    "chainDepth": 3,
-   "donorsTried": 6,
+   "donorsTried": 3,
    "provenEarly": 0,
-   "steps": 51
+   "steps": 27
   },
-  "salariedCoverHours": 20,
+  "salariedCoverHours": 16.75,
   "shifts": 77
  }
 }

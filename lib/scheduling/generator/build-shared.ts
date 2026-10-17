@@ -464,6 +464,13 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   }
   const strength: Record<string, WindowStrength[]> = {};
   for (const d of buildDays) strength[d.date] = teamStrength(builtShifts, d.date, ctx.people, s, input.skills, d.dayType, d.scheduledOutQ);
+  // CC chunk H9: `overtime_used` names a week that ENDS past the threshold — a later repair move (a donor leaving a block) can take
+  // the hours away again, and a note about overtime nobody works would be a false claim.
+  const weekHoursOf = (userId: string) => shifts.filter((x) => x.userId === userId).reduce((n, x) => n + (x.endQ - x.startQ), 0) / 4;
+  for (let i = notes.length - 1; i >= 0; i--) {
+    const n = notes[i]!;
+    if (n.code === "overtime_used" && n.userId && weekHoursOf(n.userId) <= s.limits.overtimeH) notes.splice(i, 1);
+  }
   // Pairing notes come from the validator's warnings too (the final word).
   for (const p of problems) if (p.code === "pairing_unmet" && !p.inherited) notes.push({ code: "pairing_unmet", date: p.day, userId: p.userId ?? null, positionId: p.positionId ?? null, params: { q: p.q ?? null } });
 
