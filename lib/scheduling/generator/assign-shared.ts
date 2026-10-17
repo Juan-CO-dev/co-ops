@@ -533,10 +533,14 @@ export const RELAX_TIERS: readonly RelaxTier[] = [
 ];
 
 /**
- * CC chunk H9 (spec §6.2): a run nobody at this tier can hold whole, as TWO blocks — split at the point nearest the middle among
- * the middle itself and the edges of the hourly people's availability windows that leave both parts at least the minimum shift
- * (at most three points tried). Each part is filled at the SAME tier, no manager cover; the part ending at the run's end keeps
- * the closing lead. True when at least one part was placed (what is left stays a deficit for the later tiers and the repair).
+ * CC chunk H9 (spec §6.2): a run nobody at this tier can hold whole, as TWO blocks, each filled at the SAME tier, no manager cover;
+ * the part ending at the run's end keeps the closing lead.
+ * CC chunk H10 (P2 ruling, Astra H9 P2): the split points are the middle, the edges of the hourly people's availability windows,
+ * AND the hour-budget boundaries — each eligible candidate's remaining room to their soft max and to `overtimeH`, measured from
+ * either end of the run (a 10-hour run with people at 6 h and 4 h of room splits at 6 / 4). Every point that leaves both parts at
+ * least the minimum shift is tried for a COMPLETE partition first (both parts filled, no deficit left on the run; anything else
+ * is rolled back), nearest the middle first; only then, as before, the three nearest points for a PARTIAL fill (what is left
+ * stays a deficit for the later tiers and the repair). True when anything was placed.
  */
 function splitRun(
   b: BuildCtx, week: WeekState, date: string, positionId: string, fromQ: number, toQ: number, t: Pick<Template, "source" | "essential" | "closingLead">,
@@ -544,18 +548,41 @@ function splitRun(
 ): boolean {
   const minQ = b.structure.limits.minimumShiftQ;
   const mid = fromQ + Math.floor((toQ - fromQ) / 2);
+  const pos = b.structure.positions[positionId];
+  const day = b.ctx.days[date]!;
   const points = new Set<number>([mid]);
   for (const userId of Object.keys(b.people).sort(cmp)) {
-    const w = b.people[userId]!.availability[date];
+    const p = b.people[userId]!;
+    const w = p.availability[date];
     if (w) for (const q of [w.fromQ, w.toQ]) points.add(q);
+    if (!isHourly(p) || neverGenerated(p) || !p.activeMember || !eligibleForPosition(p, pos)) continue;
+    const used = weekQuarters(week, userId);
+    for (const capH of [p.softMaxH, b.structure.limits.overtimeH]) {
+      if (capH === null) continue;
+      const room = Math.round(capH * 4) - used;
+      if (room > 0) { points.add(fromQ + room); points.add(toQ - room); }
+    }
   }
-  const ordered = [...points].filter((q) => q - fromQ >= minQ && toQ - q >= minQ).sort((a, z) => Math.abs(a - mid) - Math.abs(z - mid) || a - z).slice(0, 3);
+  const valid = [...points].filter((q) => q - fromQ >= minQ && toQ - q >= minQ).sort((x, y) => Math.abs(x - mid) - Math.abs(y - mid) || x - y);
   const opts = { allowCover: false, budgetStop: o.budgetStop, tiers: [o.tier], splitDepth: o.splitDepth };
-  for (const z of ordered) {
-    const first = fillRun(b, week, date, positionId, fromQ, z, { ...t, closingLead: false }, order, opts) === "placed";
-    const second = fillRun(b, week, date, positionId, z, toQ, t, order, opts) === "placed";
-    if (first || second) return true;
+  const fillParts = (q: number) => {
+    const first = fillRun(b, week, date, positionId, fromQ, q, { ...t, closingLead: false }, order, opts) === "placed";
+    const second = fillRun(b, week, date, positionId, q, toQ, t, order, opts) === "placed";
+    return first || second;
+  };
+  // Pass 1 — a COMPLETE non-exceeding partition (the tier keeps every placement within its limits).
+  for (const q of valid) {
+    const saved = week.built[date]!.map(cloneShift);
+    const notes = b.notes.length;
+    fillParts(q);
+    let complete = true;
+    for (let x = fromQ; x < toQ && complete; x++) if (deficitAt(week.built[date]!, day, positionId, x) > 0) complete = false;
+    if (complete) return true;
+    week.built[date] = saved;
+    b.notes.length = notes;
   }
+  // Pass 2 — the H9 behaviour: a partial fill at one of the three points nearest the middle.
+  for (const q of valid.slice(0, 3)) if (fillParts(q)) return true;
   return false;
 }
 
