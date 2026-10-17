@@ -228,5 +228,46 @@
       "path": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
       "sha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82"
     }
+  ],
+  "photoDetails": [
+    {
+      "id": "P013",
+      "representative": "P013",
+      "confirmedIds": [
+        "P013"
+      ],
+      "classification": "real-photo",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/picks-full/P013.jpg",
+      "sha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "evidence": "LANDING v2 BUILD r2; approved Chunk 1 full-frame delivery recipes"
+    },
+    {
+      "id": "P016",
+      "representative": "P016",
+      "confirmedIds": [
+        "P016"
+      ],
+      "classification": "real-photo",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/picks-full/P016.jpg",
+      "sha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
+      "evidence": "LANDING v2 BUILD r2; approved Chunk 1 full-frame delivery recipes"
+    },
+    {
+      "id": "L083",
+      "representative": "L083",
+      "confirmedIds": [
+        "L083"
+      ],
+      "classification": "real-photo",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/picks-full/L083.jpg",
+      "sha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
+      "evidence": "LANDING v2 BUILD r2; approved Chunk 1 full-frame delivery recipes"
+    }
   ]
 }

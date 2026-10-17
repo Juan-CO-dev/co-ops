@@ -25,7 +25,11 @@ it('every public media file has provenance; every photo names a confirmed eligib
     const entry = approved.media.find(e => e.publicPath === `/media/${file}`);
     expect(entry, file).toBeDefined();
     if (entry && ['real-photo', 'real-edited'].includes(entry.classification)) {
-      const source = sources.products.find(p => p.representative === ('sourceId' in entry ? entry.sourceId : undefined));
+      // Detail photographs are separate identities, never extra menu products.
+      const candidates = entry.classification === 'real-photo'
+        ? [...sources.products, ...sources.photoDetails]
+        : sources.products;
+      const source = candidates.find(p => p.representative === ('sourceId' in entry ? entry.sourceId : undefined));
       expect(source?.eligible).toBe(true);
       expect(source?.hold).toBeNull();
       expect(source?.confirmedIds).toContain(source?.representative);

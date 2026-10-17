@@ -114,5 +114,71 @@
   {
     "id": "hero-poster-960",
     "path": "/media/crunchy-boi-014-960-3c7d6237a944.webp"
+  },
+  {
+    "id": "v2-p013-320",
+    "path": "/media/v2-p013-320-0da6a08cf77b.webp",
+    "width": 320,
+    "height": 480
+  },
+  {
+    "id": "v2-p013-480",
+    "path": "/media/v2-p013-480-2956ce1ffc1d.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-p013-640",
+    "path": "/media/v2-p013-640-13b5f4142ade.webp",
+    "width": 640,
+    "height": 960
+  },
+  {
+    "id": "v2-p013-960",
+    "path": "/media/v2-p013-960-8271dfa0ca7d.webp",
+    "width": 960,
+    "height": 1440
+  },
+  {
+    "id": "v2-p013-1280",
+    "path": "/media/v2-p013-1280-870dc3083455.webp",
+    "width": 1280,
+    "height": 1920
+  },
+  {
+    "id": "v2-p016-480",
+    "path": "/media/v2-p016-480-70c16c1f977d.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-p016-720",
+    "path": "/media/v2-p016-720-8dce5f33b8f6.webp",
+    "width": 720,
+    "height": 1080
+  },
+  {
+    "id": "v2-p016-960",
+    "path": "/media/v2-p016-960-2ef06ce17068.webp",
+    "width": 960,
+    "height": 1440
+  },
+  {
+    "id": "v2-l083-480",
+    "path": "/media/v2-l083-480-9d4d188146e9.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-l083-720",
+    "path": "/media/v2-l083-720-ab0afcf3e22d.webp",
+    "width": 720,
+    "height": 1080
+  },
+  {
+    "id": "v2-l083-960",
+    "path": "/media/v2-l083-960-3c45c543b2af.webp",
+    "width": 960,
+    "height": 1440
   }
 ]

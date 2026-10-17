@@ -57,7 +57,9 @@ describe('landing asset provenance', () => {
     expect(() => tools.validateEntry(entry)).not.toThrow();
     for (const key of ['sourcePath','sourceSha256','sha256','sidecar','classification','mode','quality']) expect(() => tools.validateEntry({...entry,[key]:''})).toThrow();
     expect(() => tools.validateEntry({...entry,classification:'unknown'})).toThrow();
-    expect(() => tools.validateEntry({...entry,mode:'crop-resize-only'})).toThrow();
+    // Crop mode needs a complete bounded recipe; it is no longer forbidden outright.
+    expect(() => tools.validateEntry({...entry,mode:'crop-resize-only'})).toThrow('Invalid crop recipe');
+    expect(() => tools.validateEntry({...entry,mode:'crop-resize-only',crop:{left:0,top:0,width:20,height:20},orientedSource:{width:20,height:20},effort:6,tool:{sharp:'0.34.5',vips:'8.17.3',webp:'1.6.0'},steps:['EXIF auto-orientation (.rotate())','integer crop in oriented-source coordinates','uniform resize without enlargement','WebP encode; metadata stripped']})).not.toThrow();
     expect(() => tools.validateEntry({...entry,sourcePath:'C:/private/master.jpg'})).toThrow();
     expect(() => tools.validateEntry({...entry,bytes:101})).toThrow();
     expect(() => tools.validateEntry({...entry,bytes:100001,maxBytes:100001})).toThrow();
