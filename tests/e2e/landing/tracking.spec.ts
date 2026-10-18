@@ -75,3 +75,38 @@ test('secondary first-screen catering preserves CateringClick at hero placement'
   await link.click();await expect.poll(()=>events.length).toBe(1);
   expect(events[0]).toMatchObject({event_name:'CateringClick',placement:'hero'});
 });
+
+
+test('registry lookup starts after consent, precedes Pixel, and admits a new code',async({page})=>{
+ await isolateMeta(page);
+ let release:()=>void=()=>{}; const gate=new Promise<void>(resolve=>{release=resolve;}); let lookups=0;
+ await page.route('**/api/landing/ad-code',async route=>{lookups++;expect(route.request().postDataJSON()).toEqual({candidate:'campaign-new'});await gate;await route.fulfill({json:{ad:'campaign-new'}});});
+ await page.goto('/?ad=campaign-new&email=private@example.com');
+ expect(lookups).toBe(0);expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();
+ await page.locator('[data-landing-consent]').getByRole('button').first().click();
+ await expect.poll(()=>lookups).toBe(1);expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
+ expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();release();
+ await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
+ expect(JSON.parse((await page.evaluate(()=>sessionStorage.getItem('landing_attribution')))!)).toEqual({ad:'campaign-new',utm:{}});
+ expect(page.url()).not.toContain('email');
+});
+
+test('withdrawal during registry lookup cannot persist attribution or initialize Pixel',async({page})=>{
+ await isolateMeta(page);let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});let started=false;
+ await page.route('**/api/landing/ad-code',async route=>{started=true;await gate;await route.fulfill({json:{ad:'campaign-new'}});});
+ await page.goto('/?ad=campaign-new');await page.locator('[data-landing-consent]').getByRole('button').first().click();
+ await expect.poll(()=>started).toBe(true);
+ await page.locator('aside').filter({has:page.locator('button[aria-expanded]')}).getByRole('button').first().click();
+ await page.locator('[data-landing-consent]').getByRole('button').nth(1).click();release();await page.waitForTimeout(1100);
+ expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
+});
+
+test('restored retired code is revalidated and lookup outage preserves native navigation',async({page,context})=>{
+ await isolateMeta(page);await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
+ await page.addInitScript(()=>sessionStorage.setItem('landing_attribution',JSON.stringify({ad:'retired-code',utm:{}})));
+ let candidate:unknown;await page.route('**/api/landing/ad-code',route=>{candidate=route.request().postDataJSON();return route.fulfill({status:503});});
+ await page.goto('/');await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
+ expect(candidate).toEqual({candidate:'retired-code'});expect(JSON.parse((await page.evaluate(()=>sessionStorage.getItem('landing_attribution')))! ).ad).toBe('unattributed');
+ await page.route('https://complimentsonlysubs.appfront.app/**',route=>route.fulfill({body:'Native ordering'}));
+ await page.getByRole('link',{name:'Order Capitol Hill',exact:true}).first().click();await expect(page).toHaveURL(/appfront/);
+});

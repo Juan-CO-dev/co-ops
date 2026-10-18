@@ -59,5 +59,6 @@ export const landingTenantConfig: LandingTenantConfig = {
     {key:"doordash",url:"https://order.online/business/compliments-only-11187127"},
     {key:"uber-eats",url:"https://www.ubereats.com/store/compliments-only-dupont-circle/gEXGz9LhW5K7vNG69G9aDQ"},
   ],
-  attribution: { ads: ["subsim-photo"], utm: {} },
+  // Eligibility comes from the registry; never ship a static ad list. Offers remain separate.
+  attribution: { ads: [], utm: {} },
 };

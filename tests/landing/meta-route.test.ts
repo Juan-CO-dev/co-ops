@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+// Never let transport tests consult any connected registry, even with inherited env.
+vi.mock("@/lib/landing/ad-codes-server", () => ({ createAdCodeResolver: () => async () => "unattributed" }));
 import { handleMetaEvent } from "@/lib/landing/meta-server";
 
 const env = { LANDING_HOSTS: "eat.example.com", SITE_ORIGIN: "https://eat.example.com", STAFF_ORIGIN: "https://staff.example.com", META_PIXEL_ID: "12345", NEXT_PUBLIC_META_PIXEL_ID: "12345", META_CAPI_ACCESS_TOKEN: "test-secret", META_GRAPH_API_VERSION: "v25.0", LANDING_CAPI_ENABLED: "true", LANDING_META_UA_APPROVED: "true", LANDING_WAF_STATE: "active", LANDING_WAF_VERIFIED_AT: "2026-10-16", LANDING_WAF_RULE_IDS: "ip,aggregate" };
@@ -17,7 +19,7 @@ describe("public landing CAPI boundary", () => {
     expect((await handleMetaEvent(request(payload, effective), { env, send, now })).status).toBeGreaterThanOrEqual(400);
     expect(send).not.toHaveBeenCalled();
   });
-  it.each([{ event_name: "Purchase" }, { event_name: "PageView" }, { event_id: "no" }, { event_time: 1 }, { event_time: payload.event_time + 61 }, { consent: "rejected" }, { store: "unknown" }, { ad: "unknown" }, { placement: "unknown" }, { source_url: "https://evil.example/" }, { source_url: "https://eat.example.com/?email=x" }, { email: "pii" }, { fbc: "made-up" }])("refuses invalid payload %j", async (patch) => {
+  it.each([{ event_name: "Purchase" }, { event_name: "PageView" }, { event_id: "no" }, { event_time: 1 }, { event_time: payload.event_time + 61 }, { consent: "rejected" }, { store: "unknown" }, { ad: "email@example.com" }, { placement: "unknown" }, { source_url: "https://evil.example/" }, { source_url: "https://eat.example.com/?email=x" }, { email: "pii" }, { fbc: "made-up" }])("refuses invalid payload %j", async (patch) => {
     const send = vi.fn();
     expect((await handleMetaEvent(request({ ...payload, ...patch }), { env, send, now })).status).toBe(400);
     expect(send).not.toHaveBeenCalled();
@@ -58,4 +60,13 @@ describe("public landing CAPI boundary", () => {
     expect((await handleMetaEvent(request(), { env: { ...env, NODE_ENV: "production", META_TEST_EVENT_CODE: "TEST" }, send, now })).status).toBe(503);
     expect(send).not.toHaveBeenCalled();
   });
+});
+
+it('independently revalidates new and retired codes before CAPI transport',async()=>{
+ for(const accepted of ['new-campaign','unattributed']) {
+  const send=vi.fn().mockResolvedValue(new Response(null,{status:200})); const resolveAd=vi.fn(async()=>accepted);
+  expect((await handleMetaEvent(request({...payload,ad:'new-campaign'}),{env,send,now,resolveAd})).status).toBe(204);
+  expect(resolveAd).toHaveBeenCalledWith('new-campaign');
+  expect(JSON.parse(send.mock.calls[0]![1].body).data[0].custom_data.ad).toBe(accepted);
+ }
 });

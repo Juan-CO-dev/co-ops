@@ -27,7 +27,7 @@ export function NearbyShop({stores,language,labels,ad='unattributed'}:{stores:re
     {canLocate && <button type="button" disabled={status==='pending'} onClick={locate} className="inline-flex min-h-11 min-w-11 items-center rounded-xl border border-co-text px-4 py-3 font-bold">{status==='pending'?labels.locating:labels.nearest}</button>}
     <p role="status" className="mt-2 text-sm">{status==='unavailable'?labels.unavailable:status==='ready'?labels.straightLine:''}</p>
     <div className="mt-4 grid gap-5 sm:grid-cols-2">
-      {ordered.map(store=><article key={store.key} data-shop={store.key} className="rounded-2xl border border-co-border bg-co-surface p-5">
+      {ordered.map(store=><article key={store.key} id={store.key} data-shop={store.key} className="rounded-2xl border border-co-border bg-co-surface p-5">
         <h3 className="text-2xl font-bold">{store.name}</h3>
         {store.address && <address className="mt-3 not-italic">{store.address}</address>}
         {store.hours && <p className="mt-3">{store.hours[language]}</p>}

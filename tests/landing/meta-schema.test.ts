@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+// Never let transport tests consult any connected registry, even with inherited env.
+vi.mock("@/lib/landing/ad-codes-server", () => ({ createAdCodeResolver: () => async () => "unattributed" }));
 import { handleMetaEvent } from "@/lib/landing/meta-server";
 import { parseLandingEvent } from "@/lib/landing/tracking-schema-shared";
 import { boundedJson } from "@/lib/landing/request-server";

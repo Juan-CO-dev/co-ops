@@ -20,7 +20,7 @@ for (const method of ['GET','HEAD','POST']) test(`landing refuses every staff/ex
 });
 test('canonical redirects use configured origin, not supplied host', async ({ request }) => {
   for (const [path, target] of [['/eat','/'], ['/eat/privacy','/privacy']]) {
-    const response = await request.get(path!, {maxRedirects:0, headers:{host:'eat.example.test','x-forwarded-host':'eat.example.test'}});
+    const response = await request.get(path!, {maxRedirects:0, headers:{host:`localhost:${portBase}`,'x-forwarded-host':`localhost:${portBase}`}});
     expect(response.status()).toBe(301);
     expect(response.headers().location).toBe(`https://localhost:${portBase}${target}`);
   }
@@ -29,7 +29,7 @@ test('all host matrix rows and runtime headers', async ({ request }) => {
   for (const host of [`localhost:${portBase}`,'eat.example.test','preview.example.test']) {
     for (const path of ['/', '/privacy', '/brand/landing-icon.png', '/admin']) {
       const response = await request.get(path,{headers:{host,'x-forwarded-host':host}, maxRedirects:0});
-      expect(response.status()).toBe(path === '/admin' ? 404 : 200);
+      expect(response.status()).toBe(path === '/admin' ? 404 : host === `localhost:${portBase}` ? 200 : 301);
       const csp = response.headers()['content-security-policy-report-only']!;
       expect(csp.match(/default-src/g)).toHaveLength(1);
       expect(csp).toContain('connect.facebook.net');
@@ -40,7 +40,7 @@ test('all host matrix rows and runtime headers', async ({ request }) => {
     }
   }
   for (const host of [`127.0.0.1:${portBase}`,'unlisted.vercel.app']) {
-    for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click']) {
+    for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click','/api/landing/ad-code']) {
       const response = await request.get(path,{headers:{host,'x-forwarded-host':host}, maxRedirects:0});
       expect(response.status()).toBe(404); expect(response.headers()['content-security-policy-report-only']).not.toContain('facebook');
       expect(response.headers()['permissions-policy']).toContain('geolocation=()');
@@ -66,7 +66,7 @@ test('invalid or disagreeing hosts leave staff available and landing dormant', a
     expect(root.headers()['content-security-policy-report-only']).not.toContain('facebook');
     const admin = await request.get('/admin', {headers, maxRedirects:0});
     expect(admin.status()).toBe(307);
-    for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click']) {
+    for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click','/api/landing/ad-code']) {
       expect((await request.get(path,{headers,maxRedirects:0})).status()).toBe(404);
     }
   }
@@ -168,4 +168,14 @@ test('staff robots and HTML policy survive forged landing hints', async ({reques
       expect(html).not.toMatch(/name="robots"/);
     }
   }
+});
+
+test('ad-code route resolves one active candidate and falls back when registry is unavailable',async({request})=>{
+ const headers={origin:`https://localhost:${portBase}`,cookie:'landing_consent=accepted'};
+ for(const candidate of ['subsim-photo','campaign-new','unknown-code']) {
+  const response=await request.post('/api/landing/ad-code',{headers,data:{candidate}});expect(response.status()).toBe(200);
+  expect(await response.json()).toEqual({ad:candidate==='unknown-code'?'unattributed':candidate});
+ }
+ const response=await request.post(`http://localhost:${portBase+3}/api/landing/ad-code`,{headers:{...headers,origin:`https://localhost:${portBase+3}`},data:{candidate:'campaign-new'}});
+ expect(await response.json()).toEqual({ad:'unattributed'});
 });

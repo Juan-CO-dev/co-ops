@@ -7,7 +7,7 @@ test('production and same-origin preview metadata agree with raw headers', async
     const response=await request.get(`http://localhost:${port}${path}?lang=${lang}&utm_source=ignored`,{headers:{'x-landing-indexable':indexable?'0':'1'}});
     expect(response.headers()['x-robots-tag']).toBe(indexable?undefined:'noindex, nofollow');
     const html=await response.text();
-    expect(html).toContain(`<link rel="canonical" href="https://localhost:${port}${path === "/" ? "" : path}"`);
+    expect(html).toContain(`<link rel="canonical" href="https://localhost:${port}${path === "/" && lang === "en" ? "" : path}${lang === "es" ? "?lang=es" : ""}"`);
     expect(html).toContain(`name="robots" content="${indexable?'index, follow':'noindex, nofollow'}"`);
   }
   for(const lang of ['en','es']) {
@@ -18,7 +18,9 @@ test('production and same-origin preview metadata agree with raw headers', async
       const node=graph['@graph'][i];
       expect(node.telephone).toBe(store.phone); expect(node.address).toEqual({'@type':'PostalAddress',...store.structuredAddress});
       expect(node.geo).toEqual({'@type':'GeoCoordinates',...store.coordinates});
-      expect(node.hasMenu).toBe(store.orderUrl);
+      expect(node.hasMenu).toBeUndefined();
+      expect(new URL(node.url).hash).toBe(`#${store.key}`);
+      await expect(page.locator(`#${store.key}`)).toHaveAttribute('data-shop',store.key);
       await expect(page.locator(`a[href="tel:${store.phone}"]`).first()).toContainText(store.phoneDisplay);
       await expect(page.getByText(store.address,{exact:true}).first()).toBeVisible();
       await expect(page.getByText(store.hours![lang as 'en'|'es'],{exact:true}).first()).toBeVisible();
@@ -29,11 +31,12 @@ test('production and same-origin preview metadata agree with raw headers', async
 test('alternating canonical, alias and preview hosts never share robots or sitemap', async ({request}) => {
   for(const [port,host,indexable] of [[portBase,`localhost:${portBase}`,true],[portBase,'preview.example.test',false],[portBase+3,`localhost:${portBase+3}`,false],[portBase,`localhost:${portBase}`,true]] as const) {
     for(const path of ['/robots.txt','/sitemap.xml']) {
-      const response=await request.get(`http://localhost:${port}${path}`,{headers:{host,'x-forwarded-host':host}});
+      const response=await request.get(`http://localhost:${port}${path}`,{headers:{host,'x-forwarded-host':host},maxRedirects:0});
       expect(response.headers()['cache-control']).toBe('private, no-store');
+      if(host==='preview.example.test') { expect(response.status()).toBe(301); expect(response.headers().location).toBe(`https://localhost:${port}${path}`); continue; }
       const body=await response.text();
       if(path==='/robots.txt') expect(body).toBe(indexable?`User-agent: *\nAllow: /\nSitemap: https://localhost:${port}/sitemap.xml\n`:'User-agent: *\nDisallow: /\n');
-      else expect(body.match(/<loc>/g)?.length ?? 0).toBe(indexable?2:0);
+      else expect(body.match(/<loc>/g)?.length ?? 0).toBe(indexable?4:0);
     }
   }
 });

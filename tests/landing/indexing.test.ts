@@ -1,9 +1,18 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { landingIndexable } from '@/lib/landing/indexing-shared';
+import { classifyLandingHost } from '@/lib/landing/host-shared';
+import { landingIndexable as indexablePolicy } from '@/lib/landing/indexing-shared';
 import { proxy } from '@/proxy';
 vi.mock('@/lib/auth', () => ({ verifyJwt: vi.fn() }));
+const landingIndexable = (headers: Headers, env: Parameters<typeof indexablePolicy>[2]) => indexablePolicy(classifyLandingHost(headers, env), headers, env);
 const env = { VERCEL_ENV: 'production', LANDING_HOSTS: 'eat.example.test,preview.example.test', SITE_ORIGIN: 'https://eat.example.test', STAFF_ORIGIN: 'https://staff.example.test' };
+it('rejects ambiguous language queries consistently with the page language resolver',async()=>{
+ for(const [key,value] of Object.entries(env)) vi.stubEnv(key,value);
+ for(const query of ['lang=es&lang=en','lang=invalid']) {
+  const response=await proxy(new NextRequest(`https://eat.example.test/?${query}`,{headers:{host:'eat.example.test','accept-language':'en'}}));
+  expect(response.headers.get('x-middleware-request-x-landing-language')).toBe('en');
+ }
+});
 afterEach(() => vi.unstubAllEnvs());
 it('requires production identity AND the approved canonical authority', () => {
   for (const host of ['eat.example.test','EAT.EXAMPLE.TEST:443']) expect(landingIndexable(new Headers({host}),env)).toBe(true);
@@ -16,6 +25,7 @@ it('overwrites forged decisions and alternates uncached robots/sitemap by author
   for (const [key,value] of Object.entries(env)) vi.stubEnv(key,value);
   for (const host of ['eat.example.test','preview.example.test','eat.example.test','preview.example.test']) {
     const indexable=host==='eat.example.test';
+    vi.stubEnv('VERCEL_ENV', indexable ? 'production' : 'preview');
     for (const path of ['/','/privacy','/robots.txt','/sitemap.xml']) {
       const response=await proxy(new NextRequest(`https://${host}${path}`,{headers:{host,'x-landing-indexable':indexable?'0':'1'}}));
       expect(response.headers.get('cache-control')).toBe('private, no-store');
@@ -25,4 +35,13 @@ it('overwrites forged decisions and alternates uncached robots/sitemap by author
       else expect(response.headers.get('x-middleware-request-x-landing-indexable')).toBe(indexable?'1':'0');
     }
   }
+});
+
+it('redirects production aliases preserving path/query but leaves apex and preview documents', async () => {
+ for (const [key,value] of Object.entries(env)) vi.stubEnv(key,value);
+ const alias=await proxy(new NextRequest('https://preview.example.test/privacy?lang=es&ad=test',{headers:{host:'preview.example.test'}}));
+ expect(alias.status).toBe(301); expect(alias.headers.get('location')).toBe('https://eat.example.test/privacy?lang=es&ad=test');
+ const apex=await proxy(new NextRequest('https://eat.example.test/',{headers:{host:'eat.example.test'}})); expect(apex.status).toBe(200);
+ vi.stubEnv('VERCEL_ENV','preview');
+ const preview=await proxy(new NextRequest('https://preview.example.test/',{headers:{host:'preview.example.test'}})); expect(preview.status).toBe(200); expect(preview.headers.get('x-robots-tag')).toBe('noindex, nofollow');
 });

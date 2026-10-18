@@ -11,7 +11,7 @@ export function shopStructuredData(origin: string, brand: string, image: string,
       '@id': new URL(`/#${store.key}`, origin).href,
       name: `${brand} — ${store.name}`,
       image: new URL(image, origin).href,
-      url: new URL('/#shops', origin).href,
+      url: new URL(`/#${store.key}`, origin).href,
       address: {
         '@type': 'PostalAddress',
         streetAddress: store.structuredAddress.streetAddress,
@@ -23,7 +23,6 @@ export function shopStructuredData(origin: string, brand: string, image: string,
       ...(store.coordinates ? { geo: { '@type': 'GeoCoordinates', latitude: store.coordinates.latitude, longitude: store.coordinates.longitude } } : {}),
       telephone: store.phone,
       openingHoursSpecification: [{ '@type': 'OpeningHoursSpecification', dayOfWeek: [...store.openingHours.days], opens: store.openingHours.opens, closes: store.openingHours.closes }],
-      hasMenu: store.orderUrl,
     })),
   };
 }

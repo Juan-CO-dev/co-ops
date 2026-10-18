@@ -117,3 +117,19 @@ Every sample (no exclusions):
 The 1,625-byte script text is identical in en/es. Measured first-party transfer is 303,052 bytes in every sample, +1,417 bytes versus the prior Round G report's 301,635 bytes. That historical report recorded applied medians LCP 2174.360/2428.795 ms and TBT 260.566/247.039 ms (unset/accepted); it is not a same-session paired baseline. Current applied LCP passes but TBT remains over budget, so **no claim that JSON-LD has zero measurable LCP/TBT impact** is made. No perf gate, assertion, retry count or throttle was changed. Pixel is blocked in this advisory harness; real third-party cost is not measured. Exact-revision CI and CC review remain open.
 
 Cleanup: all ports 44170-44175 verified closed after perf, PID file absent. No test server left running. `git diff --check` passed. Branch remains `feat/landing-v2`, HEAD `0ab3fe7066ae615ee8a750964428bbb422b8779e`; all changes uncommitted.
+
+## Chunk 8 fold-ins
+
+2026-10-18, Part 0 of chunk 9, uncommitted on feat/landing-v2 at 2eb38e1b.
+
+P3-1: classify once in proxy; production and preview malformed-host tests pin one fixed warning.
+P3-2: public passthrough forwards sanitized request headers. Forged identity/indexability hints are removed on order, locations, portal, webhook and cron paths. Next internal request-override headers intentionally change; staff routing, body and public response headers remain identical to the fixture.
+P3-3: production listed aliases redirect 301 with pathname/search; apex serves and preview stays noindex.
+P3-4: explicit origin guards in proxy and page fail closed with 404.
+P3-5: per-language canonical, en-US/es-US/x-default alternates, four-URL sitemap with xhtml alternates. BUILD section 8 records the intentional amendment.
+P3-6: schema uses approved v2-p013-1280, individual visible shop IDs, and omits hasMenu because the page has ordering links, not shop menu anchors. No asset changes.
+Launch packet now requires LANDING_HOSTS coverage for every public landing host. Staff login caching remains outside this task.
+
+Initial targeted verification: `npm.cmd test -- tests/landing/indexing.test.ts tests/landing/metadata.test.ts tests/landing/structured-data.test.ts tests/landing/staff-routing.test.ts tests/landing/host-matrix.test.ts --maxWorkers=2`: 5 files / 98 tests passed. Full chunk 9 verification follows in its RESULT. Cross-family final review remains CC-owned.
+
+Fold-in final verification: chunk 9 final landing/security suite 435 passed; final full browser run 500 passed / 13 existing skips, exit 0 (18.4 minutes); production build, typecheck, 45-asset check and changed-file lint passed. Full results, advisory performance and remaining CC gates are in [chunk 9 RESULT](landing-v2-chunk9-RESULT.md).

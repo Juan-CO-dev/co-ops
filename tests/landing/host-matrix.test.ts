@@ -31,7 +31,7 @@ describe('finite landing route boundary', () => {
   it.each(['/api/locations','/api/users/login-options','/order','/order/start','/verify','/reset-password','/api/auth/pin','/api/auth/password','/api/auth/logout','/api/auth/verify','/api/auth/password-reset-request','/api/auth/password-reset','/api/portal/test','/api/webhooks/test','/api/cron/test','/admin/a.png','/dashboard','/jobs','/icon.png','/apple-icon.png','/opengraph-image.png','/eat/extra'])('refuses %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('deny'));
   it.each(['/','/privacy'])('rewrites %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('rewrite'));
   it.each(['/eat','/eat/privacy'])('canonicalizes %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('redirect'));
-  it.each(['/api/landing/events','/api/landing/order-click','/_next/static/a.js','/brand/landing-icon.png'])('allows %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('allow'));
+  it.each(['/api/landing/events','/api/landing/order-click','/api/landing/ad-code','/_next/static/a.js','/brand/landing-icon.png'])('allows %s', path => expect(landingPathDecision(path, new URLSearchParams())).toBe('allow'));
   it('refuses the unused image optimizer even for approved images', () => {
     expect(isLandingAsset('/_next/image', new URLSearchParams({url:'/brand/landing-icon.png'}))).toBe(false);
     for (const url of ['/admin/image.png','https://evil.test/a.png','//evil.test/a.png','/media/../icon.png','/brand/unknown.png','/brand/landing-icon.png?x=1']) expect(isLandingAsset('/_next/image', new URLSearchParams({url}))).toBe(false);
@@ -65,7 +65,11 @@ it.each(['/_next/static/../server.js','/_next/static/chunks/./a.js','/_next/stat
 
 it('landing host permission does not by itself grant indexing', () => {
   for(const host of ['eat.example.test','preview.example.test','staff.example.test','unlisted.vercel.app']) {
-    expect(landingIndexable(headers(host),{...env,VERCEL_ENV:'production'})).toBe(host==='eat.example.test');
-    expect(landingIndexable(headers(host),{...env,VERCEL_ENV:'preview'})).toBe(false);
+    expect(landingIndexable(classifyLandingHost(headers(host),env),headers(host),{...env,VERCEL_ENV:'production'})).toBe(host==='eat.example.test');
+    expect(landingIndexable(classifyLandingHost(headers(host),env),headers(host),{...env,VERCEL_ENV:'preview'})).toBe(false);
   }
+});
+
+it.each(['/api/landing/ad-code/extra','/api/landing/ad-codes','/api/landing/ad-code-list'])('does not widen the exact lookup path: %s',path=>{
+ expect(landingPathDecision(path,new URLSearchParams())).toBe('deny');
 });

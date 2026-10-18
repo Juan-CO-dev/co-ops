@@ -1,11 +1,11 @@
 /** Bounded vocabulary only: never accept arbitrary customer data or destinations. */
 export const LANDING_STORE_KEYS = ["capitol-hill", "dupont"] as const;
-export const LANDING_AD_CODES = ["subsim-photo", "unattributed"] as const;
+import { boundedAd, validAdCandidate, type AdPolicy } from "./ad-codes-shared";
 export const LANDING_PLACEMENTS = ["hero", "field-guide", "lineup", "shops", "catering", "footer", "sticky", "crave", "subdex"] as const;
 export const LANDING_VENDORS = ["ubereats", "doordash"] as const;
 export const LANDING_SERVER_EVENTS = ["Lead", "OrderClick", "CateringClick"] as const;
 export type LandingStoreKey = (typeof LANDING_STORE_KEYS)[number];
-export type LandingAdCode = (typeof LANDING_AD_CODES)[number];
+export type LandingAdCode = string;
 export type LandingPlacement = (typeof LANDING_PLACEMENTS)[number];
 export type LandingServerEvent = (typeof LANDING_SERVER_EVENTS)[number];
 export interface LandingEvent {
@@ -36,9 +36,9 @@ export function validMetaCookie(value: unknown, kind: "fbc" | "fbp", now: number
 export function validVendorPlacement(vendor: unknown, placement: unknown, store: unknown): boolean {
   return isAllowed(LANDING_VENDORS,vendor) && ((placement === 'footer' && store === undefined) || (vendor === 'ubereats' && placement === 'shops' && store === 'dupont'));
 }
-export function parseLandingEvent(value: unknown, origin: string, now: number): LandingEvent | null {
+export function parseLandingEvent(value: unknown, origin: string, now: number, adPolicy: AdPolicy = boundedAd): LandingEvent | null {
   if (!isRecord(value) || Object.keys(value).some(key => !["event_name", "event_id", "event_time", "consent", "source_url", "store", "ad", "placement", "fbc", "fbp", "vendor"].includes(key))) return null;
-  if (!isAllowed(LANDING_SERVER_EVENTS, value.event_name) || value.consent !== "accepted" || !isAllowed(LANDING_AD_CODES, value.ad) || !isAllowed(LANDING_PLACEMENTS, value.placement)) return null;
+  if (!isAllowed(LANDING_SERVER_EVENTS, value.event_name) || value.consent !== "accepted" || !validAdCandidate(value.ad) || !isAllowed(LANDING_PLACEMENTS, value.placement)) return null;
   if (typeof value.event_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.event_id)) return null;
   if (typeof value.event_time !== "number" || !Number.isInteger(value.event_time) || value.event_time < Math.floor(now / 1000) - 7 * 86400 || value.event_time > Math.floor(now / 1000) + 60) return null;
   if (value.vendor !== undefined && (value.event_name !== "OrderClick" || !validVendorPlacement(value.vendor,value.placement,value.store))) return null;
@@ -46,5 +46,5 @@ export function parseLandingEvent(value: unknown, origin: string, now: number): 
   // Only public landing documents are event sources; no arbitrary path, query or fragment.
   if (value.source_url !== `${origin}/` && value.source_url !== `${origin}/privacy`) return null;
   for (const key of ["fbc", "fbp"] as const) if (value[key] !== undefined && !validMetaCookie(value[key], key, now)) return null;
-  return value as unknown as LandingEvent;
+  return { ...value, ad: adPolicy(value.ad) } as unknown as LandingEvent;
 }

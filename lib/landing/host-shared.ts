@@ -44,6 +44,6 @@ export function isLandingAsset(path: string, _search: URLSearchParams): boolean 
 export function landingPathDecision(path: string, search: URLSearchParams): 'rewrite' | 'redirect' | 'allow' | 'deny' {
   if (path === '/' || path === '/privacy') return 'rewrite';
   if (path === '/eat' || path === '/eat/privacy') return 'redirect';
-  if (['/api/landing/events', '/api/landing/order-click', '/eat/icon.png', '/eat/apple-icon.png', '/favicon.ico', '/robots.txt', '/sitemap.xml'].includes(path) || isLandingAsset(path, search)) return 'allow';
+  if (['/api/landing/events', '/api/landing/order-click', '/api/landing/ad-code', '/eat/icon.png', '/eat/apple-icon.png', '/favicon.ico', '/robots.txt', '/sitemap.xml'].includes(path) || isLandingAsset(path, search)) return 'allow';
   return 'deny';
 }

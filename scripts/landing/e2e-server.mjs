@@ -60,6 +60,11 @@ const locations = createServer(async (req, res) => {
     res.writeHead(204); res.end(); return;
   }
   const url = new URL(req.url, `http://127.0.0.1:${portBase + 2}`);
+  if (req.method === 'GET' && url.pathname === '/rest/v1/landing_ad_codes' && url.searchParams.get('select') === 'code' && url.searchParams.get('active') === 'eq.true' && url.searchParams.get('limit') === '1') {
+    const candidate = url.searchParams.get('code');
+    const code = ['subsim-photo','campaign-new','send-october'].find(value => candidate === `eq.${value}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(code ? {code} : null)); return;
+  }
   if (req.method !== 'GET' || url.pathname !== '/rest/v1/locations' || url.searchParams.get('select') !== 'code,name,address,phone,active' || url.searchParams.get('active') !== 'eq.true') {
     res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({code:'PGRST202',message:'Unsupported fixture request'})); return;
   }

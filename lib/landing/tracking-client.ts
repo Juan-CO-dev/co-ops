@@ -1,3 +1,5 @@
+import { UNATTRIBUTED, validAdCandidate } from './ad-codes-shared';
+import { ATTRIBUTION_KEY } from './attribution-shared';
 import { validVendorPlacement } from './tracking-schema-shared';
 export type LandingAction = 'OrderClick' | 'CateringClick' | 'Lead';
 export interface ActionDetails { store?: string; ad?: string; placement: string; vendor?: string; fbc?: string; fbp?: string }
@@ -18,6 +20,7 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
   const hasPixel = !!config.pixelId && /^\d{1,32}$/.test(config.pixelId);
   const safe = (action: () => void) => { try { action(); } catch { /* Analytics never affects a native action. */ } };
   return {
+    setAcceptedAd(ad: string) { config = { ...config, allowedAds: [ad, 'unattributed'] }; },
     setConsent(allowed: boolean) {
       const next = config.serverApproved && allowed;
       if (!consent && next && pixelLoaded) safe(() => transport.grantPixel?.());
@@ -98,4 +101,31 @@ export function browserTransport(): TrackingTransport {
     post(path,payload) { void fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),credentials:'same-origin',keepalive:true}).catch(()=>{}); },
     uuid:()=>crypto.randomUUID(), now:()=>Date.now(),
   };
+}
+
+/** Called only after consent. Never trusts a response to introduce another code. */
+export async function lookupAdCode(candidate: unknown, send: typeof fetch = fetch): Promise<string> {
+  if (!validAdCandidate(candidate) || candidate === UNATTRIBUTED) return UNATTRIBUTED;
+  try {
+    const response = await send('/api/landing/ad-code', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ candidate }),
+      signal: AbortSignal.timeout(1000),
+    });
+    if (!response.ok) return UNATTRIBUTED;
+    const text = await response.text();
+    if (text.length > 128) return UNATTRIBUTED;
+    const data: unknown = JSON.parse(text);
+    return data && typeof data === 'object' && Object.keys(data).length === 1 && 'ad' in data && data.ad === candidate ? candidate : UNATTRIBUTED;
+  } catch { return UNATTRIBUTED; }
+}
+
+/** A stored code is only a candidate: caller must resolve it before use/persistence. */
+export function readAdCandidate(storage: Pick<Storage, 'getItem'> | undefined): string | undefined {
+  try {
+    const raw = storage?.getItem(ATTRIBUTION_KEY);
+    if (!raw || raw.length > 3000) return undefined;
+    const value: unknown = JSON.parse(raw);
+    return value && typeof value === 'object' && 'ad' in value && validAdCandidate(value.ad) ? value.ad : undefined;
+  } catch { return undefined; }
 }

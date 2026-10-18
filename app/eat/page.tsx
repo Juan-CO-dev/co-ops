@@ -1,3 +1,5 @@
+import { resolveAdCode } from "@/lib/landing/ad-codes-server";
+import { queryAdCandidate } from "@/lib/landing/ad-codes-shared";
 import { PlayfulTouch } from "@/components/landing/PlayfulTouch";
 import { ShopStructuredData } from "@/components/landing/ShopStructuredData";
 import { CraveScene } from "@/components/landing/CraveScene";
@@ -9,7 +11,7 @@ import { Lineup } from "@/components/landing/Lineup";
 import { Hero } from "@/components/landing/Hero";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { classifyLandingHost } from "@/lib/landing/host-shared";
+import { classifyLandingHost, configuredOrigin } from "@/lib/landing/host-shared";
 import { loadLandingConfig } from "@/lib/landing/config";
 import { loadPublicLandingStores } from "@/lib/landing/stores";
 import { Shops } from "@/components/landing/Shops";
@@ -32,17 +34,22 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
   const config = loadLandingConfig();
   const requestHeaders = await headers();
   if (classifyLandingHost(requestHeaders,config) !== "landing") notFound();
+  const origin = configuredOrigin(config.SITE_ORIGIN);
+  if (!origin) notFound();
   const query = await searchParams;
   const language = resolveLandingLanguage(query.lang,requestHeaders.get("accept-language"));
   const stores = await loadPublicLandingStores(config);
   const publicStores = config.stores.filter(store=>stores.some(publicStore=>publicStore.key===store.key));
   const queryString = new URLSearchParams(Object.entries(query).flatMap(([key,value])=>typeof value === "string" ? [[key,value]] : Array.isArray(value) ? value.map((v)=>[key,v]) : [])).toString();
+  const acceptedAd = await resolveAdCode(queryAdCandidate(queryString));
+  const attributionPolicy = { ...config.attribution, ads: [acceptedAd, "unattributed"] };
+  const ad = captureAttribution(queryString, attributionPolicy).ad;
   const sectionKeys = ["crave","lineup","field-guide","subdex","catering","shops","footer"] as const;
   return <div lang={language} className="landing-v2-page">
-    <ShopStructuredData origin={config.siteOrigin!} stores={stores}/>
-    <header className="landing-v2-header"><img loading="eager" src="/brand/co-wordmark.svg" fetchPriority="low" alt={TENANT_NAME} width={1125} height={140} className="h-12 w-44 object-contain"/><CateringLink config={config} language={language}/><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={config.attribution}/></header>
+    <ShopStructuredData origin={origin.origin} stores={stores}/>
+    <header className="landing-v2-header"><img loading="eager" src="/brand/co-wordmark.svg" fetchPriority="low" alt={TENANT_NAME} width={1125} height={140} className="h-12 w-44 object-contain"/><CateringLink config={config} language={language}/><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={attributionPolicy}/></header>
     <main>
-      <Hero language={language} config={{...config,stores:publicStores}} ad={captureAttribution(queryString,config.attribution).ad}/>
+      <Hero language={language} config={{...config,stores:publicStores}} ad={ad}/>
       {sectionKeys.filter(key=>key !== "shops" || stores.length > 0).map(key=><section key={key} id={key} aria-labelledby={`${key}-title`} className="landing-v2-section">
         <SectionView section={key} observationTargetId={key === "crave" ? "crave-title" : undefined}>
           <h2 id={`${key}-title`} className="text-3xl font-black tracking-tight">{serverT(language,`landing.${key}.title`)}</h2>
@@ -51,10 +58,10 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
           {key === "field-guide" && <FieldGuide language={language}/>}
           {key === "lineup" && <Lineup language={language}/>}
           {(key === "crave" || key === "subdex" || key === "field-guide" || key === "lineup") && <div className="landing-v2-inline-orders">{publicStores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="landing-v2-inline-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
-          {key === "field-guide" && publicStores.map((store) => <OfferCode key={store.key} ad={captureAttribution(queryString,config.attribution).ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}
+          {key === "field-guide" && publicStores.map((store) => <OfferCode key={store.key} ad={ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}
           {key === "field-guide" && <div className="mt-6"><FaqItem q={serverT(language,"landing.faq.question")} a={serverT(language,"landing.faq.answer")}/></div>}
           {key === "subdex" && <><SubdexMoment language={language}/><IllustratedSpin src={heroMedia.spin} label={serverT(language,"landing.spin.label")} playLabel={serverT(language,"landing.hero.play")}/></>}
-          {key === "shops" && <Shops stores={stores} language={language} ad={captureAttribution(queryString,config.attribution).ad}/>}
+          {key === "shops" && <Shops stores={stores} language={language} ad={ad}/>}
           {key === "catering" && <Catering config={config} language={language}/>}
           {key === "footer" && <Footer config={config} stores={stores} language={language}/>}
         </SectionView>

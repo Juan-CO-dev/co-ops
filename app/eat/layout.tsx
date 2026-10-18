@@ -23,10 +23,13 @@ export async function generateMetadata(): Promise<Metadata> {
   const title = serverT(language, "landing.metadata.title", { brand: TENANT_NAME });
   const description = serverT(language, "landing.metadata.description");
   const canonical = new URL(requestHeaders.get("x-landing-path") === "/privacy" ? "/privacy" : "/", origin);
+  const english = canonical.href;
+  const spanish = `${english}?lang=es`;
+  if (language === "es") canonical.search = "?lang=es";
   const indexable = requestHeaders.get("x-landing-indexable") === "1";
   return {
     metadataBase: new URL(origin), title, description,
-    alternates: { canonical: canonical.href },
+    alternates: { canonical: canonical.href, languages: { "en-US": english, "es-US": spanish, "x-default": english } },
     robots: { index: indexable, follow: indexable },
     icons: { icon: "/eat/icon.png", apple: "/eat/apple-icon.png" },
     openGraph: { title, description, url: canonical.href, locale: language === "es" ? "es_US" : "en_US", images: [{url:"/brand/og-card.webp",width:1200,height:630}] },

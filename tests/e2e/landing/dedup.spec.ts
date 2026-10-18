@@ -7,6 +7,7 @@ test('actual order actions share Pixel/CAPI IDs and count once per click',async(
   const events:Record<string,unknown>[]=[];const counts:Record<string,unknown>[]=[];
   await page.route('**/api/landing/events',route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});
   await page.route('**/api/landing/order-click',route=>{counts.push(route.request().postDataJSON());return route.fulfill({status:204});});
+  await page.route('**/api/landing/ad-code',route=>route.fulfill({json:{ad:'subsim-photo'}}));
   await page.goto('/?ad=subsim-photo&fbclid=Valid_123');
   await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
   // Keep the page available to inspect dispatch; this does not replace the native href/navigation tests.
