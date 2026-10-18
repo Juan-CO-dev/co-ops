@@ -1,6 +1,6 @@
 "use client";
 import {useEffect,useRef,useState} from 'react';
-import {createStickyVisibility,stickyPreference} from '@/lib/landing/sticky-order-shared';
+import {createStickyVisibility,stickyPreference,STICKY_SHOW_CLEARANCE} from '@/lib/landing/sticky-order-shared';
 import {OrderLink} from './OrderLink';
 interface Props {
   stores: {key:string;orderUrl:string;label:string}[];
@@ -24,6 +24,7 @@ export function StickyOrderBar({stores,labels}:Props) {
     const policy=createStickyVisibility();
     // The page's link/section inventory is static. No selector or layout reads on scroll.
     const footer=root.querySelector<HTMLElement>('footer .landing-v2-orders');
+    if(!footer)return;
     const sections=[...root.querySelectorAll<HTMLElement>('main section')];
     let footerVisible=false, footerNear=false, heroClear=false;
     let heroPassed=false, noticeInView=false, settingsOpened=false;
@@ -37,7 +38,7 @@ export function StickyOrderBar({stores,labels}:Props) {
     };
     const update=()=>{
       clearTimeout(timer);
-      const next=policy.update({now:performance.now(),clearance:footerVisible?-1:footerNear?0:Infinity,heroBottom:heroPassed?(heroClear?-121:-1):1,
+      const next=policy.update({now:performance.now(),clearance:footerVisible?-1:footerNear?0:Infinity,heroBottom:heroPassed?(heroClear?-(STICKY_SHOW_CLEARANCE + 1):-1):1,
         suppressed:document.hidden||(settingsOpened&&noticeInView)||(notice?.dataset.flow==='true'&&noticeInView)||(window.visualViewport?.height??innerHeight)<MIN_VISUAL_HEIGHT});
       if(!next.visible&&rail.contains(document.activeElement))restoreFocus();
       rail.dataset.visible=String(next.visible);rail.inert=!next.visible;rail.setAttribute('aria-hidden',String(!next.visible));
@@ -46,12 +47,12 @@ export function StickyOrderBar({stores,labels}:Props) {
     };
     const heroObserver=new IntersectionObserver(entries=>{for(const entry of entries)heroPassed=entry.boundingClientRect.bottom<0;update();},{threshold:0});
     heroObserver.observe(hero);
-    // Actual viewport boundaries hide immediately; release observers add 120 px hysteresis.
-    const heroGuard=new IntersectionObserver(entries=>{heroClear=entries[0]!.boundingClientRect.bottom < -120;update();},{rootMargin:'120px 0px 0px 0px'});
+    // Actual viewport boundaries hide immediately; release observers add policy hysteresis.
+    const heroGuard=new IntersectionObserver(([entry])=>{if(!entry)return;heroClear=!entry.isIntersecting;update();},{rootMargin:`${STICKY_SHOW_CLEARANCE}px 0px 0px 0px`});
     heroGuard.observe(hero);
     const footerObserver=new IntersectionObserver(entries=>{footerVisible=entries.some(entry=>entry.isIntersecting);update();});
-    const footerGuard=new IntersectionObserver(entries=>{footerNear=entries.some(entry=>entry.isIntersecting);update();},{rootMargin:'120px 0px 120px 0px'});
-    if(footer){footerObserver.observe(footer);footerGuard.observe(footer);}
+    const footerGuard=new IntersectionObserver(entries=>{footerNear=entries.some(entry=>entry.isIntersecting);update();},{rootMargin:`${STICKY_SHOW_CLEARANCE}px 0px ${STICKY_SHOW_CLEARANCE}px 0px`});
+    footerObserver.observe(footer);footerGuard.observe(footer);
     const noticeObserver=new IntersectionObserver(entries=>{noticeInView=entries.some(entry=>entry.isIntersecting);update();});
     if(notice)noticeObserver.observe(notice);
     const measure=()=>{

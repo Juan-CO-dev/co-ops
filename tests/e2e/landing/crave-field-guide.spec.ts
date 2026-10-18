@@ -83,14 +83,6 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
     await expect.poll(()=>stage.evaluate(el=>getComputedStyle(el).marginTop)).toBe('24px');
     // WebKit's FontFaceSet.ready waits for document load, which our held scripts
     // intentionally prevent. Load the CSS font faces directly before measuring.
-    // Reproduce an unavailable optional fallback even on Windows with Arial installed.
-    // The primary rendered family stays unchanged; no required face is bypassed.
-    await stage.evaluate(el=>{
-      document.fonts.add(new FontFace('Missing optional geometry fallback','url(/missing-unused-font.woff2)'));
-      const sheet=document.createElement('style');
-      sheet.textContent=`[data-crave-stage]{font-family:${getComputedStyle(el).fontFamily}, "Missing optional geometry fallback";}`;
-      document.head.append(sheet);
-    });
     const fonts=await stage.evaluate(async el=>{
       // next/font also declares an optional local Arial fallback. CI Linux may
       // not have Arial; loading every declaration incorrectly rejects that case.

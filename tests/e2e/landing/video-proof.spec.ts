@@ -23,6 +23,7 @@ for (const subject of ['spin','control']) for (const color of ['yellow','ink']) 
     await page.setViewportSize({width:375,height:812});
     await page.setContent('<style>body{margin:0}video,img{display:block;width:375px;height:375px}</style><video crossorigin="anonymous" muted playsinline preload="auto" src="http://media-proof.invalid/export.mp4"></video><img crossorigin="anonymous" src="http://media-proof.invalid/reference.png" alt="Decoder reference">');
     await expect.poll(() => page.locator('video').evaluate((video:HTMLVideoElement) => video.readyState)).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => page.locator('video').evaluate((video:HTMLVideoElement) => video.videoWidth)).toBeGreaterThan(0);
     await expect.poll(() => page.locator('img').evaluate((image:HTMLImageElement) => image.complete && image.naturalWidth>0)).toBe(true);
     const difference = await page.evaluate(() => {
       const video=document.querySelector('video')!;
@@ -41,6 +42,10 @@ for (const subject of ['spin','control']) for (const color of ['yellow','ink']) 
     // allows encoding noise while a black alpha rectangle fails by a wide margin.
     expect(difference.mean).toBeLessThanOrEqual(8);
     for(let channel=0;channel<3;channel++) expect(Math.abs(difference.corner[channel]!-difference.referenceCorner[channel]!)).toBeLessThanOrEqual(5);
+    // Preserve the first-frame pixel comparison above, then prove native motion.
+    const initial=await page.locator('video').evaluate(async(video:HTMLVideoElement)=>{const time=video.currentTime;await video.play();return time;});
+    await expect.poll(()=>page.locator('video').evaluate((video:HTMLVideoElement)=>video.currentTime)).toBeGreaterThan(initial);
+    await page.locator('video').evaluate((video:HTMLVideoElement)=>video.pause());
     await testInfo.attach('decoder-difference',{body:JSON.stringify(difference),contentType:'application/json'});
     await page.screenshot({path:testInfo.outputPath(`${subject}-${color}-375.png`),fullPage:true});
   });

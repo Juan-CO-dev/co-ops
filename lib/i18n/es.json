@@ -1,5 +1,4 @@
 {
-  "landing.touch.illustrated-chip": "Papa frita ilustrada",
   "landing.texture.alt": "El Crunchy Boi, de cerca.",
   "landing.texture.cross-alt": "Mitades de Crunchy Boi con pavo, papas onduladas, provolone, lechuga y pepinillos en pan de sub.",
   "landing.texture.still": "Dejar quieto",
@@ -18,7 +17,7 @@
   "landing.sticky.hint1": "psst, ¿almorzamos?",
   "landing.crave.title": "¿Un poco de crunch?",
   "landing.crave.body": "Tu próximo almuerzo empieza aquí.",
-  "landing.spin.illustrated": "Giro ilustrado del Crunchy Boi",
+  "landing.spin.label": "Giro del Crunchy Boi",
   "landing.lineup.ingredients.crunchy-boi": "Pavo, provolone, mayonesa de ajo, cebolla, pepinillos, lechuga iceberg, aceite y vinagre, papas fritas onduladas, pan para sub.",
   "landing.lineup.ingredients.farmers-market": "Salsa verde, pepino, cebolla, pimientos dulces, chiles picantes, lechuga iceberg, rúcula, aceite y vinagre, pan para sub.",
   "landing.lineup.ingredients.hot-pants": "Capicola, pepperoni, salami de Génova, provolone, cebolla, pimientos dulces, chiles picantes, lechuga iceberg, rúcula, aceite y vinagre, pan para sub.",
@@ -58,6 +57,7 @@
   "landing.subdex.alt": "Héroe de píxeles atrapando un sándwich",
   "landing.subdex.pause": "Pausa la actualización gráfica",
   "landing.subdex.play": "Reproduce la actualización gráfica",
+  "landing.subdex.fallback": "Héroe de píxeles atrapando un sándwich. Imagen no disponible.",
   "landing.offer.code": "Usa el código {code} al pagar",
   "landing.language": "Elige tu idioma",
   "landing.hero.eyebrow": "WASHINGTON, DC · SUBS CON PERSONALIDAD",

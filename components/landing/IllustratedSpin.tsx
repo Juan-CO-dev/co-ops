@@ -7,7 +7,6 @@ export function IllustratedSpin({src,label,playLabel}:{src:string;label:string;p
   const video=useRef<HTMLVideoElement>(null);
   const [attached,setAttached]=useState(false);
   return <div className="landing-v2-spin">
-    <p>{label}</p>
     {attached ? <video ref={video} aria-label={label} controls muted playsInline preload="none"/> : <div className="landing-v2-spin-placeholder" aria-hidden="true"/>}
     <button type="button" onClick={()=>{
       // Mount in this user gesture so native playback retains user activation.

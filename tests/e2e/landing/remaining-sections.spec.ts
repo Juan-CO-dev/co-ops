@@ -1,6 +1,7 @@
 import {test,expect} from '@playwright/test';
 import {landingTenantConfig} from '../../../config/tenant/landing';
 import {subdexMedia,textureMedia} from '../../../lib/landing/media';
+import {simulateSubdex} from './media-simulation';
 
 test('remaining sections keep facts, destinations and translation honest',async({page})=>{
   const photoPaths=new Set([textureMedia.catering.src,...textureMedia.catering.srcSet.split(', ').map(candidate=>candidate.split(' ')[0])]);
@@ -48,25 +49,20 @@ test('SUBDEX rejected playback retains the still in both engines',async({page})=
   await page.evaluate(()=>window.dispatchEvent(new Event('scroll')));
   await expect(page.locator('#subdex img')).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'subdexPlayAttempted'))).toBe(true);
-  await expect(page.getByTestId('subdex-motion').locator('video,button')).toHaveCount(0);
+  await expect(page.getByTestId('subdex-motion').locator('video')).toHaveCSS('opacity','0');
+  await expect(page.getByTestId('subdex-motion').getByRole('button')).toBeVisible();
   await expect(page.locator('.landing-v2-spin video')).toHaveCount(0);
   await expect(page.locator('.landing-v2-spin button')).toHaveCount(1);
-  await expect(page.locator('#subdex button')).toHaveCount(1);
+  await expect(page.locator('#subdex button')).toHaveCount(2);
 });
 
-test('SUBDEX single muted excerpt pauses by keyboard and on viewport exit',async({page,browserName})=>{
-  const decodeUnavailable = browserName === 'webkit' && process.platform !== 'darwin';
- if (decodeUnavailable) await page.addInitScript(() => {
-   const paused = new WeakMap<HTMLMediaElement, boolean>();
-   Object.defineProperty(HTMLMediaElement.prototype, 'paused', {get() { return paused.get(this) ?? true; }});
-   HTMLMediaElement.prototype.play = function () { paused.set(this, false); this.dispatchEvent(new Event('playing')); return Promise.resolve(); };
-   HTMLMediaElement.prototype.pause = function () { paused.set(this, true); };
-   document.addEventListener('error', event => { if (event.target instanceof HTMLMediaElement) event.stopImmediatePropagation(); }, true);
- });
+test('SUBDEX simulated excerpt pauses by keyboard and on viewport exit',async({page})=>{
+  await simulateSubdex(page);
   await page.goto('/',{waitUntil:'domcontentloaded'});await expect(page.locator('#subdex video')).toHaveCount(0);
   await page.locator('#subdex').scrollIntoViewIfNeeded();await page.evaluate(()=>window.dispatchEvent(new Event('scroll')));
   const video=page.locator('#subdex video');await expect(video).toHaveCSS('opacity','1');
   expect(await video.evaluate(v=>(v as HTMLVideoElement).muted)).toBe(true);
+  await expect(video).not.toHaveAttribute('loop','');
   const pause=page.getByRole('button',{name:'Pause the graphics update'});await pause.focus();await page.keyboard.press('Enter');
   await expect(page.getByRole('button',{name:'Play the graphics update'})).toBeVisible();
   await page.getByRole('button',{name:'Play the graphics update'}).click();await expect(video).toHaveCSS('opacity','1');

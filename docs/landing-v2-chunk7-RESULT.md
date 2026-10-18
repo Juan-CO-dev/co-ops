@@ -1,6 +1,6 @@
 # CC rail-rule replacement - 2026-10-17
 
-Current status: PART A QUALIFIED under CC's replacement rail rule. Part B NOT STARTED; stop cleanly after the sustained Part A verification. Historical results below belong to the superseded inline-link policy.
+Current status: Part A committed at 49a143ab, parent 9ea1da96. Part A′ review fixes QUALIFIED. Part B implemented and functionally verified, but NOT performance-qualified: advisory LCP fails in both consent states. CI and physical iPhone release gates remain open. See the appended sections; historical results below belong to superseded work.
 
 ## Bounded implementation plan (CC supplied rule)
 
@@ -42,7 +42,7 @@ The initial replacement full run was **385 passed / 2 failed / 5 skipped** (`rul
 
 The prior broad Vitest run's two unrelated tsx/os.userInfo ENOMEM failures remain historical; this dispatch reran the requested landing suite, not all 801 files. Windows WebKit decoder skips/native iPhone and Part B remain external/pending. CC's final independent review and any CI run remain after this uncommitted handoff. No push, merge, deployment or production data access.
 
-`git diff --check`: PASS (exit 0). Harness teardown completed; its PID file is absent and no listener remains on ports 44170-44175. Branch **feat/landing-v2**, unchanged HEAD **9ea1da96f36735359200da1f248c052f20acbae5**, worktree **C:/Users/conta/co-ops-landing**. All changes remain UNCOMMITTED, including the preserved earlier Part A work.
+`git diff --check`: PASS (exit 0). Harness teardown completed; its PID file is absent and no listener remains on ports 44170-44175. Branch **feat/landing-v2**, Part A committed at **49a143ab**, parent **9ea1da96**, worktree **C:/Users/conta/co-ops-landing**. This records the committed Part A baseline; subsequent Part A′ changes are recorded separately below.
 
 
 
@@ -135,3 +135,86 @@ The first rebuilt targeted sticky run exited during the 60-second route warm-up,
 Font API diagnostic: `tmp/landing-v2/font-loading-proof.cjs` confirmed Chromium rejects the whole family-list load and reports check=false when an optional fallback fails; loading the primary succeeds with one matched face. WebKit accepted the whole list in this probe; primary-only succeeds there too. This matches why the reported CI failure is Chromium-only, though the actual CI font failure still needs confirmation after CC pushes. The [CSS Font Loading matching algorithm](https://drafts.csswg.org/css-font-loading/#find-the-matching-font-faces) enumerates supplied families; the harness deliberately supplies only the computed primary family and asserts a nonempty loaded match.
 
 The broad no-dwell / 8 px guard experiment was rejected: it produced ~112 ms pairs at 600 px/s while mobile coverage was still only ~72?73%. It is NOT the handed-off policy. The final candidate retains the 124 px guard and 240 ms recovery dwell, with immediate FIRST appearance only. The recovery-dwell regression failed before restoring that behavior (`tmp/landing-v2/recovery-dwell-red.log`). Scroll-cost tests now wait explicitly for hydration, fonts and two layout frames instead of assuming 500 ms always settles them; their zero-style-read / zero-link-query assertions remain unchanged.
+
+## Part A′ — frozen-head review fixes (2026-10-17)
+
+Plan: preserve and inspect the interrupted edits against CC's numbered rulings, qualify the existing component/policy/i18n changes, then finish this result before Part B. No asset, server, API or data changes. The reviewed CC packet supplies the bounded implementation decisions; final independent review remains CC's.
+
+Assertion ledger (relative to 49a143ab):
+
+- `sticky-review.spec.ts`: restore the privacy test's `abs(scrollY-y) <= 1` assertion (stronger; no dead captured position). Representative sweeps now call `settleLayout()` before starting the measurement clock; coverage, transition, spacing, consent and hint assertions are unchanged. Product qualification still requires all six cells to achieve at least 85% across five runs.
+- `sticky-review.test.ts`: add component-contract assertions tying both observer margins and released hero state to `STICKY_SHOW_CLEARANCE`, checking `!entry.isIntersecting`, and checking the missing-footer inert guard precedes observer construction (stronger).
+- `sticky-order.test.ts`: add hide-to-show dwell checks for all three blockers and six release delays, including 399/400 ms boundaries (stronger). Remove only redundant recovery arithmetic from the implementation; retain 400 ms sustained dwell.
+- `languages.spec.ts`: add en/es whole-page absence assertions for Illustrated/Ilustrad/AI, including after section scrolling and spin attachment; pin the neutral accessible spin name. Replace the chip's illustrated accessible name with empty-alt decorative semantics while retaining exact image inventory, real-photo URLs, dimensions and full ingredients.
+- `playful-touches.spec.ts`: require every touch, including the chip, to be aria-hidden with empty alt; geometry, pointer-event and motion checks remain. This is the intentional accessibility-contract change required by Juan's 2026-10-17 ruling.
+- `static-v2.spec.ts`: replace the illustrated spin's accessible name with `Crunchy Boi spin`; keep click-only source attachment and native controls assertions.
+- `playful-touches.test.ts`: rename the test to distinguish internal illustrated provenance; all provenance assertions remain unchanged.
+- `crave-field-guide.spec.ts`: remove the inert optional FontFace injection and its comment; primary-font load and geometry assertions remain unchanged.
+
+Files: `StickyOrderBar`, `IllustratedSpin`, `PlayfulTouch`, `FieldGuide`, `app/eat/page.tsx`, sticky policy, en/es dictionaries, the eight test files listed above, BUILD and this RESULT. BUILD/RESULT now identify Part A as committed at 49a143ab, parent 9ea1da96. No visible classification tags; internal provenance and asset identity checks remain.
+
+Verification (logs and screenshots: `tmp/landing-v2/chunk7/aprime-*`):
+
+- `npm.cmd test -- tests/landing --maxWorkers=2`: PASS, 48 files / 369 tests, exit 0.
+- `npm.cmd run assets:check`: PASS, 45 assets, exit 0.
+- `npx.cmd tsc --noEmit`: PASS, exit 0.
+- `npm.cmd run build`: PASS, exit 0.
+- `npx.cmd eslint <changed .ts/.tsx files>`: exit 1; only the pre-existing `StickyOrderBar.tsx:16` set-state-in-effect error and `app/eat/page.tsx:41` no-img-element warning. The unused-variable warning is gone. Baseline findings retained per CC's ruling.
+- `LANDING_E2E_USE_BUILD=1 npm.cmd run test:e2e -- --workers=2`: PASS, **391 passed / 5 existing skips**, 14.6 minutes, captured native exit 0 and status JSON. The restored privacy-position assertion passes in BOTH engines; no anchoring exception or renamed test needed. Four en/es Chromium/WebKit screenshots are saved under `aprime-*-subdex.png`; the Chromium English capture was visually inspected. Windows WebKit decoder skips remain unresolved native evidence.
+- Full-suite teardown: PID file absent; no listeners found on 44170–44175 before starting the repeat matrix.
+- `LANDING_E2E_USE_BUILD=1 npm.cmd run test:e2e -- tests/e2e/landing/sticky-review.spec.ts --grep "representative rail" --repeat-each=5 --workers=2`: PASS, **30 passed**, 19.6 minutes, captured native exit 0. `aprime-repeat5-summary.json` records `qualified: true` for the independent >=85% product threshold. Each cell below is the minimum of five repeats × four profiles.
+
+| Engine | Viewport | Minimum coverage | Max transitions | Min pair ms | Min pair px |
+|---|---|---:|---:|---:|---:|
+| Chromium | 375x667 | 90.67% | 2 | 5334 | 6384 |
+| Chromium | 375x812 | 91.12% | 2 | 5549.2 | 6655 |
+| Chromium | 1440x900 | 91.77% | 2 | 5858 | 7040 |
+| WebKit | 375x667 | 90.57% | 2 | 5335 | 6402 |
+| WebKit | 375x812 | 90.60% | 2 | 5543 | 6620 |
+| WebKit | 1440x900 | 89.67% | 2 | 5806 | 7029 |
+
+Every trace has one consent-top value. Matrix teardown: PID file absent and no listener found on 44170–44175. Part A′ is complete before Part B changes. Changes remain uncommitted on `feat/landing-v2`, HEAD `49a143ab87baa62d56508e5b9e8e34840287dcbb`, worktree `C:/Users/conta/co-ops-landing`.
+
+## Part B — SUBDEX reliability and iPhone coverage
+
+Plan (CC's BUILD chunk 7): reproduce readiness/retry failures first; preserve the SSR poster and source identity; bound readiness after two paint opportunities; retain gesture retry, decode-gated reveal, eight-second stall recovery and one-shot completion; add the scoped iPhone project and device release checklist. Risks: asynchronous media events, platform decoder support, initial JS/transfer cost and CI duration. No deployment or device access is available.
+
+Diagnosis: before product changes, `partb-red.log` records **four expected failures**, both regressions in both Chromium and WebKit. A supported LCP observer emitting no entries never set readiness; a rejected `play()` removed both video and retry control permanently. `partb-readiness-red.log` is only a missing-module unit-test setup failure, not runtime reproduction. Juan's particular phone incident is still unattributed: no device/revision/network trace was supplied. The existing `muted` and `playsInline` attributes were already present; they were not the missing implementation.
+
+Changes: `DeferredMotion` now preserves one poster subtree instead of replacing it after scrolling; `HeroMotion` defers media attachment using the shared viewport scheduler and bounded readiness, keeps a mounted retryable video, calls Play directly in the user gesture, reveals only decoded progress, pauses offscreen/hidden, restores a still on an eight-second stall, and does not loop or automatically restart a completed excerpt. A failed poster has reserved geometry and a neutral bilingual accessible fallback. The readiness helper accepts load/LCP or a 1.5-second deadline only after two RAF opportunities. Initial media still cannot attach offscreen or under Reduce Motion/Save-Data. This trades the former dynamic component import for a small initial controller; transfer/performance must be measured, not presumed unchanged.
+
+Assertion ledger:
+
+- `iphone-subdex.spec.ts`: new en/es × unset/accepted/rejected poster and native-order coverage, keyboard gesture retry after an actual rejected attempt, LCP/load stall, unavailable observers, pre-hydration scroll with poster-node continuity, document hide/show, no-decoded-progress concealment, eight-second stall/retry, completed-excerpt no-replay, poster/MP4 404, Save-Data, no-JS and unshimmed decoded-dimensions/time proof. New coverage; no prior assertion removed.
+- `remaining-sections.spec.ts`: replace permanent-failure/no-control expectations with a hidden video plus usable retry control. Keep the successful-play-attempt requirement, visible still and spin privacy assertions. The keyboard/viewport control test explicitly uses the new media simulation in all engines, replacing its former Windows-only `playing` shim; it is state-machine evidence, not decoder evidence. Add no-loop assertion; native playback proof now has its own unshimmed test.
+- `media-policy.test.ts`: add completed-excerpt automatic-play denial; keep every readiness/privacy/preference gate.
+- `media-readiness.test.ts`: require two paint opportunities even after signal/deadline, and check 1499/1500 ms timeout and earlier post-paint signal release.
+- `video-proof.spec.ts`: preserve source hashes and first-frame pixel thresholds; add `videoWidth > 0` and advancing native playback time (stronger).
+- `playwright.config.ts`: retain both full engine projects, add only the reviewed scoped iPhone 13 Mini media project, and cap default workers at two. CI timeout remains 25 minutes.
+
+Native iOS release checklist: [docs/qa/landing-v2-device-checklist.md](qa/landing-v2-device-checklist.md). Windows emulation cannot establish native iOS Safari decoding, Low Power Mode behavior or deployed-poster correctness. [WebKit's policy](https://webkit.org/blog/6784/new-video-policies-for-ios/) supports direct gesture-handler playback; physical testing remains required.
+
+Verification (logs/screenshots use `tmp/landing-v2/chunk7/partb-*`):
+
+- `npm.cmd test -- tests/landing --maxWorkers=2`: PASS, 49 files / 371 tests, exit 0.
+- `npm.cmd run assets:check`: PASS, 45 assets, exit 0; no asset/provenance changes.
+- `npx.cmd tsc --noEmit`: PASS before build and after final browser-test edits (`partb-tsc-final.log`), exit 0.
+- `npm.cmd run build`: PASS, exit 0. No production code changed afterward.
+- Changed/new-file ESLint: exit 1, only the retained `StickyOrderBar:16` effect error and existing page/SubdexMoment no-img-element warnings. New media/readiness/test code passes targeted ESLint with exit 0.
+- FULL `LANDING_E2E_USE_BUILD=1 npm.cmd run test:e2e -- --workers=2`: **468 passed, 12 skipped, zero failed/flaky**, captured native exit 0, **16.9 minutes**. Chromium 214/214; WebKit 208 passed/6 skipped; iPhone WebKit 46 passed/6 skipped. Each WebKit project skips five existing spin codec cases plus the new native SUBDEX decoder case on Windows; simulations are not counted as decoder proof. Native Chromium SUBDEX dimensions/time and the four strengthened decoder-reference tests pass.
+- Saved HTML-report data in `partb-report.json`; `partb-timings.json` derives actual project elapsed spans from result startTime/duration: Chromium 260.536 s, WebKit 553.684 s, scoped iPhone 92.200 s; total including setup 1014.063 s. Local targets met (iPhone <3 min, full <22 min); actual CI job duration/exit remains pending because this handoff is uncommitted and unpushed. CI's 25-minute timeout is unchanged.
+- Captured en/es × three consent states in all three projects under `partb-*-{lang}-{consent}.png`; visually inspected the Chromium Spanish unset capture: decoded poster, readable shop links, no asset tags.
+- Advisory `npm.cmd run perf:ci`: **FAIL, native exit 1**. First two attempts (Playwright Chromium and installed Chrome) timed out before measurements, both states incomplete. The harness-supported `LANDING_PERF_NO_SANDBOX=1` launch mode resolved the launcher timeout; it ran all ten cold measurements using the installed cached LHCI 0.15.1 CLI and the existing build. No thresholds/config files were relaxed. The third attempt also reports Windows cleanup `ERROR: Access denied`; unlike earlier historical runs, this attempt has a real LCP assertion failure too.
+
+| Consent | Cold runs | Median performance | Accessibility | LCP ms | TBT ms | CLS | First-party bytes, every run |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Unset | 5 | 0.93 | 1.00 | **3092.306 FAIL** | 66 | 0.002750 | 302342 |
+| Accepted | 5 | 0.93 | 1.00 | **3097.252 FAIL** | 64.5 | 0.052699 | 302342 |
+
+Evidence: `partb-perf-restricted.log`, captured exit file, `partb-perf-summary.json`; all ten raw reports and assertion results in `tmp/landing-performance/2026-10-17T23-58-53.846Z-merge-65a7ed67/`. First two incomplete attempts are retained at `2026-10-17T23-54-41.510Z-merge-5785eb02` and `2026-10-17T23-56-51.384Z-merge-2c48f8b5`. Pixel is blocked only in this offline measurement harness, not product code; no real-Pixel performance claim.
+
+LCP diagnosis at the stop point: Lighthouse identifies the unchanged P013 hero image. Its discovery audit passes (SSR-discoverable, eager, high priority); a sampled unset report attributes 2204 ms of 3172 ms to render delay. This does not establish a root cause or prove the failure predates Part B. The earlier successful r2 report is from a different implementation, so it is not a controlled regression comparison. Do not waive the 2499.999 ms gate or label performance green.
+
+**Clean stop / remaining work:** Part A′ is complete. Part B source and functional tests are complete, but performance qualification remains open: investigate hero render delay and obtain the authoritative CI gate/actual job duration; then CC must run the deployed-revision/poster and physical iPhone normal/Low Power checks in the linked checklist. Juan's original device incident cannot be uniquely attributed without that evidence. No native iOS Safari result is claimed.
+
+Final cleanup: harness PID file absent; no listeners found on ports 44170–44175 after the last run. No servers remain from these runs. All changes are UNCOMMITTED on `feat/landing-v2`, HEAD `49a143ab87baa62d56508e5b9e8e34840287dcbb`, worktree `C:/Users/conta/co-ops-landing`. No push, merge, deployment or production data access.

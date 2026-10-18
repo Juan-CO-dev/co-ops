@@ -48,6 +48,20 @@ it('returns after transient suppression clears without a position change or latc
  expect(policy.update({...clear,now:1399}).visible).toBe(false);
  expect(policy.update({...clear,now:1400}).visible).toBe(true);
 });
+it('requires at least 400 ms between every hide and subsequent show through dwell alone',()=>{
+ for(const delay of [0,1,100,399,400,1000])for(const blocker of [{suppressed:true},{heroBottom:0},{clearance:-1}]){
+  const policy=createStickyVisibility();
+  policy.update({...clear,now:0});
+  expect(policy.update({...clear,now:400}).visible).toBe(true);
+  const hiddenAt=500;
+  expect(policy.update({...clear,...blocker,now:hiddenAt}).visible).toBe(false);
+  expect(policy.update({...clear,now:hiddenAt+delay})).toEqual({visible:false,wait:400});
+  expect(policy.update({...clear,now:hiddenAt+delay+399})).toEqual({visible:false,wait:1});
+  const shownAt=hiddenAt+delay+400;
+  expect(policy.update({...clear,now:shownAt}).visible).toBe(true);
+  expect(shownAt-hiddenAt).toBeGreaterThanOrEqual(400);
+ }
+});
 it('resets release dwell when hovering at either boundary',()=>{
  for(const boundary of [{heroBottom:-119},{clearance:119}]){
   const policy=createStickyVisibility();

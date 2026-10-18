@@ -4,6 +4,20 @@ import en from "../../../lib/i18n/en.json";
 import es from "../../../lib/i18n/es.json";
 test.use({locale:'es-MX'});
 
+for(const language of ['en','es'] as const)test(`no visible asset classification tags in ${language}`,async({page},info)=>{
+  await page.goto(`/?lang=${language}`);
+  for(const section of await page.locator('main section').all()){
+    await section.scrollIntoViewIfNeeded();
+    await expect(page.locator('.landing-v2-page')).not.toContainText(/Illustrated|Ilustrad|\bAI\b/i);
+  }
+  const spin=page.locator('.landing-v2-spin');
+  await spin.scrollIntoViewIfNeeded();
+  await spin.getByRole('button').click();
+  await expect(spin.locator('video')).toHaveAttribute('aria-label',(language==='es'?es:en)['landing.spin.label']);
+  await expect(page.locator('.landing-v2-page')).not.toContainText(/Illustrated|Ilustrad|\bAI\b/i);
+  await page.screenshot({path:`tmp/landing-v2/chunk7/aprime-${info.project.name}-${language}-subdex.png`});
+});
+
 for (const language of ["en","es"] as const) test(`every section and control renders in ${language}`,async ({page})=>{
   await page.goto(`/?lang=${language}`);
   const dictionary = language === "es" ? es : en;
@@ -28,7 +42,7 @@ for (const language of ["en","es"] as const) test(`every section and control ren
   const photo=held.locator('[data-landing-photo] img');
   // Exact section image inventory: one real photo and one decorative touch.
   await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveCount(1);
-  await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveAttribute('alt',dictionary['landing.touch.illustrated-chip']);
+  await expect(held.locator('[data-playful-slot="field-guide"] img')).toHaveAttribute('alt','');
   await expect(held.locator('img')).toHaveCount(2);
   await expect(photo).toHaveCount(1);
   await expect(photo).toHaveAttribute('src',textureMedia.crossSection.src);

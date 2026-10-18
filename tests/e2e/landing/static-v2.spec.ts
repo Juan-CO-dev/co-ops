@@ -79,7 +79,7 @@ test('illustrated spin requests its source only after explicit Play',async({page
   await page.locator('.landing-v2-spin').scrollIntoViewIfNeeded();
   await expect(video).toHaveCount(0);
   await page.locator('.landing-v2-spin button').click();
-  await expect(video).toHaveAttribute('aria-label','Illustrated Crunchy Boi spin');
+  await expect(video).toHaveAttribute('aria-label','Crunchy Boi spin');
   await expect(video).toHaveAttribute('src',/\.mp4$/);
   await expect(video).toHaveAttribute('controls','');
   await expect(page.locator('#hero video')).toHaveCount(0);

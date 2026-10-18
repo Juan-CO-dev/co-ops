@@ -51,7 +51,7 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
           {(key === "crave" || key === "subdex" || key === "field-guide" || key === "lineup") && <div className="landing-v2-inline-orders">{publicStores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement={key} className="landing-v2-inline-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>}
           {key === "field-guide" && publicStores.map((store) => <OfferCode key={store.key} ad={captureAttribution(queryString,config.attribution).ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}
           {key === "field-guide" && <div className="mt-6"><FaqItem q={serverT(language,"landing.faq.question")} a={serverT(language,"landing.faq.answer")}/></div>}
-          {key === "subdex" && <><SubdexMoment language={language}/><IllustratedSpin src={heroMedia.spin} label={serverT(language,"landing.spin.illustrated")} playLabel={serverT(language,"landing.hero.play")}/></>}
+          {key === "subdex" && <><SubdexMoment language={language}/><IllustratedSpin src={heroMedia.spin} label={serverT(language,"landing.spin.label")} playLabel={serverT(language,"landing.hero.play")}/></>}
           {key === "shops" && <Shops stores={stores} language={language} ad={captureAttribution(queryString,config.attribution).ad}/>}
           {key === "catering" && <Catering config={config} language={language}/>}
           {key === "footer" && <Footer config={config} stores={stores} language={language}/>}

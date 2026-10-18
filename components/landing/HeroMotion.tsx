@@ -1,80 +1,84 @@
 "use client";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { shouldLoadMotion, shouldPlayMotion, type MotionState } from "@/lib/landing/media-policy-shared";
+import {useCallback,useEffect,useRef,useState,type ReactNode} from 'react';
+import {flushSync} from 'react-dom';
+import {shouldLoadMotion,shouldPlayMotion,type MotionState} from '@/lib/landing/media-policy-shared';
+import {waitForMediaReadiness} from '@/lib/landing/media-readiness-shared';
+import {observeLandingViewport} from '@/lib/landing/scroll-controller';
 
-/** The server-rendered real photo stays mounted through every failure path. */
-export function HeroMotion({ children, src, pauseLabel, playLabel, testId = "hero-motion", initialTriggered = false }: { children: ReactNode; src: string; pauseLabel: string; playLabel: string; testId?: string; initialTriggered?: boolean }) {
-  const container = useRef<HTMLDivElement>(null);
-  const video = useRef<HTMLVideoElement>(null);
-  const [state, setState] = useState<MotionState>({ lcpReady:false, triggered:initialTriggered, visible:false, documentVisible:false, reducedMotion:true, saveData:true, failed:false, paused:false });
-  const [attached, setAttached] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  useEffect(() => {
-    const motion = matchMedia("(prefers-reduced-motion: reduce)");
-    const connection = (navigator as Navigator & { connection?: EventTarget & { saveData?: boolean } }).connection;
-    const preferences = () => setState(s => ({...s, reducedMotion:motion.matches, saveData:connection?.saveData === true, documentVisible:document.visibilityState === "visible"}));
-    const scroll = () => setState(s => s.triggered ? s : ({...s, triggered:true}));
-    const ready = () => setState(s => ({...s, lcpReady:true}));
-    preferences();
-    motion.addEventListener("change", preferences);
-    connection?.addEventListener("change", preferences);
-    document.addEventListener("visibilitychange", preferences);
-    window.addEventListener("scroll", scroll, {passive:true});
-    let lcp: PerformanceObserver | undefined;
-    if (typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes.includes("largest-contentful-paint")) {
-      lcp = new PerformanceObserver(entries => { if(entries.getEntries().length) ready(); });
-      lcp.observe({type:"largest-contentful-paint", buffered:true});
-    } else if (document.readyState === "complete") ready();
-    else window.addEventListener("load", ready, {once:true});
-    const observer = typeof IntersectionObserver === "undefined" ? undefined : new IntersectionObserver(entries => {
-      setState(s => ({...s, visible:entries.some(entry => entry.isIntersecting)}));
-    }, {threshold:0.1});
-    if(container.current) observer?.observe(container.current);
-    return () => { motion.removeEventListener("change",preferences); connection?.removeEventListener("change",preferences); document.removeEventListener("visibilitychange",preferences); window.removeEventListener("scroll",scroll); window.removeEventListener("load",ready); observer?.disconnect(); lcp?.disconnect(); };
-  }, []);
-  const canLoad = shouldLoadMotion(state);
-  const canPlay = shouldPlayMotion(state);
-  useEffect(() => { if (canLoad) setAttached(true); }, [canLoad]);
-  useEffect(() => {
-    const element = video.current;
-    if (!element) return;
-    let cancelled = false;
-    if (canPlay) {
-      const play = element.play();
-      play?.catch(() => { if (!cancelled) { setPlaying(false); setState(s=>({...s,failed:true})); } });
-    } else { element.pause(); setPlaying(false); }
-    return () => { cancelled = true; };
-  }, [canPlay, attached]);
-  // Watch actual playback progress, including a stream that freezes after playing.
-  // Primitive dependencies keep unrelated scroll/visibility updates from extending it.
-  useEffect(() => {
-    const element = video.current;
-    if (!attached || !canPlay || !element) return;
-    let lastTime = element.currentTime;
-    let lastProgress = performance.now();
-    const progress = () => {
-      if (element.currentTime !== lastTime) {
-        lastTime = element.currentTime;
-        lastProgress = performance.now();
+/** Optional motion never replaces the reserved, server-rendered still. */
+export function HeroMotion({children,src,pauseLabel,playLabel,fallbackLabel,testId='hero-motion'}:{children:ReactNode;src:string;pauseLabel:string;playLabel:string;fallbackLabel:string;testId?:string}){
+  const container=useRef<HTMLDivElement>(null),video=useRef<HTMLVideoElement>(null);
+  const started=useRef(false),attempt=useRef({id:0});
+  type RuntimeState=MotionState & {attached:boolean};
+  const [state,dispatch]=useState<RuntimeState>({lcpReady:false,triggered:false,visible:false,documentVisible:false,reducedMotion:true,saveData:true,failed:false,paused:false,completed:false,attached:false});
+  const setState=useCallback((update:(s:RuntimeState)=>RuntimeState)=>dispatch(s=>{
+    const next=update(s);
+    return {...next,attached:s.attached||next.attached||shouldLoadMotion(next)};
+  }),[]);
+  const attached=state.attached;
+  const [playing,setPlaying]=useState(false),[posterFailed,setPosterFailed]=useState(false);
+  useEffect(()=>{
+    const root=container.current!,epoch=attempt.current;
+    const connection=(navigator as Navigator & {connection?:EventTarget & {saveData?:boolean}}).connection;
+    const preferences=()=>setState(s=>({...s,saveData:connection?.saveData===true,documentVisible:!document.hidden}));
+    const cancelReady=waitForMediaReadiness(()=>{preferences();setState(s=>({...s,lcpReady:true}));});
+    const stop=observeLandingViewport(root,({active,reducedMotion})=>setState(s=>({...s,visible:active,triggered:s.triggered||active,reducedMotion,documentVisible:!document.hidden,saveData:connection?.saveData===true})),{offscreen:true});
+    connection?.addEventListener('change',preferences);
+    document.addEventListener('visibilitychange',preferences);
+    const image=root.querySelector('img');
+    // An image can fail before hydration installs React's error handler.
+    if(image?.complete&&image.naturalWidth===0)setPosterFailed(true);
+    return ()=>{epoch.id++;cancelReady();stop();connection?.removeEventListener('change',preferences);document.removeEventListener('visibilitychange',preferences);};
+  },[setState]);
+  const canPlay=shouldPlayMotion(state);
+  const fail=useCallback(()=>{started.current=false;setPlaying(false);setState(s=>({...s,failed:true}));},[setState]);
+  const play=useCallback(()=>{
+    const element=video.current;if(!element)return;
+    started.current=true;const id=++attempt.current.id;
+    element.muted=true;
+    void element.play().catch(()=>{if(attempt.current.id===id)fail();});
+  },[fail]);
+  useEffect(()=>{
+    const element=video.current;if(!element)return;
+    if(canPlay){if(!started.current)play();}
+    else {attempt.current.id++;started.current=false;element.pause();}
+  },[canPlay,attached,play]);
+  useEffect(()=>{
+    const element=video.current;if(!attached||!canPlay||!element)return;
+    let lastTime=element.currentTime,lastProgress=performance.now(),frame:number|undefined;
+    const progress=()=>{
+      if(element.currentTime!==lastTime){
+        lastTime=element.currentTime;lastProgress=performance.now();
+        if(element.readyState>=2&&element.videoWidth>0&&!element.paused)setPlaying(true);
       }
     };
-    const timeout = window.setInterval(() => {
-      progress();
-      if (performance.now() - lastProgress >= 8000) {
-        setPlaying(false);
-        setState(s => ({...s, failed:true}));
-      }
-    }, 250);
-    element.addEventListener("timeupdate", progress);
-    return () => { window.clearInterval(timeout); element.removeEventListener("timeupdate", progress); };
-  }, [attached, canPlay]);
-  const fail = () => { setPlaying(false); setState(s=>({...s,failed:true})); };
-  const showVideo = playing && !state.failed && !state.reducedMotion && !state.saveData;
-  return <div ref={container} data-testid={testId}>
-    <div className="relative overflow-hidden rounded-2xl bg-[#FFE560]">
-      {children}
-      {attached && !state.failed && <video ref={video} src={src} muted playsInline loop preload="none" aria-hidden="true" onPlaying={()=>setPlaying(true)} onError={fail} className={`absolute inset-0 h-full w-full bg-[#FFE560] object-contain ${showVideo ? "opacity-100" : "opacity-0"}`}/>}
+    const decoded=()=>{
+      if(element.readyState>=2&&element.videoWidth>0&&!element.paused){setPlaying(true);lastProgress=performance.now();}
+      frame=element.requestVideoFrameCallback(decoded);
+    };
+    if(typeof element.requestVideoFrameCallback==='function')frame=element.requestVideoFrameCallback(decoded);
+    const timer=window.setInterval(()=>{progress();if(performance.now()-lastProgress>=8000)fail();},100);
+    element.addEventListener('timeupdate',progress);
+    return ()=>{clearInterval(timer);if(frame!==undefined)element.cancelVideoFrameCallback(frame);element.removeEventListener('timeupdate',progress);};
+  },[attached,canPlay,fail]);
+  const allowed=state.lcpReady&&!state.reducedMotion&&!state.saveData;
+  const toggle=()=>{
+    if(playing&&!state.paused){setState(s=>({...s,paused:true}));return;}
+    // Reserve this attempt before flushing so the effect cannot issue a second
+    // play outside user activation. Keep the same button and video for retry.
+    started.current=true;
+    flushSync(()=>{setPlaying(false);setState(s=>({...s,attached:true,failed:false,paused:false,completed:false}));});
+    const element=video.current;if(!element)return;
+    if(element.error)element.load();
+    if(element.ended||state.completed)element.currentTime=0;
+    play();
+  };
+  return <div ref={container} data-testid={testId} data-media-ready={state.lcpReady} data-media-failed={state.failed}>
+    <div className="relative aspect-square overflow-hidden rounded-2xl bg-[#FFE560]">
+      <div className={posterFailed?'invisible':undefined} onErrorCapture={()=>setPosterFailed(true)}>{children}</div>
+      {posterFailed&&<div role="img" aria-label={fallbackLabel} className="absolute inset-0 flex items-center justify-center p-6 text-center">{fallbackLabel}</div>}
+      {attached&&<video ref={video} src={src} muted playsInline preload="none" aria-hidden="true" onError={fail} onPause={()=>setPlaying(false)} onEnded={()=>{started.current=false;setPlaying(false);setState(s=>({...s,completed:true}));}} className={`absolute inset-0 h-full w-full bg-[#FFE560] object-contain ${playing&&canPlay?'opacity-100':'opacity-0'}`}/>}
     </div>
-    <div className="min-h-[52px]">{attached && !state.failed && !state.reducedMotion && !state.saveData && (playing || state.paused) && <button type="button" aria-pressed={state.paused} onClick={()=>setState(s=>({...s,paused:!s.paused}))} className="mt-2 inline-flex min-h-11 min-w-11 items-center rounded-lg border border-co-text px-4 font-bold">{state.paused ? playLabel : pauseLabel}</button>}</div>
+    <div className="min-h-[52px]">{allowed&&<button type="button" aria-pressed={state.paused} onClick={toggle} className="mt-2 inline-flex min-h-11 min-w-11 items-center rounded-lg border border-co-text px-4 font-bold">{playing&&!state.paused?pauseLabel:playLabel}</button>}</div>
   </div>;
 }

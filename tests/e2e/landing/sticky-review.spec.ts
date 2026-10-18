@@ -31,7 +31,7 @@ for(const viewport of [{width:375,height:667},{width:375,height:812},{width:1440
   await page.setViewportSize(viewport);
   const results=[];
   for(const profile of sweepProfiles){
-    await page.goto('/');await page.evaluate(()=>scrollTo(0,0));await page.waitForTimeout(400);
+    await page.goto('/');await settleLayout(page);await page.evaluate(()=>scrollTo(0,0));
     const result=await page.evaluate(async profile=>{
       const rail=document.querySelector<HTMLElement>('[data-sticky-order]')!;
       const dock=document.querySelector('.landing-v2-consent')!;
@@ -134,6 +134,7 @@ test('privacy expansion and collapse returns the rail without scrolling',async({
   await expect(page.locator('[data-sticky-order]')).toBeHidden();
   await settings.click();
   await expect(page.locator('[data-sticky-order]')).toBeVisible();
+  expect(Math.abs(await page.evaluate(()=>scrollY)-y)).toBeLessThanOrEqual(1);
  });
 
 test('scroll does not measure or query inline order links',async({page})=>{

@@ -1,5 +1,4 @@
 {
-  "landing.touch.illustrated-chip": "Illustrated chip",
   "landing.texture.alt": "A close look at the Crunchy Boi.",
   "landing.texture.cross-alt": "Crunchy Boi halves showing turkey, chips, provolone, lettuce and pickles in a sub roll.",
   "landing.texture.still": "Keep it still",
@@ -18,7 +17,7 @@
   "landing.sticky.hint1": "psst, lunch?",
   "landing.crave.title": "A little crunch?",
   "landing.crave.body": "Your next lunch starts here.",
-  "landing.spin.illustrated": "Illustrated Crunchy Boi spin",
+  "landing.spin.label": "Crunchy Boi spin",
   "landing.lineup.ingredients.crunchy-boi": "Turkey, provolone, garlic mayo, onion, pickles, iceberg lettuce, oil & vinegar, ripple potato chips, sub roll.",
   "landing.lineup.ingredients.farmers-market": "Salsa verde, cucumber, onion, sweet peppers, hot peppers, iceberg lettuce, arugula, oil & vinegar, sub roll.",
   "landing.lineup.ingredients.hot-pants": "Capicola, pepperoni, Genoa salami, provolone, onion, sweet peppers, hot peppers, iceberg lettuce, arugula, oil & vinegar, sub roll.",
@@ -58,6 +57,7 @@
   "landing.subdex.alt": "Pixel hero catching a sub",
   "landing.subdex.pause": "Pause the graphics update",
   "landing.subdex.play": "Play the graphics update",
+  "landing.subdex.fallback": "Pixel hero catching a sub. Image unavailable.",
   "landing.offer.code": "Use code {code} at checkout",
   "landing.language": "Choose your language",
   "landing.hero.eyebrow": "WASHINGTON, DC · SUBS WITH PERSONALITY",

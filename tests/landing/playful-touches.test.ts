@@ -1,7 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import {createTouchArbiter,TOUCHES,validateTouchInventory} from '@/lib/landing/playful-touches-shared';
 describe('bounded playful touches',()=>{
- it('requires exactly the six render slots and marks the chip illustrated',async()=>{
+ it('requires exactly the six render slots and retains internal illustrated provenance',async()=>{
   expect(()=>validateTouchInventory(TOUCHES.slice(1))).toThrow();
   expect(()=>validateTouchInventory(TOUCHES.map(t=>({...t,slot:t.slot==='hero'?'unknown':t.slot})))).toThrow();
   const {default:sidecar}=await import('../../assets/provenance/touch-doodle-chip.json');
