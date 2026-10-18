@@ -359,3 +359,68 @@ Final product source was restored byte-for-byte from HEAD; git diff has no appli
 A supported way to remove the remaining shared root stylesheet from /eat is a separate landing root/layout with its own processed base/font/utility CSS. This requires CC approval: the present app has 18 top-level directories and 439 tracked files (292 API, four landing, 143 remaining). A route-group design would move the ops page trees (including (authed), admin, order, training and the root login page), distribute metadata/error/not-found ownership, preserve fonts and relative imports, and review pathname/file-path tests; API handlers need not be moved merely to change page layouts. Estimate: roughly 15 page-directory moves plus root entry files, two root layouts, about 140 non-API/non-landing files to audit, plus path-sensitive tests/config, and 1-2 engineering days including cross-family review, auth/staff regression tests, browser checks and repeated ten-run performance measurements. This is an estimate, not approval or a guarantee of LCP success. No route restructuring was performed.
 
 Branch/worktree: feat/landing-v2 at C:/Users/conta/co-ops-landing, base 9872e9b5. Round C is preserved. Round D remains uncommitted; no push, merge, deployment or production access.
+
+## Round E — controlled A/B and lazy HeroMotion candidate (base 16950ac4)
+
+The historical fast mode did **not** reproduce locally: `49a143ab` and unchanged HEAD both measured **0/10 below 2500 ms**. Therefore CC's step 3 applies: test only step 2a, retain the bounded lazy-import candidate for CI judgment, and do not bisect poster/readiness/media-policy changes. This local A/B cannot attribute the historical CI regression. Plan: `docs/landing-v2-rounde-PLAN.md` (CC's supplied reviewed sequence).
+
+### Controlled A/B
+
+Both builds used `npm.cmd run build` (Next 16.2.4 Turbopack), then unchanged `npm.cmd run perf:ci`, sequentially on this machine. Environment: `CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe`, `LANDING_PERF_NO_SANDBOX=1`, `LANDING_E2E_USE_BUILD=1`, `LHCI_CLI_PATH=C:/Users/conta/AppData/Local/npm-cache/_npx/7c4c7312e9ccc7bf/node_modules/@lhci/cli/src/cli.js` (cached 0.15.1). The four performance harness/config files, package versions, Next config, root layout and root CSS have no baseline-to-HEAD diff. No server was listening on 44170–44175 before the first build; the harness tears its servers down between consent sets.
+
+| Build | Unset LCP ms (all five) | Accepted LCP ms (all five) | Fast / slow | Gate |
+|---|---|---|---|---|
+| 49a143ab archive | 3081.411, 3026.242, 3005.351, 3049.668, 3048.995 | 3022.874, 3123.621, 3072.129, 3051.175, 3003.005 | 0 / 10 | FAIL, exit 1 |
+| HEAD 16950ac4, round C source | 2841.500, 3009.437, 3019.947, 3003.755, 3047.482 | 3062.542, 3056.665, 3046.396, 3066.240, 3050.078 | 0 / 10 | FAIL, exit 1 |
+
+Unset/accepted medians: old 3048.995 / 3051.175 ms; HEAD 3009.437 / 3056.665 ms. First-party transfer: old 301293 B in each run; HEAD 302490 B in each run. Both summary checks fail only LCP; one old accepted run has TBT 238.957 ms, but the unchanged median TBT assertion passes. These are first-party-only, Pixel-blocked merge measurements, not a measurement of real Pixel cost.
+
+Evidence under `tmp/landing-v2/chunk7/`: `rounde-{old,head}-{build,perf}.log` and `.exit`, `rounde-ab-summary.json`; archived raw reports copied to `rounde-old-evidence/2026-10-18T04-08-52.307Z-merge-3b937791/`. HEAD raw reports: `tmp/landing-performance/2026-10-18T04-13-53.965Z-merge-3418d1e6/`. The old source came from `git archive 49a143ab`, with a directory junction to clone dependencies. Next automatically selected the outer clone as its workspace root; there was no config override. Archive location can affect generated module names, so this is a same-machine/harness comparison, not an assertion of CI byte identity.
+
+### Kept step 2a and assertion ledger
+
+- `components/landing/DeferredMotion.tsx`: restore scroll-triggered dynamic import, including the already-scrolled/pre-hydration path. The SSR poster, fallback, geometry and outer node remain mounted outside the lazy boundary. Module failure leaves the still intact. No visible tags.
+- `components/landing/HeroMotion.tsx`: playback portals into persistent media/control slots. The media slot follows the fallback permanently, so a late image error cannot insert fallback above the playing video. Round C's updater bailout, visit/replay refs, synchronous gesture retry, readiness helper, media policy, decoder-progress watchdog and hidden-tab handling are retained. Poster-error handling now belongs to the eagerly mounted shell.
+- `tests/landing/hero-motion-runtime.test.ts`: adapt only the shell-ref input and video-ref index to the new component boundary. All prior bailout/observer/pause assertions remain unchanged.
+- `tests/e2e/landing/iphone-subdex.spec.ts`: add a real script-response assertion that playback code is absent before scroll and arrives after scroll; assert the same shell and image nodes survive, and late fallback precedes video. It failed on unchanged HEAD at the eager-script assertion (`rounde-lazy-red.log`, exit 1). No existing assertion or skip was weakened or removed.
+- No edits to readiness/media-policy helpers, lighthouserc, perf harness, budgets, throttling, 2.5 s gate, root/ops code, assets or visible copy. The stale `M` entries on layout/package are byte-identical to HEAD, verified directly.
+
+The first full-suite preparation was interrupted before browser execution to add the permanent overlay slot after reviewing late-error stacking. Its log is preserved as `rounde-e2e-interrupted-fixture.log`; it is not a test pass. The idle `npx eslint` launcher was interrupted; direct installed-binary ESLint is the recorded check. Final verification and candidate measurements follow below.
+
+### Bisect table and final candidate measurement
+
+| Step | Change | Fast / slow | Disposition |
+|---|---|---|---|
+| 2a | Scroll-triggered lazy HeroMotion, persistent SSR poster shell | 0 / 10 | Kept UNCOMMITTED for CC's CI judgment under step 3; not an LCP fix |
+| 2b | Revert poster-subtree behavior | Not run | Step 3 says do nothing else when old baseline is also 0/10 |
+| 2c | Readiness/media-policy changes | Not run | Same stop condition; helpers unchanged |
+| 2d | Other hero/page/root changes | Not run | Same stop condition; no scope expansion |
+
+| Candidate | Unset LCP ms (all five) | Accepted LCP ms (all five) | Gate |
+|---|---|---|---|
+| Final step 2a | 3080.168, 3042.791, 3062.511, 3083.910, 3029.899 | 3019.674, 3052.536, 3057.610, 3107.214, 3051.018 | FAIL, exit 1; 0/10 fast |
+
+Unset/accepted medians are 3062.511 / 3052.536 ms: neither passes. First-party transfer is 301461 B every run, 1029 B less than unchanged HEAD. Only LCP fails the summaries and LHCI assertions; the 2500 ms all-ten target is **not met**. The separate playback chunk is `10t-chbk52prb.js`, 4587 B raw (`rounde-chunks.json`), and the new browser assertion passed in Chromium, WebKit and iPhone WebKit: it is absent before scroll, loaded afterward, and preserves the poster node. There is no claim that smaller eager JavaScript restores fast mode locally or that CI will pass.
+
+Raw final evidence: `tmp/landing-performance/2026-10-18T04-46-00.438Z-merge-0cae3af8/` (all ten LHRs and assertions). Log/exit: `tmp/landing-v2/chunk7/rounde-lazy-perf.{log,exit}`. `rounde-ab-summary.json` includes all three matrices at full precision.
+
+### Final verification
+
+All final commands ran sequentially, one heavy job at a time. Logs below are in `tmp/landing-v2/chunk7/`.
+
+- `npm.cmd test -- tests/landing --maxWorkers=2`: PASS, 50 files / 373 tests, exit 0 (`rounde-unit.log`).
+- `node node_modules/typescript/bin/tsc --noEmit`: PASS, exit 0 (`rounde-tsc.log`).
+- `npm.cmd run assets:check`: PASS, 45 assets, exit 0 (`rounde-assets.log`); no asset changes.
+- `node node_modules/eslint/bin/eslint.js components/landing/DeferredMotion.tsx components/landing/HeroMotion.tsx tests/landing/hero-motion-runtime.test.ts tests/e2e/landing/iphone-subdex.spec.ts`: PASS, no findings, exit 0 (`rounde-eslint-direct.log`).
+- `npm.cmd run build`: PASS, exit 0 (`rounde-lazy-build.log`); no product edits afterward.
+- `LANDING_E2E_USE_BUILD=1 npm.cmd run test:e2e -- --workers=2 --reporter=list,json`: PASS, **474 passed / 13 existing skips / 0 failed / 0 flaky**, exit 0, 17.4 minutes (`rounde-e2e.log`, `rounde-e2e-report.json`). Chromium native decoder checks passed; Windows WebKit codec skips remain skips, and this is not physical iOS verification.
+- `npm.cmd run perf:ci` with the explicit environment above: FAIL, exit 1, all ten values reported. No budget, assertion or measurement-method edits.
+- `git diff --check`: PASS. Direct HEAD-byte comparison confirms layout/package stale status entries contain no changes. Existing RESULT content is preserved, with Round E appended.
+
+### Junction and server cleanup proof
+
+The archived source and both new E2E fixture directories used directory junctions to the clone's `node_modules`. Each junction was removed FIRST with `cmd.exe /c rmdir <exact-scratch-path>\node_modules`, with **no `/s`**, then checked absent while `node_modules/next/package.json` in the clone was checked present. Paths: `tmp/rounde-49a143ab`, `tmp/landing-nearby-1792297394072` (interrupted preparation), and `tmp/landing-nearby-1792297705531` (completed suite). Proof: `rounde-old-cleanup.txt`, `rounde-fixture-cleanup.txt`, `rounde-cleanup.json`.
+
+Recursive deletion of the detached archived scratch directory was rejected by automatic command policy, including a separate PowerShell cleanup attempt; the tool returned only “blocked by policy”, without a more specific reason. No approval escalation or alternate deletion mechanism was used. The detached scratch directories remain under `tmp/`, with **all three new junctions absent**; they are not shipped changes. This is the remaining cleanup limitation.
+
+Final TCP probes: ports **44170–44175 all closed**; harness PID file absent; clone dependencies present. No harness servers remain. All requested source/test/doc changes are **UNCOMMITTED** on `feat/landing-v2`, HEAD `16950ac4`, worktree `C:/Users/conta/co-ops-landing`. No push, merge, deployment or production access. Open outcome: local fast mode unresolved; CC must judge the retained step-2a candidate in CI and review it before any commit.

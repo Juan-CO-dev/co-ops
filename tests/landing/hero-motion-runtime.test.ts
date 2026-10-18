@@ -20,12 +20,13 @@ it('bails out on steady scroll state, omits offscreen updates, and still pauses 
  vi.stubGlobal('document',Object.assign(new EventTarget(),{hidden:false}));
  vi.stubGlobal('navigator',{connection:Object.assign(new EventTarget(),{saveData:false})});
  vi.stubGlobal('innerHeight',667);
- const render=()=>{harness.stateIndex=0;harness.refIndex=0;harness.effects=[];HeroMotion({children:null,src:'/clip.mp4',pauseLabel:'Pause',playLabel:'Play',fallbackLabel:'Still'});};
- render();
  let mediaTop=0;
- const section={};harness.refs[0]!.current={querySelector:()=>null,closest:()=>section,getBoundingClientRect:()=>({top:mediaTop,bottom:mediaTop+100})};
+ const section={};
+ const container={current:{closest:()=>section,getBoundingClientRect:()=>({top:mediaTop,bottom:mediaTop+100})} as unknown as HTMLDivElement};
+ const render=()=>{harness.stateIndex=0;harness.refIndex=0;harness.effects=[];HeroMotion({container,mediaSlot:{current:null},controlsSlot:{current:null},onStatus:()=>{},src:'/clip.mp4',pauseLabel:'Pause',playLabel:'Play'});};
+ render();
  const video={muted:false,play:vi.fn(()=>Promise.resolve()),pause:vi.fn(),currentTime:0};
- harness.refs[1]!.current=video;
+ harness.refs[0]!.current=video;
  const cleanup=harness.effects[0]!() as ()=>void;
  try{
   harness.viewport!({active:true,reducedMotion:false});render();harness.effects[1]!();

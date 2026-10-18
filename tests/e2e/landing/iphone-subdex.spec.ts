@@ -2,6 +2,35 @@ import {test,expect} from '@playwright/test';
 import {heroMedia,subdexMedia} from '../../../lib/landing/media';
 import {simulateSubdex} from './media-simulation';
 
+test('SUBDEX loads its playback chunk only after scroll without replacing the poster',async({page})=>{
+  await simulateSubdex(page);
+  const playbackScripts:string[]=[];
+  const reads:Promise<void>[]=[];
+  page.on('response',response=>{
+    if(response.request().resourceType()!=='script')return;
+    reads.push(response.text().then(source=>{
+      // This decoded-frame API belongs to HeroMotion, not the poster shell.
+      if(source.includes('requestVideoFrameCallback'))playbackScripts.push(response.url());
+    }));
+  });
+  await page.goto('/');await page.waitForLoadState('networkidle');
+  await Promise.all(reads);
+  expect(playbackScripts).toEqual([]);
+  const root=page.getByTestId('subdex-motion');
+  const poster=await root.locator('img').elementHandle();
+  const shell=await root.elementHandle();
+  await root.scrollIntoViewIfNeeded();
+  await expect(root.locator('video')).toHaveCSS('opacity','1');
+  await expect.poll(()=>playbackScripts.length).toBe(1);
+  expect(await root.evaluate((node,original)=>node===original,shell)).toBe(true);
+  expect(await root.locator('img').evaluate((node,original)=>node===original,poster)).toBe(true);
+  expect(await poster!.evaluate(node=>node.isConnected)).toBe(true);
+  // A late poster failure must not insert its fallback above the playing video.
+  await root.locator('img').dispatchEvent('error');
+  await expect(root.getByRole('img',{name:'Pixel hero catching a sub. Image unavailable.'})).toHaveCount(1);
+  expect(await root.evaluate(node=>!!(node.querySelector('[role="img"]')!.compareDocumentPosition(node.querySelector('video')!)&Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+});
+
 for(const lang of ['en','es'])for(const consent of ['unset','accepted','rejected'])test(`SUBDEX poster and ordering ${lang} ${consent}`,async({page,context,baseURL},info)=>{
   if(consent!=='unset')await context.addCookies([{name:'landing_consent',value:consent,url:baseURL!}]);
   await page.emulateMedia({reducedMotion:'reduce'});

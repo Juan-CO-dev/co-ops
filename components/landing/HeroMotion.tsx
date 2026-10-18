@@ -1,13 +1,13 @@
 "use client";
-import {useCallback,useEffect,useRef,useState,type ReactNode} from 'react';
-import {flushSync} from 'react-dom';
+import {useCallback,useEffect,useRef,useState,type RefObject} from 'react';
+import {createPortal,flushSync} from 'react-dom';
 import {shouldLoadMotion,shouldPlayMotion,type MotionState} from '@/lib/landing/media-policy-shared';
 import {waitForMediaReadiness} from '@/lib/landing/media-readiness-shared';
 import {observeLandingViewport} from '@/lib/landing/scroll-controller';
 
 /** Optional motion never replaces the reserved, server-rendered still. */
-export function HeroMotion({children,src,pauseLabel,playLabel,fallbackLabel,testId='hero-motion'}:{children:ReactNode;src:string;pauseLabel:string;playLabel:string;fallbackLabel:string;testId?:string}){
-  const container=useRef<HTMLDivElement>(null),video=useRef<HTMLVideoElement>(null);
+export function HeroMotion({container,mediaSlot,controlsSlot,onStatus,src,pauseLabel,playLabel}:{container:RefObject<HTMLDivElement|null>;mediaSlot:RefObject<HTMLDivElement|null>;controlsSlot:RefObject<HTMLDivElement|null>;onStatus:(status:{ready:boolean;failed:boolean})=>void;src:string;pauseLabel:string;playLabel:string}){
+  const video=useRef<HTMLVideoElement>(null);
   const started=useRef(false),attempt=useRef({id:0});
   const entryArmed=useRef(true),restart=useRef(false);
   type RuntimeState=MotionState & {attached:boolean};
@@ -18,7 +18,7 @@ export function HeroMotion({children,src,pauseLabel,playLabel,fallbackLabel,test
     return attached===next.attached?next:{...next,attached};
   }),[]);
   const attached=state.attached;
-  const [playing,setPlaying]=useState(false),[posterFailed,setPosterFailed]=useState(false);
+  const [playing,setPlaying]=useState(false);
   useEffect(()=>{
     const root=container.current!,epoch=attempt.current;
     const connection=(navigator as Navigator & {connection?:EventTarget & {saveData?:boolean}}).connection;
@@ -40,11 +40,8 @@ export function HeroMotion({children,src,pauseLabel,playLabel,fallbackLabel,test
     });
     connection?.addEventListener('change',preferences);
     document.addEventListener('visibilitychange',preferences);
-    const image=root.querySelector('img');
-    // An image can fail before hydration installs React's error handler.
-    if(image?.complete&&image.naturalWidth===0)setPosterFailed(true);
     return ()=>{epoch.id++;cancelReady();stop();connection?.removeEventListener('change',preferences);document.removeEventListener('visibilitychange',preferences);};
-  },[setState]);
+  },[container,setState]);
   const canPlay=shouldPlayMotion(state);
   const fail=useCallback(()=>{started.current=false;setPlaying(false);setState(s=>({...s,failed:true}));},[setState]);
   const play=useCallback(()=>{
@@ -78,6 +75,7 @@ export function HeroMotion({children,src,pauseLabel,playLabel,fallbackLabel,test
     return ()=>{clearInterval(timer);if(frame!==undefined)element.cancelVideoFrameCallback(frame);element.removeEventListener('timeupdate',progress);};
   },[attached,canPlay,fail]);
   const allowed=state.lcpReady&&!state.reducedMotion&&!state.saveData;
+  useEffect(()=>{onStatus({ready:state.lcpReady,failed:state.failed});},[onStatus,state.lcpReady,state.failed]);
   const toggle=()=>{
     if(playing&&!state.paused){setState(s=>({...s,paused:true}));return;}
     // Reserve this attempt before flushing so the effect cannot issue a second
@@ -89,12 +87,9 @@ export function HeroMotion({children,src,pauseLabel,playLabel,fallbackLabel,test
     if(element.ended||state.completed)element.currentTime=0;
     play();
   };
-  return <div ref={container} data-testid={testId} data-media-ready={state.lcpReady} data-media-failed={state.failed}>
-    <div className="relative aspect-square overflow-hidden rounded-2xl bg-[#FFE560]">
-      <div className={posterFailed?'invisible':undefined} onErrorCapture={()=>setPosterFailed(true)}>{children}</div>
-      {posterFailed&&<div role="img" aria-label={fallbackLabel} className="absolute inset-0 flex items-center justify-center p-6 text-center">{fallbackLabel}</div>}
-      {attached&&<video ref={video} src={src} muted playsInline preload="none" aria-hidden="true" onError={fail} onPause={()=>setPlaying(false)} onEnded={()=>{started.current=false;setPlaying(false);setState(s=>({...s,completed:true}));}} className={`absolute inset-0 h-full w-full bg-[#FFE560] object-contain ${playing&&canPlay?'opacity-100':'opacity-0'}`}/>}
-    </div>
-    <div className="min-h-[52px]">{allowed&&<button type="button" aria-pressed={state.paused} onClick={toggle} className="mt-2 inline-flex min-h-11 min-w-11 items-center rounded-lg border border-co-text px-4 font-bold">{playing&&!state.paused?pauseLabel:playLabel}</button>}</div>
-  </div>;
+  // Portal only the playback UI into the persistent shell; never reparent its still.
+  return <>
+    {mediaSlot.current&&createPortal(attached&&<video ref={video} src={src} muted playsInline preload="none" aria-hidden="true" onError={fail} onPause={()=>setPlaying(false)} onEnded={()=>{started.current=false;setPlaying(false);setState(s=>({...s,completed:true}));}} className={`absolute inset-0 h-full w-full bg-[#FFE560] object-contain ${playing&&canPlay?'opacity-100':'opacity-0'}`}/>,mediaSlot.current)}
+    {controlsSlot.current&&createPortal(allowed&&<button type="button" aria-pressed={state.paused} onClick={toggle} className="mt-2 inline-flex min-h-11 min-w-11 items-center rounded-lg border border-co-text px-4 font-bold">{playing&&!state.paused?pauseLabel:playLabel}</button>,controlsSlot.current)}
+  </>;
 }
