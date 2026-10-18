@@ -1,6 +1,64 @@
 import {test,expect} from '@playwright/test';
 import {heroMedia,subdexMedia} from '../../../lib/landing/media';
 import {simulateSubdex} from './media-simulation';
+import {playbackChunkPaths} from './playback-chunk';
+
+for(const preference of ['reduce','save-data'] as const)test(`SUBDEX imports no playback chunk under ${preference}, then activates on preference change`,async({page})=>{
+ const chunks=playbackChunkPaths(),requests:string[]=[];
+ await simulateSubdex(page);
+ if(preference==='reduce')await page.emulateMedia({reducedMotion:'reduce'});
+ else await page.addInitScript(()=>Object.defineProperty(navigator,'connection',{configurable:true,value:Object.assign(new EventTarget(),{saveData:true})}));
+ page.on('request',request=>{if(chunks.includes(new URL(request.url()).pathname))requests.push(request.url());});
+ await page.goto('/');const root=page.getByTestId('subdex-motion');await root.scrollIntoViewIfNeeded();
+ await page.waitForLoadState('networkidle');
+ expect(requests).toEqual([]);await expect(root).toHaveAttribute('data-motion-state','idle');
+ if(preference==='reduce')await page.emulateMedia({reducedMotion:'no-preference'});
+ else await page.evaluate(()=>{const connection=(navigator as Navigator & {connection:EventTarget & {saveData:boolean}}).connection;connection.saveData=false;connection.dispatchEvent(new Event('change'));});
+ await expect(root).toHaveAttribute('data-motion-state','ready');
+ await expect.poll(()=>requests.length).toBe(1);
+ await expect(root.locator('video')).toHaveCSS('opacity','1');
+});
+
+test('SUBDEX exposes cached lazy import failure, preserves its poster, and recovers on reload',async({page})=>{
+ await simulateSubdex(page);const chunks=playbackChunkPaths();let requests=0;
+ await page.route('**/_next/static/**/*.js',route=>{
+  if(!chunks.includes(new URL(route.request().url()).pathname))return route.continue();
+  requests++;return requests===1?route.abort():route.continue();
+ });
+ await page.goto('/');const root=page.getByTestId('subdex-motion');await root.scrollIntoViewIfNeeded();
+ await expect(root).toHaveAttribute('data-motion-state','failed');
+  await expect(root.locator('img')).toBeVisible();
+  await page.evaluate(()=>window.dispatchEvent(new Event('scroll')));
+  // Turbopack caches the rejected chunk promise. The unit test proves one
+  // re-armed import attempt; do not claim it forces a second network request.
+  await page.waitForTimeout(100);
+  await expect(root).toHaveAttribute('data-motion-state','failed');
+  expect(requests).toBe(1);
+  await page.reload();await root.scrollIntoViewIfNeeded();
+  await expect(root).toHaveAttribute('data-motion-state','ready');
+ expect(requests).toBe(2);
+});
+
+test('SUBDEX fractional-DPR outside sliver does not re-arm replay',async({browser,baseURL})=>{
+ const context=await browser.newContext({baseURL,viewport:{width:375,height:812},deviceScaleFactor:1.25});
+ try {
+  const page=await context.newPage();await simulateSubdex(page);await page.goto('/');
+  const root=page.getByTestId('subdex-motion');await root.scrollIntoViewIfNeeded();
+  await expect(root.locator('video')).toHaveCSS('opacity','1');
+  await root.locator('video').dispatchEvent('ended');
+  const attempts=await page.evaluate(()=>Reflect.get(window,'subdexAttempts'));
+  await page.evaluate(()=>{const section=document.querySelector('#subdex')!;scrollTo(0,section.getBoundingClientRect().bottom+scrollY+1.6);});
+  await expect.poll(()=>page.locator('#subdex').evaluate(el=>el.getBoundingClientRect().bottom)).toBeLessThan(0);
+  expect(await page.locator('#subdex').evaluate(el=>el.getBoundingClientRect().bottom)).toBeGreaterThan(-8);
+  await root.scrollIntoViewIfNeeded();await page.waitForTimeout(250);
+  expect(await page.evaluate(()=>Reflect.get(window,'subdexAttempts'))).toBe(attempts);
+  // Continue gradually beyond the margin after the first inactive callback.
+  await page.evaluate(()=>{const section=document.querySelector('#subdex')!;scrollTo(0,section.getBoundingClientRect().bottom+scrollY+2);});
+  await page.waitForTimeout(100);await page.evaluate(()=>scrollBy(0,20));await page.waitForTimeout(100);
+  await root.scrollIntoViewIfNeeded();
+  await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'subdexAttempts'))).toBe(attempts+1);
+ } finally {await context.close();}
+});
 
 test('SUBDEX loads its playback chunk only after scroll without replacing the poster',async({page})=>{
   await simulateSubdex(page);
@@ -9,18 +67,20 @@ test('SUBDEX loads its playback chunk only after scroll without replacing the po
   page.on('response',response=>{
     if(response.request().resourceType()!=='script')return;
     reads.push(response.text().then(source=>{
-      // This decoded-frame API belongs to HeroMotion, not the poster shell.
-      if(source.includes('requestVideoFrameCallback'))playbackScripts.push(response.url());
+      // Unique rendered marker belongs only to the lazy playback module.
+      if(source.includes('data-hero-motion-playback'))playbackScripts.push(response.url());
     }));
   });
   await page.goto('/');await page.waitForLoadState('networkidle');
   await Promise.all(reads);
   expect(playbackScripts).toEqual([]);
   const root=page.getByTestId('subdex-motion');
+  await expect(root).toHaveAttribute('data-motion-state','idle');
   const poster=await root.locator('img').elementHandle();
   const shell=await root.elementHandle();
   await root.scrollIntoViewIfNeeded();
   await expect(root.locator('video')).toHaveCSS('opacity','1');
+  await expect(root).toHaveAttribute('data-motion-state','ready');
   await expect.poll(()=>playbackScripts.length).toBe(1);
   expect(await root.evaluate((node,original)=>node===original,shell)).toBe(true);
   expect(await root.locator('img').evaluate((node,original)=>node===original,poster)).toBe(true);

@@ -424,3 +424,102 @@ The archived source and both new E2E fixture directories used directory junction
 Recursive deletion of the detached archived scratch directory was rejected by automatic command policy, including a separate PowerShell cleanup attempt; the tool returned only “blocked by policy”, without a more specific reason. No approval escalation or alternate deletion mechanism was used. The detached scratch directories remain under `tmp/`, with **all three new junctions absent**; they are not shipped changes. This is the remaining cleanup limitation.
 
 Final TCP probes: ports **44170–44175 all closed**; harness PID file absent; clone dependencies present. No harness servers remain. All requested source/test/doc changes are **UNCOMMITTED** on `feat/landing-v2`, HEAD `16950ac4`, worktree `C:/Users/conta/co-ops-landing`. No push, merge, deployment or production access. Open outcome: local fast mode unresolved; CC must judge the retained step-2a candidate in CI and review it before any commit.
+
+## Round F - applied performance methodology, Aggie P3s, and CI timeout (base 88ab4379)
+
+**Implementation is uncommitted; the performance gate remains RED on TBT.** All four applied LCP medians pass 2.5 s. Applied TBT medians are 246.617 / 232.920 ms in matrix 1 and 266.944 / 263.054 ms in matrix 2 (unset / accepted), above the unchanged 200 ms limit. No threshold was relaxed or moved to warning in the applied collection. This is an escalation to CC with measured evidence, not a claim that the TBT budget is meaningless or permission to recalibrate it. Further performance/budget decisions stop at this handoff.
+
+### Methodology and before/after contract
+
+Juan approved 2026-10-18. CC's recommendation replaces Lantern as the blocking measurement because Round D/E traced framework-chunk dependency bimodality despite observed LCP around 150 ms. CI fast-run shares supplied in the dispatch were 7/10 at 49a143ab, 4/10 at 610ca9bb, and 2/5 at 88ab4379; run 39098500802 hit the old 25-minute timeout during performance collection. The historical evidence above remains intact.
+
+Before (`lighthouserc.cjs`):
+```js
+throttlingMethod: 'simulate'
+throttling: {rttMs:150, throughputKbps:1600, cpuSlowdownMultiplier:4}
+'largest-contentful-paint': ['error', {maxNumericValue:2499.999, aggregationMethod:'median'}]
+```
+After, the blocking collection:
+```js
+throttlingMethod: 'devtools'
+throttling: {
+  rttMs:150, throughputKbps:1600,
+  requestLatencyMs:562.5, downloadThroughputKbps:1474.56,
+  uploadThroughputKbps:675, cpuSlowdownMultiplier:4
+}
+'largest-contentful-paint': ['error', {maxNumericValue:2499.999, aggregationMethod:'median'}]
+```
+The separate `LANDING_PERF_COLLECTION=simulated-report-only` collection selects `simulate` and sets **every LHCI assertion to `warn`**. `collectionBlocks` excludes its CLI exits and custom budget/consent failures from the job exit; errors remain recorded in its evidence. An applied failure cannot be cleared by a later simulated pass. Raw reports and summaries are separated under `applied-blocking/` and `simulated-report-only/`, including native assertion results and collection durations. The shared config/runner also uses these two collections for the existing accepted-only real-Pixel launch mode; that HTTPS release measurement was not run here.
+
+Unchanged blocking contracts: five cold samples per consent state, median aggregation, LCP <2500 ms, TBT <=200 ms, CLS <=0.1, performance >=0.85, accessibility >=0.95, first-party transfer <=500,000 B **each run**, and the existing consent/Pixel-blocking verification. Full-scroll/JS/critical-byte browser budgets remain unchanged and passed. Each local `perf:ci` now collects **10 blocking + 10 report-only samples**; both complete matrices below retain all 40 samples.
+
+`.github/workflows/landing-checks.yml`: timeout **25 -> 35 minutes**. The perf step sets `LANDING_E2E_USE_BUILD=1` to reuse the revision already built by e2e, avoiding four redundant Next builds while retaining both collections. No coverage was removed.
+
+### Every LCP sample and collection duration
+
+Milliseconds, rounded to 0.001 below; full-precision values remain in raw LHRs and `tmp/roundf-perf-summary.json`. Samples retain collection order; none were discarded.
+
+| Matrix | Collection | Consent | LCP samples 1-5 (ms) | Median (ms) | Collection seconds | CLI exit |
+|---|---|---|---|---:|---:|---:|
+| 1 | applied-blocking | unset | 2165.27, 2205.413, 2230.067, 2201.958, 2271.723 | 2205.413 | 206.075 | 1 |
+| 1 | applied-blocking | accepted | 2022.944, 2274.929, 2523.747, 2131.115, 2292.127 | 2274.929 | 140.422 | 1 |
+| 1 | simulated-report-only | unset | 3098.188, 3049.738, 3069.317, 3041.89, 3004.804 | 3049.738 | 76.485 | 0 |
+| 1 | simulated-report-only | accepted | 3086.708, 3056.711, 3049.159, 3034.399, 3047.54 | 3049.159 | 75.641 | 0 |
+| 2 | applied-blocking | unset | 2026.407, 2166.746, 2179.194, 2086.401, 2288.429 | 2166.746 | 143.206 | 1 |
+| 2 | applied-blocking | accepted | 2013.333, 2300.813, 2182.813, 2178.037, 2245.959 | 2182.813 | 141.405 | 1 |
+| 2 | simulated-report-only | unset | 3019.942, 3017.137, 2317.047, 3018.126, 3111.598 | 3018.126 | 76.419 | 0 |
+| 2 | simulated-report-only | accepted | 3053.504, 3020.001, 3048.393, 3000.563, 3133.441 | 3048.393 | 75.791 | 0 |
+
+Every native applied assertion result contains **only `total-blocking-time` at `error`**; every simulated assertion result contains **only `largest-contentful-paint` at `warn`**. Applied raw settings all confirm `devtools` and the exact throttling values above. Simulated settings confirm `simulate`.
+
+| Matrix | Collection / consent | TBT samples (ms) | TBT median | Performance median | Accessibility minimum | CLS maximum |
+|---|---|---|---:|---:|---:|---:|
+| 1 | applied-blocking / unset | 338.562, 215.591, 268.946, 246.617, 233.803 | 246.617 | 0.92 | 1 | 0.002749892 |
+| 1 | applied-blocking / accepted | 117.968, 232.92, 238.575, 205.348, 318.427 | 232.92 | 0.91 | 1 | 0.052699397 |
+| 1 | simulated-report-only / unset | 28.5, 45, 51.561, 44.5, 54.5 | 45 | 0.94 | 1 | 0.002749892 |
+| 1 | simulated-report-only / accepted | 33.5, 48, 44, 36.5, 46 | 44 | 0.94 | 1 | 0.052699397 |
+| 2 | applied-blocking / unset | 121.015, 289.386, 266.944, 230.398, 306.901 | 266.944 | 0.91 | 1 | 0.002749892 |
+| 2 | applied-blocking / accepted | 110.48, 272.975, 351.66, 258.991, 263.054 | 263.054 | 0.9 | 1 | 0.052699397 |
+| 2 | simulated-report-only / unset | 29, 30, 53.5, 30.5, 63.634 | 30.5 | 0.94 | 1 | 0.002749892 |
+| 2 | simulated-report-only / accepted | 18, 28.5, 54.536, 19.5, 61.5 | 28.5 | 0.94 | 1 | 0.052699397 |
+
+First-party transfer is **301,620 B in every one of the 40 samples**, third-party transfer 0 B. This is Pixel-blocked evidence, not a real-Pixel cost measurement. The applied-versus-simulated TBT delta is material: applied medians 232.920-266.944 ms versus simulated 28.5-45 ms. It is reported to CC without changing the existing budget or silently declaring the methods interchangeable.
+
+Evidence roots:
+
+- Matrix 1: `tmp/landing-performance/2026-10-18T14-37-50.300Z-merge-3c493e58/` (all 20 raw LHRs, HTML reports, assertion results and four summaries).
+- Matrix 2: `tmp/landing-performance/2026-10-18T14-46-17.624Z-merge-e3089ab0/` (all 20 raw LHRs, HTML reports, assertion results and four summaries).
+
+Environment for both matrices: `CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe`, `LANDING_PERF_NO_SANDBOX=1`, `LANDING_E2E_USE_BUILD=1`, `LHCI_CLI_PATH=C:/Users/conta/AppData/Local/npm-cache/_npx/7c4c7312e9ccc7bf/node_modules/@lhci/cli/src/cli.js` (cached pinned LHCI 0.15.1). Same production build and unchanged application/config between matrices; one heavy job at a time. No server was listening on 44170-44175 between e2e and perf, or between the two matrices.
+
+### Durations and verification
+
+- `node node_modules/vitest/vitest.mjs run tests/landing tests/security-headers.test.ts --pool=threads --maxWorkers=3`: **PASS**, 52 files / 399 tests, exit 0; 7.880 s wall time (`tmp/roundf-vitest.log`). Includes the config/severity test and the bounded import-retry unit test.
+- `node node_modules/typescript/bin/tsc --noEmit --incremental false`: **PASS**, exit 0, 47.067 s (`tmp/roundf-tsc.log`).
+- `npm.cmd run assets:check`: **PASS**, 45 assets, exit 0, 0.370 s (`tmp/roundf-assets.log`). No asset edits.
+- `npm.cmd run build`: **PASS**, exit 0, 146.474 s (`tmp/roundf-build.log`, `tmp/roundf-build-result.json`). No application edits after this build.
+- Changed-file ESLint: changed TS/TSX files **PASS**, exit 0 (`tmp/roundf-eslint-ts.log`); changed `.mjs`/`.cjs` files **PASS**, exit 0 with `--config tmp/roundf-eslint.config.mjs` (`tmp/roundf-eslint-js.log`). The initial combined command exited **2** because the existing repo config applies JSX-a11y rules to CJS without registering that plugin. The temporary wrapper imports the existing config and registers its exact existing `jsx-a11y` plugin globally; it disables no rules. `eslint.config.mjs` is unchanged. Initial failure remains in `tmp/roundf-eslint.log` and `tmp/roundf-checks.json`.
+- `LANDING_E2E_USE_BUILD=1 node node_modules/@playwright/test/cli.js test --workers=2`: **PASS**, **486 passed / 13 existing skips / 0 failures**, exit 0, **1016.525 s = 16m 56.525s** (`tmp/roundf-full-e2e.log`, `tmp/roundf-full-e2e-result.json`, Playwright report). All new cases pass in Chromium, WebKit and scoped iPhone WebKit. Existing Windows WebKit decoder / Chromium-only skips remain skips; no physical iPhone claim.
+- `npm.cmd run perf:ci`, matrix 1: **FAIL**, exit 1, **498.949 s = 8m 18.949s** (`tmp/roundf-perf1.log`, `tmp/roundf-perf1-result.json`). Applied TBT is the only blocking failure in each state; both simulated collections exit 0 with LCP warnings.
+- Same command, matrix 2: **FAIL**, exit 1, **437.161 s = 7m 17.161s** (`tmp/roundf-perf2.log`, `tmp/roundf-perf2-result.json`); same blocking failure and report-only behavior.
+
+Local full e2e + one complete perf matrix totals **25m 15.474s** for matrix 1, or **24m 13.686s** for matrix 2. Against 35 minutes this leaves roughly 9m45s-10m46s for CI's install, main build (local e2e reused it), type/unit checks, repeated lineup/tracking suite and artifact steps. This is a timing sanity check, **not** proof of CI duration. Both collections are retained; no trade-off was silently made. Exact-revision CI remains CC's follow-up because no push is authorized.
+
+### Aggie P3 ledger
+
+| Finding | Change | Verification / limit |
+|---|---|---|
+| P3-1 | DeferredMotion catches import failure, exposes `failed`, and re-arms scroll once (two attempts maximum); disposal prevents late updates. | New runtime unit test proves loading/failed twice and no third attempt. Browser failure preserves the poster and reload recovers. **Turbopack caches rejected chunk promises**, so the second import can still fail without a new network request; no forced recovery is claimed. |
+| P3-2 | Nonvisual `data-motion-state="idle\|loading\|ready\|failed"`; shell owns import lifecycle and child reports bounded readiness. | Browser checks idle/failed/ready; unit checks loading/failed transitions. `data-media-ready` remains the child paint/readiness gate, not decoded progress; `data-media-failed` remains playback failure, not poster/import failure. Documented in source and BUILD. |
+| P3-3 | Check Reduce Motion and Save-Data before import. Keep scroll activation armed and listen for preference changes after a scroll. | Both preferences produce zero playback-chunk requests; clearing either activates the same shell and playback in all three projects. Chunk paths are discovered from the built child-only marker. |
+| P3-4 | Replay re-arms only on a physical section exit `bottom < -8 \|\| top > innerHeight + 8`; hidden-tab notifications do not re-arm it. | Fractional DPR 1.25 test proves a 1.6px outside sliver does not replay, then a continued exit beyond the margin does. Offscreen observer notifications are required to detect that continued exit; the existing state bailout test still passes. |
+| P3-5 | Replace generic `requestVideoFrameCallback` chunk identification with unique `data-hero-motion-playback`. | Lazy-fetch/poster-identity test and built-chunk preference tests pass; no fixed chunk hash/name. |
+| P3-6 | Replace positional ref/effect assertions in `hero-motion-runtime.test.ts` with tagged video lookup and named `observeMotion` / `syncPlayback` effects. | Runtime bailout, offscreen, pause and observer assertions pass. |
+
+The initial focused Chromium run was **20 passed / 1 failed**, 181.678 s (`tmp/roundf-focused-e2e.log`). Its failed assertion expected an aborted chunk to recover from a repeated import. That expectation was disproved by Turbopack's cached rejection; the final test explicitly covers failed state, poster retention and reload recovery, while the unit test independently proves the requested bounded retry. The complete final browser suite passes. This limitation is also documented in BUILD.
+
+Changed files: `.github/workflows/landing-checks.yml`; `lighthouserc.cjs`; `scripts/landing/{perf-ci,performance-report}.mjs`; `components/landing/{DeferredMotion,HeroMotion}.tsx`; `tests/landing/{performance-budget,hero-motion-runtime,deferred-motion-runtime}.test.ts`; `tests/e2e/landing/{iphone-subdex.spec,playback-chunk}.ts`; `docs/landing-v2-{BUILD,roundf-PLAN,chunk7-RESULT}.md`.
+
+All changes remain **UNCOMMITTED** on `feat/landing-v2`, HEAD `88ab4379`, worktree `C:/Users/conta/co-ops-landing`. No push, merge, deployment or production access. No visible tags. Open items: applied TBT qualification / CC's judgment on the measurement delta, exact-revision CI timing and cross-family review, the cached-import limitation, and the existing native-device release checks.
+
+Final cleanup/checks: ports **44170-44175 closed**, harness PID file absent; `git diff --check` passes. `app/eat/layout.tsx` and `package.json` retain their pre-existing stale status entries with no content diff. Scratch fixture directories remain under ignored `tmp/`; no recursive deletion was attempted.

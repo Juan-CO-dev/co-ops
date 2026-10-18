@@ -28,7 +28,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.landing == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -54,6 +54,8 @@ jobs:
         run: echo "CHROME_PATH=$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
       - name: First-party landing merge budgets
         env:
+          # Full e2e already built this revision; both perf collections reuse it.
+          LANDING_E2E_USE_BUILD: "1"
           # Ubuntu runners block Chromium's user-namespace sandbox (AppArmor); CI-only opt-in.
           LANDING_PERF_NO_SANDBOX: "1"
         run: npm run perf:ci

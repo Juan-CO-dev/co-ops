@@ -19,16 +19,17 @@ export function HeroMotion({container,mediaSlot,controlsSlot,onStatus,src,pauseL
   }),[]);
   const attached=state.attached;
   const [playing,setPlaying]=useState(false);
-  useEffect(()=>{
-    const root=container.current!,epoch=attempt.current;
+  useEffect(function observeMotion(){
+    const root=container.current!,section=root.closest('section')??root,epoch=attempt.current;
     const connection=(navigator as Navigator & {connection?:EventTarget & {saveData?:boolean}}).connection;
     const preferences=()=>setState(s=>({...s,saveData:connection?.saveData===true,documentVisible:!document.hidden}));
     const cancelReady=waitForMediaReadiness(()=>{preferences();setState(s=>({...s,lcpReady:true}));});
-    const stop=observeLandingViewport(root.closest('section')??root,({active:sectionActive,reducedMotion})=>{
+    const stop=observeLandingViewport(section,({active:sectionActive,reducedMotion})=>{
       // Hidden-tab notifications pause but are not physical viewport exits.
-      // The scheduler uses any intersection, so a sliver at the edge stays one visit.
+      // Require a physical exit with margin: fractional edge jitter is one visit.
       const freshEntry=sectionActive&&entryArmed.current;
-      if(!sectionActive&&!document.hidden)entryArmed.current=true;
+      const sectionBox=section.getBoundingClientRect();
+      if(!sectionActive&&!document.hidden&&(sectionBox.bottom < -8||sectionBox.top > innerHeight+8))entryArmed.current=true;
       if(freshEntry){entryArmed.current=false;restart.current=true;}
       const box=sectionActive?root.getBoundingClientRect():null;
       const active=!!box&&box.bottom>0&&box.top<innerHeight;
@@ -37,7 +38,7 @@ export function HeroMotion({container,mediaSlot,controlsSlot,onStatus,src,pauseL
         if(s.visible===active&&s.reducedMotion===reducedMotion&&s.documentVisible===documentVisible&&s.saveData===saveData&&(!active||s.triggered)&&(!freshEntry||(!s.completed&&!s.paused)))return s;
         return {...s,visible:active,triggered:s.triggered||active,reducedMotion,documentVisible,saveData,...(freshEntry?{completed:false,paused:false}:{})};
       });
-    });
+    },{offscreen:true});
     connection?.addEventListener('change',preferences);
     document.addEventListener('visibilitychange',preferences);
     return ()=>{epoch.id++;cancelReady();stop();connection?.removeEventListener('change',preferences);document.removeEventListener('visibilitychange',preferences);};
@@ -51,7 +52,7 @@ export function HeroMotion({container,mediaSlot,controlsSlot,onStatus,src,pauseL
     if(restart.current){element.currentTime=0;restart.current=false;}
     void element.play().catch(()=>{if(attempt.current.id===id)fail();});
   },[fail]);
-  useEffect(()=>{
+  useEffect(function syncPlayback(){
     const element=video.current;if(!element)return;
     if(canPlay){if(!started.current)play();}
     else {attempt.current.id++;started.current=false;element.pause();}
@@ -89,7 +90,7 @@ export function HeroMotion({container,mediaSlot,controlsSlot,onStatus,src,pauseL
   };
   // Portal only the playback UI into the persistent shell; never reparent its still.
   return <>
-    {mediaSlot.current&&createPortal(attached&&<video ref={video} src={src} muted playsInline preload="none" aria-hidden="true" onError={fail} onPause={()=>setPlaying(false)} onEnded={()=>{started.current=false;setPlaying(false);setState(s=>({...s,completed:true}));}} className={`absolute inset-0 h-full w-full bg-[#FFE560] object-contain ${playing&&canPlay?'opacity-100':'opacity-0'}`}/>,mediaSlot.current)}
+    {mediaSlot.current&&createPortal(attached&&<video data-hero-motion-playback="" ref={video} src={src} muted playsInline preload="none" aria-hidden="true" onError={fail} onPause={()=>setPlaying(false)} onEnded={()=>{started.current=false;setPlaying(false);setState(s=>({...s,completed:true}));}} className={`absolute inset-0 h-full w-full bg-[#FFE560] object-contain ${playing&&canPlay?'opacity-100':'opacity-0'}`}/>,mediaSlot.current)}
     {controlsSlot.current&&createPortal(allowed&&<button type="button" aria-pressed={state.paused} onClick={toggle} className="mt-2 inline-flex min-h-11 min-w-11 items-center rounded-lg border border-co-text px-4 font-bold">{playing&&!state.paused?pauseLabel:playLabel}</button>,controlsSlot.current)}
   </>;
 }
