@@ -276,3 +276,86 @@ Sol's read-only analysis confirmed the framework chunk cannot be removed by simp
 Remaining blocker: no successful P0 product fix. The concrete next experiment and risks are in `docs/landing-v2-roundc-PLAN.md`; CC's cross-family plan review was requested and has not arrived. The supplied charter (`C:/Users/conta/.codex/AGENTS.md`) requires "a reviewer from another family reads it before you code (CC arranges this)." The proposed global Next configuration change has therefore not been authored. Final independent code review also remains CC's responsibility.
 
 Cleanup: PID file absent; TCP probes confirm ports 44170 through 44175 closed after the final matrix. All changes remain UNCOMMITTED on `feat/landing-v2`, HEAD `610ca9bb`, worktree `C:/Users/conta/co-ops-landing`. No push, merge, deployment, production data change, asset change or visible tag added.
+
+
+## Round D - landing-scoped LCP experiments (base 9872e9b5)
+
+**LCP remains unresolved.** CC's reviewed landing-only sequence was followed; global experimental.inlineCss, root layout, ops routes/styles, CSP and the performance configuration/budgets were not changed. Plan: docs/landing-v2-roundd-PLAN.md. The CSS-only candidate failed all ten runs and has been reverted. Final functional verification passed; the final performance gate still fails. No visible tags or asset changes.
+
+### Experiment 1a and unchanged perf:ci
+
+The candidate replaced only the /eat CSS import with a server-read, processed inline style, preserving its position after root CSS. Lightning CSS 1.32.0 generated the artifact; a freshness test and npm prebuild/predev regenerated it. Next traced the artifact into both /eat and /eat/privacy functions without a config exception. The existing self-hosted font URLs stayed in the unmodified root bundle. This was a real build, not response interception.
+
+| Build | Unset LCP ms (all five) | Accepted LCP ms (all five) | Outcome |
+|---|---|---|---|
+| Round C baseline | 3058.955, 3052.148, 3000.925, 3008.102, 3074.853 | 3093.775, 3091.389, 3049.816, 3055.383, 3062.167 | FAIL, exit 1; 0/10 <2500 |
+| 1a, landing CSS inline | 3086.611, 3069.492, 2947.092, 2947.205, 2930.579 | 2942.295, 2985.141, 3116.296, 3003.436, 2986.401 | FAIL, exit 1; 0/10 <2500 |
+| Restored Round C, final verification | 3076.587, 3053.595, 3009.153, 3044.526, 3045.325 | 3070.847, 3012.762, 3082.321, 3063.838, 2998.479 | FAIL, exit 1; 0/10 <2500 |
+
+Commands used explicit CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe, LANDING_PERF_NO_SANDBOX=1, LANDING_E2E_USE_BUILD=1, and the cached LHCI 0.15.1 CLI. All three matrices ran unmodified npm.cmd run perf:ci. Raw evidence: tmp/landing-performance/2026-10-18T03-23-15.358Z-merge-0a7bb42f and tmp/landing-performance/2026-10-18T03-30-17.638Z-merge-e1311022. Logs: tmp/landing-v2/chunk7/roundd-{baseline,inline-perf}.log. Baseline transferred 302492 first-party bytes per run; the candidate transferred 304390 (+1898), despite removing one stylesheet request. CLS was identical across all ten runs in each build: unset 0.00274989231721226; accepted 0.0526993970522216. These remain offline first-party-only measurements, with Pixel blocked by the existing harness.
+
+English and Spanish 375x812 reduced-motion screenshots were byte-identical before/after; hero/consent rectangles, font values, margins and padding also matched exactly. Root CSS SHA-256 remained 3296cc9c2d8f1bd765deef4b2fc3fcb7d90fd4bdaf3381def1079df9ac1f15d8. The initial /login-path CSS check also matched (that path is the staff 404; the actual login route is / and was compared separately after rebuilding the restored source). Evidence: roundd-before/roundd-inline JSON, HTML and PNG files. No visual-equivalence claim is based solely on a screenshot glance.
+
+### What /eat inherits from globals.css
+
+The supplied three-request premise does not match this HEAD's real network log: /eat requests TWO stylesheets. Root 09g.k_tok-kbd.css = 90957 B raw, 14895 B with this Node gzip run; landing 0sn3ubcrz66kb.css = 13895 B raw, 3001 B gzip. The third CSS artifact on disk is 0t48hzs_6fshe.css (10572 B), Leaflet, and is NOT requested by /eat. next/font/local's DM Sans CSS is merged into the root bundle, not a third request. No third stylesheet was removed speculatively.
+
+The root dependency includes Tailwind Preflight/reset (box sizing, margins, heading/list/button/link/image defaults), theme variables, root palette variables, html/body typography and backgrounds, DM Sans @font-face/fallback/variable declarations, utility rules and their property initialization. The landing still uses the following root classes across English/Spanish home/privacy at 375 and 1440 pixels:
+
+antialiased, aspect-square, backdrop-blur-sm, bg-[#FFE560], bg-[var(--co-cta)], bg-co-bg, bg-co-surface, bg-co-surface/70, block, border, border-2, border-co-border, border-co-border/70, border-co-cta-text, border-co-text, cursor-pointer, dmsans_fad5d34c-module__HgcYia__variable, flex, flex-col, flex-wrap, focus-visible:outline-2, focus-visible:outline-offset-4, font-black, font-bold, gap-2, gap-3, gap-5, gap-x-10, gap-x-5, gap-y-2, gap-y-4, grid, group, group-open:rotate-45, h-12, h-auto, h-full, inline-flex, items-center, justify-between, justify-center, leading-none, leading-relaxed, list-none, max-w-2xl, max-w-full, max-w-lg, max-w-xl, min-h-11, min-h-[52px], min-h-full, min-h-screen, min-w-11, motion-safe:duration-300, motion-safe:transition-transform, mt-2, mt-3, mt-4, mt-6, mx-auto, not-italic, object-contain, overflow-hidden, overflow-x-auto, p-4, p-5, pb-32, pb-4, pb-5, px-3, px-4, px-5, py-10, py-3, py-4, relative, rounded, rounded-2xl, rounded-lg, rounded-xl, shrink-0, sm:grid-cols-2, sm:text-base, snap-mandatory, snap-start, snap-x, space-y-6, sr-only, text-2xl, text-3xl, text-[var(--co-text)], text-co-cta-text, text-co-text, text-co-text-dim, text-co-text-muted, text-left, text-lg, text-sm, text-xl, tracking-tight, underline, w-44, w-[280px], w-full
+
+A conservative class-matched extract retaining base/theme/fonts/@property rules is **21468 B raw / 5475 B gzip** (roundd-root-subset.css/json). This is a dependency inventory, NOT a proven minimal replacement: pseudo states and complete variable/property definitions are retained. Chrome's CSS coverage reports 83052 B due to nested/layer ranges; it is not a reliable byte-minimum and was not used as one. No ops CSS was edited or removed.
+
+### Step 2 - framework evaluation versus paint
+
+All times below are milliseconds after navigation; image paint is PaintImage, presented frame is the hero's largestContentfulPaint::Candidate. First framework is the first /_next EvaluateScript; core is 0rin-2ldzqm~l.js. The first three are slow; delay-core is a deliberately controlled fast diagnostic, not a naturally passing gate run. No natural fast run occurred in any of the three ten-run matrices.
+
+| Trace | Simulated LCP | Hero paint | Presented frame | First framework evaluate | Core evaluate |
+|---|---:|---:|---:|---:|---:|
+| before | 3054.464 | 132.339 | 198.626 | 88.585 | 149.836 |
+| inline | 3069.239 | 155.501 | 219.479 | 102.469 | 163.32 |
+| root-only | 2929.176 | 95.017 | 149.258 | 64.648 | 111.779 |
+| delay-core | 2306.940 | 95.91 | 142.723 | 103.217 | 372.298 |
+
+Evidence: roundd-{before,inline,root-only,delay-core}-trace-{lhr,trace,graph,ordering}.json under tmp/landing-v2/chunk7. The baseline core evaluation runs for 21.502 ms. The relevant distinction remains image paint versus presentation, not image fetching or a hydration visibility gate.
+
+- Hero is already a Server Component; its children pass through client wrappers as server-rendered content. Moving nodes alone does not suppress root framework scripts. Next 16.2.4's server/app-render/required-scripts.js derives them from buildManifest.rootMainFiles, and app-render.js calls preinitScripts independently of the landing's client islands.
+- root-only blocks every non-root application script request in a scratch Lighthouse diagnostic (the ordinary SSR HTML still renders). Even this stronger-than-idle island removal leaves core evaluation ahead of the hero frame and LCP at 2929 ms. It deliberately prevents hydration and is NOT a shippable change or privacy/interaction pass. Deferring rail/touches/motion/consent effects would not defer the root framework evaluation demonstrated here, so no such ineffective behavior change was retained.
+- All baseline framework and application script requests already have Low priority. Adding fetchPriority=low would not lower the observed priority. Fetch priority also cannot enforce execution-after-presentation.
+- delay-core holds ONLY the core request for 300 ms using Puppeteer interception, without rewriting HTML. It gives the controlled fast ordering above and simulated LCP 2307 ms. It proves the scheduling mechanism; it does not implement a product scheduler, and smaller framework scripts still evaluate before the frame. No CDP/interception hook was added to product code or perf:ci.
+
+### Applied-throttling diagnostic
+
+Ten Lighthouse devtools runs completed on the same inline-CSS build. Scratch config tmp/landing-v2/chunk7/roundd-devtools.cjs overrides only throttlingMethod; each consent state uses five cold runs and the same consent harness. The repository lighthouserc, gate and assertions remain unchanged. Both collections exit 0; LHCI also prints Windows cleanup ERROR: Access denied, with all ten reports saved and child servers explicitly stopped. Diagnostic results never count as simulated-gate passes.
+
+| Consent | Applied LCP ms, all five | Median ms | Range ms |
+|---|---|---:|---|
+| unset | 2069.924, 2837.153, 2458.920, 2446.946, 2373.502 | 2446.946 | 2069.924-2837.153 |
+| accepted | 2038.083, 2517.622, 2479.350, 3087.306, 2418.474 | 2479.350 | 2038.083-3087.306 |
+
+Seven of ten are below 2500 ms. Recorded applied settings: requestLatencyMs=562.5, downloadThroughputKbps=1474.56, uploadThroughputKbps=675, cpuSlowdownMultiplier=4 (Lighthouse mobile defaults); rttMs=150 and throughputKbps=1600 remain in config but belong to simulation. This method-only switch does not mean the simulator and applied network models are identical. Evidence: roundd-devtools/{unset,accepted}/summary.json plus every raw LHR; roundd-devtools.log and .exit.
+
+### Assertion ledger and final verification
+
+The candidate's new server-markup assertion failed first on Round C (roundd-inline-red.log): no inline style existed. It passed after the product change. The candidate also added generated-CSS freshness coverage and a browser assertion that landing rules are inline after root CSS, are absent from linked CSS, and never appear in staff markup. Candidate-only assertions were removed with the reverted implementation; no pre-existing assertion is weakened or deleted.
+
+Candidate verification: landing Vitest + tests/security-headers.test.ts: 52 files / 399 tests PASS (roundd-unit.log); tsc, assets:check, changed-file ESLint and build all exit 0. Processed CSS artifact present in both landing function trace manifests. The offline npm metadata request was not cached, so the exact already-installed Lightning CSS version was declared directly in package.json/package-lock.json; those experimental declarations are also reverted. The eight candidate files and tracked diff are preserved in tmp/landing-v2/chunk7/roundd-inline-candidate/. Git index writes are sandbox-denied, so restoration used exact git show HEAD:file bytes with read-back verification; it did not change the index or Round C. Read-only index metadata can leave stale M flags for layout/package.json in git status; direct HEAD-byte comparisons and git diff confirm no source differences.
+
+Final product source was restored byte-for-byte from HEAD; git diff has no application, package, security, perf-config or existing-test changes. Only this RESULT and the Round D PLAN remain for handoff. Final commands/outcomes:
+
+- npm.cmd test -- tests/landing tests/security-headers.test.ts --maxWorkers=2: PASS, 51 files / 397 tests, exit 0 (roundd-final-unit.log).
+- npx.cmd tsc --noEmit: PASS, exit 0 (roundd-final-tsc.log).
+- npm.cmd run assets:check: PASS, 45 assets, exit 0 (roundd-final-assets.log).
+- npm.cmd run build: PASS, exit 0 (roundd-final-build.log).
+- Changed-file ESLint passed for the experimental code before reversion; no changed JS/TS remains to lint in the final diff.
+- Actual staff login shell at http://127.0.0.1:44170/ (the fixture location-unavailable state, visually inspected; not a production/authentication test) was captured on the inline build and the restored build: PNG bytes, root CSS hash and computed geometry all match. The same comparison is exact for English/Spanish landing captures (roundd-inline-actual-login and roundd-restored artifacts). The earlier /login 404 comparison is not being presented as login-page proof.
+- FULL LANDING_E2E_USE_BUILD=1 npm.cmd run test:e2e -- --workers=2 --reporter=list,json: PASS, 471 passed / 13 existing skips / zero failed or flaky, exit 0, 17.5 minutes. Machine-readable report: roundd-final-e2e-report.json (PLAYWRIGHT_JSON_OUTPUT_FILE); log: roundd-final-e2e.log. All pre-existing assertions remain intact; Windows codec skips and the Chromium-only playback case on WebKit remain skips, not decoder proof.
+- Final unchanged npm.cmd run perf:ci: FAIL, native exit 1; all ten LCP values are in the table above. LCP is the only failed assertion in both consent states. Evidence: tmp/landing-performance/2026-10-18T04-00-33.283Z-merge-459dd14a; roundd-final-perf.log and .exit. First-party bytes 302488 per run; no gate/config change.
+- Cleanup: harness PID file absent; TCP probes confirm ports 44170-44175 closed (roundd-cleanup.json). No harness servers remain.
+- git diff --quiet -- app components lib scripts tests package.json package-lock.json next.config.ts lighthouserc.cjs: exit 0 (no retained product/config/test diff). git diff --check: PASS. Prior RESULT content preserved; Round D is append-only.
+
+### Proposed scope expansion for CC (not implemented)
+
+A supported way to remove the remaining shared root stylesheet from /eat is a separate landing root/layout with its own processed base/font/utility CSS. This requires CC approval: the present app has 18 top-level directories and 439 tracked files (292 API, four landing, 143 remaining). A route-group design would move the ops page trees (including (authed), admin, order, training and the root login page), distribute metadata/error/not-found ownership, preserve fonts and relative imports, and review pathname/file-path tests; API handlers need not be moved merely to change page layouts. Estimate: roughly 15 page-directory moves plus root entry files, two root layouts, about 140 non-API/non-landing files to audit, plus path-sensitive tests/config, and 1-2 engineering days including cross-family review, auth/staff regression tests, browser checks and repeated ten-run performance measurements. This is an estimate, not approval or a guarantee of LCP success. No route restructuring was performed.
+
+Branch/worktree: feat/landing-v2 at C:/Users/conta/co-ops-landing, base 9872e9b5. Round C is preserved. Round D remains uncommitted; no push, merge, deployment or production access.
