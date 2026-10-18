@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { prepareNearbyFixture } from './e2e-nearby-fixture.mjs';
 const runtime = { ...process.env };
 // Browser harness has no access to production service credentials or provider sends.
-for (const key of Object.keys(runtime)) if (/SUPABASE|TOKEN|SECRET|PEPPER|META_|LANDING_|SITE_ORIGIN|STAFF_ORIGIN/.test(key)) delete runtime[key];
+for (const key of Object.keys(runtime)) if (/SUPABASE|TOKEN|SECRET|PEPPER|META_|LANDING_|SITE_ORIGIN|STAFF_ORIGIN|VERCEL_ENV/.test(key)) delete runtime[key];
 runtime.NEXT_TELEMETRY_DISABLED = '1';
 runtime.AUTH_JWT_SECRET = 'aa'.repeat(32);
 runtime.AUTH_PIN_PEPPER = 'landing-e2e-only';
@@ -72,11 +72,11 @@ const locations = createServer(async (req, res) => {
 await new Promise((resolve, reject) => { locations.once('error', reject); locations.listen(portBase + 2, '127.0.0.1', resolve); });
 runtime.NEXT_PUBLIC_SUPABASE_URL = `http://127.0.0.1:${portBase + 2}`;
 runtime.SUPABASE_SERVICE_ROLE_KEY = 'landing-e2e-fictional-local-only';
-const active = run(['start', '-p', `${portBase}`, '-H', '0.0.0.0'], { ...runtime, LANDING_HOSTS: 'localhost,eat.example.test,preview.example.test', SITE_ORIGIN: `https://localhost:${portBase}`, STAFF_ORIGIN: `https://127.0.0.1:${portBase}`, NEXT_PUBLIC_META_PIXEL_ID: '123456789', LANDING_CAPI_ENABLED: 'true', LANDING_COUNTER_ENABLED: 'true' });
-const dormant = run(['start', '-p', `${portBase + 1}`, '-H', '0.0.0.0'], { ...runtime, SITE_ORIGIN: `https://localhost:${portBase + 1}`, STAFF_ORIGIN: `https://127.0.0.1:${portBase + 1}` });
+const active = run(['start', '-p', `${portBase}`, '-H', '0.0.0.0'], { ...runtime, VERCEL_ENV: 'production', LANDING_HOSTS: 'localhost,eat.example.test,preview.example.test', SITE_ORIGIN: `https://localhost:${portBase}`, STAFF_ORIGIN: `https://127.0.0.1:${portBase}`, NEXT_PUBLIC_META_PIXEL_ID: '123456789', LANDING_CAPI_ENABLED: 'true', LANDING_COUNTER_ENABLED: 'true' });
+const dormant = run(['start', '-p', `${portBase + 1}`, '-H', '0.0.0.0'], { ...runtime, VERCEL_ENV: 'preview', SITE_ORIGIN: `https://localhost:${portBase + 1}`, STAFF_ORIGIN: `https://127.0.0.1:${portBase + 1}` });
 // Nothing listens on +4: prove a genuine connection refusal, not an HTTP error stub.
-const unavailable = run(['start', '-p', `${portBase + 3}`, '-H', '0.0.0.0'], { ...runtime, NEXT_PUBLIC_SUPABASE_URL:`http://127.0.0.1:${portBase + 4}`, LANDING_COUNTER_ENABLED:'true', LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 3}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 3}` });
-const nearby = fixtureDir ? run(['start', '-p', `${portBase + 5}`, '-H', '0.0.0.0'], {...runtime, LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 5}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 5}`, NEXT_PUBLIC_META_PIXEL_ID:'123456789', LANDING_CAPI_ENABLED:'true'}, fixtureDir) : null;
+const unavailable = run(['start', '-p', `${portBase + 3}`, '-H', '0.0.0.0'], { ...runtime, VERCEL_ENV: 'preview', NEXT_PUBLIC_SUPABASE_URL:`http://127.0.0.1:${portBase + 4}`, LANDING_COUNTER_ENABLED:'true', LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 3}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 3}` });
+const nearby = fixtureDir ? run(['start', '-p', `${portBase + 5}`, '-H', '0.0.0.0'], {...runtime, VERCEL_ENV: 'preview', LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 5}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 5}`, NEXT_PUBLIC_META_PIXEL_ID:'123456789', LANDING_CAPI_ENABLED:'true'}, fixtureDir) : null;
 const children = [active,dormant,unavailable,...(nearby ? [nearby] : [])];
 writePidsAtomic(pidFile, children.map(child=>child.pid));
 function stop(code) { for (const child of children) child.kill(); locations.close(); process.exit(code); }

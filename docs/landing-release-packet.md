@@ -1,5 +1,7 @@
 # Landing release packet - CC review
 
+Chunk 8 indexing note (2026-10-18): production indexability requires server `VERCEL_ENV=production` and an approved Host authority matching `SITE_ORIGIN`. Matching-origin previews remain noindex. Landing HTML and the proxy-owned robots/sitemap deliberately remain `private, no-store` for host isolation: **no CDN HTML caching despite LCP pressure**. Hashed asset caching is unchanged. This is a deliberate isolation/performance trade-off, not authorization to change environments or domains. Local verification and exact en/es JSON-LD: [chunk 8 result](landing-v2-chunk8-RESULT.md). Public HTTPS verification, exact-revision CI and CC/Juan release approval remain external gates.
+
 Latest verification: [Merge-gate round](landing-merge-gate-result.md). Older evidence below is historical.
 
 Custody (2026-10-16): branch `feat/landing-p1`, HEAD/base `21eeedde`, dedicated clone `C:/Users/conta/co-ops-landing`; clean before this round. Only this merge-gate/P3 round is UNCOMMITTED. Earlier rounds are committed. No push, merge, deploy, environment change or production write; 0273 remains file-only. Current evidence: [merge-gate result](landing-merge-gate-result.md).

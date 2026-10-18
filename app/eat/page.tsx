@@ -1,4 +1,5 @@
 import { PlayfulTouch } from "@/components/landing/PlayfulTouch";
+import { ShopStructuredData } from "@/components/landing/ShopStructuredData";
 import { CraveScene } from "@/components/landing/CraveScene";
 import { FieldGuide } from "@/components/landing/FieldGuide";
 import { StickyOrderBar } from "@/components/landing/StickyOrderBar";
@@ -38,6 +39,7 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
   const queryString = new URLSearchParams(Object.entries(query).flatMap(([key,value])=>typeof value === "string" ? [[key,value]] : Array.isArray(value) ? value.map((v)=>[key,v]) : [])).toString();
   const sectionKeys = ["crave","lineup","field-guide","subdex","catering","shops","footer"] as const;
   return <div lang={language} className="landing-v2-page">
+    <ShopStructuredData origin={config.siteOrigin!} stores={stores}/>
     <header className="landing-v2-header"><img loading="eager" src="/brand/co-wordmark.svg" fetchPriority="low" alt={TENANT_NAME} width={1125} height={140} className="h-12 w-44 object-contain"/><CateringLink config={config} language={language}/><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={config.attribution}/></header>
     <main>
       <Hero language={language} config={{...config,stores:publicStores}} ad={captureAttribution(queryString,config.attribution).ad}/>

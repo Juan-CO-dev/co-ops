@@ -21,7 +21,7 @@ test('production responses pin metadata, brand and API cache policy', async ({re
   for (const path of ['/robots.txt','/sitemap.xml','/brand/co-wordmark.svg','/brand/landing-icon.png','/eat/icon.png','/eat/apple-icon.png','/favicon.ico']) {
     const response = await request.get(path);
     expect(response.status(),path).toBe(200);
-    expect(response.headers()['cache-control'],path).toBe('public, max-age=300');
+    expect(response.headers()['cache-control'],path).toBe(['/robots.txt','/sitemap.xml'].includes(path)?'private, no-store':'public, max-age=300');
   }
   for (const path of ['/api/landing/events','/api/landing/order-click']) {
     const response = await request.post(path, {data:{}});

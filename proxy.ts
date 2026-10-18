@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { verifyJwt } from './lib/auth';
 import { loadLandingConfig } from './lib/landing/config';
+import { landingIndexable } from './lib/landing/indexing-shared';
 import { resolveLandingLanguage } from './lib/landing/language-shared';
 import { classifyLandingHost, configuredOrigin, landingPathDecision, isLandingAsset } from './lib/landing/host-shared';
 import { LANDING_SECURITY_HEADERS, SECURITY_HEADERS } from './lib/security-headers';
@@ -16,20 +17,26 @@ function finishResponse(response: NextResponse, landing: boolean, assetPath?: st
     response.headers.set('Cache-Control', 'private, no-store');
   }
   if (landing && assetPath?.startsWith('/media/')) response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-  if (landing && (assetPath?.startsWith('/brand/') || assetPath === '/robots.txt' || assetPath === '/sitemap.xml')) response.headers.set('Cache-Control', 'public, max-age=300');
+  if (landing && assetPath?.startsWith('/brand/')) response.headers.set('Cache-Control', 'public, max-age=300');
+  if (landing && (assetPath === '/robots.txt' || assetPath === '/sitemap.xml')) response.headers.set('Cache-Control', 'private, no-store');
   if (landing && assetPath?.startsWith('/api/landing/')) response.headers.set('Cache-Control', 'no-store');
   if (landing && nearbyEnabled) response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
   return response;
 }
 export async function proxy(req: NextRequest): Promise<NextResponse> {
   const landingConfig = loadLandingConfig();
-  const finish = (response: NextResponse, landing: boolean, assetPath?: string) => finishResponse(response, landing, assetPath, landingConfig.nearbyEnabled);
+  const indexable = landingIndexable(req.headers, landingConfig);
+  const finish = (response: NextResponse, landing: boolean, assetPath?: string) => {
+    if (landing && !indexable) response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+    return finishResponse(response, landing, assetPath, landingConfig.nearbyEnabled);
+  };
   const kind = classifyLandingHost(req.headers, landingConfig);
   const path = req.nextUrl.pathname;
   const headers = new Headers(req.headers);
   // No client-supplied routing/identity hints survive the public boundary.
   for (const key of [...headers.keys()]) if (key.startsWith('x-landing') || key.startsWith('x-co-')) headers.delete(key);
   if (kind === 'landing') {
+    headers.set('x-landing-indexable', indexable ? '1' : '0');
     headers.set('x-landing-path', path === '/privacy' ? '/privacy' : '/');
     headers.set('x-landing-language', resolveLandingLanguage(req.nextUrl.searchParams.get('lang'), req.headers.get('accept-language')));
     const decision = landingPathDecision(path, req.nextUrl.searchParams);
@@ -40,8 +47,9 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
       target.search = req.nextUrl.search;
       return finish(NextResponse.redirect(target, 301), true);
     }
-    if (path === '/robots.txt') return finish(new NextResponse('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } }), true, path);
-    if (path === '/sitemap.xml') return finish(new NextResponse('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>', { headers: { 'Content-Type': 'application/xml' } }), true, path);
+    const origin = configuredOrigin(landingConfig.SITE_ORIGIN)!.origin;
+    if (path === '/robots.txt') return finish(new NextResponse(indexable ? `User-agent: *\nAllow: /\nSitemap: ${origin}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } }), true, path);
+    if (path === '/sitemap.xml') return finish(new NextResponse(`<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${indexable ? `<url><loc>${origin}/</loc></url><url><loc>${origin}/privacy</loc></url>` : ''}</urlset>`, { headers: { 'Content-Type': 'application/xml' } }), true, path);
     const target = req.nextUrl.clone();
     if (decision === 'rewrite') target.pathname = path === '/' ? '/eat' : '/eat/privacy';
     const icon = ['/favicon.ico', '/eat/icon.png', '/eat/apple-icon.png'].includes(path);

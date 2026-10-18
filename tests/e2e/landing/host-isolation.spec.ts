@@ -152,3 +152,20 @@ test('enabled counter reaches the fixture RPC and fails closed with a dead Supab
   const unavailable = await request.post(`http://localhost:${portBase + 3}/api/landing/order-click`, {headers:{origin:`https://localhost:${portBase + 3}`,cookie:'landing_consent=accepted'},data});
   expect(unavailable.status()).toBe(503);
 });
+
+test('staff robots and HTML policy survive forged landing hints', async ({request}) => {
+  for(const path of ['/','/robots.txt','/sitemap.xml']) {
+    const url=`http://127.0.0.1:${portBase}${path}`;
+    const clean=await request.get(url,{maxRedirects:0});
+    const forged=await request.get(url,{maxRedirects:0,headers:{'x-landing-indexable':'1','x-landing-path':'/privacy'}});
+    expect(forged.status()).toBe(clean.status());
+    for(const key of ['cache-control','x-robots-tag','location','content-security-policy-report-only','permissions-policy']) expect(forged.headers()[key],key).toBe(clean.headers()[key]);
+    expect(forged.headers()['x-robots-tag']).toBeUndefined();
+    if(path==='/') {
+      // The pre-existing static staff login is cacheable; preserve its exact policy.
+      expect(forged.headers()['cache-control']).toBe('s-maxage=31536000');
+      const html=await forged.text(); expect(html).not.toContain('application/ld+json');
+      expect(html).not.toMatch(/name="robots"/);
+    }
+  }
+});

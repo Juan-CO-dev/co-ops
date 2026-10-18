@@ -1,3 +1,4 @@
+import { landingIndexable } from '@/lib/landing/indexing-shared';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NotFound from '@/app/not-found';
@@ -60,4 +61,11 @@ it.each(['/_next/static/chunks/0xk6mlf-qpr7..css','/_next/static/chunks/a..b.js'
 it.each(['/_next/static/../server.js','/_next/static/chunks/./a.js','/_next/static/chunks/..','/_next/static/%2e%2e/server.js','/_next/static/%252e%252e/server.js','/_next/static/chunks\\..\\server.js'])('refuses actual static path traversal or encoded ambiguity: %s',path=>{
   expect(isLandingAsset(path,new URLSearchParams())).toBe(false);
   expect(landingPathDecision(path,new URLSearchParams())).toBe('deny');
+});
+
+it('landing host permission does not by itself grant indexing', () => {
+  for(const host of ['eat.example.test','preview.example.test','staff.example.test','unlisted.vercel.app']) {
+    expect(landingIndexable(headers(host),{...env,VERCEL_ENV:'production'})).toBe(host==='eat.example.test');
+    expect(landingIndexable(headers(host),{...env,VERCEL_ENV:'preview'})).toBe(false);
+  }
 });

@@ -7,6 +7,7 @@ import ts from "typescript";
 import * as auth from "@/lib/auth";
 import * as landingConfig from "@/lib/landing/config";
 import * as language from "@/lib/landing/language-shared";
+import * as indexing from '@/lib/landing/indexing-shared';
 import * as hosts from "@/lib/landing/host-shared";
 import * as security from "@/lib/security-headers";
 import * as sim from "@/lib/sim-isolation-shared";
@@ -26,7 +27,7 @@ function compile(source: string): { proxy: typeof proxy; default: typeof nextCon
     "next/server": { NextRequest, NextResponse }, "@/lib/auth": auth,
     "./lib/auth": auth, "./lib/landing/config": landingConfig,
     "./lib/landing/language-shared": language, "./lib/landing/host-shared": hosts,
-    "./lib/security-headers": security, "./lib/sim-isolation-shared": sim,
+    "./lib/landing/indexing-shared": indexing, "./lib/security-headers": security, "./lib/sim-isolation-shared": sim,
   };
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
@@ -86,4 +87,18 @@ it("logs no request data when an invalid host falls back to staff", async () => 
   expect(response.status).toBe(200);
   expect(warn.mock.calls).toEqual([["[landing] invalid host; landing dormant"]]);
  } finally {warn.mockRestore();}
+});
+
+it('keeps all staff response headers byte-identical with landing production enabled', async () => {
+  vi.stubEnv('VERCEL_ENV','production'); vi.stubEnv('LANDING_HOSTS','eat.example.test');
+  vi.stubEnv('SITE_ORIGIN','https://eat.example.test'); vi.stubEnv('STAFF_ORIGIN','https://staff.example.test');
+  const matcher = new RegExp(`^${config.matcher[0]}$`);
+  for(const path of ['/','/privacy','/robots.txt','/sitemap.xml','/admin','/order','/api/locations','/_next/static/a.js']) for(const cookie of ['', 'co_ops_session=test']) {
+    const req=new NextRequest(`https://staff.example.test${path}`,{headers:{host:'staff.example.test',cookie}});
+    const before=matcher.test(path)?await original(req):NextResponse.next();
+    const after=await proxy(req);
+    expect(after.status,path).toBe(before.status);
+    expect([...after.headers],path).toEqual([...before.headers]);
+    expect(await after.text(),path).toBe(await before.text());
+  }
 });

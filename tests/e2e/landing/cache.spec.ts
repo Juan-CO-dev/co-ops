@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 import approved from '../../../assets/approved-media.json';
 
 test('landing pages cannot cache; immutable media and framework chunks can', async ({ request }) => {
-  for (const path of ['/', '/privacy', '/?_rsc=cache-test', '/missing']) {
+  for (const path of ['/', '/privacy', '/?_rsc=cache-test', '/missing', '/robots.txt', '/sitemap.xml']) {
     const response = await request.get(path, { headers: path.includes('_rsc') ? { RSC: '1' } : {} });
     expect(response.headers()['cache-control']).toContain('private');
     expect(response.headers()['cache-control']).toContain('no-store');
