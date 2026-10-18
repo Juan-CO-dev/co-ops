@@ -218,3 +218,61 @@ LCP diagnosis at the stop point: Lighthouse identifies the unchanged P013 hero i
 **Clean stop / remaining work:** Part A′ is complete. Part B source and functional tests are complete, but performance qualification remains open: investigate hero render delay and obtain the authoritative CI gate/actual job duration; then CC must run the deployed-revision/poster and physical iPhone normal/Low Power checks in the linked checklist. Juan's original device incident cannot be uniquely attributed without that evidence. No native iOS Safari result is claimed.
 
 Final cleanup: harness PID file absent; no listeners found on ports 44170–44175 after the last run. No servers remain from these runs. All changes are UNCOMMITTED on `feat/landing-v2`, HEAD `49a143ab87baa62d56508e5b9e8e34840287dcbb`, worktree `C:/Users/conta/co-ops-landing`. No push, merge, deployment or production data access.
+
+## Fix round C (base 610ca9bb)
+
+Status: media/assertion fixes implemented and functional verification complete, including the repeat rail matrix. P0 is NOT resolved; this is NOT merge-ready. Branch `feat/landing-v2`, dedicated worktree `C:/Users/conta/co-ops-landing`; uncommitted, no push/merge/deploy. Plan: `docs/landing-v2-roundc-PLAN.md`.
+
+### P0 evidence and experiments
+
+The supplied CI LHRs report *simulated* LCP. In sampled fast/slow CI reports, observed LCP is 151/132 ms, not 2338/3045 ms. The local trace at `tmp/landing-v2/chunk7/roundc-trace-trace.json` establishes image load end 71.7 ms, initial layout 91.25–118.55 ms, image paint 120.47 ms, image decode 124.00–128.04 ms, React core evaluation 138.08–162.59 ms, and first presented LCP 186.09 ms. There is no observed 1.8-second image decode or hydration reveal gate.
+
+The matching Lantern graph (`roundc-trace-graph.json`) includes React's `0rin-2ldzqm~l.js` because it evaluates before that presentation. It is the critical dependency: optimistic network completion 2890 ms plus evaluation to 2988 ms; pessimistic completion/evaluation 3040/3138 ms; combined LCP 3063 ms. The hero image ends at 2126 ms in this graph. In the local fast baseline run, core download ends at 294 ms, after observed LCP 277 ms, so it falls outside this paint dependency set. This identifies the timing-band mechanism; it does not establish a successful product remedy.
+
+Unchanged `LANDING_PERF_NO_SANDBOX=1 LANDING_E2E_USE_BUILD=1 npm.cmd run perf:ci` using cached LHCI 0.15.1 and installed Chrome, five cold runs per consent state:
+
+| Candidate | Unset LCP ms, all five | Accepted LCP ms, all five | Outcome |
+|---|---|---|---|
+| Baseline build | 2477.113, 2999.835, 3062.560, 3031.893, 3047.152 | 3081.531, 3047.076, 3052.341, 3048.579, 3043.383 | FAIL, exit 1 |
+| Hero `decoding="sync"` | 3068.447, 3015.743, 3079.926, 3061.840, 3004.994 | 3064.993, 3064.302, 2995.936, 3034.203, 3119.599 | FAIL, exit 1; reverted |
+| Final media fixes (sync reverted) | 3061.866, 3069.653, 3051.858, 2997.871, 2999.893 | 3073.223, 3059.261, 3045.174, 3057.534, 3054.179 | FAIL, exit 1; 0/10 under 2500 ms |
+
+Raw runs: `tmp/landing-performance/2026-10-18T02-12-24.771Z-merge-0300b798/` and `2026-10-18T02-20-33.368Z-merge-85ca548f/`. First baseline invocation without explicit CHROME_PATH failed Chrome discovery and collected no runs (`02-11-30.354Z-merge-8a7d3bd8`); it is not a measurement. No budget/config assertion changed. The synchronous-decode markup assertion failed first in both languages, but the performance experiment failed, so neither the attribute nor its assertion remains.
+
+Sol's read-only analysis confirmed the framework chunk cannot be removed by simply moving existing SSR hero nodes outside their client wrapper. Next's documented `experimental.inlineCss` is a candidate because it removes blocking stylesheet requests, but it is GLOBAL. CC plan review was requested before making that broader change, per AGENTS.md. No config change is made. Throwaway response-interception inline experiments are NOT gate evidence: the uncompressed response distorted transfer size; the gzip interception did not yield a valid hero-image measurement. Neither is counted as a pass.
+
+### Changed-assertion ledger
+
+- `hero-motion-runtime.test.ts`: invokes the real component's updater/effects through deterministic hooks. Sixty identical scroll callbacks must retain state identity, observer registration must omit offscreen mode, and a real exit must pause. Failed first on the old allocation behavior; passes after fixing both the viewport updater and attachment wrapper.
+- `media-readiness.test.ts`: runtime timer-before-two-RAFs regression; readiness releases exactly once on the second RAF after the deadline. This PASSES on 610ca9bb: the requested second-RAF clock check already existed, so no speculative helper rewrite.
+- `languages.spec.ts`: stronger word-safe en/es absence pattern for Illustrated/Ilustrad/AI/Drawn/Edited/Dibujad/Editad/Generad/standalone IA. No visible tags added.
+- `remaining-sections.spec.ts`: retain all-engine simulated keyboard/viewport test and add an unshimmed Chromium variant requiring decoded dimensions and progressing time.
+- `sticky-missing-footer.spec.ts` plus the isolated nearby fixture: actually render without Footer's order group, observe the real rail while scrolling, and require hidden/inert/aria-hidden throughout. No production test switch or rail policy change.
+- `helpers/sticky.ts`: replace the timing-dependent scroll with mounted consent measurement, font/two-frame settling, clearance of both hero actions and an in-flow notice, and explicit assertions explaining eligibility. Product suppression/dwell rules unchanged.
+- `iphone-subdex.spec.ts`: wrap the actual React click handler and assert enter → play → exit, plus active-handler marker and existing userActivation evidence. Replace no-replay-after-reentry with completion → still; stay/jitter/hide-show → no replay; full exit/reentry → exactly one replay using the same video node; second completion → still.
+- BUILD: Juan's once-per-arrival rule supersedes Part B's page-lifetime completion latch. Reduce Motion/Save-Data, hidden-tab pause, initial media gates and manual replay remain.
+
+### Verification
+
+- Landing Vitest: `npm.cmd test -- tests/landing --maxWorkers=2` PASS, 50 files / 373 tests, exit 0.
+- `npm.cmd run assets:check`: PASS, 45 assets, exit 0.
+- `npx.cmd tsc --noEmit`: PASS, exit 0.
+- Changed-file ESLint: PASS, exit 0 (`roundc-eslint-final.log`).
+- Final `npm.cmd run build`: PASS, exit 0 (`roundc-final2-build.log`); no product source edits afterward.
+- FULL `LANDING_E2E_USE_BUILD=1 npm.cmd run test:e2e -- --workers=2`: **471 passed, 13 skipped, zero failed/flaky**, native exit 0, 17.3 minutes. Report data preserved as `roundc-e2e-report.json`. The extra skip is the Chromium-only native keyboard/viewport test on WebKit; the other 12 are retained Windows codec skips. Native Chromium control/decoder proof passed; simulations are not decoder proof.
+- Final `LANDING_PERF_NO_SANDBOX=1 LANDING_E2E_USE_BUILD=1 npm.cmd run perf:ci`: FAIL, native exit 1, all ten LCP values above. Raw reports: `tmp/landing-performance/2026-10-18T02-55-41.771Z-merge-e49e979d/`; log `roundc-perf-final.log`. First-party transfer 302492 bytes in every run; both consent states fail only the LCP summary check. No performance budgets/assertions changed.
+- `LANDING_E2E_USE_BUILD=1 npm.cmd run test:e2e -- tests/e2e/landing/sticky-review.spec.ts --grep "representative rail" --repeat-each=5 --workers=2`: **30 passed, zero failed/flaky/skipped**, native exit 0, 19.4 minutes. All 30 trace files are newer than the recorded run start; copies retained in `tmp/landing-v2/chunk7/roundc-rail-evidence/`. Report: `roundc-rail-report.json`; strict qualification: `roundc-repeat5-summary.json`, qualified=true across 120 profiles. Every profile has one consent-top value.
+- P0 all-ten-under-2500 target: NOT MET. No CI-green or physical iOS claim.
+
+| Engine | Viewport | Minimum coverage (20 profiles) | Max transitions | Min pair ms | Min pair px |
+|---|---|---:|---:|---:|---:|
+| Chromium | 375x667 | 90.80% | 2 | 5349.1 | 6393 |
+| Chromium | 375x812 | 91.01% | 2 | 5551.3 | 6645 |
+| Chromium | 1440x900 | 91.76% | 2 | 5845.2 | 7020 |
+| WebKit | 375x667 | 90.33% | 2 | 5326 | 6396 |
+| WebKit | 375x812 | 90.53% | 2 | 5539 | 6639 |
+| WebKit | 1440x900 | 90.46% | 2 | 5805 | 7038 |
+
+Remaining blocker: no successful P0 product fix. The concrete next experiment and risks are in `docs/landing-v2-roundc-PLAN.md`; CC's cross-family plan review was requested and has not arrived. The supplied charter (`C:/Users/conta/.codex/AGENTS.md`) requires "a reviewer from another family reads it before you code (CC arranges this)." The proposed global Next configuration change has therefore not been authored. Final independent code review also remains CC's responsibility.
+
+Cleanup: PID file absent; TCP probes confirm ports 44170 through 44175 closed after the final matrix. All changes remain UNCOMMITTED on `feat/landing-v2`, HEAD `610ca9bb`, worktree `C:/Users/conta/co-ops-landing`. No push, merge, deployment, production data change, asset change or visible tag added.

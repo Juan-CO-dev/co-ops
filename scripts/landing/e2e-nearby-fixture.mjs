@@ -34,7 +34,10 @@ export async function prepareNearbyFixture(runtime) {
   const page = readFileSync(pagePath, 'utf8');
   const queryRead = 'const query = await searchParams;';
   if (!page.includes(queryRead)) throw new Error('Update the not-found fixture for the changed page');
-  writeFileSync(pagePath, page.replace(queryRead, queryRead + '\n  if (query.__fixture_not_found === "1") notFound();'));
+  const footerRender='key === "footer" && <Footer';
+  if(!page.includes(footerRender))throw new Error('Update the missing-footer fixture for the changed page');
+  writeFileSync(pagePath, page.replace(queryRead, queryRead + '\n  if (query.__fixture_not_found === "1") notFound();')
+    .replace(footerRender,'key === "footer" && query.__fixture_no_footer !== "1" && <Footer'));
   // Webpack supports the dependency junction; Turbopack forbids outside-root links.
   const build = spawn(process.execPath, [join(root, 'node_modules/next/dist/bin/next'), 'build', '--webpack'], {cwd:dir, env:runtime, stdio:'inherit'});
   const code = await new Promise((resolve, reject) => {build.once('error', reject);build.once('exit', resolve);});

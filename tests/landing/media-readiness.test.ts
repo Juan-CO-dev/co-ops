@@ -1,5 +1,23 @@
-import {expect,it} from 'vitest';
-import {createMediaReadiness,MEDIA_READY_TIMEOUT_MS} from '@/lib/landing/media-readiness-shared';
+import {afterEach,expect,it,vi} from 'vitest';
+import {createMediaReadiness,MEDIA_READY_TIMEOUT_MS,waitForMediaReadiness} from '@/lib/landing/media-readiness-shared';
+
+afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();});
+it('rechecks the elapsed deadline on the second RAF when the timeout fired first',()=>{
+ vi.useFakeTimers();let now=0,pending:FrameRequestCallback|undefined;
+ vi.stubGlobal('performance',{now:()=>now});
+ vi.stubGlobal('window',Object.assign(new EventTarget(),{setTimeout,clearTimeout}));
+ vi.stubGlobal('document',{readyState:'loading'});vi.stubGlobal('PerformanceObserver',undefined);
+ vi.stubGlobal('requestAnimationFrame',(callback:FrameRequestCallback)=>{pending=callback;return 1;});
+ vi.stubGlobal('cancelAnimationFrame',()=>{pending=undefined;});
+ const ready=vi.fn();const stop=waitForMediaReadiness(ready);
+ try{
+  now=MEDIA_READY_TIMEOUT_MS;vi.advanceTimersByTime(MEDIA_READY_TIMEOUT_MS);
+  expect(ready).not.toHaveBeenCalled();
+  pending!(now);expect(ready).not.toHaveBeenCalled();
+  pending!(now);expect(ready).toHaveBeenCalledOnce();
+  vi.advanceTimersByTime(5000);expect(ready).toHaveBeenCalledOnce();
+ }finally{stop();}
+});
 
 it('requires two paint opportunities even when load or timeout arrives first',()=>{
   for(const signal of [false,true]){

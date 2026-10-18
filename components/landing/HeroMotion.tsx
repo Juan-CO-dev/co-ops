@@ -9,11 +9,13 @@ import {observeLandingViewport} from '@/lib/landing/scroll-controller';
 export function HeroMotion({children,src,pauseLabel,playLabel,fallbackLabel,testId='hero-motion'}:{children:ReactNode;src:string;pauseLabel:string;playLabel:string;fallbackLabel:string;testId?:string}){
   const container=useRef<HTMLDivElement>(null),video=useRef<HTMLVideoElement>(null);
   const started=useRef(false),attempt=useRef({id:0});
+  const entryArmed=useRef(true),restart=useRef(false);
   type RuntimeState=MotionState & {attached:boolean};
   const [state,dispatch]=useState<RuntimeState>({lcpReady:false,triggered:false,visible:false,documentVisible:false,reducedMotion:true,saveData:true,failed:false,paused:false,completed:false,attached:false});
   const setState=useCallback((update:(s:RuntimeState)=>RuntimeState)=>dispatch(s=>{
     const next=update(s);
-    return {...next,attached:s.attached||next.attached||shouldLoadMotion(next)};
+    const attached=s.attached||next.attached||shouldLoadMotion(next);
+    return attached===next.attached?next:{...next,attached};
   }),[]);
   const attached=state.attached;
   const [playing,setPlaying]=useState(false),[posterFailed,setPosterFailed]=useState(false);
@@ -22,7 +24,20 @@ export function HeroMotion({children,src,pauseLabel,playLabel,fallbackLabel,test
     const connection=(navigator as Navigator & {connection?:EventTarget & {saveData?:boolean}}).connection;
     const preferences=()=>setState(s=>({...s,saveData:connection?.saveData===true,documentVisible:!document.hidden}));
     const cancelReady=waitForMediaReadiness(()=>{preferences();setState(s=>({...s,lcpReady:true}));});
-    const stop=observeLandingViewport(root,({active,reducedMotion})=>setState(s=>({...s,visible:active,triggered:s.triggered||active,reducedMotion,documentVisible:!document.hidden,saveData:connection?.saveData===true})),{offscreen:true});
+    const stop=observeLandingViewport(root.closest('section')??root,({active:sectionActive,reducedMotion})=>{
+      // Hidden-tab notifications pause but are not physical viewport exits.
+      // The scheduler uses any intersection, so a sliver at the edge stays one visit.
+      const freshEntry=sectionActive&&entryArmed.current;
+      if(!sectionActive&&!document.hidden)entryArmed.current=true;
+      if(freshEntry){entryArmed.current=false;restart.current=true;}
+      const box=sectionActive?root.getBoundingClientRect():null;
+      const active=!!box&&box.bottom>0&&box.top<innerHeight;
+      const documentVisible=!document.hidden,saveData=connection?.saveData===true;
+      setState(s=>{
+        if(s.visible===active&&s.reducedMotion===reducedMotion&&s.documentVisible===documentVisible&&s.saveData===saveData&&(!active||s.triggered)&&(!freshEntry||(!s.completed&&!s.paused)))return s;
+        return {...s,visible:active,triggered:s.triggered||active,reducedMotion,documentVisible,saveData,...(freshEntry?{completed:false,paused:false}:{})};
+      });
+    });
     connection?.addEventListener('change',preferences);
     document.addEventListener('visibilitychange',preferences);
     const image=root.querySelector('img');
@@ -36,6 +51,7 @@ export function HeroMotion({children,src,pauseLabel,playLabel,fallbackLabel,test
     const element=video.current;if(!element)return;
     started.current=true;const id=++attempt.current.id;
     element.muted=true;
+    if(restart.current){element.currentTime=0;restart.current=false;}
     void element.play().catch(()=>{if(attempt.current.id===id)fail();});
   },[fail]);
   useEffect(()=>{

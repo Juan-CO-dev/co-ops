@@ -22,7 +22,7 @@ test('SUBDEX retries blocked autoplay inside the keyboard gesture',async({page})
       if(this.closest('[data-testid="subdex-motion"]')){
         const attempts=Number(Reflect.get(window,'subdexAttempts')??0)+1;
         Reflect.set(window,'subdexAttempts',attempts);
-        if(attempts>1){Reflect.set(window,'subdexGesture',navigator.userActivation.isActive);return Promise.resolve();}
+        if(attempts>1){Reflect.set(window,'subdexGesture',navigator.userActivation.isActive);Reflect.set(window,'subdexInsideHandler',Reflect.get(window,'subdexHandlerActive'));(Reflect.get(window,'subdexHandlerOrder') as string[]).push('play');return Promise.resolve();}
       }
       return Promise.reject(new DOMException('blocked','NotAllowedError'));
     };
@@ -30,9 +30,20 @@ test('SUBDEX retries blocked autoplay inside the keyboard gesture',async({page})
   await page.goto('/');await page.getByTestId('subdex-motion').scrollIntoViewIfNeeded();
   await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'subdexAttempts'))).toBe(1);
   const retry=page.getByTestId('subdex-motion').getByRole('button');
-  await expect(retry).toBeVisible();await retry.focus();await page.keyboard.press('Enter');
+  await expect(retry).toBeVisible();
+  // Wrap the actual React handler: capture/bubble or userActivation alone would
+  // also allow an incorrectly deferred microtask call to pass.
+  await retry.evaluate(button=>{
+    const key=Object.keys(button).find(key=>key.startsWith('__reactProps$'))!;
+    const props=Reflect.get(button,key) as {onClick:(event:unknown)=>void};
+    const original=props.onClick;const order:string[]=[];Reflect.set(window,'subdexHandlerOrder',order);
+    props.onClick=event=>{Reflect.set(window,'subdexHandlerActive',true);order.push('enter');try{original(event);}finally{order.push('exit');Reflect.set(window,'subdexHandlerActive',false);}};
+  });
+  await retry.focus();await page.keyboard.press('Enter');
   await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'subdexAttempts'))).toBe(2);
   expect(await page.evaluate(()=>Reflect.get(window,'subdexGesture'))).toBe(true);
+  expect(await page.evaluate(()=>Reflect.get(window,'subdexInsideHandler'))).toBe(true);
+  expect(await page.evaluate(()=>Reflect.get(window,'subdexHandlerOrder'))).toEqual(['enter','play','exit']);
   await expect(retry).toBeFocused();
 });
 
@@ -73,8 +84,34 @@ test('SUBDEX playing event without decoded progress stays still, then stalls and
   await root.locator('video').evaluate(el=>el.dispatchEvent(new Event('ended')));
   await expect(root.locator('video')).toHaveCSS('opacity','0');
   const attempts=await page.evaluate(()=>Reflect.get(window,'subdexAttempts'));
-  await page.locator('#hero').scrollIntoViewIfNeeded();await root.scrollIntoViewIfNeeded();await page.waitForTimeout(250);
+  // Completion rests in place, including still-intersecting edge jitter.
+  await page.waitForTimeout(250);
   expect(await page.evaluate(()=>Reflect.get(window,'subdexAttempts'))).toBe(attempts);
+  await page.evaluate(async()=>{
+    for(const hidden of [true,false]){
+      Object.defineProperty(document,'hidden',{configurable:true,value:hidden});
+      document.dispatchEvent(new Event('visibilitychange'));
+      await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
+    }
+    Reflect.deleteProperty(document,'hidden');
+  });
+  expect(await page.evaluate(()=>Reflect.get(window,'subdexAttempts'))).toBe(attempts);
+  const element=await root.locator('video').elementHandle();
+  await page.evaluate(async()=>{
+    const el=document.querySelector('#subdex')!;
+    const end=el.getBoundingClientRect().bottom+scrollY;
+    for(const overlap of [8,2,6,1,5]){scrollTo(0,end-overlap);await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));}
+  });
+  expect(await page.evaluate(()=>Reflect.get(window,'subdexAttempts'))).toBe(attempts);
+  await page.locator('#hero').scrollIntoViewIfNeeded();
+  await expect.poll(()=>page.locator('#subdex').evaluate(el=>el.getBoundingClientRect().top>=innerHeight)).toBe(true);
+  await root.scrollIntoViewIfNeeded();
+  await expect.poll(()=>page.evaluate(()=>Reflect.get(window,'subdexAttempts'))).toBe(attempts+1);
+  expect(await root.locator('video').evaluate((el,original)=>el===original,element)).toBe(true);
+  await expect(root.locator('video')).toHaveCSS('opacity','1');
+  await root.locator('video').evaluate(el=>el.dispatchEvent(new Event('ended')));
+  await expect(root.locator('video')).toHaveCSS('opacity','0');await page.waitForTimeout(250);
+  expect(await page.evaluate(()=>Reflect.get(window,'subdexAttempts'))).toBe(attempts+1);
 });
 
 for(const failed of ['poster','motion'])test(`SUBDEX ${failed} 404 preserves geometry and accessible fallback`,async({page})=>{

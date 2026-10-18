@@ -56,11 +56,13 @@ test('SUBDEX rejected playback retains the still in both engines',async({page})=
   await expect(page.locator('#subdex button')).toHaveCount(2);
 });
 
-test('SUBDEX simulated excerpt pauses by keyboard and on viewport exit',async({page})=>{
-  await simulateSubdex(page);
+for(const simulated of [true,false])test(`SUBDEX ${simulated?'simulated':'native Chromium'} excerpt pauses by keyboard and on viewport exit`,async({page,browserName})=>{
+  test.skip(!simulated&&browserName!=='chromium','The unshimmed control variant uses the Chromium decoder.');
+  if(simulated)await simulateSubdex(page);
   await page.goto('/',{waitUntil:'domcontentloaded'});await expect(page.locator('#subdex video')).toHaveCount(0);
   await page.locator('#subdex').scrollIntoViewIfNeeded();await page.evaluate(()=>window.dispatchEvent(new Event('scroll')));
   const video=page.locator('#subdex video');await expect(video).toHaveCSS('opacity','1');
+  if(!simulated)await expect.poll(()=>video.evaluate((v:HTMLVideoElement)=>v.videoWidth>0&&v.currentTime>0&&v.readyState>=2)).toBe(true);
   expect(await video.evaluate(v=>(v as HTMLVideoElement).muted)).toBe(true);
   await expect(video).not.toHaveAttribute('loop','');
   const pause=page.getByRole('button',{name:'Pause the graphics update'});await pause.focus();await page.keyboard.press('Enter');

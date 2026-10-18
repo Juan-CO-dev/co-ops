@@ -8,13 +8,13 @@ for(const language of ['en','es'] as const)test(`no visible asset classification
   await page.goto(`/?lang=${language}`);
   for(const section of await page.locator('main section').all()){
     await section.scrollIntoViewIfNeeded();
-    await expect(page.locator('.landing-v2-page')).not.toContainText(/Illustrated|Ilustrad|\bAI\b/i);
+    await expect(page.locator('.landing-v2-page')).not.toContainText(/\b(?:Illustrated|Ilustrad\w*|AI|Drawn|Edited|Dibujad\w*|Editad\w*|Generad\w*|IA)\b/i);
   }
   const spin=page.locator('.landing-v2-spin');
   await spin.scrollIntoViewIfNeeded();
   await spin.getByRole('button').click();
   await expect(spin.locator('video')).toHaveAttribute('aria-label',(language==='es'?es:en)['landing.spin.label']);
-  await expect(page.locator('.landing-v2-page')).not.toContainText(/Illustrated|Ilustrad|\bAI\b/i);
+  await expect(page.locator('.landing-v2-page')).not.toContainText(/\b(?:Illustrated|Ilustrad\w*|AI|Drawn|Edited|Dibujad\w*|Editad\w*|Generad\w*|IA)\b/i);
   await page.screenshot({path:`tmp/landing-v2/chunk7/aprime-${info.project.name}-${language}-subdex.png`});
 });
 
