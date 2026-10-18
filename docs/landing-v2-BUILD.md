@@ -319,3 +319,11 @@ Part B: reproduced the unbounded LCP wait and missing retry control in both engi
 ## Fix round C — SUBDEX arrival rule (Juan, 2026-10-17)
 
 "Replay each time you arrive" supersedes Part B's completed-excerpt no-auto-replay rule. The excerpt plays once per physical viewport visit, then returns to the still. A fresh visit requires the entire SUBDEX section to have left the viewport; still-intersecting edge jitter and hiding/showing the tab do not re-arm a completed excerpt. A new visit starts at the beginning and reuses the attached video element. The keyboard/tap Play control continues to replay on demand. Reduce Motion and Save-Data still prohibit autoplay and initial MP4 attachment; a hidden document pauses playback. No visible asset-classification labels are permitted.
+
+### Round G: report artifacts and diagnostics
+
+`data-motion-state="suppressed"` means a scroll attempted activation but Reduce Motion or Save-Data refused it. Clearing the preference can still activate the armed shell; this is nonvisual diagnostic metadata only.
+
+LHCI uploads each consent/collection separately as `reports-{unset|accepted}-{simulated|applied}`. The simulated report-only collections run first and applied blocking collections last, so the top-level `assertion-results.json`, when present, belongs to the blocking lane. Raw assertions remain preserved per collection and consent in the timestamped evidence directory. PID cleanup and error-evidence writes log failures without throwing; server PID publication uses a sibling temporary file and atomic rename.
+
+The workflow's perf-step `LANDING_E2E_USE_BUILD: "1"` is a separate build-reuse change retained from Round F, alongside its timeout change: both collections reuse the revision built by full e2e instead of rebuilding four times. Thresholds, assertions, throttling and run counts are unchanged; applied TBT <=200 ms remains blocking. Local perf is advisory; CI is the gate.

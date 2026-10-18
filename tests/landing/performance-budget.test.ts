@@ -12,13 +12,20 @@ it('blocks applied mobile throttling at 2.5 s and keeps every simulated assertio
   process.env.LANDING_PERF_HARNESS='merge';process.env.LANDING_PERF_BLOCK_PIXEL='1';
   for(const collection of ['applied-blocking','simulated-report-only']){
    process.env.LANDING_PERF_COLLECTION=collection;delete require.cache[path];
-   const {collect,assert}=require(path).ci;
+   const {collect,assert,upload}=require(path).ci;
    const simulated=collection==='simulated-report-only';
    expect(collect.numberOfRuns).toBe(5);
    expect(collect.settings.throttlingMethod).toBe(simulated?'simulate':'devtools');
    expect(collect.settings.throttling).toMatchObject({requestLatencyMs:562.5,downloadThroughputKbps:1474.56,uploadThroughputKbps:675,cpuSlowdownMultiplier:4});
-   expect(assert.assertions['largest-contentful-paint']).toEqual([simulated?'warn':'error',{maxNumericValue:2499.999,aggregationMethod:'median'}]);
-   for(const assertion of Object.values(assert.assertions) as [string,unknown][])expect(assertion[0]).toBe(simulated?'warn':'error');
+   const level=simulated?'warn':'error';
+   expect(assert.assertions).toEqual({
+    'categories:performance':[level,{minScore:0.85,aggregationMethod:'median'}],
+    'categories:accessibility':[level,{minScore:0.95,aggregationMethod:'median'}],
+    'largest-contentful-paint':[level,{maxNumericValue:2499.999,aggregationMethod:'median'}],
+    'cumulative-layout-shift':[level,{maxNumericValue:0.1,aggregationMethod:'median'}],
+    'total-blocking-time':[level,{maxNumericValue:200,aggregationMethod:'median'}],
+   });
+   expect(upload.outputDir).toBe(`.lighthouseci/reports-${process.env.LANDING_PERF_CONSENT==='accepted'?'accepted':'unset'}-${simulated?'simulated':'applied'}`);
    expect(collectionBlocks(collection,1,['lcp','performance','first-party-bytes'])).toBe(!simulated);
    expect(collectionBlocks(collection,null,['incomplete-run'])).toBe(!simulated);
    expect(collectionBlocks(collection,0,[])).toBe(false);

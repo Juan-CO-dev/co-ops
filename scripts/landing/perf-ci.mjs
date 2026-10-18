@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 import {checkFirstPartyRuns,checkConsentRuns,summarizeRun,collectionBlocks} from './performance-report.mjs';
+import {bestEffort,cleanupPids} from './perf-housekeeping.mjs';
 let failed=false;
 const launch=process.argv.includes('--launch');
 if(process.argv.slice(2).some(arg=>arg!=='--launch'))throw Error('Unknown measurement mode');
@@ -12,7 +13,8 @@ const runDir=`tmp/landing-performance/${new Date().toISOString().replaceAll(':',
 mkdirSync(runDir,{recursive:true});
 console.log(`Measurement evidence: ${runDir}`);
 const measurement=blockPixel?'first-party-only-pixel-blocked':'real-pixel';
-for(const collection of ['applied-blocking','simulated-report-only']) for(const state of (launch?['accepted']:['unset','accepted'])) {
+// Leave LHCI's top-level assertion-results.json describing the blocking lane.
+for(const collection of ['simulated-report-only','applied-blocking']) for(const state of (launch?['accepted']:['unset','accepted'])) {
   const started=Date.now();
   console.log(`Collection: ${collection}, consent: ${state}`);
   try {
@@ -42,15 +44,14 @@ for(const collection of ['applied-blocking','simulated-report-only']) for(const 
   } catch(error) {
     const failures=['collection-error'];
     failed ||= collectionBlocks(collection,1,failures);
+    bestEffort(`${collection}/${state} error evidence`,()=>{
     mkdirSync(`${runDir}/${collection}`,{recursive:true});
     writeFileSync(`${runDir}/${collection}/${state}.json`,JSON.stringify({collection,state,blocking:collection==='applied-blocking',failures,error:String(error),durationMs:Date.now()-started,runs:[]},null,2));
+    });
     console.error(`${collection}/${state}: ${error}`);
   } finally {
   // LHCI's parent termination alone does not terminate Next children on Windows.
-  if(existsSync('tmp-landing-server-pids.json')){
-    for(const pid of JSON.parse(readFileSync('tmp-landing-server-pids.json','utf8')))try{process.kill(pid);}catch{}
-    unlinkSync('tmp-landing-server-pids.json');
-  }
+  cleanupPids('tmp-landing-server-pids.json');
   }
 }
 process.exitCode=failed?1:0;

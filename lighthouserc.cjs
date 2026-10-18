@@ -25,6 +25,6 @@ module.exports = {
       // perf-ci gates measured first-party transfer bytes (500 KB per cold run).
       // Accepted consent reports the real third-party Pixel cost separately.
     } },
-    upload: { target: 'filesystem', outputDir: `.lighthouseci/reports-${process.env.LANDING_PERF_CONSENT === 'accepted' ? 'accepted' : 'unset'}` },
+    upload: { target: 'filesystem', outputDir: `.lighthouseci/reports-${process.env.LANDING_PERF_CONSENT === 'accepted' ? 'accepted' : 'unset'}-${simulated?'simulated':'applied'}` },
   },
 };

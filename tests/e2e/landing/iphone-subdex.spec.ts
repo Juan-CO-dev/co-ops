@@ -11,7 +11,7 @@ for(const preference of ['reduce','save-data'] as const)test(`SUBDEX imports no 
  page.on('request',request=>{if(chunks.includes(new URL(request.url()).pathname))requests.push(request.url());});
  await page.goto('/');const root=page.getByTestId('subdex-motion');await root.scrollIntoViewIfNeeded();
  await page.waitForLoadState('networkidle');
- expect(requests).toEqual([]);await expect(root).toHaveAttribute('data-motion-state','idle');
+ expect(requests).toEqual([]);await expect(root).toHaveAttribute('data-motion-state','suppressed');
  if(preference==='reduce')await page.emulateMedia({reducedMotion:'no-preference'});
  else await page.evaluate(()=>{const connection=(navigator as Navigator & {connection:EventTarget & {saveData:boolean}}).connection;connection.saveData=false;connection.dispatchEvent(new Event('change'));});
  await expect(root).toHaveAttribute('data-motion-state','ready');

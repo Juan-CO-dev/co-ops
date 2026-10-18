@@ -7,7 +7,7 @@ export function DeferredMotion({children,fallbackLabel,testId='hero-motion',...m
   const container=useRef<HTMLDivElement>(null),mediaSlot=useRef<HTMLDivElement>(null),controlsSlot=useRef<HTMLDivElement>(null);
   const [Motion,setMotion]=useState<typeof HeroMotion|null>(null);
   const [status,setStatus]=useState({ready:false,failed:false});
-  const [importState,setImportState]=useState<'idle'|'loading'|'failed'>('idle');
+  const [importState,setImportState]=useState<'idle'|'suppressed'|'loading'|'failed'>('idle');
   const [posterFailed,setPosterFailed]=useState(false);
   useEffect(()=>{
     let disposed=false,attempts=0,loading=false,loaded=false,scrolled=window.scrollY>0;
@@ -15,7 +15,8 @@ export function DeferredMotion({children,fallbackLabel,testId='hero-motion',...m
     const connection=(navigator as Navigator & {connection?:EventTarget & {saveData?:boolean}}).connection;
     const activate=()=>{
       scrolled=true;
-      if(disposed||loading||loaded||attempts>=2||preference.matches||connection?.saveData===true)return;
+      if(disposed||loading||loaded||attempts>=2)return;
+      if(preference.matches||connection?.saveData===true){setImportState('suppressed');return;}
       window.removeEventListener('scroll',activate);
       loading=true;attempts++;setImportState('loading');
       void import('./HeroMotion').then(module=>{if(!disposed){loaded=true;setMotion(()=>module.HeroMotion);}}).catch(()=>{

@@ -523,3 +523,70 @@ Changed files: `.github/workflows/landing-checks.yml`; `lighthouserc.cjs`; `scri
 All changes remain **UNCOMMITTED** on `feat/landing-v2`, HEAD `88ab4379`, worktree `C:/Users/conta/co-ops-landing`. No push, merge, deployment or production access. No visible tags. Open items: applied TBT qualification / CC's judgment on the measurement delta, exact-revision CI timing and cross-family review, the cached-import limitation, and the existing native-device release checks.
 
 Final cleanup/checks: ports **44170-44175 closed**, harness PID file absent; `git diff --check` passes. `app/eat/layout.tsx` and `package.json` retain their pre-existing stale status entries with no content diff. Scratch fixture directories remain under ignored `tmp/`; no recursive deletion was attempted.
+
+## Round G — Aggie round F P3 closure
+
+Scope: five bounded P3 findings only, based on `e51fc32f` on `feat/landing-v2`. No performance optimization, visible tags, budget/threshold/throttling changes, push, merge or commit.
+
+| Finding | Change | Verification |
+|---|---|---|
+| P3-1 | `perf-housekeeping.mjs` guards PID parsing/removal, individual kills and error-evidence writes with log-and-continue behavior. `e2e-server.mjs` publishes PID JSON by sibling temp-file rename. | Four regression tests cover malformed JSON plus failed unlink, continuing after a kill failure, failed error evidence, and write-before-rename publication. |
+| P3-2 | `lighthouserc.cjs` uses separate consent/collection output directories. `perf-ci.mjs` runs simulated first, applied last so root assertions describe the blocking lane; per-collection raw assertions remain preserved. | Config test pins output naming; the complete perf matrix checks artifacts. |
+| P3-3 | `DeferredMotion.tsx` exposes nonvisual `suppressed` when Reduce Motion/Save-Data refuses activation. Updated `iphone-subdex.spec.ts` and BUILD. | Both preference cases still require zero chunk requests and later `ready` after clearing the preference. |
+| P3-4 | `performance-budget.test.ts` pins the complete `[level, params]` tuples for all five assertions in both lanes. | Performance, accessibility, LCP, CLS and TBT values and median aggregation remain unchanged. |
+| P3-5 | Retained workflow perf-step `LANDING_E2E_USE_BUILD: "1"` and explicitly documented build reuse as a separate Round F change alongside the timeout. | `.github/workflows/landing-checks.yml` already has it at this HEAD; no additional workflow diff in Round G. |
+
+Validation results and all local perf samples follow after the running suites complete. Local perf is advisory; exact-revision CI remains CC's gate. The user reports CI run 39138254523 green on base e51fc32f; that is not a CI result for this uncommitted diff.
+
+### Verification
+
+- `node node_modules/vitest/vitest.mjs run tests/landing tests/security-headers.test.ts --pool=threads --maxWorkers=3`: PASS, 53 files / 403 tests (7.43 s).
+- `node node_modules/typescript/bin/tsc --noEmit --incremental false`: PASS, exit 0.
+- `npm.cmd run assets:check`: PASS, 45 assets.
+- `npm.cmd run build`: PASS, exit 0, 96.997 s.
+- Changed-file ESLint (eight TS/TSX/MJS/CJS files): PASS, exit 0. Used existing `--config tmp/roundf-eslint.config.mjs` wrapper to register the existing jsx-a11y plugin globally; no rules disabled, repo lint config unchanged.
+- `LANDING_E2E_USE_BUILD=1 node node_modules/@playwright/test/cli.js test --workers=2`: PASS, 486 passed / 13 existing skips / 0 failures, exit 0, 1035.586 s. Reduce Motion and Save-Data suppressed-to-ready checks pass in all three projects. No physical-device claim.
+- `npm.cmd run perf:ci` exactly once: FAIL, exit 1, 437.029 s. Applied TBT alone fails in both states (medians 260.566 / 247.039 ms); simulated LCP warnings remain report-only, both simulated CLI exits 0. Applied LCP medians 2174.360 / 2428.795 ms pass; all CLS values pass. No gate waiver or TBT tuning.
+
+Logs: `tmp/roundg-{vitest,tsc,assets,eslint,build,full-e2e,perf}.log`; timing/exit records: `tmp/roundg-{build,full-e2e,perf}-result.json`.
+
+Perf environment: `CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe`, `LANDING_PERF_NO_SANDBOX=1`, `LANDING_E2E_USE_BUILD=1`, cached pinned LHCI 0.15.1 via `LHCI_CLI_PATH=C:/Users/conta/AppData/Local/npm-cache/_npx/7c4c7312e9ccc7bf/node_modules/@lhci/cli/src/cli.js`. One heavy job at a time. Evidence root: `
+tmp/landing-performance/2026-10-18T15-50-06.490Z-merge-b63e5243
+`.
+
+### Every local perf sample
+
+LCP/TBT in milliseconds, rounded to 0.001; CLS rounded to 9 decimals. All 20 samples retained, including the accepted applied outlier. Full precision remains in raw LHRs.
+
+| Collection | Consent | Run | LCP | TBT | CLS |
+|---|---|---:|---:|---:|---:|
+| simulated-report-only | unset | 1 | 3030.720 | 23.000 | 0.002749892 |
+| simulated-report-only | unset | 2 | 3122.767 | 54.500 | 0.002749892 |
+| simulated-report-only | unset | 3 | 3048.704 | 45.500 | 0.002749892 |
+| simulated-report-only | unset | 4 | 3064.721 | 110.426 | 0.002749892 |
+| simulated-report-only | unset | 5 | 2999.439 | 44.000 | 0.002749892 |
+| simulated-report-only | accepted | 1 | 3061.744 | 19.500 | 0.052699397 |
+| simulated-report-only | accepted | 2 | 3016.421 | 33.360 | 0.052699397 |
+| simulated-report-only | accepted | 3 | 3054.122 | 47.000 | 0.052699397 |
+| simulated-report-only | accepted | 4 | 3059.655 | 47.500 | 0.052699397 |
+| simulated-report-only | accepted | 5 | 3053.751 | 46.000 | 0.052699397 |
+| applied-blocking | unset | 1 | 2015.589 | 114.207 | 0.002749892 |
+| applied-blocking | unset | 2 | 2172.137 | 196.393 | 0.002749892 |
+| applied-blocking | unset | 3 | 2174.360 | 260.566 | 0.002749892 |
+| applied-blocking | unset | 4 | 2197.731 | 314.708 | 0.002749892 |
+| applied-blocking | unset | 5 | 2175.917 | 268.536 | 0.002749892 |
+| applied-blocking | accepted | 1 | 2082.890 | 146.846 | 0.052699397 |
+| applied-blocking | accepted | 2 | 2428.795 | 223.152 | 0.052699397 |
+| applied-blocking | accepted | 3 | 3062.116 | 496.746 | 0.052699397 |
+| applied-blocking | accepted | 4 | 2229.019 | 247.039 | 0.052699397 |
+| applied-blocking | accepted | 5 | 2484.767 | 256.374 | 0.052699397 |
+
+Every sample transferred 301,635 first-party bytes and zero third-party bytes (Pixel blocked). This does not measure real Pixel cost.
+
+Artifact verification: all four `reports-{unset|accepted}-{simulated|applied}` directories exist. Top-level `.lighthouseci/assertion-results.json` matches the final applied/accepted TBT error (200 ms expected, 247.039 ms actual); each timestamped raw directory retains its own assertions. Pre-existing unsuffixed local report directories are from earlier rounds, not outputs of Round G.
+
+Changed files: `components/landing/DeferredMotion.tsx`; `scripts/landing/{perf-ci,e2e-server,perf-housekeeping}.mjs`; `lighthouserc.cjs`; `tests/landing/{performance-budget,perf-housekeeping}.test.ts`; `tests/e2e/landing/iphone-subdex.spec.ts`; `docs/landing-v2-{BUILD,chunk7-RESULT}.md`.
+
+Handoff: UNCOMMITTED on `feat/landing-v2`, HEAD `e51fc32f`, worktree `C:/Users/conta/co-ops-landing`. No push, merge, deployment or production access. Ports 44170-44175 closed; PID file absent. The two initial stale status entries (`app/eat/layout.tsx`, `package.json`) still have no content diff.
+
+Open risks: local applied TBT remains above budget; exact-revision CI and CC review are outstanding. Existing WebKit decoder skips, native-device release checks and cached-import retry limitation are unchanged. All five requested P3 implementation items are complete; CI remains the gate.

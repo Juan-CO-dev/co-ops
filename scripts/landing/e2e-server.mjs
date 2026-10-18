@@ -1,6 +1,7 @@
 import { warmRoutes } from './e2e-readiness.mjs';
 import { portBase, pidFile } from './e2e-ports.cjs';
-import { writeFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { writePidsAtomic } from './perf-housekeeping.mjs';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { prepareNearbyFixture } from './e2e-nearby-fixture.mjs';
@@ -77,7 +78,7 @@ const dormant = run(['start', '-p', `${portBase + 1}`, '-H', '0.0.0.0'], { ...ru
 const unavailable = run(['start', '-p', `${portBase + 3}`, '-H', '0.0.0.0'], { ...runtime, NEXT_PUBLIC_SUPABASE_URL:`http://127.0.0.1:${portBase + 4}`, LANDING_COUNTER_ENABLED:'true', LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 3}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 3}` });
 const nearby = fixtureDir ? run(['start', '-p', `${portBase + 5}`, '-H', '0.0.0.0'], {...runtime, LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 5}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 5}`, NEXT_PUBLIC_META_PIXEL_ID:'123456789', LANDING_CAPI_ENABLED:'true'}, fixtureDir) : null;
 const children = [active,dormant,unavailable,...(nearby ? [nearby] : [])];
-writeFileSync(pidFile, JSON.stringify(children.map(child=>child.pid)));
+writePidsAtomic(pidFile, children.map(child=>child.pid));
 function stop(code) { for (const child of children) child.kill(); locations.close(); process.exit(code); }
 for (const child of children) child.on('exit', code => stop(code ?? 1));
 for (const signal of ['SIGTERM','SIGINT']) process.on(signal, () => stop(0));
