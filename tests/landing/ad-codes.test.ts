@@ -1,9 +1,26 @@
 import { expect, it, vi } from 'vitest';
-import { createAdCodeResolver, handleAdCode } from '@/lib/landing/ad-codes-server';
+import { createAdCodeResolver, handleAdCode, SSR_AD_CODE_TIMEOUT_MS } from '@/lib/landing/ad-codes-server';
 import { lookupAdCode } from '@/lib/landing/tracking-client';
 import { queryAdCandidate, validAdCandidate } from '@/lib/landing/ad-codes-shared';
 const env={LANDING_HOSTS:'eat.example.test',SITE_ORIGIN:'https://eat.example.test',STAFF_ORIGIN:'https://staff.example.test'};
 const request=(body:unknown={candidate:'campaign-new'},headers:Record<string,string>={})=>new Request(`${env.SITE_ORIGIN}/api/landing/ad-code`,{method:'POST',headers:{host:'eat.example.test',origin:env.SITE_ORIGIN,cookie:'landing_consent=accepted','content-type':'application/json',...headers},body:JSON.stringify(body)});
+it.each([['refused',429],['unavailable',503]] as const)('honors WAF %s before lookup',async(state,status)=>{
+ const resolve=vi.fn();const response=await handleAdCode(request(),{env:{...env,LANDING_WAF_STATE:state},resolve});
+ expect(response.status).toBe(status);expect(resolve).not.toHaveBeenCalled();expect(response.headers.get('cache-control')).toContain('no-store');
+});
+it('SSR timeout is 300 ms with abort and fallback; default CAPI budget stays 750 ms',async()=>{
+ vi.useFakeTimers();
+ try {
+  expect(SSR_AD_CODE_TIMEOUT_MS).toBe(300);
+  let signal:AbortSignal|undefined;
+  const lookup=vi.fn((_candidate:string,s:AbortSignal)=>{signal=s;return new Promise<boolean>(()=>{});});
+  const result=createAdCodeResolver(lookup,SSR_AD_CODE_TIMEOUT_MS)('new-code');
+  await vi.advanceTimersByTimeAsync(299);expect(signal?.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);expect(await result).toBe('unattributed');expect(signal?.aborted).toBe(true);
+  const normal=createAdCodeResolver(lookup)('new-code');await vi.advanceTimersByTimeAsync(300);expect(signal?.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(450);expect(await normal).toBe('unattributed');
+ } finally {vi.useRealTimers();}
+});
 it('accepts opaque bounded campaign/send syntax, never identities or ambiguous query keys',()=>{
  for(const code of ['a','a'.repeat(64),'campaign-2026','send_oct_18',...Array.from({length:12},(_,i)=>`family-${i}`)]) expect(validAdCandidate(code)).toBe(true);
  for(const code of ['',null,'a'.repeat(65),'PERSON','person@example.com','a b','a/b','-bad','code\n','code\r','code\r\n']) expect(validAdCandidate(code)).toBe(false);

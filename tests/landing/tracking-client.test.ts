@@ -10,6 +10,25 @@ describe('landing dispatch', () => {
   it('denies all sends without consent or server approval', () => {
     for (const approved of [true,false]) { const f=fixture({serverApproved:approved}); if (!approved) f.tracker.setConsent(true); f.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'}); expect(f.post).not.toHaveBeenCalled(); expect(f.pixel).not.toHaveBeenCalled(); }
   });
+  it('buffers one click with its original ID, resolves its ad and flushes exactly once',()=>{
+    const f=fixture();f.tracker.beginResolution();f.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero',ad:'unresolved'});
+    expect(f.loadPixel).not.toHaveBeenCalled();expect(f.post).not.toHaveBeenCalled();
+    f.tracker.setAcceptedAd('new-campaign');f.tracker.setConsent(true);f.tracker.pageView();f.tracker.flushPending('new-campaign');f.tracker.flushPending('new-campaign');
+    const action=f.pixel.mock.calls.find(call=>call[1]==='OrderClick');expect(action?.[3]).toBe('id-1');expect(action?.[2]).toHaveProperty('ad','new-campaign');
+    expect(f.post.mock.calls.filter(call=>call[0].endsWith('/events'))).toEqual([['/api/landing/events',expect.objectContaining({event_id:'id-1',event_time:123,ad:'new-campaign'})]]);
+    expect(f.post.mock.calls.filter(call=>call[0].endsWith('/order-click'))).toEqual([['/api/landing/order-click',{store:'dupont',ad:'new-campaign'}]]);
+  });
+  it.each(['withdrawal','generation'])('drops the prior buffer on %s',reason=>{
+    const f=fixture();f.tracker.beginResolution();f.tracker.dispatch('Lead',{placement:'hero'});f.tracker.sectionView('hero');
+    if(reason==='withdrawal')f.tracker.setConsent(false);else f.tracker.beginResolution();
+    f.tracker.setConsent(true);f.tracker.flushPending('unattributed');expect(f.post).not.toHaveBeenCalled();expect(f.pixel).not.toHaveBeenCalled();
+  });
+  it('bounds queued calls to ten and preserves section deduplication',()=>{
+    const f=fixture();f.tracker.beginResolution();f.tracker.sectionView('hero');f.tracker.sectionView('hero');
+    for(let i=0;i<20;i++)f.tracker.dispatch('Lead',{placement:'hero'});
+    f.tracker.setConsent(true);f.tracker.flushPending('unattributed');f.tracker.sectionView('hero');
+    expect(f.pixel.mock.calls.filter(call=>call[1]==='ViewContent')).toHaveLength(1);expect(f.post).toHaveBeenCalledTimes(8);
+  });
   it('loads once, deduplicates page/sections and revokes', () => {
     const f=fixture(); f.tracker.setConsent(true); f.tracker.setConsent(true); f.tracker.pageView(); f.tracker.pageView(); f.tracker.sectionView('hero'); f.tracker.sectionView('hero');
     expect(f.loadPixel).toHaveBeenCalledOnce(); expect(f.pixel.mock.calls.map(c=>c[1])).toEqual(['PageView','ViewContent']);

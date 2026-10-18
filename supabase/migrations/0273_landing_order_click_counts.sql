@@ -6,6 +6,9 @@
 -- and sim jepgzucrvklhqpthowsc; registry/counter/function absent in both.
 -- Self-contained: no dependency on 0274/0275 objects; manual apply may be out of order.
 -- Derived increment-only aggregate exception; no operational history is modified.
+-- Re-application is intentionally an error: fail-closed, not idempotent.
+
+begin;
 
 -- Opaque campaign/send codes only. Slots are lifetime allocations, including retired codes.
 CREATE TABLE public.landing_ad_codes (
@@ -31,6 +34,9 @@ CREATE TABLE public.landing_order_click_counts (
   click_count bigint NOT NULL CHECK (click_count > 0),
   PRIMARY KEY (day_utc, store_key, ad_code)
 );
+-- Expected advisor lint: unindexed_foreign_keys on ad_code. Parent rows are
+-- never deleted or re-keyed (no DELETE/code-UPDATE grant); an index would add
+-- write cost to the hot increment. Deliberately no supporting ad_code index.
 ALTER TABLE public.landing_order_click_counts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY landing_order_click_counts_read ON public.landing_order_click_counts FOR SELECT USING (false);
 CREATE POLICY landing_order_click_counts_no_user_insert ON public.landing_order_click_counts FOR INSERT WITH CHECK (false);
@@ -68,3 +74,19 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.increment_landing_order_click(text, text) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.increment_landing_order_click(text, text) TO service_role;
+
+-- The definer's RLS exemption requires ownership of BOTH tables.
+do $$
+begin
+  if exists (
+    select 1 from pg_catalog.pg_class c
+    where c.oid in ('public.landing_ad_codes'::regclass, 'public.landing_order_click_counts'::regclass)
+      and c.relowner <> (select p.proowner from pg_catalog.pg_proc p
+        where p.oid = 'public.increment_landing_order_click(text,text)'::regprocedure)
+  ) then
+    raise exception '0273: increment function must own both landing tables';
+  end if;
+end;
+$$;
+
+commit;

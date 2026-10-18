@@ -1,6 +1,14 @@
 import { expect, it } from 'vitest';
 import { landingTenantConfig } from '@/config/tenant/landing';
-import { shopStructuredData, serializeStructuredData } from '@/lib/landing/structured-data-shared';
+import { shopStructuredData, serializeStructuredData, structuredDataImage } from '@/lib/landing/structured-data-shared';
+it('keeps all schema facts except image when the hero asset is missing', () => {
+ const image=structuredDataImage([{id:'other',path:'/other.webp'}]);expect(image).toBeUndefined();
+ const missing=shopStructuredData('https://eat.example.test','Brand',image,landingTenantConfig.stores);
+ const present=shopStructuredData('https://eat.example.test','Brand','/hero.webp',landingTenantConfig.stores);
+ expect(missing['@graph']).toEqual(present['@graph'].map(node=>{const copy={...node};delete copy.image;return copy;}));
+ expect(serializeStructuredData(missing)).not.toContain('"image"');
+ expect(structuredDataImage([{id:'v2-p013-1280',path:'/hero.webp'}])).toBe('/hero.webp');
+});
 it('projects only the exact public facts, two restaurants and seven-day hours', () => {
   const graph=shopStructuredData('https://eat.example.test','Brand','/media/hero.webp',landingTenantConfig.stores);
   expect(graph['@graph']).toHaveLength(2);

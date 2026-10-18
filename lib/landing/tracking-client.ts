@@ -17,12 +17,20 @@ export interface TrackingTransport {
 export function createLandingTracker(config: TrackerConfig, transport: TrackingTransport) {
   let consent = false, pixelLoaded = false, pageSent = false;
   const sections = new Set<string>();
+  let resolving = false;
+  let buffered: ((ad: string) => void)[] = [];
   const hasPixel = !!config.pixelId && /^\d{1,32}$/.test(config.pixelId);
   const safe = (action: () => void) => { try { action(); } catch { /* Analytics never affects a native action. */ } };
-  return {
+  const tracker = {
+    beginResolution() { tracker.setConsent(false); resolving = true; },
+    flushPending(ad: string) {
+      const queued = buffered; buffered = []; resolving = false;
+      if (consent) for (const send of queued) send(ad);
+    },
     setAcceptedAd(ad: string) { config = { ...config, allowedAds: [ad, 'unattributed'] }; },
     setConsent(allowed: boolean) {
       const next = config.serverApproved && allowed;
+      if (!next) { buffered = []; resolving = false; }
       if (!consent && next && pixelLoaded) safe(() => transport.grantPixel?.());
       if (consent && !next && pixelLoaded) safe(() => transport.revokePixel());
       consent = next;
@@ -32,11 +40,20 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       if (!consent || !hasPixel || pageSent) return;
       pageSent = true; safe(() => transport.pixel('track','PageView',{},transport.uuid()));
     },
-    sectionView(section: string) {
+    sectionView(section: string, eventId?: string): void {
+      if (resolving && config.serverApproved && buffered.length < 10) {
+        const id = eventId ?? transport.uuid();
+        buffered.push(() => tracker.sectionView(section, id)); return;
+      }
       if (!consent || !hasPixel || sections.has(section) || !/^[a-z-]{1,40}$/.test(section)) return;
-      sections.add(section); safe(() => transport.pixel('track','ViewContent',{content_name:section},transport.uuid()));
+      sections.add(section); safe(() => transport.pixel('track','ViewContent',{content_name:section},eventId ?? transport.uuid()));
     },
-    dispatch(name: LandingAction, details: ActionDetails) {
+    dispatch(name: LandingAction, details: ActionDetails, event?: { id: string; time: number }): void {
+      if (resolving && config.serverApproved && buffered.length < 10) {
+        const original = event ?? { id: transport.uuid(), time: transport.now() };
+        const snapshot = { ...details };
+        buffered.push(ad => tracker.dispatch(name, { ...snapshot, ad }, original)); return;
+      }
       if (!consent || !['OrderClick','CateringClick','Lead'].includes(name) || !config.allowedPlacements.includes(details.placement)) return;
       if (details.store && !config.allowedStores.includes(details.store)) return;
       if (name === 'OrderClick' && !details.store && !details.vendor) return;
@@ -44,10 +61,10 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       const params: Record<string,string> = {ad,placement:details.placement};
       if (details.store) params.store = details.store;
       if (details.vendor) { if (name !== 'OrderClick' || !validVendorPlacement(details.vendor,details.placement,details.store)) return; params.vendor = details.vendor; }
-      const id = transport.uuid();
+      const id = event?.id ?? transport.uuid();
       if (hasPixel) safe(() => transport.pixel(name === 'Lead' ? 'track' : 'trackCustom',name,params,id));
       if (config.capiEnabled) {
-        const payload: Record<string,unknown> = {event_name:name,event_id:id,event_time:Math.floor(transport.now()/1000),consent:'accepted',source_url:config.sourceUrl,...params};
+        const payload: Record<string,unknown> = {event_name:name,event_id:id,event_time:Math.floor((event?.time ?? transport.now())/1000),consent:'accepted',source_url:config.sourceUrl,...params};
         if (details.fbc && /^fb\.1\.\d{1,16}\.[A-Za-z0-9_-]{1,500}$/.test(details.fbc)) payload.fbc=details.fbc;
         if (details.fbp && /^fb\.1\.\d{1,16}\.\d{1,30}$/.test(details.fbp)) payload.fbp=details.fbp;
         safe(() => transport.post('/api/landing/events',payload));
@@ -55,6 +72,7 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       if (name === 'OrderClick' && details.store && !details.vendor) safe(() => transport.post('/api/landing/order-click',{store:details.store,ad}));
     },
   };
+  return tracker;
 }
 
 type Pixel = ((...args: unknown[]) => void) & { queue?: unknown[][]; callMethod?: (...args:unknown[])=>void; push?: Pixel; loaded?: boolean; version?: string };

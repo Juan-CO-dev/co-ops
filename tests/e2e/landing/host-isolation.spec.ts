@@ -29,7 +29,7 @@ test('all host matrix rows and runtime headers', async ({ request }) => {
   for (const host of [`localhost:${portBase}`,'eat.example.test','preview.example.test']) {
     for (const path of ['/', '/privacy', '/brand/landing-icon.png', '/admin']) {
       const response = await request.get(path,{headers:{host,'x-forwarded-host':host}, maxRedirects:0});
-      expect(response.status()).toBe(path === '/admin' ? 404 : host === `localhost:${portBase}` ? 200 : 301);
+      expect(response.status()).toBe(path === '/admin' ? 404 : path.startsWith('/brand/') || host === `localhost:${portBase}` ? 200 : 301);
       const csp = response.headers()['content-security-policy-report-only']!;
       expect(csp.match(/default-src/g)).toHaveLength(1);
       expect(csp).toContain('connect.facebook.net');
@@ -57,7 +57,6 @@ test('invalid or disagreeing hosts leave staff available and landing dormant', a
     {'x-forwarded-host':'evil.test'},
     {'x-forwarded-host':`localhost:${portBase + 1}`},
     {'x-forwarded-host':'localhost.,evil.test'},
-    {host:'localhost.', 'x-forwarded-host':'localhost.'},
     {host:'user@localhost', 'x-forwarded-host':'user@localhost'},
   ] as Record<string, string>[]) {
     const root = await request.get('/', {headers, maxRedirects:0});
@@ -69,6 +68,13 @@ test('invalid or disagreeing hosts leave staff available and landing dormant', a
     for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click','/api/landing/ad-code']) {
       expect((await request.get(path,{headers,maxRedirects:0})).status()).toBe(404);
     }
+  }
+});
+test('rejected listed landing authority never serves staff', async ({request}) => {
+  for(const path of ['/','/admin','/privacy','/api/landing/ad-code']) {
+    const response=await request.get(path,{headers:{host:'localhost.','x-forwarded-host':'localhost.'},maxRedirects:0});
+    expect(response.status()).toBe(404);expect(response.headers()['x-robots-tag']).toBe('noindex, nofollow');
+    expect(await response.text()).not.toContain('Operations Platform');
   }
 });
 test('local optimizer cannot bypass isolation', async ({ request }) => {

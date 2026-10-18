@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 import { LANDING_STORE_KEYS } from "@/lib/landing/tracking-schema-shared";
 const sql = readFileSync("supabase/migrations/0273_landing_order_click_counts.sql", "utf8");
 describe("file-only landing counter migration contract", () => {
+  it('wraps the file atomically and asserts both table owners, with expected FK lint', () => {
+    expect(sql.replace(/^--.*$/gm, '').trim()).toMatch(/^begin;/);
+    expect(sql.trim()).toMatch(/commit;$/);
+    expect(sql).toContain('Re-application is intentionally an error');
+    expect(sql).toContain('c.relowner <> (select p.proowner');
+    expect(sql).toContain("raise exception '0273:");
+    expect(sql).toContain('unindexed_foreign_keys');
+    expect(sql).not.toMatch(/CREATE\s+INDEX/i);
+  });
   it("keeps bounded vocabulary aligned and stores only aggregates", () => {
     for (const key of ["unattributed", "subsim-photo", ...LANDING_STORE_KEYS]) expect(sql).toContain(`'${key}'`);
     expect(sql).toContain("PRIMARY KEY (day_utc, store_key, ad_code)");

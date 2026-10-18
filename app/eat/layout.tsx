@@ -25,7 +25,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const canonical = new URL(requestHeaders.get("x-landing-path") === "/privacy" ? "/privacy" : "/", origin);
   const english = canonical.href;
   const spanish = `${english}?lang=es`;
-  if (language === "es") canonical.search = "?lang=es";
+  if (requestHeaders.get("x-landing-explicit-language") === "es") canonical.search = "?lang=es";
   const indexable = requestHeaders.get("x-landing-indexable") === "1";
   return {
     metadataBase: new URL(origin), title, description,

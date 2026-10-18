@@ -38,10 +38,9 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
   if (!origin) notFound();
   const query = await searchParams;
   const language = resolveLandingLanguage(query.lang,requestHeaders.get("accept-language"));
-  const stores = await loadPublicLandingStores(config);
-  const publicStores = config.stores.filter(store=>stores.some(publicStore=>publicStore.key===store.key));
   const queryString = new URLSearchParams(Object.entries(query).flatMap(([key,value])=>typeof value === "string" ? [[key,value]] : Array.isArray(value) ? value.map((v)=>[key,v]) : [])).toString();
-  const acceptedAd = await resolveAdCode(queryAdCandidate(queryString));
+  const [stores, acceptedAd] = await Promise.all([loadPublicLandingStores(config), resolveAdCode(queryAdCandidate(queryString))]);
+  const publicStores = config.stores.filter(store=>stores.some(publicStore=>publicStore.key===store.key));
   const attributionPolicy = { ...config.attribution, ads: [acceptedAd, "unattributed"] };
   const ad = captureAttribution(queryString, attributionPolicy).ad;
   const sectionKeys = ["crave","lineup","field-guide","subdex","catering","shops","footer"] as const;

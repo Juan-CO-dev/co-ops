@@ -36,6 +36,10 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   // No client-supplied routing/identity hints survive the public boundary.
   for (const key of [...headers.keys()]) if (key.startsWith('x-landing') || key.startsWith('x-co-')) headers.delete(key);
   const requestedHost = parseAuthority(req.headers.get('host'));
+  const rawHostname = req.headers.get('host')?.toLowerCase().replace(/:[^:]*$/, '').replace(/\.$/, '');
+  if (!requestedHost && rawHostname && landingConfig.landingHosts.includes(rawHostname)) {
+    return finish(new NextResponse(null, { status: 404 }), true);
+  }
   if (requestedHost && landingConfig.landingHosts.includes(requestedHost.hostname) && requestedHost.hostname !== configuredOrigin(landingConfig.STAFF_ORIGIN)?.hostname && !configuredOrigin(landingConfig.SITE_ORIGIN)) {
     return finish(new NextResponse(null, { status: 404 }), true);
   }
@@ -45,11 +49,12 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     headers.set('x-landing-indexable', indexable ? '1' : '0');
     headers.set('x-landing-path', path === '/privacy' ? '/privacy' : '/');
     const languages = req.nextUrl.searchParams.getAll('lang');
+    if (languages.length === 1 && (languages[0] === 'en' || languages[0] === 'es')) headers.set('x-landing-explicit-language', languages[0]);
     headers.set('x-landing-language', resolveLandingLanguage(languages.length === 1 ? languages[0] : undefined, req.headers.get('accept-language')));
     const decision = landingPathDecision(path, req.nextUrl.searchParams);
     if (decision === 'deny') return finish(new NextResponse(null, { status: 404 }), true);
-    if (landingConfig.VERCEL_ENV === 'production' && !indexable) {
-      targetOrigin.pathname = path;
+    if (landingConfig.VERCEL_ENV === 'production' && !indexable && (decision === 'rewrite' || decision === 'redirect')) {
+      targetOrigin.pathname = path === '/eat' ? '/' : path === '/eat/privacy' ? '/privacy' : path;
       targetOrigin.search = req.nextUrl.search;
       return finish(NextResponse.redirect(targetOrigin, 301), true);
     }

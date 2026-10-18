@@ -15,6 +15,17 @@ import { proxy as original, config } from "./pre-chunk-a-proxy.fixture";
 vi.mock("@/lib/auth", () => ({ verifyJwt: vi.fn(async () => ({ user_id:"u", app_role:"employee", role_level:1, session_id:"s" })) }));
 afterEach(() => vi.unstubAllEnvs());
 const identityHeaders = ["user-id", "app-role", "role-level", "session-id"];
+it('fails closed only for rejected raw authorities matching listed landing hostnames',async()=>{
+ vi.stubEnv('LANDING_HOSTS','eat.example.test,preview.example.test');vi.stubEnv('SITE_ORIGIN','https://eat.example.test');vi.stubEnv('STAFF_ORIGIN','https://staff.example.test');
+ for(const host of ['eat.example.test.','EAT.EXAMPLE.TEST.:443','preview.example.test:0','eat.example.test:65536','eat.example.test:bad']) {
+  const response=await proxy(new NextRequest('https://eat.example.test/',{headers:{host}}));expect(response.status,host).toBe(404);expect(response.headers.get('x-robots-tag')).toBe('noindex, nofollow');expect(response.headers.get('x-middleware-next')).toBeNull();
+ }
+ const publicHeaders=(response:NextResponse)=>[...response.headers].filter(([key])=>!key.startsWith('x-middleware-request-')&&key!=='x-middleware-override-headers');
+ for(const host of ['staff.example.test.','unlisted.example.test.','bad_host.test','eat.example.test..','private@example.test'])for(const path of ['/','/order','/admin']) {
+  const req=new NextRequest(`https://staff.example.test${path}`,{headers:{host}});const before=await original(req);const after=await proxy(req);
+  expect(after.status).toBe(before.status);expect(publicHeaders(after),host).toEqual(publicHeaders(before));expect(await after.text()).toBe(await before.text());
+ }
+});
 function decision(response: NextResponse) {
   return { status: response.status, location: response.headers.get("location"), rewrite: response.headers.get("x-middleware-rewrite"), next: response.headers.get("x-middleware-next"), identity: identityHeaders.map(name => response.headers.get(`x-middleware-request-x-co-${name}`)) };
 }

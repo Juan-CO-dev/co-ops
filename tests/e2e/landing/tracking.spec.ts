@@ -79,26 +79,39 @@ test('secondary first-screen catering preserves CateringClick at hero placement'
 
 test('registry lookup starts after consent, precedes Pixel, and admits a new code',async({page})=>{
  await isolateMeta(page);
+ const events:Record<string,unknown>[]=[],counters:Record<string,unknown>[]=[];
+ await page.route('**/api/landing/events',route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});
+ await page.route('**/api/landing/order-click',route=>{counters.push(route.request().postDataJSON());return route.fulfill({status:204});});
  let release:()=>void=()=>{}; const gate=new Promise<void>(resolve=>{release=resolve;}); let lookups=0;
  await page.route('**/api/landing/ad-code',async route=>{lookups++;expect(route.request().postDataJSON()).toEqual({candidate:'campaign-new'});await gate;await route.fulfill({json:{ad:'campaign-new'}});});
  await page.goto('/?ad=campaign-new&email=private@example.com');
  expect(lookups).toBe(0);expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();
  await page.locator('[data-landing-consent]').getByRole('button').first().click();
  await expect.poll(()=>lookups).toBe(1);expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
+ await page.locator('#lineup a').first().evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
+ expect(events).toEqual([]);expect(counters).toEqual([]);
  expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();release();
  await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
  expect(JSON.parse((await page.evaluate(()=>sessionStorage.getItem('landing_attribution')))!)).toEqual({ad:'campaign-new',utm:{}});
  expect(page.url()).not.toContain('email');
+ await expect.poll(()=>events.length).toBe(1);await expect.poll(()=>counters.length).toBe(1);
+ expect(events[0]).toMatchObject({event_name:'OrderClick',ad:'campaign-new'});expect(counters[0]).toMatchObject({ad:'campaign-new'});
+ const queued=await page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='OrderClick'));
+ expect(queued).toHaveLength(1);expect(queued?.[0]?.[3]).toEqual({eventID:events[0]?.event_id});
 });
 
 test('withdrawal during registry lookup cannot persist attribution or initialize Pixel',async({page})=>{
  await isolateMeta(page);let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});let started=false;
+ const sends:string[]=[];
+ await page.route(/\/api\/landing\/(events|order-click)$/,route=>{sends.push(route.request().url());return route.fulfill({status:204});});
  await page.route('**/api/landing/ad-code',async route=>{started=true;await gate;await route.fulfill({json:{ad:'campaign-new'}});});
  await page.goto('/?ad=campaign-new');await page.locator('[data-landing-consent]').getByRole('button').first().click();
  await expect.poll(()=>started).toBe(true);
+ await page.locator('#lineup a').first().evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
  await page.locator('aside').filter({has:page.locator('button[aria-expanded]')}).getByRole('button').first().click();
  await page.locator('[data-landing-consent]').getByRole('button').nth(1).click();release();await page.waitForTimeout(1100);
  expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
+ expect(sends).toEqual([]);
 });
 
 test('restored retired code is revalidated and lookup outage preserves native navigation',async({page,context})=>{

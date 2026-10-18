@@ -2,6 +2,7 @@ import 'server-only';
 import { cache } from 'react';
 import { getServiceRoleClient } from '@/lib/supabase-server';
 import { UNATTRIBUTED, validAdCandidate } from './ad-codes-shared';
+import { landingRateLimit } from './rate-limit';
 import { boundedJson, emptyResponse, guardLandingRequest, type LandingServerEnv } from './request-server';
 
 type Lookup = (candidate: string, signal: AbortSignal) => Promise<boolean>;
@@ -31,16 +32,21 @@ export function createAdCodeResolver(lookup: Lookup = registryLookup, timeoutMs 
   };
 }
 // React cache is request-scoped during server rendering, never a global registry cache.
-export const resolveAdCode = cache(async (candidate: unknown) => createAdCodeResolver()(candidate));
+export const SSR_AD_CODE_TIMEOUT_MS = 300;
+export const resolveAdCode = cache(async (candidate: unknown) => createAdCodeResolver(registryLookup, SSR_AD_CODE_TIMEOUT_MS)(candidate));
 
 export async function handleAdCode(request: Request, dependencies: { env?: LandingServerEnv; resolve?: (candidate: unknown) => Promise<string> } = {}): Promise<Response> {
-  const refused = guardLandingRequest(request, dependencies.env ?? process.env);
+  const env = dependencies.env ?? process.env;
+  const refused = guardLandingRequest(request, env);
   if (refused) return refused;
   const body = await boundedJson(request, 512);
   if ('error' in body) return body.error;
   const value = body.value;
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 1 || !('candidate' in value) || !validAdCandidate(value.candidate)) return emptyResponse(400);
   let ad = UNATTRIBUTED;
+  const protection = landingRateLimit(env);
+  if (protection === 'refused') return emptyResponse(429);
+  if (protection === 'unavailable') return emptyResponse(503);
   try { ad = await (dependencies.resolve ?? createAdCodeResolver())(value.candidate); } catch { /* Fixed fallback, no diagnostics. */ }
   return Response.json({ ad: ad === value.candidate ? ad : UNATTRIBUTED }, { headers: { 'Cache-Control': 'private, no-store' } });
 }

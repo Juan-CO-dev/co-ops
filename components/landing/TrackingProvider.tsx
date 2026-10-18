@@ -52,12 +52,14 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
       const version=++generation.current;
       tracker.current?.setConsent(false); setAllowed(false);
       if (!permitted()) return;
+      tracker.current?.beginResolution();
       const query=window.location.search;
       const explicitAd=new URLSearchParams(query).has('ad');
       const candidate=explicitAd ? queryAdCandidate(query) : readAdCandidate(storage());
       const ad=await lookupAdCode(candidate);
       // Withdrawal/unmount/re-accept invalidates an in-flight lookup, even if consent is now allowed.
-      if(version!==generation.current || !permitted()) return;
+      if(version!==generation.current) return;
+      if(!permitted()) { tracker.current?.setConsent(false); return; }
       const policy={...cfg.attributionPolicy,ads:[ad,'unattributed']};
       const restored=readAttribution(storage(),policy);
       const captured=captureAttribution(query,policy,Date.now(),restored);
@@ -66,6 +68,7 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
       persistAttribution(storage(),attribution.current,true);
       tracker.current?.setAcceptedAd(ad);
       tracker.current?.setConsent(true); tracker.current?.pageView(); setAllowed(true);
+      tracker.current?.flushPending(ad);
     };
     const saved=readConsent(document.cookie); setChoice(saved);
     if(permitted()) void enable.current();
@@ -88,7 +91,7 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
       const fbp=document.cookie.split(';').map(v=>v.trim()).find(v=>v.startsWith('_fbp='))?.slice(5);
       tracker.current?.dispatch(name,{...details,ad:attribution.current.ad,fbc:buildFbc(attribution.current.fbclid,attribution.current.capturedAt??0),fbp});
     },
-    sectionView(section) { if(marketingAllowed(serverApproved,readConsent(document.cookie),signals())) tracker.current?.sectionView(section); },
+    sectionView(section) { if(marketingAllowed(serverApproved,readConsent(document.cookie),signals())) tracker.current?.sectionView(section); else tracker.current?.setConsent(false); },
   };
   const notice=serverApproved?<ConsentNotice choice={choice} labels={labels} onChoose={choose}/>:null;
   return <TrackingContext.Provider value={context}><ConsentContext.Provider value={notice}>{children}{new URL(sourceUrl).pathname !== '/' && notice}</ConsentContext.Provider></TrackingContext.Provider>;

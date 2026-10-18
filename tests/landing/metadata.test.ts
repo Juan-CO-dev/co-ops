@@ -1,10 +1,14 @@
 import { expect, it, vi } from "vitest";
-vi.mock("next/headers",()=>({headers:async()=>new Headers({host:"eat.example.test","x-landing-language":process.env.TEST_LANGUAGE ?? "en","x-landing-path":"/"})}));
+vi.mock("next/headers",()=>({headers:async()=>new Headers({host:"eat.example.test","x-landing-language":process.env.TEST_LANGUAGE ?? "en","x-landing-path":"/",...(process.env.TEST_EXPLICIT_LANGUAGE ? {"x-landing-explicit-language":process.env.TEST_EXPLICIT_LANGUAGE} : {})})}));
 import LandingPage from "@/app/eat/page";
 import LandingLayout, { generateMetadata, viewport } from "@/app/eat/layout";
 import * as hostPolicy from "@/lib/landing/host-shared";
+it('Spanish rendering alone keeps the English URL canonical',async()=>{
+ vi.stubEnv('LANDING_HOSTS','eat.example.test');vi.stubEnv('SITE_ORIGIN','https://eat.example.test');vi.stubEnv('STAFF_ORIGIN','https://staff.example.test');vi.stubEnv('TEST_LANGUAGE','es');vi.stubEnv('TEST_EXPLICIT_LANGUAGE','');
+ try {const result=await generateMetadata();expect(result.alternates?.canonical).toBe('https://eat.example.test/');expect(result.openGraph).toHaveProperty('locale','es_US');}finally{vi.unstubAllEnvs();}
+});
 it.each(["en","es"])("owns public metadata in %s",async language=>{
- vi.stubEnv("LANDING_HOSTS","eat.example.test");vi.stubEnv("SITE_ORIGIN","https://eat.example.test");vi.stubEnv("STAFF_ORIGIN","https://staff.example.test");vi.stubEnv("TEST_LANGUAGE",language);
+ vi.stubEnv("LANDING_HOSTS","eat.example.test");vi.stubEnv("SITE_ORIGIN","https://eat.example.test");vi.stubEnv("STAFF_ORIGIN","https://staff.example.test");vi.stubEnv("TEST_LANGUAGE",language);vi.stubEnv("TEST_EXPLICIT_LANGUAGE",language);
  try {const result=await generateMetadata();expect(result.description).toBeTruthy();expect(result.openGraph).toHaveProperty("description",result.description);expect(new URL(result.metadataBase!.toString()).origin).toBe("https://eat.example.test");expect(result.alternates?.canonical).toBe(`https://eat.example.test/${language === "es" ? "?lang=es" : ""}`);expect(result.alternates?.languages).toEqual({"en-US":"https://eat.example.test/","es-US":"https://eat.example.test/?lang=es","x-default":"https://eat.example.test/"});expect(JSON.stringify(result)).not.toContain("Operations Platform");}finally{vi.unstubAllEnvs();}
 });
 it("refuses metadata and layout when the independently derived origin is invalid", async () => {

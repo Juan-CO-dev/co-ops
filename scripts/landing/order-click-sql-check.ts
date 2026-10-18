@@ -19,8 +19,31 @@ async function main() {
     await db.exec("CREATE ROLE migration_owner; CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; GRANT USAGE ON SCHEMA public TO migration_owner, anon, authenticated, service_role; GRANT CREATE ON SCHEMA public TO migration_owner; SET ROLE migration_owner;");
     // Supabase explicit default ACLs, including broad table defaults.
     await db.exec("ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO anon, authenticated; ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO anon, authenticated, service_role;");
-    await db.exec(readFileSync("supabase/migrations/0273_landing_order_click_counts.sql", "utf8"));
+    const migration = readFileSync("supabase/migrations/0273_landing_order_click_counts.sql", "utf8");
+    equal(migration.replace(/^--.*$/gm, '').trim().startsWith('begin;'), true);
+    equal(migration.trim().endsWith('commit;'), true);
+    await db.exec(migration);
     await db.exec("RESET ROLE");
+    const ownershipGuard = migration.slice(migration.indexOf('do $$'), migration.lastIndexOf('commit;'));
+    await db.exec(ownershipGuard); checks++;
+    for (const table of ['landing_ad_codes', 'landing_order_click_counts']) {
+      await db.exec(`BEGIN; ALTER TABLE public.${table} OWNER TO postgres;`);
+      await expectError(ownershipGuard, 'P0001');
+      await db.exec('ROLLBACK');
+    }
+    // A failing ownership guard must roll back every object created by the wrapper.
+    await db.exec('DROP TABLE public.landing_order_click_counts; DROP TABLE public.landing_ad_codes; DROP FUNCTION public.increment_landing_order_click(text,text);');
+    const mismatched = migration.replace('do $$', () => 'ALTER TABLE public.landing_ad_codes OWNER TO migration_owner;\ndo $$');
+    await assert.rejects(db.exec(mismatched), /0273: increment function must own both landing tables/); checks++;
+    await db.exec('ROLLBACK');
+    equal(await scalar("SELECT to_regclass('public.landing_ad_codes') IS NULL AS value"), true);
+    equal(await scalar("SELECT to_regclass('public.landing_order_click_counts') IS NULL AS value"), true);
+    equal(await scalar("SELECT to_regprocedure('public.increment_landing_order_click(text,text)') IS NULL AS value"), true);
+    await db.exec('SET ROLE migration_owner');
+    await db.exec(migration);
+    await db.exec('RESET ROLE');
+    await expectError(migration, '42P07');
+    await db.exec('ROLLBACK');
     equal((await db.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name = 'landing_order_click_counts' ORDER BY ordinal_position")).rows.map(row => row.column_name), ["day_utc", "store_key", "ad_code", "click_count"]);
     equal((await db.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name = 'landing_ad_codes' ORDER BY ordinal_position")).rows.map(row => row.column_name), ["code", "slot", "active"]);
     equal(await scalar("SELECT count(*)::integer AS value FROM public.landing_ad_codes WHERE (code = 'unattributed' AND slot = 1 OR code = 'subsim-photo' AND slot = 2) AND active"), 2);

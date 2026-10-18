@@ -33,10 +33,22 @@ test('alternating canonical, alias and preview hosts never share robots or sitem
     for(const path of ['/robots.txt','/sitemap.xml']) {
       const response=await request.get(`http://localhost:${port}${path}`,{headers:{host,'x-forwarded-host':host},maxRedirects:0});
       expect(response.headers()['cache-control']).toBe('private, no-store');
-      if(host==='preview.example.test') { expect(response.status()).toBe(301); expect(response.headers().location).toBe(`https://localhost:${port}${path}`); continue; }
+      expect(response.status()).toBe(200);
+      expect(response.headers().location).toBeUndefined();
+      if(!indexable) expect(response.headers()['x-robots-tag']).toBe('noindex, nofollow');
       const body=await response.text();
       if(path==='/robots.txt') expect(body).toBe(indexable?`User-agent: *\nAllow: /\nSitemap: https://localhost:${port}/sitemap.xml\n`:'User-agent: *\nDisallow: /\n');
       else expect(body.match(/<loc>/g)?.length ?? 0).toBe(indexable?4:0);
     }
   }
+});
+
+test('Accept-Language changes rendering but only an explicit query changes canonical',async({request})=>{
+ for(const path of ['/','/privacy'])for(const query of ['','?lang=es','?lang=es&lang=en','?lang=invalid']) {
+  const response=await request.get(`${path}${query}`,{headers:{'accept-language':'es','x-landing-explicit-language':'es'}});
+  expect(response.headers()['cache-control']).toContain('no-store'); // CC ruling: no Vary adapter; no-store keeps languages unmixed
+  const html=await response.text();
+  expect(html).toContain(`rel="canonical" href="https://localhost:${portBase}${path==='/'&&query!=='?lang=es'?'':path}${query==='?lang=es'?'?lang=es':''}"`);
+  expect(html).toContain('lang="es"');
+ }
 });

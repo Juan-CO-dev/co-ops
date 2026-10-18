@@ -9,4 +9,3 @@ export function queryAdCandidate(query: string): string | undefined {
 }
 export type AdPolicy = (candidate: string) => string;
 export const boundedAd: AdPolicy = candidate => validAdCandidate(candidate) ? candidate : UNATTRIBUTED;
-

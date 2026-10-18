@@ -14,6 +14,28 @@ it('rejects ambiguous language queries consistently with the page language resol
  }
 });
 afterEach(() => vi.unstubAllEnvs());
+it('serves alias APIs, assets and discovery endpoints in place with noindex',async()=>{
+ for(const [key,value] of Object.entries(env))vi.stubEnv(key,value);
+ for(const path of ['/api/landing/ad-code','/api/landing/events','/api/landing/order-click','/favicon.ico','/_next/static/a.js','/eat/icon.png','/robots.txt','/sitemap.xml']) {
+  const response=await proxy(new NextRequest(`https://preview.example.test${path}`,{method:path.startsWith('/api/')?'POST':'GET',headers:{host:'preview.example.test'}}));
+  expect(response.status,path).toBe(200);expect(response.headers.get('location'),path).toBeNull();expect(response.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  if(path==='/robots.txt')expect(await response.text()).toBe('User-agent: *\nDisallow: /\n');
+  if(path==='/sitemap.xml')expect(await response.text()).not.toContain('<loc>');
+ }
+});
+it.each([['/eat','/'],['/eat/privacy','/privacy']])('collapses alias %s in exactly one hop',async(path,destination)=>{
+ for(const [key,value] of Object.entries(env))vi.stubEnv(key,value);
+ const response=await proxy(new NextRequest(`https://preview.example.test${path}?lang=es&ad=campaign`,{headers:{host:'preview.example.test'}}));
+ expect(response.status).toBe(301);expect(response.headers.get('location')).toBe(`https://eat.example.test${destination}?lang=es&ad=campaign`);
+ const next=await proxy(new NextRequest(response.headers.get('location')!,{headers:{host:'eat.example.test'}}));expect(next.status).toBe(200);expect(next.headers.get('location')).toBeNull();
+});
+it('forwards only explicit valid single language and varies landing HTML',async()=>{
+ for(const [key,value] of Object.entries(env))vi.stubEnv(key,value);
+ for(const [query,explicit] of [['',''],['lang=invalid',''],['lang=es&lang=en',''],['lang=es','es'],['lang=en','en']]) {
+  const response=await proxy(new NextRequest(`https://eat.example.test/?${query}`,{headers:{host:'eat.example.test','accept-language':'es','x-landing-explicit-language':'es'}}));
+  expect(response.headers.get('x-middleware-request-x-landing-explicit-language')).toBe(explicit||null);
+ }
+});
 it('requires production identity AND the approved canonical authority', () => {
   for (const host of ['eat.example.test','EAT.EXAMPLE.TEST:443']) expect(landingIndexable(new Headers({host}),env)).toBe(true);
   for (const host of ['preview.example.test','staff.example.test','unknown.test','eat.example.test:3100']) expect(landingIndexable(new Headers({host}),env)).toBe(false);
