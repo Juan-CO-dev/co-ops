@@ -41,6 +41,7 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
   const attribution=useRef<Attribution>({ad:'unattributed',utm:{}});
   const initial=useRef({serverApproved,pixelId,capiEnabled,sourceUrl,attributionPolicy,allowedStores,allowedPlacements});
   const generation=useRef(0);
+  const resolving=useRef(false);
   const enable=useRef<() => Promise<void>>(async()=>{});
   useEffect(()=>{
     const cfg=initial.current;
@@ -50,15 +51,16 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
     const permitted=()=>marketingAllowed(cfg.serverApproved,readConsent(document.cookie),signals());
     enable.current=async()=>{
       const version=++generation.current;
-      tracker.current?.setConsent(false); setAllowed(false);
+      tracker.current?.setConsent(false); setAllowed(false); resolving.current=false;
       if (!permitted()) return;
-      tracker.current?.beginResolution();
+      tracker.current?.beginResolution(); resolving.current=true;
       const query=window.location.search;
       const explicitAd=new URLSearchParams(query).has('ad');
       const candidate=explicitAd ? queryAdCandidate(query) : readAdCandidate(storage());
       const ad=await lookupAdCode(candidate);
       // Withdrawal/unmount/re-accept invalidates an in-flight lookup, even if consent is now allowed.
       if(version!==generation.current) return;
+      resolving.current=false;
       if(!permitted()) { tracker.current?.setConsent(false); return; }
       const policy={...cfg.attributionPolicy,ads:[ad,'unattributed']};
       const restored=readAttribution(storage(),policy);
@@ -80,7 +82,7 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
     document.cookie=consentCookie(next,window.location.protocol==='https:');
     setChoice(next);
     if(marketingAllowed(serverApproved,next,signals())) {void enable.current();return;}
-    generation.current++; setAllowed(false); tracker.current?.setConsent(false);
+    generation.current++; resolving.current=false; setAllowed(false); tracker.current?.setConsent(false);
     attribution.current={ad:'unattributed',utm:{}};
     persistAttribution(storage(),attribution.current,false);
     sanitizeTrackingLocation(attribution.current); clearMarketingCookies();
@@ -88,8 +90,18 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
   const context:TrackingContextValue={allowed,
     dispatch(name,details) {
       if(!marketingAllowed(serverApproved,readConsent(document.cookie),signals())) { tracker.current?.setConsent(false); return; }
-      const fbp=document.cookie.split(';').map(v=>v.trim()).find(v=>v.startsWith('_fbp='))?.slice(5);
-      tracker.current?.dispatch(name,{...details,ad:attribution.current.ad,fbc:buildFbc(attribution.current.fbclid,attribution.current.capturedAt??0),fbp});
+      const leavingDuringLookup=resolving.current && (name==='OrderClick' || name==='CateringClick');
+      // Keep the intent in memory; resolve attribution and cookies when it is sent.
+      tracker.current?.dispatch(name,cookiesOnly=>{
+        const cookies=document.cookie.split(';').map(v=>v.trim());
+        const fbp=cookies.find(v=>v.startsWith('_fbp='))?.slice(5);
+        const cookieFbc=cookies.find(v=>v.startsWith('_fbc='))?.slice(5);
+        const fbc=cookiesOnly ? cookieFbc : buildFbc(attribution.current.fbclid,attribution.current.capturedAt??0) ?? cookieFbc;
+        return {...details,ad:attribution.current.ad,fbc,fbp};
+      });
+      // Navigation can reject fetch before unmount (WebKit). Do not let that
+      // rejection resume enable(), initialize Pixel or flush on a departing page.
+      if(leavingDuringLookup) {generation.current++;resolving.current=false;tracker.current?.setConsent(false);}
     },
     sectionView(section) { if(marketingAllowed(serverApproved,readConsent(document.cookie),signals())) tracker.current?.sectionView(section); else tracker.current?.setConsent(false); },
   };

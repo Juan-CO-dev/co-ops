@@ -36,8 +36,11 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   // No client-supplied routing/identity hints survive the public boundary.
   for (const key of [...headers.keys()]) if (key.startsWith('x-landing') || key.startsWith('x-co-')) headers.delete(key);
   const requestedHost = parseAuthority(req.headers.get('host'));
-  const rawHostname = req.headers.get('host')?.toLowerCase().replace(/:[^:]*$/, '').replace(/\.$/, '');
-  if (!requestedHost && rawHostname && landingConfig.landingHosts.includes(rawHostname)) {
+  const rawAuthority = req.headers.get('host')?.toLowerCase();
+  const rawHostname = (rawAuthority && /^\[[^\]]+\](?::\d+)?$/.test(rawAuthority)
+    ? rawAuthority.replace(/\]:\d+$/, ']')
+    : rawAuthority?.replace(/:[^:]*$/, ''))?.replace(/\.$/, '');
+  if (!requestedHost && rawHostname && landingConfig.landingHosts.includes(rawHostname) && rawHostname !== configuredOrigin(landingConfig.STAFF_ORIGIN)?.hostname) {
     return finish(new NextResponse(null, { status: 404 }), true);
   }
   if (requestedHost && landingConfig.landingHosts.includes(requestedHost.hostname) && requestedHost.hostname !== configuredOrigin(landingConfig.STAFF_ORIGIN)?.hostname && !configuredOrigin(landingConfig.SITE_ORIGIN)) {

@@ -146,7 +146,7 @@ CC's eleven rulings are the bounded implementation plan. Starting HEAD: `6751c48
 | P3-6 | 0273 has explicit begin/commit, a P0001 owner-equality assertion against both tables, and an intentionally non-idempotent re-application warning. PGlite proves normal application, each mismatch, full-wrapper rollback and re-application refusal. |
 | P3-7 | No index added. SQL documents expected `unindexed_foreign_keys` for `ad_code`: no parent DELETE/code-UPDATE grant and an index would add hot-increment write cost. See advisor checklist below. |
 | P3-8 | `structured-data-shared.ts` owns optional inventory lookup. Missing `v2-p013-1280` omits only image, preserving the remaining nodes; unit regression covers this. |
-| P3-9 | Proxy strips/rebuilds `x-landing-explicit-language`; only explicit single valid lang determines canonical. Accept-Language only renders; landing HTML varies on it. Next 16.2.4 replaces Vary in its final app-page response, so `instrumentation.ts` installs the narrow `vary-server.ts` Node adapter: preserve only an existing Accept-Language token on a positively classified landing response. Staff/other headers retain original setter behavior. Metadata, proxy, adapter and browser tests cover forged/absent/invalid/duplicate lang. BUILD §8 amended. |
+| P3-9 | Proxy strips/rebuilds `x-landing-explicit-language`; only explicit single valid lang determines canonical. Accept-Language selects rendering. Landing HTML is private, no-store; no Node header adapter remains (CC gate amendment below). |
 | P3-10 | Tracker buffers at most ten calls in memory during enable, keeping original event IDs/times and flushing with resolved ad after Pixel initialization. Withdrawal/unmount/new generation clears via consent reset. Unit tests pin bound, section dedup, no repeat flush and withdrawal/generation clearing; browser tests click during lookup and verify resolved dispatch or withdrawal drop. Native links remain immediate. |
 | P3-11 | Rejected Host matching a listed landing hostname after lowercasing, port removal and exactly one trailing-dot removal returns 404/noindex. It is never promoted to a parsed authority. Tests prove listed failures and byte-identical staff responses for unlisted/malformed non-landing Hosts. |
 
@@ -159,7 +159,7 @@ CC post-apply advisor checklist addition: expect `unindexed_foreign_keys` on `la
 | Command | Outcome / evidence |
 |---|---|
 | `node --experimental-strip-types scripts/landing/order-click-sql-check.ts` | PASS, 174 checks, isolated PGlite; `tmp/round-b-sql.log`. |
-| `npm.cmd test -- tests/landing tests/security-headers.test.ts --maxWorkers=2` | PASS, 58 files / 454 tests; includes host/staff and Node header-adapter checks; `tmp/round-b-unit-final.log`. |
+| `npm.cmd test -- tests/landing tests/security-headers.test.ts --maxWorkers=2` | SUPERSEDED: pre-revert result, not evidence for the final round-B tree; `tmp/round-b-unit-final.log`. |
 | `npm.cmd run typecheck` | PASS; `tmp/round-b-tsc-final.log`. |
 | `npm.cmd run assets:check` | PASS, 45 assets; `tmp/round-b-assets.log`. No asset bytes changed. |
 | Changed-file `npx.cmd eslint` including new files | PASS, zero errors / one existing page no-img-element warning; `tmp/round-b-eslint-final.log`. |
@@ -183,13 +183,66 @@ All 20 cold samples, including failures, remain in `tmp/landing-performance/2026
 
 Applied median TBT fails the unchanged <=200 ms gate. Applied median LCP and score pass; simulated LCP misses remain report-only. Each sample transferred 303,594 first-party bytes and zero third-party bytes, within 500 KB. Windows emitted `ERROR: Access denied` cleanup diagnostics, but all 20 samples completed and independent final port probes prove no test server remains. No perf pass or waiver is claimed. "Registry failure is NOT a score."
 
-Open gates: CC's cross-family review, independent-session SQL contention and later authorized sim/prod apply, WAF/Meta activation, real-Pixel/device evidence and deployed HTTPS header smoke. The Node Vary preservation adapter is locally wire-tested; re-evaluate it when upgrading Next or changing the hosting runtime. No release action is authorized by these local results.
+Open gates: CC's cross-family review, independent-session SQL contention and later authorized sim/prod apply, WAF/Meta activation, real-Pixel/device evidence and deployed HTTPS header smoke. No release action is authorized by these local results.
 
 One harness-authoring failure was corrected before its passing rerun: JavaScript string replacement interpreted SQL `$$` as replacement syntax, producing a syntax error in the mismatch fixture. A replacement callback now preserves the literal SQL delimiter. No migration failure was hidden or assertion weakened.
 
-The first browser run exposed two stale host expectations (alias assets redirecting and listed trailing-dot Hosts serving staff) and the real Next Vary overwrite. It was stopped, its recorded servers closed, the expectations corrected to CC's rulings, and the Node header-preservation adapter added before rebuilding. The new wire assertion remains intact. Evidence: `tmp/round-b-e2e.log`. Initial tsc/build briefly overlapped due to starting build before the typecheck session had exited; subsequent heavy verification runs are serialized.
+The first browser run exposed two stale host expectations (alias assets redirecting and listed trailing-dot Hosts serving staff) and the real Next Vary overwrite. It was stopped, its recorded servers closed, the expectations corrected to CC's rulings, and the Node header-preservation adapter added before rebuilding. The adapter and wire assertion were subsequently removed under the gate amendment below. Evidence: `tmp/round-b-e2e.log`. Initial tsc/build briefly overlapped due to starting build before the typecheck session had exited; subsequent heavy verification runs are serialized.
 
 Branch/worktree: existing `feat/landing-v2`, `C:/Users/conta/co-ops-landing`. Creating `fix/landing-v2-chunk9-round-b` was denied by the sandbox's read-only `.git`; no branch was created. All work remains uncommitted, with no push, merge, deployment, environment change or connected database action.
 
 ### CC gate amendment (round B)
-CC rejected the `instrumentation.ts` + `lib/landing/vary-server.ts` Node `ServerResponse.prototype.setHeader` patch: it is process-wide (staff included), reaches outside the landing surface, and is fragile across Next/runtime upgrades, all to add a defensive header to a `private, no-store` response. Reverted: `instrumentation.ts` restored byte-identical; `vary-server.ts`, its test, the proxy `Vary` append and both Vary assertions removed. The e2e now asserts landing HTML stays `no-store`. P3-9's real fix (canonical from the explicit `lang` only) is kept. BUILD.md §8 records the cacheability prerequisite. The P3-9 row above describing the adapter is superseded by this section.
+CC rejected the `instrumentation.ts` + `lib/landing/vary-server.ts` Node `ServerResponse.prototype.setHeader` patch: it is process-wide (staff included), reaches outside the landing surface, and is fragile across Next/runtime upgrades, all to add a defensive header to a `private, no-store` response. Reverted: `instrumentation.ts` restored byte-identical; `vary-server.ts`, its test, the proxy `Vary` append and both Vary assertions removed. The e2e now asserts landing HTML stays `no-store`. P3-9's real fix (canonical from the explicit `lang` only) is kept. BUILD.md §8 records the cacheability prerequisite. The former P3-9 adapter claim has been removed; this amendment records its rejection.
+
+
+## Round C - Aggie's round-B residuals only (2026-10-18)
+
+CC's supplied rulings are the bounded implementation plan; starting HEAD `d9ca0c12`, existing branch `feat/landing-v2`.
+
+- P3-B/C: `proxy.ts` excludes the configured staff hostname from rejected-authority 404s and preserves bracketed IPv6 while removing its optional port. Differential tests compare staff status, public headers and body for a listed staff host with a trailing dot, `[::1]`, `[::1]:3000` and `[2001:db8::1]:443`.
+- P3-D: `tracking-client.ts` sends resolving-window OrderClick/CateringClick immediately to enabled server transports with unattributed, original ID/time and cookies at click time. These events never enter the buffer or Pixel. After sending, the provider invalidates the pending enable generation: WebKit can reject the lookup on navigation before unmount, and that rejection must not initialize Pixel or flush the departing page. Counter eligibility remains unchanged (store OrderClick only). Transport retains keepalive and same-origin credentials and now explicitly sets no-store. Unit contracts cover both actions, disabled CAPI, absent approval and no duplicate flush. The browser regression follows the actual ordering anchor without preventDefault or href replacement; both analytics endpoints use real Next handlers, with a test-only HTTP relay recording their response statuses after unload. The relay models TLS termination for the HTTPS-configured local fixture; neither analytics POST is fulfilled through browser routing.
+- P3-E: `TrackingProvider.tsx` supplies a details factory, so buffered Lead intent reads resolved attribution and current cookies at flush. The contract/browser tests pin original ID/time and the fbc derived from the captured fbclid. Section views and withdrawal/generation clearing remain buffered as before.
+- P3-F (documentation only): ad-code retains order-click WAF semantics: dormant/unverified pass; refused/unavailable block. Attribution therefore works before attestation. A transient unavailable permanently drops that visit's campaign by design: URL sanitization and persisted unattributed, no retry. Recorded in BUILD section 10; no route change.
+- P3-A: removed obsolete adapter claims and marked the pre-revert unit row superseded. The verification below belongs to the final Round C tree. No Node/global patch; instrumentation and 0273 are untouched.
+
+### Round C verification
+
+No production, DB, Vercel, persistent env, asset or performance-budget changes. Heavy jobs ran serially; Vitest/Playwright used two workers.
+
+| Command | Final-tree outcome / evidence |
+|---|---|
+| `npm.cmd test -- tests/landing tests/security-headers.test.ts --maxWorkers=2` | PASS, 57 files / 456 tests; includes host/staff differential tests. `tmp/round-c-unit-final.log`. The reported `performance-blocking.test.ts:36` timeout did not recur in either full Round C unit run. |
+| `npm.cmd run typecheck` | PASS, exit 0; `tmp/round-c-tsc-final.log`. |
+| `npm.cmd run assets:check` | PASS, 45 assets; `tmp/round-c-assets-final.log`. |
+| `node node_modules/eslint/bin/eslint.js` on all seven changed TS/TSX files | PASS, zero warnings/errors; `tmp/round-c-eslint-verified.log`. |
+| `npm.cmd run build` | PASS, final application build; `tmp/round-c-build-final.log`. |
+| `LANDING_E2E_USE_BUILD=1 node node_modules/@playwright/test/cli.js test --workers=2` | PASS, 506 passed / 13 existing skips / zero failures, 18.1 minutes. `tmp/round-c-e2e-verified.log`, native exit `0` in `tmp/round-c-e2e-verified.exit`, `playwright-report/index.html`. No skips/retries added. |
+| `git diff --check 2eb38e1b` | PASS, whole chunk through working tree; `tmp/round-c-diff-check.log`. |
+| Byte comparisons | `instrumentation.ts` equals HEAD and `2eb38e1b` byte-for-byte (SHA-256 `001065f84da4768163dcaaaf10d27c0027ea1f9fa43c1daac6ca41ed9e5d3e6d`). 0273 equals HEAD byte-for-byte (SHA-256 `816e21522ab54c6878e0e4967b57d71e8c82142238f3b3a7842c4258b48a2e35`); no migration edit in Round C. `tmp/round-c-invariants.json`. |
+
+Browser/perf commands use explicit `CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe` and `LANDING_PERF_NO_SANDBOX=1`. Final e2e teardown: all six ports 44170-44175 ECONNREFUSED and PID file absent (`tmp/round-c-e2e-teardown.json`).
+
+Earlier failures retained, not counted as passes:
+
+- Initial changed-file ESLint found two prefer-const errors in the new test fixture; fixed before final lint/tests.
+- The first full e2e attempt stopped before tests on the existing 60-second readiness timeout (`tmp/round-c-e2e.log`). Recorded servers were closed and all six ports refused connections before rerunning; no timeout change.
+- The next full run had 504 passes / 13 skips / two failing new native-navigation assertions (`tmp/round-c-e2e-browser-observer.log`). Page response listeners could not establish receipt after unload, so the final test observes the real handler responses at the relay.
+- Targeted relay runs exposed invalid three-digit fixture cookie timestamps (corrected to valid 13-digit values), an overly early synchronous click that canceled lookup before server receipt, and the real WebKit lookup-cancellation/Pixel race. Logs: `tmp/round-c-native-targeted.log`, `tmp/round-c-native-final.log`, `tmp/round-c-native-synchronous.log`, `tmp/round-c-native-receipt.log`. The provider generation fix makes the strict zero-Pixel assertion pass; no production timeout or assertion relaxed. Final complete tracking spec: 20 passed (`tmp/round-c-tracking-final.log`); the final full-suite native exit above is the authoritative browser gate.
+
+
+### Round C advisory performance - one run, exit 1
+
+`npm.cmd run perf:ci` ran exactly once, using the Chrome/no-sandbox settings above, `LANDING_E2E_USE_BUILD=1`, and process-local `LHCI_CLI_PATH=C:/Users/conta/AppData/Local/npm-cache/_npx/7c4c7312e9ccc7bf/node_modules/@lhci/cli/src/cli.js`. Evidence: `tmp/round-c-perf.log`, `tmp/round-c-perf.exit`; all 20 cold samples and raw reports retained in `tmp/landing-performance/2026-10-18T20-16-16.420Z-merge-ab707547`. No rerun, discarded sample or budget change.
+
+| Collection / consent | Median score | Median LCP ms | Median TBT ms | Exit / failed metric |
+|---|---:|---:|---:|---|
+| simulated-report-only / unset | 0.94 | 3061.320 | 43.000 | 0 / lcp |
+| simulated-report-only / accepted | 0.93 | 3032.153 | 34.500 | 0 / lcp |
+| applied-blocking / unset | 0.90 | 2282.684 | 247.723 | 1 / tbt |
+| applied-blocking / accepted | 0.91 | 2169.854 | 253.612 | 1 / tbt |
+
+Applied median TBT exceeds the unchanged 200 ms budget in both consent states: **advisory FAIL**, not a perf pass or waiver. Applied median score/LCP pass; simulated LCP misses remain report-only. Each sample transferred 303,682 first-party bytes and zero third-party bytes, within 500 KB. Pixel was blocked by the harness: no real-Pixel performance claim. Windows emitted access-denied cleanup diagnostics; all 20 samples completed. Independent final teardown confirms all six ports 44170-44175 ECONNREFUSED and the PID file absent (`tmp/round-c-final-teardown.json`). Each native-navigation test also closes its temporary relay in finally.
+
+Open risks/gates: local advisory TBT failure, CC cross-family review, and the existing later operator-owned WAF/Meta, real-device/real-Pixel, deployed HTTPS and sim/prod gates. No database action was performed. Registry failure is NOT a score.
+
+Branch/worktree: `feat/landing-v2` at `d9ca0c12`, `C:/Users/conta/co-ops-landing`. All nine changed files remain **UNCOMMITTED**. No push, merge or deployment.

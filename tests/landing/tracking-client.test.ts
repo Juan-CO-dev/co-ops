@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { buildFbc } from '@/lib/landing/attribution-shared';
 import { createLandingTracker } from '@/lib/landing/tracking-client';
 describe('landing dispatch', () => {
   function fixture(overrides = {}) {
@@ -10,13 +11,33 @@ describe('landing dispatch', () => {
   it('denies all sends without consent or server approval', () => {
     for (const approved of [true,false]) { const f=fixture({serverApproved:approved}); if (!approved) f.tracker.setConsent(true); f.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'}); expect(f.post).not.toHaveBeenCalled(); expect(f.pixel).not.toHaveBeenCalled(); }
   });
-  it('buffers one click with its original ID, resolves its ad and flushes exactly once',()=>{
-    const f=fixture();f.tracker.beginResolution();f.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero',ad:'unresolved'});
-    expect(f.loadPixel).not.toHaveBeenCalled();expect(f.post).not.toHaveBeenCalled();
-    f.tracker.setAcceptedAd('new-campaign');f.tracker.setConsent(true);f.tracker.pageView();f.tracker.flushPending('new-campaign');f.tracker.flushPending('new-campaign');
-    const action=f.pixel.mock.calls.find(call=>call[1]==='OrderClick');expect(action?.[3]).toBe('id-1');expect(action?.[2]).toHaveProperty('ad','new-campaign');
-    expect(f.post.mock.calls.filter(call=>call[0].endsWith('/events'))).toEqual([['/api/landing/events',expect.objectContaining({event_id:'id-1',event_time:123,ad:'new-campaign'})]]);
-    expect(f.post.mock.calls.filter(call=>call[0].endsWith('/order-click'))).toEqual([['/api/landing/order-click',{store:'dupont',ad:'new-campaign'}]]);
+  it.each(['OrderClick','CateringClick'] as const)('sends %s immediately during resolution, server only, exactly once',name=>{
+    const f=fixture();f.tracker.beginResolution();
+    const details=vi.fn(()=>({store:'dupont',placement:'hero',ad:'unresolved',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'}));
+    f.tracker.dispatch(name,details,{id:'original',time:123000});
+    expect(details).toHaveBeenCalledWith(true);
+    expect(f.loadPixel).not.toHaveBeenCalled();expect(f.pixel).not.toHaveBeenCalled();
+    expect(f.post.mock.calls[0]).toEqual(['/api/landing/events',expect.objectContaining({event_name:name,event_id:'original',event_time:123,ad:'unattributed',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'})]);
+    expect(f.post).toHaveBeenCalledTimes(name==='OrderClick'?2:1);
+    f.tracker.setAcceptedAd('new-campaign');f.tracker.setConsent(true);f.tracker.flushPending('new-campaign');f.tracker.flushPending('new-campaign');
+    expect(f.pixel).not.toHaveBeenCalled();expect(f.post).toHaveBeenCalledTimes(name==='OrderClick'?2:1);
+    if(name==='OrderClick')expect(f.post.mock.calls[1]).toEqual(['/api/landing/order-click',{store:'dupont',ad:'unattributed'}]);
+  });
+  it('flushes a buffered Lead with fresh details and its original ID/time exactly once',()=>{
+    const f=fixture();const current: {fbc?:string;fbp?:string}={};
+    const details=vi.fn(()=>({placement:'hero',...current}));
+    f.tracker.beginResolution();f.tracker.dispatch('Lead',details);
+    expect(details).not.toHaveBeenCalled();expect(f.post).not.toHaveBeenCalled();
+    current.fbc=buildFbc('Captured_Click',123456);current.fbp='fb.1.123.789';
+    f.tracker.setAcceptedAd('new-campaign');f.tracker.setConsent(true);f.tracker.flushPending('new-campaign');f.tracker.flushPending('new-campaign');
+    expect(details).toHaveBeenCalledExactlyOnceWith(false);
+    expect(f.post).toHaveBeenCalledExactlyOnceWith('/api/landing/events',expect.objectContaining({event_id:'id-1',event_time:123,ad:'new-campaign',fbc:'fb.1.123456.Captured_Click',fbp:current.fbp}));
+    expect(f.pixel.mock.calls[0]?.[3]).toBe('id-1');
+  });
+  it('keeps resolution sends gated by server approval and CAPI flag',()=>{
+    const denied=fixture({serverApproved:false});denied.tracker.beginResolution();denied.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'});expect(denied.post).not.toHaveBeenCalled();
+    const counter=fixture({capiEnabled:false});counter.tracker.beginResolution();counter.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'});
+    expect(counter.post).toHaveBeenCalledExactlyOnceWith('/api/landing/order-click',{store:'dupont',ad:'unattributed'});
   });
   it.each(['withdrawal','generation'])('drops the prior buffer on %s',reason=>{
     const f=fixture();f.tracker.beginResolution();f.tracker.dispatch('Lead',{placement:'hero'});f.tracker.sectionView('hero');

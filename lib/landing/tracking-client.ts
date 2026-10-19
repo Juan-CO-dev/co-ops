@@ -3,6 +3,7 @@ import { ATTRIBUTION_KEY } from './attribution-shared';
 import { validVendorPlacement } from './tracking-schema-shared';
 export type LandingAction = 'OrderClick' | 'CateringClick' | 'Lead';
 export interface ActionDetails { store?: string; ad?: string; placement: string; vendor?: string; fbc?: string; fbp?: string }
+export type DetailsFactory = (cookiesOnly: boolean) => ActionDetails;
 export interface TrackerConfig { serverApproved: boolean; pixelId?: string; capiEnabled?: boolean; sourceUrl: string; allowedStores: readonly string[]; allowedAds: readonly string[]; allowedPlacements: readonly string[] }
 export interface TrackingTransport {
   loadPixel(id: string): void;
@@ -48,21 +49,23 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       if (!consent || !hasPixel || sections.has(section) || !/^[a-z-]{1,40}$/.test(section)) return;
       sections.add(section); safe(() => transport.pixel('track','ViewContent',{content_name:section},eventId ?? transport.uuid()));
     },
-    dispatch(name: LandingAction, details: ActionDetails, event?: { id: string; time: number }): void {
-      if (resolving && config.serverApproved && buffered.length < 10) {
+    dispatch(name: LandingAction, intent: ActionDetails | DetailsFactory, event?: { id: string; time: number }): void {
+      const navigating = resolving && config.serverApproved && (name === 'OrderClick' || name === 'CateringClick');
+      if (resolving && !navigating && config.serverApproved && buffered.length < 10) {
         const original = event ?? { id: transport.uuid(), time: transport.now() };
-        const snapshot = { ...details };
-        buffered.push(ad => tracker.dispatch(name, { ...snapshot, ad }, original)); return;
+        const resolveDetails = typeof intent === 'function' ? intent : () => ({ ...intent });
+        buffered.push(ad => tracker.dispatch(name, { ...resolveDetails(false), ad }, original)); return;
       }
-      if (!consent || !['OrderClick','CateringClick','Lead'].includes(name) || !config.allowedPlacements.includes(details.placement)) return;
+      const details = typeof intent === 'function' ? intent(navigating) : intent;
+      if ((!consent && !navigating) || !['OrderClick','CateringClick','Lead'].includes(name) || !config.allowedPlacements.includes(details.placement)) return;
       if (details.store && !config.allowedStores.includes(details.store)) return;
       if (name === 'OrderClick' && !details.store && !details.vendor) return;
-      const ad = details.ad && config.allowedAds.includes(details.ad) ? details.ad : 'unattributed';
+      const ad = !navigating && details.ad && config.allowedAds.includes(details.ad) ? details.ad : 'unattributed';
       const params: Record<string,string> = {ad,placement:details.placement};
       if (details.store) params.store = details.store;
       if (details.vendor) { if (name !== 'OrderClick' || !validVendorPlacement(details.vendor,details.placement,details.store)) return; params.vendor = details.vendor; }
       const id = event?.id ?? transport.uuid();
-      if (hasPixel) safe(() => transport.pixel(name === 'Lead' ? 'track' : 'trackCustom',name,params,id));
+      if (!navigating && hasPixel) safe(() => transport.pixel(name === 'Lead' ? 'track' : 'trackCustom',name,params,id));
       if (config.capiEnabled) {
         const payload: Record<string,unknown> = {event_name:name,event_id:id,event_time:Math.floor((event?.time ?? transport.now())/1000),consent:'accepted',source_url:config.sourceUrl,...params};
         if (details.fbc && /^fb\.1\.\d{1,16}\.[A-Za-z0-9_-]{1,500}$/.test(details.fbc)) payload.fbc=details.fbc;
@@ -116,7 +119,7 @@ export function browserTransport(): TrackingTransport {
       }
     },
     pixel(method,name,params,id) { window.fbq?.(method,name,params,{eventID:id}); },
-    post(path,payload) { void fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),credentials:'same-origin',keepalive:true}).catch(()=>{}); },
+    post(path,payload) { void fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),credentials:'same-origin',cache:'no-store',keepalive:true}).catch(()=>{}); },
     uuid:()=>crypto.randomUUID(), now:()=>Date.now(),
   };
 }

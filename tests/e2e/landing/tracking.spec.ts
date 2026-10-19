@@ -1,5 +1,7 @@
 import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import {test,expect,type Page} from '@playwright/test';
+import {createServer,request as httpRequest} from 'node:http';
+import type {AddressInfo} from 'node:net';
 
 async function isolateMeta(page:Page) {
   const requests:string[]=[];
@@ -84,19 +86,20 @@ test('registry lookup starts after consent, precedes Pixel, and admits a new cod
  await page.route('**/api/landing/order-click',route=>{counters.push(route.request().postDataJSON());return route.fulfill({status:204});});
  let release:()=>void=()=>{}; const gate=new Promise<void>(resolve=>{release=resolve;}); let lookups=0;
  await page.route('**/api/landing/ad-code',async route=>{lookups++;expect(route.request().postDataJSON()).toEqual({candidate:'campaign-new'});await gate;await route.fulfill({json:{ad:'campaign-new'}});});
- await page.goto('/?ad=campaign-new&email=private@example.com');
+ await page.goto('/?ad=campaign-new&fbclid=Captured_Click&email=private@example.com');
  expect(lookups).toBe(0);expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();
  await page.locator('[data-landing-consent]').getByRole('button').first().click();
  await expect.poll(()=>lookups).toBe(1);expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
- await page.locator('#lineup a').first().evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
+ await page.locator('a[href$="catering-inquiry"]').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
  expect(events).toEqual([]);expect(counters).toEqual([]);
  expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();release();
  await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
- expect(JSON.parse((await page.evaluate(()=>sessionStorage.getItem('landing_attribution')))!)).toEqual({ad:'campaign-new',utm:{}});
+ const stored=JSON.parse((await page.evaluate(()=>sessionStorage.getItem('landing_attribution')))!);
+ expect(stored).toMatchObject({ad:'campaign-new',utm:{},fbclid:'Captured_Click'});
  expect(page.url()).not.toContain('email');
- await expect.poll(()=>events.length).toBe(1);await expect.poll(()=>counters.length).toBe(1);
- expect(events[0]).toMatchObject({event_name:'OrderClick',ad:'campaign-new'});expect(counters[0]).toMatchObject({ad:'campaign-new'});
- const queued=await page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='OrderClick'));
+ await expect.poll(()=>events.length).toBe(1);expect(counters).toEqual([]);
+ expect(events[0]).toMatchObject({event_name:'Lead',ad:'campaign-new',fbc:`fb.1.${stored.capturedAt}.Captured_Click`});
+ const queued=await page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='Lead'));
  expect(queued).toHaveLength(1);expect(queued?.[0]?.[3]).toEqual({eventID:events[0]?.event_id});
 });
 
@@ -107,7 +110,7 @@ test('withdrawal during registry lookup cannot persist attribution or initialize
  await page.route('**/api/landing/ad-code',async route=>{started=true;await gate;await route.fulfill({json:{ad:'campaign-new'}});});
  await page.goto('/?ad=campaign-new');await page.locator('[data-landing-consent]').getByRole('button').first().click();
  await expect.poll(()=>started).toBe(true);
- await page.locator('#lineup a').first().evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
+ await page.locator('a[href$="catering-inquiry"]').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
  await page.locator('aside').filter({has:page.locator('button[aria-expanded]')}).getByRole('button').first().click();
  await page.locator('[data-landing-consent]').getByRole('button').nth(1).click();release();await page.waitForTimeout(1100);
  expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
@@ -122,4 +125,54 @@ test('restored retired code is revalidated and lookup outage preserves native na
  expect(candidate).toEqual({candidate:'retired-code'});expect(JSON.parse((await page.evaluate(()=>sessionStorage.getItem('landing_attribution')))! ).ad).toBe('unattributed');
  await page.route('https://complimentsonlysubs.appfront.app/**',route=>route.fulfill({body:'Native ordering'}));
  await page.getByRole('link',{name:'Order Capitol Hill',exact:true}).first().click();await expect(page).toHaveURL(/appfront/);
+});
+
+// Observe receipt at the HTTP server: browser response listeners can disappear on unload.
+test('native navigation during held lookup delivers exactly one unattributed server event and counter',async({page,context})=>{
+ const received:{path:string;body:Record<string,unknown>;status:number}[]=[];
+ const meta:string[]=[];
+ context.on('request',request=>{if(/facebook\.net|facebook\.com/.test(request.url()))meta.push(request.url());});
+ let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});let started=false;
+ // Test-only reverse proxy models TLS termination for the HTTPS-configured Next
+ // fixture. Analytics are forwarded, never fulfilled through browser routing.
+ const relay=createServer(async(req,res)=>{
+   const path=new URL(req.url!, 'http://localhost').pathname;
+   if(path==='/api/landing/ad-code') {
+     started=true;await gate;res.writeHead(200,{'Content-Type':'application/json'});res.end('{"ad":"campaign-new"}');return;
+   }
+   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+   const body=Buffer.concat(chunks);
+   const headers={...req.headers,host:`localhost:${portBase}`};
+   if(headers.origin)headers.origin=`https://localhost:${portBase}`;
+   const upstream=httpRequest({hostname:'localhost',port:portBase,path:req.url,method:req.method,headers},response=>{
+     if(['/api/landing/events','/api/landing/order-click'].includes(path))received.push({path,body:JSON.parse(body.toString()),status:response.statusCode!});
+     res.writeHead(response.statusCode!,response.headers);response.pipe(res);
+   });
+   upstream.on('error',()=>{res.writeHead(502);res.end();});upstream.end(body);
+ });
+ await new Promise<void>(resolve=>relay.listen(0,'127.0.0.1',resolve));
+ const origin=`http://localhost:${(relay.address() as AddressInfo).port}`;
+ // Context-level destination interception survives the source document's unload.
+ await context.route('https://complimentsonlysubs.appfront.app/**',route=>route.fulfill({contentType:'text/html',body:'Native ordering destination'}));
+ try {
+   await page.goto(`${origin}/?ad=campaign-new&fbclid=Captured_Click`);
+   await expect(page.locator('[data-landing-consent]')).toBeVisible();
+   await context.addCookies([{name:'_fbc',value:'fb.1.1730000000000.Cookie_Click',url:origin},{name:'_fbp',value:'fb.1.1730000000000.456',url:origin}]);
+   expect(started).toBe(false);expect(received).toEqual([]);
+   await page.locator('[data-landing-consent]').getByRole('button').first().evaluate(el=>(el as HTMLButtonElement).click());
+   await expect.poll(()=>started).toBe(true);
+   // Native same-tab link: no preventDefault, no href replacement.
+   expect(await page.locator('#lineup').getByRole('link',{name:'Order Capitol Hill'}).evaluate(el=>{
+     const pixel=!!window.fbq;(el as HTMLAnchorElement).click();return pixel;
+   })).toBe(false);
+   await expect(page).toHaveURL(/appfront/);
+   await expect.poll(()=>received.length).toBe(2);
+   expect(received.filter(item=>item.path==='/api/landing/events')).toEqual([{path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})}]);
+   expect(received.filter(item=>item.path==='/api/landing/order-click')).toEqual([{path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}}]);
+   expect(meta).toEqual([]);
+   release();await page.waitForTimeout(1100);
+   expect(received).toHaveLength(2);expect(meta).toEqual([]);
+ } finally {
+   release();relay.closeAllConnections();await new Promise<void>((resolve,reject)=>relay.close(error=>error?reject(error):resolve()));
+ }
 });
