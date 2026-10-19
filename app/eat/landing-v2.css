@@ -117,7 +117,8 @@
 @keyframes landing-v2-crave-slide { from { transform: translateX(0); } to { transform: translateX(-100%); } }
 @supports (animation-timeline: view()) {
   .landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="css"] .landing-v2-crave-track { animation: landing-v2-crave-slide linear both; animation-timeline: --crave; animation-range: contain; }
-  .landing-v2 .landing-v2-crave-stage[data-active="false"] .landing-v2-crave-track { animation-play-state: paused; }
+  /* No offscreen pause: a scroll-driven animation does no work while not scrolling, and a
+     paused-then-resumed scroll timeline can stay stuck (seen in Linux WebKit CI). */
 }
 .landing-v2 .landing-v2-field-guide { margin-top: 28px; }
 .landing-v2 .landing-v2-field-guide h3 { font-size: clamp(2.5rem,6vw,5rem); font-weight: 900; letter-spacing: -.06em; line-height: 1.05; }
