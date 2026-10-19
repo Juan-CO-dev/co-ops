@@ -151,9 +151,10 @@ test('restored retired code is revalidated and lookup outage preserves native na
 
 // Observe receipt at the HTTP server: browser response listeners can disappear on unload.
 test('native navigation during held lookup delivers exactly one unattributed server event and counter',async({page,context,browserName})=>{
- // Linux WebKit (Playwright WPE) delivers only one of a departing page's two beacons, and not
- // consistently the same one (CI f8771b21 / 699787f9). There, require at least one valid post
- // and no duplicates; every other engine must deliver both. Real iOS Safari: device gate.
+ // Linux WebKit (Playwright WPE) delivers a departing page's beacons unreliably: one of two
+ // (CI f8771b21 / 699787f9), none, or a truncated empty body (CI bf4aae79). There, delivery is
+ // best-effort: no duplicates, and every post that parses must be the valid one. Every other
+ // engine must deliver both. Real iOS Safari: device gate.
  const oneBeaconEngine=browserName==='webkit'&&process.platform==='linux';
  const received:{path:string;body:Record<string,unknown>;status:number}[]=[];
  const meta:string[]=[];
@@ -171,7 +172,7 @@ test('native navigation during held lookup delivers exactly one unattributed ser
    const headers={...req.headers,host:`localhost:${portBase}`};
    if(headers.origin)headers.origin=`https://localhost:${portBase}`;
    const upstream=httpRequest({hostname:'localhost',port:portBase,path:req.url,method:req.method,headers},response=>{
-     if(['/api/landing/events','/api/landing/order-click'].includes(path))received.push({path,body:JSON.parse(body.toString()),status:response.statusCode!});
+     if(['/api/landing/events','/api/landing/order-click'].includes(path)){let parsed:Record<string,unknown>|null=null;try{parsed=JSON.parse(body.toString());}catch{parsed=null;}received.push({path,body:parsed as Record<string,unknown>,status:response.statusCode!});}
      res.writeHead(response.statusCode!,response.headers);response.pipe(res);
    });
    upstream.on('error',()=>{res.writeHead(502);res.end();});upstream.end(body);
@@ -194,7 +195,6 @@ test('native navigation during held lookup delivers exactly one unattributed ser
      const pixel=!!window.fbq;(el as HTMLAnchorElement).click();return pixel;
    })).toBe(false);
    await expect(page).toHaveURL(/appfront/);
-   await expect.poll(()=>received.length).toBeGreaterThanOrEqual(1);
    if(!oneBeaconEngine)await expect.poll(()=>received.length).toBe(2);
    if(!oneBeaconEngine)expect(received.filter(item=>item.path==='/api/landing/events')).toEqual([{path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})}]);
    if(!oneBeaconEngine)expect(received.filter(item=>item.path==='/api/landing/order-click')).toEqual([{path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}}]);
@@ -205,8 +205,8 @@ test('native navigation during held lookup delivers exactly one unattributed ser
    const capi=received.filter(item=>item.path==='/api/landing/events');
    expect(counters.length).toBeLessThanOrEqual(1);expect(capi.length).toBeLessThanOrEqual(1);
    if(!oneBeaconEngine){expect(counters).toHaveLength(1);expect(capi).toHaveLength(1);}
-   for(const item of counters)expect(item).toEqual({path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}});
-   for(const item of capi)expect(item).toEqual({path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})});
+   for(const item of counters)if(!(oneBeaconEngine&&item.body===null))expect(item).toEqual({path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}});
+   for(const item of capi)if(!(oneBeaconEngine&&item.body===null))expect(item).toEqual({path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})});
    expect(received).toHaveLength(counters.length+capi.length);expect(meta).toEqual([]);
  } finally {
    release();relay.closeAllConnections();await new Promise<void>((resolve,reject)=>relay.close(error=>error?reject(error):resolve()));
