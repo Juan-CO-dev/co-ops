@@ -1,7 +1,7 @@
 /** Bounded vocabulary only: never accept arbitrary customer data or destinations. */
 export const LANDING_STORE_KEYS = ["capitol-hill", "dupont"] as const;
 import { boundedAd, validAdCandidate, type AdPolicy } from "./ad-codes-shared";
-export const LANDING_PLACEMENTS = ["hero", "field-guide", "lineup", "shops", "catering", "footer", "sticky", "crave", "subdex"] as const;
+export const LANDING_PLACEMENTS = ["hero", "lineup", "shops", "catering", "footer", "sticky"] as const;
 export const LANDING_VENDORS = ["ubereats", "doordash"] as const;
 export const LANDING_SERVER_EVENTS = ["Lead", "OrderClick", "CateringClick"] as const;
 export type LandingStoreKey = (typeof LANDING_STORE_KEYS)[number];

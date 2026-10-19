@@ -6,7 +6,8 @@ import {FieldGuide} from '../../components/landing/FieldGuide';
 
 describe('crave server rendering',()=>{
   it('reserves the motion control before hydration without exposing an inactive button',()=>{
-    const html=renderToStaticMarkup(createElement(CraveScene,{textureAlt:'Texture',crossAlt:'Cross section',stillLabel:'Still',motionLabel:'Motion'}));
+    const html=renderToStaticMarkup(createElement(CraveScene,{textureAlt:'Texture',crossAlt:'Cross section',stillLabel:'Still',motionLabel:'Motion',captions:['First beat','Second beat'] as const}));
+    expect(html).toContain('First beat');expect(html).toContain('Second beat');
     expect(html).toContain('landing-v2-crave-control-slot');
     expect(html).not.toContain('<button');
     expect(html).toContain('data-motion="pending"');

@@ -10,12 +10,6 @@ export const heroMedia = {
   srcSet: [320, 480, 640, 960, 1280].map(width => `${mediaPath(`v2-p013-${width}`)} ${width}w`).join(', '),
   // Full-bleed mobile image; exactly half the viewport on desktop.
   sizes: '(min-width: 768px) 50vw, 100vw',
-  spin: mediaPath('crunchy-boi-spin'), background: '#ed3308',
-} as const;
-
-export const subdexMedia = {
-  poster: mediaPath('subdex-poster'), motion: mediaPath('subdex-catch'),
-  width: 720, height: 720, background: '#FFE560',
 } as const;
 
 /** Shared real-photo candidates: identical sizes/URLs enable reuse in all three sections. */
@@ -31,3 +25,19 @@ export const textureMedia={
     srcSet:[320,640,960].map(width=>`${mediaPath(`hero-poster-${width}`)} ${width}w`).join(', '),
     sizes:'(min-width: 768px) 480px, calc(100vw - 44px)'},
 };
+
+/** Drawn turntable frames (one revolution, 7.5 degrees apart); decorative, never a real photo. */
+export const spinMedia = {
+  frames: Array.from({length:48},(_,index)=>mediaPath(`crunchy-boi-spin-f${String(index).padStart(2,'0')}`)),
+  width: 540, height: 284,
+} as const;
+
+function sprite(id:string) {
+  const asset = inventory.find(entry => entry.id === id) as {path:string;width?:number;height?:number}|undefined;
+  if (!asset?.width || !asset.height) throw new Error('Missing approved sprite: ' + id);
+  return {src:asset.path,width:asset.width,height:asset.height};
+}
+/** Pixel sprites render with image-rendering: pixelated, alt="" and aria-hidden. */
+export const spriteMedia = {
+  p1Idle: sprite('pixel-p1-idle'), p1Jump: sprite('pixel-p1-jump'), selected: sprite('pixel-hero-selected'),
+} as const;

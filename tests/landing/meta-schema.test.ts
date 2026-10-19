@@ -45,7 +45,7 @@ it.each([undefined, ""])("sends a valid server-only event without a public Pixel
   expect(JSON.parse(send.mock.calls[0]![1].body).data[0].event_id).toBe(event.event_id);
 });
 
-it.each(['sticky','crave','subdex'])('accepts direct %s placement and rejects vendor misuse',placement=>{
+it.each(['sticky','hero','catering'])('accepts direct %s placement and rejects vendor misuse',placement=>{
   expect(parseLandingEvent({...event,placement},env.SITE_ORIGIN,event.event_time*1000)).not.toBeNull();
   expect(parseLandingEvent({...event,placement,vendor:'ubereats'},env.SITE_ORIGIN,event.event_time*1000)).toBeNull();
 });

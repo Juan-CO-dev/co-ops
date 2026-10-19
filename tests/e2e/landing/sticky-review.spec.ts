@@ -158,8 +158,8 @@ test('inline links pass beneath the rail without hiding it or evacuating focus',
   const rail=page.locator('[data-sticky-order]');
   const target=await page.evaluate(()=>{
     const bar=document.querySelector('[data-sticky-order]')!.getBoundingClientRect();
-    const link=document.querySelector<HTMLElement>('#field-guide [data-landing-placement]')!;
-    return {y:scrollY+link.getBoundingClientRect().top-bar.top-10,heading:'#field-guide-title'};
+    const link=document.querySelector<HTMLElement>('#shops [data-landing-placement]')!;
+    return {y:scrollY+link.getBoundingClientRect().top-bar.top-10,heading:'#shops-title'};
   });
   await rail.getByRole('button').focus();
   await page.evaluate(y=>scrollTo(0,y),target.y);

@@ -7,7 +7,8 @@ test("all direct and catering destinations match approved tenant config",async (
   expect(await page.locator("[data-landing-placement]").evaluateAll(links=>[...new Set(links.map(link=>link.getAttribute("data-landing-placement")))].sort())).toEqual([...LANDING_PLACEMENTS].sort());
   for (const store of landingTenantConfig.stores) {
     const links = page.getByRole("link",{name:`Order ${store.orderLabel}`,exact:true});
-    await expect(links).toHaveCount(7);
+    // Hero, shop card and footer; the select screen's copy sits in its closed sheet.
+    await expect(links).toHaveCount(3);
     for (const link of await links.all()) {
       await expect(link).toHaveAttribute("href",store.orderUrl);
       await expect(link).toHaveAttribute("referrerpolicy","origin");

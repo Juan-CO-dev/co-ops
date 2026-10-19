@@ -35,8 +35,8 @@ for(const consent of ['accepted','unset'])test(`cold initial and full-scroll tra
   const strip=page.locator('[data-lineup]');await strip.scrollIntoViewIfNeeded();
   for(const card of await strip.locator('li').all()){
     await card.evaluate(el=>{const parent=el.parentElement!;parent.scrollLeft=(el as HTMLElement).offsetLeft-parent.offsetLeft;});
-    await expect(card.locator('img')).toHaveCount(1);
-    await expect.poll(()=>card.locator('img').evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
+    await expect(card.locator('img:not(.landing-v3-cursor)')).toHaveCount(1);
+    await expect.poll(()=>card.locator('img:not(.landing-v3-cursor)').evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
   }
   await page.waitForLoadState('networkidle');await Promise.all(pending);
   const sum=(items:typeof records)=>items.reduce((total,item)=>total+item.bytes,0);

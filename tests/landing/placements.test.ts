@@ -20,7 +20,7 @@ it('accepts every rendered CTA placement on both client and server', () => {
       for (const match of condition![1]!.matchAll(/key === "([^"]+)"/g)) placements.add(match[1]!);
     }
   }
-  expect([...placements].sort()).toEqual(['catering','crave','field-guide','footer','hero','lineup','shops','sticky','subdex']);
+  expect([...placements].sort()).toEqual(['catering','footer','hero','lineup','shops','sticky']);
   expect([...placements].sort()).toEqual([...LANDING_PLACEMENTS].sort());
   for (const placement of placements) {
     const post = vi.fn(), pixel = vi.fn();

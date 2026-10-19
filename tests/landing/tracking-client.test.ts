@@ -17,11 +17,11 @@ describe('landing dispatch', () => {
     f.tracker.dispatch(name,details,{id:'original',time:123000});
     expect(details).toHaveBeenCalledWith(true);
     expect(f.loadPixel).not.toHaveBeenCalled();expect(f.pixel).not.toHaveBeenCalled();
-    expect(f.post.mock.calls[0]).toEqual(['/api/landing/events',expect.objectContaining({event_name:name,event_id:'original',event_time:123,ad:'unattributed',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'})]);
+    expect(f.post.mock.calls[0]).toEqual(['/api/landing/events',expect.objectContaining({event_name:name,event_id:'original',event_time:123,ad:'unattributed',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'}),{unload:true}]);
     expect(f.post).toHaveBeenCalledTimes(name==='OrderClick'?2:1);
     f.tracker.setAcceptedAd('new-campaign');f.tracker.setConsent(true);f.tracker.flushPending('new-campaign');f.tracker.flushPending('new-campaign');
     expect(f.pixel).not.toHaveBeenCalled();expect(f.post).toHaveBeenCalledTimes(name==='OrderClick'?2:1);
-    if(name==='OrderClick')expect(f.post.mock.calls[1]).toEqual(['/api/landing/order-click',{store:'dupont',ad:'unattributed'}]);
+    if(name==='OrderClick')expect(f.post.mock.calls[1]).toEqual(['/api/landing/order-click',{store:'dupont',ad:'unattributed'},{unload:true}]);
   });
   it('flushes a buffered Lead with fresh details and its original ID/time exactly once',()=>{
     const f=fixture();const current: {fbc?:string;fbp?:string}={};
@@ -37,7 +37,7 @@ describe('landing dispatch', () => {
   it('keeps resolution sends gated by server approval and CAPI flag',()=>{
     const denied=fixture({serverApproved:false});denied.tracker.beginResolution();denied.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'});expect(denied.post).not.toHaveBeenCalled();
     const counter=fixture({capiEnabled:false});counter.tracker.beginResolution();counter.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'});
-    expect(counter.post).toHaveBeenCalledExactlyOnceWith('/api/landing/order-click',{store:'dupont',ad:'unattributed'});
+    expect(counter.post).toHaveBeenCalledExactlyOnceWith('/api/landing/order-click',{store:'dupont',ad:'unattributed'},{unload:true});
   });
   it.each(['withdrawal','generation'])('drops the prior buffer on %s',reason=>{
     const f=fixture();f.tracker.beginResolution();f.tracker.dispatch('Lead',{placement:'hero'});f.tracker.sectionView('hero');
@@ -86,11 +86,41 @@ describe('landing dispatch', () => {
   });
 });
 
-it.each(['sticky','crave','subdex'])('keeps %s consent-gated with one dispatch per action',placement=>{
+it.each(['sticky','shops','footer'])('keeps %s consent-gated with one dispatch per action',placement=>{
   const pixel=vi.fn(),post=vi.fn();
   const tracker=createLandingTracker({serverApproved:true,pixelId:'123',capiEnabled:true,sourceUrl:'https://eat.example/',allowedStores:['dupont'],allowedAds:[],allowedPlacements:[placement]}, {pixel,post,loadPixel:vi.fn(),revokePixel:vi.fn(),uuid:()=> 'action-id',now:()=>123000});
   tracker.dispatch('OrderClick',{placement,store:'dupont'});expect(post).not.toHaveBeenCalled();
   tracker.setConsent(true);tracker.dispatch('OrderClick',{placement,store:'dupont'});
   expect(pixel).toHaveBeenCalledOnce();expect(post).toHaveBeenCalledTimes(2);
   tracker.setConsent(false);tracker.dispatch('OrderClick',{placement,store:'dupont'});expect(post).toHaveBeenCalledTimes(2);
+});
+
+describe('browser transport unload delivery', () => {
+  it('prefers a same-origin JSON beacon only for unload posts and falls back to keepalive fetch', async () => {
+    const { browserTransport } = await import('@/lib/landing/tracking-client');
+    const beacon = vi.fn(() => true);
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+    vi.stubGlobal('navigator', { sendBeacon: beacon });
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const transport = browserTransport();
+      transport.post('/api/landing/order-click', { store: 'dupont', ad: 'unattributed' }, { unload: true });
+      expect(beacon).toHaveBeenCalledOnce();
+      const [path, blob] = beacon.mock.calls[0] as unknown as [string, Blob];
+      expect(path).toBe('/api/landing/order-click');
+      expect(blob.type).toBe('application/json');
+      expect(JSON.parse(await blob.text())).toEqual({ store: 'dupont', ad: 'unattributed' });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      transport.post('/api/landing/events', { a: 1 });
+      expect(beacon).toHaveBeenCalledOnce();
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      beacon.mockReturnValueOnce(false);
+      transport.post('/api/landing/events', { b: 2 }, { unload: true });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(fetchSpy.mock.calls[1]).toEqual(['/api/landing/events', expect.objectContaining({ keepalive: true, method: 'POST', credentials: 'same-origin' })]);
+      beacon.mockImplementationOnce(() => { throw new TypeError('disallowed'); });
+      transport.post('/api/landing/events', { c: 3 }, { unload: true });
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+    } finally { vi.unstubAllGlobals(); }
+  });
 });

@@ -10,7 +10,8 @@ export interface TrackingTransport {
   revokePixel(): void;
   grantPixel?(): void;
   pixel(method: 'track' | 'trackCustom', name: string, params: Record<string,string>, id: string): void;
-  post(path: string, payload: Record<string, unknown>): void;
+  /** `unload`: the page is navigating away now; prefer a beacon that survives unload. */
+  post(path: string, payload: Record<string, unknown>, options?: { unload?: boolean }): void;
   uuid(): string;
   now(): number;
 }
@@ -70,9 +71,9 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
         const payload: Record<string,unknown> = {event_name:name,event_id:id,event_time:Math.floor((event?.time ?? transport.now())/1000),consent:'accepted',source_url:config.sourceUrl,...params};
         if (details.fbc && /^fb\.1\.\d{1,16}\.[A-Za-z0-9_-]{1,500}$/.test(details.fbc)) payload.fbc=details.fbc;
         if (details.fbp && /^fb\.1\.\d{1,16}\.\d{1,30}$/.test(details.fbp)) payload.fbp=details.fbp;
-        safe(() => transport.post('/api/landing/events',payload));
+        safe(() => navigating ? transport.post('/api/landing/events',payload,{unload:true}) : transport.post('/api/landing/events',payload));
       }
-      if (name === 'OrderClick' && details.store && !details.vendor) safe(() => transport.post('/api/landing/order-click',{store:details.store,ad}));
+      if (name === 'OrderClick' && details.store && !details.vendor) safe(() => navigating ? transport.post('/api/landing/order-click',{store:details.store,ad},{unload:true}) : transport.post('/api/landing/order-click',{store:details.store,ad}));
     },
   };
   return tracker;
@@ -119,7 +120,15 @@ export function browserTransport(): TrackingTransport {
       }
     },
     pixel(method,name,params,id) { window.fbq?.(method,name,params,{eventID:id}); },
-    post(path,payload) { void fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),credentials:'same-origin',cache:'no-store',keepalive:true}).catch(()=>{}); },
+    post(path,payload,options) {
+      const body=JSON.stringify(payload);
+      // A navigating page can cancel even keepalive fetches (observed: Linux WebKit).
+      // Same-origin JSON beacon first; a refused or throwing beacon falls back.
+      if(options?.unload && typeof navigator.sendBeacon==='function') {
+        try { if(navigator.sendBeacon(path,new Blob([body],{type:'application/json'}))) return; } catch { /* fall back */ }
+      }
+      void fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body,credentials:'same-origin',cache:'no-store',keepalive:true}).catch(()=>{});
+    },
     uuid:()=>crypto.randomUUID(), now:()=>Date.now(),
   };
 }

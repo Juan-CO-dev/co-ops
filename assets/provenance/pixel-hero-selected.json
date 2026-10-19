@@ -1,0 +1,16 @@
+{
+  "id": "pixel-hero-selected",
+  "kind": "sprite",
+  "classification": "drawn",
+  "publicPath": "/media/pixel-hero-selected-f86b650bc8de.png",
+  "sourcePath": "pixel-bank:hero/hero-close-selected-AI-DRAWN.png",
+  "sourceSha256": "f86b650bc8de8bac622c4c7427fb63a99553ac388b9dc15e35a0661081cea43f",
+  "sha256": "f86b650bc8de8bac622c4c7427fb63a99553ac388b9dc15e35a0661081cea43f",
+  "bytes": 3553,
+  "maxBytes": 20000,
+  "width": 49,
+  "height": 83,
+  "sidecar": "assets/provenance/pixel-hero-selected.json",
+  "command": "node scripts/assets/export-sprites.mjs",
+  "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+}

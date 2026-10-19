@@ -72,18 +72,6 @@ for(const consent of ['unset','accepted']) for(const dpr of [1,2,3]) test(`initi
   } finally {await context.close();}
 });
 
-test('illustrated spin requests its source only after explicit Play',async({page})=>{
-  await page.goto('/');
-  const video=page.locator('.landing-v2-spin video');
-  await expect(video).toHaveCount(0);
-  await page.locator('.landing-v2-spin').scrollIntoViewIfNeeded();
-  await expect(video).toHaveCount(0);
-  await page.locator('.landing-v2-spin button').click();
-  await expect(video).toHaveAttribute('aria-label','Crunchy Boi spin');
-  await expect(video).toHaveAttribute('src',/\.mp4$/);
-  await expect(video).toHaveAttribute('controls','');
-  await expect(page.locator('#hero video')).toHaveCount(0);
-});
 
 test('landing CSS remains absent from staff markup and loaded stylesheets',async({page,baseURL})=>{
   await page.goto(new URL('/login',baseURL!.replace('localhost','127.0.0.1')).href);

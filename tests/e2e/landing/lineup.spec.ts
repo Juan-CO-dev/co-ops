@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
+import { landingTenantConfig } from '../../../config/tenant/landing';
+import { spinMedia } from '../../../lib/landing/media';
 
-for (const javaScriptEnabled of [true, false]) test(`lineup is usable with JS ${javaScriptEnabled}`, async ({browser,baseURL}) => {
+for (const javaScriptEnabled of [true, false]) test(`select screen roster keeps the full menu with JS ${javaScriptEnabled}`, async ({browser,baseURL}) => {
   const context = await browser.newContext({javaScriptEnabled,viewport:{width:375,height:812},reducedMotion:'reduce'});
   const page = await context.newPage();
   await page.goto(baseURL!);
@@ -8,35 +10,102 @@ for (const javaScriptEnabled of [true, false]) test(`lineup is usable with JS ${
   await strip.scrollIntoViewIfNeeded();
   await expect(strip.locator('li')).toHaveCount(10);
   await expect(strip).not.toContainText('Marisa');
-  // Enhanced pages only attach picture URLs once each card intersects the viewport.
-  // Scroll the card itself: off-screen images do not exist until then.
+  await expect(strip.locator('li').first()).toContainText('Crunchy Boi');
+  await expect(page.locator('.landing-v3-plate h3')).toHaveText('Crunchy Boi');
   for (const card of await strip.locator('li').all()) {
-    await card.scrollIntoViewIfNeeded();
     await expect(card.locator('[data-ingredients]')).toContainText('sub roll');
-    const source = card.locator('source');
-    const img = card.locator('img');
+    await card.scrollIntoViewIfNeeded();
+    const img = card.locator('img:not(.landing-v3-cursor)');
     await expect(img).toHaveCount(1);
-    await expect(source).toHaveAttribute('sizes','280px');
-    await expect(source).toHaveAttribute('srcset', /480w, .*750w/);
     await expect(img).toHaveAttribute('loading','lazy');
-    await expect(img).toHaveAttribute('fetchpriority','low');
     expect(await img.getAttribute('src')).not.toContain('/_next/image');
-    await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
   }
-  await strip.locator('li').first().scrollIntoViewIfNeeded();
-  await strip.evaluate(el => { el.scrollLeft = 0; });
-  await expect.poll(() => strip.evaluate(el => el.scrollLeft)).toBe(0);
-  await strip.focus(); await page.keyboard.press('ArrowRight');
-  await expect.poll(() => strip.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
-  // Keyboard movement is pinned above. Reach the end without an actionability
-  // stability wait racing native scroll snap in Chromium's JS-disabled context.
-  await strip.evaluate(el => { el.scrollLeft = el.scrollWidth; });
-  await expect.poll(() => strip.locator('li').last().evaluate(el => {
-    const rect = el.getBoundingClientRect();
-    return rect.left >= 0 && rect.right <= 375;
-  })).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
-  await expect(page.locator('#lineup').getByRole('link',{name:'Order Capitol Hill'})).toHaveAttribute('href',/appfront/);
-  await page.screenshot({path:test.info().outputPath('lineup-375.png')});
+  await expect(page.locator('video')).toHaveCount(0);
+  await page.screenshot({path:test.info().outputPath('select-375.png')});
   await context.close();
+});
+
+test('selecting a fighter swaps the stage and the one CTA opens a two-shop sheet', async ({page}) => {
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/');
+  await page.locator('#lineup').scrollIntoViewIfNeeded();
+  const frex = page.locator('[data-lineup] button', {hasText:'The Frex'});
+  await frex.click();
+  await expect(frex).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('.landing-v3-plate h3')).toHaveText('The Frex');
+  await expect(page.locator('.landing-v3-stage [data-spin-stage]')).toHaveCount(0);
+  const cta = page.getByRole('button',{name:'Order The Frex'});
+  await cta.click();
+  const sheet = page.getByRole('dialog',{name:'Pick a shop for The Frex'});
+  await expect(sheet).toBeVisible();
+  const links = sheet.locator('a[data-landing-placement="lineup"]');
+  await expect(links).toHaveCount(2);
+  for (const [index,link] of (await links.all()).entries()) {
+    await expect(link).toHaveAttribute('href',landingTenantConfig.stores[index]!.orderUrl);
+    expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await expect(cta).toBeFocused();
+});
+
+test('roster auto-advances with a visible pause control and stops for good on a manual pick', async ({page}) => {
+  await page.clock.install();
+  await page.goto('/');
+  await page.locator('[data-lineup]').scrollIntoViewIfNeeded();
+  const auto = page.locator('.landing-v3-auto');
+  await expect(auto).toHaveAttribute('aria-pressed','true');
+  expect((await auto.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await page.clock.runFor(5100);
+  await expect(page.locator('.landing-v3-plate h3')).toHaveText('The Frex');
+  await auto.click();
+  await expect(auto).toHaveAttribute('aria-pressed','false');
+  await page.clock.runFor(15000);
+  await expect(page.locator('.landing-v3-plate h3')).toHaveText('The Frex');
+  await auto.click();
+  await expect(auto).toHaveAttribute('aria-pressed','true');
+  await page.locator('[data-lineup] button',{hasText:'Vesuvio'}).click();
+  await expect(auto).toHaveAttribute('aria-pressed','false');
+  await page.clock.runFor(15000);
+  await expect(page.locator('.landing-v3-plate h3')).toContainText('Vesuvio');
+});
+
+test('the Crunchy Boi stage is a keyboard-turnable spin with no video and lazy frames', async ({page}) => {
+  const frameRequests:string[] = [];
+  page.on('request',request=>{if(/crunchy-boi-spin-f\d\d/.test(request.url()))frameRequests.push(request.url());});
+  await page.goto('/');
+  // Only the lazy front still may load before the stage nears the viewport.
+  expect(frameRequests.filter(url=>!/crunchy-boi-spin-f00-/.test(url))).toEqual([]);
+  const spin = page.locator('[data-spin-stage]');
+  await spin.scrollIntoViewIfNeeded();
+  // Hold the roster on the Crunchy Boi while frames load (auto-advance runs every 5 s).
+  await page.locator('.landing-v3-auto').click();
+  await expect(page.locator('.landing-v3-auto')).toHaveAttribute('aria-pressed','false');
+  await expect(spin).toHaveAttribute('data-spin-ready','true');
+  await expect(page.getByRole('slider',{name:'Turn the Crunchy Boi'})).toBeVisible();
+  await expect.poll(() => frameRequests.length).toBe(spinMedia.frames.length);
+  const slider = page.getByRole('slider',{name:'Turn the Crunchy Boi'});
+  await slider.focus();
+  // Focus can scroll the page (WebKit), and scroll turns the spin: let it settle first.
+  await expect.poll(async()=>{const a=await page.evaluate(()=>scrollY);await page.waitForTimeout(150);return a===await page.evaluate(()=>scrollY);}).toBe(true);
+  await page.keyboard.press('Home');
+  await expect(slider).toHaveAttribute('aria-valuenow','0');
+  await page.keyboard.press('ArrowRight');
+  await expect(slider).toHaveAttribute('aria-valuenow','8');
+  await expect(page.locator('video')).toHaveCount(0);
+});
+
+test('reduced motion keeps the front still, never autoplays, never loads the turntable', async ({page}) => {
+  await page.emulateMedia({reducedMotion:'reduce'});
+  const frameRequests:string[] = [];
+  page.on('request',request=>{if(/crunchy-boi-spin-f(?!00)\d\d/.test(request.url()))frameRequests.push(request.url());});
+  await page.goto('/');
+  await page.locator('[data-spin-stage]').scrollIntoViewIfNeeded();
+  await expect(page.locator('[data-spin-stage]')).toHaveAttribute('role','img');
+  await expect(page.locator('[data-spin-stage]')).toHaveAttribute('aria-label','Crunchy Boi sub');
+  await expect(page.getByRole('slider')).toHaveCount(0);
+  await expect(page.locator('.landing-v3-auto')).toHaveAttribute('aria-pressed','false');
+  await page.waitForTimeout(500);
+  expect(frameRequests).toEqual([]);
 });

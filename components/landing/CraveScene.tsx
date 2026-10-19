@@ -18,7 +18,7 @@ export function TexturePhoto({kind,alt}:{kind:keyof typeof textureMedia;alt:stri
   const picture=<img {...media} alt={alt} loading="lazy" fetchPriority="low"/>;
   return <div ref={ref} data-landing-photo data-texture-photo={kind} className="landing-v2-texture-photo">{loaded?picture:<noscript>{picture}</noscript>}</div>;
 }
-export function CraveScene({textureAlt,crossAlt,stillLabel,motionLabel}:{textureAlt:string;crossAlt:string;stillLabel:string;motionLabel:string}) {
+export function CraveScene({textureAlt,crossAlt,stillLabel,motionLabel,captions}:{textureAlt:string;crossAlt:string;stillLabel:string;motionLabel:string;captions:readonly [string,string]}) {
   const ref=useRef<HTMLDivElement>(null);
   const [still,setStill]=useState(false);
   const [enhanced,setEnhanced]=useState(false);
@@ -37,9 +37,11 @@ export function CraveScene({textureAlt,crossAlt,stillLabel,motionLabel}:{texture
     },{offscreen:true});
   },[still]);
   return <div ref={ref} data-crave-stage data-motion="pending" className="landing-v2-crave-stage">
-    <noscript><style>{`.landing-v2 .landing-v2-crave-stage[data-motion="pending"] { height:auto; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v2-crave-sticky { position:static; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v2-crave-window { width:100%; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v2-crave-track { display:grid; transform:none; }`}</style></noscript>
+    <noscript><style>{`.landing-v2 .landing-v2-crave-stage[data-motion="pending"] { height:auto; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v2-crave-sticky { position:static; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v2-crave-window { width:100%; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v2-crave-track { display:grid; transform:none; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v3-crave-captions { display:block; } .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v3-crave-captions p[data-beat] { margin:0 0 8px; visibility:visible; }`}</style></noscript>
     <div className="landing-v2-crave-sticky">
       <div className="landing-v2-crave-control-slot">{enhanced?<button type="button" aria-pressed={still} onClick={()=>setStill(value=>!value)} className="landing-v2-crave-control">{still?motionLabel:stillLabel}</button>:<span aria-hidden="true" style={{visibility:'hidden'}} className="landing-v2-crave-control">{stillLabel}</span>}</div>
+      {/* What you are looking at, per beat: crossfades with the scroll; static modes list both. */}
+      <div className="landing-v3-crave-captions">{captions.map((caption,index)=><p key={index} data-beat={index}>{caption}</p>)}</div>
       <div className="landing-v2-crave-window"><div className="landing-v2-crave-track">
         <TexturePhoto kind="texture" alt={textureAlt}/><TexturePhoto kind="crossSection" alt={crossAlt}/>
       </div></div>

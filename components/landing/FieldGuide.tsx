@@ -3,7 +3,6 @@ import {fieldGuideAnchors} from '@/lib/landing/crave-motion-shared';
 import {serverT} from '@/lib/i18n/server';
 import type {Language} from '@/lib/i18n/types';
 import {TexturePhoto} from './CraveScene';
-import {PlayfulTouch} from './PlayfulTouch';
 export function FieldGuide({language}:{language:Language}) {
   const crunchy=products.find(product=>product.id==='crunchy-boi');
   if(!crunchy)throw new Error('Missing Field Guide product');
@@ -18,6 +17,5 @@ export function FieldGuide({language}:{language:Language}) {
       <TexturePhoto kind="crossSection" alt={serverT(language,'landing.texture.cross-alt')}/>
       <figcaption>{serverT(language,'landing.field-guide.caption')}</figcaption>
     </figure></div>
-    <PlayfulTouch slot="field-guide"/>
   </div>;
 }

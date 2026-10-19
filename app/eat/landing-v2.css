@@ -1,5 +1,7 @@
 /* Route-only stylesheet. Every selector is bounded to the landing root. */
-.landing-v2 { --landing-safe-bottom: env(safe-area-inset-bottom, 0px); padding-bottom: calc(var(--landing-dock-height, 120px) + var(--landing-rail-height, 0px) + var(--landing-safe-bottom) + 16px); }
+/* Scroll-linked motion and the measured dock resize content above the reader; engine
+   scroll anchoring (WebKit) would turn those into page jumps, so the landing opts out. */
+.landing-v2 { overflow-anchor: none; --landing-safe-bottom: env(safe-area-inset-bottom, 0px); padding-bottom: calc(var(--landing-dock-height, 120px) + var(--landing-rail-height, 0px) + var(--landing-safe-bottom) + 16px); }
 .landing-v2 .landing-v2-page { overflow-wrap: anywhere; }
 .landing-v2 .landing-v2-header { min-height: 52px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: space-between; padding: 0 22px; background: #fff9e4; }
 .landing-v2 .landing-v2-header img { width: 120px; height: 36px; }
@@ -13,9 +15,12 @@
 .landing-v2 .landing-v2-hero-copy > p { color: #000; font-size: .875rem; line-height: 1.4; margin: 0; }
 .landing-v2 #landing-consent-slot { height: 0; }
 .landing-v2 .landing-v2-orders { display: flex; gap: 8px; }
-.landing-v2 .landing-v2-order { flex: 1; min-width: 0; min-height: 44px; display: flex; justify-content: center; align-items: center; padding: 10px 8px; border: 1px solid #171712; background: #ffe560; color: #171712; font-size: .75rem; font-weight: 800; text-align: center; }
+.landing-v2 .landing-v2-order { flex: 1; min-width: 0; min-height: 44px; display: flex; justify-content: center; align-items: center; padding: 10px 8px; border: 1px solid #171712; background: #ffe560; color: #171712; font-size: .9375rem; font-weight: 900; text-align: center; }
 .landing-v2 .landing-v2-catering-link { color: #000; display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; text-decoration: underline; font-size: .875rem; }
 .landing-v2 .landing-v2-hero-photo { display: block; width: 100%; height: 100%; min-height: 0; object-fit: cover; object-position: 50% 62%; border-radius: 0; }
+.landing-v2 .landing-v2-hero-media { min-height: 0; min-width: 0; align-self: stretch; overflow: hidden; }
+/* v3 hero push-in: inert until the first scroll (LCP paints the untouched still). */
+.landing-v2 [data-hero-zoom][data-zooming] .landing-v2-hero-photo { transform: scale(calc(1 + var(--hero-zoom, 0) * .45)); transform-origin: 50% 58%; will-change: transform; }
 .landing-v2 .landing-v2-section { padding: 48px 22px; border-top: 1px solid #171712; }
 .landing-v2 .landing-v2-section h2 { font-size: clamp(2.5rem, 7vw, 6rem); font-weight: 950; letter-spacing: -.06em; line-height: 1; }
 .landing-v2 #catering { background: #ffe560; }
@@ -24,9 +29,6 @@
 .landing-v2 #footer .landing-v2-order { color: #171712; }
 .landing-v2 [data-lineup] { border-radius: 0; }
 .landing-v2 [data-lineup] > li { border-radius: 0; border-width: 0; background: transparent; }
-.landing-v2 .landing-v2-spin { margin-top: 32px; }
-.landing-v2 .landing-v2-spin video, .landing-v2 .landing-v2-spin-placeholder { display: block; width: 100%; max-width: 400px; aspect-ratio: 1; background: #171712; }
-.landing-v2 .landing-v2-spin button { min-height: 44px; padding: 8px 16px; border: 1px solid; }
 .landing-v2 .landing-v2-consent { background: #fff9e4; color: #171712; padding: 6px 12px; border: 1px solid #171712; font-size: .6875rem; line-height: 1.3; display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(44px, .65fr) minmax(44px, 1fr); gap: 4px 8px; }
 .landing-v2 .landing-v2-consent[data-flow="false"] { position: fixed; z-index: 30; bottom: var(--landing-safe-bottom); left: 0; width: 100%; }
 .landing-v2 .landing-v2-consent > button[aria-expanded] { grid-column: 3; grid-row: 2; border: 0; text-decoration: underline; font-size: .6875rem; }
@@ -56,8 +58,6 @@
 .landing-v2[data-consent-flow="true"] #landing-consent-slot { height: auto; }
 .landing-v2[data-consent-flow="true"] .landing-v2-hero-photo { height: auto; }
 .landing-v2 .landing-v2-consent[data-flow="true"] { display: block; }
-.landing-v2 .landing-v2-inline-orders { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 4px 24px; }
-.landing-v2 .landing-v2-inline-order { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; text-decoration: underline; background: transparent; }
 @media (max-width: 320px) {
   .landing-v2 .landing-v2-header { height: auto; min-height: 52px; flex-wrap: wrap; gap: 4px; }
   .landing-v2 .landing-v2-orders { flex-wrap: wrap; }
@@ -110,7 +110,7 @@
 @media (prefers-reduced-motion: no-preference) and (min-height: 500px) {
   .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) { height: 175svh; view-timeline-name: --crave; view-timeline-axis: block; }
   .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-sticky { position: sticky; top: 76px; }
-  .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-window { width: min(100%, 480px, 45svh); }
+  .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-window { width: min(100%, 480px, 38svh); }
   .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-track { display: flex; gap: 0; transform: translateX(calc(var(--crave-progress, 0) * -100%)); }
   .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-track > div { flex: 0 0 100%; }
 }
@@ -154,26 +154,74 @@
   .landing-v2 #crave h2 { grid-column: 1; grid-row: 1; }
   .landing-v2 #crave > div > p { grid-column: 1; grid-row: 2; }
   .landing-v2 #crave .landing-v2-crave-stage { grid-column: 2; grid-row: 1 / 4; }
-  .landing-v2 #crave .landing-v2-inline-orders { grid-column: 1 / -1; grid-row: 4; }
   .landing-v2 .landing-v2-field-guide { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,606px); column-gap: 48px; align-items: start; }
   .landing-v2 .landing-v2-field-guide h3 { grid-column: 1; grid-row: 1; }
   .landing-v2 .landing-v2-field-guide [data-field-ingredients] { grid-column: 1; grid-row: 2; }
   .landing-v2 .landing-v2-field-guide .landing-v2-anatomy-frame { grid-column: 2; grid-row: 1 / 4; }
 }
 
-/* Bounded accent envelopes: this normal-flow band owns all transformed pixels. */
-.landing-v2 .landing-v2-touch-slot { height:80px; width:80px; margin:8px 0; display:grid; place-items:center; pointer-events:none; overflow:hidden; contain:layout paint; }
-.landing-v2 .landing-v2-touch-art { display:grid; place-items:center; width:48px; height:48px; transform-origin:center; }
-.landing-v2 .landing-v2-touch-art img { display:block; width:auto; height:auto; max-width:40px; max-height:48px; object-fit:contain; }
-.landing-v2 .landing-v2-touch-checker { width:48px; height:32px; background:conic-gradient(#141414 25%,#fff7df 0 50%,#141414 0 75%,#fff7df 0); background-size:16px 16px; }
-.landing-v2 [data-playing="true"] .landing-v2-touch-art { animation:landing-touch-nod var(--touch-duration) ease-in-out 1; }
-.landing-v2 [data-touch="doodle-chip"][data-playing="true"] .landing-v2-touch-art { animation-name:landing-touch-hop; }
-.landing-v2 [data-touch="checker-peek"][data-playing="true"] .landing-v2-touch-art { animation-name:landing-touch-peek; }
-.landing-v2 [data-touch="lowpoly-prop"][data-playing="true"] .landing-v2-touch-art { animation-name:landing-touch-turn; }
-@keyframes landing-touch-nod { 0%,100% { transform:none } 45% { transform:translateY(-3px) rotate(8deg) } }
-@keyframes landing-touch-hop { 0%,100% { transform:none } 45% { transform:translateY(-7px) rotate(-6deg) } }
-@keyframes landing-touch-peek { 0%,100% { transform:none } 45% { transform:translateX(6px) } }
-@keyframes landing-touch-turn { 0%,100% { transform:none } 50% { transform:rotate(90deg) } }
-@media (prefers-reduced-motion:reduce) { .landing-v2 [data-playing] .landing-v2-touch-art { animation:none; transform:none; } }
-/* The phone hero has no safe gutter above its dock; BUILD permits omitting T1. */
-@media (max-width:767px) { .landing-v2 [data-playful-slot="hero"] { display:none; } }
+
+/* ── v3: Choose your fighter (select screen) ─────────────────────────────── */
+.landing-v2 .landing-v3-select { margin-top: 24px; max-width: 640px; }
+.landing-v2 .landing-v3-pixel { image-rendering: pixelated; }
+.landing-v2 .landing-v3-stage { position: relative; overflow: hidden; padding: 14px 16px 18px; border: 3px solid #171712; background: radial-gradient(circle at 50% 38%, #ff6a3a 0%, #ed3308 52%, #a81f02 100%); color: #fff9e4; }
+.landing-v2 .landing-v3-stage::before { content: ''; position: absolute; inset: 0 0 auto; height: 8px; background: conic-gradient(#171712 25%, #fff9e4 0 50%, #171712 0 75%, #fff9e4 0); background-size: 8px 8px; }
+.landing-v2 .landing-v3-stage-media { position: relative; margin-top: 8px; aspect-ratio: 4 / 3; display: grid; place-items: center; animation: landing-v3-pop .32s steps(4) both; }
+.landing-v2 .landing-v3-stage-media::after { content: ''; position: absolute; left: 18%; right: 18%; bottom: 10%; height: 9%; border-radius: 50%; background: rgb(23 23 18 / .28); filter: blur(6px); z-index: 0; pointer-events: none; }
+.landing-v2 .landing-v3-stage-media [data-landing-photo] { position: relative; z-index: 1; width: 100%; height: 100%; aspect-ratio: 4 / 3 !important; overflow: hidden; border: 3px solid #171712; }
+.landing-v2 .landing-v3-stage-media [data-landing-photo] img { width: 100%; height: 100%; object-fit: cover; }
+.landing-v2 .landing-v3-spin { position: relative; z-index: 1; width: 100%; height: 100%; display: grid; place-items: center; touch-action: pan-y; cursor: grab; -webkit-user-select: none; user-select: none; }
+.landing-v2 .landing-v3-spin:active { cursor: grabbing; }
+.landing-v2 .landing-v3-spin:focus-visible { outline: 3px solid #ffe560; outline-offset: 4px; }
+.landing-v2 .landing-v3-spin-still, .landing-v2 .landing-v3-spin-canvas { grid-area: 1 / 1; width: 100%; height: auto; aspect-ratio: 540 / 284; }
+.landing-v2 .landing-v3-spin-still[data-hidden="true"] { visibility: hidden; }
+.landing-v2 .landing-v3-stage-cheer { position: absolute; right: 10px; top: 18px; width: auto; height: 96px; z-index: 2; pointer-events: none; animation: landing-v3-cheer 1.4s steps(7) both; }
+.landing-v2 .landing-v3-plate { position: relative; z-index: 1; margin-top: 10px; }
+.landing-v2 .landing-v3-p1 { display: inline-block; padding: 2px 8px; border: 2px solid #171712; background: #ffe560; color: #171712; font-size: .75rem; font-weight: 950; letter-spacing: .12em; }
+.landing-v2 .landing-v3-plate h3 { margin: 6px 0 0; font-size: 2.25rem; font-weight: 950; line-height: .95; letter-spacing: -.05em; text-transform: uppercase; }
+.landing-v2 .landing-v3-plate p { margin: 8px 0 0; font-size: .9375rem; line-height: 1.4; }
+.landing-v2 .landing-v3-cta { margin-top: 14px; width: 100%; min-height: 52px; display: flex; align-items: center; justify-content: center; padding: 10px 14px; border: 3px solid #171712; background: #ffe560; color: #171712; font-size: 1.0625rem; font-weight: 950; letter-spacing: .02em; text-transform: uppercase; box-shadow: 4px 4px 0 #171712; }
+.landing-v2 .landing-v3-cta:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #171712; }
+.landing-v2 .landing-v3-roster-bar { display: flex; justify-content: flex-end; margin-top: 10px; }
+.landing-v2 .landing-v3-auto { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; padding: 0 14px; border: 2px solid #171712; background: #fff9e4; color: #171712; font-size: .8125rem; font-weight: 800; }
+.landing-v2 .landing-v3-auto::before { content: ''; width: 10px; height: 10px; border: 2px solid #171712; background: transparent; }
+.landing-v2 .landing-v3-auto[aria-pressed="true"]::before { background: #ed3308; }
+.landing-v2 .landing-v3-roster { display: flex; gap: 12px; margin: 0; padding: 38px 6px 12px; overflow-x: auto; list-style: none; scroll-snap-type: x mandatory; scrollbar-width: thin; }
+.landing-v2 .landing-v3-roster > li { position: relative; flex: 0 0 104px; scroll-snap-align: center; }
+.landing-v2 .landing-v3-roster button { display: block; width: 100%; padding: 0; border: 3px solid #171712; background: #fff9e4; color: #171712; text-align: left; }
+.landing-v2 .landing-v3-roster button [data-landing-photo] { aspect-ratio: 1 !important; overflow: hidden; }
+.landing-v2 .landing-v3-roster button img { width: 100%; height: 100%; object-fit: cover; }
+.landing-v2 .landing-v3-roster button > span:not(.sr-only) { display: flex; align-items: center; min-height: 44px; padding: 4px 6px; font-size: .75rem; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
+.landing-v2 .landing-v3-roster > li[data-selected="true"] button { background: #ffe560; box-shadow: 0 0 0 4px #ed3308, 0 0 0 7px #171712; animation: landing-v3-p1 .5s steps(2) 3; }
+.landing-v2 .landing-v3-roster button:focus-visible { outline: 3px solid #171712; outline-offset: 8px; }
+.landing-v2 .landing-v3-cursor { position: absolute; top: -36px; left: 50%; z-index: 1; width: auto; height: 34px; transform: translateX(-50%); pointer-events: none; animation: landing-v3-hop .36s steps(3) both; }
+.landing-v2 .landing-v3-sheet { margin: auto auto 0; width: 100%; max-width: 480px; max-height: 90svh; padding: 20px 22px calc(20px + var(--landing-safe-bottom)); border: 3px solid #171712; background: #fff9e4; color: #171712; }
+.landing-v2 .landing-v3-sheet::backdrop { background: rgb(23 23 18 / .55); }
+.landing-v2 .landing-v3-sheet h3 { margin: 0; font-size: 1.5rem; font-weight: 950; letter-spacing: -.03em; }
+.landing-v2 .landing-v3-sheet ul { display: grid; gap: 14px; margin: 16px 0; padding: 0; list-style: none; }
+.landing-v2 .landing-v3-sheet .landing-v2-order { min-height: 52px; font-size: 1rem; }
+.landing-v2 .landing-v3-sheet p { margin: 6px 0 0; font-size: .875rem; }
+.landing-v2 .landing-v3-sheet-close { min-height: 44px; min-width: 44px; padding: 0 12px; text-decoration: underline; }
+@keyframes landing-v3-pop { from { transform: scale(.92); opacity: .4; } to { transform: none; opacity: 1; } }
+@keyframes landing-v3-hop { 0% { transform: translate(-50%, 10px); } 60% { transform: translate(-50%, -8px); } 100% { transform: translate(-50%, 0); } }
+@keyframes landing-v3-p1 { 50% { box-shadow: 0 0 0 4px #ffe560, 0 0 0 7px #171712; } }
+@keyframes landing-v3-cheer { 0% { transform: translateY(24px); opacity: 0; } 15%, 80% { transform: none; opacity: 1; } 100% { transform: translateY(-6px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .landing-v2 .landing-v3-stage-media, .landing-v2 .landing-v3-cursor, .landing-v2 .landing-v3-roster > li[data-selected="true"] button, .landing-v2 .landing-v3-stage-cheer { animation: none; }
+  .landing-v2 .landing-v3-stage-cheer { display: none; }
+}
+
+/* ── v3: crunch story captions (above the pinned media) ──────────────────── */
+.landing-v2 .landing-v3-crave-captions p { margin: 0 0 8px; font-size: 1.125rem; font-weight: 900; line-height: 1.25; letter-spacing: -.01em; }
+/* Pending and running share one stacked box, so hydration never changes its height. */
+.landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v3-crave-captions { display: grid; min-height: 2.6em; margin-bottom: 8px; }
+.landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v3-crave-captions p { grid-area: 1 / 1; margin: 0; }
+.landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v3-crave-captions p[data-beat="1"] { visibility: hidden; }
+.landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="raf"] .landing-v3-crave-captions p[data-beat="0"] { opacity: clamp(0, calc((.55 - var(--crave-progress, 0)) * 8), 1); }
+.landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="raf"] .landing-v3-crave-captions p[data-beat="1"] { opacity: clamp(0, calc((var(--crave-progress, 0) - .45) * 8), 1); }
+@keyframes landing-v3-caption-out { 0%, 42% { opacity: 1; } 56%, 100% { opacity: 0; } }
+@keyframes landing-v3-caption-in { 0%, 44% { opacity: 0; } 58%, 100% { opacity: 1; } }
+@supports (animation-timeline: view()) {
+  .landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="css"] .landing-v3-crave-captions p[data-beat="0"] { animation: landing-v3-caption-out linear both; animation-timeline: --crave; animation-range: contain; }
+  .landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="css"] .landing-v3-crave-captions p[data-beat="1"] { animation: landing-v3-caption-in linear both; animation-timeline: --crave; animation-range: contain; }
+}

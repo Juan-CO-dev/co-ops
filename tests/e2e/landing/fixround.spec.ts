@@ -21,17 +21,12 @@ for(const language of ['en','es']) test(`consent target and first-visit toggle $
   await expect(privacy).toBeVisible();
 });
 
-test('mid-page shop choices are light native links with their own placements',async({page})=>{
+test('mid-page sections carry no repeated shop-link pairs',async({page})=>{
   await page.goto('/');
-  for(const placement of ['crave','lineup','field-guide','subdex']) {
-    const links=page.locator(`#${placement} a[data-landing-placement="${placement}"]`);
-    await expect(links).toHaveCount(2);
-    for(const [index,link] of (await links.all()).entries()) {
-      await expect(link).toHaveAttribute('href',landingTenantConfig.stores[index]!.orderUrl);
-      await expect(link).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
-      await expect(link).toHaveCSS('text-decoration-line','underline');
-      expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-    }
-  }
+  for(const section of ['crave','field-guide']) await expect(page.locator(`#${section} a[href*="appfront.app"]`)).toHaveCount(0);
+  // The select screen's shop choice lives only in its closed sheet.
+  await expect(page.locator('#lineup a[href*="appfront.app"]')).toHaveCount(2);
+  await expect(page.locator('#lineup dialog a[href*="appfront.app"]')).toHaveCount(2);
+  await expect(page.locator('#lineup dialog')).toBeHidden();
   await expect(page.locator('#footer a[href*="appfront.app"]')).toHaveCount(2);
 });

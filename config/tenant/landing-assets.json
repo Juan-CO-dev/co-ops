@@ -1,9 +1,5 @@
 [
   {
-    "id": "crunchy-boi-spin",
-    "path": "/media/crunchy-boi-spin-drawn-dfb8c93fe64d.mp4"
-  },
-  {
     "id": "hero-poster",
     "path": "/media/crunchy-boi-014-3566a724066c.webp"
   },
@@ -96,14 +92,6 @@
     "path": "/brand/og-card.webp"
   },
   {
-    "id": "subdex-catch",
-    "path": "/media/subdex-catch-drawn-c539c9f5e05e.mp4"
-  },
-  {
-    "id": "subdex-poster",
-    "path": "/media/subdex-poster-drawn-4f35ab463487.webp"
-  },
-  {
     "id": "hero-poster-320",
     "path": "/media/crunchy-boi-014-320-1c40aa3dc34f.webp"
   },
@@ -182,33 +170,213 @@
     "height": 1440
   },
   {
-    "id": "touch-clay-bag",
-    "path": "/media/touch-clay-bag-861f328984ef.webp",
-    "width": 256,
-    "height": 326
+    "id": "crunchy-boi-spin-f00",
+    "path": "/media/crunchy-boi-spin-f00-b8d51c884e10.webp"
   },
   {
-    "id": "touch-lowpoly-prop",
-    "path": "/media/touch-lowpoly-prop-af74d0fcd201.webp",
-    "width": 115,
-    "height": 120
+    "id": "crunchy-boi-spin-f01",
+    "path": "/media/crunchy-boi-spin-f01-ced1376cb595.webp"
   },
   {
-    "id": "touch-office-wave",
-    "path": "/media/touch-office-wave-f48cff95714f.webp",
-    "width": 256,
-    "height": 453
+    "id": "crunchy-boi-spin-f02",
+    "path": "/media/crunchy-boi-spin-f02-7555b434dceb.webp"
   },
   {
-    "id": "touch-doodle-chip",
-    "path": "/brand/touch-doodle-chip-1d7f6e74dcf9.svg",
-    "width": 48,
-    "height": 48
+    "id": "crunchy-boi-spin-f03",
+    "path": "/media/crunchy-boi-spin-f03-808fc0c87ae3.webp"
   },
   {
-    "id": "touch-mark-nod",
-    "path": "/brand/touch-mark-nod-4dbd4bc62726.svg",
-    "width": 805,
-    "height": 894
+    "id": "crunchy-boi-spin-f04",
+    "path": "/media/crunchy-boi-spin-f04-8b4a3afabbc5.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f05",
+    "path": "/media/crunchy-boi-spin-f05-ef1b175a727e.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f06",
+    "path": "/media/crunchy-boi-spin-f06-76e68e7ac130.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f07",
+    "path": "/media/crunchy-boi-spin-f07-0e0b8f15efb2.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f08",
+    "path": "/media/crunchy-boi-spin-f08-6f51479d394a.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f09",
+    "path": "/media/crunchy-boi-spin-f09-f2ef04035b43.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f10",
+    "path": "/media/crunchy-boi-spin-f10-6844e691f257.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f11",
+    "path": "/media/crunchy-boi-spin-f11-47dc7a8bad83.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f12",
+    "path": "/media/crunchy-boi-spin-f12-1dd759f3662b.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f13",
+    "path": "/media/crunchy-boi-spin-f13-b89ed4b02fa2.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f14",
+    "path": "/media/crunchy-boi-spin-f14-b9523422c08f.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f15",
+    "path": "/media/crunchy-boi-spin-f15-d91dac82eec7.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f16",
+    "path": "/media/crunchy-boi-spin-f16-a18ccc3d813e.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f17",
+    "path": "/media/crunchy-boi-spin-f17-b1beef37ad5f.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f18",
+    "path": "/media/crunchy-boi-spin-f18-e5973d93f5fa.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f19",
+    "path": "/media/crunchy-boi-spin-f19-3ce47d66c2d8.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f20",
+    "path": "/media/crunchy-boi-spin-f20-854c2b11ce64.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f21",
+    "path": "/media/crunchy-boi-spin-f21-f35a04808050.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f22",
+    "path": "/media/crunchy-boi-spin-f22-eb849b30fc63.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f23",
+    "path": "/media/crunchy-boi-spin-f23-58fe7f993102.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f24",
+    "path": "/media/crunchy-boi-spin-f24-cd73e4160891.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f25",
+    "path": "/media/crunchy-boi-spin-f25-6070d907fb41.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f26",
+    "path": "/media/crunchy-boi-spin-f26-83bb814927fe.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f27",
+    "path": "/media/crunchy-boi-spin-f27-68f235aa4cff.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f28",
+    "path": "/media/crunchy-boi-spin-f28-dafa4a567267.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f29",
+    "path": "/media/crunchy-boi-spin-f29-921628075b01.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f30",
+    "path": "/media/crunchy-boi-spin-f30-83472b3b5e47.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f31",
+    "path": "/media/crunchy-boi-spin-f31-fa0770f76058.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f32",
+    "path": "/media/crunchy-boi-spin-f32-1126426c93f4.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f33",
+    "path": "/media/crunchy-boi-spin-f33-933b039c2e1e.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f34",
+    "path": "/media/crunchy-boi-spin-f34-69e6861c939c.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f35",
+    "path": "/media/crunchy-boi-spin-f35-69fbe1edf2a0.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f36",
+    "path": "/media/crunchy-boi-spin-f36-53a5221bb740.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f37",
+    "path": "/media/crunchy-boi-spin-f37-4c433dc27222.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f38",
+    "path": "/media/crunchy-boi-spin-f38-1a130042c85e.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f39",
+    "path": "/media/crunchy-boi-spin-f39-cce739e8f389.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f40",
+    "path": "/media/crunchy-boi-spin-f40-2d3d0a796476.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f41",
+    "path": "/media/crunchy-boi-spin-f41-b4e280bbd1ae.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f42",
+    "path": "/media/crunchy-boi-spin-f42-188816b734e1.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f43",
+    "path": "/media/crunchy-boi-spin-f43-e1ccb87a91ca.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f44",
+    "path": "/media/crunchy-boi-spin-f44-3ff36e7ef251.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f45",
+    "path": "/media/crunchy-boi-spin-f45-bb9c38fb63ef.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f46",
+    "path": "/media/crunchy-boi-spin-f46-a201d7f0e2f1.webp"
+  },
+  {
+    "id": "crunchy-boi-spin-f47",
+    "path": "/media/crunchy-boi-spin-f47-b7da0306aa42.webp"
+  },
+  {
+    "id": "pixel-p1-idle",
+    "path": "/media/pixel-p1-idle-736b424f3074.png",
+    "width": 29,
+    "height": 47
+  },
+  {
+    "id": "pixel-p1-jump",
+    "path": "/media/pixel-p1-jump-4c4663b03fb6.png",
+    "width": 31,
+    "height": 44
+  },
+  {
+    "id": "pixel-hero-selected",
+    "path": "/media/pixel-hero-selected-f86b650bc8de.png",
+    "width": 49,
+    "height": 83
   }
 ]

@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 
@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
  * mutate the real tenant config or add a production environment/test switch. */
 export async function prepareNearbyFixture(runtime) {
   const root = process.cwd();
+  pruneNearbyFixtures(resolve(root, 'tmp'));
   // Fresh directory each run: no stale compiled modules or removed source files.
   const dir = resolve(root, 'tmp', `landing-nearby-${Date.now()}`);
   mkdirSync(dir, { recursive:true });
@@ -43,4 +44,25 @@ export async function prepareNearbyFixture(runtime) {
   const code = await new Promise((resolve, reject) => {build.once('error', reject);build.once('exit', resolve);});
   if (code !== 0) throw new Error(`Nearby fixture production build failed (${code})`);
   return dir;
+}
+
+/** Each run leaves a full app copy (~1 GB with its build). Remove earlier copies before
+ * making a new one. The node_modules junction is unlinked FIRST and verified gone, so a
+ * recursive delete can never follow it into the real dependency tree. */
+export function pruneNearbyFixtures(tmp) {
+  if (!existsSync(tmp)) return;
+  for (const name of readdirSync(tmp)) {
+    if (!/^landing-nearby-\d+$/.test(name)) continue;
+    const dir = join(tmp, name), link = join(dir, 'node_modules');
+    let stat = null;
+    try { stat = lstatSync(link); } catch { /* no link */ }
+    if (stat) {
+      if (!stat.isSymbolicLink()) throw new Error(`Refusing to prune ${dir}: node_modules is not a link`);
+      rmdirSync(link);
+      let still = true;
+      try { lstatSync(link); } catch { still = false; }
+      if (still) throw new Error(`Refusing to prune ${dir}: link survived unlink`);
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 }

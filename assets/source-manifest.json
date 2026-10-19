@@ -227,6 +227,12 @@
       "id": "subdex-video-original",
       "path": "C:/Users/conta/CO-Ads-Launch-2026-10/03 SUBDEX/SUBDEX_9x16_25s_TEXTLESS-AI-DRAWN.mp4",
       "sha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82"
+    },
+    {
+      "id": "spin-rgba-frames",
+      "path": "C:/Users/conta/co-3d/spin-ad/masters/png-16x9-rgba-AI-REFERENCE-drawn",
+      "sha256": "88212e69ab4ee5c69eb62a2ff686e838255fd0aa5b5b7535a5a5c0c3361cb5de",
+      "kind": "frame-sequence-digest"
     }
   ],
   "photoDetails": [

@@ -100,7 +100,7 @@ const expectedMenu = [
   ]
 ] as const;
 it.each(["en", "es"] as const)("renders all ten complete menu lists in %s", language => {
- const html = renderToStaticMarkup(Lineup({language})).replaceAll("&amp;", "&").replaceAll("&#x27;", "'");
+ const html = renderToStaticMarkup(Lineup({language,stores:[]})).replaceAll("&amp;", "&").replaceAll("&#x27;", "'");
  for (const [name,en,es] of expectedMenu) { expect(html).toContain(name); expect(html).toContain(language === "en" ? en : es); }
  expect(html).not.toContain("Marisa");
 });

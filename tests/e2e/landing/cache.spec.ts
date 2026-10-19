@@ -1,6 +1,6 @@
 import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import { test, expect } from '@playwright/test';
-import approved from '../../../assets/approved-media.json';
+import { approvedFiles } from '../../approved-files';
 
 test('landing pages cannot cache; immutable media and framework chunks can', async ({ request }) => {
   for (const path of ['/', '/privacy', '/?_rsc=cache-test', '/missing', '/robots.txt', '/sitemap.xml']) {
@@ -15,7 +15,7 @@ test('landing pages cannot cache; immutable media and framework chunks can', asy
   expect(staticResponse.status()).toBe(200);
   expect(staticResponse.headers()['cache-control']).toContain('public');
   expect(staticResponse.headers()['cache-control']).toContain('immutable');
-  for (const asset of approved.media.filter(e => e.publicPath.startsWith('/media/'))) {
+  for (const asset of approvedFiles.filter(e => e.publicPath.startsWith('/media/'))) {
     const response = await request.get(asset.publicPath);
     expect(response.status()).toBe(200);
     expect(response.headers()['cache-control']).toBe('public, max-age=31536000, immutable');

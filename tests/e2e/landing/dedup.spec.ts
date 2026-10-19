@@ -22,7 +22,7 @@ test('actual order actions share Pixel/CAPI IDs and count once per click',async(
   expect(events[1]!.event_id).not.toBe(first.event_id);
 });
 
-for(const placement of ['sticky','crave','subdex']) test(`${placement} hover and dwell are silent; native clicks share Pixel/CAPI IDs`,async({page})=>{
+for(const placement of ['sticky','shops','footer']) test(`${placement} hover and dwell are silent; native clicks share Pixel/CAPI IDs`,async({page})=>{
   await page.route('https://connect.facebook.net/**',route=>route.fulfill({contentType:'application/javascript',body:'/* offline */'}));
   const events:Record<string,unknown>[]=[];const counters:Record<string,unknown>[]=[];
   await page.route('**/api/landing/events',route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});

@@ -25,11 +25,6 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
   await expect(shops.getByRole('button',{name:'Find my nearest shop'})).toHaveCount(1);
   for(const link of await shops.getByRole('link').all()) expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(375);
-  await page.locator('#subdex').scrollIntoViewIfNeeded();
-  await expect(page.locator('#subdex img')).toBeVisible();
-  await expect.poll(() => page.locator('#subdex img').evaluate((img:HTMLImageElement) => img.complete && img.naturalWidth === 720)).toBe(true);
-  await expect(page.locator('#subdex video')).toHaveCount(0);
-  await page.screenshot({path:test.info().outputPath('subdex-375.png')});
   await shops.scrollIntoViewIfNeeded();
   await page.screenshot({path:test.info().outputPath('shops-375.png')});
   expect(errors).toEqual([]);await context.close();

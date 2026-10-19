@@ -18,16 +18,16 @@ test('lineup native order click sends Pixel, CAPI request and independent counte
   await page.route('**/api/landing/order-click', route => { counters.push(route.request().postDataJSON()); return route.fulfill({status:204}); });
   await page.goto('/');
   await page.locator('[data-landing-consent]').getByRole('button').first().click();
-  const link = page.locator('#lineup').getByRole('link', {name:'Order Capitol Hill'});
+  const link = page.locator('#hero').getByRole('link', {name:'Order Capitol Hill'});
   // Preserve the document for queued-pixel inspection; React's real click handler runs.
   await link.evaluate(el => el.addEventListener('click', event => event.preventDefault()));
   await link.click();
   await expect.poll(() => events.length).toBe(1);
   await expect.poll(() => counters.length).toBe(1);
-  expect(events[0]).toMatchObject({event_name:'OrderClick',placement:'lineup',store:'capitol-hill'});
+  expect(events[0]).toMatchObject({event_name:'OrderClick',placement:'hero',store:'capitol-hill'});
   expect(counters[0]).toEqual({store:'capitol-hill',ad:'unattributed'});
   const queued = await page.evaluate(() => window.fbq?.queue?.find(args => args[1] === 'OrderClick'));
-  expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement:'lineup',store:'capitol-hill'},{eventID:events[0]?.event_id}]);
+  expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement:'hero',store:'capitol-hill'},{eventID:events[0]?.event_id}]);
 });
 
 test('no Meta or attribution persistence before consent; equal keyboard consent choices',async({page})=>{
@@ -157,12 +157,14 @@ test('native navigation during held lookup delivers exactly one unattributed ser
  try {
    await page.goto(`${origin}/?ad=campaign-new&fbclid=Captured_Click`);
    await expect(page.locator('[data-landing-consent]')).toBeVisible();
-   await context.addCookies([{name:'_fbc',value:'fb.1.1730000000000.Cookie_Click',url:origin},{name:'_fbp',value:'fb.1.1730000000000.456',url:origin}]);
    expect(started).toBe(false);expect(received).toEqual([]);
    await page.locator('[data-landing-consent]').getByRole('button').first().evaluate(el=>(el as HTMLButtonElement).click());
    await expect.poll(()=>started).toBe(true);
+   // Returning-visitor first-party cookies, present at click time. Written after consent:
+   // the provider clears marketing cookies while consent is unset (WebKit hydrates later).
+   await page.evaluate(()=>{document.cookie='_fbc=fb.1.1730000000000.Cookie_Click; path=/';document.cookie='_fbp=fb.1.1730000000000.456; path=/';});
    // Native same-tab link: no preventDefault, no href replacement.
-   expect(await page.locator('#lineup').getByRole('link',{name:'Order Capitol Hill'}).evaluate(el=>{
+   expect(await page.locator('#hero').getByRole('link',{name:'Order Capitol Hill'}).evaluate(el=>{
      const pixel=!!window.fbq;(el as HTMLAnchorElement).click();return pixel;
    })).toBe(false);
    await expect(page).toHaveURL(/appfront/);

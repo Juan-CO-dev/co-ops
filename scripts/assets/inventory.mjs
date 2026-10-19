@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { FRAME_ID, FRAME_PATH, SOURCE_SHA256, SOURCE, CUT } from './subdex-source.mjs';
 import { TOUCH_RECIPES } from './touch-recipes.mjs';
+import { SPIN_RECIPE, spinFrameStem } from './spin-recipe.mjs';
+import { SPRITES, SPRITE_DIR, SPRITE_MAX_BYTES } from './sprite-recipe.mjs';
 export const sha256 = p => createHash('sha256').update(readFileSync(p)).digest('hex');
 // Reviewed r2 recipes. Manifest data cannot award itself a larger delivery budget.
 export const PHOTO_DETAILS = Object.freeze({
@@ -82,17 +84,67 @@ export function validateEntry(e) {
  const ceiling=recipe?.maxBytes ?? (/\.(mp4|webm)$/.test(e.publicPath)?1500000:e.classification==='brand'?500000:100000);
  if (![e.bytes,e.maxBytes,e.width,e.height].every(n=>Number.isInteger(n)&&n>0)||e.bytes>e.maxBytes||e.maxBytes>ceiling) throw new Error('Invalid dimensions or oversized asset');
 }
+/** Frame sequences are one reviewed recipe each; data cannot widen its own budget. */
+export function validateSequence(e) {
+ const r=SPIN_RECIPE;
+ if(e.id!==r.id || e.classification!=='drawn' || e.sourcePath!==`source:${r.sourceId}` || e.sidecar!==`assets/provenance/${r.id}.json`)throw Error('Unapproved sequence');
+ for(const key of ['count','step','width','height','quality','alphaQuality','effort','maxBytes'])if(e[key]!==r[key])throw Error('Unapproved sequence recipe');
+ if(JSON.stringify(e.crop)!==JSON.stringify(r.crop))throw Error('Unapproved sequence crop');
+ if(!/^[a-f0-9]{64}$/.test(e.sourceSha256??'') || !['sharp','vips','webp'].every(k=>/^\d+\.\d+\.\d+$/.test(e.tool?.[k] ?? '')))throw Error('Incomplete sequence recipe');
+ if(!Array.isArray(e.frames) || e.frames.length!==r.count)throw Error('Sequence frame count mismatch');
+ let total=0;
+ e.frames.forEach((f,i)=>{
+  if(!/^[a-f0-9]{64}$/.test(f.sha256??'') || f.publicPath!==`/media/${spinFrameStem(i)}-${f.sha256.slice(0,12)}.webp` || !Number.isInteger(f.bytes) || f.bytes<=0 || f.bytes>r.frameMaxBytes)throw Error('Invalid sequence frame');
+  total+=f.bytes;
+ });
+ if(total!==e.bytes || e.bytes>r.maxBytes)throw Error('Sequence over budget');
+}
+/** Pixel sprites ship byte-for-byte from a pinned source list. */
+export function validateSprite(e) {
+ const sprite=SPRITES.find(s=>s.id===e.id);
+ if(!sprite || e.classification!=='drawn' || e.sourcePath!==`pixel-bank:${sprite.source}` || e.sourceSha256!==sprite.sha256 || e.sha256!==sprite.sha256)throw Error('Unapproved sprite');
+ if(e.publicPath!==`/media/${e.id}-${e.sha256.slice(0,12)}.png` || e.sidecar!==`assets/provenance/${e.id}.json` || e.maxBytes!==SPRITE_MAX_BYTES || !Number.isInteger(e.bytes) || e.bytes<=0 || e.bytes>e.maxBytes || ![e.width,e.height].every(n=>Number.isInteger(n)&&n>0))throw Error('Invalid sprite entry');
+}
 export async function checkAssets(root, {sources=false}={}) {
  const manifest=JSON.parse(readFileSync(path.join(root,'assets/source-manifest.json'),'utf8'));
  const approved=JSON.parse(readFileSync(path.join(root,'assets/approved-media.json'),'utf8'));
  const ids=new Set(), hashes=new Set();
  if(!approved.media.length) throw new Error('No approved media');
- const publicPaths=new Set(approved.media.map(e=>e.publicPath));
- if(publicPaths.size!==approved.media.length) throw new Error('Duplicate public path');
+ const allPaths=approved.media.flatMap(e=>e.kind==='sequence'?e.frames.map(f=>f.publicPath):[e.publicPath]);
+ const publicPaths=new Set(allPaths);
+ if(publicPaths.size!==allPaths.length) throw new Error('Duplicate public path');
  for(const file of readdirSync(path.join(root,'public/media'),{recursive:true})) {
   if(statSync(path.join(root,'public/media',file)).isFile()&&!publicPaths.has('/media/'+file.replaceAll('\\','/'))) throw new Error('Unapproved public media');
  }
  for(const e of approved.media){
+  if(e.kind==='sprite'){
+   validateSprite(e); if(ids.has(e.id)) throw new Error('Duplicate asset'); ids.add(e.id);
+   if(hashes.has(e.sha256)) throw new Error('Duplicate asset content'); hashes.add(e.sha256);
+   const file=safeOutput(root,'public'+e.publicPath);
+   if(sha256(file)!==e.sha256 || statSync(file).size!==e.bytes) throw new Error('Export hash/size changed');
+   if(JSON.stringify(JSON.parse(readFileSync(safeOutput(root,e.sidecar),'utf8')))!==JSON.stringify(e))throw Error('Sprite sidecar mismatch');
+   if(sources && sha256(`${SPRITE_DIR}/${SPRITES.find(s=>s.id===e.id).source}`)!==e.sourceSha256)throw Error('Original source changed');
+   continue;
+  }
+  if(e.kind==='sequence'){
+   validateSequence(e); if(ids.has(e.id)) throw new Error('Duplicate asset'); ids.add(e.id);
+   for(const f of e.frames){
+    if(hashes.has(f.sha256)) throw new Error('Duplicate asset content'); hashes.add(f.sha256);
+    const file=safeOutput(root,'public'+f.publicPath);
+    if(sha256(file)!==f.sha256 || statSync(file).size!==f.bytes) throw new Error('Export hash/size changed');
+   }
+   if(readFileSync(safeOutput(root,e.sidecar),'utf8')!==JSON.stringify(e,null,2)+'\n')throw Error('Sequence sidecar mismatch');
+   const ext=manifest.externalSources?.find(source=>`source:${source.id}`===e.sourcePath);
+   if(!ext || ext.sha256!==e.sourceSha256 || ext.path!==SPIN_RECIPE.dir)throw Error('Unknown sequence source');
+   if(sources){
+    const {default:sharp}=await import('sharp');
+    const {spinSourceDigest,encodeSpinFrame}=await import('./spin-recipe.mjs');
+    if(spinSourceDigest()!==e.sourceSha256)throw Error('Original source changed');
+    if(['sharp','vips','webp'].some(k=>e.tool[k]!==sharp.versions[k]))throw Error('Sequence encoder version mismatch');
+    for(let i=0;i<e.frames.length;i++)if(createHash('sha256').update(await encodeSpinFrame(sharp,i)).digest('hex')!==e.frames[i].sha256)throw Error('Sequence derivation mismatch');
+   }
+   continue;
+  }
   validateEntry(e); if(hashes.has(e.sha256)) throw new Error('Duplicate asset content'); hashes.add(e.sha256); if(ids.has(e.id)) throw new Error('Duplicate asset'); ids.add(e.id);
   const file=safeOutput(root,'public'+e.publicPath), side=safeOutput(root,e.sidecar);
   if(sha256(file)!==e.sha256 || statSync(file).size!==e.bytes) throw new Error('Export hash/size changed');

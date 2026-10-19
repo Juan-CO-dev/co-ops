@@ -53,7 +53,6 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
   await mkdir('tmp/landing-v2/chunk5',{recursive:true});
   await page.locator('#field-guide h3').evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-16));
   await page.screenshot({path:`tmp/landing-v2/chunk5/${testInfo.project.name}-${size.width}x${size.height}-${language}-guide.png`});
-  await page.screenshot({path:`tmp/landing-v2/chunk5/${testInfo.project.name}-${size.width}x${size.height}-${language}-full.png`,fullPage:true});
   await expect(stage).toHaveAttribute('data-active','false');
   const top=await stage.evaluate(el=>el.getBoundingClientRect().top+scrollY);
   const travel=await stage.evaluate(el=>el.getBoundingClientRect().height-innerHeight);
@@ -68,6 +67,8 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
     if(progress===0||progress===1){const endpointPhoto=stage.locator('[data-texture-photo]').nth(progress===0?0:1).locator('img');await expect(endpointPhoto).toHaveCount(1);await expect.poll(()=>endpointPhoto.evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);}
     if(progress===.5)await page.screenshot({path:`tmp/landing-v2/chunk5/${testInfo.project.name}-${size.width}x${size.height}-${language}-texture.png`});
   }
+  // Full-page capture resizes the viewport, which stalls Chromium scroll timelines; take it last.
+  await page.screenshot({path:`tmp/landing-v2/chunk5/${testInfo.project.name}-${size.width}x${size.height}-${language}-full.png`,fullPage:true});
 
 });
 
@@ -192,21 +193,11 @@ for(const mode of ['reduce','no-js','no-js-full-motion'] as const)test(`${mode} 
   await page.locator('#crave').scrollIntoViewIfNeeded();
   for(const photo of await page.locator('#crave [data-texture-photo]').all()){await photo.scrollIntoViewIfNeeded();await expect(photo.locator('img')).toHaveCount(1);}
   await expect(page.locator('#crave [data-landing-photo] img')).toHaveCount(2);
-  const touch=page.locator('#crave [data-playful-slot="crave"]');
-  if(mode==='reduce'){
-    await touch.scrollIntoViewIfNeeded();
-    await expect(touch.locator('img')).toHaveCount(1);
-    await expect(touch.locator('img')).toHaveAttribute('alt','');
-    await expect(touch).toHaveAttribute('data-playing','false');
-    await expect(page.locator('#crave img')).toHaveCount(3);
-  }else{
-    await expect(touch.locator('img')).toHaveCount(0);
-    await expect(page.locator('#crave img')).toHaveCount(2);
-  }
+  await expect(page.locator('#crave img')).toHaveCount(2);
   await page.locator('#field-guide').scrollIntoViewIfNeeded();
   await expect(page.locator('#field-guide h3')).toHaveText('Crunchy Boi');
   await expect(page.locator('[data-field-ingredients]')).toHaveText(en['landing.lineup.ingredients.crunchy-boi']);
-  await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(2);
+  await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(0);
   await context.close();
 });
 
@@ -239,4 +230,21 @@ for(const height of [667,812])for(const language of ['en','es'])for(const consen
   await visitIntro();
   await page.waitForTimeout(1200);
   expect(await count()).toBe(1);
+});
+
+test('leaving and returning keeps the pinned crunch story scroll-linked',async({page})=>{
+  await page.setViewportSize({width:1440,height:900});
+  await page.goto('/');
+  const stage=page.locator('[data-crave-stage]');
+  await stage.scrollIntoViewIfNeeded();
+  await page.locator('#field-guide').scrollIntoViewIfNeeded();
+  await expect(stage).toHaveAttribute('data-active','false');
+  const top=await stage.evaluate(el=>el.getBoundingClientRect().top+scrollY);
+  const travel=await stage.evaluate(el=>el.getBoundingClientRect().height-innerHeight);
+  const offset=()=>stage.locator('[data-texture-photo]').first().evaluate(el=>el.getBoundingClientRect().left);
+  await page.evaluate(y=>scrollTo(0,y),top);
+  const start=await offset();
+  await page.evaluate(y=>scrollTo(0,y),top+travel);
+  await expect.poll(offset).toBeLessThan(start-100);
+  await expect(stage.locator('[data-texture-photo]').nth(1).locator('img')).toHaveCount(1);
 });
