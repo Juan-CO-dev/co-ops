@@ -1,0 +1,46 @@
+{
+  "id": "v2-l083-720",
+  "sourceId": "L083",
+  "quality": 86,
+  "load": "lazy",
+  "width": 720,
+  "maxBytes": 180000,
+  "publicPath": "/media/v2-l083-720-ab0afcf3e22d.webp",
+  "classification": "real-photo",
+  "mode": "resize-only",
+  "sourcePath": "source:L083",
+  "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
+  "sha256": "ab0afcf3e22d938b6ed2ef86055c63cc0f39a852bfc3fade9f1bcb44b0b0becd",
+  "bytes": 172414,
+  "height": 1080,
+  "sidecar": "assets/provenance/v2-l083-720.json",
+  "crop": {
+    "left": 0,
+    "top": 0,
+    "width": 2667,
+    "height": 4000
+  },
+  "orientedSource": {
+    "width": 2667,
+    "height": 4000
+  },
+  "steps": [
+    "EXIF auto-orientation (.rotate())",
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "effort": 6,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "webp": "1.6.0",
+    "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+  },
+  "command": "node scripts/assets/export-landing-v2.mjs",
+  "inspection": {
+    "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+    "reviewer": "Astra",
+    "date": "2026-10-16",
+    "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+  }
+}

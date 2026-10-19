@@ -1,0 +1,16 @@
+{
+  "id": "pixel-hero-basket",
+  "kind": "sprite",
+  "classification": "drawn",
+  "publicPath": "/media/pixel-hero-basket-bb60e6cb20f2.png",
+  "sourcePath": "pixel-bank:hero/hero-close-walk-basket-AI-DRAWN.png",
+  "sourceSha256": "bb60e6cb20f2bd361420dc6bbc95ffe9785a91c3b621670eb15b91b89f843717",
+  "sha256": "bb60e6cb20f2bd361420dc6bbc95ffe9785a91c3b621670eb15b91b89f843717",
+  "bytes": 3577,
+  "maxBytes": 20000,
+  "width": 59,
+  "height": 78,
+  "sidecar": "assets/provenance/pixel-hero-basket.json",
+  "command": "node scripts/assets/export-sprites.mjs",
+  "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+}

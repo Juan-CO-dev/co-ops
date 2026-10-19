@@ -41,15 +41,24 @@ for (const width of [320, 640, 768, 1024]) {
         await document.fonts.ready;
         const image = element as HTMLImageElement;
         const box = image.getBoundingClientRect();
-        // object-contain can paint narrower than its full-width element box.
-        const paintedWidth = Math.min(box.width, box.height * 750 / 1125);
+        // Full-bleed object-cover paints the entire element, with uniform cropping.
+        const paintedWidth = box.width;
         const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
         return { paintedWidth, height: box.height, rem, sizes: image.sizes };
       });
-      const declaredWidth = width >= 640 ? 18.666667 * geometry.rem : Math.min(width - 5 * geometry.rem, 18.666667 * geometry.rem);
-      expect(geometry.sizes).toBe('(min-width: 640px) 18.666667rem, min(calc(100vw - 5rem), 18.666667rem)');
+      const declaredWidth = width >= 768 ? width / 2 : width;
+      expect(geometry.sizes).toBe('(min-width: 768px) 50vw, 100vw');
       expect(Math.abs(geometry.paintedWidth - declaredWidth)).toBeLessThan(1);
-      expect(geometry.height).toBeLessThanOrEqual(28 * geometry.rem + 0.1);
+      // Full-bleed replacement for r2 P3-F's obsolete 28rem contained-poster cap:
+      // desktop is the prototype's 740px stage; mobile reserves header/copy/consent.
+      if (width >= 768) expect(geometry.height).toBe(740);
+      else if (width >= 330) {
+        expect(geometry.height).toBeGreaterThanOrEqual(360);
+        expect(geometry.height).toBeLessThanOrEqual(900 - 52 - 120);
+      } else {
+        // Narrow accessibility fallback preserves the original 2:3 image ratio.
+        expect(geometry.height).toBe(width * 1.5);
+      }
     } finally {
       await context.close();
     }
@@ -64,9 +73,9 @@ for (const language of ['en', 'es'] as const) {
         const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 375, height: 812 }, deviceScaleFactor, reducedMotion });
         try {
           const page = await context.newPage();
-          // The original 750px file is also a legitimate no-JS lineup image.
+          // Only current P013 hero derivatives belong to this responsive request set.
           // Count hero-only derivatives; the SSR test rejects a second fallback preload.
-          const posterPaths = inventory.filter(asset => /^hero-poster-\d+$/.test(asset.id)).map(asset => asset.path);
+          const posterPaths = inventory.filter(asset => /^v2-p013-\d+$/.test(asset.id)).map(asset => asset.path);
           const requests: string[] = [];
           page.on('request', request => {
             const pathname = new URL(request.url()).pathname;
@@ -78,7 +87,7 @@ for (const language of ['en', 'es'] as const) {
           await expect(poster).toBeVisible();
           await expect(heading).toBeVisible();
           await expect(heading).not.toBeEmpty();
-          const expected = inventory.find(asset => asset.id === `hero-poster-${deviceScaleFactor * 320}`);
+          const expected = inventory.find(asset => asset.id === `v2-p013-${({1:480,2:960,3:1280} as Record<number,number>)[deviceScaleFactor]}`);
           expect(expected).toBeDefined();
           expect(await poster.evaluate(image => new URL((image as HTMLImageElement).currentSrc).pathname)).toBe(expected!.path);
           expect(await poster.evaluate(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0)).toBe(true);
@@ -109,5 +118,7 @@ test('only the hero receives an image preload on the full page', async ({page}) 
  await page.goto('/');
  const hints=page.locator('link[rel="preload"][as="image"]');
  await expect(hints).toHaveCount(1);
- await expect(hints).toHaveAttribute('imagesrcset', /crunchy-boi-014/);
+ await expect(hints).toHaveAttribute('imagesrcset', /v2-p013/);
+ await expect(page.locator('.landing-v2-header img')).toHaveAttribute('loading','eager');
+ await expect(page.locator('.landing-v2-header img')).toHaveAttribute('fetchpriority','low');
 });

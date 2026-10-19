@@ -1,0 +1,8 @@
+{
+  "id": "checker-peek",
+  "classification": "brand",
+  "mode": "code-native",
+  "recipe": "48x32 CSS conic-gradient black/cream checker; one 600ms transform; reserved 80px slot",
+  "inspection": "Approved: code-native motif, no food or image bytes",
+  "reviewer": "Astra 2026-10-17"
+}

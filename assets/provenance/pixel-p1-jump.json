@@ -1,0 +1,16 @@
+{
+  "id": "pixel-p1-jump",
+  "kind": "sprite",
+  "classification": "drawn",
+  "publicPath": "/media/pixel-p1-jump-4c4663b03fb6.png",
+  "sourcePath": "pixel-bank:hero/hero-cheer-jump-AI-DRAWN.png",
+  "sourceSha256": "4c4663b03fb68651cec817e4b4bd376bd5f4def5642eebe2a1a8611bed8420dc",
+  "sha256": "4c4663b03fb68651cec817e4b4bd376bd5f4def5642eebe2a1a8611bed8420dc",
+  "bytes": 1530,
+  "maxBytes": 20000,
+  "width": 31,
+  "height": 44,
+  "sidecar": "assets/provenance/pixel-p1-jump.json",
+  "command": "node scripts/assets/export-sprites.mjs",
+  "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+}

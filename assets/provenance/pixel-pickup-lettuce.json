@@ -1,0 +1,16 @@
+{
+  "id": "pixel-pickup-lettuce",
+  "kind": "sprite",
+  "classification": "drawn",
+  "publicPath": "/media/pixel-pickup-lettuce-fa93ea7c875e.png",
+  "sourcePath": "pixel-bank:items/pickup-lettuce-AI-DRAWN.png",
+  "sourceSha256": "fa93ea7c875efd3d1793ce917cedcde8a3ad1bd83db2cf35d6081df22fd12e55",
+  "sha256": "fa93ea7c875efd3d1793ce917cedcde8a3ad1bd83db2cf35d6081df22fd12e55",
+  "bytes": 2145,
+  "maxBytes": 20000,
+  "width": 40,
+  "height": 32,
+  "sidecar": "assets/provenance/pixel-pickup-lettuce.json",
+  "command": "node scripts/assets/export-sprites.mjs",
+  "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+}

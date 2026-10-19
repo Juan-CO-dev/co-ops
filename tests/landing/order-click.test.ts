@@ -8,13 +8,13 @@ const request = (body: unknown, headers: Record<string, string | undefined> = {}
 describe("independent order counter", () => {
   it("bounds cardinality and never accepts identifiers or unknown stores", () => {
     expect(parseOrderClick({ store: "capitol-hill", ad: "subsim-photo" })).toEqual({ store: "capitol-hill", ad: "subsim-photo" });
-    expect(parseOrderClick({ store: "dupont", ad: "unknown" })).toEqual({ store: "dupont", ad: "unattributed" });
+    expect(parseOrderClick({ store: "dupont", ad: "unknown" })).toEqual({ store: "dupont", ad: "unknown" });
     for (const value of [{ store: "other", ad: "subsim-photo" }, { store: "dupont", ad: "x".repeat(100) }, { store: "dupont", ad: "subsim-photo", event_id: "id" }, { store: "dupont", ad: "subsim-photo", ip: "1.2.3.4" }, null]) expect(parseOrderClick(value)).toBeNull();
   });
   it("writes only normalized keys once, independently of Meta and WAF", async () => {
     const increment = vi.fn().mockResolvedValue(undefined);
     expect((await handleOrderClick(request({ store: "dupont", ad: "unknown" }), { env, increment })).status).toBe(204);
-    expect(increment).toHaveBeenCalledExactlyOnceWith({ store: "dupont", ad: "unattributed" });
+    expect(increment).toHaveBeenCalledExactlyOnceWith({ store: "dupont", ad: "unknown" });
   });
   it("does no DB work when dormant, denied, invalid or wrong-origin", async () => {
     const increment = vi.fn();

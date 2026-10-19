@@ -6,9 +6,14 @@ describe("anonymous landing language", () => {
     expect(resolveLandingLanguage(query,header as string|null)).toBe(expected);
   });
   it("toggle preserves only approved attribution and removes arbitrary data", () => {
-    const href = landingLanguageHref("es", new URLSearchParams("ad=subsim-photo&email=private%40example.com&utm_source=facebook&lang=en"));
+    const href = landingLanguageHref("es", new URLSearchParams("ad=subsim-photo&email=private%40example.com&utm_source=facebook&lang=en"), {ads:["subsim-photo"]});
     expect(href).toContain("lang=es");
     expect(href).toContain("ad=subsim-photo");
     expect(href).not.toContain("email");
   });
+});
+
+it('toggle retains only the request-resolved campaign, not stale configured seeds',()=>{
+ expect(landingLanguageHref('es',new URLSearchParams('ad=new-campaign'),{ads:['new-campaign']})).toContain('ad=new-campaign');
+ expect(landingLanguageHref('es',new URLSearchParams('ad=subsim-photo'))).not.toContain('ad=');
 });

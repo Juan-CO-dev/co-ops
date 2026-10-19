@@ -2,23 +2,6 @@
   "version": 1,
   "media": [
     {
-      "id": "crunchy-boi-spin",
-      "publicPath": "/media/crunchy-boi-spin-drawn-dfb8c93fe64d.mp4",
-      "classification": "drawn",
-      "sourcePath": "source:hero-spin-original",
-      "sourceSha256": "ebb277e24a3d8e7bc71b90081931af8d959680cca5f585c22173270b266c4127",
-      "sha256": "dfb8c93fe64d4c2aac3380dab9762a74110423b93f3f545288425ac0b5a2645a",
-      "width": 720,
-      "height": 720,
-      "bytes": 562664,
-      "maxBytes": 1500000,
-      "sidecar": "assets/provenance/hero-spin.json",
-      "duration": 8,
-      "background": "#FFE560",
-      "codec": "h264",
-      "provenance": "DRAWN (AI REFERENCE), supplied approved spin; decode/composite/encode only"
-    },
-    {
       "id": "hero-poster",
       "sourceId": "014",
       "publicPath": "/media/crunchy-boi-014-3566a724066c.webp",
@@ -749,73 +732,6 @@
       ]
     },
     {
-      "id": "subdex-catch",
-      "publicPath": "/media/subdex-catch-drawn-c539c9f5e05e.mp4",
-      "classification": "drawn",
-      "sourcePath": "source:subdex-video-original",
-      "sourceSha256": "332643dcbff5eb90e1e862d20bc2b9aa9b09ca99f25376f7d92d11e5f5abad82",
-      "sha256": "c539c9f5e05e67212f9c9ad8b091d8677096e63a30031a292e41a4aa04659b99",
-      "width": 720,
-      "height": 720,
-      "bytes": 63770,
-      "maxBytes": 1000000,
-      "sidecar": "assets/provenance/subdex-catch.json",
-      "duration": 0.9,
-      "codec": "h264",
-      "steps": [
-        "Existing AI-DRAWN source; no generation",
-        "Crop and uniform resize; metadata stripped",
-        "H264 CRF23 slow yuv420p faststart; audio removed"
-      ],
-      "cut": {
-        "start": 17.3,
-        "duration": 0.9,
-        "poster": 17.5,
-        "crop": [
-          0,
-          780,
-          1080,
-          1080
-        ],
-        "width": 720,
-        "height": 720
-      }
-    },
-    {
-      "id": "subdex-poster",
-      "publicPath": "/media/subdex-poster-drawn-4f35ab463487.webp",
-      "classification": "drawn",
-      "sourcePath": "assets/work/subdex-source-frame.png",
-      "sourceSha256": "f1321be97625c1484cc0c41f40c22f23dd2cb44c19be3925cf80c8c72236ba7f",
-      "sourceId": "subdex-frame-17-5",
-      "mode": "resize-only",
-      "quality": 85,
-      "sha256": "4f35ab4634873d62b3dcf2e1595c1fb10486796671790c40d1a06a0c72e8369d",
-      "width": 720,
-      "height": 720,
-      "bytes": 16874,
-      "maxBytes": 100000,
-      "sidecar": "assets/provenance/subdex-poster.json",
-      "steps": [
-        "Existing AI-DRAWN source; no generation",
-        "Crop and uniform resize; metadata stripped",
-        "Sharp rotate + uniform resize 720 + WebP quality85 effort6 from pinned drawn source frame"
-      ],
-      "cut": {
-        "start": 17.3,
-        "duration": 0.9,
-        "poster": 17.5,
-        "crop": [
-          0,
-          780,
-          1080,
-          1080
-        ],
-        "width": 720,
-        "height": 720
-      }
-    },
-    {
       "id": "hero-poster-320",
       "sourceId": "014",
       "publicPath": "/media/crunchy-boi-014-320-1c40aa3dc34f.webp",
@@ -913,6 +829,1153 @@
         "scriptSha256": "57b17a8a9d1be36de339c2fbd2ce61615140414c1883b250af7159867725b29e"
       },
       "command": "node scripts/assets/export-hero-sizes.mjs"
+    },
+    {
+      "id": "crunchy-boi-spin",
+      "kind": "sequence",
+      "classification": "drawn",
+      "sourcePath": "source:spin-rgba-frames",
+      "sourceSha256": "88212e69ab4ee5c69eb62a2ff686e838255fd0aa5b5b7535a5a5c0c3361cb5de",
+      "width": 540,
+      "height": 284,
+      "count": 48,
+      "step": 5,
+      "crop": {
+        "left": 239,
+        "top": 153,
+        "width": 1508,
+        "height": 792
+      },
+      "quality": 70,
+      "alphaQuality": 80,
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0"
+      },
+      "bytes": 853748,
+      "maxBytes": 1100000,
+      "frames": [
+        {
+          "publicPath": "/media/crunchy-boi-spin-f00-b8d51c884e10.webp",
+          "sha256": "b8d51c884e103340374277bf30e8e8bc1ecb3e19c8bb3b3a301bc42794275c73",
+          "bytes": 23062
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f01-ced1376cb595.webp",
+          "sha256": "ced1376cb59500d732382ba14f21be09fc77aaab469b653f49b7a11182008e22",
+          "bytes": 23058
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f02-7555b434dceb.webp",
+          "sha256": "7555b434dceb5eb98f6db30ef5ed9c24682028048ea3c4f90ed4ff3f2ee1a1f7",
+          "bytes": 23416
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f03-808fc0c87ae3.webp",
+          "sha256": "808fc0c87ae3393cf26738e433a502df7028c24d0cddcbb9d381a19bb0745a63",
+          "bytes": 23452
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f04-8b4a3afabbc5.webp",
+          "sha256": "8b4a3afabbc5b120bf03aaf3d37b8b3e20cf98edc9b81789f3cc5b9f841811ab",
+          "bytes": 23352
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f05-ef1b175a727e.webp",
+          "sha256": "ef1b175a727e1632f71400ec7ef5ae8f43d62d4e7ebdf9e54b8e8295c4e7e20d",
+          "bytes": 23348
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f06-76e68e7ac130.webp",
+          "sha256": "76e68e7ac1309a57b6151d265baec6d685b2d1842b5db9aed924334d915f8786",
+          "bytes": 23300
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f07-0e0b8f15efb2.webp",
+          "sha256": "0e0b8f15efb2b8f91f1d93186c10654dca754e04279f22a1d6dd523b2ac0a008",
+          "bytes": 23090
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f08-6f51479d394a.webp",
+          "sha256": "6f51479d394ad7f7e5a0571eab75a09fe59e145d9e31a5e1e051f900f536d8c2",
+          "bytes": 22210
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f09-f2ef04035b43.webp",
+          "sha256": "f2ef04035b4393a02e105bf8f79bc28ae9141b2bb39b910770bb44fcb5f41f1e",
+          "bytes": 21594
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f10-6844e691f257.webp",
+          "sha256": "6844e691f257971b89a30e43e63fe85325f7e508e587c706ba5dec5c5fb6b1a7",
+          "bytes": 20384
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f11-47dc7a8bad83.webp",
+          "sha256": "47dc7a8bad83938e44a8c1f7269fc06bad8870d900cb6504aeb33865acef9163",
+          "bytes": 19176
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f12-1dd759f3662b.webp",
+          "sha256": "1dd759f3662b562341793bf3650a07fb871946ffb93b64fa41c50acc26c067e3",
+          "bytes": 17360
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f13-b89ed4b02fa2.webp",
+          "sha256": "b89ed4b02fa24d143ac2cd5a80572f95032c4345c104d178a56df13ea0b1f5db",
+          "bytes": 15952
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f14-b9523422c08f.webp",
+          "sha256": "b9523422c08f3d3170f2517611749d164d42771ca748c30145ce1b6569f194ee",
+          "bytes": 14166
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f15-d91dac82eec7.webp",
+          "sha256": "d91dac82eec7634a6a204955140f4ba3e6aca924abb946e0a72bf95691587515",
+          "bytes": 12884
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f16-a18ccc3d813e.webp",
+          "sha256": "a18ccc3d813e90ad15f2aa84ab55b450cca0054051398871991674e7c0f6753e",
+          "bytes": 11950
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f17-b1beef37ad5f.webp",
+          "sha256": "b1beef37ad5f9ae3b7e3ad5fc5b011b722d78c79c281c0f1775ec1d0cef28f45",
+          "bytes": 11590
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f18-e5973d93f5fa.webp",
+          "sha256": "e5973d93f5faadd901a276d52b766efef4e2a8b2fab776561374000a97310c6b",
+          "bytes": 11640
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f19-3ce47d66c2d8.webp",
+          "sha256": "3ce47d66c2d86fa8564c58a20b3954adc18828669f6ed5615e9bf96bfc73f6b9",
+          "bytes": 12186
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f20-854c2b11ce64.webp",
+          "sha256": "854c2b11ce6440eda9c60ba108eacc43d11ec832e3afca3ceacb2799e7ef19a6",
+          "bytes": 12640
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f21-f35a04808050.webp",
+          "sha256": "f35a0480805040ee889d37c41b4e53e886813661bca06ee13a0392a47d6fce32",
+          "bytes": 12516
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f22-eb849b30fc63.webp",
+          "sha256": "eb849b30fc63c817bf1cea63974acfbbe863c863c4541273a69444c12adcbcc1",
+          "bytes": 12562
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f23-58fe7f993102.webp",
+          "sha256": "58fe7f99310209919961671efcaa56e3a33fa586309b9283b08f956e981e8f59",
+          "bytes": 13036
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f24-cd73e4160891.webp",
+          "sha256": "cd73e4160891c22e1704479cd606e43f728495079be5580dd9e0baec543e2f80",
+          "bytes": 13506
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f25-6070d907fb41.webp",
+          "sha256": "6070d907fb41ab9093be5991b4d903fb869a3991ae688f89cf3f5d8ed0a17b6c",
+          "bytes": 13298
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f26-83bb814927fe.webp",
+          "sha256": "83bb814927fe9db2a479cde47ef8ce9e8545462e3cd6a8e9de4c175b953dc9b6",
+          "bytes": 13176
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f27-68f235aa4cff.webp",
+          "sha256": "68f235aa4cffaca4adcc467cd27f24cc77e4dafc6591b79dae7b62a6b70eafe8",
+          "bytes": 13932
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f28-dafa4a567267.webp",
+          "sha256": "dafa4a5672673b2faa956b077caeae7d0294e6cdbcd50cf7aa5df7e20bda22cf",
+          "bytes": 13406
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f29-921628075b01.webp",
+          "sha256": "921628075b01d547a24ff104c9cfc439d2cc1a6f9f24daad7af31323706181cb",
+          "bytes": 12754
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f30-83472b3b5e47.webp",
+          "sha256": "83472b3b5e471d1320c0c5cde563ad493c144148ed4bf7225e0e0a90cd678e22",
+          "bytes": 12240
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f31-fa0770f76058.webp",
+          "sha256": "fa0770f76058f131227466e04963977a4815d3f977c1064533a1ff5dcf3cb03a",
+          "bytes": 11438
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f32-1126426c93f4.webp",
+          "sha256": "1126426c93f47b2ba8715ff0075dfbcae21610b9f5b4ebccf1e0a965de664dca",
+          "bytes": 11270
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f33-933b039c2e1e.webp",
+          "sha256": "933b039c2e1e6c58d104253a611ba9dc6d677328df7459a177495abb7d4facf6",
+          "bytes": 11790
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f34-69e6861c939c.webp",
+          "sha256": "69e6861c939cd294a9206bc2445eb2cb96bfc4ecf54f3fda66fc9ddb3c7fa363",
+          "bytes": 13762
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f35-69fbe1edf2a0.webp",
+          "sha256": "69fbe1edf2a02bc52fe4ef1cf9f5223538e41666e493340743b12e2734e9b3db",
+          "bytes": 16108
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f36-53a5221bb740.webp",
+          "sha256": "53a5221bb740976969a5f9c70cebda1bd3bbc7eda35014d9e64fc0abda706337",
+          "bytes": 17916
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f37-4c433dc27222.webp",
+          "sha256": "4c433dc27222ed6fd6393712aa01d2cb577b8d000767858eddfd19755b51623b",
+          "bytes": 19426
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f38-1a130042c85e.webp",
+          "sha256": "1a130042c85e0a0fd2e5a439e8878ae758d24ece734ba0da44fd6500873202f1",
+          "bytes": 20844
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f39-cce739e8f389.webp",
+          "sha256": "cce739e8f389ce0eec761eb367621b064f2f01001d593fb64353b1545ed5e0de",
+          "bytes": 22400
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f40-2d3d0a796476.webp",
+          "sha256": "2d3d0a7964769a50957e8cecf5f33fb490499d9b7bd1c650c40b160302f3f5bf",
+          "bytes": 23020
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f41-b4e280bbd1ae.webp",
+          "sha256": "b4e280bbd1ae2f99326325095deb70f2ffcd7ccc5e15e748fda18d8898afc43c",
+          "bytes": 23458
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f42-188816b734e1.webp",
+          "sha256": "188816b734e192af2f8e62bfd3718cedd68a2648bc88f1b3838f471e5a944e37",
+          "bytes": 23768
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f43-e1ccb87a91ca.webp",
+          "sha256": "e1ccb87a91cacbcc5c4b7bfb825c6c8eee7b1bbcef3d969a94d0f34ba66555fa",
+          "bytes": 23938
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f44-3ff36e7ef251.webp",
+          "sha256": "3ff36e7ef25159b1cd78abf25edf02ba02df6dda6efe59e197632e65a35f15f8",
+          "bytes": 23648
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f45-bb9c38fb63ef.webp",
+          "sha256": "bb9c38fb63ef317d909c7e1faf912d0a5965f37b19c59bc87516a2e9bf04b199",
+          "bytes": 23406
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f46-a201d7f0e2f1.webp",
+          "sha256": "a201d7f0e2f1ae654fa2a18e3f39e7de677967b6f64bd825935e8fc3c434e221",
+          "bytes": 23646
+        },
+        {
+          "publicPath": "/media/crunchy-boi-spin-f47-b7da0306aa42.webp",
+          "sha256": "b7da0306aa4253b9588cf37c5f47f208b14f74a0ada28866f9eef6457e5b91fd",
+          "bytes": 23674
+        }
+      ],
+      "sidecar": "assets/provenance/crunchy-boi-spin.json",
+      "command": "node scripts/assets/export-spin-frames.mjs",
+      "provenance": "DRAWN (AI REFERENCE) Crunchy Boi spin master; crop/resize/encode only; never shown as a real photo"
+    },
+    {
+      "id": "landing-map",
+      "kind": "map",
+      "classification": "brand",
+      "publicPath": "/media/landing-map-c05b790c0390.webp",
+      "sourcePath": "source:osm-dc-extract",
+      "sourceSha256": "2844cdc840a7795b14f05e2ed4f69ec2e94fe6fc8719708ed85d559de426f162",
+      "rasterSha256": "a09fc7d226e31aecd1012c16cc0788008bede5259b9cfbc0425b79b8daa5f6f0",
+      "rendererSha256": "c15ccf53e1fdb9760d8715f591f442f9e4a50a11e727634c2b379361a356e499",
+      "sha256": "c05b790c03908574a0d4f8b0838cb415c4e2c5f042557f979626a52f404fe123",
+      "bytes": 117704,
+      "maxBytes": 160000,
+      "width": 1200,
+      "height": 1200,
+      "quality": 72,
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0"
+      },
+      "sidecar": "assets/provenance/landing-map.json",
+      "command": "node scripts/assets/export-map.mjs",
+      "provenance": "OpenStreetMap data (ODbL 1.0), pinned Overpass extract; own render (roads, water, parks; no labels); attribution shown under the map"
+    },
+    {
+      "id": "v2-p013-320",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 320,
+      "maxBytes": 20000,
+      "publicPath": "/media/v2-p013-320-0da6a08cf77b.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "0da6a08cf77b16643f2203d33897852dcb951460ca3c8b6abd33f42bc7ba916a",
+      "bytes": 16744,
+      "height": 480,
+      "sidecar": "assets/provenance/v2-p013-320.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p013-480",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 480,
+      "maxBytes": 35000,
+      "publicPath": "/media/v2-p013-480-2956ce1ffc1d.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "2956ce1ffc1d6a961c1a37134c6541b83a40f658d84abfd1503e223dfc194cea",
+      "bytes": 30088,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-p013-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p013-640",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 640,
+      "maxBytes": 50000,
+      "publicPath": "/media/v2-p013-640-13b5f4142ade.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "13b5f4142aded3efc7fd8e96807147e2687994881762030c78835086791951ae",
+      "bytes": 46798,
+      "height": 960,
+      "sidecar": "assets/provenance/v2-p013-640.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p013-960",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 960,
+      "maxBytes": 90000,
+      "publicPath": "/media/v2-p013-960-8271dfa0ca7d.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "8271dfa0ca7dd78b5628a2bf65b24501d6352144049d7dfafa75146b0007e7a8",
+      "bytes": 84742,
+      "height": 1440,
+      "sidecar": "assets/provenance/v2-p013-960.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p013-1280",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 1280,
+      "maxBytes": 140000,
+      "publicPath": "/media/v2-p013-1280-870dc3083455.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "870dc3083455318ec4ff8770dccfae6d4c25aa0ed3454d5ffda71014bd5c204e",
+      "bytes": 130616,
+      "height": 1920,
+      "sidecar": "assets/provenance/v2-p013-1280.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p016-480",
+      "sourceId": "P016",
+      "quality": 86,
+      "load": "lazy",
+      "width": 480,
+      "maxBytes": 70000,
+      "publicPath": "/media/v2-p016-480-70c16c1f977d.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P016",
+      "sourceSha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
+      "sha256": "70c16c1f977d603ac0611b9dfd3c0b8a15ade9ce25fca3d50e97ecfd6ef0f377",
+      "bytes": 67070,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-p016-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p016-720",
+      "sourceId": "P016",
+      "quality": 86,
+      "load": "lazy",
+      "width": 720,
+      "maxBytes": 135000,
+      "publicPath": "/media/v2-p016-720-8dce5f33b8f6.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P016",
+      "sourceSha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
+      "sha256": "8dce5f33b8f65d035f2da3433c71d9e446615ff3b1d662c85b3fd7daac72b88b",
+      "bytes": 127440,
+      "height": 1080,
+      "sidecar": "assets/provenance/v2-p016-720.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p016-960",
+      "sourceId": "P016",
+      "quality": 86,
+      "load": "lazy",
+      "width": 960,
+      "maxBytes": 205000,
+      "publicPath": "/media/v2-p016-960-2ef06ce17068.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P016",
+      "sourceSha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
+      "sha256": "2ef06ce17068dfeef659862bc3405c39dfcc204eb1e1e963160b135d8d892977",
+      "bytes": 196008,
+      "height": 1440,
+      "sidecar": "assets/provenance/v2-p016-960.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-l083-480",
+      "sourceId": "L083",
+      "quality": 86,
+      "load": "lazy",
+      "width": 480,
+      "maxBytes": 100000,
+      "publicPath": "/media/v2-l083-480-9d4d188146e9.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L083",
+      "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
+      "sha256": "9d4d188146e931669295f341a95aa99122eca948baab99d85356f37cdcef513e",
+      "bytes": 96506,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-l083-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-l083-720",
+      "sourceId": "L083",
+      "quality": 86,
+      "load": "lazy",
+      "width": 720,
+      "maxBytes": 180000,
+      "publicPath": "/media/v2-l083-720-ab0afcf3e22d.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L083",
+      "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
+      "sha256": "ab0afcf3e22d938b6ed2ef86055c63cc0f39a852bfc3fade9f1bcb44b0b0becd",
+      "bytes": 172414,
+      "height": 1080,
+      "sidecar": "assets/provenance/v2-l083-720.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-l083-960",
+      "sourceId": "L083",
+      "quality": 86,
+      "load": "lazy",
+      "width": 960,
+      "maxBytes": 270000,
+      "publicPath": "/media/v2-l083-960-3c45c543b2af.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L083",
+      "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
+      "sha256": "3c45c543b2af9519f7a10efefe765901788d448a88c2cf357499c8993b0e0120",
+      "bytes": 260624,
+      "height": 1440,
+      "sidecar": "assets/provenance/v2-l083-960.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-l118-480",
+      "sourceId": "L118",
+      "quality": 78,
+      "load": "lazy",
+      "width": 480,
+      "maxBytes": 100000,
+      "publicPath": "/media/v2-l118-480-c674525bb22b.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L118",
+      "sourceSha256": "a5acbe06f8f99faa7e73f6aa3e0103e718ece0b075a4cccd02cb2e58bca47dd0",
+      "sha256": "c674525bb22b98b7cfe0ffb7a4149c6a2e6663205e1467a70657bd2cce0a48a6",
+      "bytes": 53842,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-l118-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; L118 (480/720/960) and L082 (480) delivery sizes and both originals visually inspected; real food, no edits, no encode artifacts",
+        "reviewer": "CC (Claude Opus 5.5)",
+        "date": "2026-10-19",
+        "scope": "Asset visual QA for the v3 catering section; browser integration verified separately"
+      }
+    },
+    {
+      "id": "v2-l118-720",
+      "sourceId": "L118",
+      "quality": 78,
+      "load": "lazy",
+      "width": 720,
+      "maxBytes": 180000,
+      "publicPath": "/media/v2-l118-720-0c97c269be81.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L118",
+      "sourceSha256": "a5acbe06f8f99faa7e73f6aa3e0103e718ece0b075a4cccd02cb2e58bca47dd0",
+      "sha256": "0c97c269be81b044714b6199580539fd69386fe299372e510e73abcab7d765d2",
+      "bytes": 92110,
+      "height": 1080,
+      "sidecar": "assets/provenance/v2-l118-720.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; L118 (480/720/960) and L082 (480) delivery sizes and both originals visually inspected; real food, no edits, no encode artifacts",
+        "reviewer": "CC (Claude Opus 5.5)",
+        "date": "2026-10-19",
+        "scope": "Asset visual QA for the v3 catering section; browser integration verified separately"
+      }
+    },
+    {
+      "id": "v2-l118-960",
+      "sourceId": "L118",
+      "quality": 78,
+      "load": "lazy",
+      "width": 960,
+      "maxBytes": 270000,
+      "publicPath": "/media/v2-l118-960-ffd52584fddb.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L118",
+      "sourceSha256": "a5acbe06f8f99faa7e73f6aa3e0103e718ece0b075a4cccd02cb2e58bca47dd0",
+      "sha256": "ffd52584fddbe64d811a3b474109fae7605410918c6d24a56965bf137ef4884e",
+      "bytes": 133822,
+      "height": 1440,
+      "sidecar": "assets/provenance/v2-l118-960.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; L118 (480/720/960) and L082 (480) delivery sizes and both originals visually inspected; real food, no edits, no encode artifacts",
+        "reviewer": "CC (Claude Opus 5.5)",
+        "date": "2026-10-19",
+        "scope": "Asset visual QA for the v3 catering section; browser integration verified separately"
+      }
+    },
+    {
+      "id": "v2-l082-480",
+      "sourceId": "L082",
+      "quality": 72,
+      "load": "lazy",
+      "width": 480,
+      "maxBytes": 100000,
+      "publicPath": "/media/v2-l082-480-874777ec975a.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L082",
+      "sourceSha256": "a372beffd38dff0257373c5923642d39f79e581ad39539b018e01c583a23fc28",
+      "sha256": "874777ec975ad0377b66f26b7e15c2887f41fcf13cd52752144360a76dc36236",
+      "bytes": 80388,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-l082-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; L118 (480/720/960) and L082 (480) delivery sizes and both originals visually inspected; real food, no edits, no encode artifacts",
+        "reviewer": "CC (Claude Opus 5.5)",
+        "date": "2026-10-19",
+        "scope": "Asset visual QA for the v3 catering section; browser integration verified separately"
+      }
+    },
+    {
+      "id": "pixel-p1-idle",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-p1-idle-736b424f3074.png",
+      "sourcePath": "pixel-bank:hero/hero-idle-front-AI-DRAWN.png",
+      "sourceSha256": "736b424f30746b44f64ec50a9bb590ce8d36040c5679e94867ad5aab965c3f4d",
+      "sha256": "736b424f30746b44f64ec50a9bb590ce8d36040c5679e94867ad5aab965c3f4d",
+      "bytes": 1630,
+      "maxBytes": 20000,
+      "width": 29,
+      "height": 47,
+      "sidecar": "assets/provenance/pixel-p1-idle.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-p1-jump",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-p1-jump-4c4663b03fb6.png",
+      "sourcePath": "pixel-bank:hero/hero-cheer-jump-AI-DRAWN.png",
+      "sourceSha256": "4c4663b03fb68651cec817e4b4bd376bd5f4def5642eebe2a1a8611bed8420dc",
+      "sha256": "4c4663b03fb68651cec817e4b4bd376bd5f4def5642eebe2a1a8611bed8420dc",
+      "bytes": 1530,
+      "maxBytes": 20000,
+      "width": 31,
+      "height": 44,
+      "sidecar": "assets/provenance/pixel-p1-jump.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-hero-selected",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-hero-selected-f86b650bc8de.png",
+      "sourcePath": "pixel-bank:hero/hero-close-selected-AI-DRAWN.png",
+      "sourceSha256": "f86b650bc8de8bac622c4c7427fb63a99553ac388b9dc15e35a0661081cea43f",
+      "sha256": "f86b650bc8de8bac622c4c7427fb63a99553ac388b9dc15e35a0661081cea43f",
+      "bytes": 3553,
+      "maxBytes": 20000,
+      "width": 49,
+      "height": 83,
+      "sidecar": "assets/provenance/pixel-hero-selected.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-roll",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-roll-7bd8740176d4.png",
+      "sourcePath": "pixel-bank:items/pickup-roll-AI-DRAWN.png",
+      "sourceSha256": "7bd8740176d4f90e08eb847fb91ec86200f0592be649dd6660d3decaf92eb028",
+      "sha256": "7bd8740176d4f90e08eb847fb91ec86200f0592be649dd6660d3decaf92eb028",
+      "bytes": 2055,
+      "maxBytes": 20000,
+      "width": 48,
+      "height": 33,
+      "sidecar": "assets/provenance/pixel-pickup-roll.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-chip",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-chip-0917c51faab2.png",
+      "sourcePath": "pixel-bank:items/pickup-chip-AI-DRAWN.png",
+      "sourceSha256": "0917c51faab2b05f0ca39b71f08560ff8afe02d137e6b4c8a4cad3bc1011678d",
+      "sha256": "0917c51faab2b05f0ca39b71f08560ff8afe02d137e6b4c8a4cad3bc1011678d",
+      "bytes": 1808,
+      "maxBytes": 20000,
+      "width": 37,
+      "height": 32,
+      "sidecar": "assets/provenance/pixel-pickup-chip.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-turkey",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-turkey-ac08f896ada1.png",
+      "sourcePath": "pixel-bank:items/pickup-turkey-AI-DRAWN.png",
+      "sourceSha256": "ac08f896ada14244937defca2116b39684248e10cfa2eaaf02752e41d9ebe869",
+      "sha256": "ac08f896ada14244937defca2116b39684248e10cfa2eaaf02752e41d9ebe869",
+      "bytes": 1694,
+      "maxBytes": 20000,
+      "width": 38,
+      "height": 33,
+      "sidecar": "assets/provenance/pixel-pickup-turkey.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-lettuce",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-lettuce-fa93ea7c875e.png",
+      "sourcePath": "pixel-bank:items/pickup-lettuce-AI-DRAWN.png",
+      "sourceSha256": "fa93ea7c875efd3d1793ce917cedcde8a3ad1bd83db2cf35d6081df22fd12e55",
+      "sha256": "fa93ea7c875efd3d1793ce917cedcde8a3ad1bd83db2cf35d6081df22fd12e55",
+      "bytes": 2145,
+      "maxBytes": 20000,
+      "width": 40,
+      "height": 32,
+      "sidecar": "assets/provenance/pixel-pickup-lettuce.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-pickle",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-pickle-3f022231cf47.png",
+      "sourcePath": "pixel-bank:items/pickup-pickle-AI-DRAWN.png",
+      "sourceSha256": "3f022231cf471398338f19d2275e132846315dab66449bc432cfbae731e104dd",
+      "sha256": "3f022231cf471398338f19d2275e132846315dab66449bc432cfbae731e104dd",
+      "bytes": 1529,
+      "maxBytes": 20000,
+      "width": 29,
+      "height": 30,
+      "sidecar": "assets/provenance/pixel-pickup-pickle.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-provolone",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-provolone-b6d0639cabf2.png",
+      "sourcePath": "pixel-bank:items/pickup-provolone-AI-DRAWN.png",
+      "sourceSha256": "b6d0639cabf22e0f04749489084f0eefd02c942b54879030275f5619bb16690b",
+      "sha256": "b6d0639cabf22e0f04749489084f0eefd02c942b54879030275f5619bb16690b",
+      "bytes": 1125,
+      "maxBytes": 20000,
+      "width": 34,
+      "height": 32,
+      "sidecar": "assets/provenance/pixel-pickup-provolone.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-hero-basket",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-hero-basket-bb60e6cb20f2.png",
+      "sourcePath": "pixel-bank:hero/hero-close-walk-basket-AI-DRAWN.png",
+      "sourceSha256": "bb60e6cb20f2bd361420dc6bbc95ffe9785a91c3b621670eb15b91b89f843717",
+      "sha256": "bb60e6cb20f2bd361420dc6bbc95ffe9785a91c3b621670eb15b91b89f843717",
+      "bytes": 3577,
+      "maxBytes": 20000,
+      "width": 59,
+      "height": 78,
+      "sidecar": "assets/provenance/pixel-hero-basket.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
     }
   ]
 }

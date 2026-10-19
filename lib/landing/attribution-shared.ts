@@ -1,3 +1,4 @@
+import { validAdCandidate } from './ad-codes-shared';
 export const ATTRIBUTION_KEY = 'landing_attribution';
 export interface AttributionPolicy { ads: readonly string[]; utm?: Readonly<Record<string, readonly string[]>> }
 export interface Attribution { ad: string; utm: Record<string,string>; fbclid?: string; capturedAt?: number }
@@ -11,7 +12,7 @@ export function captureAttribution(query: string, policy: AttributionPolicy, now
   const params = new URLSearchParams(query);
   const single = (key: string) => params.getAll(key).length === 1 ? params.get(key) : null;
   const ad = single('ad');
-  const result: Attribution = { ad: ad && policy.ads.includes(ad) ? ad : 'unattributed', utm: {} };
+  const result: Attribution = { ad: validAdCandidate(ad) && policy.ads.includes(ad) ? ad : 'unattributed', utm: {} };
   for (const key of ['utm_source','utm_medium','utm_campaign','utm_content','utm_term']) {
     const value = single(key);
     if (value && value.length <= 100 && policy.utm?.[key]?.includes(value)) result.utm[key] = value;

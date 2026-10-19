@@ -1,12 +1,13 @@
 [
   {
     "id": "frex",
-    "name": "Frex",
+    "name": "The Frex",
     "sourceId": "001",
     "image": "/media/frex-lineup-001-c36000951c0c.webp",
     "smallImage": "/media/frex-lineup-001-480-517d10fd7598.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.frex"
   },
   {
     "id": "hot-pants",
@@ -15,7 +16,8 @@
     "image": "/media/hot-pants-lineup-005-93e4e8c18dbe.webp",
     "smallImage": "/media/hot-pants-lineup-005-480-343abd691c3f.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.hot-pants"
   },
   {
     "id": "teamster",
@@ -24,7 +26,8 @@
     "image": "/media/teamster-lineup-011-895508296c97.webp",
     "smallImage": "/media/teamster-lineup-011-480-986e5e108a02.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.teamster"
   },
   {
     "id": "crunchy-boi",
@@ -33,7 +36,8 @@
     "image": "/media/crunchy-boi-014-3566a724066c.webp",
     "smallImage": "/media/crunchy-boi-lineup-014-480-ed44ac35b10b.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.crunchy-boi"
   },
   {
     "id": "sicky-wicky",
@@ -42,7 +46,8 @@
     "image": "/media/sicky-wicky-lineup-024-918d9cc75ec4.webp",
     "smallImage": "/media/sicky-wicky-lineup-024-480-634275f3b822.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.sicky-wicky"
   },
   {
     "id": "never-been-cheddar",
@@ -51,34 +56,38 @@
     "image": "/media/never-been-cheddar-lineup-029-4efc33caa2de.webp",
     "smallImage": "/media/never-been-cheddar-lineup-029-480-4fc09dc6adbe.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.never-been-cheddar"
   },
   {
     "id": "turkey-caesar",
-    "name": "Turkey Caesar",
+    "name": "Turkey Caesar Sub",
     "sourceId": "033",
     "image": "/media/turkey-caesar-lineup-033-650f5a6e02b4.webp",
     "smallImage": "/media/turkey-caesar-lineup-033-480-4faa0ad0b824.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.turkey-caesar"
   },
   {
     "id": "farmers-market",
-    "name": "Farmers Market",
+    "name": "Farmers Market After Dark",
     "sourceId": "037",
     "image": "/media/farmers-market-lineup-037-b7e4f26b8aa1.webp",
     "smallImage": "/media/farmers-market-lineup-037-480-4ec2dca44de4.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.farmers-market"
   },
   {
     "id": "french-dip",
-    "name": "French Dip",
+    "name": "Our French Dip",
     "sourceId": "040",
     "image": "/media/french-dip-lineup-040-33ff8db796a0.webp",
     "smallImage": "/media/french-dip-lineup-040-480-06427ec29381.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.french-dip"
   },
   {
     "id": "vesuvio",
@@ -87,6 +96,7 @@
     "image": "/media/vesuvio-lineup-047-43c31e4810ad.webp",
     "smallImage": "/media/vesuvio-lineup-047-480-cf5baf4c9974.webp",
     "width": 750,
-    "height": 1125
+    "height": 1125,
+    "ingredientsKey": "landing.lineup.ingredients.vesuvio"
   }
 ]

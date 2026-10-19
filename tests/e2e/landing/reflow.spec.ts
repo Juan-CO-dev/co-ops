@@ -4,8 +4,10 @@ for (const language of ['en','es']) test(`375px reflow at 200% text size and key
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.goto(`/?lang=${language}`);
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+  // ResizeObserver applies the accessible in-flow layout after the font resize.
+  await expect(page.locator('.landing-v2-consent')).toHaveAttribute('data-flow','true');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  for (const control of await page.locator('main a,header a,summary,aside button').all()) {
+  for (const control of await page.locator('main a,header a,summary,aside button,aside a').all()) {
     if (!await control.isVisible()) continue;
     const rect = await control.boundingBox();
     expect(rect?.height).toBeGreaterThanOrEqual(44);

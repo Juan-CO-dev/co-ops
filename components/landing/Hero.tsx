@@ -1,30 +1,35 @@
+import { LandingConsentSlot } from "./TrackingProvider";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import type { LandingConfig } from "@/lib/landing/config";
 import { heroMedia } from "@/lib/landing/media";
 import { SectionView } from "./SectionView";
-import { DeferredMotion as HeroMotion } from "./DeferredMotion";
 import { OrderLink } from "./OrderLink";
 import { OfferCode } from "./OfferCode";
 import { preload } from "react-dom";
+import { HeroZoom } from "./HeroZoom";
 
 export function Hero({language, config, ad}:{language:Language;config:LandingConfig;ad:string}) {
   preload(heroMedia.poster, { as: 'image', imageSrcSet: heroMedia.srcSet, imageSizes: heroMedia.sizes, fetchPriority: 'high' });
-  return <section id="hero" aria-labelledby="hero-title" className="rounded-3xl bg-[#FFE560] px-5 py-7 sm:px-8 sm:py-10">
+  return <section id="hero" aria-labelledby="hero-title" className="landing-v2-hero">
     <SectionView section="hero">
-      <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-2">
-        <div className="min-w-0 [overflow-wrap:anywhere]">
-          <h1 id="hero-title" className="max-w-xl text-4xl font-black tracking-tight sm:text-6xl">{serverT(language,"landing.hero.title")}</h1>
-          <p className="mt-4 max-w-xl text-lg">{serverT(language,"landing.hero.body")}</p>
-          <div className="mt-6 flex flex-wrap gap-3">{config.stores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement="hero" className="inline-flex min-h-11 items-center justify-center rounded-xl bg-co-cta px-5 py-3 font-bold text-co-text">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>
+      <div className="landing-v2-hero-grid">
+        <div className="landing-v2-hero-copy">
+          <div className="landing-v2-eyebrow">{serverT(language,"landing.hero.eyebrow")}</div>
+          <h1 id="hero-title">{serverT(language,"landing.hero.title").split("\n").map((line,index)=><span key={line}>{index>0?'\n':''}{line}</span>)}</h1>
+          <p>{serverT(language,"landing.hero.body")}</p>
+          <div data-hero-actions>
+            <div className="landing-v2-orders">{config.stores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement="hero" className="landing-v2-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>
+          </div>
+          <div className="landing-v2-hero-foot">{serverT(language,"landing.hero.foot")}</div>
           {config.stores.map(store=><OfferCode key={store.key} ad={ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}
+          <div id="landing-consent-slot"><LandingConsentSlot/></div>
         </div>
-        <HeroMotion src={heroMedia.spin} pauseLabel={serverT(language,"landing.hero.pause")} playLabel={serverT(language,"landing.hero.play")}>
-          {/* Original photo, crop/encode only; no image optimizer or alpha decoder dependency. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={heroMedia.poster} srcSet={heroMedia.srcSet} sizes={heroMedia.sizes} alt={serverT(language,"landing.hero.alt")} width={heroMedia.width} height={heroMedia.height} fetchPriority="high" loading="eager" className="block aspect-[2/3] max-h-[28rem] w-full object-contain"/>
-        </HeroMotion>
+        {/* Original P013, uniform object-cover crop. Copy never overlays it. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <div data-hero-zoom className="landing-v2-hero-media"><img data-landing-photo src={heroMedia.poster} srcSet={heroMedia.srcSet} sizes={heroMedia.sizes} alt={serverT(language,"landing.hero.alt")} width={heroMedia.width} height={heroMedia.height} fetchPriority="high" loading="eager" className="landing-v2-hero-photo"/></div>
       </div>
+      <HeroZoom/>
     </SectionView>
   </section>;
 }

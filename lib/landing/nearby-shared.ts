@@ -1,4 +1,10 @@
 export interface Coordinates { latitude: number; longitude: number }
+/** Choose the unit from the displayed value, including rounding to one mile. */
+export function formatDistanceMiles(km:number, language:string, plural:string, singular:string):string {
+  const miles=Math.round(km / 1.609344 * 10) / 10;
+  const template=new Intl.PluralRules(language).select(miles)==='one'?singular:plural;
+  return template.replace('{distance}',new Intl.NumberFormat(language,{maximumFractionDigits:1}).format(miles));
+}
 export function validCoordinates(point: Coordinates | null | undefined): point is Coordinates {
   return !!point && Number.isFinite(point.latitude) && Number.isFinite(point.longitude) && Math.abs(point.latitude) <= 90 && Math.abs(point.longitude) <= 180;
 }

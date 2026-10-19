@@ -1,0 +1,25 @@
+{
+  "id": "landing-map",
+  "kind": "map",
+  "classification": "brand",
+  "publicPath": "/media/landing-map-c05b790c0390.webp",
+  "sourcePath": "source:osm-dc-extract",
+  "sourceSha256": "2844cdc840a7795b14f05e2ed4f69ec2e94fe6fc8719708ed85d559de426f162",
+  "rasterSha256": "a09fc7d226e31aecd1012c16cc0788008bede5259b9cfbc0425b79b8daa5f6f0",
+  "rendererSha256": "c15ccf53e1fdb9760d8715f591f442f9e4a50a11e727634c2b379361a356e499",
+  "sha256": "c05b790c03908574a0d4f8b0838cb415c4e2c5f042557f979626a52f404fe123",
+  "bytes": 117704,
+  "maxBytes": 160000,
+  "width": 1200,
+  "height": 1200,
+  "quality": 72,
+  "effort": 6,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "webp": "1.6.0"
+  },
+  "sidecar": "assets/provenance/landing-map.json",
+  "command": "node scripts/assets/export-map.mjs",
+  "provenance": "OpenStreetMap data (ODbL 1.0), pinned Overpass extract; own render (roads, water, parks; no labels); attribution shown under the map"
+}
