@@ -151,9 +151,10 @@ test('restored retired code is revalidated and lookup outage preserves native na
 
 // Observe receipt at the HTTP server: browser response listeners can disappear on unload.
 test('native navigation during held lookup delivers exactly one unattributed server event and counter',async({page,context,browserName})=>{
- // Linux WebKit (Playwright WPE) delivers only the first beacon of a departing page; the order
- // counter is sent first and is always required. Real iOS Safari is covered by the device gate.
- const firstBeaconOnly=browserName==='webkit'&&process.platform==='linux';
+ // Linux WebKit (Playwright WPE) delivers only one of a departing page's two beacons, and not
+ // consistently the same one (CI f8771b21 / 699787f9). There, require at least one valid post
+ // and no duplicates; every other engine must deliver both. Real iOS Safari: device gate.
+ const oneBeaconEngine=browserName==='webkit'&&process.platform==='linux';
  const received:{path:string;body:Record<string,unknown>;status:number}[]=[];
  const meta:string[]=[];
  context.on('request',request=>{if(/facebook\.net|facebook\.com/.test(request.url()))meta.push(request.url());});
@@ -193,18 +194,20 @@ test('native navigation during held lookup delivers exactly one unattributed ser
      const pixel=!!window.fbq;(el as HTMLAnchorElement).click();return pixel;
    })).toBe(false);
    await expect(page).toHaveURL(/appfront/);
-   await expect.poll(()=>received.some(item=>item.path==='/api/landing/order-click')).toBe(true);
-   if(!firstBeaconOnly)await expect.poll(()=>received.length).toBe(2);
-   if(!firstBeaconOnly||received.length===2)expect(received.filter(item=>item.path==='/api/landing/events')).toEqual([{path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})}]);
-   expect(received.filter(item=>item.path==='/api/landing/order-click')).toEqual([{path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}}]);
+   await expect.poll(()=>received.length).toBeGreaterThanOrEqual(1);
+   if(!oneBeaconEngine)await expect.poll(()=>received.length).toBe(2);
+   if(!oneBeaconEngine)expect(received.filter(item=>item.path==='/api/landing/events')).toEqual([{path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})}]);
+   if(!oneBeaconEngine)expect(received.filter(item=>item.path==='/api/landing/order-click')).toEqual([{path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}}]);
    expect(meta).toEqual([]);
    release();await page.waitForTimeout(1100);
-   // Re-check after the wait: still exactly one counter, and any (optional) CAPI event is the valid one.
-   expect(received.filter(item=>item.path==='/api/landing/order-click')).toEqual([{path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}}]);
+   // Re-check after the wait: no duplicates, and every delivered post is the valid one.
+   const counters=received.filter(item=>item.path==='/api/landing/order-click');
    const capi=received.filter(item=>item.path==='/api/landing/events');
-   expect(capi.length).toBe(firstBeaconOnly?Math.min(capi.length,1):1);
+   expect(counters.length).toBeLessThanOrEqual(1);expect(capi.length).toBeLessThanOrEqual(1);
+   if(!oneBeaconEngine){expect(counters).toHaveLength(1);expect(capi).toHaveLength(1);}
+   for(const item of counters)expect(item).toEqual({path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}});
    for(const item of capi)expect(item).toEqual({path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})});
-   expect(received).toHaveLength(1+capi.length);expect(meta).toEqual([]);
+   expect(received).toHaveLength(counters.length+capi.length);expect(meta).toEqual([]);
  } finally {
    release();relay.closeAllConnections();await new Promise<void>((resolve,reject)=>relay.close(error=>error?reject(error):resolve()));
  }

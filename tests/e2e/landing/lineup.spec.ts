@@ -59,8 +59,8 @@ test('roster auto-advances with a visible pause control and stops for good on a 
   const auto = page.locator('.landing-v3-auto');
   await expect(auto).toHaveAttribute('aria-pressed','true');
   expect((await auto.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  await page.clock.runFor(5100);
-  await expect(page.locator('.landing-v3-plate h3')).toHaveText('The Frex');
+  // The roster must be observed in view before its timer runs: step fake time until it advances.
+  await expect.poll(async()=>{await page.clock.runFor(1000);return page.locator('.landing-v3-plate h3').textContent();},{timeout:15000}).toBe('The Frex');
   await auto.click();
   await expect(auto).toHaveAttribute('aria-pressed','false');
   await page.clock.runFor(15000);

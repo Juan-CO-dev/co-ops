@@ -68,8 +68,8 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       const id = event?.id ?? transport.uuid();
       if (!navigating && hasPixel) safe(() => transport.pixel(name === 'Lead' ? 'track' : 'trackCustom',name,params,id));
       const countClick = () => { if (name === 'OrderClick' && details.store && !details.vendor) safe(() => navigating ? transport.post('/api/landing/order-click',{store:details.store,ad},{unload:true}) : transport.post('/api/landing/order-click',{store:details.store,ad})); };
-      // A departing page may deliver only its first beacon (observed: Linux WebKit): our own
-      // order count goes first, the Meta copy second.
+      // On a departing page our own order count is queued first, the Meta copy second.
+      // (Linux WebKit has been seen delivering only one of the two; real browsers deliver both.)
       if (navigating) countClick();
       if (config.capiEnabled) {
         const payload: Record<string,unknown> = {event_name:name,event_id:id,event_time:Math.floor((event?.time ?? transport.now())/1000),consent:'accepted',source_url:config.sourceUrl,...params};
