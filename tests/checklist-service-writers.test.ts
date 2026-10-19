@@ -74,7 +74,7 @@ function client(service: boolean): SupabaseClient {
 beforeEach(() => {
   vi.clearAllMocks(); exists = true; insertResult = undefined; rpcError = null;
   instance = { id: "instance", template_id: "template", location_id: "shop", date: "2026-10-19", status: "open" };
-  template = { id: "template", type: "closing", single_submission_only: false, submission_gate_predicate: null };
+  template = { id: "template", location_id: "shop", active: true, type: "closing", single_submission_only: false, submission_gate_predicate: null };
   items = [{ id: "00000000-0000-4000-8000-000000000001", template_id: "template", active: true, min_role_level: 3, required: true,
     label: "Task", station: null, hard_gate: false, report_reference_type: null, expects_count: false,
     expects_photo: false, input_type: null }];
@@ -128,6 +128,7 @@ describe("verified route authority and separate read/write clients", () => {
       if (state === "inactive") user.active = false;
       if (state === "foreign" || state === "global-reader") memberships = [];
       if (state === "global-reader") user.role = "moo";
+      if (name === "instances") exists = false; // Assert creation refusal, not broader READ authority.
       const response = await post(request(name, body));
       expect(response.status).toBe(403); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.insert).not.toHaveBeenCalled();
     });
@@ -188,7 +189,7 @@ describe("application gates and RPC outcome mapping", () => {
       : ["completion_set_changed", "instance_not_open"].includes(error) ? 409 : 400;
     expect(response.status).toBe(status);
     const body = await response.json();
-    if (status === 409) expect(body).toMatchObject({ code: error === "instance_not_open" ? "concurrent_modification" : error });
+    if (status === 409) expect(body).toMatchObject({ code: ["instance_not_open", "completion_cardinality"].includes(error) ? "concurrent_modification" : error });
     if (error === "completion_set_changed") expect(body.error).toBe("The list changed \u2014 review it again");
     expect(mocks.after).not.toHaveBeenCalled();
   });
@@ -237,7 +238,8 @@ describe("application gates and RPC outcome mapping", () => {
       .rejects.toHaveProperty("code");
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
-  it("refuses an owner without membership despite global read authority", async () => {
+  it("refuses creation by an owner without membership despite global read authority", async () => {
+    exists = false;
     await expect(getOrCreateInstance(mocks.reader, { templateId: "template", locationId: "shop", date: "2026-10-19",
       actor: checklistActor({ role: "owner", level: 9, locations: [] }) })).rejects.toMatchObject({ code: "role_level_insufficient" });
     expect(mocks.insert).not.toHaveBeenCalled();
@@ -280,5 +282,31 @@ describe("instance creation preserves both policy alternatives", () => {
     exists = false; insertResult = null;
     await expect(getOrCreateInstance(mocks.reader, { templateId: "template", locationId: "shop", date: "2020-01-01", actor }))
       .rejects.toThrow("insert returned no row");
+  });
+});
+
+describe("chunk-2 review regressions", () => {
+  it.each(["completion_cardinality", "23505"])("completion %s returns reloadable 409", async code => {
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { code, message: code } });
+    const response = await complete(request("completions", endpoints[0][2]));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "concurrent_modification" });
+  });
+  it.each(endpoints.slice(0, 3))("%s logs a distinct missing-migration tag", async (name, post, body) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mocks.rpc.mockResolvedValueOnce({ data: null, error: { code: "PGRST202", message: "function absent" } });
+      expect((await post(request(name, body))).status).toBe(500);
+      expect(log).toHaveBeenCalledWith("[checklist 0276_missing]", expect.anything());
+    } finally { log.mockRestore(); }
+  });
+  it.each(["foreign", "inactive"])("instance endpoint refuses %s closing template", async kind => {
+    exists = false;
+    if (kind === "foreign") template.location_id = "other-shop";
+    else template.active = false;
+    const response = await create(request("instances", endpoints[3][2]));
+    expect(response.status).toBe(403);
+    expect(mocks.insert).not.toHaveBeenCalled();
+    expect(mocks.rpc).not.toHaveBeenCalled();
   });
 });

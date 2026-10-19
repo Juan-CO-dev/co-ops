@@ -1,5 +1,11 @@
 # Lockdown step 2 - five-table manifest (R7 chunk 1)
 
+## Chunk-4 amendment (2026-10-19)
+
+Part A applies CC's Opus review rulings: existing-instance reads require active actor and membership OR level >=8; creation still requires membership. Closing page nonmembers / refused write actors take the read-only loader with readOnly=true. The instance POST now validates template type, active state and exact requested shop. Completion cardinality and completion-RPC 23505 map to concurrent_modification; PIN confirm handles that and invalid_payload through reload + onError. Missing checklist RPCs log [checklist 0276_missing].
+
+0277 revokes PUBLIC/anon/authenticated writes on all five tables, keeps SELECT and service_role rights, and asserts exact before/after SELECT ACL/policy parity. Its five per-table security.grants_change rows plus one migration-summary row carry migration_apply metadata; the summary targets schema_migrations to satisfy audit_log.resource_table NOT NULL. Read-only operator preflight: scripts/preflight-0276.mjs (explicit CHECKLIST_PREFLIGHT_DATABASE_URL; no .env; not run against a database by the builder). It checks the three checklist RPCs plus the chunk-3 report writer and both helper dependencies. CC still owns real sim verification and promotion. Detailed assertions/verification: 2026-10-19-lockdown-step2-chunk4-result.md.
+
 ## Chunk-3 amendment (2026-10-19, supersedes historical descriptions below)
 
 Base `59f2d8bf`, branch `feat/lockdown-step2`. Written-report POST/PATCH now resolve the verified actor with `resolveChecklistWriteActor`; the library owns service writes. Create binds author/role exclusively to that actor, requires active level >=3 and null-or-member location. Update calls service-only `written_report_update_self` in **0276**, with author + strict `submitted_at > now()-interval '3 hours'` and `edit_count = coalesce(edit_count,0)+1` in the same SQL UPDATE; exactly one row succeeds, zero preserves `window_closed`. Read clients/callers remain unchanged (existing list/detail loaders already use service with app gates; no read cutover).
@@ -8,7 +14,7 @@ Completion now returns `{completion, superseded_ids, kept_completed_at}`; audit 
 
 **Follow-up ticket / PR disclosure:** `revokeCompletion`, `revokeWithReason`, `markNotDoneByAuthority`, `tagActualCompleter`, `replaceLiveClosingRefCompletion` (`lib/prep.ts`), and the prep single-submission lock race remain existing service-role paths outside 0276 serialization. Release claim remains **replacement + confirm through 0276**, not a universal freeze guarantee. Scope and assertion ledger: `2026-10-19-lockdown-step2-chunk3-result.md`.
 
-No 0277 authored; no migration applied. **Before any apply: two-connection sim proof must PASS and P2 findings must be closed.** Offline PGlite is not that proof. Unknown-role parity explicitly records the legacy helper's level-0 fallback versus the new actor/SQL refusal; the original 720 null-actor cases are not session coverage. Real revoked/expired/mismatched/inactive actor resolution is covered separately by behavioral tests.
+0277 is now authored FILE ONLY (chunk 4); no migration applied. **Before any apply: two-connection sim proof must PASS and P2 findings must be closed.** Offline PGlite is not that proof. Unknown-role parity explicitly records the legacy helper's level-0 fallback versus the new actor/SQL refusal; the original 720 null-actor cases are not session coverage. Real revoked/expired/mismatched/inactive actor resolution is covered separately by behavioral tests.
 
 Baseline: `34a3624a`, `feat/lockdown-step2`, 2026-10-19. Source inspection only; no database, credentials, environment files, or operator scripts were used. This inventories existing readers/writers before the chunk-2 cutover. R7 allocates 0276 to guarded writers and 0277 to lockdown. Neither migration is applied by this task.
 
@@ -24,7 +30,7 @@ R2: identity must resolve an unrevoked, unexpired matching session; role require
 
 | Site | Client | Existing checks / disposition |
 |---|---|---|
-| lib/checklists.ts:835 getOrCreateInstance | Supplied (`authed` on API, service on closing page) | lockLocationContext, employee floor for creation, configured submission gate; API additionally selects active closing template at shop. Existing-row path is a read. 23505 re-read. Keep plain INSERT with R2 actor guard in chunk 2. |
+| lib/checklists.ts:835 getOrCreateInstance | Supplied (`authed` on API, service on closing page) | lockLocationContext, employee floor for creation, configured submission gate; API now explicitly validates closing type, active=true and template.location_id === requested locationId (chunk-4 review fix; baseline checked type only). Existing-row path is a read. 23505 re-read. Keep plain INSERT with R2 actor guard in chunk 2. |
 | lib/checklists.ts:994,1017,1043,1081 completeItem | service supersede/restore/link, supplied INSERT | Open parent, assignment, single-submission lock, item/template binding, active item, role floor, payload/count/photo checks. Supersede before insert; owned-stamp restoration; link write currently unchecked. R7 replaces transaction as a whole, not just INSERT. |
 | lib/checklists.ts:1177 submitBatch | Supplied | Open, assignment, single-submission lock; each completion id present and belongs to instance AND actor; nonfinal event. R7 parent-locked RPC. |
 | lib/checklists.ts:1519,1573,1598,1612 confirmInstance | Supplied | Open, assignment, role, lock-up/cash/hard gates, exact reasons and actor PIN; guarded claim, reason inserts, final submission, compensation on failure. R7 replaces this transaction; PIN/gates stay app-side. |

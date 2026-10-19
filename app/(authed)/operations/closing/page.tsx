@@ -1,4 +1,4 @@
-import { resolveChecklistWriteActor } from "@/lib/checklist-write-actor";
+import { ChecklistActorNotAuthorizedError, resolveChecklistWriteActor, type ChecklistWriteActor } from "@/lib/checklist-write-actor";
 import { hasTaskAccess } from "@/lib/assignments";
 import { isTaskType } from "@/lib/assignments-shared";
 /**
@@ -234,9 +234,21 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   const yesterday = todayUtc.toISOString().slice(0, 10);
   const isYesterday = isHistorical && targetDate === yesterday;
 
+  // Write authority can be narrower than this page's existing read authority.
+  let writeActor: ChecklistWriteActor | null = null;
+  if (!isHistorical && auth.level >= 3) {
+    try {
+      writeActor = await resolveChecklistWriteActor(auth);
+    } catch (error) {
+      if (!(error instanceof ChecklistActorNotAuthorizedError)) throw error;
+    }
+  }
+  const writeUnavailable = auth.level >= 3 &&
+    (!writeActor || !writeActor.locations.includes(locationParam));
+
   // Load or create the instance.
   let instanceRow: InstanceRow | null = null;
-  if (isHistorical || auth.level < 3) {
+  if (isHistorical || auth.level < 3 || writeUnavailable) {
     // Trainees can work an existing close, but cannot create its instance.
     const { data, error } = await sb
       .from("checklist_instances")
@@ -263,7 +275,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
       templateId: templateRow.id,
       locationId: locationParam,
       date: today,
-      actor: await resolveChecklistWriteActor(auth),
+      actor: writeActor!,
     });
     instanceRow = {
       id: result.instance.id,
@@ -455,7 +467,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
 
   // Determine read-only mode + banner.
   const isReadOnly =
-    isHistorical ||
+    isHistorical || writeUnavailable ||
     instanceRow.status === "confirmed" ||
     instanceRow.status === "incomplete_confirmed";
 

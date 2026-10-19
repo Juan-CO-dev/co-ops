@@ -16,8 +16,8 @@ it("LRA-227: foreign locations are denied before any read, including the service
   expect(getServiceRoleClient).not.toHaveBeenCalled();
 });
 
-it("LRA-227: own-shop GMs and member owners reach the existing read", async () => {
-  for (const [role, level, locations] of [["gm", 7, ["own"]], ["owner", 9, ["own"]]] as const) {
+it("LRA-227: own-shop GMs and non-member global readers reach the existing read", async () => {
+  for (const [role, level, locations] of [["gm", 7, ["own"]], ["owner", 9, []], ["cgs", 10, []], ["moo", 8, []]] as const) {
     const from = vi.fn(() => { throw new Error("Reached authorized read"); });
     await expect(getOrCreateInstance({ from } as unknown as SupabaseClient, {
       templateId: "template", locationId: "own", date: "2026-09-10",
@@ -36,4 +36,17 @@ it("trainees can read an existing closing but cannot create one", async () => {
   await expect(getOrCreateInstance(service, args)).rejects.toMatchObject({ code: "role_level_insufficient" });
   query.maybeSingle.mockResolvedValue({ data: { id: "existing" } as never, error: null });
   await expect(getOrCreateInstance(service, args)).resolves.toMatchObject({ created: false, instance: { id: "existing" } });
+});
+
+// READ >=8 is deliberately broader than R2 membership required to INSERT.
+it.each([9, 10])("non-member level %s reads an existing instance but cannot create", async level => {
+  const actor = checklistActor({ level, locations: [] });
+  const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: { id: "existing" }, error: null }) };
+  const reader = { from: vi.fn(() => query) } as unknown as SupabaseClient;
+  const args = { templateId: "template", locationId: "own", date: "2026-10-19", actor };
+  await expect(getOrCreateInstance(reader, args)).resolves.toMatchObject({ created: false, instance: { id: "existing" } });
+  query.maybeSingle.mockResolvedValue({ data: null as never, error: null });
+  await expect(getOrCreateInstance(reader, args)).rejects.toMatchObject({ code: "role_level_insufficient" });
+  expect(getServiceRoleClient).not.toHaveBeenCalled();
 });

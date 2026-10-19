@@ -81,9 +81,9 @@ export async function POST(req: NextRequest) {
   const svc = getServiceRoleClient();
   const { data: tmpl, error: tmplErr } = await svc
     .from("checklist_templates")
-    .select("type")
+    .select("type, location_id, active")
     .eq("id", templateId)
-    .maybeSingle<{ type: string }>();
+    .maybeSingle<{ type: string; location_id: string; active: boolean }>();
   if (tmplErr) {
     console.error("[/api/checklist/instances POST] template type lookup failed:", tmplErr.message);
     return jsonError(500, "internal_error", { message: "template lookup failed" });
@@ -100,6 +100,10 @@ export async function POST(req: NextRequest) {
       message:
         "This route only creates closing instances. Opening and prep instances are created by their own service-role flows.",
     });
+  }
+
+  if (tmpl.location_id !== locationId || !tmpl.active) {
+    return jsonError(403, "template_not_available", { field: "templateId" });
   }
 
   const rawJwt = req.cookies.get(SESSION_COOKIE_NAME)?.value;

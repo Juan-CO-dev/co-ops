@@ -245,6 +245,8 @@ export function PinConfirmModal({
             onError(body);
             return;
 
+          case "concurrent_modification":
+          case "invalid_payload":
           case "missing_reasons":
           case "extra_reasons":
             triggerError(t("auth.pin_modal.error_reload"));

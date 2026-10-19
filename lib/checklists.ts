@@ -612,7 +612,14 @@ function requireChecklistRpcRow<T extends { id: string }>(data: unknown, kind: s
 
 async function throwChecklistWriteError(
   reader: SupabaseClient, error: { message: string; code?: string }, instanceId: string, actor: ChecklistWriteActor,
+  operation: "completion" | "submission" | "confirm",
 ): Promise<never> {
+  if (error.code === "PGRST202") {
+    console.error("[checklist 0276_missing]", { operation, code: error.code });
+  }
+  if (operation === "completion" && error.code === "23505") {
+    throw new ChecklistError("The checklist changed. Re-check and try again.", "concurrent_modification");
+  }
   if (error.code === "22P02") throw new ChecklistError("Invalid checklist write payload.", "invalid_payload");
   switch (error.message) {
     case "instance_not_open": {
@@ -628,6 +635,7 @@ async function throwChecklistWriteError(
     case "completion_set_changed":
       throw new ChecklistError("The list changed — review it again", "completion_set_changed");
     case "completion_cardinality":
+      throw new ChecklistError("The checklist changed. Re-check and try again.", "concurrent_modification");
     case "submission_cardinality":
     case "instance_cardinality":
     case "reason_cardinality":
@@ -807,7 +815,7 @@ export async function getOrCreateInstance(
   },
 ): Promise<{ instance: ChecklistInstance; created: boolean }> {
   const { templateId, locationId, date, actor } = args;
-  if (!actor.active || !actor.locations.includes(locationId)) {
+  if (!actor.active || (!actor.locations.includes(locationId) && actor.level < 8)) {
     throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
   }
 
@@ -826,7 +834,9 @@ export async function getOrCreateInstance(
     return { instance: rowToInstance(existing), created: false };
   }
   // Reading an existing close is open to staff; starting one retains main's employee floor.
-  if (actor.level < 3) throw new ChecklistRoleViolationError(3, actor.level);
+  if (actor.level < 3 || !actor.locations.includes(locationId)) {
+    throw new ChecklistRoleViolationError(3, actor.level);
+  }
 
   // Build #3 PR 1 — submission gate evaluation. Loads the template's
   // submission_gate_predicate and runs the evaluator if configured. NULL
@@ -1010,7 +1020,7 @@ export async function completeItem(
     p_actor: actor.userId, p_instance: instanceId, p_template_item: templateItemId,
     p_count_value: args.countValue ?? null, p_photo_id: args.photoId ?? null, p_notes: args.notes ?? null,
   });
-  if (error) await throwChecklistWriteError(authed, error, instanceId, actor);
+  if (error) await throwChecklistWriteError(authed, error, instanceId, actor, "completion");
   const result = data as { completion?: unknown; superseded_ids?: unknown; kept_completed_at?: unknown } | null;
   const inserted = requireChecklistRpcRow<CompletionRow>(result?.completion, "completion");
   if (!Array.isArray(result?.superseded_ids) || !result.superseded_ids.every(id => typeof id === "string") ||
@@ -1123,7 +1133,7 @@ export async function submitBatch(
   const { data, error } = await getServiceRoleClient().rpc("checklist_submit_batch", {
     p_actor: actor.userId, p_instance: instanceId, p_completion_ids: completionIds,
   });
-  if (error) await throwChecklistWriteError(authed, error, instanceId, actor);
+  if (error) await throwChecklistWriteError(authed, error, instanceId, actor, "submission");
   const inserted = requireChecklistRpcRow<SubmissionRow>(data, "submission");
 
   await audit({
@@ -1465,7 +1475,7 @@ export async function confirmInstance(
     p_reasons: incompleteReasons,
     p_expected_completion_ids: (liveCompletions ?? []).map((row) => row.id),
   });
-  if (error) await throwChecklistWriteError(authed, error, instanceId, actor);
+  if (error) await throwChecklistWriteError(authed, error, instanceId, actor, "confirm");
   const updatedRow = requireChecklistRpcRow<InstanceRow>(data?.instance, "instance");
   const submissionRow = requireChecklistRpcRow<SubmissionRow>(data?.submission, "submission");
   if (!Array.isArray(data?.reasons) || data.reasons.length !== incompleteReasons.length
