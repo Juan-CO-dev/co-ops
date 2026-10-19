@@ -30,6 +30,28 @@ test('lineup native order click sends Pixel, CAPI request and independent counte
   expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement:'hero',store:'capitol-hill'},{eventID:events[0]?.event_id}]);
 });
 
+test('selecting a fighter and opening the sheet are silent; the sheet link counts once as lineup', async ({page}) => {
+  await isolateMeta(page);
+  const events: Record<string,unknown>[] = [], counters: Record<string,unknown>[] = [];
+  await page.route('**/api/landing/events', route => { events.push(route.request().postDataJSON()); return route.fulfill({status:204}); });
+  await page.route('**/api/landing/order-click', route => { counters.push(route.request().postDataJSON()); return route.fulfill({status:204}); });
+  await page.goto('/');
+  await page.locator('[data-landing-consent]').getByRole('button').first().click();
+  await page.locator('#lineup').scrollIntoViewIfNeeded();
+  await page.locator('[data-lineup] button',{hasText:'The Frex'}).click();
+  await page.getByRole('button',{name:'Order The Frex'}).click();
+  const link = page.getByRole('dialog').getByRole('link',{name:'Order Dupont'});
+  await expect(link).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(events).toEqual([]);expect(counters).toEqual([]);
+  await link.evaluate(el => el.addEventListener('click', event => event.preventDefault()));
+  await link.click();
+  await expect.poll(() => events.length).toBe(1);
+  await expect.poll(() => counters.length).toBe(1);
+  expect(events[0]).toMatchObject({event_name:'OrderClick',placement:'lineup',store:'dupont'});
+  expect(counters[0]).toEqual({store:'dupont',ad:'unattributed'});
+});
+
 test('no Meta or attribution persistence before consent; equal keyboard consent choices',async({page})=>{
   const requests=await isolateMeta(page);
   await page.goto('/?ad=subsim-photo&fbclid=Valid_123&email=must-not-persist@example.com');

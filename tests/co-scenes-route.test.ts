@@ -174,14 +174,11 @@ describe("the photo store (git-ignored, manifest-allowlisted)", () => {
     const tracked = execFileSync("git", ["ls-files", "vendor", "public"], { encoding: "utf8" }).split(/\r?\n/).filter(Boolean);
     // Public landing derivatives have their own hash/identity provenance gate.
     // This exception never includes private training photos or arbitrary media.
-    const landing = JSON.parse(readFileSync("assets/approved-media.json", "utf8")) as { media: { publicPath: string; sourceId?: string; classification: string }[] };
+    const landing = JSON.parse(readFileSync("assets/approved-media.json", "utf8"));
     const modulePath = '../scripts/assets/inventory.mjs';
-    const { validateEntry, approvedSource } = await import(/* @vite-ignore */ modulePath);
+    const { approvedPublicFiles } = await import(/* @vite-ignore */ modulePath);
     const sources = JSON.parse(readFileSync('assets/source-manifest.json', 'utf8'));
-    const approvedLanding = new Set(landing.media.filter(asset => {
-      try { validateEntry(asset); if(asset.sourceId) approvedSource(sources, asset.sourceId, asset.classification); return true; }
-      catch { return false; }
-    }).map(asset => `public${asset.publicPath}`));
+    const approvedLanding = new Set([...approvedPublicFiles(landing, sources) as Set<string>].map(path => `public${path}`));
     expect(tracked.filter((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) && !f.startsWith("public/brand/") && !approvedLanding.has(f))).toEqual([]);
     expect(tracked.filter((f) => f.startsWith("vendor/co-scenes/photos/"))).toEqual([]);
     // check-ignore exits 0 (no throw) only when the path IS ignored.

@@ -12,12 +12,14 @@ test('remaining sections keep facts, destinations and translation honest',async(
   await expect(page.locator('#catering a').nth(1)).toHaveAttribute('href',landingTenantConfig.inquiryUrl);
   // The catering photo URL attaches only when the section nears the viewport.
   expect(photoRequests).toEqual([]);
-  await expect(page.locator('#catering img')).toHaveCount(0);
+  await expect(page.locator('#catering img:not(.landing-v3-pixel)')).toHaveCount(0);
   await expect(page.locator('#catering form')).toHaveCount(0);
   await page.locator('#catering').scrollIntoViewIfNeeded();
-  await expect(page.locator('#catering [data-landing-photo] img')).toBeVisible();
+  await expect(page.locator('#catering .landing-v3-catering-spread [data-landing-photo] img')).toBeVisible();
   await expect.poll(()=>photoRequests.length).toBeGreaterThan(0);
-  await expect(page.locator('#catering [data-landing-photo] img')).toHaveAttribute('src',textureMedia.catering.src);
+  await expect(page.locator('#catering .landing-v3-catering-spread [data-landing-photo] img')).toHaveAttribute('src',textureMedia.catering.src);
+  await expect(page.locator('#catering .landing-v3-catering-box [data-landing-photo] img')).toHaveAttribute('src',textureMedia.cateringBox.src);
+  await expect(page.locator('#catering img.landing-v3-pixel')).toHaveAttribute('alt','');
   await expect(page.locator('#footer')).toContainText('526 8th St SE Ste A');
   const footerDestinations=landingTenantConfig.footerLinks.filter(link=>link.key!=='uber-eats').map(link=>link.url).sort();
   expect((await page.locator('#footer nav a').evaluateAll(links=>links.map(link=>link.getAttribute('href')))).sort()).toEqual(footerDestinations);

@@ -104,72 +104,6 @@
     "path": "/media/crunchy-boi-014-960-3c7d6237a944.webp"
   },
   {
-    "id": "v2-p013-320",
-    "path": "/media/v2-p013-320-0da6a08cf77b.webp",
-    "width": 320,
-    "height": 480
-  },
-  {
-    "id": "v2-p013-480",
-    "path": "/media/v2-p013-480-2956ce1ffc1d.webp",
-    "width": 480,
-    "height": 721
-  },
-  {
-    "id": "v2-p013-640",
-    "path": "/media/v2-p013-640-13b5f4142ade.webp",
-    "width": 640,
-    "height": 960
-  },
-  {
-    "id": "v2-p013-960",
-    "path": "/media/v2-p013-960-8271dfa0ca7d.webp",
-    "width": 960,
-    "height": 1440
-  },
-  {
-    "id": "v2-p013-1280",
-    "path": "/media/v2-p013-1280-870dc3083455.webp",
-    "width": 1280,
-    "height": 1920
-  },
-  {
-    "id": "v2-p016-480",
-    "path": "/media/v2-p016-480-70c16c1f977d.webp",
-    "width": 480,
-    "height": 721
-  },
-  {
-    "id": "v2-p016-720",
-    "path": "/media/v2-p016-720-8dce5f33b8f6.webp",
-    "width": 720,
-    "height": 1080
-  },
-  {
-    "id": "v2-p016-960",
-    "path": "/media/v2-p016-960-2ef06ce17068.webp",
-    "width": 960,
-    "height": 1440
-  },
-  {
-    "id": "v2-l083-480",
-    "path": "/media/v2-l083-480-9d4d188146e9.webp",
-    "width": 480,
-    "height": 721
-  },
-  {
-    "id": "v2-l083-720",
-    "path": "/media/v2-l083-720-ab0afcf3e22d.webp",
-    "width": 720,
-    "height": 1080
-  },
-  {
-    "id": "v2-l083-960",
-    "path": "/media/v2-l083-960-3c45c543b2af.webp",
-    "width": 960,
-    "height": 1440
-  },
-  {
     "id": "crunchy-boi-spin-f00",
     "path": "/media/crunchy-boi-spin-f00-b8d51c884e10.webp"
   },
@@ -362,6 +296,100 @@
     "path": "/media/crunchy-boi-spin-f47-b7da0306aa42.webp"
   },
   {
+    "id": "landing-map",
+    "path": "/media/landing-map-c05b790c0390.webp"
+  },
+  {
+    "id": "v2-p013-320",
+    "path": "/media/v2-p013-320-0da6a08cf77b.webp",
+    "width": 320,
+    "height": 480
+  },
+  {
+    "id": "v2-p013-480",
+    "path": "/media/v2-p013-480-2956ce1ffc1d.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-p013-640",
+    "path": "/media/v2-p013-640-13b5f4142ade.webp",
+    "width": 640,
+    "height": 960
+  },
+  {
+    "id": "v2-p013-960",
+    "path": "/media/v2-p013-960-8271dfa0ca7d.webp",
+    "width": 960,
+    "height": 1440
+  },
+  {
+    "id": "v2-p013-1280",
+    "path": "/media/v2-p013-1280-870dc3083455.webp",
+    "width": 1280,
+    "height": 1920
+  },
+  {
+    "id": "v2-p016-480",
+    "path": "/media/v2-p016-480-70c16c1f977d.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-p016-720",
+    "path": "/media/v2-p016-720-8dce5f33b8f6.webp",
+    "width": 720,
+    "height": 1080
+  },
+  {
+    "id": "v2-p016-960",
+    "path": "/media/v2-p016-960-2ef06ce17068.webp",
+    "width": 960,
+    "height": 1440
+  },
+  {
+    "id": "v2-l083-480",
+    "path": "/media/v2-l083-480-9d4d188146e9.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-l083-720",
+    "path": "/media/v2-l083-720-ab0afcf3e22d.webp",
+    "width": 720,
+    "height": 1080
+  },
+  {
+    "id": "v2-l083-960",
+    "path": "/media/v2-l083-960-3c45c543b2af.webp",
+    "width": 960,
+    "height": 1440
+  },
+  {
+    "id": "v2-l118-480",
+    "path": "/media/v2-l118-480-c674525bb22b.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
+    "id": "v2-l118-720",
+    "path": "/media/v2-l118-720-0c97c269be81.webp",
+    "width": 720,
+    "height": 1080
+  },
+  {
+    "id": "v2-l118-960",
+    "path": "/media/v2-l118-960-ffd52584fddb.webp",
+    "width": 960,
+    "height": 1440
+  },
+  {
+    "id": "v2-l082-480",
+    "path": "/media/v2-l082-480-874777ec975a.webp",
+    "width": 480,
+    "height": 721
+  },
+  {
     "id": "pixel-p1-idle",
     "path": "/media/pixel-p1-idle-736b424f3074.png",
     "width": 29,
@@ -378,5 +406,47 @@
     "path": "/media/pixel-hero-selected-f86b650bc8de.png",
     "width": 49,
     "height": 83
+  },
+  {
+    "id": "pixel-pickup-roll",
+    "path": "/media/pixel-pickup-roll-7bd8740176d4.png",
+    "width": 48,
+    "height": 33
+  },
+  {
+    "id": "pixel-pickup-chip",
+    "path": "/media/pixel-pickup-chip-0917c51faab2.png",
+    "width": 37,
+    "height": 32
+  },
+  {
+    "id": "pixel-pickup-turkey",
+    "path": "/media/pixel-pickup-turkey-ac08f896ada1.png",
+    "width": 38,
+    "height": 33
+  },
+  {
+    "id": "pixel-pickup-lettuce",
+    "path": "/media/pixel-pickup-lettuce-fa93ea7c875e.png",
+    "width": 40,
+    "height": 32
+  },
+  {
+    "id": "pixel-pickup-pickle",
+    "path": "/media/pixel-pickup-pickle-3f022231cf47.png",
+    "width": 29,
+    "height": 30
+  },
+  {
+    "id": "pixel-pickup-provolone",
+    "path": "/media/pixel-pickup-provolone-b6d0639cabf2.png",
+    "width": 34,
+    "height": 32
+  },
+  {
+    "id": "pixel-hero-basket",
+    "path": "/media/pixel-hero-basket-bb60e6cb20f2.png",
+    "width": 59,
+    "height": 78
   }
 ]

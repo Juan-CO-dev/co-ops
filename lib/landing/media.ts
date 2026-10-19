@@ -13,17 +13,17 @@ export const heroMedia = {
 } as const;
 
 /** Shared real-photo candidates: identical sizes/URLs enable reuse in all three sections. */
-function texturePhoto(source:'p016'|'l083') {
+function texturePhoto(source:'p016'|'l083'|'l118') {
   return {src:mediaPath(`v2-${source}-720`),width:720,height:1080,
     srcSet:[480,720,960].map(width=>`${mediaPath(`v2-${source}-${width}`)} ${width}w`).join(', '),
     sizes:'(min-width: 768px) 480px, calc(100vw - 44px)'};
 }
 export const textureMedia={
   texture:texturePhoto('p016'),crossSection:texturePhoto('l083'),
-  // Source 014 is a separately provenanced real photo, distinct from crave's L083.
-  catering:{src:mediaPath('hero-poster'),width:750,height:1125,
-    srcSet:[320,640,960].map(width=>`${mediaPath(`hero-poster-${width}`)} ${width}w`).join(', '),
-    sizes:'(min-width: 768px) 480px, calc(100vw - 44px)'},
+  // Real spread: hands reaching into the table (Lifestyle_Kitchen sm_118).
+  catering:texturePhoto('l118'),
+  // Inset: wrapped Crunchy Boi halves stacked in a catering box (sm_082); shown small.
+  cateringBox:{src:mediaPath('v2-l082-480'),width:480,height:721,srcSet:`${mediaPath('v2-l082-480')} 480w`,sizes:'200px'},
 };
 
 /** Drawn turntable frames (one revolution, 7.5 degrees apart); decorative, never a real photo. */
@@ -39,5 +39,7 @@ function sprite(id:string) {
 }
 /** Pixel sprites render with image-rendering: pixelated, alt="" and aria-hidden. */
 export const spriteMedia = {
+  basket: sprite('pixel-hero-basket'),
   p1Idle: sprite('pixel-p1-idle'), p1Jump: sprite('pixel-p1-jump'), selected: sprite('pixel-hero-selected'),
+  pickups: {bread:sprite('pixel-pickup-roll'),chips:sprite('pixel-pickup-chip'),turkey:sprite('pixel-pickup-turkey'),iceberg:sprite('pixel-pickup-lettuce'),pickles:sprite('pixel-pickup-pickle'),provolone:sprite('pixel-pickup-provolone')},
 } as const;

@@ -8,6 +8,8 @@ export const SPIN_RECIPE = Object.freeze({
   id: 'crunchy-boi-spin',
   sourceId: 'spin-rgba-frames',
   dir: 'C:/Users/conta/co-3d/spin-ad/masters/png-16x9-rgba-AI-REFERENCE-drawn',
+  // Reviewed digest of the 48 sampled master frames; changing it is an explicit review.
+  sourceSha256: '88212e69ab4ee5c69eb62a2ff686e838255fd0aa5b5b7535a5a5c0c3361cb5de',
   // 241 master frames are one seamless revolution (240 == 0); every 5th = 7.5 degrees.
   count: 48,
   step: 5,

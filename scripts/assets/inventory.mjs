@@ -6,17 +6,23 @@ import { FRAME_ID, FRAME_PATH, SOURCE_SHA256, SOURCE, CUT } from './subdex-sourc
 import { TOUCH_RECIPES } from './touch-recipes.mjs';
 import { SPIN_RECIPE, spinFrameStem } from './spin-recipe.mjs';
 import { SPRITES, SPRITE_DIR, SPRITE_MAX_BYTES } from './sprite-recipe.mjs';
+import { MAP_RECIPE } from './map-recipe.mjs';
 export const sha256 = p => createHash('sha256').update(readFileSync(p)).digest('hex');
 // Reviewed r2 recipes. Manifest data cannot award itself a larger delivery budget.
 export const PHOTO_DETAILS = Object.freeze({
  P013: '52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde',
  P016: '781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2',
  L083: '4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c',
+ // Landing v3 catering (Juan's shoot, Lifestyle_Kitchen sm_118 / sm_082), full-frame 2667x4000 picks.
+ L118: 'a5acbe06f8f99faa7e73f6aa3e0103e718ece0b075a4cccd02cb2e58bca47dd0',
+ L082: 'a372beffd38dff0257373c5923642d39f79e581ad39539b018e01c583a23fc28',
 });
 export const V2_RECIPES = Object.freeze(Object.fromEntries([
  ['P013',78,'initial',[[320,20000],[480,35000],[640,50000],[960,90000],[1280,140000]]],
  ['P016',86,'lazy',[[480,70000],[720,135000],[960,205000]]],
  ['L083',86,'lazy',[[480,100000],[720,180000],[960,270000]]],
+ ['L118',78,'lazy',[[480,100000],[720,180000],[960,270000]]],
+ ['L082',72,'lazy',[[480,100000]]],
 ].flatMap(([sourceId,quality,load,sizes])=>sizes.map(([width,maxBytes])=>[
  `v2-${sourceId.toLowerCase()}-${width}`,Object.freeze({sourceId,quality,load,width,maxBytes})
 ]))));
@@ -90,7 +96,7 @@ export function validateSequence(e) {
  if(e.id!==r.id || e.classification!=='drawn' || e.sourcePath!==`source:${r.sourceId}` || e.sidecar!==`assets/provenance/${r.id}.json`)throw Error('Unapproved sequence');
  for(const key of ['count','step','width','height','quality','alphaQuality','effort','maxBytes'])if(e[key]!==r[key])throw Error('Unapproved sequence recipe');
  if(JSON.stringify(e.crop)!==JSON.stringify(r.crop))throw Error('Unapproved sequence crop');
- if(!/^[a-f0-9]{64}$/.test(e.sourceSha256??'') || !['sharp','vips','webp'].every(k=>/^\d+\.\d+\.\d+$/.test(e.tool?.[k] ?? '')))throw Error('Incomplete sequence recipe');
+ if(e.sourceSha256!==r.sourceSha256 || !['sharp','vips','webp'].every(k=>/^\d+\.\d+\.\d+$/.test(e.tool?.[k] ?? '')))throw Error('Unapproved sequence source');
  if(!Array.isArray(e.frames) || e.frames.length!==r.count)throw Error('Sequence frame count mismatch');
  let total=0;
  e.frames.forEach((f,i)=>{
@@ -99,11 +105,33 @@ export function validateSequence(e) {
  });
  if(total!==e.bytes || e.bytes>r.maxBytes)throw Error('Sequence over budget');
 }
+/** The shop map: one reviewed OSM-derived render, pinned extract + renderer. */
+export function validateMap(e) {
+ const r=MAP_RECIPE;
+ if(e.id!==r.id || e.classification!=='brand' || e.sourcePath!==`source:${r.sourceId}` || e.sourceSha256!==r.osmSha256 || e.sidecar!==`assets/provenance/${r.id}.json`)throw Error('Unapproved map');
+ if(!/^[a-f0-9]{64}$/.test(e.sha256??'') || !/^[a-f0-9]{64}$/.test(e.rasterSha256??'') || !/^[a-f0-9]{64}$/.test(e.rendererSha256??'') || e.publicPath!==`/media/${r.id}-${e.sha256.slice(0,12)}.webp`)throw Error('Invalid map entry');
+ if(e.width!==r.width || e.height!==r.height || e.quality!==r.quality || e.effort!==r.effort || e.maxBytes!==r.maxBytes || !Number.isInteger(e.bytes) || e.bytes<=0 || e.bytes>r.maxBytes)throw Error('Unapproved map recipe');
+}
 /** Pixel sprites ship byte-for-byte from a pinned source list. */
 export function validateSprite(e) {
  const sprite=SPRITES.find(s=>s.id===e.id);
  if(!sprite || e.classification!=='drawn' || e.sourcePath!==`pixel-bank:${sprite.source}` || e.sourceSha256!==sprite.sha256 || e.sha256!==sprite.sha256)throw Error('Unapproved sprite');
- if(e.publicPath!==`/media/${e.id}-${e.sha256.slice(0,12)}.png` || e.sidecar!==`assets/provenance/${e.id}.json` || e.maxBytes!==SPRITE_MAX_BYTES || !Number.isInteger(e.bytes) || e.bytes<=0 || e.bytes>e.maxBytes || ![e.width,e.height].every(n=>Number.isInteger(n)&&n>0))throw Error('Invalid sprite entry');
+ if(e.publicPath!==`/media/${e.id}-${e.sha256.slice(0,12)}.png` || e.sidecar!==`assets/provenance/${e.id}.json` || e.maxBytes!==SPRITE_MAX_BYTES || !Number.isInteger(e.bytes) || e.bytes<=0 || e.bytes>e.maxBytes || e.width!==sprite.width || e.height!==sprite.height)throw Error('Invalid sprite entry');
+}
+/** Public files whose entry passes its kind's validator (structural checks only; hashes
+ * and sources are checkAssets' job). Shared by repository guards outside the landing. */
+export function approvedPublicFiles(approved, manifest) {
+ const files=new Set();
+ for(const e of approved.media){
+  try {
+   if(e.kind==='sequence'){validateSequence(e);for(const f of e.frames)files.add(f.publicPath);continue;}
+   if(e.kind==='sprite')validateSprite(e);
+   else if(e.kind==='map')validateMap(e);
+   else {validateEntry(e);if(e.sourceId)approvedSource(manifest,e.sourceId,e.classification);}
+   files.add(e.publicPath);
+  } catch { /* unapproved entries contribute nothing */ }
+ }
+ return files;
 }
 export async function checkAssets(root, {sources=false}={}) {
  const manifest=JSON.parse(readFileSync(path.join(root,'assets/source-manifest.json'),'utf8'));
@@ -117,6 +145,24 @@ export async function checkAssets(root, {sources=false}={}) {
   if(statSync(path.join(root,'public/media',file)).isFile()&&!publicPaths.has('/media/'+file.replaceAll('\\','/'))) throw new Error('Unapproved public media');
  }
  for(const e of approved.media){
+  if(e.kind==='map'){
+   validateMap(e); if(ids.has(e.id)) throw new Error('Duplicate asset'); ids.add(e.id);
+   if(hashes.has(e.sha256)) throw new Error('Duplicate asset content'); hashes.add(e.sha256);
+   const file=safeOutput(root,'public'+e.publicPath);
+   if(sha256(file)!==e.sha256 || statSync(file).size!==e.bytes) throw new Error('Export hash/size changed');
+   if(JSON.stringify(JSON.parse(readFileSync(safeOutput(root,e.sidecar),'utf8')))!==JSON.stringify(e))throw Error('Map sidecar mismatch');
+   if(sha256(path.join(root,MAP_RECIPE.renderer))!==e.rendererSha256)throw Error('Map renderer changed');
+   const ext=manifest.externalSources?.find(source=>`source:${source.id}`===e.sourcePath);
+   if(!ext || ext.sha256!==e.sourceSha256 || ext.path!==MAP_RECIPE.osmPath)throw Error('Unknown map source');
+   const runtimeMap=JSON.parse(readFileSync(path.join(root,'config/tenant/landing-map.json'),'utf8'));
+   if(runtimeMap.image!==e.publicPath || runtimeMap.width!==e.width || runtimeMap.height!==e.height)throw Error('Map config mismatch');
+   if(sources){
+    const {renderMap}=await import('./export-map.mjs');
+    const {raster,bytes}=await renderMap(root);
+    if(createHash('sha256').update(raster).digest('hex')!==e.rasterSha256 || createHash('sha256').update(bytes).digest('hex')!==e.sha256)throw Error('Map derivation mismatch');
+   }
+   continue;
+  }
   if(e.kind==='sprite'){
    validateSprite(e); if(ids.has(e.id)) throw new Error('Duplicate asset'); ids.add(e.id);
    if(hashes.has(e.sha256)) throw new Error('Duplicate asset content'); hashes.add(e.sha256);

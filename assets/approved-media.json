@@ -831,512 +831,6 @@
       "command": "node scripts/assets/export-hero-sizes.mjs"
     },
     {
-      "id": "v2-p013-320",
-      "sourceId": "P013",
-      "quality": 78,
-      "load": "initial",
-      "width": 320,
-      "maxBytes": 20000,
-      "publicPath": "/media/v2-p013-320-0da6a08cf77b.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:P013",
-      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
-      "sha256": "0da6a08cf77b16643f2203d33897852dcb951460ca3c8b6abd33f42bc7ba916a",
-      "bytes": 16744,
-      "height": 480,
-      "sidecar": "assets/provenance/v2-p013-320.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-p013-480",
-      "sourceId": "P013",
-      "quality": 78,
-      "load": "initial",
-      "width": 480,
-      "maxBytes": 35000,
-      "publicPath": "/media/v2-p013-480-2956ce1ffc1d.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:P013",
-      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
-      "sha256": "2956ce1ffc1d6a961c1a37134c6541b83a40f658d84abfd1503e223dfc194cea",
-      "bytes": 30088,
-      "height": 721,
-      "sidecar": "assets/provenance/v2-p013-480.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-p013-640",
-      "sourceId": "P013",
-      "quality": 78,
-      "load": "initial",
-      "width": 640,
-      "maxBytes": 50000,
-      "publicPath": "/media/v2-p013-640-13b5f4142ade.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:P013",
-      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
-      "sha256": "13b5f4142aded3efc7fd8e96807147e2687994881762030c78835086791951ae",
-      "bytes": 46798,
-      "height": 960,
-      "sidecar": "assets/provenance/v2-p013-640.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-p013-960",
-      "sourceId": "P013",
-      "quality": 78,
-      "load": "initial",
-      "width": 960,
-      "maxBytes": 90000,
-      "publicPath": "/media/v2-p013-960-8271dfa0ca7d.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:P013",
-      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
-      "sha256": "8271dfa0ca7dd78b5628a2bf65b24501d6352144049d7dfafa75146b0007e7a8",
-      "bytes": 84742,
-      "height": 1440,
-      "sidecar": "assets/provenance/v2-p013-960.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-p013-1280",
-      "sourceId": "P013",
-      "quality": 78,
-      "load": "initial",
-      "width": 1280,
-      "maxBytes": 140000,
-      "publicPath": "/media/v2-p013-1280-870dc3083455.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:P013",
-      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
-      "sha256": "870dc3083455318ec4ff8770dccfae6d4c25aa0ed3454d5ffda71014bd5c204e",
-      "bytes": 130616,
-      "height": 1920,
-      "sidecar": "assets/provenance/v2-p013-1280.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-p016-480",
-      "sourceId": "P016",
-      "quality": 86,
-      "load": "lazy",
-      "width": 480,
-      "maxBytes": 70000,
-      "publicPath": "/media/v2-p016-480-70c16c1f977d.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:P016",
-      "sourceSha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
-      "sha256": "70c16c1f977d603ac0611b9dfd3c0b8a15ade9ce25fca3d50e97ecfd6ef0f377",
-      "bytes": 67070,
-      "height": 721,
-      "sidecar": "assets/provenance/v2-p016-480.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-p016-720",
-      "sourceId": "P016",
-      "quality": 86,
-      "load": "lazy",
-      "width": 720,
-      "maxBytes": 135000,
-      "publicPath": "/media/v2-p016-720-8dce5f33b8f6.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:P016",
-      "sourceSha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
-      "sha256": "8dce5f33b8f65d035f2da3433c71d9e446615ff3b1d662c85b3fd7daac72b88b",
-      "bytes": 127440,
-      "height": 1080,
-      "sidecar": "assets/provenance/v2-p016-720.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-p016-960",
-      "sourceId": "P016",
-      "quality": 86,
-      "load": "lazy",
-      "width": 960,
-      "maxBytes": 205000,
-      "publicPath": "/media/v2-p016-960-2ef06ce17068.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:P016",
-      "sourceSha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
-      "sha256": "2ef06ce17068dfeef659862bc3405c39dfcc204eb1e1e963160b135d8d892977",
-      "bytes": 196008,
-      "height": 1440,
-      "sidecar": "assets/provenance/v2-p016-960.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-l083-480",
-      "sourceId": "L083",
-      "quality": 86,
-      "load": "lazy",
-      "width": 480,
-      "maxBytes": 100000,
-      "publicPath": "/media/v2-l083-480-9d4d188146e9.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:L083",
-      "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
-      "sha256": "9d4d188146e931669295f341a95aa99122eca948baab99d85356f37cdcef513e",
-      "bytes": 96506,
-      "height": 721,
-      "sidecar": "assets/provenance/v2-l083-480.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-l083-720",
-      "sourceId": "L083",
-      "quality": 86,
-      "load": "lazy",
-      "width": 720,
-      "maxBytes": 180000,
-      "publicPath": "/media/v2-l083-720-ab0afcf3e22d.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:L083",
-      "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
-      "sha256": "ab0afcf3e22d938b6ed2ef86055c63cc0f39a852bfc3fade9f1bcb44b0b0becd",
-      "bytes": 172414,
-      "height": 1080,
-      "sidecar": "assets/provenance/v2-l083-720.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
-      "id": "v2-l083-960",
-      "sourceId": "L083",
-      "quality": 86,
-      "load": "lazy",
-      "width": 960,
-      "maxBytes": 270000,
-      "publicPath": "/media/v2-l083-960-3c45c543b2af.webp",
-      "classification": "real-photo",
-      "mode": "resize-only",
-      "sourcePath": "source:L083",
-      "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
-      "sha256": "3c45c543b2af9519f7a10efefe765901788d448a88c2cf357499c8993b0e0120",
-      "bytes": 260624,
-      "height": 1440,
-      "sidecar": "assets/provenance/v2-l083-960.json",
-      "crop": {
-        "left": 0,
-        "top": 0,
-        "width": 2667,
-        "height": 4000
-      },
-      "orientedSource": {
-        "width": 2667,
-        "height": 4000
-      },
-      "steps": [
-        "EXIF auto-orientation (.rotate())",
-        "full-frame uniform resize",
-        "WebP encode; metadata stripped"
-      ],
-      "effort": 6,
-      "tool": {
-        "sharp": "0.34.5",
-        "vips": "8.17.3",
-        "webp": "1.6.0",
-        "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
-      },
-      "command": "node scripts/assets/export-landing-v2.mjs",
-      "inspection": {
-        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
-        "reviewer": "Astra",
-        "date": "2026-10-16",
-        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
-      }
-    },
-    {
       "id": "crunchy-boi-spin",
       "kind": "sequence",
       "classification": "drawn",
@@ -1609,6 +1103,721 @@
       "provenance": "DRAWN (AI REFERENCE) Crunchy Boi spin master; crop/resize/encode only; never shown as a real photo"
     },
     {
+      "id": "landing-map",
+      "kind": "map",
+      "classification": "brand",
+      "publicPath": "/media/landing-map-c05b790c0390.webp",
+      "sourcePath": "source:osm-dc-extract",
+      "sourceSha256": "2844cdc840a7795b14f05e2ed4f69ec2e94fe6fc8719708ed85d559de426f162",
+      "rasterSha256": "a09fc7d226e31aecd1012c16cc0788008bede5259b9cfbc0425b79b8daa5f6f0",
+      "rendererSha256": "c15ccf53e1fdb9760d8715f591f442f9e4a50a11e727634c2b379361a356e499",
+      "sha256": "c05b790c03908574a0d4f8b0838cb415c4e2c5f042557f979626a52f404fe123",
+      "bytes": 117704,
+      "maxBytes": 160000,
+      "width": 1200,
+      "height": 1200,
+      "quality": 72,
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0"
+      },
+      "sidecar": "assets/provenance/landing-map.json",
+      "command": "node scripts/assets/export-map.mjs",
+      "provenance": "OpenStreetMap data (ODbL 1.0), pinned Overpass extract; own render (roads, water, parks; no labels); attribution shown under the map"
+    },
+    {
+      "id": "v2-p013-320",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 320,
+      "maxBytes": 20000,
+      "publicPath": "/media/v2-p013-320-0da6a08cf77b.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "0da6a08cf77b16643f2203d33897852dcb951460ca3c8b6abd33f42bc7ba916a",
+      "bytes": 16744,
+      "height": 480,
+      "sidecar": "assets/provenance/v2-p013-320.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p013-480",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 480,
+      "maxBytes": 35000,
+      "publicPath": "/media/v2-p013-480-2956ce1ffc1d.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "2956ce1ffc1d6a961c1a37134c6541b83a40f658d84abfd1503e223dfc194cea",
+      "bytes": 30088,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-p013-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p013-640",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 640,
+      "maxBytes": 50000,
+      "publicPath": "/media/v2-p013-640-13b5f4142ade.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "13b5f4142aded3efc7fd8e96807147e2687994881762030c78835086791951ae",
+      "bytes": 46798,
+      "height": 960,
+      "sidecar": "assets/provenance/v2-p013-640.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p013-960",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 960,
+      "maxBytes": 90000,
+      "publicPath": "/media/v2-p013-960-8271dfa0ca7d.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "8271dfa0ca7dd78b5628a2bf65b24501d6352144049d7dfafa75146b0007e7a8",
+      "bytes": 84742,
+      "height": 1440,
+      "sidecar": "assets/provenance/v2-p013-960.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p013-1280",
+      "sourceId": "P013",
+      "quality": 78,
+      "load": "initial",
+      "width": 1280,
+      "maxBytes": 140000,
+      "publicPath": "/media/v2-p013-1280-870dc3083455.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P013",
+      "sourceSha256": "52a07051eeb065785ada32af719604c113bfe4605ceabcd895dd70069de9fbde",
+      "sha256": "870dc3083455318ec4ff8770dccfae6d4c25aa0ed3454d5ffda71014bd5c204e",
+      "bytes": 130616,
+      "height": 1920,
+      "sidecar": "assets/provenance/v2-p013-1280.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p016-480",
+      "sourceId": "P016",
+      "quality": 86,
+      "load": "lazy",
+      "width": 480,
+      "maxBytes": 70000,
+      "publicPath": "/media/v2-p016-480-70c16c1f977d.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P016",
+      "sourceSha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
+      "sha256": "70c16c1f977d603ac0611b9dfd3c0b8a15ade9ce25fca3d50e97ecfd6ef0f377",
+      "bytes": 67070,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-p016-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p016-720",
+      "sourceId": "P016",
+      "quality": 86,
+      "load": "lazy",
+      "width": 720,
+      "maxBytes": 135000,
+      "publicPath": "/media/v2-p016-720-8dce5f33b8f6.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P016",
+      "sourceSha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
+      "sha256": "8dce5f33b8f65d035f2da3433c71d9e446615ff3b1d662c85b3fd7daac72b88b",
+      "bytes": 127440,
+      "height": 1080,
+      "sidecar": "assets/provenance/v2-p016-720.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-p016-960",
+      "sourceId": "P016",
+      "quality": 86,
+      "load": "lazy",
+      "width": 960,
+      "maxBytes": 205000,
+      "publicPath": "/media/v2-p016-960-2ef06ce17068.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:P016",
+      "sourceSha256": "781031156a21799f1f16fc83f496d046056a23a72fae4eeae9b62d8df3da3eb2",
+      "sha256": "2ef06ce17068dfeef659862bc3405c39dfcc204eb1e1e963160b135d8d892977",
+      "bytes": 196008,
+      "height": 1440,
+      "sidecar": "assets/provenance/v2-p016-960.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-l083-480",
+      "sourceId": "L083",
+      "quality": 86,
+      "load": "lazy",
+      "width": 480,
+      "maxBytes": 100000,
+      "publicPath": "/media/v2-l083-480-9d4d188146e9.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L083",
+      "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
+      "sha256": "9d4d188146e931669295f341a95aa99122eca948baab99d85356f37cdcef513e",
+      "bytes": 96506,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-l083-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-l083-720",
+      "sourceId": "L083",
+      "quality": 86,
+      "load": "lazy",
+      "width": 720,
+      "maxBytes": 180000,
+      "publicPath": "/media/v2-l083-720-ab0afcf3e22d.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L083",
+      "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
+      "sha256": "ab0afcf3e22d938b6ed2ef86055c63cc0f39a852bfc3fade9f1bcb44b0b0becd",
+      "bytes": 172414,
+      "height": 1080,
+      "sidecar": "assets/provenance/v2-l083-720.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-l083-960",
+      "sourceId": "L083",
+      "quality": 86,
+      "load": "lazy",
+      "width": 960,
+      "maxBytes": 270000,
+      "publicPath": "/media/v2-l083-960-3c45c543b2af.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L083",
+      "sourceSha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
+      "sha256": "3c45c543b2af9519f7a10efefe765901788d448a88c2cf357499c8993b0e0120",
+      "bytes": 260624,
+      "height": 1440,
+      "sidecar": "assets/provenance/v2-l083-960.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; all eleven delivery sizes and three originals visually inspected",
+        "reviewer": "Astra",
+        "date": "2026-10-16",
+        "scope": "Asset visual QA only; CC final approval and browser integration remain separate"
+      }
+    },
+    {
+      "id": "v2-l118-480",
+      "sourceId": "L118",
+      "quality": 78,
+      "load": "lazy",
+      "width": 480,
+      "maxBytes": 100000,
+      "publicPath": "/media/v2-l118-480-c674525bb22b.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L118",
+      "sourceSha256": "a5acbe06f8f99faa7e73f6aa3e0103e718ece0b075a4cccd02cb2e58bca47dd0",
+      "sha256": "c674525bb22b98b7cfe0ffb7a4149c6a2e6663205e1467a70657bd2cce0a48a6",
+      "bytes": 53842,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-l118-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; L118 (480/720/960) and L082 (480) delivery sizes and both originals visually inspected; real food, no edits, no encode artifacts",
+        "reviewer": "CC (Claude Opus 5.5)",
+        "date": "2026-10-19",
+        "scope": "Asset visual QA for the v3 catering section; browser integration verified separately"
+      }
+    },
+    {
+      "id": "v2-l118-720",
+      "sourceId": "L118",
+      "quality": 78,
+      "load": "lazy",
+      "width": 720,
+      "maxBytes": 180000,
+      "publicPath": "/media/v2-l118-720-0c97c269be81.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L118",
+      "sourceSha256": "a5acbe06f8f99faa7e73f6aa3e0103e718ece0b075a4cccd02cb2e58bca47dd0",
+      "sha256": "0c97c269be81b044714b6199580539fd69386fe299372e510e73abcab7d765d2",
+      "bytes": 92110,
+      "height": 1080,
+      "sidecar": "assets/provenance/v2-l118-720.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; L118 (480/720/960) and L082 (480) delivery sizes and both originals visually inspected; real food, no edits, no encode artifacts",
+        "reviewer": "CC (Claude Opus 5.5)",
+        "date": "2026-10-19",
+        "scope": "Asset visual QA for the v3 catering section; browser integration verified separately"
+      }
+    },
+    {
+      "id": "v2-l118-960",
+      "sourceId": "L118",
+      "quality": 78,
+      "load": "lazy",
+      "width": 960,
+      "maxBytes": 270000,
+      "publicPath": "/media/v2-l118-960-ffd52584fddb.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L118",
+      "sourceSha256": "a5acbe06f8f99faa7e73f6aa3e0103e718ece0b075a4cccd02cb2e58bca47dd0",
+      "sha256": "ffd52584fddbe64d811a3b474109fae7605410918c6d24a56965bf137ef4884e",
+      "bytes": 133822,
+      "height": 1440,
+      "sidecar": "assets/provenance/v2-l118-960.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; L118 (480/720/960) and L082 (480) delivery sizes and both originals visually inspected; real food, no edits, no encode artifacts",
+        "reviewer": "CC (Claude Opus 5.5)",
+        "date": "2026-10-19",
+        "scope": "Asset visual QA for the v3 catering section; browser integration verified separately"
+      }
+    },
+    {
+      "id": "v2-l082-480",
+      "sourceId": "L082",
+      "quality": 72,
+      "load": "lazy",
+      "width": 480,
+      "maxBytes": 100000,
+      "publicPath": "/media/v2-l082-480-874777ec975a.webp",
+      "classification": "real-photo",
+      "mode": "resize-only",
+      "sourcePath": "source:L082",
+      "sourceSha256": "a372beffd38dff0257373c5923642d39f79e581ad39539b018e01c583a23fc28",
+      "sha256": "874777ec975ad0377b66f26b7e15c2887f41fcf13cd52752144360a76dc36236",
+      "bytes": 80388,
+      "height": 721,
+      "sidecar": "assets/provenance/v2-l082-480.json",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 2667,
+        "height": 4000
+      },
+      "orientedSource": {
+        "width": 2667,
+        "height": 4000
+      },
+      "steps": [
+        "EXIF auto-orientation (.rotate())",
+        "full-frame uniform resize",
+        "WebP encode; metadata stripped"
+      ],
+      "effort": 6,
+      "tool": {
+        "sharp": "0.34.5",
+        "vips": "8.17.3",
+        "webp": "1.6.0",
+        "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+      },
+      "command": "node scripts/assets/export-landing-v2.mjs",
+      "inspection": {
+        "verdict": "PASS: full-frame geometry preserved; L118 (480/720/960) and L082 (480) delivery sizes and both originals visually inspected; real food, no edits, no encode artifacts",
+        "reviewer": "CC (Claude Opus 5.5)",
+        "date": "2026-10-19",
+        "scope": "Asset visual QA for the v3 catering section; browser integration verified separately"
+      }
+    },
+    {
       "id": "pixel-p1-idle",
       "kind": "sprite",
       "classification": "drawn",
@@ -1653,6 +1862,118 @@
       "width": 49,
       "height": 83,
       "sidecar": "assets/provenance/pixel-hero-selected.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-roll",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-roll-7bd8740176d4.png",
+      "sourcePath": "pixel-bank:items/pickup-roll-AI-DRAWN.png",
+      "sourceSha256": "7bd8740176d4f90e08eb847fb91ec86200f0592be649dd6660d3decaf92eb028",
+      "sha256": "7bd8740176d4f90e08eb847fb91ec86200f0592be649dd6660d3decaf92eb028",
+      "bytes": 2055,
+      "maxBytes": 20000,
+      "width": 48,
+      "height": 33,
+      "sidecar": "assets/provenance/pixel-pickup-roll.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-chip",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-chip-0917c51faab2.png",
+      "sourcePath": "pixel-bank:items/pickup-chip-AI-DRAWN.png",
+      "sourceSha256": "0917c51faab2b05f0ca39b71f08560ff8afe02d137e6b4c8a4cad3bc1011678d",
+      "sha256": "0917c51faab2b05f0ca39b71f08560ff8afe02d137e6b4c8a4cad3bc1011678d",
+      "bytes": 1808,
+      "maxBytes": 20000,
+      "width": 37,
+      "height": 32,
+      "sidecar": "assets/provenance/pixel-pickup-chip.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-turkey",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-turkey-ac08f896ada1.png",
+      "sourcePath": "pixel-bank:items/pickup-turkey-AI-DRAWN.png",
+      "sourceSha256": "ac08f896ada14244937defca2116b39684248e10cfa2eaaf02752e41d9ebe869",
+      "sha256": "ac08f896ada14244937defca2116b39684248e10cfa2eaaf02752e41d9ebe869",
+      "bytes": 1694,
+      "maxBytes": 20000,
+      "width": 38,
+      "height": 33,
+      "sidecar": "assets/provenance/pixel-pickup-turkey.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-lettuce",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-lettuce-fa93ea7c875e.png",
+      "sourcePath": "pixel-bank:items/pickup-lettuce-AI-DRAWN.png",
+      "sourceSha256": "fa93ea7c875efd3d1793ce917cedcde8a3ad1bd83db2cf35d6081df22fd12e55",
+      "sha256": "fa93ea7c875efd3d1793ce917cedcde8a3ad1bd83db2cf35d6081df22fd12e55",
+      "bytes": 2145,
+      "maxBytes": 20000,
+      "width": 40,
+      "height": 32,
+      "sidecar": "assets/provenance/pixel-pickup-lettuce.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-pickle",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-pickle-3f022231cf47.png",
+      "sourcePath": "pixel-bank:items/pickup-pickle-AI-DRAWN.png",
+      "sourceSha256": "3f022231cf471398338f19d2275e132846315dab66449bc432cfbae731e104dd",
+      "sha256": "3f022231cf471398338f19d2275e132846315dab66449bc432cfbae731e104dd",
+      "bytes": 1529,
+      "maxBytes": 20000,
+      "width": 29,
+      "height": 30,
+      "sidecar": "assets/provenance/pixel-pickup-pickle.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-pickup-provolone",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-pickup-provolone-b6d0639cabf2.png",
+      "sourcePath": "pixel-bank:items/pickup-provolone-AI-DRAWN.png",
+      "sourceSha256": "b6d0639cabf22e0f04749489084f0eefd02c942b54879030275f5619bb16690b",
+      "sha256": "b6d0639cabf22e0f04749489084f0eefd02c942b54879030275f5619bb16690b",
+      "bytes": 1125,
+      "maxBytes": 20000,
+      "width": 34,
+      "height": 32,
+      "sidecar": "assets/provenance/pixel-pickup-provolone.json",
+      "command": "node scripts/assets/export-sprites.mjs",
+      "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+    },
+    {
+      "id": "pixel-hero-basket",
+      "kind": "sprite",
+      "classification": "drawn",
+      "publicPath": "/media/pixel-hero-basket-bb60e6cb20f2.png",
+      "sourcePath": "pixel-bank:hero/hero-close-walk-basket-AI-DRAWN.png",
+      "sourceSha256": "bb60e6cb20f2bd361420dc6bbc95ffe9785a91c3b621670eb15b91b89f843717",
+      "sha256": "bb60e6cb20f2bd361420dc6bbc95ffe9785a91c3b621670eb15b91b89f843717",
+      "bytes": 3577,
+      "maxBytes": 20000,
+      "width": 59,
+      "height": 78,
+      "sidecar": "assets/provenance/pixel-hero-basket.json",
       "command": "node scripts/assets/export-sprites.mjs",
       "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
     }

@@ -34,7 +34,7 @@
     "sharp": "0.34.5",
     "vips": "8.17.3",
     "webp": "1.6.0",
-    "scriptSha256": "4ab8659f0fde81da855e62b0161a646430acc6eb072fb80aa00df1f30fb1569a"
+    "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
   },
   "command": "node scripts/assets/export-landing-v2.mjs",
   "inspection": {

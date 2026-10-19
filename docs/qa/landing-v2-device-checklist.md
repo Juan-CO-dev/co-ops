@@ -1,17 +1,56 @@
-# SUBDEX — physical iPhone Safari release gate
+# Landing v3: physical iPhone Safari release gate
 
-Status: NOT RUN. Windows Playwright WebKit and iPhone emulation are not native iOS Safari evidence. No approved HTTPS preview or physical device was available in this dispatch. CC must record the following before release.
+**Status: NOT RUN.** Playwright WebKit and iPhone emulation are not native iOS Safari evidence. Juan smoke-tests the preview on his own iPhone; CC records the results below before release.
 
-Record device model, iOS/Safari version, date, approved HTTPS URL, reviewed commit SHA, deployed SHA, language, consent state, Low Power Mode and Low Data Mode settings. Archive response headers, raw HTML, screenshots and playback measurements with those identifiers.
+## What to record
+- Device model, iOS/Safari version, date
+- Preview URL and the deployed SHA, which must equal the reviewed SHA
+- Language
+- Consent state
+- Low Power Mode, Reduce Motion and Low Data Mode settings
 
-1. Verify deployed SHA equals the reviewed revision. Fetch raw HTML from that same host for en/es and consent unset/accepted/rejected. Confirm the SUBDEX server-rendered image is 720×720 and uses `/media/subdex-poster-drawn-4f35ab463487.webp`.
-2. Fetch that exact URL on the preview host. Require HTTP 200, `image/webp`, 16,874 bytes and SHA256 `4f35ab4634873d62b3dcf2e1595c1fb10486796671790c40d1a06a0c72e8369d`. Record redirects and cache headers. On the phone require `naturalWidth === 720`, nonzero visible bounds and a nonblank screenshot after scrolling to SUBDEX. Diagnose wrong revision, host/URL failure, image decoding and video playback separately.
-3. In normal power mode, scroll to SUBDEX. Confirm the still is visible before motion, then inline muted playback occurs once, without fullscreen takeover or looping. With no playback shim, record `readyState >= 2`, `videoWidth > 0` and two increasing currentTime/frame readings during the 0.9-second clip. Reload if the excerpt ends before measurements can be captured.
-4. In Low Power Mode, verify the poster remains visible even if autoplay is blocked. Tap Play and confirm inline playback or a persistent usable Play control with the still. Confirm the control retains focus after retry; orders and language navigation work.
-5. Enable Reduce Motion and then Low Data Mode separately. Confirm the still decodes and optional automatic video is not downloaded where Save-Data is exposed. iOS Low Data Mode's browser exposure must be recorded, not assumed from desktop simulation.
-6. Exercise back/forward restoration, scroll before hydration on a slow connection, background/foreground, viewport exit/re-entry, keyboard/zoom and failed MP4/poster requests. No collapsed media region; failures retain the still or the bilingual accessible text fallback. A completed clip must not auto-replay on re-entry.
-7. Verify no text, control or decorative touch covers real-food photos, no public classification labels appear, and direct ordering remains usable. Capture English and Spanish views at normal and enlarged text sizes.
+## The checks
+1. **Hero:**
+   - The page opens on the still Crunchy Boi photo, with no movement before the first scroll.
+   - Scrolling down pushes the camera in on the sub, smoothly, with no jump.
+   - The order buttons are readable and tappable.
+2. **"A little crunch?":**
+   - The section pins while you scroll.
+   - The caption above the photo changes from the iceberg line to the chips line as the second photo slides in.
+   - "Keep it still" stops the motion.
+   - Leave the section and come back: the motion still follows the scroll.
+3. **Choose your fighter:**
+   - The Crunchy Boi stage does one arrival spin.
+   - It turns as you scroll and as you drag sideways, while vertical swipes still scroll the page.
+   - The roster advances on its own about every 5 s. The Player 1 cursor hops between cards.
+   - "Auto-scroll" pauses and resumes it, and any tap or drag inside the screen stops it.
+   - Tapping a sub swaps the stage and the pixel guy cheers.
+   - "Order {sub}" opens the shop sheet. Both links open the right Appfront shop. Closing the sheet returns focus.
+4. **Field Guide:**
+   - Words with pixel pickups sit above the cut-open photo.
+   - On arrival one line at a time draws to its ingredient, fades, and the word turns "collected"; the counter reaches 6/6.
+   - No word or line covers the food permanently.
+5. **Catering ("Co-op mode"):**
+   - The real spread photo shows with the box inset and the walking pixel guy.
+   - Exactly one strong "Start a catering order" button, plus a light "Ask us" link.
+6. **Pick your shop:**
+   - A real DC street map shows both pins.
+   - "Find my nearest shop" asks for location, drops your blue dot and zooms to fit you and the nearest shop.
+   - The nearest card shows a big Directions button that opens Apple Maps. No coordinates appear in the URL.
+   - Away from DC, you get the edge arrow and the "outside this map" note.
+7. **Reduce Motion, then Low Power and Low Data Mode, each separately:**
+   - No auto-advance, no spin frames loaded, and no hero push-in.
+   - Every caption and every Field Guide line is shown statically.
+   - Nothing is missing.
+8. **Throughout:**
+   - No "Illustrated", "AI", "Drawn" or "Edited" text anywhere.
+   - The sticky order bar works.
+   - en/es look right at normal and enlarged text sizes.
+   - Back/forward and background/foreground restore cleanly.
 
-Release also requires CC's independent review and authoritative Landing checks CI exit. Keep the CI job at 25 minutes; record actual duration, with <=22 minutes total and <=3 additional iPhone-project minutes as targets. Local timing is advisory, not a CI duration claim. `perf:launch` against the approved HTTPS revision remains separate from the offline first-party performance harness.
+## Release conditions
+- CC's independent review.
+- The authoritative Landing checks CI run (applied-throttling perf gate) on the exact pushed SHA.
+- `perf:launch` against the approved HTTPS revision stays separate from the offline first-party harness.
 
-Policy reference: [WebKit's inline video and user-gesture policy](https://webkit.org/blog/6784/new-video-policies-for-ios/). Direct user-handler `play()` and `muted`/`playsInline` are implemented; device/OS behavior still needs the measurements above.
+_History: the v2 SUBDEX/video gate this file used to hold was retired with the SUBDEX section (Juan, 2026-10-19)._

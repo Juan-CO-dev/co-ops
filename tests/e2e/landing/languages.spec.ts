@@ -27,7 +27,7 @@ for (const language of ["en","es"] as const) test(`every section and control ren
   await expect(page.getByRole("navigation",{name:dictionary["landing.language"]})).toBeVisible();
   const held = page.locator('#field-guide');
   await expect(held).toContainText(dictionary['landing.field-guide.body']);
-  await expect(held.locator('img,picture,video')).toHaveCount(0);
+  await expect(held.locator('img:not(.landing-v3-pixel),picture,video')).toHaveCount(0);
   expect(await held.locator('noscript').textContent()).toContain(textureMedia.crossSection.src);
   await expect(page.getByRole("button",{name:dictionary["landing.consent.accept"],exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:dictionary["landing.consent.reject"],exact:true})).toBeVisible();
@@ -35,7 +35,9 @@ for (const language of ["en","es"] as const) test(`every section and control ren
   await held.scrollIntoViewIfNeeded();
   const photo=held.locator('[data-landing-photo] img');
   // Exact section image inventory: one real photo, no decoration.
-  await expect(held.locator('img')).toHaveCount(1);
+  await expect(held.locator('img:not(.landing-v3-pixel)')).toHaveCount(1);
+  await expect(held.locator('img.landing-v3-pixel')).toHaveCount(6);
+  for(const pickup of await held.locator('img.landing-v3-pixel').all())await expect(pickup).toHaveAttribute('alt','');
   await expect(photo).toHaveCount(1);
   await expect(photo).toHaveAttribute('src',textureMedia.crossSection.src);
   await expect(photo).toHaveAttribute('srcset',textureMedia.crossSection.srcSet);

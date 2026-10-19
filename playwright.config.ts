@@ -8,7 +8,7 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width:375,height:812 } } },
     { name: 'webkit', use: { ...devices['Desktop Safari'], viewport: { width:375,height:812 } } },
-    { name: 'iphone-webkit', testMatch: /(?:motion|hero|hero-poster)\.spec\.ts$/, use: {...devices['iPhone 13 Mini']} },
+    { name: 'iphone-webkit', testMatch: /(?:motion|hero|hero-poster|lineup)\.spec\.ts$/, use: {...devices['iPhone 13 Mini']} },
   ],
   webServer: { command: 'node scripts/landing/e2e-server.mjs', wait: { stdout: /LANDING_E2E_READY/ }, reuseExistingServer: false, stdout: 'pipe', timeout: 1200000 },
 });

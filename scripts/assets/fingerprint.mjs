@@ -11,7 +11,7 @@ export function fingerprintAssets(root = process.cwd()) {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   const replacements = new Map();
   for (const entry of manifest.media) {
-    if (entry.kind === 'sequence' || entry.kind === 'sprite' || !entry.publicPath.startsWith('/media/')) continue;
+    if (['sequence', 'sprite', 'map'].includes(entry.kind) || !entry.publicPath.startsWith('/media/')) continue;
     const oldPath = entry.publicPath;
     const file = safeOutput(root, 'public' + oldPath);
     if (sha256(file) !== entry.sha256) throw new Error('Cannot fingerprint changed bytes');

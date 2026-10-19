@@ -100,8 +100,8 @@ describe('v2 bounded photo recipes', () => {
     const source=read('assets/source-manifest.json');
     expect(source.products).toHaveLength(11);
     expect(source.products.filter((p: {eligible:boolean})=>p.eligible)).toHaveLength(10);
-    expect(source.photoDetails.map((p: {representative:string})=>p.representative)).toEqual(['P013','P016','L083']);
-    for(const id of ['P013','P016','L083']) {
+    expect(source.photoDetails.map((p: {representative:string})=>p.representative)).toEqual(['P013','P016','L083','L118','L082']);
+    for(const id of ['P013','P016','L083','L118','L082']) {
       expect(tools.approvedSource(source,id).classification).toBe('real-photo');
       for(const classification of ['drawn','brand','real-edited']) expect(()=>tools.approvedSource(source,id,classification)).toThrow();
       const selected=tools.approvedSource(source,id);
@@ -111,16 +111,18 @@ describe('v2 bounded photo recipes', () => {
     for(const id of ['013','018','unknown']) expect(()=>tools.approvedSource(source,id)).toThrow();
     expect(()=>tools.approvedSource(source,'014','drawn')).toThrow();
   });
-  it('registers exactly eleven responsive recipes with bounded budgets and portable runtime records', async () => {
+  it('registers exactly fifteen responsive recipes with bounded budgets and portable runtime records', async () => {
     const manifest=read('assets/approved-media.json');
     const runtime=read('config/tenant/landing-assets.json');
-    const recipes=[['p013',78,[320,480,640,960,1280]],['p016',86,[480,720,960]],['l083',86,[480,720,960]]] as const;
+    const recipes=[['p013',78,[320,480,640,960,1280]],['p016',86,[480,720,960]],['l083',86,[480,720,960]],['l118',78,[480,720,960]],['l082',72,[480]]] as const;
     const entries=manifest.media.filter((e: {id:string})=>e.id.startsWith('v2-'));
-    expect(entries).toHaveLength(11);
+    expect(entries).toHaveLength(15);
     expect(entries.map((e: {bytes:number;maxBytes:number})=>[e.bytes,e.maxBytes])).toEqual([
       [16744,20000],[30088,35000],[46798,50000],[84742,90000],[130616,140000],
       [67070,70000],[127440,135000],[196008,205000],
       [96506,100000],[172414,180000],[260624,270000],
+      [53842,100000],[92110,180000],[133822,270000],
+      [80388,100000],
     ]);
     const {default:sharp}=await import('sharp');
     for(const [source,quality,widths] of recipes) for(const width of widths) {

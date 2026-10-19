@@ -1,0 +1,16 @@
+{
+  "id": "pixel-pickup-turkey",
+  "kind": "sprite",
+  "classification": "drawn",
+  "publicPath": "/media/pixel-pickup-turkey-ac08f896ada1.png",
+  "sourcePath": "pixel-bank:items/pickup-turkey-AI-DRAWN.png",
+  "sourceSha256": "ac08f896ada14244937defca2116b39684248e10cfa2eaaf02752e41d9ebe869",
+  "sha256": "ac08f896ada14244937defca2116b39684248e10cfa2eaaf02752e41d9ebe869",
+  "bytes": 1694,
+  "maxBytes": 20000,
+  "width": 38,
+  "height": 33,
+  "sidecar": "assets/provenance/pixel-pickup-turkey.json",
+  "command": "node scripts/assets/export-sprites.mjs",
+  "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+}

@@ -1,0 +1,46 @@
+{
+  "id": "v2-l118-720",
+  "sourceId": "L118",
+  "quality": 78,
+  "load": "lazy",
+  "width": 720,
+  "maxBytes": 180000,
+  "publicPath": "/media/v2-l118-720-0c97c269be81.webp",
+  "classification": "real-photo",
+  "mode": "resize-only",
+  "sourcePath": "source:L118",
+  "sourceSha256": "a5acbe06f8f99faa7e73f6aa3e0103e718ece0b075a4cccd02cb2e58bca47dd0",
+  "sha256": "0c97c269be81b044714b6199580539fd69386fe299372e510e73abcab7d765d2",
+  "bytes": 92110,
+  "height": 1080,
+  "sidecar": "assets/provenance/v2-l118-720.json",
+  "crop": {
+    "left": 0,
+    "top": 0,
+    "width": 2667,
+    "height": 4000
+  },
+  "orientedSource": {
+    "width": 2667,
+    "height": 4000
+  },
+  "steps": [
+    "EXIF auto-orientation (.rotate())",
+    "full-frame uniform resize",
+    "WebP encode; metadata stripped"
+  ],
+  "effort": 6,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "webp": "1.6.0",
+    "scriptSha256": "4c1d2bd0e8316c36ef21184d524d4087108b06d897fe89794f7aab00f6f072db"
+  },
+  "command": "node scripts/assets/export-landing-v2.mjs",
+  "inspection": {
+    "verdict": "PASS: full-frame geometry preserved; L118 (480/720/960) and L082 (480) delivery sizes and both originals visually inspected; real food, no edits, no encode artifacts",
+    "reviewer": "CC (Claude Opus 5.5)",
+    "date": "2026-10-19",
+    "scope": "Asset visual QA for the v3 catering section; browser integration verified separately"
+  }
+}

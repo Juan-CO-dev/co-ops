@@ -233,6 +233,11 @@
       "path": "C:/Users/conta/co-3d/spin-ad/masters/png-16x9-rgba-AI-REFERENCE-drawn",
       "sha256": "88212e69ab4ee5c69eb62a2ff686e838255fd0aa5b5b7535a5a5c0c3361cb5de",
       "kind": "frame-sequence-digest"
+    },
+    {
+      "id": "osm-dc-extract",
+      "path": "C:/Users/conta/co-3d/best-sub/work/osm/dc.json",
+      "sha256": "2844cdc840a7795b14f05e2ed4f69ec2e94fe6fc8719708ed85d559de426f162"
     }
   ],
   "photoDetails": [
@@ -274,6 +279,32 @@
       "path": "C:/Users/conta/co-chief-assets/picks-full/L083.jpg",
       "sha256": "4960db2947693c5e450b4c9752c7d16cea772640ea1b387c62638273b8840b0c",
       "evidence": "LANDING v2 BUILD r2; approved Chunk 1 full-frame delivery recipes"
+    },
+    {
+      "id": "L118",
+      "representative": "L118",
+      "confirmedIds": [
+        "L118"
+      ],
+      "classification": "real-photo",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/picks-full/L118.jpg",
+      "sha256": "a5acbe06f8f99faa7e73f6aa3e0103e718ece0b075a4cccd02cb2e58bca47dd0",
+      "evidence": "LANDING v3 catering (2026-10-19): Juan shoot Lifestyle_Kitchen sm_118, EXIF-oriented uniform resize to 2667x4000 JPEG q95; no edits"
+    },
+    {
+      "id": "L082",
+      "representative": "L082",
+      "confirmedIds": [
+        "L082"
+      ],
+      "classification": "real-photo",
+      "eligible": true,
+      "hold": null,
+      "path": "C:/Users/conta/co-chief-assets/picks-full/L082.jpg",
+      "sha256": "a372beffd38dff0257373c5923642d39f79e581ad39539b018e01c583a23fc28",
+      "evidence": "LANDING v3 catering (2026-10-19): Juan shoot Lifestyle_Kitchen sm_082, EXIF-oriented uniform resize to 2667x4000 JPEG q95; no edits"
     }
   ],
   "decorativeSources": [

@@ -109,3 +109,54 @@ test('reduced motion keeps the front still, never autoplays, never loads the tur
   await page.waitForTimeout(500);
   expect(frameRequests).toEqual([]);
 });
+
+test('without JavaScript every menu is visible and each shop is a native order link', async ({browser,baseURL}) => {
+  const context = await browser.newContext({javaScriptEnabled:false,viewport:{width:375,height:812}});
+  const page = await context.newPage();
+  await page.goto(baseURL!);
+  const select = page.locator('.landing-v3-select');
+  await select.scrollIntoViewIfNeeded();
+  for (const card of await select.locator('[data-lineup] li').all()) await expect(card.locator('[data-ingredients]')).toBeVisible();
+  const links = select.locator('.landing-v3-direct-orders a[data-landing-placement="lineup"]');
+  await expect(links).toHaveCount(2);
+  for (const [index,link] of (await links.all()).entries()) {
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute('href',landingTenantConfig.stores[index]!.orderUrl);
+    expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+  await expect(select.locator('.landing-v3-auto')).toBeHidden();
+  await context.close();
+});
+
+test('Save-Data gets the static screen: no auto-advance, no turntable frames', async ({page}) => {
+  await page.addInitScript(()=>Object.defineProperty(navigator,'connection',{value:{saveData:true,addEventListener(){},removeEventListener(){}}}));
+  const frameRequests:string[] = [];
+  page.on('request',request=>{if(/crunchy-boi-spin-f(?!00)\d\d/.test(request.url()))frameRequests.push(request.url());});
+  await page.clock.install();
+  await page.goto('/');
+  await page.locator('[data-spin-stage]').scrollIntoViewIfNeeded();
+  await expect(page.locator('.landing-v3-select')).toHaveAttribute('data-calm','true');
+  await expect(page.locator('.landing-v3-auto')).toHaveAttribute('aria-pressed','false');
+  await page.clock.runFor(15000);
+  await expect(page.locator('.landing-v3-plate h3')).toHaveText('Crunchy Boi');
+  await expect(page.locator('[data-spin-stage]')).toHaveAttribute('role','img');
+  expect(frameRequests).toEqual([]);
+});
+
+test('dragging the Crunchy Boi sideways turns it', async ({page}) => {
+  test.skip(test.info().project.name==='iphone-webkit','Playwright cannot synthesize a touch drag; desktop engines cover pointer drag, the physical-device checklist covers touch.');
+  await page.goto('/');
+  const spin = page.locator('[data-spin-stage]');
+  await spin.scrollIntoViewIfNeeded();
+  await page.locator('.landing-v3-auto').click();
+  await expect(spin).toHaveAttribute('data-spin-ready','true');
+  const slider = page.getByRole('slider',{name:'Turn the Crunchy Boi'});
+  await expect.poll(async()=>{const a=await page.evaluate(()=>scrollY);await page.waitForTimeout(150);return a===await page.evaluate(()=>scrollY);}).toBe(true);
+  const before = Number(await slider.getAttribute('aria-valuenow'));
+  const box = (await spin.boundingBox())!;
+  await page.mouse.move(box.x+box.width*.7,box.y+box.height/2);
+  await page.mouse.down();
+  await page.mouse.move(box.x+box.width*.3,box.y+box.height/2,{steps:8});
+  await page.mouse.up();
+  await expect.poll(async()=>Number(await slider.getAttribute('aria-valuenow'))).not.toBe(before);
+});

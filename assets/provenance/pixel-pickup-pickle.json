@@ -1,0 +1,16 @@
+{
+  "id": "pixel-pickup-pickle",
+  "kind": "sprite",
+  "classification": "drawn",
+  "publicPath": "/media/pixel-pickup-pickle-3f022231cf47.png",
+  "sourcePath": "pixel-bank:items/pickup-pickle-AI-DRAWN.png",
+  "sourceSha256": "3f022231cf471398338f19d2275e132846315dab66449bc432cfbae731e104dd",
+  "sha256": "3f022231cf471398338f19d2275e132846315dab66449bc432cfbae731e104dd",
+  "bytes": 1529,
+  "maxBytes": 20000,
+  "width": 29,
+  "height": 30,
+  "sidecar": "assets/provenance/pixel-pickup-pickle.json",
+  "command": "node scripts/assets/export-sprites.mjs",
+  "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+}

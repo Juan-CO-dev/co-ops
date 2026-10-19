@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 
@@ -58,7 +58,8 @@ export function pruneNearbyFixtures(tmp) {
     try { stat = lstatSync(link); } catch { /* no link */ }
     if (stat) {
       if (!stat.isSymbolicLink()) throw new Error(`Refusing to prune ${dir}: node_modules is not a link`);
-      rmdirSync(link);
+      // POSIX symlink: unlink. Windows junction: unlink fails (EPERM), rmdir removes the link.
+      try { unlinkSync(link); } catch { rmdirSync(link); }
       let still = true;
       try { lstatSync(link); } catch { still = false; }
       if (still) throw new Error(`Refusing to prune ${dir}: link survived unlink`);

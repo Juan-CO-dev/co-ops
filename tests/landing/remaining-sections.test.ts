@@ -1,12 +1,13 @@
 import { textureMedia } from '@/lib/landing/media';
-import cateringProvenance from '../../assets/provenance/hero-poster.json';
+import cateringProvenance from '../../assets/provenance/v2-l118-720.json';
+import boxProvenance from '../../assets/provenance/v2-l082-480.json';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { Shops } from '@/components/landing/Shops';
 import { Footer } from '@/components/landing/Footer';
 import { Catering } from '@/components/landing/Catering';
-import { ShopMap } from '@/components/landing/ShopMap';
+import landingMap from '@/config/tenant/landing-map.json';
 import { loadLandingConfig } from '@/lib/landing/config';
 import { projectLandingStores } from '@/lib/landing/stores';
 
@@ -23,15 +24,16 @@ describe('remaining landing sections',()=>{
       expect(renderToStaticMarkup(createElement(Footer,{config,stores:all,language}))).not.toContain('ubereats.com');
     }
   });
-  it('omits invalid map coordinates and uses one geographic scale for both axes',()=>{
+  it('renders the self-hosted street map with a pin per shop and never a visitor dot on the server',()=>{
     const all=projectLandingStores([{code:'MEP',name:'',address:null,phone:null},{code:'EM',name:'',address:null,phone:null}],config);
-    const invalid=all.map(store=>({...store,coordinates:{latitude:NaN,longitude:Infinity}}));
-    expect(renderToStaticMarkup(createElement(ShopMap,{stores:invalid,language:'en'}))).toBe('');
-    const html=renderToStaticMarkup(createElement(ShopMap,{stores:all,language:'en'}));
-    const circles=[...html.matchAll(/<circle cx="([^"]+)" cy="([^"]+)"/g)].map(match=>({x:Number(match[1]),y:Number(match[2])}));
-    expect(circles).toHaveLength(2);
-    const ratio=Math.abs((circles[0]!.x-circles[1]!.x)/(circles[0]!.y-circles[1]!.y));
-    expect(ratio).toBeCloseTo(1.427,2);
+    const html=renderToStaticMarkup(createElement(Shops,{stores:all,language:'en'}));
+    expect(html).toContain(`src="${landingMap.image}"`);
+    expect(html.match(/data-map-pin="/g)).toHaveLength(2);
+    expect(html).not.toContain('data-map-you');
+    expect(html).toContain('openstreetmap.org/copyright');
+    expect(html).not.toMatch(/tile\.openstreetmap|maps\.googleapis|api\.mapbox|maplibre/);
+    const invalid=all.map(store=>({...store,coordinates:null}));
+    expect(renderToStaticMarkup(createElement(Shops,{stores:invalid,language:'en'})).match(/data-map-pin="/g)).toBeNull();
   });
   it('renders verified hours and formatted selectable phone text without fabricated distances',()=>{
     const html=renderToStaticMarkup(createElement(Shops,{stores,language:'en'}));
@@ -45,13 +47,16 @@ describe('remaining landing sections',()=>{
     expect(config.cateringPortalLive).toBe(false);
     expect(html).toContain(config.cateringUrl); expect(html).toContain(config.inquiryUrl);
     expect(html).not.toContain('<form');
-    // CC's chunk-5 review requires a distinct approved real photo when available.
-    expect(html.match(/<img /g)).toHaveLength(1);
+    // v3: two distinct approved real photos (spread + box inset) and one decorative sprite.
+    expect(html.match(/<img /g)).toHaveLength(3);
+    expect(html.match(/<img [^>]*alt=""/g)).toHaveLength(1);
     expect(html).toContain(`src="${textureMedia.catering.src}"`);
     expect(html).toContain(`srcSet="${textureMedia.catering.srcSet}"`);
-    expect(html).toContain('width="750" height="1125"');
+    expect(html).toContain('width="720" height="1080"');
+    expect(html).toContain(`src="${textureMedia.cateringBox.src}"`);
     expect(textureMedia.catering.src).not.toBe(textureMedia.crossSection.src);
-    expect(cateringProvenance).toMatchObject({sourceId:'014',publicPath:textureMedia.catering.src,classification:'real-photo',mode:'resize-only'});
+    expect(cateringProvenance).toMatchObject({sourceId:'L118',publicPath:textureMedia.catering.src,classification:'real-photo',mode:'resize-only'});
+    expect(boxProvenance).toMatchObject({sourceId:'L082',publicPath:textureMedia.cateringBox.src,classification:'real-photo',mode:'resize-only'});
     expect(html).toContain('loading="lazy"');
     expect(html).toContain('<noscript>');
     expect(html).not.toContain('Start a catering order');

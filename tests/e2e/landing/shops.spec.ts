@@ -19,8 +19,11 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
   await expect(page.locator('footer a[href*="ubereats.com"]')).toHaveCount(0);
   await expect(shops).toContainText('Daily 10:30am–6pm');
   await expect(shops).toContainText('Daily 10:30am–8pm');
-  await expect(shops.locator('[data-shop-map]')).toContainText('Schematic');
-  await expect(shops.locator('a[href*="google.com/maps"]')).toHaveCount(2);
+  await expect(shops.locator('[data-shop-map] [role="img"]')).toHaveAttribute('aria-label','Map of our two shops in Washington, DC');
+  await expect(shops.locator('[data-map-pin]')).toHaveCount(2);
+  await expect(shops.locator('[data-map-you]')).toHaveCount(0);
+  // Destination-only directions: Apple Maps on Apple devices, Google Maps elsewhere.
+  await expect(shops.locator('a[data-directions][href^="https://www.google.com/maps/dir/?api=1&destination="], a[data-directions][href^="https://maps.apple.com/?daddr="]')).toHaveCount(2);
   await expect(shops.locator('a[href*="openstreetmap.org/copyright"]')).toHaveCount(1);
   await expect(shops.getByRole('button',{name:'Find my nearest shop'})).toHaveCount(1);
   for(const link of await shops.getByRole('link').all()) expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
@@ -62,4 +65,31 @@ for(const outcome of ['granted','denied','timeout','unavailable'] as const)test(
   }
   await expect(fixture.getByRole('link')).toHaveCount(2);
   expect(await page.evaluate(()=>({local:{...localStorage},session:{...sessionStorage},cookie:document.cookie}))).toEqual(before);
+});
+
+for(const place of [{name:'near Dupont',latitude:38.9105,longitude:-77.0425,onMap:true},{name:'out of town',latitude:40.7128,longitude:-74.006,onMap:false}] as const)test(`find my nearest shop puts the visitor on the real map without sending their location: ${place.name}`,async({page})=>{
+  await page.addInitScript(point=>Object.defineProperty(navigator,'geolocation',{configurable:true,value:{getCurrentPosition(success:PositionCallback){success({coords:{latitude:point.latitude,longitude:point.longitude}} as GeolocationPosition);}}}),place);
+  const urls:string[]=[];page.on('request',request=>urls.push(request.url()+' '+(request.postData()??'')));
+  await page.goto('/');
+  const shops=page.locator('#shops');await shops.scrollIntoViewIfNeeded();
+  await expect(shops.locator('[data-shop-map] img')).toHaveAttribute('src',/\/media\/landing-map-[a-f0-9]{12}\.webp$/);
+  await shops.getByRole('button',{name:'Find my nearest shop'}).click();
+  if(place.onMap){
+    await expect(shops.locator('[data-map-you] span')).toBeVisible();
+    await expect(shops.locator('[data-shop]').first()).toHaveAttribute('data-shop','dupont');
+    await expect(shops.locator('[data-map-pin="dupont"]')).toHaveAttribute('data-nearest','true');
+    await expect.poll(()=>shops.locator('.landing-v3-map-canvas').evaluate(el=>new DOMMatrix(getComputedStyle(el).transform).a)).toBeGreaterThan(1);
+    await expect(shops.locator('[data-map-offmap]')).toHaveCount(0);
+  }else{
+    await expect(shops.locator('[data-map-you]')).toHaveCount(0);
+    await expect(shops.locator('[data-map-offmap]')).toBeAttached();
+    await expect(shops).toContainText('You are outside this map');
+  }
+  const directions=shops.locator('[data-shop]').first().locator('a.landing-v3-directions');
+  await expect(directions).toBeVisible();
+  const href=(await directions.getAttribute('href'))!;
+  expect(href).toMatch(/^https:\/\/(maps\.apple\.com\/\?daddr=|www\.google\.com\/maps\/dir\/\?api=1&destination=)/);
+  const digits=[String(place.latitude),String(place.longitude),place.latitude.toFixed(2),place.longitude.toFixed(2)];
+  for(const url of [...urls,href])for(const value of digits)expect(url,url).not.toContain(value);
+  await page.screenshot({path:test.info().outputPath(`map-${place.onMap?'near':'far'}.png`)});
 });

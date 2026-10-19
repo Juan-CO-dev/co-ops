@@ -69,6 +69,8 @@ export function SpinCanvas({frames,width,height,label,stillLabel,valueText}:Prop
     inView.observe(element);
     const onScroll=()=>{
       const y=scrollY;if(!visible){lastY=y;return;}
+      // A real scroll during the arrival spin hands control to the visitor (no snap-back).
+      if(Math.abs(y-lastY)>2)tookOver.current=true;
       angle.current+=(y-lastY)/14;lastY=y;schedule();
     };
     addEventListener('scroll',onScroll,{passive:true});
