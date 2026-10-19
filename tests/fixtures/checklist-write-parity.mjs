@@ -10,13 +10,15 @@ function add(input) {
     templateType: "closing", itemMinRoleLevel: 3, itemActive: true,
     itemMatchesTemplate: true, reportReferenceType: null,
     refTrackItemCompletion: false, referencesTemplateItemId: null, ...input };
-  const level = PARITY_ROLES[c.role];
+  const knownRole = Object.hasOwn(PARITY_ROLES, c.role);
+  const level = knownRole ? PARITY_ROLES[c.role] : 0;
   const valid = c.sessionState === "valid";
   const member = valid && c.active && c.member;
   const open = member && c.status === "open";
   CHECKLIST_PARITY_CASES.push({ ...c, id: `parity-${CHECKLIST_PARITY_CASES.length}`, level,
-    expected: { completion: open && level >= c.itemMinRoleLevel,
-      submission: open, confirm: open && level >= 3,
+    expected: { completion: knownRole && open && level >= c.itemMinRoleLevel,
+      liveCompletion: open && level >= c.itemMinRoleLevel,
+      submission: knownRole && open, confirm: open && level >= 3,
       instanceCreate: member && level >= (["opening", "prep"].includes(c.templateType) ? 4 : 3),
       // The old submission/reason policy did not even reference role/active.
       liveSubmission: valid,
@@ -35,8 +37,14 @@ for (const role of Object.keys(PARITY_ROLES)) {
           refTrackItemCompletion: tracked, referencesTemplateItemId: tracked ? "reference" : null });
 }
 
+// Exercise every integer floor for every role, including the live helper's
+// unknown-role fallback (0), which the verified app actor deliberately refuses.
+for (const role of [...Object.keys(PARITY_ROLES), "unknown_role"])
+  for (let itemMinRoleLevel = 0; itemMinRoleLevel <= 11; itemMinRoleLevel++)
+    add({ role, itemMinRoleLevel });
+
 export function actorForParityCase(c) {
-  return c.sessionState !== "valid" ? null : {
+  return c.sessionState !== "valid" || !Object.hasOwn(PARITY_ROLES, c.role) ? null : {
     userId: "actor", level: c.level, active: c.active,
     locations: c.member ? ["location"] : [],
   };

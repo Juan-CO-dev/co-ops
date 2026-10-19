@@ -240,6 +240,11 @@ export function PinConfirmModal({
             onError(body);
             return;
 
+          case "completion_set_changed":
+            triggerError(t("closing.error.completion_set_changed"));
+            onError(body);
+            return;
+
           case "missing_reasons":
           case "extra_reasons":
             triggerError(t("auth.pin_modal.error_reload"));

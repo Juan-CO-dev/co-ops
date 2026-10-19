@@ -208,7 +208,8 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
   if (err instanceof ChecklistFinalizeGateError) {
     return jsonError(403, err.code, { message: err.message, reason: err.reason });
   }
-  if (err.code === "concurrent_modification") {
+  if (["concurrent_modification", "completion_set_changed", "completion_cardinality",
+    "submission_cardinality", "instance_cardinality", "reason_cardinality"].includes(err.code)) {
     return jsonError(409, err.code, { message: err.message });
   }
   // Generic ChecklistError with an in-band code (empty_batch,

@@ -4,10 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { checklistActor } from "./helpers/checklist-actor";
 
 const mocks = vi.hoisted(() => ({ reader: {} as SupabaseClient, writer: {} as SupabaseClient,
-  rpc: vi.fn(), insert: vi.fn(), pin: vi.fn(), after: vi.fn(), access: vi.fn() }));
+  rpc: vi.fn(), insert: vi.fn(), pin: vi.fn(), after: vi.fn(), access: vi.fn(), audit: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ createAuthedClient: () => mocks.reader, getServiceRoleClient: () => mocks.writer }));
 vi.mock("@/lib/auth", () => ({ verifyPin: mocks.pin }));
-vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
+vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: mocks.access, auditTaskOverride: vi.fn() }));
 vi.mock("@/lib/session", () => ({ SESSION_COOKIE_NAME: "co_session", requireSession: async () => ({
   user: { id: "actor" }, session: { id: "session", userId: "actor" }, role: "owner", level: 9, locations: ["spoof-shop"],
@@ -33,7 +33,7 @@ let exists: boolean;
 let insertResult: unknown;
 let rpcError: string | null;
 const actor = checklistActor();
-const completionArgs = { instanceId: "instance", templateItemId: "item", actor };
+const completionArgs = { instanceId: "instance", templateItemId: "00000000-0000-4000-8000-000000000001", actor };
 const confirmArgs = { instanceId: "instance", actor, pin: "1234", incompleteReasons: [] };
 
 // Distinct clients: any authenticated mutation throws immediately. The service
@@ -49,7 +49,7 @@ function client(service: boolean): SupabaseClient {
           : table === "user_locations" ? memberships
           : table === "checklist_instances" ? exists || inserting ? instance : null
           : table === "checklist_templates" ? template
-          : table === "checklist_template_items" ? single ? items.find(row => row.id === (filters.id ?? "item")) : items
+          : table === "checklist_template_items" ? single ? items.find(row => row.id === (filters.id ?? "00000000-0000-4000-8000-000000000001")) : items
           : table === "checklist_completions" ? filters.superseded_by ? [] : completions : [];
         if (inserting && insertResult !== undefined) data = insertResult;
         return { data, error: null };
@@ -75,19 +75,19 @@ beforeEach(() => {
   vi.clearAllMocks(); exists = true; insertResult = undefined; rpcError = null;
   instance = { id: "instance", template_id: "template", location_id: "shop", date: "2026-10-19", status: "open" };
   template = { id: "template", type: "closing", single_submission_only: false, submission_gate_predicate: null };
-  items = [{ id: "item", template_id: "template", active: true, min_role_level: 3, required: true,
+  items = [{ id: "00000000-0000-4000-8000-000000000001", template_id: "template", active: true, min_role_level: 3, required: true,
     label: "Task", station: null, hard_gate: false, report_reference_type: null, expects_count: false,
     expects_photo: false, input_type: null }];
-  completions = [{ id: "completion", instance_id: "instance", template_item_id: "item", completed_by: "actor" }];
+  completions = [{ id: "completion", instance_id: "instance", template_item_id: "00000000-0000-4000-8000-000000000001", completed_by: "actor" }];
   user = { id: "actor", role: "key_holder", active: true, pin_hash: "test-hash" };
   session = { id: "session", user_id: "actor", revoked_at: null, expires_at: new Date(Date.now() + 60000).toISOString() };
   memberships = [{ location_id: "shop" }];
   mocks.pin.mockResolvedValue(true); mocks.access.mockResolvedValue(true);
   mocks.reader = client(false); mocks.writer = client(true);
   mocks.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
-    if (rpcError) return { data: null, error: { message: rpcError } };
+    if (rpcError) return { data: null, error: { message: rpcError, code: rpcError === "22P02" ? "22P02" : "P0001" } };
     if (instance.status !== "open") return { data: null, error: { message: "instance_not_open" } };
-    if (name === "checklist_write_completion") return { data: { ...completions[0], id: "new", completed_at: new Date().toISOString() }, error: null };
+    if (name === "checklist_write_completion") return { data: { completion: { ...completions[0], id: "new", completed_at: new Date().toISOString() }, superseded_ids: [], kept_completed_at: false }, error: null };
     const submission = { id: "submission", instance_id: "instance", submitted_by: args.p_actor,
       completion_ids: args.p_completion_ids ?? [], is_final_confirmation: name === "checklist_confirm_instance" };
     if (name === "checklist_submit_batch") return { data: submission, error: null };
@@ -101,7 +101,7 @@ beforeEach(() => {
 });
 
 const endpoints = [
-  ["completions", complete, { instanceId: "instance", templateItemId: "item" }, "checklist_write_completion"],
+  ["completions", complete, { instanceId: "instance", templateItemId: "00000000-0000-4000-8000-000000000001" }, "checklist_write_completion"],
   ["submissions", submit, { instanceId: "instance", completionIds: ["completion"] }, "checklist_submit_batch"],
   ["confirm", confirm, { instanceId: "instance", pin: "1234", incompleteReasons: [] }, "checklist_confirm_instance"],
   ["instances", create, { templateId: "template", locationId: "shop", date: "2026-10-19" }, null],
@@ -120,10 +120,11 @@ describe("verified route authority and separate read/write clients", () => {
     if (rpc) expect(mocks.rpc).toHaveBeenCalledWith(rpc, expect.objectContaining({ p_actor: "actor" }));
     else expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({ triggered_by_user_id: "actor" }));
   });
-  for (const state of ["revoked", "expired", "inactive", "foreign", "global-reader"] as const) {
+  for (const state of ["revoked", "expired", "mismatch", "inactive", "foreign", "global-reader"] as const) {
     it.each(endpoints)(`%s refuses ${state} before mutation`, async (name, post, body) => {
       if (state === "revoked") session.revoked_at = new Date().toISOString();
       if (state === "expired") session.expires_at = new Date(Date.now() - 1).toISOString();
+      if (state === "mismatch") session.user_id = "other";
       if (state === "inactive") user.active = false;
       if (state === "foreign" || state === "global-reader") memberships = [];
       if (state === "global-reader") user.role = "moo";
@@ -162,8 +163,8 @@ describe("application gates and RPC outcome mapping", () => {
   });
   it.each(["missing", "extra", "duplicate", "blank"])("validates exact reasons before PIN/RPC: %s", async kind => {
     completions = [];
-    const good = { templateItemId: "item", reason: "supplies missing" };
-    const reasons = kind === "missing" ? [] : kind === "extra" ? [good, { ...good, templateItemId: "foreign" }]
+    const good = { templateItemId: "00000000-0000-4000-8000-000000000001", reason: "supplies missing" };
+    const reasons = kind === "missing" ? [] : kind === "extra" ? [good, { ...good, templateItemId: "00000000-0000-4000-8000-000000000002" }]
       : kind === "duplicate" ? [good, good] : [{ ...good, reason: "  " }];
     await expect(confirmInstance(mocks.reader, { ...confirmArgs, incompleteReasons: reasons })).rejects.toMatchObject({
       code: kind === "missing" ? "missing_reasons" : kind === "blank" ? "blank_reason" : "extra_reasons",
@@ -172,22 +173,44 @@ describe("application gates and RPC outcome mapping", () => {
   });
   it.each([false, true])("status agrees with SQL, incomplete=%s; exact live snapshot passed", async incomplete => {
     if (incomplete) completions = [];
-    const reasons = incomplete ? [{ templateItemId: "item", reason: "supplies missing" }] : [];
+    const reasons = incomplete ? [{ templateItemId: "00000000-0000-4000-8000-000000000001", reason: "supplies missing" }] : [];
     const result = await confirmInstance(mocks.reader, { ...confirmArgs, incompleteReasons: reasons });
     expect(result.status).toBe(incomplete ? "incomplete_confirmed" : "confirmed");
     expect(mocks.rpc).toHaveBeenCalledWith("checklist_confirm_instance", expect.objectContaining({
       p_expected_completion_ids: incomplete ? [] : ["completion"], p_reasons: reasons,
     }));
   });
-  it.each(["completion_set_changed", "instance_not_open", "not_authorized", "item_mismatch", "invalid_reasons",
+  it.each(["completion_set_changed", "instance_not_open", "not_authorized", "item_mismatch", "invalid_reasons", "invalid_payload", "22P02",
     "completion_cardinality", "submission_cardinality", "instance_cardinality", "reason_cardinality"])("maps SQL %s", async error => {
     rpcError = error;
     const response = await confirm(request("confirm", endpoints[2][2]));
-    const status = error.endsWith("cardinality") ? 500 : ["not_authorized", "item_mismatch"].includes(error) ? 403
+    const status = error.endsWith("cardinality") ? 409 : ["not_authorized", "item_mismatch"].includes(error) ? 403
       : ["completion_set_changed", "instance_not_open"].includes(error) ? 409 : 400;
     expect(response.status).toBe(status);
-    if (status === 409) expect(await response.json()).toMatchObject({ code: "concurrent_modification" });
+    const body = await response.json();
+    if (status === 409) expect(body).toMatchObject({ code: error === "instance_not_open" ? "concurrent_modification" : error });
+    if (error === "completion_set_changed") expect(body.error).toBe("The list changed \u2014 review it again");
     expect(mocks.after).not.toHaveBeenCalled();
+  });
+  it("rejects non-UUID reason ids before PIN/RPC", async () => {
+    const response = await confirm(request("confirm", { ...confirmArgs, incompleteReasons: [{ templateItemId: "not-a-uuid", reason: "missing" }] }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "invalid_payload" });
+    expect(mocks.pin).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it.each([[[]], [["old"]], [["old", "older"]]])("audits locked RPC prior heads %j without a history read", async prior => {
+    mocks.rpc.mockResolvedValueOnce({ data: { completion: { ...completions[0], id: "new" },
+      superseded_ids: prior, kept_completed_at: prior.length === 1 }, error: null });
+    const originalFrom = mocks.writer.from.bind(mocks.writer);
+    mocks.writer.from = ((table: string) => {
+      if (table === "checklist_completions") throw new Error("extra history read");
+      return originalFrom(table);
+    }) as typeof mocks.writer.from;
+    await completeItem(mocks.reader, completionArgs);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({
+      superseded_prior_id: prior.length === 1 ? prior[0] : null,
+      superseded_prior_ids: prior, kept_completed_at: prior.length === 1,
+    }) }));
   });
   it("confirm-vs-confirm mocked ordering: one wins, no loser compensation", async () => {
     const results = await Promise.allSettled([confirmInstance(mocks.reader, confirmArgs), confirmInstance(mocks.reader, confirmArgs)]);
@@ -228,8 +251,8 @@ describe("application gates and RPC outcome mapping", () => {
     mocks.rpc.mockResolvedValueOnce({ data, error: null });
     await expect(completeItem(mocks.reader, completionArgs)).rejects.toThrow("invalid cardinality");
   });
-  it("accepts exactly one composite row in PostgREST array representation", async () => {
-    mocks.rpc.mockResolvedValueOnce({ data: [{ ...completions[0], id: "new" }], error: null });
+  it("accepts the JSONB completion and one composite batch row", async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: { completion: { ...completions[0], id: "new" }, superseded_ids: [], kept_completed_at: false }, error: null });
     await expect(completeItem(mocks.reader, completionArgs)).resolves.toMatchObject({ completion: { id: "new" } });
     mocks.rpc.mockResolvedValueOnce({ data: [{ id: "batch", completion_ids: ["completion"] }], error: null });
     await expect(submitBatch(mocks.reader, { instanceId: "instance", actor, completionIds: ["completion"] }))

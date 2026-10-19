@@ -611,8 +611,9 @@ function requireChecklistRpcRow<T extends { id: string }>(data: unknown, kind: s
 }
 
 async function throwChecklistWriteError(
-  reader: SupabaseClient, error: { message: string }, instanceId: string, actor: ChecklistWriteActor,
+  reader: SupabaseClient, error: { message: string; code?: string }, instanceId: string, actor: ChecklistWriteActor,
 ): Promise<never> {
+  if (error.code === "22P02") throw new ChecklistError("Invalid checklist write payload.", "invalid_payload");
   switch (error.message) {
     case "instance_not_open": {
       const { data: current, error: readError } = await reader.from("checklist_instances")
@@ -625,7 +626,12 @@ async function throwChecklistWriteError(
     case "not_authorized":
       throw new ChecklistRoleViolationError(3, actor.level, "Writing is not permitted for this instance");
     case "completion_set_changed":
-      throw new ChecklistError("The checklist changed. Re-check and try again.", "concurrent_modification");
+      throw new ChecklistError("The list changed — review it again", "completion_set_changed");
+    case "completion_cardinality":
+    case "submission_cardinality":
+    case "instance_cardinality":
+    case "reason_cardinality":
+      throw new ChecklistError("The list changed — review it again", error.message);
     case "item_mismatch":
       throw new ChecklistRoleViolationError(3, actor.level, "Item does not belong to this checklist");
     case "invalid_reasons":
@@ -636,7 +642,6 @@ async function throwChecklistWriteError(
     case "completion_wrong_instance":
     case "completion_wrong_author":
       throw new ChecklistError(error.message, error.message);
-    // Cardinality failures are server invariant failures, not caller mistakes.
     default: throw new Error(`checklist RPC failed: ${error.message}`);
   }
 }
@@ -1006,14 +1011,18 @@ export async function completeItem(
     p_count_value: args.countValue ?? null, p_photo_id: args.photoId ?? null, p_notes: args.notes ?? null,
   });
   if (error) await throwChecklistWriteError(authed, error, instanceId, actor);
-  const inserted = requireChecklistRpcRow<CompletionRow>(data, "completion");
+  const result = data as { completion?: unknown; superseded_ids?: unknown; kept_completed_at?: unknown } | null;
+  const inserted = requireChecklistRpcRow<CompletionRow>(result?.completion, "completion");
+  if (!Array.isArray(result?.superseded_ids) || !result.superseded_ids.every(id => typeof id === "string") ||
+      typeof result.kept_completed_at !== "boolean") {
+    throw new Error("checklist RPC completion returned invalid audit metadata");
+  }
   const newId = inserted.id;
-  // Read committed history for audit only; no app-side supersession/compensation.
-  const { data: priorRows, error: priorError } = await sb.from("checklist_completions")
-    .select("id, completed_at").eq("superseded_by", newId);
-  const prior = priorRows?.length === 1 ? priorRows[0] : null;
-  const priorId = prior?.id ?? null;
-  const keptCompletedAt = prior ? Date.parse(prior.completed_at) === Date.parse(inserted.completed_at) : false;
+  // SQL carries time only for exactly one prior head; unlike the former app's
+  // superseded[0] rule, multiple prior heads cannot select an arbitrary timestamp.
+  const priorIds = result.superseded_ids as string[];
+  const priorId = priorIds.length === 1 ? priorIds[0] : null;
+  const keptCompletedAt = result.kept_completed_at;
 
   await audit({
     actorId: actor.userId,
@@ -1025,8 +1034,7 @@ export async function completeItem(
       instance_id: instanceId,
       template_item_id: templateItemId,
       superseded_prior_id: priorId,
-      superseded_prior_ids: priorRows?.map((row) => row.id) ?? [],
-      prior_audit_read_failed: !!priorError,
+      superseded_prior_ids: priorIds,
       had_count: args.countValue !== undefined && args.countValue !== null,
       had_photo: args.photoId !== undefined && args.photoId !== null,
       kept_completed_at: keptCompletedAt,
@@ -1204,6 +1212,10 @@ export async function confirmInstance(
   templateType: string;
 }> {
   const { instanceId, actor, pin, incompleteReasons } = args;
+  if (incompleteReasons.some(reason => typeof reason.templateItemId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reason.templateItemId))) {
+    throw new ChecklistError("Invalid checklist write payload.", "invalid_payload");
+  }
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);

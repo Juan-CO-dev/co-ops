@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { CHECKLIST_PARITY_CASES } from '../tests/fixtures/checklist-write-parity.mjs';
 
-const sql = readFileSync('supabase/migrations/0276_checklist_guarded_writers.sql', 'utf8');
+const sql = readFileSync('supabase/migrations/0276_checklist_guarded_writers.sql', 'utf8').replace(/\r\n/g, '\n');
 const read = name => readFileSync(`supabase/migrations/${name}`, 'utf8');
 const id = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
 const actor = id(1), other = id(2), location = id(3), template = id(4), item = id(5), instance = id(6), completion = id(7), session = id(8);
@@ -26,6 +26,9 @@ async function setup(migration = sql) {
       grant usage on schema public to anon, authenticated, service_role;
       -- Simulate Supabase explicit defaults, not merely PostgreSQL's PUBLIC grant.
       alter default privileges grant execute on functions to anon, authenticated;
+      create table audit_log(actor_id uuid,actor_role text,action text,resource_table text,resource_id uuid,destructive boolean,metadata jsonb);
+      create table written_reports(id uuid primary key,submitted_by uuid,submitted_at timestamptz,
+        title text,body text,category text,visibility_min_level integer,last_edited_at timestamptz,edit_count integer default 0);
       create table users(id uuid primary key, role text not null, active boolean not null);
       create table user_locations(user_id uuid references users, location_id uuid, active boolean default true);
       create table sessions(id uuid primary key,user_id uuid references users,revoked_at timestamptz,expires_at timestamptz);
@@ -132,7 +135,7 @@ async function parity(db) {
       `insert into checklist_instances(template_id,location_id) values('${template}','${location}')`,
       `update checklist_instances set confirmed_at=now() where id='${instance}'`,
     ])).rows[0];
-    for (const [key, expected] of Object.entries({completion:c.expected.completion,submission:c.expected.liveSubmission,reason:c.expected.liveSubmission,instance_create:c.expected.instanceCreate,instance_update:c.expected.liveInstanceUpdate})) {
+    for (const [key, expected] of Object.entries({completion:c.expected.liveCompletion,submission:c.expected.liveSubmission,reason:c.expected.liveSubmission,instance_create:c.expected.instanceCreate,instance_update:c.expected.liveInstanceUpdate})) {
       check((live[key] === 'allowed') === expected, `${c.id} LIVE ${key}: ${live[key]}`);
       if (!expected) check(live[key].startsWith('42501:'), `${c.id} LIVE refusal must be RLS`);
     }
@@ -146,15 +149,23 @@ async function parity(db) {
       if (!c.expected[key]) check(/P0001:(not_authorized|instance_not_open)/.test(results[key]), `${c.id} named authorization refusal: ${results[key]}`);
     }
   }
+  check(CHECKLIST_PARITY_CASES.filter(c => c.sessionState !== 'valid').length === 720,
+    '720 null-actor cases retained; session resolver coverage lives in checklist-write-actor.test.ts');
+  console.log('0276 session coverage: 720 null-actor cases only; revoked/expired/mismatch/inactive verified by actor resolver tests');
   console.log(`0276 parity: ${CHECKLIST_PARITY_CASES.length} shared cases, real RLS inserts and guarded RPCs; two R7 hole closures explicit`);
 }
 
 async function lockContract(db) {
-  const rows = (await db.query(`select proname,prosrc from pg_proc where proname in
+  const rows = (await db.query(`select proname,pg_get_functiondef(oid) as definition from pg_proc where proname in
     ('checklist_write_completion','checklist_submit_batch','checklist_confirm_instance')`)).rows;
   check(rows.length === 3, 'three guarded writers');
-  for (const row of rows) check(/select \* into v_instance from public.checklist_instances where id = p_instance for update;/i.test(row.prosrc),
-    `0276: parent lock missing: ${row.proname}`);
+  for (const row of rows) {
+    const body = row.definition.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').split(/\bbegin\b/i)[1];
+    // Require the very first executable statement to acquire the parent lock.
+    // This rejects a status/head read or helper invocation before the lock.
+    check(/^\s*select \* into v_instance from public\.checklist_instances where id = p_instance for update;/i.test(body),
+      `0276: parent lock missing or not first data access: ${row.proname}`);
+  }
 }
 
 async function behavior(db) {
@@ -202,16 +213,34 @@ async function behavior(db) {
     ['count changed', 'update checklist_completions set count_value=1', false],
     ['photo changed', `insert into report_photos values('${id(99)}'); update checklist_completions set photo_id='${id(99)}'`, false],
     ['first tick', 'truncate checklist_completions cascade', false],
+    // Deliberate SQL tightening from the old app's superseded[0] carry behavior.
+    ['two prior phase heads', `insert into checklist_completions(instance_id,template_item_id,completed_by,completed_at,prep_data)
+      values('${instance}','${item}','${actor}',now()-interval '2 hours','{"phase2":true}')`, false],
   ]) {
     await db.exec('begin');
     try {
       const original = (await db.query(`select completed_at from checklist_completions where id='${completion}'`)).rows[0].completed_at;
       if (change) await db.exec(change);
-      await db.query(calls.completion);
+      const result = (await db.query(calls.completion + ' as result')).rows[0].result;
+      check(result.kept_completed_at === expectedCarry, `B8 ${name} returned carry decision`);
+      const expectedPriorCount = name === 'first tick' ? 0 : name === 'two prior phase heads' ? 2 : 1;
+      check(result.superseded_ids.length === expectedPriorCount, `B8 ${name} returned superseded ids`);
+      check(result.completion.id, `B8 ${name} returned completion`);
       const current = (await db.query('select completed_at from checklist_completions where superseded_at is null')).rows[0].completed_at;
       check((String(current) === String(original)) === expectedCarry, `B8 ${name} timestamp`);
     } finally { await db.exec('rollback'); }
   }
+  // A reason surviving an earlier app write/retry is reused, preserving attribution.
+  await db.exec('begin');
+  try {
+    await db.exec(`insert into checklist_incomplete_reasons(id,instance_id,template_item_id,reason,reported_by)
+      values('${id(50)}','${instance}','${item}','original reason','${actor}')`);
+    const result = (await db.query(withReason + ' as result')).rows[0].result;
+    check(result.reasons.length === 1 && result.reasons[0].id === id(50)
+      && result.reasons[0].reason === 'original reason', 'confirmation reuses existing reason');
+    check((await db.query('select count(*)::integer n from checklist_incomplete_reasons')).rows[0].n === 1,
+      'retry does not duplicate reason');
+  } finally { await db.exec('rollback'); }
   // Real committed in-memory replacement preserves note timestamp and points history at winner.
   const before = (await db.query('select completed_at from checklist_completions where id=$1',[completion])).rows[0].completed_at;
   await db.query(calls.completion);
@@ -219,11 +248,43 @@ async function behavior(db) {
   check(heads.length === 1 && String(heads[0].completed_at) === String(before), 'notes-only timestamp retained');
   check((await db.query('select superseded_by from checklist_completions where id=$1',[completion])).rows[0].superseded_by===heads[0].id, 'supersession linked');
   check(await attempt(db,calls.confirm)==='P0001:completion_set_changed','replace-before-confirm rejects old app snapshot');
-  await db.query(calls.confirm.replace(completion,heads[0].id));
+  const confirmed = (await db.query(calls.confirm.replace(completion,heads[0].id)
+    .replace('now()', "'2000-01-01'::timestamptz") + ' as result')).rows[0].result;
+  const stored = (await db.query(`select confirmed_at from checklist_instances where id='${instance}'`)).rows[0].confirmed_at;
+  check(new Date(confirmed.instance.confirmed_at).getTime() === new Date(stored).getTime(), 'confirmation returns stored timestamp');
+  check(new Date(stored).getFullYear() > 2000, 'SQL ignores forged caller confirmation clock');
   const frozen = JSON.stringify((await db.query('select * from checklist_completions order by id')).rows);
   for (const [key, statement] of Object.entries(calls)) check(await attempt(db,statement)==='P0001:instance_not_open',`closed ${key} refuses`);
   check(JSON.stringify((await db.query('select * from checklist_completions order by id')).rows)===frozen,'attested completion set unchanged');
   check((await db.query('select count(*)::integer n from checklist_submissions where is_final_confirmation')).rows[0].n===1,'exactly one final attestation');
+  await db.exec('reset role');
+}
+
+async function writtenReports(db) {
+  const report = id(80);
+  await db.exec(`insert into written_reports(id,submitted_by,submitted_at) values('${report}','${actor}',now())`);
+  const edit = `select public.written_report_update_self('${actor}','${report}','title','body','general',3) as n`;
+  for (const role of ['anon', 'authenticated']) {
+    await db.exec(`set role ${role}`);
+    let code;
+    try { await db.query(edit); } catch (e) { code = e.code; }
+    check(code === '42501', `${role} written report RPC refused`);
+    await db.exec('reset role');
+  }
+  for (const [age, expected] of [['3 hours -1 microsecond', 1], ['3 hours', 0], ['3 hours 1 microsecond', 0]]) {
+    await db.exec('begin');
+    try {
+      await db.exec(`update written_reports set submitted_at=now()-interval '${age}'; set local role service_role`);
+      check((await db.query(edit)).rows[0].n === expected, `written report boundary ${age}`);
+    } finally { await db.exec('rollback'); }
+  }
+  await db.exec('set role service_role');
+  check((await db.query(edit.replace(quote(actor), quote(other)))).rows[0].n === 0, 'non-author written report edit refused');
+  check((await db.query(edit.replace(quote(report), quote(id(99))))).rows[0].n === 0, 'missing written report returns zero');
+  const results = await Promise.all([db.query(edit), db.query(edit)]);
+  check(results.every(r => r.rows[0].n === 1), 'both queued report edits succeed');
+  check((await db.query(`select edit_count from written_reports where id='${report}'`)).rows[0].edit_count === 2,
+    'SQL increments retain both queued edits (single backend; not a multi-connection proof)');
   await db.exec('reset role');
 }
 
@@ -242,14 +303,14 @@ async function mutations() {
   // Remove each writer's lock/check separately. Lock mutation is STRUCTURAL only:
   // PGlite cannot execute two connections; the sim script proves actual blocking.
   for (let index=0; index<3; index++) {
-    for (const kind of ['lock','open']) {
-      const target = kind==='lock' ? ' for update;' : "if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;";
+    for (const kind of ['lock','read-before-lock','open']) {
+      const target = kind==='read-before-lock' ? 'select * into v_instance from public.checklist_instances where id = p_instance for update;' : kind==='lock' ? ' for update;' : "if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;";
       let seen=0;
-      const changed=sql.replaceAll(target,match=>seen++===index?(kind==='lock'?';':''):match);
+      const changed=sql.replaceAll(target,match=>seen++===index?(kind==='read-before-lock' ? 'perform status from public.checklist_instances where id = p_instance;\n  '+match : kind==='lock'?';':''):match);
       check(changed!==sql, `${kind} mutation applied`);
       const db=await setup(changed);
       try {
-        if(kind==='lock') {
+        if(kind==='lock' || kind==='read-before-lock') {
           let rejected=false;
           try { await lockContract(db); } catch(e) { rejected=e.message.includes('parent lock missing'); }
           check(rejected,`lock ${index} mutation detected`);
@@ -273,6 +334,7 @@ try {
   await lockContract(db);
   await parity(db);
   await behavior(db);
+  await writtenReports(db);
   await db.close(); db=undefined;
   await mutations();
   console.log(`PASS 0276: ${checks} checks; two-connection sim proof NOT RUN`);

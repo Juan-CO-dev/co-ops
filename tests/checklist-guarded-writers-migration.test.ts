@@ -11,9 +11,9 @@ describe("0276 guarded checklist writers (file only)", () => {
     expect(statements).not.toMatch(/\bdelete\s+from\b|\b(?:alter|drop)\s+(?:table|policy)\b/i);
     expect(statements).not.toMatch(/\b(?:grant|revoke)\b[^;]*\bon\s+(?:table\s+)?public\.checklist_instances/i);
     expect([...statements.matchAll(/create function public\.([a-z_]+)/g)].map(m => m[1])).toEqual([
-      "checklist_actor_level", "checklist_write_completion", "checklist_submit_batch", "checklist_confirm_instance",
+      "checklist_actor_level", "checklist_write_completion", "checklist_submit_batch", "checklist_confirm_instance", "written_report_update_self",
     ]);
-    expect(statements.match(/security invoker/gi)).toHaveLength(4);
+    expect(statements.match(/security invoker/gi)).toHaveLength(5);
   });
 
   it("reuses the existing role map and binds prevalidated completion identity", () => {
@@ -27,10 +27,10 @@ describe("0276 guarded checklist writers (file only)", () => {
     const output = execFileSync(process.execPath, ["scripts/sql-harness-0276.mjs"], {
       encoding: "utf8", timeout: 300_000,
     });
-    expect(output).toContain("3300 shared cases");
+    expect(output).toContain("3492 shared cases");
     expect(output).toContain("mutation authenticated EXECUTE: rejected");
     expect(output).toContain("mutation anon EXECUTE: rejected");
-    for (const writer of [1, 2, 3]) for (const kind of ["lock", "open"]) {
+    for (const writer of [1, 2, 3]) for (const kind of ["lock", "read-before-lock", "open"]) {
       expect(output).toContain(`mutation ${kind} writer ${writer}: rejected`);
     }
     expect(output).toContain("PASS 0276:");

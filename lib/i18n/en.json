@@ -2360,6 +2360,7 @@
   "closing.error.invalid_picker_candidate": "That person can't be tagged here.",
   "closing.error.tag_hierarchy_violation": "Can't override a more senior tag.",
   "closing.error.revocation_note_required": "Add a note first.",
+  "closing.error.completion_set_changed": "The list changed — review it again",
   "closing.error.concurrent_modification": "Just modified by someone else — try again.",
   "closing.error.use_quick_revoke": "Use Undo instead.",
   "closing.error.completion_not_found": "This item was just modified — refresh.",

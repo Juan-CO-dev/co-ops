@@ -168,7 +168,8 @@ export async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(() => {
+  main().catch((e) => {
+    if (e?.name === "AssertionError" || e?.code === "P0001") console.error(e.message);
     // Do not print connection errors: drivers may embed credential-bearing URLs.
     console.error("FAIL 0276 concurrency proof (fixture, connection, or invariant failure); no credentials logged");
     process.exitCode = 1;

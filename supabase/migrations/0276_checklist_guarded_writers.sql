@@ -6,6 +6,9 @@
 -- lock-up/cash/hard gates and exact required-reason validation remain in the app.
 -- Actor UUID is trusted ONLY from the verified server session, never request JSON.
 -- SQL independently checks current active status, plain membership and role.
+-- SECURITY INVOKER: only service_role may call these functions. They depend on
+-- service_role retaining table DML; a future service-role ceiling must account
+-- for these writers rather than assuming SECURITY DEFINER elevates them.
 begin;
 
 -- Reuse 0228's role map, not assignment_user_level (that helper has owner bypass
@@ -26,7 +29,7 @@ end $$;
 create function public.checklist_write_completion(
   p_actor uuid, p_instance uuid, p_template_item uuid,
   p_count_value numeric default null, p_photo_id uuid default null, p_notes text default null
-) returns public.checklist_completions
+) returns jsonb
 language plpgsql security invoker set search_path = pg_catalog, public as $$
 declare
   v_instance public.checklist_instances%rowtype;
@@ -82,7 +85,8 @@ begin
     where id = any(v_ids) and superseded_at = v_at and superseded_by is null;
   get diagnostics v_n = row_count;
   if v_n <> v_expected then raise exception 'completion_cardinality'; end if;
-  return v_new;
+  return jsonb_build_object('completion', to_jsonb(v_new), 'superseded_ids', to_jsonb(v_ids),
+    'kept_completed_at', v_completed_at is not null);
 end $$;
 
 create function public.checklist_submit_batch(p_actor uuid, p_instance uuid, p_completion_ids uuid[])
@@ -124,7 +128,8 @@ begin
   if not found then raise exception 'instance_not_found'; end if;
   if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;
   if public.checklist_actor_level(p_actor, v_instance.location_id) < 3 then raise exception 'not_authorized'; end if;
-  if p_confirmed_at is null or jsonb_typeof(p_reasons) is distinct from 'array'
+  -- p_confirmed_at is retained for call compatibility but intentionally ignored.
+  if jsonb_typeof(p_reasons) is distinct from 'array'
     or p_expected_completion_ids is null or array_position(p_expected_completion_ids, null) is not null then
     raise exception 'invalid_payload';
   end if;
@@ -148,16 +153,22 @@ begin
     end if;
   end loop;
   update public.checklist_instances set status = case when v_count > 0 then 'incomplete_confirmed' else 'confirmed' end,
-    confirmed_at = p_confirmed_at, confirmed_by = p_actor
+    confirmed_at = clock_timestamp(), confirmed_by = p_actor
     where id = p_instance and status = 'open' returning * into strict v_instance;
   get diagnostics v_n = row_count;
   if v_n <> 1 then raise exception 'instance_cardinality'; end if;
   for v_reason in select value from jsonb_array_elements(p_reasons) loop
-    insert into public.checklist_incomplete_reasons(instance_id, template_item_id, reason, reported_by)
-      values (p_instance, (v_reason->>'templateItemId')::uuid, v_reason->>'reason', p_actor)
-      returning * into strict v_row;
-    get diagnostics v_n = row_count;
-    if v_n <> 1 then raise exception 'reason_cardinality'; end if;
+    -- Reuse a reason saved by an earlier attempt, matching the former app path.
+    select * into v_row from public.checklist_incomplete_reasons
+      where instance_id = p_instance and template_item_id = (v_reason->>'templateItemId')::uuid
+        and reported_by = p_actor order by reported_at, id limit 1;
+    if not found then
+      insert into public.checklist_incomplete_reasons(instance_id, template_item_id, reason, reported_by)
+        values (p_instance, (v_reason->>'templateItemId')::uuid, v_reason->>'reason', p_actor)
+        returning * into strict v_row;
+      get diagnostics v_n = row_count;
+      if v_n <> 1 then raise exception 'reason_cardinality'; end if;
+    end if;
     v_reasons := v_reasons || jsonb_build_array(to_jsonb(v_row));
   end loop;
   insert into public.checklist_submissions(instance_id, submitted_by, completion_ids, is_final_confirmation)
@@ -166,6 +177,26 @@ begin
   if v_n <> 1 then raise exception 'submission_cardinality'; end if;
   return jsonb_build_object('instance', to_jsonb(v_instance), 'reasons', v_reasons, 'submission', to_jsonb(v_submission));
 end $$;
+
+-- PostgREST value filters cannot express now()-3h. Keep the predicate and the
+-- counter increment in ONE UPDATE; row locking makes concurrent increments safe.
+-- p_actor comes only from the verified server actor, as with checklist writers.
+create function public.written_report_update_self(
+  p_actor uuid, p_id uuid, p_title text, p_body text, p_category text, p_visibility_min_level integer
+) returns integer language plpgsql security invoker set search_path = pg_catalog, public as $$
+declare v_n integer;
+begin
+  update public.written_reports set title = p_title, body = p_body, category = p_category,
+    visibility_min_level = p_visibility_min_level, last_edited_at = clock_timestamp(),
+    edit_count = coalesce(edit_count, 0) + 1
+    where id = p_id and submitted_by = p_actor and submitted_at > now() - interval '3 hours';
+  get diagnostics v_n = row_count;
+  if v_n not in (0, 1) then raise exception 'report_cardinality'; end if;
+  return v_n;
+end $$;
+
+revoke all on function public.written_report_update_self(uuid,uuid,text,text,text,integer) from public, anon, authenticated;
+grant execute on function public.written_report_update_self(uuid,uuid,text,text,text,integer) to service_role;
 
 revoke all on function public.checklist_actor_level(uuid,uuid),
   public.checklist_write_completion(uuid,uuid,uuid,numeric,uuid,text),
@@ -179,7 +210,11 @@ grant execute on function public.checklist_actor_level(uuid,uuid),
 do $$
 declare f regprocedure;
 begin
+  if not has_function_privilege('service_role', 'public.assignment_author_level(uuid)', 'EXECUTE') then
+    raise exception '0276: service_role cannot execute assignment_author_level';
+  end if;
   foreach f in array array[
+    'public.written_report_update_self(uuid,uuid,text,text,text,integer)'::regprocedure,
     'public.checklist_actor_level(uuid,uuid)'::regprocedure,
     'public.checklist_write_completion(uuid,uuid,uuid,numeric,uuid,text)'::regprocedure,
     'public.checklist_submit_batch(uuid,uuid,uuid[])'::regprocedure,
@@ -195,4 +230,9 @@ begin
     end if;
   end loop;
 end $$;
+INSERT INTO public.audit_log (actor_id, actor_role, action, resource_table, resource_id, destructive, metadata)
+VALUES (NULL, NULL, 'security.grants_change', 'checklist_instances', NULL, true,
+  jsonb_build_object('actor_context', 'migration_apply', 'migration', '0276_checklist_guarded_writers',
+    'change', 'service-only guarded checklist writers and atomic written-report self-edit',
+    'scope', 'replacement + confirm through 0276; existing revoke/tag/reference writers excluded'));
 commit;

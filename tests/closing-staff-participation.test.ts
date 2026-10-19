@@ -28,7 +28,7 @@ function client(type = "closing", reference: string | null = null, floor = 4) {
   };
   return { from, rpc: async (_name: string, payload: unknown) => {
     mocks.insert(payload);
-    return { data: { id: "completion", instance_id: "instance", template_item_id: "item", completed_by: "trainee" }, error: null };
+    return { data: { completion: { id: "completion", instance_id: "instance", template_item_id: "item", completed_by: "trainee" }, superseded_ids: [], kept_completed_at: false }, error: null };
   } } as unknown as SupabaseClient;
 }
 const actor = checklistActor({ userId: "trainee", role: "trainee", level: 2 });

@@ -2360,6 +2360,7 @@
   "closing.error.invalid_picker_candidate": "Esa persona no puede ser asignada aquí.",
   "closing.error.tag_hierarchy_violation": "No puedes sobrescribir una asignación de más rango.",
   "closing.error.revocation_note_required": "Agrega una nota primero.",
+  "closing.error.completion_set_changed": "La lista cambió — revísala de nuevo",
   "closing.error.concurrent_modification": "Lo modificó otra persona — intenta de nuevo.",
   "closing.error.use_quick_revoke": "Usa Deshacer.",
   "closing.error.completion_not_found": "Este ítem cambió — recarga.",

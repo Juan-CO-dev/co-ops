@@ -1,5 +1,15 @@
 # Lockdown step 2 - five-table manifest (R7 chunk 1)
 
+## Chunk-3 amendment (2026-10-19, supersedes historical descriptions below)
+
+Base `59f2d8bf`, branch `feat/lockdown-step2`. Written-report POST/PATCH now resolve the verified actor with `resolveChecklistWriteActor`; the library owns service writes. Create binds author/role exclusively to that actor, requires active level >=3 and null-or-member location. Update calls service-only `written_report_update_self` in **0276**, with author + strict `submitted_at > now()-interval '3 hours'` and `edit_count = coalesce(edit_count,0)+1` in the same SQL UPDATE; exactly one row succeeds, zero preserves `window_closed`. Read clients/callers remain unchanged (existing list/detail loaders already use service with app gates; no read cutover).
+
+Completion now returns `{completion, superseded_ids, kept_completed_at}`; audit consumes it without another read. Exactly one eligible prior head may carry its timestamp; two heads do not (accepted difference from the old app's `superseded[0]`). Confirmation reuses an existing `(instance, template_item, reported_by)` reason; `p_confirmed_at` is compatibility-only and ignored in favor of `clock_timestamp()`, returned from the stored instance. The migration asserts service-role EXECUTE on `assignment_author_level(uuid)` and records `security.grants_change` with `actor_context=migration_apply`. SECURITY INVOKER depends on service_role retaining table DML; any future service-role ceiling must account for all five functions.
+
+**Follow-up ticket / PR disclosure:** `revokeCompletion`, `revokeWithReason`, `markNotDoneByAuthority`, `tagActualCompleter`, `replaceLiveClosingRefCompletion` (`lib/prep.ts`), and the prep single-submission lock race remain existing service-role paths outside 0276 serialization. Release claim remains **replacement + confirm through 0276**, not a universal freeze guarantee. Scope and assertion ledger: `2026-10-19-lockdown-step2-chunk3-result.md`.
+
+No 0277 authored; no migration applied. **Before any apply: two-connection sim proof must PASS and P2 findings must be closed.** Offline PGlite is not that proof. Unknown-role parity explicitly records the legacy helper's level-0 fallback versus the new actor/SQL refusal; the original 720 null-actor cases are not session coverage. Real revoked/expired/mismatched/inactive actor resolution is covered separately by behavioral tests.
+
 Baseline: `34a3624a`, `feat/lockdown-step2`, 2026-10-19. Source inspection only; no database, credentials, environment files, or operator scripts were used. This inventories existing readers/writers before the chunk-2 cutover. R7 allocates 0276 to guarded writers and 0277 to lockdown. Neither migration is applied by this task.
 
 ## Authority and limits
