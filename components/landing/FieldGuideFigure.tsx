@@ -3,7 +3,7 @@ import {useEffect,useRef,useState} from 'react';
 import {TexturePhoto} from './CraveScene';
 import {fieldGuideAnchors} from '@/lib/landing/crave-motion-shared';
 import {leaderPath} from '@/lib/landing/field-guide-shared';
-import {prefersCalm} from '@/lib/landing/motion-policy-shared';
+import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
 
 type AnchorId=(typeof fieldGuideAnchors)[number]['id'];
 interface Pickup {src:string;width:number;height:number}
@@ -46,7 +46,9 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
     };
     const observer=new IntersectionObserver(entries=>{if(!started&&entries.some(entry=>entry.isIntersecting)){started=true;observer.disconnect();run(0);}},{threshold:.45});
     observer.observe(frame);
-    return ()=>{resize.disconnect();observer.disconnect();clearTimeout(timer);};
+    // Turning on reduced motion or Save-Data mid-visit switches to the complete static view.
+    const unsubscribe=subscribeCalm(calm=>{if(!calm)return;started=true;observer.disconnect();clearTimeout(timer);setActive(-1);setCollected(fieldGuideAnchors.length);setMode('static');});
+    return ()=>{resize.disconnect();observer.disconnect();clearTimeout(timer);unsubscribe();};
   },[]);
   const total=fieldGuideAnchors.length;
   return <div ref={root} className="landing-v3-guide" data-guide-mode={mode}>

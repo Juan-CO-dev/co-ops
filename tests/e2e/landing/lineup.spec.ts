@@ -193,3 +193,16 @@ test('Save-Data keeps the Field Guide static with every line shown', async ({pag
   await expect(guide.locator('[data-line][data-state="shown"]')).toHaveCount(6);
   await expect(page.locator('.landing-v2')).toHaveAttribute('data-calm','true');
 });
+
+test('turning on reduced motion mid-visit switches the Field Guide and roster to static', async ({page}) => {
+  await page.goto('/');
+  const guide = page.locator('.landing-v3-guide');
+  await guide.scrollIntoViewIfNeeded();
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await expect(guide).toHaveAttribute('data-guide-mode','static');
+  await expect(guide.locator('[data-line][data-state="shown"]')).toHaveCount(6);
+  await expect(page.locator('.landing-v3-select')).toHaveAttribute('data-calm','true');
+  await expect(page.locator('.landing-v3-auto')).toHaveAttribute('aria-pressed','false');
+  await expect(page.locator('.landing-v2')).toHaveAttribute('data-calm','true');
+});

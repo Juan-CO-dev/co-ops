@@ -4,7 +4,7 @@ import {LineupPhoto} from './LineupPhoto';
 import {OrderLink} from './OrderLink';
 import {SpinCanvas} from './SpinCanvas';
 import {nextFighter,AUTO_ADVANCE_MS} from '@/lib/landing/fighter-select-shared';
-import {prefersCalm} from '@/lib/landing/motion-policy-shared';
+import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
 
 export interface Fighter {id:string;name:string;image:string;smallImage:string;width:number;height:number;ingredients:string;photoAlt:string}
 export interface FighterShop {key:string;name:string;address?:string;orderUrl:string;orderLabel:string}
@@ -32,6 +32,7 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
   useEffect(()=>{
     setEnhanced(true);
     if(prefersCalm()){setCalm(true);setAuto(false);}
+    return subscribeCalm(calm=>{setCalm(calm);if(calm)setAuto(false);});
   },[]);
   // Auto-advance only while running, in view, visible and motion is allowed.
   useEffect(()=>{

@@ -199,7 +199,12 @@ test('native navigation during held lookup delivers exactly one unattributed ser
    expect(received.filter(item=>item.path==='/api/landing/order-click')).toEqual([{path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}}]);
    expect(meta).toEqual([]);
    release();await page.waitForTimeout(1100);
-   expect(received.length).toBeLessThanOrEqual(2);if(!firstBeaconOnly)expect(received).toHaveLength(2);expect(meta).toEqual([]);
+   // Re-check after the wait: still exactly one counter, and any (optional) CAPI event is the valid one.
+   expect(received.filter(item=>item.path==='/api/landing/order-click')).toEqual([{path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}}]);
+   const capi=received.filter(item=>item.path==='/api/landing/events');
+   expect(capi.length).toBe(firstBeaconOnly?Math.min(capi.length,1):1);
+   for(const item of capi)expect(item).toEqual({path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})});
+   expect(received).toHaveLength(1+capi.length);expect(meta).toEqual([]);
  } finally {
    release();relay.closeAllConnections();await new Promise<void>((resolve,reject)=>relay.close(error=>error?reject(error):resolve()));
  }

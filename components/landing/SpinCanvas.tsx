@@ -1,6 +1,7 @@
 "use client";
 import {useEffect,useRef,useState,type KeyboardEvent,type PointerEvent} from 'react';
 import {spinFrameAt,spinLoadOrder,wrapAngle} from '@/lib/landing/spin-shared';
+import {subscribeCalm} from '@/lib/landing/motion-policy-shared';
 
 interface Props {frames:readonly string[];width:number;height:number;label:string;stillLabel:string;valueText:(degrees:number)=>string}
 
@@ -67,15 +68,18 @@ export function SpinCanvas({frames,width,height,label,stillLabel,valueText}:Prop
     near.observe(element);
     const inView=new IntersectionObserver(entries=>{visible=entries.some(entry=>entry.isIntersecting);lastY=scrollY;if(visible)runIntro();},{threshold:.35});
     inView.observe(element);
+    // Reduced motion / Save-Data switched on mid-visit: stop the intro and scroll coupling.
+    let calm=false;
+    const unsubscribeCalm=subscribeCalm(next=>{calm=next;if(next){tookOver.current=true;cancelAnimationFrame(intro);}});
     const onScroll=()=>{
-      const y=scrollY;if(!visible){lastY=y;return;}
+      const y=scrollY;if(!visible||calm){lastY=y;return;}
       // A real scroll during the arrival spin hands control to the visitor (no snap-back).
       if(Math.abs(y-lastY)>2)tookOver.current=true;
       angle.current+=(y-lastY)/14;lastY=y;schedule();
     };
     addEventListener('scroll',onScroll,{passive:true});
     const resize=new ResizeObserver(schedule);resize.observe(surface);
-    return ()=>{disposed=true;redraw.current=()=>{};cancelAnimationFrame(frame.current);cancelAnimationFrame(intro);near.disconnect();inView.disconnect();resize.disconnect();removeEventListener('scroll',onScroll);};
+    return ()=>{disposed=true;unsubscribeCalm();redraw.current=()=>{};cancelAnimationFrame(frame.current);cancelAnimationFrame(intro);near.disconnect();inView.disconnect();resize.disconnect();removeEventListener('scroll',onScroll);};
   },[frames]);
   const nudge=(next:number)=>{tookOver.current=true;angle.current=next;redraw.current();};
   const onPointerDown=(event:PointerEvent<HTMLDivElement>)=>{if(!interactive)return;tookOver.current=true;drag.current={x:event.clientX,angle:angle.current};event.currentTarget.setPointerCapture(event.pointerId);};
