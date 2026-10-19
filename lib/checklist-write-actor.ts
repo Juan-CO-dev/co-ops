@@ -16,9 +16,10 @@ export class ChecklistActorNotAuthorizedError extends Error {
 }
 
 /** Call only with requireSession/requireSessionFromHeaders' verified context.
- * No body attribution or JWT authorization claims are accepted. R2 membership
- * means ALL user_locations rows, without an active filter or global override.
- * AuthContext.locations is unsuitable: it filters active and can fall back to JWT.
+ * No body attribution or JWT authorization claims are accepted. R8 membership
+ * means active user_locations rows, without a global override. This preserves
+ * the app's stronger rule than the live RLS helper's unfiltered membership.
+ * Read fresh membership rather than allowing AuthContext's JWT fallback.
  * These reads fail closed; SQL repeats user/membership checks under parent lock.
  */
 export async function resolveChecklistWriteActor(auth: AuthContext): Promise<ChecklistWriteActor> {
@@ -27,7 +28,7 @@ export async function resolveChecklistWriteActor(auth: AuthContext): Promise<Che
     db.from("sessions").select("id,user_id,revoked_at,expires_at")
       .eq("id", auth.session.id).maybeSingle(),
     db.from("users").select("id,role,active").eq("id", auth.user.id).maybeSingle(),
-    db.from("user_locations").select("location_id").eq("user_id", auth.user.id),
+    db.from("user_locations").select("location_id").eq("user_id", auth.user.id).eq("active", true),
   ]);
   const session = sessionResult.data;
   const user = userResult.data;

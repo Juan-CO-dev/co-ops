@@ -11,7 +11,7 @@ describe("R7 shared authorization case table", () => {
       expect(getRoleLevel(role as RoleCode), role).toBe(level);
     }
   });
-  it("preserves policy OR, member-only writes and the two documented hole closures", () => {
+  it("preserves policy OR and the three intentional tightenings: submission, confirm and active membership", () => {
     for (const c of CHECKLIST_PARITY_CASES) {
       const actor = actorForParityCase(c);
       const target = contextForParityCase(c);
@@ -23,8 +23,16 @@ describe("R7 shared authorization case table", () => {
         expect(c.expected.submission).toBe(false); // closure only, never a new allowance
       }
       if (c.expected.confirm !== c.expected.liveInstanceUpdate) {
-        expect(c.status).not.toBe("open"); // no arbitrary status/column updates
+        expect(c.status !== "open" || !c.membershipActive).toBe(true);
         expect(c.expected.confirm).toBe(false);
+      }
+      if (c.expected.completion !== c.expected.liveCompletion && c.role !== "unknown_role") {
+        expect(c.membershipActive).toBe(false);
+        expect(c.expected.completion).toBe(false);
+      }
+      if (c.expected.instanceCreate !== c.expected.liveInstanceCreate) {
+        expect(c.membershipActive).toBe(false);
+        expect(c.expected.instanceCreate).toBe(false);
       }
     }
   });

@@ -28,11 +28,11 @@ describe("session-derived checklist actor", () => {
       return query;
     });
   });
-  it("uses fresh role and plain membership, never JWT/fallback authority", async () => {
+  it("uses fresh role and active membership, never JWT/fallback authority", async () => {
     const actor = await resolveChecklistWriteActor(auth);
     expect(actor).toMatchObject({ userId: "user", level: 3, active: true, locations: ["fresh-location"] });
     expect(filters).toEqual([["sessions", "id", "session"], ["users", "id", "user"],
-      ["user_locations", "user_id", "user"]]);
+      ["user_locations", "user_id", "user"], ["user_locations", "active", true]]);
     expect(Object.isFrozen(actor.locations)).toBe(true);
   });
   it.each(["revoked", "expired", "mismatch", "inactive", "unknown-role", "membership-error"])(

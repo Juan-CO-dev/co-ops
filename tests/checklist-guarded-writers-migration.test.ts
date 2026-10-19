@@ -27,10 +27,10 @@ describe("0276 guarded checklist writers (file only)", () => {
     const output = execFileSync(process.execPath, ["scripts/sql-harness-0276.mjs"], {
       encoding: "utf8", timeout: 300_000,
     });
-    expect(output).toContain("3492 shared cases");
+    expect(output).toContain("4392 shared cases");
     expect(output).toContain("mutation authenticated EXECUTE: rejected");
     expect(output).toContain("mutation anon EXECUTE: rejected");
-    for (const writer of [1, 2, 3]) for (const kind of ["lock", "read-before-lock", "open"]) {
+    for (const writer of [1, 2, 3]) for (const kind of ["lock", "read-before-lock", "declare-call", "declare-query", "open"]) {
       expect(output).toContain(`mutation ${kind} writer ${writer}: rejected`);
     }
     expect(output).toContain("PASS 0276:");

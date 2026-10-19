@@ -28,7 +28,7 @@ let items: Record<string, unknown>[];
 let completions: Record<string, unknown>[];
 let user: Record<string, unknown>;
 let session: Record<string, unknown>;
-let memberships: { location_id: string }[];
+let memberships: { location_id: string; active: boolean }[];
 let exists: boolean;
 let insertResult: unknown;
 let rpcError: string | null;
@@ -46,7 +46,7 @@ function client(service: boolean): SupabaseClient {
       const filters: Record<string, unknown> = {};
       const result = (single: boolean) => {
         let data: unknown = table === "sessions" ? session : table === "users" ? user
-          : table === "user_locations" ? memberships
+          : table === "user_locations" ? memberships.filter(row => filters.active === undefined || row.active === filters.active)
           : table === "checklist_instances" ? exists || inserting ? instance : null
           : table === "checklist_templates" ? template
           : table === "checklist_template_items" ? single ? items.find(row => row.id === (filters.id ?? "00000000-0000-4000-8000-000000000001")) : items
@@ -81,7 +81,7 @@ beforeEach(() => {
   completions = [{ id: "completion", instance_id: "instance", template_item_id: "00000000-0000-4000-8000-000000000001", completed_by: "actor" }];
   user = { id: "actor", role: "key_holder", active: true, pin_hash: "test-hash" };
   session = { id: "session", user_id: "actor", revoked_at: null, expires_at: new Date(Date.now() + 60000).toISOString() };
-  memberships = [{ location_id: "shop" }];
+  memberships = [{ location_id: "shop", active: true }];
   mocks.pin.mockResolvedValue(true); mocks.access.mockResolvedValue(true);
   mocks.reader = client(false); mocks.writer = client(true);
   mocks.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
@@ -120,12 +120,13 @@ describe("verified route authority and separate read/write clients", () => {
     if (rpc) expect(mocks.rpc).toHaveBeenCalledWith(rpc, expect.objectContaining({ p_actor: "actor" }));
     else expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({ triggered_by_user_id: "actor" }));
   });
-  for (const state of ["revoked", "expired", "mismatch", "inactive", "foreign", "global-reader"] as const) {
+  for (const state of ["revoked", "expired", "mismatch", "inactive", "inactive-membership", "foreign", "global-reader"] as const) {
     it.each(endpoints)(`%s refuses ${state} before mutation`, async (name, post, body) => {
       if (state === "revoked") session.revoked_at = new Date().toISOString();
       if (state === "expired") session.expires_at = new Date(Date.now() - 1).toISOString();
       if (state === "mismatch") session.user_id = "other";
       if (state === "inactive") user.active = false;
+      if (state === "inactive-membership") memberships = [{ location_id: "shop", active: false }];
       if (state === "foreign" || state === "global-reader") memberships = [];
       if (state === "global-reader") user.role = "moo";
       if (name === "instances") exists = false; // Assert creation refusal, not broader READ authority.

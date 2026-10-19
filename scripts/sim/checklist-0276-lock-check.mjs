@@ -5,15 +5,19 @@
  * OPEN checklist instances dated 2099 or later with the same template/item.
  * Each fixture must already have a live completion of that item and no final
  * submission. Actor must be active, a shop member and eligible to confirm.
+ * Also prepare a disposable written report by this actor within the last two
+ * hours, with a title starting "SIM 0276 concurrency proof" and readable by
+ * the actor's current level and active shop memberships.
  *
  * Set SIM_DATABASE_URL explicitly in the process environment (never loads .env).
  * With `pg` installed:
  * node scripts/sim/checklist-0276-lock-check.mjs --actor=<uuid> --item=<uuid> 
- *   --replace-first=<uuid> --confirm-first=<uuid> --confirm-race=<uuid>
+ *   --replace-first=<uuid> --confirm-first=<uuid> --confirm-race=<uuid> --report=<uuid>
  *
  * THIS SCRIPT WRITES/COMMITS TO THE SIM when explicitly run. It leaves all three
  * fixture instances confirmed, including replacement history and final
  * submissions. It never deletes, resets, or silently reuses existing history.
+ * The report receives two committed edits; its edit_count must start at zero.
  * A failed run may leave partial committed history: use fresh fixtures to retry.
  * Two writer connections use SET LOCAL ROLE service_role; a third read-only
  * observer verifies the second writer is blocked by the first backend (not a
@@ -29,6 +33,8 @@ const WRITE = `select public.checklist_write_completion(
   $1::uuid, $2::uuid, $3::uuid, null::numeric, null::uuid, 'SIM 0276 concurrency proof') as result`;
 const CONFIRM = `select public.checklist_confirm_instance(
   $1::uuid, $2::uuid, clock_timestamp(), '[]'::jsonb, $3::uuid[]) as result`;
+const EDIT = `select public.written_report_update_self(
+  $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::integer) as result`;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const race = (client, sql, params) => client.query(sql, params).then(
   (value) => ({ ok: true, value }),
@@ -43,17 +49,17 @@ const refused = (result, name) => {
 export async function main() {
   const target = simDatabaseTarget(process.env.SIM_DATABASE_URL);
   if (!target.ok) throw new Error(target.reason);
-  const names = ["actor", "item", "replace-first", "confirm-first", "confirm-race"];
+  const names = ["actor", "item", "replace-first", "confirm-first", "confirm-race", "report"];
   const args = {};
   for (const arg of process.argv.slice(2)) {
     const match = /^--([^=]+)=(.*)$/.exec(arg);
     if (!match || !names.includes(match[1]) || args[match[1]] || !UUID.test(match[2])) {
-      throw new Error("Require exactly --actor, --item, --replace-first, --confirm-first, --confirm-race UUID arguments");
+      throw new Error("Require exactly --actor, --item, --replace-first, --confirm-first, --confirm-race, --report UUID arguments");
     }
     args[match[1]] = match[2].toLowerCase();
   }
   if (names.some((key) => !args[key])) throw new Error("Missing required fixture UUID argument");
-  const fixtureIds = names.slice(2).map((key) => args[key]);
+  const fixtureIds = names.slice(2, 5).map((key) => args[key]);
   assert.equal(new Set(fixtureIds).size, 3, "three distinct fixture instances required");
   const { default: pg } = await import("pg");
   const clients = Array.from({ length: 3 }, () => new pg.Client(target.config));
@@ -92,6 +98,22 @@ export async function main() {
       }
       assert.fail("B never blocked on A: shared parent serialization is absent");
     };
+    const reportRows = (await observer.query(`select title, body, category,
+      visibility_min_level, coalesce(edit_count, 0) as edit_count
+      from public.written_reports where id = $1 and submitted_by = $2
+      and submitted_at > now() - interval '2 hours' and submitted_at <= now()
+      and title like 'SIM 0276 concurrency proof%'
+      and coalesce(edit_count, 0) = 0`, [args.report, args.actor])).rows;
+    assert.equal(reportRows.length, 1, "report fixture must be tagged, fresh, unedited and authored by actor");
+    const report = reportRows[0];
+    const editParams = (title) => [args.actor, args.report, title, report.body,
+      report.category, report.visibility_min_level];
+    // The actual UPDATE predicate also validates current visibility/location
+    // eligibility. A rollback probe refuses unsuitable fixtures before commits.
+    await begin(a);
+    assert.equal((await a.query(EDIT, editParams(report.title))).rows[0]?.result, 1,
+      "report fixture must pass live self-edit authorization");
+    await a.query("rollback");
     // Validate ALL fixtures before the first commit. Probe both function paths
     // in rolled-back transactions, catching unsuitable actors/items up front.
     for (const id of fixtureIds) {
@@ -159,11 +181,29 @@ export async function main() {
     await b.query("rollback");
     await attested(third, doubleHeads);
     console.log("PASS concurrent confirmations: exactly one winner and final submission");
+
+    // Both self-edits queue on the same report row. The waiter must increment
+    // the committed predecessor's count, rather than overwrite a stale count.
+    await begin(a);
+    assert.equal((await a.query(EDIT, editParams("SIM 0276 concurrency proof edit A"))).rows[0]?.result, 1);
+    await begin(b);
+    const queuedEdit = race(b, EDIT, editParams("SIM 0276 concurrency proof edit B"));
+    await proveBlocked();
+    await a.query("commit");
+    const edited = await queuedEdit;
+    assert.equal(edited.ok, true, "queued report edit must succeed after predecessor commits");
+    assert.equal(edited.value.rows[0]?.result, 1, "queued report edit updates exactly one row");
+    await b.query("commit");
+    const finalReport = (await observer.query(`select title, edit_count from public.written_reports
+      where id = $1`, [args.report])).rows[0];
+    assert.equal(finalReport?.edit_count, report.edit_count + 2, "both queued report increments must land");
+    assert.equal(finalReport?.title, "SIM 0276 concurrency proof edit B", "queued edit's payload must land");
+    console.log("PASS queued written report edits: both increments and final payload retained");
   } finally {
     // Release A before B: B may still be waiting if a check failed mid-race.
     for (const client of connected) await client.query("rollback").catch(() => {});
     for (const client of connected) await client.end().catch(() => {});
-    console.log(`SIM fixture history retained: ${fixtureIds.join(", ")}`);
+    console.log("SIM fixture history retained: three checklist instances and one written report");
   }
 }
 

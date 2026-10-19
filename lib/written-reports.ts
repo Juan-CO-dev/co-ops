@@ -12,7 +12,8 @@
  *   READ   : level >= visibility_min_level
  *            AND (location_id IS NULL OR location_id ∈ my locations OR level >= 8)
  *   INSERT : submitted_by = me AND level >= 3
- *   UPDATE : submitted_by = me AND submitted_at > now() - 3h   (self-edit window)
+ *   UPDATE : author + strict 3h window + active actor + current visibility/location
+ *            (0276 SQL predicate; location membership must be active under R8)
  *   DELETE : false (append-only — never)
  *
  * The pure surface (categories, limits, draft validation) lives in
@@ -350,8 +351,9 @@ export interface UpdateWrittenReportArgs {
 }
 
 /**
- * The service-only RPC evaluates author + strict 3h window in the UPDATE and
- * increments edit_count atomically. Zero rows retains the existing denial.
+ * The service-only RPC evaluates author, strict 3h window and current read-policy
+ * visibility/location in the UPDATE and increments edit_count atomically.
+ * Zero rows retains the existing denial, including demotion or shop removal.
  */
 export async function updateWrittenReport(
   args: UpdateWrittenReportArgs,

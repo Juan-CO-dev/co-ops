@@ -16,6 +16,8 @@ Astra's counterexample is accepted: under a service-role cutover a completion re
 5. Every function: exact rowcount/cardinality assertions inside SQL; no DELETE anywhere.
 
 ## Parity (R2 extended)
+**Superseded in part by CC R8 (2026-10-19):** membership in app guards and 0276 means `user_locations.active = true`. The live RLS oracle still includes inactive rows; this is the third intentional tightening, alongside the two hole closures below. The shared fixture now carries membership-row existence and membership active status independently. See the chunk-5 result for implementation and verification.
+
 One case table (role × membership × active × parent status × template type × item floor/active/report-ref) run against: (a) the LIVE RLS predicates (from the rulings dump) in PGlite, (b) the 0276 functions' actor checks, (c) the app guard. (a) ≡ (b) ≡ (c) except the two documented hole closures (submissions/reasons require member + open-or-own-confirm parent; instance status changes only through the confirm function).
 
 ## Concurrency proof

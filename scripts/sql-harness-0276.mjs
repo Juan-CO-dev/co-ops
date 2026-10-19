@@ -27,7 +27,7 @@ async function setup(migration = sql) {
       -- Simulate Supabase explicit defaults, not merely PostgreSQL's PUBLIC grant.
       alter default privileges grant execute on functions to anon, authenticated;
       create table audit_log(actor_id uuid,actor_role text,action text,resource_table text,resource_id uuid,destructive boolean,metadata jsonb);
-      create table written_reports(id uuid primary key,submitted_by uuid,submitted_at timestamptz,
+      create table written_reports(id uuid primary key,submitted_by uuid,submitted_at timestamptz,location_id uuid,
         title text,body text,category text,visibility_min_level integer,last_edited_at timestamptz,edit_count integer default 0);
       create table users(id uuid primary key, role text not null, active boolean not null);
       create table user_locations(user_id uuid references users, location_id uuid, active boolean default true);
@@ -54,7 +54,7 @@ async function setup(migration = sql) {
       grant select on all tables in schema public to authenticated;
       grant insert,update on checklist_instances,checklist_completions,checklist_submissions,checklist_incomplete_reasons to authenticated;
       insert into users values('${actor}','key_holder',true),('${other}','key_holder',true);
-      insert into user_locations values('${actor}','${location}',false);
+      insert into user_locations values('${actor}','${location}',true);
       insert into sessions values('${session}','${actor}',null,now()+interval '1 day');
       insert into checklist_templates values('${template}','${location}','closing',true);
       insert into checklist_template_items values('${item}','${template}',3,true,null,false,null,null);
@@ -109,7 +109,7 @@ async function fixture(db, c) {
   const validSession = c.sessionState !== 'missing' ? session : id(99);
   await db.exec(`reset role;
     update users set role=${quote(c.role)},active=${c.active} where id='${actor}';
-    update user_locations set location_id='${c.member ? location : id(99)}';
+    update user_locations set location_id='${c.member ? location : id(99)}',active=${c.membershipActive ?? true};
     update sessions set user_id='${c.sessionState === 'mismatch' ? other : actor}',
       revoked_at=${c.sessionState === 'revoked' ? 'now()' : 'null'},
       expires_at=now()+interval '${c.sessionState === 'expired' ? '-1' : '1'} day';
@@ -135,7 +135,7 @@ async function parity(db) {
       `insert into checklist_instances(template_id,location_id) values('${template}','${location}')`,
       `update checklist_instances set confirmed_at=now() where id='${instance}'`,
     ])).rows[0];
-    for (const [key, expected] of Object.entries({completion:c.expected.liveCompletion,submission:c.expected.liveSubmission,reason:c.expected.liveSubmission,instance_create:c.expected.instanceCreate,instance_update:c.expected.liveInstanceUpdate})) {
+    for (const [key, expected] of Object.entries({completion:c.expected.liveCompletion,submission:c.expected.liveSubmission,reason:c.expected.liveSubmission,instance_create:c.expected.liveInstanceCreate,instance_update:c.expected.liveInstanceUpdate})) {
       check((live[key] === 'allowed') === expected, `${c.id} LIVE ${key}: ${live[key]}`);
       if (!expected) check(live[key].startsWith('42501:'), `${c.id} LIVE refusal must be RLS`);
     }
@@ -149,10 +149,10 @@ async function parity(db) {
       if (!c.expected[key]) check(/P0001:(not_authorized|instance_not_open)/.test(results[key]), `${c.id} named authorization refusal: ${results[key]}`);
     }
   }
-  check(CHECKLIST_PARITY_CASES.filter(c => c.sessionState !== 'valid').length === 720,
-    '720 null-actor cases retained; session resolver coverage lives in checklist-write-actor.test.ts');
-  console.log('0276 session coverage: 720 null-actor cases only; revoked/expired/mismatch/inactive verified by actor resolver tests');
-  console.log(`0276 parity: ${CHECKLIST_PARITY_CASES.length} shared cases, real RLS inserts and guarded RPCs; two R7 hole closures explicit`);
+  check(CHECKLIST_PARITY_CASES.filter(c => c.sessionState !== 'valid').length === 1440,
+    '1440 null-actor cases retained; session resolver coverage lives in checklist-write-actor.test.ts');
+  console.log('0276 session coverage: 1440 null-actor cases only; revoked/expired/mismatch/inactive verified by actor resolver tests');
+  console.log(`0276 parity: ${CHECKLIST_PARITY_CASES.length} shared cases, real RLS inserts and guarded RPCs; two R7 hole closures and R8 inactive-membership tightening explicit`);
 }
 
 async function lockContract(db) {
@@ -160,7 +160,15 @@ async function lockContract(db) {
     ('checklist_write_completion','checklist_submit_batch','checklist_confirm_instance')`)).rows;
   check(rows.length === 3, 'three guarded writers');
   for (const row of rows) {
-    const body = row.definition.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').split(/\bbegin\b/i)[1];
+    const clean = row.definition.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const [declarations, body] = clean.split(/\bbegin\b/i);
+    // Only literal defaults are permitted before the parent lock. Reject all
+    // expressions, including functions/subqueries hidden in DECLARE initializers.
+    const declare = declarations.split(/\bdeclare\b/i)[1];
+    check(declare !== undefined && declare.split(';').every(statement => {
+      const initializer = statement.match(/(?::=|\bdefault\b|=)([\s\S]*)/i)?.[1];
+      return initializer === undefined || /^\s*(?:null|true|false|-?\d+(?:\.\d+)?|'(?:[^']|'')*')(?:\s*::\s*[a-z_][a-z_0-9]*(?:\[\])?)?\s*$/i.test(initializer);
+    }), `0276: parent lock missing before DECLARE expression: ${row.proname}`);
     // Require the very first executable statement to acquire the parent lock.
     // This rejects a status/head read or helper invocation before the lock.
     check(/^\s*select \* into v_instance from public\.checklist_instances where id = p_instance for update;/i.test(body),
@@ -187,7 +195,7 @@ async function behavior(db) {
   check((await db.query('select superseded_at from checklist_completions where id=$1',[completion])).rows[0].superseded_at === null, 'failed insert restored prior head transactionally');
   check(await attempt(db, calls.submission.replace(`array['${completion}']::uuid[]`, "'{}'::uuid[]")) === 'P0001:empty_batch', 'empty batch');
   check(await attempt(db, calls.submission.replace(completion, id(999))) === 'P0001:completion_not_found', 'missing completion');
-  await db.exec(`insert into user_locations values('${other}','${location}',false)`);
+  await db.exec(`insert into user_locations values('${other}','${location}',true)`);
   check(await attempt(db, calls.submission.replace(quote(actor), quote(other))) === 'P0001:completion_wrong_author', 'member cannot submit another actor completion');
   await db.exec(`insert into checklist_instances(id,template_id,location_id) values('${id(20)}','${template}','${location}')`);
   check(await attempt(db, calls.submission.replace(quote(instance), quote(id(20)))) === 'P0001:completion_wrong_instance', 'foreign instance completion');
@@ -262,7 +270,7 @@ async function behavior(db) {
 
 async function writtenReports(db) {
   const report = id(80);
-  await db.exec(`insert into written_reports(id,submitted_by,submitted_at) values('${report}','${actor}',now())`);
+  await db.exec(`insert into written_reports(id,submitted_by,submitted_at,visibility_min_level) values('${report}','${actor}',now(),3)`);
   const edit = `select public.written_report_update_self('${actor}','${report}','title','body','general',3) as n`;
   for (const role of ['anon', 'authenticated']) {
     await db.exec(`set role ${role}`);
@@ -276,6 +284,24 @@ async function writtenReports(db) {
     try {
       await db.exec(`update written_reports set submitted_at=now()-interval '${age}'; set local role service_role`);
       check((await db.query(edit)).rows[0].n === expected, `written report boundary ${age}`);
+    } finally { await db.exec('rollback'); }
+  }
+  for (const [name, change, expected] of [
+    ['demoted author', 'update written_reports set visibility_min_level=5', 0],
+    ['active shop member', `update written_reports set location_id='${location}'`, 1],
+    ['removed shop member', `update written_reports set location_id='${location}'; update user_locations set active=false`, 0],
+    ['foreign shop', `update written_reports set location_id='${id(999)}'`, 0],
+    ['level 8 foreign shop', `update written_reports set location_id='${id(999)}'; update users set role='moo' where id='${actor}'`, 1],
+    ['level 8 still needs visibility', `update written_reports set visibility_min_level=9; update users set role='moo' where id='${actor}'`, 0],
+    ['null location without membership', 'update user_locations set active=false', 1],
+    ['inactive author', `update users set active=false where id='${actor}'`, 0],
+  ]) {
+    await db.exec('begin');
+    try {
+      await db.exec(change + '; set local role service_role');
+      check((await db.query(edit)).rows[0].n === expected, `written report ${name}`);
+      check((await db.query(`select edit_count from written_reports where id='${report}'`)).rows[0].edit_count === expected,
+        `written report ${name} counter unchanged on refusal`);
     } finally { await db.exec('rollback'); }
   }
   await db.exec('set role service_role');
@@ -303,14 +329,14 @@ async function mutations() {
   // Remove each writer's lock/check separately. Lock mutation is STRUCTURAL only:
   // PGlite cannot execute two connections; the sim script proves actual blocking.
   for (let index=0; index<3; index++) {
-    for (const kind of ['lock','read-before-lock','open']) {
-      const target = kind==='read-before-lock' ? 'select * into v_instance from public.checklist_instances where id = p_instance for update;' : kind==='lock' ? ' for update;' : "if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;";
+    for (const kind of ['lock','read-before-lock','declare-call','declare-query','open']) {
+      const target = kind.startsWith('declare-') ? 'v_instance public.checklist_instances%rowtype;' : kind==='read-before-lock' ? 'select * into v_instance from public.checklist_instances where id = p_instance for update;' : kind==='lock' ? ' for update;' : "if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;";
       let seen=0;
-      const changed=sql.replaceAll(target,match=>seen++===index?(kind==='read-before-lock' ? 'perform status from public.checklist_instances where id = p_instance;\n  '+match : kind==='lock'?';':''):match);
+      const changed=sql.replaceAll(target,match=>seen++===index?(kind==='declare-call' ? match+' v_probe integer := public.assignment_author_level(p_actor);' : kind==='declare-query' ? match+' v_probe text default (select status from public.checklist_instances where id=p_instance);' : kind==='read-before-lock' ? 'perform status from public.checklist_instances where id = p_instance;\n  '+match : kind==='lock'?';':''):match);
       check(changed!==sql, `${kind} mutation applied`);
       const db=await setup(changed);
       try {
-        if(kind==='lock' || kind==='read-before-lock') {
+        if(kind==='lock' || kind==='read-before-lock' || kind.startsWith('declare-')) {
           let rejected=false;
           try { await lockContract(db); } catch(e) { rejected=e.message.includes('parent lock missing'); }
           check(rejected,`lock ${index} mutation detected`);

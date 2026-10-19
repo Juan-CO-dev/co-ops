@@ -11,11 +11,12 @@ vi.mock("@/lib/session", () => ({ requireSession: async () => ({
 vi.mock("@/lib/supabase-server", () => ({
   createAuthedClient: mocks.authed,
   getServiceRoleClient: () => ({ rpc: mocks.rpc, from(table: string) {
-    const q = { select: () => q, eq: () => q,
+    const filters: Record<string, unknown> = {};
+    const q = { select: () => q, eq: (key: string, value: unknown) => { filters[key] = value; return q; },
       insert: (row: unknown) => { mocks.insert(row); return q; },
       single: async () => ({ data: { id: reportId }, error: null }),
       maybeSingle: async () => ({ data: table === "sessions" ? session : user, error: null }),
-      then: (resolve: (result: unknown) => unknown) => Promise.resolve({ data: [{ location_id: "shop" }], error: null }).then(resolve),
+      then: (resolve: (result: unknown) => unknown) => Promise.resolve({ data: memberships.filter(row => filters.active === undefined || row.active === filters.active), error: null }).then(resolve),
     }; return q;
   } }),
 }));
@@ -26,11 +27,13 @@ import { PATCH } from "@/app/api/written-reports/[id]/route";
 const reportId = "00000000-0000-4000-8000-000000000001";
 const draft = { title: "Report", body: "A useful report", category: "other" as const, visibilityMinLevel: 3 };
 let user: { id: string; role: string; active: boolean };
+let memberships: { location_id: string; active: boolean }[];
 let session: { id: string; user_id: string; revoked_at: string | null; expires_at: string };
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.rpc.mockResolvedValue({ data: 1, error: null });
   user = { id: "actor", role: "employee", active: true };
+  memberships = [{ location_id: "shop", active: true }];
   session = { id: "session", user_id: "actor", revoked_at: null, expires_at: new Date(Date.now() + 60_000).toISOString() };
 });
 function request(method: string, extra: Record<string, unknown> = {}) {
@@ -46,9 +49,10 @@ describe("written report service writes", () => {
     expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({ submitted_by: "actor", submitted_by_role: "employee", location_id: "shop" }));
     expect(mocks.authed).not.toHaveBeenCalled();
   });
-  it.each(["level2", "foreign", "inactive", "revoked", "expired", "mismatch"])("POST refuses %s before insertion", async state => {
+  it.each(["level2", "foreign", "inactive", "inactive-membership", "revoked", "expired", "mismatch"])("POST refuses %s before insertion", async state => {
     if (state === "level2") user.role = "trainee";
     if (state === "inactive") user.active = false;
+    if (state === "inactive-membership") memberships = [{ location_id: "shop", active: false }];
     if (state === "revoked") session.revoked_at = new Date().toISOString();
     if (state === "expired") session.expires_at = new Date(Date.now() - 1).toISOString();
     if (state === "mismatch") session.user_id = "victim";
@@ -81,7 +85,7 @@ describe("written report service writes", () => {
     mocks.rpc.mockResolvedValue({ data: count, error: null });
     await expect(updateWrittenReport({ actor: checklistActor(), id: reportId, draft })).rejects.toThrow("invalid rowcount");
   });
-  it("does not add a create-only level or location gate to self-edit", async () => {
+  it("delegates current self-edit visibility and location checks to SQL", async () => {
     await expect(updateWrittenReport({ actor: checklistActor({ level: 2, role: "trainee", locations: [] }), id: reportId, draft })).resolves.toEqual({ ok: true });
   });
 });

@@ -5,21 +5,21 @@
 -- must be drained before claiming serialization. PIN, assignments, answer validation,
 -- lock-up/cash/hard gates and exact required-reason validation remain in the app.
 -- Actor UUID is trusted ONLY from the verified server session, never request JSON.
--- SQL independently checks current active status, plain membership and role.
+-- SQL independently checks current active status, active membership and role (R8).
 -- SECURITY INVOKER: only service_role may call these functions. They depend on
 -- service_role retaining table DML; a future service-role ceiling must account
 -- for these writers rather than assuming SECURITY DEFINER elevates them.
 begin;
 
 -- Reuse 0228's role map, not assignment_user_level (that helper has owner bypass
--- and active-membership semantics which differ from current_user_locations).
+-- semantics). R8 deliberately tightens current_user_locations' inactive-row gap.
 create function public.checklist_actor_level(p_actor uuid, p_location uuid)
 returns integer language plpgsql security invoker set search_path = pg_catalog, public as $$
 declare v_level integer;
 begin
   perform 1 from public.users where id = p_actor and active for share;
   if not found then raise exception 'not_authorized'; end if;
-  perform 1 from public.user_locations where user_id = p_actor and location_id = p_location for share;
+  perform 1 from public.user_locations where user_id = p_actor and location_id = p_location and active for share;
   if not found then raise exception 'not_authorized'; end if;
   v_level := public.assignment_author_level(p_actor);
   if v_level is null then raise exception 'not_authorized'; end if;
@@ -189,7 +189,12 @@ begin
   update public.written_reports set title = p_title, body = p_body, category = p_category,
     visibility_min_level = p_visibility_min_level, last_edited_at = clock_timestamp(),
     edit_count = coalesce(edit_count, 0) + 1
-    where id = p_id and submitted_by = p_actor and submitted_at > now() - interval '3 hours';
+    where id = p_id and submitted_by = p_actor and submitted_at > now() - interval '3 hours'
+      and exists(select 1 from public.users where id = p_actor and active)
+      and visibility_min_level <= public.assignment_author_level(p_actor)
+      and (location_id is null or public.assignment_author_level(p_actor) >= 8
+        or exists(select 1 from public.user_locations ul
+          where ul.user_id = p_actor and ul.location_id = written_reports.location_id and ul.active));
   get diagnostics v_n = row_count;
   if v_n not in (0, 1) then raise exception 'report_cardinality'; end if;
   return v_n;
