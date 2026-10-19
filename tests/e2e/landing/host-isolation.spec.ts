@@ -15,12 +15,12 @@ for (const method of ['GET','HEAD','POST']) test(`landing refuses every staff/ex
     }
     expect(response.status(), path).toBe(404);
     expect(response.headers()['set-cookie'],path).toBeUndefined();
-    expect(response.headers()['permissions-policy']).toContain('geolocation=()');
+    expect(response.headers()['permissions-policy']).toContain('geolocation=(self)');
   }
 });
 test('canonical redirects use configured origin, not supplied host', async ({ request }) => {
   for (const [path, target] of [['/eat','/'], ['/eat/privacy','/privacy']]) {
-    const response = await request.get(path!, {maxRedirects:0, headers:{host:'eat.example.test','x-forwarded-host':'eat.example.test'}});
+    const response = await request.get(path!, {maxRedirects:0, headers:{host:`localhost:${portBase}`,'x-forwarded-host':`localhost:${portBase}`}});
     expect(response.status()).toBe(301);
     expect(response.headers().location).toBe(`https://localhost:${portBase}${target}`);
   }
@@ -29,25 +29,27 @@ test('all host matrix rows and runtime headers', async ({ request }) => {
   for (const host of [`localhost:${portBase}`,'eat.example.test','preview.example.test']) {
     for (const path of ['/', '/privacy', '/brand/landing-icon.png', '/admin']) {
       const response = await request.get(path,{headers:{host,'x-forwarded-host':host}, maxRedirects:0});
-      expect(response.status()).toBe(path === '/admin' ? 404 : 200);
+      expect(response.status()).toBe(path === '/admin' ? 404 : path.startsWith('/brand/') || host === `localhost:${portBase}` ? 200 : 301);
       const csp = response.headers()['content-security-policy-report-only']!;
       expect(csp.match(/default-src/g)).toHaveLength(1);
       expect(csp).toContain('connect.facebook.net');
       expect(csp).not.toContain('graph.facebook');
-      expect(response.headers()['permissions-policy']).toContain('geolocation=()');
+      expect(response.headers()['permissions-policy']).toContain('geolocation=(self)');
       expect(response.headers()['set-cookie']).toBeUndefined();
       if(path === '/') { expect(response.headers()['cache-control']).toContain('no-store'); expect(response.headers()['cache-control']).toContain('private'); }
     }
   }
   for (const host of [`127.0.0.1:${portBase}`,'unlisted.vercel.app']) {
-    for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click']) {
+    for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click','/api/landing/ad-code']) {
       const response = await request.get(path,{headers:{host,'x-forwarded-host':host}, maxRedirects:0});
       expect(response.status()).toBe(404); expect(response.headers()['content-security-policy-report-only']).not.toContain('facebook');
+      expect(response.headers()['permissions-policy']).toContain('geolocation=()');
     }
   }
   for(const host of [`localhost:${portBase + 1}`,'eat.example.test']) for(const path of ['/eat','/api/landing/events']) {
     const response=await request.get(`http://localhost:${portBase + 1}${path}`,{headers:{host,'x-forwarded-host':host},maxRedirects:0});
     expect(response.status()).toBe(404); expect(response.headers()['content-security-policy-report-only']).not.toContain('facebook');
+    expect(response.headers()['permissions-policy']).toContain('geolocation=()');
   }
 });
 test('invalid or disagreeing hosts leave staff available and landing dormant', async ({ request }) => {
@@ -55,18 +57,24 @@ test('invalid or disagreeing hosts leave staff available and landing dormant', a
     {'x-forwarded-host':'evil.test'},
     {'x-forwarded-host':`localhost:${portBase + 1}`},
     {'x-forwarded-host':'localhost.,evil.test'},
-    {host:'localhost.', 'x-forwarded-host':'localhost.'},
     {host:'user@localhost', 'x-forwarded-host':'user@localhost'},
   ] as Record<string, string>[]) {
     const root = await request.get('/', {headers, maxRedirects:0});
     expect(root.status()).toBe(200);
-    expect(await root.text()).not.toContain('Your next great lunch.');
+    expect(await root.text()).not.toContain('CRUNCH,');
     expect(root.headers()['content-security-policy-report-only']).not.toContain('facebook');
     const admin = await request.get('/admin', {headers, maxRedirects:0});
     expect(admin.status()).toBe(307);
-    for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click']) {
+    for (const path of ['/eat','/eat/privacy','/api/landing/events','/api/landing/order-click','/api/landing/ad-code']) {
       expect((await request.get(path,{headers,maxRedirects:0})).status()).toBe(404);
     }
+  }
+});
+test('rejected listed landing authority never serves staff', async ({request}) => {
+  for(const path of ['/','/admin','/privacy','/api/landing/ad-code']) {
+    const response=await request.get(path,{headers:{host:'localhost.','x-forwarded-host':'localhost.'},maxRedirects:0});
+    expect(response.status()).toBe(404);expect(response.headers()['x-robots-tag']).toBe('noindex, nofollow');
+    expect(await response.text()).not.toContain('Operations Platform');
   }
 });
 test('local optimizer cannot bypass isolation', async ({ request }) => {
@@ -91,11 +99,11 @@ test('HTML and RSC are private and no-store, with distinct content per host',asy
     expect(response.headers()['cache-control']).toContain('no-store');
     expect(response.headers()['cache-control']).toContain('private');
     const landingContent = await response.text();
-    expect(landingContent).toContain('Your next great lunch.');
+    expect(landingContent).toContain('CRUNCH,');
     const staff=await request.get(`http://127.0.0.1:${portBase}`+(rsc?'/?_rsc=fixture':'/'),{headers:rsc?{RSC:'1'}:{}});
     expect(staff.status()).toBe(200);
     const staffContent = await staff.text();
-    expect(staffContent).not.toContain('Your next great lunch.');
+    expect(staffContent).not.toContain('CRUNCH,');
     expect(staffContent).not.toBe(landingContent);
     expect(staff.headers()['content-security-policy-report-only']).not.toContain('facebook');
   }
@@ -149,4 +157,31 @@ test('enabled counter reaches the fixture RPC and fails closed with a dead Supab
   expect(after.capitolHillUnattributed).toBeGreaterThan(before);
   const unavailable = await request.post(`http://localhost:${portBase + 3}/api/landing/order-click`, {headers:{origin:`https://localhost:${portBase + 3}`,cookie:'landing_consent=accepted'},data});
   expect(unavailable.status()).toBe(503);
+});
+
+test('staff robots and HTML policy survive forged landing hints', async ({request}) => {
+  for(const path of ['/','/robots.txt','/sitemap.xml']) {
+    const url=`http://127.0.0.1:${portBase}${path}`;
+    const clean=await request.get(url,{maxRedirects:0});
+    const forged=await request.get(url,{maxRedirects:0,headers:{'x-landing-indexable':'1','x-landing-path':'/privacy'}});
+    expect(forged.status()).toBe(clean.status());
+    for(const key of ['cache-control','x-robots-tag','location','content-security-policy-report-only','permissions-policy']) expect(forged.headers()[key],key).toBe(clean.headers()[key]);
+    expect(forged.headers()['x-robots-tag']).toBeUndefined();
+    if(path==='/') {
+      // The pre-existing static staff login is cacheable; preserve its exact policy.
+      expect(forged.headers()['cache-control']).toBe('s-maxage=31536000');
+      const html=await forged.text(); expect(html).not.toContain('application/ld+json');
+      expect(html).not.toMatch(/name="robots"/);
+    }
+  }
+});
+
+test('ad-code route resolves one active candidate and falls back when registry is unavailable',async({request})=>{
+ const headers={origin:`https://localhost:${portBase}`,cookie:'landing_consent=accepted'};
+ for(const candidate of ['subsim-photo','campaign-new','unknown-code']) {
+  const response=await request.post('/api/landing/ad-code',{headers,data:{candidate}});expect(response.status()).toBe(200);
+  expect(await response.json()).toEqual({ad:candidate==='unknown-code'?'unattributed':candidate});
+ }
+ const response=await request.post(`http://localhost:${portBase+3}/api/landing/ad-code`,{headers:{...headers,origin:`https://localhost:${portBase+3}`},data:{candidate:'campaign-new'}});
+ expect(await response.json()).toEqual({ad:'unattributed'});
 });

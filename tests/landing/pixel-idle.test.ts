@@ -19,3 +19,9 @@ it('waits for load and idle and refuses insertion after withdrawal',()=>{
   transport.grantPixel?.(); idle();
   expect(appendChild).toHaveBeenCalledOnce();
 });
+
+it('posts with unload survival, same-origin credentials and no-store',()=>{
+  const send=vi.fn().mockResolvedValue({});vi.stubGlobal('fetch',send);
+  browserTransport().post('/api/landing/events',{event_id:'original'});
+  expect(send).toHaveBeenCalledExactlyOnceWith('/api/landing/events',expect.objectContaining({method:'POST',credentials:'same-origin',cache:'no-store',keepalive:true,body:'{"event_id":"original"}'}));
+});

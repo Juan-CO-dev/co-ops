@@ -18,7 +18,7 @@ export function LineupPhoto({src,small,width,height,alt}:{src:string;small:strin
     <source type="image/webp" srcSet={`${small} 480w, ${src} 750w`} sizes="280px"/>
     <img src={src} width={width} height={height} sizes="280px" loading="lazy" fetchPriority="low" alt={alt} className="h-auto w-full"/>
   </picture>;
-  return <div ref={ref} style={{aspectRatio:`${width}/${height}`}}>
+  return <div data-landing-photo ref={ref} style={{aspectRatio:`${width}/${height}`}}>
     {visible ? picture : <noscript>{picture}</noscript>}
   </div>;
 }

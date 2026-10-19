@@ -1,11 +1,37 @@
 import {it,expect} from 'vitest';
 import {createRequire} from 'node:module';
 import {checkTransferBudget,TRANSFER_LIMITS} from '../../scripts/check-transfer-budget.mjs';
-import {checkFirstPartyRuns,checkConsentRuns,summarizeRun} from '../../scripts/landing/performance-report.mjs';
+import {checkFirstPartyRuns,checkConsentRuns,summarizeRun,collectionBlocks} from '../../scripts/landing/performance-report.mjs';
 const fixture=(bytes=499999)=>({finalUrl:'http://localhost:44170/',categories:{performance:{score:0.9}},audits:{
   'largest-contentful-paint':{numericValue:2000},'total-blocking-time':{numericValue:150},
   'network-requests':{details:{items:[{url:'http://localhost:44170/a.js',transferSize:bytes},{url:'https://connect.facebook.net/pixel.js',transferSize:116000}]}}
 }});
+it('blocks applied mobile throttling at 2.5 s and keeps every simulated assertion report-only',()=>{
+ const require=createRequire(import.meta.url),path=require.resolve('../../lighthouserc.cjs'),old={...process.env};
+ try {
+  process.env.LANDING_PERF_HARNESS='merge';process.env.LANDING_PERF_BLOCK_PIXEL='1';
+  for(const collection of ['applied-blocking','simulated-report-only']){
+   process.env.LANDING_PERF_COLLECTION=collection;delete require.cache[path];
+   const {collect,assert,upload}=require(path).ci;
+   const simulated=collection==='simulated-report-only';
+   expect(collect.numberOfRuns).toBe(5);
+   expect(collect.settings.throttlingMethod).toBe(simulated?'simulate':'devtools');
+   expect(collect.settings.throttling).toMatchObject({requestLatencyMs:562.5,downloadThroughputKbps:1474.56,uploadThroughputKbps:675,cpuSlowdownMultiplier:4});
+   const level=simulated?'warn':'error';
+   expect(assert.assertions).toEqual({
+    'categories:performance':[level,{minScore:0.85,aggregationMethod:'median'}],
+    'categories:accessibility':[level,{minScore:0.95,aggregationMethod:'median'}],
+    'largest-contentful-paint':[level,{maxNumericValue:2499.999,aggregationMethod:'median'}],
+    'cumulative-layout-shift':[level,{maxNumericValue:0.1,aggregationMethod:'median'}],
+    'total-blocking-time':[level,{maxNumericValue:200,aggregationMethod:'median'}],
+   });
+   expect(upload.outputDir).toBe(`.lighthouseci/reports-${process.env.LANDING_PERF_CONSENT==='accepted'?'accepted':'unset'}-${simulated?'simulated':'applied'}`);
+   expect(collectionBlocks(collection,1,['lcp','performance','first-party-bytes'])).toBe(!simulated);
+   expect(collectionBlocks(collection,null,['incomplete-run'])).toBe(!simulated);
+   expect(collectionBlocks(collection,0,[])).toBe(false);
+  }
+ } finally {process.env=old;delete require.cache[path];}
+});
 it.each(['merge','launch'])('collects exactly five cold runs for %s', harness=>{
   const require=createRequire(import.meta.url);
   const configPath=require.resolve('../../lighthouserc.cjs');

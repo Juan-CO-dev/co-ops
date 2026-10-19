@@ -11,8 +11,9 @@ const DELIVERY_VENDORS: Partial<Record<LandingFooterKey, 'ubereats' | 'doordash'
 
 export function Footer({config,stores,language}:{config:LandingConfig;stores:readonly LandingStore[];language:Language}) {
   const delivery=(key:LandingFooterKey)=>!!DELIVERY_VENDORS[key];
-  const links=[...config.footerLinks].sort((a,b)=>Number(delivery(a.key))-Number(delivery(b.key)));
+  const links=config.footerLinks.filter(link=>link.key !== 'uber-eats').sort((a,b)=>Number(delivery(a.key))-Number(delivery(b.key)));
   return <footer className="mt-6">
+    <div className="landing-v2-orders">{stores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement="footer" className="landing-v2-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>
     <div className="flex flex-wrap gap-x-10 gap-y-4">{stores.filter(store=>store.address).map(store=><address key={store.key} className="not-italic"><span className="font-bold">{store.name}</span><br/>{store.address}</address>)}</div>
     <a href={`/privacy?lang=${language}`} className="mt-4 inline-flex min-h-11 items-center underline">{serverT(language,'landing.privacy.link')}</a>
     {links.length>0 && <nav aria-label={serverT(language,'landing.footer.links')} className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">{links.map(link=>DELIVERY_VENDORS[link.key]

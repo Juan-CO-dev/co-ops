@@ -34,3 +34,8 @@ describe('landing attribution', () => {
     expect(readAttribution({getItem:()=>'{"ad":"subsim-photo","utm":{"fbclid":"forged","ad":"other"}}'}, policy)).toEqual({ ad:'subsim-photo', utm:{} });
   });
 });
+
+it('a new registry-approved code survives capture but an unresolved or retired code cannot',()=>{
+ expect(captureAttribution('?ad=new-campaign',{ads:[]})).toEqual({ad:'unattributed',utm:{}});
+ expect(captureAttribution('?ad=new-campaign',{ads:['new-campaign']})).toEqual({ad:'new-campaign',utm:{}});
+});

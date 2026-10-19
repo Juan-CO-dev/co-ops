@@ -1,0 +1,12 @@
+# Round E — controlled LCP A/B and bounded bisect
+
+Base: `16950ac4`, branch `feat/landing-v2`. CC's supplied Round E dispatch is the reviewed experiment sequence. No checkout, commit, push, merge or deployment.
+
+1. Archive `49a143ab` under `tmp/`, junction its dependencies to the clone, build with the existing Turbopack command, and run unchanged `perf:ci` (five unset + five accepted). Then build and measure unchanged HEAD on the same machine. Explicit Chrome path, no-sandbox flag, cached pinned LHCI; one heavy job at a time.
+2. Restore scroll-triggered `import('./HeroMotion')` in `components/landing/DeferredMotion.tsx`. Keep the SSR poster mounted outside that boundary. Split only ownership of the persistent shell/poster and the lazy playback overlay in `HeroMotion.tsx`; preserve its round C state transitions, refs, gesture retry, decoder watchdog and bailout. Add focused browser coverage for poster identity and delayed chunk loading. Read back changes and inspect the generated chunks.
+3. If the old baseline also has zero fast runs, stop after this candidate, retaining it for CC's CI judgment. Otherwise follow CC's ordered one-change-at-a-time bisect only as evidence warrants. Never change the harness, assertions, throttling, budgets or 2500 ms target.
+4. Verify landing Vitest, TypeScript, assets, changed-file ESLint, production build, full two-worker production landing E2E and all ten performance runs. Append evidence and assertion ledger to RESULT.
+
+References read: both versions of DeferredMotion; current HeroMotion, Hero, SubdexMoment, readiness helper, runtime bailout test, iPhone/SUBDEX browser tests; perf CI, Lighthouse config, server and nearby fixture scripts; Next's installed lazy-loading guide. The four perf harness/config files have no baseline-to-HEAD diff. No blocking contract mismatch found.
+
+Risks: splitting playback can accidentally remount the poster or lose pre-hydration scroll; preserve a stable outer shell and cover both in the browser. A lazy-module failure must leave the still intact. Local scheduling may never reproduce CI fast mode; report all counts without claiming a fix. Scratch builds may have different module hashes because their path is different; record the build mode/root selection. Remove each new dependency junction FIRST (nonrecursive rmdir), verify clone dependencies, then delete the checked scratch directory. All servers must be closed at handoff.

@@ -1,11 +1,12 @@
 import "server-only";
+import { createAdCodeResolver } from "./ad-codes-server";
 import { loadLandingConfig } from "./config";
 import { boundedJson, emptyResponse, guardLandingRequest, type LandingServerEnv } from "./request-server";
 import { landingRateLimit } from "./rate-limit";
 import { parseLandingEvent } from "./tracking-schema-shared";
 
-interface Dependencies { env?: LandingServerEnv; now?: () => number; send?: typeof fetch }
-/** No Supabase import, audit call, event log, customer record, or automatic retry. */
+interface Dependencies { env?: LandingServerEnv; now?: () => number; send?: typeof fetch; resolveAd?: (candidate: unknown) => Promise<string> }
+/** Registry read only; no audit call, event log, customer record, or automatic retry. */
 export async function handleMetaEvent(request: Request, dependencies: Dependencies = {}): Promise<Response> {
   const env = dependencies.env ?? process.env;
   const refused = guardLandingRequest(request, env);
@@ -25,11 +26,12 @@ export async function handleMetaEvent(request: Request, dependencies: Dependenci
   // Current Meta website event contract requires UA. Its use needs approved disclosure.
   // No IP is collected. A real consented fbc/fbp is additionally required for matching.
   if (env.LANDING_META_UA_APPROVED !== "true" || !userAgent || userAgent.length > 512 || (!event.fbc && !event.fbp)) return emptyResponse(204);
+  const ad = await (dependencies.resolveAd ?? createAdCodeResolver())(event.ad).catch(() => "unattributed");
   const data = {
     event_name: event.event_name, event_time: event.event_time, event_id: event.event_id,
     event_source_url: event.source_url, action_source: "website",
     user_data: { client_user_agent: userAgent, ...(event.fbc ? { fbc: event.fbc } : {}), ...(event.fbp ? { fbp: event.fbp } : {}) },
-    custom_data: { ad: event.ad, placement: event.placement, ...(event.store ? { store: event.store } : {}), ...(event.vendor ? { vendor: event.vendor } : {}) },
+    custom_data: { ad: ad === event.ad ? ad : "unattributed", placement: event.placement, ...(event.store ? { store: event.store } : {}), ...(event.vendor ? { vendor: event.vendor } : {}) },
   };
   try {
     const response = await (dependencies.send ?? fetch)(`https://graph.facebook.com/v25.0/${env.META_PIXEL_ID}/events`, {

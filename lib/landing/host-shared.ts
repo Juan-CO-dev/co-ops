@@ -37,12 +37,13 @@ export function classifyLandingHost(headers: Pick<Headers, 'get'>, env: LandingH
 export const LANDING_ASSETS = new Set(inventory.map(asset => asset.path));
 export function isLandingAsset(path: string, _search: URLSearchParams): boolean {
   if (LANDING_ASSETS.has(path)) return true;
-  if (path.startsWith('/_next/static/') && !path.includes('..') && !path.includes('%')) return true;
+  // Turbopack hashes may contain adjacent dots; only dot path segments traverse.
+  if (path.startsWith('/_next/static/') && !path.includes('%') && !path.includes('\\') && !path.split('/').some(segment => segment === '.' || segment === '..')) return true;
   return false;
 }
 export function landingPathDecision(path: string, search: URLSearchParams): 'rewrite' | 'redirect' | 'allow' | 'deny' {
   if (path === '/' || path === '/privacy') return 'rewrite';
   if (path === '/eat' || path === '/eat/privacy') return 'redirect';
-  if (['/api/landing/events', '/api/landing/order-click', '/eat/icon.png', '/eat/apple-icon.png', '/favicon.ico', '/robots.txt', '/sitemap.xml'].includes(path) || isLandingAsset(path, search)) return 'allow';
+  if (['/api/landing/events', '/api/landing/order-click', '/api/landing/ad-code', '/eat/icon.png', '/eat/apple-icon.png', '/favicon.ico', '/robots.txt', '/sitemap.xml'].includes(path) || isLandingAsset(path, search)) return 'allow';
   return 'deny';
 }

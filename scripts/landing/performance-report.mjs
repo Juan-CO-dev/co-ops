@@ -1,4 +1,7 @@
 /** Summarize real LHCI network records; never substitute offline Pixel costs. */
+export function collectionBlocks(collection,code,failures) {
+  return collection!=='simulated-report-only' && (code!==0 || failures.length>0);
+}
 export function summarizeRun(report) {
   const origin=new URL(report.finalDisplayedUrl ?? report.finalUrl ?? report.requestedUrl).origin;
   const requests=report.audits['network-requests']?.details?.items;

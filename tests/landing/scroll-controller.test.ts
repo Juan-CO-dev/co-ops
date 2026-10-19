@@ -1,0 +1,31 @@
+﻿import {afterEach,expect,it,vi} from 'vitest';
+import {observeLandingViewport} from '@/lib/landing/scroll-controller';
+
+afterEach(()=>vi.unstubAllGlobals());
+it('shares one observer and RAF, pauses offscreen/hidden, and tears down the last subscriber',()=>{
+  const events=new EventTarget(),doc=new EventTarget();
+  const documentState=Object.assign(doc,{hidden:false});
+  vi.stubGlobal('document',documentState);vi.stubGlobal('window',events);vi.stubGlobal('innerHeight',667);
+  const motion=Object.assign(new EventTarget(),{matches:true});vi.stubGlobal('matchMedia',()=>motion);
+  let pending:FrameRequestCallback|undefined;
+  const raf=vi.fn((callback:FrameRequestCallback)=>{pending=callback;return 1;});
+  vi.stubGlobal('requestAnimationFrame',raf);vi.stubGlobal('cancelAnimationFrame',()=>{pending=undefined;});
+  const disconnect=vi.fn();let observers=0;
+  vi.stubGlobal('IntersectionObserver',class {constructor(){observers++;}observe(){}unobserve(){}disconnect=disconnect;});
+  vi.stubGlobal('ResizeObserver',class {observe(){}unobserve(){}disconnect(){} });
+  let top=0;
+  const element={getBoundingClientRect:()=>({top,bottom:top+100})} as Element;
+  const motionCallback=vi.fn(),functional=vi.fn();
+  const stopA=observeLandingViewport(element,motionCallback),stopB=observeLandingViewport(element,functional,{offscreen:true});
+  const flush=()=>{const callback=pending;pending=undefined;callback?.(0);};
+  expect(observers).toBe(1);expect(raf).toHaveBeenCalledOnce();flush();
+  expect(motionCallback).toHaveBeenLastCalledWith({active:true,reducedMotion:true});
+  top=-200;events.dispatchEvent(new Event('scroll'));flush();
+  expect(motionCallback).toHaveBeenLastCalledWith({active:false,reducedMotion:true});
+  motionCallback.mockClear();events.dispatchEvent(new Event('scroll'));flush();expect(motionCallback).not.toHaveBeenCalled();
+  expect(functional).toHaveBeenCalledTimes(3);
+  documentState.hidden=true;doc.dispatchEvent(new Event('visibilitychange'));events.dispatchEvent(new Event('scroll'));expect(pending).toBeUndefined();
+  documentState.hidden=false;doc.dispatchEvent(new Event('visibilitychange'));flush();expect(functional).toHaveBeenCalledTimes(4);
+  stopA();expect(disconnect).not.toHaveBeenCalled();stopB();expect(disconnect).toHaveBeenCalledOnce();
+  events.dispatchEvent(new Event('scroll'));expect(pending).toBeUndefined();
+});

@@ -1,0 +1,16 @@
+{
+  "id": "pixel-pickup-chip",
+  "kind": "sprite",
+  "classification": "drawn",
+  "publicPath": "/media/pixel-pickup-chip-0917c51faab2.png",
+  "sourcePath": "pixel-bank:items/pickup-chip-AI-DRAWN.png",
+  "sourceSha256": "0917c51faab2b05f0ca39b71f08560ff8afe02d137e6b4c8a4cad3bc1011678d",
+  "sha256": "0917c51faab2b05f0ca39b71f08560ff8afe02d137e6b4c8a4cad3bc1011678d",
+  "bytes": 1808,
+  "maxBytes": 20000,
+  "width": 37,
+  "height": 32,
+  "sidecar": "assets/provenance/pixel-pickup-chip.json",
+  "command": "node scripts/assets/export-sprites.mjs",
+  "provenance": "DRAWN (AI) pixel sprite; byte-for-byte copy; decorative only"
+}

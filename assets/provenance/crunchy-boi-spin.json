@@ -1,0 +1,272 @@
+{
+  "id": "crunchy-boi-spin",
+  "kind": "sequence",
+  "classification": "drawn",
+  "sourcePath": "source:spin-rgba-frames",
+  "sourceSha256": "88212e69ab4ee5c69eb62a2ff686e838255fd0aa5b5b7535a5a5c0c3361cb5de",
+  "width": 540,
+  "height": 284,
+  "count": 48,
+  "step": 5,
+  "crop": {
+    "left": 239,
+    "top": 153,
+    "width": 1508,
+    "height": 792
+  },
+  "quality": 70,
+  "alphaQuality": 80,
+  "effort": 6,
+  "tool": {
+    "sharp": "0.34.5",
+    "vips": "8.17.3",
+    "webp": "1.6.0"
+  },
+  "bytes": 853748,
+  "maxBytes": 1100000,
+  "frames": [
+    {
+      "publicPath": "/media/crunchy-boi-spin-f00-b8d51c884e10.webp",
+      "sha256": "b8d51c884e103340374277bf30e8e8bc1ecb3e19c8bb3b3a301bc42794275c73",
+      "bytes": 23062
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f01-ced1376cb595.webp",
+      "sha256": "ced1376cb59500d732382ba14f21be09fc77aaab469b653f49b7a11182008e22",
+      "bytes": 23058
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f02-7555b434dceb.webp",
+      "sha256": "7555b434dceb5eb98f6db30ef5ed9c24682028048ea3c4f90ed4ff3f2ee1a1f7",
+      "bytes": 23416
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f03-808fc0c87ae3.webp",
+      "sha256": "808fc0c87ae3393cf26738e433a502df7028c24d0cddcbb9d381a19bb0745a63",
+      "bytes": 23452
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f04-8b4a3afabbc5.webp",
+      "sha256": "8b4a3afabbc5b120bf03aaf3d37b8b3e20cf98edc9b81789f3cc5b9f841811ab",
+      "bytes": 23352
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f05-ef1b175a727e.webp",
+      "sha256": "ef1b175a727e1632f71400ec7ef5ae8f43d62d4e7ebdf9e54b8e8295c4e7e20d",
+      "bytes": 23348
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f06-76e68e7ac130.webp",
+      "sha256": "76e68e7ac1309a57b6151d265baec6d685b2d1842b5db9aed924334d915f8786",
+      "bytes": 23300
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f07-0e0b8f15efb2.webp",
+      "sha256": "0e0b8f15efb2b8f91f1d93186c10654dca754e04279f22a1d6dd523b2ac0a008",
+      "bytes": 23090
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f08-6f51479d394a.webp",
+      "sha256": "6f51479d394ad7f7e5a0571eab75a09fe59e145d9e31a5e1e051f900f536d8c2",
+      "bytes": 22210
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f09-f2ef04035b43.webp",
+      "sha256": "f2ef04035b4393a02e105bf8f79bc28ae9141b2bb39b910770bb44fcb5f41f1e",
+      "bytes": 21594
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f10-6844e691f257.webp",
+      "sha256": "6844e691f257971b89a30e43e63fe85325f7e508e587c706ba5dec5c5fb6b1a7",
+      "bytes": 20384
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f11-47dc7a8bad83.webp",
+      "sha256": "47dc7a8bad83938e44a8c1f7269fc06bad8870d900cb6504aeb33865acef9163",
+      "bytes": 19176
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f12-1dd759f3662b.webp",
+      "sha256": "1dd759f3662b562341793bf3650a07fb871946ffb93b64fa41c50acc26c067e3",
+      "bytes": 17360
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f13-b89ed4b02fa2.webp",
+      "sha256": "b89ed4b02fa24d143ac2cd5a80572f95032c4345c104d178a56df13ea0b1f5db",
+      "bytes": 15952
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f14-b9523422c08f.webp",
+      "sha256": "b9523422c08f3d3170f2517611749d164d42771ca748c30145ce1b6569f194ee",
+      "bytes": 14166
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f15-d91dac82eec7.webp",
+      "sha256": "d91dac82eec7634a6a204955140f4ba3e6aca924abb946e0a72bf95691587515",
+      "bytes": 12884
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f16-a18ccc3d813e.webp",
+      "sha256": "a18ccc3d813e90ad15f2aa84ab55b450cca0054051398871991674e7c0f6753e",
+      "bytes": 11950
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f17-b1beef37ad5f.webp",
+      "sha256": "b1beef37ad5f9ae3b7e3ad5fc5b011b722d78c79c281c0f1775ec1d0cef28f45",
+      "bytes": 11590
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f18-e5973d93f5fa.webp",
+      "sha256": "e5973d93f5faadd901a276d52b766efef4e2a8b2fab776561374000a97310c6b",
+      "bytes": 11640
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f19-3ce47d66c2d8.webp",
+      "sha256": "3ce47d66c2d86fa8564c58a20b3954adc18828669f6ed5615e9bf96bfc73f6b9",
+      "bytes": 12186
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f20-854c2b11ce64.webp",
+      "sha256": "854c2b11ce6440eda9c60ba108eacc43d11ec832e3afca3ceacb2799e7ef19a6",
+      "bytes": 12640
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f21-f35a04808050.webp",
+      "sha256": "f35a0480805040ee889d37c41b4e53e886813661bca06ee13a0392a47d6fce32",
+      "bytes": 12516
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f22-eb849b30fc63.webp",
+      "sha256": "eb849b30fc63c817bf1cea63974acfbbe863c863c4541273a69444c12adcbcc1",
+      "bytes": 12562
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f23-58fe7f993102.webp",
+      "sha256": "58fe7f99310209919961671efcaa56e3a33fa586309b9283b08f956e981e8f59",
+      "bytes": 13036
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f24-cd73e4160891.webp",
+      "sha256": "cd73e4160891c22e1704479cd606e43f728495079be5580dd9e0baec543e2f80",
+      "bytes": 13506
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f25-6070d907fb41.webp",
+      "sha256": "6070d907fb41ab9093be5991b4d903fb869a3991ae688f89cf3f5d8ed0a17b6c",
+      "bytes": 13298
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f26-83bb814927fe.webp",
+      "sha256": "83bb814927fe9db2a479cde47ef8ce9e8545462e3cd6a8e9de4c175b953dc9b6",
+      "bytes": 13176
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f27-68f235aa4cff.webp",
+      "sha256": "68f235aa4cffaca4adcc467cd27f24cc77e4dafc6591b79dae7b62a6b70eafe8",
+      "bytes": 13932
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f28-dafa4a567267.webp",
+      "sha256": "dafa4a5672673b2faa956b077caeae7d0294e6cdbcd50cf7aa5df7e20bda22cf",
+      "bytes": 13406
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f29-921628075b01.webp",
+      "sha256": "921628075b01d547a24ff104c9cfc439d2cc1a6f9f24daad7af31323706181cb",
+      "bytes": 12754
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f30-83472b3b5e47.webp",
+      "sha256": "83472b3b5e471d1320c0c5cde563ad493c144148ed4bf7225e0e0a90cd678e22",
+      "bytes": 12240
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f31-fa0770f76058.webp",
+      "sha256": "fa0770f76058f131227466e04963977a4815d3f977c1064533a1ff5dcf3cb03a",
+      "bytes": 11438
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f32-1126426c93f4.webp",
+      "sha256": "1126426c93f47b2ba8715ff0075dfbcae21610b9f5b4ebccf1e0a965de664dca",
+      "bytes": 11270
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f33-933b039c2e1e.webp",
+      "sha256": "933b039c2e1e6c58d104253a611ba9dc6d677328df7459a177495abb7d4facf6",
+      "bytes": 11790
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f34-69e6861c939c.webp",
+      "sha256": "69e6861c939cd294a9206bc2445eb2cb96bfc4ecf54f3fda66fc9ddb3c7fa363",
+      "bytes": 13762
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f35-69fbe1edf2a0.webp",
+      "sha256": "69fbe1edf2a02bc52fe4ef1cf9f5223538e41666e493340743b12e2734e9b3db",
+      "bytes": 16108
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f36-53a5221bb740.webp",
+      "sha256": "53a5221bb740976969a5f9c70cebda1bd3bbc7eda35014d9e64fc0abda706337",
+      "bytes": 17916
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f37-4c433dc27222.webp",
+      "sha256": "4c433dc27222ed6fd6393712aa01d2cb577b8d000767858eddfd19755b51623b",
+      "bytes": 19426
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f38-1a130042c85e.webp",
+      "sha256": "1a130042c85e0a0fd2e5a439e8878ae758d24ece734ba0da44fd6500873202f1",
+      "bytes": 20844
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f39-cce739e8f389.webp",
+      "sha256": "cce739e8f389ce0eec761eb367621b064f2f01001d593fb64353b1545ed5e0de",
+      "bytes": 22400
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f40-2d3d0a796476.webp",
+      "sha256": "2d3d0a7964769a50957e8cecf5f33fb490499d9b7bd1c650c40b160302f3f5bf",
+      "bytes": 23020
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f41-b4e280bbd1ae.webp",
+      "sha256": "b4e280bbd1ae2f99326325095deb70f2ffcd7ccc5e15e748fda18d8898afc43c",
+      "bytes": 23458
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f42-188816b734e1.webp",
+      "sha256": "188816b734e192af2f8e62bfd3718cedd68a2648bc88f1b3838f471e5a944e37",
+      "bytes": 23768
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f43-e1ccb87a91ca.webp",
+      "sha256": "e1ccb87a91cacbcc5c4b7bfb825c6c8eee7b1bbcef3d969a94d0f34ba66555fa",
+      "bytes": 23938
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f44-3ff36e7ef251.webp",
+      "sha256": "3ff36e7ef25159b1cd78abf25edf02ba02df6dda6efe59e197632e65a35f15f8",
+      "bytes": 23648
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f45-bb9c38fb63ef.webp",
+      "sha256": "bb9c38fb63ef317d909c7e1faf912d0a5965f37b19c59bc87516a2e9bf04b199",
+      "bytes": 23406
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f46-a201d7f0e2f1.webp",
+      "sha256": "a201d7f0e2f1ae654fa2a18e3f39e7de677967b6f64bd825935e8fc3c434e221",
+      "bytes": 23646
+    },
+    {
+      "publicPath": "/media/crunchy-boi-spin-f47-b7da0306aa42.webp",
+      "sha256": "b7da0306aa4253b9588cf37c5f47f208b14f74a0ada28866f9eef6457e5b91fd",
+      "bytes": 23674
+    }
+  ],
+  "sidecar": "assets/provenance/crunchy-boi-spin.json",
+  "command": "node scripts/assets/export-spin-frames.mjs",
+  "provenance": "DRAWN (AI REFERENCE) Crunchy Boi spin master; crop/resize/encode only; never shown as a real photo"
+}

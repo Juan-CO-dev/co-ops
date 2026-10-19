@@ -1,5 +1,5 @@
 import { nearbyEnabled } from './nearby-shared';
-import { landingTenantConfig } from "@/config/tenant/landing";
+import { landingTenantConfig, type LandingTenantConfig } from "@/config/tenant/landing";
 
 export type LandingEnvironment = Readonly<Record<string, string | undefined>>;
 function httpsOrigin(value: string | undefined): string | null {
@@ -13,14 +13,16 @@ function httpsOrigin(value: string | undefined): string | null {
 
 /** Host-safe: no database, I/O, or secret fields. Host permission still comes
  * exclusively from classifyLandingHost; config presence never authorizes it. */
-export function loadLandingConfig(env: LandingEnvironment = process.env) {
+export function loadLandingConfig(env: LandingEnvironment = process.env, tenant: LandingTenantConfig = landingTenantConfig) {
   const landingHosts = (env.LANDING_HOSTS ?? "").split(",").map((v) => v.trim()).filter((v) => /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(v) && !v.includes("xn--"));
   return {
-    ...landingTenantConfig,
-    nearbyEnabled: nearbyEnabled(landingTenantConfig.stores),
+    ...tenant,
+    stores: tenant.stores.filter(store=>store.active),
+    nearbyEnabled: nearbyEnabled(tenant.stores.filter(store=>store.active)),
     LANDING_HOSTS: env.LANDING_HOSTS,
     STAFF_ORIGIN: env.STAFF_ORIGIN,
     SITE_ORIGIN: env.SITE_ORIGIN,
+    VERCEL_ENV: env.VERCEL_ENV,
     landingHosts,
     siteOrigin: httpsOrigin(env.SITE_ORIGIN),
     staffOrigin: httpsOrigin(env.STAFF_ORIGIN),

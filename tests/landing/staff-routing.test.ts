@@ -7,6 +7,7 @@ import ts from "typescript";
 import * as auth from "@/lib/auth";
 import * as landingConfig from "@/lib/landing/config";
 import * as language from "@/lib/landing/language-shared";
+import * as indexing from '@/lib/landing/indexing-shared';
 import * as hosts from "@/lib/landing/host-shared";
 import * as security from "@/lib/security-headers";
 import * as sim from "@/lib/sim-isolation-shared";
@@ -14,6 +15,17 @@ import { proxy as original, config } from "./pre-chunk-a-proxy.fixture";
 vi.mock("@/lib/auth", () => ({ verifyJwt: vi.fn(async () => ({ user_id:"u", app_role:"employee", role_level:1, session_id:"s" })) }));
 afterEach(() => vi.unstubAllEnvs());
 const identityHeaders = ["user-id", "app-role", "role-level", "session-id"];
+it('fails closed only for rejected raw authorities matching listed landing hostnames',async()=>{
+ vi.stubEnv('LANDING_HOSTS','eat.example.test,preview.example.test,staff.example.test');vi.stubEnv('SITE_ORIGIN','https://eat.example.test');vi.stubEnv('STAFF_ORIGIN','https://staff.example.test');
+ for(const host of ['eat.example.test.','EAT.EXAMPLE.TEST.:443','preview.example.test:0','eat.example.test:65536','eat.example.test:bad']) {
+  const response=await proxy(new NextRequest('https://eat.example.test/',{headers:{host}}));expect(response.status,host).toBe(404);expect(response.headers.get('x-robots-tag')).toBe('noindex, nofollow');expect(response.headers.get('x-middleware-next')).toBeNull();
+ }
+ const publicHeaders=(response:NextResponse)=>[...response.headers].filter(([key])=>!key.startsWith('x-middleware-request-')&&key!=='x-middleware-override-headers');
+ for(const host of ['[::1]','[::1]:3000','[2001:db8::1]:443','staff.example.test.','unlisted.example.test.','bad_host.test','eat.example.test..','private@example.test'])for(const path of ['/','/order','/admin']) {
+  const req=new NextRequest(`https://staff.example.test${path}`,{headers:{host}});const before=await original(req);const after=await proxy(req);
+  expect(after.status).toBe(before.status);expect(publicHeaders(after),host).toEqual(publicHeaders(before));expect(await after.text()).toBe(await before.text());
+ }
+});
 function decision(response: NextResponse) {
   return { status: response.status, location: response.headers.get("location"), rewrite: response.headers.get("x-middleware-rewrite"), next: response.headers.get("x-middleware-next"), identity: identityHeaders.map(name => response.headers.get(`x-middleware-request-x-co-${name}`)) };
 }
@@ -26,7 +38,7 @@ function compile(source: string): { proxy: typeof proxy; default: typeof nextCon
     "next/server": { NextRequest, NextResponse }, "@/lib/auth": auth,
     "./lib/auth": auth, "./lib/landing/config": landingConfig,
     "./lib/landing/language-shared": language, "./lib/landing/host-shared": hosts,
-    "./lib/security-headers": security, "./lib/sim-isolation-shared": sim,
+    "./lib/landing/indexing-shared": indexing, "./lib/security-headers": security, "./lib/sim-isolation-shared": sim,
   };
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
@@ -39,7 +51,7 @@ function compile(source: string): { proxy: typeof proxy; default: typeof nextCon
 it.each([
   ["identity forwarding removed", "proxy.ts", "headers.set('x-co-user-id', claims.user_id);", "", "/admin", "co_ops_session=test"],
   ["custom slash redirect restored", "proxy.ts", "const path = req.nextUrl.pathname;", "const path = req.nextUrl.pathname; if (path.endsWith('/') && path !== '/') return NextResponse.redirect(new URL(path.slice(0, -1), req.url), 308);", "/admin/", ""],
-  ["real public branch redirects", "proxy.ts", "if (isPublicPath(path)) return NextResponse.next();", "if (isPublicPath(path)) return NextResponse.redirect(new URL('/wrong', req.url));", "/order", ""],
+  ["real public branch redirects", "proxy.ts", "if (isPublicPath(path)) return NextResponse.next({ request: { headers } });", "if (isPublicPath(path)) return NextResponse.redirect(new URL('/wrong', req.url));", "/order", ""],
   ["fixture public branch redirects", "tests/landing/pre-chunk-a-proxy.fixture.ts", "if (isPublicPath(pathname)) return NextResponse.next();", "if (isPublicPath(pathname)) return NextResponse.redirect(new URL('/wrong', req.url));", "/order", ""],
 ])("fingerprint rejects mutation: %s", async (_name, file, before, after, path, cookie) => {
   vi.stubEnv("LANDING_HOSTS", "");
@@ -78,7 +90,8 @@ it.each([undefined, ""])("empty allowlist preserves byte-identical staff routing
     }
   }
 });
-it("logs no request data when an invalid host falls back to staff", async () => {
+it.each(["preview","production"])("logs once with no request data for invalid host (%s)", async deployment => {
+ vi.stubEnv("VERCEL_ENV",deployment);
  const warn=vi.spyOn(console,"warn").mockImplementation(()=>{});
  try {
   vi.stubEnv("LANDING_HOSTS","eat.example.test");
@@ -86,4 +99,39 @@ it("logs no request data when an invalid host falls back to staff", async () => 
   expect(response.status).toBe(200);
   expect(warn.mock.calls).toEqual([["[landing] invalid host; landing dormant"]]);
  } finally {warn.mockRestore();}
+});
+
+it('keeps all staff response headers byte-identical with landing production enabled', async () => {
+  vi.stubEnv('VERCEL_ENV','production'); vi.stubEnv('LANDING_HOSTS','eat.example.test');
+  vi.stubEnv('SITE_ORIGIN','https://eat.example.test'); vi.stubEnv('STAFF_ORIGIN','https://staff.example.test');
+  const matcher = new RegExp(`^${config.matcher[0]}$`);
+  for(const path of ['/','/privacy','/robots.txt','/sitemap.xml','/admin','/order','/api/locations','/_next/static/a.js']) for(const cookie of ['', 'co_ops_session=test']) {
+    const req=new NextRequest(`https://staff.example.test${path}`,{headers:{host:'staff.example.test',cookie}});
+    const before=matcher.test(path)?await original(req):NextResponse.next();
+    const after=await proxy(req);
+    expect(after.status,path).toBe(before.status);
+    const publicHeaders=(response:NextResponse)=>[...response.headers].filter(([key])=>!key.startsWith('x-middleware-request-') && key!=='x-middleware-override-headers');
+    expect(publicHeaders(after),path).toEqual(publicHeaders(before));
+    expect(await after.text(),path).toBe(await before.text());
+  }
+});
+
+it.each(['/order','/api/locations','/api/portal/test','/api/webhooks/test','/api/cron/test'])('strips forged hints on public path %s', async path => {
+ const response=await proxy(new NextRequest(`https://staff.example.test${path}`,{headers:{host:'staff.example.test','x-co-user-id':'forged','x-landing-indexable':'1'}}));
+ expect(response.headers.get('x-middleware-next')).toBe('1');
+ expect(response.headers.get('x-middleware-request-x-co-user-id')).toBeNull();
+ expect(response.headers.get('x-middleware-request-x-landing-indexable')).toBeNull();
+ expect(response.headers.get('x-middleware-override-headers')).not.toMatch(/x-co-|x-landing/);
+});
+it('fails closed if landing origin derivation fails', async () => {
+ const classify=vi.spyOn(hosts,'classifyLandingHost').mockReturnValue('landing');
+ const origin=vi.spyOn(hosts,'configuredOrigin').mockReturnValue(null);
+ try {expect((await proxy(new NextRequest('https://eat.example.test/',{headers:{host:'eat.example.test'}}))).status).toBe(404);}
+ finally {classify.mockRestore();origin.mockRestore();}
+});
+
+it('invalid canonical configuration returns 404 on the listed public host and preserves staff',async()=>{
+ vi.stubEnv('LANDING_HOSTS','eat.example.test');vi.stubEnv('SITE_ORIGIN','not-an-origin');vi.stubEnv('STAFF_ORIGIN','https://staff.example.test');
+ expect((await proxy(new NextRequest('https://eat.example.test/',{headers:{host:'eat.example.test'}}))).status).toBe(404);
+ expect((await proxy(new NextRequest('https://staff.example.test/',{headers:{host:'staff.example.test'}}))).status).toBe(200);
 });
