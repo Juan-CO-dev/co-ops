@@ -192,6 +192,26 @@ async function behavior(db) {
   check(await attempt(db, withReason) === 'P0001:injected_final_failure', 'dependent failure reached');
   check((await db.query(`select status,(select count(*) from checklist_incomplete_reasons)::integer as reasons from checklist_instances where id='${instance}'`)).rows.every(r=>r.status==='open' && r.reasons===0), 'claim and reasons rolled back');
   await db.exec('reset role; drop trigger fail_final on checklist_submissions; set role service_role;');
+  // B8 app tests moved here: exercise the actual SQL timestamp owner, rolling
+  // each variant back so no test double can merely imitate the carry rule.
+  for (const [name, change, expectedCarry] of [
+    ['notes only', '', true],
+    ['free text answer', "update checklist_template_items set input_type='free_text'", false],
+    ['peer tagged', `update checklist_completions set actual_completer_id='${other}'`, false],
+    ['other author', `update checklist_completions set completed_by='${other}'`, false],
+    ['count changed', 'update checklist_completions set count_value=1', false],
+    ['photo changed', `insert into report_photos values('${id(99)}'); update checklist_completions set photo_id='${id(99)}'`, false],
+    ['first tick', 'truncate checklist_completions cascade', false],
+  ]) {
+    await db.exec('begin');
+    try {
+      const original = (await db.query(`select completed_at from checklist_completions where id='${completion}'`)).rows[0].completed_at;
+      if (change) await db.exec(change);
+      await db.query(calls.completion);
+      const current = (await db.query('select completed_at from checklist_completions where superseded_at is null')).rows[0].completed_at;
+      check((String(current) === String(original)) === expectedCarry, `B8 ${name} timestamp`);
+    } finally { await db.exec('rollback'); }
+  }
   // Real committed in-memory replacement preserves note timestamp and points history at winner.
   const before = (await db.query('select completed_at from checklist_completions where id=$1',[completion])).rows[0].completed_at;
   await db.query(calls.completion);

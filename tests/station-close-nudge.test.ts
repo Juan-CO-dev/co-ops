@@ -1,3 +1,4 @@
+vi.mock("@/lib/checklist-write-actor", () => ({ resolveChecklistWriteActor: async () => ({ userId: "kh", role: "key_holder", level: 4, active: true, locations: ["shop"], sessionId: "session" }) }));
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";

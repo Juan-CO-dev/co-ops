@@ -1,3 +1,4 @@
+import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError } from "@/lib/checklist-write-actor";
 /**
  * POST /api/checklist/confirm — PIN-attestation finalization of a
  * checklist instance.
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
   try {
     const result = await confirmInstance(authed, {
       instanceId: parsed.instanceId,
-      actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
+      actor: await resolveChecklistWriteActor(ctx),
       pin: parsed.pin,
       incompleteReasons: parsed.incompleteReasons,
       ipAddress: extractIp(req),
@@ -122,6 +123,7 @@ export async function POST(req: NextRequest) {
       incompleteReasonRows: result.incompleteReasonRows,
     });
   } catch (err) {
+    if (err instanceof ChecklistActorNotAuthorizedError) return jsonError(403, "role_level_insufficient", { message: "Writing is not permitted for this session" });
     if (err instanceof ChecklistError) return mapChecklistError(err);
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[/api/checklist/confirm POST] unexpected error:", msg);

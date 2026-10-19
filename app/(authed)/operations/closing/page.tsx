@@ -1,3 +1,4 @@
+import { resolveChecklistWriteActor } from "@/lib/checklist-write-actor";
 import { hasTaskAccess } from "@/lib/assignments";
 import { isTaskType } from "@/lib/assignments-shared";
 /**
@@ -262,7 +263,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
       templateId: templateRow.id,
       locationId: locationParam,
       date: today,
-      actor: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
+      actor: await resolveChecklistWriteActor(auth),
     });
     instanceRow = {
       id: result.instance.id,

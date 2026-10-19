@@ -1,3 +1,4 @@
+import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError } from "@/lib/checklist-write-actor";
 /**
  * POST /api/checklist/instances — get-or-create the instance for a
  * (templateId, locationId, date) tuple. Idempotent. Used by the closing
@@ -7,11 +8,11 @@
  *
  * Response: { instance: ChecklistInstance, created: boolean }
  *
- * Auth: requireSession. RLS on checklist_instances enforces
+ * Auth: requireSession + fresh write actor. The service writer enforces
  *   location_id ∈ user_locations AND role_level >= 3 at INSERT time.
  *   Type guard (Flag #1 Option A): rejects any non-closing templateId with
  *   403 template_type_forbidden — opening/prep are service-role-only. The
- *   checklist_instances_insert RLS is also type-aware (Option B backstop):
+ *   creation policy equivalent is also type-aware:
  *   >=4 for opening/prep, >=3 for closing.
  *
  * Audit: lib/checklists.ts emits checklist_instance.create on creation.
@@ -113,12 +114,13 @@ export async function POST(req: NextRequest) {
       templateId,
       locationId,
       date,
-      actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level, locations: ctx.locations },
+      actor: await resolveChecklistWriteActor(ctx),
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),
     });
     return jsonOk({ instance: result.instance, created: result.created });
   } catch (err) {
+    if (err instanceof ChecklistActorNotAuthorizedError) return jsonError(403, "role_level_insufficient", { message: "Writing is not permitted for this session" });
     if (err instanceof ChecklistError) return mapChecklistError(err);
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[/api/checklist/instances POST] unexpected error:", msg);

@@ -1,14 +1,19 @@
 import "server-only";
 import type { AuthContext } from "./session";
 import { getServiceRoleClient } from "./supabase-server";
-import { getRoleLevel, isRoleCode } from "./roles";
+import { getRoleLevel, isRoleCode, type RoleCode } from "./roles";
 import type { ChecklistWriteAuthority } from "./checklist-write-guard-shared";
 
 declare const verifiedChecklistActor: unique symbol;
 export type ChecklistWriteActor = ChecklistWriteAuthority & {
   readonly sessionId: string;
+  readonly role: RoleCode;
   readonly [verifiedChecklistActor]: true;
 };
+
+export class ChecklistActorNotAuthorizedError extends Error {
+  constructor() { super("checklist_actor_not_authorized"); }
+}
 
 /** Call only with requireSession/requireSessionFromHeaders' verified context.
  * No body attribution or JWT authorization claims are accepted. R2 membership
@@ -31,12 +36,13 @@ export async function resolveChecklistWriteActor(auth: AuthContext): Promise<Che
     || session.user_id !== auth.user.id || auth.session.userId !== auth.user.id
     || session.revoked_at !== null || !(Date.parse(session.expires_at) > Date.now())
     || !user.active || !isRoleCode(user.role)) {
-    throw new Error("checklist_actor_not_authorized");
+    throw new ChecklistActorNotAuthorizedError();
   }
   return Object.freeze({
     userId: auth.user.id,
     sessionId: session.id as string,
     active: true,
+    role: user.role,
     level: getRoleLevel(user.role),
     locations: Object.freeze(locationsResult.data.map((row) => row.location_id as string)),
   }) as ChecklistWriteActor;

@@ -1,3 +1,4 @@
+import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError } from "@/lib/checklist-write-actor";
 /**
  * POST /api/checklist/completions — record a single item completion.
  *
@@ -11,18 +12,10 @@
  *
  * Response: { completion: ChecklistCompletion }
  *
- * Behavior: append-only with synchronous prior-completion supersession
- * (see lib/checklists.ts completeItem). On supersede partial-failure, the
- * lib audits and throws ChecklistSupersedeFailedError carrying both
- * completion ids; the route surfaces 500 supersede_failed with both ids
- * in the response body so the caller can pursue cleanup.
- *
- * RLS gates: completed_by = current_user_id(), instance status='open',
- * template_item.min_role_level <= caller level. App-layer checks in the
- * lib produce clearer errors before RLS rejection.
- *
- * Audit: lib emits checklist_completion.create on success and
- * checklist_completion.supersede_failure on the partial-failure path.
+ * Behavior: service-only RPC atomically supersedes and inserts under the
+ * parent lock. App validation precedes the call; no partial-write cleanup.
+ * Actor attribution comes exclusively from the verified session resolver.
+ * Audit: lib emits checklist_completion.create on success.
  */
 
 import { type NextRequest } from "next/server";
@@ -79,7 +72,7 @@ export async function POST(req: NextRequest) {
     const result = await completeItem(authed, {
       instanceId: parsed.instanceId,
       templateItemId: parsed.templateItemId,
-      actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
+      actor: await resolveChecklistWriteActor(ctx),
       countValue: parsed.countValue ?? null,
       photoId: parsed.photoId ?? null,
       notes: parsed.notes ?? null,
@@ -88,6 +81,7 @@ export async function POST(req: NextRequest) {
     });
     return jsonOk({ completion: result.completion });
   } catch (err) {
+    if (err instanceof ChecklistActorNotAuthorizedError) return jsonError(403, "role_level_insufficient", { message: "Writing is not permitted for this session" });
     if (err instanceof ChecklistError) return mapChecklistError(err);
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[/api/checklist/completions POST] unexpected error:", msg);

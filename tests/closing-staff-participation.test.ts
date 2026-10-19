@@ -1,3 +1,4 @@
+import { checklistActor } from "./helpers/checklist-actor";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { canCompleteChecklistItem, evaluateLockUpGate } from "@/lib/checklist-constants";
@@ -25,20 +26,23 @@ function client(type = "closing", reference: string | null = null, floor = 4) {
     };
     return query;
   };
-  return { from } as unknown as SupabaseClient;
+  return { from, rpc: async (_name: string, payload: unknown) => {
+    mocks.insert(payload);
+    return { data: { id: "completion", instance_id: "instance", template_item_id: "item", completed_by: "trainee" }, error: null };
+  } } as unknown as SupabaseClient;
 }
-const actor = { userId: "trainee", role: "trainee" as const, level: 2 };
+const actor = checklistActor({ userId: "trainee", role: "trainee", level: 2 });
 beforeEach(() => { vi.clearAllMocks(); mocks.service = client(); });
 
 describe("closing manual work preserves each item role floor", () => {
   it("refuses employee completion of a KH-only closing item", async () => {
     await expect(completeItem(client(), { instanceId: "instance", templateItemId: "item",
-      actor: { userId: "employee", role: "employee", level: 3 } })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
+      actor: checklistActor({ userId: "employee", role: "employee", level: 3 }) })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     expect(mocks.insert).not.toHaveBeenCalled();
   });
   it("allows a trainee to complete a closing item whose floor is trainee", async () => {
     await expect(completeItem(client("closing", null, 2), { instanceId: "instance", templateItemId: "item", actor })).resolves.toMatchObject({ completion: { id: "completion" } });
-    expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({ completed_by: "trainee" }));
+    expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({ p_actor: "trainee" }));
   });
   it("refuses direct manual completion of a report-reference task", async () => {
     await expect(completeItem(client("closing", "cash_report"), { instanceId: "instance", templateItemId: "item", actor })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
