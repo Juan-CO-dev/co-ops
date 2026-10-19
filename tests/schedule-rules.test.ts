@@ -1,0 +1,1662 @@
+/**
+ * Scheduling Phase 2, Task 3 — the validator `checkScheduleRules` (plan "The validator ↔ mockup
+ * invariants map"): one positive and one negative case for EVERY code, the gap certificates per cause
+ * (r2 P1-1, r3 capacity + unresolved_search, r4 Approve), original vs current validation (r3 P2-4,
+ * r4), the historical contract (r2 P1-3), deterministic order and a complexity guard.
+ */
+import { describe, expect, it } from "vitest";
+import {
+  CALLOUT_LAST_RESORT, RULE_CODES, REPAIR_LIMITS, approvalRefusal, capacityBound, checkCertificate, checkScheduleRules,
+  cheapestFill, fillIsLegal, proveGap, structureInfeasible, type DeclaredGap, type RuleCode, type RuleProblem,
+  SALARIED_FLEX_REASON, CATERING_MANAGER_COVER, cateringWindows, zeroCostCovers, applyFillSteps, salariedWeek, salariedFlexBlocks, neverGenerated,
+  applyFlexBlock, flexBlockReaching, flexLeftQ, floorCandidateStatus, floorCandidatesOf, floorLimitCertificate, legalHoldPath, legalHoldersOf, segmentHoldProblems,
+  type FloorLimitCertificate,
+} from "@/lib/scheduling/rules-shared";
+import { GENERATOR_VERSION, buildWeek } from "@/lib/scheduling/generator/build-shared";
+import { FIXTURES } from "./fixtures/schedule/fixtures";
+import { contextAdvisory, ruleContextFromSnapshot, toContextSnapshot, type RuleContext, type RulePerson } from "@/lib/scheduling/context-shared";
+import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
+import {
+  DATES, FRI, MON, P, SAT, SUN, THU, TUE, U, WED, context, setNeed, shift, structure, week,
+} from "./fixtures/schedule/rules-fixture";
+
+const run = (shifts = [] as ReturnType<typeof shift>[], ctx: RuleContext = context(), gaps: DeclaredGap[] = []) =>
+  checkScheduleRules(week(shifts, gaps), ctx);
+/** A budget_limited gap exactly as the search proves it (the witness is the search's own), or a forged one for refusals. */
+const proven = (subject: Omit<DeclaredGap, "cause" | "certificate">, s: ReturnType<typeof week>, ctx: RuleContext): DeclaredGap => {
+  const got = proveGap(subject, s, ctx);
+  expect(got?.cause).toBe("budget_limited");
+  return { ...subject, ...got! } as DeclaredGap;
+};
+const forged = (subject: Omit<DeclaredGap, "cause" | "certificate">, budgetedDates: string[], fillHours: number): DeclaredGap => ({ ...subject, cause: "budget_limited",
+  certificate: { budgetedDates, budgetHours: 0, usedHours: 0, essentialHours: 0, remainingHours: 0, fillHours, witness: [] } } as DeclaredGap);
+const codes = (ps: RuleProblem[]) => [...new Set(ps.map((p) => p.code))].sort();
+/** CC chunk H8: the floor certificate as the lib computes it (asserted present); the tests then pin its facts with toMatchObject. */
+const floorCertOf = (g: { code: "coverage_gap"; date: string; positionId: string; fromQ: number; toQ: number }, s: ReturnType<typeof week>, ctx: RuleContext) => {
+  const c = floorLimitCertificate(g, s, ctx);
+  expect(c, "a floor_limit certificate was expected").not.toBeNull();
+  return c!;
+};
+const of = (ps: RuleProblem[], code: RuleCode) => ps.filter((p) => p.code === code);
+
+describe("the severity table", () => {
+  it("errors, gaps and warnings are exactly the plan's map", () => {
+    const by = (sev: string) => Object.entries(RULE_CODES).filter(([, s]) => s === sev).map(([c]) => c).sort();
+    expect(by("gap")).toEqual(["closing_manager_missing", "coverage_gap", "mod_missing"]);
+    // CC addendum A (2026-10-16): the 40 h week is a TARGET — the salaried week checks are warnings (never block Approve).
+    // CC chunk H9: two days off (max_days_per_week) is a warning too — hard for the generator, like the salaried week.
+    expect(by("warning")).toEqual(["checklist_past_max", "flex_used", "max_days_per_week", "outside_assumed_availability", "over_budget", "overtime", "pairing_unmet", "salaried_base_over_target", "salaried_over_flex", "soft_range"]);
+    expect(by("error")).toEqual([
+      "catering_cover_in_catering_window", "closing_manager_not_closing", "closing_manager_role", "closing_manager_setting", "cover_outside_preferences", "leader_setting", "manager_floor_exceeded",
+      "manager_on_boh", "not_member", "person_overlap", "position_over_headcount", "role_not_allowed", "salaried_minimum",
+      "secondary_without_primary", "segment_outside_window", "segments_malformed", "shift_below_minimum", "shift_over_maximum", "uncertified_gap",
+      "undeclared_gap", "unknown_person", "untouchable_day", "work_type_not_allowed",
+    ]);
+  });
+});
+
+describe("every code: a positive and a negative case", () => {
+  it("(a) person_overlap — per 15-min slot, across shifts", () => {
+    const ps = run([shift(U.maya, WED, 44, 60, P.REG), shift(U.maya, WED, 58, 74, P.WALKON)]);
+    expect(of(ps, "person_overlap").map((p) => p.q)).toEqual([58, 59]);
+    expect(of(run([shift(U.maya, WED, 44, 60, P.REG), shift(U.maya, WED, 60, 76, P.WALKON)]), "person_overlap")).toEqual([]);
+  });
+
+  it("(b) position_over_headcount — limit headsBefore before the trim, headsAfter after", () => {
+    const ps = run([shift(U.maya, WED, 44, 60, P.REG), shift(U.ben, WED, 44, 60, P.REG)]);
+    expect(of(ps, "position_over_headcount")).toHaveLength(16);
+    expect(of(ps, "position_over_headcount")[0]).toMatchObject({ positionId: P.REG, q: 44, params: { count: 2, limit: 1 } });
+    const two = context({ s: structure((s) => { s.positions[P.REG]!.headsBefore = 2; }) });
+    expect(of(run([shift(U.maya, WED, 44, 60, P.REG), shift(U.ben, WED, 44, 60, P.REG)], two), "position_over_headcount")).toEqual([]);
+  });
+
+  it("(c) shift_below_minimum — the 4 h minimum", () => {
+    expect(of(run([shift(U.ben, WED, 44, 56, P.REG)]), "shift_below_minimum")).toHaveLength(1);
+    expect(of(run([shift(U.ben, WED, 44, 60, P.REG)]), "shift_below_minimum")).toEqual([]);
+  });
+
+  it("shift_over_maximum — CC chunk B ruling 3: a HARD daily maximum, the per-shop setting limits.maxShiftH (default 10.5 h, CC chunk C ruling 2)", () => {
+    const over = of(run([shift(U.ben, WED, 42, 85, P.WALKON)]), "shift_over_maximum");
+    expect(over).toHaveLength(1);
+    expect(over[0]).toMatchObject({ severity: "error", userId: U.ben, q: 42, params: { minutes: 645, maximumMinutes: 630 } });
+    expect(of(run([shift(U.ben, WED, 42, 84, P.WALKON)]), "shift_over_maximum")).toEqual([]); // exactly 10.5 h is allowed
+    expect(of(run([shift(U.ben, WED, 42, 83, P.WALKON)]), "shift_over_maximum")).toEqual([]); // the v17 line day, 10.25 h
+    const ten = context({ s: structure((s) => { s.limits.maxShiftH = 10; }) });
+    expect(of(run([shift(U.ben, WED, 42, 83, P.WALKON)], ten), "shift_over_maximum")).toHaveLength(1); // the setting decides
+    const twelve = context({ s: structure((s) => { s.limits.maxShiftH = 12; }) });
+    expect(of(run([shift(U.ben, WED, 42, 85, P.WALKON)], twelve), "shift_over_maximum")).toEqual([]);
+    // A multi-position shift counts whole; an inherited day is never re-judged.
+    const multi = shift(U.ben, WED, 42, 86, P.WALKON);
+    multi.segments = [{ positionId: P.REG, startQ: 42, endQ: 60 }, { positionId: P.WALKON, startQ: 60, endQ: 86 }];
+    expect(of(run([multi]), "shift_over_maximum")).toHaveLength(1);
+    const inheritedMon = [{ date: MON, originRevisionId: "rev-0", structureVersionId: "sv-1", inherited: true, problems: [] }];
+    expect(of(checkScheduleRules(week([shift(U.ben, MON, 42, 83, P.WALKON)], [], inheritedMon), context()), "shift_over_maximum")).toEqual([]);
+  });
+
+  it("(d) role_not_allowed and manager_on_boh — two codes; the call-out exemption is an inert branch", () => {
+    expect(codes(run([shift(U.iris, WED, 28, 44, P.DISH, {}, {})]))).toContain("role_not_allowed");
+    const dani = run([shift(U.dani, WED, 28, 44, P.DISH)]);
+    expect(of(dani, "role_not_allowed")).toHaveLength(1);
+    expect(of(dani, "manager_on_boh")).toHaveLength(1);
+    const exempt = run([shift(U.dani, WED, 28, 44, P.DISH, {}, { coverFor: U.kai, reasonKey: CALLOUT_LAST_RESORT })]);
+    expect(of(exempt, "role_not_allowed")).toEqual([]);
+    expect(of(exempt, "manager_on_boh")).toEqual([]);
+    const kai = run([shift(U.kai, WED, 28, 44, P.DISH)]);
+    expect(of(kai, "role_not_allowed")).toEqual([]);
+    expect(of(kai, "manager_on_boh")).toEqual([]);
+  });
+
+  it("(e) segment_outside_window — OPEN–CLOSE (trim belongs to rule b)", () => {
+    expect(of(run([shift(U.ben, WED, 40, 56, P.EXPO)]), "segment_outside_window")).toHaveLength(1);
+    expect(of(run([shift(U.ben, WED, 46, 62, P.EXPO), shift(U.maya, WED, 46, 62, P.REG)]), "segment_outside_window")).toEqual([]);
+    expect(of(run([shift(U.ben, WED, 46, 62, "no-such-position")]), "segment_outside_window")).toHaveLength(1);
+  });
+
+  it("(f) closing_manager_role and (g) closing_manager_setting", () => {
+    const maya = run([shift(U.maya, WED, 64, 83, P.REG, { closingManager: true })]);
+    expect(of(maya, "closing_manager_role")).toHaveLength(1);
+    expect(of(maya, "closing_manager_setting")).toHaveLength(1);
+    const dani = run([shift(U.dani, WED, 64, 83, P.REG, { closingManager: true })]);
+    expect(of(dani, "closing_manager_role")).toEqual([]);
+    expect(of(dani, "closing_manager_setting")).toHaveLength(1); // the v17 Dani bug: an opens-only leader
+    const iris = run([shift(U.iris, WED, 64, 83, P.REG, { closingManager: true })]);
+    expect(of(iris, "closing_manager_role")).toEqual([]);
+    expect(of(iris, "closing_manager_setting")).toEqual([]);
+  });
+
+  it("(g) leader_setting — opens-only ending at service close, closes-only starting before service", () => {
+    expect(of(run([shift(U.dani, WED, 64, 83, P.REG)]), "leader_setting")).toHaveLength(1);
+    expect(of(run([shift(U.iris, WED, 28, 44, P.PREP)]), "leader_setting")).toHaveLength(1);
+    expect(of(run([shift(U.dani, WED, 28, 60, P.REG)]), "leader_setting")).toEqual([]);
+    expect(of(run([shift(U.iris, WED, 64, 83, P.REG)]), "leader_setting")).toEqual([]);
+  });
+
+  it("(h) secondary_without_primary — per slot, from prep start to scheduled out", () => {
+    const ps = of(run([shift(U.ben, WED, 46, 62, P.EXPO)]), "secondary_without_primary");
+    expect(ps.map((p) => p.q)).toEqual(Array.from({ length: 16 }, (_, i) => 46 + i));
+    expect(ps[0]).toMatchObject({ positionId: P.EXPO, params: { primary: P.REG } });
+    expect(of(run([shift(U.ben, WED, 46, 62, P.EXPO), shift(U.maya, WED, 44, 64, P.REG)]), "secondary_without_primary")).toEqual([]);
+  });
+
+  it("(i) cover_outside_preferences — unless the segment is marked last resort", () => {
+    expect(of(run([shift(U.dani, WED, 44, 60, P.WALK)]), "cover_outside_preferences")).toHaveLength(1);
+    expect(of(run([shift(U.dani, WED, 44, 60, P.WALK, {}, { lastResort: true })]), "cover_outside_preferences")).toEqual([]);
+    expect(of(run([shift(U.dani, WED, 44, 60, P.REG)]), "cover_outside_preferences")).toEqual([]);
+  });
+
+  it("segments_malformed — segments must tile the shift exactly", () => {
+    const bad = shift(U.ben, WED, 44, 64, P.REG);
+    bad.segments = [{ positionId: P.REG, startQ: 44, endQ: 50 }, { positionId: P.WALKON, startQ: 52, endQ: 64 }];
+    expect(of(run([bad]), "segments_malformed")).toHaveLength(1);
+    const notSpanning = shift(U.ben, WED, 44, 64, P.REG);
+    notSpanning.segments = [{ positionId: P.REG, startQ: 44, endQ: 60 }];
+    expect(of(run([notSpanning]), "segments_malformed")).toHaveLength(1);
+    const good = shift(U.ben, WED, 44, 64, P.REG);
+    good.segments = [{ positionId: P.REG, startQ: 44, endQ: 56 }, { positionId: P.WALKON, startQ: 56, endQ: 64 }];
+    expect(of(run([good]), "segments_malformed")).toEqual([]);
+  });
+
+  it("unknown_person and not_member", () => {
+    expect(of(run([shift("u-ghost", WED, 44, 60, P.REG)]), "unknown_person")).toHaveLength(1);
+    expect(of(run([shift(U.tess, WED, 44, 60, P.REG)]), "not_member")).toHaveLength(1);
+    const ok = run([shift(U.maya, WED, 44, 60, P.REG)]);
+    expect(of(ok, "unknown_person")).toEqual([]);
+    expect(of(ok, "not_member")).toEqual([]);
+  });
+
+  it("salaried_minimum — a GM / AGM's day reaches max(minimum shift, role minimum)", () => {
+    expect(of(run([shift(U.alex, WED, 28, 44, "mod")]), "salaried_minimum")).toHaveLength(1);
+    expect(of(run([shift(U.alex, WED, 28, 60, "mod")]), "salaried_minimum")).toEqual([]);
+  });
+
+  it("manager_floor_exceeded — a salaried manager's floor hours over managerFloorH (32) in the week", () => {
+    const five = [WED, THU, FRI, SAT, SUN].map((d) => shift(U.alex, d, 28, 60, P.PREP));
+    const ps = of(run(five), "manager_floor_exceeded");
+    expect(ps).toHaveLength(1);
+    expect(ps[0]).toMatchObject({ day: SUN, userId: U.alex, params: { hours: 40, limit: 32 } });
+    expect(of(run(five.slice(0, 4)), "manager_floor_exceeded")).toEqual([]);
+  });
+
+  it("work_type_not_allowed — BOH on the line, FOH on Prep/Dishwasher", () => {
+    expect(of(run([shift(U.kai, WED, 44, 60, P.REG)]), "work_type_not_allowed")).toHaveLength(1);
+    expect(of(run([shift(U.maya, WED, 28, 44, P.DISH)]), "work_type_not_allowed")).toHaveLength(1);
+    expect(of(run([shift(U.maya, WED, 44, 60, P.REG)]), "work_type_not_allowed")).toEqual([]);
+    expect(of(run([shift(U.maya, WED, 28, 44, P.PREP)]), "work_type_not_allowed")).toEqual([]); // FOH may prep (mockup)
+  });
+
+  it("untouchable_day — inert until Phase 3 feeds it", () => {
+    const ctx = context();
+    ctx.people[U.maya]!.untouchableDates = [WED];
+    expect(of(run([shift(U.maya, WED, 44, 60, P.REG)], ctx), "untouchable_day")).toHaveLength(1);
+    expect(of(run([shift(U.maya, THU, 44, 60, P.REG)], ctx), "untouchable_day")).toEqual([]);
+  });
+
+  it("mod_missing — a gap: undeclared → undeclared_gap; declared and certified → shown as a gap; covered → nothing", () => {
+    // KH-as-MoD OFF for this case (the default is 19:00 since Juan's decision 6): the eligible MoD members are Alex and Dani.
+    const ctx = context({ s: structure((s) => { s.leadership.modRequired = true; s.leadership.keyHolderModAfterQ = null; }), built: [THU] });
+    const und = run([], ctx);
+    expect(of(und, "undeclared_gap")).toHaveLength(1);
+    expect(of(und, "undeclared_gap")[0]).toMatchObject({ day: THU, params: { gap: "mod_missing", fromQ: 28, toQ: 83 } });
+    for (const u of [U.alex, U.dani]) ctx.people[u]!.availability[THU] = null;
+    const gap: DeclaredGap = { code: "mod_missing", date: THU, positionId: null, fromQ: 28, toQ: 83, cause: "availability",
+      certificate: { eligibleIds: [U.alex, U.dani], unavailableIds: [U.alex, U.dani] } };
+    const shown = run([], ctx, [gap]);
+    expect(codes(shown)).toEqual(["mod_missing"]);
+    expect(of(shown, "mod_missing")[0]).toMatchObject({ severity: "gap", params: { cause: "availability", proven: true } });
+    const covered = run([shift(U.pete, THU, 28, 83, "mod", { pinned: true })], context({ s: structure((s) => { s.leadership.modRequired = true; }), built: [THU] }));
+    expect(codes(covered).filter((c) => c === "mod_missing" || c === "undeclared_gap")).toEqual([]);
+  });
+
+  it("closing_manager_missing — required when the line needs a closer; a Closing Manager satisfies it", () => {
+    const ctx = context({ built: [WED] });
+    setNeed(ctx, WED, P.REG, 80, 83);
+    const missing = run([shift(U.iris, WED, 64, 83, P.REG)], ctx);
+    expect(of(missing, "undeclared_gap").map((p) => p.params.gap)).toEqual(["closing_manager_missing"]);
+    const ok = run([shift(U.iris, WED, 64, 83, P.REG, { closingManager: true })], ctx);
+    expect(of(ok, "undeclared_gap")).toEqual([]);
+    expect(of(ok, "closing_manager_missing")).toEqual([]);
+  });
+
+  it("coverage_gap / undeclared_gap / uncertified_gap — a deficit against the stored need", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.REG, 44, 48);
+    expect(of(run([], ctx), "undeclared_gap")[0]).toMatchObject({ day: WED, positionId: P.REG, params: { gap: "coverage_gap", fromQ: 44, toQ: 48 } });
+    ctx.budgetByDate[WED] = 0;
+    // A 1 h hole with no adjacent shift: the cheapest legal fill FOUND is a 4 h block (budget_limited, CC chunk D ruling).
+    const gap = proven({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx);
+    expect(gap.certificate).toMatchObject({ fillHours: 4, remainingHours: 0 });
+    const shown = run([], ctx, [gap]);
+    expect(codes(shown)).toEqual(["coverage_gap"]);
+    ctx.budgetByDate[WED] = 10;
+    expect(codes(run([], ctx, [gap]))).toEqual(["uncertified_gap"]);
+    expect(of(run([shift(U.maya, WED, 44, 60, P.REG)], ctx), "coverage_gap")).toEqual([]);
+    expect(of(run([shift(U.maya, WED, 44, 60, P.REG)], ctx), "undeclared_gap")).toEqual([]);
+  });
+
+  it("warnings: overtime, over_budget, soft_range, outside_assumed_availability, checklist_past_max, flex_used, pairing_unmet", () => {
+    const nine = (d: string) => shift(U.ben, d, 44, 80, P.REG);
+    expect(of(run([WED, THU, FRI, SAT, SUN].map(nine)), "overtime")).toMatchObject([{ severity: "warning", day: SUN, params: { hours: 45, limit: 40 } }]);
+    expect(of(run([WED, THU, FRI, SAT].map(nine)), "overtime")).toEqual([]);
+
+    const budget = context();
+    budget.budgetByDate[WED] = 2;
+    expect(of(run([shift(U.ben, WED, 44, 60, P.REG)], budget), "over_budget")).toHaveLength(1);
+    budget.budgetByDate[WED] = 10;
+    expect(of(run([shift(U.ben, WED, 44, 60, P.REG)], budget), "over_budget")).toEqual([]);
+
+    const soft = context();
+    soft.people[U.ben]!.softMaxH = 30;
+    expect(of(run([WED, THU, FRI, SAT].map(nine), soft), "soft_range")).toHaveLength(1);
+    soft.people[U.ben]!.softMaxH = 40;
+    expect(of(run([WED, THU, FRI, SAT].map(nine), soft), "soft_range")).toEqual([]);
+
+    const avail = context();
+    avail.people[U.ben]!.availability[WED] = { fromQ: 50, toQ: 84, source: "toast_pattern" };
+    expect(of(run([shift(U.ben, WED, 44, 60, P.REG)], avail), "outside_assumed_availability")).toHaveLength(1);
+    avail.people[U.ben]!.availability[WED] = { fromQ: 40, toQ: 84, source: "insufficient_history" };
+    expect(of(run([shift(U.ben, WED, 44, 60, P.REG)], avail), "outside_assumed_availability")).toEqual([]);
+
+    const late = context();
+    late.days[WED]!.closingMinutes = 70;
+    expect(of(run([], late), "checklist_past_max")).toMatchObject([{ day: WED }]);
+    expect(of(run([], context()), "checklist_past_max")).toEqual([]);
+
+    const flex = context();
+    flex.people[U.ben]!.flexDates = [WED];
+    const f = run([shift(U.ben, WED, 44, 56, P.REG, { flex: true })], flex);
+    expect(of(f, "flex_used")).toHaveLength(1);
+    expect(of(f, "shift_below_minimum")).toEqual([]); // 3 h meets the flex minimum on the flex day
+    expect(of(run([shift(U.ben, WED, 44, 60, P.REG)], flex), "flex_used")).toEqual([]);
+
+    const pair = context();
+    pair.people[U.eli]!.newerPositions = [P.WALK];
+    pair.people[U.maya]!.strongPositions = [P.WALKON];
+    expect(of(run([shift(U.eli, WED, 44, 60, P.WALK)], pair), "pairing_unmet")).toHaveLength(1);
+    expect(of(run([shift(U.eli, WED, 44, 60, P.WALK), shift(U.maya, WED, 44, 60, P.WALKON)], pair), "pairing_unmet")).toEqual([]);
+  });
+});
+
+describe("gap certificates, per cause", () => {
+  it("budget_limited: certifies R < W (the cheapest legal fill FOUND, its witness re-found exactly); fails when the budget had room", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.REG, 44, 48);
+    ctx.budgetByDate[WED] = 0;
+    const g = proven({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx);
+    expect(checkCertificate(g, week([]), ctx)).toBe(true);
+    // A tampered witness or W is refused: the verifier re-runs the same search.
+    const c = g.certificate as { fillHours: number; witness: unknown[] };
+    expect(checkCertificate({ ...g, certificate: { ...c, fillHours: 3 } } as unknown as DeclaredGap, week([]), ctx)).toBe(false);
+    expect(checkCertificate({ ...g, certificate: { ...c, witness: [] } } as unknown as DeclaredGap, week([]), ctx)).toBe(false);
+    ctx.budgetByDate[WED] = 10;
+    expect(checkCertificate({ ...g, certificate: { ...g.certificate, budgetHours: 10 } as never }, week([]), ctx)).toBe(false);
+    // W is what the found LEGAL fill adds: 4 h for the lone hole; exactly the hole when an eligible hourly shift is adjacent.
+    ctx.budgetByDate[WED] = 2;
+    const lone = proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx);
+    expect(lone).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 4, budgetHours: 2, remainingHours: 2 } });
+    ctx.budgetByDate[WED] = 6;
+    const beside = proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([shift(U.ben, WED, 48, 64, P.REG)]), ctx);
+    expect(beside).toBeNull(); // Ben (4 h) extends over the 1 h hole within the 6 h budget: the budget does not excuse it
+    ctx.budgetByDate[WED] = 4.5;
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([shift(U.ben, WED, 48, 64, P.REG)]), ctx))
+      .toMatchObject({ cause: "budget_limited", certificate: { fillHours: 1, usedHours: 4, remainingHours: 0.5 } }); // 1 > 4.5 - 4: even the extension is unaffordable
+  });
+  it("floor_limit: only when no eligible hourly person is available and every salaried manager is excluded (CC chunk H4 / H7: flex spent, OFF shift during the gap)", () => {
+    // Juan 2026-10-16 (decision 4): past the floor a cover is FLEX, so the proof needs the flex spent (0 h here).
+    const ctx = context({ s: structure((x) => { x.limits.salariedFlexH = 0; }) });
+    setNeed(ctx, THU, P.PREP, 28, 44);
+    for (const u of [U.maya, U.ben, U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[THU] = null;
+    // 32 h of base station time Wed / Fri / Sat / Sun; Thursday off.
+    const shifts = [WED, FRI, SAT, SUN].map((d) => shift(U.alex, d, 28, 60, P.PREP));
+    const g: DeclaredGap = { code: "coverage_gap", date: THU, positionId: P.PREP, fromQ: 28, toQ: 44, cause: "floor_limit",
+      certificate: floorCertOf({ code: "coverage_gap", date: THU, positionId: P.PREP, fromQ: 28, toQ: 44 }, week(shifts), ctx) };
+    // CC chunk H8: every legal holder of Prep is a candidate — the hourly people (off that day), the GM (flex spent), the owner (pins only).
+    expect(g.certificate).toMatchObject({ limitH: 32, salariedFlexH: 0, excludedBy: { [U.alex]: "flex_exhausted", [U.kai]: "unavailable", [U.ben]: "unavailable", [U.pete]: "never_generated" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } });
+    expect(checkCertificate(g, week(shifts), ctx)).toBe(true);
+    expect(proveGap(g, week(shifts), ctx)).toEqual({ cause: "floor_limit", certificate: g.certificate });
+    // CC chunk H7: the GM on the MoD lane over the window that Thursday is ON SHIFT and eligible → never excluded, no proof
+    // (a relabel MoD → Prep would cost nothing).
+    const onShift = [...shifts, shift(U.alex, THU, 28, 60, "mod")];
+    expect(floorCandidateStatus(ctx.people[U.alex]!, g, week(onShift), ctx)).toBe("on_shift_legal");
+    expect(checkCertificate(g, week(onShift), ctx)).toBe(false);
+    expect(proveGap(g, week(onShift), ctx)?.cause).not.toBe("floor_limit");
+    expect(checkCertificate(g, week(shifts.slice(0, 1)), ctx)).toBe(false); // 8 h used: the certificate's floor hours no longer match
+    // With flex left, a GM who could take the window on a flex block is not a floor-limit proof; with the flex spent he is.
+    const noFlex = context({ s: structure((x) => { x.limits.salariedFlexH = 0; }) });
+    setNeed(noFlex, THU, P.REG, 44, 52);
+    for (const u of [U.maya, U.ben, U.kai, U.iris, U.eli, U.dani]) noFlex.people[u]!.availability[THU] = null;
+    const regGap: DeclaredGap = { code: "coverage_gap", date: THU, positionId: P.REG, fromQ: 44, toQ: 52, cause: "floor_limit",
+      certificate: floorCertOf({ code: "coverage_gap", date: THU, positionId: P.REG, fromQ: 44, toQ: 52 }, week(shifts), noFlex) };
+    expect(checkCertificate(regGap, week(shifts), noFlex)).toBe(true);
+    const flexCtx = context();
+    setNeed(flexCtx, THU, P.REG, 44, 52);
+    for (const u of [U.maya, U.ben, U.kai, U.iris, U.eli, U.dani]) flexCtx.people[u]!.availability[THU] = null;
+    expect(checkCertificate(regGap, week(shifts), flexCtx)).toBe(false);
+    expect(proveGap(regGap, week(shifts), flexCtx)?.cause).not.toBe("floor_limit");
+    ctx.people[U.ben]!.availability[THU] = { fromQ: 28, toQ: 84, source: "toast_pattern" };
+    expect(checkCertificate(g, week(shifts), ctx)).toBe(false); // an hourly person is free
+  });
+
+  it("eligibility: fails when even one member could work the position", () => {
+    const only = context({ s: structure((s) => { s.positions[P.DISH]!.allowedRoles = ["trainer"]; }) });
+    setNeed(only, FRI, P.DISH, 28, 44);
+    const g: DeclaredGap = { code: "coverage_gap", date: FRI, positionId: P.DISH, fromQ: 28, toQ: 44, cause: "eligibility",
+      certificate: { positionId: P.DISH, eligibleCount: 0 } };
+    expect(checkCertificate(g, week([]), only)).toBe(true);
+    const normal = context();
+    setNeed(normal, FRI, P.DISH, 28, 44);
+    expect(checkCertificate(g, week([]), normal)).toBe(false); // kai (BOH employee) could
+  });
+
+  it("availability: fails when an eligible member is available and free", () => {
+    const ctx = context();
+    setNeed(ctx, FRI, P.DISH, 28, 44);
+    ctx.people[U.kai]!.availability[FRI] = null;
+    const g: DeclaredGap = { code: "coverage_gap", date: FRI, positionId: P.DISH, fromQ: 28, toQ: 44, cause: "availability",
+      certificate: { eligibleIds: [U.kai], unavailableIds: [U.kai] } };
+    expect(checkCertificate(g, week([]), ctx)).toBe(true);
+    ctx.people[U.kai]!.availability[FRI] = { fromQ: 28, toQ: 84, source: "toast_pattern" };
+    expect(checkCertificate(g, week([]), ctx)).toBe(false);
+  });
+
+  it("structure: certifies the case-file infeasible row (a secondary while its primary is closed); a short window is NOT a proof (Astra P2-4)", () => {
+    const short = structure((s) => { s.positions[P.BOI]!.openQ = 52; });
+    const g1: DeclaredGap = { code: "coverage_gap", date: SAT, positionId: P.BOI, fromQ: 52, toQ: 56, cause: "structure",
+      certificate: { rule: "primary_window_closed", detail: { positionId: P.BOI } } };
+    expect(structureInfeasible(short, SAT, g1)).toBe(false);
+    const c1 = context({ s: short });
+    setNeed(c1, SAT, P.BOI, 52, 56);
+    expect(checkCertificate(g1, week([]), c1)).toBe(false);
+
+    const closed = structure((s) => { s.positions[P.EXPO]!.closeQ = 84; s.positions[P.REG]!.trimQ = 64; s.positions[P.REG]!.closeQ = 64; });
+    const g2: DeclaredGap = { code: "coverage_gap", date: SAT, positionId: P.EXPO, fromQ: 64, toQ: 80, cause: "structure",
+      certificate: { rule: "primary_window_closed", detail: { positionId: P.EXPO, primaryId: P.REG } } };
+    expect(structureInfeasible(closed, SAT, g2)).toBe(true);
+    expect(structureInfeasible(closed, SAT, { ...g2, fromQ: 46, toQ: 60 })).toBe(false);
+
+    const g3: DeclaredGap = { code: "mod_missing", date: SAT, positionId: null, fromQ: 28, toQ: 83, cause: "structure",
+      certificate: { rule: "no_mod_member", detail: {} } };
+    // KH-as-MoD OFF here (decision 6 makes Iris, a KH, eligible from 19:00 by default).
+    const ctx = context({ s: structure((s) => { s.leadership.modRequired = true; s.leadership.keyHolderModAfterQ = null; }) });
+    expect(checkCertificate(g3, week([]), ctx)).toBe(false); // Alex and Dani are members
+    for (const u of [U.alex, U.dani]) ctx.people[u]!.activeMember = false;
+    expect(checkCertificate(g3, week([]), ctx)).toBe(true);
+  });
+
+  it("capacity (r3): two positions, one eligible + available person → required 2, people 1, short 1", () => {
+    const s = structure((x) => { x.positions[P.REG]!.allowedRoles = ["trainer"]; x.positions[P.WALKON]!.allowedRoles = ["trainer"]; });
+    const ctx = context({ s });
+    setNeed(ctx, SUN, P.REG, 44, 56);
+    setNeed(ctx, SUN, P.WALKON, 44, 56);
+    const cert = { fromQ: 44, toQ: 56, positionIds: [P.REG, P.WALKON], requiredHeads: 2, peopleIds: [U.maya], people: 1, shortBy: 1 };
+    const g: DeclaredGap = { code: "coverage_gap", date: SUN, positionId: P.WALKON, fromQ: 44, toQ: 56, cause: "capacity", certificate: cert };
+    const placed = [shift(U.maya, SUN, 44, 60, P.REG)];
+    expect(checkCertificate(g, week(placed), ctx)).toBe(true); // exactly one head uncovered per quarter
+    expect(checkCertificate(g, week([]), ctx)).toBe(false); // two uncovered: the excess is not proven
+    expect(capacityBound({ date: SUN, positionId: P.WALKON, fromQ: 44, toQ: 56 }, week(placed), ctx)).toEqual(cert);
+  });
+
+  it("capacity: the Hall-type search finds the binding subset where no single position is short", () => {
+    const s = structure((x) => {
+      x.positions[P.REG]!.allowedRoles = ["trainer"];
+      x.positions[P.WALKON]!.allowedRoles = ["trainer"];
+      x.positions[P.THIRD]!.allowedRoles = ["employee"];
+    });
+    const ctx = context({ s });
+    for (const p of [P.REG, P.WALKON, P.THIRD]) setNeed(ctx, SUN, p, 44, 56);
+    const placed = [shift(U.maya, SUN, 44, 60, P.REG), shift(U.ben, SUN, 40, 60, P.THIRD)];
+    const got = capacityBound({ date: SUN, positionId: P.WALKON, fromQ: 44, toQ: 56 }, week(placed), ctx);
+    expect(got).toMatchObject({ positionIds: [P.REG, P.WALKON], requiredHeads: 2, people: 1, shortBy: 1 });
+    for (const single of [P.REG, P.WALKON, P.THIRD]) {
+      const one = capacityBound({ date: SUN, positionId: single, fromQ: 44, toQ: 56 }, week(placed), { ...ctx });
+      expect(one?.positionIds.length ?? 0).not.toBe(1);
+    }
+  });
+
+  it("unresolved_search (r3): only when a search limit was hit AND no proven cause certifies; a gap, never proven", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.REG, 44, 48);
+    const g: DeclaredGap = { code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48, cause: "unresolved_search",
+      certificate: { searched: { steps: REPAIR_LIMITS.REPAIR_MAX_STEPS, donorsTried: 8, chainDepth: 3 }, limits: { ...REPAIR_LIMITS }, candidateIds: [U.maya] } };
+    expect(checkCertificate(g, week([]), ctx)).toBe(true);
+    const ps = run([], ctx, [g]);
+    expect(ps).toMatchObject([{ code: "coverage_gap", severity: "gap", params: { cause: "unresolved_search", proven: false } }]);
+    const notHit = { ...g, certificate: { ...g.certificate, searched: { steps: 50, donorsTried: 2, chainDepth: 1 } } } as DeclaredGap;
+    expect(checkCertificate(notHit, week([]), ctx)).toBe(false);
+    ctx.budgetByDate[WED] = 0; // now `budget_limited` proves it: an unresolved claim is no longer honest
+    expect(checkCertificate(g, week([]), ctx)).toBe(false);
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx)?.cause).toBe("budget_limited");
+  });
+
+  it("Approve refuses unresolved_gaps while ANY unresolved_search gap exists, inherited or not (r4); rules_failing on a NEW error", () => {
+    const inheritedGap: DeclaredGap = { code: "coverage_gap", date: MON, positionId: P.REG, fromQ: 44, toQ: 48, cause: "unresolved_search",
+      certificate: { searched: { steps: 200, donorsTried: 8, chainDepth: 3 }, limits: { ...REPAIR_LIMITS }, candidateIds: [] } };
+    const days = [{ date: MON, originRevisionId: "rev-0", structureVersionId: "sv-1", inherited: true, problems: [] }];
+    const s = week([], [inheritedGap], days);
+    expect(approvalRefusal(s, checkScheduleRules(s, context()))).toBe("unresolved_gaps");
+    expect(approvalRefusal(week([]), [])).toBeNull();
+    const broken = week([shift(U.ben, WED, 44, 56, P.REG)]);
+    expect(approvalRefusal(broken, checkScheduleRules(broken, context()))).toBe("rules_failing");
+    const inheritedError: RuleProblem = { code: "shift_below_minimum", severity: "error", day: MON, params: {}, inherited: true };
+    expect(approvalRefusal(week([]), [inheritedError])).toBeNull();
+  });
+});
+
+describe("original vs current validation (r3 P2-4, r4)", () => {
+  it("replays from the stored snapshot only; the advisory lists exactly what changed", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.REG, 44, 64);
+    ctx.budgetByDate[THU] = 62;
+    ctx.people[U.ben]!.availability[THU] = { fromQ: 40, toQ: 84, source: "toast_pattern" };
+    const s = week([shift(U.ben, WED, 44, 60, P.REG), shift(U.tess, THU, 44, 60, P.REG), shift(U.ben, THU, 44, 60, P.WALKON)]);
+    const snap = toContextSnapshot(ctx);
+    const original = checkScheduleRules(s, ruleContextFromSnapshot(snap.json));
+
+    const live = structuredClone(ctx);
+    live.people[U.maya]!.activeMember = false; // Maya left
+    live.people[U.ben]!.availability[THU] = { fromQ: 60, toQ: 84, source: "toast_pattern" };
+    live.budgetByDate[THU] = 58;
+    // The stored snapshot is unchanged, so the original verdict is byte-identical.
+    expect(JSON.stringify(checkScheduleRules(s, ruleContextFromSnapshot(snap.json)))).toBe(JSON.stringify(original));
+    expect(JSON.stringify(checkScheduleRules(s, live))).not.toBe(JSON.stringify(original));
+    expect(contextAdvisory(ruleContextFromSnapshot(snap.json), live).map((a) => [a.code, a.date, a.userId])).toEqual([
+      ["member_removed", null, U.maya],
+      ["availability_changed", THU, U.ben],
+      ["budget_changed", THU, null],
+    ]);
+    expect(snap.digest).toMatch(/^[0-9a-f]{16}$/);
+    expect(toContextSnapshot(ruleContextFromSnapshot(snap.json)).digest).toBe(snap.digest);
+  });
+
+  it("coverage reads need(p, q) from the snapshot's need grid, never from the structure", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.BOI, 44, 48);
+    ctx.days[WED]!.structure.positions[P.BOI]!.headsBefore = 0; // the structure says nothing about need
+    expect(of(run([], ctx), "undeclared_gap")).toHaveLength(1);
+  });
+});
+
+describe("the historical contract (r2 P1-3)", () => {
+  it("an inherited day is NOT re-judged: its stored problems return as-is, inherited, even for a gone person / retired position", () => {
+    const stored: RuleProblem = { code: "shift_below_minimum", severity: "error", day: MON, userId: "u-gone", params: { minutes: 120 }, inherited: false };
+    const days = [{ date: MON, originRevisionId: "rev-1", structureVersionId: "sv-0", inherited: true, problems: [stored] }];
+    const s = week([shift("u-gone", MON, 44, 52, "retired-position")], [], days);
+    const ps = checkScheduleRules(s, context());
+    expect(ps).toEqual([{ ...stored, inherited: true }]);
+  });
+
+  it("weekly totals COUNT inherited hours, and attribute the problem to a built day (overtime, as a warning)", () => {
+    const days = [MON, TUE].map((date) => ({ date, originRevisionId: "rev-1", structureVersionId: "sv-1", inherited: true, problems: [] }));
+    const s = week([MON, TUE, WED, THU, FRI].map((d) => shift(U.ben, d, 44, 80, P.REG)), [], days);
+    const ot = of(checkScheduleRules(s, context()), "overtime");
+    expect(ot).toEqual([expect.objectContaining({ day: FRI, severity: "warning", inherited: false, params: { hours: 45, limit: 40 } })]);
+  });
+});
+
+describe("determinism and cost", () => {
+  it("output order is (day, code, user, q) and byte-identical across runs and input permutations", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.REG, 44, 48);
+    const shifts = [shift(U.dani, WED, 64, 83, P.REG), shift(U.ben, THU, 44, 56, P.EXPO), shift(U.maya, WED, 44, 60, P.REG), shift(U.ben, WED, 44, 60, P.REG)];
+    const a = checkScheduleRules(week(shifts), ctx);
+    const b = checkScheduleRules(week([...shifts].reverse()), ctx);
+    expect(JSON.stringify(b)).toBe(JSON.stringify(a));
+    const keys = a.map((p) => [p.day, p.code, p.userId ?? "", p.q ?? -1]);
+    const sorted = [...keys].sort((x, y) => (x[0]! < y[0]! ? -1 : x[0]! > y[0]! ? 1 : x[1]! < y[1]! ? -1 : x[1]! > y[1]! ? 1 : x[2]! < y[2]! ? -1 : x[2]! > y[2]! ? 1 : (x[3] as number) - (y[3] as number)));
+    expect(keys).toEqual(sorted);
+  });
+
+  it("a 500-shift week checks in < 50 ms", () => {
+    const ctx = context();
+    for (let i = 0; i < 100; i++) ctx.people[`u-${i}`] = { ...ctx.people[U.ben]!, userId: `u-${i}` };
+    for (const d of DATES.slice(2)) for (const p of [P.REG, P.WALKON, P.BOI, P.THIRD]) setNeed(ctx, d, p, 44, 56);
+    // 100 people × 5 built days, one shift each a day (a big but real week), on four line positions.
+    const shifts = Array.from({ length: 500 }, (_, i) => shift(`u-${i % 100}`, DATES[2 + Math.floor(i / 100)]!, 42 + (i % 8) * 2, 60 + (i % 8) * 2, [P.REG, P.WALKON, P.WALK, P.EXPO][i % 4]!));
+    for (let i = 0; i < 2; i++) checkScheduleRules(week(shifts), ctx); // warm the JIT
+    // The best of three runs: a complexity guard, not a benchmark of a busy 2-core desktop.
+    const times = [0, 1, 2].map(() => { const t0 = performance.now(); checkScheduleRules(week(shifts), ctx); return performance.now() - t0; });
+    expect(Math.min(...times)).toBeLessThan(50);
+  });
+});
+
+describe("Astra's chunk A review probes (failing first, fixed in the same commit)", () => {
+  it("P1 Closing Manager: the flag counts only on an eligible shift that COVERS the closing window; a KH 10:30-14:30 flagged CM FAILS", () => {
+    const ctx = context({ built: [WED] });
+    setNeed(ctx, WED, P.REG, 44, 83);
+    const flaggedLunch = shift(U.iris, WED, 42, 58, P.REG, { closingManager: true });
+    const closer = shift(U.ben, WED, 64, 83, P.REG);
+    const ps = run([flaggedLunch, closer], ctx);
+    expect(ps.some((p) => p.severity === "error")).toBe(true);
+    expect(of(ps, "closing_manager_not_closing")).toMatchObject([{ userId: U.iris, day: WED }]);
+    expect(of(ps, "undeclared_gap").map((p) => p.params.gap)).toContain("closing_manager_missing");
+    expect(approvalRefusal(week([flaggedLunch, closer]), ps)).toBe("rules_failing");
+    // The same KH actually closing satisfies it.
+    const ok = run([shift(U.iris, WED, 64, 83, P.REG, { closingManager: true }), shift(U.ben, WED, 44, 64, P.REG)], ctx);
+    expect(ok.filter((p) => p.severity === "error")).toEqual([]);
+    // A flagged shift that starts after service close, or ends before everyone is out, does not cover the window either.
+    expect(of(run([shift(U.iris, WED, 81, 83, P.REG, { closingManager: true })], ctx), "closing_manager_not_closing")).toHaveLength(1);
+    expect(of(run([shift(U.iris, WED, 64, 82, P.REG, { closingManager: true })], ctx), "closing_manager_not_closing")).toHaveLength(1);
+  });
+
+  it("P1 floor_limit: an hourly person whose existing shift can EXTEND over the gap is free; 12:00-16:00 beside a 16:00-17:00 gap is NOT floor_limit", () => {
+    const ctx = context({ s: structure((x) => { x.limits.salariedFlexH = 0; }) }); // the floor proof needs the flex spent (decision 4)
+    setNeed(ctx, THU, P.REG, 48, 68);
+    for (const u of [U.maya, U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[THU] = null;
+    ctx.people[U.ben]!.availability[THU] = { fromQ: 40, toQ: 84, source: "toast_pattern" };
+    const shifts = [
+      shift(U.ben, THU, 48, 64, P.REG),
+      shift(U.alex, THU, 28, 60, "mod"),
+      ...[WED, FRI, SAT, SUN].map((d) => shift(U.alex, d, 42, 74, P.REG)),
+    ];
+    // Alex has 32 floor hours (Register, in his cover list; 8 h days meet the GM minimum): the 1 h window would take him to 33 > 32.
+    // CC chunk H8: the Register's legal holders that Thursday — every FOH person and the GM (the BOH employee is not one), the owner.
+    const g: DeclaredGap = { code: "coverage_gap", date: THU, positionId: P.REG, fromQ: 64, toQ: 68, cause: "floor_limit",
+      certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, excludedBy: { [U.alex]: "flex_exhausted", [U.ben]: "unavailable", [U.dani]: "unavailable", [U.eli]: "unavailable", [U.iris]: "unavailable", [U.maya]: "unavailable", [U.pete]: "never_generated" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } };
+    expect(checkCertificate(g, week(shifts), ctx)).toBe(false);
+    expect(proveGap(g, week(shifts), ctx)?.cause).not.toBe("floor_limit");
+    // Extending Ben to 17:00 is a clean fill.
+    const extended = [shift(U.ben, THU, 48, 68, P.REG), ...shifts.slice(1)];
+    expect(run(extended, ctx).filter((p) => p.severity === "error" || p.severity === "gap")).toEqual([]);
+    // When the extension is impossible (Ben's availability ends at 16:00), the floor-limit proof stands again.
+    ctx.people[U.ben]!.availability[THU] = { fromQ: 40, toQ: 64, source: "toast_pattern" };
+    expect(checkCertificate(g, week(shifts), ctx)).toBe(true);
+    // A gap INSIDE Ben's shift (he is on another position then): CC chunk H6 — he is eligible and available, so no certificate
+    // either (a swap or a reassignment may reach it: the repair search's business, never a proof's).
+    ctx.people[U.ben]!.availability[THU] = { fromQ: 40, toQ: 84, source: "toast_pattern" };
+    setNeed(ctx, THU, P.WALKON, 52, 56);
+    const inside: DeclaredGap = { ...g, positionId: P.WALKON, fromQ: 52, toQ: 56 };
+    expect(checkCertificate(inside, week(shifts), ctx)).toBe(false);
+    expect(floorLimitCertificate(inside, week(shifts), ctx)).toBeNull();
+  });
+
+  it("P1 budget: essential coverage (the closing window, MoD, the Closing Manager) is budget-exempt and is never excused by budget", () => {
+    const ctx = context({ built: [WED] });
+    setNeed(ctx, WED, P.REG, 80, 83);
+    ctx.budgetByDate[WED] = 0;
+    const closing = forged({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 80, toQ: 83 }, [WED], 0.75);
+    expect(checkCertificate(closing, week([]), ctx)).toBe(false);
+    expect(proveGap(closing, week([]), ctx)?.cause).not.toBe("budget_limited");
+    // A gap that merely TOUCHES the closing window is filled by a closing shift: exempt too.
+    setNeed(ctx, WED, P.REG, 76, 83);
+    const touching = forged({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 76, toQ: 81 }, [WED], 1.25);
+    expect(checkCertificate(touching, week([]), ctx)).toBe(false);
+    // Scheduling the closer costs no budget: a whole shift working the closing window is essential.
+    const filled = run([shift(U.iris, WED, 67, 83, P.REG, { closingManager: true })], ctx);
+    expect(filled.filter((p) => p.severity === "error" || p.severity === "gap" || p.code === "over_budget")).toEqual([]);
+    // MoD deficits are never budget gaps either.
+    const modCtx = context({ s: structure((s) => { s.leadership.modRequired = true; }), built: [THU] });
+    modCtx.budgetByDate[THU] = 0;
+    expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 28, toQ: 83 }, week([]), modCtx)?.cause).not.toBe("budget_limited");
+    // A lunch gap with no budget is still a budget gap.
+    const lunch = context({ built: [WED] });
+    setNeed(lunch, WED, P.REG, 44, 48);
+    lunch.budgetByDate[WED] = 0;
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), lunch)?.cause).toBe("budget_limited");
+  });
+
+  it("P2 short windows: the minimum applies to the whole SHIFT; a 2 h window is a segment of a multi-position shift, never a structure proof", () => {
+    const s = structure((x) => { x.positions[P.EXPO]!.openQ = 48; x.positions[P.EXPO]!.trimQ = 56; x.positions[P.EXPO]!.closeQ = 56; });
+    const ctx = context({ s, built: [FRI] });
+    setNeed(ctx, FRI, P.REG, 44, 48);
+    setNeed(ctx, FRI, P.EXPO, 48, 56);
+    setNeed(ctx, FRI, P.WALKON, 56, 60);
+    const g: DeclaredGap = { code: "coverage_gap", date: FRI, positionId: P.EXPO, fromQ: 48, toQ: 56, cause: "structure",
+      certificate: { rule: "primary_window_closed", detail: { positionId: P.EXPO } } };
+    expect(structureInfeasible(s, FRI, g)).toBe(false);
+    expect(proveGap(g, week([]), ctx)?.cause).not.toBe("structure");
+    // The valid 4 h Register -> Expeditor -> Walk-ins / Online shift fills it with zero problems.
+    const multi = { ...shift(U.ben, FRI, 44, 60, P.REG), segments: [
+      { positionId: P.REG, startQ: 44, endQ: 48 }, { positionId: P.EXPO, startQ: 48, endQ: 56 }, { positionId: P.WALKON, startQ: 56, endQ: 60 },
+    ] };
+    const reg = shift(U.maya, FRI, 48, 64, P.REG); // the primary stays filled while Expeditor is
+    expect(run([multi, reg], ctx).filter((p) => p.severity !== "warning")).toEqual([]);
+  });
+
+  it("CC ruling 2: 'KH may be manager on duty after <time>' is a SETTING, default OFF — OFF leaves the evening a MoD gap; ON lets the KH cover from that time", () => {
+    const evening = (after: number | null) => context({ s: structure((s) => { s.leadership.modRequired = true; s.leadership.keyHolderModAfterQ = after; }), built: [THU] });
+    // Pete (presence pin) holds MoD until 16:30; Iris, a key holder, closes on Register 16:00-20:45.
+    const shifts = [shift(U.pete, THU, 28, 66, "mod", { pinned: true }), shift(U.iris, THU, 64, 83, P.REG)];
+    const off = run(shifts, evening(null));
+    expect(of(off, "undeclared_gap").map((p) => p.params)).toEqual([{ gap: "mod_missing", fromQ: 66, toQ: 83 }]);
+    const on = run(shifts, evening(66));
+    expect(of(on, "undeclared_gap")).toEqual([]);
+    expect(of(on, "mod_missing")).toEqual([]);
+    const later = run(shifts, evening(72));
+    expect(of(later, "undeclared_gap").map((p) => p.params)).toEqual([{ gap: "mod_missing", fromQ: 66, toQ: 72 }]);
+    // Certificates follow the setting: with only a KH able to be MoD, the structure proof holds before the time and fails after it.
+    const ctx = evening(66);
+    for (const u of [U.alex, U.dani]) ctx.people[u]!.activeMember = false;
+    const before: DeclaredGap = { code: "mod_missing", date: THU, positionId: null, fromQ: 28, toQ: 66, cause: "structure", certificate: { rule: "no_mod_member", detail: {} } };
+    expect(checkCertificate(before, week([]), ctx)).toBe(true);
+    expect(checkCertificate({ ...before, fromQ: 66, toQ: 83 }, week([]), ctx)).toBe(false);
+    expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 66, toQ: 83 }, week([]), ctx)?.cause).not.toBe("structure");
+    expect(checkCertificate({ ...before, fromQ: 66, toQ: 83 }, week([]), evening(null))).toBe(false); // Alex and Dani are members when OFF
+  });
+
+  it("CC chunk B ruling 1: capacityBound returns the LARGEST VERIFIABLE subset — never one the excess check refuses", () => {
+    // Register needs 2 (Maya on it), Expeditor needs 2 (Ben could work it but is not placed). {REG, EXPO} has the larger
+    // raw shortBy (4 − 2 = 2) but leaves 3 uncovered > 2, so it can never verify; {REG} (2 − 1 = 1, 1 uncovered) is the
+    // strongest proof the counting bound supports.
+    const s = structure((x) => {
+      x.positions[P.REG]!.headsBefore = 2; x.positions[P.REG]!.allowedRoles = ["trainer"];
+      x.positions[P.EXPO]!.headsBefore = 2; x.positions[P.EXPO]!.allowedRoles = ["employee"];
+    });
+    const ctx = context({ s });
+    setNeed(ctx, SUN, P.REG, 48, 52, 2);
+    setNeed(ctx, SUN, P.EXPO, 48, 52, 2);
+    const placed = [shift(U.maya, SUN, 44, 60, P.REG)];
+    const cert = capacityBound({ date: SUN, positionId: P.REG, fromQ: 48, toQ: 52 }, week(placed), ctx);
+    expect(cert).toEqual({ fromQ: 48, toQ: 52, positionIds: [P.REG], requiredHeads: 2, peopleIds: [U.maya], people: 1, shortBy: 1 });
+    const g: DeclaredGap = { code: "coverage_gap", date: SUN, positionId: P.REG, fromQ: 48, toQ: 52, cause: "capacity", certificate: cert! };
+    expect(checkCertificate(g, week(placed), ctx)).toBe(true);
+    // The larger subset's certificate is refused by the excess check (that is why it is never returned).
+    const big: DeclaredGap = { ...g, certificate: { fromQ: 48, toQ: 52, positionIds: [P.REG, P.EXPO].sort(), requiredHeads: 4, peopleIds: [U.ben, U.maya].sort(), people: 2, shortBy: 2 } };
+    expect(checkCertificate(big, week(placed), ctx)).toBe(false);
+    expect(proveGap({ code: "coverage_gap", date: SUN, positionId: P.REG, fromQ: 48, toQ: 52 }, week(placed), ctx)).toEqual({ cause: "capacity", certificate: cert });
+    // Every certificate capacityBound returns verifies (the property the ruling asks for), across the earlier fixtures too.
+    for (const pos of [P.REG, P.EXPO]) {
+      const c = capacityBound({ date: SUN, positionId: pos, fromQ: 48, toQ: 52 }, week(placed), ctx);
+      if (c) expect(checkCertificate({ ...g, positionId: pos, certificate: c }, week(placed), ctx)).toBe(true);
+    }
+  });
+
+  it("P2 capacity: duplicate position ids are rejected before the bound is recomputed", () => {
+    const s = structure((x) => { x.positions[P.REG]!.headsBefore = 2; x.positions[P.REG]!.allowedRoles = ["trainer", "employee"]; });
+    const ctx = context({ s });
+    for (const u of [U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[SUN] = null;
+    setNeed(ctx, SUN, P.REG, 44, 56, 2);
+    const placed = [shift(U.maya, SUN, 44, 60, P.REG)];
+    const dup: DeclaredGap = { code: "coverage_gap", date: SUN, positionId: P.REG, fromQ: 44, toQ: 56, cause: "capacity",
+      certificate: { fromQ: 44, toQ: 56, positionIds: [P.REG, P.REG, P.REG], requiredHeads: 6, peopleIds: [U.ben, U.maya], people: 2, shortBy: 4 } };
+    expect(checkCertificate(dup, week(placed), ctx)).toBe(false);
+    expect(capacityBound({ date: SUN, positionId: P.REG, fromQ: 44, toQ: 56 }, week(placed), ctx)).toBeNull(); // Ben can fill it
+    expect(approvalRefusal(week(placed, [dup]), run(placed, ctx, [dup]))).toBe("rules_failing");
+    const dupPeople = { ...dup, certificate: { ...dup.certificate, positionIds: [P.REG], requiredHeads: 2, peopleIds: [U.maya, U.maya], people: 2, shortBy: 0 } } as DeclaredGap;
+    expect(checkCertificate(dupPeople, week(placed), ctx)).toBe(false);
+  });
+});
+
+describe("Astra's chunk B review probes (failing first)", () => {
+  it("P1-1 budget vs salaried cover: a budget certificate is REJECTED while a legal zero-hourly-cost fill exists (the GM on MoD can take Register)", () => {
+    const ctx = context({ built: [THU] });
+    setNeed(ctx, THU, P.REG, 44, 60);
+    ctx.budgetByDate[THU] = 0;
+    const gm = shift(U.alex, THU, 28, 60, "mod");
+    const g = proven({ code: "coverage_gap", date: THU, positionId: P.REG, fromQ: 44, toQ: 60 }, week([]), ctx);
+    expect(checkCertificate(g, week([gm]), ctx)).toBe(false);
+    expect(proveGap(g, week([gm]), ctx)?.cause).not.toBe("budget_limited");
+    expect(cheapestFill(g, week([gm]), ctx)).toMatchObject({ hours: 0, steps: [{ kind: "relabel", userId: U.alex, fromPositionId: "mod" }] });
+    // Relabelling the GM's block to Register is legal and costs no hourly money: zero problems.
+    const relabelled = { ...gm, segments: [{ positionId: "mod", startQ: 28, endQ: 44 }, { positionId: P.REG, startQ: 44, endQ: 60 }] };
+    expect(run([relabelled], ctx).filter((p) => p.severity !== "warning")).toEqual([]);
+    // Without the GM (or with the GM's floor AND flex exhausted — past the floor a relabel is flex, Juan's decision 4)
+    // the budget proof stands again.
+    expect(checkCertificate(g, week([]), ctx)).toBe(true);
+    const capped = context({ s: structure((x) => { x.limits.managerFloorH = 0; x.limits.salariedFlexH = 0; }), built: [THU] });
+    setNeed(capped, THU, P.REG, 44, 60);
+    capped.budgetByDate[THU] = 0;
+    expect(proveGap(g, week([gm]), capped)?.cause).toBe("budget_limited");
+  });
+
+  it("P1-2 KH-MoD boundaries: impossibility before the KH-may-be-MoD time never certifies the time after it", () => {
+    const s = structure((x) => { x.leadership.modRequired = true; x.leadership.keyHolderModAfterQ = 48; });
+    const ctx = context({ s, built: [THU] });
+    ctx.people = { [U.iris]: ctx.people[U.iris]! }; // a key-holder-only roster
+    const across: DeclaredGap = { code: "mod_missing", date: THU, positionId: null, fromQ: 40, toQ: 64, cause: "structure", certificate: { rule: "no_mod_member", detail: {} } };
+    expect(checkCertificate(across, week([]), ctx)).toBe(false); // Iris may be MoD 12:00–16:00
+    expect(checkCertificate({ ...across, toQ: 48 }, week([]), ctx)).toBe(true); // before noon nobody can
+    expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 40, toQ: 64 }, week([]), ctx)).toBeNull();
+    expect(proveGap({ code: "mod_missing", date: THU, positionId: null, fromQ: 40, toQ: 48 }, week([]), ctx)?.cause).toBe("structure");
+    const elig: DeclaredGap = { ...across, cause: "eligibility", certificate: { positionId: null, eligibleCount: 0 } };
+    expect(checkCertificate(elig, week([]), ctx)).toBe(false);
+    // Availability is judged per quarter where the person counts: Iris unavailable after noon proves the afternoon.
+    ctx.people[U.iris]!.availability[THU] = { fromQ: 28, toQ: 48, source: "toast_pattern" };
+    const av: DeclaredGap = { ...across, cause: "availability", certificate: { eligibleIds: [U.iris], unavailableIds: [U.iris] } };
+    expect(checkCertificate(av, week([]), ctx)).toBe(true);
+    ctx.people[U.iris]!.availability[THU] = { fromQ: 28, toQ: 56, source: "toast_pattern" };
+    expect(checkCertificate(av, week([]), ctx)).toBe(false); // available 12:00–14:00, when she counts
+  });
+
+  it("hoursNeeded (Astra ruling): the legal MARGINAL non-essential hourly cost — extending an essential closer costs 0; an illegal extension is not counted", () => {
+    const ctx = context({ built: [WED] });
+    setNeed(ctx, WED, P.REG, 60, 64);
+    ctx.budgetByDate[WED] = 0;
+    const subject = { code: "coverage_gap" as const, date: WED, positionId: P.REG, fromQ: 60, toQ: 64 };
+    // Iris closes 16:00–20:45 on Register (essential): extending her back to 15:00 costs no non-essential hour.
+    const closer = shift(U.iris, WED, 64, 83, P.REG, { closingManager: true });
+    expect(proveGap(subject, week([closer]), ctx)?.cause).not.toBe("budget_limited");
+    // A non-essential adjacent shift: the extension's hours (1 h); its availability ending at 15:00 makes it illegal → a new 4 h block.
+    const ben = shift(U.ben, WED, 44, 60, P.REG);
+    ctx.budgetByDate[WED] = 4;
+    expect(proveGap(subject, week([ben]), ctx)).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 1, usedHours: 4 } });
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 40, toQ: 60, source: "toast_pattern" };
+    expect(proveGap(subject, week([ben]), ctx)).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 4 } });
+    // A pinned shift is never extended.
+    ctx.people[U.ben]!.availability = {};
+    expect(proveGap(subject, week([{ ...ben, pinned: true }]), ctx)).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 4 } });
+    // Reassignment: Ben on an over-covered Walk-ins / Online can move over at no extra hour → never a budget gap.
+    const twoWalk = shift(U.ben, WED, 56, 72, P.WALKON);
+    const maya = shift(U.maya, WED, 56, 72, P.WALKON);
+    const roomy = context({ s: structure((x) => { x.positions[P.WALKON]!.headsBefore = 2; x.positions[P.WALKON]!.headsAfter = 2; }), built: [WED] });
+    setNeed(roomy, WED, P.REG, 60, 64);
+    setNeed(roomy, WED, P.WALKON, 56, 72);
+    roomy.budgetByDate[WED] = 0;
+    expect(proveGap(subject, week([twoWalk, maya]), roomy)?.cause).not.toBe("budget_limited");
+  });
+});
+
+
+describe("Astra's chunk C review probes (failing first)", () => {
+  const regOnlyBen = () => {
+    const ctx = context({ s: structure((x) => { x.positions[P.REG]!.allowedRoles = ["employee"]; }) }); // Ben is the one eligible member (Tess is inactive)
+    setNeed(ctx, WED, P.REG, 44, 48);
+    ctx.budgetByDate[WED] = 0;
+    return ctx;
+  };
+  const budgetGap = (fillHours: number): DeclaredGap => forged({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, [WED], fillHours);
+
+  it("P1 budget needs a LEGAL PLACEMENT WITNESS: one eligible employee available 11:00–12:00, a 4 h minimum, a 1 h gap, budget 0 → NOT a budget proof", () => {
+    const ctx = regOnlyBen();
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 44, toQ: 48, source: "toast_pattern" };
+    // No 4 h shift fits inside 11:00–12:00, so no legal fill exists: the budget is not the reason.
+    expect(checkCertificate(budgetGap(4), week([]), ctx)).toBe(false);
+    expect(checkCertificate(budgetGap(1), week([]), ctx)).toBe(false);
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx)?.cause).not.toBe("budget_limited");
+    // With 11:00–15:00 available, the 4 h block 11:00–15:00 is the witness: budget_limited, W = 4.
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 44, toQ: 60, source: "toast_pattern" };
+    expect(proven({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 44, toQ: 48 }, week([]), ctx).certificate).toMatchObject({ fillHours: 4,
+      witness: [{ kind: "new_block", userId: U.ben, positionId: P.REG, fromQ: 44, toQ: 60, hours: 4 }] });
+  });
+
+  it("P1 the witness is a whole legal block: inside the position's open–close window, no overlap with the person's own shift, the daily maximum, the leader setting", () => {
+    // Window: Register opens 10:30 (42). A gap at 10:30–11:00 needs a 4 h block starting at 10:30 at the earliest.
+    const ctx = regOnlyBen();
+    ctx.days[WED]!.need.positions[P.REG]!.fill(0);
+    setNeed(ctx, WED, P.REG, 42, 44);
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 36, toQ: 50, source: "toast_pattern" }; // 9:00–12:30: no 4 h block from 10:30 fits
+    const gap = (hoursNeeded: number): DeclaredGap => ({ ...budgetGap(hoursNeeded), fromQ: 42, toQ: 44 });
+    expect(checkCertificate(gap(4), week([]), ctx)).toBe(false);
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 36, toQ: 58, source: "toast_pattern" }; // 9:00–14:30: 10:30–14:30 fits
+    expect(proven({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 42, toQ: 44 }, week([]), ctx).certificate).toMatchObject({ fillHours: 4 });
+    // Ben's own shift that day (Walk-ins / Online 1:00–8:00 PM, 7 h, not the closing window): a NEW 4 h block from 10:30 would
+    // overlap it and break the daily maximum (7 + 4 > 10.5 h), so it is never the witness; extending his shift back to 10:30 (9.5 h, the
+    // 0.5 h hole + a 2 h bridge on Register) is, and it costs 2.5 h.
+    const busy = regOnlyBen();
+    busy.people[U.ben]!.availability[WED] = { fromQ: 36, toQ: 84, source: "toast_pattern" };
+    busy.days[WED]!.need.positions[P.REG]!.fill(0);
+    setNeed(busy, WED, P.REG, 42, 44);
+    const own = shift(U.ben, WED, 52, 80, P.WALKON);
+    expect(checkCertificate({ ...gap(4), certificate: { ...gap(4).certificate, usedHours: 7 } } as DeclaredGap, week([own]), busy)).toBe(false);
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.REG, fromQ: 42, toQ: 44 }, week([own]), busy)).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 2.5 } });
+  });
+
+  it("P1 a secondary whose primary is unstaffed: the witness must staff the primary too (two people, two blocks), else no budget proof", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.WALK, 44, 48); // Walk-ins (secondary of Walk-ins / Online), primary unstaffed
+    ctx.budgetByDate[WED] = 0;
+    const proof = proveGap({ code: "coverage_gap", date: WED, positionId: P.WALK, fromQ: 44, toQ: 48 }, week([]), ctx);
+    expect(proof).toMatchObject({ cause: "budget_limited", certificate: { fillHours: 8 } }); // 4 h on Walk-ins + 4 h on Walk-ins / Online (paired)
+    // Only one person may work either position: no legal pair exists → not a budget proof.
+    const solo = context({ s: structure((x) => { x.positions[P.WALK]!.allowedRoles = ["employee"]; x.positions[P.WALKON]!.allowedRoles = ["employee"]; }) });
+    setNeed(solo, WED, P.WALK, 44, 48);
+    solo.budgetByDate[WED] = 0;
+    expect(proveGap({ code: "coverage_gap", date: WED, positionId: P.WALK, fromQ: 44, toQ: 48 }, week([]), solo)?.cause).not.toBe("budget_limited");
+  });
+});
+
+describe("Astra's chunk D review P1 + CC's design ruling: budget_limited — R < the cheapest legal fill FOUND (never a minimality claim)", () => {
+  /** Her probe: Walk-ins / Online (primary) and Walk-ins (secondary) staffed 10:30–2:30 by two people; both needed to 3:30. */
+  const probe = (budget: number) => {
+    const ctx = context();
+    setNeed(ctx, WED, P.WALKON, 42, 62);
+    setNeed(ctx, WED, P.WALK, 42, 62);
+    ctx.budgetByDate[WED] = budget;
+    const s = week([shift(U.maya, WED, 42, 58, P.WALKON), shift(U.ben, WED, 42, 58, P.WALK)]);
+    return { ctx, s, subject: { code: "coverage_gap" as const, date: WED, positionId: P.WALK, fromQ: 58, toQ: 62 } };
+  };
+
+  it("the PAIRED extension is found (each existing shift extended 1 h = 2 h) — with 2 h left it is NOT a budget gap", () => {
+    const { ctx, s, subject } = probe(10); // 8 h used, R = 2
+    expect(cheapestFill(subject, s, ctx)).toEqual({ hours: 2, steps: [
+      { kind: "extend", userId: U.ben, shiftStartQ: 42, positionId: P.WALK, fromQ: 58, toQ: 62, hours: 1 },
+      { kind: "extend", userId: U.maya, shiftStartQ: 42, positionId: P.WALKON, fromQ: 58, toQ: 62, hours: 1 },
+    ] });
+    expect(proveGap(subject, s, ctx)?.cause).not.toBe("budget_limited");
+    // The old over-statement (a hand-made 8 h claim) is refused: it is not what the search found.
+    expect(checkCertificate(forged(subject, [WED], 8), s, ctx)).toBe(false);
+    // The completed schedule (both extended) leaves no error and no gap on those positions.
+    const done = run([shift(U.maya, WED, 42, 62, P.WALKON), shift(U.ben, WED, 42, 62, P.WALK)], ctx);
+    expect(done.filter((p) => p.severity !== "warning" && (p.positionId === P.WALK || p.positionId === P.WALKON))).toEqual([]);
+  });
+
+  it("with less than W left (R = 1.5 < 2) it IS budget_limited, carrying R, W and the witness; shown as a proven gap", () => {
+    const { ctx, s, subject } = probe(9.5);
+    const g = proven(subject, s, ctx);
+    expect(g.certificate).toMatchObject({ remainingHours: 1.5, fillHours: 2 });
+    expect(checkCertificate(g, s, ctx)).toBe(true);
+    expect(run(s.shifts, ctx, [g]).filter((p) => p.code === "coverage_gap" && p.positionId === P.WALK)).toMatchObject([{ params: { cause: "budget_limited", proven: true } }]);
+  });
+
+  it("Approve does NOT refuse a budget_limited gap (a manager's choice); it still refuses unresolved_search", () => {
+    const { ctx, s, subject } = probe(9.5);
+    const g = proven(subject, s, ctx);
+    expect(approvalRefusal(week(s.shifts, [g]), run(s.shifts, ctx, [g]).filter((p) => p.positionId === P.WALK))).toBeNull();
+    const unresolved = { ...subject, cause: "unresolved_search", certificate: { searched: { steps: 200, donorsTried: 8, chainDepth: 3 }, limits: { ...REPAIR_LIMITS }, candidateIds: [] } } as DeclaredGap;
+    expect(approvalRefusal(week(s.shifts, [unresolved]), [])).toBe("unresolved_gaps");
+  });
+
+  it("a REASSIGNMENT is searched: Ben moves off Walk-ins / Online to Register and Maya stays on there 1 h earlier (W = 1)", () => {
+    const ctx = context();
+    setNeed(ctx, WED, P.REG, 48, 52);
+    setNeed(ctx, WED, P.WALKON, 42, 68);
+    ctx.budgetByDate[WED] = 0;
+    const s = week([shift(U.ben, WED, 42, 52, P.WALKON), shift(U.maya, WED, 52, 68, P.WALKON)]);
+    const plan = cheapestFill({ date: WED, positionId: P.REG, fromQ: 48, toQ: 52 }, s, ctx);
+    expect(plan).toEqual({ hours: 1, steps: [
+      { kind: "relabel", userId: U.ben, shiftStartQ: 42, fromPositionId: P.WALKON, positionId: P.REG, fromQ: 48, toQ: 52 },
+      { kind: "extend", userId: U.maya, shiftStartQ: 52, positionId: P.WALKON, fromQ: 48, toQ: 52, hours: 1 },
+    ] });
+  });
+});
+
+describe("Astra's chunk E review P1-1: a witness is legal only when the WHOLE combined fill applies cleanly", () => {
+  /**
+   * Her probe: Ben is on Register 11–3 (needed); Walk-ins (secondary) and Walk-ins / Online (primary) are both needed
+   * 11–3 and empty. Only Ben and Maya can work. The old search moved Ben to Walk-ins, refilled Register with a Maya
+   * block AND paired Walk-ins / Online with ANOTHER Maya block over the same hours (W = 8) — Maya double-booked.
+   */
+  const probe = (extra: (ctx: RuleContext) => void = () => {}) => {
+    // Register holds two heads (the room her refill used); one is needed.
+    const ctx = context({ s: structure((x) => { x.positions[P.REG]!.headsBefore = 2; x.positions[P.REG]!.headsAfter = 2; }) });
+    for (const id of [U.iris, U.dani, U.eli, U.kai, U.alex, U.pete]) ctx.people[id]!.activeMember = false;
+    setNeed(ctx, WED, P.REG, 44, 60);
+    setNeed(ctx, WED, P.WALKON, 44, 60);
+    setNeed(ctx, WED, P.WALK, 44, 60);
+    ctx.budgetByDate[WED] = 0;
+    extra(ctx);
+    const s = week([shift(U.ben, WED, 44, 60, P.REG)]);
+    return { ctx, s, subject: { code: "coverage_gap" as const, date: WED, positionId: P.WALK, fromQ: 44, toQ: 60 } };
+  };
+  const herWitness = [
+    { kind: "relabel" as const, userId: U.ben, shiftStartQ: 44, fromPositionId: P.REG, positionId: P.WALK, fromQ: 44, toQ: 60 },
+    { kind: "new_block" as const, userId: U.maya, positionId: P.REG, fromQ: 44, toQ: 60, hours: 4 },
+    { kind: "new_block" as const, userId: U.maya, positionId: P.WALKON, fromQ: 44, toQ: 60, hours: 4 },
+  ];
+
+  it("her double-booked plan is REFUSED as a witness; with no legal plan the deficit is never budget_limited", () => {
+    const { ctx, s, subject } = probe();
+    expect(fillIsLegal(subject, s, ctx, { hours: 8, steps: herWitness })).toBe(false);
+    expect(cheapestFill(subject, s, ctx)).toBeNull();
+    expect(proveGap(subject, s, ctx)?.cause).not.toBe("budget_limited");
+    const f = { budgetedDates: [WED], budgetHours: 0, usedHours: 4, essentialHours: 0, remainingHours: -4, fillHours: 8, witness: herWitness };
+    expect(checkCertificate({ ...subject, cause: "budget_limited", certificate: f } as DeclaredGap, s, ctx)).toBe(false);
+  });
+
+  it("when a LEGAL combined plan exists (a third person for the paired primary) it is the witness, and it validates", () => {
+    const { ctx, s, subject } = probe((c) => { c.people[U.eli]!.activeMember = true; });
+    const plan = cheapestFill(subject, s, ctx)!;
+    expect(plan).not.toBeNull();
+    expect(fillIsLegal(subject, s, ctx, plan)).toBe(true);
+    const users = plan.steps.filter((x) => x.kind === "new_block").map((x) => x.userId);
+    expect(new Set(users).size).toBe(users.length); // nobody gets two blocks over the same hours
+    const g = proven(subject, s, ctx);
+    expect(g.certificate).toMatchObject({ fillHours: plan.hours, witness: plan.steps });
+    expect(checkCertificate(g, s, ctx)).toBe(true);
+  });
+
+  it("the applied witness is validated, not just re-found: an overlapping, over-maximum or unavailable step is illegal", () => {
+    const { ctx, s, subject } = probe((c) => { c.people[U.eli]!.activeMember = true; });
+    // Overlap with the person's own shift.
+    expect(fillIsLegal(subject, s, ctx, { hours: 4, steps: [{ kind: "new_block", userId: U.ben, positionId: P.WALK, fromQ: 44, toQ: 60, hours: 4 }] })).toBe(false);
+    // Outside availability.
+    ctx.people[U.eli]!.availability[WED] = { fromQ: 64, toQ: 84, source: "toast_pattern" };
+    expect(fillIsLegal(subject, s, ctx, { hours: 8, steps: [
+      { kind: "new_block", userId: U.eli, positionId: P.WALK, fromQ: 44, toQ: 60, hours: 4 },
+      { kind: "new_block", userId: U.maya, positionId: P.WALKON, fromQ: 44, toQ: 60, hours: 4 },
+    ] })).toBe(false);
+    // A step that does not apply (no such shift) is illegal.
+    expect(fillIsLegal(subject, s, ctx, { hours: 1, steps: [{ kind: "extend", userId: U.maya, shiftStartQ: 30, positionId: P.WALK, fromQ: 44, toQ: 60, hours: 4 }] })).toBe(false);
+  });
+});
+
+describe("CC chunk C ruling 2: the cap-only structure certificate (max_shift) — a counting bound over eligible people × availability, capped per day", () => {
+  /** Register 10:30–9:00 PM (42 quarters) needs one head; the shop's cap is 8 h (32 q); Ben is the only eligible member. */
+  const capShop = (over: (s: ScheduleStructure) => void = () => {}) => {
+    const ctx = context({ s: structure((x) => { x.positions[P.REG]!.allowedRoles = ["employee"]; x.limits.maxShiftH = 8; x.limits.gmMinimumH = 8; x.limits.agmMinimumH = 8; over(x); }) });
+    setNeed(ctx, WED, P.REG, 42, 84);
+    return ctx;
+  };
+  const subject = { code: "coverage_gap" as const, date: WED, positionId: P.REG, fromQ: 74, toQ: 84 };
+
+  it("the validator's daily maximum is per person per DATE (a split day cannot dodge it), one problem at the day's first shift", () => {
+    const two = run([shift(U.ben, WED, 42, 66, P.REG), shift(U.ben, WED, 66, 86, P.WALKON)]);
+    expect(of(two, "shift_over_maximum")).toEqual([expect.objectContaining({ userId: U.ben, q: 42, params: { minutes: 660, maximumMinutes: 630 } })]);
+    expect(of(run([shift(U.ben, WED, 42, 60, P.REG), shift(U.ben, WED, 64, 84, P.WALKON)]), "shift_over_maximum")).toEqual([]); // 9.5 h in two shifts
+  });
+
+  it("positive: one eligible person, a 10.5 h need, an 8 h cap → short 10 quarters in EVERY allocation; the 2:30–9:00 PM remainder is certified by the numbers", () => {
+    const ctx = capShop();
+    const s = week([shift(U.ben, WED, 42, 74, P.REG)]);
+    const proof = proveGap(subject, s, ctx);
+    expect(proof).toEqual({ cause: "structure", certificate: { rule: "max_shift", detail: {
+      positionId: P.REG, runFromQ: 42, runToQ: 84, runQ: 42, maxShiftQ: 32, requiredQ: 42, peopleIds: [U.ben], availableQ: 42, coverableQ: 32, shortQ: 10,
+    } } });
+    expect(checkCertificate({ ...subject, ...proof! } as DeclaredGap, s, ctx)).toBe(true);
+    // And the validator accepts the declared gap as certified.
+    const gap = { ...subject, ...proof! } as DeclaredGap;
+    const problems = run(s.shifts, ctx, [gap]);
+    expect(problems.find((p) => p.code === "coverage_gap")).toMatchObject({ positionId: P.REG, q: 74, params: { cause: "structure", proven: true } });
+    expect(problems.filter((p) => (p.code === "uncertified_gap" || p.code === "undeclared_gap") && p.params.gap === "coverage_gap")).toEqual([]);
+  });
+
+  it("negative: an overlong window ALONE is not proof — a second eligible person who is available makes it coverable (8 + 8 ≥ 10.5 h)", () => {
+    const ctx = capShop((x) => { x.positions[P.REG]!.allowedRoles = ["employee", "trainer"]; }); // + Maya
+    const s = week([shift(U.ben, WED, 42, 74, P.REG)]);
+    expect(proveGap(subject, s, ctx)?.certificate).not.toMatchObject({ rule: "max_shift" });
+    const forged: DeclaredGap = { ...subject, cause: "structure", certificate: { rule: "max_shift", detail: {
+      positionId: P.REG, runFromQ: 42, runToQ: 84, runQ: 42, maxShiftQ: 32, requiredQ: 42, peopleIds: [U.ben], availableQ: 42, coverableQ: 32, shortQ: 10,
+    } } };
+    expect(checkCertificate(forged, s, ctx)).toBe(false);
+    // …unless Maya is unavailable that day: then the bound is back (availability enters the count).
+    ctx.people[U.maya]!.availability[WED] = null;
+    expect(checkCertificate(forged, s, ctx)).toBe(true);
+  });
+
+  it("negative: the cap must be the ONLY reason — no availability shortage (a quarter with nobody available is not the cap's), no excess beyond the bound, a run that fits one shift", () => {
+    const ctx = capShop();
+    ctx.people[U.ben]!.availability[WED] = { fromQ: 42, toQ: 70, source: "toast_pattern" }; // nobody can stand there after 5:30 PM
+    expect(proveGap(subject, week([shift(U.ben, WED, 42, 70, P.REG)]), ctx)?.certificate).not.toMatchObject({ rule: "max_shift" });
+    const excess = capShop();
+    expect(proveGap({ ...subject, fromQ: 66 }, week([shift(U.ben, WED, 42, 66, P.REG)]), excess)?.certificate).not.toMatchObject({ rule: "max_shift" }); // 18 q uncovered > 10 provable
+    const fits = capShop((x) => { x.limits.maxShiftH = 12; });
+    expect(proveGap(subject, week([shift(U.ben, WED, 42, 74, P.REG)]), fits)?.certificate).not.toMatchObject({ rule: "max_shift" });
+  });
+
+  it("tampered numbers are refused (every field is recomputed)", () => {
+    const ctx = capShop();
+    const s = week([shift(U.ben, WED, 42, 74, P.REG)]);
+    const proof = proveGap(subject, s, ctx)!;
+    const detail = (proof.certificate as { detail: Record<string, unknown> }).detail;
+    for (const [k, v] of [["shortQ", 12], ["maxShiftQ", 40], ["runFromQ", 40], ["peopleIds", [U.ben, U.maya]], ["coverableQ", 30]] as const) {
+      expect(checkCertificate({ ...subject, cause: "structure", certificate: { rule: "max_shift", detail: { ...detail, [k]: v } } } as DeclaredGap, s, ctx), k).toBe(false);
+    }
+  });
+
+  it("the MoD: one manager for a 13.75 h shop day under a 10.5 h cap → the evening remainder is certified; with a second manager it is not", () => {
+    // KH-as-MoD OFF here (with the 19:00 default Iris, a KH, would carry the evening).
+    const ctx = context({ s: structure((x) => { x.leadership.modRequired = true; x.leadership.keyHolderModAfterQ = null; }) });
+    ctx.people[U.alex]!.activeMember = false; // Dani is the only SL+ member
+    const s = week([shift(U.dani, WED, 28, 70, "mod")]);
+    const mod = { code: "mod_missing" as const, date: WED, positionId: null, fromQ: 70, toQ: 83 };
+    expect(proveGap(mod, s, ctx)).toMatchObject({ cause: "structure", certificate: { rule: "max_shift", detail: { positionId: "mod", runFromQ: 28, runToQ: 83, requiredQ: 55, coverableQ: 42, shortQ: 13 } } });
+    ctx.people[U.alex]!.activeMember = true;
+    expect(proveGap(mod, s, ctx)?.certificate).not.toMatchObject({ rule: "max_shift" });
+  });
+});
+
+describe("Juan 2026-10-16 — the salaried week (decision 4) and the catering manager's cover (decision 8)", () => {
+  const segs = (userId: string, date: string, parts: Array<[string, number, number, string?]>) => shift(userId, date, parts[0]![1], parts[parts.length - 1]![2], parts[0]![0], {
+    segments: parts.map(([positionId, startQ, endQ, reasonKey]) => ({ positionId, startQ, endQ, ...(reasonKey ? { reasonKey } : {}) })),
+  });
+  const FIVE = [WED, THU, FRI, SAT, SUN];
+
+  it("salaried_base_over_target — the base week (station + MoD, flex quarters aside) over limits.salariedTargetWeekH (40) is a WARNING (addendum A)", () => {
+    expect(RULE_CODES.salaried_base_over_target).toBe("warning");
+    const over = FIVE.map((d) => shift(U.alex, d, 28, 61, "mod")); // 5 × 8.25 h = 41.25 h, no flex reason
+    const ps = of(run(over), "salaried_base_over_target");
+    expect(ps).toHaveLength(1);
+    expect(ps[0]).toMatchObject({ day: SUN, userId: U.alex, params: { hours: 41.25, limit: 40 } });
+    expect(of(run(FIVE.map((d) => shift(U.alex, d, 28, 60, "mod"))), "salaried_base_over_target")).toEqual([]);
+    // Hourly people are never judged by it.
+    expect(of(run(FIVE.map((d) => shift(U.maya, d, 28, 61, P.PREP))), "salaried_base_over_target")).toEqual([]);
+  });
+
+  it("flex quarters (SALARIED_FLEX_REASON) take a salaried week past 40 legally, up to 40 + limits.salariedFlexH; past it → salaried_over_flex (WARNING, addendum A)", () => {
+    expect(SALARIED_FLEX_REASON).toBe("schedule.reason.salaried_flex");
+    expect(RULE_CODES.salaried_over_flex).toBe("warning");
+    // 40 h base + 2 h of stay-longer flex on Register.
+    const week40 = FIVE.map((d, i) => (i === 0 ? segs(U.alex, d, [["mod", 28, 60], [P.REG, 60, 68, SALARIED_FLEX_REASON]]) : shift(U.alex, d, 28, 60, "mod")));
+    const ok = run(week40);
+    expect(of(ok, "salaried_base_over_target")).toEqual([]);
+    expect(of(ok, "salaried_over_flex")).toEqual([]);
+    // The same 2 h WITHOUT the flex reason: the base week is 42 h.
+    const plain = FIVE.map((d, i) => (i === 0 ? segs(U.alex, d, [["mod", 28, 60], [P.REG, 60, 68]]) : shift(U.alex, d, 28, 60, "mod")));
+    expect(of(run(plain), "salaried_base_over_target")[0]).toMatchObject({ params: { hours: 42, limit: 40 } });
+    // Flex 0 h: any flex quarter is over.
+    const noFlex = context({ s: structure((s) => { s.limits.salariedFlexH = 0; }) });
+    expect(of(run(week40, noFlex), "salaried_over_flex")[0]).toMatchObject({ userId: U.alex, params: { hours: 42, flexHours: 2, flexLimit: 0, limit: 40 } });
+    // 11.25 h of flex (5 × 2.25 h) over a 40 h base.
+    const big = FIVE.map((d) => segs(U.alex, d, [["mod", 28, 60], [P.REG, 60, 69, SALARIED_FLEX_REASON]]));
+    expect(of(run(big), "salaried_over_flex")[0]).toMatchObject({ params: { hours: 51.25, flexHours: 11.25, flexLimit: 10, limit: 40 } });
+  });
+
+  it("manager_floor_exceeded judges BASE station time: station past 32 h only through flex quarters", () => {
+    const station = FIVE.map((d) => shift(U.alex, d, 28, 56, P.PREP)); // 5 × 7 h = 35 h of station time
+    expect(of(run(station), "manager_floor_exceeded")[0]).toMatchObject({ params: { hours: 35, limit: 32 } });
+    const flexed = FIVE.map((d, i) => (i === 0 ? segs(U.alex, d, [[P.PREP, 28, 44], [P.PREP, 44, 56, SALARIED_FLEX_REASON]]) : shift(U.alex, d, 28, 56, P.PREP)));
+    expect(of(run(flexed), "manager_floor_exceeded")).toEqual([]); // 35 − 3 h of flex = 32 h of base station time
+  });
+
+  it("the overtime WARNING is for hourly people: a salaried week is governed by its target + flex", () => {
+    const week40 = FIVE.map((d, i) => (i === 0 ? segs(U.alex, d, [["mod", 28, 60], [P.REG, 60, 68, SALARIED_FLEX_REASON]]) : shift(U.alex, d, 28, 60, "mod")));
+    expect(of(run(week40), "overtime")).toEqual([]);
+    expect(of(run(FIVE.map((d) => shift(U.maya, d, 28, 61, P.PREP))), "overtime")).toHaveLength(1);
+  });
+
+  it("zero-hourly-cost fills: the MoD relabel takes the base station room, then FLEX; staying longer is FLEX only", () => {
+    const at = (floor: number, flex: number) => {
+      const c = context({ built: [WED], s: structure((x) => { x.limits.managerFloorH = floor; x.limits.salariedFlexH = flex; }) });
+      setNeed(c, WED, P.REG, 44, 52);
+      return c;
+    };
+    const s = week([shift(U.alex, WED, 28, 60, "mod")]);
+    const covers = (c: RuleContext) => zeroCostCovers({ date: WED, positionId: P.REG, fromQ: 44, toQ: 52 }, s, c);
+    expect(covers(context({ built: [WED] }).days[WED] ? at(32, 10) : at(32, 10))).toEqual([{ userId: U.alex, fromQ: 44, toQ: 52 }]);
+    expect(covers(at(0, 0))).toEqual([]); // floor and flex spent
+    expect(covers(at(0, 1))).toEqual([{ userId: U.alex, fromQ: 44, toQ: 48 }]); // 1 h of flex
+    expect(covers(at(1, 0))).toEqual([{ userId: U.alex, fromQ: 44, toQ: 48 }]); // 1 h of base room
+    expect(covers(at(1, 1))).toEqual([{ userId: U.alex, fromQ: 44, toQ: 52 }]); // 1 h base + 1 h flex
+    // Applied by the budget search: the base part unmarked, the rest FLEX.
+    const plan = cheapestFill({ date: WED, positionId: P.REG, fromQ: 44, toQ: 52 }, s, at(1, 1));
+    expect(plan).toMatchObject({ hours: 0, steps: [{ kind: "relabel", userId: U.alex }] });
+    // Staying longer: FLEX only (the base station room never pays for added time).
+    const after = week([shift(U.alex, WED, 28, 44, "mod")]);
+    const ext = (c: RuleContext) => zeroCostCovers({ date: WED, positionId: P.REG, fromQ: 44, toQ: 52 }, after, c).filter((x) => x.extend);
+    expect(ext(at(32, 0))).toEqual([]);
+    expect(ext(at(0, 1))).toEqual([{ userId: U.alex, fromQ: 44, toQ: 48, extend: "after" }]);
+  });
+
+  it("decision 8: a catering manager may cover a station ONLY as a last resort marked CATERING_MANAGER_COVER, outside booked catering windows", () => {
+    expect(CATERING_MANAGER_COVER).toBe("schedule.reason.catering_manager_cover");
+    expect(RULE_CODES.catering_cover_in_catering_window).toBe("error");
+    const ctx = context({ built: [WED] });
+    ctx.people["u-cat"] = { ...ctx.people[U.dani]!, userId: "u-cat", role: "catering_mgr", leaderSetting: "mix", coverPositions: [] };
+    // A booked event at 13:00 (lead 210 min → its window 09:30–13:00).
+    ctx.days[WED]!.inputs.cateringEvents = [{ id: "ev-1", headcount: 12, eventQ: 52 }];
+    expect(cateringWindows(ctx.days[WED]!)).toEqual([[38, 52]]);
+    const cover = (from: number, to: number, extra: Record<string, unknown> = { lastResort: true, reasonKey: CATERING_MANAGER_COVER }) =>
+      segs("u-cat", WED, [["mod", 36, from], [P.REG, from, to], ["mod", to, 76]]).segments.map((g) => (g.positionId === P.REG ? { ...g, ...extra } : g));
+    const at = (segments: ReturnType<typeof cover>) => [{ ...shift("u-cat", WED, 36, 76, "mod"), pinned: true, segments }];
+    const outside = run(at(cover(56, 64)), ctx);
+    expect(of(outside, "role_not_allowed")).toEqual([]);
+    expect(of(outside, "catering_cover_in_catering_window")).toEqual([]);
+    expect(of(outside, "cover_outside_preferences")).toEqual([]);
+    // Inside the booked window: an error, named.
+    expect(of(run(at(cover(44, 52)), ctx), "catering_cover_in_catering_window")[0]).toMatchObject({ userId: "u-cat", positionId: P.REG, q: 44 });
+    // Without the marker (or not as a last resort): the role is simply not allowed there.
+    expect(of(run(at(cover(56, 64, { lastResort: true })), ctx), "role_not_allowed")).toHaveLength(1);
+    expect(of(run(at(cover(56, 64, { reasonKey: CATERING_MANAGER_COVER })), ctx), "role_not_allowed")).toHaveLength(1);
+    // Never on Prep/Dishwasher.
+    const dish = segs("u-cat", WED, [["mod", 36, 56], [P.DISH, 56, 64], ["mod", 64, 76]]).segments.map((g) => (g.positionId === P.DISH ? { ...g, lastResort: true, reasonKey: CATERING_MANAGER_COVER } : g));
+    expect(of(run(at(dish), ctx), "role_not_allowed")).toHaveLength(1);
+  });
+});
+describe("Juan 2026-10-16 (decision 4): floor_limit also proves a manager whose BASE week target is reached", () => {
+  it("a free GM at 40 h base (station time under 32 h) with no flex cannot take a new block: floor_limit certifies (CC chunk H4: with 0 h of flex, so does a 30 h base — a new block is flex only)", () => {
+    const ctx = context({ s: structure((x) => { x.limits.salariedFlexH = 0; }) });
+    setNeed(ctx, SUN, P.PREP, 28, 44);
+    for (const u of [U.maya, U.ben, U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[SUN] = null;
+    const five = [WED, THU, FRI, SAT].map((d) => shift(U.alex, d, 28, 68, "mod")); // 4 × 10 h of MoD = 40 h base, 0 h station
+    const g: DeclaredGap = { code: "coverage_gap", date: SUN, positionId: P.PREP, fromQ: 28, toQ: 44, cause: "floor_limit",
+      certificate: floorCertOf({ code: "coverage_gap", date: SUN, positionId: P.PREP, fromQ: 28, toQ: 44 }, week(five), ctx) };
+    expect(g.certificate).toMatchObject({ excludedBy: { [U.alex]: "flex_exhausted", [U.pete]: "never_generated" }, floorHoursUsed: { [U.alex]: 0 } });
+    expect(checkCertificate(g, week(five), ctx)).toBe(true);
+    expect(proveGap(g, week(five), ctx)?.cause).toBe("floor_limit");
+    // 30 h of base week and 0 h of flex: no FILL can add a Sunday block (every added hour is flex); the base plan is a person's call.
+    const thirty = [WED, THU, FRI].map((d) => shift(U.alex, d, 28, 68, "mod"));
+    expect(checkCertificate(g, week(thirty), ctx)).toBe(true);
+    // With 10 h of flex the GM could take the block → no proof (unresolved unless the generator fills it).
+    const flex = context();
+    setNeed(flex, SUN, P.PREP, 28, 44);
+    for (const u of [U.maya, U.ben, U.kai, U.iris, U.eli, U.dani]) flex.people[u]!.availability[SUN] = null;
+    expect(proveGap(g, week(thirty), flex)).toBeNull();
+  });
+});
+
+
+describe("Astra chunk H review (2026-10-16)", () => {
+  it("P2-1: a relabel keeps each quarter's flex classification — 40 h base + 2 h flex MoD relabelled onto Register stays 40 + 2", () => {
+    const flexMod = { positionId: "mod", startQ: 60, endQ: 68, reasonKey: SALARIED_FLEX_REASON };
+    const sun = shift(U.alex, SUN, 28, 68, "mod", { segments: [{ positionId: "mod", startQ: 28, endQ: 60 }, flexMod] });
+    const s = week([...[WED, THU, FRI, SAT].map((d) => shift(U.alex, d, 28, 60, "mod")), sun]);
+    expect(salariedWeek(s, U.alex)).toEqual({ totalH: 42, flexH: 2, baseH: 40 });
+    const ctx = context();
+    setNeed(ctx, SUN, P.REG, 60, 68);
+    const plan = cheapestFill({ date: SUN, positionId: P.REG, fromQ: 60, toQ: 68 }, s, ctx);
+    expect(plan).toMatchObject({ hours: 0, steps: [{ kind: "relabel", userId: U.alex, fromPositionId: "mod", positionId: P.REG, fromQ: 60, toQ: 68 }] });
+    const applied = applyFillSteps(s, SUN, plan!.steps, new Map([[U.alex, 32 * 4]]))!;
+    expect(salariedWeek(applied, U.alex)).toEqual({ totalH: 42, flexH: 2, baseH: 40 });
+    expect(applied.shifts.find((x) => x.date === SUN)!.segments.find((g) => g.positionId === P.REG)).toMatchObject({ startQ: 60, endQ: 68, reasonKey: SALARIED_FLEX_REASON });
+    expect(of(run(applied.shifts, ctx), "salaried_base_over_target")).toEqual([]);
+    expect(fillIsLegal({ date: SUN, positionId: P.REG, fromQ: 60, toQ: 68 }, s, ctx, plan!)).toBe(true);
+  });
+});
+
+describe("CC chunk H2 (2026-10-16): salaried flex may COVER A GAP with a new block; addendum A (the 40 h is a target) and B2 / B3", () => {
+  const FLEX = SALARIED_FLEX_REASON;
+  const segs = (userId: string, date: string, parts: Array<[string, number, number, string?]>) => shift(userId, date, parts[0]![1], parts[parts.length - 1]![2], parts[0]![0], {
+    segments: parts.map(([positionId, startQ, endQ, reasonKey]) => ({ positionId, startQ, endQ, ...(reasonKey ? { reasonKey } : {}) })),
+  });
+  const satCtx = (over: (s: ScheduleStructure) => void = () => {}) => context({ built: [SAT], s: structure(over) });
+
+  it("a flex-only day is a COVER: the GM / AGM 8 h daily minimum does not apply, the 4 h shift minimum does; unmarked it is a scheduled day", () => {
+    const ctx = satCtx();
+    const cover = run([segs(U.alex, SAT, [[P.REG, 44, 60, FLEX]])], ctx);
+    expect(of(cover, "salaried_minimum")).toEqual([]);
+    expect(of(cover, "shift_below_minimum")).toEqual([]);
+    // The same 4 h WITHOUT the flex reason: a scheduled GM day below the 8 h minimum.
+    expect(of(run([shift(U.alex, SAT, 44, 60, P.REG)], ctx), "salaried_minimum")).toHaveLength(1);
+    // A 3 h flex block standing alone: below the 4 h shift minimum (both minimums name it).
+    const short = run([segs(U.alex, SAT, [[P.REG, 44, 56, FLEX]])], ctx);
+    expect(of(short, "shift_below_minimum")).toHaveLength(1);
+    expect(of(short, "salaried_minimum")).toHaveLength(1);
+  });
+
+  it("salariedFlexBlocks: a NEW block over an otherwise-uncovered window, inside the remaining flex, ≥ 4 h, on the cover list", () => {
+    const ctx = satCtx();
+    setNeed(ctx, SAT, P.REG, 44, 64);
+    expect(salariedFlexBlocks(SAT, week([]), ctx)).toEqual([
+      { userId: U.alex, kind: "new_block", shiftStartQ: null, fromQ: 44, toQ: 64, segments: [{ positionId: P.REG, startQ: 44, endQ: 64 }], gain: 20 },
+    ]);
+    // Covered by an hourly person already: nothing to cover (a flex block never displaces anyone).
+    expect(salariedFlexBlocks(SAT, week([shift(U.ben, SAT, 44, 64, P.REG)]), ctx)).toEqual([]);
+    // 2 h of flex: a 5 h window cannot stand alone in 2 h.
+    const two = satCtx((s) => { s.limits.salariedFlexH = 2; });
+    setNeed(two, SAT, P.REG, 44, 64);
+    expect(salariedFlexBlocks(SAT, week([]), two)).toEqual([]);
+    // Flex spent elsewhere in the week (10 h of flex quarters Wed–Thu): nothing.
+    const spent = [WED, THU].map((d) => segs(U.alex, d, [["mod", 28, 60], [P.REG, 60, 80, FLEX]]));
+    expect(salariedFlexBlocks(SAT, week(spent), ctx)).toEqual([]);
+    // Not on the cover list → no block (Walk-in is not one of Alex's).
+    const walk = satCtx();
+    setNeed(walk, SAT, P.WALK, 44, 64);
+    expect(salariedFlexBlocks(SAT, week([]), walk)).toEqual([]);
+  });
+
+  it("a < 4 h flex need only EXTENDS an existing day; it never stands alone", () => {
+    const ctx = satCtx();
+    setNeed(ctx, SAT, P.REG, 44, 56);
+    expect(salariedFlexBlocks(SAT, week([]), ctx)).toEqual([]);
+    // Alex works 7:00–15:00 that day: a 2 h need right after it is an extension (staying longer on flex).
+    const after = satCtx();
+    setNeed(after, SAT, P.REG, 60, 68);
+    expect(salariedFlexBlocks(SAT, week([]), after)).toEqual([]);
+    expect(salariedFlexBlocks(SAT, week([shift(U.alex, SAT, 28, 60, "mod")]), after)).toEqual([
+      { userId: U.alex, kind: "extend", shiftStartQ: 28, fromQ: 60, toQ: 68, segments: [{ positionId: P.REG, startQ: 60, endQ: 68 }], gain: 8 },
+    ]);
+  });
+  it("floor_limit accounts for the remaining flex: proven only when the flex is spent (CC chunk H4: a manager with flex left is never excluded)", () => {
+    const mk = (flexH: number) => {
+      // Expeditor GM-only and not a priority secondary here (so the proof is about the GM alone).
+      const c = satCtx((s) => { s.positions[P.EXPO]!.allowedRoles = ["gm"]; s.priority = []; s.limits.salariedFlexH = flexH; });
+      setNeed(c, SAT, P.EXPO, 46, 64);
+      return c;
+    };
+    // 32 h of base station time Mon–Thu: the floor is spent.
+    const s = week([MON, TUE, WED, THU].map((d) => shift(U.alex, d, 28, 60, P.EXPO)));
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.EXPO, fromQ: 46, toQ: 64 };
+    expect(proveGap(g, s, mk(0))).toMatchObject({ cause: "floor_limit", certificate: { excludedBy: { [U.alex]: "flex_exhausted" }, limitH: 32, salariedFlexH: 0 } });
+    // With 10 h of flex the GM can cover it on a flex block → not floor_limit.
+    expect(proveGap(g, s, mk(10))?.cause).not.toBe("floor_limit");
+    const at0 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
+    expect(checkCertificate(at0, s, mk(0))).toBe(true);
+    expect(checkCertificate(at0, s, mk(10))).toBe(false);
+  });
+
+  it("addendum A: manager_floor_exceeded is an ERROR on a generated week and a WARNING on a manager-edited one; a 48 h hand week warns only", () => {
+    const station = [WED, THU, FRI, SAT, SUN].map((d) => shift(U.alex, d, 28, 56, P.PREP));
+    expect(of(run(station), "manager_floor_exceeded")[0]).toMatchObject({ severity: "error" });
+    expect(of(checkScheduleRules(week(station), context(), { managerEdited: true }), "manager_floor_exceeded")[0]).toMatchObject({ severity: "warning" });
+    const hand = [WED, THU, FRI, SAT].map((d) => shift(U.alex, d, 28, 76, "mod"));
+    const ps = checkScheduleRules(week(hand), context(), { managerEdited: true });
+    expect(of(ps, "salaried_base_over_target")[0]).toMatchObject({ severity: "warning", params: { hours: 48, limit: 40 } });
+    expect(ps.filter((p) => p.code.startsWith("salaried_") && p.severity === "error")).toEqual([]);
+  });
+
+  it("addendum B2: a prep manager is never generated (pins / presence only), like the catering manager", () => {
+    expect(neverGenerated({ role: "prep_mgr", presenceOnly: false })).toBe(true);
+    expect(neverGenerated({ role: "catering_mgr", presenceOnly: false })).toBe(true);
+    expect(neverGenerated({ role: "gm", presenceOnly: false })).toBe(false);
+  });
+
+  it("addendum B3: a pinned catering manager counts as the manager on duty OUTSIDE booked catering windows, never inside one", () => {
+    const ctx = context({ built: [WED], s: structure((x) => { x.leadership.modRequired = true; x.leadership.keyHolderModAfterQ = null; }) });
+    ctx.people["u-cat"] = { ...ctx.people[U.dani]!, userId: "u-cat", role: "catering_mgr", leaderSetting: "mix", coverPositions: [] };
+    const day = ctx.days[WED]!;
+    const from = day.structure.shopDay.prepStartQ;
+    const pinned = [{ ...shift("u-cat", WED, from, day.scheduledOutQ, "mod"), pinned: true }];
+    const holes = (ps: RuleProblem[]) => of(ps, "undeclared_gap").filter((p) => p.params.gap === "mod_missing").map((p) => [p.params.fromQ, p.params.toQ]);
+    expect(holes(run(pinned, ctx))).toEqual([]);
+    day.inputs.cateringEvents = [{ id: "ev-1", headcount: 12, eventQ: 52 }];
+    expect(cateringWindows(day)).toEqual([[38, 52]]);
+    expect(holes(run(pinned, ctx))).toEqual([[38, 52]]);
+  });
+});
+
+describe("CC chunk H3 / H4 (2026-10-16/17, Astra H2 + H3 P1): floor_limit is CONSERVATIVE — it certifies only a checkable precondition, never 'no legal block exists'", () => {
+  const FLEX = SALARIED_FLEX_REASON;
+  /**
+   * Astra's competing-station fixture: Register AND Expo both GM-only and both needing a head Saturday 46–64; the GM at 32 h of
+   * base station time Mon–Thu, no Saturday shift, `flexH` of flex (10 by default); Register first on the cover list.
+   */
+  const competing = (flexH = 10, over: (s: ScheduleStructure) => void = () => {}, roles: string[] = ["gm"]) => {
+    const c = context({ built: [SAT], s: structure((s) => {
+      s.positions[P.REG]!.allowedRoles = roles as never; s.positions[P.EXPO]!.allowedRoles = roles as never; s.priority = []; s.limits.salariedFlexH = flexH; over(s);
+    }) });
+    c.people[U.alex]!.coverPositions = [P.REG, P.EXPO];
+    setNeed(c, SAT, P.REG, 46, 64);
+    setNeed(c, SAT, P.EXPO, 46, 64);
+    return c;
+  };
+  /**
+   * The same with a second eligible person who is BUSY: Dani (hourly shift lead) may work both stations but stands on Walk-ins /
+   * Online 10:30–16:30 that day, over EVERY quarter of the window. The counting bound (capacity) has 2 people for 2 heads and does
+   * not fire — and since CC chunk H6 her being eligible and AVAILABLE refuses every floor_limit certificate by itself (an eligible
+   * person busy elsewhere may be swapped or reassigned onto the gap), so this fixture never certifies floor_limit.
+   */
+  const competingPlus = (flexH = 10, over: (s: ScheduleStructure) => void = () => {}) => {
+    const c = competing(flexH, over, ["gm", "shift_lead"]);
+    c.people[U.dani]!.coverPositions = [P.REG, P.EXPO, P.WALKON];
+    return c;
+  };
+  const base = (...more: ReturnType<typeof shift>[]) => week([...[MON, TUE, WED, THU].map((d) => shift(U.alex, d, 28, 60, P.EXPO)), ...more]);
+  const dani = shift(U.dani, SAT, 42, 66, P.WALKON);
+  const expo = { code: "coverage_gap" as const, date: SAT, positionId: P.EXPO, fromQ: 46, toQ: 64 };
+  const reg = { ...expo, positionId: P.REG };
+  const certified = (subject: typeof expo, s: ReturnType<typeof week>, ctx: RuleContext): DeclaredGap => {
+    const got = proveGap(subject, s, ctx);
+    expect(got?.cause).toBe("floor_limit");
+    return { ...subject, ...got! } as DeclaredGap;
+  };
+  const certifiedH8 = (subject: { code: "coverage_gap"; date: string; positionId: string; fromQ: number; toQ: number }, s: ReturnType<typeof week>, ctx: RuleContext): DeclaredGap => {
+    const got = proveGap(subject, s, ctx);
+    expect(got?.cause).toBe("floor_limit");
+    return { ...subject, ...got! } as DeclaredGap;
+  };
+  const takeRegister = (s: ReturnType<typeof week>, ctx: RuleContext) => {
+    const blocks = salariedFlexBlocks(SAT, s, ctx);
+    expect(blocks.map((b) => b.segments.map((g) => g.positionId))).toEqual([[P.REG]]); // the preferred fill's choice
+    return applyFlexBlock(s, SAT, blocks[0]!)!;
+  };
+  /** 10 h of flex spent Wed / Thu (Register after the Expo day), 32 h of base. */
+  const twoDays = (endQ: number) => [WED, THU].map((d) => shift(U.alex, d, 28, endQ, P.EXPO, { segments: [{ positionId: P.EXPO, startQ: 28, endQ: 60 }, { positionId: P.REG, startQ: 60, endQ, reasonKey: FLEX }] }));
+  const monTue = [MON, TUE].map((d) => shift(U.alex, d, 28, 60, P.EXPO));
+  const spent = () => week([...monTue, ...twoDays(80)]);
+
+  it("her H2 fixture, the GM free: the preferred fill labels Register, an Expo block over 46–64 is legal too (the FILL helper finds it) — and NO cause certifies either station", () => {
+    const ctx = competing();
+    const s = base();
+    expect(salariedFlexBlocks(SAT, s, ctx).map((b) => b.segments.map((g) => g.positionId))).toEqual([[P.REG]]);
+    expect(proveGap(expo, s, ctx)).toBeNull(); // at bad32700: floor_limit — the H2 P1
+    const alt = flexBlockReaching(expo, s, ctx);
+    expect(alt).toMatchObject({ userId: U.alex, kind: "new_block", shiftStartQ: null, fromQ: 46, toQ: 64, segments: [{ positionId: P.EXPO, startQ: 46, endQ: 64 }], gain: 18 });
+    expect(salariedWeek(applyFlexBlock(s, SAT, alt!)!, U.alex)).toEqual({ totalH: 36.5, flexH: 4.5, baseH: 32 }); // her alternative week
+    expect(proveGap(reg, s, ctx)).toBeNull();
+    expect(floorLimitCertificate(expo, s, ctx)).toBeNull();
+    expect(floorCandidateStatus(ctx.people[U.alex]!, expo, s, ctx)).toBeNull(); // flex left, eligible, around, the day empty
+  });
+
+  it("once Register is taken, Expo is proven by the counting bound in her exact fixture (one GM, two GM-only heads) — and NOT by floor_limit: the GM still has 5.5 h of flex; with an eligible, available (busy) Dani nothing certifies", () => {
+    const ctx = competing();
+    const taken = takeRegister(base(), ctx);
+    expect(flexBlockReaching(expo, taken, ctx)).toBeNull();
+    expect(proveGap(expo, taken, ctx)).toMatchObject({ cause: "capacity", certificate: { requiredHeads: 2, peopleIds: [U.alex], people: 1, shortBy: 1 } });
+    expect(floorLimitCertificate(expo, taken, ctx)).toBeNull();
+    // With a second, busy, eligible person capacity does not fire either: the gap is nobody's proof → unresolved_search, a person decides.
+    const plus = competingPlus();
+    const takenPlus = takeRegister(base(dani), plus);
+    expect(proveGap(expo, takenPlus, plus)).toBeNull();
+    expect(floorCandidateStatus(plus.people[U.alex]!, expo, takenPlus, plus)).toBe("on_shift_legal"); // CC chunk H7: on the Register flex block over the window
+    // CC chunk H6: even with the GM's flex spent, Dani — eligible, available, busy on Walk-ins / Online — refuses the certificate.
+    const spentPlus = week([...monTue, ...twoDays(80), dani]);
+    expect(floorCandidateStatus(plus.people[U.alex]!, expo, spentPlus, plus)).toBe("flex_exhausted");
+    expect(floorLimitCertificate(expo, spentPlus, plus)).toBeNull();
+    expect(proveGap(expo, spentPlus, plus)).toBeNull();
+  });
+
+  it("Astra's H3 P1 — the mixed-position extension: the GM works Saturday 7:00–11:00 as MoD, Expo opens at 11:30 and needs them to 16:00; only the target-position shapes miss it, so NOTHING certifies (at 3d8f58aa: floor_limit)", () => {
+    const ctx = competingPlus();
+    const sat = base(dani, shift(U.alex, SAT, 28, 44, "mod"));
+    expect(flexBlockReaching(expo, sat, ctx)).toBeNull(); // the FILL helper's scope ends at the target position
+    // Her legal alternative: Register 44–46 (a legal cover-list station), then Expo 46–64 — flex, 5 h, 41 h total, 36 base.
+    const mixed = applyFlexBlock(sat, SAT, { userId: U.alex, kind: "extend", shiftStartQ: 28, fromQ: 44, toQ: 64, segments: [{ positionId: P.REG, startQ: 44, endQ: 46 }, { positionId: P.EXPO, startQ: 46, endQ: 64 }], gain: 20 })!;
+    expect(salariedWeek(mixed, U.alex)).toEqual({ totalH: 41, flexH: 5, baseH: 36 });
+    expect(run(mixed.shifts.filter((x) => x.date === SAT), ctx).filter((p) => p.severity === "error" && p.userId === U.alex)).toEqual([]);
+    // So the certificate must not exist: the GM has flex, is eligible, around, and the day has room.
+    expect(floorCandidateStatus(ctx.people[U.alex]!, expo, sat, ctx)).toBeNull();
+    expect(floorLimitCertificate(expo, sat, ctx)).toBeNull();
+    expect(proveGap(expo, sat, ctx)).toBeNull();
+    // Staying longer off, or the day pinned, changes nothing: these are not among the four conditions.
+    const noStay = competingPlus(10, (s) => { s.limits.salariedStayLonger = false; });
+    expect(proveGap(expo, sat, noStay)).toBeNull();
+    expect(proveGap(expo, base(dani, shift(U.alex, SAT, 28, 44, "mod", { pinned: true })), ctx)).toBeNull();
+    // With Expo opening at 11:00 the FILL helper reaches it on the position alone (what the generator takes).
+    const open44 = competingPlus(10, (s) => { s.positions[P.EXPO]!.openQ = 44; });
+    expect(flexBlockReaching(expo, sat, open44)).toMatchObject({ kind: "extend", shiftStartQ: 28, fromQ: 44, toQ: 64 });
+  });
+
+  it("flex exhausted → a legitimate floor_limit (excluded by flex_exhausted, the 10 h shown spent); 4 h or 3 h left → never", () => {
+    const ctx = competing(); // GM-only stations: no eligible hourly person
+    const s = spent();
+    expect(salariedWeek(s, U.alex)).toEqual({ totalH: 42, flexH: 10, baseH: 32 });
+    expect(flexLeftQ(s, U.alex, ctx.days[SAT]!.structure)).toBe(0);
+    const g = certified(expo, s, ctx);
+    expect(g.certificate).toEqual({ limitH: 32, targetWeekH: 40, salariedFlexH: 10, maxShiftH: 10.5, excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 10 }, floorHoursUsed: { [U.alex]: 32 } });
+    expect(checkCertificate(g, s, ctx)).toBe(true);
+    // The week total at target + flex excludes too, even with flex quarters unspent (a 40 h base + 10 h of MoD, no flex marks): 50 h.
+    const full = week([...[MON, TUE, WED, THU].map((d) => shift(U.alex, d, 28, 68, P.EXPO)), shift(U.alex, FRI, 28, 68, "mod")]);
+    expect(salariedWeek(full, U.alex).totalH).toBe(50);
+    expect(floorCandidateStatus(ctx.people[U.alex]!, expo, full, ctx)).toBe("flex_exhausted");
+    // 6 h spent (4 h left): no proof — a 4 h block reaches (the fill takes it). 7 h spent (3 h left, under the shift minimum): still no proof.
+    for (const endQ of [72, 74]) {
+      const some = week([...monTue, ...twoDays(endQ)]);
+      expect(floorCandidateStatus(ctx.people[U.alex]!, expo, some, ctx)).toBeNull();
+      expect(proveGap(expo, some, ctx)).toBeNull();
+    }
+  });
+
+  it("each condition excludes with its reason: the GM's day at the maximum (off shift during the gap), an AGM unavailable; a salaried key holder is no candidate at all (CC chunk H8); on shift and legal → never excluded (CC chunk H7)", () => {
+    const ctx = competing(10, () => {}, ["gm", "agm"]); // GM / AGM-only stations: no hourly candidate
+    ctx.people["u-agm"] = { ...ctx.people[U.alex]!, userId: "u-agm", role: "agm", coverPositions: [P.REG, P.EXPO], availability: { [SAT]: null } };
+    ctx.people["u-skh"] = { ...ctx.people[U.iris]!, userId: "u-skh", salaried: true, coverPositions: [P.REG, P.EXPO] }; // a salaried key holder: never the MoD before 19:00
+    // Expo also needs a head 18:00–19:00 (before the key holder's MoD hour); the GM's Saturday is pinned to 10.5 h on Register
+    // (7:00–17:30): the day sits at the daily maximum and he is OFF SHIFT during that evening gap.
+    setNeed(ctx, SAT, P.EXPO, 72, 76);
+    const evening = { ...expo, fromQ: 72, toQ: 76 };
+    const s = week([...base().shifts, shift(U.alex, SAT, 28, 70, P.REG, { pinned: true })]);
+    expect(floorCandidateStatus(ctx.people[U.alex]!, evening, s, ctx)).toBe("day_at_max");
+    expect(floorCandidateStatus(ctx.people["u-agm"]!, evening, s, ctx)).toBe("unavailable");
+    expect(floorCandidateStatus(ctx.people["u-skh"]!, evening, s, ctx)).toBeNull(); // not a legal holder → not a candidate
+    expect(floorCandidatesOf(evening, ctx).map((p) => p.userId)).toEqual(["u-agm", U.alex]);
+    const g = certified(evening, s, ctx);
+    expect(g.certificate).toEqual({
+      limitH: 32, targetWeekH: 40, salariedFlexH: 10, maxShiftH: 10.5,
+      excludedBy: { [U.alex]: "day_at_max", "u-agm": "unavailable" },
+      flexHoursUsed: { [U.alex]: 0, "u-agm": 0 }, floorHoursUsed: { [U.alex]: 42.5, "u-agm": 0 },
+    });
+    expect(checkCertificate(g, s, ctx)).toBe(true);
+    // CC chunk H7: over the 11:30–16:00 gap the GM is ON SHIFT (Register) and eligible → never excluded, whatever his day or flex;
+    // the counting bound (one eligible, available person for two GM-only heads) still proves that gap first.
+    expect(floorCandidateStatus(ctx.people[U.alex]!, expo, s, ctx)).toBe("on_shift_legal");
+    expect(floorLimitCertificate(expo, s, ctx)).toBeNull();
+    expect(proveGap(expo, s, ctx)?.cause).toBe("capacity");
+    // The AGM available only in the morning: 7:00–9:00 reaches into [72 − 42, …) → not excluded, and the evening certificate no longer matches.
+    ctx.people["u-agm"]!.availability[SAT] = { fromQ: 28, toQ: 36, source: "toast_pattern" };
+    expect(floorCandidateStatus(ctx.people["u-agm"]!, evening, s, ctx)).toBeNull();
+    expect(checkCertificate(g, s, ctx)).toBe(false);
+    // The same GM day on the MoD lane instead of Register: on shift over 11:30–16:00 → on_shift_eligible, no certificate.
+    ctx.people["u-agm"]!.availability[SAT] = null;
+    const mod = week([...base().shifts, shift(U.alex, SAT, 28, 70, "mod", { pinned: true })]);
+    expect(floorCandidateStatus(ctx.people[U.alex]!, expo, mod, ctx)).toBe("on_shift_legal");
+    expect(proveGap(expo, mod, ctx)).toBeNull();
+    // Off shift in the evening on that MoD day too: day_at_max again.
+    expect(floorCandidateStatus(ctx.people[U.alex]!, evening, mod, ctx)).toBe("day_at_max");
+  });
+
+  it("a stale certificate is refused: proven at 0 h of flex it FAILS at 10 h; proven with the flex spent it fails once the flex is given back; proven with Dani off it fails once she is available", () => {
+    const s = base();
+    const at0 = certified(expo, s, competing(0));
+    expect(at0.certificate).toMatchObject({ salariedFlexH: 0, excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 } });
+    expect(checkCertificate(at0, s, competing(0))).toBe(true);
+    expect(checkCertificate(at0, s, competing(10))).toBe(false);
+    const ctx = competing();
+    const atSpent = certified(expo, spent(), ctx);
+    expect(checkCertificate(atSpent, s, ctx)).toBe(false);
+    expect(checkCertificate(atSpent, week([...monTue, ...twoDays(72)]), ctx)).toBe(false);
+    // CC chunk H6: with Dani eligible but OFF that day the certificate names her; the day she is available it fails.
+    const off = competingPlus();
+    off.people[U.dani]!.availability[SAT] = null;
+    const atOff = certified(expo, spent(), off);
+    expect(atOff.certificate).toMatchObject({ excludedBy: { [U.alex]: "flex_exhausted", [U.dani]: "unavailable" } });
+    expect(checkCertificate(atOff, spent(), competingPlus())).toBe(false);
+  });
+
+  it("a forged certificate is refused: another condition, the flex used, a limit, a manager added or left out, the hourly map, the H5 / H3 / H2 shapes", () => {
+    const ctx = competingPlus();
+    ctx.people[U.dani]!.availability[SAT] = null; // Dani eligible but off: she is named in the certificate
+    const s = spent();
+    const good = certified(expo, s, ctx);
+    const forge = (over: Partial<FloorLimitCertificate>) => checkCertificate({ ...expo, cause: "floor_limit", certificate: { ...(good.certificate as FloorLimitCertificate), ...over } } as DeclaredGap, s, ctx);
+    expect(forge({})).toBe(true);
+    expect(forge({ excludedBy: { [U.alex]: "unavailable" } })).toBe(false);
+    expect(forge({ excludedBy: { [U.alex]: "on_shift_legal" } as unknown as FloorLimitCertificate["excludedBy"] })).toBe(false); // CC chunk H8: not a reason — it means no certificate
+    expect(forge({ excludedBy: { [U.alex]: "flex_exhausted" } })).toBe(false); // Dani (eligible, off) left out
+    expect(forge({ excludedBy: { [U.alex]: "flex_exhausted", [U.dani]: "unavailable", [U.ben]: "unavailable" } })).toBe(false); // Ben is no candidate here
+    expect(forge({ excludedBy: {} })).toBe(false);
+    expect(forge({ excludedBy: { [U.alex]: "flex_exhausted", [U.dani]: "never_generated" } })).toBe(false);
+    expect(forge({ flexHoursUsed: { [U.alex]: 4.5 } })).toBe(false);
+    expect(forge({ floorHoursUsed: { [U.alex]: 30 } })).toBe(false);
+    expect(forge({ salariedFlexH: 0 })).toBe(false);
+    expect(forge({ targetWeekH: 48 })).toBe(false);
+    expect(forge({ maxShiftH: 12 })).toBe(false);
+    expect(forge({ limitH: 24 })).toBe(false);
+    const h3 = { ...expo, cause: "floor_limit", certificate: { managerIds: [U.alex], floorHoursUsed: { [U.alex]: 32 }, limitH: 32, targetWeekH: 40, salariedFlexH: 10, flexHoursUsed: { [U.alex]: 10 } } } as unknown as DeclaredGap;
+    expect(checkCertificate(h3, s, ctx)).toBe(false);
+    const h2 = { ...expo, cause: "floor_limit", certificate: { managerIds: [U.alex], floorHoursUsed: { [U.alex]: 32 }, limitH: 32 } } as unknown as DeclaredGap;
+    expect(checkCertificate(h2, s, ctx)).toBe(false);
+  });
+
+  it("CC chunk H5 (Astra H4 P1), split hourly coverage: Register 44–76 with Ben available 11:00–15:00 and Maya 15:00–19:00, the GM at 0 h of flex — two 4 h shifts cover it clean, so NOT floor_limit (at b655c259: floor_limit, Approve not refused)", () => {
+    const ctx = context({ built: [SAT], s: structure((s) => { s.limits.salariedFlexH = 0; s.priority = []; }) });
+    setNeed(ctx, SAT, P.REG, 44, 76);
+    for (const u of [U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[SAT] = null;
+    ctx.people[U.ben]!.availability[SAT] = { fromQ: 44, toQ: 60, source: "toast_pattern" };
+    ctx.people[U.maya]!.availability[SAT] = { fromQ: 60, toQ: 76, source: "toast_pattern" };
+    const s = base();
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.REG, fromQ: 44, toQ: 76 };
+    expect(floorCandidateStatus(ctx.people[U.alex]!, g, s, ctx)).toBe("flex_exhausted"); // the GM IS excluded …
+    expect(floorLimitCertificate(g, s, ctx)).toBeNull(); // … but an hourly person is free and available at a quarter of the gap
+    expect(proveGap(g, s, ctx)).toBeNull();
+    const h4 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, excludedBy: { [U.alex]: "flex_exhausted", [U.ben]: "unavailable", [U.maya]: "unavailable", [U.pete]: "never_generated" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
+    expect(checkCertificate(h4, s, ctx)).toBe(false);
+    // Her two shifts: zero findings, nobody displaced.
+    const covered = [shift(U.ben, SAT, 44, 60, P.REG), shift(U.maya, SAT, 60, 76, P.REG)];
+    expect(run(covered, ctx).filter((p) => p.severity === "error" || p.severity === "gap")).toEqual([]);
+    // A single person available for PART of it (Ben only): still no certificate.
+    ctx.people[U.maya]!.availability[SAT] = null;
+    expect(floorLimitCertificate(g, s, ctx)).toBeNull();
+    expect(proveGap(g, s, ctx)).toBeNull();
+    // Ben available 10:00–11:15 only (one quarter of the gap): still no certificate — any quarter is enough.
+    ctx.people[U.ben]!.availability[SAT] = { fromQ: 40, toQ: 45, source: "toast_pattern" };
+    expect(floorLimitCertificate(g, s, ctx)).toBeNull();
+    // Ben available 10:00–11:00 only (ends where the gap starts): nobody reaches it → floor_limit, the hourly people listed.
+    ctx.people[U.ben]!.availability[SAT] = { fromQ: 40, toQ: 44, source: "toast_pattern" };
+    const cert = floorLimitCertificate(g, s, ctx);
+    expect(cert).toMatchObject({ excludedBy: { [U.alex]: "flex_exhausted", [U.ben]: "unavailable", [U.maya]: "unavailable", [U.pete]: "never_generated" } });
+    expect(proveGap(g, s, ctx)).toEqual({ cause: "floor_limit", certificate: cert });
+    // CC chunk H6: his shift that day is irrelevant — available at one quarter of the gap (to 12:00) is enough: Ben 10:30–11:00 on Walk-ins / Online.
+    ctx.people[U.ben]!.availability[SAT] = { fromQ: 40, toQ: 48, source: "toast_pattern" };
+    expect(floorLimitCertificate(g, week([...s.shifts, shift(U.ben, SAT, 42, 44, P.WALKON)]), ctx)).toBeNull();
+    // Truly nobody: every hourly person off that day → floor_limit again (the GM is available, so it is not an availability gap).
+    for (const u of [U.ben, U.maya]) ctx.people[u]!.availability[SAT] = null;
+    expect(proveGap(g, s, ctx)?.cause).toBe("floor_limit");
+  });
+
+  it("CC chunk H6 (Astra H5 P1), the mixed-position hourly extension: Ben on Walk-ins 12–16 can go Walk-ins 16–17 then Register 17–20; eligible + available at a quarter of the gap → NO certificate (at 5ce8a938: floor_limit, Approve not refused)", () => {
+    const ctx = context({ built: [SAT], s: structure((s) => { s.limits.salariedFlexH = 0; s.priority = []; }) });
+    setNeed(ctx, SAT, P.REG, 48, 80);
+    setNeed(ctx, SAT, P.WALKON, 48, 80);
+    for (const u of [U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[SAT] = null;
+    const maya = shift(U.maya, SAT, 48, 80, P.REG, { segments: [{ positionId: P.REG, startQ: 48, endQ: 68 }, { positionId: P.WALKON, startQ: 68, endQ: 80 }] });
+    const s = week([...base().shifts, shift(U.ben, SAT, 48, 64, P.WALKON), maya]);
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.REG, fromQ: 68, toQ: 80 };
+    // Register is occupied over the 16:00–17:00 bridge, so the H5 per-quarter freeFor saw Ben as busy; H6 ignores his shift.
+    expect(floorCandidateStatus(ctx.people[U.alex]!, g, s, ctx)).toBe("flex_exhausted");
+    expect(floorLimitCertificate(g, s, ctx)).toBeNull();
+    expect(proveGap(g, s, ctx)).toBeNull();
+    const h5 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, excludedBy: { [U.alex]: "flex_exhausted", [U.ben]: "unavailable", [U.maya]: "unavailable", [U.pete]: "never_generated" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
+    expect(checkCertificate(h5, s, ctx)).toBe(false);
+    // Her legal fill: Ben 12:00–20:00, Walk-ins / Online to 17:00 then Register — zero findings, Maya unchanged.
+    const ben = shift(U.ben, SAT, 48, 80, P.WALKON, { segments: [{ positionId: P.WALKON, startQ: 48, endQ: 68 }, { positionId: P.REG, startQ: 68, endQ: 80 }] });
+    expect(run([ben, maya], ctx).filter((p) => p.severity === "error" || p.severity === "gap")).toEqual([]);
+  });
+
+  it("CC chunk H6: an eligible person BUSY elsewhere over the whole gap → no certificate; nobody eligible-and-available (and the GM excluded) → floor_limit naming them", () => {
+    const ctx = context({ built: [SAT], s: structure((s) => { s.limits.salariedFlexH = 0; s.priority = []; }) });
+    setNeed(ctx, SAT, P.REG, 44, 60);
+    for (const u of [U.maya, U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[SAT] = null;
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.REG, fromQ: 44, toQ: 60 };
+    // Ben stands on Walk-ins / Online 10:30–16:30 — over every quarter of the gap — and is available: no certificate.
+    const busy = week([...base().shifts, shift(U.ben, SAT, 42, 66, P.WALKON)]);
+    expect(floorLimitCertificate(g, busy, ctx)).toBeNull();
+    expect(proveGap(g, busy, ctx)).toBeNull();
+    // Ben off that day: nobody eligible is available, the GM is at 0 h of flex → floor_limit, the hourly people recorded.
+    ctx.people[U.ben]!.availability[SAT] = null;
+    const got = proveGap(g, base(), ctx);
+    expect(got).toMatchObject({ cause: "floor_limit", certificate: { excludedBy: { [U.alex]: "flex_exhausted", [U.ben]: "unavailable", [U.maya]: "unavailable", [U.pete]: "never_generated" } } });
+    expect(checkCertificate({ ...g, ...got! } as DeclaredGap, base(), ctx)).toBe(true);
+  });
+
+  it("CC chunk H6 ruling 2: a real shortage still certifies through capacity, which proveGap tries BEFORE floor_limit", () => {
+    const ctx = context({ built: [SAT], s: structure((s) => { s.limits.salariedFlexH = 0; s.priority = []; }) });
+    setNeed(ctx, SAT, P.REG, 44, 60);
+    setNeed(ctx, SAT, P.WALKON, 44, 60);
+    for (const u of [U.maya, U.kai, U.iris, U.eli, U.dani, U.alex]) ctx.people[u]!.availability[SAT] = null; // the GM is off too
+    // Ben, the one eligible and available person, stands on Walk-ins / Online: Register's head is a counting shortage.
+    const s = week([...base().shifts, shift(U.ben, SAT, 44, 60, P.WALKON)]);
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.REG, fromQ: 44, toQ: 60 };
+    expect(floorLimitCertificate(g, s, ctx)).toBeNull(); // Ben is eligible and available: no floor certificate …
+    expect(proveGap(g, s, ctx)).toMatchObject({ cause: "capacity", certificate: { requiredHeads: 2, peopleIds: [U.ben], people: 1, shortBy: 1 } }); // … but the shortage is proven
+  });
+
+  it("CC chunk H7 (Astra H6 P1), the salaried swap: GM on Register 11–19, AGM on MoD 11–19, Expo (GM-only) 11:30–15:30, zero flex, hourly off — the AGM takes the Register so the GM steps onto Expo; NO certificate (at b68063b0: floor_limit, both flex_exhausted)", () => {
+    const ctx = context({ built: [SAT], s: structure((s) => { s.positions[P.EXPO]!.allowedRoles = ["gm"]; s.priority = []; s.limits.salariedFlexH = 0; }) });
+    ctx.people["u-agm"] = { ...ctx.people[U.alex]!, userId: "u-agm", role: "agm", coverPositions: [P.REG, P.EXPO] };
+    for (const u of [U.maya, U.ben, U.kai, U.iris, U.eli, U.dani]) ctx.people[u]!.availability[SAT] = null;
+    setNeed(ctx, SAT, P.REG, 44, 76);
+    setNeed(ctx, SAT, P.EXPO, 46, 62);
+    // 24 h Mon–Wed + Saturday's 8 h on Register = 32 h of base station time for the GM; the AGM's week is Saturday's MoD day.
+    const gm = shift(U.alex, SAT, 44, 76, P.REG);
+    const agm = shift("u-agm", SAT, 44, 76, "mod");
+    const s = week([...[MON, TUE, WED].map((d) => shift(U.alex, d, 28, 60, P.EXPO)), gm, agm]);
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.EXPO, fromQ: 46, toQ: 62 };
+    expect(flexLeftQ(s, U.alex, ctx.days[SAT]!.structure)).toBe(0);
+    expect(floorCandidateStatus(ctx.people[U.alex]!, g, s, ctx)).toBe("on_shift_legal"); // the GM: eligible for Expo, on Register just then
+    expect(floorCandidateStatus(ctx.people["u-agm"]!, g, s, ctx)).toBeNull(); // CC chunk H8: the AGM cannot stand on Expo → not a candidate
+    expect(floorLimitCertificate(g, s, ctx)).toBeNull();
+    expect(proveGap(g, s, ctx)).toBeNull();
+    const h6 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
+    expect(checkCertificate(h6, s, ctx)).toBe(false);
+    // Her repair: the AGM relabels MoD → Register 11:30–15:30, the GM relabels Register → Expo there. Same shift times, no flex,
+    // no hourly hour — and the validator has nothing to say.
+    const gmFixed = shift(U.alex, SAT, 44, 76, P.REG, { segments: [{ positionId: P.REG, startQ: 44, endQ: 46 }, { positionId: P.EXPO, startQ: 46, endQ: 62 }, { positionId: P.REG, startQ: 62, endQ: 76 }] });
+    const agmFixed = shift("u-agm", SAT, 44, 76, "mod", { segments: [{ positionId: "mod", startQ: 44, endQ: 46 }, { positionId: P.REG, startQ: 46, endQ: 62 }, { positionId: "mod", startQ: 62, endQ: 76 }] });
+    expect(run([gmFixed, agmFixed], ctx)).toEqual([]);
+  });
+
+  it("CC chunk H7: an on-shift eligible manager at 0 h of flex → no certificate; the same manager OFF shift at 0 h of flex → excluded, so floor_limit is legitimate when nobody else can", () => {
+    const ctx = competing(0); // Register and Expo GM-only, Expo needing 11:30–16:00, 0 h of flex, no eligible hourly person
+    // The GM at 32 h of base station time Mon–Thu, plus Saturday 11:00–15:00 on the MoD lane (MoD time is not floor time).
+    const onShift = week([...base().shifts, shift(U.alex, SAT, 44, 60, "mod")]);
+    expect(floorCandidateStatus(ctx.people[U.alex]!, expo, onShift, ctx)).toBe("on_shift_legal");
+    expect(floorLimitCertificate(expo, onShift, ctx)).toBeNull();
+    expect(proveGap(expo, onShift, ctx)).toBeNull(); // at b68063b0: floor_limit (flex_exhausted; the MoD-relabel guard saw no base room)
+    // Off shift during the gap (the same 4 h as MoD 7:00–11:00): excluded as flex_exhausted → floor_limit, verifying.
+    const offShift = week([...base().shifts, shift(U.alex, SAT, 28, 44, "mod")]);
+    expect(floorCandidateStatus(ctx.people[U.alex]!, expo, offShift, ctx)).toBe("flex_exhausted");
+    const g = certified(expo, offShift, ctx);
+    expect(g.certificate).toMatchObject({ excludedBy: { [U.alex]: "flex_exhausted" }, salariedFlexH: 0 });
+    expect(checkCertificate(g, offShift, ctx)).toBe(true);
+    // Stale: that certificate fails the moment his MoD day is stretched over the gap (he is then on shift and eligible).
+    expect(checkCertificate(g, onShift, ctx)).toBe(false);
+    expect(checkCertificate(g, week([...base().shifts, shift(U.alex, SAT, 28, 48, "mod")]), ctx)).toBe(false); // one overlapping quarter is enough
+  });
+
+  it("CC chunk H8 (Astra H7 P1), the catering manager's cover: pinned on MoD 11–19, Expo cover allowed, no booked window, Expo gap 11:30–15:30, GM off at 0 h of flex, hourly off → NO certificate (at 5c51e1ed: floor_limit)", () => {
+    const mk = (events: Array<{ id: string; headcount: number; eventQ: number | null }> = []) => {
+      const c = context({ built: [SAT], s: structure((s) => { s.positions[P.EXPO]!.allowedRoles = ["gm"]; s.priority = []; s.limits.salariedFlexH = 0; s.catering = { ...s.catering, leadMinutes: 240 }; }) });
+      c.people["u-cat"] = { ...c.people[U.alex]!, userId: "u-cat", role: "catering_mgr", coverPositions: [P.EXPO] };
+      for (const u of [U.maya, U.ben, U.kai, U.iris, U.eli, U.dani]) c.people[u]!.availability[SAT] = null;
+      setNeed(c, SAT, P.EXPO, 46, 62);
+      c.days[SAT]!.inputs.cateringEvents = events;
+      return c;
+    };
+    const g = { code: "coverage_gap" as const, date: SAT, positionId: P.EXPO, fromQ: 46, toQ: 62 };
+    const pin = shift("u-cat", SAT, 44, 76, "mod", { pinned: true });
+    const ctx = mk();
+    const s = week([...base().shifts, pin]);
+    // The catering manager may legally hold Expo there by the catering-cover path; pinned on the MoD lane over the gap → on shift.
+    expect(legalHoldPath(ctx.people["u-cat"]!, P.EXPO, ctx.days[SAT]!, SAT, 50)).toBe("catering_cover");
+    expect(floorCandidatesOf(g, ctx).map((p) => p.userId)).toEqual([U.alex, "u-cat"]);
+    expect(floorCandidateStatus(ctx.people[U.alex]!, g, s, ctx)).toBe("flex_exhausted");
+    expect(floorCandidateStatus(ctx.people["u-cat"]!, g, s, ctx)).toBe("on_shift_legal");
+    expect(floorLimitCertificate(g, s, ctx)).toBeNull();
+    expect(proveGap(g, s, ctx)).toBeNull();
+    const h7 = { ...g, cause: "floor_limit", certificate: { limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, excludedBy: { [U.alex]: "flex_exhausted" }, flexHoursUsed: { [U.alex]: 0 }, floorHoursUsed: { [U.alex]: 32 } } } as DeclaredGap;
+    expect(checkCertificate(h7, s, ctx)).toBe(false);
+    // Her relabel: the MoD hour 11:30–15:30 onto Expo, marked last resort with the catering-cover reason — zero findings.
+    const relabelled = shift("u-cat", SAT, 44, 76, "mod", { pinned: true, segments: [{ positionId: "mod", startQ: 44, endQ: 46 }, { positionId: P.EXPO, startQ: 46, endQ: 62, lastResort: true, reasonKey: CATERING_MANAGER_COVER }, { positionId: "mod", startQ: 62, endQ: 76 }] });
+    expect(run([relabelled], ctx).filter((p) => p.severity === "error" || p.severity === "gap")).toEqual([]);
+    // INSIDE a booked catering window (a 240-minute lead to a 15:30 event → 11:30–15:30): the validator forbids the cover there, so the
+    // catering manager is no candidate for that gap and does not block — floor_limit, the GM alone excluded.
+    const booked = mk([{ id: "ev-1", headcount: 20, eventQ: 62 }]);
+    expect(legalHoldPath(booked.people["u-cat"]!, P.EXPO, booked.days[SAT]!, SAT, 50)).toBeNull();
+    expect(floorCandidatesOf(g, booked).map((p) => p.userId)).toEqual([U.alex]);
+    expect(run([relabelled], booked).map((p) => p.code)).toContain("catering_cover_in_catering_window");
+    expect(proveGap(g, s, booked)).toMatchObject({ cause: "floor_limit", certificate: { excludedBy: { [U.alex]: "flex_exhausted" } } });
+    // OFF shift (no pin): a never-generated role cannot be added by any fill → excluded, named never_generated.
+    const off = certifiedH8(g, base(), ctx);
+    // (The catering manager is salaried here, so the hour maps carry them too — at 0.)
+    expect(off.certificate).toEqual({ limitH: 32, targetWeekH: 40, salariedFlexH: 0, maxShiftH: 10.5, excludedBy: { [U.alex]: "flex_exhausted", "u-cat": "never_generated" }, flexHoursUsed: { [U.alex]: 0, "u-cat": 0 }, floorHoursUsed: { [U.alex]: 32, "u-cat": 0 } });
+    expect(checkCertificate(off, base(), ctx)).toBe(true);
+    expect(checkCertificate(off, s, ctx)).toBe(false); // stale the moment the pin lands
+  });
+
+  it("CC chunk H8: the certificate's candidate set IS the validator's legal set — one function, no role list in the proof", () => {
+    // (1) Over the rules fixture's roster × positions × a quarter, legalHoldPath agrees with the validator segment by segment:
+    //     a one-quarter segment with the path's flags raises no position-holding problem, and a person with no path raises one with every flag set.
+    const ctx = context({ built: [SAT] });
+    ctx.people["u-cat"] = { ...ctx.people[U.alex]!, userId: "u-cat", role: "catering_mgr", coverPositions: [] };
+    const day = ctx.days[SAT]!;
+    const flagsOf = (path: string) => (path === "eligible" ? {} : path === "last_resort" ? { lastResort: true } : { lastResort: true, reasonKey: CATERING_MANAGER_COVER });
+    const HOLD_CODES = ["role_not_allowed", "catering_cover_in_catering_window", "manager_on_boh", "cover_outside_preferences", "work_type_not_allowed"];
+    // A person with no path is refused by the validator somewhere: a position-holding rule, or the shift-level membership / untouchable-day rules.
+    const REFUSAL_CODES = [...HOLD_CODES, "not_member", "unknown_person", "untouchable_day", "segment_outside_window"];
+    let agreed = 0;
+    for (const p of Object.values(ctx.people)) {
+      for (const positionId of Object.keys(day.structure.positions)) {
+        const pos = day.structure.positions[positionId]!;
+        const q = pos.openQ;
+        const path = legalHoldPath(p, positionId, day, SAT, q);
+        const problems = (flags: Partial<{ lastResort: boolean; reasonKey: string }>, codes: string[]) => run([shift(p.userId, SAT, q, q + 1, positionId, {}, flags)], ctx).filter((x) => codes.includes(x.code) && x.userId === p.userId);
+        if (path) expect(problems(flagsOf(path), REFUSAL_CODES), `${p.userId} on ${positionId} by ${path}`).toEqual([]);
+        else for (const fl of ["eligible", "last_resort", "catering_cover"]) expect(problems(flagsOf(fl), REFUSAL_CODES).length, `${p.userId} on ${positionId} with ${fl}`).toBeGreaterThan(0);
+        expect(legalHoldersOf(positionId, day, SAT, q, ctx).some((x) => x.userId === p.userId)).toBe(path !== null);
+        agreed++;
+      }
+    }
+    expect(agreed).toBeGreaterThan(60);
+    // (2) Across the 27 golden fixtures: every placed segment is one the one function accepts at every quarter, and every floor_limit
+    //     certificate's candidate set equals the legal holders of its position over its window — so any future role or path lands
+    //     in both at once.
+    let segments = 0;
+    let floors = 0;
+    for (const [name, make] of Object.entries(FIXTURES)) {
+      const out = buildWeek(make());
+      expect(out.version).toBe(GENERATOR_VERSION);
+      const w = { locationId: out.context.locationId, weekStart: out.context.weekStart, shifts: out.shifts, gaps: out.gaps, days: out.days };
+      const inherited = new Set(out.days.filter((d) => d.inherited).map((d) => d.date));
+      for (const sh of out.shifts) {
+        const d = out.context.days[sh.date];
+        if (!d || inherited.has(sh.date)) continue;
+        const p = out.context.people[sh.userId]!;
+        for (const seg of sh.segments) {
+          if (seg.positionId === "mod") continue;
+          for (let q = seg.startQ; q < seg.endQ; q++) expect(legalHoldPath(p, seg.positionId, d, sh.date, q), `${name} ${sh.userId} ${seg.positionId}@${q}`).not.toBeNull();
+          segments++;
+        }
+      }
+      for (const gap of out.gaps) {
+        if (gap.cause !== "floor_limit" || inherited.has(gap.date)) continue;
+        floors++;
+        const d = out.context.days[gap.date]!;
+        const legal = new Set<string>();
+        for (let q = gap.fromQ; q < gap.toQ; q++) for (const p of legalHoldersOf(gap.positionId!, d, gap.date, q, out.context)) legal.add(p.userId);
+        expect(Object.keys(gap.certificate.excludedBy).sort()).toEqual([...legal].sort());
+        expect(floorCandidatesOf(gap, out.context).map((p: RulePerson) => p.userId)).toEqual([...legal].sort());
+        expect(checkCertificate(gap, w, out.context)).toBe(true);
+      }
+    }
+    expect(segments).toBeGreaterThan(1000);
+    expect(floors).toBeGreaterThan(0);
+  });
+});

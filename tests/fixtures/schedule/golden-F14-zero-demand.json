@@ -1,0 +1,214 @@
+{
+ "_header": "Generator golden p2.16. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "days": [
+  {
+   "date": "2026-10-26",
+   "inherited": false,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-27",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-28",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-29",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-30",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-31",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-11-01",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  }
+ ],
+ "gaps": [],
+ "notes": [
+  {
+   "code": "unbudgeted_date",
+   "date": "2026-10-26",
+   "params": {},
+   "positionId": null,
+   "userId": null
+  },
+  {
+   "code": "zero_demand",
+   "date": "2026-10-26",
+   "params": {
+    "lineHours": 8,
+    "targetHours": 10
+   },
+   "positionId": null,
+   "userId": null
+  }
+ ],
+ "reasons": {
+  "2026-10-26|u-p1|44": {
+   "alternates": [
+    {
+     "skill": 0.5,
+     "userId": "u-p3"
+    },
+    {
+     "skill": 0.5,
+     "userId": "u-p4"
+    }
+   ],
+   "segments": [
+    [
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 44,
+       "positionId": "5f000000-0000-4000-8000-000000000002",
+       "toQ": 60
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 44,
+      "positionId": "5f000000-0000-4000-8000-000000000002",
+      "toQ": 60
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5f000000-0000-4000-8000-000000000002",
+      "skill": 0.9,
+      "userId": "u-p1"
+     }
+    }
+   ]
+  },
+  "2026-10-26|u-p2|44": {
+   "alternates": [
+    {
+     "skill": 0.5,
+     "userId": "u-p3"
+    },
+    {
+     "skill": 0.5,
+     "userId": "u-p4"
+    }
+   ],
+   "segments": [
+    [
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 44,
+       "positionId": "5f000000-0000-4000-8000-000000000001",
+       "toQ": 60
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 44,
+      "positionId": "5f000000-0000-4000-8000-000000000001",
+      "toQ": 60
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5f000000-0000-4000-8000-000000000001",
+      "skill": 0.9,
+      "userId": "u-p2"
+     }
+    }
+   ]
+  }
+ },
+ "shifts": [
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 60,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 60,
+     "positionId": "5f000000-0000-4000-8000-000000000002",
+     "startQ": 44
+    }
+   ],
+   "startQ": 44,
+   "userId": "u-p1"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 60,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 60,
+     "positionId": "5f000000-0000-4000-8000-000000000001",
+     "startQ": 44
+    }
+   ],
+   "startQ": 44,
+   "userId": "u-p2"
+  }
+ ],
+ "stats": {
+  "budgetHours": 0,
+  "budgetedDates": [],
+  "essentialHours": 0,
+  "gaps": 0,
+  "hourlyCostCents": 15200,
+  "hourlyHours": 8,
+  "hourlyHoursByDate": {
+   "2026-10-26": 8
+  },
+  "repair": {
+   "accepted": 0,
+   "chainDepth": 0,
+   "donorsTried": 0,
+   "provenEarly": 0,
+   "steps": 0
+  },
+  "salariedCoverHours": 0,
+  "shifts": 2
+ }
+}

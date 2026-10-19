@@ -8,6 +8,7 @@ import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { readNotInToast } from "@/lib/catering/not-in-toast";
+import { loadBookedCateringEvents } from "@/lib/catering/booked-events";
 import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { summarizeLabor, weekStart, type LaborEntryFact, type LaborSummary } from "@/lib/toast/labor-shared";
 import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
@@ -102,27 +103,19 @@ export async function loadSales(sb: Sb, locationId: string, day: string): Promis
 
 export async function loadCateringNight(sb: Sb, locationId: string, day: string): Promise<Loaded<CateringNightFacts>> {
   const tomorrow = lookaheadDay(day);
-  const leads = await selectAllRows<{ id: string; contact_name: string; company: string | null; event_date: string; time_window: string | null; headcount: number | null; stage: string; delivery_address: string | null; estimated_revenue_cents: number | null }>((from, to) =>
-    sb.from("catering_pipeline").select("id, contact_name, company, event_date, time_window, headcount, stage, delivery_address, estimated_revenue_cents")
-      .eq("location_id", locationId).in("event_date", [day, tomorrow]).in("stage", ["confirmed", "out", "completed"]).order("id").range(from, to));
-  const ids = leads.map((l) => l.id);
-  const quotes = await inChunks(ids, (chunk) => selectAllRows<{ pipeline_id: string; total_cents: number; is_delivery: boolean; version: number }>((from, to) =>
-    sb.from("catering_quotes").select("pipeline_id, total_cents, is_delivery, version").in("pipeline_id", chunk)
-      .eq("status", "accepted").is("superseded_at", null).order("id").range(from, to)));
-  const accepted = new Map<string, { total_cents: number; is_delivery: boolean; version: number }>();
-  for (const q of quotes) { const p = accepted.get(q.pipeline_id); if (!p || q.version > p.version) accepted.set(q.pipeline_id, q); }
-  const value = (l: (typeof leads)[number]) => accepted.get(l.id)?.total_cents ?? l.estimated_revenue_cents ?? 0;
-  const onDay = leads.filter((l) => l.event_date === day);
+  // Scheduling Phase 2 (Task 16): the pipeline + accepted-quote read is the extracted loadBookedCateringEvents (same query).
+  const events = await loadBookedCateringEvents(sb, { locationId, dates: [day, tomorrow] });
+  const onDay = events.filter((e) => e.eventDate === day);
   return ok({
     toRingInToast: await readNotInToast(sb, [locationId], { from: tomorrow, through: tomorrow }),
     day: {
       orders: onDay.length,
-      completedCents: onDay.filter((l) => l.stage === "completed").reduce((a, l) => a + value(l), 0),
-      confirmedCents: onDay.filter((l) => l.stage !== "completed").reduce((a, l) => a + value(l), 0),
+      completedCents: onDay.filter((e) => e.stage === "completed").reduce((a, e) => a + e.valueCents, 0),
+      confirmedCents: onDay.filter((e) => e.stage !== "completed").reduce((a, e) => a + e.valueCents, 0),
     },
-    tomorrow: leads.filter((l) => l.event_date === tomorrow && l.stage !== "completed").map((l) => ({
-      id: l.id, name: l.company ? `${l.contact_name} (${l.company})` : l.contact_name, timeWindow: l.time_window, headcount: l.headcount,
-      isDelivery: !!l.delivery_address?.trim() || !!accepted.get(l.id)?.is_delivery,
+    tomorrow: events.filter((e) => e.eventDate === tomorrow && e.stage !== "completed").map((e) => ({
+      id: e.id, name: e.company ? `${e.contactName} (${e.company})` : e.contactName, timeWindow: e.timeWindow, headcount: e.headcount,
+      isDelivery: !!e.deliveryAddress?.trim() || !!e.acceptedQuote?.isDelivery,
     })),
   });
 }

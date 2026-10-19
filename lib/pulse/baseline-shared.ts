@@ -27,12 +27,22 @@ export function cumulativeByHour(curve: readonly number[], currentHour: number):
   });
 }
 
-/** Average cumulative curve for one weekday across `weeks` covered weekdays; null when no basis. */
-export function baselineCumulative(heat: readonly HeatCell[], dow: number, weeks: number): Array<number | null> | null {
+/**
+ * The per-hour AVERAGE for one weekday across `weeks` covered weekdays (`round(cell / weeks)`); null
+ * when no basis. The non-cumulative first half of `baselineCumulative`, shared with scheduling's
+ * demand (Scheduling Phase 2, Task 4); the pulse's output is pinned byte-identical.
+ */
+export function baselineHourly(heat: readonly HeatCell[], dow: number, weeks: number): number[] | null {
   if (weeks <= 0) return null;
   const cells = heat.filter((c) => c.dow === dow);
   if (cells.length === 0) return null;
-  const avg = hourCurve(cells).map((c) => Math.round(c / weeks));
+  return hourCurve(cells).map((c) => Math.round(c / weeks));
+}
+
+/** Average cumulative curve for one weekday across `weeks` covered weekdays; null when no basis. */
+export function baselineCumulative(heat: readonly HeatCell[], dow: number, weeks: number): Array<number | null> | null {
+  const avg = baselineHourly(heat, dow, weeks);
+  if (!avg) return null;
   let acc = 0;
   return avg.map((c) => (acc += c));
 }

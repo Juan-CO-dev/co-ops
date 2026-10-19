@@ -1,0 +1,684 @@
+{
+ "_header": "Generator golden p2.16. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "days": [
+  {
+   "date": "2026-10-26",
+   "inherited": false,
+   "originRevisionId": null,
+   "problems": [
+    {
+     "code": "soft_range",
+     "day": "2026-10-26",
+     "inherited": false,
+     "params": {
+      "hours": 10.25,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-b-bo"
+    },
+    {
+     "code": "soft_range",
+     "day": "2026-10-26",
+     "inherited": false,
+     "params": {
+      "hours": 4.5,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-c-cy"
+    },
+    {
+     "code": "soft_range",
+     "day": "2026-10-26",
+     "inherited": false,
+     "params": {
+      "hours": 4,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-d-dee"
+    },
+    {
+     "code": "soft_range",
+     "day": "2026-10-26",
+     "inherited": false,
+     "params": {
+      "hours": 9.75,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-e-eve"
+    },
+    {
+     "code": "soft_range",
+     "day": "2026-10-26",
+     "inherited": false,
+     "params": {
+      "hours": 6.5,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-f-finn"
+    },
+    {
+     "code": "soft_range",
+     "day": "2026-10-26",
+     "inherited": false,
+     "params": {
+      "hours": 6,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-i-ivy"
+    },
+    {
+     "code": "soft_range",
+     "day": "2026-10-26",
+     "inherited": false,
+     "params": {
+      "hours": 5.5,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-sam"
+    },
+    {
+     "code": "soft_range",
+     "day": "2026-10-26",
+     "inherited": false,
+     "params": {
+      "hours": 10.25,
+      "max": 40,
+      "min": 24
+     },
+     "severity": "warning",
+     "userId": "u-tess"
+    }
+   ],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-27",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-28",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-29",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-30",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-10-31",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  },
+  {
+   "date": "2026-11-01",
+   "inherited": true,
+   "originRevisionId": null,
+   "problems": [],
+   "structureVersionId": "sv-fixture-1"
+  }
+ ],
+ "gaps": [],
+ "notes": [
+  {
+   "code": "no_history",
+   "date": "2026-10-26",
+   "params": {},
+   "positionId": null,
+   "userId": null
+  },
+  {
+   "code": "unbudgeted_date",
+   "date": "2026-10-26",
+   "params": {},
+   "positionId": null,
+   "userId": null
+  }
+ ],
+ "reasons": {
+  "2026-10-26|u-b-bo|42": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 42,
+       "positionId": "5c000000-0000-4000-8000-000000000003",
+       "toQ": 67
+      }
+     },
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 67,
+       "positionId": "5c000000-0000-4000-8000-000000000003",
+       "toQ": 80
+      }
+     },
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 80,
+       "positionId": "5c000000-0000-4000-8000-000000000003",
+       "toQ": 83
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 42,
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "toQ": 67
+     }
+    },
+    {
+     "key": "under_soft_min",
+     "params": {
+      "hoursUnder": 24,
+      "userId": "u-b-bo"
+     }
+    },
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 67,
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "toQ": 80
+     }
+    },
+    {
+     "key": "under_soft_min",
+     "params": {
+      "hoursUnder": 17.75,
+      "userId": "u-b-bo"
+     }
+    },
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 80,
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "toQ": 83
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "skill": 0.9,
+      "userId": "u-b-bo"
+     }
+    }
+   ]
+  },
+  "2026-10-26|u-c-cy|38": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 38,
+       "positionId": "5c000000-0000-4000-8000-000000000007",
+       "toQ": 56
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 38,
+      "positionId": "5c000000-0000-4000-8000-000000000007",
+      "toQ": 56
+     }
+    },
+    {
+     "key": "under_soft_min",
+     "params": {
+      "hoursUnder": 24,
+      "userId": "u-c-cy"
+     }
+    }
+   ]
+  },
+  "2026-10-26|u-d-dee|67": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "extended_to_minimum",
+      "params": {
+       "fromQ": 67,
+       "positionId": "5c000000-0000-4000-8000-000000000002",
+       "toQ": 80
+      }
+     },
+     {
+      "key": "closing_crew",
+      "params": {
+       "fromQ": 80,
+       "positionId": "5c000000-0000-4000-8000-000000000002",
+       "toQ": 83
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "closing_crew",
+     "params": {
+      "fromQ": 80,
+      "positionId": "5c000000-0000-4000-8000-000000000002",
+      "toQ": 83
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000002",
+      "skill": 0.9,
+      "userId": "u-d-dee"
+     }
+    }
+   ]
+  },
+  "2026-10-26|u-e-eve|28": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "boh_crew",
+      "params": {
+       "fromQ": 28,
+       "positionId": "5c000000-0000-4000-8000-000000000002",
+       "toQ": 67
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "boh_crew",
+     "params": {
+      "fromQ": 28,
+      "positionId": "5c000000-0000-4000-8000-000000000002",
+      "toQ": 67
+     }
+    },
+    {
+     "key": "under_soft_min",
+     "params": {
+      "hoursUnder": 24,
+      "userId": "u-e-eve"
+     }
+    }
+   ]
+  },
+  "2026-10-26|u-f-finn|42": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "repair_moved",
+      "params": {
+       "fromPositionId": "5c000000-0000-4000-8000-000000000001",
+       "fromQ": 42,
+       "positionId": "5c000000-0000-4000-8000-000000000006",
+       "toQ": 68,
+       "userId": "u-f-finn"
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "repair_moved",
+     "params": {
+      "fromPositionId": "5c000000-0000-4000-8000-000000000001",
+      "fromQ": 42,
+      "positionId": "5c000000-0000-4000-8000-000000000006",
+      "toQ": 68,
+      "userId": "u-f-finn"
+     }
+    }
+   ]
+  },
+  "2026-10-26|u-i-ivy|38": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 38,
+       "positionId": "5c000000-0000-4000-8000-000000000008",
+       "toQ": 62
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 38,
+      "positionId": "5c000000-0000-4000-8000-000000000008",
+      "toQ": 62
+     }
+    },
+    {
+     "key": "under_soft_min",
+     "params": {
+      "hoursUnder": 24,
+      "userId": "u-i-ivy"
+     }
+    }
+   ]
+  },
+  "2026-10-26|u-j-gm|28": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "manager_cover",
+      "params": {
+       "fromQ": 28,
+       "positionId": "5c000000-0000-4000-8000-000000000001",
+       "rank": 1,
+       "toQ": 60
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "salaried_minimum",
+     "params": {
+      "fromQ": 28,
+      "toQ": 60,
+      "userId": "u-j-gm"
+     }
+    },
+    {
+     "key": "manager_cover",
+     "params": {
+      "fromQ": 28,
+      "positionId": "5c000000-0000-4000-8000-000000000001",
+      "rank": 1,
+      "toQ": 60
+     }
+    }
+   ]
+  },
+  "2026-10-26|u-sam|46": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 46,
+       "positionId": "5c000000-0000-4000-8000-000000000004",
+       "toQ": 68
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 46,
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "toQ": 68
+     }
+    },
+    {
+     "key": "under_soft_min",
+     "params": {
+      "hoursUnder": 24,
+      "userId": "u-sam"
+     }
+    }
+   ]
+  },
+  "2026-10-26|u-tess|42": {
+   "alternates": [],
+   "segments": [
+    [
+     {
+      "key": "repair_moved",
+      "params": {
+       "fromPositionId": "5c000000-0000-4000-8000-000000000003",
+       "fromQ": 42,
+       "positionId": "5c000000-0000-4000-8000-000000000005",
+       "toQ": 83,
+       "userId": "u-tess"
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "repair_moved",
+     "params": {
+      "fromPositionId": "5c000000-0000-4000-8000-000000000003",
+      "fromQ": 42,
+      "positionId": "5c000000-0000-4000-8000-000000000005",
+      "toQ": 83,
+      "userId": "u-tess"
+     }
+    },
+    {
+     "key": "closing_manager",
+     "params": {
+      "closeScore": 0.9,
+      "userId": "u-tess"
+     }
+    }
+   ]
+  }
+ },
+ "shifts": [
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 83,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 83,
+     "positionId": "5c000000-0000-4000-8000-000000000003",
+     "startQ": 42
+    }
+   ],
+   "startQ": 42,
+   "userId": "u-b-bo"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 56,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 56,
+     "positionId": "5c000000-0000-4000-8000-000000000007",
+     "startQ": 38
+    }
+   ],
+   "startQ": 38,
+   "userId": "u-c-cy"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 83,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 83,
+     "positionId": "5c000000-0000-4000-8000-000000000002",
+     "startQ": 67
+    }
+   ],
+   "startQ": 67,
+   "userId": "u-d-dee"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 67,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 67,
+     "positionId": "5c000000-0000-4000-8000-000000000002",
+     "startQ": 28
+    }
+   ],
+   "startQ": 28,
+   "userId": "u-e-eve"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 68,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 68,
+     "positionId": "5c000000-0000-4000-8000-000000000006",
+     "startQ": 42
+    }
+   ],
+   "startQ": 42,
+   "userId": "u-f-finn"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 62,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 62,
+     "positionId": "5c000000-0000-4000-8000-000000000008",
+     "startQ": 38
+    }
+   ],
+   "startQ": 38,
+   "userId": "u-i-ivy"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 60,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 60,
+     "positionId": "5c000000-0000-4000-8000-000000000001",
+     "startQ": 28
+    }
+   ],
+   "startQ": 28,
+   "userId": "u-j-gm"
+  },
+  {
+   "closingManager": false,
+   "date": "2026-10-26",
+   "endQ": 68,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 68,
+     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "startQ": 46
+    }
+   ],
+   "startQ": 46,
+   "userId": "u-sam"
+  },
+  {
+   "closingManager": true,
+   "date": "2026-10-26",
+   "endQ": 83,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 83,
+     "positionId": "5c000000-0000-4000-8000-000000000005",
+     "startQ": 42
+    }
+   ],
+   "startQ": 42,
+   "userId": "u-tess"
+  }
+ ],
+ "stats": {
+  "budgetHours": 0,
+  "budgetedDates": [],
+  "essentialHours": 24.5,
+  "gaps": 0,
+  "hourlyCostCents": 107825,
+  "hourlyHours": 56.75,
+  "hourlyHoursByDate": {
+   "2026-10-26": 56.75
+  },
+  "repair": {
+   "accepted": 2,
+   "chainDepth": 2,
+   "donorsTried": 1,
+   "provenEarly": 0,
+   "steps": 7
+  },
+  "salariedCoverHours": 8,
+  "shifts": 9
+ }
+}

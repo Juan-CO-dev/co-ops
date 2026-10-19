@@ -274,9 +274,17 @@ export function isCountsStepUpPath(currentPath: string): boolean {
   return currentPath === "/api/operations/counts" || currentPath.startsWith("/operations/counts");
 }
 
+/** The schedule board's action route (Scheduling Phase 2) takes Tier B for Approve and for a rebuild that overwrites a
+ *  confirmed edited week, and lives OUTSIDE /admin: its own requireSession must keep the unlock the immediately-
+ *  preceding POST /api/auth/step-up set, or assertStepUp could never pass. Exactly that endpoint; the board's pages
+ *  and the settings route (Tier E, its own clock) still clear it. */
+export function isScheduleStepUpPath(currentPath: string): boolean {
+  return currentPath === "/api/schedule";
+}
+
 /** Paths where an unlocked step-up flag survives requireSession (does not auto-clear). */
 export function isStepUpSurface(currentPath: string): boolean {
-  return isAdminPath(currentPath) || isCateringStepUpPath(currentPath) || isCountsStepUpPath(currentPath);
+  return isAdminPath(currentPath) || isCateringStepUpPath(currentPath) || isCountsStepUpPath(currentPath) || isScheduleStepUpPath(currentPath);
 }
 
 /**

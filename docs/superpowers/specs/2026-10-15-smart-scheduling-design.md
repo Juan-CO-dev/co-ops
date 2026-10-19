@@ -260,9 +260,9 @@ A fast 2D interactive board, not three.js; three.js only if a moment truly needs
 - **Leader shifts settings**, the MoO/Owner presence toggles, and **Add to schedule** (add anyone, MoO/Owner included, to a day with a block and the positions they can flex across).
 - **Manager on duty** lane and markers.
 - **Reason panel:** why this person, this shape, this segment, this budget, this flex use; their skill profile; who else could cover.
-- **The staffing recommendation panel** (§6.4).
-- **Out…** (reason dropdown + write-in, §6.3)
-- **Send to 7shifts as draft.**
+- **The staffing recommendation panel** (§6.4). *Phase 3* (§9; CC ruling 2026-10-16, chunk H): Phase 2 ships no staffing panel.
+- **Out…** (reason dropdown + write-in, §6.3). *Out (§6.3) is Phase 3* (§9; CC ruling 2026-10-16): Phase 2 ships no Out control.
+- **Send to 7shifts as draft.** *Phase 3* (§9; CC ruling 2026-10-16, chunk H): Phase 2 shows "Ready for 7shifts — sending comes in a later update" and sends nothing.
 
 Every string is in English and Spanish, per house law.
 

@@ -125,13 +125,22 @@ export async function loadSkillMatrix(
 ): Promise<SkillMatrix> {
   if (!canViewPeople(args.actor, args.locationId)) throw new PeopleSkillError(403, "forbidden");
   try {
-    const members = await loadMembers(service, args.locationId);
-    const l = await loadSkillFacts(service, args.locationId, { kind: "team", memberIds: members.map((m) => m.userId) }, args.now ?? new Date());
-    return computeSkills({ locationId: args.locationId, facts: l.facts.skills, members, asOf: l.asOf, nowIso: l.nowIso, tunables: l.tunables, actorNames: l.names, pmV2: l.facts.pmV2 }).matrix;
+    return await computeSkillMatrixForShop(service, args.locationId, args.now ?? new Date());
   } catch (e) {
     if (unavailable(e)) throw new PeopleSkillError(503, "skills_unavailable");
     throw e;
   }
+}
+
+/**
+ * The matrix itself, UNGATED (Scheduling Phase 2, Task 16): the body `loadSkillMatrix` always ran, split out so the
+ * scheduling loader (which runs only after its own gate, `canViewSchedule`, or the cron's system context) reads the
+ * SAME matrix. Never call it without a gate of your own. Throws SkillsUnavailableError before 0270.
+ */
+export async function computeSkillMatrixForShop(service: SupabaseClient, locationId: string, now: Date): Promise<SkillMatrix> {
+  const members = await loadMembers(service, locationId);
+  const l = await loadSkillFacts(service, locationId, { kind: "team", memberIds: members.map((m) => m.userId) }, now);
+  return computeSkills({ locationId, facts: l.facts.skills, members, asOf: l.asOf, nowIso: l.nowIso, tunables: l.tunables, actorNames: l.names, pmV2: l.facts.pmV2 }).matrix;
 }
 
 export type SkillsRead<T> = { available: true; view: T } | { available: false };
