@@ -3,6 +3,7 @@ import {useEffect,useRef,useState} from 'react';
 import {TexturePhoto} from './CraveScene';
 import {fieldGuideAnchors} from '@/lib/landing/crave-motion-shared';
 import {leaderPath} from '@/lib/landing/field-guide-shared';
+import {prefersCalm} from '@/lib/landing/motion-policy-shared';
 
 type AnchorId=(typeof fieldGuideAnchors)[number]['id'];
 interface Pickup {src:string;width:number;height:number}
@@ -12,7 +13,7 @@ const STEP_MS=1100;
 
 /** Words (each with its pixel pickup) sit above the cross-section. On arrival one leader
  * line at a time draws from a word to its ingredient, holds, fades, and the word is
- * "collected". Reduced motion shows every line at once; without JS the words stay a list. */
+ * "collected". Reduced motion / Save-Data show every line at once; without JS the words stay a list. */
 export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pickups}:Props) {
   const root=useRef<HTMLDivElement>(null),photo=useRef<HTMLDivElement>(null);
   const words=useRef<Partial<Record<AnchorId,HTMLLIElement|null>>>({});
@@ -33,7 +34,7 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       setPaths(next);
     };
     const resize=new ResizeObserver(measure);resize.observe(element);resize.observe(frame);measure();
-    if(matchMedia('(prefers-reduced-motion: reduce)').matches||typeof IntersectionObserver==='undefined'){
+    if(prefersCalm()||typeof IntersectionObserver==='undefined'){
       setMode('static');setCollected(fieldGuideAnchors.length);return ()=>resize.disconnect();
     }
     setMode('motion');

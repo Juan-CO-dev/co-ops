@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, readdirSync, rmSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { MAP_RECIPE } from './map-recipe.mjs';
+import { MAP_RECIPE, validateRenderedProjection } from './map-recipe.mjs';
 import { writeRuntimeInventory } from './runtime-inventory.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -25,6 +25,7 @@ export async function renderMap(root = process.cwd()) {
 export async function exportMap(root = process.cwd()) {
   const r = MAP_RECIPE;
   const { raster, bytes, projection } = await renderMap(root);
+  validateRenderedProjection(projection);
   const { width, height } = await sharp(bytes).metadata();
   if (width !== r.width || height !== r.height || bytes.length > r.maxBytes) throw Error(`Unexpected map output ${width}x${height} ${bytes.length}`);
   const sha256 = hash(bytes);

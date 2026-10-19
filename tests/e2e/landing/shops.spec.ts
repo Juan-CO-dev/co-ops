@@ -19,7 +19,7 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
   await expect(page.locator('footer a[href*="ubereats.com"]')).toHaveCount(0);
   await expect(shops).toContainText('Daily 10:30am–6pm');
   await expect(shops).toContainText('Daily 10:30am–8pm');
-  await expect(shops.locator('[data-shop-map] [role="img"]')).toHaveAttribute('aria-label','Map of our two shops in Washington, DC');
+  await expect(shops.locator('[data-shop-map] [role="img"]')).toHaveAttribute('aria-label','Map of our shops');
   await expect(shops.locator('[data-map-pin]')).toHaveCount(2);
   await expect(shops.locator('[data-map-you]')).toHaveCount(0);
   // Destination-only directions: Apple Maps on Apple devices, Google Maps elsewhere.

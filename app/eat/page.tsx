@@ -14,6 +14,7 @@ import { loadPublicLandingStores } from "@/lib/landing/stores";
 import { Shops } from "@/components/landing/Shops";
 import { Catering } from "@/components/landing/Catering";
 import { Footer } from "@/components/landing/Footer";
+import { MotionPolicy } from "@/components/landing/MotionPolicy";
 import { resolveLandingLanguage } from "@/lib/landing/language-shared";
 import { serverT } from "@/lib/i18n/server";
 import { TENANT_NAME } from "@/lib/tenant";
@@ -41,6 +42,7 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
   const sectionKeys = ["crave","lineup","field-guide","catering","shops","footer"] as const;
   return <div lang={language} className="landing-v2-page">
     <ShopStructuredData origin={origin.origin} stores={stores}/>
+    <MotionPolicy/>
     <header className="landing-v2-header"><img loading="eager" src="/brand/co-wordmark.svg" fetchPriority="low" alt={TENANT_NAME} width={1125} height={140} className="h-12 w-44 object-contain"/><CateringLink config={config} language={language}/><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={attributionPolicy}/></header>
     <main>
       <Hero language={language} config={{...config,stores:publicStores}} ad={ad}/>

@@ -31,3 +31,12 @@ it('builds destination-only directions links',()=>{
   expect(directionsHref('526 8th St SE','apple'.length>0)).toBe('https://maps.apple.com/?daddr=526%208th%20St%20SE');
   expect(directionsHref('2029 P St NW',false)).toBe('https://www.google.com/maps/dir/?api=1&destination=2029%20P%20St%20NW');
 });
+it('refuses a runtime map config whose projection drifts from the reviewed contract',async()=>{
+  const modulePath='../../scripts/assets/map-recipe.mjs';
+  const {validateMapConfig}=await import(/* @vite-ignore */ modulePath);
+  const approved=(await import('@/assets/approved-media.json')).default as {media:{id:string;publicPath?:string;width?:number;height?:number}[]};
+  const entry=approved.media.find(e=>e.id==='landing-map')!;
+  expect(()=>validateMapConfig(map,entry)).not.toThrow();
+  for(const key of ['lat0','lon0','kx','ky','halfMetres'] as const)expect(()=>validateMapConfig({...map,[key]:(map[key] as number)*1.01},entry)).toThrow(/projection/);
+  expect(()=>validateMapConfig({...map,image:'/media/other.webp'},entry)).toThrow(/config/);
+});

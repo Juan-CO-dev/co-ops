@@ -4,13 +4,13 @@ import {LineupPhoto} from './LineupPhoto';
 import {OrderLink} from './OrderLink';
 import {SpinCanvas} from './SpinCanvas';
 import {nextFighter,AUTO_ADVANCE_MS} from '@/lib/landing/fighter-select-shared';
+import {prefersCalm} from '@/lib/landing/motion-policy-shared';
 
 export interface Fighter {id:string;name:string;image:string;smallImage:string;width:number;height:number;ingredients:string;photoAlt:string}
 export interface FighterShop {key:string;name:string;address?:string;orderUrl:string;orderLabel:string}
 interface Sprite {src:string;width:number;height:number}
 export interface FighterLabels {order:string;sheetTitle:string;close:string;auto:string;p1:string;spin:string;spinValue:string;browse:string}
 
-const prefersCalm=()=>matchMedia('(prefers-reduced-motion: reduce)').matches||Boolean((navigator as Navigator&{connection?:{saveData?:boolean}}).connection?.saveData);
 const fill=(template:string,values:Record<string,string|number>)=>template.replace(/\{(\w+)\}/g,(_,key:string)=>String(values[key]??''));
 
 /** "Choose your fighter": a select screen. The roster auto-advances (visible pause
@@ -67,7 +67,7 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
     <div className="landing-v3-stage" data-fighter={fighter.id}>
       <div key={`${fighter.id}-${picked}`} className="landing-v3-stage-media" data-pop={picked>0||selected!==0}>
         {fighter.id==='crunchy-boi'
-          ? <SpinCanvas frames={spin.frames} width={spin.width} height={spin.height} label={labels.spin} stillLabel={fighter.photoAlt} valueText={degrees=>fill(labels.spinValue,{degrees})}/>
+          ? <SpinCanvas frames={spin.frames} width={spin.width} height={spin.height} label={fill(labels.spin,{name:fighter.name})} stillLabel={fighter.photoAlt} valueText={degrees=>fill(labels.spinValue,{degrees})}/>
           : <LineupPhoto src={fighter.image} small={fighter.smallImage} width={fighter.width} height={fighter.height} alt={fighter.photoAlt}/>}
       </div>
       {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -17,11 +17,13 @@ describe('landing dispatch', () => {
     f.tracker.dispatch(name,details,{id:'original',time:123000});
     expect(details).toHaveBeenCalledWith(true);
     expect(f.loadPixel).not.toHaveBeenCalled();expect(f.pixel).not.toHaveBeenCalled();
-    expect(f.post.mock.calls[0]).toEqual(['/api/landing/events',expect.objectContaining({event_name:name,event_id:'original',event_time:123,ad:'unattributed',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'}),{unload:true}]);
+    expect(f.post.mock.calls.find(call=>call[0]==='/api/landing/events')).toEqual(['/api/landing/events',expect.objectContaining({event_name:name,event_id:'original',event_time:123,ad:'unattributed',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'}),{unload:true}]);
+    // A departing page may deliver only one beacon: our own count is sent first.
+    if(name==='OrderClick')expect(f.post.mock.calls[0]?.[0]).toBe('/api/landing/order-click');
     expect(f.post).toHaveBeenCalledTimes(name==='OrderClick'?2:1);
     f.tracker.setAcceptedAd('new-campaign');f.tracker.setConsent(true);f.tracker.flushPending('new-campaign');f.tracker.flushPending('new-campaign');
     expect(f.pixel).not.toHaveBeenCalled();expect(f.post).toHaveBeenCalledTimes(name==='OrderClick'?2:1);
-    if(name==='OrderClick')expect(f.post.mock.calls[1]).toEqual(['/api/landing/order-click',{store:'dupont',ad:'unattributed'},{unload:true}]);
+    if(name==='OrderClick')expect(f.post.mock.calls[0]).toEqual(['/api/landing/order-click',{store:'dupont',ad:'unattributed'},{unload:true}]);
   });
   it('flushes a buffered Lead with fresh details and its original ID/time exactly once',()=>{
     const f=fixture();const current: {fbc?:string;fbp?:string}={};

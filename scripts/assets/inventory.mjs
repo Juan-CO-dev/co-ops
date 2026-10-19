@@ -6,7 +6,7 @@ import { FRAME_ID, FRAME_PATH, SOURCE_SHA256, SOURCE, CUT } from './subdex-sourc
 import { TOUCH_RECIPES } from './touch-recipes.mjs';
 import { SPIN_RECIPE, spinFrameStem } from './spin-recipe.mjs';
 import { SPRITES, SPRITE_DIR, SPRITE_MAX_BYTES } from './sprite-recipe.mjs';
-import { MAP_RECIPE } from './map-recipe.mjs';
+import { MAP_RECIPE, validateMapConfig, validateRenderedProjection } from './map-recipe.mjs';
 export const sha256 = p => createHash('sha256').update(readFileSync(p)).digest('hex');
 // Reviewed r2 recipes. Manifest data cannot award itself a larger delivery budget.
 export const PHOTO_DETAILS = Object.freeze({
@@ -155,10 +155,11 @@ export async function checkAssets(root, {sources=false}={}) {
    const ext=manifest.externalSources?.find(source=>`source:${source.id}`===e.sourcePath);
    if(!ext || ext.sha256!==e.sourceSha256 || ext.path!==MAP_RECIPE.osmPath)throw Error('Unknown map source');
    const runtimeMap=JSON.parse(readFileSync(path.join(root,'config/tenant/landing-map.json'),'utf8'));
-   if(runtimeMap.image!==e.publicPath || runtimeMap.width!==e.width || runtimeMap.height!==e.height)throw Error('Map config mismatch');
+   validateMapConfig(runtimeMap,e);
    if(sources){
     const {renderMap}=await import('./export-map.mjs');
-    const {raster,bytes}=await renderMap(root);
+    const {raster,bytes,projection}=await renderMap(root);
+    validateRenderedProjection(projection);
     if(createHash('sha256').update(raster).digest('hex')!==e.rasterSha256 || createHash('sha256').update(bytes).digest('hex')!==e.sha256)throw Error('Map derivation mismatch');
    }
    continue;

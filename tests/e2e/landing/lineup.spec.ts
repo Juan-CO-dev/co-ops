@@ -19,6 +19,8 @@ for (const javaScriptEnabled of [true, false]) test(`select screen roster keeps 
     await expect(img).toHaveCount(1);
     await expect(img).toHaveAttribute('loading','lazy');
     expect(await img.getAttribute('src')).not.toContain('/_next/image');
+    // Decoded, not just present in markup.
+    await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
   await expect(page.locator('video')).toHaveCount(0);
@@ -159,4 +161,35 @@ test('dragging the Crunchy Boi sideways turns it', async ({page}) => {
   await page.mouse.move(box.x+box.width*.3,box.y+box.height/2,{steps:8});
   await page.mouse.up();
   await expect.poll(async()=>Number(await slider.getAttribute('aria-valuenow'))).not.toBe(before);
+});
+
+test('keyboard users can walk the roster and select with Enter', async ({page}) => {
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/');
+  const first = page.locator('[data-lineup] button').first();
+  await first.scrollIntoViewIfNeeded();
+  await first.focus();
+  await page.keyboard.press('Tab');
+  const second = page.locator('[data-lineup] button').nth(1);
+  await expect(second).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(second).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('.landing-v3-plate h3')).toHaveText('The Frex');
+  // Tab through to the last card: the strip scrolls it into view, the page width holds.
+  const cards = page.locator('[data-lineup] button');
+  const count = await cards.count();
+  for (let i = 2; i < count; i++) await page.keyboard.press('Tab');
+  await expect(cards.last()).toBeFocused();
+  await expect.poll(() => cards.last().evaluate(el => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(await page.evaluate(() => innerWidth));
+});
+
+test('Save-Data keeps the Field Guide static with every line shown', async ({page}) => {
+  await page.addInitScript(()=>Object.defineProperty(navigator,'connection',{value:{saveData:true,addEventListener(){},removeEventListener(){}}}));
+  await page.goto('/');
+  const guide = page.locator('.landing-v3-guide');
+  await guide.scrollIntoViewIfNeeded();
+  await expect(guide).toHaveAttribute('data-guide-mode','static');
+  await expect(guide.locator('[data-line][data-state="shown"]')).toHaveCount(6);
+  await expect(page.locator('.landing-v2')).toHaveAttribute('data-calm','true');
 });

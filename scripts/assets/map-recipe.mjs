@@ -11,4 +11,17 @@ export const MAP_RECIPE = Object.freeze({
   quality: 72,
   effort: 6,
   maxBytes: 160000,
+  // Reviewed projection contract: pins and the visitor dot use exactly these numbers.
+  projection: Object.freeze({lat0: 38.89576945, lon0: -77.02053065000001, kx: 86639.18862384661, ky: 110950, halfMetres: 3300}),
 });
+
+const PROJECTION_KEYS = ['lat0', 'lon0', 'kx', 'ky', 'halfMetres'];
+/** The runtime map config must name the shipped image and carry the reviewed projection. */
+export function validateMapConfig(config, entry) {
+  if (config.image !== entry.publicPath || config.width !== entry.width || config.height !== entry.height) throw Error('Map config mismatch');
+  for (const key of PROJECTION_KEYS) if (config[key] !== MAP_RECIPE.projection[key]) throw Error(`Map projection mismatch: ${key}`);
+}
+/** Renderer output must reproduce the reviewed projection exactly. */
+export function validateRenderedProjection(projection) {
+  for (const key of PROJECTION_KEYS) if (projection[key] !== MAP_RECIPE.projection[key]) throw Error(`Rendered projection mismatch: ${key}`);
+}

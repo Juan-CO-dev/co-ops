@@ -67,13 +67,17 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       if (details.vendor) { if (name !== 'OrderClick' || !validVendorPlacement(details.vendor,details.placement,details.store)) return; params.vendor = details.vendor; }
       const id = event?.id ?? transport.uuid();
       if (!navigating && hasPixel) safe(() => transport.pixel(name === 'Lead' ? 'track' : 'trackCustom',name,params,id));
+      const countClick = () => { if (name === 'OrderClick' && details.store && !details.vendor) safe(() => navigating ? transport.post('/api/landing/order-click',{store:details.store,ad},{unload:true}) : transport.post('/api/landing/order-click',{store:details.store,ad})); };
+      // A departing page may deliver only its first beacon (observed: Linux WebKit): our own
+      // order count goes first, the Meta copy second.
+      if (navigating) countClick();
       if (config.capiEnabled) {
         const payload: Record<string,unknown> = {event_name:name,event_id:id,event_time:Math.floor((event?.time ?? transport.now())/1000),consent:'accepted',source_url:config.sourceUrl,...params};
         if (details.fbc && /^fb\.1\.\d{1,16}\.[A-Za-z0-9_-]{1,500}$/.test(details.fbc)) payload.fbc=details.fbc;
         if (details.fbp && /^fb\.1\.\d{1,16}\.\d{1,30}$/.test(details.fbp)) payload.fbp=details.fbp;
         safe(() => navigating ? transport.post('/api/landing/events',payload,{unload:true}) : transport.post('/api/landing/events',payload));
       }
-      if (name === 'OrderClick' && details.store && !details.vendor) safe(() => navigating ? transport.post('/api/landing/order-click',{store:details.store,ad},{unload:true}) : transport.post('/api/landing/order-click',{store:details.store,ad}));
+      if (!navigating) countClick();
     },
   };
   return tracker;

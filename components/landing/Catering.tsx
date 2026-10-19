@@ -12,17 +12,20 @@ export function Catering({config,language}:{config:LandingConfig;language:Langua
   const basket=spriteMedia.basket;
   return <div className="landing-v3-catering">
     <p className="landing-v3-coop"><span>{serverT(language,'landing.catering.mode')}</span></p>
-    <div className="landing-v3-catering-media">
-      <div className="landing-v3-catering-spread"><TexturePhoto kind="catering" alt={serverT(language,'landing.catering.spread-alt')}/></div>
+    {/* Nothing is layered over food: the spread, then the box photo beside the points. */}
+    <div className="landing-v3-catering-spread"><TexturePhoto kind="catering" alt={serverT(language,'landing.catering.spread-alt')}/></div>
+    <div className="landing-v3-catering-row">
       <div className="landing-v3-catering-box"><TexturePhoto kind="cateringBox" alt={serverT(language,'landing.catering.box-alt')}/></div>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={basket.src} width={basket.width} height={basket.height} alt="" aria-hidden="true" loading="lazy" decoding="async" className="landing-v3-pixel landing-v3-catering-walker"/>
+      <div className="landing-v3-catering-side">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={basket.src} width={basket.width} height={basket.height} alt="" aria-hidden="true" loading="lazy" decoding="async" className="landing-v3-pixel landing-v3-catering-walker"/>
+        <ul className="landing-v3-catering-points">
+          <li>{serverT(language,'landing.catering.point-lineup')}</li>
+          <li>{serverT(language,'landing.catering.point-online')}</li>
+          <li>{serverT(language,'landing.catering.point-help')}</li>
+        </ul>
+      </div>
     </div>
-    <ul className="landing-v3-catering-points">
-      <li>{serverT(language,'landing.catering.point-lineup')}</li>
-      <li>{serverT(language,'landing.catering.point-online')}</li>
-      <li>{serverT(language,'landing.catering.point-help')}</li>
-    </ul>
     <OrderLink href={links.catering} placement="catering" event="CateringClick" className="landing-v3-cta">{serverT(language,'landing.catering.order')}</OrderLink>
     <OrderLink href={links.inquiry} placement="catering" event="Lead" className="landing-v3-ask">{serverT(language,'landing.catering.inquiry')}</OrderLink>
   </div>;
