@@ -64,6 +64,7 @@ begin
   end if;
   foreach signature in array array[
     'public.checklist_actor_level(uuid,uuid)',
+    'public.assignment_author_level(uuid)',
     'public.checklist_write_completion(uuid,uuid,uuid,numeric,uuid,text)',
     'public.checklist_submit_batch(uuid,uuid,uuid[])',
     'public.checklist_confirm_instance(uuid,uuid,timestamptz,jsonb,uuid[])',
@@ -75,6 +76,16 @@ begin
       raise exception '0277: service_role lacks EXECUTE on %', signature;
     end if;
   end loop;
+  -- PostgreSQL ARE uses \y for a word boundary (\b means backspace).
+  if exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.prosecdef and p.prorettype <> 'trigger'::regtype
+      and (has_function_privilege('anon', p.oid, 'EXECUTE')
+        or has_function_privilege('authenticated', p.oid, 'EXECUTE'))
+      and p.prosrc ~* '(insert\s+into|update|delete\s+from)\s+(public\.)?(checklist_(instances|completions|submissions|incomplete_reasons)|written_reports)\y'
+  ) then
+    raise exception '0277: PostgREST-callable definer writer remains';
+  end if;
   for r in select * from lockdown_0277 loop
     obj := format('public.%I', r.table_name);
     if not (select relrowsecurity from pg_class where oid = obj::regclass) then

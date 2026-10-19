@@ -1,5 +1,19 @@
 # Lockdown step 2 - five-table manifest (R7 chunk 1)
 
+## Authoritative deploy runbook (2026-10-19 final review)
+
+This is the sole deploy sequence; it supersedes R6 and the original plan's deployment order and migration numbering. **The app must NEVER ship before 0276 is installed and its preflight passes on the target database.** CC operates these gates; this builder task performs no database writes.
+
+1. Apply `0276_checklist_guarded_writers.sql` on sim, then run `node scripts/preflight-0276-management.mjs --ref=<sim-ref>` on sim.
+2. Run the Management-API lock proof on sim: `node scripts/sim/checklist-0276-lock-check-management.mjs --ref=<sim-ref>`. Require passing blocking/winner-loser evidence before proceeding.
+3. Apply 0276 on prod, then run `node scripts/preflight-0276-management.mjs --ref=<prod-ref>` on prod. Stop on any missing signature or service_role EXECUTE.
+4. Merge the app PR and require the production deployment to be READY.
+5. Drain or SSO-gate old deployment URLs, then smoke closing and written-report flows on prod. READY alone does not eliminate old deployments.
+6. Apply `0277_postgrest_checklist_write_lockdown.sql` on sim; perform harness-equivalent verification on real sim (role write denial, preserved SELECT/table and column ACLs/policies, service rights, all six prerequisites, callable definer-writer refusal, audit and rollback assertions). Only after that evidence and **Juan's yes**, apply 0277 on prod.
+
+Operator credentials are supplied through the environment; do not load `.env`. Local PGlite harnesses are offline proof, not substitutes for the real sim gates. After lockdown, rollback only to a service-writer-compatible app; prefer forward repair. Restoring grants/policies requires separate emergency approval.
+
+
 ## Chunk-4 amendment (2026-10-19)
 
 Part A applies CC's Opus review rulings: existing-instance reads require active actor and membership OR level >=8; creation still requires membership. Closing page nonmembers / refused write actors take the read-only loader with readOnly=true. The instance POST now validates template type, active state and exact requested shop. Completion cardinality and completion-RPC 23505 map to concurrent_modification; PIN confirm handles that and invalid_payload through reload + onError. Missing checklist RPCs log [checklist 0276_missing].

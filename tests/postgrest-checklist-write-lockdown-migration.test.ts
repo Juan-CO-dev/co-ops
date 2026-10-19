@@ -37,7 +37,8 @@ describe("0277 PostgREST checklist write lockdown", () => {
   it("guards every exact 0276 signature and compares full SELECT ACL and policy snapshots", () => {
     const prerequisite = readFileSync("supabase/migrations/0276_checklist_guarded_writers.sql", "utf8");
     const signatures = [...sql.matchAll(/^    '(public\.[^']+)'[,\n]/gm)].map(m => m[1]);
-    expect(signatures).toHaveLength(5);
+    expect(signatures).toHaveLength(6);
+    expect(signatures).toContain("public.assignment_author_level(uuid)");
     for (const signature of signatures) expect(prerequisite).toContain(signature);
     expect(sql).toContain("to_regprocedure(signature)");
     expect(sql).toContain("has_function_privilege('service_role', f, 'EXECUTE')");

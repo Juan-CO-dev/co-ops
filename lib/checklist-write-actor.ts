@@ -15,6 +15,10 @@ export class ChecklistActorNotAuthorizedError extends Error {
   constructor() { super("checklist_actor_not_authorized"); }
 }
 
+export class ChecklistActorTransientError extends Error {
+  constructor() { super("checklist_actor_unavailable"); }
+}
+
 /** Call only with requireSession/requireSessionFromHeaders' verified context.
  * No body attribution or JWT authorization claims are accepted. R8 membership
  * means active user_locations rows, without a global override. This preserves
@@ -29,11 +33,13 @@ export async function resolveChecklistWriteActor(auth: AuthContext): Promise<Che
       .eq("id", auth.session.id).maybeSingle(),
     db.from("users").select("id,role,active").eq("id", auth.user.id).maybeSingle(),
     db.from("user_locations").select("location_id").eq("user_id", auth.user.id).eq("active", true),
-  ]);
+  ]).catch(() => { throw new ChecklistActorTransientError(); });
   const session = sessionResult.data;
   const user = userResult.data;
-  if (sessionResult.error || userResult.error || locationsResult.error
-    || !session || !user || !locationsResult.data
+  if (sessionResult.error || userResult.error || locationsResult.error) {
+    throw new ChecklistActorTransientError();
+  }
+  if (!session || !user || !locationsResult.data
     || session.user_id !== auth.user.id || auth.session.userId !== auth.user.id
     || session.revoked_at !== null || !(Date.parse(session.expires_at) > Date.now())
     || !user.active || !isRoleCode(user.role)) {

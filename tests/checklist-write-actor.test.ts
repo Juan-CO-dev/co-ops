@@ -3,7 +3,7 @@ import type { AuthContext } from "../lib/session";
 
 const dbMock = vi.hoisted(() => ({ from: vi.fn() }));
 vi.mock("../lib/supabase-server", () => ({ getServiceRoleClient: () => dbMock }));
-import { resolveChecklistWriteActor } from "../lib/checklist-write-actor";
+import { resolveChecklistWriteActor, ChecklistActorTransientError } from "../lib/checklist-write-actor";
 
 describe("session-derived checklist actor", () => {
   const auth = { user: { id: "user" }, session: { id: "session", userId: "user" },
@@ -35,14 +35,26 @@ describe("session-derived checklist actor", () => {
       ["user_locations", "user_id", "user"], ["user_locations", "active", true]]);
     expect(Object.isFrozen(actor.locations)).toBe(true);
   });
-  it.each(["revoked", "expired", "mismatch", "inactive", "unknown-role", "membership-error"])(
+  it("distinguishes a transient membership read failure from authorization denial", async () => {
+    membershipError = { message: "read failed" };
+    await expect(resolveChecklistWriteActor(auth)).rejects.toBeInstanceOf(ChecklistActorTransientError);
+  });
+  it("classifies rejected reads as transient", async () => {
+    dbMock.from.mockImplementation(() => {
+      const query = { select: () => query, eq: () => query,
+        maybeSingle: () => Promise.reject(new Error("network failed")),
+        then: (_resolve: unknown, reject: (err: Error) => unknown) => Promise.reject(new Error("network failed")).catch(reject) };
+      return query;
+    });
+    await expect(resolveChecklistWriteActor(auth)).rejects.toBeInstanceOf(ChecklistActorTransientError);
+  });
+  it.each(["revoked", "expired", "mismatch", "inactive", "unknown-role"])(
     "fails closed for %s", async (state) => {
       if (state === "revoked") session.revoked_at = new Date().toISOString();
       if (state === "expired") session.expires_at = new Date(Date.now() - 1).toISOString();
       if (state === "mismatch") session.user_id = "someone-else";
       if (state === "inactive") user.active = false;
       if (state === "unknown-role") user.role = "constructor";
-      if (state === "membership-error") membershipError = { message: "read failed" };
       await expect(resolveChecklistWriteActor(auth)).rejects.toThrow("checklist_actor_not_authorized");
     });
 });

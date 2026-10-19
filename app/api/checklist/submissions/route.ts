@@ -1,4 +1,4 @@
-import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError } from "@/lib/checklist-write-actor";
+import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError, ChecklistActorTransientError } from "@/lib/checklist-write-actor";
 /**
  * POST /api/checklist/submissions — record a non-final submission event
  * over a batch of completions the caller just performed.
@@ -70,6 +70,7 @@ export async function POST(req: NextRequest) {
     });
     return jsonOk({ submission: result.submission });
   } catch (err) {
+    if (err instanceof ChecklistActorTransientError) return jsonError(503, "checklist_actor_unavailable");
     if (err instanceof ChecklistActorNotAuthorizedError) return jsonError(403, "role_level_insufficient", { message: "Writing is not permitted for this session" });
     if (err instanceof ChecklistError) return mapChecklistError(err);
     const msg = err instanceof Error ? err.message : String(err);

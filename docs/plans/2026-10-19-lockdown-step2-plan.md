@@ -1,4 +1,6 @@
-**Plan only; no files changed.** HEAD is `bd72a8c2`. The cutover needs two releases: application writers first, privilege lockdown second.
+**Historical plan: deployment order and migration numbering SUPERSEDED.** Follow only the [authoritative deploy runbook](2026-10-19-lockdown-step2-manifest.md#authoritative-deploy-runbook-2026-10-19-final-review). 0276 is the guarded-writer prerequisite; 0277 is lockdown. Never ship the app before 0276 and a passing preflight on the target DB.
+
+**Plan only; no files changed.** HEAD is `bd72a8c2`. The original release outline below is historical; use the runbook above.
 
 **Evidence limits:** original policies predate the migration lineage; their repository source is Foundation Spec v1.3, subsequently amended by 0058/0217. No live SQL connector is available here. CC must supply `pg_policies`, effective table/column grants, helper definitions, and migration receipts before this becomes an implementation-ready authorization specification. Do not treat the spec as a verified live-policy dump.
 
@@ -52,7 +54,7 @@ The two INSERT policies on each checklist table are **OR alternatives**, not cum
 
 Do not substitute `lockLocationContext` blindly: its owner override differs from the membership predicate shown in SQL. Likewise level-8 global **read** authority is not write authority. Verify current active-user/session/membership semantics from 0189/0200 and live helpers.
 
-App prechecks alone cannot preserve statement-time open-state/window enforcement. Use narrow service-only guarded SQL writers where necessary, with matching application checks. **CC must allocate a prerequisite migration before app deployment; keep 0276 reserved for lockdown.** This ordering decision blocks coding.
+App prechecks alone cannot preserve statement-time open-state/window enforcement. Use narrow service-only guarded SQL writers where necessary, with matching application checks. **SUPERSEDED:** prerequisite allocation is resolved as 0276; lockdown is 0277. See the authoritative runbook above.
 
 **3. Rowcounts and concurrency — ½–1 day**
 
@@ -99,7 +101,7 @@ node --import tsx scripts/sim/launch-readiness/run.ts --suite opening --fixture 
 
 Include existing confirmation-denial, supersession-compensation, closing-participation, assignment, finalize-gate, note-timestamp, opening tests, plus concurrency races/full-day under the authorized runner.
 
-Deploy prerequisite SQL, then application. Verify production **READY**, aliases, and opening/checklist flows before CC/Juan applies 0276. Drain or disable older deployment URLs: READY alone does not eliminate skew.
+**SUPERSEDED deploy instructions:** use the authoritative runbook above; this historical section is not an operator procedure.
 
 Before lockdown, app rollback remains possible. After lockdown, roll back only to a service-writer-compatible build; prefer forward repair. Restoring captured grants/policies requires explicit emergency approval and reopens the vulnerability.
 

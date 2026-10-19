@@ -16,7 +16,7 @@ import { type NextRequest } from "next/server";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { requireSession } from "@/lib/session";
-import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError } from "@/lib/checklist-write-actor";
+import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError, ChecklistActorTransientError } from "@/lib/checklist-write-actor";
 import { updateWrittenReport, validateWrittenReportDraft } from "@/lib/written-reports";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -36,6 +36,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     actor = await resolveChecklistWriteActor(ctx);
   } catch (err) {
+    if (err instanceof ChecklistActorTransientError) return jsonError(503, "checklist_actor_unavailable");
     if (err instanceof ChecklistActorNotAuthorizedError) return jsonError(403, "forbidden");
     throw err;
   }
@@ -80,6 +81,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     });
     return jsonOk({ ok: true });
   } catch (err) {
+    if (err instanceof ChecklistActorTransientError) return jsonError(503, "checklist_actor_unavailable");
     if (err instanceof ChecklistActorNotAuthorizedError) return jsonError(403, "forbidden");
     const ip = extractIp(req);
     console.error(

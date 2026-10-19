@@ -27,7 +27,7 @@ vi.mock("@/components/ActionButton", () => ({ ActionLink: () => null }));
 vi.mock("@/app/(authed)/operations/closing/closing-client", () => ({ ClosingClient: () => null }));
 
 import ClosingPage from "@/app/(authed)/operations/closing/page";
-import { ChecklistActorNotAuthorizedError } from "@/lib/checklist-write-actor";
+import { ChecklistActorNotAuthorizedError, ChecklistActorTransientError } from "@/lib/checklist-write-actor";
 import { ClosingClient } from "@/app/(authed)/operations/closing/closing-client";
 
 const shop = "10000000-0000-4000-8000-000000000001";
@@ -91,6 +91,15 @@ describe("closing page read authority without write authority", () => {
     } else {
       expect(renderToStaticMarkup(tree)).toContain("closing.no_instance.body");
     }
+    expectNoWrites();
+  });
+
+  it.each([true, false])("sends transient actor failures to the error boundary (existing=%s)", async (existing) => {
+    fixtures(existing);
+    auth("owner", 9, true);
+    const error = new ChecklistActorTransientError();
+    h.actor.mockRejectedValue(error);
+    await expect(page()).rejects.toBe(error);
     expectNoWrites();
   });
 

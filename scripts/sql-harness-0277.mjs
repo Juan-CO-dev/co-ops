@@ -43,10 +43,10 @@ async function setup() {
   return db;
 }
 const marker = '-- ASSERTIONS:';
-function inject(sql) { return migration.replace(marker, sql + '\n' + marker); }
+function inject(sql) { return migration.replace(marker, () => sql + '\n' + marker); }
 let db;
 try {
-  check(manifest.length === 5 && signatures.length === 5, 'five tables and five exact RPC signatures');
+  check(manifest.length === 5 && signatures.length === 6, 'five tables and six exact prerequisite signatures');
   db = await setup();
   await db.exec('revoke update on public.checklist_instances from authenticated');
   const survives = (await db.query("select has_column_privilege('authenticated','public.checklist_instances','value','UPDATE') as allowed")).rows[0].allowed;
@@ -90,6 +90,12 @@ try {
   for (const { table } of manifest) check((await db.query(`select policyname from pg_policies where tablename='${table}' and policyname in ('${table}_no_user_delete','${table}_no_user_update')`)).rows.length === 2, `false policies retained ${table}`);
   await db.close(); db = undefined;
   const cases = [
+    ['definer writer', `create function public.escaped_writer() returns void language sql security definer
+      set search_path = pg_catalog, public as $$update public.written_reports set value = 'escaped' where id = 1$$;
+      revoke all on function public.escaped_writer() from public, anon;
+      grant execute on function public.escaped_writer() to authenticated;`, 'PostgREST-callable definer writer remains'],
+    ['missing assignment helper', 'drop function public.assignment_author_level(uuid);', 'required 0276 function missing'],
+    ['assignment helper EXECUTE', 'revoke execute on function public.assignment_author_level(uuid) from service_role;', 'service_role lacks EXECUTE'],
     ['table grant', 'grant update on public.checklist_instances to authenticated;', 'PostgREST write grant remains'],
     ['column grant', 'grant update(value) on public.checklist_instances to authenticated;', 'PostgREST write grant remains'],
     ['PUBLIC grant', 'grant insert on public.checklist_instances to public;', 'PostgREST write grant remains'],
