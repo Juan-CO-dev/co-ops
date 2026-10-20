@@ -22,11 +22,25 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
   const fallback=useRef<HTMLDivElement>(null);
   useEffect(()=>{
     if(hydrated)return;
-    let idle:number|undefined,timer:ReturnType<typeof setTimeout>|undefined;
+    let idle:number|undefined,timer:ReturnType<typeof setTimeout>|undefined,settleTimer:ReturnType<typeof setTimeout>|undefined;
     // Never swap the links out from under keyboard focus: wait until focus leaves them.
     let leave:((event:FocusEvent)=>void)|undefined;
+    // Never swap them out from under a finger or mouse either: a press on a link holds the swap
+    // until the gesture ends (its click has run, or it was cancelled), so the tap is never lost.
+    let pressed=false,held=false;
+    const element=fallback.current;
+    const settle=()=>{
+      clearTimeout(settleTimer);removeEventListener('pointerup',onUp,true);removeEventListener('pointercancel',settle,true);
+      if(!pressed)return;pressed=false;
+      if(held){held=false;swap();}
+    };
+    // The click follows pointerup; settle after it (a press that ends off the link has no click).
+    const onUp=()=>{clearTimeout(settleTimer);settleTimer=setTimeout(settle,700);};
+    const onClick=()=>{clearTimeout(settleTimer);settleTimer=setTimeout(settle,0);};
+    const onDown=()=>{pressed=true;clearTimeout(settleTimer);addEventListener('pointerup',onUp,true);addEventListener('pointercancel',settle,true);};
+    element?.addEventListener('pointerdown',onDown,true);element?.addEventListener('click',onClick,true);
     const swap=()=>{
-      const element=fallback.current;
+      if(pressed){held=true;return;}
       if(element&&element.contains(document.activeElement)){
         if(leave)return;
         leave=event=>{if(element.contains(event.relatedTarget as Node|null))return;element.removeEventListener('focusout',leave!);leave=undefined;swap();};
@@ -38,8 +52,8 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
       if(typeof window.requestIdleCallback==='function')idle=window.requestIdleCallback(swap,{timeout:1000});
       else timer=setTimeout(swap,50);
     };
-    const element=fallback.current;
-    const stop=()=>{if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);if(leave)element?.removeEventListener('focusout',leave);};
+    const stop=()=>{if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);clearTimeout(settleTimer);if(leave)element?.removeEventListener('focusout',leave);
+      element?.removeEventListener('pointerdown',onDown,true);element?.removeEventListener('click',onClick,true);removeEventListener('pointerup',onUp,true);removeEventListener('pointercancel',settle,true);};
     if(!element||typeof IntersectionObserver==='undefined'){enhance();return stop;}
     const near=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){near.disconnect();enhance();}},{rootMargin:'100% 0px'});
     near.observe(element);

@@ -227,3 +227,79 @@ test('tapping the order action makes P1 hop onto it (decorative, CSS only, none 
   expect(await cta.evaluate(el=>getComputedStyle(el,'::after').content)).toBe('none');
   await expect(sheet.locator('[data-spin-stage]')).toHaveAttribute('data-spin-ready','false');
 });
+
+/** Hold the page's idle callbacks so a test can fire enhancement at an exact moment. */
+async function holdIdle(page:import('@playwright/test').Page) {
+  await page.addInitScript(()=>{
+    const queue:IdleRequestCallback[]=[];
+    (window as unknown as {__idle:IdleRequestCallback[]}).__idle=queue;
+    window.requestIdleCallback=((callback:IdleRequestCallback)=>{queue.push(callback);return queue.length;}) as typeof window.requestIdleCallback;
+    window.cancelIdleCallback=()=>{};
+  });
+}
+const runIdle=(page:import('@playwright/test').Page)=>page.evaluate(()=>{const queue=(window as unknown as {__idle:IdleRequestCallback[]}).__idle.splice(0);for(const callback of queue)callback({didTimeout:false,timeRemaining:()=>50});return queue.length;});
+async function countOrders(page:import('@playwright/test').Page) {
+  const orders:string[]=[];
+  await page.route('https://complimentsonlysubs.appfront.app/**',route=>{orders.push(route.request().url());return route.fulfill({contentType:'text/html',body:'<h1>Ordering destination fixture</h1>'});});
+  return orders;
+}
+
+test('a press on a native shop link survives enhancement arriving mid-gesture (mouse; navigates exactly once)',async({page})=>{
+  await holdIdle(page);
+  const orders=await countOrders(page);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/');
+  const link=page.locator('.landing-v3-select .landing-v3-direct-orders a[data-landing-placement="lineup"]').first();
+  await link.scrollIntoViewIfNeeded();
+  // Near the viewport: the swap to the button + sheet is queued for idle.
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {__idle:unknown[]}).__idle.length)).toBeGreaterThan(0);
+  const box=(await link.boundingBox())!;
+  await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
+  try { await page.mouse.down(); } catch { test.skip(true,'This engine has no mouse press; the touch variant covers the gesture.'); }
+  // Enhancement fires between the press and the click: the link must stay under the pointer.
+  expect(await runIdle(page)).toBeGreaterThan(0);
+  await page.waitForTimeout(150);
+  await expect(link).toBeAttached();
+  await expect(page.locator('.landing-v3-select .landing-v3-cta')).toHaveCount(0);
+  await page.mouse.up();
+  await expect(page).toHaveURL(landingTenantConfig.stores[0]!.orderUrl);
+  expect(orders).toHaveLength(1);
+});
+
+test('a touch on a native shop link survives enhancement arriving mid-gesture (touch; navigates exactly once)',async({browser,baseURL,browserName})=>{
+  test.skip(browserName!=='chromium','Trusted split touch start/end needs the Chromium protocol; WebKit runs the mouse variant.');
+  const context=await browser.newContext({baseURL,hasTouch:true,isMobile:true,viewport:{width:390,height:844},reducedMotion:'reduce'});
+  const page=await context.newPage();
+  await holdIdle(page);
+  const orders=await countOrders(page);
+  await page.goto('/');
+  const link=page.locator('.landing-v3-select .landing-v3-direct-orders a[data-landing-placement="lineup"]').first();
+  await link.scrollIntoViewIfNeeded();
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {__idle:unknown[]}).__idle.length)).toBeGreaterThan(0);
+  const box=(await link.boundingBox())!;
+  const point={x:Math.round(box.x+box.width/2),y:Math.round(box.y+box.height/2)};
+  const cdp=await context.newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
+  expect(await runIdle(page)).toBeGreaterThan(0);
+  await page.waitForTimeout(150);
+  await expect(link).toBeAttached();
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  await expect(page).toHaveURL(landingTenantConfig.stores[0]!.orderUrl);
+  expect(orders).toHaveLength(1);
+  await context.close();
+});
+
+test('a cancelled press releases the held enhancement',async({page})=>{
+  await holdIdle(page);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/');
+  const link=page.locator('.landing-v3-select .landing-v3-direct-orders a[data-landing-placement="lineup"]').first();
+  await link.scrollIntoViewIfNeeded();
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {__idle:unknown[]}).__idle.length)).toBeGreaterThan(0);
+  await link.dispatchEvent('pointerdown',{pointerId:7,pointerType:'touch',isPrimary:true});
+  await runIdle(page);
+  await page.waitForTimeout(150);
+  await expect(link).toBeAttached();
+  await page.evaluate(()=>dispatchEvent(new PointerEvent('pointercancel',{pointerId:7,pointerType:'touch',isPrimary:true})));
+  await expect(page.locator('.landing-v3-select .landing-v3-cta')).toHaveCount(1);
+});
