@@ -87,8 +87,8 @@ beforeAll(async () => {
   await db.exec(read("supabase/migrations/0274_schedule_settings.sql"));
   await db.exec(read("supabase/migrations/0275_schedule_weeks.sql"));
   await db.exec(extract(read("supabase/migrations/0224_toast_time_entries.sql"), "create table public.toast_time_entries (", ");"));
-  // Staff separations (0279): the employment read (sessions is the one table 0279's pre-flight needs beyond the stub).
-  await db.exec("create table public.sessions (id uuid primary key default gen_random_uuid(), user_id uuid not null references public.users(id), revoked_at timestamptz);");
+  // Staff separations (0279): the employment read (0279's pre-flight needs the user-admin columns the stub does not model).
+  await db.exec(read("tests/fixtures/user-admin-columns-stub.sql"));
   await db.exec(read("supabase/migrations/0279_user_employment_events.sql"));
   // Production columns the stub does not model: 0230 / 0238 station closing settings and the membership's assigned_at
   // (user management spec, docs/superpowers/specs/2026-06-20-user-management-design.md).

@@ -35,20 +35,45 @@
 --          TRANSACTION (the AGENTS.md law: an authorization change revokes sessions).
 --      Returns { id, kind, status_before, status_after, sessions_revoked }. The lib (lib/admin/employment.ts) decides
 --      every rule first, before any I/O, and writes the audit row (never the reason text).
+--   3. EVERY USER-ADMIN WRITE GOES THROUGH ONE LOCK (Astra's review of b3213674, BC-007 / BC-022 — the GM target check
+--      and Activate were a check on a snapshot followed by a separate write; a separation, a promotion or a new shop
+--      could commit in between). `user_admin_lock(actor, user)` is the ONE gate: the per-person advisory lock (the SAME
+--      key the employment writer takes), the target users row FOR UPDATE, the actor row FOR SHARE (a change to the
+--      actor's own role / shops serializes with it), then THE ACTOR RULE re-checked against that LOCKED state — the
+--      actor active and GM (7) or above, never oneself, the target strictly below the actor (canActOn), and below MoO
+--      (8) every active membership of the target at a shop where the actor holds an active membership
+--      ('target_outside_shop'). Every writer below calls it first, MoO+ included (MoO+ semantics unchanged; their
+--      role / location writes now hold the same row lock, so they serialize with a GM's):
+--        admin_user_set_active(actor, user, active)        activation re-reads the employment status INSIDE the lock:
+--                                                           on leave → 'use_back_from_leave', separated → 'use_rehire';
+--                                                           deactivation revokes live sessions in the same transaction
+--        admin_user_set_credential(actor, user, kind, hash) pin | password — the lib passes the already-computed HASH,
+--                                                           never plaintext; revokes live sessions
+--        admin_user_set_role(actor, user, role)            the new role strictly below the actor; revokes sessions
+--        admin_user_set_locations(actor, user, shops[])     below owner (9) only the actor's own shops; a GM never
+--                                                           leaves the person with none ('locations_required');
+--                                                           memberships at shops the actor is not in are left alone
+--        admin_user_set_dormant(actor, user, dormant, expected)  compare-and-set on dormant_at ('dormancy_changed')
+--        admin_user_update_profile(actor, user, patch)     name / phone / email ('invalid_name', 'email_taken');
+--                                                           an email change revokes sessions
+--      The lib writes the audit rows after each (unchanged actions and metadata).
 --
 -- PRIVACY: reason and notes are HR-sensitive. They live only in this table; the lib sends them only to owner / MoO / CGS
 --   and the GM of a shop the person belongs to (lib/admin/employment-shared.ts `canSeeEmploymentDetail`); everyone else
 --   gets the status chip. The audit row carries the event id and kinds, never the text.
 --
--- REFUSALS (raise exception '<code>', P0001): invalid_payload · employment_forbidden · employment_outside_shop ·
---   employment_not_found · employment_moved · employment_invalid_transition · rehire_owner_ok_required ·
---   rehire_owner_required.
+-- REFUSALS (raise exception '<code>', P0001): invalid_payload · forbidden · target_outside_shop · user_not_found ·
+--   employment_moved · employment_invalid_transition · rehire_owner_ok_required · rehire_owner_required ·
+--   use_back_from_leave · use_rehire · locations_required · dormancy_changed · invalid_name · email_taken.
 --
--- DEPENDS ON: users (role, active, phone), user_locations (active), sessions (user_id, revoked_at), 0228's
---   assignment_author_level (reused, never copied).
+-- ROLLOUT: apply 0279 to PROD BEFORE PR #498 merges — the lib has NO fallback for these writes (without 0279 every
+--   user-admin write refuses 'user_admin_unavailable', 503).
+--
+-- DEPENDS ON: users (name, role, active, email, phone, pin_hash, password_hash, dormant_at, dormant_by), user_locations
+--   (user_id, location_id, active, assigned_by), locations (id), sessions (user_id, revoked_at). The role levels are
+--   `user_admin_role_level`, pinned equal to lib/roles.ts ROLES by tests/user-employment-events-migration.test.ts.
 --
 -- PRE-FLIGHT (MCP, before apply):
---   select to_regprocedure('public.assignment_author_level(uuid)');                             -- present
 --   select to_regclass('public.user_employment_events');                                       -- NULL
 --   select column_name from information_schema.columns where table_schema = 'public' and table_name = 'sessions'
 --    and column_name in ('user_id', 'revoked_at');                                             -- both
@@ -59,7 +84,7 @@
 --   select grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public'
 --    and table_name = 'user_employment_events' order by 1, 2;                                  -- service_role SELECT (+ postgres)
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
---    and routine_name in ('record_user_employment_event', 'user_employment_json_date', 'user_employment_text') order by 1, 2;
+--    and routine_name like any (array['record_user_employment_event', 'user_employment_%', 'user_admin_%', 'admin_user_%']) order by 1, 2;
 --                                                                                               -- service_role (+ postgres) only
 
 begin;
@@ -71,15 +96,19 @@ begin
      or to_regprocedure('public.record_user_employment_event(uuid, uuid, uuid, text, jsonb)') is not null then
     raise exception '0279: already applied';
   end if;
-  if to_regprocedure('public.assignment_author_level(uuid)') is null then
-    raise exception '0279: assignment_author_level (0228) must be applied first';
-  end if;
   if to_regclass('public.users') is null or to_regclass('public.user_locations') is null or to_regclass('public.sessions') is null then
     raise exception '0279: users, user_locations and sessions must exist';
   end if;
   if (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'sessions'
        and column_name in ('user_id', 'revoked_at')) <> 2 then
     raise exception '0279: sessions.user_id and sessions.revoked_at must exist';
+  end if;
+  if (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'users'
+       and column_name in ('name', 'role', 'active', 'email', 'phone', 'pin_hash', 'password_hash', 'dormant_at', 'dormant_by')) <> 9
+     or (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'user_locations'
+       and column_name in ('user_id', 'location_id', 'active', 'assigned_by')) <> 4
+     or to_regclass('public.locations') is null then
+    raise exception '0279: the users / user_locations / locations columns the user-admin writers use must exist';
   end if;
 end $$;
 
@@ -158,11 +187,58 @@ begin
   return v;
 end $$;
 
--- ── 3. THE WRITER ───────────────────────────────────────────────────────────────────────────────
+-- ── 3. THE ONE GATE: the per-person lock, the locked rows, the actor rule ────────────────────────
+-- The role levels (the twin of lib/roles.ts ROLES; pinned equal by the migration test).
+create function public.user_admin_role_level(p_role text)
+returns integer language sql immutable security definer set search_path = pg_catalog, public as $$
+  select case p_role when 'cgs' then 10 when 'owner' then 9 when 'moo' then 8 when 'gm' then 7 when 'agm' then 6
+    when 'catering_mgr' then 6 when 'prep_mgr' then 6 when 'social_media_mgr' then 6 when 'shift_lead' then 5
+    when 'key_holder' then 4 when 'trainer' then 4 when 'employee' then 3 when 'trainee' then 2
+    when 'hired_not_yet_worked' then 1 when 'prospect' then 0 else null end
+$$;
+
+-- Every user-admin writer calls this FIRST. The advisory key is the employment writer's, so an activation, a separation,
+-- a credential reset, a promotion or a shop change of one person run one at a time; the target row is locked FOR UPDATE
+-- (a MoO's promotion or new shop for the same person waits, or has committed and is SEEN here), the actor row FOR SHARE
+-- (a change to the actor's own role or shops waits, or is seen). The actor rule is the twin of lib/admin/
+-- user-access-shared.ts `userAdminRefusal`, judged on the LOCKED state.
+create function public.user_admin_lock(p_actor uuid, p_user uuid)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_target_role text; v_target_active boolean; v_actor_role text; v_actor_active boolean; v_actor_level integer; v_target_level integer;
+begin
+  if p_actor is null or p_user is null then raise exception 'invalid_payload'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('user-employment/' || p_user::text, 0));
+  select role, active into v_target_role, v_target_active from public.users where id = p_user for update;
+  if not found then raise exception 'user_not_found'; end if;
+  if p_actor = p_user then raise exception 'forbidden'; end if;
+  select role, active into v_actor_role, v_actor_active from public.users where id = p_actor for share;
+  if not found or not v_actor_active then raise exception 'forbidden'; end if;
+  v_actor_level := coalesce(public.user_admin_role_level(v_actor_role), 0);
+  v_target_level := coalesce(public.user_admin_role_level(v_target_role), 0);
+  if v_actor_level < 7 or v_target_level >= v_actor_level then raise exception 'forbidden'; end if;
+  if v_actor_level < 8 then
+    if not exists (select 1 from public.user_locations t where t.user_id = p_user and t.active)
+       or exists (select 1 from public.user_locations t where t.user_id = p_user and t.active
+                   and not exists (select 1 from public.user_locations a where a.user_id = p_actor and a.active and a.location_id = t.location_id)) then
+      raise exception 'target_outside_shop';
+    end if;
+  end if;
+  return jsonb_build_object('actor_role', v_actor_role, 'actor_level', v_actor_level, 'target_role', v_target_role,
+    'target_level', v_target_level, 'target_active', v_target_active);
+end $$;
+
+-- The employment status in force (twin of employmentStateOf's status): the latest non-correction event.
+create function public.user_employment_status(p_user uuid)
+returns text language sql stable security definer set search_path = pg_catalog, public as $$
+  select coalesce((select case e.kind when 'leave_start' then 'on_leave' when 'separated' then 'separated' else 'active' end
+    from public.user_employment_events e where e.user_id = p_user and e.kind <> 'correction' order by e.created_at desc, e.id desc limit 1), 'active')
+$$;
+
+-- ── 4. THE EMPLOYMENT WRITER ───────────────────────────────────────────────────────────────────
 create function public.record_user_employment_event(p_actor uuid, p_user uuid, p_expected uuid, p_kind text, p_fields jsonb)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
-  v_actor_role text; v_actor_active boolean; v_actor_level integer; v_subject_level integer;
+  v_ctx jsonb; v_actor_role text;
   v_head uuid; v_status_event public.user_employment_events%rowtype; v_has_status boolean;
   v_status text; v_after text; v_target public.user_employment_events%rowtype; v_current_rehire text;
   v_new_rehire text; v_allowed text[]; v_required text[]; v_key text; v_target_kind text;
@@ -174,24 +250,9 @@ begin
     raise exception 'invalid_payload';
   end if;
 
-  -- The lock BEFORE any read, then the subject row.
-  perform pg_advisory_xact_lock(hashtextextended('user-employment/' || p_user::text, 0));
-  perform 1 from public.users where id = p_user for update;
-  if not found then raise exception 'employment_not_found'; end if;
-
-  -- The actor rule (twin of employmentActRefusal).
-  select role, active into v_actor_role, v_actor_active from public.users where id = p_actor;
-  if not found or not v_actor_active then raise exception 'employment_forbidden'; end if;
-  v_actor_level := coalesce(public.assignment_author_level(p_actor), 0);
-  v_subject_level := coalesce(public.assignment_author_level(p_user), 0);
-  if v_actor_level < 7 or p_actor = p_user or v_subject_level >= v_actor_level then raise exception 'employment_forbidden'; end if;
-  if v_actor_level < 8 then
-    if not exists (select 1 from public.user_locations t where t.user_id = p_user and t.active)
-       or exists (select 1 from public.user_locations t where t.user_id = p_user and t.active
-                   and not exists (select 1 from public.user_locations a where a.user_id = p_actor and a.active and a.location_id = t.location_id)) then
-      raise exception 'employment_outside_shop';
-    end if;
-  end if;
+  -- The one gate (the lock BEFORE any read, the locked rows, the actor rule on the locked state).
+  v_ctx := public.user_admin_lock(p_actor, p_user);
+  v_actor_role := v_ctx ->> 'actor_role';
 
   -- The head (any kind) and the status event in force.
   select id into v_head from public.user_employment_events where user_id = p_user order by created_at desc, id desc limit 1;
@@ -293,13 +354,166 @@ begin
   return jsonb_build_object('id', v_id, 'kind', p_kind, 'status_before', v_status, 'status_after', v_after, 'sessions_revoked', v_revoked);
 end $$;
 
+-- ── 5. THE USER-ADMIN WRITERS (each: the gate first, then its write, all in one transaction) ─────────
+create function public.admin_user_set_active(p_actor uuid, p_user uuid, p_active boolean)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_ctx jsonb; v_status text; v_revoked integer := 0;
+begin
+  if p_active is null then raise exception 'invalid_payload'; end if;
+  v_ctx := public.user_admin_lock(p_actor, p_user);
+  if p_active then
+    -- Re-read INSIDE the lock: a separation that committed after the screen loaded is seen here.
+    v_status := public.user_employment_status(p_user);
+    if v_status = 'on_leave' then raise exception 'use_back_from_leave'; end if;
+    if v_status = 'separated' then raise exception 'use_rehire'; end if;
+  end if;
+  update public.users set active = p_active where id = p_user;
+  if not p_active then
+    update public.sessions set revoked_at = clock_timestamp() where user_id = p_user and revoked_at is null;
+    get diagnostics v_revoked = row_count;
+  end if;
+  return jsonb_build_object('active', p_active, 'was_active', (v_ctx ->> 'target_active')::boolean, 'sessions_revoked', v_revoked);
+end $$;
+
+create function public.admin_user_set_credential(p_actor uuid, p_user uuid, p_kind text, p_hash text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_revoked integer := 0;
+begin
+  if p_kind is null or p_kind not in ('pin', 'password') or p_hash is null or char_length(p_hash) not between 20 and 255 then
+    raise exception 'invalid_payload';
+  end if;
+  perform public.user_admin_lock(p_actor, p_user);
+  if p_kind = 'pin' then update public.users set pin_hash = p_hash where id = p_user;
+  else update public.users set password_hash = p_hash where id = p_user; end if;
+  update public.sessions set revoked_at = clock_timestamp() where user_id = p_user and revoked_at is null;
+  get diagnostics v_revoked = row_count;
+  return jsonb_build_object('kind', p_kind, 'sessions_revoked', v_revoked);
+end $$;
+
+create function public.admin_user_set_role(p_actor uuid, p_user uuid, p_role text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_ctx jsonb; v_revoked integer := 0;
+begin
+  if public.user_admin_role_level(p_role) is null then raise exception 'invalid_payload'; end if;
+  v_ctx := public.user_admin_lock(p_actor, p_user);
+  if public.user_admin_role_level(p_role) >= (v_ctx ->> 'actor_level')::integer then raise exception 'forbidden'; end if;
+  if p_role = v_ctx ->> 'target_role' then
+    return jsonb_build_object('changed', false, 'from_role', v_ctx ->> 'target_role', 'to_role', p_role, 'sessions_revoked', 0);
+  end if;
+  update public.users set role = p_role where id = p_user;
+  update public.sessions set revoked_at = clock_timestamp() where user_id = p_user and revoked_at is null;
+  get diagnostics v_revoked = row_count;
+  return jsonb_build_object('changed', true, 'from_role', v_ctx ->> 'target_role', 'to_role', p_role, 'sessions_revoked', v_revoked);
+end $$;
+
+create function public.admin_user_set_locations(p_actor uuid, p_user uuid, p_locations uuid[])
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_ctx jsonb; v_level integer; v_desired uuid[]; v_mine uuid[]; v_loc uuid; v_revoked integer := 0;
+begin
+  if p_locations is null or array_position(p_locations, null) is not null then raise exception 'invalid_payload'; end if;
+  v_ctx := public.user_admin_lock(p_actor, p_user);
+  v_level := (v_ctx ->> 'actor_level')::integer;
+  v_desired := array(select distinct x from unnest(p_locations) x order by x);
+  if exists (select 1 from unnest(v_desired) x where not exists (select 1 from public.locations l where l.id = x)) then raise exception 'invalid_payload'; end if;
+  select coalesce(array_agg(location_id), '{}'::uuid[]) into v_mine from public.user_locations where user_id = p_actor and active;
+  -- Below the all-shops level (9) only the actor's own shops; a GM never leaves the person with none.
+  if v_level < 9 and not (v_desired <@ v_mine) then raise exception 'forbidden'; end if;
+  if v_level < 8 and cardinality(v_desired) = 0 then raise exception 'locations_required'; end if;
+  foreach v_loc in array v_desired loop
+    if not exists (select 1 from public.user_locations where user_id = p_user and location_id = v_loc) then
+      insert into public.user_locations (user_id, location_id, assigned_by, active) values (p_user, v_loc, p_actor, true);
+    elsif exists (select 1 from public.user_locations where user_id = p_user and location_id = v_loc and not active) then
+      update public.user_locations set active = true, assigned_by = p_actor where user_id = p_user and location_id = v_loc;
+    end if;
+  end loop;
+  -- A membership at a shop the actor is not in (below 9) is left alone.
+  update public.user_locations set active = false
+   where user_id = p_user and active and not (location_id = any (v_desired)) and (v_level >= 9 or location_id = any (v_mine));
+  update public.sessions set revoked_at = clock_timestamp() where user_id = p_user and revoked_at is null;
+  get diagnostics v_revoked = row_count;
+  return jsonb_build_object('locations', to_jsonb(v_desired), 'sessions_revoked', v_revoked);
+end $$;
+
+create function public.admin_user_set_dormant(p_actor uuid, p_user uuid, p_dormant boolean, p_expected timestamptz)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_cur timestamptz; v_active boolean; v_at timestamptz;
+begin
+  if p_dormant is null then raise exception 'invalid_payload'; end if;
+  perform public.user_admin_lock(p_actor, p_user);
+  select dormant_at, active into v_cur, v_active from public.users where id = p_user;
+  -- Compare-and-set on the marker the screen saw: two taps never both write.
+  if v_cur is distinct from p_expected then raise exception 'dormancy_changed'; end if;
+  if p_dormant and not v_active then return jsonb_build_object('changed', false, 'dormant_at', v_cur); end if;
+  v_at := case when p_dormant then clock_timestamp() else null end;
+  update public.users set dormant_at = v_at, dormant_by = case when p_dormant then p_actor else null end where id = p_user;
+  return jsonb_build_object('changed', true, 'dormant_at', v_at);
+end $$;
+
+create function public.admin_user_update_profile(p_actor uuid, p_user uuid, p_patch jsonb)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_key text; v_name text; v_phone text; v_email text; v_old_email text; v_fields text[] := '{}'; v_revoked integer := 0;
+  v_email_changed boolean := false;
+begin
+  if p_patch is null or jsonb_typeof(p_patch) <> 'object' then raise exception 'invalid_payload'; end if;
+  for v_key in select jsonb_object_keys(p_patch) loop
+    if v_key not in ('name', 'phone', 'email') then raise exception 'invalid_payload'; end if;
+    if jsonb_typeof(p_patch -> v_key) not in ('string', 'null') then raise exception 'invalid_payload'; end if;
+  end loop;
+  perform public.user_admin_lock(p_actor, p_user);
+  select email into v_old_email from public.users where id = p_user;
+  if p_patch ? 'name' then
+    v_name := btrim(coalesce(p_patch ->> 'name', ''));
+    if v_name = '' then raise exception 'invalid_name'; end if;
+    update public.users set name = v_name where id = p_user;
+    v_fields := array_append(v_fields, 'name');
+  end if;
+  if p_patch ? 'phone' then
+    v_phone := nullif(btrim(coalesce(p_patch ->> 'phone', '')), '');
+    if char_length(v_phone) > 40 then raise exception 'invalid_payload'; end if;
+    update public.users set phone = v_phone where id = p_user;
+    v_fields := array_append(v_fields, 'phone');
+  end if;
+  if p_patch ? 'email' then
+    v_email := nullif(lower(btrim(coalesce(p_patch ->> 'email', ''))), '');
+    if v_email is not null and exists (select 1 from public.users where lower(email) = v_email and id <> p_user) then
+      raise exception 'email_taken';
+    end if;
+    update public.users set email = v_email where id = p_user;
+    v_fields := array_append(v_fields, 'email');
+    v_email_changed := v_email is distinct from v_old_email;
+  end if;
+  if v_email_changed then
+    update public.sessions set revoked_at = clock_timestamp() where user_id = p_user and revoked_at is null;
+    get diagnostics v_revoked = row_count;
+  end if;
+  return jsonb_build_object('fields', to_jsonb(v_fields), 'email_changed', v_email_changed, 'sessions_revoked', v_revoked);
+end $$;
+
 -- ── GRANTS: service_role only ───────────────────────────────────────────────────────────────────
 revoke all on function public.user_employment_json_date(jsonb, text) from public, anon, authenticated;
 revoke all on function public.user_employment_text(jsonb, text, integer) from public, anon, authenticated;
+revoke all on function public.user_admin_role_level(text) from public, anon, authenticated;
+revoke all on function public.user_admin_lock(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.user_employment_status(uuid) from public, anon, authenticated;
 revoke all on function public.record_user_employment_event(uuid, uuid, uuid, text, jsonb) from public, anon, authenticated;
+revoke all on function public.admin_user_set_active(uuid, uuid, boolean) from public, anon, authenticated;
+revoke all on function public.admin_user_set_credential(uuid, uuid, text, text) from public, anon, authenticated;
+revoke all on function public.admin_user_set_role(uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public.admin_user_set_locations(uuid, uuid, uuid[]) from public, anon, authenticated;
+revoke all on function public.admin_user_set_dormant(uuid, uuid, boolean, timestamptz) from public, anon, authenticated;
+revoke all on function public.admin_user_update_profile(uuid, uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.user_employment_json_date(jsonb, text) to service_role;
 grant execute on function public.user_employment_text(jsonb, text, integer) to service_role;
+grant execute on function public.user_admin_role_level(text) to service_role;
+grant execute on function public.user_admin_lock(uuid, uuid) to service_role;
+grant execute on function public.user_employment_status(uuid) to service_role;
 grant execute on function public.record_user_employment_event(uuid, uuid, uuid, text, jsonb) to service_role;
+grant execute on function public.admin_user_set_active(uuid, uuid, boolean) to service_role;
+grant execute on function public.admin_user_set_credential(uuid, uuid, text, text) to service_role;
+grant execute on function public.admin_user_set_role(uuid, uuid, text) to service_role;
+grant execute on function public.admin_user_set_locations(uuid, uuid, uuid[]) to service_role;
+grant execute on function public.admin_user_set_dormant(uuid, uuid, boolean, timestamptz) to service_role;
+grant execute on function public.admin_user_update_profile(uuid, uuid, jsonb) to service_role;
 
 -- ── THE CEILING GUARD ───────────────────────────────────────────────────────────────────────────
 do $$
@@ -335,7 +549,16 @@ begin
   foreach f in array array[
     'public.user_employment_json_date(jsonb, text)'::regprocedure,
     'public.user_employment_text(jsonb, text, integer)'::regprocedure,
-    'public.record_user_employment_event(uuid, uuid, uuid, text, jsonb)'::regprocedure] loop
+    'public.user_admin_role_level(text)'::regprocedure,
+    'public.user_admin_lock(uuid, uuid)'::regprocedure,
+    'public.user_employment_status(uuid)'::regprocedure,
+    'public.record_user_employment_event(uuid, uuid, uuid, text, jsonb)'::regprocedure,
+    'public.admin_user_set_active(uuid, uuid, boolean)'::regprocedure,
+    'public.admin_user_set_credential(uuid, uuid, text, text)'::regprocedure,
+    'public.admin_user_set_role(uuid, uuid, text)'::regprocedure,
+    'public.admin_user_set_locations(uuid, uuid, uuid[])'::regprocedure,
+    'public.admin_user_set_dormant(uuid, uuid, boolean, timestamptz)'::regprocedure,
+    'public.admin_user_update_profile(uuid, uuid, jsonb)'::regprocedure] loop
     if has_function_privilege('anon', f, 'EXECUTE') or has_function_privilege('authenticated', f, 'EXECUTE') then
       raise exception '0279: % is executable by a PostgREST role', f;
     end if;

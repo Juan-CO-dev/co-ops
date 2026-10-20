@@ -117,6 +117,7 @@ const KNOWN_ERROR_CODES = new Set([
   "rehire_reason_required",
   "target_outside_shop",
   "employment_unavailable",
+  "user_admin_unavailable",
   "use_back_from_leave",
   "use_rehire",
   "rehire_match",

@@ -40,6 +40,15 @@ function query(source: string, call?: (typeof rpcCalls)[number]) {
   return q;
 }
 const service = { from: (table: string) => query(table), rpc: (name: string, args: unknown) => {
+  // 0279's dormancy writer (Astra BC-007/022: every user-admin write goes through the locked writer): a compare-and-set on
+  // the marker the screen saw. The in-memory double stores what it is sent and answers dormancy_changed on a lost update.
+  if (name === "admin_user_set_dormant") {
+    const a = args as { p_actor: string; p_dormant: boolean; p_expected: string | null };
+    const at = a.p_dormant ? new Date().toISOString() : null;
+    writes.push({ dormant_at: at, dormant_by: a.p_dormant ? a.p_actor : null });
+    const ok = updateRows.length > 0 && ((target.dormant_at as string | null) ?? null) === (a.p_expected ?? null);
+    return Promise.resolve(ok ? { data: { changed: true, dormant_at: at }, error: null } : { data: null, error: { message: "dormancy_changed" } });
+  }
   const call = { name, args, filters: [] as Array<[string, unknown]> }; rpcCalls.push(call); return query("rpc", call);
 } } as unknown as SupabaseClient;
 beforeEach(() => {

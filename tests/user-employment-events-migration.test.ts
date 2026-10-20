@@ -11,6 +11,10 @@ import {
   EMPLOYMENT_EVENT_KINDS, EMPLOYMENT_NOTE_MAX, EMPLOYMENT_REASON_MAX, EMPLOYMENT_RPC_ERRORS, LEAVE_REASONS, recordEmploymentEventCall,
   REHIRE_SETTINGS, SEPARATION_TYPES,
 } from "@/lib/admin/employment-shared";
+import {
+  setUserActiveCall, setUserCredentialCall, setUserDormantCall, setUserLocationsCall, setUserRoleCall, updateUserProfileCall, USER_ADMIN_RPC_ERRORS,
+} from "@/lib/admin/user-admin-rpc-shared";
+import { ROLES } from "@/lib/roles";
 
 const src = readFileSync("supabase/migrations/0279_user_employment_events.sql", "utf8");
 const inList = (xs: readonly string[]) => xs.map((x) => `'${x}'`).join(", ");
@@ -31,7 +35,12 @@ describe("0279_user_employment_events", () => {
       "S1 anon cannot read the table", "S1 authenticated cannot EXECUTE the writer", "S1 service_role cannot update (append-only)",
       "S2 a GM is refused a person who also works at a shop the GM does not belong to",
       "S3 leave: on leave, deactivated, both live sessions revoked in the same transaction", "S4 a stale p_expected → employment_moved",
-      "S6 not eligible → the CGS is refused (owner only)", "S7 the TS state reads the corrected fields; the head is the correction", "PASS 0279:",
+      "S6 not eligible → the CGS is refused (owner only)", "S7 the TS state reads the corrected fields; the head is the correction",
+      "S8 admin_user_set_credential takes the ONE gate (user_admin_lock) and no lock of its own",
+      "S9 a promotion to GM committed first → the GM's password write is refused → forbidden",
+      "S9 a second shop committed first → the GM's PIN write is refused → target_outside_shop",
+      "S10 a separation committed after the screen read 'active' → the activation is refused use_rehire → use_rehire",
+      "S10 … users.active stays false (login not restored)", "PASS 0279:",
     ]) expect(out).toContain(s);
   }, 260_000);
 
@@ -44,6 +53,13 @@ describe("0279_user_employment_events", () => {
     expect(src).toContain(`char_length(reason) between 1 and ${EMPLOYMENT_REASON_MAX}`);
     expect(src).toContain(`char_length(note) between 1 and ${EMPLOYMENT_NOTE_MAX}`);
     for (const code of EMPLOYMENT_RPC_ERRORS) expect(src).toContain(`raise exception '${code}'`);
+    for (const code of Object.keys(USER_ADMIN_RPC_ERRORS)) expect(src, code).toContain(`raise exception '${code}'`);
+  });
+
+  it("the SQL role levels equal lib/roles.ts ROLES (user_admin_role_level)", () => {
+    const fn = src.slice(src.indexOf("create function public.user_admin_role_level("), src.indexOf("$$;", src.indexOf("create function public.user_admin_role_level(")));
+    const sql = Object.fromEntries([...fn.matchAll(/when '([a-z_]+)' then (\d+)/g)].map((m) => [m[1], Number(m[2])]));
+    expect(sql).toEqual(Object.fromEntries(Object.values(ROLES).map((r) => [r.code, r.level])));
   });
 
   it("the table: deny-all RLS, no PostgREST grant, service_role SELECT only; every function service_role only", () => {
@@ -51,7 +67,10 @@ describe("0279_user_employment_events", () => {
     expect(src).toContain("grant select on public.user_employment_events to service_role;");
     expect(src).not.toMatch(/grant (insert|update|delete|all)[^;]*user_employment_events/i);
     for (const op of ["select", "insert", "update", "delete"]) expect(src).toContain(`create policy user_employment_events_no_user_${op} on public.user_employment_events for ${op}`);
-    for (const sig of ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)"]) {
+    for (const sig of ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "user_admin_role_level(text)", "user_admin_lock(uuid, uuid)",
+      "user_employment_status(uuid)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)", "admin_user_set_active(uuid, uuid, boolean)",
+      "admin_user_set_credential(uuid, uuid, text, text)", "admin_user_set_role(uuid, uuid, text)", "admin_user_set_locations(uuid, uuid, uuid[])",
+      "admin_user_set_dormant(uuid, uuid, boolean, timestamptz)", "admin_user_update_profile(uuid, uuid, jsonb)"]) {
       expect(src).toContain(`revoke all on function public.${sig} from public, anon, authenticated;`);
       expect(src).toContain(`grant execute on function public.${sig} to service_role;`);
     }
@@ -63,5 +82,17 @@ describe("0279_user_employment_events", () => {
     expect(call.fn).toBe("record_user_employment_event");
     expect(Object.keys(call.args)).toEqual(["p_actor", "p_user", "p_expected", "p_kind", "p_fields"]);
     expect(src).toContain("create function public.record_user_employment_event(p_actor uuid, p_user uuid, p_expected uuid, p_kind text, p_fields jsonb)");
+    const sigs: Array<[{ fn: string; args: Record<string, unknown> }, string]> = [
+      [setUserActiveCall({ actorId: "a", userId: "u", active: true }), "p_actor uuid, p_user uuid, p_active boolean"],
+      [setUserCredentialCall({ actorId: "a", userId: "u", kind: "pin", hash: "h" }), "p_actor uuid, p_user uuid, p_kind text, p_hash text"],
+      [setUserRoleCall({ actorId: "a", userId: "u", role: "employee" }), "p_actor uuid, p_user uuid, p_role text"],
+      [setUserLocationsCall({ actorId: "a", userId: "u", locationIds: [] }), "p_actor uuid, p_user uuid, p_locations uuid[]"],
+      [setUserDormantCall({ actorId: "a", userId: "u", dormant: true, expectedDormantAt: null }), "p_actor uuid, p_user uuid, p_dormant boolean, p_expected timestamptz"],
+      [updateUserProfileCall({ actorId: "a", userId: "u", patch: {} }), "p_actor uuid, p_user uuid, p_patch jsonb"],
+    ];
+    for (const [call, params] of sigs) {
+      expect(src).toContain(`create function public.${call.fn}(${params})`);
+      expect(Object.keys(call.args).join(", ")).toBe(params.split(", ").map((p) => p.split(" ")[0]).join(", "));
+    }
   });
 });

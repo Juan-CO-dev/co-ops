@@ -103,6 +103,15 @@ function client() {
       return chain({ data: { id: row.id, kind: args.p_kind, status_before: before, status_after: after, sessions_revoked: 0 }, error: null });
     }
     if (fn === "link_toast_employee") return chain({ data: { id: id(300), changed: true, backfilled: 0 }, error: null });
+    if (fn.startsWith("admin_user_")) {
+      if (missing0279) return chain({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } });
+      // The locked writer's refusal is proved in PGlite; here it stores what the lib sends.
+      const u = tables.users!.find((x) => x.id === args.p_user)!;
+      if (fn === "admin_user_set_active") u.active = args.p_active;
+      if (fn === "admin_user_set_credential") u[args.p_kind === "pin" ? "pin_hash" : "password_hash"] = args.p_hash;
+      if (fn === "admin_user_set_role") u.role = args.p_role;
+      return chain({ data: { changed: true, sessions_revoked: 0 }, error: null });
+    }
     return chain({ data: [], error: null }); // admin_last_clock_ins and other reads
   };
   return { from, rpc };
@@ -249,13 +258,26 @@ describe("the employment route (Tier B, the head, the transitions, the rehire au
     tables.users!.find((u) => u.id === EMP_A)!.active = false;
     expect((await activatePost(req(`/api/admin/users/${EMP_A}/activate`, {}), params(EMP_A))).status).toBe(200);
   });
-  it("before 0279 is applied: the list works and every employment write is 503", async () => {
+  it("before 0279 is applied: the list works; every write refuses by name (no fallback — 0279 reaches prod first)", async () => {
     missing0279 = true;
     as(GM_A);
     const list = await listGet(req("/api/admin/users"));
     expect(list.status).toBe(200);
     expect((await json(await post(EMP_A, { act: "leave_start", fields: { leaveReason: "school" }, expectedId: null }))).body.code).toBe("employment_unavailable");
-    expect((await activatePost(req(`/api/admin/users/${LEAVE_A}/activate`, {}), params(LEAVE_A))).status).toBe(200);
+    const act = await json(await activatePost(req(`/api/admin/users/${LEAVE_A}/activate`, {}), params(LEAVE_A)));
+    expect(act).toMatchObject({ status: 503, body: { code: "user_admin_unavailable" } });
+    expect((await json(await resetPinPost(req(`/api/admin/users/${EMP_A}/reset-pin`, { pin: "1234" }), params(EMP_A)))).body.code).toBe("user_admin_unavailable");
+  });
+  it("every user-admin write goes through the locked 0279 writer with the lib's exact arguments (the hash, never the PIN)", async () => {
+    as(GM_A);
+    await resetPinPost(req(`/api/admin/users/${EMP_A}/reset-pin`, { pin: "4321" }), params(EMP_A));
+    await deactivatePost(req(`/api/admin/users/${EMP_A}/deactivate`, {}), params(EMP_A));
+    const fns = mocks.rpcCalls.filter((c) => c.fn.startsWith("admin_user_"));
+    expect(fns.map((c) => c.fn)).toEqual(["admin_user_set_credential", "admin_user_set_active"]);
+    expect(fns[0]!.args).toMatchObject({ p_actor: GM_A, p_user: EMP_A, p_kind: "pin" });
+    expect(String(fns[0]!.args.p_hash)).not.toContain("4321");
+    expect(String(fns[0]!.args.p_hash).length).toBeGreaterThan(20);
+    expect(fns[1]!.args).toEqual({ p_actor: GM_A, p_user: EMP_A, p_active: false });
   });
 });
 

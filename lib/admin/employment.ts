@@ -37,9 +37,9 @@ const ACTION_OF: Record<EmploymentEventKind, AuditAction> = {
 };
 const RPC_CODES: Record<string, { status: number; code: string }> = {
   invalid_payload: { status: 400, code: "invalid_payload" },
-  employment_forbidden: { status: 403, code: "forbidden" },
-  employment_outside_shop: { status: 403, code: "target_outside_shop" },
-  employment_not_found: { status: 404, code: "not_found" },
+  forbidden: { status: 403, code: "forbidden" },
+  target_outside_shop: { status: 403, code: "target_outside_shop" },
+  user_not_found: { status: 404, code: "not_found" },
   employment_moved: { status: 409, code: "employment_moved" },
   employment_invalid_transition: { status: 409, code: "employment_invalid_transition" },
   rehire_owner_ok_required: { status: 403, code: "rehire_owner_ok_required" },

@@ -254,7 +254,7 @@ export function recordEmploymentEventCall(a: {
 
 /** 0279's named refusals (raise exception '<code>'). */
 export const EMPLOYMENT_RPC_ERRORS = [
-  "invalid_payload", "employment_forbidden", "employment_outside_shop", "employment_not_found", "employment_moved",
+  "invalid_payload", "forbidden", "target_outside_shop", "user_not_found", "employment_moved",
   "employment_invalid_transition", "rehire_owner_ok_required", "rehire_owner_required",
 ] as const;
 
