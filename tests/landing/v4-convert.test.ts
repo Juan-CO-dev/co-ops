@@ -5,8 +5,9 @@ import roster from '@/config/tenant/landing-products.json';
 import en from '@/lib/i18n/en.json';
 import es from '@/lib/i18n/es.json';
 import { landingTenantConfig } from '@/config/tenant/landing';
-import { closingToday, formatClock, shopWeekday } from '@/lib/landing/hours-shared';
-import { orderDetail } from '@/lib/landing/order-details';
+import { closingToday, shopWeekday, validWeeklyHours } from '@/lib/landing/hours-shared';
+import { formatClockTimeShort } from '@/lib/i18n/format';
+import { orderDetail, orderDetailsByStore } from '@/lib/landing/order-details';
 import { createLandingTracker } from '@/lib/landing/tracking-client';
 import { LANDING_ITEMS, LANDING_PLACEMENTS, parseLandingEvent } from '@/lib/landing/tracking-schema-shared';
 import { parseOrderClick } from '@/lib/landing/order-click-shared';
@@ -32,18 +33,43 @@ describe('today\'s closing time (static hours, America/New_York)', () => {
     expect(closingToday(null, mondayNoonEt)).toBeNull();
     expect(closingToday(daily, new Date('invalid'))).toBeNull();
   });
-  it('formats the time in each language', () => {
-    expect(formatClock('18:00', 'en')).toBe('6 PM');
-    expect(formatClock('20:00', 'es')).toBe('8 p. m.');
-    expect(formatClock('18:30', 'en')).toBe('6:30 PM');
-    expect(formatClock('00:00', 'en')).toBe('12 AM');
-    expect(formatClock('12:00', 'es')).toBe('12 p. m.');
+  it('validates the whole hours shape first and never throws on malformed data', () => {
+    expect(validWeeklyHours(daily)).toBe(true);
+    const malformed: unknown[] = [
+      undefined, null, 'daily', 42, [], {},
+      { ...daily, opens: 'bad' }, { ...daily, opens: '' }, { ...daily, opens: '10:30am' }, { ...daily, opens: undefined },
+      { ...daily, days: undefined }, { ...daily, days: 'Monday' }, { ...daily, days: ['Funday'] }, { ...daily, days: [1] }, { ...daily, days: null },
+      { ...daily, closes: 18 }, { ...daily, closes: undefined },
+      { ...daily, opens: '18:00', closes: '10:30' }, { ...daily, opens: '18:00', closes: '18:00' },
+      { opens: '10:30', closes: '18:00' },
+    ];
+    for (const hours of malformed) {
+      expect(validWeeklyHours(hours), JSON.stringify(hours)).toBe(false);
+      expect(() => closingToday(hours, mondayNoonEt)).not.toThrow();
+      expect(closingToday(hours, mondayNoonEt), JSON.stringify(hours)).toBeNull();
+    }
+    expect(closingToday(daily, 'not a date' as unknown as Date)).toBeNull();
+    const store = landingTenantConfig.stores[0]!;
+    expect(orderDetail({ ...store, openingHours: { ...daily, opens: 'bad' } }, 'en', mondayNoonEt).line).toBe('8th St SE');
+    expect(orderDetail({ ...store, openingHours: { ...daily, days: undefined } as unknown as typeof daily }, 'es', mondayNoonEt).line).toBe('8th St SE');
+  });
+  it('formats the closing time through the canonical i18n clock formatter (compact form, en + es)', () => {
+    expect(formatClockTimeShort('18:00', 'en')).toBe('6 PM');
+    expect(formatClockTimeShort('20:00', 'en')).toBe('8 PM');
+    expect(formatClockTimeShort('18:30', 'en')).toBe('6:30 PM');
+    expect(formatClockTimeShort('00:00', 'en')).toBe('12 AM');
+    expect(formatClockTimeShort('18:00', 'es')).toBe('6 p.m.');
+    expect(formatClockTimeShort('20:00', 'es')).toBe('8 p.m.');
+    expect(formatClockTimeShort('10:30', 'es')).toBe('10:30 a.m.');
+    expect(formatClockTimeShort('12:00', 'es')).toBe('12 p.m.');
+    for (const bad of ['6pm', '24:00', '18:0', '']) { expect(formatClockTimeShort(bad, 'en')).toBe(''); expect(formatClockTimeShort(bad, 'es')).toBe(''); }
   });
   it('builds the order-button line from config: street, then today\'s close (or the street alone)', () => {
     const [capitolHill, dupont] = landingTenantConfig.stores;
     expect(orderDetail(capitolHill!, 'en', mondayNoonEt).line).toBe('8th St SE · til 6 PM');
     expect(orderDetail(dupont!, 'en', mondayNoonEt).line).toBe('P St NW · til 8 PM');
-    expect(orderDetail(dupont!, 'es', mondayNoonEt).line).toBe('P St NW · hasta las 8 p. m.');
+    expect(orderDetail(dupont!, 'es', mondayNoonEt).line).toBe('P St NW · hasta las 8 p.m.');
+    expect(orderDetailsByStore(landingTenantConfig.stores, 'en', mondayNoonEt)).toEqual({ 'capitol-hill': orderDetail(capitolHill!, 'en', mondayNoonEt), dupont: orderDetail(dupont!, 'en', mondayNoonEt) });
     const closed = orderDetail({ ...capitolHill!, openingHours: { ...daily, days: [] } }, 'en', mondayNoonEt);
     expect(closed).toEqual({ street: '8th St SE', until: null, line: '8th St SE' });
   });
