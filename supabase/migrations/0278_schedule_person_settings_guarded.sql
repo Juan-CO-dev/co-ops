@@ -1,6 +1,6 @@
 -- Migration 0278_schedule_person_settings_guarded
 -- AUTHORED 2026-10-20. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0274).
--- APPLIED TO SIM 2026-10-20 (by CC; sim schema_migrations version not recorded in this repo)
+-- APPLIED TO SIM 2026-10-20 (schema_migrations version 20261020205124, name '0278_schedule_person_settings_guarded')
 -- APPLIED TO PROD 2026-10-20 (schema_migrations version 20261020210710, name '0278_schedule_person_settings_guarded')
 -- Provenance: primary / secondary position per person (feat/sched-primary-secondary, PR #497), Astra round-2 review
 --   BC-007 (SHOULD-FIX, Juan approved the DB change 2026-10-20) and Juan's "GMs own their shop" ruling (2026-10-20).
