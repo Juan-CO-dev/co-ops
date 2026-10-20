@@ -50,6 +50,9 @@ export const SCHEDULE_ERROR_CODES = [
   "gap_certificate_invalid",
   // CC chunk D ruling 3: the validation context a revision would store is past the lib's safe ceiling (well under 0275's CHECK)
   "context_too_large",
+  // Juan 2026-10-20: a primary / secondary position the person's work type does not allow — refused in the save path
+  // before the RPC (position-rank-shared `positionListProblems`); TS only, no SQL twin.
+  "position_rank_not_allowed",
 ] as const;
 
 export type ScheduleErrorCode = (typeof SCHEDULE_ERROR_CODES)[number];
@@ -90,7 +93,7 @@ export const SCHEDULE_ERROR_STATUS: Record<ScheduleErrorCode, 400 | 403 | 404 | 
   rules_failing: 409, unresolved_gaps: 409, history_changed: 409, structure_moved: 409,
   generator_invalid_output: 500, context_too_large: 500,
   structure_invalid: 422, budget_invalid: 422, horizon_invalid: 422, horizon_too_long: 422, edit_off_grid: 422, edit_overlap: 422, edit_segments_malformed: 422,
-  edit_below_segment_min: 422, pin_invalid: 422, wage_estimate_invalid: 422, shift_over_maximum: 422, gap_certificate_invalid: 422, suggestion_unavailable: 422,
+  edit_below_segment_min: 422, pin_invalid: 422, position_rank_not_allowed: 422, wage_estimate_invalid: 422, shift_over_maximum: 422, gap_certificate_invalid: 422, suggestion_unavailable: 422,
   person_not_at_shop: 404, position_not_at_shop: 404, position_retired: 409,
   inputs_unavailable: 503, demand_unavailable: 503,
   invalid_payload: 400,

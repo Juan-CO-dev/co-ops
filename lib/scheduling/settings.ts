@@ -21,15 +21,18 @@ import {
 import { forecastWeek } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import { buildWeek } from "./generator/build-shared";
-import { loadSchedulingDemand, loadWeekHeads } from "./inputs";
+import { loadLiveStructure, loadSchedulingDemand, loadWeekHeads } from "./inputs";
 import { STRUCTURE_DEFAULTS_ID, generatorInputFor, type SchedulingInputs } from "./inputs-shared";
+import { defaultWorkType } from "./people-input-shared";
+import { positionListProblems } from "./position-rank-shared";
 import {
   recordBudgetEntryCall, recordDayTypeCall, recordPersonSettingsCall, recordPinCall, saveShopSettingsCall, saveStructureCall,
 } from "./rpc-args-shared";
 import { MOD } from "./rules-shared";
 import { gate, rpcRefusal, type ScheduleDeps } from "./schedules";
-import { validScheduleStructure } from "./structure-shared";
+import { validScheduleStructure, type PositionRole } from "./structure-shared";
 import { addDays, isYmd, isoWeekStart, weekDays } from "./time-shared";
+import { ROLES, type RoleCode } from "@/lib/roles";
 import { loadSchedulingInputs } from "./inputs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -86,9 +89,31 @@ export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: Pe
   await gate(deps.service, args.actor, args.locationId, "person_settings");
   const s = args.settings;
   if (!s || typeof s.userId !== "string" || !UUID.test(s.userId) || !Array.isArray(s.coverPositions) || !Array.isArray(s.alsoAllowed)) throw new ScheduleError("invalid_payload");
+  await refusePositionRank(deps.service, args.locationId, s);
   const r = await rpc(deps.service, recordPersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s }));
   await log(args.actor, "schedule.person_settings_update", "schedule_person_settings", args.locationId, { user_id: s.userId, before: r.before ?? null, after: r.after ?? null });
   return r;
+}
+
+/**
+ * Juan 2026-10-20 (primary / secondary): the ordered list's first two entries must be positions the person may hold —
+ * their EFFECTIVE work type (the setting, else the role default) with "also allowed", and never a manager on the
+ * dish-and-prep position (`positionListProblems`, the same rule the staff settings card shows before it posts). Judged
+ * only once the shop's structure is SAVED (before that every position reads as a line position, so the roles are not
+ * known); an unknown subject is left to the RPC (`person_not_at_shop`). Refusal: `position_rank_not_allowed`.
+ */
+async function refusePositionRank(service: SupabaseClient, locationId: string, s: PersonSettingsInput): Promise<void> {
+  if (s.coverPositions.length === 0) return;
+  const live = await loadLiveStructure(service, locationId);
+  if (live.source !== "saved") return;
+  const { data, error } = await service.from("users").select("role").eq("id", s.userId).maybeSingle();
+  if (error) throw new Error(`refusePositionRank: ${error.message}`);
+  const role = (data as { role?: string } | null)?.role;
+  if (!role || !Object.hasOwn(ROLES, role)) return;
+  const roles: Record<string, PositionRole> = Object.fromEntries(Object.entries(live.structure.positions).map(([id, p]) => [id, p.role]));
+  const problems = positionListProblems({ role: role as RoleCode, workType: s.workType ?? defaultWorkType(role as RoleCode), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles);
+  const first = problems[0];
+  if (first) throw new ScheduleError("position_rank_not_allowed", { params: { slot: first.slot, positionId: first.positionId, reason: first.code } });
 }
 
 // ─── Day types and pins ──────────────────────────────────────────────────────

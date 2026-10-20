@@ -51,7 +51,7 @@ export function formatParams(params: Readonly<Record<string, string | number>> |
     if (typeof v === "number" && /Cents$/.test(k)) out[k] = formatCentsWhole(v, ctx.language);
     else if (typeof v === "number" && CLOCK_Q.has(k)) out[k] = formatQ(v, ctx.language);
     else if (k === "userId" && typeof v === "string") out[k] = personName(ctx, v);
-    else if (k === "positionId" && typeof v === "string") out[k] = positionLabel(ctx, v);
+    else if ((k === "positionId" || k === "primaryId") && typeof v === "string") out[k] = positionLabel(ctx, v);
     else if (DATE_PARAMS.has(k) && typeof v === "string" && isYmd(v)) out[k] = formatDateLabel(v, ctx.language);
     else if (k === "window" && typeof v === "string") out[k] = ctx.t(`schedule.board.window.${v}` as TranslationKey);
     else if (k === "scope" && typeof v === "string") out[k] = ctx.t(`schedule.board.scope.${v}` as TranslationKey);

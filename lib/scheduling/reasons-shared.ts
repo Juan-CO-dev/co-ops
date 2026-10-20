@@ -27,6 +27,9 @@ export const REASON_KEYS = [
   "catering_manager_cover",
   // CC chunk H2 (2026-10-16): a salaried manager covers an otherwise-uncovered window on a FLEX block (no hourly cost).
   "salaried_flex_cover",
+  // Juan 2026-10-20 (primary / secondary position): on their primary, on their secondary, or flexed to another position
+  // while they have a primary (params: positionId, primaryId).
+  "on_primary", "on_secondary", "flexed",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

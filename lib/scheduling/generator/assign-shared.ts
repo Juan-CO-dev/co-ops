@@ -10,15 +10,16 @@
  *
  * Primitives, in the mockup's order: `planBlock` (a deficit run extended to the minimum shift inside the
  * position's window, then into the next needed position — a multi-position segment), `rankCandidates`
- * (skill-weighted with guardrails: the busiest windows by skill, elsewhere most-under-soft-min first;
- * overtime skipped unless nobody else fits; full-timers below their minimum pulled forward; the pairing
- * tie-break; ties to the lower userId), `fillRun` (insert a free person, or extend their own shift that
+ * (Juan 2026-10-20: the position rank first — primary, then secondary, then flex; then skill-weighted with
+ * guardrails: the busiest windows by skill, elsewhere most-under-soft-min first; overtime skipped unless nobody
+ * else fits; full-timers below their minimum pulled forward; the pairing tie-break; ties to the lower userId), `fillRun` (insert a free person, or extend their own shift that
  * day, else a salaried manager's cover carved out of their MoD block within the floor limit), the priority
  * relabel, the Closing Manager, and the MoD lane fill. Determinism: no Date, no random, every iteration
  * over sorted arrays, ids compared with `<`.
  */
 import type { DayContext, RuleContext, RulePerson } from "../context-shared";
 import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../people-input-shared";
+import { POSITION_RANK, positionRankOf, primaryPositionOf } from "../position-rank-shared";
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
 import type { FillPlan, FillStep } from "../rules-shared";
 import {
@@ -292,7 +293,14 @@ export function planBlock(shifts: readonly GShift[], day: DayContext, positionId
 
 // ─── Candidates ──────────────────────────────────────────────────────────────
 
+/**
+ * A ranked candidate. `key` is the sort key, compared left to right (Juan 2026-10-20):
+ * [positionRank, fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] — see `CANDIDATE_KEY`.
+ */
 export interface Candidate { person: SchedPerson; own: GShift | null; skill: number; key: Array<number | string> }
+
+/** The index of each part of `Candidate.key` (one place, so `whyChosen` and the notes never read a stale slot). */
+export const CANDIDATE_KEY = { positionRank: 0, fullTimerFirst: 1, softMin: 2, skill: 3, pairing: 4, userId: 5 } as const;
 
 export interface CandidateOpts {
   date: string;
@@ -341,7 +349,12 @@ function extendsOwn(own: GShift, plan: BlockPlan): boolean {
 }
 
 /**
- * Eligible hourly candidates for a planned block, ranked. Eligibility: an active hourly member, allowed on
+ * Eligible hourly candidates for a planned block, ranked. The ranking (Juan 2026-10-20) is the POSITION RANK first —
+ * on `o.positionId` (the position the deficit is on; for a multi-position block, the block's core position) a person
+ * whose primary it is (0) beats one whose secondary it is (1), who beats everyone else eligible (flex, 2; a null
+ * `positionId` — the MoD lane — ranks everyone flex, so nothing changes there) — then full-timers short of their
+ * minimum, then the busiest-window skill / under-soft-min key, then skill, the pairing tie-break and the userId.
+ * The rank never makes anyone eligible: eligibility is exactly as before. Eligibility: an active hourly member, allowed on
  * every planned position (role, work type, never a manager on Prep/Dishwasher), available over the whole
  * span, their leader setting allows it, no untouchable day, a Closing Manager-eligible closer for the
  * `closingLead`, free that day or extendable from their own adjacent shift, and not over the overtime
@@ -381,7 +394,7 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
     const fullTimerFirst = p.fullTime && p.fullTimeMinH !== null && weekQuarters(week, userId) / 4 < p.fullTimeMinH ? 0 : 1;
     const newer = !!o.positionId && p.newerPositions.includes(o.positionId);
     const pairing = newer ? (strongPartnerOnLine(b, shifts, o.plan.startQ, o.plan.endQ, userId) ? -1 : 1) : 0;
-    out.push({ person: p, own, skill, key: [fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] });
+    out.push({ person: p, own, skill, key: [positionRankOf(p, o.positionId), fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] });
   }
   out.sort((x, y) => {
     for (let i = 0; i < x.key.length; i++) {
@@ -429,11 +442,22 @@ export function applyPlacement(shifts: GShift[], c: Candidate, o: PlaceOpts, peo
 /** The ranking reason for a chosen candidate (why this person). */
 export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, o: CandidateOpts): Reason[] {
   const out: Reason[] = [];
-  if (c.key[0] === 0) out.push(reason("full_timer_minimum", { userId: c.person.userId }));
-  if (c.key[1] === 0 && o.positionId) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
-  else if (typeof c.key[1] === "number" && c.key[1] < 0) out.push(reason("under_soft_min", { userId: c.person.userId, hoursUnder: -c.key[1] }));
-  if (c.key[3] === -1) out.push(reason("beside_strong", { userId: c.person.userId, positionId: o.positionId }));
-  if (c.key[3] === 1) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
+  const K = CANDIDATE_KEY;
+  // Juan 2026-10-20: the position rank — on their primary / secondary it says so; placed elsewhere while they HAVE a
+  // primary, it is a flex (the reason names the position and their primary). No primary set → nothing (as before).
+  const primary = primaryPositionOf(c.person);
+  if (o.positionId && primary) {
+    const rank = c.key[K.positionRank];
+    if (rank === POSITION_RANK.primary) out.push(reason("on_primary", { userId: c.person.userId, positionId: o.positionId }));
+    else if (rank === POSITION_RANK.secondary) out.push(reason("on_secondary", { userId: c.person.userId, positionId: o.positionId, primaryId: primary }));
+    else out.push(reason("flexed", { userId: c.person.userId, positionId: o.positionId, primaryId: primary }));
+  }
+  if (c.key[K.fullTimerFirst] === 0) out.push(reason("full_timer_minimum", { userId: c.person.userId }));
+  const softMin = c.key[K.softMin];
+  if (softMin === 0 && o.positionId) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
+  else if (typeof softMin === "number" && softMin < 0) out.push(reason("under_soft_min", { userId: c.person.userId, hoursUnder: -softMin }));
+  if (c.key[K.pairing] === -1) out.push(reason("beside_strong", { userId: c.person.userId, positionId: o.positionId }));
+  if (c.key[K.pairing] === 1) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
   void b;
   void shifts;
   return out;
@@ -499,7 +523,7 @@ export function fillRun(
         const ok = guarded(b, week, date, place);
         if (ok) {
           if (overtime) b.notes.push({ code: "overtime_used", date, userId: c.person.userId, positionId, params: {} });
-          if (c.key[3] === 1) b.notes.push({ code: "pairing_unmet", date, userId: c.person.userId, positionId, params: { fromQ: plan.startQ, toQ: plan.endQ } });
+          if (c.key[CANDIDATE_KEY.pairing] === 1) b.notes.push({ code: "pairing_unmet", date, userId: c.person.userId, positionId, params: { fromQ: plan.startQ, toQ: plan.endQ } });
           return "placed";
         }
       }
