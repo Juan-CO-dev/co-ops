@@ -12,7 +12,8 @@
  *   READ   : level >= visibility_min_level
  *            AND (location_id IS NULL OR location_id ∈ my locations OR level >= 8)
  *   INSERT : submitted_by = me AND level >= 3
- *   UPDATE : submitted_by = me AND submitted_at > now() - 3h   (self-edit window)
+ *   UPDATE : author + strict 3h window + active actor + current visibility/location
+ *            (0276 SQL predicate; location membership must be active under R8)
  *   DELETE : false (append-only — never)
  *
  * The pure surface (categories, limits, draft validation) lives in
@@ -23,7 +24,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
-import { ROLES, type RoleCode } from "@/lib/roles";
+import { type RoleCode } from "@/lib/roles";
+import { ChecklistActorNotAuthorizedError, type ChecklistWriteActor } from "@/lib/checklist-write-actor";
+import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { WrittenReport } from "@/lib/types";
 import { parseReportRange, reportTimestampBounds } from "@/lib/report-range";
 import { etCalendarDate } from "@/lib/operational-day";
@@ -302,38 +305,32 @@ export async function loadWrittenReport(
 }
 
 export interface CreateWrittenReportArgs {
-  /** The author. INSERT RLS requires submitted_by = current_user_id(). */
-  authorId: string;
-  authorRole: RoleCode;
+  /** Resolved from a verified AuthContext, never request attribution. */
+  actor: ChecklistWriteActor;
   /** The location this report is scoped to; null = all-location post. */
   locationId: string | null;
   draft: WrittenReportDraft;
 }
 
 /**
- * Create a written report. Uses an AUTHED client (the caller passes one built
- * from the actor's JWT) so the INSERT RLS policy (submitted_by = me AND
- * level >= 3) is the real authority; this fn just shapes the row and checks the
- * returned id (INSERT denials raise 42501, surfaced as an error).
- *
- * The author's level floor (>= 3) is also asserted app-side for a clean early
- * error before the round-trip.
+ * Service write with the former INSERT policy and null-or-member route gate.
+ * Attribution is taken exclusively from the server-resolved actor.
  */
 export async function createWrittenReport(
-  authed: SupabaseClient,
   args: CreateWrittenReportArgs,
 ): Promise<{ id: string }> {
-  const level = ROLES[args.authorRole].level;
-  if (level < WRITTEN_REPORT_WRITE_MIN_LEVEL) {
-    throw new Error("forbidden: level below write floor");
+  const { actor } = args;
+  if (!actor.active || actor.level < WRITTEN_REPORT_WRITE_MIN_LEVEL ||
+    (args.locationId !== null && !actor.locations.includes(args.locationId))) {
+    throw new ChecklistActorNotAuthorizedError();
   }
 
-  const { data, error } = await authed
+  const { data, error } = await getServiceRoleClient()
     .from("written_reports")
     .insert({
       location_id: args.locationId,
-      submitted_by: args.authorId,
-      submitted_by_role: args.authorRole,
+      submitted_by: actor.userId,
+      submitted_by_role: actor.role,
       title: args.draft.title,
       body: args.draft.body,
       category: args.draft.category,
@@ -347,46 +344,28 @@ export async function createWrittenReport(
 }
 
 export interface UpdateWrittenReportArgs {
+  actor: ChecklistWriteActor;
   id: string;
   /** Editable fields (append-only spirit: correction inside the 3h window). */
   draft: WrittenReportDraft;
 }
 
 /**
- * Self-edit a report inside the 3-hour window. Uses an AUTHED client so the
- * UPDATE RLS policy (submitted_by = me AND submitted_at > now()-3h) is the
- * authority. Per AGENTS.md silent-UPDATE-denial law, we check the returned
- * rowcount and treat 0 as a denial (window closed / not the author).
- * Bumps edit_count + stamps last_edited_at.
+ * The service-only RPC evaluates author, strict 3h window and current read-policy
+ * visibility/location in the UPDATE and increments edit_count atomically.
+ * Zero rows retains the existing denial, including demotion or shop removal.
  */
 export async function updateWrittenReport(
-  authed: SupabaseClient,
   args: UpdateWrittenReportArgs,
 ): Promise<{ ok: boolean; denied?: boolean }> {
-  // Read the current edit_count so we can bump it (append-only history spirit;
-  // the RLS window gate still guards whether the UPDATE lands at all).
-  const { data: current } = await authed
-    .from("written_reports")
-    .select("edit_count")
-    .eq("id", args.id)
-    .maybeSingle<{ edit_count: number | null }>();
-  const nextCount = (current?.edit_count ?? 0) + 1;
-
-  const { data: updatedRows, error } = await authed
-    .from("written_reports")
-    .update({
-      title: args.draft.title,
-      body: args.draft.body,
-      category: args.draft.category,
-      visibility_min_level: args.draft.visibilityMinLevel,
-      last_edited_at: new Date().toISOString(),
-      edit_count: nextCount,
-    })
-    .eq("id", args.id)
-    .select("id");
-
+  if (!args.actor.active) throw new ChecklistActorNotAuthorizedError();
+  const { data: count, error } = await getServiceRoleClient().rpc("written_report_update_self", {
+    p_actor: args.actor.userId, p_id: args.id, p_title: args.draft.title,
+    p_body: args.draft.body, p_category: args.draft.category,
+    p_visibility_min_level: args.draft.visibilityMinLevel,
+  });
   if (error) throw new Error(`updateWrittenReport failed: ${error.message}`);
-  // Silent-denial law: 0 rows = RLS denied (window closed or not author).
-  if (!updatedRows || updatedRows.length === 0) return { ok: false, denied: true };
+  if (count === 0) return { ok: false, denied: true };
+  if (count !== 1) throw new Error("updateWrittenReport failed: invalid rowcount");
   return { ok: true };
 }

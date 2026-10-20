@@ -208,6 +208,10 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
   if (err instanceof ChecklistFinalizeGateError) {
     return jsonError(403, err.code, { message: err.message, reason: err.reason });
   }
+  if (["concurrent_modification", "completion_set_changed", "completion_cardinality",
+    "submission_cardinality", "instance_cardinality", "reason_cardinality"].includes(err.code)) {
+    return jsonError(409, err.code, { message: err.message });
+  }
   // Generic ChecklistError with an in-band code (empty_batch,
   // completion_not_found, completion_wrong_instance, completion_wrong_author,
   // use_quick_revoke, invalid_payload).
