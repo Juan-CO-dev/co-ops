@@ -448,22 +448,11 @@ export function applyPlacement(shifts: GShift[], c: Candidate, o: PlaceOpts, peo
 }
 
 /**
- * Did SKILL decide `c`'s place among the candidates of its own position rank? True when the next candidate after `c` with the
- * same rank first differs from `c` at the skill key (Astra BC-042). No such candidate → false.
- */
-export function skillDecided(c: Candidate, peers: readonly Candidate[]): boolean {
-  const K = CANDIDATE_KEY;
-  const next = peers.slice(peers.indexOf(c) + 1).find((x) => x.key[K.positionRank] === c.key[K.positionRank]);
-  if (!next || peers.indexOf(c) < 0) return false;
-  const i = c.key.findIndex((v, j) => v !== next.key[j]);
-  return i === K.skill;
-}
-
-/**
  * The ranking reason for a chosen candidate (why this person). Astra BC-042: a candidate who won on their POSITION RANK
- * (primary / secondary) over a WORSE-ranked candidate is never explained as "strongest available" unless skill actually
- * decided it among the candidates of the same rank (`peers`, the ranked list); when every peer shares one rank, the
- * reasons are exactly as before.
+ * (primary / secondary) over a WORSE-ranked candidate is never explained as "strongest available"; it gets the QUALIFIED
+ * claim ("strongest among the people with this as their primary / secondary") only when it is the top skill among every
+ * candidate of its rank (`peers`, the ranked list) — else the reason that decided it (a full-timer short of hours…) stands
+ * alone. When every peer shares one rank, the reasons are exactly as before.
  */
 export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, o: CandidateOpts, peers: readonly Candidate[] = []): Reason[] {
   const out: Reason[] = [];
@@ -473,8 +462,12 @@ export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, 
   // Astra BC-042 r3: when the RANK put them ahead of stronger people, "strongest available" would be false — the skill
   // reason is then QUALIFIED ("strongest among the people with this as their primary / secondary"), and only when skill
   // decided it among that rank.
+  // Astra BC-042 r4: the qualified claim only when they ARE the top skill among every eligible candidate of their rank (a
+  // full-timer short of hours can win over a stronger same-rank person — then the full-timer reason names the decider).
   const rankNow = c.key[K.positionRank];
-  const strongestKey = !byRank ? "strongest_on_position" as const : !skillDecided(c, peers) ? null
+  const sameRank = peers.filter((x) => x !== c && x.key[K.positionRank] === rankNow);
+  const topOfRank = sameRank.length > 0 && sameRank.every((x) => x.skill <= c.skill);
+  const strongestKey = !byRank ? "strongest_on_position" as const : !topOfRank ? null
     : rankNow === POSITION_RANK.primary ? "strongest_among_primary" as const
     : rankNow === POSITION_RANK.secondary ? "strongest_among_secondary" as const : null;
   // Juan 2026-10-20: the position rank — on their primary / secondary it says so; placed elsewhere while they HAVE a

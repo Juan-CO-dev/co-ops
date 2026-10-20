@@ -289,6 +289,19 @@ describe("the reasons: on primary / on secondary / flexed", () => {
     expect(whyChosen(b, [], ranked[2]!, o, ranked).map((r) => r.key)).toContain("strongest_on_position"); // Bo, flex: as before
     expect(ES_STRINGS["schedule.reason.strongest_among_primary"]).toBeTruthy();
   });
+  it("Astra BC-042 r4: A (0.7) and B (0.5) are full-timers short of their minimum, C (0.9) is not — all three primaries: A wins on the full-timer key and is NOT called the strongest; C, chosen, would be", () => {
+    const { b, week } = ctxWith({
+      "u-m-mia": { coverPositions: [I.$REG], fullTime: true, fullTimeMinH: 30 },
+      "u-f-finn": { coverPositions: [I.$REG], fullTime: true, fullTimeMinH: 30 },
+      "u-b-bo": { coverPositions: [I.$REG] },
+    });
+    b.busiest[MON] = new Set(Array.from({ length: 16 }, (_, i) => 44 + i));
+    const o = opts(I.$REG, plan(I.$REG));
+    const ranked = rankCandidates(b, week, [], o);
+    expect(ranked.slice(0, 3).map((c) => c.person.userId)).toEqual(["u-m-mia", "u-f-finn", "u-b-bo"]);
+    expect(whyChosen(b, [], ranked[0]!, o, ranked).map((r) => r.key)).toEqual(["on_primary", "full_timer_minimum"]);
+    expect(whyChosen(b, [], ranked[2]!, o, ranked).map((r) => r.key)).toEqual(["on_primary", "strongest_among_primary"]);
+  });
   it("no primary set → no position reason (as before); a manager never gets one", () => {
     const keys = (r: Array<{ key: string }>) => r.map((x) => x.key);
     for (const k of ["on_primary", "on_secondary", "flexed"]) {
