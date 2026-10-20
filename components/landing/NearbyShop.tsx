@@ -8,7 +8,11 @@ import { OfferCode } from './OfferCode';
 import { ShopMapView } from './ShopMapView';
 import { directionsHref, projectPoint, type MapPoint, type MapProjection } from '@/lib/landing/map-shared';
 
-export interface NearbyLabels {nearest:string;locating:string;unavailable:string;straightLine:string;distance:string;distanceOne?:string;offer:string;uberEats?:string;directions?:Record<string,string>;call:Record<string,string>;order:Record<string,string>}
+export interface NearbyLabels {nearest:string;locating:string;unavailable:string;straightLine:string;distance:string;distanceOne?:string;offer:string;uberEats?:string;directions?:Record<string,string>;call:Record<string,string>;order:Record<string,string>;
+  /** Per shop: the schedule line with both endpoints through the clock formatter. */
+  hours?:Record<string,string|undefined>;
+  /** Today's closing line per shop ("Today: til 6 PM"), absent when the shop is closed today. */
+  today?:Record<string,string|undefined>}
 export interface NearbyMap extends MapProjection {image:string;width:number;height:number;labels:{map:string;you:string;attribution:string;attributionHref:string;offMap:string}}
 export function NearbyShop({stores,language,labels,ad='unattributed',map}:{stores:readonly LandingStore[];language:Language;labels:NearbyLabels;ad?:string;map?:NearbyMap}) {
   const [ordered,setOrdered]=useState(()=>stores.map(store=>({...store,distance:null as number|null})));
@@ -38,14 +42,16 @@ export function NearbyShop({stores,language,labels,ad='unattributed',map}:{store
     {canLocate && <button type="button" disabled={status==='pending'} onClick={locate} className="inline-flex min-h-11 min-w-11 items-center rounded-xl border border-co-text px-4 py-3 font-bold">{status==='pending'?labels.locating:labels.nearest}</button>}
     <p role="status" className="mt-2 text-sm">{status==='unavailable'?labels.unavailable:status==='ready'?labels.straightLine:''}</p>
     <div className="mt-4 grid gap-5 sm:grid-cols-2">
-      {ordered.map(store=><article key={store.key} id={store.key} data-shop={store.key} className="rounded-2xl border border-co-border bg-co-surface p-5">
+      {ordered.map(store=><article key={store.key} id={store.key} data-shop={store.key} data-nearest={store.key===nearest} className="rounded-2xl border border-co-border bg-co-surface p-5">
         <h3 className="text-2xl font-bold">{store.name}</h3>
         {store.address && <address className="mt-3 not-italic">{store.address}</address>}
-        {store.hours && <p className="mt-3">{store.hours[language]}</p>}
-        {store.phone && <a href={`tel:${store.phone.replace(/[^+\d]/g,'')}`} className="inline-flex min-h-11 min-w-11 items-center underline" aria-label={labels.call[store.key]}>{store.phoneDisplay}</a>}
-        {store.directionsUrl && <a href={store.address?directionsHref(store.address,apple):store.directionsUrl} data-directions={store.key} className={store.key===nearest?'landing-v3-directions':'flex min-h-11 items-center underline'}>{labels.directions?.[store.key]}</a>}
+        {(labels.hours?.[store.key]??store.hours?.[language]) && <p className="mt-3" data-shop-hours>{labels.hours?.[store.key]??store.hours?.[language]}</p>}
+        {labels.today?.[store.key] && <p className="landing-v4-today">{labels.today[store.key]}</p>}
         {store.distance!==null && <p className="mt-2 text-sm">{formatDistanceMiles(store.distance,language,labels.distance,labels.distanceOne??labels.distance)}</p>}
-        <div className="mt-4"><OrderLink href={store.orderUrl} store={store.key} placement="shops">{labels.order[store.key]}</OrderLink></div>
+        {/* Sell first: the order action right under the hours, directions and phone below it. */}
+        <OrderLink href={store.orderUrl} store={store.key} placement="shops" className="landing-v3-cta landing-v4-shop-order">{labels.order[store.key]}</OrderLink>
+        {store.directionsUrl && <a href={store.address?directionsHref(store.address,apple):store.directionsUrl} data-directions={store.key} className="landing-v4-directions">{labels.directions?.[store.key]}</a>}
+        {store.phone && <a href={`tel:${store.phone.replace(/[^+\d]/g,'')}`} className="inline-flex min-h-11 min-w-11 items-center underline" aria-label={labels.call[store.key]}>{store.phoneDisplay}</a>}
         {store.uberEatsUrl && <OrderLink href={store.uberEatsUrl} store={store.key} placement="shops" vendor="ubereats" className="inline-flex min-h-11 min-w-11 items-center underline text-sm">{labels.uberEats}</OrderLink>}
         <OfferCode ad={ad} store={store.key} label={labels.offer}/>
       </article>)}

@@ -45,7 +45,9 @@ for (const language of ["en","es"] as const) test(`every section and control ren
   await expect(photo).toHaveAttribute('height','1080');
   await expect(photo).toHaveAttribute('alt',dictionary['landing.texture.cross-alt']);
   await expect(held.locator('video')).toHaveCount(0);
-  await expect(held.locator('[data-field-ingredients]')).toHaveText(dictionary['landing.lineup.ingredients.crunchy-boi']);
+  // v4: the duplicate ingredient paragraph is gone; the select screen carries the full list.
+  await expect(held.locator('[data-field-ingredients]')).toHaveCount(0);
+  await expect(page.locator('[data-stage-ingredients]')).toHaveText(dictionary['landing.lineup.ingredients.crunchy-boi']);
 });
 
 test("query wins over language header and toggle drops unapproved query",async ({page})=>{

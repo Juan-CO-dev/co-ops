@@ -31,7 +31,7 @@ export async function handleMetaEvent(request: Request, dependencies: Dependenci
     event_name: event.event_name, event_time: event.event_time, event_id: event.event_id,
     event_source_url: event.source_url, action_source: "website",
     user_data: { client_user_agent: userAgent, ...(event.fbc ? { fbc: event.fbc } : {}), ...(event.fbp ? { fbp: event.fbp } : {}) },
-    custom_data: { ad: ad === event.ad ? ad : "unattributed", placement: event.placement, ...(event.store ? { store: event.store } : {}), ...(event.vendor ? { vendor: event.vendor } : {}) },
+    custom_data: { ad: ad === event.ad ? ad : "unattributed", placement: event.placement, ...(event.store ? { store: event.store } : {}), ...(event.vendor ? { vendor: event.vendor } : {}), ...(event.item ? { item: event.item } : {}) },
   };
   try {
     const response = await (dependencies.send ?? fetch)(`https://graph.facebook.com/v25.0/${env.META_PIXEL_ID}/events`, {

@@ -1,13 +1,14 @@
 "use client";
 import {useEffect,useRef,useState} from 'react';
 import {LineupPhoto} from './LineupPhoto';
-import {OrderLink} from './OrderLink';
+import {OrderSheet} from './OrderSheet';
 import {SpinCanvas} from './SpinCanvas';
 import {nextFighter,AUTO_ADVANCE_MS} from '@/lib/landing/fighter-select-shared';
 import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
+import {isAllowed,LANDING_ITEMS} from '@/lib/landing/tracking-schema-shared';
 
 export interface Fighter {id:string;name:string;image:string;smallImage:string;width:number;height:number;ingredients:string;photoAlt:string}
-export interface FighterShop {key:string;name:string;address?:string;orderUrl:string;orderLabel:string}
+export interface FighterShop {key:string;name:string;address?:string;orderUrl:string;orderLabel:string;detail:string}
 interface Sprite {src:string;width:number;height:number}
 export interface FighterLabels {order:string;sheetTitle:string;close:string;auto:string;p1:string;spin:string;spinValue:string;browse:string}
 
@@ -15,15 +16,15 @@ const fill=(template:string,values:Record<string,string|number>)=>template.repla
 
 /** "Choose your fighter": a select screen. The roster auto-advances (visible pause
  * control; any touch or focus inside the screen stops it, one loop at most); tapping a card
- * selects it; one CTA opens the shop sheet. The drawn spin is only ever the Crunchy Boi's
+ * selects it; one CTA (above the ingredients, so name + spin + CTA share a phone screen) opens the shop sheet. The drawn spin is only ever the Crunchy Boi's
  * stage object and is never morphed into or out of a real photo. */
 export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:readonly Fighter[];shops:readonly FighterShop[];spin:{frames:readonly string[];width:number;height:number};sprites:{idle:Sprite;jump:Sprite;selected:Sprite};labels:FighterLabels}) {
-  const root=useRef<HTMLDivElement>(null),strip=useRef<HTMLUListElement>(null),dialog=useRef<HTMLDialogElement>(null),trigger=useRef<HTMLButtonElement>(null);
+  const root=useRef<HTMLDivElement>(null),strip=useRef<HTMLUListElement>(null);
   const autoButton=useRef<HTMLButtonElement>(null);
   const [selected,setSelected]=useState(0);
   const [auto,setAuto]=useState(true);
   const [picked,setPicked]=useState(0);
-  // Until hydration the screen is a plain menu with native shop links (also the no-JS path).
+  // Until hydration the screen is a plain menu (the sheet renders native shop links; also the no-JS path).
   const [enhanced,setEnhanced]=useState(false);
   // Reduced motion and Save-Data get the same static screen: no auto-advance or animation.
   const [calm,setCalm]=useState(false);
@@ -62,8 +63,6 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
     list.scrollTo({left:Math.max(0,left),behavior:prefersCalm()?'auto':'smooth'});
   },[selected]);
   const choose=(index:number)=>{setAuto(false);setSelected(index);setPicked(value=>value+1);};
-  const openSheet=()=>{setAuto(false);dialog.current?.showModal();};
-  const closeSheet=()=>{dialog.current?.close();};
   return <div ref={root} className="landing-v3-select" data-enhanced={enhanced} data-calm={calm} onPointerDownCapture={event=>{if(!autoButton.current?.contains(event.target as Node))setAuto(false);}} onFocusCapture={event=>{if(!autoButton.current?.contains(event.target as Node))setAuto(false);}}>
     <div className="landing-v3-stage" data-fighter={fighter.id}>
       <div key={`${fighter.id}-${picked}`} className="landing-v3-stage-media" data-pop={picked>0||selected!==0}>
@@ -76,10 +75,10 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
       <div className="landing-v3-plate">
         <span aria-hidden="true" className="landing-v3-p1">{labels.p1}</span>
         <h3>{fighter.name}</h3>
+        <OrderSheet shops={shops.map(shop=>({key:shop.key,orderUrl:shop.orderUrl,label:shop.orderLabel,detail:shop.detail}))} placement="lineup" item={isAllowed(LANDING_ITEMS,fighter.id)?fighter.id:undefined}
+          triggerLabel={fill(labels.order,{name:fighter.name})} title={fill(labels.sheetTitle,{name:fighter.name})} closeLabel={labels.close} onOpen={()=>setAuto(false)}
+          spin={fighter.id==='crunchy-boi'?{...spin,alt:fighter.photoAlt}:undefined}/>
         <p data-stage-ingredients>{fighter.ingredients}</p>
-        {enhanced
-          ? <button ref={trigger} type="button" onClick={openSheet} aria-haspopup="dialog" className="landing-v3-cta">{fill(labels.order,{name:fighter.name})}</button>
-          : <div className="landing-v3-direct-orders">{shops.map(shop=><OrderLink key={shop.key} href={shop.orderUrl} store={shop.key} placement="lineup" className="landing-v2-order">{shop.orderLabel}</OrderLink>)}</div>}
       </div>
     </div>
     {/* Without JS every fighter's full menu is visible, not just announced. */}
@@ -100,14 +99,5 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
         </button>
       </li>)}
     </ul>
-    <dialog ref={dialog} className="landing-v3-sheet" aria-labelledby="landing-v3-sheet-title" onClose={()=>trigger.current?.focus()} onClick={event=>{if(event.target===dialog.current)closeSheet();}}>
-      <div>
-        <h3 id="landing-v3-sheet-title">{fill(labels.sheetTitle,{name:fighter.name})}</h3>
-        <ul>{shops.map(shop=><li key={shop.key}>
-          <OrderLink href={shop.orderUrl} store={shop.key} placement="lineup" className="landing-v2-order">{shop.orderLabel}</OrderLink>
-        </li>)}</ul>
-        <button type="button" onClick={closeSheet} className="landing-v3-sheet-close">{labels.close}</button>
-      </div>
-    </dialog>
   </div>;
 }

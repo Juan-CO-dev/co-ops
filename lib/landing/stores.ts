@@ -10,7 +10,7 @@ export function projectLandingStores(rows: readonly PublicLocation[], config: La
   return config.stores.flatMap((store) => {
     if (!store.active) return [];
     const row = rows.find((location) => location.code === store.locationCode && location.active !== false);
-    return row ? [{key:store.key, name:store.name, orderLabel:store.orderLabel, address:store.address, phone:store.phone, phoneDisplay:store.phoneDisplay, uberEatsUrl:store.key === 'dupont' ? config.footerLinks.find(link=>link.key === 'uber-eats')?.url : undefined, structuredAddress:store.structuredAddress, openingHours:store.openingHours, directionsUrl:`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(store.address)}`, hours:store.hours, coordinates:store.coordinates, orderUrl:store.orderUrl}] : [];
+    return row ? [{key:store.key, name:store.name, orderLabel:store.orderLabel, address:store.address, street:store.street, phone:store.phone, phoneDisplay:store.phoneDisplay, uberEatsUrl:store.key === 'dupont' ? config.footerLinks.find(link=>link.key === 'uber-eats')?.url : undefined, structuredAddress:store.structuredAddress, openingHours:store.openingHours, directionsUrl:`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(store.address)}`, hours:store.hours, coordinates:store.coordinates, orderUrl:store.orderUrl}] : [];
   });
 }
 export type LandingStore = ReturnType<typeof projectLandingStores>[number];

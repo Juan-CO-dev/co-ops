@@ -36,12 +36,13 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
   expect(await stage.locator('[data-texture-photo]').first().evaluate(el=>el.getBoundingClientRect().height)).toBeCloseTo(beforePhotoHeight,1);
   await page.locator('#field-guide').scrollIntoViewIfNeeded();
   await expect(page.locator('#field-guide h3')).toHaveText('Crunchy Boi');
-  await expect(page.locator('[data-field-ingredients]')).toHaveText((language==='en'?en:es)['landing.lineup.ingredients.crunchy-boi']);
+  // v4: no duplicate ingredient paragraph; the six words carry them here.
+  await expect(page.locator('[data-field-ingredients]')).toHaveCount(0);
   await expect(page.locator('[data-anatomy-label]')).toHaveCount(6);
   await expect(page.getByRole('group',{name:(language==='en'?en:es)['landing.field-guide.labels']})).toBeVisible();
   const intersections=await page.locator('#field-guide').evaluate(section=>{
     const photo=section.querySelector('[data-landing-photo]')!.getBoundingClientRect();
-    return [...section.querySelectorAll('[data-anatomy-label],h3,[data-field-ingredients],[data-landing-placement]')].map(el=>{
+    return [...section.querySelectorAll('[data-anatomy-label],h3,.landing-v4-guide-cta button,[data-landing-placement]')].map(el=>{
       const b=el.getBoundingClientRect();return Math.max(0,Math.min(b.right,photo.right)-Math.max(b.left,photo.left))*Math.max(0,Math.min(b.bottom,photo.bottom)-Math.max(b.top,photo.top));
     });
   });
@@ -196,8 +197,15 @@ for(const mode of ['reduce','no-js','no-js-full-motion'] as const)test(`${mode} 
   await expect(page.locator('#crave img')).toHaveCount(2);
   await page.locator('#field-guide').scrollIntoViewIfNeeded();
   await expect(page.locator('#field-guide h3')).toHaveText('Crunchy Boi');
-  await expect(page.locator('[data-field-ingredients]')).toHaveText(en['landing.lineup.ingredients.crunchy-boi']);
-  await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(0);
+  await expect(page.locator('[data-field-ingredients]')).toHaveCount(0);
+  if(mode==='reduce'){
+    // The static equivalent of "all six found": the order action is there at once (its shop links sit in the closed sheet).
+    await expect(page.locator('#field-guide .landing-v4-guide-cta')).toHaveAttribute('data-ready','true');
+    await expect(page.locator('#field-guide').getByRole('button',{name:en['landing.lineup.order'].replace('{name}','Crunchy Boi')})).toBeVisible();
+    await expect(page.locator('#field-guide [data-landing-placement="guide"]')).toHaveCount(2);
+  } else await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(0);
+  // The crunch story ends on its own order action, never over a photo.
+  await expect(page.locator('#crave [data-landing-placement="crave"]')).toHaveCount(2);
   await context.close();
 });
 
@@ -236,15 +244,87 @@ test('leaving and returning keeps the pinned crunch story scroll-linked',async({
   await page.setViewportSize({width:1440,height:900});
   await page.goto('/');
   const stage=page.locator('[data-crave-stage]');
+  // The story is scroll-linked only once hydrated: wait for that state, never for a fixed time.
+  await expect(stage).toHaveAttribute('data-motion','true');
   await stage.scrollIntoViewIfNeeded();
   await page.locator('#field-guide').scrollIntoViewIfNeeded();
   await expect(stage).toHaveAttribute('data-active','false');
   const top=await stage.evaluate(el=>el.getBoundingClientRect().top+scrollY);
   const travel=await stage.evaluate(el=>el.getBoundingClientRect().height-innerHeight);
-  const offset=()=>stage.locator('[data-texture-photo]').first().evaluate(el=>el.getBoundingClientRect().left);
-  await page.evaluate(y=>scrollTo(0,y),top);
-  const start=await offset();
-  await page.evaluate(y=>scrollTo(0,y),top+travel);
-  await expect.poll(offset).toBeLessThan(start-100);
+  // Read geometry only after the engine has run a rendering update for the new scroll position:
+  // a scroll-driven animation updates in "update the rendering", so a read straight after
+  // scrollTo can still see the PREVIOUS position's frame (Linux/Windows WebKit, seen 1 in 25).
+  const settled=()=>page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+  const geometry=()=>stage.evaluate(el=>({photo:el.querySelector('[data-texture-photo]')!.getBoundingClientRect().left,window:el.querySelector('.landing-v2-crave-window')!.getBoundingClientRect()}));
+  const scrollAndSettle=async(y:number)=>{await page.evaluate(y=>scrollTo(0,y),y);await expect.poll(()=>page.evaluate(()=>scrollY)).toBe(Math.round(y));await settled();};
+  // Returning to the top of the runway: the first photo sits exactly in the window (progress 0).
+  await scrollAndSettle(top);
+  await expect.poll(async()=>{const g=await geometry();return Math.abs(g.photo-g.window.left);}).toBeLessThan(1);
+  const start=(await geometry()).photo;
+  // The end of the runway: the story has slid a full photo width (progress 1), scroll-linked.
+  await scrollAndSettle(top+travel);
+  await expect.poll(async()=>{const g=await geometry();return Math.abs(g.photo-(g.window.left-g.window.width));}).toBeLessThan(1);
+  expect((await geometry()).photo).toBeLessThan(start-100);
   await expect(stage.locator('[data-texture-photo]').nth(1).locator('img')).toHaveCount(1);
+  // v4: the runway is 140svh (was 175svh) and the story ends on its order action, right after the stage.
+  const runway=await stage.evaluate(el=>el.getBoundingClientRect().height/innerHeight);
+  expect(runway).toBeGreaterThan(1.35);expect(runway).toBeLessThan(1.45);
+  const after=await page.evaluate(()=>({stage:document.querySelector('[data-crave-stage]')!.getBoundingClientRect().bottom,cta:document.querySelector('.landing-v4-crave-cta')!.getBoundingClientRect().top}));
+  expect(after.cta).toBeGreaterThanOrEqual(after.stage-1);
+});
+
+test('finding all six Field Guide ingredients turns into the Crunchy Boi order action',async({page})=>{
+  await page.clock.install();
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await guide.scrollIntoViewIfNeeded();
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  const cta=page.locator('#field-guide .landing-v4-guide-cta');
+  await expect(cta).toHaveAttribute('data-ready','false');
+  await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(0);
+  await page.locator('.landing-v3-guide-figure').scrollIntoViewIfNeeded();
+  await expect.poll(async()=>{await page.clock.runFor(1200);return cta.getAttribute('data-ready');},{timeout:20000}).toBe('true');
+  const button=cta.getByRole('button',{name:'Order Crunchy Boi'});
+  await expect(button).toBeVisible();
+  await button.click();
+  const sheet=page.getByRole('dialog',{name:'Pick a shop for Crunchy Boi'});
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('a[data-landing-placement="guide"]')).toHaveCount(2);
+});
+
+for(const text of ['100%','200%'] as const)for(const language of ['en','es'] as const)test(`the Field Guide action slot keeps one height from first paint to six-of-six (${language}; text ${text})`,async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  let releaseScripts!:()=>void;
+  const scriptsReady=new Promise<void>(resolve=>{releaseScripts=resolve;});
+  await page.route('**/_next/static/**/*.js',async route=>{await scriptsReady;await route.continue();});
+  await page.clock.install();
+  try {
+    await page.goto(`/?lang=${language}`,{waitUntil:'commit'});
+    const slot=page.locator('#field-guide [data-guide-cta]');
+    await expect(slot).toBeAttached();
+    if(text==='200%')await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});
+    // Server render, before hydration: the action's invisible twin already holds the box (stylesheet applied).
+    const twin=slot.locator('[data-guide-twin]');
+    await expect(twin).toHaveCount(1);
+    await expect.poll(()=>twin.evaluate(el=>getComputedStyle(el).visibility)).toBe('hidden');
+    await expect(twin).toHaveAttribute('aria-hidden','true');
+    await expect(twin).toBeDisabled();
+    await expect(slot).toHaveAttribute('data-ready','false');
+    const height=()=>slot.evaluate(el=>el.getBoundingClientRect().height);
+    const before=await height();
+    expect(before).toBeGreaterThanOrEqual(text==='200%'?80:52);
+    releaseScripts();
+    const guide=page.locator('.landing-v3-guide');
+    await expect(guide).toHaveAttribute('data-guide-mode','motion');
+    await expect(slot).toHaveAttribute('data-ready','false');
+    expect(await height()).toBeCloseTo(before,1);
+    await page.locator('.landing-v3-guide-figure').scrollIntoViewIfNeeded();
+    await expect.poll(async()=>{await page.clock.runFor(1200);return slot.getAttribute('data-ready');},{timeout:20000}).toBe('true');
+    const action=slot.getByRole('button',{name:(language==='en'?en:es)['landing.lineup.order'].replace('{name}','Crunchy Boi')});
+    await expect(action).toBeVisible();
+    expect(await height()).toBeCloseTo(before,1);
+    // The real action fills the twin's box exactly; nothing is clipped.
+    const boxes=await slot.evaluate(el=>{const a=el.querySelector('button:not([data-guide-twin])')!.getBoundingClientRect(),t=el.querySelector('[data-guide-twin]')!.getBoundingClientRect(),b=el.getBoundingClientRect();return {action:a.height,twin:t.height,slot:b.height,overflow:el.scrollHeight-el.clientHeight};});
+    expect(boxes.action).toBeCloseTo(boxes.twin,1);expect(boxes.overflow).toBeLessThanOrEqual(0);
+  } finally {releaseScripts();}
 });

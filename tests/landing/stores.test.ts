@@ -24,6 +24,6 @@ it("shares structured facts and complete address destinations with public render
    expect(new URL(store.directionsUrl).searchParams.get("destination")).toBe(store.address);
    expect(store.hours?.en).toMatch(/^Daily 10:30am/);
    expect(store.hours?.es).toContain("10:30 a. m.");
-   expect(Object.keys(store).sort()).toEqual(["key","name","orderLabel","address","phone","phoneDisplay","uberEatsUrl","structuredAddress","openingHours","directionsUrl","hours","coordinates","orderUrl"].sort());
+   expect(Object.keys(store).sort()).toEqual(["key","name","orderLabel","address","street","phone","phoneDisplay","uberEatsUrl","structuredAddress","openingHours","directionsUrl","hours","coordinates","orderUrl"].sort());
  }
 });

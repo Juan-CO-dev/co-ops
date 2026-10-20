@@ -1,12 +1,15 @@
 /** Bounded vocabulary only: never accept arbitrary customer data or destinations. */
 export const LANDING_STORE_KEYS = ["capitol-hill", "dupont"] as const;
 import { boundedAd, validAdCandidate, type AdPolicy } from "./ad-codes-shared";
-export const LANDING_PLACEMENTS = ["hero", "lineup", "shops", "catering", "footer", "sticky"] as const;
+export const LANDING_PLACEMENTS = ["hero", "lineup", "shops", "catering", "footer", "sticky", "crave", "guide"] as const;
+/** Which sub an order tap was for: the approved roster ids only (pinned equal to landing-products.json). */
+export const LANDING_ITEMS = ["frex", "hot-pants", "teamster", "crunchy-boi", "sicky-wicky", "never-been-cheddar", "turkey-caesar", "farmers-market", "french-dip", "vesuvio"] as const;
 export const LANDING_VENDORS = ["ubereats", "doordash"] as const;
 export const LANDING_SERVER_EVENTS = ["Lead", "OrderClick", "CateringClick"] as const;
 export type LandingStoreKey = (typeof LANDING_STORE_KEYS)[number];
 export type LandingAdCode = string;
 export type LandingPlacement = (typeof LANDING_PLACEMENTS)[number];
+export type LandingItem = (typeof LANDING_ITEMS)[number];
 export type LandingServerEvent = (typeof LANDING_SERVER_EVENTS)[number];
 export interface LandingEvent {
   event_name: LandingServerEvent;
@@ -20,6 +23,7 @@ export interface LandingEvent {
   fbc?: string;
   fbp?: string;
   vendor?: (typeof LANDING_VENDORS)[number];
+  item?: LandingItem;
 }
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -32,16 +36,23 @@ export function validMetaCookie(value: unknown, kind: "fbc" | "fbp", now: number
   const match = /^fb\.[12]\.([0-9]{13})\.([a-zA-Z0-9_-]{1,500})$/.exec(value);
   return !!match && Number(match[1]) <= now + 60_000 && (kind !== "fbp" || /^[0-9]+$/.test(match[2]!));
 }
+/** Placements whose order taps are for one named sub. */
+export const LANDING_ITEM_PLACEMENTS = ["lineup", "crave", "guide"] as const;
+/** An item names the sub behind a direct shop order tap: OrderClick, a shop, an item placement, no delivery vendor. */
+export function validItemEvent(item: unknown, name: unknown, store: unknown, vendor: unknown, placement: unknown): boolean {
+  return isAllowed(LANDING_ITEMS, item) && name === "OrderClick" && isAllowed(LANDING_STORE_KEYS, store) && vendor === undefined && isAllowed(LANDING_ITEM_PLACEMENTS, placement);
+}
 /** The only shop-specific delivery destination is the verified Dupont Uber Eats link. */
 export function validVendorPlacement(vendor: unknown, placement: unknown, store: unknown): boolean {
   return isAllowed(LANDING_VENDORS,vendor) && ((placement === 'footer' && store === undefined) || (vendor === 'ubereats' && placement === 'shops' && store === 'dupont'));
 }
 export function parseLandingEvent(value: unknown, origin: string, now: number, adPolicy: AdPolicy = boundedAd): LandingEvent | null {
-  if (!isRecord(value) || Object.keys(value).some(key => !["event_name", "event_id", "event_time", "consent", "source_url", "store", "ad", "placement", "fbc", "fbp", "vendor"].includes(key))) return null;
+  if (!isRecord(value) || Object.keys(value).some(key => !["event_name", "event_id", "event_time", "consent", "source_url", "store", "ad", "placement", "fbc", "fbp", "vendor", "item"].includes(key))) return null;
   if (!isAllowed(LANDING_SERVER_EVENTS, value.event_name) || value.consent !== "accepted" || !validAdCandidate(value.ad) || !isAllowed(LANDING_PLACEMENTS, value.placement)) return null;
   if (typeof value.event_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.event_id)) return null;
   if (typeof value.event_time !== "number" || !Number.isInteger(value.event_time) || value.event_time < Math.floor(now / 1000) - 7 * 86400 || value.event_time > Math.floor(now / 1000) + 60) return null;
   if (value.vendor !== undefined && (value.event_name !== "OrderClick" || !validVendorPlacement(value.vendor,value.placement,value.store))) return null;
+  if (value.item !== undefined && !validItemEvent(value.item,value.event_name,value.store,value.vendor,value.placement)) return null;
   if (((value.event_name === "OrderClick" && value.vendor === undefined) || value.store !== undefined) && !isAllowed(LANDING_STORE_KEYS, value.store)) return null;
   // Only public landing documents are event sources; no arbitrary path, query or fragment.
   if (value.source_url !== `${origin}/` && value.source_url !== `${origin}/privacy`) return null;

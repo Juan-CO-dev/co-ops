@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { portBase } from '../../../scripts/landing/e2e-ports.cjs';
 import { landingTenantConfig } from '../../../config/tenant/landing';
+import { formatClockTimeShort } from '../../../lib/i18n/format';
+import en from '../../../lib/i18n/en.json';
+import es from '../../../lib/i18n/es.json';
 
 test('production and same-origin preview metadata agree with raw headers', async ({request,page}) => {
   for (const [port,indexable] of [[portBase,true],[portBase+3,false]] as const) for(const lang of ['en','es']) for(const path of ['/','/privacy']) {
@@ -23,7 +26,10 @@ test('production and same-origin preview metadata agree with raw headers', async
       await expect(page.locator(`#${store.key}`)).toHaveAttribute('data-shop',store.key);
       await expect(page.locator(`a[href="tel:${store.phone}"]`).first()).toContainText(store.phoneDisplay);
       await expect(page.getByText(store.address,{exact:true}).first()).toBeVisible();
-      await expect(page.getByText(store.hours![lang as 'en'|'es'],{exact:true}).first()).toBeVisible();
+      // The card states the configured daily schedule with both endpoints through the one clock formatter (v4).
+      const language=lang as 'en'|'es';
+      const schedule=(language==='en'?en:es)['landing.shops.hours-daily'].replace('{opens}',formatClockTimeShort(store.openingHours.opens,language)).replace('{closes}',formatClockTimeShort(store.openingHours.closes,language));
+      await expect(page.locator(`#${store.key} [data-shop-hours]`)).toHaveText(schedule);
     }
   }
 });

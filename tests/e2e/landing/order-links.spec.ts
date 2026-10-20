@@ -3,13 +3,20 @@ import { test, expect } from "@playwright/test";
 import { landingTenantConfig } from "../../../config/tenant/landing";
 
 test("all direct and catering destinations match approved tenant config",async ({page})=>{
+  // The Field Guide's order action mounts once all six are found; the static (reduced-motion) guide shows it at once.
+  await page.emulateMedia({reducedMotion:"reduce"});
   await page.goto("/");
+  await expect(page.locator('[data-landing-placement="guide"]').first()).toBeAttached();
   expect(await page.locator("[data-landing-placement]").evaluateAll(links=>[...new Set(links.map(link=>link.getAttribute("data-landing-placement")))].sort())).toEqual([...LANDING_PLACEMENTS].sort());
   for (const store of landingTenantConfig.stores) {
     const links = page.getByRole("link",{name:`Order ${store.orderLabel}`,exact:true});
-    // Hero, shop card and footer; the select screen's copy sits in its closed sheet.
-    await expect(links).toHaveCount(3);
-    for (const link of await links.all()) {
+    // Shop card and footer; the select screen's, crunch story's and Field Guide's copies sit in closed sheets.
+    await expect(links).toHaveCount(2);
+    // v4: the hero button also names the street and today's closing time from the same config.
+    const hero = page.locator("[data-hero-actions]").getByRole("link",{name:new RegExp(`^Order ${store.orderLabel} · ${store.street}( · til [0-9]{1,2}(:[0-9]{2})? (AM|PM))?$`)});
+    await expect(hero).toHaveCount(1);
+    await expect(hero).toHaveAttribute("href",store.orderUrl);
+    for (const link of [...await links.all(), hero]) {
       await expect(link).toHaveAttribute("href",store.orderUrl);
       await expect(link).toHaveAttribute("referrerpolicy","origin");
       await expect(link).toHaveAttribute("rel",/noopener/);

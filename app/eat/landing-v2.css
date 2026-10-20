@@ -11,7 +11,6 @@
 .landing-v2 .landing-v2-hero-copy h1 { font-size: 4rem; font-weight: 950; line-height: .86; letter-spacing: -.075em; margin: 0; }
 .landing-v2 .landing-v2-hero-copy h1 span { display: block; }
 .landing-v2 .landing-v2-eyebrow { color: #000; font-size: .5625rem; font-weight: 800; line-height: 1.2; letter-spacing: .1em; text-transform: uppercase; }
-.landing-v2 .landing-v2-hero-foot { color: #000; font-size: .5625rem; line-height: 1.2; letter-spacing: .06em; text-transform: uppercase; }
 .landing-v2 .landing-v2-hero-copy > p { color: #000; font-size: .875rem; line-height: 1.4; margin: 0; }
 .landing-v2 #landing-consent-slot { height: 0; }
 .landing-v2 .landing-v2-orders { display: flex; gap: 8px; }
@@ -29,7 +28,7 @@
 .landing-v2 #footer .landing-v2-order { color: #171712; }
 .landing-v2 [data-lineup] { border-radius: 0; }
 .landing-v2 [data-lineup] > li { border-radius: 0; border-width: 0; background: transparent; }
-.landing-v2 .landing-v2-consent { background: #fff9e4; color: #171712; padding: 6px 12px; border: 1px solid #171712; font-size: .6875rem; line-height: 1.3; display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(44px, .65fr) minmax(44px, 1fr); gap: 4px 8px; }
+.landing-v2 .landing-v2-consent { background: #fff9e4; color: #171712; padding: 4px 10px; border: 1px solid #171712; font-size: .6875rem; line-height: 1.25; display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(44px, .65fr) minmax(44px, 1fr); gap: 2px 6px; }
 .landing-v2 .landing-v2-consent[data-flow="false"] { position: fixed; z-index: 30; bottom: var(--landing-safe-bottom); left: 0; width: 100%; }
 .landing-v2 .landing-v2-consent > button[aria-expanded] { grid-column: 3; grid-row: 2; border: 0; text-decoration: underline; font-size: .6875rem; }
 .landing-v2 .landing-v2-consent > [data-landing-consent] { display: contents; }
@@ -45,7 +44,7 @@
   .landing-v2 .landing-v2-hero-grid { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; align-items: center; height: 740px; }
   .landing-v2 .landing-v2-hero-copy { padding: 40px 8%; gap: 26px; }
   .landing-v2 .landing-v2-hero-copy h1 { font-size: clamp(4rem, 8.3vw, 8.75rem); }
-  .landing-v2 .landing-v2-eyebrow, .landing-v2 .landing-v2-hero-foot { font-size: .6875rem; }
+  .landing-v2 .landing-v2-eyebrow { font-size: .6875rem; }
   .landing-v2 .landing-v2-hero-copy > p { font-size: 1.0625rem; }
   .landing-v2 .landing-v2-orders { justify-content: flex-start; }
   .landing-v2 .landing-v2-order { flex: initial; padding: 15px 18px; font-size: .8125rem; }
@@ -108,7 +107,7 @@
 .landing-v2 .landing-v2-crave-track { display: grid; gap: 16px; }
 /* Reserve the same runway before hydration; reduced motion starts static in CSS. */
 @media (prefers-reduced-motion: no-preference) and (min-height: 500px) {
-  .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) { height: 175svh; view-timeline-name: --crave; view-timeline-axis: block; }
+  .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) { height: 140svh; view-timeline-name: --crave; view-timeline-axis: block; }
   .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-sticky { position: sticky; top: 76px; }
   .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-window { width: min(100%, 480px, 38svh); }
   .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v2-crave-track { display: flex; gap: 0; transform: translateX(calc(var(--crave-progress, 0) * -100%)); }
@@ -135,6 +134,7 @@
   .landing-v2 #crave h2 { grid-column: 1; grid-row: 1; }
   .landing-v2 #crave > div > p { grid-column: 1; grid-row: 2; }
   .landing-v2 #crave .landing-v2-crave-stage { grid-column: 2; grid-row: 1 / 4; }
+  .landing-v2 #crave .landing-v4-crave-cta { grid-column: 2; grid-row: 4; }
   .landing-v2 .landing-v2-field-guide { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,606px); column-gap: 48px; align-items: start; }
   .landing-v2 .landing-v2-field-guide h3 { grid-column: 1; grid-row: 1; }
   .landing-v2 .landing-v2-field-guide [data-field-ingredients] { grid-column: 1; grid-row: 2; }
@@ -179,7 +179,7 @@
 .landing-v2 .landing-v3-cursor { position: absolute; top: -36px; left: 50%; z-index: 1; width: auto; height: 34px; transform: translateX(-50%); pointer-events: none; animation: landing-v3-hop .36s steps(3) both; }
 .landing-v2 .landing-v3-sheet { margin: auto auto 0; width: 100%; max-width: 480px; max-height: 90svh; padding: 20px 22px calc(20px + var(--landing-safe-bottom)); border: 3px solid #171712; background: #fff9e4; color: #171712; }
 .landing-v2 .landing-v3-sheet::backdrop { background: rgb(23 23 18 / .55); }
-.landing-v2 .landing-v3-sheet h3 { margin: 0; font-size: 1.5rem; font-weight: 950; letter-spacing: -.03em; }
+.landing-v2 .landing-v3-sheet h2 { margin: 0; font-size: 1.5rem; font-weight: 950; letter-spacing: -.03em; }
 .landing-v2 .landing-v3-sheet ul { display: grid; gap: 14px; margin: 16px 0; padding: 0; list-style: none; }
 .landing-v2 .landing-v3-sheet .landing-v2-order { min-height: 52px; font-size: 1rem; }
 .landing-v2 .landing-v3-sheet p { margin: 6px 0 0; font-size: .875rem; }
@@ -274,3 +274,50 @@
 /* Shared calm policy (reduced motion or Save-Data) for CSS-only motion. */
 .landing-v2[data-calm="true"] .landing-v3-catering-walker { animation: none; }
 .landing-v2[data-calm="true"] .landing-v3-map-canvas { transition: none; }
+
+/* ── v4 "convert": street + today's closing on order buttons, slimmer bottom chrome ── */
+.landing-v2 .landing-v4-order-two { flex-direction: column; gap: 0; min-height: 48px; padding: 4px; line-height: 1.15; }
+.landing-v2 .landing-v4-order-detail { font-size: .75rem; font-weight: 700; }
+.landing-v2 .landing-v4-find-shop { display: inline-flex; align-items: center; min-height: 44px; color: #000; font-size: .8125rem; font-weight: 700; text-decoration: underline; }
+@media (min-width: 768px) {
+  .landing-v2 .landing-v4-order-two { padding: 8px 18px; }
+}
+/* While the consent notice is open the rail is only its two order buttons. */
+.landing-v2 .landing-v2-sticky[data-compact="true"] { padding-top: 4px; }
+.landing-v2 .landing-v2-sticky[data-compact="true"] :is(.landing-v2-sticky-heading, .landing-v2-sticky-links > button) { display: none; }
+.landing-v2 .landing-v2-sticky .landing-v2-order { font-size: .875rem; padding: 8px 6px; }
+/* Crunch story ends on one order action, below the pinned photos (never over them). */
+.landing-v2 .landing-v4-crave-cta { max-width: 480px; margin-top: 16px; }
+.landing-v2 .landing-v4-crave-cta .landing-v3-cta { margin-top: 0; }
+/* The order sheet keeps the drawn Crunchy Boi turning above the shop choice. */
+.landing-v2 .landing-v4-sheet-spin { width: min(100%, 320px); margin: 10px auto 0; }
+.landing-v2 .landing-v4-sheet-spin .landing-v3-spin { cursor: grab; }
+.landing-v2 .landing-v3-sheet li { display: grid; }
+/* Field Guide: all six found turns into the order action (reserved, so nothing shifts). */
+.landing-v2 .landing-v4-guide-cta { display: grid; margin-top: 14px; }
+.landing-v2 .landing-v4-guide-cta > :not(dialog) { grid-area: 1 / 1; }
+.landing-v2 .landing-v4-guide-cta .landing-v4-guide-twin { visibility: hidden; pointer-events: none; }
+.landing-v2 .landing-v4-guide-cta .landing-v3-cta { margin-top: 0; }
+/* Shop cards sell first: one full-width order action under the hours. */
+.landing-v2 .landing-v4-today { margin-top: 4px; font-weight: 800; }
+.landing-v2 .landing-v4-shop-order { margin-top: 14px; text-decoration: none; }
+.landing-v2 .landing-v4-directions { display: flex; align-items: center; min-height: 44px; margin-top: 6px; text-decoration: underline; font-weight: 700; }
+/* Catering: the order action right after the spread, the walker beside it. */
+.landing-v2 .landing-v4-catering-act { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+.landing-v2 .landing-v4-catering-act .landing-v3-catering-walker { flex: none; margin: 0; }
+.landing-v2 .landing-v4-catering-act .landing-v3-cta { flex: 1; min-width: 0; margin-top: 0; }
+/* P1 hops onto a tapped order control: decorative (::after), never with reduced motion / Save-Data. */
+.landing-v2 [data-hop] { position: relative; }
+@media (prefers-reduced-motion: no-preference) {
+  .landing-v2:not([data-calm="true"]) [data-hop]::after { content: ''; position: absolute; z-index: 2; left: 50%; bottom: calc(100% - 4px); width: 31px; height: 44px; margin-left: -15px; background: var(--landing-p1-hop) center bottom / contain no-repeat; image-rendering: pixelated; pointer-events: none; animation: landing-v4-hop .6s steps(6) both; }
+}
+@keyframes landing-v4-hop { 0% { transform: translateY(16px); opacity: 0; } 25% { opacity: 1; } 45% { transform: translateY(-12px); } 75% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(0); opacity: 0; } }
+/* Fighter card: name, then the order action, then the full ingredients. */
+.landing-v2 .landing-v3-plate .landing-v3-direct-orders { margin-top: 12px; }
+.landing-v2 .landing-v3-plate [data-stage-ingredients] { margin-top: 14px; }
+/* Short phones (iPhone SE class): the hero keeps the photo at ≥40% of the screen with the v4
+   street lines and the find-your-shop link by tightening the headline and copy padding only. */
+@media (max-width: 767px) and (max-height: 700px) {
+  .landing-v2 .landing-v2-hero-copy { padding: 4px 22px; gap: 2px; }
+  .landing-v2 .landing-v2-hero-copy h1 { font-size: 3.5rem; }
+}

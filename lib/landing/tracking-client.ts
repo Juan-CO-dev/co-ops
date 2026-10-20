@@ -1,8 +1,8 @@
 import { UNATTRIBUTED, validAdCandidate } from './ad-codes-shared';
 import { ATTRIBUTION_KEY } from './attribution-shared';
-import { validVendorPlacement } from './tracking-schema-shared';
+import { validItemEvent, validVendorPlacement } from './tracking-schema-shared';
 export type LandingAction = 'OrderClick' | 'CateringClick' | 'Lead';
-export interface ActionDetails { store?: string; ad?: string; placement: string; vendor?: string; fbc?: string; fbp?: string }
+export interface ActionDetails { store?: string; ad?: string; placement: string; vendor?: string; item?: string; fbc?: string; fbp?: string }
 export type DetailsFactory = (cookiesOnly: boolean) => ActionDetails;
 export interface TrackerConfig { serverApproved: boolean; pixelId?: string; capiEnabled?: boolean; sourceUrl: string; allowedStores: readonly string[]; allowedAds: readonly string[]; allowedPlacements: readonly string[] }
 export interface TrackingTransport {
@@ -65,6 +65,8 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       const params: Record<string,string> = {ad,placement:details.placement};
       if (details.store) params.store = details.store;
       if (details.vendor) { if (name !== 'OrderClick' || !validVendorPlacement(details.vendor,details.placement,details.store)) return; params.vendor = details.vendor; }
+      // Which sub (bounded roster id) rides to Meta only; our own counter stays {store, ad}.
+      if (details.item !== undefined) { if (!validItemEvent(details.item,name,details.store,details.vendor,details.placement)) return; params.item = details.item; }
       const id = event?.id ?? transport.uuid();
       if (!navigating && hasPixel) safe(() => transport.pixel(name === 'Lead' ? 'track' : 'trackCustom',name,params,id));
       const countClick = () => { if (name === 'OrderClick' && details.store && !details.vendor) safe(() => navigating ? transport.post('/api/landing/order-click',{store:details.store,ad},{unload:true}) : transport.post('/api/landing/order-click',{store:details.store,ad})); };

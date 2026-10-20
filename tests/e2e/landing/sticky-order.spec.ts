@@ -26,7 +26,9 @@ for(const lang of ['en','es']) for(const height of [667,812]) test(`sticky thres
   await page.evaluate(()=>window.scrollTo(0,0));await expect(bar).toBeHidden();
 });
 
-test('minimization survives reverse scroll, reload and language navigation; restore retains focus',async({page})=>{
+// The minimize toggle belongs to the full rail: with the consent notice open the rail is compact (see below).
+test('minimization survives reverse scroll, reload and language navigation; restore retains focus',async({page,context,baseURL})=>{
+  await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
   await page.goto('/');await clearRailPosition(page);
   const bar=page.locator('[data-sticky-order]');await expect(bar).toBeVisible();
   const toggle=bar.getByRole('button');await toggle.focus();await page.keyboard.press('Enter');await expect(toggle).toBeFocused();
@@ -70,7 +72,8 @@ for(const lang of ['en','es']) for(const viewport of [{width:375,height:667},{wi
   await page.screenshot({path:`tmp/landing-v2/chunk6/page-${info.project.name}-${lang}-${viewport.width}x${viewport.height}.png`,fullPage:true,animations:'disabled'});
 });
 
-test('storage denial preserves minimize through scroll; safe inset and enlarged text remain usable',async({page})=>{
+test('storage denial preserves minimize through scroll; safe inset and enlarged text remain usable',async({page,context,baseURL})=>{
+  await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
   await page.addInitScript(()=>Object.defineProperty(window,'sessionStorage',{get(){throw new DOMException('denied','SecurityError');}}));
   await page.goto('/');await page.evaluate(()=>document.querySelector<HTMLElement>('.landing-v2')!.style.setProperty('--landing-safe-bottom','34px'));
   await clearRailPosition(page);const bar=page.locator('[data-sticky-order]');await expect(bar).toBeVisible();
@@ -80,7 +83,28 @@ test('storage denial preserves minimize through scroll; safe inset and enlarged 
   const bottom=await bar.evaluate(el=>parseFloat(getComputedStyle(el).paddingBottom));expect(bottom).toBe(34);
   await page.evaluate(()=>{window.scrollTo(0,0);document.documentElement.style.fontSize='200%';});
   await expect(page.locator('.landing-v2-consent')).toHaveAttribute('data-flow','true');await expect(bar).toBeHidden();
+  // A decided visitor sees the collapsed notice; reopening it shows every control again.
+  await page.locator('.landing-v2-consent > button[aria-expanded]').click();
   for(const button of await page.locator('[data-landing-consent] button').all()){await button.focus();await expect(button).toBeFocused();}
+});
+
+for(const lang of ['en','es'])test(`open consent notice keeps the rail compact: two order buttons, one row each (${lang} 390x844)`,async({page})=>{
+  await page.setViewportSize({width:390,height:844});await page.goto(`/?lang=${lang}`);
+  await clearRailPosition(page);
+  const bar=page.locator('[data-sticky-order]');
+  await expect(bar).toHaveAttribute('data-compact','true');
+  await expect(bar.locator('#landing-sticky-heading')).toBeHidden();
+  await expect(bar.getByRole('button')).toHaveCount(0);
+  await expect(bar.getByRole('link')).toHaveCount(2);
+  for(const link of await bar.getByRole('link').all())expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  const chrome=await page.evaluate(()=>innerHeight-document.querySelector('[data-sticky-order]')!.getBoundingClientRect().top);
+  // v3 was 176 px (en) / 199 px (es); the notice keeps its exact wording and all four controls.
+  expect(chrome).toBeLessThanOrEqual(150);
+  await expect(page.locator('[data-landing-consent] button')).toHaveCount(2);
+  // Answering restores the full rail (hint row + toggle).
+  await page.locator('[data-landing-consent] button').nth(1).click();
+  await expect(bar).toHaveAttribute('data-compact','false');
+  await expect(bar.getByRole('button')).toHaveCount(1);
 });
 
 test('reduced motion is static and pageshow recomputes restored scroll',async({page})=>{

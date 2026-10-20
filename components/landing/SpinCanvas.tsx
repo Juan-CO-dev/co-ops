@@ -3,12 +3,18 @@ import {useEffect,useRef,useState,type KeyboardEvent,type PointerEvent} from 're
 import {spinFrameAt,spinLoadOrder,wrapAngle} from '@/lib/landing/spin-shared';
 import {subscribeCalm} from '@/lib/landing/motion-policy-shared';
 
-interface Props {frames:readonly string[];width:number;height:number;label:string;stillLabel:string;valueText:(degrees:number)=>string}
+interface Props {frames:readonly string[];width:number;height:number;label:string;stillLabel:string;valueText:(degrees:number)=>string;
+  /** Keep turning on its own (the order sheet): no scroll coupling, no arrival spin; a drag still turns it. */
+  auto?:boolean;
+  /** Decoration beside another control: hidden from assistive tech, no slider role or keys. */
+  decorative?:boolean}
+/** One full turn every few seconds while it keeps turning on its own. */
+const AUTO_TURN_MS=6000;
 
 /** The drawn Crunchy Boi turntable: scroll turns it, drag/keys turn it, one intro turn
  * on arrival. Frames load only near the viewport; reduced motion and Save-Data keep the
  * single front still. Never a <video>, never controls. */
-export function SpinCanvas({frames,width,height,label,stillLabel,valueText}:Props) {
+export function SpinCanvas({frames,width,height,label,stillLabel,valueText,auto=false,decorative=false}:Props) {
   const root=useRef<HTMLDivElement>(null),canvas=useRef<HTMLCanvasElement>(null);
   const images=useRef<(HTMLImageElement|undefined)[]>([]);
   const angle=useRef(0),frame=useRef(0),drag=useRef<{x:number;angle:number}|null>(null);
@@ -23,7 +29,7 @@ export function SpinCanvas({frames,width,height,label,stillLabel,valueText}:Prop
     const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
     const saveData=Boolean((navigator as Navigator&{connection?:{saveData?:boolean}}).connection?.saveData);
     if(reduced||saveData||typeof IntersectionObserver==='undefined')return;
-    let disposed=false,visible=false,lastY=scrollY,intro=0,loaded=0,started=false,introDone=false;
+    let disposed=false,visible=false,lastY=scrollY,intro=0,loaded=0,started=false,introDone=false,turning=0,lastTurn=0;
     const context=surface.getContext('2d');
     const draw=()=>{
       frame.current=0;if(!context)return;
@@ -34,12 +40,20 @@ export function SpinCanvas({frames,width,height,label,stillLabel,valueText}:Prop
       const w=Math.round(surface.clientWidth*ratio),h=Math.round(surface.clientHeight*ratio);
       if(surface.width!==w||surface.height!==h){surface.width=w;surface.height=h;}
       context.clearRect(0,0,w,h);context.drawImage(image,0,0,w,h);
+      if(decorative)return;
       const nextStep=Math.round(wrapAngle(angle.current,frames.length));
       setStep(previous=>previous===nextStep?previous:nextStep);
     };
     const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(draw);};
     redraw.current=schedule;
+    // Auto mode: a steady turn while visible; a drag holds it, release resumes from there.
+    const turn=(now:number)=>{
+      if(disposed||calm)return;
+      if(visible&&!drag.current&&lastTurn){angle.current+=(now-lastTurn)*frames.length/AUTO_TURN_MS;schedule();}
+      lastTurn=now;turning=requestAnimationFrame(turn);
+    };
     const runIntro=()=>{
+      if(auto){if(!turning&&loaded>0)turning=requestAnimationFrame(turn);return;}
       if(introDone||loaded<12||!visible)return;introDone=true;
       const start=performance.now(),duration=2400;
       const tick=(now:number)=>{
@@ -70,17 +84,17 @@ export function SpinCanvas({frames,width,height,label,stillLabel,valueText}:Prop
     inView.observe(element);
     // Reduced motion / Save-Data switched on mid-visit: stop the intro and scroll coupling.
     let calm=false;
-    const unsubscribeCalm=subscribeCalm(next=>{calm=next;if(next){tookOver.current=true;cancelAnimationFrame(intro);}});
+    const unsubscribeCalm=subscribeCalm(next=>{calm=next;if(next){tookOver.current=true;cancelAnimationFrame(intro);cancelAnimationFrame(turning);turning=0;}});
     const onScroll=()=>{
-      const y=scrollY;if(!visible||calm){lastY=y;return;}
+      const y=scrollY;if(!visible||calm||auto){lastY=y;return;}
       // A real scroll during the arrival spin hands control to the visitor (no snap-back).
       if(Math.abs(y-lastY)>2)tookOver.current=true;
       angle.current+=(y-lastY)/14;lastY=y;schedule();
     };
     addEventListener('scroll',onScroll,{passive:true});
     const resize=new ResizeObserver(schedule);resize.observe(surface);
-    return ()=>{disposed=true;unsubscribeCalm();redraw.current=()=>{};cancelAnimationFrame(frame.current);cancelAnimationFrame(intro);near.disconnect();inView.disconnect();resize.disconnect();removeEventListener('scroll',onScroll);};
-  },[frames]);
+    return ()=>{disposed=true;unsubscribeCalm();redraw.current=()=>{};cancelAnimationFrame(frame.current);cancelAnimationFrame(intro);cancelAnimationFrame(turning);near.disconnect();inView.disconnect();resize.disconnect();removeEventListener('scroll',onScroll);};
+  },[frames,auto,decorative]);
   const nudge=(next:number)=>{tookOver.current=true;angle.current=next;redraw.current();};
   const onPointerDown=(event:PointerEvent<HTMLDivElement>)=>{if(!interactive)return;tookOver.current=true;drag.current={x:event.clientX,angle:angle.current};event.currentTarget.setPointerCapture(event.pointerId);};
   const onPointerMove=(event:PointerEvent<HTMLDivElement>)=>{
@@ -95,7 +109,7 @@ export function SpinCanvas({frames,width,height,label,stillLabel,valueText}:Prop
   };
   const degrees=Math.round(step*360/frames.length)%360;
   return <div ref={root} data-spin-stage data-spin-ready={ready} className="landing-v3-spin"
-    {...(interactive?{role:'slider',tabIndex:0,'aria-label':label,'aria-valuemin':0,'aria-valuemax':359,'aria-valuenow':degrees,'aria-valuetext':valueText(degrees),onPointerDown,onPointerMove,onPointerUp,onPointerCancel:onPointerUp,onKeyDown}:{role:'img','aria-label':stillLabel})}>
+    {...(decorative?{'aria-hidden':true,...(interactive?{onPointerDown,onPointerMove,onPointerUp,onPointerCancel:onPointerUp}:{})}:interactive?{role:'slider',tabIndex:0,'aria-label':label,'aria-valuemin':0,'aria-valuemax':359,'aria-valuenow':degrees,'aria-valuetext':valueText(degrees),onPointerDown,onPointerMove,onPointerUp,onPointerCancel:onPointerUp,onKeyDown}:{role:'img','aria-label':stillLabel})}>
     {/* eslint-disable-next-line @next/next/no-img-element */}
     <img src={frames[0]} width={width} height={height} alt="" loading="lazy" decoding="async" className="landing-v3-spin-still" data-hidden={ready}/>
     <canvas ref={canvas} aria-hidden="true" className="landing-v3-spin-canvas"/>

@@ -56,6 +56,10 @@ export function StickyOrderBar({stores,labels}:Props) {
     const noticeObserver=new IntersectionObserver(entries=>{noticeInView=entries.some(entry=>entry.isIntersecting);update();});
     if(notice)noticeObserver.observe(notice);
     const measure=()=>{
+      // While the docked consent notice is open (unanswered or reopened), the rail is only its two
+      // order buttons: CSS hides the hint row and toggle. A DOM attribute, so no re-render. The
+      // notice's wording and controls are untouched.
+      rail.dataset.compact=String(notice?.dataset.flow==='false'&&notice.dataset.expanded==='true');
       const safeBottom=parseFloat(getComputedStyle(root).getPropertyValue('--landing-safe-bottom'))||0;
       const desktop=innerWidth>=MOBILE_BREAKPOINT;
       const height=rail.getBoundingClientRect().height;
