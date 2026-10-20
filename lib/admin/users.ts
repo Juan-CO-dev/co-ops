@@ -242,6 +242,8 @@ export interface CreateUserInput {
   toast?: { locationId: string; employeeGuid: string } | null;
   /** The actor saw the rehire warning and proceeds (needs the rehire authority for every match). */
   confirmRehire?: boolean;
+  /** Why they are adding a person marked "not eligible for rehire" (required then; stored on the new account only). */
+  rehireReason?: string | null;
 }
 
 /** A create that found separated people needing more authority to rehire: the screen shows them (redacted). */
@@ -324,7 +326,23 @@ export async function createUser(actor: AuthContext, input: CreateUserInput): Pr
   // ONE transaction in 0279 (Astra BC-007/004): the actor's row locked FOR SHARE and the actor rule re-checked on it (a
   // demotion, deactivation or shop removal that committed while the hashes were computed refuses the create), then the
   // user row (hashes only) and every membership. No fallback: without 0279 → user_admin_unavailable (503).
-  const created = await userAdminRpc(sb, createUserCall({ actorId: actor.user.id, name, role, email, phone, pinHash, passwordHash, locationIds }));
+  // The rehire override travels INTO the transaction (Astra BC-007/004): the writer re-runs the match under the locks and
+  // re-checks the LOCKED actor's authority for each match; a refusal there answers with the (redacted) matches again.
+  const rehireReason = typeof input.rehireReason === "string" && input.rehireReason.trim() ? input.rehireReason.trim() : null;
+  if (rehireReason && rehireReason.length > 1000) throw new AdminUserError(400, "invalid_payload");
+  if (check.matches.some((m) => m.rehire === "no") && input.confirmRehire && !rehireReason) throw new RehireMatchError(check.matches, 400, "rehire_reason_required");
+  let created: Record<string, unknown>;
+  try {
+    created = await userAdminRpc(sb, createUserCall({ actorId: actor.user.id, name, role, email, phone, pinHash, passwordHash, locationIds,
+      toastGuid: toast?.employeeGuid ?? null, rehireConfirmed: input.confirmRehire === true && check.matches.length > 0,
+      rehireUserIds: check.matches.map((m) => m.userId), rehireReason }));
+  } catch (e) {
+    if (e instanceof AdminUserError && ["rehire_match", "rehire_permission_required", "rehire_reason_required"].includes(e.code)) {
+      const again = await findRehireMatches(sb, { role: actor.user.role, locations: actor.locations }, { phone, toastGuids: toast ? [toast.employeeGuid] : [] });
+      throw new RehireMatchError(again.matches, e.status, e.code);
+    }
+    throw e;
+  }
   const row = { id: String(created.id) };
 
   await audit({

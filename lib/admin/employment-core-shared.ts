@@ -29,6 +29,12 @@ export const REHIRE_SETTINGS = ["yes", "only_with_owner_ok", "no"] as const;
 export type RehireSetting = (typeof REHIRE_SETTINGS)[number];
 export const EMPLOYMENT_EVENT_KINDS = ["leave_start", "leave_end", "separated", "rehired", "correction"] as const;
 export type EmploymentEventKind = (typeof EMPLOYMENT_EVENT_KINDS)[number];
+/**
+ * Every kind a row can carry: the recordable ones, plus `rehire_override` — written ONLY by `admin_user_create` on a NEW
+ * account when its creator confirmed past a separated match (who was matched, the written reason). Never a status.
+ */
+export const EMPLOYMENT_ROW_KINDS = [...EMPLOYMENT_EVENT_KINDS, "rehire_override"] as const;
+export type EmploymentRowKind = (typeof EMPLOYMENT_ROW_KINDS)[number];
 export type EmploymentStatus = "active" | "on_leave" | "separated";
 
 /** Text limits (0279's CHECKs). */
@@ -46,7 +52,7 @@ export const REHIRE_NO_ROLES: readonly RoleCode[] = ["owner", "cgs"];
 export interface EmploymentEventRow {
   id: string;
   userId: string;
-  kind: EmploymentEventKind;
+  kind: EmploymentRowKind;
   correctsId: string | null;
   leaveReason: LeaveReason | null;
   expectedBack: string | null;
@@ -85,7 +91,8 @@ export function employmentStateOf(rows: readonly EmploymentEventRow[]): Employme
   if (rows.length === 0) return ACTIVE_STATE;
   const sorted = [...rows].sort(newestFirst);
   const head = sorted[0]!;
-  const ev = sorted.find((r) => r.kind !== "correction");
+  // The status is the latest leave / separation / rehire event: a correction or a rehire override never is one.
+  const ev = sorted.find((r) => r.kind !== "correction" && r.kind !== "rehire_override");
   if (!ev || ev.kind === "leave_end" || ev.kind === "rehired") return { status: "active", headId: head.id, current: null };
   const fix = sorted.find((r) => r.kind === "correction" && r.correctsId === ev.id);
   const src = fix ?? ev;

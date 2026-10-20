@@ -145,6 +145,9 @@ describe("Add user: the rehire warning", () => {
     expect(html).toContain("Separated · not eligible for rehire");
     expect(html).toContain("I checked — add them anyway");
     expect(html).toContain("Took cash from the drawer"); // the owner's view
+    // `no` needs the written reason (it travels into the create's transaction).
+    expect(html).toContain("Why are you adding them anyway?");
+    expect(html).toMatch(/<textarea[^>]*required=""/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Add user<\/button>|<button[^>]*disabled=""[^>]*>[^<]*<\/button>\s*<\/div>\s*<\/div>\s*<\/div>$/);
   });
   it("a match the actor may not pass: no confirm box, who can approve; no reason for a viewer it was not sent to", () => {

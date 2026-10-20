@@ -77,6 +77,7 @@ export function CreateUserForm({
     initial?.roster ? { shop: initial.locationIds?.[0] ?? null, state: "ok", list: initial.roster } : { shop: null, state: "idle", list: [] });
   const [matches, setMatches] = useState<RehireMatch[]>(initial?.matches ?? []);
   const [ack, setAck] = useState(false);
+  const [rehireReason, setRehireReason] = useState("");
   const [role, setRole] = useState<RoleCode | "">(initial?.role ?? firstRole ?? "");
   const [email, setEmail] = useState("");
   const [tempPin, setTempPin] = useState("");
@@ -127,7 +128,8 @@ export function CreateUserForm({
     const r = await postJsonData<{ matches?: RehireMatch[] }>("/api/admin/users/rehire-check", { phone: probe.phone.trim() || null, toastGuid: probe.toastGuid || null });
     setMatches(r.ok ? r.data.matches ?? [] : []);
   };
-  const rehireBlocked = matches.length > 0 && (!ack || matches.some((m) => !m.mayProceed));
+  const needsRehireReason = matches.some((m) => m.rehire === "no");
+  const rehireBlocked = matches.length > 0 && (!ack || matches.some((m) => !m.mayProceed) || (needsRehireReason && rehireReason.trim() === ""));
 
   const toggleLocation = (id: string) => {
     setLocationIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -149,6 +151,7 @@ export function CreateUserForm({
       phone: phone.trim() || null,
       toast: toastGuid && toastShop ? { locationId: toastShop.id, employeeGuid: toastGuid } : null,
       confirmRehire: matches.length > 0 && ack,
+      rehireReason: needsRehireReason ? rehireReason.trim() : null,
     });
     if (!result.ok) {
       setSubmitting(false);
@@ -316,6 +319,14 @@ export function CreateUserForm({
             <label className="flex min-h-[44px] items-center gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3">
               <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="h-5 w-5 accent-co-gold" />
               <span className="text-sm text-co-text">{t("admin.users.rehire.confirm")}</span>
+            </label>
+          ) : null}
+          {matches.length > 0 && matches.every((m) => m.mayProceed) && needsRehireReason ? (
+            <label className="block">
+              <span className="text-sm font-bold text-co-text">{t("admin.users.rehire.reason")}</span>
+              <textarea rows={2} required maxLength={1000} value={rehireReason} onChange={(e) => setRehireReason(e.target.value)}
+                className="mt-1 w-full rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60" />
+              <span className="mt-1 block text-[11px] text-co-text-muted">{t("admin.users.rehire.reason_help")}</span>
             </label>
           ) : null}
 

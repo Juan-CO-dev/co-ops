@@ -57,11 +57,20 @@
 --        admin_user_set_dormant(actor, user, dormant, expected)  compare-and-set on dormant_at ('dormancy_changed')
 --        admin_user_update_profile(actor, user, patch)     name / phone / email ('invalid_name', 'email_taken');
 --                                                           an email change revokes sessions
---        admin_user_create(actor, name, role, email, phone, pin hash, password hash, shops[])  Add user in ONE transaction:
+--        admin_user_create(actor, name, role, email, phone, pin hash, password hash, shops[], toast guid, rehire confirmed,
+--                          rehire user ids[], rehire reason)                  Add user in ONE transaction:
 --                                                           the ACTOR row FOR SHARE and the actor rule re-checked on it
 --                                                           (active, GM+, the role strictly below, below 9 only the actor's
 --                                                           own shops), then the user row (hashes only, email lowercased)
---                                                           and every membership ('email_required', 'password_required')
+--                                                           and every membership ('email_required', 'password_required');
+--                                                           THE REHIRE MATCH re-run under the locks (same phone key or Toast
+--                                                           GUID; the matched people locked FOR SHARE with the actor in
+--                                                           sorted order): the confirmed set must cover it ('rehire_match')
+--                                                           and the LOCKED actor needs the authority ('rehire_permission_required':
+--                                                           owner OK needed → owner / MoO / CGS; no → owner / CGS, with the
+--                                                           reason, 'rehire_reason_required'); the override is recorded on
+--                                                           the new account (kind rehire_override, never a status). A
+--                                                           concurrent duplicate email (23505) is 'email_taken'.
 --      THE LOCK ORDER (Astra BC-042/040): one advisory lock per call (the target's), then the two users rows in SORTED id
 --      order (the lower first, each at its own strength) — so (A,B) and (B,A) queue, never deadlock. A residual 40P01 /
 --      55P03 is mapped by the lib to 'user_admin_busy' (409).
@@ -74,7 +83,9 @@
 -- REFUSALS (raise exception '<code>', P0001): invalid_payload · forbidden · target_outside_shop · user_not_found ·
 --   employment_moved · employment_invalid_transition · rehire_owner_ok_required · rehire_owner_required ·
 --   use_back_from_leave · use_rehire · locations_required · dormancy_changed · invalid_name · email_taken ·
---   email_required · password_required.
+--   email_required · password_required · rehire_match · rehire_permission_required · rehire_reason_required.
+--   Emails: users.email carries its case-sensitive UNIQUE constraint (0001); every writer lowercases (the admin create and
+--   the profile writer here, the provisioning script), so no new index on users is added.
 --
 -- ROLLOUT: apply 0279 to PROD BEFORE PR #498 merges — the lib has NO fallback for these writes (without 0279 every
 --   user-admin write refuses 'user_admin_unavailable', 503).
@@ -118,7 +129,7 @@ begin
                            'email_verified', 'email_verified_at', 'created_by')) <> 12
      or (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'user_locations'
        and column_name in ('user_id', 'location_id', 'active', 'assigned_by')) <> 4
-     or to_regclass('public.locations') is null then
+     or to_regclass('public.locations') is null or to_regclass('public.toast_employee_links') is null then
     raise exception '0279: the users / user_locations / locations columns the user-admin writers use must exist';
   end if;
 end $$;
@@ -127,7 +138,7 @@ end $$;
 create table public.user_employment_events (
   id               uuid primary key default gen_random_uuid(),
   user_id          uuid not null references public.users(id),
-  kind             text not null check (kind in ('leave_start', 'leave_end', 'separated', 'rehired', 'correction')),
+  kind             text not null check (kind in ('leave_start', 'leave_end', 'separated', 'rehired', 'correction', 'rehire_override')),
   -- the event a correction corrects (a leave_start or a separated row of the same person)
   corrects_id      uuid references public.user_employment_events(id),
   -- leave
@@ -141,9 +152,13 @@ create table public.user_employment_events (
   rehire_note      text check (rehire_note is null or char_length(rehire_note) between 1 and 1000),
   -- leave note, leave_end note, rehire reason
   note             text check (note is null or char_length(note) between 1 and 1000),
+  -- rehire_override (on the NEW account, written by admin_user_create): the separated people the creator confirmed past
+  matched_user_ids uuid[],
   actor_id         uuid not null references public.users(id),
   created_at       timestamptz not null default clock_timestamp(),
   constraint user_employment_events_correction check ((kind = 'correction') = (corrects_id is not null)),
+  constraint user_employment_events_override check ((kind = 'rehire_override') = (matched_user_ids is not null)
+    and (matched_user_ids is null or (cardinality(matched_user_ids) > 0 and array_position(matched_user_ids, null) is null))),
   constraint user_employment_events_leave_fields check (
     (leave_reason is not null) = (kind = 'leave_start' or (kind = 'correction' and separation_type is null))
     and (expected_back is null or leave_reason is not null)),
@@ -256,7 +271,26 @@ end $$;
 create function public.user_employment_status(p_user uuid)
 returns text language sql stable security definer set search_path = pg_catalog, public as $$
   select coalesce((select case e.kind when 'leave_start' then 'on_leave' when 'separated' then 'separated' else 'active' end
-    from public.user_employment_events e where e.user_id = p_user and e.kind <> 'correction' order by e.created_at desc, e.id desc limit 1), 'active')
+    from public.user_employment_events e where e.user_id = p_user and e.kind not in ('correction', 'rehire_override')
+   order by e.created_at desc, e.id desc limit 1), 'active')
+$$;
+
+-- The rehire setting in force for a SEPARATED person (corrections applied, the newest wins); null when not separated.
+create function public.user_employment_rehire(p_user uuid)
+returns text language sql stable security definer set search_path = pg_catalog, public as $$
+  with s as (select e.* from public.user_employment_events e where e.user_id = p_user and e.kind not in ('correction', 'rehire_override')
+              order by e.created_at desc, e.id desc limit 1)
+  select case when (select kind from s) = 'separated' then coalesce(
+    (select c.rehire from public.user_employment_events c where c.user_id = p_user and c.kind = 'correction' and c.corrects_id = (select id from s)
+      order by c.created_at desc, c.id desc limit 1), (select rehire from s)) else null end
+$$;
+
+-- A phone as the rehire check keys it (the twin of lib normalizePhone): its 10 US digits, a leading country 1 dropped;
+-- anything else is not matchable (null). Never a name.
+create function public.user_admin_phone_key(p_phone text)
+returns text language sql immutable security definer set search_path = pg_catalog, public as $$
+  select case when d ~ '^[0-9]{10}$' then d when d ~ '^1[0-9]{10}$' then substr(d, 2) else null end
+    from (select regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g') as d) x
 $$;
 
 -- ── 4. THE EMPLOYMENT WRITER ───────────────────────────────────────────────────────────────────
@@ -282,7 +316,7 @@ begin
   -- The head (any kind) and the status event in force.
   select id into v_head from public.user_employment_events where user_id = p_user order by created_at desc, id desc limit 1;
   if v_head is distinct from p_expected then raise exception 'employment_moved'; end if;
-  select * into v_status_event from public.user_employment_events where user_id = p_user and kind <> 'correction'
+  select * into v_status_event from public.user_employment_events where user_id = p_user and kind not in ('correction', 'rehire_override')
    order by created_at desc, id desc limit 1;
   v_has_status := found;
   v_status := case when not v_has_status then 'active' when v_status_event.kind = 'leave_start' then 'on_leave'
@@ -503,7 +537,13 @@ begin
     if v_email is not null and exists (select 1 from public.users where lower(email) = v_email and id <> p_user) then
       raise exception 'email_taken';
     end if;
-    update public.users set email = v_email where id = p_user;
+    begin
+      update public.users set email = v_email where id = p_user;
+    exception when unique_violation then
+      get stacked diagnostics v_old_email = constraint_name;
+      if v_old_email ilike '%email%' then raise exception 'email_taken'; end if;
+      raise;
+    end;
     v_fields := array_append(v_fields, 'email');
     v_email_changed := v_email is distinct from v_old_email;
   end if;
@@ -523,27 +563,69 @@ end $$;
 -- all-shops level (9) every requested shop among the actor's active shops — then the user row (the HASHES, never
 -- plaintext; the email lowercased per the law) and every membership.
 create function public.admin_user_create(p_actor uuid, p_name text, p_role text, p_email text, p_phone text, p_pin_hash text,
-  p_password_hash text, p_locations uuid[])
+  p_password_hash text, p_locations uuid[], p_toast_guid text, p_rehire_confirmed boolean, p_rehire_user_ids uuid[], p_rehire_reason text)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_actor_role text; v_actor_active boolean; v_actor_level integer; v_role_level integer; v_name text; v_email text; v_phone text;
-  v_desired uuid[] := '{}'::uuid[]; v_mine uuid[]; v_id uuid; v_email_auth boolean;
+  v_desired uuid[] := '{}'::uuid[]; v_mine uuid[]; v_id uuid; v_email_auth boolean; v_key text; v_guid text; v_matches uuid[];
+  v_locked uuid[]; v_m uuid; v_setting text; v_reason text; v_constraint text;
 begin
-  if p_actor is null or p_role is null or p_locations is null or array_position(p_locations, null) is not null then raise exception 'invalid_payload'; end if;
+  if p_actor is null or p_role is null or p_locations is null or array_position(p_locations, null) is not null
+     or p_rehire_confirmed is null or p_rehire_user_ids is null or array_position(p_rehire_user_ids, null) is not null then
+    raise exception 'invalid_payload';
+  end if;
   v_role_level := public.user_admin_role_level(p_role);
   if v_role_level is null then raise exception 'invalid_payload'; end if;
   if p_pin_hash is null or char_length(p_pin_hash) not between 20 and 255
      or (p_password_hash is not null and char_length(p_password_hash) not between 20 and 255) then
     raise exception 'invalid_payload';
   end if;
-  select role, active into v_actor_role, v_actor_active from public.users where id = p_actor for share;
+  v_phone := nullif(btrim(coalesce(p_phone, '')), '');
+  if char_length(v_phone) > 40 then raise exception 'invalid_payload'; end if;
+  v_guid := nullif(btrim(coalesce(p_toast_guid, '')), '');
+  if v_guid is not null and v_guid !~ '^[A-Za-z0-9-]{1,64}$' then raise exception 'invalid_payload'; end if;
+  v_reason := nullif(btrim(coalesce(p_rehire_reason, '')), '');
+  if char_length(v_reason) > 1000 then raise exception 'invalid_payload'; end if;
+  v_key := public.user_admin_phone_key(v_phone);
+
+  -- THE REHIRE MATCH, server side (Astra BC-007/004): separated people whose rehire setting needs authority, by the same
+  -- phone key or the same Toast employee GUID (any of their links) — never by name. A client cannot omit one.
+  select coalesce(array_agg(distinct u.id order by u.id), '{}'::uuid[]) into v_matches
+    from public.users u
+   where u.id <> p_actor
+     and coalesce(public.user_employment_rehire(u.id), 'yes') <> 'yes'
+     and ((v_key is not null and public.user_admin_phone_key(u.phone) = v_key)
+       or (v_guid is not null and exists (select 1 from public.toast_employee_links t where t.user_id = u.id and t.employee_guid = v_guid)));
+
+  -- THE LOCKS, in sorted id order (one statement, ascending): the actor and every matched person FOR SHARE. A role / shop
+  -- / employment write on any of them (FOR UPDATE through the gate) waits for this create or is seen by it.
+  v_locked := array(select distinct x from unnest(array[p_actor] || v_matches) x order by x);
+  perform 1 from public.users where id = any (v_locked) order by id for share;
+
+  -- The actor rule on the locked row.
+  select role, active into v_actor_role, v_actor_active from public.users where id = p_actor;
   if not found or not v_actor_active then raise exception 'forbidden'; end if;
   v_actor_level := coalesce(public.user_admin_role_level(v_actor_role), 0);
   if v_actor_level < 7 or v_role_level >= v_actor_level then raise exception 'forbidden'; end if;
+
+  -- The match again, now that the matched people are locked: their settings cannot move under us.
+  select coalesce(array_agg(x order by x), '{}'::uuid[]) into v_matches
+    from unnest(v_matches) x where coalesce(public.user_employment_rehire(x), 'yes') <> 'yes';
+  if cardinality(v_matches) > 0 then
+    -- The creator saw and confirmed EVERY match (the set confirmed must cover the set found).
+    if not p_rehire_confirmed or not (v_matches <@ p_rehire_user_ids) then raise exception 'rehire_match'; end if;
+    -- The LOCKED actor's authority for each (the rehire rule): only_with_owner_ok → owner / MoO / CGS; no → owner / CGS,
+    -- with the written reason.
+    foreach v_m in array v_matches loop
+      v_setting := public.user_employment_rehire(v_m);
+      if v_setting = 'only_with_owner_ok' and v_actor_role not in ('owner', 'moo', 'cgs') then raise exception 'rehire_permission_required'; end if;
+      if v_setting = 'no' and v_actor_role not in ('owner', 'cgs') then raise exception 'rehire_permission_required'; end if;
+      if v_setting = 'no' and v_reason is null then raise exception 'rehire_reason_required'; end if;
+    end loop;
+  end if;
+
   v_name := btrim(coalesce(p_name, ''));
   if v_name = '' then raise exception 'invalid_name'; end if;
   v_email := nullif(lower(btrim(coalesce(p_email, ''))), '');
-  v_phone := nullif(btrim(coalesce(p_phone, '')), '');
-  if char_length(v_phone) > 40 then raise exception 'invalid_payload'; end if;
   -- The email-auth roles (level 6 and up, lib/roles.ts hasEmailAuth) sign in with an email and a password.
   v_email_auth := v_role_level >= 6;
   if v_email_auth and v_email is null then raise exception 'email_required'; end if;
@@ -559,13 +641,25 @@ begin
       if not (v_desired <@ v_mine) then raise exception 'forbidden'; end if;
     end if;
   end if;
-  insert into public.users (name, email, role, active, email_verified, email_verified_at, pin_hash, password_hash, phone, created_by)
-    values (v_name, v_email, p_role, true, v_email_auth, case when v_email_auth then clock_timestamp() else null end, p_pin_hash,
-      p_password_hash, v_phone, p_actor)
-    returning id into v_id;
+  begin
+    insert into public.users (name, email, role, active, email_verified, email_verified_at, pin_hash, password_hash, phone, created_by)
+      values (v_name, v_email, p_role, true, v_email_auth, case when v_email_auth then clock_timestamp() else null end, p_pin_hash,
+        p_password_hash, v_phone, p_actor)
+      returning id into v_id;
+  exception when unique_violation then
+    -- Astra BC-037/057: two creates both passed the existence check; the loser meets the email's unique constraint.
+    get stacked diagnostics v_constraint = constraint_name;
+    if v_constraint ilike '%email%' then raise exception 'email_taken'; end if;
+    raise;
+  end;
   insert into public.user_locations (user_id, location_id, assigned_by, active)
     select v_id, x, p_actor, true from unnest(v_desired) x;
-  return jsonb_build_object('id', v_id, 'role', p_role, 'locations', to_jsonb(v_desired));
+  -- The override is recorded on the NEW account (append-only; never a status): who was matched, and the written reason.
+  if cardinality(v_matches) > 0 then
+    insert into public.user_employment_events (user_id, kind, matched_user_ids, note, actor_id)
+      values (v_id, 'rehire_override', v_matches, v_reason, p_actor);
+  end if;
+  return jsonb_build_object('id', v_id, 'role', p_role, 'locations', to_jsonb(v_desired), 'rehire_matches', to_jsonb(v_matches));
 end $$;
 
 -- ── GRANTS: service_role only ───────────────────────────────────────────────────────────────────
@@ -573,6 +667,8 @@ revoke all on function public.user_employment_json_date(jsonb, text) from public
 revoke all on function public.user_employment_text(jsonb, text, integer) from public, anon, authenticated;
 revoke all on function public.user_admin_role_level(text) from public, anon, authenticated;
 revoke all on function public.user_admin_lock(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.user_employment_rehire(uuid) from public, anon, authenticated;
+revoke all on function public.user_admin_phone_key(text) from public, anon, authenticated;
 revoke all on function public.user_employment_status(uuid) from public, anon, authenticated;
 revoke all on function public.record_user_employment_event(uuid, uuid, uuid, text, jsonb) from public, anon, authenticated;
 revoke all on function public.admin_user_set_active(uuid, uuid, boolean) from public, anon, authenticated;
@@ -581,11 +677,13 @@ revoke all on function public.admin_user_set_role(uuid, uuid, text) from public,
 revoke all on function public.admin_user_set_locations(uuid, uuid, uuid[]) from public, anon, authenticated;
 revoke all on function public.admin_user_set_dormant(uuid, uuid, boolean, timestamptz) from public, anon, authenticated;
 revoke all on function public.admin_user_update_profile(uuid, uuid, jsonb) from public, anon, authenticated;
-revoke all on function public.admin_user_create(uuid, text, text, text, text, text, text, uuid[]) from public, anon, authenticated;
+revoke all on function public.admin_user_create(uuid, text, text, text, text, text, text, uuid[], text, boolean, uuid[], text) from public, anon, authenticated;
 grant execute on function public.user_employment_json_date(jsonb, text) to service_role;
 grant execute on function public.user_employment_text(jsonb, text, integer) to service_role;
 grant execute on function public.user_admin_role_level(text) to service_role;
 grant execute on function public.user_admin_lock(uuid, uuid) to service_role;
+grant execute on function public.user_employment_rehire(uuid) to service_role;
+grant execute on function public.user_admin_phone_key(text) to service_role;
 grant execute on function public.user_employment_status(uuid) to service_role;
 grant execute on function public.record_user_employment_event(uuid, uuid, uuid, text, jsonb) to service_role;
 grant execute on function public.admin_user_set_active(uuid, uuid, boolean) to service_role;
@@ -594,7 +692,7 @@ grant execute on function public.admin_user_set_role(uuid, uuid, text) to servic
 grant execute on function public.admin_user_set_locations(uuid, uuid, uuid[]) to service_role;
 grant execute on function public.admin_user_set_dormant(uuid, uuid, boolean, timestamptz) to service_role;
 grant execute on function public.admin_user_update_profile(uuid, uuid, jsonb) to service_role;
-grant execute on function public.admin_user_create(uuid, text, text, text, text, text, text, uuid[]) to service_role;
+grant execute on function public.admin_user_create(uuid, text, text, text, text, text, text, uuid[], text, boolean, uuid[], text) to service_role;
 
 -- ── THE CEILING GUARD ───────────────────────────────────────────────────────────────────────────
 do $$
@@ -632,6 +730,8 @@ begin
     'public.user_employment_text(jsonb, text, integer)'::regprocedure,
     'public.user_admin_role_level(text)'::regprocedure,
     'public.user_admin_lock(uuid, uuid)'::regprocedure,
+    'public.user_employment_rehire(uuid)'::regprocedure,
+    'public.user_admin_phone_key(text)'::regprocedure,
     'public.user_employment_status(uuid)'::regprocedure,
     'public.record_user_employment_event(uuid, uuid, uuid, text, jsonb)'::regprocedure,
     'public.admin_user_set_active(uuid, uuid, boolean)'::regprocedure,
@@ -640,7 +740,7 @@ begin
     'public.admin_user_set_locations(uuid, uuid, uuid[])'::regprocedure,
     'public.admin_user_set_dormant(uuid, uuid, boolean, timestamptz)'::regprocedure,
     'public.admin_user_update_profile(uuid, uuid, jsonb)'::regprocedure,
-    'public.admin_user_create(uuid, text, text, text, text, text, text, uuid[])'::regprocedure] loop
+    'public.admin_user_create(uuid, text, text, text, text, text, text, uuid[], text, boolean, uuid[], text)'::regprocedure] loop
     if has_function_privilege('anon', f, 'EXECUTE') or has_function_privilege('authenticated', f, 'EXECUTE') then
       raise exception '0279: % is executable by a PostgREST role', f;
     end if;

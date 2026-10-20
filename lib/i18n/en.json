@@ -6333,6 +6333,8 @@
   "admin.users.rehire.by_phone": "Same phone",
   "admin.users.rehire.by_toast": "Same Toast employee",
   "admin.users.rehire.confirm": "I checked — add them anyway",
+  "admin.users.rehire.reason": "Why are you adding them anyway?",
+  "admin.users.rehire.reason_help": "Required when the record says not eligible for rehire. Only who can read the record sees it.",
   "admin.users.rehire.cannot_owner": "Only the owner or the CGS can approve adding this person.",
   "admin.users.rehire.cannot_owner_ok": "Only the owner, the MoO or the CGS can approve adding this person.",
   "admin.users.error.employment_moved": "Someone else just changed this person's record. Close and try again.",

@@ -344,10 +344,35 @@ describe("the rehire warning on Add user — phone or Toast GUID, never a name",
     const second = await json(await createPost(req("/api/admin/users", { ...body, locationIds: [B], confirmRehire: true })));
     expect(second).toMatchObject({ status: 403, body: { code: "rehire_permission_required" } });
     as(OWNER);
-    const third = await json(await createPost(req("/api/admin/users", { ...body, confirmRehire: true })));
+    // `no` needs the written reason, even from the owner.
+    const noReason = await json(await createPost(req("/api/admin/users", { ...body, confirmRehire: true })));
+    expect(noReason).toMatchObject({ status: 400, body: { code: "rehire_reason_required" } });
+    const third = await json(await createPost(req("/api/admin/users", { ...body, confirmRehire: true, rehireReason: "Pete approved" })));
     expect(third.status).toBe(201);
+    // The override travels INTO the writer's transaction (Astra BC-007/004): the ids confirmed and the reason.
+    expect(mocks.rpcCalls.filter((c) => c.fn === "admin_user_create").at(-1)!.args).toMatchObject({
+      p_phone: "2025550101", p_rehire_confirmed: true, p_rehire_user_ids: [SEP_A], p_rehire_reason: "Pete approved", p_toast_guid: null });
     const auditRow = mocks.audit.mock.calls.find((c) => (c[0] as { action: string }).action === "user.create")![0] as { metadata: Record<string, unknown> };
     expect(auditRow.metadata.rehire_match_override).toEqual([SEP_A]);
     expect(tables.users!.find((u) => u.name === "M. Lopez")?.phone).toBe("2025550101");
+  });
+  it("the writer's own refusal under its lock (a demoted actor, an omitted match) answers with the matches again, redacted", async () => {
+    const c = mocks.client as { rpc: (fn: string, args: Record<string, unknown>) => unknown };
+    const origRpc = c.rpc;
+    c.rpc = (fn: string, args: Record<string, unknown>) => fn === "admin_user_create"
+      ? { then: (res: (v: unknown) => unknown) => Promise.resolve({ data: null, error: { code: "P0001", message: "rehire_permission_required" } }).then(res) }
+      : origRpc(fn, args);
+    // The lib's check passes (the owner, with the reason); the writer, under its lock, finds the actor no longer may.
+    as(OWNER);
+    const r = await json(await createPost(req("/api/admin/users", { name: "X", role: "employee", tempPin: "1234", email: null, tempPassword: null,
+      locationIds: [A], phone: "2025550101", confirmRehire: true, rehireReason: "Pete approved" })));
+    expect(r.status).toBe(403);
+    expect(r.body.code).toBe("rehire_permission_required");
+    expect((r.body.matches as unknown[]).length).toBe(1);
+    expect(mocks.rpcCalls.filter((x) => x.fn === "admin_user_create")).toEqual([]); // the swapped rpc answered
+    as(GM_B);
+    const g = await json(await createPost(req("/api/admin/users", { name: "X", role: "employee", tempPin: "1234", email: null, tempPassword: null,
+      locationIds: [B], phone: "2025550101", confirmRehire: true })));
+    expect(g.text).not.toContain(REASON); // redacted for a viewer the record is not sent to
   });
 });

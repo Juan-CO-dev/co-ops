@@ -32,8 +32,15 @@ export const updateUserProfileCall = (a: { actorId: string; userId: string; patc
 export const createUserCall = (a: {
   actorId: string; name: string; role: string; email: string | null; phone: string | null; pinHash: string; passwordHash: string | null;
   locationIds: readonly string[];
+  /** The Toast employee picked on the form (the writer re-runs the rehire match by it and by the phone). */
+  toastGuid: string | null;
+  /** The creator confirmed past these separated matches (the writer's own match must be covered by them). */
+  rehireConfirmed: boolean; rehireUserIds: readonly string[];
+  /** Required when a match is "not eligible for rehire". */
+  rehireReason: string | null;
 }) => ({ fn: "admin_user_create", args: { p_actor: a.actorId, p_name: a.name, p_role: a.role, p_email: a.email, p_phone: a.phone,
-  p_pin_hash: a.pinHash, p_password_hash: a.passwordHash, p_locations: [...a.locationIds] } }) as const;
+  p_pin_hash: a.pinHash, p_password_hash: a.passwordHash, p_locations: [...a.locationIds], p_toast_guid: a.toastGuid,
+  p_rehire_confirmed: a.rehireConfirmed, p_rehire_user_ids: [...a.rehireUserIds], p_rehire_reason: a.rehireReason } }) as const;
 
 /** Postgres lock refusals that are not a rule: a deadlock victim (40P01) or a lock not available (55P03). */
 export const USER_ADMIN_BUSY_SQLSTATES: readonly string[] = ["40P01", "55P03"];
@@ -52,4 +59,7 @@ export const USER_ADMIN_RPC_ERRORS: Readonly<Record<string, { status: number; co
   email_taken: { status: 409, code: "email_taken" },
   email_required: { status: 400, code: "email_required" },
   password_required: { status: 400, code: "password_required" },
+  rehire_match: { status: 409, code: "rehire_match" },
+  rehire_permission_required: { status: 403, code: "rehire_permission_required" },
+  rehire_reason_required: { status: 400, code: "rehire_reason_required" },
 };

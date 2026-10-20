@@ -37,6 +37,11 @@
  *   S12 Astra BC-007/004 — Add user in ONE transaction under the ACTOR's row lock: a demotion, a deactivation and a shop
  *       removal of the actor committed before the create each refuse it (nothing inserted); the happy path inserts the
  *       user (hashes only, email lowercased) and every membership together; the lock statements follow SORTED id order
+ *   S13 Astra BC-007/004 + BC-037/057 — the rehire override INSIDE the create: the writer re-runs the match (phone key,
+ *       Toast GUID) under the locks; unconfirmed or an omitted match → rehire_match; the LOCKED actor's authority per
+ *       setting (a demotion between the lib's check and the create → rehire_permission_required; `no` needs owner / CGS and
+ *       the reason); the override is recorded on the new account (never a status); a concurrent duplicate email (a 23505
+ *       from the unique constraint) is email_taken
  *   S11 the role / location / dormancy / profile writers: below the actor only, own shops only (a GM never leaves the
  *       person with none), memberships elsewhere left alone, the dormancy compare-and-set, a taken email, sessions revoked
  */
@@ -68,10 +73,10 @@ async function base({ cols = true, sessionsOnly = false } = {}) {
   return db;
 }
 const FNS = ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "user_admin_role_level(text)", "user_admin_lock(uuid, uuid)",
-  "user_employment_status(uuid)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)", "admin_user_set_active(uuid, uuid, boolean)",
+  "user_employment_status(uuid)", "user_employment_rehire(uuid)", "user_admin_phone_key(text)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)", "admin_user_set_active(uuid, uuid, boolean)",
   "admin_user_set_credential(uuid, uuid, text, text)", "admin_user_set_role(uuid, uuid, text)", "admin_user_set_locations(uuid, uuid, uuid[])",
   "admin_user_set_dormant(uuid, uuid, boolean, timestamptz)", "admin_user_update_profile(uuid, uuid, jsonb)",
-  "admin_user_create(uuid, text, text, text, text, text, text, uuid[])"];
+  "admin_user_create(uuid, text, text, text, text, text, text, uuid[], text, boolean, uuid[], text)"];
 
 const db = await base();
 async function rpc(call) {
@@ -369,7 +374,8 @@ try {
   await member(gmD, SD);
   await member(moo, SD);
   const create = (actor, o = {}) => rpc(createUserCall({ actorId: actor, name: o.name ?? "New Person", role: o.role ?? "employee", email: o.email ?? null,
-    phone: o.phone ?? null, pinHash: hash(8), passwordHash: o.passwordHash ?? null, locationIds: o.locations ?? [SD] }));
+    phone: o.phone ?? null, pinHash: hash(8), passwordHash: o.passwordHash ?? null, locationIds: o.locations ?? [SD], toastGuid: o.toastGuid ?? null,
+    rehireConfirmed: o.confirmed ?? false, rehireUserIds: o.confirmedIds ?? [], rehireReason: o.reason ?? null }));
   const made = await create(gmD, { name: "  Rosa  ", email: "Rosa@Example.COM", phone: " 202-555-0123 " });
   const rosa = (await db.query("select name, email, phone, role, active, pin_hash, password_hash, created_by from public.users where id = $1", [made.id])).rows[0];
   check(rosa.name === "Rosa" && rosa.email === "rosa@example.com" && rosa.phone === "202-555-0123" && rosa.role === "employee" && rosa.active === true
@@ -393,6 +399,47 @@ try {
   await refuses(() => create(gmD), "forbidden", "S12 the actor deactivated first → the create is refused");
   check(await usersCount() === n0, "S12 … and none of the refused creates inserted anyone");
   check(typeof (await create(owner, { locations: [SA, SB] })).id === "string", "S12 the owner creates at any shop");
+
+  // S13 — the rehire override inside the create
+  await activeSet(owner, gmD, true);
+  const sepOk = await user("employee"), sepNo = await user("employee"), moo3 = await user("moo");
+  for (const u of [sepOk, sepNo]) await member(u, SA);
+  for (const l of [SA, SD]) await member(moo3, l);
+  await db.query("update public.users set phone = '(202) 555-0188' where id = $1", [sepOk]);
+  await db.query("update public.users set phone = '202.555.0177' where id = $1", [sepNo]);
+  await ev(gmA, sepOk, "separated", SEP("only_with_owner_ok"));
+  await ev(gmA, sepNo, "separated", SEP("no"));
+  await db.query("insert into public.toast_employee_links (location_id, employee_guid, user_id) values ($1, 'toast-ok', $2)", [SA, sepOk]);
+  const n1 = await usersCount();
+  await refuses(() => create(moo3, { phone: "+1 202 555 0188" }), "rehire_match", "S13 a phone match, not confirmed → rehire_match");
+  await refuses(() => create(moo3, { phone: "2025550188", confirmed: true, confirmedIds: [] }), "rehire_match", "S13 a match the client OMITTED → rehire_match");
+  await refuses(() => create(moo3, { toastGuid: "toast-ok", confirmed: true, confirmedIds: [] }), "rehire_match", "S13 a Toast GUID match the client omitted → rehire_match");
+  // Astra's case: the MoO's confirmation passed the lib's check; the CGS demotes the MoO to GM (still at the shop) first.
+  await role(cgs, moo3, "gm");
+  await refuses(() => create(moo3, { phone: "2025550188", confirmed: true, confirmedIds: [sepOk] }), "rehire_permission_required",
+    "S13 the actor demoted between the check and the create → rehire_permission_required");
+  check(await usersCount() === n1, "S13 … and nothing was inserted");
+  await role(cgs, moo3, "moo");
+  const okMade = await create(moo3, { phone: "202-555-0188", confirmed: true, confirmedIds: [sepOk] });
+  const okRows = await rows(okMade.id);
+  check(JSON.stringify(okMade.rehire_matches) === JSON.stringify([sepOk]) && okRows.length === 1 && okRows[0].kind === "rehire_override"
+    && employmentStateOf(okRows).status === "active", "S13 the MoO confirms owner-OK-needed: created; the override recorded on the new account, never a status");
+  await refuses(() => create(moo3, { phone: "202-555-0177", confirmed: true, confirmedIds: [sepNo], reason: "x" }), "rehire_permission_required",
+    "S13 not eligible → the MoO is refused (owner / CGS only)");
+  await refuses(() => create(cgs, { phone: "202-555-0177", confirmed: true, confirmedIds: [sepNo] }), "rehire_reason_required", "S13 not eligible → the CGS needs the reason");
+  const noMade = await create(cgs, { phone: "202-555-0177", confirmed: true, confirmedIds: [sepNo], reason: "Pete approved a second chance" });
+  const noRow = (await db.query("select kind, matched_user_ids, note from public.user_employment_events where user_id = $1", [noMade.id])).rows[0];
+  check(noRow.kind === "rehire_override" && JSON.stringify(noRow.matched_user_ids) === JSON.stringify([sepNo]) && noRow.note === "Pete approved a second chance",
+    "S13 not eligible → the CGS adds them with the reason (stored on the new account's record)");
+  // A concurrent duplicate email: the loser's insert meets the unique constraint (simulated: the winner committed between
+  // the existence check and the insert).
+  await db.exec(`create function public.zz_dup() returns trigger language plpgsql as $f$ begin
+      if new.email = 'race@example.com' then raise exception using errcode = 'unique_violation', constraint = 'users_email_key', message = 'duplicate key value violates unique constraint "users_email_key"'; end if;
+      return new; end $f$;
+    create trigger zz_dup before insert or update on public.users for each row execute function public.zz_dup();`);
+  await refuses(() => create(moo3, { email: "Race@Example.com" }), "email_taken", "S13 a concurrent duplicate email (23505) on create → email_taken");
+  await refuses(() => rpc(updateUserProfileCall({ actorId: moo, userId: p1, patch: { email: "race@example.com" } })), "email_taken", "S13 … and on a profile edit → email_taken");
+  await db.exec("drop trigger zz_dup on public.users; drop function public.zz_dup();");
 
   // the table stays append-only by CHECK too (a superuser insert of a malformed row is refused by the constraints)
   await refuses(() => db.query("insert into public.user_employment_events (user_id, kind, actor_id, separation_type, last_day_worked, reason, rehire) values ($1, 'separated', $2, 'fired', '2026-10-01', 'r', 'no')", [e1, gmA]),

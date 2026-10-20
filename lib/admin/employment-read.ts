@@ -5,12 +5,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isMissingTable } from "@/lib/people/facts";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { ACTIVE_STATE, employmentStatesByUser, type EmploymentEventKind, type EmploymentEventRow, type EmploymentState, type RehireSetting } from "./employment-core-shared";
+import { ACTIVE_STATE, employmentStatesByUser, type EmploymentEventRow, type EmploymentRowKind, type EmploymentState, type RehireSetting } from "./employment-core-shared";
 
 export const ID_CHUNK = 100;
 const COLUMNS = "id, user_id, kind, corrects_id, leave_reason, expected_back, separation_type, last_day_worked, reason, rehire, rehire_note, note, actor_id, created_at";
 type Db = {
-  id: string; user_id: string; kind: EmploymentEventKind; corrects_id: string | null; leave_reason: EmploymentEventRow["leaveReason"];
+  id: string; user_id: string; kind: EmploymentRowKind; corrects_id: string | null; leave_reason: EmploymentEventRow["leaveReason"];
   expected_back: string | null; separation_type: EmploymentEventRow["separationType"]; last_day_worked: string | null; reason: string | null;
   rehire: RehireSetting | null; rehire_note: string | null; note: string | null; actor_id: string; created_at: string;
 };

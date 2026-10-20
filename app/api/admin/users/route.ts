@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
       phone: typeof b.phone === "string" ? b.phone : null,
       toast: toastOf(b.toast),
       confirmRehire: b.confirmRehire === true,
+      rehireReason: typeof b.rehireReason === "string" ? b.rehireReason : null,
     });
     return jsonOk({ ...created }, 201);
   } catch (e) {

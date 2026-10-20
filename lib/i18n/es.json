@@ -6333,6 +6333,8 @@
   "admin.users.rehire.by_phone": "Mismo teléfono",
   "admin.users.rehire.by_toast": "Mismo empleado de Toast",
   "admin.users.rehire.confirm": "Ya revisé — agregar de todos modos",
+  "admin.users.rehire.reason": "¿Por qué agregas a esta persona de todos modos?",
+  "admin.users.rehire.reason_help": "Obligatorio si el registro dice que no se puede recontratar. Solo lo ve quien puede leer el registro.",
   "admin.users.rehire.cannot_owner": "Solo el dueño o el CGS pueden aprobar que se agregue a esta persona.",
   "admin.users.rehire.cannot_owner_ok": "Solo el dueño, el MoO o el CGS pueden aprobar que se agregue a esta persona.",
   "admin.users.error.employment_moved": "Alguien más acaba de cambiar el registro de esta persona. Cierra e inténtalo otra vez.",

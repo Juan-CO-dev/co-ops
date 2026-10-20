@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  EMPLOYMENT_EVENT_KINDS, EMPLOYMENT_NOTE_MAX, EMPLOYMENT_REASON_MAX, EMPLOYMENT_RPC_ERRORS, LEAVE_REASONS, recordEmploymentEventCall,
+  EMPLOYMENT_ROW_KINDS, EMPLOYMENT_NOTE_MAX, EMPLOYMENT_REASON_MAX, EMPLOYMENT_RPC_ERRORS, LEAVE_REASONS, recordEmploymentEventCall,
   REHIRE_SETTINGS, SEPARATION_TYPES,
 } from "@/lib/admin/employment-shared";
 import {
@@ -43,12 +43,15 @@ describe("0279_user_employment_events", () => {
       "S10 … users.active stays false (login not restored)",
       "S12 the gate locks the two users rows in SORTED id order (lower first; target FOR UPDATE, actor FOR SHARE), one advisory lock, checks after",
       "S12 the actor demoted first → the create is refused → forbidden", "S12 the actor deactivated first → the create is refused → forbidden",
-      "S12 the actor moved off the shop first → the create is refused → forbidden", "S12 … and none of the refused creates inserted anyone", "PASS 0279:",
+      "S12 the actor moved off the shop first → the create is refused → forbidden",
+      "S13 a match the client OMITTED → rehire_match → rehire_match",
+      "S13 the actor demoted between the check and the create → rehire_permission_required → rehire_permission_required",
+      "S13 a concurrent duplicate email (23505) on create → email_taken → email_taken", "S12 … and none of the refused creates inserted anyone", "PASS 0279:",
     ]) expect(out).toContain(s);
   }, 260_000);
 
   it("the SQL vocabularies and limits equal the TS ones", () => {
-    expect(src).toContain(`kind             text not null check (kind in (${inList(EMPLOYMENT_EVENT_KINDS)}))`);
+    expect(src).toContain(`kind             text not null check (kind in (${inList(EMPLOYMENT_ROW_KINDS)}))`);
     expect(src).toContain(`leave_reason     text check (leave_reason in (${inList(LEAVE_REASONS)}))`);
     expect(src).toContain(`separation_type  text check (separation_type in (${inList(SEPARATION_TYPES)}))`);
     expect(src).toContain(`rehire           text check (rehire in (${inList(["yes", "no", "only_with_owner_ok"])}))`);
@@ -87,10 +90,10 @@ describe("0279_user_employment_events", () => {
     expect(src).not.toMatch(/grant (insert|update|delete|all)[^;]*user_employment_events/i);
     for (const op of ["select", "insert", "update", "delete"]) expect(src).toContain(`create policy user_employment_events_no_user_${op} on public.user_employment_events for ${op}`);
     for (const sig of ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "user_admin_role_level(text)", "user_admin_lock(uuid, uuid)",
-      "user_employment_status(uuid)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)", "admin_user_set_active(uuid, uuid, boolean)",
+      "user_employment_status(uuid)", "user_employment_rehire(uuid)", "user_admin_phone_key(text)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)", "admin_user_set_active(uuid, uuid, boolean)",
       "admin_user_set_credential(uuid, uuid, text, text)", "admin_user_set_role(uuid, uuid, text)", "admin_user_set_locations(uuid, uuid, uuid[])",
       "admin_user_set_dormant(uuid, uuid, boolean, timestamptz)", "admin_user_update_profile(uuid, uuid, jsonb)",
-      "admin_user_create(uuid, text, text, text, text, text, text, uuid[])"]) {
+      "admin_user_create(uuid, text, text, text, text, text, text, uuid[], text, boolean, uuid[], text)"]) {
       expect(src).toContain(`revoke all on function public.${sig} from public, anon, authenticated;`);
       expect(src).toContain(`grant execute on function public.${sig} to service_role;`);
     }
@@ -109,8 +112,9 @@ describe("0279_user_employment_events", () => {
       [setUserLocationsCall({ actorId: "a", userId: "u", locationIds: [] }), "p_actor uuid, p_user uuid, p_locations uuid[]"],
       [setUserDormantCall({ actorId: "a", userId: "u", dormant: true, expectedDormantAt: null }), "p_actor uuid, p_user uuid, p_dormant boolean, p_expected timestamptz"],
       [updateUserProfileCall({ actorId: "a", userId: "u", patch: {} }), "p_actor uuid, p_user uuid, p_patch jsonb"],
-      [createUserCall({ actorId: "a", name: "n", role: "employee", email: null, phone: null, pinHash: "h", passwordHash: null, locationIds: [] }),
-        "p_actor uuid, p_name text, p_role text, p_email text, p_phone text, p_pin_hash text,\n  p_password_hash text, p_locations uuid[]"],
+      [createUserCall({ actorId: "a", name: "n", role: "employee", email: null, phone: null, pinHash: "h", passwordHash: null, locationIds: [],
+        toastGuid: null, rehireConfirmed: false, rehireUserIds: [], rehireReason: null }),
+        "p_actor uuid, p_name text, p_role text, p_email text, p_phone text, p_pin_hash text,\n  p_password_hash text, p_locations uuid[], p_toast_guid text, p_rehire_confirmed boolean, p_rehire_user_ids uuid[], p_rehire_reason text"],
     ];
     for (const [call, params] of sigs) {
       expect(src).toContain(`create function public.${call.fn}(${params})`);
