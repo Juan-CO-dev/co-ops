@@ -15,6 +15,7 @@ import { useId, useState, type ReactNode } from "react";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { employmentChipKey as chipKey } from "@/lib/admin/employment-core-shared";
 import { isActionableFlag, type ReconcileDay, type ReconcileFlag, type ReconcileRow, type ReconcileView, type SevenStatus } from "@/lib/scheduling/reconcile-shared";
 
 export interface ReconcilePageView {
@@ -118,7 +119,7 @@ function Tick({ source, state }: { source: "coops" | "toast" | "seven"; state: "
 }
 
 function PersonRow({ row, page, initialOpen, flagText }: { row: ReconcileRow; page: ReconcilePageView; initialOpen: boolean; flagText: (f: ReconcileFlag) => string }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [open, setOpen] = useState(initialOpen);
   const panel = useId();
   const identity = row.flags.filter((f) => !f.date);
@@ -127,7 +128,14 @@ function PersonRow({ row, page, initialOpen, flagText }: { row: ReconcileRow; pa
       <button type="button" data-person={row.userId} aria-expanded={open} aria-controls={panel} onClick={() => setOpen((o) => !o)}
         className="grid min-h-[44px] w-full items-center gap-1 px-4 py-2 text-left">
         <span className="flex flex-wrap items-center justify-between gap-2">
-          <span className="font-bold text-co-text">{row.name}</span>
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="font-bold text-co-text">{row.name}</span>
+            {row.employment ? (
+              <span data-employment-chip={row.employment.status} className="inline-flex min-h-[28px] items-center rounded-full border border-co-border-2 bg-co-surface-inset px-2.5 text-xs font-bold text-co-text">
+                {t(chipKey(row.employment), row.employment.status === "on_leave" && row.employment.until ? { date: formatDateLabel(row.employment.until, language) } : undefined)}
+              </span>
+            ) : null}
+          </span>
           {/* Astra chunk G P2-4: informational flags are detail, never an amber count. */}
           {row.lookAt > 0
             ? <span className="text-xs font-bold text-co-warning-text">{t("schedule.reconcile.row.to_look_at", { n: row.lookAt })}</span>

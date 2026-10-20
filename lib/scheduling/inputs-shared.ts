@@ -95,6 +95,12 @@ export interface SchedulingInputs {
   wages: { byUserCents: Record<string, number>; source: "sevenshifts" | "none" };
   overtimeH: number | null;
   keptBudgetDigests: string[];
+  /**
+   * Staff separations (0279, 2026-10-20): members who are ON LEAVE (while on leave) or SEPARATED (for good — even if their
+   * account was reactivated by mistake). They never reach the generator's roster and their open future pins are ignored;
+   * history (past shifts, punches, revisions) is untouched. Absent = nobody (fixtures, and before 0279 is applied).
+   */
+  employmentExcluded?: string[];
 }
 
 // ─── Small pure readers ──────────────────────────────────────────────────────
@@ -227,8 +233,10 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
   const windowStart = addDays(isoWeekStart(inputs.asOf), -56);
   const patterns = punchPatterns(inputs.punches, { asOf: inputs.asOf, firstSeen: firstSeenFor(inputs.members, inputs.punches, windowStart) });
   const skills = makeSkillLookup(inputs.skills, inputs.skillBands);
+  const excluded = new Set(inputs.employmentExcluded ?? []);
   const { people } = toSchedPeople({
     members: inputs.members.map((m) => ({ userId: m.userId, role: m.role, active: true })),
+    excludedUserIds: [...excluded],
     settings: inputs.personSettings, patterns, dates, structure: s,
     shopDay: { fromQ: s.shopDay.prepStartQ, toQ: s.shopDay.outLatestQ },
     wages: { byUserCents: inputs.wages.byUserCents, estimateHourlyCents: inputs.shopSettings.estimatedHourlyCents }, skills,
@@ -236,7 +244,7 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
   const budget = budgetForDates(inputs.budget.entries, inputs.budget.rows, dates);
   return {
     locationId: inputs.locationId, weekStart, today: opts.today, days, structure: s, structureVersionId: inputs.structure.id, people, skills,
-    pins: inputs.pins.filter((p) => dates.includes(p.date)), budgetByDate: budget.byDate, head: headSnapshotFor(inputs.weeks[weekStart]),
+    pins: inputs.pins.filter((p) => dates.includes(p.date) && !excluded.has(p.userId)), budgetByDate: budget.byDate, head: headSnapshotFor(inputs.weeks[weekStart]),
   };
 }
 

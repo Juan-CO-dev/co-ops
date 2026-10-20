@@ -16,6 +16,8 @@
  * The CALLER gates (the schedules lib runs `access-shared` first; the cron is a system context). Before 0274 / 0275
  * (or 0270) are applied every read answers `inputs_unavailable` (503), never a 500. No email, no notification.
  */
+import { loadEmploymentStates, stateOf } from "@/lib/admin/employment-read";
+import { excludedFromScheduling } from "@/lib/admin/employment-core-shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadBookedCateringEvents } from "@/lib/catering/booked-events";
 import { CLOSING_MANAGER_STATION } from "@/lib/checklist-constants";
@@ -313,9 +315,12 @@ export async function loadSchedulingInputs(service: SupabaseClient, args: LoadSc
     const closing = closingDuration(closingFacts(facts.skills), structure.structure.shopDay.serviceCloseQ);
     const { wages, overtimeH } = await loadWages(service, members.map((m) => m.userId));
     const keptBudgetDigests = await loadKeptDigests(service, locationId);
+    // Staff separations (0279): on leave / separated members never reach the roster (a missing 0279 = nobody).
+    const employment = await loadEmploymentStates(service, members.map((m) => m.userId));
+    const employmentExcluded = members.filter((m) => excludedFromScheduling(stateOf(employment, m.userId).status)).map((m) => m.userId);
     return {
       locationId, asOf, shopSettings, structure, structuresById, members, skills, skillBands: { building: tunables.bands.building, strong: tunables.bands.strong },
-      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, keptBudgetDigests,
+      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, keptBudgetDigests, employmentExcluded,
     };
   } catch (e) {
     if (e instanceof ScheduleError) throw e;
