@@ -231,3 +231,36 @@ describe("0278: the writes go ONLY through the lock-held writers; before 0278 is
     expect(SCHEDULE_ERROR_STATUS.person_settings_unavailable).toBe(503);
   });
 });
+
+describe("Astra BC-022/042: position and person ids are canonical lowercase at the parse boundary (both write paths)", () => {
+  const gm = actor(GM, "gm", 7, [A]);
+  // A position id with hex letters, so case matters; the saved structure's keys are lowercase (as Postgres returns them).
+  const POS_X = "abcdef00-0000-4000-8000-0000000000aa";
+  const saved = (t: ReturnType<typeof shopTables>) => {
+    t.schedule_structures = [{ id: "sv-x", location_id: A, created_at: "2026-10-01T12:00:00Z", structure: { positions: { [POS_X]: { role: "prep_dish" } } } }];
+  };
+  const mixed = "AbCdEf00-0000-4000-8000-0000000000aA";
+  it("the full-row write: the dish-and-prep primary for a FOH employee is refused in lowercase, UPPERCASE and mixed case", async () => {
+    for (const id of [POS_X, POS_X.toUpperCase(), mixed]) {
+      const s = shop(saved);
+      expect(await code(recordPersonSettings(s.deps, { actor: gm, locationId: A, settings: row(EMP, { coverPositions: [id] }), expectedId: null })), id).toBe("position_rank_not_allowed");
+      expect(rpcArgs(s)).toEqual([]);
+    }
+  });
+  it("the picker merge: the same three spellings are refused; what is sent to the writer is always lowercase", async () => {
+    for (const id of [POS_X, POS_X.toUpperCase(), mixed]) {
+      const s = shop(saved);
+      expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: { primary: id }, expectedId: null })), id).toBe("position_rank_not_allowed");
+    }
+    const ok = shop(saved);
+    expect(await code(recordPersonPositions(ok.deps, { actor: gm, locationId: A, userId: EMP, changes: { workType: "boh", primary: POS_X.toUpperCase() }, expectedId: null }))).toBe("ok");
+    expect(ok.calls.find((c) => c.fn === "merge_schedule_person_positions")!.args.p_changes).toEqual({ workType: "boh", primary: POS_X });
+    const full = shop(saved);
+    expect(await code(recordPersonSettings(full.deps, { actor: gm, locationId: A, settings: row(EMP, { workType: "boh", coverPositions: [mixed] }), expectedId: null }))).toBe("ok");
+    expect(full.calls.find((c) => c.fn === "save_schedule_person_settings")!.args.p_cover_positions).toEqual([POS_X]);
+  });
+  it("the subject rule's self check is case-blind", () => {
+    const me = actor("abcdef00-0000-4000-8000-000000000001", "gm", 7, [A]);
+    expect(personSettingsSubjectRefusal(me, { userId: "ABCDEF00-0000-4000-8000-000000000001", role: "employee" })).toBe("schedule_forbidden");
+  });
+});

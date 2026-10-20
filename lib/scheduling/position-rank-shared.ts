@@ -106,7 +106,8 @@ export function positionListProblems(person: PositionListPerson, list: readonly 
   const out: PositionListProblem[] = [];
   const asPerson = { workType: person.workType, alsoAllowed: [...person.alsoAllowed] };
   list.slice(0, 2).forEach((positionId, i) => {
-    const role = roles[positionId];
+    // Astra BC-022/042: structure keys are canonical lowercase uuids — an uppercase id must never skip the check.
+    const role = roles[positionId.toLowerCase()];
     if (role && !workTypeAllows(asPerson, { role })) out.push({ slot: i === 0 ? "primary" : "secondary", positionId, code: "work_type" });
   });
   return out;

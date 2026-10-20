@@ -65,7 +65,8 @@ export function scheduleActRefusal(actor: PeopleActor, locationId: string, act: 
 export function personSettingsSubjectRefusal(actor: PeopleActor, subject: { userId: string; role: RoleCode }): ScheduleErrorCode | null {
   if (isMooPlus(actor)) return null;
   const level = getRoleLevel(subject.role);
-  if (subject.userId === actor.userId || level >= GM_LEVEL || level >= actor.level) return "schedule_forbidden";
+  // Astra BC-022/042: ids compared in canonical lowercase (an uppercase spelling of oneself is still oneself).
+  if (subject.userId.toLowerCase() === actor.userId.toLowerCase() || level >= GM_LEVEL || level >= actor.level) return "schedule_forbidden";
   return null;
 }
 

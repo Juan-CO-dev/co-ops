@@ -96,14 +96,21 @@ export interface PersonSettingsInput {
  */
 export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput; expectedId: string | null }): Promise<Record<string, unknown>> {
   await gate(deps.service, args.actor, args.locationId, "person_settings");
-  const s = args.settings;
-  if (!s || typeof s.userId !== "string" || !UUID.test(s.userId) || !Array.isArray(s.coverPositions) || !Array.isArray(s.alsoAllowed)) throw new ScheduleError("invalid_payload");
+  const raw = args.settings;
+  if (!raw || typeof raw.userId !== "string" || !UUID.test(raw.userId) || !Array.isArray(raw.coverPositions) || !Array.isArray(raw.alsoAllowed)
+    || !raw.coverPositions.every((x) => typeof x === "string" && UUID.test(x)) || (args.expectedId !== null && typeof args.expectedId !== "string")) {
+    throw new ScheduleError("invalid_payload");
+  }
+  // Astra BC-022/042: every id canonical lowercase at the parse boundary — the subject rule's self check, the role lookup
+  // of the work-type check and the list's own distinctness all compare strings.
+  const s: PersonSettingsInput = { ...raw, userId: raw.userId.toLowerCase(), coverPositions: raw.coverPositions.map((x) => x.toLowerCase()) };
+  const expectedId = args.expectedId === null ? null : args.expectedId.toLowerCase();
   const role = await subjectRole(deps.service, args.actor, s.userId);
   // The early read refuses most stale saves with no write; 0278's writer re-checks under the per-person lock (the race).
   const latest = await loadLatestPersonSettings(deps.service, args.locationId, s.userId);
-  if ((latest?.id ?? null) !== args.expectedId) throw new ScheduleError("person_settings_moved");
+  if ((latest?.id ?? null) !== expectedId) throw new ScheduleError("person_settings_moved");
   await refusePositionRank(deps.service, args.locationId, role, s);
-  const r = await guardedRpc(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId: args.expectedId }));
+  const r = await guardedRpc(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId }));
   return logPersonSettings(args.actor, args.locationId, s.userId, r);
 }
 
@@ -117,14 +124,17 @@ export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: Pe
 export async function recordPersonPositions(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; userId: string; changes: Record<string, unknown>; expectedId: string | null }): Promise<Record<string, unknown>> {
   await gate(deps.service, args.actor, args.locationId, "person_settings");
   const changes = parsePositionChanges(args.changes);
-  if (!UUID.test(args.userId) || !changes) throw new ScheduleError("invalid_payload");
-  const role = await subjectRole(deps.service, args.actor, args.userId);
-  const latest = await loadLatestPersonSettings(deps.service, args.locationId, args.userId);
-  if ((latest?.id ?? null) !== args.expectedId) throw new ScheduleError("person_settings_moved");
-  const merged = mergePositionChanges(latest?.row ?? null, args.userId, changes);
+  if (!UUID.test(args.userId) || !changes || (args.expectedId !== null && typeof args.expectedId !== "string")) throw new ScheduleError("invalid_payload");
+  // Astra BC-022/042: canonical lowercase ids (parsePositionChanges lowercases the positions).
+  const userId = args.userId.toLowerCase();
+  const expectedId = args.expectedId === null ? null : args.expectedId.toLowerCase();
+  const role = await subjectRole(deps.service, args.actor, userId);
+  const latest = await loadLatestPersonSettings(deps.service, args.locationId, userId);
+  if ((latest?.id ?? null) !== expectedId) throw new ScheduleError("person_settings_moved");
+  const merged = mergePositionChanges(latest?.row ?? null, userId, changes);
   await refusePositionRank(deps.service, args.locationId, role, merged);
-  const r = await guardedRpc(deps.service, mergePersonPositionsCall({ actorId: args.actor.userId, locationId: args.locationId, userId: args.userId, expectedId: args.expectedId, changes: { ...changes } }));
-  return logPersonSettings(args.actor, args.locationId, args.userId, r);
+  const r = await guardedRpc(deps.service, mergePersonPositionsCall({ actorId: args.actor.userId, locationId: args.locationId, userId, expectedId, changes: { ...changes } }));
+  return logPersonSettings(args.actor, args.locationId, userId, r);
 }
 
 /**

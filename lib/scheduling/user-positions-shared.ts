@@ -69,7 +69,8 @@ export function parsePositionChanges(v: Record<string, unknown>): PositionChange
     if (!(k in v)) continue;
     const x = v[k];
     if (x !== null && (typeof x !== "string" || !UUID.test(x))) return null;
-    out[k] = x as string | null;
+    // Astra BC-022/042: canonical lowercase at the parse boundary, before any validation or merge.
+    out[k] = x === null ? null : (x as string).toLowerCase();
   }
   return out;
 }
