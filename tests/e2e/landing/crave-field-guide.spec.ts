@@ -380,6 +380,31 @@ test('tapping an ingredient finds it at once; the scroll then finds the rest',as
   await expect(page.locator('#field-guide [data-guide-cta]')).toHaveAttribute('data-ready','true',{timeout:4000});
 });
 
+test('finding all six by taps alone stops the scroll observer',async({page})=>{
+  // Record whether the guide photo's scroll observer is disconnected (Astra v4.1 nit).
+  await page.addInitScript(()=>{
+    const Native=window.IntersectionObserver;
+    const w=window as unknown as {__guideObserverDisconnected:boolean};w.__guideObserverDisconnected=false;
+    window.IntersectionObserver=class extends Native{
+      private guide=false;
+      observe(target:Element){if(target.parentElement?.classList.contains('landing-v3-guide-figure'))this.guide=true;super.observe(target);}
+      disconnect(){if(this.guide)w.__guideObserverDisconnected=true;super.disconnect();}
+    } as typeof IntersectionObserver;
+  });
+  await page.setViewportSize({width:390,height:844});
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  // Words at the bottom of the screen, the photo wholly below it: scrolling has found nothing.
+  await page.locator('.landing-v3-guide-words').evaluate(el=>scrollTo(0,el.getBoundingClientRect().bottom+scrollY-innerHeight+8));
+  await page.waitForTimeout(600);
+  expect(await page.locator('.landing-v3-guide-figure').evaluate(el=>el.getBoundingClientRect().top>=innerHeight)).toBe(true);
+  expect(Number(await guide.getAttribute('data-guide-found'))).toBe(0);
+  for(const word of await guide.locator('.landing-v4-guide-word').all())await word.click();
+  await expect(guide).toHaveAttribute('data-guide-found','6');
+  expect(await page.evaluate(()=>(window as unknown as {__guideObserverDisconnected:boolean}).__guideObserverDisconnected)).toBe(true);
+});
+
 for(const policy of ['reduce','save-data'] as const)test(`${policy}: no find animation, all six found and the action reachable`,async({page})=>{
   if(policy==='reduce')await page.emulateMedia({reducedMotion:'reduce'});
   else await page.addInitScript(()=>Object.defineProperty(navigator,'connection',{value:{saveData:true,addEventListener(){},removeEventListener(){}}}));

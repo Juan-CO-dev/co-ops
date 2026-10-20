@@ -56,6 +56,8 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
     const find=(index:number)=>{
       if(calm||index<0||index>=total||mask&(1<<index))return;
       mask|=1<<index;setFound(mask);setDrawing(value=>value|(1<<index));
+      // Found by taps alone: nothing is left for scrolling to find.
+      if(mask===all)observer.disconnect();
       const timer=setTimeout(()=>{draws.delete(timer);setDrawing(value=>value&~(1<<index));},STEP_MS);
       draws.add(timer);
     };
