@@ -64,6 +64,13 @@ describe("sim-0279-lock-check: what it proves (static pins; the run is CC's, on 
     expect(source).toContain("check(deadlocks === 0");
     expect(source).toContain("B's user_admin_lock(Y, X) WAITS on a lock");
   });
+  it("Astra BC-030/042: each racing session rolls back as soon as ITS OWN statement settles (never after Promise.all)", () => {
+    expect(source).toContain('const settleThenRollback = (c, sql, params) => race(c, sql, params).then(async (r) => { await c.query("rollback")');
+    const loop = source.slice(source.indexOf("for (let i = 0; i < ROUNDS; i++)"), source.indexOf("check(deadlocks === 0"));
+    expect(loop).toContain("Promise.all([settleThenRollback(first[0]");
+    expect(loop).toContain("settleThenRollback(second[0]");
+    expect(loop).not.toMatch(/\.query\("rollback"\)/);
+  });
   it("Add user vs a stale actor: demoted and deactivated inside a held transaction, the create waits, then is refused; nothing inserted", () => {
     expect(source).toContain("public.admin_user_create(");
     expect(source).toContain("admin_user_set_role($1::uuid, $2::uuid, 'employee')");

@@ -60,6 +60,12 @@ async function blockedOn(pid, ms = 5000) {
 }
 /** Starts a statement WITHOUT awaiting it; settles to { ok, value } | { ok: false, error, code }. */
 const race = (c, sql, params) => c.query(sql, params).then((r) => ({ ok: true, value: r.rows[0] }), (e) => ({ ok: false, error: String(e.message), code: e.code ?? null }));
+/**
+ * Astra BC-030/042: each session rolls back AS SOON AS ITS OWN statement settles (the rollback is chained onto that
+ * statement's promise), so the session that passed releases its locks at once and the other one is never left waiting
+ * for its peer until the lock timeout. Settles to the statement's own result.
+ */
+const settleThenRollback = (c, sql, params) => race(c, sql, params).then(async (r) => { await c.query("rollback").catch(() => {}); return r; });
 const begin = async (c) => { await c.query("begin"); await c.query("set local statement_timeout = '20s'"); await c.query("set local lock_timeout = '15s'"); };
 
 const LOCK = "select public.user_admin_lock($1::uuid, $2::uuid) as r";
@@ -91,14 +97,13 @@ try {
   for (let i = 0; i < ROUNDS; i++) {
     await begin(a); await begin(b);
     const [first, second] = i % 2 === 0 ? [[a, X, Y], [b, Y, X]] : [[a, Y, X], [b, X, Y]];
-    const [r1, r2] = await Promise.all([race(first[0], LOCK, [first[1], first[2]]), race(second[0], LOCK, [second[1], second[2]])]);
+    const [r1, r2] = await Promise.all([settleThenRollback(first[0], LOCK, [first[1], first[2]]), settleThenRollback(second[0], LOCK, [second[1], second[2]])]);
     for (const r of [r1, r2]) {
       if (r.ok) passes++;
       else if (r.code === "40P01") deadlocks++;
       else if (r.code === "55P03" || r.code === "57014") lockErrors++;
       else if (/forbidden/.test(r.error)) forbidden++;
     }
-    await a.query("rollback"); await b.query("rollback");
   }
   check(deadlocks === 0, `1a: ${ROUNDS} rounds of (X,Y) ‖ (Y,X): no deadlock (40P01 seen: ${deadlocks})`);
   check(lockErrors === 0, `1a: … no lock timeout either (seen: ${lockErrors})`);
