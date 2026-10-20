@@ -6265,7 +6265,7 @@
   "admin.users.positions.secondary": "Puesto secundario",
   "admin.users.positions.secondary_manager_duty": "Tareas de gerente (siempre, para un líder por hora)",
   "admin.users.positions.none": "Ninguno",
-  "admin.users.positions.none_clear": "Ninguno, y quitar los otros {count} puestos",
+  "admin.users.positions.none_clear": "Ninguno — quita {count} más",
   "admin.users.positions.clears_flex": "Al guardar se quitan los otros {count} puestos de la lista de esta persona.",
   "admin.users.positions.unavailable": "Los ajustes del horario aún no están disponibles en esta tienda.",
   "admin.users.positions.not_member": "Primero agrega esta tienda a las tiendas de esta persona.",
