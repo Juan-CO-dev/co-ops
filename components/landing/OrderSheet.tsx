@@ -15,14 +15,23 @@ export interface SheetSpin {frames:readonly string[];width:number;height:number;
 export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,spin,onOpen,className='landing-v3-cta',eager=false}:{shops:readonly SheetShop[];placement:LandingPlacement;item?:LandingItem;triggerLabel:string;title:string;closeLabel:string;spin?:SheetSpin;onOpen?:()=>void;className?:string;
   /** Mounted only after the page is interactive (never server-rendered): start as the button. */
   eager?:boolean}) {
-  // The button + sheet replace the native links when the main thread is idle, never inside
-  // the hydration task (keeps first-load blocking time down; the links work meanwhile).
+  // The button + sheet replace the native links only once the action nears the viewport, and
+  // then at idle — never inside the hydration task and never for a section nobody reached
+  // (keeps first-load blocking time down; the native links work meanwhile).
   const [hydrated,setHydrated]=useState(eager);
+  const fallback=useRef<HTMLDivElement>(null);
   useEffect(()=>{
     if(hydrated)return;
-    const enhance=()=>setHydrated(true);
-    if(typeof window.requestIdleCallback==='function'){const id=window.requestIdleCallback(enhance,{timeout:2000});return ()=>window.cancelIdleCallback(id);}
-    const id=setTimeout(enhance,200);return ()=>clearTimeout(id);
+    let idle:number|undefined,timer:ReturnType<typeof setTimeout>|undefined;
+    const enhance=()=>{
+      if(typeof window.requestIdleCallback==='function')idle=window.requestIdleCallback(()=>setHydrated(true),{timeout:1000});
+      else timer=setTimeout(()=>setHydrated(true),50);
+    };
+    const element=fallback.current;
+    if(!element||typeof IntersectionObserver==='undefined'){enhance();return ()=>{if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);};}
+    const near=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){near.disconnect();enhance();}},{rootMargin:'100% 0px'});
+    near.observe(element);
+    return ()=>{near.disconnect();if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);};
   },[hydrated]);
   const dialog=useRef<HTMLDialogElement>(null),trigger=useRef<HTMLButtonElement>(null);
   const [open,setOpen]=useState(false);
@@ -31,7 +40,7 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
   const link=(shop:SheetShop)=><OrderLink key={shop.key} href={shop.orderUrl} store={shop.key} placement={placement} item={item} className="landing-v2-order landing-v4-order-two">
     <span>{shop.label}</span><span className="sr-only"> · </span><span className="landing-v4-order-detail" data-order-detail>{shop.detail}</span>
   </OrderLink>;
-  if(!hydrated)return <div className="landing-v3-direct-orders">{shops.map(link)}</div>;
+  if(!hydrated)return <div ref={fallback} className="landing-v3-direct-orders">{shops.map(link)}</div>;
   const show=()=>{if(trigger.current)hop(trigger.current);onOpen?.();dialog.current?.showModal();setOpen(true);};
   return <>
     <button ref={trigger} type="button" onClick={show} aria-haspopup="dialog" className={className}>{triggerLabel}</button>
