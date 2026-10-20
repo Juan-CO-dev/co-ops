@@ -23,12 +23,17 @@
  *   2. ADD USER vs A STALE ACTOR (BC-007/004). A MoO-or-above M demotes (then, separately, deactivates) a GM G inside a
  *      held transaction; G's `admin_user_create` at G's shop WAITS on G's row; A commits; B is refused `forbidden` and
  *      NOTHING is inserted. W restores G (role, then active) through the same writers.
+ *   3. ADD USER vs A REHIRE SETTING FLIP (Astra BC-007/004 r2). A fixture person P (created for the run, then separated with
+ *      rehire OK) shares the new person's phone; A corrects P's setting to "not eligible" inside a held transaction (the
+ *      employment writer's gate holds P's row FOR UPDATE); G's UNCONFIRMED create with that phone WAITS on P's row (every
+ *      identity candidate is locked, whatever its setting); A commits; the create is refused `rehire_match`, nothing inserted.
  *
  * THE FIXTURE: nothing of check 1 persists (every round rolls back). Check 2 commits the demotion / deactivation of G and
  * then restores G with `admin_user_set_role` / `admin_user_set_active` (append-only audit is the lib's; these direct calls
  * write no audit row). G's live sessions on the sim are revoked by those writers — the sim is disposable (CC's chunk G
  * ruling 3). The would-be new user is named `SIM lock check <epoch ms>`; if one was created (a FAILURE), it is deactivated
- * and its id printed. Exit 0 = every check passed; 1 = a check or the restore failed; 2 = refused / not runnable.
+ * and its id printed. Check 3's P (`SIM lock check P <epoch ms>`) stays on the sim separated (inactive, "not eligible") and is
+ * printed by id. Exit 0 = every check passed; 1 = a check or the restore failed; 2 = refused / not runnable.
  */
 import { simDatabaseTarget } from "./sim-0270-0271-lock-check-lib.mjs";
 
@@ -69,15 +74,19 @@ const settleThenRollback = (c, sql, params) => race(c, sql, params).then(async (
 const begin = async (c) => { await c.query("begin"); await c.query("set local statement_timeout = '20s'"); await c.query("set local lock_timeout = '15s'"); };
 
 const LOCK = "select public.user_admin_lock($1::uuid, $2::uuid) as r";
-const CREATE = "select public.admin_user_create($1::uuid, $2, 'employee', null, null, $3, null, $4::uuid[]) as r";
+// admin_user_create by NAMED arguments — the list is pinned equal to the migration's signature (tests/sim-0279-lock-check-guard).
+const CREATE = `select public.admin_user_create(p_actor => $1::uuid, p_name => $2, p_role => 'employee', p_email => null, p_phone => $3,
+  p_pin_hash => $4, p_password_hash => null, p_locations => $5::uuid[], p_toast_guid => null, p_rehire_confirmed => false,
+  p_rehire_user_ids => '{}'::uuid[], p_rehire_reason => null) as r`;
+const EMPLOYMENT = "select public.record_user_employment_event(p_actor => $1::uuid, p_user => $2::uuid, p_expected => $3::uuid, p_kind => $4, p_fields => $5::jsonb) as r";
 const DUMMY_HASH = `$2b$10$${"x".repeat(53)}`;
 
-const fixture = { m: null, g: null, shop: null, gRole: null, gActive: null, createdIds: [], name: `SIM lock check ${Date.now()}` };
+const fixture = { m: null, g: null, shop: null, gRole: null, gActive: null, createdIds: [], name: `SIM lock check ${Date.now()}`, p: null };
 await a.connect(); await b.connect(); await w.connect();
 const pidB = (await one(b, "select pg_backend_pid() as p")).p;
 try {
   const ready = await one(w, `select to_regprocedure('public.user_admin_lock(uuid,uuid)') is not null as gate,
-    to_regprocedure('public.admin_user_create(uuid,text,text,text,text,text,text,uuid[])') is not null as create_fn`);
+    to_regprocedure('public.admin_user_create(uuid,text,text,text,text,text,text,uuid[],text,boolean,uuid[],text)') is not null as create_fn`);
   if (!ready.gate || !ready.create_fn) throw Object.assign(new Error(`0279 is not applied on this database: ${JSON.stringify(ready)}`), { refused: true });
 
   // ── fixture: M (MoO and up, active), G (an active GM with an active shop), Y (an active hourly person) ──
@@ -136,7 +145,7 @@ try {
     const change = await race(a, sql, params);
     check(change.ok, `2 (${label}): A ${label} G inside a held transaction (${change.ok ? "ok" : change.error})`);
     await begin(b);
-    const pB = race(b, CREATE, [f.g, fixture.name, DUMMY_HASH, [f.shop]]);
+    const pB = race(b, CREATE, [f.g, fixture.name, null, DUMMY_HASH, [f.shop]]);
     const waits = await blockedOn(pidB);
     check(waits.length > 0, `2 (${label}): G's admin_user_create WAITS on G's row (waiting on: ${waits.join(",") || "nothing"})`);
     await a.query("commit");
@@ -148,6 +157,37 @@ try {
     // restore G through the same writers
     if (label === "demoted") await w.query("select public.admin_user_set_role($1::uuid, $2::uuid, $3) as r", [f.m, f.g, fixture.gRole]);
     else await w.query("select public.admin_user_set_active($1::uuid, $2::uuid, $3) as r", [f.m, f.g, fixture.gActive]);
+  }
+
+  // ── 3. Add user vs a rehire setting flip (every identity candidate locked, the setting read under the lock) ──
+  {
+    let phone = null;
+    for (let i = 0; i < 20 && !phone; i++) {
+      const p = `202${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}`;
+      const taken = await one(w, "select count(*)::int as n from public.users where public.user_admin_phone_key(phone) = $1", [p]);
+      if (taken.n === 0) phone = p;
+    }
+    if (!phone) throw new Error("no free fixture phone after 20 tries");
+    const pName = `SIM lock check P ${Date.now()}`;
+    const madeP = await one(w, CREATE, [f.m, pName, phone, DUMMY_HASH, [f.shop]]).catch((e) => { throw Object.assign(new Error(`check 3 fixture: M could not create P at G's shop (${e.message})`), { refused: true }); });
+    fixture.p = madeP.r.id;
+    const fields = { separationType: "other", lastDayWorked: new Date().toISOString().slice(0, 10), reason: "SIM lock check fixture", rehire: "yes" };
+    const sep = await one(w, EMPLOYMENT, [f.m, fixture.p, null, "separated", JSON.stringify(fields)]);
+    await begin(a);
+    const flip = await race(a, EMPLOYMENT, [f.m, fixture.p, sep.r.id, "correction",
+      JSON.stringify({ correctsId: sep.r.id, ...fields, rehire: "no", rehireNote: "SIM lock check: not eligible" })]);
+    check(flip.ok, `3: A flips P's rehire setting to not eligible inside a held transaction (${flip.ok ? "ok" : flip.error})`);
+    await begin(b);
+    const name3 = `${fixture.name} (3)`;
+    const pB = race(b, CREATE, [f.g, name3, phone, DUMMY_HASH, [f.shop]]);
+    const waits = await blockedOn(pidB);
+    check(waits.length > 0, `3: G's unconfirmed create sharing P's phone WAITS on P's row (waiting on: ${waits.join(",") || "nothing"})`);
+    await a.query("commit");
+    const rB = await pB;
+    if (rB.ok && rB.value?.r?.id) fixture.createdIds.push(rB.value.r.id);
+    check(!rB.ok && /rehire_match/.test(rB.error), `3: once the flip commits, the unconfirmed create is refused rehire_match (${rB.ok ? `it CREATED ${JSON.stringify(rB.value)}` : rB.error})`);
+    await b.query(rB.ok ? "commit" : "rollback");
+    check((await w.query("select id from public.users where name = $1", [name3])).rows.length === 0, "3: nothing was inserted");
   }
 } catch (e) {
   if (e.refused) { refused = true; console.error(e.message); }
@@ -169,8 +209,9 @@ try {
     await w.query("select public.admin_user_set_active($1::uuid, $2::uuid, false) as r", [fixture.m, id]).catch((e) => console.error(`FAIL retiring ${id}: ${e.message}`));
   }
   console.log(`fixture: M ${fixture.m}, G ${fixture.g} (sessions revoked by the writers), shop ${fixture.shop}; unexpected users created (deactivated): ${JSON.stringify(fixture.createdIds)}`);
+  if (fixture.p) console.log(`fixture: P ${fixture.p} stays on the sim, separated (inactive, not eligible for rehire)`);
   await a.end(); await b.end(); await w.end();
 }
 if (failures > 0) { console.error(`\n${failures} check(s) FAILED`); process.exitCode = 1; }
 else if (refused) process.exitCode = 2;
-else console.log("\nPASS 0279 locks: the gate never deadlocks ((A,B) ‖ (B,A) queue), and Add user is refused once its actor is demoted or deactivated");
+else console.log("\nPASS 0279 locks: the gate never deadlocks ((A,B) ‖ (B,A) queue); Add user is refused once its actor is demoted or deactivated, and once a matched person's rehire setting flips");

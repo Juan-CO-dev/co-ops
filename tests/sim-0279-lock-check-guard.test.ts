@@ -77,6 +77,22 @@ describe("sim-0279-lock-check: what it proves (static pins; the run is CC's, on 
     expect(source).toContain("admin_user_set_active($1::uuid, $2::uuid, false)");
     expect(source).toContain("nothing was inserted");
   });
+  it("Astra BC-042/030: the script calls admin_user_create with EXACTLY the migration's arguments (names and types)", () => {
+    const mig = readFileSync("supabase/migrations/0279_user_employment_events.sql", "utf8");
+    const head = mig.slice(mig.indexOf("create function public.admin_user_create("), mig.indexOf(")\nreturns jsonb", mig.indexOf("create function public.admin_user_create(")));
+    const params = head.slice(head.indexOf("(") + 1).split(",").map((p) => p.trim().split(/\s+/));
+    const names = params.map((p) => p[0]);
+    const types = params.map((p) => p[1]);
+    const call = source.slice(source.indexOf("select public.admin_user_create("), source.indexOf(") as r`;", source.indexOf("select public.admin_user_create(")));
+    expect([...call.matchAll(/(p_[a-z_]+) =>/g)].map((m) => m[1])).toEqual(names);
+    expect(source).toContain(`to_regprocedure('public.admin_user_create(${types.join(",")})')`);
+    expect(names).toHaveLength(12);
+  });
+  it("the rehire setting flip: P's correction held, the unconfirmed create waits, then is refused rehire_match", () => {
+    expect(source).toContain('"correction"');
+    expect(source).toContain("rehire: \"no\"");
+    expect(source).toContain("/rehire_match/.test(rB.error)");
+  });
   it("never deletes; restores the actor and prints the fixture", () => {
     expect(source).not.toMatch(/delete\s+from/i);
     expect(source).not.toMatch(/truncate/i);
