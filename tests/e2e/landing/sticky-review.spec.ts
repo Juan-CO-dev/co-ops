@@ -87,7 +87,9 @@ for(const viewport of [{width:375,height:667},{width:375,height:812},{width:1440
     expect.soft(new Set(samples.map(sample=>sample.hint)).size).toBe(1);
   }
 });
-test('hiding a focused rail returns focus to the visible section heading and visible rail passes axe',async({page})=>{
+// The rail's toggle exists once consent is answered (an open notice keeps the rail compact).
+test('hiding a focused rail returns focus to the visible section heading and visible rail passes axe',async({page,context,baseURL})=>{
+  await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
   await page.goto('/');await reveal(page);
   const bar=page.locator('[data-sticky-order]');
 
@@ -153,7 +155,8 @@ test('scroll does not measure or query inline order links',async({page})=>{
 });
 
 
-test('inline links pass beneath the rail without hiding it or evacuating focus',async({page})=>{
+test('inline links pass beneath the rail without hiding it or evacuating focus',async({page,context,baseURL})=>{
+  await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
   await page.goto('/');await reveal(page);
   const rail=page.locator('[data-sticky-order]');
   const target=await page.evaluate(()=>{

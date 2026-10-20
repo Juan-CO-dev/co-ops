@@ -16,9 +16,9 @@ for(const language of ['en','es']) for(const height of [667,812]) test(`static A
   expect(boxes.dock.top).toBeGreaterThanOrEqual(height-234);
   expect(boxes.dock.top-boxes.actions.bottom).toBeGreaterThanOrEqual(41);
   expect(boxes.overflow).toBe(false);
-  // Catering remains above the fold in the header; both shop links stay in hero.
+  // Catering remains above the fold in the header; both shop links (+ v4's "find your shop") stay in hero.
   const links=page.locator('[data-hero-actions] a, .landing-v2-header .landing-v2-catering-link');
-  await expect(links).toHaveCount(3);
+  await expect(links).toHaveCount(4);
   for(const link of await links.all()) {
     const b=(await link.boundingBox())!;
     expect(b.height).toBeGreaterThanOrEqual(44);

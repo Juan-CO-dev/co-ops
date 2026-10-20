@@ -28,7 +28,8 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
     <button ref={trigger} type="button" onClick={show} aria-haspopup="dialog" className={className}>{triggerLabel}</button>
     <dialog ref={dialog} className="landing-v3-sheet" aria-labelledby={titleId} onClose={()=>{setOpen(false);trigger.current?.focus();}} onClick={event=>{if(event.target===dialog.current)dialog.current?.close();}}>
       <div>
-        <h3 id={titleId}>{title}</h3>
+        {/* The sheet is a modal: its own top-level heading, not a sub-heading of the card behind it. */}
+        <h2 id={titleId}>{title}</h2>
         {open&&spin&&<div className="landing-v4-sheet-spin"><SpinCanvas frames={spin.frames} width={spin.width} height={spin.height} label={spin.alt} stillLabel={spin.alt} valueText={()=>''} auto decorative/></div>}
         <ul>{shops.map(shop=><li key={shop.key}>{link(shop)}</li>)}</ul>
         <button type="button" onClick={()=>dialog.current?.close()} className="landing-v3-sheet-close">{closeLabel}</button>

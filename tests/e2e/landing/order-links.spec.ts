@@ -4,6 +4,8 @@ import { landingTenantConfig } from "../../../config/tenant/landing";
 
 test("all direct and catering destinations match approved tenant config",async ({page})=>{
   await page.goto("/");
+  // The Field Guide's order action mounts once its figure hydrates.
+  await expect(page.locator('[data-landing-placement="guide"]').first()).toBeAttached();
   expect(await page.locator("[data-landing-placement]").evaluateAll(links=>[...new Set(links.map(link=>link.getAttribute("data-landing-placement")))].sort())).toEqual([...LANDING_PLACEMENTS].sort());
   for (const store of landingTenantConfig.stores) {
     const links = page.getByRole("link",{name:`Order ${store.orderLabel}`,exact:true});

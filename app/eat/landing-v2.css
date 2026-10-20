@@ -178,7 +178,7 @@
 .landing-v2 .landing-v3-cursor { position: absolute; top: -36px; left: 50%; z-index: 1; width: auto; height: 34px; transform: translateX(-50%); pointer-events: none; animation: landing-v3-hop .36s steps(3) both; }
 .landing-v2 .landing-v3-sheet { margin: auto auto 0; width: 100%; max-width: 480px; max-height: 90svh; padding: 20px 22px calc(20px + var(--landing-safe-bottom)); border: 3px solid #171712; background: #fff9e4; color: #171712; }
 .landing-v2 .landing-v3-sheet::backdrop { background: rgb(23 23 18 / .55); }
-.landing-v2 .landing-v3-sheet h3 { margin: 0; font-size: 1.5rem; font-weight: 950; letter-spacing: -.03em; }
+.landing-v2 .landing-v3-sheet h2 { margin: 0; font-size: 1.5rem; font-weight: 950; letter-spacing: -.03em; }
 .landing-v2 .landing-v3-sheet ul { display: grid; gap: 14px; margin: 16px 0; padding: 0; list-style: none; }
 .landing-v2 .landing-v3-sheet .landing-v2-order { min-height: 52px; font-size: 1rem; }
 .landing-v2 .landing-v3-sheet p { margin: 6px 0 0; font-size: .875rem; }
@@ -275,7 +275,7 @@
 .landing-v2[data-calm="true"] .landing-v3-map-canvas { transition: none; }
 
 /* ── v4 "convert": street + today's closing on order buttons, slimmer bottom chrome ── */
-.landing-v2 .landing-v4-order-two { flex-direction: column; gap: 1px; min-height: 52px; padding: 6px; line-height: 1.15; }
+.landing-v2 .landing-v4-order-two { flex-direction: column; gap: 0; min-height: 48px; padding: 4px; line-height: 1.15; }
 .landing-v2 .landing-v4-order-detail { font-size: .75rem; font-weight: 700; }
 .landing-v2 .landing-v4-find-shop { display: inline-flex; align-items: center; min-height: 44px; color: #000; font-size: .8125rem; font-weight: 700; text-decoration: underline; }
 @media (min-width: 768px) {
@@ -312,3 +312,9 @@
 /* Fighter card: name, then the order action, then the full ingredients. */
 .landing-v2 .landing-v3-plate .landing-v3-direct-orders { margin-top: 12px; }
 .landing-v2 .landing-v3-plate [data-stage-ingredients] { margin-top: 14px; }
+/* Short phones (iPhone SE class): the hero keeps the photo at ≥40% of the screen with the v4
+   street lines and the find-your-shop link by tightening the headline and copy padding only. */
+@media (max-width: 767px) and (max-height: 700px) {
+  .landing-v2 .landing-v2-hero-copy { padding-top: 4px; padding-bottom: 4px; gap: 2px; }
+  .landing-v2 .landing-v2-hero-copy h1 { font-size: 3.5rem; }
+}
