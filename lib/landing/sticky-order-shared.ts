@@ -7,12 +7,22 @@
  * card, crunch story, Field Guide) swap from native links to a button, so they register
  * themselves through `registerOrderControl` instead. */
 export const STATIC_ORDER_CONTROL_SELECTOR = [
+  '.landing-v2-header [data-landing-placement]',      // the header's "Catering" order link (outbound catering order)
   '[data-hero-actions] [data-landing-placement]',     // the hero's two shop buttons (not "Find your shop")
   '[data-guide-cta]',                                 // the Field Guide's slot, tight around its action (counts once revealed)
   '#shops [data-landing-placement]',                  // each shop card's order button (+ Dupont's Uber Eats)
   '.landing-v4-catering-act [data-landing-placement]',// catering's order action (not the walker)
   'footer [data-landing-placement]',                  // the footer's shop buttons and delivery links
 ].join(', ');
+// Deliberately NOT order controls: "Ask us about catering" (an inquiry, not an order), "Find your
+// shop", directions, phone, map attribution, language and privacy links; the privacy page renders
+// no order link and no pill. Open sheets are dialogs over the page (their links are not counted).
+
+/** The sheet triggers mark their current element (native links, then the button) with this. */
+export const REGISTERED_ORDER_CONTROL_SELECTOR = '[data-order-control]';
+/** ONE definition of "an on-page way to order" the pill yields to: the static controls plus the
+ * registered sheet triggers. The browser tests read this same constant, so they cannot drift. */
+export const ORDER_CONTROL_SELECTOR = `${STATIC_ORDER_CONTROL_SELECTOR}, ${REGISTERED_ORDER_CONTROL_SELECTOR}`;
 
 /** A reserved-but-unrevealed slot is not an order control yet. */
 export function blocksPill(element: { getAttribute(name: string): string | null }): boolean {

@@ -1,6 +1,6 @@
 import {describe,expect,it,vi} from 'vitest';
 import {readFileSync} from 'node:fs';
-import {blocksPill,createPillPolicy,PILL_COMPACT_MAX_HEIGHT,PILL_SHOW_DWELL_MS,registerOrderControl,STATIC_ORDER_CONTROL_SELECTOR,stickyPillVisible,subscribeOrderControls,USABLE_RATIO,usableRatio,type PillFacts} from '@/lib/landing/sticky-order-shared';
+import {blocksPill,createPillPolicy,PILL_COMPACT_MAX_HEIGHT,PILL_SHOW_DWELL_MS,registerOrderControl,STATIC_ORDER_CONTROL_SELECTOR,ORDER_CONTROL_SELECTOR,REGISTERED_ORDER_CONTROL_SELECTOR,stickyPillVisible,subscribeOrderControls,USABLE_RATIO,usableRatio,type PillFacts} from '@/lib/landing/sticky-order-shared';
 
 const clear:PillFacts={orderInView:false,consentShowing:false,pageHidden:false,sheetOpen:false};
 describe('v4.2 Order pill: shows only where no other order control is usable on screen',()=>{
@@ -15,7 +15,7 @@ describe('v4.2 Order pill: shows only where no other order control is usable on 
   });
   it('watches the order controls themselves, never their cards or sections',()=>{
     const selectors=STATIC_ORDER_CONTROL_SELECTOR.split(', ');
-    for(const selector of ['[data-hero-actions] [data-landing-placement]','[data-guide-cta]','#shops [data-landing-placement]','.landing-v4-catering-act [data-landing-placement]','footer [data-landing-placement]'])
+    for(const selector of ['.landing-v2-header [data-landing-placement]','[data-hero-actions] [data-landing-placement]','[data-guide-cta]','#shops [data-landing-placement]','.landing-v4-catering-act [data-landing-placement]','footer [data-landing-placement]'])
       expect(selectors).toContain(selector);
     // v4.2's whole-container targets are gone: a card heading or ingredients on screen is not a way to order.
     for(const container of ['[data-hero-actions]','.landing-v3-plate','.landing-v4-crave-cta','.landing-v4-catering-act','footer'])
@@ -70,4 +70,15 @@ describe('show dwell: hide at once, appear only after the screen stays clear',()
     expect(policy.update({...clear,sheetOpen:true,orderInView:true},0).visible).toBe(true);
     expect(policy.update(clear,1).visible).toBe(true);
   });
+});
+
+it('one definition of an on-page order control serves the pill and the browser tests',()=>{
+  expect(ORDER_CONTROL_SELECTOR).toBe(`${STATIC_ORDER_CONTROL_SELECTOR}, ${REGISTERED_ORDER_CONTROL_SELECTOR}`);
+  expect(REGISTERED_ORDER_CONTROL_SELECTOR).toBe('[data-order-control]');
+  const helper=readFileSync('tests/e2e/landing/helpers/sticky.ts','utf8');
+  expect(helper).toContain('ORDER_CONTROLS=ORDER_CONTROL_SELECTOR');
+  expect(helper).not.toMatch(/ORDER_CONTROLS\s*=\s*['"`]/);
+  // Every outbound order/catering-order link the page renders sits inside a listed scope.
+  const header=readFileSync('app/eat/page.tsx','utf8');
+  expect(header).toMatch(/<header className="landing-v2-header">.*<CateringLink/);
 });

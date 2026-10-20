@@ -19,7 +19,7 @@ async function settleLayout(page:Page){
 // is not a way to order. Includes 200% text and landscape phones.
 const sweeps=[
   {width:375,height:667,text:1},{width:390,height:844,text:1},{width:390,height:844,text:2},{width:1440,height:900,text:1},
-  {width:844,height:390,text:1},{width:667,height:375,text:1},
+  {width:844,height:390,text:1},{width:667,height:375,text:1},{width:844,height:390,text:2},
 ] as const;
 for(const sweep of sweeps)test(`a scroll sweep always offers exactly one way to order ${sweep.width}x${sweep.height}${sweep.text>1?' at 200% text':''}`,async({page,context,baseURL})=>{
   test.setTimeout(180000);
@@ -40,6 +40,36 @@ for(const sweep of sweeps)test(`a scroll sweep always offers exactly one way to 
   expect(checked).toBeGreaterThan(5);
   // It does appear somewhere on the way down (between order controls).
   expect(shown).toBeGreaterThan(0);
+});
+
+// Astra (v4.2, BC-051/060): the header's "Catering" link is an outbound order control. In a short
+// window or at 200% text the hero's shop buttons sit below the fold while it is on screen; the pill
+// must still yield to it after its dwell ("never both").
+// (At 100% text a landscape phone shows the hero's shop buttons on the same first screen as the
+// header, so this header-only state only exists with enlarged text; the 100% sweeps cover the rest.)
+for(const state of [{width:844,height:390,text:2},{width:667,height:375,text:2},{width:390,height:844,text:2}] as const)test(`the header Catering link alone holds the pill back ${state.width}x${state.height}${state.text>1?' at 200% text':''}`,async({page,context,baseURL})=>{
+  await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
+  await page.setViewportSize({width:state.width,height:state.height});await page.goto('/');await settleLayout(page);
+  if(state.text>1)await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});
+  // Park where the header link is fully on screen and every hero shop button is mostly off it.
+  const parked=await page.evaluate(()=>{
+    const header=document.querySelector('.landing-v2-header [data-landing-placement]')!.getBoundingClientRect();
+    const firstHero=Math.min(...[...document.querySelectorAll('[data-hero-actions] [data-landing-placement]')].map(el=>el.getBoundingClientRect().top+scrollY));
+    const y=Math.max(0,Math.min(header.top+scrollY,firstHero-innerHeight+20));
+    scrollTo(0,y);return {y,headerFits:header.bottom-header.top<=innerHeight};
+  });
+  expect(parked.headerFits).toBe(true);
+  await page.waitForTimeout(900);
+  const facts=await page.evaluate(()=>{
+    const frac=(el:Element)=>{const b=el.getBoundingClientRect();const w=Math.max(0,Math.min(b.right,innerWidth)-Math.max(b.left,0)),h=Math.max(0,Math.min(b.bottom,innerHeight)-Math.max(b.top,0));return b.width&&b.height?w*h/(b.width*b.height):0;};
+    return {header:frac(document.querySelector('.landing-v2-header [data-landing-placement]')!),hero:Math.max(...[...document.querySelectorAll('[data-hero-actions] [data-landing-placement]')].map(frac))};
+  });
+  // The precondition this test exists for: the header link usable, the hero shop buttons not.
+  expect(facts.header).toBeGreaterThanOrEqual(.55);
+  expect(facts.hero).toBeLessThan(.5);
+  const pill=await pillState(page);
+  expect(pill.usable).toBe(true);
+  expect(pill.visible).toBe(false);
 });
 
 test('visible pill and its open sheet pass axe',async({page,context,baseURL})=>{
