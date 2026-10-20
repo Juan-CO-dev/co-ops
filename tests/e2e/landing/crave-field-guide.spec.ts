@@ -255,4 +255,9 @@ test('leaving and returning keeps the pinned crunch story scroll-linked',async({
   await page.evaluate(y=>scrollTo(0,y),top+travel);
   await expect.poll(offset).toBeLessThan(start-100);
   await expect(stage.locator('[data-texture-photo]').nth(1).locator('img')).toHaveCount(1);
+  // v4: the runway is 140svh (was 175svh) and the story ends on its order action, right after the stage.
+  const runway=await stage.evaluate(el=>el.getBoundingClientRect().height/innerHeight);
+  expect(runway).toBeGreaterThan(1.35);expect(runway).toBeLessThan(1.45);
+  const after=await page.evaluate(()=>({stage:document.querySelector('[data-crave-stage]')!.getBoundingClientRect().bottom,cta:document.querySelector('.landing-v4-crave-cta')!.getBoundingClientRect().top}));
+  expect(after.cta).toBeGreaterThanOrEqual(after.stage-1);
 });
