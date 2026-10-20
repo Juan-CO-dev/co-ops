@@ -331,3 +331,9 @@
 }
 /* pointer-events is inherited: the pill's (top-layer) sheet takes taps again. */
 .landing-v2 .landing-v2-sticky dialog { pointer-events: auto; }
+/* Short / landscape viewports (PILL_COMPACT_MAX_HEIGHT): the same pill, smaller and tucked in —
+   still a 44 px target, same in-view and consent rules. */
+@media (max-height: 499px) {
+  .landing-v2 .landing-v2-sticky { right: 8px; bottom: calc(8px + var(--landing-safe-bottom)); }
+  .landing-v2 .landing-v42-pill { min-height: 44px; padding: 0 14px; font-size: .875rem; border-width: 2px; box-shadow: 2px 2px 0 #171712; }
+}

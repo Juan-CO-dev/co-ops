@@ -1,25 +1,58 @@
-import {describe,expect,it} from 'vitest';
-import {blocksPill,createPillPolicy,IN_CONTENT_ORDER_SELECTOR,PILL_MIN_VISUAL_HEIGHT,PILL_SHOW_DWELL_MS,stickyPillVisible,type PillFacts} from '@/lib/landing/sticky-order-shared';
+import {describe,expect,it,vi} from 'vitest';
+import {readFileSync} from 'node:fs';
+import {blocksPill,createPillPolicy,PILL_COMPACT_MAX_HEIGHT,PILL_SHOW_DWELL_MS,registerOrderControl,STATIC_ORDER_CONTROL_SELECTOR,stickyPillVisible,subscribeOrderControls,USABLE_RATIO,usableRatio,type PillFacts} from '@/lib/landing/sticky-order-shared';
 
-const clear:PillFacts={orderInView:false,consentShowing:false,pageHidden:false,visualHeight:844,sheetOpen:false};
-describe('v4.2 Order pill: shows only where no other order control is on screen',()=>{
-  it('is hidden by any in-content order surface, the consent notice, a hidden page or a short viewport',()=>{
+const clear:PillFacts={orderInView:false,consentShowing:false,pageHidden:false,sheetOpen:false};
+describe('v4.2 Order pill: shows only where no other order control is usable on screen',()=>{
+  it('is hidden by a usable order control, the consent notice or a hidden page — never by viewport height',()=>{
     expect(stickyPillVisible(clear)).toBe(true);
-    for(const patch of [{orderInView:true},{consentShowing:true},{pageHidden:true},{visualHeight:PILL_MIN_VISUAL_HEIGHT-1}])
+    for(const patch of [{orderInView:true},{consentShowing:true},{pageHidden:true}])
       expect(stickyPillVisible({...clear,...patch}),JSON.stringify(patch)).toBe(false);
+    expect(Object.keys(clear)).not.toContain('visualHeight');
   });
   it('never pulls its trigger out from under its own open sheet',()=>{
     expect(stickyPillVisible({...clear,orderInView:true,consentShowing:true,sheetOpen:true})).toBe(true);
   });
-  it('watches the hero, every in-content order surface and the footer',()=>{
-    for(const selector of ['[data-hero-actions]','.landing-v3-plate','.landing-v4-crave-cta','[data-guide-cta]','.landing-v4-shop-order','.landing-v4-catering-act','footer'])
-      expect(IN_CONTENT_ORDER_SELECTOR.split(', ')).toContain(selector);
+  it('watches the order controls themselves, never their cards or sections',()=>{
+    const selectors=STATIC_ORDER_CONTROL_SELECTOR.split(', ');
+    for(const selector of ['[data-hero-actions] [data-landing-placement]','[data-guide-cta]','#shops [data-landing-placement]','.landing-v4-catering-act [data-landing-placement]','footer [data-landing-placement]'])
+      expect(selectors).toContain(selector);
+    // v4.2's whole-container targets are gone: a card heading or ingredients on screen is not a way to order.
+    for(const container of ['[data-hero-actions]','.landing-v3-plate','.landing-v4-crave-cta','.landing-v4-catering-act','footer'])
+      expect(selectors).not.toContain(container);
+    // The sheet triggers register their current element (links, then the button).
+    const sheet=readFileSync('components/landing/OrderSheet.tsx','utf8');
+    expect(sheet).toContain('registerOrderControl(element)');
+    expect(sheet.match(/data-order-control/g)).toHaveLength(2);
+  });
+  it('a control counts once half of it is on screen',()=>{
+    expect(USABLE_RATIO).toBe(.5);
+    expect(usableRatio(.49)).toBe(false);
+    expect(usableRatio(.5)).toBe(true);
   });
   it('a reserved Field Guide slot blocks only once its action is revealed',()=>{
     const el=(ready:string|null)=>({getAttribute:(name:string)=>name==='data-ready'?ready:null});
     expect(blocksPill(el('false'))).toBe(false);
     expect(blocksPill(el('true'))).toBe(true);
     expect(blocksPill(el(null))).toBe(true);
+  });
+  it('short and landscape viewports keep a compact pill (CSS at the same boundary)',()=>{
+    const css=readFileSync('app/eat/landing-v2.css','utf8');
+    expect(css).toContain(`@media (max-height: ${PILL_COMPACT_MAX_HEIGHT}px) {\n  .landing-v2 .landing-v2-sticky { right: 8px;`);
+    expect(css).toMatch(/@media \(max-height: 499px\) \{[^}]*\}\s*\.landing-v2 \.landing-v42-pill \{ min-height: 44px;/);
+  });
+});
+describe('order-control registry',()=>{
+  it('replays current controls to a new subscriber and reports swaps',()=>{
+    const a={id:'a'} as unknown as Element,b={id:'b'} as unknown as Element;
+    const offA=registerOrderControl(a);
+    const listener=vi.fn();
+    const unsubscribe=subscribeOrderControls(listener);
+    expect(listener).toHaveBeenCalledWith(a,true);
+    offA();expect(listener).toHaveBeenCalledWith(a,false);
+    const offB=registerOrderControl(b);expect(listener).toHaveBeenCalledWith(b,true);
+    unsubscribe();offB();
+    expect(listener).not.toHaveBeenCalledWith(b,false);
   });
 });
 describe('show dwell: hide at once, appear only after the screen stays clear',()=>{

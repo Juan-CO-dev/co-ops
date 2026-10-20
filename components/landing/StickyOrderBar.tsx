@@ -1,6 +1,6 @@
 "use client";
 import {useEffect,useRef,useState} from 'react';
-import {blocksPill,createPillPolicy,IN_CONTENT_ORDER_SELECTOR} from '@/lib/landing/sticky-order-shared';
+import {blocksPill,createPillPolicy,STATIC_ORDER_CONTROL_SELECTOR,subscribeOrderControls,USABLE_RATIO,usableRatio} from '@/lib/landing/sticky-order-shared';
 import {OrderSheet,type SheetShop} from './OrderSheet';
 interface Props {
   shops: SheetShop[];
@@ -8,8 +8,9 @@ interface Props {
 }
 /** v4.2: one slim "Order" pill (bottom corner) that opens the shop chooser — both shops with
  * street + today's closing — whose links are the ordinary order links (placement "sticky").
- * It shows only when no other order control is on screen and the consent notice is not
- * showing. Observers and attribute changes only; nothing is read on scroll. */
+ * It shows only when no other order control is usable on screen (each control observed on its
+ * own, never its card) and the consent notice is not showing. Short / landscape viewports keep a
+ * compact pill. Observers, attribute changes and registrations only; nothing is read on scroll. */
 export function StickyOrderBar({shops,labels}:Props) {
   const ref=useRef<HTMLDivElement>(null);
   const [visible,setVisible]=useState(false);
@@ -22,8 +23,8 @@ export function StickyOrderBar({shops,labels}:Props) {
     const root=rail?.closest<HTMLElement>('.landing-v2');
     if(!rail||!root||!shops.length)return;
     const notice=root.querySelector<HTMLElement>('.landing-v2-consent');
-    // The page's order-surface inventory is static: collected once, then only observed.
-    const targets=[...root.querySelectorAll<HTMLElement>(IN_CONTENT_ORDER_SELECTOR)].filter(el=>!rail.contains(el));
+    // Static controls are collected once; the sheet triggers register (and re-register on swap).
+    const targets=[...root.querySelectorAll<HTMLElement>(STATIC_ORDER_CONTROL_SELECTOR)].filter(el=>!rail.contains(el));
     const inView=new Set<Element>();
     let seen=false,timer:ReturnType<typeof setTimeout>|undefined;
     const policy=createPillPolicy();
@@ -34,7 +35,6 @@ export function StickyOrderBar({shops,labels}:Props) {
         orderInView:[...inView].some(blocksPill),
         consentShowing:!!notice&&!notice.hidden,
         pageHidden:document.hidden,
-        visualHeight:window.visualViewport?.height??innerHeight,
         sheetOpen:sheetOpen.current,
       },performance.now());
       if(wait!==null)timer=setTimeout(update,wait+1);
@@ -44,10 +44,15 @@ export function StickyOrderBar({shops,labels}:Props) {
     recompute.current=update;
     const observer=new IntersectionObserver(entries=>{
       seen=true;
-      for(const entry of entries){if(entry.isIntersecting)inView.add(entry.target);else inView.delete(entry.target);}
+      for(const entry of entries){if(entry.isIntersecting&&usableRatio(entry.intersectionRatio))inView.add(entry.target);else inView.delete(entry.target);}
       update();
-    });
+    },{threshold:[0,USABLE_RATIO,1]});
     for(const target of targets)observer.observe(target);
+    const unsubscribe=subscribeOrderControls((element,added)=>{
+      if(rail.contains(element))return;
+      if(added){observer.observe(element);return;}
+      observer.unobserve(element);if(inView.delete(element))update();
+    });
     // Consent showing/hidden and the Field Guide slot's reveal change attributes, not geometry.
     const mutations=new MutationObserver(update);
     if(notice)mutations.observe(notice,{attributes:true,attributeFilter:['hidden','data-expanded']});
@@ -55,9 +60,9 @@ export function StickyOrderBar({shops,labels}:Props) {
     // The sheet's dialog closing (close does not bubble; capture it on the pill).
     const closed=()=>{sheetOpen.current=false;update();};
     rail.addEventListener('close',closed,true);
-    document.addEventListener('visibilitychange',update);window.visualViewport?.addEventListener('resize',update);window.addEventListener('resize',update);
-    return ()=>{clearTimeout(timer);observer.disconnect();mutations.disconnect();rail.removeEventListener('close',closed,true);recompute.current=()=>{};
-      document.removeEventListener('visibilitychange',update);window.visualViewport?.removeEventListener('resize',update);window.removeEventListener('resize',update);};
+    document.addEventListener('visibilitychange',update);
+    return ()=>{clearTimeout(timer);unsubscribe();observer.disconnect();mutations.disconnect();rail.removeEventListener('close',closed,true);recompute.current=()=>{};
+      document.removeEventListener('visibilitychange',update);};
   },[shops.length]);
   // Only the pill itself hides (CSS visibility): its sheet is a sibling and never inherits it.
   return <div ref={ref} data-sticky-order data-visible={visible} className="landing-v2-sticky">
