@@ -27,13 +27,17 @@
  *      rehire OK) shares the new person's phone; A corrects P's setting to "not eligible" inside a held transaction (the
  *      employment writer's gate holds P's row FOR UPDATE); G's UNCONFIRMED create with that phone WAITS on P's row (every
  *      identity candidate is locked, whatever its setting); A commits; the create is refused `rehire_match`, nothing inserted.
+ *   4. ADD USER vs A PENDING PHONE EDIT (Astra BC-007/004 r3). A fixture person P4 (created for the run, separated "not
+ *      eligible") gets its phone edited to phone X inside A's held transaction (admin_user_update_profile takes the
+ *      IDENTITY lock first); G's create with phone X WAITS on the identity lock (an advisory lock); A commits; the create is
+ *      refused `rehire_match` and nothing is inserted.
  *
  * THE FIXTURE: nothing of check 1 persists (every round rolls back). Check 2 commits the demotion / deactivation of G and
  * then restores G with `admin_user_set_role` / `admin_user_set_active` (append-only audit is the lib's; these direct calls
  * write no audit row). G's live sessions on the sim are revoked by those writers — the sim is disposable (CC's chunk G
  * ruling 3). The would-be new user is named `SIM lock check <epoch ms>`; if one was created (a FAILURE), it is deactivated
  * and its id printed. Check 3's P (`SIM lock check P <epoch ms>`) stays on the sim separated (inactive, "not eligible") and is
- * printed by id. Exit 0 = every check passed; 1 = a check or the restore failed; 2 = refused / not runnable.
+ * printed by id; so does check 4's P4 (`SIM lock check P4 <epoch ms>`). Exit 0 = every check passed; 1 = a check or the restore failed; 2 = refused / not runnable.
  */
 import { simDatabaseTarget } from "./sim-0270-0271-lock-check-lib.mjs";
 
@@ -81,7 +85,7 @@ const CREATE = `select public.admin_user_create(p_actor => $1::uuid, p_name => $
 const EMPLOYMENT = "select public.record_user_employment_event(p_actor => $1::uuid, p_user => $2::uuid, p_expected => $3::uuid, p_kind => $4, p_fields => $5::jsonb) as r";
 const DUMMY_HASH = `$2b$10$${"x".repeat(53)}`;
 
-const fixture = { m: null, g: null, shop: null, gRole: null, gActive: null, createdIds: [], name: `SIM lock check ${Date.now()}`, p: null };
+const fixture = { m: null, g: null, shop: null, gRole: null, gActive: null, createdIds: [], name: `SIM lock check ${Date.now()}`, p: null, p4: null };
 await a.connect(); await b.connect(); await w.connect();
 const pidB = (await one(b, "select pg_backend_pid() as p")).p;
 try {
@@ -189,6 +193,39 @@ try {
     await b.query(rB.ok ? "commit" : "rollback");
     check((await w.query("select id from public.users where name = $1", [name3])).rows.length === 0, "3: nothing was inserted");
   }
+
+  // ── 4. Add user vs a pending phone edit (the identity lock: rank 1, first in both writers) ──
+  {
+    const freePhone = async () => {
+      for (let i = 0; i < 20; i++) {
+        const p = `202${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}`;
+        if ((await one(w, "select count(*)::int as n from public.users where public.user_admin_phone_key(phone) = $1", [p])).n === 0) return p;
+      }
+      throw new Error("no free fixture phone after 20 tries");
+    };
+    const oldPhone = await freePhone();
+    const newPhone = await freePhone();
+    const p4Name = `SIM lock check P4 ${Date.now()}`;
+    const madeP4 = await one(w, CREATE, [f.m, p4Name, oldPhone, DUMMY_HASH, [f.shop]]);
+    fixture.p4 = madeP4.r.id;
+    await one(w, EMPLOYMENT, [f.m, fixture.p4, null, "separated", JSON.stringify({ separationType: "other",
+      lastDayWorked: new Date().toISOString().slice(0, 10), reason: "SIM lock check fixture", rehire: "no", rehireNote: "SIM lock check: not eligible" })]);
+    await begin(a);
+    const edit = await race(a, "select public.admin_user_update_profile(p_actor => $1::uuid, p_user => $2::uuid, p_patch => $3::jsonb) as r",
+      [f.m, fixture.p4, JSON.stringify({ phone: newPhone })]);
+    check(edit.ok, `4: A edits P4's phone to X inside a held transaction (${edit.ok ? "ok" : edit.error})`);
+    await begin(b);
+    const name4 = `${fixture.name} (4)`;
+    const pB = race(b, CREATE, [f.g, name4, newPhone, DUMMY_HASH, [f.shop]]);
+    const waits = await blockedOn(pidB);
+    check(waits.includes("advisory"), `4: G's create with phone X WAITS on the IDENTITY lock (waiting on: ${waits.join(",") || "nothing"})`);
+    await a.query("commit");
+    const rB = await pB;
+    if (rB.ok && rB.value?.r?.id) fixture.createdIds.push(rB.value.r.id);
+    check(!rB.ok && /rehire_match/.test(rB.error), `4: once the edit commits, the create is refused rehire_match (${rB.ok ? `it CREATED ${JSON.stringify(rB.value)}` : rB.error})`);
+    await b.query(rB.ok ? "commit" : "rollback");
+    check((await w.query("select id from public.users where name = $1", [name4])).rows.length === 0, "4: nothing was inserted");
+  }
 } catch (e) {
   if (e.refused) { refused = true; console.error(e.message); }
   else { failures++; console.error(`FAIL the check could not complete: ${e.message}`); }
@@ -210,8 +247,9 @@ try {
   }
   console.log(`fixture: M ${fixture.m}, G ${fixture.g} (sessions revoked by the writers), shop ${fixture.shop}; unexpected users created (deactivated): ${JSON.stringify(fixture.createdIds)}`);
   if (fixture.p) console.log(`fixture: P ${fixture.p} stays on the sim, separated (inactive, not eligible for rehire)`);
+  if (fixture.p4) console.log(`fixture: P4 ${fixture.p4} stays on the sim, separated (inactive, not eligible for rehire), its phone edited by the run`);
   await a.end(); await b.end(); await w.end();
 }
 if (failures > 0) { console.error(`\n${failures} check(s) FAILED`); process.exitCode = 1; }
 else if (refused) process.exitCode = 2;
-else console.log("\nPASS 0279 locks: the gate never deadlocks ((A,B) ‖ (B,A) queue); Add user is refused once its actor is demoted or deactivated, and once a matched person's rehire setting flips");
+else console.log("\nPASS 0279 locks: the gate never deadlocks ((A,B) ‖ (B,A) queue); Add user is refused once its actor is demoted or deactivated, and once a matched person's rehire setting flips, and once a pending phone edit makes a match");

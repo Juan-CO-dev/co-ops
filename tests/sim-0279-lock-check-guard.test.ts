@@ -93,6 +93,12 @@ describe("sim-0279-lock-check: what it proves (static pins; the run is CC's, on 
     expect(source).toContain("rehire: \"no\"");
     expect(source).toContain("/rehire_match/.test(rB.error)");
   });
+  it("check 4 (Astra BC-007/004 r3): a pending phone edit holds the identity lock; the create waits on it, then is refused", () => {
+    expect(source).toContain("select public.admin_user_update_profile(p_actor => $1::uuid, p_user => $2::uuid, p_patch => $3::jsonb) as r");
+    expect(source).toContain('check(waits.includes("advisory"), `4: G\'s create with phone X WAITS on the IDENTITY lock');
+    expect(source).toContain("`4: once the edit commits, the create is refused rehire_match");
+    expect(source).toContain('"4: nothing was inserted"');
+  });
   it("never deletes; restores the actor and prints the fixture", () => {
     expect(source).not.toMatch(/delete\s+from/i);
     expect(source).not.toMatch(/truncate/i);
