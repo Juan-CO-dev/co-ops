@@ -495,3 +495,29 @@ test('every fighter photo is framed on its sub (focal point per item, both crops
     expect(stageY).toBeCloseTo(expected(focus,.5),0);
   }
 });
+
+// v4.2 (Juan): Auto-scroll is a small icon toggle in the strip's top margin, not its own row.
+for(const language of ['en','es'] as const)test(`auto-scroll is a compact named toggle that adds no row (${language})`, async ({page}) => {
+  await page.setViewportSize({width:390,height:844});
+  await page.goto(`/?lang=${language}`);
+  await page.locator('[data-lineup]').scrollIntoViewIfNeeded();
+  const auto=page.getByRole('button',{name:language==='en'?'Auto-scroll':'Avance automático'});
+  await expect(auto).toBeVisible();
+  await expect(auto).toHaveAttribute('aria-pressed',/true|false/);
+  const box=(await auto.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(44);expect(box.width).toBeGreaterThanOrEqual(44);
+  expect(box.width).toBeLessThanOrEqual(48); // visually small: no text label box
+  const geometry=await page.evaluate(()=>{
+    const stage=document.querySelector('.landing-v3-stage')!.getBoundingClientRect();
+    const bar=document.querySelector('.landing-v3-roster-bar')!.getBoundingClientRect();
+    const strip=document.querySelector('[data-lineup]')!.getBoundingClientRect();
+    const toggle=document.querySelector('.landing-v3-auto')!.getBoundingClientRect();
+    return {barHeight:bar.height,gap:strip.top-stage.bottom,toggleInsideStrip:toggle.top>=strip.top-1&&toggle.bottom<=strip.top+48};
+  });
+  expect(geometry.barHeight).toBe(0);
+  expect(geometry.gap).toBeLessThanOrEqual(1); // the strip starts right under the card
+  expect(geometry.toggleInsideStrip).toBe(true);
+  const pressed=await auto.getAttribute('aria-pressed');
+  await auto.click();
+  await expect(auto).toHaveAttribute('aria-pressed',pressed==='true'?'false':'true');
+});
