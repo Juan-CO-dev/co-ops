@@ -317,6 +317,6 @@
 /* Short phones (iPhone SE class): the hero keeps the photo at ≥40% of the screen with the v4
    street lines and the find-your-shop link by tightening the headline and copy padding only. */
 @media (max-width: 767px) and (max-height: 700px) {
-  .landing-v2 .landing-v2-hero-copy { padding-top: 4px; padding-bottom: 4px; gap: 2px; }
+  .landing-v2 .landing-v2-hero-copy { padding: 4px 22px; gap: 2px; }
   .landing-v2 .landing-v2-hero-copy h1 { font-size: 3.5rem; }
 }
