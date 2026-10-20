@@ -9,14 +9,16 @@ type AnchorId=(typeof fieldGuideAnchors)[number]['id'];
 interface Pickup {src:string;width:number;height:number}
 interface Props {labels:Record<AnchorId,string>;groupLabel:string;counter:string;crossAlt:string;caption:string;pickups:Record<AnchorId,Pickup>;
   /** The order action shown once all six are found (static modes: at once). Its box is reserved, so nothing shifts. */
-  cta?:ReactNode}
+  cta?:ReactNode;
+  /** The action's label: an invisible twin of the button holds its exact height from the server render on. */
+  ctaLabel?:string}
 
 const STEP_MS=1100;
 
 /** Words (each with its pixel pickup) sit above the cross-section. On arrival one leader
  * line at a time draws from a word to its ingredient, holds, fades, and the word is
  * "collected". Reduced motion / Save-Data show every line at once; without JS the words stay a list. */
-export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pickups,cta}:Props) {
+export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pickups,cta,ctaLabel}:Props) {
   const root=useRef<HTMLDivElement>(null),photo=useRef<HTMLDivElement>(null);
   const words=useRef<Partial<Record<AnchorId,HTMLLIElement|null>>>({});
   const [paths,setPaths]=useState<Partial<Record<AnchorId,{d:string;x:number;y:number}>>>({});
@@ -70,9 +72,14 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       <div ref={photo}><TexturePhoto kind="crossSection" alt={crossAlt}/></div>
       <figcaption>{caption}</figcaption>
     </figure>
-    {/* One constant box from the server render on: empty before hydration and until all six are
-        found, then the action. It never changes height (no layout shift). Without JS the page's noscript rule removes it. */}
-    {cta&&<div className="landing-v4-guide-cta" data-guide-cta data-ready={mode!=='list'&&found}>{mode!=='list'&&found?cta:null}</div>}
+    {/* One constant box from the server render on. An invisible, inert, disabled twin of the action
+        (same element, class and words) sits in the slot's only grid cell from the start, so the box is
+        the button's own height at any text size; at six-of-six the real action takes the same cell.
+        It never changes height (no layout shift). Without JS the page's noscript rule removes it. */}
+    {cta&&<div className="landing-v4-guide-cta" data-guide-cta data-ready={mode!=='list'&&found}>
+      <button type="button" disabled tabIndex={-1} aria-hidden="true" inert className="landing-v3-cta landing-v4-guide-twin" data-guide-twin>{ctaLabel}</button>
+      {mode!=='list'&&found?cta:null}
+    </div>}
     <svg aria-hidden="true" className="landing-v3-guide-lines">
       {fieldGuideAnchors.map((anchor,index)=>{
         const path=paths[anchor.id];if(!path||mode==='list')return null;

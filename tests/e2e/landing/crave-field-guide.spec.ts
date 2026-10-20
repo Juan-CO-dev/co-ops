@@ -281,7 +281,7 @@ test('finding all six Field Guide ingredients turns into the Crunchy Boi order a
   await expect(sheet.locator('a[data-landing-placement="guide"]')).toHaveCount(2);
 });
 
-for(const language of ['en','es'] as const)test(`the Field Guide action slot keeps one height from first paint to six-of-six (${language})`,async({page})=>{
+for(const text of ['100%','200%'] as const)for(const language of ['en','es'] as const)test(`the Field Guide action slot keeps one height from first paint to six-of-six (${language}; text ${text})`,async({page})=>{
   await page.setViewportSize({width:390,height:844});
   let releaseScripts!:()=>void;
   const scriptsReady=new Promise<void>(resolve=>{releaseScripts=resolve;});
@@ -291,12 +291,17 @@ for(const language of ['en','es'] as const)test(`the Field Guide action slot kee
     await page.goto(`/?lang=${language}`,{waitUntil:'commit'});
     const slot=page.locator('#field-guide [data-guide-cta]');
     await expect(slot).toBeAttached();
-    // Server render, before hydration: the box is already reserved (stylesheet applied).
-    await expect.poll(()=>slot.evaluate(el=>getComputedStyle(el).minHeight)).toBe('56px');
+    if(text==='200%')await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});
+    // Server render, before hydration: the action's invisible twin already holds the box (stylesheet applied).
+    const twin=slot.locator('[data-guide-twin]');
+    await expect(twin).toHaveCount(1);
+    await expect.poll(()=>twin.evaluate(el=>getComputedStyle(el).visibility)).toBe('hidden');
+    await expect(twin).toHaveAttribute('aria-hidden','true');
+    await expect(twin).toBeDisabled();
     await expect(slot).toHaveAttribute('data-ready','false');
     const height=()=>slot.evaluate(el=>el.getBoundingClientRect().height);
     const before=await height();
-    expect(before).toBeGreaterThanOrEqual(52);
+    expect(before).toBeGreaterThanOrEqual(text==='200%'?80:52);
     releaseScripts();
     const guide=page.locator('.landing-v3-guide');
     await expect(guide).toHaveAttribute('data-guide-mode','motion');
@@ -304,7 +309,11 @@ for(const language of ['en','es'] as const)test(`the Field Guide action slot kee
     expect(await height()).toBeCloseTo(before,1);
     await page.locator('.landing-v3-guide-figure').scrollIntoViewIfNeeded();
     await expect.poll(async()=>{await page.clock.runFor(1200);return slot.getAttribute('data-ready');},{timeout:20000}).toBe('true');
-    await expect(slot.getByRole('button',{name:(language==='en'?en:es)['landing.lineup.order'].replace('{name}','Crunchy Boi')})).toBeVisible();
+    const action=slot.getByRole('button',{name:(language==='en'?en:es)['landing.lineup.order'].replace('{name}','Crunchy Boi')});
+    await expect(action).toBeVisible();
     expect(await height()).toBeCloseTo(before,1);
+    // The real action fills the twin's box exactly; nothing is clipped.
+    const boxes=await slot.evaluate(el=>{const a=el.querySelector('button:not([data-guide-twin])')!.getBoundingClientRect(),t=el.querySelector('[data-guide-twin]')!.getBoundingClientRect(),b=el.getBoundingClientRect();return {action:a.height,twin:t.height,slot:b.height,overflow:el.scrollHeight-el.clientHeight};});
+    expect(boxes.action).toBeCloseTo(boxes.twin,1);expect(boxes.overflow).toBeLessThanOrEqual(0);
   } finally {releaseScripts();}
 });

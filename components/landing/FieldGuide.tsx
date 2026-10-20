@@ -17,6 +17,7 @@ export function FieldGuide({language,stores=[],now,details}:{language:Language;s
     <h3>{crunchy.name}</h3>
     <FieldGuideFigure labels={labels} groupLabel={serverT(language,'landing.field-guide.labels')} counter={serverT(language,'landing.field-guide.counter')}
       crossAlt={serverT(language,'landing.texture.cross-alt')} caption={serverT(language,'landing.field-guide.caption')} pickups={spriteMedia.pickups}
+      ctaLabel={serverT(language,'landing.lineup.order',{name:crunchy.name})}
       cta={<CrunchyOrder language={language} stores={stores} placement="guide" label={serverT(language,'landing.lineup.order',{name:crunchy.name})} now={now} details={details}/>}/>
   </div>;
 }

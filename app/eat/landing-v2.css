@@ -294,7 +294,9 @@
 .landing-v2 .landing-v4-sheet-spin .landing-v3-spin { cursor: grab; }
 .landing-v2 .landing-v3-sheet li { display: grid; }
 /* Field Guide: all six found turns into the order action (reserved, so nothing shifts). */
-.landing-v2 .landing-v4-guide-cta { --landing-guide-cta-h: 56px; display: flex; flex-direction: column; justify-content: flex-start; margin-top: 14px; min-height: var(--landing-guide-cta-h); }
+.landing-v2 .landing-v4-guide-cta { display: grid; margin-top: 14px; }
+.landing-v2 .landing-v4-guide-cta > :not(dialog) { grid-area: 1 / 1; }
+.landing-v2 .landing-v4-guide-cta .landing-v4-guide-twin { visibility: hidden; pointer-events: none; }
 .landing-v2 .landing-v4-guide-cta .landing-v3-cta { margin-top: 0; }
 /* Shop cards sell first: one full-width order action under the hours. */
 .landing-v2 .landing-v4-today { margin-top: 4px; font-weight: 800; }
