@@ -7,6 +7,8 @@ import {SpinCanvas} from './SpinCanvas';
 
 export interface SheetShop {key:string;orderUrl:string;label:string;detail:string}
 export interface SheetSpin {frames:readonly string[];width:number;height:number;alt:string}
+/** A press with no end event (lost to the OS, a long hold) stops holding enhancement after this. */
+const PRESS_RELEASE_MS=1500;
 
 /** One order action for one sub: a button that opens a two-shop sheet. Before hydration
  * (and without JavaScript) it is the two native shop links instead. The drawn Crunchy Boi
@@ -22,26 +24,38 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
   const fallback=useRef<HTMLDivElement>(null);
   useEffect(()=>{
     if(hydrated)return;
-    let idle:number|undefined,timer:ReturnType<typeof setTimeout>|undefined,settleTimer:ReturnType<typeof setTimeout>|undefined;
+    const element=fallback.current;
+    // The fallback's enhancement state, readable by tests: waiting → pending (queued for idle)
+    // → held (a press or keyboard focus is on a link) → gone (the button + sheet replaced it).
+    const mark=(state:'waiting'|'pending'|'held')=>{if(element)element.dataset.enhance=state;};
+    let idle:number|undefined,timer:ReturnType<typeof setTimeout>|undefined,settleTimer:ReturnType<typeof setTimeout>|undefined,safetyTimer:ReturnType<typeof setTimeout>|undefined;
     // Never swap the links out from under keyboard focus: wait until focus leaves them.
     let leave:((event:FocusEvent)=>void)|undefined;
     // Never swap them out from under a finger or mouse either: a press on a link holds the swap
     // until the gesture ends (its click has run, or it was cancelled), so the tap is never lost.
+    // An interrupted gesture (capture lost, app switched, window blurred, or no end at all
+    // within PRESS_RELEASE_MS) releases the hold too, so the links can never stay un-enhanced.
     let pressed=false,held=false;
-    const element=fallback.current;
-    const settle=()=>{
-      clearTimeout(settleTimer);removeEventListener('pointerup',onUp,true);removeEventListener('pointercancel',settle,true);
+    const listen=(on:boolean)=>{
+      if(on){window.addEventListener('pointerup',onUp,true);window.addEventListener('pointercancel',release,true);window.addEventListener('blur',release);document.addEventListener('visibilitychange',onVisibility);element?.addEventListener('lostpointercapture',onUp,true);}
+      else{window.removeEventListener('pointerup',onUp,true);window.removeEventListener('pointercancel',release,true);window.removeEventListener('blur',release);document.removeEventListener('visibilitychange',onVisibility);element?.removeEventListener('lostpointercapture',onUp,true);}
+    };
+    const release=()=>{
+      clearTimeout(settleTimer);clearTimeout(safetyTimer);listen(false);
       if(!pressed)return;pressed=false;
       if(held){held=false;swap();}
     };
-    // The click follows pointerup; settle after it (a press that ends off the link has no click).
-    const onUp=()=>{clearTimeout(settleTimer);settleTimer=setTimeout(settle,700);};
-    const onClick=()=>{clearTimeout(settleTimer);settleTimer=setTimeout(settle,0);};
-    const onDown=()=>{pressed=true;clearTimeout(settleTimer);addEventListener('pointerup',onUp,true);addEventListener('pointercancel',settle,true);};
+    const onVisibility=()=>{if(document.visibilityState==='hidden')release();};
+    // The click follows pointerup (and the touch's own lostpointercapture, which every touch ends
+    // with); settle after it — a press that ends off the link, or loses capture, gets no click.
+    const onUp=()=>{clearTimeout(settleTimer);settleTimer=setTimeout(release,700);};
+    const onClick=()=>{clearTimeout(settleTimer);settleTimer=setTimeout(release,0);};
+    const onDown=()=>{pressed=true;clearTimeout(settleTimer);clearTimeout(safetyTimer);safetyTimer=setTimeout(release,PRESS_RELEASE_MS);listen(true);};
     element?.addEventListener('pointerdown',onDown,true);element?.addEventListener('click',onClick,true);
     const swap=()=>{
-      if(pressed){held=true;return;}
+      if(pressed){held=true;mark('held');return;}
       if(element&&element.contains(document.activeElement)){
+        mark('held');
         if(leave)return;
         leave=event=>{if(element.contains(event.relatedTarget as Node|null))return;element.removeEventListener('focusout',leave!);leave=undefined;swap();};
         element.addEventListener('focusout',leave);return;
@@ -49,11 +63,12 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
       setHydrated(true);
     };
     const enhance=()=>{
+      mark('pending');
       if(typeof window.requestIdleCallback==='function')idle=window.requestIdleCallback(swap,{timeout:1000});
       else timer=setTimeout(swap,50);
     };
-    const stop=()=>{if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);clearTimeout(settleTimer);if(leave)element?.removeEventListener('focusout',leave);
-      element?.removeEventListener('pointerdown',onDown,true);element?.removeEventListener('click',onClick,true);removeEventListener('pointerup',onUp,true);removeEventListener('pointercancel',settle,true);};
+    const stop=()=>{if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);clearTimeout(settleTimer);clearTimeout(safetyTimer);if(leave)element?.removeEventListener('focusout',leave);
+      element?.removeEventListener('pointerdown',onDown,true);element?.removeEventListener('click',onClick,true);listen(false);};
     if(!element||typeof IntersectionObserver==='undefined'){enhance();return stop;}
     const near=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){near.disconnect();enhance();}},{rootMargin:'100% 0px'});
     near.observe(element);
@@ -66,7 +81,7 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
   const link=(shop:SheetShop)=><OrderLink key={shop.key} href={shop.orderUrl} store={shop.key} placement={placement} item={item} className="landing-v2-order landing-v4-order-two">
     <span>{shop.label}</span><span className="sr-only"> · </span><span className="landing-v4-order-detail" data-order-detail>{shop.detail}</span>
   </OrderLink>;
-  if(!hydrated)return <div ref={fallback} className="landing-v3-direct-orders">{shops.map(link)}</div>;
+  if(!hydrated)return <div ref={fallback} data-enhance="waiting" className="landing-v3-direct-orders">{shops.map(link)}</div>;
   const show=()=>{if(trigger.current)hop(trigger.current);onOpen?.();dialog.current?.showModal();setOpen(true);};
   return <>
     <button ref={trigger} type="button" onClick={show} aria-haspopup="dialog" className={className}>{triggerLabel}</button>
