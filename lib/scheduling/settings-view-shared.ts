@@ -146,6 +146,16 @@ export const retirePinBody = (locationId: string, pinId: string) => ({ action: "
 export const tunablesBody = (locationId: string | null, tunables: SkillTunables) => ({ action: "tunables" as const, locationId, tunables });
 export const prepBody = (locationId: string, s: { pmV2: boolean; prepPositionId: string | null }) => ({ action: "shop" as const, locationId, pmV2: s.pmV2, prepPositionId: s.prepPositionId });
 
+/**
+ * Astra BC-007 (r3): the staff editor's expected row id is bound to its DRAFT. When the props bring a different row (a
+ * refresh, someone else's save) a CLEAN editor adopts it — values AND id together; a DIRTY editor keeps its draft and the
+ * id that draft was based on, so its save is refused `person_settings_moved` instead of overwriting the newer row.
+ */
+export function editorBaseOnProps(cur: { dirty: boolean; baseId: string | null; seenId: string | null }, propsId: string | null): { baseId: string | null; seenId: string | null; reset: boolean } {
+  if (propsId === cur.seenId) return { baseId: cur.baseId, seenId: cur.seenId, reset: false };
+  return cur.dirty ? { baseId: cur.baseId, seenId: propsId, reset: false } : { baseId: propsId, seenId: propsId, reset: true };
+}
+
 /** Dollars typed by a person → cents, or null when blank (a blank estimate stays blank, R2); NaN / negative → "invalid". */
 export function dollarsToCents(v: string): number | null | "invalid" {
   const s = v.trim();

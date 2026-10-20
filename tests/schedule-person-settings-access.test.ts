@@ -26,6 +26,7 @@ import type { PeopleActor } from "@/lib/people/access-shared";
 import type { RoleCode } from "@/lib/roles";
 import type { PersonSettingsRow } from "@/lib/scheduling/people-input-shared";
 import { positionChangesOf, type ShopPositionPicker } from "@/lib/scheduling/user-positions-shared";
+import { editorBaseOnProps } from "@/lib/scheduling/settings-view-shared";
 import { A, AGM, B, GM, GM_B, KH, MOO, P_REG, P_WALK, SL, STAFF, scheduleStore, shopTables, uid } from "./fixtures/schedule/lib-store";
 
 const EMP = STAFF[1]!;
@@ -170,5 +171,31 @@ describe("Astra BC-007: a stale write never clobbers", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("Astra BC-007 r3 (blocker): the card's values and its expected id are ONE revision", () => {
+  const gm = actor(GM, "gm", 7, [A]);
+  it("a save landing between the loader's reads never pairs revision A's values with revision B's id", async () => {
+    const s = shop((t) => { t.schedule_person_settings = [dbRow("ps-a", EMP, "2026-10-01T00:00:00Z", { cover_positions: [P_WALK] })]; });
+    let reads = 0;
+    const from = s.client.from.bind(s.client);
+    (s.client as unknown as { from: (t: string) => unknown }).from = (table: string) => {
+      if (table === "schedule_person_settings" && ++reads === 2) {
+        // Another manager saves revision B right before the card's read.
+        s.tables.schedule_person_settings!.push(dbRow("ps-b", EMP, "2026-10-02T00:00:00Z", { cover_positions: [P_REG] }));
+      }
+      return from(table);
+    };
+    const v = await loadScheduleSettings(s.deps, { actor: gm, locationId: A });
+    if (v.state !== "ready") throw new Error(v.state);
+    const m = v.members.find((x) => x.userId === EMP)!;
+    expect([m.settingsId, m.settings?.coverPositions]).toEqual(["ps-b", [P_REG]]);
+  });
+  it("the editor's base id moves with its draft: a clean editor adopts a refreshed row; a dirty one keeps the id its draft is based on", () => {
+    expect(editorBaseOnProps({ dirty: false, baseId: "a", seenId: "a" }, "a")).toEqual({ baseId: "a", seenId: "a", reset: false });
+    expect(editorBaseOnProps({ dirty: false, baseId: "a", seenId: "a" }, "b")).toEqual({ baseId: "b", seenId: "b", reset: true });
+    expect(editorBaseOnProps({ dirty: true, baseId: "a", seenId: "a" }, "b")).toEqual({ baseId: "a", seenId: "b", reset: false });
+    expect(editorBaseOnProps({ dirty: false, baseId: null, seenId: null }, "c")).toEqual({ baseId: "c", seenId: "c", reset: true });
   });
 });

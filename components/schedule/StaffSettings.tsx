@@ -17,7 +17,7 @@ import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { defaultWorkType, type PersonSettingsRow } from "@/lib/scheduling/people-input-shared";
 import { hasPositionRank, isHourlyLeadRole, positionListProblems, positionSlotOf } from "@/lib/scheduling/position-rank-shared";
-import { personBody, type SettingsMember } from "@/lib/scheduling/settings-view-shared";
+import { editorBaseOnProps, personBody, type SettingsMember } from "@/lib/scheduling/settings-view-shared";
 import type { PositionRole } from "@/lib/scheduling/structure-shared";
 import { scheduleErrorKey } from "./schedule-errors";
 import { BUTTON, Check, Fields, GHOST, NumField } from "./settings-fields";
@@ -83,13 +83,21 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState("");
+  // Astra BC-007 (r3): the row id this DRAFT is based on (sent as expectedId), moved with the draft by the prev-compare
+  // pattern — a clean editor adopts a refreshed row (values + id), a dirty one keeps both and is refused on save.
+  const [base, setBase] = useState<{ baseId: string | null; seenId: string | null }>(() => ({ baseId: member.settingsId ?? null, seenId: member.settingsId ?? null }));
+  const next = editorBaseOnProps({ dirty, ...base }, member.settingsId ?? null);
+  if (next.baseId !== base.baseId || next.seenId !== base.seenId) {
+    setBase({ baseId: next.baseId, seenId: next.seenId });
+    if (next.reset) setS(structuredClone(member.settings ?? empty(member.userId)));
+  }
   const edit = (f: (x: PersonSettingsRow) => void) => {
     setS((cur) => { const n = structuredClone(cur); f(n); return n; });
     if (!dirty) { setDirty(true); onDirty(true); }
   };
   async function save() {
     setBusy(true); setError(null);
-    const r = await post("/api/schedule", personBody(locationId, s, member.settingsId ?? null));
+    const r = await post("/api/schedule", personBody(locationId, s, base.baseId));
     setBusy(false);
     if (!r.ok) { setError(r.code); return; }
     setDirty(false); onDirty(false);

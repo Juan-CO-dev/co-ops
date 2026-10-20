@@ -104,12 +104,12 @@ export function ShopPositionFields({ userId, role, location, shop, pick, onChang
           <select id={ids.s} className={SELECT} value={pick.secondary ?? ""} disabled={pick.primary === null} data-pick="secondary"
             onChange={(e) => onChange({ ...pick, secondary: e.target.value || null })}>
             {/* Astra BC-013: with "can flex to" entries behind it, None says it clears them — no silent promotion. */}
-            <option value="">{tailCount > 0 ? t("admin.users.positions.none_clear", { count: tailCount }) : t("admin.users.positions.none")}</option>
+            <option value="">{tailCount === 1 ? t("admin.users.positions.none_clear_one") : tailCount > 1 ? t("admin.users.positions.none_clear_other", { count: tailCount }) : t("admin.users.positions.none")}</option>
             {shop.positions.filter((p) => p.id !== pick.primary).map((p) => <option key={p.id} value={p.id}>{label(p)}</option>)}
           </select>
         </label>
       )}
-      {dropped > 0 ? <p className="text-xs font-bold text-co-warning-text">{t("admin.users.positions.clears_flex", { count: dropped })}</p> : null}
+      {dropped > 0 ? <p className="text-xs font-bold text-co-warning-text">{dropped === 1 ? t("admin.users.positions.clears_flex_one") : t("admin.users.positions.clears_flex_other", { count: dropped })}</p> : null}
       {problems.length > 0 ? (
         <ul role="alert" data-position-problems className="grid gap-1 text-sm font-bold text-co-cta-text">
           {problems.map((pr) => <li key={pr.slot}>{t("schedule.settings.staff.problem_work_type", { slot: slot(pr.slot), position: name(pr.positionId) })}</li>)}

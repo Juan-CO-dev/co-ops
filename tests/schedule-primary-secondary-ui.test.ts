@@ -253,10 +253,14 @@ describe("the admin user screen: the Positions dialog and the Add user form", ()
     const shops = { [A]: pickerShop({ settings: { [EMP]: row(EMP, { coverPositions: [P_EXPO, P_WALK, P_REG] }) } }) };
     for (const [lang, L] of [["en", EN], ["es", ES]] as const) {
       const h = wrap(createElement(UserPositionsDialog, { userId: EMP, role: "employee", locations: [LOC], shops, onClose: () => {} }), lang);
-      expect(text(h)).toContain(L["admin.users.positions.none_clear"]!.replace("{count}", "1"));
+      expect(text(h)).toContain(L["admin.users.positions.none_clear_one"]!);
     }
     const cleared = wrap(createElement(UserPositionsDialog, { userId: EMP, role: "employee", locations: [LOC], shops, onClose: () => {}, initialPicksOverride: { [A]: { workType: null, primary: P_EXPO, secondary: null } } }));
-    expect(text(cleared)).toContain(EN["admin.users.positions.clears_flex"]!.replace("{count}", "1"));
+    expect(text(cleared)).toContain(EN["admin.users.positions.clears_flex_one"]!);
+    // Astra BC-018: proper singular / plural in both languages.
+    expect(ES["admin.users.positions.clears_flex_one"]).toBe("Al guardar se quita el otro puesto de la lista de esta persona.");
+    expect(EN["admin.users.positions.clears_flex_other"]).toContain("{count}");
+    expect(ES["admin.users.positions.clears_flex_other"]).toContain("{count}");
   });
   it("a work type that does not allow the primary is named and Save is disabled; scheduling not installed at a shop says so", () => {
     const shops = { [A]: pickerShop() };

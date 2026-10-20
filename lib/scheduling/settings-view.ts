@@ -73,7 +73,11 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
   for (const r of await loadPositionLabelRows(deps.service, locationId)) {
     positions[r.id] = { name: r.name, nameEs: r.name_es, role: live.positions[r.id]?.role ?? "line_other" };
   }
-  const latest = new Map(inputs.personSettings.map((s) => [s.userId, s]));
+  // Astra BC-007 (r3 blocker): the card's VALUES and its row ID come from ONE read of the rows — never the inputs' copy
+  // plus a later query, which could pair revision A's values with revision B's id and let a stale save pass the check.
+  const snapshot = perms.people ? await loadPersonSettingsWithIds(deps.service, locationId) : [];
+  const latestRow = new Map(snapshot.map((x) => [x.row.userId, x]));
+  const latest = new Map(snapshot.map((x) => [x.row.userId, x.row]));
   const rolesKnown = inputs.structure.source === "saved";
   // Juan 2026-10-20: the suggested primary from Toast (people with a link and no primary), matched on the live positions.
   let suggestions: ReturnType<typeof toastSuggestions> = {};
@@ -85,12 +89,10 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
         livePositionIds.map((id) => ({ id, name: positions[id]!.name, role: rolesKnown ? live.positions[id]!.role : null })));
     }
   }
-  // Astra BC-007: each card carries the id of the row it shows, so a save based on a stale row is refused, never applied.
-  const ids = perms.people ? new Map((await loadPersonSettingsWithIds(deps.service, locationId)).map((x) => [x.row.userId, x.id])) : new Map<string, string>();
   const members: SettingsMember[] = perms.people ? inputs.members.filter((m) => !NEVER_INCLUDED.includes(m.role)).map((m) => ({
     userId: m.userId, name: m.name, role: m.role, settings: latest.get(m.userId) ?? null,
     includeOffered: live.roster.excludedRoles.includes(m.role), suggestedPrimary: suggestions[m.userId] ?? null,
-    settingsId: ids.get(m.userId) ?? null, editable: personSettingsSubjectRefusal(actor, { userId: m.userId, role: m.role }) === null,
+    settingsId: latestRow.get(m.userId)?.id ?? null, editable: personSettingsSubjectRefusal(actor, { userId: m.userId, role: m.role }) === null,
   })) : [];
   let presencePeople: ScheduleSettingsView["presencePeople"] = [];
   if (perms.presence) presencePeople = await loadPresencePeople(deps.service);
