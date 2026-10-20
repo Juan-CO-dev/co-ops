@@ -19,7 +19,7 @@
  */
 import type { DayContext, RuleContext, RulePerson } from "../context-shared";
 import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../people-input-shared";
-import { POSITION_RANK, positionRankOf, primaryPositionOf } from "../position-rank-shared";
+import { POSITION_RANK, isHourlyLeadRole, positionRankOf, primaryPositionOf } from "../position-rank-shared";
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
 import type { FillPlan, FillStep } from "../rules-shared";
 import {
@@ -351,8 +351,10 @@ function extendsOwn(own: GShift, plan: BlockPlan): boolean {
 /**
  * Eligible hourly candidates for a planned block, ranked. The ranking (Juan 2026-10-20) is the POSITION RANK first —
  * on `o.positionId` (the position the deficit is on; for a multi-position block, the block's core position) a person
- * whose primary it is (0) beats one whose secondary it is (1), who beats everyone else eligible (flex, 2; a null
- * `positionId` — the MoD lane — ranks everyone flex, so nothing changes there) — then full-timers short of their
+ * whose primary it is (0) beats one whose secondary it is (1), who beats everyone else eligible (flex, 2). An hourly
+ * lead's secondary is MANAGER DUTIES: on the MoD lane (`o.mod`, null position) and the Closing Manager's slot
+ * (`o.closingLead`) every hourly lead ranks 1 unless the slot is their primary station — all candidates of those lanes
+ * are leads, so with no primaries nothing changes there — then full-timers short of their
  * minimum, then the busiest-window skill / under-soft-min key, then skill, the pairing tie-break and the userId.
  * The rank never makes anyone eligible: eligibility is exactly as before. Eligibility: an active hourly member, allowed on
  * every planned position (role, work type, never a manager on Prep/Dishwasher), available over the whole
@@ -394,7 +396,8 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
     const fullTimerFirst = p.fullTime && p.fullTimeMinH !== null && weekQuarters(week, userId) / 4 < p.fullTimeMinH ? 0 : 1;
     const newer = !!o.positionId && p.newerPositions.includes(o.positionId);
     const pairing = newer ? (strongPartnerOnLine(b, shifts, o.plan.startQ, o.plan.endQ, userId) ? -1 : 1) : 0;
-    out.push({ person: p, own, skill, key: [positionRankOf(p, o.positionId), fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] });
+    // Juan 2026-10-20: the MoD lane and the Closing Manager's slot are MANAGER DUTIES — an hourly lead's secondary.
+    out.push({ person: p, own, skill, key: [positionRankOf(p, o.positionId, o.mod || o.closingLead), fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] });
   }
   out.sort((x, y) => {
     for (let i = 0; i < x.key.length; i++) {
@@ -453,13 +456,15 @@ export function skillDecided(c: Candidate, peers: readonly Candidate[]): boolean
 
 /**
  * The ranking reason for a chosen candidate (why this person). Astra BC-042: a candidate who won on their POSITION RANK
- * (primary / secondary) is never explained as "strongest available" unless skill actually decided it among the candidates
- * of the same rank (`peers`, the ranked list); flex candidates keep the reasons exactly as before.
+ * (primary / secondary / an hourly lead's manager duties) over a WORSE-ranked candidate is never explained as "strongest
+ * available" unless skill actually decided it among the candidates of the same rank (`peers`, the ranked list); when every
+ * peer shares one rank (no primaries anywhere, or a lane only leads can fill), the reasons are exactly as before.
  */
 export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, o: CandidateOpts, peers: readonly Candidate[] = []): Reason[] {
   const out: Reason[] = [];
   const K = CANDIDATE_KEY;
-  const byRank = c.key[K.positionRank] !== POSITION_RANK.flex;
+  // Rank decided the pick only when it put `c` ahead of someone of a WORSE rank (all of one rank: rank decided nothing).
+  const byRank = peers.some((x) => (x.key[K.positionRank] as number) > (c.key[K.positionRank] as number));
   const strongest = !byRank || skillDecided(c, peers);
   // Juan 2026-10-20: the position rank — on their primary / secondary it says so; placed elsewhere while they HAVE a
   // primary, it is a flex (the reason names the position and their primary). No primary set → nothing (as before).
@@ -467,6 +472,7 @@ export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, 
   if (o.positionId && primary) {
     const rank = c.key[K.positionRank];
     if (rank === POSITION_RANK.primary) out.push(reason("on_primary", { userId: c.person.userId, positionId: o.positionId }));
+    else if (rank === POSITION_RANK.secondary && isHourlyLeadRole(c.person.role)) out.push(reason("manager_duty", { userId: c.person.userId, positionId: o.positionId, primaryId: primary }));
     else if (rank === POSITION_RANK.secondary) out.push(reason("on_secondary", { userId: c.person.userId, positionId: o.positionId, primaryId: primary }));
     else out.push(reason("flexed", { userId: c.person.userId, positionId: o.positionId, primaryId: primary }));
   }

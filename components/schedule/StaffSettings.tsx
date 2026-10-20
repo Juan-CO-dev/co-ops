@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { defaultWorkType, type PersonSettingsRow } from "@/lib/scheduling/people-input-shared";
-import { hasPositionRank, positionListProblems, positionSlotOf } from "@/lib/scheduling/position-rank-shared";
+import { hasPositionRank, isHourlyLeadRole, positionListProblems, positionSlotOf } from "@/lib/scheduling/position-rank-shared";
 import { personBody, type SettingsMember } from "@/lib/scheduling/settings-view-shared";
 import type { PositionRole } from "@/lib/scheduling/structure-shared";
 import { scheduleErrorKey } from "./schedule-errors";
@@ -97,12 +97,20 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
   }
   // Juan 2026-10-20: below shift lead the list is Primary / Secondary / Can flex to; a manager's is their cover order.
   const ranked = hasPositionRank(member);
+  // An hourly lead's secondary is MANAGER DUTIES (implicit, never stored): a fixed row, then their list's [1..] as "can flex to".
+  const lead = isHourlyLeadRole(member.role);
   const roles: Record<string, PositionRole> = {};
   if (rolesKnown) for (const [pid, p] of Object.entries(positions)) if (p.role) roles[pid] = p.role;
   const problems = ranked ? positionListProblems({ role: member.role, workType: s.workType ?? defaultWorkType(member.role), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles) : [];
-  const slotLabel = (i: number) => t(`schedule.settings.staff.slot_${positionSlotOf(i)}` as TranslationKey);
+  const slotLabel = (i: number) => t(`schedule.settings.staff.slot_${positionSlotOf(i, lead)}` as TranslationKey);
   const suggestion = ranked && s.coverPositions.length === 0 && member.suggestedPrimary && positions[member.suggestedPrimary.positionId] ? member.suggestedPrimary : null;
   const readOnly = member.editable === false;
+  const managerDutyRow = (
+    <li key="manager-duty" data-position-slot="manager_duty" className="grid gap-0.5 rounded-lg bg-co-surface-inset px-2 py-2 text-sm text-co-text">
+      <span className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("schedule.settings.staff.slot_manager_duty")}</span>
+      <span className="text-xs text-co-text-muted">{t("schedule.settings.staff.manager_duty_help")}</span>
+    </li>
+  );
   const move = (i: number, by: -1 | 1) => edit((x) => { const a = x.coverPositions; const j = i + by; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j]!, a[i]!]; });
   const iconBtn = "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-60";
   return (
@@ -143,7 +151,7 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
       </div>
       <div className="grid gap-1" data-position-list={ranked ? "ranked" : "cover"}>
         <span id={`${id}-pos`} className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t(ranked ? "schedule.settings.staff.cover" : "schedule.settings.staff.cover_manager")}</span>
-        {ranked ? <p className="text-xs text-co-text-muted">{t("schedule.settings.staff.cover_help")}</p> : null}
+        {ranked ? <p className="text-xs text-co-text-muted">{t(lead ? "schedule.settings.staff.cover_help_lead" : "schedule.settings.staff.cover_help")}</p> : null}
         {suggestion ? (
           <div className="flex flex-wrap items-center gap-2" data-toast-suggestion={suggestion.positionId}>
             <button type="button" className={GHOST} onClick={() => edit((x) => { x.coverPositions = [suggestion.positionId]; })}>
@@ -153,8 +161,9 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
           </div>
         ) : null}
         <ol className="grid gap-1" aria-labelledby={`${id}-pos`}>
-          {s.coverPositions.map((p, i) => (
-            <li key={p} data-position-slot={ranked ? positionSlotOf(i) : "cover"} className="flex flex-wrap items-center gap-2 text-sm text-co-text">
+          {s.coverPositions.map((p, i) => [
+            lead && i === 1 ? managerDutyRow : null,
+            <li key={p} data-position-slot={ranked ? positionSlotOf(i, lead) : "cover"} className="flex flex-wrap items-center gap-2 text-sm text-co-text">
               <span className="grid min-w-[8rem] flex-1">
                 {ranked ? <span className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{slotLabel(i)}</span> : null}
                 <span>{i + 1}. {position(p)}</span>
@@ -162,8 +171,9 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
               <button type="button" data-cover-act="up" className={iconBtn} disabled={i === 0} aria-label={t("schedule.settings.staff.cover_up", { position: position(p) })} onClick={() => move(i, -1)}>↑</button>
               <button type="button" data-cover-act="down" className={iconBtn} disabled={i === s.coverPositions.length - 1} aria-label={t("schedule.settings.staff.cover_down", { position: position(p) })} onClick={() => move(i, 1)}>↓</button>
               <button type="button" data-cover-act="remove" className={iconBtn} aria-label={t("schedule.settings.staff.cover_remove", { position: position(p) })} onClick={() => edit((x) => { x.coverPositions = x.coverPositions.filter((y) => y !== p); })}>×</button>
-            </li>
-          ))}
+            </li>,
+          ])}
+          {lead && s.coverPositions.length < 2 ? managerDutyRow : null}
         </ol>
         <div className="flex flex-wrap items-center gap-2">
           <select aria-label={t("schedule.settings.staff.cover_pick")} className="min-h-[44px] min-w-0 flex-1 rounded-lg border-2 border-co-border bg-co-surface px-2 text-sm" value={adding} onChange={(e) => setAdding(e.target.value)}>

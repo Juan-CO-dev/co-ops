@@ -30,6 +30,8 @@ export const REASON_KEYS = [
   // Juan 2026-10-20 (primary / secondary position): on their primary, on their secondary, or flexed to another position
   // while they have a primary (params: positionId, primaryId).
   "on_primary", "on_secondary", "flexed",
+  // Juan 2026-10-20: an hourly lead placed on manager duties (the MoD lane / the Closing Manager's slot) — their secondary.
+  "manager_duty",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

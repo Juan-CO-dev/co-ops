@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.17. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.18. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -1299,6 +1299,13 @@
      }
     },
     {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
+     }
+    },
+    {
      "key": "strongest_on_position",
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000004",
@@ -1312,6 +1319,13 @@
       "fromQ": 62,
       "positionId": "5c000000-0000-4000-8000-000000000004",
       "toQ": 64
+     }
+    },
+    {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
      }
     },
     {
@@ -2090,6 +2104,13 @@
      }
     },
     {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
+     }
+    },
+    {
      "key": "strongest_on_position",
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000004",
@@ -2103,6 +2124,13 @@
       "fromQ": 62,
       "positionId": "5c000000-0000-4000-8000-000000000004",
       "toQ": 64
+     }
+    },
+    {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
      }
     },
     {
@@ -2672,6 +2700,13 @@
      }
     },
     {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
+     }
+    },
+    {
      "key": "strongest_on_position",
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000004",
@@ -2685,6 +2720,13 @@
       "fromQ": 62,
       "positionId": "5c000000-0000-4000-8000-000000000004",
       "toQ": 64
+     }
+    },
+    {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
      }
     },
     {
@@ -3214,6 +3256,13 @@
      }
     },
     {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
+     }
+    },
+    {
      "key": "strongest_on_position",
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000004",
@@ -3227,6 +3276,13 @@
       "fromQ": 62,
       "positionId": "5c000000-0000-4000-8000-000000000004",
       "toQ": 64
+     }
+    },
+    {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
      }
     },
     {
@@ -3700,6 +3756,13 @@
      }
     },
     {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
+     }
+    },
+    {
      "key": "strongest_on_position",
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000004",
@@ -3713,6 +3776,13 @@
       "fromQ": 62,
       "positionId": "5c000000-0000-4000-8000-000000000004",
       "toQ": 64
+     }
+    },
+    {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-g-gus"
      }
     },
     {

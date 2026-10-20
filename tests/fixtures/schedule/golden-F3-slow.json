@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.17. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.18. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -156,7 +156,7 @@
      "day": "2026-11-01",
      "inherited": false,
      "params": {
-      "hours": 18,
+      "hours": 14,
       "max": 28,
       "min": 20
      },
@@ -998,10 +998,9 @@
      }
     },
     {
-     "key": "strongest_on_position",
+     "key": "on_primary",
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000004",
-      "skill": 0.84,
       "userId": "u-05-dani"
      }
     }
@@ -1296,8 +1295,8 @@
   "2026-10-28|u-01-maya|38": {
    "alternates": [
     {
-     "skill": 0.5,
-     "userId": "u-05-dani"
+     "skill": 0.4,
+     "userId": "u-11-eli"
     }
    ],
    "segments": [
@@ -1334,8 +1333,8 @@
   "2026-10-28|u-02-leo|38": {
    "alternates": [
     {
-     "skill": 0.5,
-     "userId": "u-05-dani"
+     "skill": 0.35,
+     "userId": "u-11-eli"
     }
    ],
    "segments": [
@@ -1372,8 +1371,8 @@
   "2026-10-28|u-04-ben|42": {
    "alternates": [
     {
-     "skill": 0.66,
-     "userId": "u-05-dani"
+     "skill": 0.58,
+     "userId": "u-11-eli"
     }
    ],
    "segments": [
@@ -1407,8 +1406,58 @@
     }
    ]
   },
+  "2026-10-28|u-05-dani|46": {
+   "alternates": [
+    {
+     "skill": 0.42,
+     "userId": "u-11-eli"
+    }
+   ],
+   "segments": [
+    [
+     {
+      "key": "wave_arrival",
+      "params": {
+       "fromQ": 46,
+       "positionId": "5c000000-0000-4000-8000-000000000004",
+       "toQ": 60
+      }
+     },
+     {
+      "key": "extended_to_minimum",
+      "params": {
+       "fromQ": 60,
+       "positionId": "5c000000-0000-4000-8000-000000000004",
+       "toQ": 62
+      }
+     }
+    ]
+   ],
+   "shift": [
+    {
+     "key": "wave_arrival",
+     "params": {
+      "fromQ": 46,
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "toQ": 60
+     }
+    },
+    {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-05-dani"
+     }
+    }
+   ]
+  },
   "2026-10-28|u-06-iris|42": {
-   "alternates": [],
+   "alternates": [
+    {
+     "skill": 0.58,
+     "userId": "u-11-eli"
+    }
+   ],
    "segments": [
     [
      {
@@ -1527,52 +1576,6 @@
     }
    ]
   },
-  "2026-10-28|u-11-eli|44": {
-   "alternates": [
-    {
-     "skill": 0.72,
-     "userId": "u-05-dani"
-    }
-   ],
-   "segments": [
-    [
-     {
-      "key": "wave_arrival",
-      "params": {
-       "fromQ": 44,
-       "positionId": "5c000000-0000-4000-8000-000000000006",
-       "toQ": 56
-      }
-     },
-     {
-      "key": "extended_to_minimum",
-      "params": {
-       "fromQ": 56,
-       "positionId": "5c000000-0000-4000-8000-000000000006",
-       "toQ": 60
-      }
-     }
-    ]
-   ],
-   "shift": [
-    {
-     "key": "wave_arrival",
-     "params": {
-      "fromQ": 44,
-      "positionId": "5c000000-0000-4000-8000-000000000006",
-      "toQ": 56
-     }
-    },
-    {
-     "key": "strongest_on_position",
-     "params": {
-      "positionId": "5c000000-0000-4000-8000-000000000006",
-      "skill": 0.64,
-      "userId": "u-11-eli"
-     }
-    }
-   ]
-  },
   "2026-10-28|u-12-riley|28": {
    "alternates": [
     {
@@ -1611,11 +1614,11 @@
     }
    ]
   },
-  "2026-10-28|u-13-sam|46": {
+  "2026-10-28|u-13-sam|44": {
    "alternates": [
     {
-     "skill": 0.84,
-     "userId": "u-05-dani"
+     "skill": 0.64,
+     "userId": "u-11-eli"
     }
    ],
    "segments": [
@@ -1623,17 +1626,17 @@
      {
       "key": "wave_arrival",
       "params": {
-       "fromQ": 46,
-       "positionId": "5c000000-0000-4000-8000-000000000004",
-       "toQ": 60
+       "fromQ": 44,
+       "positionId": "5c000000-0000-4000-8000-000000000006",
+       "toQ": 56
       }
      },
      {
       "key": "extended_to_minimum",
       "params": {
-       "fromQ": 60,
-       "positionId": "5c000000-0000-4000-8000-000000000004",
-       "toQ": 62
+       "fromQ": 56,
+       "positionId": "5c000000-0000-4000-8000-000000000006",
+       "toQ": 60
       }
      }
     ]
@@ -1642,23 +1645,28 @@
     {
      "key": "wave_arrival",
      "params": {
-      "fromQ": 46,
-      "positionId": "5c000000-0000-4000-8000-000000000004",
-      "toQ": 60
+      "fromQ": 44,
+      "positionId": "5c000000-0000-4000-8000-000000000006",
+      "toQ": 56
      }
     },
     {
      "key": "strongest_on_position",
      "params": {
-      "positionId": "5c000000-0000-4000-8000-000000000004",
-      "skill": 0.9,
+      "positionId": "5c000000-0000-4000-8000-000000000006",
+      "skill": 0.73,
       "userId": "u-13-sam"
      }
     }
    ]
   },
   "2026-10-28|u-14-wren|67": {
-   "alternates": [],
+   "alternates": [
+    {
+     "skill": 0.53,
+     "userId": "u-11-eli"
+    }
+   ],
    "segments": [
     [
      {
@@ -1699,12 +1707,7 @@
    ]
   },
   "2026-10-28|u-15-alex|28": {
-   "alternates": [
-    {
-     "skill": 0,
-     "userId": "u-05-dani"
-    }
-   ],
+   "alternates": [],
    "segments": [
     [
      {
@@ -1729,12 +1732,7 @@
    ]
   },
   "2026-10-28|u-16-jules|34": {
-   "alternates": [
-    {
-     "skill": 0,
-     "userId": "u-05-dani"
-    }
-   ],
+   "alternates": [],
    "segments": [
     [
      {
@@ -1782,10 +1780,6 @@
   },
   "2026-10-29|u-02-leo|38": {
    "alternates": [
-    {
-     "skill": 0.5,
-     "userId": "u-05-dani"
-    },
     {
      "skill": 0.5,
      "userId": "u-14-wren"
@@ -2076,10 +2070,6 @@
      "userId": "u-14-wren"
     },
     {
-     "skill": 0.72,
-     "userId": "u-05-dani"
-    },
-    {
      "skill": 0.64,
      "userId": "u-11-eli"
     }
@@ -2130,10 +2120,6 @@
      "userId": "u-14-wren"
     },
     {
-     "skill": 0.5,
-     "userId": "u-05-dani"
-    },
-    {
      "skill": 0.4,
      "userId": "u-11-eli"
     }
@@ -2171,10 +2157,6 @@
   },
   "2026-10-29|u-13-sam|46": {
    "alternates": [
-    {
-     "skill": 0.84,
-     "userId": "u-05-dani"
-    },
     {
      "skill": 0.78,
      "userId": "u-14-wren"
@@ -2224,12 +2206,7 @@
    ]
   },
   "2026-10-29|u-15-alex|28": {
-   "alternates": [
-    {
-     "skill": 0,
-     "userId": "u-05-dani"
-    }
-   ],
+   "alternates": [],
    "segments": [
     [
      {
@@ -2254,12 +2231,7 @@
    ]
   },
   "2026-10-29|u-16-jules|34": {
-   "alternates": [
-    {
-     "skill": 0,
-     "userId": "u-05-dani"
-    }
-   ],
+   "alternates": [],
    "segments": [
     [
      {
@@ -2498,10 +2470,9 @@
      }
     },
     {
-     "key": "strongest_on_position",
+     "key": "on_primary",
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000004",
-      "skill": 0.84,
       "userId": "u-05-dani"
      }
     }
@@ -2819,6 +2790,14 @@
       "fromQ": 42,
       "positionId": "5c000000-0000-4000-8000-000000000003",
       "toQ": 67
+     }
+    },
+    {
+     "key": "flexed",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "primaryId": "5c000000-0000-4000-8000-000000000004",
+      "userId": "u-05-dani"
      }
     },
     {
@@ -3362,10 +3341,9 @@
      }
     },
     {
-     "key": "strongest_on_position",
+     "key": "on_primary",
      "params": {
       "positionId": "5c000000-0000-4000-8000-000000000004",
-      "skill": 0.84,
       "userId": "u-05-dani"
      }
     },
@@ -4053,6 +4031,22 @@
    "userId": "u-04-ben"
   },
   {
+   "closingManager": false,
+   "date": "2026-10-28",
+   "endQ": 62,
+   "flex": false,
+   "pinned": false,
+   "segments": [
+    {
+     "endQ": 62,
+     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "startQ": 46
+    }
+   ],
+   "startQ": 46,
+   "userId": "u-05-dani"
+  },
+  {
    "closingManager": true,
    "date": "2026-10-28",
    "endQ": 83,
@@ -4092,22 +4086,6 @@
   {
    "closingManager": false,
    "date": "2026-10-28",
-   "endQ": 60,
-   "flex": false,
-   "pinned": false,
-   "segments": [
-    {
-     "endQ": 60,
-     "positionId": "5c000000-0000-4000-8000-000000000006",
-     "startQ": 44
-    }
-   ],
-   "startQ": 44,
-   "userId": "u-11-eli"
-  },
-  {
-   "closingManager": false,
-   "date": "2026-10-28",
    "endQ": 67,
    "flex": false,
    "pinned": false,
@@ -4124,17 +4102,17 @@
   {
    "closingManager": false,
    "date": "2026-10-28",
-   "endQ": 62,
+   "endQ": 60,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 62,
-     "positionId": "5c000000-0000-4000-8000-000000000004",
-     "startQ": 46
+     "endQ": 60,
+     "positionId": "5c000000-0000-4000-8000-000000000006",
+     "startQ": 44
     }
    ],
-   "startQ": 46,
+   "startQ": 44,
    "userId": "u-13-sam"
   },
   {

@@ -43,7 +43,9 @@ export const AGM_BOARD_PATHS: readonly string[] = [
   ".days[].rows[].shifts[].endQ", ".days[].rows[].shifts[].flex", ".days[].rows[].shifts[].locked", ".days[].rows[].shifts[].pinned",
   ".days[].rows[].shifts[].reasons[].key", ".days[].rows[].shifts[].reasons[].params.closeScore", ".days[].rows[].shifts[].reasons[].params.fromPositionId", ".days[].rows[].shifts[].reasons[].params.fromQ",
   ".days[].rows[].shifts[].reasons[].params.hours", ".days[].rows[].shifts[].reasons[].params.hoursUnder", ".days[].rows[].shifts[].reasons[].params.kind", ".days[].rows[].shifts[].reasons[].params.lastResort",
-  ".days[].rows[].shifts[].reasons[].params.maxShiftQ", ".days[].rows[].shifts[].reasons[].params.positionId", ".days[].rows[].shifts[].reasons[].params.rank", ".days[].rows[].shifts[].reasons[].params.skill",
+  ".days[].rows[].shifts[].reasons[].params.maxShiftQ", ".days[].rows[].shifts[].reasons[].params.positionId",
+  // Juan 2026-10-20: the on_secondary / flexed / manager_duty reasons name the person's primary POSITION (an id, nothing money-derivable).
+  ".days[].rows[].shifts[].reasons[].params.primaryId", ".days[].rows[].shifts[].reasons[].params.rank", ".days[].rows[].shifts[].reasons[].params.skill",
   ".days[].rows[].shifts[].reasons[].params.toQ", ".days[].rows[].shifts[].reasons[].params.userId", ".days[].rows[].shifts[].ref.date", ".days[].rows[].shifts[].ref.startQ",
   ".days[].rows[].shifts[].ref.userId", ".days[].rows[].shifts[].segments[].endQ", ".days[].rows[].shifts[].segments[].lastResort", ".days[].rows[].shifts[].segments[].mod", ".days[].rows[].shifts[].segments[].modFromQ",
   ".days[].rows[].shifts[].segments[].positionId", ".days[].rows[].shifts[].segments[].reasons[].key", ".days[].rows[].shifts[].segments[].reasons[].params.after", ".days[].rows[].shifts[].segments[].reasons[].params.fromPositionId",

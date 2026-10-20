@@ -98,7 +98,7 @@ export function CreateUserForm({
     }
     const userId = result.data?.userId;
     if (offersPositions && userId) {
-      const code = await savePicks(userId, chosenPicks, positionShops!);
+      const code = await savePicks(userId, chosenPicks, positionShops!, role as RoleCode);
       if (code) {
         setSubmitting(false);
         setCreatedOnly(true);

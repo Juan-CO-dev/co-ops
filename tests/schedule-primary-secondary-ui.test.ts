@@ -31,7 +31,7 @@ const { CreateUserForm } = await import("@/components/admin/users/CreateUserForm
 import type { PeopleActor } from "@/lib/people/access-shared";
 import type { PersonSettingsRow } from "@/lib/scheduling/people-input-shared";
 import { flexDropped, nextSettingsRow, pickChanged, pickOf, type ShopPositionPicker } from "@/lib/scheduling/user-positions-shared";
-import { A, GM, KH, P_REG, P_WALK, SL, ST, STAFF, scheduleStore, shopTables } from "./fixtures/schedule/lib-store";
+import { A, AGM, GM, KH, P_REG, P_WALK, SL, ST, STAFF, scheduleStore, shopTables } from "./fixtures/schedule/lib-store";
 
 const EN = en as Record<string, string>;
 const ES = es as Record<string, string>;
@@ -73,9 +73,9 @@ const withSettings = (v: View, userId: string, over: Partial<PersonSettingsRow>)
 
 describe("Staff settings: Positions (in order) — Primary / Secondary / Can flex to", () => {
   it("below shift lead: the heading, the help line and one slot label per entry, en + es", async () => {
-    const v = withSettings(await ready(shop()), KH, { coverPositions: [P_WALK, P_REG, P_EXPO] });
+    const v = withSettings(await ready(shop()), EMP, { coverPositions: [P_WALK, P_REG, P_EXPO] });
     for (const [lang, L] of [["en", EN], ["es", ES]] as const) {
-      const d = drawer(render(v, lang, KH));
+      const d = drawer(render(v, lang, EMP));
       const tx = text(d);
       expect(tx).toContain(L["schedule.settings.staff.cover"]);
       expect(tx).toContain(L["schedule.settings.staff.cover_help"]);
@@ -87,9 +87,25 @@ describe("Staff settings: Positions (in order) — Primary / Secondary / Can fle
     }
     expect(EN["schedule.settings.staff.cover"]).toBe("Positions (in order)");
   });
-  it("a manager (the hourly shift lead too) keeps 'Preferred cover positions (in order)' with no slot labels — unchanged", async () => {
-    const v = withSettings(await ready(shop()), SL, { coverPositions: [P_REG, P_WALK] });
-    const d = drawer(render(v, "en", SL));
+  it("Juan 2026-10-20: an HOURLY LEAD (shift lead, key holder): Primary = a station, Secondary = 'Manager duties' (fixed, explained), then 'Can flex to' — en + es", async () => {
+    for (const lead of [SL, KH]) {
+      const v = withSettings(await ready(shop()), lead, { coverPositions: [P_REG, P_WALK, P_EXPO] });
+      for (const [lang, L] of [["en", EN], ["es", ES]] as const) {
+        const d = drawer(render(v, lang, lead));
+        const tx = text(d);
+        expect(d).toContain('data-position-list="ranked"');
+        expect(d.match(/data-position-slot="(primary|secondary|flex|manager_duty)"/g)).toEqual(
+          ['data-position-slot="primary"', 'data-position-slot="manager_duty"', 'data-position-slot="flex"', 'data-position-slot="flex"']);
+        for (const k of ["cover_help_lead", "slot_primary", "slot_manager_duty", "manager_duty_help", "slot_flex"]) expect(tx, k).toContain(L[`schedule.settings.staff.${k}`]);
+      }
+      // With no primary yet, the manager-duty row still says what their secondary is.
+      const empty = drawer(render(withSettings(await ready(shop()), lead, { coverPositions: [] }), "en", lead));
+      expect(empty.match(/data-position-slot="(primary|secondary|flex|manager_duty)"/g)).toEqual(['data-position-slot="manager_duty"']);
+    }
+  });
+  it("a SALARIED manager (GM / AGM) keeps 'Preferred cover positions (in order)' with no slot labels — unchanged", async () => {
+    const v = withSettings(await ready(shop()), AGM, { coverPositions: [P_REG, P_WALK] });
+    const d = drawer(render(v, "en", AGM));
     expect(text(d)).toContain(EN["schedule.settings.staff.cover_manager"]);
     expect(EN["schedule.settings.staff.cover_manager"]).toBe("Preferred cover positions (in order)");
     expect(d).toContain('data-position-list="cover"');
@@ -155,8 +171,9 @@ describe("the Toast suggestion: most-worked job, last 8 weeks, a button never sa
     const m = (id: string) => v.members.find((x) => x.userId === id)!;
     expect(m(EMP).suggestedPrimary).toEqual({ positionId: P_REG, jobName: "Register" });
     expect(m(EMP2).suggestedPrimary).toBeNull();
-    expect(m(KH).suggestedPrimary).toBeNull();
-    expect(m(SL).suggestedPrimary).toBeNull();
+    expect(m(KH).suggestedPrimary).toBeNull(); // older than 8 weeks
+    expect(m(SL).suggestedPrimary).toEqual({ positionId: P_REG, jobName: "Register" }); // an hourly lead gets a primary station too
+    expect(m(AGM).suggestedPrimary).toBeNull(); // a salaried manager never
   });
   it("the drawer offers 'Use Register' with its Toast line (en + es) and only while no primary is set", async () => {
     const v = await ready(shop(punches));
@@ -258,8 +275,14 @@ describe("the admin user screen: the Positions dialog and the Add user form", ()
     expect(emp).toContain("data-create-positions");
     expect(emp).toContain(`data-position-shop="${A}"`);
     expect(text(emp)).toContain(EN["admin.users.positions.primary"]);
-    const mgr = wrap(createElement(CreateUserForm, { ...base, assignableRoles: [...base.assignableRoles], initial: { role: "shift_lead", locationIds: [A] } }));
+    const mgr = wrap(createElement(CreateUserForm, { ...base, assignableRoles: [...base.assignableRoles], initial: { role: "gm", locationIds: [A] } }));
     expect(mgr).not.toContain("data-create-positions");
+    // An hourly lead gets the Primary station picker; their Secondary is shown as manager duties, never a picker.
+    const lead = wrap(createElement(CreateUserForm, { ...base, assignableRoles: [...base.assignableRoles], initial: { role: "shift_lead", locationIds: [A] } }));
+    expect(lead).toContain("data-create-positions");
+    expect(lead).toContain("data-secondary-manager-duty");
+    expect(lead).not.toContain('data-pick="secondary"');
+    expect(text(lead)).toContain(EN["admin.users.positions.secondary_manager_duty"]!);
     const none = wrap(createElement(CreateUserForm, { ...base, assignableRoles: [...base.assignableRoles], initial: { role: "employee", locationIds: [] } }));
     expect(none).not.toContain("data-create-positions");
     const bad = wrap(createElement(CreateUserForm, { ...base, assignableRoles: [...base.assignableRoles], initial: { role: "employee", locationIds: [A], picks: { [A]: { workType: null, primary: P_REG, secondary: null } } } }));

@@ -146,7 +146,7 @@ export const V17_SPECS: PersonSpec[] = [
   { id: "u-02-leo", role: "employee", off: [7], skills: sk({ [R.THIRD]: 0.94, [R.BOI]: 0.82, [R.PREP]: 0.58, [R.WALK]: 0.62, [R.REG]: 0.4, [R.EXPO]: 0.45 }) },
   { id: "u-03-sofia", role: "trainer", workType: "boh", off: [7], skills: sk({ [R.PREP]: 0.96, [R.DISH]: 0.83 }) },
   { id: "u-04-ben", role: "employee", off: [4], skills: sk({ [R.REG]: 0.92, [R.EXPO]: 0.82, [R.WALK]: 0.68, [R.WALKON]: 0.55, [R.THIRD]: 0.45, [R.PREP]: 0.4 }) },
-  { id: "u-05-dani", role: "shift_lead", leader: "opens", cover: [R.REG, R.EXPO], off: [1], close: 0.97, skills: sk({ [R.EXPO]: 0.84, [R.WALK]: 0.72, [R.REG]: 0.66, [R.WALKON]: 0.64, [R.BOI]: 0.5 }) },
+  { id: "u-05-dani", role: "shift_lead", leader: "opens", cover: [R.EXPO, R.REG], off: [1], close: 0.97, skills: sk({ [R.EXPO]: 0.84, [R.WALK]: 0.72, [R.REG]: 0.66, [R.WALKON]: 0.64, [R.BOI]: 0.5 }) },
   { id: "u-06-iris", role: "key_holder", leader: "closes", off: [5], close: 0.94, skills: sk({ [R.WALKON]: 0.84, [R.WALK]: 0.82, [R.EXPO]: 0.7, [R.REG]: 0.67, [R.BOI]: 0.48 }) },
   { id: "u-07-omar", role: "employee", workType: "boh", off: [2], skills: sk({ [R.PREP]: 0.94, [R.DISH]: 0.81 }) },
   { id: "u-08-kai", role: "employee", workType: "boh", off: [3], skills: sk({ [R.DISH]: 0.93, [R.PREP]: 0.81 }) },
@@ -185,7 +185,7 @@ export const SMALL_SPECS: PersonSpec[] = [
   { id: "u-d-dee", role: "employee", workType: "boh", skills: sk({ [R.DISH]: 0.9, [R.PREP]: 0.8 }) },
   { id: "u-e-eve", role: "employee", workType: "boh", skills: sk({ [R.PREP]: 0.9, [R.DISH]: 0.8 }) },
   { id: "u-f-finn", role: "employee", skills: sk({ [R.WALKON]: 0.7, [R.WALK]: 0.7, [R.EXPO]: 0.6 }) },
-  { id: "u-g-gus", role: "shift_lead", leader: "opens", cover: [R.REG, R.EXPO], close: 0.8, skills: sk({ [R.EXPO]: 0.9, [R.REG]: 0.8 }) },
+  { id: "u-g-gus", role: "shift_lead", leader: "opens", cover: [R.EXPO, R.REG], close: 0.8, skills: sk({ [R.EXPO]: 0.9, [R.REG]: 0.8 }) },
   { id: "u-h-hal", role: "key_holder", leader: "closes", close: 0.85, skills: sk({ [R.REG]: 0.85, [R.WALKON]: 0.75 }) },
   { id: "u-i-ivy", role: "employee", skills: sk({ [R.THIRD]: 0.9, [R.BOI]: 0.8, [R.WALK]: 0.7, [R.EXPO]: 0.6 }) },
   { id: "u-j-gm", role: "gm", leader: "opens", cover: [R.PREP, R.EXPO, R.REG], skills: sk({ [R.PREP]: 0.9, [R.EXPO]: 0.8 }) },
@@ -347,7 +347,7 @@ export function f0eRepairNeeded(): GeneratorInput {
   });
   const specs: PersonSpec[] = [
     { id: "u-tess", role: "key_holder", leader: "closes", close: 0.9, skills: { [R.REG]: [0.95, 0.7], [R.WALKON]: [0.9, 0.7] } },
-    { id: "u-sam", role: "shift_lead", leader: "closes", cover: [R.REG, R.EXPO], close: 0.8, skills: { [R.REG]: [0.6, 0.7], [R.EXPO]: [0.9, 0.7] } },
+    { id: "u-sam", role: "shift_lead", leader: "closes", cover: [R.EXPO, R.REG], close: 0.8, skills: { [R.REG]: [0.6, 0.7], [R.EXPO]: [0.9, 0.7] } },
     ...SMALL_SPECS.filter((p) => !["u-a-ana", "u-h-hal", "u-g-gus"].includes(p.id)),
   ];
   return fixture({ structure: s, specs, days: [flatDay(WEEK, s)] });

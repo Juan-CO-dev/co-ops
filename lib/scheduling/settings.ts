@@ -118,7 +118,7 @@ export async function recordPersonPositions(deps: ScheduleDeps, args: { actor: P
   if (!UUID.test(args.userId) || !changes) throw new ScheduleError("invalid_payload");
   const role = await subjectRole(deps.service, args.actor, args.userId);
   const latest = await loadLatestPersonSettings(deps.service, args.locationId, args.userId);
-  return writePersonSettings(deps, args.actor, args.locationId, role, mergePositionChanges(latest?.row ?? null, args.userId, changes));
+  return writePersonSettings(deps, args.actor, args.locationId, role, mergePositionChanges(latest?.row ?? null, args.userId, changes, role));
 }
 
 /** The subject's role, after the subject rule (unknown → person_not_at_shop; refused → schedule_forbidden). */

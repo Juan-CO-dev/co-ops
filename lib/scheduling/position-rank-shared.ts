@@ -10,9 +10,17 @@
  * the "can flex to" entries included). Flex is allowed, only ranked last. A deficit with no single position (the
  * MoD lane, `positionId` null) ranks everyone as flex, so nothing changes there.
  *
- * MANAGERS (shift lead and up, `isManagerRole` — the hourly shift lead included) keep the list's EXISTING meaning,
- * unchanged: their preferred cover positions in order (the MoD cover ranking, `cover_outside_preferences`). For them
- * there is no primary / secondary: every rank here is flex, no primary reason is emitted and nothing is validated.
+ * HOURLY LEADS (Juan 2026-10-20: "put manager duties as secondary. They are hourly pay." — the shift lead and the key
+ * holder, `isHourlyLeadRole`): [0] = their PRIMARY station, ranked like anyone's primary; their SECONDARY is always
+ * MANAGER DUTIES — an implicit rule, never stored (MoD is not a position uuid): when the generator fills the manager-on-
+ * duty lane or the Closing Manager's closing slot, a lead ranks 1 there (their station primary still wins a station slot).
+ * The rest of their list ([1..]) is "can flex to" and keeps its existing cover-order meaning where the code reads it (a
+ * shift lead's `cover_outside_preferences`). A lead with NO primary behaves exactly as before: every candidate of those
+ * two lanes is a lead, so they all rank 1 together.
+ *
+ * SALARIED MANAGERS (GM / AGM) and every other manager role keep the list's EXISTING meaning, unchanged: their preferred
+ * cover positions in order (the MoD cover ranking, `cover_outside_preferences`). For them there is no primary /
+ * secondary: every rank here is flex, no primary reason is emitted and nothing is validated.
  *
  * Eligibility is unchanged: a rank never makes anyone eligible. `positionListProblems` is the save-time check (UI
  * and the save path, en + es) that a primary or secondary is one the person's work type allows.
@@ -31,19 +39,33 @@ import type { PositionRole } from "./structure-shared";
 export const POSITION_RANK = { primary: 0, secondary: 1, flex: 2 } as const;
 export type PositionRank = (typeof POSITION_RANK)[keyof typeof POSITION_RANK];
 
-/** Does this person have a primary / secondary at all? Everyone below shift lead; a manager's list is their cover order. */
+/**
+ * The HOURLY LEAD roles: paid hourly (not the salaried GM / AGM, not the presence-only MoO / Owner, not the never-generated
+ * catering / prep managers, never the CGS / social media manager) AND able to lead a shift (manager on duty or Closing
+ * Manager): the shift lead and the key holder. Pinned against the role table by a test.
+ */
+export const HOURLY_LEAD_ROLES: readonly RoleCode[] = ["shift_lead", "key_holder"];
+export function isHourlyLeadRole(role: RoleCode): boolean {
+  return HOURLY_LEAD_ROLES.includes(role);
+}
+
+/** Does this person have a primary at all? Everyone below shift lead, and the hourly leads; a salaried manager's list is their cover order. */
 export function hasPositionRank(p: Pick<RulePerson, "role">): boolean {
-  return !isManagerRole(p.role);
+  return !isManagerRole(p.role) || isHourlyLeadRole(p.role);
 }
 
 /**
  * The person's rank on `positionId`: 0 = their primary, 1 = their secondary, 2 = flex (everything else — the "can flex
- * to" entries, a position not on the list, an empty list, a null position: the MoD lane — and every manager).
+ * to" entries, a position not on the list, an empty list, a null position — and every salaried manager). For an hourly
+ * lead the secondary is MANAGER DUTIES: `managerDuty` (the MoD lane, the Closing Manager's slot) ranks them 1 unless the
+ * slot is their primary station; a station entry of theirs is never rank 1.
  */
-export function positionRankOf(p: Pick<RulePerson, "role" | "coverPositions">, positionId: string | null): PositionRank {
-  if (positionId === null || !hasPositionRank(p)) return POSITION_RANK.flex;
-  const i = p.coverPositions.indexOf(positionId);
-  return i === 0 ? POSITION_RANK.primary : i === 1 ? POSITION_RANK.secondary : POSITION_RANK.flex;
+export function positionRankOf(p: Pick<RulePerson, "role" | "coverPositions">, positionId: string | null, managerDuty = false): PositionRank {
+  if (!hasPositionRank(p)) return POSITION_RANK.flex;
+  const lead = isHourlyLeadRole(p.role);
+  const i = positionId === null ? -1 : p.coverPositions.indexOf(positionId);
+  const station = i === 0 ? POSITION_RANK.primary : i === 1 && !lead ? POSITION_RANK.secondary : POSITION_RANK.flex;
+  return managerDuty && lead && station === POSITION_RANK.flex ? POSITION_RANK.secondary : station;
 }
 
 /** The person's primary position, or null when their list is empty (and always null for a manager). */
@@ -67,9 +89,20 @@ export function withPrimarySecondary(list: readonly string[], primary: string | 
   return [primary, second, ...list.slice(2).filter((x) => x !== primary && x !== second)];
 }
 
-/** The label role of entry `i` of the ordered list. */
-export function positionSlotOf(i: number): "primary" | "secondary" | "flex" {
-  return i === 0 ? "primary" : i === 1 ? "secondary" : "flex";
+/**
+ * An hourly lead's list after picking a primary station (their secondary is manager duties, not in the list): the new
+ * primary first, then everything else they had, in order (the old primary moves to the front of "can flex to" — for a
+ * shift lead the list is also the positions they may cover, so nothing is dropped). No primary → the list is cleared
+ * (its first entry would otherwise become the primary; the pickers name the count first).
+ */
+export function withLeadPrimary(list: readonly string[], primary: string | null): string[] {
+  if (!primary) return [];
+  return [primary, ...list.filter((x) => x !== primary)];
+}
+
+/** The label role of entry `i` of the ordered list (an hourly lead's secondary is manager duties, so their [1..] are flex). */
+export function positionSlotOf(i: number, lead = false): "primary" | "secondary" | "flex" {
+  return i === 0 ? "primary" : i === 1 && !lead ? "secondary" : "flex";
 }
 
 // ─── Save-time validation ────────────────────────────────────────────────────
@@ -88,7 +121,8 @@ export function positionListProblems(person: PositionListPerson, list: readonly 
   if (!hasPositionRank(person)) return [];
   const out: PositionListProblem[] = [];
   const asPerson = { workType: person.workType, alsoAllowed: [...person.alsoAllowed] };
-  list.slice(0, 2).forEach((positionId, i) => {
+  // An hourly lead's secondary is manager duties: only their primary station is judged.
+  list.slice(0, isHourlyLeadRole(person.role) ? 1 : 2).forEach((positionId, i) => {
     const role = roles[positionId];
     if (role && !workTypeAllows(asPerson, { role })) out.push({ slot: i === 0 ? "primary" : "secondary", positionId, code: "work_type" });
   });
