@@ -120,7 +120,7 @@ export function UserActions({
   };
 
   const base = `/api/admin/users/${user.id}`;
-  const view = user.employment ?? { status: "active" as const, headId: null, chip: null, detail: null };
+  const view = user.employment ?? { status: "active" as const, headId: null, chip: null, detail: null, overrides: [] };
   const can = employmentAvailable
     ? employmentActionsFor(actor, { id: user.id, role: user.role, locationIds: user.locationIds }, actStateOf(view))
     : { endEmployment: false, backFromLeave: false, rehire: false, correct: false };

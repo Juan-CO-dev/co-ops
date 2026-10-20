@@ -111,6 +111,11 @@ function client() {
         tables.users!.push({ id: nid, name: String(args.p_name).trim(), email: args.p_email, role: args.p_role, active: true, last_login_at: null,
           phone: args.p_phone, email_verified: false, created_at: "2026-10-20T00:00:00Z", created_by: args.p_actor, locked_until: null, dormant_at: null });
         for (const l of args.p_locations as string[]) tables.user_locations!.push({ user_id: nid, location_id: l, active: true });
+        if (args.p_rehire_confirmed === true && (args.p_rehire_user_ids as string[]).length > 0) {
+          tables.user_employment_events!.push({ id: id(500 + mocks.rpcCalls.length), user_id: nid, kind: "rehire_override", corrects_id: null, leave_reason: null,
+            expected_back: null, separation_type: null, last_day_worked: null, reason: null, rehire: null, rehire_note: null, note: args.p_rehire_reason,
+            actor_id: args.p_actor, created_at: "2026-10-20T14:00:00Z", matched_user_ids: args.p_rehire_user_ids });
+        }
         return chain({ data: { id: nid }, error: null });
       }
       const u = tables.users!.find((x) => x.id === args.p_user)!;
@@ -355,6 +360,17 @@ describe("the rehire warning on Add user — phone or Toast GUID, never a name",
     const auditRow = mocks.audit.mock.calls.find((c) => (c[0] as { action: string }).action === "user.create")![0] as { metadata: Record<string, unknown> };
     expect(auditRow.metadata.rehire_match_override).toEqual([SEP_A]);
     expect(tables.users!.find((u) => u.name === "M. Lopez")?.phone).toBe("2025550101");
+    // "Added despite a rehire flag" (Astra BC-017/013): on the new person's detail, named, for who may read it.
+    const newId = String(third.body.userId);
+    const ownerList = await (await listGet(req("/api/admin/users"))).json() as { users: Array<{ id: string; employment?: { status: string; overrides: unknown[] } }> };
+    const row = ownerList.users.find((u) => u.id === newId)!;
+    expect(row.employment!.status).toBe("active");
+    expect(row.employment!.overrides).toEqual([{ eventId: expect.any(String), at: "2026-10-20T14:00:00Z", actorId: OWNER, actorName: "Pete",
+      matched: [{ userId: SEP_A, name: "Miguel" }], reason: "Pete approved" }]);
+    as(GM_A); // the GM of the shop the new person belongs to
+    expect(JSON.stringify(await (await listGet(req("/api/admin/users"))).json())).toContain("Pete approved");
+    as(GM_B); // another shop's GM: not their person, nothing of it
+    expect(JSON.stringify(await (await listGet(req("/api/admin/users"))).json())).not.toContain("Pete approved");
   });
   it("the writer's own refusal under its lock (a demoted actor, an omitted match) answers with the matches again, redacted", async () => {
     const c = mocks.client as { rpc: (fn: string, args: Record<string, unknown>) => unknown };

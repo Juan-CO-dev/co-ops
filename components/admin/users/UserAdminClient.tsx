@@ -26,7 +26,7 @@ import type { AdminUserListItem } from "@/lib/admin/users";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { CreateUserForm } from "./CreateUserForm";
 import { UserActions } from "./UserActions";
-import { EmploymentChip, EmploymentRecord } from "./Employment";
+import { EmploymentChip, EmploymentRecord, RehireOverrides } from "./Employment";
 import type { UserAdminClientProps } from "./shared";
 
 export function UserAdminClient({
@@ -112,6 +112,7 @@ export function UserAdminClient({
               </div>
 
               <EmploymentRecord detail={u.employment?.detail ?? null} />
+              <RehireOverrides overrides={u.employment?.overrides} />
               {u.dormancy.dormant && statusOf(u) === "active" && <p className="mt-2 text-sm text-co-text-muted">
                 {u.dormancy.reason === "deactivated" ? t("admin.users.dormancy.deactivated")
                   : t(u.dormancy.reason === "manual" ? "admin.users.dormancy.manual"

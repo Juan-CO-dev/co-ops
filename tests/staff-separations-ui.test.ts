@@ -100,6 +100,29 @@ describe("from on leave: End employment → Separated, never another leave (Astr
   });
 });
 
+describe("\"Added despite a rehire flag\" on the person's detail (Astra BC-017/013)", () => {
+  const added = (role: RoleCode) => {
+    const st = employmentStateOf([ev({ id: "o1", kind: "rehire_override", createdAt: "2026-10-20T16:00:00Z", note: "Pete approved a second chance", matchedUserIds: ["m1"] })]);
+    const v = viewFor(role, st);
+    for (const o of v.overrides) { o.actorName = "Pete"; for (const m of o.matched) m.name = "Miguel"; }
+    return [person("n1", "Miguel L", { employment: v })];
+  };
+  it("who may read it sees when, by whom, the matched person and the reason (collapsed)", () => {
+    const html = page("en", "gm", added("gm"));
+    expect(html).toContain("Added despite a rehire flag");
+    expect(html).toContain("Added by Pete on Tue, Oct 20");
+    expect(html).toContain("Matched: Miguel");
+    expect(html).toContain("Pete approved a second chance");
+    expect(html).not.toMatch(/<details[^>]*data-rehire-overrides[^>]* open/);
+    expect(page("es", "gm", added("gm"))).toContain("Agregado pese a una alerta de recontratación");
+  });
+  it("anyone else: nothing of it", () => {
+    const html = page("en", "gm", added("agm"));
+    expect(html).not.toContain("Added despite a rehire flag");
+    expect(html).not.toContain("Pete approved");
+  });
+});
+
 describe("the dialogs", () => {
   it("End employment: the two branches; the separation asks type, last day, reason, rehire; the privacy line", () => {
     const leave = dialog("en", "end", employmentStateOf([]), "leave");

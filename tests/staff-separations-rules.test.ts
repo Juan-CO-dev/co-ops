@@ -53,6 +53,17 @@ describe("THE ROLE MATRIX — who reads the reasons (every role, in and out of t
       });
     }
   }
+  it("THE ROLE MATRIX for \"Added despite a rehire flag\" (Astra BC-017/013): the override rides the authorized detail only", () => {
+    const added = employmentStateOf([ev({ id: "o1", kind: "rehire_override", createdAt: "2026-10-20T12:00:00Z", note: "SECRET OVERRIDE REASON", matchedUserIds: ["m1"] })]);
+    expect(added.status).toBe("active");
+    expect(added.overrides).toEqual([{ eventId: "o1", at: "2026-10-20T12:00:00Z", actorId: "gm", actorName: null, matched: [{ userId: "m1", name: null }], reason: "SECRET OVERRIDE REASON" }]);
+    for (const role of ALL_ROLES) for (const inShop of [true, false]) {
+      const view = employmentViewFor({ role, locations: inShop ? [A] : [B] }, [A], added);
+      const may = role === "owner" || role === "moo" || role === "cgs" || (role === "gm" && inShop);
+      expect(view.overrides.length, `${role} ${inShop}`).toBe(may ? 1 : 0);
+      if (!may) expect(JSON.stringify(view)).not.toMatch(/SECRET|m1/);
+    }
+  });
   it("a GM with no shop overlap never reads it, even for a two-shop person in another shop pair", () => {
     expect(canSeeEmploymentDetail({ role: "gm", locations: [] }, [A, B])).toBe(false);
     expect(canSeeEmploymentDetail({ role: "gm", locations: [B] }, [A, B])).toBe(true);
@@ -150,7 +161,7 @@ describe("the state: the latest status event; corrections replace the fields (ne
   it("no events → active; leave → back → active; rehired → active; separated → separated", () => {
     expect(employmentStateOf([]).status).toBe("active");
     const back = employmentStateOf([ev({ id: "1", kind: "leave_start", createdAt: "2026-10-01T00:00:00Z", leaveReason: "seasonal" }), ev({ id: "2", kind: "leave_end", createdAt: "2026-10-02T00:00:00Z" })]);
-    expect(back).toEqual({ status: "active", headId: "2", current: null });
+    expect(back).toEqual({ status: "active", headId: "2", current: null, overrides: [] });
     expect(SEPARATED.status).toBe("separated");
   });
   it("corrections: the newest correction of the event in force wins; the status never moves", () => {

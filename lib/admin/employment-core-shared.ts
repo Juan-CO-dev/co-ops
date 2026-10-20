@@ -64,6 +64,22 @@ export interface EmploymentEventRow {
   note: string | null;
   actorId: string;
   createdAt: string;
+  /** rehire_override rows only: the separated people the creator confirmed past. */
+  matchedUserIds?: string[] | null;
+}
+
+/**
+ * "Added despite a rehire flag" (Astra BC-017/013): a `rehire_override` row on this account — when, by whom, which
+ * separated people it matched, and the written reason. Never a status; part of the AUTHORIZED detail only. Names are
+ * filled by the loader that has them (null until then).
+ */
+export interface EmploymentOverride {
+  eventId: string;
+  at: string;
+  actorId: string;
+  actorName: string | null;
+  matched: Array<{ userId: string; name: string | null }>;
+  reason: string | null;
 }
 
 /** The event in force, corrections applied. */
@@ -79,9 +95,11 @@ export interface EmploymentState {
   /** The latest event of ANY kind — what a write must name as `expectedId` (null = no event yet). */
   headId: string | null;
   current: EmploymentDetail | null;
+  /** This account's rehire overrides, newest first (never a status). */
+  overrides: EmploymentOverride[];
 }
 
-export const ACTIVE_STATE: EmploymentState = Object.freeze({ status: "active", headId: null, current: null }) as EmploymentState;
+export const ACTIVE_STATE: EmploymentState = Object.freeze({ status: "active", headId: null, current: null, overrides: [] }) as unknown as EmploymentState;
 
 const newestFirst = (a: EmploymentEventRow, b: EmploymentEventRow) =>
   a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
@@ -91,20 +109,24 @@ export function employmentStateOf(rows: readonly EmploymentEventRow[]): Employme
   if (rows.length === 0) return ACTIVE_STATE;
   const sorted = [...rows].sort(newestFirst);
   const head = sorted[0]!;
+  const overrides: EmploymentOverride[] = sorted.filter((r) => r.kind === "rehire_override").map((r) => ({
+    eventId: r.id, at: r.createdAt, actorId: r.actorId, actorName: null,
+    matched: (r.matchedUserIds ?? []).map((userId) => ({ userId, name: null })), reason: r.note,
+  }));
   // The status is the latest leave / separation / rehire event: a correction or a rehire override never is one.
   const ev = sorted.find((r) => r.kind !== "correction" && r.kind !== "rehire_override");
-  if (!ev || ev.kind === "leave_end" || ev.kind === "rehired") return { status: "active", headId: head.id, current: null };
+  if (!ev || ev.kind === "leave_end" || ev.kind === "rehired") return { status: "active", headId: head.id, current: null, overrides };
   const fix = sorted.find((r) => r.kind === "correction" && r.correctsId === ev.id);
   const src = fix ?? ev;
   if (ev.kind === "leave_start") {
     return {
-      status: "on_leave", headId: head.id,
+      status: "on_leave", headId: head.id, overrides,
       current: { kind: "on_leave", eventId: ev.id, since: ev.createdAt, leaveReason: src.leaveReason ?? "other",
         expectedBack: src.expectedBack, note: src.note, corrected: !!fix },
     };
   }
   return {
-    status: "separated", headId: head.id,
+    status: "separated", headId: head.id, overrides,
     current: { kind: "separated", eventId: ev.id, since: ev.createdAt, separationType: src.separationType ?? "other",
       lastDayWorked: src.lastDayWorked ?? ev.createdAt.slice(0, 10), reason: src.reason ?? "", rehire: src.rehire ?? "no",
       rehireNote: src.rehireNote, corrected: !!fix },
@@ -146,6 +168,8 @@ export interface EmploymentView {
   chip: EmploymentChip | null;
   /** Null unless the viewer may read the reasons (canSeeEmploymentDetail). */
   detail: EmploymentDetail | null;
+  /** "Added despite a rehire flag" — empty unless the viewer may read the reasons (the same rule as `detail`). */
+  overrides: EmploymentOverride[];
 }
 
 /** The chip's i18n key (`{date}` = the expected-back date when there is one). */
@@ -165,6 +189,7 @@ export function employmentViewFor(viewer: EmploymentViewer, subjectLocationIds: 
   return {
     status: state.status, headId: state.headId, chip: employmentChipOf(state),
     detail: state.current && canSeeEmploymentDetail(viewer, subjectLocationIds) ? state.current : null,
+    overrides: canSeeEmploymentDetail(viewer, subjectLocationIds) ? state.overrides.map((o) => ({ ...o, matched: o.matched.map((m) => ({ ...m })) })) : [],
   };
 }
 

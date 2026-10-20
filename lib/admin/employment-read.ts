@@ -8,16 +8,17 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { ACTIVE_STATE, employmentStatesByUser, type EmploymentEventRow, type EmploymentRowKind, type EmploymentState, type RehireSetting } from "./employment-core-shared";
 
 export const ID_CHUNK = 100;
-const COLUMNS = "id, user_id, kind, corrects_id, leave_reason, expected_back, separation_type, last_day_worked, reason, rehire, rehire_note, note, actor_id, created_at";
+const COLUMNS = "id, user_id, kind, corrects_id, leave_reason, expected_back, separation_type, last_day_worked, reason, rehire, rehire_note, note, actor_id, created_at, matched_user_ids";
 type Db = {
   id: string; user_id: string; kind: EmploymentRowKind; corrects_id: string | null; leave_reason: EmploymentEventRow["leaveReason"];
   expected_back: string | null; separation_type: EmploymentEventRow["separationType"]; last_day_worked: string | null; reason: string | null;
   rehire: RehireSetting | null; rehire_note: string | null; note: string | null; actor_id: string; created_at: string;
+  matched_user_ids: string[] | null;
 };
 const rowOf = (r: Db): EmploymentEventRow => ({
   id: r.id, userId: r.user_id, kind: r.kind, correctsId: r.corrects_id, leaveReason: r.leave_reason, expectedBack: r.expected_back,
   separationType: r.separation_type, lastDayWorked: r.last_day_worked, reason: r.reason, rehire: r.rehire, rehireNote: r.rehire_note,
-  note: r.note, actorId: r.actor_id, createdAt: r.created_at,
+  note: r.note, actorId: r.actor_id, createdAt: r.created_at, matchedUserIds: r.matched_user_ids ?? null,
 });
 
 export interface EmploymentStates {

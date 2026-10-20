@@ -24,7 +24,7 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import {
   EMPLOYMENT_NOTE_MAX, EMPLOYMENT_REASON_MAX, employmentChipKey, LEAVE_REASONS, REHIRE_SETTINGS, SEPARATION_TYPES,
-  type EmploymentChip as Chip, type EmploymentDetail, type EmploymentView, type LeaveReason, type RehireSetting, type SeparationType,
+  type EmploymentChip as Chip, type EmploymentDetail, type EmploymentOverride, type EmploymentView, type LeaveReason, type RehireSetting, type SeparationType,
 } from "@/lib/admin/employment-shared";
 import type { RehireMatch } from "@/lib/admin/employment";
 import { postJson, resolveErrorKey } from "./shared";
@@ -84,6 +84,30 @@ export function EmploymentRecord({ detail }: { detail: EmploymentDetail | null }
           </>
         )}
       </dl>
+    </details>
+  );
+}
+
+/** "Added despite a rehire flag" — for the viewers the server sent it to (empty otherwise). Default-collapsed. */
+export function RehireOverrides({ overrides }: { overrides: EmploymentOverride[] | undefined }) {
+  const { t, language } = useTranslation();
+  if (!overrides || overrides.length === 0) return null;
+  return (
+    <details className="mt-2 rounded-lg border border-co-border bg-co-surface-inset" data-rehire-overrides>
+      <summary className="flex min-h-[44px] cursor-pointer items-center px-3 text-sm font-bold text-co-text">{t("admin.users.employment.override.title")}</summary>
+      <ul className="flex flex-col gap-3 px-3 pb-3">
+        {overrides.map((o) => (
+          <li key={o.eventId} className="flex flex-col gap-1">
+            <span className="text-sm text-co-text">
+              {t("admin.users.employment.override.by", { name: o.actorName ?? t("admin.users.employment.override.someone"), date: formatDateLabel(etCalendarDate(o.at), language) })}
+            </span>
+            <span className="text-sm text-co-text">
+              {t("admin.users.employment.override.matched", { names: o.matched.map((m) => m.name ?? t("admin.users.employment.override.someone")).join(", ") })}
+            </span>
+            {o.reason ? <Row label={t("admin.users.employment.field.reason")} value={o.reason} /> : null}
+          </li>
+        ))}
+      </ul>
     </details>
   );
 }

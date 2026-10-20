@@ -154,7 +154,7 @@ export async function listUsers(filters: ListUsersFilters, viewer?: UserListView
   });
   const now = Date.now();
   const employment = viewer ? await loadEmploymentStates(sb, rows.map((r) => r.id)) : null;
-  return rows.map((r) => ({
+  const items = rows.map((r) => ({
     id: r.id, name: r.name, email: r.email, role: r.role,
     level: getRoleLevel(r.role), active: r.active, lastLoginAt: r.last_login_at,
     locationIds: locMap.get(r.id) ?? [],
@@ -163,6 +163,22 @@ export async function listUsers(filters: ListUsersFilters, viewer?: UserListView
       dormantAt: r.dormant_at, lastClockInAt: clocks?.get(r.id) ?? null, now, clockHistoryKnown: clocks !== null }),
     ...(employment && viewer ? { employment: employmentViewFor(viewer, locMap.get(r.id) ?? [], stateOf(employment, r.id)) } : {}),
   }));
+  // "Added despite a rehire flag": name the creator and the matched people — only in the overrides the viewer may read
+  // (employmentViewFor left them empty otherwise).
+  const ids = [...new Set(items.flatMap((u) => (u.employment?.overrides ?? []).flatMap((o) => [o.actorId, ...o.matched.map((m) => m.userId)])))];
+  if (ids.length > 0) {
+    const names = new Map<string, string>();
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error: nErr } = await sb.from("users").select("id, name").in("id", ids.slice(i, i + 100));
+      if (nErr) throw new Error(`listUsers override names failed: ${nErr.message}`);
+      for (const n of (data ?? []) as Array<{ id: string; name: string }>) names.set(n.id, n.name);
+    }
+    for (const u of items) for (const o of u.employment?.overrides ?? []) {
+      o.actorName = names.get(o.actorId) ?? null;
+      for (const m of o.matched) m.name = names.get(m.userId) ?? null;
+    }
+  }
+  return items;
 }
 
 export async function getUserDetail(id: string): Promise<AdminUserDetail | null> {
