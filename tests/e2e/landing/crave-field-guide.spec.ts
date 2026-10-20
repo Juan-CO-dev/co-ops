@@ -280,3 +280,31 @@ test('finding all six Field Guide ingredients turns into the Crunchy Boi order a
   await expect(sheet).toBeVisible();
   await expect(sheet.locator('a[data-landing-placement="guide"]')).toHaveCount(2);
 });
+
+for(const language of ['en','es'] as const)test(`the Field Guide action slot keeps one height from first paint to six-of-six (${language})`,async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  let releaseScripts!:()=>void;
+  const scriptsReady=new Promise<void>(resolve=>{releaseScripts=resolve;});
+  await page.route('**/_next/static/**/*.js',async route=>{await scriptsReady;await route.continue();});
+  await page.clock.install();
+  try {
+    await page.goto(`/?lang=${language}`,{waitUntil:'commit'});
+    const slot=page.locator('#field-guide [data-guide-cta]');
+    await expect(slot).toBeAttached();
+    // Server render, before hydration: the box is already reserved (stylesheet applied).
+    await expect.poll(()=>slot.evaluate(el=>getComputedStyle(el).minHeight)).toBe('56px');
+    await expect(slot).toHaveAttribute('data-ready','false');
+    const height=()=>slot.evaluate(el=>el.getBoundingClientRect().height);
+    const before=await height();
+    expect(before).toBeGreaterThanOrEqual(52);
+    releaseScripts();
+    const guide=page.locator('.landing-v3-guide');
+    await expect(guide).toHaveAttribute('data-guide-mode','motion');
+    await expect(slot).toHaveAttribute('data-ready','false');
+    expect(await height()).toBeCloseTo(before,1);
+    await page.locator('.landing-v3-guide-figure').scrollIntoViewIfNeeded();
+    await expect.poll(async()=>{await page.clock.runFor(1200);return slot.getAttribute('data-ready');},{timeout:20000}).toBe('true');
+    await expect(slot.getByRole('button',{name:(language==='en'?en:es)['landing.lineup.order'].replace('{name}','Crunchy Boi')})).toBeVisible();
+    expect(await height()).toBeCloseTo(before,1);
+  } finally {releaseScripts();}
+});

@@ -70,8 +70,10 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       <div ref={photo}><TexturePhoto kind="crossSection" alt={crossAlt}/></div>
       <figcaption>{caption}</figcaption>
     </figure>
-    {/* The action mounts only once all six are found; until then its box is reserved (no shift). */}
-    {cta&&mode!=='list'&&<div className="landing-v4-guide-cta" data-ready={found}>{found?cta:null}</div>}
+    {/* One constant box from the server render on: empty before hydration and until all six are
+        found, then the action. It never changes height (no layout shift). Without JS it is removed. */}
+    {cta&&<div className="landing-v4-guide-cta" data-guide-cta data-ready={mode!=='list'&&found}>{mode!=='list'&&found?cta:null}</div>}
+    {cta&&<noscript><style>{'.landing-v2 .landing-v4-guide-cta { display: none; }'}</style></noscript>}
     <svg aria-hidden="true" className="landing-v3-guide-lines">
       {fieldGuideAnchors.map((anchor,index)=>{
         const path=paths[anchor.id];if(!path||mode==='list')return null;
