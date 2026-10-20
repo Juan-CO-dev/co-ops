@@ -321,3 +321,11 @@
   .landing-v2 .landing-v2-hero-copy { padding: 4px 22px; gap: 2px; }
   .landing-v2 .landing-v2-hero-copy h1 { font-size: 3.5rem; }
 }
+/* v4.1: Field Guide words are tap targets while the find game runs (same look as the chip). */
+.landing-v2 .landing-v3-guide[data-guide-mode="motion"] .landing-v3-guide-words li { padding: 0; }
+.landing-v2 .landing-v4-guide-word { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; margin: 0; padding: 4px 6px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.landing-v2 .landing-v4-guide-word:focus-visible { outline: 3px solid #ed3308; outline-offset: 2px; }
+/* v4.1: every fighter photo is framed on its own sub. --focal-y is the sub's vertical centre in the
+   2:3 photo; each crop converts it to the object-position that centres it (clamped to the photo). */
+.landing-v2 .landing-v3-stage-media [data-landing-photo] img { object-position: 50% clamp(0%, calc(var(--focal-y, .5) * 200% - 50%), 100%); }
+.landing-v2 .landing-v3-roster button img { object-position: 50% clamp(0%, calc(var(--focal-y, .5) * 300% - 100%), 100%); }
