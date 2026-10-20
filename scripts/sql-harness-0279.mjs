@@ -22,7 +22,7 @@
  *   S5  the payload by exact keys: missing / blank reason, a rehire setting needing a note without one, an unknown key,
  *       an impossible date, an over-long reason → invalid_payload; rehire = yes drops a stray rehire note
  *   S6  the rehire gate: yes → a GM; only_with_owner_ok → owner / MoO / CGS (GM refused), with a reason; no → the owner
- *       only (MoO and CGS refused), with a reason
+ *       or the CGS (Juan 2026-10-20: the CGS holds the owner's authority) — the MoO refused — with a reason
  *   S7  corrections: a new row naming the event in force; the status is unchanged; loosening `no` needs the owner;
  *       naming another event or correcting an active person is refused; the TS state reads the corrected fields
  *   S8  the user-admin writers' posture (SECURITY DEFINER, search_path pinned, service_role only) and the ONE gate:
@@ -233,7 +233,12 @@ try {
   const r4 = await ev(moo, e4, "rehired", { note: "Owner approved by phone" });
   check(r4.status_after === "active" && await active(e4), "S6 owner OK needed → the MoO rehires with a reason");
   await refuses(() => ev(moo, e3, "rehired", { note: "x" }), "rehire_owner_required", "S6 not eligible → the MoO is refused");
-  await refuses(() => ev(cgs, e3, "rehired", { note: "x" }), "rehire_owner_required", "S6 not eligible → the CGS is refused (owner only)");
+  await refuses(() => ev(cgs, e3, "rehired", {}), "invalid_payload", "S6 not eligible → the CGS (the owner's authority, Juan 2026-10-20) must give a reason");
+  const e6 = await user("employee");
+  await member(e6, SA);
+  await ev(gmA, e6, "separated", SEP("no"));
+  const r6 = await ev(cgs, e6, "rehired", { note: "Juan reviewed it with Pete" });
+  check(r6.status_after === "active" && await active(e6), "S6 not eligible → the CGS rehires with a reason (the owner's authority)");
   await refuses(() => ev(owner, e3, "rehired", {}), "invalid_payload", "S6 not eligible → the owner must give a reason");
 
   // S7 — corrections

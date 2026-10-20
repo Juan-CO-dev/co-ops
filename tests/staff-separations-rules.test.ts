@@ -123,7 +123,8 @@ describe("the act rules: transitions and the rehire authority", () => {
   it.each([
     ["yes", { gm: true, moo: true, cgs: true, owner: true }],
     ["only_with_owner_ok", { gm: false, moo: true, cgs: true, owner: true }],
-    ["no", { gm: false, moo: false, cgs: false, owner: true }],
+    // Juan 2026-10-20: the CGS holds the owner's authority for this feature.
+    ["no", { gm: false, moo: false, cgs: true, owner: true }],
   ] as const)("rehire on %s", (setting, who) => {
     for (const [role, ok] of Object.entries(who) as Array<[RoleCode, boolean]>) {
       expect(employmentActRefusal(a(role), emp, "rehired", rehireState(setting)) === null, `${role} rehires on ${setting}`).toBe(ok);
@@ -135,6 +136,8 @@ describe("the act rules: transitions and the rehire authority", () => {
     expect(employmentActRefusal(a("gm"), emp, "correction", rehireState("only_with_owner_ok"), "yes")).toBe("rehire_owner_ok_required");
     expect(employmentActRefusal(a("moo"), emp, "correction", rehireState("only_with_owner_ok"), "yes")).toBeNull();
     expect(employmentActRefusal(a("owner"), emp, "correction", rehireState("no"), "yes")).toBeNull();
+    expect(employmentActRefusal(a("cgs"), emp, "correction", rehireState("no"), "yes")).toBeNull();
+    expect(employmentActRefusal(a("moo"), emp, "correction", rehireState("no"), "yes")).toBe("rehire_owner_required");
   });
   it("the act state reads the rehire setting from a REDACTED view too (the chip carries it)", () => {
     const view = employmentViewFor({ role: "agm", locations: [A] }, [A], SEPARATED);

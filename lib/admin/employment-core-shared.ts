@@ -14,7 +14,9 @@
  *
  * WHO RECORDS (the SQL twin is 0279's actor rule): user management's rule (`userAdminRefusal`: GM own shop, MoO+ any,
  * strictly below oneself) for leave, back from leave and separation; a rehire follows the separation's rehire setting —
- * `yes` the same rule, `only_with_owner_ok` the owner / MoO / CGS, `no` the owner only, with a reason.
+ * `yes` the same rule, `only_with_owner_ok` the owner / MoO / CGS, `no` the owner or the CGS, with a reason (Juan
+ * 2026-10-20: "I should be able to see whatever Pete sees because I will need to fix it" — the CGS holds the owner's
+ * authority for this feature everywhere).
  */
 import type { RoleCode } from "../roles";
 import type { TranslationKey } from "../i18n/types";
@@ -38,7 +40,7 @@ export const EMPLOYMENT_DETAIL_ROLES: readonly RoleCode[] = ["owner", "moo", "cg
 /** A rehire on `only_with_owner_ok`. */
 export const REHIRE_OWNER_OK_ROLES: readonly RoleCode[] = ["owner", "moo", "cgs"];
 /** A rehire on `no`. */
-export const REHIRE_NO_ROLES: readonly RoleCode[] = ["owner"];
+export const REHIRE_NO_ROLES: readonly RoleCode[] = ["owner", "cgs"];
 
 /** One row of 0279, as the loader maps it. */
 export interface EmploymentEventRow {

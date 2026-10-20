@@ -35,7 +35,7 @@ describe("0279_user_employment_events", () => {
       "S1 anon cannot read the table", "S1 authenticated cannot EXECUTE the writer", "S1 service_role cannot update (append-only)",
       "S2 a GM is refused a person who also works at a shop the GM does not belong to",
       "S3 leave: on leave, deactivated, both live sessions revoked in the same transaction", "S4 a stale p_expected → employment_moved",
-      "S6 not eligible → the CGS is refused (owner only)", "S7 the TS state reads the corrected fields; the head is the correction",
+      "S6 not eligible → the CGS rehires with a reason (the owner's authority)", "S7 the TS state reads the corrected fields; the head is the correction",
       "S8 admin_user_set_credential takes the ONE gate (user_admin_lock) and no lock of its own",
       "S9 a promotion to GM committed first → the GM's password write is refused → forbidden",
       "S9 a second shop committed first → the GM's PIN write is refused → target_outside_shop",

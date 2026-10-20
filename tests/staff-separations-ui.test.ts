@@ -150,9 +150,9 @@ describe("Add user: the rehire warning", () => {
   it("a match the actor may not pass: no confirm box, who can approve; no reason for a viewer it was not sent to", () => {
     const html = form("en", [match(false, false)]);
     expect(html).not.toContain("I checked — add them anyway");
-    expect(html).toContain("Only the owner can approve adding this person.");
+    expect(html).toContain("Only the owner or the CGS can approve adding this person.");
     expect(html).not.toContain("Took cash");
-    expect(form("es", [match(false, false)])).toContain("Solo el dueño puede aprobar");
+    expect(form("es", [match(false, false)])).toContain("Solo el dueño o el CGS pueden aprobar");
   });
   it("the phone field is there, labelled, 44 px", () => {
     const html = form("en", []);

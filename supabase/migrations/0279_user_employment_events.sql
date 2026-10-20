@@ -28,7 +28,8 @@
 --          separation), else 'employment_invalid_transition';
 --        - THE REHIRE GATE (rehired, and a correction that loosens the rehire setting): the separation's setting
 --          `yes` → the rule above; `only_with_owner_ok` → owner / MoO / CGS only ('rehire_owner_ok_required');
---          `no` → the owner only ('rehire_owner_required'). A rehire on anything but `yes` needs a note (the reason).
+--          `no` → the owner or the CGS only ('rehire_owner_required'; Juan 2026-10-20: the CGS holds the owner's
+--          authority here). A rehire on anything but `yes` needs a note (the reason).
 --        - the payload, by EXACT keys per kind ('invalid_payload' otherwise);
 --        - the insert; then `users.active` follows the new status (false on leave_start / separated, true on
 --          leave_end / rehired) and, on leaving active, every live session of the person is revoked IN THE SAME
@@ -328,7 +329,7 @@ begin
                       and c.corrects_id = v_status_event.id order by c.created_at desc, c.id desc limit 1), v_status_event.rehire)
       into v_current_rehire;
     v_new_rehire := case when p_kind = 'rehired' then 'yes' else v_rehire end;
-    if v_current_rehire = 'no' and v_new_rehire <> 'no' and v_actor_role <> 'owner' then raise exception 'rehire_owner_required'; end if;
+    if v_current_rehire = 'no' and v_new_rehire <> 'no' and v_actor_role not in ('owner', 'cgs') then raise exception 'rehire_owner_required'; end if;
     if v_current_rehire = 'only_with_owner_ok' and v_new_rehire = 'yes' and v_actor_role not in ('owner', 'moo', 'cgs') then
       raise exception 'rehire_owner_ok_required';
     end if;

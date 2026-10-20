@@ -225,13 +225,13 @@ describe("the employment route (Tier B, the head, the transitions, the rehire au
     expect(mocks.rpcCalls.filter((c) => c.fn === "record_user_employment_event")).toEqual([]);
     expect((await post(LEAVE_A, { act: "leave_end", fields: {}, expectedId: LEAVE_EVENT })).status).toBe(200);
   });
-  it("the rehire authority: `no` → owner only; `yes` → the GM; a reason when not `yes`", async () => {
+  it("the rehire authority: `no` → owner or CGS; `yes` → the GM; a reason when not `yes`", async () => {
     as(GM_A);
     expect((await json(await post(SEP_A, { act: "rehired", fields: { note: "x" }, expectedId: SEP_EVENT }))).body.code).toBe("rehire_owner_required");
     as(MOO);
     expect((await json(await post(SEP_A, { act: "rehired", fields: { note: "x" }, expectedId: SEP_EVENT }))).body.code).toBe("rehire_owner_required");
-    as(CGS);
-    expect((await json(await post(SEP_A, { act: "rehired", fields: { note: "x" }, expectedId: SEP_EVENT }))).body.code).toBe("rehire_owner_required");
+    as(CGS); // Juan 2026-10-20: the CGS holds the owner's authority — but still with a reason.
+    expect((await json(await post(SEP_A, { act: "rehired", fields: {}, expectedId: SEP_EVENT }))).body.code).toBe("rehire_reason_required");
     as(OWNER);
     expect((await json(await post(SEP_A, { act: "rehired", fields: {}, expectedId: SEP_EVENT }))).body.code).toBe("rehire_reason_required");
     expect(mocks.rpcCalls.filter((c) => c.fn === "record_user_employment_event")).toEqual([]);
