@@ -42,6 +42,13 @@ export interface SettingsMember {
    * link, no primary yet, and a confident match to one of the shop's positions. A button, never saved on its own.
    */
   suggestedPrimary?: ToastPrimarySuggestion | null;
+  /** Astra BC-007: the id of the latest settings row the card shows (null = none yet) — sent back as `expectedId`. */
+  settingsId?: string | null;
+  /**
+   * Juan 2026-10-20 ("GMs own their shop"): may this actor change this person's settings? Below MoO never oneself, anyone at
+   * or above GM, or anyone at or above the actor (`personSettingsSubjectRefusal`); the save path enforces the same rule.
+   */
+  editable?: boolean;
 }
 
 export interface SettingsPin { id: string; date: string; userId: string; startQ: number; endQ: number; positions: string[]; kind: "presence" | "added" }
@@ -131,7 +138,9 @@ export const structureBody = (locationId: string, expectedId: string | null, str
 export const shopBody = (locationId: string, s: ScheduleShopSettings) => ({
   action: "shop" as const, locationId, enabled: s.enabled, estimatedHourlyCents: s.estimatedHourlyCents, estimatedSalariedWeeklyCents: s.estimatedSalariedWeeklyCents, agmAccess: s.agmAccess,
 });
-export const personBody = (locationId: string, settings: PersonSettingsRow) => ({ action: "person" as const, locationId, settings: { ...settings } });
+export const personBody = (locationId: string, settings: PersonSettingsRow, expectedId: string | null) => ({ action: "person" as const, locationId, settings: { ...settings }, expectedId });
+/** The user screen's pickers: only what changed, merged server-side onto the latest row (Astra BC-007). */
+export const personPositionsBody = (locationId: string, userId: string, changes: Record<string, unknown>) => ({ action: "person_positions" as const, locationId, userId, changes: { ...changes } });
 export const pinBody = (locationId: string, pin: Omit<SettingsPin, "id">) => ({ action: "pin" as const, locationId, pin: { ...pin, positions: [...pin.positions] } });
 export const retirePinBody = (locationId: string, pinId: string) => ({ action: "pin" as const, locationId, pin: { retiresId: pinId } });
 export const tunablesBody = (locationId: string | null, tunables: SkillTunables) => ({ action: "tunables" as const, locationId, tunables });

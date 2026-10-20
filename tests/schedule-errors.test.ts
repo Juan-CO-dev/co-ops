@@ -29,6 +29,8 @@ describe("ScheduleErrorCode", () => {
       "context_too_large",
       // Juan 2026-10-20: a primary / secondary position the person's work type does not allow
       "position_rank_not_allowed",
+      // Astra BC-007: a stale full-row person-settings write
+      "person_settings_moved",
     ].sort());
   });
 

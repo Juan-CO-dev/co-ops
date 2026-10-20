@@ -40,10 +40,56 @@ export function pickOf(row: PersonSettingsRow | null | undefined): PositionPick 
   return { workType: row?.workType ?? null, primary: row?.coverPositions[0] ?? null, secondary: row?.coverPositions[1] ?? null };
 }
 
-/** The row to write: the latest row (or an empty one) with the work type and the first two positions replaced. */
+/**
+ * What the pickers CHANGED against the row they were loaded with — the only fields the user screen sends (Astra BC-007):
+ * the server merges them onto the person's LATEST row, so a save never overwrites full-time, the soft range, also-allowed,
+ * the leader setting, roster_include or the "can flex to" tail that someone else changed after the page loaded.
+ */
+export interface PositionChanges { workType?: WorkType | null; primary?: string | null; secondary?: string | null }
+export function positionChangesOf(loaded: PersonSettingsRow | null | undefined, pick: PositionPick): PositionChanges {
+  const was = pickOf(loaded);
+  const out: PositionChanges = {};
+  if (was.workType !== pick.workType) out.workType = pick.workType;
+  if (was.primary !== pick.primary) out.primary = pick.primary;
+  if (was.secondary !== pick.secondary) out.secondary = pick.secondary;
+  return out;
+}
+
+const WORK_TYPES_OK: ReadonlyArray<WorkType | null> = [null, "boh", "foh", "management"];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A posted `changes` object, validated (only the three keys, each the right type); null = malformed. */
+export function parsePositionChanges(v: Record<string, unknown>): PositionChanges | null {
+  const keys = Object.keys(v);
+  if (keys.length === 0 || keys.some((k) => k !== "workType" && k !== "primary" && k !== "secondary")) return null;
+  const out: PositionChanges = {};
+  if ("workType" in v) { if (!WORK_TYPES_OK.includes(v.workType as WorkType | null)) return null; out.workType = v.workType as WorkType | null; }
+  for (const k of ["primary", "secondary"] as const) {
+    if (!(k in v)) continue;
+    const x = v[k];
+    if (x !== null && (typeof x !== "string" || !UUID.test(x))) return null;
+    out[k] = x as string | null;
+  }
+  return out;
+}
+
+/**
+ * The row to write: the person's LATEST row (or an empty one) with ONLY the changed fields replaced — the work type, and the
+ * list re-derived from the latest list when the primary or the secondary changed (an unchanged one is the latest's).
+ */
+export function mergePositionChanges(latest: PersonSettingsRow | null | undefined, userId: string, changes: PositionChanges): PersonSettingsRow {
+  const base = latest ? { ...latest, alsoAllowed: [...latest.alsoAllowed], coverPositions: [...latest.coverPositions] } : emptySettingsRow(userId);
+  const out: PersonSettingsRow = { ...base, userId };
+  if ("workType" in changes) out.workType = changes.workType ?? null;
+  if ("primary" in changes || "secondary" in changes) {
+    const now = pickOf(base);
+    out.coverPositions = withPrimarySecondary(base.coverPositions, "primary" in changes ? changes.primary ?? null : now.primary, "secondary" in changes ? changes.secondary ?? null : now.secondary);
+  }
+  return out;
+}
+
+/** The row the picks would write against `current` (the merge of their changes). */
 export function nextSettingsRow(current: PersonSettingsRow | null | undefined, userId: string, pick: PositionPick): PersonSettingsRow {
-  const base = current ? { ...current, alsoAllowed: [...current.alsoAllowed], coverPositions: [...current.coverPositions] } : emptySettingsRow(userId);
-  return { ...base, userId, workType: pick.workType, coverPositions: withPrimarySecondary(base.coverPositions, pick.primary, pick.secondary) };
+  return mergePositionChanges(current, userId, positionChangesOf(current, pick));
 }
 
 /** Did the picks change anything worth a write? */

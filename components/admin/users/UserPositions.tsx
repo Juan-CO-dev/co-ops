@@ -19,9 +19,9 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
 import type { WorkType } from "@/lib/scheduling/context-shared";
-import { personBody } from "@/lib/scheduling/settings-view-shared";
+import { personPositionsBody } from "@/lib/scheduling/settings-view-shared";
 import {
-  flexDropped, nextSettingsRow, pickChanged, pickOf, pickProblems, type PickerPosition, type PositionPick, type ShopPositionPicker,
+  flexDropped, pickChanged, pickOf, pickProblems, positionChangesOf, type PickerPosition, type PositionPick, type ShopPositionPicker,
 } from "@/lib/scheduling/user-positions-shared";
 import { scheduleErrorKey } from "@/components/schedule/schedule-errors";
 import { postJson, type LocationOption } from "./shared";
@@ -118,14 +118,19 @@ export function anyPickProblem(userId: string | null, role: RoleCode, picks: Rec
   return Object.entries(picks).some(([id, pick]) => { const shop = shops[id]; return !!shop && pickProblems(role, userId ? shop.settings[userId] : null, pick, shop).length > 0; });
 }
 
-/** Write every changed shop's picks (one POST per shop); the first refusal's code, or null when all saved. */
+/**
+ * Write every changed shop's picks (one POST per shop); the first refusal's code, or null when all saved. Astra BC-007: only
+ * WHAT CHANGED is sent (`person_positions`); the server merges it onto the person's latest row, so nothing changed by
+ * someone else since the page loaded (full-time, soft range, also-allowed, leader setting, roster_include, the flex
+ * tail) is overwritten.
+ */
 export async function savePicks(userId: string, picks: Record<string, PositionPick>, shops: PositionShops): Promise<string | null> {
   for (const [locationId, pick] of Object.entries(picks).sort(([a], [b]) => (a < b ? -1 : 1))) {
     const shop = shops[locationId];
     if (!shop) continue;
     const current = shop.settings[userId] ?? null;
     if (!pickChanged(current, pick)) continue;
-    const r = await postJson("/api/schedule", personBody(locationId, nextSettingsRow(current, userId, pick)));
+    const r = await postJson("/api/schedule", personPositionsBody(locationId, userId, { ...positionChangesOf(current, pick) }));
     if (!r.ok) return r.code;
   }
   return null;

@@ -21,7 +21,9 @@ import {
 import { forecastWeek } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import { buildWeek } from "./generator/build-shared";
-import { loadLiveStructure, loadSchedulingDemand, loadWeekHeads } from "./inputs";
+import { loadLatestPersonSettings, loadLiveStructure, loadSchedulingDemand, loadWeekHeads } from "./inputs";
+import { personSettingsSubjectRefusal } from "./access-shared";
+import { mergePositionChanges, parsePositionChanges } from "./user-positions-shared";
 import { STRUCTURE_DEFAULTS_ID, generatorInputFor, type SchedulingInputs } from "./inputs-shared";
 import { defaultWorkType } from "./people-input-shared";
 import { positionListProblems } from "./position-rank-shared";
@@ -85,13 +87,55 @@ export interface PersonSettingsInput {
   userId: string; workType: "boh" | "foh" | "management" | null; alsoAllowed: Array<"boh" | "foh">; leaderSetting: "opens" | "closes" | "mix" | null;
   coverPositions: string[]; softMinH: number | null; softMaxH: number | null; fullTime: boolean; fullTimeMinH: number | null; rosterInclude: boolean | null;
 }
-export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput }): Promise<Record<string, unknown>> {
+/**
+ * A FULL-ROW write (the staff settings card). Juan 2026-10-20: below MoO, only people below the actor and below GM, never
+ * oneself (`personSettingsSubjectRefusal`). Astra BC-007: `expectedId` is the latest row the card was loaded with (null =
+ * none); a different latest row now is `person_settings_moved` — the card reloads instead of overwriting someone's change.
+ * (`undefined` skips the check: in-process callers only; the route always sends it.)
+ */
+export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput; expectedId?: string | null }): Promise<Record<string, unknown>> {
   await gate(deps.service, args.actor, args.locationId, "person_settings");
   const s = args.settings;
   if (!s || typeof s.userId !== "string" || !UUID.test(s.userId) || !Array.isArray(s.coverPositions) || !Array.isArray(s.alsoAllowed)) throw new ScheduleError("invalid_payload");
-  await refusePositionRank(deps.service, args.locationId, s);
-  const r = await rpc(deps.service, recordPersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s }));
-  await log(args.actor, "schedule.person_settings_update", "schedule_person_settings", args.locationId, { user_id: s.userId, before: r.before ?? null, after: r.after ?? null });
+  const role = await subjectRole(deps.service, args.actor, s.userId);
+  if (args.expectedId !== undefined) {
+    const latest = await loadLatestPersonSettings(deps.service, args.locationId, s.userId);
+    if ((latest?.id ?? null) !== args.expectedId) throw new ScheduleError("person_settings_moved");
+  }
+  return writePersonSettings(deps, args.actor, args.locationId, role, s);
+}
+
+/**
+ * The user screen's primary / secondary pickers (Juan 2026-10-20; Astra BC-007): ONLY the changed fields are sent and
+ * MERGED onto the person's LATEST row here, so a save never overwrites what someone else changed after the page loaded
+ * (full-time, the soft range, also-allowed, the leader setting, roster_include, the "can flex to" tail). Same rules as the
+ * full-row write. The read is outside the RPC's per-person lock (no migration): two saves inside the same instant can
+ * still race; closing that needs the RPC to merge under its lock.
+ */
+export async function recordPersonPositions(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; userId: string; changes: Record<string, unknown> }): Promise<Record<string, unknown>> {
+  await gate(deps.service, args.actor, args.locationId, "person_settings");
+  const changes = parsePositionChanges(args.changes);
+  if (!UUID.test(args.userId) || !changes) throw new ScheduleError("invalid_payload");
+  const role = await subjectRole(deps.service, args.actor, args.userId);
+  const latest = await loadLatestPersonSettings(deps.service, args.locationId, args.userId);
+  return writePersonSettings(deps, args.actor, args.locationId, role, mergePositionChanges(latest?.row ?? null, args.userId, changes));
+}
+
+/** The subject's role, after the subject rule (unknown → person_not_at_shop; refused → schedule_forbidden). */
+async function subjectRole(service: SupabaseClient, actor: PeopleActor, userId: string): Promise<RoleCode> {
+  const { data, error } = await service.from("users").select("role").eq("id", userId).maybeSingle();
+  if (error) throw new Error(`subjectRole: ${error.message}`);
+  const role = (data as { role?: string } | null)?.role;
+  if (!role || !Object.hasOwn(ROLES, role)) throw new ScheduleError("person_not_at_shop");
+  const refusal = personSettingsSubjectRefusal(actor, { userId, role: role as RoleCode });
+  if (refusal) throw new ScheduleError(refusal);
+  return role as RoleCode;
+}
+
+async function writePersonSettings(deps: ScheduleDeps, actor: PeopleActor, locationId: string, role: RoleCode, s: PersonSettingsInput): Promise<Record<string, unknown>> {
+  await refusePositionRank(deps.service, locationId, role, s);
+  const r = await rpc(deps.service, recordPersonSettingsCall({ actorId: actor.userId, locationId, ...s }));
+  await log(actor, "schedule.person_settings_update", "schedule_person_settings", locationId, { user_id: s.userId, before: r.before ?? null, after: r.after ?? null });
   return r;
 }
 
@@ -100,18 +144,14 @@ export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: Pe
  * their EFFECTIVE work type (the setting, else the role default) with "also allowed", and never a manager on the
  * dish-and-prep position (`positionListProblems`, the same rule the staff settings card shows before it posts). Judged
  * only once the shop's structure is SAVED (before that every position reads as a line position, so the roles are not
- * known); an unknown subject is left to the RPC (`person_not_at_shop`). Refusal: `position_rank_not_allowed`.
+ * known). Refusal: `position_rank_not_allowed`.
  */
-async function refusePositionRank(service: SupabaseClient, locationId: string, s: PersonSettingsInput): Promise<void> {
+async function refusePositionRank(service: SupabaseClient, locationId: string, role: RoleCode, s: PersonSettingsInput): Promise<void> {
   if (s.coverPositions.length === 0) return;
   const live = await loadLiveStructure(service, locationId);
   if (live.source !== "saved") return;
-  const { data, error } = await service.from("users").select("role").eq("id", s.userId).maybeSingle();
-  if (error) throw new Error(`refusePositionRank: ${error.message}`);
-  const role = (data as { role?: string } | null)?.role;
-  if (!role || !Object.hasOwn(ROLES, role)) return;
   const roles: Record<string, PositionRole> = Object.fromEntries(Object.entries(live.structure.positions).map(([id, p]) => [id, p.role]));
-  const problems = positionListProblems({ role: role as RoleCode, workType: s.workType ?? defaultWorkType(role as RoleCode), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles);
+  const problems = positionListProblems({ role, workType: s.workType ?? defaultWorkType(role), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles);
   const first = problems[0];
   if (first) throw new ScheduleError("position_rank_not_allowed", { params: { slot: first.slot, positionId: first.positionId, reason: first.code } });
 }

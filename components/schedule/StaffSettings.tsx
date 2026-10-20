@@ -89,7 +89,7 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
   };
   async function save() {
     setBusy(true); setError(null);
-    const r = await post("/api/schedule", personBody(locationId, s));
+    const r = await post("/api/schedule", personBody(locationId, s, member.settingsId ?? null));
     setBusy(false);
     if (!r.ok) { setError(r.code); return; }
     setDirty(false); onDirty(false);
@@ -102,10 +102,14 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
   const problems = ranked ? positionListProblems({ role: member.role, workType: s.workType ?? defaultWorkType(member.role), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles) : [];
   const slotLabel = (i: number) => t(`schedule.settings.staff.slot_${positionSlotOf(i)}` as TranslationKey);
   const suggestion = ranked && s.coverPositions.length === 0 && member.suggestedPrimary && positions[member.suggestedPrimary.positionId] ? member.suggestedPrimary : null;
+  const readOnly = member.editable === false;
   const move = (i: number, by: -1 | 1) => edit((x) => { const a = x.coverPositions; const j = i + by; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j]!, a[i]!]; });
   const iconBtn = "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-60";
   return (
     <div data-person-editor={member.userId} className="grid gap-3 border-t border-co-border p-3">
+      {readOnly ? <p className="text-sm font-bold text-co-text-muted" data-person-read-only>{t("schedule.settings.staff.read_only")}</p> : null}
+      {/* Juan 2026-10-20: a person this actor may not change (themselves, a GM or above) — every control disabled; the save path refuses too. */}
+      <fieldset disabled={readOnly} className="contents">
       <div className="grid gap-1" role="radiogroup" aria-labelledby={`${id}-wt`}>
         <span id={`${id}-wt`} className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("schedule.settings.staff.work_type")}</span>
         <div className="flex flex-wrap gap-x-3">
@@ -193,6 +197,7 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
         <button type="button" className={BUTTON} disabled={busy || !dirty || problems.length > 0} onClick={save}>{t("schedule.settings.save")}</button>
         {dirty ? <span className="text-xs font-bold text-co-warning-text">{t("schedule.settings.unsaved")}</span> : null}
       </div>
+      </fieldset>
       <span data-person-editor-end hidden />
     </div>
   );

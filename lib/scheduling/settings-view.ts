@@ -14,11 +14,11 @@ import { loadPeopleShopSettings } from "@/lib/people/settings";
 import { loadShopTunables } from "@/lib/people/skills";
 import { operationalNow } from "@/lib/midshift-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { canEditStructure, canManageShopSwitch, scheduleActRefusal } from "./access-shared";
+import { canEditStructure, canManageShopSwitch, personSettingsSubjectRefusal, scheduleActRefusal } from "./access-shared";
 import type { PositionLabel } from "./board-view-shared";
 import { loadPositionLabelRows } from "./board";
 import { ScheduleError } from "./errors-shared";
-import { loadScheduleShopSettings, loadSchedulingInputs, loadStationSeedRows } from "./inputs";
+import { loadPersonSettingsWithIds, loadScheduleShopSettings, loadSchedulingInputs, loadStationSeedRows } from "./inputs";
 import { gate, type ScheduleDeps } from "./schedules";
 import { loadToastJobHours, toastSuggestions } from "./position-suggest";
 import { presenceDates, presenceWeekStarts, stationAdvisory, type ScheduleSettingsView, type SettingsMember } from "./settings-view-shared";
@@ -85,9 +85,12 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
         livePositionIds.map((id) => ({ id, name: positions[id]!.name, role: rolesKnown ? live.positions[id]!.role : null })));
     }
   }
+  // Astra BC-007: each card carries the id of the row it shows, so a save based on a stale row is refused, never applied.
+  const ids = perms.people ? new Map((await loadPersonSettingsWithIds(deps.service, locationId)).map((x) => [x.row.userId, x.id])) : new Map<string, string>();
   const members: SettingsMember[] = perms.people ? inputs.members.filter((m) => !NEVER_INCLUDED.includes(m.role)).map((m) => ({
     userId: m.userId, name: m.name, role: m.role, settings: latest.get(m.userId) ?? null,
     includeOffered: live.roster.excludedRoles.includes(m.role), suggestedPrimary: suggestions[m.userId] ?? null,
+    settingsId: ids.get(m.userId) ?? null, editable: personSettingsSubjectRefusal(actor, { userId: m.userId, role: m.role }) === null,
   })) : [];
   let presencePeople: ScheduleSettingsView["presencePeople"] = [];
   if (perms.presence) presencePeople = await loadPresencePeople(deps.service);
