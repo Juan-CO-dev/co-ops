@@ -521,3 +521,30 @@ for(const language of ['en','es'] as const)test(`auto-scroll is a compact named 
   await auto.click();
   await expect(auto).toHaveAttribute('aria-pressed',pressed==='true'?'false':'true');
 });
+
+for(const language of ['en','es'] as const)for(const scale of ['100%','200%'] as const)test(`strip labels wrap only between words and stay inside their cards (390x844, ${scale} text, ${language})`,async({page},testInfo)=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto(`/?lang=${language}`);
+  await page.evaluate(size=>{document.documentElement.style.fontSize=size;},scale);
+  const strip=page.locator('[data-lineup]');
+  await strip.scrollIntoViewIfNeeded();
+  // Measure with the real web font, and let the visible cards' photos decode for the capture.
+  await page.evaluate(()=>document.fonts.ready);
+  await expect.poll(()=>strip.locator('li img:not(.landing-v3-cursor)').first().evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
+  const report=await strip.evaluate(list=>[...list.querySelectorAll<HTMLElement>('button > span:not(.sr-only)')].map(label=>{
+    const node=[...label.childNodes].find(child=>child.nodeType===Node.TEXT_NODE)!;
+    const text=node.textContent??'';
+    // A word split across lines has two client rects for its own range.
+    const split=[...text.matchAll(/\S+/g)].filter(match=>{
+      const range=document.createRange();range.setStart(node,match.index!);range.setEnd(node,match.index!+match[0].length);
+      return [...range.getClientRects()].filter(rect=>rect.width>0).length!==1;
+    }).map(match=>match[0]);
+    const box=label.getBoundingClientRect(),card=label.closest('button')!.getBoundingClientRect();
+    return {text,split,overflow:label.scrollWidth>label.clientWidth+1,outside:box.left<card.left-.5||box.right>card.right+.5,style:getComputedStyle(label).overflowWrap};
+  }));
+  expect(report).toHaveLength(10);
+  expect(report.filter(label=>label.split.length||label.overflow||label.outside)).toEqual([]);
+  for(const label of report)expect(label.style).toBe('normal');
+  await page.screenshot({path:testInfo.outputPath(`strip-${language}-${scale}.png`)});
+});

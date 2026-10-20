@@ -162,11 +162,12 @@
 .landing-v2 .landing-v3-auto[aria-pressed="true"] .landing-v42-auto-icon::before { transform: translate(-50%, -50%); width: 10px; height: 11px; border-width: 0 3px; border-color: #171712; }
 .landing-v2 .landing-v3-auto:focus-visible { outline: 3px solid #171712; outline-offset: -2px; }
 .landing-v2 .landing-v3-roster { display: flex; gap: 12px; margin: 0; padding: 44px 6px 12px; overflow-x: auto; list-style: none; scroll-snap-type: x mandatory; scrollbar-width: thin; }
-.landing-v2 .landing-v3-roster > li { position: relative; flex: 0 0 104px; scroll-snap-align: center; }
+/* 6.5rem = 104px at default text size; the card grows with enlarged text so names wrap between words. */
+.landing-v2 .landing-v3-roster > li { position: relative; flex: 0 0 6.5rem; scroll-snap-align: center; }
 .landing-v2 .landing-v3-roster button { display: block; width: 100%; padding: 0; border: 3px solid #171712; background: #fff9e4; color: #171712; text-align: left; }
 .landing-v2 .landing-v3-roster button [data-landing-photo] { aspect-ratio: 1 !important; overflow: hidden; }
 .landing-v2 .landing-v3-roster button img { width: 100%; height: 100%; object-fit: cover; }
-.landing-v2 .landing-v3-roster button > span:not(.sr-only) { display: flex; align-items: center; min-height: 44px; padding: 4px 6px; font-size: .75rem; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
+.landing-v2 .landing-v3-roster button > span:not(.sr-only) { display: flex; align-items: center; min-height: 44px; padding: 4px 6px; font-size: .75rem; font-weight: 900; line-height: 1.1; text-transform: uppercase; overflow-wrap: normal; word-break: normal; hyphens: manual; }
 .landing-v2 .landing-v3-roster > li[data-selected="true"] button { background: #ffe560; box-shadow: 0 0 0 4px #ed3308, 0 0 0 7px #171712; animation: landing-v3-p1 .5s steps(2) 3; }
 .landing-v2 .landing-v3-roster button:focus-visible { outline: 3px solid #171712; outline-offset: 8px; }
 .landing-v2 .landing-v3-cursor { position: absolute; top: -36px; left: 50%; z-index: 1; width: auto; height: 34px; transform: translateX(-50%); pointer-events: none; animation: landing-v3-hop .36s steps(3) both; }
