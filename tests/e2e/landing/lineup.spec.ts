@@ -466,3 +466,32 @@ test('a long press (2.5 s) with enhancement arriving mid-press navigates exactly
   await expectOneOrderEvent(page,baseURL!,sent,browserName);
   expect(orders).toHaveLength(1);
 });
+
+// v4.1 (Juan's iPhone check): every fighter photo frames its own sub, on the card and on the stage.
+test('every fighter photo is framed on its sub (focal point per item, both crops)',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/');
+  const strip=page.locator('[data-lineup]');
+  await strip.scrollIntoViewIfNeeded();
+  const expected=(focus:number,visible:number)=>Math.min(100,Math.max(0,(focus*(visible===.5?200:300)-(visible===.5?50:100))));
+  const cards=strip.locator('li');
+  await expect(cards).toHaveCount(10);
+  for(const [index,card] of (await cards.all()).entries()){
+    const photo=card.locator('[data-landing-photo]');
+    const focus=Number(await photo.getAttribute('data-focal-y'));
+    expect(focus,`card ${index}`).toBeGreaterThan(0);expect(focus).toBeLessThan(1);expect(focus).not.toBe(.5);
+    await card.scrollIntoViewIfNeeded();
+    const img=photo.locator('img');
+    await expect(img).toHaveCount(1);
+    const [x,y]=(await img.evaluate(el=>getComputedStyle(el).objectPosition)).split(' ').map(parseFloat);
+    expect(x).toBeCloseTo(50,0);expect(y!).toBeCloseTo(expected(focus,2/3),0);
+    // The stage shows the same item framed for its 4:3 crop (the Crunchy Boi's stage is the spin).
+    await card.getByRole('button').click();
+    const stagePhoto=page.locator('.landing-v3-stage-media [data-landing-photo] img');
+    if(index===0){await expect(page.locator('.landing-v3-stage [data-spin-stage]')).toHaveCount(1);continue;}
+    await expect(stagePhoto).toHaveCount(1);
+    const stageY=parseFloat((await stagePhoto.evaluate(el=>getComputedStyle(el).objectPosition)).split(' ')[1]!);
+    expect(stageY).toBeCloseTo(expected(focus,.5),0);
+  }
+});

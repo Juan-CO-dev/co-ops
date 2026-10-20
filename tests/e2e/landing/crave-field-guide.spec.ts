@@ -328,3 +328,70 @@ for(const text of ['100%','200%'] as const)for(const language of ['en','es'] as 
     expect(boxes.action).toBeCloseTo(boxes.twin,1);expect(boxes.overflow).toBeLessThanOrEqual(0);
   } finally {releaseScripts();}
 });
+
+// v4.1 (Juan): the Field Guide's find game is scroll-driven, forward only; a tap finds a word at once.
+test('scrolling through the Field Guide finds the six one by one, never backwards, and reveals the action',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await guide.scrollIntoViewIfNeeded();
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  // Words in view, photo still below the fold: nothing found yet.
+  await page.locator('#field-guide h3').evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-8));
+  await page.waitForTimeout(400);
+  const found=async()=>Number(await guide.getAttribute('data-guide-found'));
+  const start=await found();
+  expect(start).toBeLessThan(6);
+  const top=await page.locator('.landing-v3-guide-figure').evaluate(el=>el.getBoundingClientRect().top+scrollY);
+  const seen:number[]=[start];
+  for(let y=top-844;y<=top-200;y+=60){
+    await page.evaluate(v=>scrollTo(0,v),y);await page.waitForTimeout(150);
+    seen.push(await found());
+  }
+  await expect.poll(found,{timeout:5000}).toBe(6);
+  seen.push(6);
+  // Forward only, in more than one step: the scroll walked the six, it did not jump.
+  for(let i=1;i<seen.length;i++)expect(seen[i]!).toBeGreaterThanOrEqual(seen[i-1]!);
+  expect(new Set(seen.filter(n=>n>0&&n<6)).size).toBeGreaterThan(0);
+  const slot=page.locator('#field-guide [data-guide-cta]');
+  await expect(slot).toHaveAttribute('data-ready','true');
+  // Scrolling back up never un-finds.
+  await page.evaluate(()=>scrollTo(0,0));await page.waitForTimeout(300);
+  expect(await found()).toBe(6);
+  await expect(slot).toHaveAttribute('data-ready','true');
+});
+
+test('tapping an ingredient finds it at once; the scroll then finds the rest',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await page.locator('#field-guide h3').evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-8));
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  const pickles=page.locator('[data-anatomy-label="pickles"]');
+  await expect(pickles).toHaveAttribute('data-found','false');
+  const word=pickles.getByRole('button');
+  expect((await word.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await word.click();
+  await expect(pickles).toHaveAttribute('data-found','true');
+  await expect(pickles).toHaveAttribute('data-active','true');
+  await expect(pickles).toHaveAttribute('data-collected','true',{timeout:3000});
+  await page.locator('.landing-v3-guide-figure').scrollIntoViewIfNeeded();
+  await expect(guide).toHaveAttribute('data-guide-found','6',{timeout:5000});
+  await expect(page.locator('#field-guide [data-guide-cta]')).toHaveAttribute('data-ready','true',{timeout:4000});
+});
+
+for(const policy of ['reduce','save-data'] as const)test(`${policy}: no find animation, all six found and the action reachable`,async({page})=>{
+  if(policy==='reduce')await page.emulateMedia({reducedMotion:'reduce'});
+  else await page.addInitScript(()=>Object.defineProperty(navigator,'connection',{value:{saveData:true,addEventListener(){},removeEventListener(){}}}));
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await guide.scrollIntoViewIfNeeded();
+  await expect(guide).toHaveAttribute('data-guide-mode','static');
+  await expect(guide).toHaveAttribute('data-guide-found','6');
+  await expect(guide.locator('[data-line][data-state="drawing"]')).toHaveCount(0);
+  await expect(guide.locator('.landing-v4-guide-word')).toHaveCount(0);
+  const slot=page.locator('#field-guide [data-guide-cta]');
+  await expect(slot).toHaveAttribute('data-ready','true');
+  await slot.scrollIntoViewIfNeeded();
+  await expect(slot.getByRole('button',{name:'Order Crunchy Boi'})).toBeVisible();
+});
