@@ -102,6 +102,7 @@ describe("H11b: the repair budget counts ONLY the backtrack retries (pinned on F
     const { FIXTURES } = await import("./fixtures/schedule/fixtures");
     const out = buildWeek(FIXTURES["F2-busy"]!());
     expect(out.stats.repair.steps).toBe(200);
-    expect(out.gaps.filter((g) => g.cause === "unresolved_search")).toHaveLength(5);
+    // p2.19: 3 (was 5) — the MoD-aware placement extends a lead's own shift into two of the manager-on-duty holes.
+    expect(out.gaps.filter((g) => g.cause === "unresolved_search")).toHaveLength(3);
   });
 });

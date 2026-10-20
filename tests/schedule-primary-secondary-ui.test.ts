@@ -73,9 +73,9 @@ const withSettings = (v: View, userId: string, over: Partial<PersonSettingsRow>)
 
 describe("Staff settings: Positions (in order) — Primary / Secondary / Can flex to", () => {
   it("below shift lead: the heading, the help line and one slot label per entry, en + es", async () => {
-    const v = withSettings(await ready(shop()), EMP, { coverPositions: [P_WALK, P_REG, P_EXPO] });
+    const v = withSettings(await ready(shop()), KH, { coverPositions: [P_WALK, P_REG, P_EXPO] });
     for (const [lang, L] of [["en", EN], ["es", ES]] as const) {
-      const d = drawer(render(v, lang, EMP));
+      const d = drawer(render(v, lang, KH));
       const tx = text(d);
       expect(tx).toContain(L["schedule.settings.staff.cover"]);
       expect(tx).toContain(L["schedule.settings.staff.cover_help"]);
@@ -87,21 +87,17 @@ describe("Staff settings: Positions (in order) — Primary / Secondary / Can fle
     }
     expect(EN["schedule.settings.staff.cover"]).toBe("Positions (in order)");
   });
-  it("Juan 2026-10-20: an HOURLY LEAD (shift lead, key holder): Primary = a station, Secondary = 'Manager duties' (fixed, explained), then 'Can flex to' — en + es", async () => {
+  it("Juan 2026-10-20 (revised): an HOURLY LEAD's card is the same Primary / Secondary / Can flex to list, plus one line: manager duties are implied (en + es)", async () => {
     for (const lead of [SL, KH]) {
-      const v = withSettings(await ready(shop()), lead, { coverPositions: [P_REG, P_WALK, P_EXPO] });
+      const v = withSettings(await ready(shop()), lead, { coverPositions: [P_REG, P_WALK] });
       for (const [lang, L] of [["en", EN], ["es", ES]] as const) {
         const d = drawer(render(v, lang, lead));
-        const tx = text(d);
-        expect(d).toContain('data-position-list="ranked"');
-        expect(d.match(/data-position-slot="(primary|secondary|flex|manager_duty)"/g)).toEqual(
-          ['data-position-slot="primary"', 'data-position-slot="manager_duty"', 'data-position-slot="flex"', 'data-position-slot="flex"']);
-        for (const k of ["cover_help_lead", "slot_primary", "slot_manager_duty", "manager_duty_help", "slot_flex"]) expect(tx, k).toContain(L[`schedule.settings.staff.${k}`]);
+        expect(d.match(/data-position-slot="(primary|secondary|flex)"/g)).toEqual(['data-position-slot="primary"', 'data-position-slot="secondary"']);
+        expect(d).toContain("data-lead-note");
+        expect(text(d)).toContain(L["schedule.settings.staff.lead_note"]);
       }
-      // With no primary yet, the manager-duty row still says what their secondary is.
-      const empty = drawer(render(withSettings(await ready(shop()), lead, { coverPositions: [] }), "en", lead));
-      expect(empty.match(/data-position-slot="(primary|secondary|flex|manager_duty)"/g)).toEqual(['data-position-slot="manager_duty"']);
     }
+    expect(drawer(render(withSettings(await ready(shop()), EMP, { coverPositions: [P_REG] }), "en", EMP))).not.toContain("data-lead-note");
   });
   it("a SALARIED manager (GM / AGM) keeps 'Preferred cover positions (in order)' with no slot labels — unchanged", async () => {
     const v = withSettings(await ready(shop()), AGM, { coverPositions: [P_REG, P_WALK] });
@@ -171,8 +167,8 @@ describe("the Toast suggestion: most-worked job, last 8 weeks, a button never sa
     const m = (id: string) => v.members.find((x) => x.userId === id)!;
     expect(m(EMP).suggestedPrimary).toEqual({ positionId: P_REG, jobName: "Register" });
     expect(m(EMP2).suggestedPrimary).toBeNull();
-    expect(m(KH).suggestedPrimary).toBeNull(); // older than 8 weeks
-    expect(m(SL).suggestedPrimary).toEqual({ positionId: P_REG, jobName: "Register" }); // an hourly lead gets a primary station too
+    expect(m(KH).suggestedPrimary).toBeNull();
+    expect(m(SL).suggestedPrimary).toEqual({ positionId: P_REG, jobName: "Register" }); // an hourly lead gets a suggestion too
     expect(m(AGM).suggestedPrimary).toBeNull(); // a salaried manager never
   });
   it("the drawer offers 'Use Register' with its Toast line (en + es) and only while no primary is set", async () => {
@@ -281,12 +277,11 @@ describe("the admin user screen: the Positions dialog and the Add user form", ()
     expect(text(emp)).toContain(EN["admin.users.positions.primary"]);
     const mgr = wrap(createElement(CreateUserForm, { ...base, assignableRoles: [...base.assignableRoles], initial: { role: "gm", locationIds: [A] } }));
     expect(mgr).not.toContain("data-create-positions");
-    // An hourly lead gets the Primary station picker; their Secondary is shown as manager duties, never a picker.
+    // An hourly lead: the same Primary and Secondary pickers, plus the one-line manager-duties note.
     const lead = wrap(createElement(CreateUserForm, { ...base, assignableRoles: [...base.assignableRoles], initial: { role: "shift_lead", locationIds: [A] } }));
     expect(lead).toContain("data-create-positions");
-    expect(lead).toContain("data-secondary-manager-duty");
-    expect(lead).not.toContain('data-pick="secondary"');
-    expect(text(lead)).toContain(EN["admin.users.positions.secondary_manager_duty"]!);
+    expect(lead).toContain('data-pick="secondary"');
+    expect(lead).toContain("data-lead-note");
     const none = wrap(createElement(CreateUserForm, { ...base, assignableRoles: [...base.assignableRoles], initial: { role: "employee", locationIds: [] } }));
     expect(none).not.toContain("data-create-positions");
     const bad = wrap(createElement(CreateUserForm, { ...base, assignableRoles: [...base.assignableRoles], initial: { role: "employee", locationIds: [A], picks: { [A]: { workType: null, primary: P_REG, secondary: null } } } }));

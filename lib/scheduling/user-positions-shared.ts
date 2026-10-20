@@ -3,8 +3,7 @@
  * shop the person belongs to: their work type, PRIMARY and SECONDARY position, written as the SAME schedule person
  * settings the staff settings card writes (`personBody` → POST /api/schedule {action: "person"}: GM own / MoO+ — every
  * actor of the user screen, level 8+, holds that tier). Everyone below shift lead; a manager's ordered list is their cover
- * order and stays on the schedule settings card. An HOURLY LEAD (shift lead, key holder) picks a primary station only: their
- * secondary is always manager duties (implicit, never stored), so every helper below takes the subject's ROLE.
+ * order and stays on the schedule settings card.
  *
  * The rest of the person's settings row (also allowed, leader setting, soft range, full-timer, the "can flex to" tail) is
  * carried over untouched: the write is the person's latest row with only the work type and the first two positions changed.
@@ -12,7 +11,7 @@
 import type { RoleCode } from "@/lib/roles";
 import type { WorkType } from "./context-shared";
 import { defaultWorkType, type PersonSettingsRow } from "./people-input-shared";
-import { isHourlyLeadRole, positionListProblems, withLeadPrimary, withPrimarySecondary, type PositionListProblem, type ToastPrimarySuggestion } from "./position-rank-shared";
+import { positionListProblems, withPrimarySecondary, type PositionListProblem, type ToastPrimarySuggestion } from "./position-rank-shared";
 import type { PositionRole } from "./structure-shared";
 
 export interface PickerPosition { id: string; name: string; nameEs: string | null; role: PositionRole | null }
@@ -36,16 +35,9 @@ export function emptySettingsRow(userId: string): PersonSettingsRow {
   return { userId, workType: null, alsoAllowed: [], leaderSetting: null, coverPositions: [], softMinH: null, softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: null };
 }
 
-const leadOf = (role: RoleCode | undefined) => (role ? isHourlyLeadRole(role) : false);
-
-/** The picks a stored row shows (an hourly lead has no secondary to pick: it is manager duties). */
-export function pickOf(row: PersonSettingsRow | null | undefined, role?: RoleCode): PositionPick {
-  return { workType: row?.workType ?? null, primary: row?.coverPositions[0] ?? null, secondary: leadOf(role) ? null : row?.coverPositions[1] ?? null };
-}
-
-/** The list a pick makes from `list` (an hourly lead: the primary station first, everything else kept behind it). */
-function listFor(list: readonly string[], primary: string | null, secondary: string | null, role?: RoleCode): string[] {
-  return leadOf(role) ? withLeadPrimary(list, primary) : withPrimarySecondary(list, primary, secondary);
+/** The picks a stored row shows. */
+export function pickOf(row: PersonSettingsRow | null | undefined): PositionPick {
+  return { workType: row?.workType ?? null, primary: row?.coverPositions[0] ?? null, secondary: row?.coverPositions[1] ?? null };
 }
 
 /**
@@ -54,12 +46,12 @@ function listFor(list: readonly string[], primary: string | null, secondary: str
  * the leader setting, roster_include or the "can flex to" tail that someone else changed after the page loaded.
  */
 export interface PositionChanges { workType?: WorkType | null; primary?: string | null; secondary?: string | null }
-export function positionChangesOf(loaded: PersonSettingsRow | null | undefined, pick: PositionPick, role?: RoleCode): PositionChanges {
-  const was = pickOf(loaded, role);
+export function positionChangesOf(loaded: PersonSettingsRow | null | undefined, pick: PositionPick): PositionChanges {
+  const was = pickOf(loaded);
   const out: PositionChanges = {};
   if (was.workType !== pick.workType) out.workType = pick.workType;
   if (was.primary !== pick.primary) out.primary = pick.primary;
-  if (!leadOf(role) && was.secondary !== pick.secondary) out.secondary = pick.secondary;
+  if (was.secondary !== pick.secondary) out.secondary = pick.secondary;
   return out;
 }
 
@@ -84,27 +76,25 @@ export function parsePositionChanges(v: Record<string, unknown>): PositionChange
  * The row to write: the person's LATEST row (or an empty one) with ONLY the changed fields replaced — the work type, and the
  * list re-derived from the latest list when the primary or the secondary changed (an unchanged one is the latest's).
  */
-export function mergePositionChanges(latest: PersonSettingsRow | null | undefined, userId: string, changes: PositionChanges, role?: RoleCode): PersonSettingsRow {
+export function mergePositionChanges(latest: PersonSettingsRow | null | undefined, userId: string, changes: PositionChanges): PersonSettingsRow {
   const base = latest ? { ...latest, alsoAllowed: [...latest.alsoAllowed], coverPositions: [...latest.coverPositions] } : emptySettingsRow(userId);
   const out: PersonSettingsRow = { ...base, userId };
   if ("workType" in changes) out.workType = changes.workType ?? null;
-  // An hourly lead's secondary is manager duties: a posted secondary is ignored for them, only the primary moves the list.
-  const moves = "primary" in changes || (!leadOf(role) && "secondary" in changes);
-  if (moves) {
-    const now = pickOf(base, role);
-    out.coverPositions = listFor(base.coverPositions, "primary" in changes ? changes.primary ?? null : now.primary, "secondary" in changes ? changes.secondary ?? null : now.secondary, role);
+  if ("primary" in changes || "secondary" in changes) {
+    const now = pickOf(base);
+    out.coverPositions = withPrimarySecondary(base.coverPositions, "primary" in changes ? changes.primary ?? null : now.primary, "secondary" in changes ? changes.secondary ?? null : now.secondary);
   }
   return out;
 }
 
 /** The row the picks would write against `current` (the merge of their changes). */
-export function nextSettingsRow(current: PersonSettingsRow | null | undefined, userId: string, pick: PositionPick, role?: RoleCode): PersonSettingsRow {
-  return mergePositionChanges(current, userId, positionChangesOf(current, pick, role), role);
+export function nextSettingsRow(current: PersonSettingsRow | null | undefined, userId: string, pick: PositionPick): PersonSettingsRow {
+  return mergePositionChanges(current, userId, positionChangesOf(current, pick));
 }
 
 /** Did the picks change anything worth a write? */
-export function pickChanged(current: PersonSettingsRow | null | undefined, pick: PositionPick, role?: RoleCode): boolean {
-  const was = pickOf(current, role);
+export function pickChanged(current: PersonSettingsRow | null | undefined, pick: PositionPick): boolean {
+  const was = pickOf(current);
   return was.workType !== pick.workType || was.primary !== pick.primary || (pick.primary !== null && was.secondary !== pick.secondary);
 }
 
@@ -112,7 +102,7 @@ export function pickChanged(current: PersonSettingsRow | null | undefined, pick:
 export function pickProblems(role: RoleCode, current: PersonSettingsRow | null | undefined, pick: PositionPick, shop: Pick<ShopPositionPicker, "positions" | "rolesKnown">): PositionListProblem[] {
   const roles: Record<string, PositionRole> = {};
   if (shop.rolesKnown) for (const p of shop.positions) if (p.role) roles[p.id] = p.role;
-  const list = listFor(current?.coverPositions ?? [], pick.primary, pick.secondary, role);
+  const list = withPrimarySecondary(current?.coverPositions ?? [], pick.primary, pick.secondary);
   return positionListProblems({ role, workType: pick.workType ?? defaultWorkType(role), alsoAllowed: current?.alsoAllowed ?? [] }, list, roles);
 }
 
@@ -120,9 +110,7 @@ export function pickProblems(role: RoleCode, current: PersonSettingsRow | null |
  * How many "can flex to" entries (beyond the two pickers) the picks would CLEAR: all of them with no primary, and with no
  * secondary too (Astra BC-013: never a silent promotion — the pickers name the count before a save).
  */
-export function flexDropped(current: PersonSettingsRow | null | undefined, pick: PositionPick, role?: RoleCode): number {
-  // An hourly lead: only clearing the primary clears anything (all of their other positions).
-  if (leadOf(role)) return pick.primary === null ? Math.max(0, (current?.coverPositions ?? []).length - 1) : 0;
+export function flexDropped(current: PersonSettingsRow | null | undefined, pick: PositionPick): number {
   const tail = (current?.coverPositions ?? []).slice(2);
   if (pick.primary === null) return tail.length;
   if (pick.secondary === null) return tail.filter((x) => x !== pick.primary).length;

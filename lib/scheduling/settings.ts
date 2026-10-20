@@ -122,7 +122,7 @@ export async function recordPersonPositions(deps: ScheduleDeps, args: { actor: P
   if (!UUID.test(args.userId) || !changes) throw new ScheduleError("invalid_payload");
   const role = await subjectRole(deps.service, args.actor, args.userId);
   const latest = await loadLatestPersonSettings(deps.service, args.locationId, args.userId);
-  const merged = mergePositionChanges(latest?.row ?? null, args.userId, changes, role);
+  const merged = mergePositionChanges(latest?.row ?? null, args.userId, changes);
   // The work-type check judges the row the merge makes now; 0278's writer merges again from the row it reads UNDER the lock.
   await refusePositionRank(deps.service, args.locationId, role, merged);
   const guarded = await rpcIfInstalled(deps.service, mergePersonPositionsCall({ actorId: args.actor.userId, locationId: args.locationId, userId: args.userId, changes: { ...changes } }));

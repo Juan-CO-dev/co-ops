@@ -58,10 +58,8 @@ export function ShopPositionFields({ userId, role, location, shop, pick, onChang
   const name = (id: string) => { const p = byId.get(id); return p ? label(p) : ""; };
   const suggestion = userId && pick.primary === null ? shop.suggestions[userId] ?? null : null;
   const problems = pickProblems(role, current, pick, shop);
-  const dropped = flexDropped(current, pick, role);
-  const tailCount = flexDropped(current, { ...pick, secondary: null }, role);
-  // An hourly lead's secondary is manager duties (fixed, never stored): no secondary picker.
-  const lead = isHourlyLeadRole(role);
+  const dropped = flexDropped(current, pick);
+  const tailCount = flexDropped(current, { ...pick, secondary: null });
   const slot = (s: "primary" | "secondary") => t(s === "primary" ? "schedule.settings.staff.slot_primary" : "schedule.settings.staff.slot_secondary");
   const ids = { wt: `wt-${location.id}`, p: `pr-${location.id}`, s: `se-${location.id}` };
   return (
@@ -92,23 +90,16 @@ export function ShopPositionFields({ userId, role, location, shop, pick, onChang
           <span className="text-xs text-co-text-muted">{t("schedule.settings.staff.toast_suggest_help", { job: suggestion.jobName })}</span>
         </div>
       ) : null}
-      {lead ? (
-        <div className="grid gap-1" data-secondary-manager-duty>
-          <span className={LABEL}>{t("admin.users.positions.secondary")}</span>
-          <p className="rounded-lg bg-co-surface-inset px-3 py-2 text-sm text-co-text">{t("admin.users.positions.secondary_manager_duty")}</p>
-          <p className="text-xs text-co-text-muted">{t("schedule.settings.staff.manager_duty_help")}</p>
-        </div>
-      ) : (
-        <label className="block" htmlFor={ids.s}>
-          <span className={LABEL}>{t("admin.users.positions.secondary")}</span>
-          <select id={ids.s} className={SELECT} value={pick.secondary ?? ""} disabled={pick.primary === null} data-pick="secondary"
-            onChange={(e) => onChange({ ...pick, secondary: e.target.value || null })}>
-            {/* Astra BC-013: with "can flex to" entries behind it, None says it clears them — no silent promotion. */}
-            <option value="">{tailCount === 1 ? t("admin.users.positions.none_clear_one") : tailCount > 1 ? t("admin.users.positions.none_clear_other", { count: tailCount }) : t("admin.users.positions.none")}</option>
-            {shop.positions.filter((p) => p.id !== pick.primary).map((p) => <option key={p.id} value={p.id}>{label(p)}</option>)}
-          </select>
-        </label>
-      )}
+      <label className="block" htmlFor={ids.s}>
+        <span className={LABEL}>{t("admin.users.positions.secondary")}</span>
+        <select id={ids.s} className={SELECT} value={pick.secondary ?? ""} disabled={pick.primary === null} data-pick="secondary"
+          onChange={(e) => onChange({ ...pick, secondary: e.target.value || null })}>
+          {/* Astra BC-013: with "can flex to" entries behind it, None says it clears them — no silent promotion. */}
+          <option value="">{tailCount === 1 ? t("admin.users.positions.none_clear_one") : tailCount > 1 ? t("admin.users.positions.none_clear_other", { count: tailCount }) : t("admin.users.positions.none")}</option>
+          {shop.positions.filter((p) => p.id !== pick.primary).map((p) => <option key={p.id} value={p.id}>{label(p)}</option>)}
+        </select>
+      </label>
+      {isHourlyLeadRole(role) ? <p data-lead-note className="text-xs text-co-text-muted">{t("schedule.settings.staff.lead_note")}</p> : null}
       {dropped > 0 ? <p className="text-xs font-bold text-co-warning-text">{dropped === 1 ? t("admin.users.positions.clears_flex_one") : t("admin.users.positions.clears_flex_other", { count: dropped })}</p> : null}
       {problems.length > 0 ? (
         <ul role="alert" data-position-problems className="grid gap-1 text-sm font-bold text-co-cta-text">
@@ -120,8 +111,8 @@ export function ShopPositionFields({ userId, role, location, shop, pick, onChang
 }
 
 /** The picks for a person across shops, starting from their stored rows. */
-export function initialPicks(userId: string | null, locationIds: readonly string[], shops: PositionShops, role?: RoleCode): Record<string, PositionPick> {
-  return Object.fromEntries(locationIds.map((id) => [id, pickOf(userId ? shops[id]?.settings[userId] : null, role)]));
+export function initialPicks(userId: string | null, locationIds: readonly string[], shops: PositionShops): Record<string, PositionPick> {
+  return Object.fromEntries(locationIds.map((id) => [id, pickOf(userId ? shops[id]?.settings[userId] : null)]));
 }
 
 /** Any blocking problem across the shops? */
@@ -135,13 +126,13 @@ export function anyPickProblem(userId: string | null, role: RoleCode, picks: Rec
  * someone else since the page loaded (full-time, soft range, also-allowed, leader setting, roster_include, the flex
  * tail) is overwritten.
  */
-export async function savePicks(userId: string, picks: Record<string, PositionPick>, shops: PositionShops, role?: RoleCode): Promise<string | null> {
+export async function savePicks(userId: string, picks: Record<string, PositionPick>, shops: PositionShops): Promise<string | null> {
   for (const [locationId, pick] of Object.entries(picks).sort(([a], [b]) => (a < b ? -1 : 1))) {
     const shop = shops[locationId];
     if (!shop) continue;
     const current = shop.settings[userId] ?? null;
-    if (!pickChanged(current, pick, role)) continue;
-    const r = await postJson("/api/schedule", personPositionsBody(locationId, userId, { ...positionChangesOf(current, pick, role) }));
+    if (!pickChanged(current, pick)) continue;
+    const r = await postJson("/api/schedule", personPositionsBody(locationId, userId, { ...positionChangesOf(current, pick) }));
     if (!r.ok) return r.code;
   }
   return null;
@@ -159,13 +150,13 @@ export function UserPositionsDialog({ userId, role, locations, shops, onClose, i
 }) {
   const { t } = useTranslation();
   const router = useRouter();
-  const [picks, setPicks] = useState<Record<string, PositionPick>>(() => initialPicksOverride ?? initialPicks(userId, locations.map((l) => l.id), shops, role));
+  const [picks, setPicks] = useState<Record<string, PositionPick>>(() => initialPicksOverride ?? initialPicks(userId, locations.map((l) => l.id), shops));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const blocked = anyPickProblem(userId, role, picks, shops);
   const save = async () => {
     setBusy(true); setError(null);
-    const code = await savePicks(userId, picks, shops, role);
+    const code = await savePicks(userId, picks, shops);
     setBusy(false);
     if (code) { setError(code); return; }
     onClose();

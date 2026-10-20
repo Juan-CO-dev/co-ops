@@ -32,8 +32,10 @@ export const REASON_KEYS = [
   "on_primary", "on_secondary", "flexed",
   // Astra BC-042 r3: the skill reason, qualified, when the position rank put them ahead of stronger people.
   "strongest_among_primary", "strongest_among_secondary",
-  // Juan 2026-10-20: an hourly lead placed on manager duties (the MoD lane / the Closing Manager's slot) — their secondary.
-  "manager_duty",
+  // Juan 2026-10-20: placed off their primary / secondary while the build closed a gap (the repair's yield).
+  "flexed_gap",
+  // Juan 2026-10-20 ("consideration on their managerial duties"): a lead's own shift extended into a manager-on-duty hole.
+  "mod_extension",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

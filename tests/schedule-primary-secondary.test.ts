@@ -50,25 +50,19 @@ describe("the position rank (pure)", () => {
   it("a SALARIED manager (GM / AGM) and the other manager roles have no primary: their list is their cover order, unchanged", () => {
     for (const role of ["agm", "gm", "catering_mgr", "prep_mgr"] as const) {
       expect(positionRankOf(p(role, [I.$REG, I.$EXPO]), I.$REG)).toBe(POSITION_RANK.flex);
-      expect(positionRankOf(p(role, [I.$REG, I.$EXPO]), null, true)).toBe(POSITION_RANK.flex);
       expect(primaryPositionOf(p(role, [I.$REG]))).toBeNull();
     }
   });
-  it("Juan 2026-10-20: an HOURLY LEAD (shift lead, key holder): [0] = primary station; the secondary is MANAGER DUTIES (MoD lane / Closing Manager slot), never a station", () => {
+  it("Juan 2026-10-20 (revised): the HOURLY LEADS (shift lead, key holder) have a real primary AND secondary station, exactly like employees", () => {
     for (const role of ["shift_lead", "key_holder"] as const) {
-      const lead = p(role, [I.$REG, I.$EXPO]);
+      const lead = p(role, [I.$REG, I.$EXPO, I.$WALK]);
       expect(positionRankOf(lead, I.$REG)).toBe(POSITION_RANK.primary);
-      expect(positionRankOf(lead, I.$EXPO)).toBe(POSITION_RANK.flex); // list[1] is "can flex to" for a lead, not a secondary
-      expect(positionRankOf(lead, null, true)).toBe(POSITION_RANK.secondary); // the MoD lane
-      expect(positionRankOf(lead, I.$EXPO, true)).toBe(POSITION_RANK.secondary); // a Closing Manager slot on another station
-      expect(positionRankOf(lead, I.$REG, true)).toBe(POSITION_RANK.primary); // the closing slot IS their primary: the primary wins
+      expect(positionRankOf(lead, I.$EXPO)).toBe(POSITION_RANK.secondary);
+      expect(positionRankOf(lead, I.$WALK)).toBe(POSITION_RANK.flex);
+      // Manager duty is IMPLICIT, never a rank: the MoD lane (a null position) ranks everyone flex, as before.
+      expect(positionRankOf(lead, null)).toBe(POSITION_RANK.flex);
       expect(primaryPositionOf(lead)).toBe(I.$REG);
-      // No primary: manager duties still rank 1 — every candidate of those lanes is a lead, so they rank together (unchanged).
-      expect(positionRankOf(p(role, []), null, true)).toBe(POSITION_RANK.secondary);
-      expect(positionRankOf(p(role, []), I.$REG)).toBe(POSITION_RANK.flex);
     }
-    // A non-lead never gets the manager-duty rank.
-    expect(positionRankOf(p("employee", [I.$REG]), null, true)).toBe(POSITION_RANK.flex);
   });
   it("the hourly lead roles are exactly the hourly roles that can lead a shift, derived from the role table", async () => {
     const { ROLES } = await import("@/lib/roles");
@@ -102,12 +96,11 @@ describe("save-time validation: a primary or secondary the work type does not al
     expect(positionListProblems({ role: "employee", workType: "foh", alsoAllowed: ["boh"] }, [I.$DISH, I.$REG], roles)).toEqual([]);
     expect(positionListProblems({ role: "employee", workType: "boh", alsoAllowed: [] }, [I.$DISH, I.$PREP, I.$REG], roles)).toEqual([]);
   });
-  it("unknown position roles (structure not saved yet) are skipped; a salaried manager's list is never judged; an hourly lead's PRIMARY only", () => {
+  it("unknown position roles (structure not saved yet) are skipped; a manager's list is never judged (unchanged)", () => {
     expect(positionListProblems({ role: "employee", workType: "foh", alsoAllowed: [] }, [I.$DISH], {})).toEqual([]);
     expect(positionListProblems({ role: "agm", workType: "foh", alsoAllowed: [] }, [I.$DISH], roles)).toEqual([]);
-    expect(positionListProblems({ role: "key_holder", workType: "foh", alsoAllowed: [] }, [I.$DISH], roles)).toEqual([{ slot: "primary", positionId: I.$DISH, code: "work_type" }]);
-    // list[1] is "can flex to" for a lead (their secondary is manager duties): not judged.
-    expect(positionListProblems({ role: "key_holder", workType: "foh", alsoAllowed: [] }, [I.$REG, I.$DISH], roles)).toEqual([]);
+    // An hourly lead's primary AND secondary are judged like anyone's.
+    expect(positionListProblems({ role: "key_holder", workType: "foh", alsoAllowed: [] }, [I.$REG, I.$DISH], roles)).toEqual([{ slot: "secondary", positionId: I.$DISH, code: "work_type" }]);
   });
   it("the refusal and every new string are en + es, and the es copy is a real translation", () => {
     for (const k of ["schedule.error.position_rank_not_allowed", "schedule.settings.staff.problem_work_type", "schedule.settings.staff.slot_primary",
@@ -163,9 +156,9 @@ describe("the suggested primary from Toast (most-worked job, last 8 weeks; never
 // ─── rankCandidates ──────────────────────────────────────────────────────────
 
 /**
- * The small shop on Monday, people overridden; an empty built Monday. The shift lead Gus's fixture list [Register, Expo]
- * is cleared by default (Juan 2026-10-20: an hourly lead's [0] IS a primary), so the non-lead rank tests compare like with
- * like; the lead tests set it back explicitly.
+ * The small shop on Monday, people overridden; an empty built Monday. The shift lead Gus's fixture list [Register, Expo] is
+ * cleared by default (it is now his primary + secondary), so the non-lead rank tests compare like with like; the lead tests
+ * set it back explicitly.
  */
 function ctxWith(over: Record<string, Partial<SchedPerson>> = {}, specs: PersonSpec[] = [...SMALL_SPECS, ...H9_EXTRA]) {
   const input = fixture({ specs, days: [day(MON)] });
@@ -217,7 +210,7 @@ describe("rankCandidates: the position rank first (Juan 2026-10-20)", () => {
     const { b, week } = ctxWith({ "u-m-mia": { coverPositions: [I.$DISH] } });
     expect(order(b, week, opts(I.$DISH, plan(I.$DISH, 30, 46)))).not.toContain("u-m-mia");
   });
-  it("the MoD lane (null position): every candidate is an hourly lead ranked 1 (manager duties) — the order equals the no-primary order", () => {
+  it("a null position (the MoD lane) is unchanged: everyone ranks flex, the order equals the no-primary order", () => {
     const base = ctxWith();
     const withLists = ctxWith({ "u-a-ana": { coverPositions: [I.$REG] }, "u-h-hal": { coverPositions: [I.$WALKON, I.$REG] } });
     // The evening MoD lane from 7:00 PM (the key holders count from keyHolderModAfterQ = 76).
@@ -226,78 +219,25 @@ describe("rankCandidates: the position rank first (Juan 2026-10-20)", () => {
     const z = mod(withLists);
     expect(a.length).toBeGreaterThan(1);
     expect(z.map((c) => c.person.userId)).toEqual(a.map((c) => c.person.userId));
-    expect(z.every((c) => c.key[CANDIDATE_KEY.positionRank] === POSITION_RANK.secondary)).toBe(true);
-    expect(a.every((c) => c.key[CANDIDATE_KEY.positionRank] === POSITION_RANK.secondary)).toBe(true);
+    expect(z.every((c) => c.key[CANDIDATE_KEY.positionRank] === POSITION_RANK.flex)).toBe(true);
   });
-  it("MANAGER ranking unchanged: the hourly shift lead's cover list [Register, Expo] gives no primary rank — the order is the old one", () => {
-    // Gus (shift lead, cover [REG, EXPO]) and the same roster with his list emptied rank identically on Register.
-    const withList = ctxWith();
-    const without = ctxWith({ "u-g-gus": { coverPositions: [] } });
-    const a = rankCandidates(withList.b, withList.week, [], opts(I.$REG, plan(I.$REG)));
-    const z = rankCandidates(without.b, without.week, [], opts(I.$REG, plan(I.$REG)));
-    expect(a.map((c) => c.person.userId)).toEqual(z.map((c) => c.person.userId));
-    const gus = a.find((c) => c.person.userId === "u-g-gus");
-    if (gus) expect(gus.key[CANDIDATE_KEY.positionRank]).toBe(POSITION_RANK.flex);
+  it("an HOURLY LEAD ranks like anyone: the shift lead Gus [Register, Expo] is first on Register (primary) and on Expo (secondary)", () => {
+    const { b, week } = ctxWith({ "u-g-gus": { coverPositions: [I.$REG, I.$EXPO] } });
+    const reg = rankCandidates(b, week, [], opts(I.$REG, plan(I.$REG)));
+    expect(reg[0]!.person.userId).toBe("u-g-gus");
+    expect(reg[0]!.rank).toBe(POSITION_RANK.primary);
+    const expo = rankCandidates(b, week, [], opts(I.$EXPO, plan(I.$EXPO, 46, 62)));
+    expect(expo[0]!.person.userId).toBe("u-g-gus");
+    expect(expo[0]!.rank).toBe(POSITION_RANK.secondary);
   });
-});
-
-// ─── Hourly leads (Juan 2026-10-20: primary station; manager duties as the secondary) ─────────────────────────
-
-describe("hourly leads: station primary first, manager duties as the secondary, no primary = unchanged", () => {
-  it("a station slot: the key holder whose PRIMARY it is ranks first (over stronger people)", () => {
-    const base = ctxWith();
-    const o = opts(I.$WALKON, plan(I.$WALKON));
-    const before = order(base.b, base.week, o);
-    const { b, week } = ctxWith({ "u-h-hal": { coverPositions: [I.$WALKON] } }); // Hal 0.75 on Walk-ins / Online; Ana 0.9
-    expect(before.indexOf("u-a-ana")).toBeLessThan(before.indexOf("u-h-hal"));
-    expect(order(b, week, o)[0]).toBe("u-h-hal");
-  });
-  it("the Closing Manager's slot: a lead whose primary IS that station ranks 0, every other lead 1 (manager duties) — no primaries: all 1, the old order", () => {
-    const closing = { ...opts(I.$REG, plan(I.$REG, 64, 83)), closingLead: true };
-    const none = ctxWith();
-    const rankedNone = rankCandidates(none.b, none.week, [], closing);
-    expect(rankedNone.length).toBeGreaterThan(1);
-    expect(rankedNone.every((c) => c.key[CANDIDATE_KEY.positionRank] === POSITION_RANK.secondary)).toBe(true);
-    const { b, week } = ctxWith({ "u-p-pia": { coverPositions: [I.$REG] } });
-    const ranked = rankCandidates(b, week, [], closing);
-    expect(ranked[0]!.person.userId).toBe("u-p-pia");
-    expect(ranked[0]!.key[CANDIDATE_KEY.positionRank]).toBe(POSITION_RANK.primary);
-    // Rank aside, the others keep the old order among themselves.
-    expect(ranked.slice(1).map((c) => c.person.userId)).toEqual(rankedNone.map((c) => c.person.userId).filter((u) => u !== "u-p-pia"));
-  });
-  it("a lead placed on manager duties says so (with their primary); without a primary, nothing new is said", () => {
-    const closing = { ...opts(I.$REG, plan(I.$REG, 64, 83)), closingLead: true };
-    const { b, week } = ctxWith({ "u-h-hal": { coverPositions: [I.$WALKON] } });
-    const ranked = rankCandidates(b, week, [], closing);
-    const hal = ranked.find((c) => c.person.userId === "u-h-hal")!;
-    expect(whyChosen(b, [], hal, closing, ranked)[0]).toEqual({ key: "manager_duty", params: { userId: "u-h-hal", positionId: I.$REG, primaryId: I.$WALKON } });
-    const ana = ranked.find((c) => c.person.userId === "u-a-ana")!;
-    expect(whyChosen(b, [], ana, closing, ranked).map((r) => r.key)).not.toContain("manager_duty");
-  });
-  it("a whole week: key holders given their strongest station as primary — no new gap and no more uncovered manager-on-duty time than with none", () => {
-    const uncovered = (out: ReturnType<typeof buildWeek>) => out.gaps.reduce((n, g) => n + (g.toQ - g.fromQ), 0);
-    const specs = (withPrimaries: boolean): PersonSpec[] => [...SMALL_SPECS, ...H9_EXTRA].map((s) => {
-      if (!withPrimaries) return s;
-      if (s.id === "u-a-ana") return { ...s, cover: [I.$WALKON] };
-      if (s.id === "u-h-hal") return { ...s, cover: [I.$REG] };
-      if (s.id === "u-p-pia") return { ...s, cover: [I.$WALKON] };
-      return s;
-    });
-    const without = buildWeek(fixture({ specs: specs(false) }));
-    const withP = buildWeek(fixture({ specs: specs(true) }));
-    expect(withP.problems.filter((p) => p.severity === "error" && !p.inherited)).toEqual([]);
-    expect(withP.gaps.length).toBeLessThanOrEqual(without.gaps.length);
-    expect(uncovered(withP)).toBeLessThanOrEqual(uncovered(without));
-    expect(withP.gaps.filter((g) => g.code === "mod_missing").length).toBeLessThanOrEqual(without.gaps.filter((g) => g.code === "mod_missing").length);
-  });
-  it("the trade-off, pinned: two closing key holders who SHARE one primary (Register) widen Wednesday's manager-on-duty hole by 45 min (67 → 64), nothing else", () => {
-    const kh = (pia: string) => [...SMALL_SPECS, ...H9_EXTRA].map((s) => (s.id === "u-a-ana" ? { ...s, cover: [I.$WALKON] } : s.id === "u-h-hal" ? { ...s, cover: [I.$REG] }
-      : s.id === "u-p-pia" ? { ...s, cover: [pia] } : s));
-    const gaps = (out: ReturnType<typeof buildWeek>) => out.gaps.map((g) => `${g.date}|${g.code}|${g.positionId ?? ""}|${g.fromQ}-${g.toQ}`);
-    const own = gaps(buildWeek(fixture({ specs: kh(I.$WALKON) })));
-    const shared = gaps(buildWeek(fixture({ specs: kh(I.$REG) })));
-    expect(shared.filter((g) => !own.includes(g))).toEqual([`${DATES[2]}|mod_missing||64-76`]);
-    expect(own.filter((g) => !shared.includes(g))).toEqual([`${DATES[2]}|mod_missing||67-76`]);
+  it("Juan 2026-10-20: the rank decides the FIRST placement only — while closing gaps (the repair) everyone ranks flex, and a flex placement says flexed_gap", () => {
+    const { b, week } = ctxWith({ "u-m-mia": { coverPositions: [I.$WALK] } });
+    b.closingGaps = true;
+    const o = opts(I.$REG, plan(I.$REG));
+    const ranked = rankCandidates(b, week, [], o);
+    expect(ranked.every((c) => c.key[CANDIDATE_KEY.positionRank] === POSITION_RANK.flex)).toBe(true);
+    const mia = ranked.find((c) => c.person.userId === "u-m-mia")!;
+    expect(whyChosen(b, [], mia, o, ranked)[0]).toEqual({ key: "flexed_gap", params: { userId: "u-m-mia", positionId: I.$REG, primaryId: I.$WALK } });
   });
 });
 
@@ -393,7 +333,7 @@ describe("manager behaviour is unchanged (regression pin)", () => {
 // ─── A whole week ────────────────────────────────────────────────────────────
 
 describe("a whole week with primaries: validator-clean, deterministic, the primary holder on their primary", () => {
-  // Gus (shift lead) is given Expo as his primary station so Register is Mia's alone.
+  // Gus (shift lead) is given Expo as his primary, Register his secondary, so Register's primary is Mia's alone.
   const specs: PersonSpec[] = [...SMALL_SPECS, ...H9_EXTRA].map((s) => (s.id === "u-m-mia" ? { ...s, cover: [I.$REG] } : s.id === "u-n-noe" ? { ...s, cover: [I.$WALK, I.$REG] }
     : s.id === "u-g-gus" ? { ...s, cover: [I.$EXPO, I.$REG] } : s));
   const input = () => fixture({ specs, days: DATES.slice(0, 3).map((d) => day(d)) });
@@ -411,5 +351,24 @@ describe("a whole week with primaries: validator-clean, deterministic, the prima
     expect(onReg / total).toBeGreaterThan(0.5);
     const keys = new Set(Object.values(out.reasons).flatMap((r) => r.shift.map((x) => x.key)));
     expect(keys.has("on_primary")).toBe(true);
+  });
+});
+
+// ─── The Expo-first scenario (CC ruling 2026-10-20: an EXTRA scenario beside the original [Register, Expo] fixtures) ──
+
+describe("the Expo-first scenario: the fixture shift leads list [Expo, Register] instead", () => {
+  it("validator-clean and deterministic; the same gaps as the Register-first goldens (ranks 0 and 1 both outrank everyone else on those two stations)", async () => {
+    const { FIXTURES } = await import("./fixtures/schedule/fixtures");
+    const swap = (people: SchedPerson[]) => people.map((p) => (p.role === "shift_lead" && p.coverPositions.length === 2 && p.coverPositions[0] === I.$REG && p.coverPositions[1] === I.$EXPO
+      ? { ...p, coverPositions: [I.$EXPO, I.$REG] } : p));
+    for (const name of ["F1-mockup-v17", "F2-busy", "F0f-all-unproven", "F0b-tight-budget-essential-plus-6"]) {
+      const regFirst = buildWeek(FIXTURES[name]!());
+      const input = FIXTURES[name]!();
+      input.people = swap(input.people);
+      const expoFirst = buildWeek(input);
+      expect(expoFirst.problems.filter((p) => p.severity === "error" && !p.inherited), name).toEqual([]);
+      expect(canonicalJson(buildWeek({ ...input, people: [...input.people] })), name).toBe(canonicalJson(expoFirst));
+      expect(expoFirst.gaps.map((g) => [g.date, g.code, g.positionId, g.fromQ, g.toQ, g.cause]), name).toEqual(regFirst.gaps.map((g) => [g.date, g.code, g.positionId, g.fromQ, g.toQ, g.cause]));
+    }
   });
 });
