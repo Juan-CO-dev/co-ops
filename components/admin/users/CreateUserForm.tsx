@@ -29,7 +29,7 @@
  * employee is linked after create; if that link fails the user still exists and the form says so.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
@@ -97,19 +97,28 @@ export function CreateUserForm({
   // The Toast picker follows the FIRST chosen shop (in the order the shops are listed).
   const toastShop = needsLocations ? accessibleLocations.find((l) => locationIds.includes(l.id)) ?? null : null;
   const toastShopId = toastShop?.id ?? null;
+  // Astra BC-060: the fetch is keyed on the SELECTED shop alone (never on the roster state it writes, which used to
+  // re-run the effect and cancel its own response). One AbortController per request: a shop change aborts the old
+  // request; an answer for a shop no longer selected is never shown (the render below matches roster.shop).
+  const loadedShop = useRef<string | null>(initial?.roster ? initial.locationIds?.[0] ?? null : null);
   useEffect(() => {
-    if (!toastPickerEnabled || !toastShopId || roster.shop === toastShopId) return;
-    let live = true;
+    if (!toastPickerEnabled || !toastShopId || loadedShop.current === toastShopId) return;
+    loadedShop.current = toastShopId;
+    const ctl = new AbortController();
     setRoster({ shop: toastShopId, state: "loading", list: [] });
     setToastGuid("");
-    fetch(`/api/admin/users/toast-roster?location=${encodeURIComponent(toastShopId)}`, { redirect: "manual" })
+    fetch(`/api/admin/users/toast-roster?location=${encodeURIComponent(toastShopId)}`, { redirect: "manual", signal: ctl.signal })
       .then(async (res) => {
         const body = res.ok ? ((await res.json()) as { employees?: Array<{ guid: string; name: string }> }) : null;
-        if (live) setRoster({ shop: toastShopId, state: body?.employees ? "ok" : "unavailable", list: body?.employees ?? [] });
+        if (!ctl.signal.aborted) setRoster({ shop: toastShopId, state: body?.employees ? "ok" : "unavailable", list: body?.employees ?? [] });
       })
-      .catch(() => { if (live) setRoster({ shop: toastShopId, state: "unavailable", list: [] }); });
-    return () => { live = false; };
-  }, [toastPickerEnabled, toastShopId, roster.shop]);
+      .catch(() => { if (!ctl.signal.aborted) setRoster({ shop: toastShopId, state: "unavailable", list: [] }); });
+    return () => {
+      ctl.abort();
+      if (loadedShop.current === toastShopId) loadedShop.current = null;
+    };
+  }, [toastPickerEnabled, toastShopId]);
+  const shownRoster = roster.shop === toastShopId ? roster : { shop: toastShopId, state: "loading" as const, list: [] };
 
   /** The rehire check (phone / Toast employee only). A new probe clears the acknowledgement. */
   const checkRehire = async (probe: { phone: string; toastGuid: string }) => {
@@ -285,18 +294,18 @@ export function CreateUserForm({
           {toastPickerEnabled && toastShop ? (
             <label className="block">
               <span className="text-sm font-bold text-co-text">{t("admin.users.create.field.toast", { shop: toastShop.name })}</span>
-              {roster.state === "ok" ? (
+              {shownRoster.state === "ok" ? (
                 <select
                   value={toastGuid}
                   onChange={(e) => { setToastGuid(e.target.value); void checkRehire({ phone, toastGuid: e.target.value }); }}
                   className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
                 >
                   <option value="">{t("admin.users.create.toast.none")}</option>
-                  {roster.list.map((e) => <option key={e.guid} value={e.guid}>{e.name}</option>)}
+                  {shownRoster.list.map((e) => <option key={e.guid} value={e.guid}>{e.name}</option>)}
                 </select>
               ) : (
                 <span className="mt-1 block text-[11px] text-co-text-muted">
-                  {t(roster.state === "unavailable" ? "admin.users.create.toast.unavailable" : "admin.users.create.toast.loading")}
+                  {t(shownRoster.state === "unavailable" ? "admin.users.create.toast.unavailable" : "admin.users.create.toast.loading")}
                 </span>
               )}
             </label>
