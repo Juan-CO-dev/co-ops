@@ -6,6 +6,7 @@
 import type { AdminUserListItem } from "@/lib/admin/users";
 import type { RoleCode } from "@/lib/roles";
 import type { TranslationKey } from "@/lib/i18n/types";
+import type { ShopPositionPicker } from "@/lib/scheduling/user-positions-shared";
 
 export type LocationOption = { id: string; name: string; code: string };
 
@@ -20,6 +21,8 @@ export interface UserAdminClientProps {
   actorRole: RoleCode;
   actorLevel: number;
   currentFilters: { role: string; status: string; location: string; q: string };
+  /** Juan 2026-10-20: the primary / secondary picker data per accessible shop (null = scheduling not installed there). */
+  positionShops?: Record<string, ShopPositionPicker | null>;
 }
 
 /** Mutating-fetch result, narrowed by the caller. */
@@ -52,6 +55,23 @@ export async function postJson(
     } catch {
       // Non-JSON / opaque (e.g. 307 redirect) — fall through to generic.
     }
+    return { ok: false, code };
+  } catch {
+    return { ok: false, code: "generic" };
+  }
+}
+
+/**
+ * A POST that also returns the JSON body on success (the Add user flow needs the new `userId` to write the person's
+ * positions right after). Same fetch shape as `postJson`.
+ */
+export async function postJsonData<T>(url: string, body: unknown): Promise<{ ok: true; data: T } | { ok: false; code: string }> {
+  try {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), redirect: "manual" });
+    let parsed: unknown = null;
+    try { parsed = await res.json(); } catch { /* opaque (e.g. a 307 redirect): no body */ }
+    if (res.ok) return { ok: true, data: parsed as T };
+    const code = parsed && typeof (parsed as { code?: unknown }).code === "string" ? (parsed as { code: string }).code : "generic";
     return { ok: false, code };
   } catch {
     return { ok: false, code: "generic" };

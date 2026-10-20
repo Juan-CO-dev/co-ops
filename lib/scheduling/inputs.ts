@@ -114,7 +114,8 @@ async function loadMembersWithSince(service: SupabaseClient, locationId: string)
   return out.sort((a, b) => (a.userId < b.userId ? -1 : 1));
 }
 
-async function loadPersonSettings(service: SupabaseClient, locationId: string): Promise<PersonSettingsRow[]> {
+/** The latest person settings row per person at one shop (0274, append-only: the newest row wins). */
+export async function loadPersonSettings(service: SupabaseClient, locationId: string): Promise<PersonSettingsRow[]> {
   const rows = await selectAllRows<{ id: string; user_id: string; work_type: PersonSettingsRow["workType"]; also_allowed: Array<"boh" | "foh">; leader_setting: PersonSettingsRow["leaderSetting"];
     cover_positions: string[]; soft_min_h: number | string | null; soft_max_h: number | string | null; full_time: boolean; full_time_min_h: number | string | null; roster_include: boolean | null; created_at: string }>(
     (from, to) => service.from("schedule_person_settings")

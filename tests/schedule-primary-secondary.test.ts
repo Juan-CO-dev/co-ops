@@ -25,7 +25,7 @@ import {
   type SuggestPosition,
 } from "@/lib/scheduling/position-rank-shared";
 import { MOD, segmentHoldProblems } from "@/lib/scheduling/rules-shared";
-import { DATES, H9_EXTRA, I, SMALL_SPECS, day, fixture, small, type PersonSpec } from "./fixtures/schedule/fixtures";
+import { DATES, H9_EXTRA, I, SMALL_SPECS, day, fixture, type PersonSpec } from "./fixtures/schedule/fixtures";
 
 const MON = DATES[0]!;
 const EN = en as Record<string, string>;
