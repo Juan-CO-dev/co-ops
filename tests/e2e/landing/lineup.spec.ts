@@ -243,63 +243,137 @@ async function countOrders(page:import('@playwright/test').Page) {
   await page.route('https://complimentsonlysubs.appfront.app/**',route=>{orders.push(route.request().url());return route.fulfill({contentType:'text/html',body:'<h1>Ordering destination fixture</h1>'});});
   return orders;
 }
+/** The select screen's own fallback links: readiness is bound to THIS sheet's enhancement state. */
+const lineupFallback=(page:import('@playwright/test').Page)=>page.locator('.landing-v3-select .landing-v3-direct-orders');
+/** Consent accepted, Meta offline; records every counter / CAPI post (context level, survives
+ * the unload) and every Pixel OrderClick (written through to localStorage at call time). */
+async function measureOrders(context:import('@playwright/test').BrowserContext) {
+  const counters:Record<string,unknown>[]=[],capi:Record<string,unknown>[]=[];
+  await context.route('https://connect.facebook.net/**',route=>route.fulfill({contentType:'application/javascript',body:'/* offline */'}));
+  await context.route('https://www.facebook.com/**',route=>route.fulfill({status:204}));
+  await context.route('**/api/landing/order-click',route=>{counters.push(route.request().postDataJSON());return route.fulfill({status:204});});
+  await context.route('**/api/landing/events',route=>{capi.push(route.request().postDataJSON());return route.fulfill({status:204});});
+  await context.addInitScript(()=>{
+    let real:unknown;
+    Object.defineProperty(window,'fbq',{configurable:true,get:()=>real,set(value){
+      real=typeof value==='function'?new Proxy(value,{apply(target,self,args){
+        if(args[0]==='trackCustom'&&args[1]==='OrderClick'){const list=JSON.parse(localStorage.getItem('__pixel_orders')??'[]');list.push({params:args[2],id:args[3]?.eventID});localStorage.setItem('__pixel_orders',JSON.stringify(list));}
+        return Reflect.apply(target,self,args);
+      }}):value;
+    }});
+  });
+  return {counters,capi};
+}
+async function acceptConsent(page:import('@playwright/test').Page) {
+  await page.locator('[data-landing-consent]').getByRole('button').first().click();
+  await expect.poll(()=>page.evaluate(()=>typeof window.fbq)).toBe('function');
+}
+/** Exactly one counter post, one CAPI OrderClick and one Pixel OrderClick, the pair sharing its event id. */
+async function expectOneOrderEvent(page:import('@playwright/test').Page,baseURL:string,sent:{counters:Record<string,unknown>[];capi:Record<string,unknown>[]},browserName:string) {
+  // Linux WebKit is known to deliver only one of two posts from a departing page (tracking.spec).
+  const oneBeaconEngine=browserName==='webkit'&&process.platform==='linux';
+  await page.waitForTimeout(800);
+  await page.goto(baseURL);
+  const pixel=await page.evaluate(()=>JSON.parse(localStorage.getItem('__pixel_orders')??'[]') as {params:Record<string,string>;id:string}[]);
+  expect(pixel).toHaveLength(1);
+  expect(pixel[0]!.params).toMatchObject({placement:'lineup',store:'capitol-hill',item:'crunchy-boi'});
+  const orderEvents=sent.capi.filter(event=>event.event_name==='OrderClick');
+  expect(sent.counters.length).toBeLessThanOrEqual(1);expect(orderEvents.length).toBeLessThanOrEqual(1);
+  if(!oneBeaconEngine){expect(sent.counters).toEqual([{store:'capitol-hill',ad:'unattributed'}]);expect(orderEvents).toHaveLength(1);}
+  for(const event of orderEvents)expect(event).toMatchObject({placement:'lineup',store:'capitol-hill',item:'crunchy-boi',event_id:pixel[0]!.id});
+}
 
-test('a press on a native shop link survives enhancement arriving mid-gesture (mouse; navigates exactly once)',async({page})=>{
+test('a press on a native shop link survives enhancement arriving mid-gesture (mouse; navigates and counts exactly once)',async({page,context,baseURL,browserName})=>{
   await holdIdle(page);
   const orders=await countOrders(page);
+  const sent=await measureOrders(context);
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.goto('/');
-  const link=page.locator('.landing-v3-select .landing-v3-direct-orders a[data-landing-placement="lineup"]').first();
+  await acceptConsent(page);
+  const fallback=lineupFallback(page);
+  const link=fallback.locator('a[data-landing-placement="lineup"]').first();
   await link.scrollIntoViewIfNeeded();
-  // Near the viewport: the swap to the button + sheet is queued for idle.
-  await expect.poll(()=>page.evaluate(()=>(window as unknown as {__idle:unknown[]}).__idle.length)).toBeGreaterThan(0);
+  // Near the viewport: THIS sheet's swap to the button is queued for idle.
+  await expect(fallback).toHaveAttribute('data-enhance','pending');
   const box=(await link.boundingBox())!;
   await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
   try { await page.mouse.down(); } catch { test.skip(true,'This engine has no mouse press; the touch variant covers the gesture.'); }
+  // Isolate the POINTER guard: Chromium also focuses a pressed link, and the keyboard-focus
+  // guard would hold the swap on its own. The click still lands on the same link.
+  await link.evaluate(el=>(el as HTMLElement).blur());
   // Enhancement fires between the press and the click: the link must stay under the pointer.
   expect(await runIdle(page)).toBeGreaterThan(0);
+  await expect(fallback).toHaveAttribute('data-enhance','held');
   await page.waitForTimeout(150);
   await expect(link).toBeAttached();
   await expect(page.locator('.landing-v3-select .landing-v3-cta')).toHaveCount(0);
   await page.mouse.up();
   await expect(page).toHaveURL(landingTenantConfig.stores[0]!.orderUrl);
   expect(orders).toHaveLength(1);
+  await expectOneOrderEvent(page,baseURL!,sent,browserName);
+  expect(orders).toHaveLength(1);
 });
 
-test('a touch on a native shop link survives enhancement arriving mid-gesture (touch; navigates exactly once)',async({browser,baseURL,browserName})=>{
+test('a touch on a native shop link survives enhancement arriving mid-gesture (touch; navigates and counts exactly once)',async({browser,baseURL,browserName})=>{
   test.skip(browserName!=='chromium','Trusted split touch start/end needs the Chromium protocol; WebKit runs the mouse variant.');
   const context=await browser.newContext({baseURL,hasTouch:true,isMobile:true,viewport:{width:390,height:844},reducedMotion:'reduce'});
   const page=await context.newPage();
   await holdIdle(page);
   const orders=await countOrders(page);
+  const sent=await measureOrders(context);
   await page.goto('/');
-  const link=page.locator('.landing-v3-select .landing-v3-direct-orders a[data-landing-placement="lineup"]').first();
+  await acceptConsent(page);
+  const fallback=lineupFallback(page);
+  const link=fallback.locator('a[data-landing-placement="lineup"]').first();
   await link.scrollIntoViewIfNeeded();
-  await expect.poll(()=>page.evaluate(()=>(window as unknown as {__idle:unknown[]}).__idle.length)).toBeGreaterThan(0);
+  await expect(fallback).toHaveAttribute('data-enhance','pending');
   const box=(await link.boundingBox())!;
   const point={x:Math.round(box.x+box.width/2),y:Math.round(box.y+box.height/2)};
   const cdp=await context.newCDPSession(page);
   await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
   expect(await runIdle(page)).toBeGreaterThan(0);
+  await expect(fallback).toHaveAttribute('data-enhance','held');
   await page.waitForTimeout(150);
   await expect(link).toBeAttached();
   await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
   await expect(page).toHaveURL(landingTenantConfig.stores[0]!.orderUrl);
   expect(orders).toHaveLength(1);
+  await expectOneOrderEvent(page,baseURL!,sent,browserName);
+  expect(orders).toHaveLength(1);
   await context.close();
 });
 
-test('a cancelled press releases the held enhancement',async({page})=>{
+/** Press a link (synthetic pointerdown), fire THIS sheet's queued enhancement, prove it is held. */
+async function holdWithPress(page:import('@playwright/test').Page) {
   await holdIdle(page);
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.goto('/');
-  const link=page.locator('.landing-v3-select .landing-v3-direct-orders a[data-landing-placement="lineup"]').first();
+  const fallback=lineupFallback(page);
+  const link=fallback.locator('a[data-landing-placement="lineup"]').first();
   await link.scrollIntoViewIfNeeded();
-  await expect.poll(()=>page.evaluate(()=>(window as unknown as {__idle:unknown[]}).__idle.length)).toBeGreaterThan(0);
+  await expect(fallback).toHaveAttribute('data-enhance','pending');
   await link.dispatchEvent('pointerdown',{pointerId:7,pointerType:'touch',isPrimary:true});
   await runIdle(page);
+  await expect(fallback).toHaveAttribute('data-enhance','held');
   await page.waitForTimeout(150);
   await expect(link).toBeAttached();
+  await expect(page.locator('.landing-v3-select .landing-v3-cta')).toHaveCount(0);
+  return link;
+}
+
+test('a cancelled press releases the held enhancement',async({page})=>{
+  await holdWithPress(page);
   await page.evaluate(()=>dispatchEvent(new PointerEvent('pointercancel',{pointerId:7,pointerType:'touch',isPrimary:true})));
   await expect(page.locator('.landing-v3-select .landing-v3-cta')).toHaveCount(1);
+});
+
+for(const interruption of ['lostpointercapture','visibilitychange','blur','no end event'] as const)test(`an interrupted press (${interruption}) releases the hold and enhancement completes`,async({page})=>{
+  const link=await holdWithPress(page);
+  if(interruption==='lostpointercapture')await link.dispatchEvent('lostpointercapture',{pointerId:7,pointerType:'touch',isPrimary:true});
+  if(interruption==='visibilitychange')await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>'hidden'});document.dispatchEvent(new Event('visibilitychange'));});
+  if(interruption==='blur')await page.evaluate(()=>dispatchEvent(new FocusEvent('blur')));
+  // 'no end event': only the safety release can free it.
+  await expect(page.locator('.landing-v3-select .landing-v3-cta')).toHaveCount(1,{timeout:interruption==='no end event'?5000:2000});
+  if(interruption==='visibilitychange')await page.evaluate(()=>{delete (document as unknown as {visibilityState?:string}).visibilityState;});
+  await expect(lineupFallback(page)).toHaveCount(0);
 });
