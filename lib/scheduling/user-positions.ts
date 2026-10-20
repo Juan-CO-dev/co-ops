@@ -13,7 +13,7 @@ import { isMissingTable } from "@/lib/people/facts";
 import type { RoleCode } from "@/lib/roles";
 import { loadPositionLabelRows } from "./board";
 import { ScheduleError } from "./errors-shared";
-import { loadLiveStructure, loadPersonSettings } from "./inputs";
+import { loadLiveStructure, loadPersonSettingsWithIds } from "./inputs";
 import { loadToastJobHours, toastSuggestions } from "./position-suggest";
 import type { PickerPosition, ShopPositionPicker } from "./user-positions-shared";
 
@@ -35,12 +35,15 @@ export async function loadUserPositionPickers(service: SupabaseClient, args: {
         const l = labels.get(id)!;
         return { id, name: l.name, nameEs: l.name_es, role: rolesKnown ? live.structure.positions[id]!.role : null };
       }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1));
-      const settings = Object.fromEntries((await loadPersonSettings(service, locationId)).map((r) => [r.userId, r]));
+      // The values and their row ids from ONE read (the picks send the id back as their expected head).
+      const snapshot = await loadPersonSettingsWithIds(service, locationId);
+      const settings = Object.fromEntries(snapshot.map((x) => [x.row.userId, x.row]));
+      const settingsIds = Object.fromEntries(snapshot.map((x) => [x.row.userId, x.id]));
       const members = args.people.filter((p) => p.locationIds.includes(locationId)).map((p) => ({ userId: p.userId, role: p.role, coverPositions: settings[p.userId]?.coverPositions ?? [] }));
       const suggestions = members.some((m) => m.coverPositions.length === 0)
         ? toastSuggestions(await loadToastJobHours(service, locationId, args.today), members, positions)
         : {};
-      out[locationId] = { locationId, positions, rolesKnown, settings, suggestions };
+      out[locationId] = { locationId, positions, rolesKnown, settings, settingsIds, suggestions };
     } catch (e) {
       // The scheduling tables are not installed at this shop's database yet: the screen shows "not available", no picker.
       if (notInstalled(e)) { out[locationId] = null; continue; }

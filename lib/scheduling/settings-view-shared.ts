@@ -140,7 +140,8 @@ export const shopBody = (locationId: string, s: ScheduleShopSettings) => ({
 });
 export const personBody = (locationId: string, settings: PersonSettingsRow, expectedId: string | null) => ({ action: "person" as const, locationId, settings: { ...settings }, expectedId });
 /** The user screen's pickers: only what changed, merged server-side onto the latest row (Astra BC-007). */
-export const personPositionsBody = (locationId: string, userId: string, changes: Record<string, unknown>) => ({ action: "person_positions" as const, locationId, userId, changes: { ...changes } });
+export const personPositionsBody = (locationId: string, userId: string, changes: Record<string, unknown>, expectedId: string | null) =>
+  ({ action: "person_positions" as const, locationId, userId, changes: { ...changes }, expectedId });
 export const pinBody = (locationId: string, pin: Omit<SettingsPin, "id">) => ({ action: "pin" as const, locationId, pin: { ...pin, positions: [...pin.positions] } });
 export const retirePinBody = (locationId: string, pinId: string) => ({ action: "pin" as const, locationId, pin: { retiresId: pinId } });
 export const tunablesBody = (locationId: string | null, tunables: SkillTunables) => ({ action: "tunables" as const, locationId, tunables });

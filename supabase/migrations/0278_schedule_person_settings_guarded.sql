@@ -16,8 +16,11 @@
 --   3. save_schedule_person_settings(…, p_expected): the FULL-ROW write (the staff settings card). Under the SAME
 --      per-person advisory lock 0274's writer takes, BEFORE its read: the latest row's id must equal p_expected (NULL =
 --      the person has no row yet), else 'person_settings_moved'. Then it calls (2) inside that lock.
---   4. merge_schedule_person_positions(p_actor, p_location, p_user, p_changes jsonb): the user screen's pickers. Under
---      the same lock, reads the person's LATEST row and replaces ONLY the changed fields — `workType`, and the list
+--   4. merge_schedule_person_positions(p_actor, p_location, p_user, p_expected, p_changes jsonb): the user screen's pickers.
+--      Under the same lock: the latest row's id must equal p_expected (the row the pickers were loaded from; NULL = none),
+--      else 'person_settings_moved' (Astra BC-007/042 — two valid changes merged blind can make an invalid row: an FOH
+--      person given Register by A while B makes them BOH). On that unmoved head it replaces ONLY the changed fields —
+--      `workType`, and the list
 --      re-derived from the latest list when `primary` / `secondary` changed (the twin of lib/scheduling/
 --      user-positions-shared.ts `mergePositionChanges` + position-rank-shared `withPrimarySecondary`: no primary → the
 --      list is cleared; no secondary → [primary]; else [primary, secondary, …the latest tail minus both]). Every other
@@ -28,6 +31,9 @@
 --
 -- REFUSALS (raise exception '<code>', P0001), every one a ScheduleErrorCode: schedule_forbidden, person_settings_moved,
 --   invalid_payload, plus 0274's own.
+--
+-- ROLLOUT (Astra BC-007/038): apply 0278 to PROD BEFORE PR #497 merges — the lib has NO 0274 fallback for these writes
+--   (without 0278 they refuse 'person_settings_unavailable').
 --
 -- VERIFY AFTER APPLY:
 --   select p.proname, p.prosecdef, p.proconfig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -47,7 +53,7 @@ begin
     raise exception '0278: 0274 (schedule_person_settings + record_schedule_person_settings) must be applied first';
   end if;
   if to_regprocedure('public.save_schedule_person_settings(uuid, uuid, uuid, uuid, text, text[], text, uuid[], numeric, numeric, boolean, numeric, boolean)') is not null
-     or to_regprocedure('public.merge_schedule_person_positions(uuid, uuid, uuid, jsonb)') is not null
+     or to_regprocedure('public.merge_schedule_person_positions(uuid, uuid, uuid, uuid, jsonb)') is not null
      or to_regprocedure('public.schedule_person_subject_check(uuid, integer, uuid)') is not null then
     raise exception '0278: already applied';
   end if;
@@ -126,7 +132,7 @@ begin
 end $$;
 
 -- ── 4. The pickers' changes, merged onto the latest row under the lock ───────────────────────────
-create function public.merge_schedule_person_positions(p_actor uuid, p_location uuid, p_user uuid, p_changes jsonb)
+create function public.merge_schedule_person_positions(p_actor uuid, p_location uuid, p_user uuid, p_expected uuid, p_changes jsonb)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
   v_old public.schedule_person_settings%rowtype; v_had boolean; v_key text; v_work text; v_list uuid[]; v_p uuid; v_s uuid;
@@ -153,6 +159,7 @@ begin
   select * into v_old from public.schedule_person_settings where location_id = p_location and user_id = p_user
    order by created_at desc, id desc limit 1;
   v_had := found;
+  if (case when v_had then v_old.id else null end) is distinct from p_expected then raise exception 'person_settings_moved'; end if;
   v_work := case when p_changes ? 'workType' then p_changes ->> 'workType' when v_had then v_old.work_type else null end;
   v_list := case when v_had then v_old.cover_positions else '{}'::uuid[] end;
   if p_changes ? 'primary' or p_changes ? 'secondary' then
@@ -178,10 +185,10 @@ end $$;
 revoke all on function public.schedule_person_subject_check(uuid, integer, uuid) from public, anon, authenticated;
 revoke all on function public.record_schedule_person_settings(uuid, uuid, uuid, text, text[], text, uuid[], numeric, numeric, boolean, numeric, boolean) from public, anon, authenticated;
 revoke all on function public.save_schedule_person_settings(uuid, uuid, uuid, uuid, text, text[], text, uuid[], numeric, numeric, boolean, numeric, boolean) from public, anon, authenticated;
-revoke all on function public.merge_schedule_person_positions(uuid, uuid, uuid, jsonb) from public, anon, authenticated;
+revoke all on function public.merge_schedule_person_positions(uuid, uuid, uuid, uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.schedule_person_subject_check(uuid, integer, uuid) to service_role;
 grant execute on function public.record_schedule_person_settings(uuid, uuid, uuid, text, text[], text, uuid[], numeric, numeric, boolean, numeric, boolean) to service_role;
 grant execute on function public.save_schedule_person_settings(uuid, uuid, uuid, uuid, text, text[], text, uuid[], numeric, numeric, boolean, numeric, boolean) to service_role;
-grant execute on function public.merge_schedule_person_positions(uuid, uuid, uuid, jsonb) to service_role;
+grant execute on function public.merge_schedule_person_positions(uuid, uuid, uuid, uuid, jsonb) to service_role;
 
 commit;

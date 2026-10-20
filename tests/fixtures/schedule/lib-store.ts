@@ -162,6 +162,7 @@ export function scheduleStore(tables: Tables, opts: StoreOpts = {}) {
       case "merge_schedule_person_positions": {
         if (opts.no0278) return { data: null, error: { code: "PGRST202", message: "Could not find the function public.merge_schedule_person_positions" } };
         const r = latestPerson(args.p_location as string, args.p_user as string);
+        if (((r?.id as string | undefined) ?? null) !== args.p_expected) return fail("person_settings_moved");
         const row = r ? { userId: r.user_id as string, workType: r.work_type as never, alsoAllowed: (r.also_allowed ?? []) as never, leaderSetting: r.leader_setting as never,
           coverPositions: (r.cover_positions ?? []) as string[], softMinH: r.soft_min_h as never, softMaxH: r.soft_max_h as never, fullTime: r.full_time === true,
           fullTimeMinH: r.full_time_min_h as never, rosterInclude: r.roster_include as never } : null;

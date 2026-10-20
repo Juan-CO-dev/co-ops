@@ -88,8 +88,8 @@ export async function POST(req: NextRequest) {
         if (!b.settings || typeof b.settings !== "object" || !strOrNull(b.expectedId)) return jsonError(400, "bad_request");
         return jsonOk({ result: await recordPersonSettings(deps, { actor, locationId, settings: b.settings as PersonSettingsInput, expectedId: b.expectedId as string | null }) });
       case "person_positions":
-        if (!isStr(b.userId) || !b.changes || typeof b.changes !== "object" || Array.isArray(b.changes)) return jsonError(400, "bad_request");
-        return jsonOk({ result: await recordPersonPositions(deps, { actor, locationId, userId: b.userId, changes: b.changes as Record<string, unknown> }) });
+        if (!isStr(b.userId) || !b.changes || typeof b.changes !== "object" || Array.isArray(b.changes) || !strOrNull(b.expectedId)) return jsonError(400, "bad_request");
+        return jsonOk({ result: await recordPersonPositions(deps, { actor, locationId, userId: b.userId, changes: b.changes as Record<string, unknown>, expectedId: b.expectedId as string | null }) });
       default:
         return jsonError(400, "bad_request");
     }

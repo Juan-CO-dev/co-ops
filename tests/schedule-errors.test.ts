@@ -31,6 +31,8 @@ describe("ScheduleErrorCode", () => {
       "position_rank_not_allowed",
       // Astra BC-007: a stale full-row person-settings write
       "person_settings_moved",
+      // Astra BC-007/038: 0278 not applied → the person-settings writes refuse
+      "person_settings_unavailable",
     ].sort());
   });
 

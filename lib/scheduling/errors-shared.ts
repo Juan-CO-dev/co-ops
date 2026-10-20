@@ -55,6 +55,8 @@ export const SCHEDULE_ERROR_CODES = [
   "position_rank_not_allowed",
   // Astra BC-007: a full-row person-settings write based on a row that is no longer the latest (someone saved in between)
   "person_settings_moved",
+  // Astra BC-007/038: the person-settings writes require 0278's lock-held writers; not applied → refused, never 0274's.
+  "person_settings_unavailable",
 ] as const;
 
 export type ScheduleErrorCode = (typeof SCHEDULE_ERROR_CODES)[number];
@@ -97,7 +99,7 @@ export const SCHEDULE_ERROR_STATUS: Record<ScheduleErrorCode, 400 | 403 | 404 | 
   structure_invalid: 422, budget_invalid: 422, horizon_invalid: 422, horizon_too_long: 422, edit_off_grid: 422, edit_overlap: 422, edit_segments_malformed: 422,
   edit_below_segment_min: 422, pin_invalid: 422, position_rank_not_allowed: 422, wage_estimate_invalid: 422, shift_over_maximum: 422, gap_certificate_invalid: 422, suggestion_unavailable: 422,
   person_not_at_shop: 404, position_not_at_shop: 404, position_retired: 409,
-  inputs_unavailable: 503, demand_unavailable: 503,
+  inputs_unavailable: 503, demand_unavailable: 503, person_settings_unavailable: 503,
   invalid_payload: 400,
 };
 

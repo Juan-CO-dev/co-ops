@@ -25,7 +25,8 @@ describe("0278_schedule_person_settings_guarded", () => {
     const out = execFileSync(process.execPath, ["scripts/sql-harness-0278.mjs"], { encoding: "utf8", timeout: 240_000 });
     expect(out).not.toContain("FAIL ");
     for (const s of ["S2 merge: a GM never sets their OWN settings", "S3 a stale p_expected (an older row) → person_settings_moved",
-      "S4 a primary change keeps every other field of the latest row", "S5 A's picker change merges onto B's row: both changes stand", "PASS 0278:"]) expect(out).toContain(s);
+      "S4 a primary change keeps every other field of the latest row", "S5 A's picker merge based on the head B superseded → person_settings_moved",
+      "S5 never BOH + Register: the stored row is B's alone", "PASS 0278:"]) expect(out).toContain(s);
   }, 260_000);
 
   it("0274's writer is re-emitted with ONLY the subject check (and the level it needs) added", () => {
@@ -50,7 +51,7 @@ describe("0278_schedule_person_settings_guarded", () => {
     for (const sig of ["schedule_person_subject_check(uuid, integer, uuid)",
       "record_schedule_person_settings(uuid, uuid, uuid, text, text[], text, uuid[], numeric, numeric, boolean, numeric, boolean)",
       "save_schedule_person_settings(uuid, uuid, uuid, uuid, text, text[], text, uuid[], numeric, numeric, boolean, numeric, boolean)",
-      "merge_schedule_person_positions(uuid, uuid, uuid, jsonb)"]) {
+      "merge_schedule_person_positions(uuid, uuid, uuid, uuid, jsonb)"]) {
       expect(src).toContain(`revoke all on function public.${sig} from public, anon, authenticated;`);
       expect(src).toContain(`grant execute on function public.${sig} to service_role;`);
     }
@@ -64,7 +65,8 @@ describe("0278_schedule_person_settings_guarded", () => {
     expect(save.fn).toBe(SCHEDULE_RPC.savePersonSettings);
     const sig = /create function public\.save_schedule_person_settings\(([\s\S]*?)\)\s*returns/.exec(src)![1]!;
     expect(Object.keys(save.args)).toEqual([...sig.matchAll(/(p_\w+)/g)].map((m) => m[1]));
-    const merge = mergePersonPositionsCall({ actorId: "a", locationId: "l", userId: "u", changes: {} });
-    expect(Object.keys(merge.args)).toEqual(["p_actor", "p_location", "p_user", "p_changes"]);
+    const merge = mergePersonPositionsCall({ actorId: "a", locationId: "l", userId: "u", expectedId: null, changes: {} });
+    const msig = /create function public\.merge_schedule_person_positions\(([\s\S]*?)\)\s*returns/.exec(src)![1]!;
+    expect(Object.keys(merge.args)).toEqual([...msig.matchAll(/(p_\w+)/g)].map((m) => m[1]));
   });
 });

@@ -18,7 +18,9 @@
  *   S4  the merge (merge_schedule_person_positions): ONLY the changed fields; the list rules (no primary → cleared, no
  *       secondary → [primary], else the tail kept behind them); a malformed change refused invalid_payload; a position of
  *       another shop refused by 0274's own check
- *   S5  INTERLEAVED writes: two requests read the same head; the second one's write never erases the first one's change
+ *   S5  INTERLEAVED writes: two requests read the same head; whichever lands second — a full-row save OR a picker merge —
+ *       is refused person_settings_moved (Astra BC-007/042: no blind merge), so neither erases nor corrupts the first;
+ *       Astra's case: A gives an FOH employee Register while B makes them BOH → A refused, never BOH + Register
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
@@ -62,7 +64,7 @@ const FNS = [
   "schedule_person_subject_check(uuid, integer, uuid)",
   "record_schedule_person_settings(uuid, uuid, uuid, text, text[], text, uuid[], numeric, numeric, boolean, numeric, boolean)",
   "save_schedule_person_settings(uuid, uuid, uuid, uuid, text, text[], text, uuid[], numeric, numeric, boolean, numeric, boolean)",
-  "merge_schedule_person_positions(uuid, uuid, uuid, jsonb)",
+  "merge_schedule_person_positions(uuid, uuid, uuid, uuid, jsonb)",
 ];
 
 const db = await base();
@@ -108,7 +110,7 @@ try {
   check(pub === 0, "S1 no PUBLIC / anon / authenticated EXECUTE on any 0278 function");
   for (const role of ["anon", "authenticated"]) {
     await db.exec(`set role ${role}`);
-    await refuses(() => db.query("select public.merge_schedule_person_positions(p_actor => null, p_location => null, p_user => null, p_changes => null)"), "42501", `S1 ${role} cannot EXECUTE merge_schedule_person_positions`);
+    await refuses(() => db.query("select public.merge_schedule_person_positions(p_actor => null, p_location => null, p_user => null, p_expected => null, p_changes => null)"), "42501", `S1 ${role} cannot EXECUTE merge_schedule_person_positions`);
     await db.exec("reset role");
   }
 
@@ -131,7 +133,9 @@ try {
     softMinH: o.softMin ?? null, softMaxH: o.softMax ?? null, fullTime: o.fullTime ?? false, fullTimeMinH: o.fullTimeMin ?? null, rosterInclude: o.rosterInclude ?? null });
   const record = (actor, u, o) => rpc(recordPersonSettingsCall({ actorId: actor, locationId: SA, userId: u, ...fields(o) }));
   const save = (actor, u, expectedId, o) => rpc(savePersonSettingsCall({ actorId: actor, locationId: SA, userId: u, expectedId, ...fields(o) }));
-  const merge = (actor, u, changes) => rpc(mergePersonPositionsCall({ actorId: actor, locationId: SA, userId: u, changes }));
+  // The picks' expected head: by default the CURRENT latest row (an unmoved head); S5 passes a stale one explicitly.
+  const merge = async (actor, u, changes, expectedId) => rpc(mergePersonPositionsCall({ actorId: actor, locationId: SA, userId: u,
+    expectedId: expectedId === undefined ? ((await latest(u))?.id ?? null) : expectedId, changes }));
   const latest = async (u) => (await db.query(`select * from public.schedule_person_settings where location_id = $1 and user_id = $2
     order by created_at desc, id desc limit 1`, [SA, u])).rows[0];
   const count = async () => (await db.query("select count(*)::int as n from public.schedule_person_settings")).rows[0].n;
@@ -181,18 +185,27 @@ try {
   }
   await refuses(() => merge(gmA, empC, { primary: posB }), "position_not_at_shop", "S4 a position of another shop → position_not_at_shop (0274's check)");
 
-  // S5 — INTERLEAVED writes: A and B read the same head; B writes first; A must not erase B's change.
+  // S5 — INTERLEAVED writes: A and B read the same head; B writes first; A is refused, whatever kind of write it is.
   await record(gmA, empA, { workType: "foh", cover: [REG, WALK], fullTime: false });
   const head = (await latest(empA)).id;              // request A reads the head
   const headB = (await latest(empA)).id;             // request B reads the SAME head
   check(head === headB, "S5 both requests read the same head");
-  await merge(agmA, empA, { workType: "boh" });      // B lands first (a picker change)
+  await merge(agmA, empA, { workType: "boh" }, headB); // B lands first (a picker change on its head)
   await refuses(() => save(gmA, empA, head, { workType: "foh", cover: [EXPO], fullTime: true }), "person_settings_moved",
     "S5 A's full-row save based on the head B superseded → person_settings_moved (B's change survives)");
-  check((await latest(empA)).work_type === "boh", "S5 B's work type is still the latest");
-  await merge(gmA, empA, { primary: EXPO });         // A as a picker change instead: merged onto B's row under the lock
+  await refuses(() => merge(gmA, empA, { primary: EXPO }, head), "person_settings_moved",
+    "S5 A's picker merge based on the head B superseded → person_settings_moved (no blind merge)");
   r = await latest(empA);
-  check(r.work_type === "boh" && JSON.stringify(r.cover_positions) === JSON.stringify([EXPO, WALK]), "S5 A's picker change merges onto B's row: both changes stand");
+  check(r.work_type === "boh" && JSON.stringify(r.cover_positions) === JSON.stringify([REG, WALK]), "S5 only B's change stands; A wrote nothing");
+  await merge(gmA, empA, { primary: EXPO }, r.id);    // A retries on the fresh head: merged
+  check(JSON.stringify((await latest(empA)).cover_positions) === JSON.stringify([EXPO, WALK]) && (await latest(empA)).work_type === "boh", "S5 A's retry on the new head merges: both changes stand");
+  // Astra's case: an FOH employee; A adds Register (valid for FOH), B makes them BOH (valid alone) — together invalid.
+  await record(gmA, empC, { workType: "foh", cover: [], fullTime: false });
+  const baseC = (await latest(empC)).id;
+  await merge(agmA, empC, { workType: "boh" }, baseC);  // B
+  await refuses(() => merge(gmA, empC, { primary: REG }, baseC), "person_settings_moved", "S5 Astra's FOH/BOH case: A's Register on the old head is refused");
+  r = await latest(empC);
+  check(r.work_type === "boh" && JSON.stringify(r.cover_positions) === JSON.stringify([]), "S5 never BOH + Register: the stored row is B's alone");
 } catch (e) {
   failures++;
   console.error("FAIL harness threw:", e);

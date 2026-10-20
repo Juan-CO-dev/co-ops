@@ -69,7 +69,7 @@ describe("the actor matrix: setting an employee's schedule settings at shop A (b
   it.each(cases)("%s", async (_name, a, access, expected) => {
     const s = shop(() => {}, access);
     expect(await code(recordPersonSettings(s.deps, { actor: a, locationId: A, settings: row(EMP, { coverPositions: [P_REG] }), expectedId: null }))).toBe(expected);
-    expect(await code(recordPersonPositions(s.deps, { actor: a, locationId: A, userId: EMP, changes: { primary: P_REG } }))).toBe(expected);
+    expect(await code(recordPersonPositions(s.deps, { actor: a, locationId: A, userId: EMP, changes: { primary: P_REG }, expectedId: null }))).toBe(expected);
     expect(rpcArgs(s)).toHaveLength(expected === "ok" ? 2 : 0);
   });
 });
@@ -90,7 +90,7 @@ describe("GMs own their shop: whose settings a GM (and an AGM with edit) may cha
   it.each(subjects)("%s", async (_n, userId, gmResult, agmResult) => {
     const s = shop(() => {}, "edit");
     expect(await code(recordPersonSettings(s.deps, { actor: gm, locationId: A, settings: row(userId), expectedId: null }))).toBe(gmResult);
-    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId, changes: { workType: "foh" } }))).toBe(gmResult);
+    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId, changes: { workType: "foh" }, expectedId: null }))).toBe(gmResult);
     expect(await code(recordPersonSettings(s.deps, { actor: agmEdit, locationId: A, settings: row(userId), expectedId: null }))).toBe(agmResult);
   });
   it("MoO+ is unchanged (any subject); the pure rule matches", () => {
@@ -135,13 +135,17 @@ describe("Astra BC-007: a stale write never clobbers", () => {
     expect(await code(recordPersonSettings(s.deps, { actor: gm, locationId: A, settings: row(EMP, { coverPositions: [P_REG] }), expectedId: "ps-new" }))).toBe("ok");
     expect(await code(recordPersonSettings(shop().deps, { actor: gm, locationId: A, settings: row(EMP), expectedId: null }))).toBe("ok"); // no row yet
   });
-  it("the pickers' save (changes only, from a page loaded with the OLD row) merges onto the LATEST row: nothing else is lost", async () => {
+  it("Astra BC-007/042: the pickers' save from a page loaded with the OLD row is person_settings_moved — never a blind merge", async () => {
     const s = shop(latest);
-    const loaded = row(EMP, { coverPositions: [P_WALK] }); // what the page showed
+    const loaded = row(EMP, { coverPositions: [P_WALK] }); // what the page showed (ps-old)
+    const changes = positionChangesOf(loaded, { workType: null, primary: P_WALK, secondary: uid(50) });
+    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: { ...changes }, expectedId: "ps-old" }))).toBe("person_settings_moved");
+    expect(rpcArgs(s)).toEqual([]);
+  });
+  it("on the UNMOVED head the pickers' changes merge onto it: only the changed fields move, nothing else is lost", async () => {
+    const s = shop(latest);
     const P_NEW = uid(50);
-    const changes = positionChangesOf(loaded, { workType: null, primary: P_WALK, secondary: P_NEW });
-    expect(changes).toEqual({ secondary: P_NEW });
-    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: { ...changes } }))).toBe("ok");
+    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: { secondary: P_NEW }, expectedId: "ps-new" }))).toBe("ok");
     expect(rpcArgs(s)).toEqual([expect.objectContaining({
       p_user: EMP, p_work_type: "foh", p_also_allowed: ["boh"], p_leader_setting: "closes", p_soft_min_h: 20, p_soft_max_h: 32, p_full_time: true,
       p_full_time_min_h: 30, p_roster_include: null,
@@ -152,10 +156,10 @@ describe("Astra BC-007: a stale write never clobbers", () => {
   });
   it("a work-type-only change keeps the latest list untouched; malformed changes are invalid_payload", async () => {
     const s = shop(latest);
-    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: { workType: "boh" } }))).toBe("ok");
+    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: { workType: "boh" }, expectedId: "ps-new" }))).toBe("ok");
     expect(rpcArgs(s)[0]).toMatchObject({ p_work_type: "boh", p_cover_positions: [P_WALK, P_REG, P_EXPO], p_full_time: true });
     for (const bad of [{}, { softMinH: 4 }, { workType: "chef" }, { primary: "not-a-uuid" }]) {
-      expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: bad }))).toBe("invalid_payload");
+      expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: bad, expectedId: "ps-new" }))).toBe("invalid_payload");
     }
   });
   it("the client sends ONLY what changed (person_positions), one POST per changed shop", async () => {
@@ -163,11 +167,13 @@ describe("Astra BC-007: a stale write never clobbers", () => {
     const fetchMock = vi.fn(async (_url: string, init: { body: string }) => { bodies.push(JSON.parse(init.body)); return new Response("{}", { status: 200 }); });
     vi.stubGlobal("fetch", fetchMock);
     try {
-      const shopA: ShopPositionPicker = { locationId: A, positions: [], rolesKnown: false, suggestions: {}, settings: { [EMP]: row(EMP, { fullTime: true, coverPositions: [P_WALK, P_REG] }) } };
+      const shopA: ShopPositionPicker = { locationId: A, positions: [], rolesKnown: false, suggestions: {}, settings: { [EMP]: row(EMP, { fullTime: true, coverPositions: [P_WALK, P_REG] }) },
+        settingsIds: { [EMP]: "ps-a" } };
       const shopB: ShopPositionPicker = { locationId: B, positions: [], rolesKnown: false, suggestions: {}, settings: {} };
       const res = await savePicks(EMP, { [A]: { workType: null, primary: P_WALK, secondary: P_EXPO }, [B]: { workType: null, primary: null, secondary: null } }, { [A]: shopA, [B]: shopB });
       expect(res).toBeNull();
-      expect(bodies).toEqual([{ action: "person_positions", locationId: A, userId: EMP, changes: { secondary: P_EXPO } }]);
+      // The row the pickers were loaded from rides along as the expected head (Astra BC-007/042).
+      expect(bodies).toEqual([{ action: "person_positions", locationId: A, userId: EMP, changes: { secondary: P_EXPO }, expectedId: "ps-a" }]);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -200,28 +206,28 @@ describe("Astra BC-007 r3 (blocker): the card's values and its expected id are O
   });
 });
 
-describe("0278: the writes go through the lock-held writers; before 0278 is applied, 0274's writer behind the lib's checks", () => {
+describe("0278: the writes go ONLY through the lock-held writers; before 0278 is applied they refuse (no 0274 fallback)", () => {
   const gm = actor(GM, "gm", 7, [A]);
   const one = (t: ReturnType<typeof shopTables>) => { t.schedule_person_settings = [dbRow("ps-1", EMP, "2026-10-01T00:00:00Z", { cover_positions: [P_WALK], full_time: true })]; };
   it("the full-row write calls save_schedule_person_settings with p_expected; the pickers call merge_schedule_person_positions with ONLY the changes", async () => {
     const s = shop(one);
     expect(await code(recordPersonSettings(s.deps, { actor: gm, locationId: A, settings: row(EMP, { coverPositions: [P_REG] }), expectedId: "ps-1" }))).toBe("ok");
-    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: { primary: P_REG } }))).toBe("ok");
+    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: { primary: P_REG }, expectedId: "ps-1" }))).toBe("ok");
     const calls = s.calls.filter((c) => c.fn.includes("person"));
     expect(calls.map((c) => c.fn)).toEqual(["save_schedule_person_settings", "record_schedule_person_settings", "merge_schedule_person_positions", "record_schedule_person_settings"]);
     expect(calls[0]!.args.p_expected).toBe("ps-1");
     expect(calls[2]!.args.p_changes).toEqual({ primary: P_REG });
+    expect(calls[2]!.args.p_expected).toBe("ps-1");
   });
-  it("0278 not applied (PGRST202): both writes fall back to record_schedule_person_settings, the lib's stale check and merge still hold", async () => {
+  it("Astra BC-007/038 — 0278 not applied (PGRST202): both writes refuse person_settings_unavailable (503) and NOTHING reaches 0274's writer", async () => {
     const t = shopTables();
     one(t);
     const st = scheduleStore(t, { no0278: true });
     const deps = { service: st.client, now: NOW };
-    expect(await code(recordPersonSettings(deps, { actor: gm, locationId: A, settings: row(EMP), expectedId: "stale" }))).toBe("person_settings_moved");
-    expect(await code(recordPersonSettings(deps, { actor: gm, locationId: A, settings: row(EMP), expectedId: "ps-1" }))).toBe("ok");
-    expect(await code(recordPersonPositions(deps, { actor: gm, locationId: A, userId: EMP, changes: { primary: P_REG } }))).toBe("ok");
-    const rec = st.calls.filter((c) => c.fn === "record_schedule_person_settings");
-    expect(rec).toHaveLength(2);
-    expect(rec[1]!.args).toMatchObject({ p_cover_positions: [P_REG], p_full_time: true });
+    expect(await code(recordPersonSettings(deps, { actor: gm, locationId: A, settings: row(EMP), expectedId: "ps-1" }))).toBe("person_settings_unavailable");
+    expect(await code(recordPersonPositions(deps, { actor: gm, locationId: A, userId: EMP, changes: { primary: P_REG }, expectedId: "ps-1" }))).toBe("person_settings_unavailable");
+    expect(st.calls.filter((c) => c.fn === "record_schedule_person_settings")).toEqual([]);
+    const { SCHEDULE_ERROR_STATUS } = await import("@/lib/scheduling/errors-shared");
+    expect(SCHEDULE_ERROR_STATUS.person_settings_unavailable).toBe(503);
   });
 });

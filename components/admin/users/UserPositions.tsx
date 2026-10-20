@@ -132,7 +132,7 @@ export async function savePicks(userId: string, picks: Record<string, PositionPi
     if (!shop) continue;
     const current = shop.settings[userId] ?? null;
     if (!pickChanged(current, pick)) continue;
-    const r = await postJson("/api/schedule", personPositionsBody(locationId, userId, { ...positionChangesOf(current, pick) }));
+    const r = await postJson("/api/schedule", personPositionsBody(locationId, userId, { ...positionChangesOf(current, pick) }, shop.settingsIds?.[userId] ?? null));
     if (!r.ok) return r.code;
   }
   return null;

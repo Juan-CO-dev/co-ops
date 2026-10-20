@@ -131,7 +131,7 @@ describe("the save path refuses the same thing before the RPC (position_rank_not
     t.schedule_structures = [{ id: "sv-1", location_id: A, created_at: "2026-10-01T12:00:00Z", structure: { positions: { [P_REG]: { role }, [P_WALK]: { role: "walk" } } } }];
   };
   const save = async (s: ReturnType<typeof shop>, settings: PersonSettingsRow) => {
-    try { await recordPersonSettings(s.deps, { actor: gm, locationId: A, settings }); return "ok"; } catch (e) { return e instanceof ScheduleError ? e.code : `throw:${(e as Error).message}`; }
+    try { await recordPersonSettings(s.deps, { actor: gm, locationId: A, settings, expectedId: null }); return "ok"; } catch (e) { return e instanceof ScheduleError ? e.code : `throw:${(e as Error).message}`; }
   };
   it("a FOH employee with the dish-and-prep position as primary or secondary: refused, nothing sent; BOH, a manager, or roles unknown: sent", async () => {
     const s = shop(saved("prep_dish"));

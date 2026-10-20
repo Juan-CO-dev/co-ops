@@ -73,9 +73,9 @@ export function savePersonSettingsCall(i: Parameters<typeof recordPersonSettings
     p_roster_include: args.p_roster_include } } as const;
 }
 
-/** 0278: the user screen's changes only (workType / primary / secondary), merged onto the latest row under the lock. */
-export function mergePersonPositionsCall(i: { actorId: string; locationId: string; userId: string; changes: Record<string, unknown> }) {
-  return { fn: SCHEDULE_RPC.mergePersonPositions, args: { p_actor: i.actorId, p_location: i.locationId, p_user: i.userId, p_changes: i.changes } } as const;
+/** 0278: the user screen's changes only (workType / primary / secondary) + the head they were based on, merged under the lock. */
+export function mergePersonPositionsCall(i: { actorId: string; locationId: string; userId: string; expectedId: string | null; changes: Record<string, unknown> }) {
+  return { fn: SCHEDULE_RPC.mergePersonPositions, args: { p_actor: i.actorId, p_location: i.locationId, p_user: i.userId, p_expected: i.expectedId, p_changes: i.changes } } as const;
 }
 
 export function recordBudgetEntryCall(i: {

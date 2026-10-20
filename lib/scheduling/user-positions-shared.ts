@@ -24,6 +24,8 @@ export interface ShopPositionPicker {
   rolesKnown: boolean;
   /** userId → the latest person settings row at this shop (absent = role defaults). */
   settings: Record<string, PersonSettingsRow>;
+  /** userId → that row's id (sent back as the picks' expected head, Astra BC-007/042; absent = no row yet). */
+  settingsIds?: Record<string, string>;
   /** userId → the Toast suggestion (a Toast link, no primary yet, a confident match). */
   suggestions: Record<string, ToastPrimarySuggestion>;
 }

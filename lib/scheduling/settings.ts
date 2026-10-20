@@ -28,7 +28,7 @@ import { STRUCTURE_DEFAULTS_ID, generatorInputFor, type SchedulingInputs } from 
 import { defaultWorkType } from "./people-input-shared";
 import { positionListProblems } from "./position-rank-shared";
 import {
-  mergePersonPositionsCall, recordBudgetEntryCall, recordDayTypeCall, recordPersonSettingsCall, recordPinCall, savePersonSettingsCall, saveShopSettingsCall, saveStructureCall,
+  mergePersonPositionsCall, recordBudgetEntryCall, recordDayTypeCall, recordPinCall, savePersonSettingsCall, saveShopSettingsCall, saveStructureCall,
 } from "./rpc-args-shared";
 import { MOD } from "./rules-shared";
 import { gate, rpcRefusal, type ScheduleDeps } from "./schedules";
@@ -91,52 +91,50 @@ export interface PersonSettingsInput {
  * A FULL-ROW write (the staff settings card). Juan 2026-10-20: below MoO, only people below the actor and below GM, never
  * oneself (`personSettingsSubjectRefusal`). Astra BC-007: `expectedId` is the latest row the card was loaded with (null =
  * none); a different latest row now is `person_settings_moved` — the card reloads instead of overwriting someone's change.
- * (`undefined` skips the check: in-process callers only; the route always sends it.)
+ * Astra BC-007/038: ONLY through 0278's lock-held writer — without it this write is `person_settings_unavailable`, never
+ * the 0274 writer (two requests on one head would both append, and the later full row would erase the earlier change).
  */
-export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput; expectedId?: string | null }): Promise<Record<string, unknown>> {
+export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput; expectedId: string | null }): Promise<Record<string, unknown>> {
   await gate(deps.service, args.actor, args.locationId, "person_settings");
   const s = args.settings;
   if (!s || typeof s.userId !== "string" || !UUID.test(s.userId) || !Array.isArray(s.coverPositions) || !Array.isArray(s.alsoAllowed)) throw new ScheduleError("invalid_payload");
   const role = await subjectRole(deps.service, args.actor, s.userId);
-  if (args.expectedId === undefined) return writePersonSettings(deps, args.actor, args.locationId, role, s);
   // The early read refuses most stale saves with no write; 0278's writer re-checks under the per-person lock (the race).
   const latest = await loadLatestPersonSettings(deps.service, args.locationId, s.userId);
   if ((latest?.id ?? null) !== args.expectedId) throw new ScheduleError("person_settings_moved");
   await refusePositionRank(deps.service, args.locationId, role, s);
-  const guarded = await rpcIfInstalled(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId: args.expectedId }));
-  if (guarded) return logPersonSettings(args.actor, args.locationId, s.userId, guarded);
-  // 0278 not applied yet: the 0274 writer (the lib's own checks above stand; the lock-held re-check arrives with 0278).
-  return writePersonSettings(deps, args.actor, args.locationId, role, s);
+  const r = await guardedRpc(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId: args.expectedId }));
+  return logPersonSettings(args.actor, args.locationId, s.userId, r);
 }
 
 /**
- * The user screen's primary / secondary pickers (Juan 2026-10-20; Astra BC-007): ONLY the changed fields are sent and
- * MERGED onto the person's LATEST row here, so a save never overwrites what someone else changed after the page loaded
- * (full-time, the soft range, also-allowed, the leader setting, roster_include, the "can flex to" tail). Same rules as the
- * full-row write. The read is outside the RPC's per-person lock (no migration): two saves inside the same instant can
- * still race; closing that needs the RPC to merge under its lock.
+ * The user screen's primary / secondary pickers (Juan 2026-10-20; Astra BC-007): ONLY the changed fields are sent, with the
+ * id of the row the pickers were loaded from (`expectedId`, null = none). Astra BC-007/042: if the person's latest row is
+ * no longer that one, the save is `person_settings_moved` (the screen reloads, the person retries) — two valid changes
+ * merged blind can make an invalid row (FOH + Register from A, BOH from B → BOH + Register). On the unmoved head the
+ * changed fields are merged under 0278's per-person lock (the same row the pickers saw). No 0274 fallback.
  */
-export async function recordPersonPositions(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; userId: string; changes: Record<string, unknown> }): Promise<Record<string, unknown>> {
+export async function recordPersonPositions(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; userId: string; changes: Record<string, unknown>; expectedId: string | null }): Promise<Record<string, unknown>> {
   await gate(deps.service, args.actor, args.locationId, "person_settings");
   const changes = parsePositionChanges(args.changes);
   if (!UUID.test(args.userId) || !changes) throw new ScheduleError("invalid_payload");
   const role = await subjectRole(deps.service, args.actor, args.userId);
   const latest = await loadLatestPersonSettings(deps.service, args.locationId, args.userId);
+  if ((latest?.id ?? null) !== args.expectedId) throw new ScheduleError("person_settings_moved");
   const merged = mergePositionChanges(latest?.row ?? null, args.userId, changes);
-  // The work-type check judges the row the merge makes now; 0278's writer merges again from the row it reads UNDER the lock.
   await refusePositionRank(deps.service, args.locationId, role, merged);
-  const guarded = await rpcIfInstalled(deps.service, mergePersonPositionsCall({ actorId: args.actor.userId, locationId: args.locationId, userId: args.userId, changes: { ...changes } }));
-  if (guarded) return logPersonSettings(args.actor, args.locationId, args.userId, guarded);
-  return writePersonSettings(deps, args.actor, args.locationId, role, merged);
+  const r = await guardedRpc(deps.service, mergePersonPositionsCall({ actorId: args.actor.userId, locationId: args.locationId, userId: args.userId, expectedId: args.expectedId, changes: { ...changes } }));
+  return logPersonSettings(args.actor, args.locationId, args.userId, r);
 }
 
 /**
- * A 0278 writer, or null when 0278 is not applied yet (PostgREST: the function is unknown) — the caller then uses the 0274
- * writer behind the lib's own checks. Every other error is the writer's named refusal (or a thrown error), as `rpc`.
+ * A 0278 writer. Astra BC-007/038: these writes REQUIRE the lock-held writers — when 0278 is not applied (PostgREST: the
+ * function is unknown) the write is refused `person_settings_unavailable` (503), never sent to 0274's writer. Every other
+ * error is the writer's named refusal (or a thrown error), as `rpc`.
  */
-async function rpcIfInstalled(service: SupabaseClient, call: { fn: string; args: Record<string, unknown> }): Promise<Record<string, unknown> | null> {
+async function guardedRpc(service: SupabaseClient, call: { fn: string; args: Record<string, unknown> }): Promise<Record<string, unknown>> {
   const { data, error } = await service.rpc(call.fn, call.args);
-  if (error && (error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message))) return null;
+  if (error && (error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message))) throw new ScheduleError("person_settings_unavailable");
   if (error) rpcRefusal(error);
   return (data ?? {}) as Record<string, unknown>;
 }
@@ -155,11 +153,6 @@ async function subjectRole(service: SupabaseClient, actor: PeopleActor, userId: 
   const refusal = personSettingsSubjectRefusal(actor, { userId, role: role as RoleCode });
   if (refusal) throw new ScheduleError(refusal);
   return role as RoleCode;
-}
-
-async function writePersonSettings(deps: ScheduleDeps, actor: PeopleActor, locationId: string, role: RoleCode, s: PersonSettingsInput): Promise<Record<string, unknown>> {
-  await refusePositionRank(deps.service, locationId, role, s);
-  return logPersonSettings(actor, locationId, s.userId, await rpc(deps.service, recordPersonSettingsCall({ actorId: actor.userId, locationId, ...s })));
 }
 
 /**
