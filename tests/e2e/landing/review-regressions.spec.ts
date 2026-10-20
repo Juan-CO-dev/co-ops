@@ -39,7 +39,7 @@ test('fixture coordinates produce exactly one merged Permissions-Policy on landi
     expect(policies[0]?.value).toBe(expected);
   }
   await page.goto(`http://localhost:${portBase + 5}/`, {waitUntil:'domcontentloaded'});
-  await expect(page.getByRole('button',{name:'Find my nearest shop'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Which shop is closer?'})).toBeVisible();
 });
 
 test('configured delivery clicks retain their actual placement without a shop counter', async ({page}) => {

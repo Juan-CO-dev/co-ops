@@ -36,12 +36,13 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
   expect(await stage.locator('[data-texture-photo]').first().evaluate(el=>el.getBoundingClientRect().height)).toBeCloseTo(beforePhotoHeight,1);
   await page.locator('#field-guide').scrollIntoViewIfNeeded();
   await expect(page.locator('#field-guide h3')).toHaveText('Crunchy Boi');
-  await expect(page.locator('[data-field-ingredients]')).toHaveText((language==='en'?en:es)['landing.lineup.ingredients.crunchy-boi']);
+  // v4: no duplicate ingredient paragraph; the six words carry them here.
+  await expect(page.locator('[data-field-ingredients]')).toHaveCount(0);
   await expect(page.locator('[data-anatomy-label]')).toHaveCount(6);
   await expect(page.getByRole('group',{name:(language==='en'?en:es)['landing.field-guide.labels']})).toBeVisible();
   const intersections=await page.locator('#field-guide').evaluate(section=>{
     const photo=section.querySelector('[data-landing-photo]')!.getBoundingClientRect();
-    return [...section.querySelectorAll('[data-anatomy-label],h3,[data-field-ingredients],[data-landing-placement]')].map(el=>{
+    return [...section.querySelectorAll('[data-anatomy-label],h3,.landing-v4-guide-cta button,[data-landing-placement]')].map(el=>{
       const b=el.getBoundingClientRect();return Math.max(0,Math.min(b.right,photo.right)-Math.max(b.left,photo.left))*Math.max(0,Math.min(b.bottom,photo.bottom)-Math.max(b.top,photo.top));
     });
   });
@@ -196,8 +197,15 @@ for(const mode of ['reduce','no-js','no-js-full-motion'] as const)test(`${mode} 
   await expect(page.locator('#crave img')).toHaveCount(2);
   await page.locator('#field-guide').scrollIntoViewIfNeeded();
   await expect(page.locator('#field-guide h3')).toHaveText('Crunchy Boi');
-  await expect(page.locator('[data-field-ingredients]')).toHaveText(en['landing.lineup.ingredients.crunchy-boi']);
-  await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(0);
+  await expect(page.locator('[data-field-ingredients]')).toHaveCount(0);
+  if(mode==='reduce'){
+    // The static equivalent of "all six found": the order action is there at once (its shop links sit in the closed sheet).
+    await expect(page.locator('#field-guide .landing-v4-guide-cta')).toHaveAttribute('data-ready','true');
+    await expect(page.locator('#field-guide').getByRole('button',{name:en['landing.lineup.order'].replace('{name}','Crunchy Boi')})).toBeVisible();
+    await expect(page.locator('#field-guide [data-landing-placement="guide"]')).toHaveCount(2);
+  } else await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(0);
+  // The crunch story ends on its own order action, never over a photo.
+  await expect(page.locator('#crave [data-landing-placement="crave"]')).toHaveCount(2);
   await context.close();
 });
 

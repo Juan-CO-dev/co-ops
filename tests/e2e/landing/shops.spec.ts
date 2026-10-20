@@ -25,7 +25,7 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
   // Destination-only directions: Apple Maps on Apple devices, Google Maps elsewhere.
   await expect(shops.locator('a[data-directions][href^="https://www.google.com/maps/dir/?api=1&destination="], a[data-directions][href^="https://maps.apple.com/?daddr="]')).toHaveCount(2);
   await expect(shops.locator('a[href*="openstreetmap.org/copyright"]')).toHaveCount(1);
-  await expect(shops.getByRole('button',{name:'Find my nearest shop'})).toHaveCount(1);
+  await expect(shops.getByRole('button',{name:'Which shop is closer?'})).toHaveCount(1);
   for(const link of await shops.getByRole('link').all()) expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(375);
   await shops.scrollIntoViewIfNeeded();
@@ -73,7 +73,7 @@ for(const place of [{name:'near Dupont',latitude:38.9105,longitude:-77.0425,onMa
   await page.goto('/');
   const shops=page.locator('#shops');await shops.scrollIntoViewIfNeeded();
   await expect(shops.locator('[data-shop-map] img')).toHaveAttribute('src',/\/media\/landing-map-[a-f0-9]{12}\.webp$/);
-  await shops.getByRole('button',{name:'Find my nearest shop'}).click();
+  await shops.getByRole('button',{name:'Which shop is closer?'}).click();
   if(place.onMap){
     await expect(shops.locator('[data-map-you] span')).toBeVisible();
     await expect(shops.locator('[data-shop]').first()).toHaveAttribute('data-shop','dupont');
@@ -85,7 +85,9 @@ for(const place of [{name:'near Dupont',latitude:38.9105,longitude:-77.0425,onMa
     await expect(shops.locator('[data-map-offmap]')).toBeAttached();
     await expect(shops).toContainText('You are outside this map');
   }
-  const directions=shops.locator('[data-shop]').first().locator('a.landing-v3-directions');
+  // v4: the nearest card sorts first and sells first; directions are the link under its order button.
+  await expect(shops.locator('[data-shop]').first()).toHaveAttribute('data-nearest','true');
+  const directions=shops.locator('[data-shop]').first().locator('a[data-directions]');
   await expect(directions).toBeVisible();
   const href=(await directions.getAttribute('href'))!;
   expect(href).toMatch(/^https:\/\/(maps\.apple\.com\/\?daddr=|www\.google\.com\/maps\/dir\/\?api=1&destination=)/);
