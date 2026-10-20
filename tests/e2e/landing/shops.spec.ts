@@ -17,8 +17,9 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
   await expect(shops.locator('[data-shop="dupont"] a[href*="ubereats.com"]')).toHaveText('Uber Eats (Dupont)');
   await expect(shops.locator('[data-shop="capitol-hill"] a[href*="ubereats.com"]')).toHaveCount(0);
   await expect(page.locator('footer a[href*="ubereats.com"]')).toHaveCount(0);
-  await expect(shops).toContainText('Daily 10:30am–6pm');
-  await expect(shops).toContainText('Daily 10:30am–8pm');
+  // One clock style per card: schedule endpoints and today's close share the i18n clock formatter.
+  await expect(shops).toContainText('Daily 10:30 AM–6 PM');
+  await expect(shops).toContainText('Daily 10:30 AM–8 PM');
   await expect(shops.locator('[data-shop-map] [role="img"]')).toHaveAttribute('aria-label','Map of our shops');
   await expect(shops.locator('[data-map-pin]')).toHaveCount(2);
   await expect(shops.locator('[data-map-you]')).toHaveCount(0);

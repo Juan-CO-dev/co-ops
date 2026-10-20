@@ -90,6 +90,26 @@ describe('today\'s closing time (static hours, America/New_York)', () => {
     const closedStores = stores.map(store => ({ ...store, openingHours: { ...store.openingHours, days: [] } }));
     expect(renderToStaticMarkup(createElement(Shops, { stores: closedStores, language: 'es', now: mondayNoonEt }))).not.toContain('Hoy:');
   });
+  it("a shop card speaks ONE clock style per language: schedule endpoints and today's close both through the formatter", () => {
+    const config = loadLandingConfig({});
+    const stores = projectLandingStores([{code:'MEP',name:'',address:null,phone:null},{code:'EM',name:'',address:null,phone:null}], config);
+    const hoursLine = (html: string, key: string) => /data-shop-hours="[^"]*">([^<]*)</.exec(html.slice(html.indexOf(`data-shop="${key}"`)))?.[1];
+    const english = renderToStaticMarkup(createElement(Shops, { stores, language: 'en', now: mondayNoonEt }));
+    expect(hoursLine(english, 'capitol-hill')).toBe(`Daily ${formatClockTimeShort('10:30','en')}–${formatClockTimeShort('18:00','en')}`);
+    expect(hoursLine(english, 'capitol-hill')).toBe('Daily 10:30 AM–6 PM');
+    expect(hoursLine(english, 'dupont')).toBe('Daily 10:30 AM–8 PM');
+    expect(english).toContain('Today: til 6 PM');
+    expect(english).not.toMatch(/\d(am|pm)/);
+    const spanish = renderToStaticMarkup(createElement(Shops, { stores, language: 'es', now: mondayNoonEt }));
+    expect(hoursLine(spanish, 'capitol-hill')).toBe(`Todos los días de ${formatClockTimeShort('10:30','es')} a ${formatClockTimeShort('18:00','es')}`);
+    expect(spanish).toContain(`Hoy: hasta las ${formatClockTimeShort('18:00','es')}`);
+    // No second Spanish clock style ("6:00 p. m.") on the card.
+    expect(spanish).not.toContain('p. m.'); expect(spanish).not.toContain('a. m.');
+    // The hours DATA is unchanged; a schedule the structured hours cannot state keeps its configured text.
+    expect(landingTenantConfig.stores[0]!.hours?.en).toBe('Daily 10:30am–6pm');
+    const partial = stores.map(store => ({ ...store, openingHours: { ...store.openingHours, days: ['Monday'] } }));
+    expect(hoursLine(renderToStaticMarkup(createElement(Shops, { stores: partial, language: 'en', now: mondayNoonEt })), 'capitol-hill')).toBe('Daily 10:30am–6pm');
+  });
 });
 
 describe('tracking: crave + guide placements and the item field', () => {

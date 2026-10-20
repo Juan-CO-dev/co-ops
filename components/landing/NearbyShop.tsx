@@ -9,6 +9,8 @@ import { ShopMapView } from './ShopMapView';
 import { directionsHref, projectPoint, type MapPoint, type MapProjection } from '@/lib/landing/map-shared';
 
 export interface NearbyLabels {nearest:string;locating:string;unavailable:string;straightLine:string;distance:string;distanceOne?:string;offer:string;uberEats?:string;directions?:Record<string,string>;call:Record<string,string>;order:Record<string,string>;
+  /** Per shop: the schedule line with both endpoints through the clock formatter. */
+  hours?:Record<string,string|undefined>;
   /** Today's closing line per shop ("Today: til 6 PM"), absent when the shop is closed today. */
   today?:Record<string,string|undefined>}
 export interface NearbyMap extends MapProjection {image:string;width:number;height:number;labels:{map:string;you:string;attribution:string;attributionHref:string;offMap:string}}
@@ -43,7 +45,7 @@ export function NearbyShop({stores,language,labels,ad='unattributed',map}:{store
       {ordered.map(store=><article key={store.key} id={store.key} data-shop={store.key} data-nearest={store.key===nearest} className="rounded-2xl border border-co-border bg-co-surface p-5">
         <h3 className="text-2xl font-bold">{store.name}</h3>
         {store.address && <address className="mt-3 not-italic">{store.address}</address>}
-        {store.hours && <p className="mt-3">{store.hours[language]}</p>}
+        {(labels.hours?.[store.key]??store.hours?.[language]) && <p className="mt-3" data-shop-hours>{labels.hours?.[store.key]??store.hours?.[language]}</p>}
         {labels.today?.[store.key] && <p className="landing-v4-today">{labels.today[store.key]}</p>}
         {store.distance!==null && <p className="mt-2 text-sm">{formatDistanceMiles(store.distance,language,labels.distance,labels.distanceOne??labels.distance)}</p>}
         {/* Sell first: the order action right under the hours, directions and phone below it. */}

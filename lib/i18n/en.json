@@ -50,6 +50,7 @@
   "landing.shops.distance-one": "{distance} mile away in a straight line",
   "landing.shops.call": "Call {shop}",
   "landing.shops.today": "Today: {until}",
+  "landing.shops.hours-daily": "Daily {opens}–{closes}",
   "landing.hours.until": "til {time}",
   "landing.footer.links": "More ways to find us",
   "landing.footer.gift-cards": "Gift cards",

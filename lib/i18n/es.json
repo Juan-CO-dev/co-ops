@@ -50,6 +50,7 @@
   "landing.shops.distance-one": "A {distance} milla en línea recta",
   "landing.shops.call": "Llama a {shop}",
   "landing.shops.today": "Hoy: {until}",
+  "landing.shops.hours-daily": "Todos los días de {opens} a {closes}",
   "landing.hours.until": "hasta las {time}",
   "landing.footer.links": "Más formas de encontrarnos",
   "landing.footer.gift-cards": "Tarjetas de regalo",
