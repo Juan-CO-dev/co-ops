@@ -151,9 +151,9 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
         <ol className="grid gap-1" aria-labelledby={`${id}-pos`}>
           {s.coverPositions.map((p, i) => (
             <li key={p} data-position-slot={ranked ? positionSlotOf(i) : "cover"} className="flex flex-wrap items-center gap-2 text-sm text-co-text">
-              <span className="min-w-[8rem] flex-1">
-                {ranked ? <span className="mr-2 text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{slotLabel(i)}</span> : null}
-                {i + 1}. {position(p)}
+              <span className="grid min-w-[8rem] flex-1">
+                {ranked ? <span className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{slotLabel(i)}</span> : null}
+                <span>{i + 1}. {position(p)}</span>
               </span>
               <button type="button" data-cover-act="up" className={iconBtn} disabled={i === 0} aria-label={t("schedule.settings.staff.cover_up", { position: position(p) })} onClick={() => move(i, -1)}>↑</button>
               <button type="button" data-cover-act="down" className={iconBtn} disabled={i === s.coverPositions.length - 1} aria-label={t("schedule.settings.staff.cover_down", { position: position(p) })} onClick={() => move(i, 1)}>↓</button>
