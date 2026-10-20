@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {landingTenantConfig} from '../../../config/tenant/landing';
-import {answerConsent,revealPill} from './helpers/sticky';
+import {answerConsent,pillState,revealPill} from './helpers/sticky';
 
 // v4.2 (Juan): one slim "Order" pill instead of the two-button bar; nothing else at the bottom.
 const pillLocator='[data-sticky-order] .landing-v42-pill';
@@ -42,11 +42,11 @@ for(const lang of ['en','es'])test(`consent answered: only the slim pill when it
   await expect(pill).toHaveText(lang==='en'?'Order':'Pide');
 });
 
-test('the pill hides while any in-content order surface is on screen',async({page,context,baseURL})=>{
+test('the pill hides while any in-content order control is on screen',async({page,context,baseURL})=>{
   await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
   await page.setViewportSize({width:390,height:844});await page.goto('/');
   await revealPill(page);
-  for(const selector of ['[data-hero-actions]','.landing-v3-plate','.landing-v4-crave-cta','.landing-v4-shop-order','.landing-v4-catering-act','footer']){
+  for(const selector of ['[data-hero-actions] [data-landing-placement]','.landing-v3-plate [data-order-control]','.landing-v4-crave-cta [data-order-control]','.landing-v4-shop-order','.landing-v4-catering-act [data-landing-placement]','footer [data-landing-placement]']){
     await page.locator(selector).first().evaluate(el=>el.scrollIntoView({block:'center'}));
     await expect(page.locator('[data-sticky-order]'),selector).toHaveAttribute('data-visible','false');
     await expect(page.locator(pillLocator),selector).toBeHidden();
@@ -77,14 +77,51 @@ test('the pill opens the shop chooser: both shops with street + closing, sticky 
   await expect(pill).toBeFocused();
 });
 
-test('short viewport hides the pill and recovers; no storage is written',async({page,context,baseURL})=>{
+for(const part of ['heading peeks in at the bottom','ingredients stay after the button scrolls off'] as const)test(`the fighter card: ${part} — the pill is the way to order until the button itself is on screen`,async({page,context,baseURL})=>{
   await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
-  await page.setViewportSize({width:375,height:812});await page.goto('/');
-  const pill=await revealPill(page);
-  await page.setViewportSize({width:375,height:450});
+  // A short window for the first case: at 844 px the crunch story's own order button is still on screen there.
+  await page.setViewportSize(part==='heading peeks in at the bottom'?{width:390,height:470}:{width:390,height:844});await page.goto('/');
+  await revealPill(page);
+  const pill=page.locator(pillLocator);
+  const button=page.locator('.landing-v3-plate [data-order-control]');
+  // Let the nearby sheet triggers finish enhancing (links → button) so nothing shifts under the measurement.
+  await button.evaluate(el=>el.scrollIntoView({block:'center'}));
+  await expect(page.locator('.landing-v3-plate button[data-order-control]')).toHaveCount(1);
+  await expect(page.locator('.landing-v4-crave-cta button[data-order-control]')).toHaveCount(1);
   await expect(pill).toBeHidden();
-  await page.setViewportSize({width:375,height:812});
+  if(part==='heading peeks in at the bottom'){
+    await page.locator('.landing-v3-plate h3').evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-innerHeight+8));
+    expect(await button.evaluate(el=>el.getBoundingClientRect().top>=innerHeight)).toBe(true);
+  } else {
+    await button.evaluate(el=>scrollTo(0,el.getBoundingClientRect().bottom+scrollY+2));
+    expect(await page.locator('.landing-v3-plate [data-stage-ingredients]').evaluate(el=>{const b=el.getBoundingClientRect();return b.bottom>0&&b.top<innerHeight;})).toBe(true);
+  }
+  await page.waitForTimeout(650);
+  // No order control is usable here, so the pill must be on offer (v4.2's card-level target hid it).
+  expect((await pillState(page)).usable).toBe(false);
   await expect(pill).toBeVisible();
+  // Back on the button itself: hidden at once.
+  await button.evaluate(el=>el.scrollIntoView({block:'center'}));
+  await expect(pill).toBeHidden();
+});
+
+for(const viewport of [{width:844,height:390},{width:667,height:375},{width:375,height:450}])test(`short / landscape ${viewport.width}x${viewport.height}: a compact pill stays, same rules; no storage is written`,async({page,context,baseURL})=>{
+  await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
+  await page.setViewportSize(viewport);await page.goto('/');
+  const pill=await revealPill(page);
+  const box=(await pill.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(box.height).toBeLessThanOrEqual(46);
+  expect(box.width).toBeLessThanOrEqual(Math.min(viewport.width*.35,140));
+  expect(Math.round(viewport.width-box.x-box.width)).toBe(8);
+  expect(Math.round(viewport.height-box.y-box.height)).toBe(8);
+  // It opens the same chooser.
+  await pill.click();
+  await expect(page.getByRole('dialog',{name:'Pick your shop'}).locator('a[data-landing-placement="sticky"]')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  // Growing back to a tall window: the full pill under the same rule.
+  await page.setViewportSize({width:375,height:812});
+  await expect.poll(async()=>{const state=await pillState(page);return state.ambiguous||state.visible===!state.usable;}).toBe(true);
   expect(await page.evaluate(()=>Object.keys(sessionStorage).filter(key=>key!=='landing_attribution'))).toEqual([]);
   expect(await page.evaluate(()=>Object.keys(localStorage))).toEqual([]);
 });

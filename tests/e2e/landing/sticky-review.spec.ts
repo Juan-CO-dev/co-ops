@@ -1,35 +1,44 @@
 import {test,expect,type Page} from '@playwright/test';
 import {createRequire} from 'node:module';
-import {revealPill} from './helpers/sticky';
+import {pillState,revealPill} from './helpers/sticky';
 const require=createRequire(process.cwd()+'/package.json');
 
 // Isolate scroll cost from legitimate hydration/font-driven ResizeObserver work.
 async function settleLayout(page:Page){
- await expect(page.locator('[data-crave-stage]')).toHaveAttribute('data-motion','true');
+ // Short windows (landscape phones) get the static crunch story by design; either way it has settled.
+ await expect(page.locator('[data-crave-stage]')).toHaveAttribute('data-motion',(page.viewportSize()?.height??812)<500?'false':'true');
  await page.evaluate(async()=>{
   await document.fonts.ready;
   await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
  });
 }
 
-for(const viewport of [{width:375,height:667},{width:390,height:844},{width:1440,height:900}])test(`a scroll sweep never shows the pill beside another order control ${viewport.width}x${viewport.height}`,async({page,context,baseURL})=>{
-  test.setTimeout(90000);
+// Invariant (Astra v4.2 review): after the show dwell, at EVERY scroll position exactly one way to
+// order is on offer — a usable in-page order control (at least half on screen) OR the pill, never
+// both and never neither. Each control counts on its own: a card's heading or ingredients on screen
+// is not a way to order. Includes 200% text and landscape phones.
+const sweeps=[
+  {width:375,height:667,text:1},{width:390,height:844,text:1},{width:390,height:844,text:2},{width:1440,height:900,text:1},
+  {width:844,height:390,text:1},{width:667,height:375,text:1},
+] as const;
+for(const sweep of sweeps)test(`a scroll sweep always offers exactly one way to order ${sweep.width}x${sweep.height}${sweep.text>1?' at 200% text':''}`,async({page,context,baseURL})=>{
+  test.setTimeout(180000);
   await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
-  await page.setViewportSize(viewport);await page.goto('/');await settleLayout(page);
+  await page.setViewportSize({width:sweep.width,height:sweep.height});await page.goto('/');await settleLayout(page);
+  if(sweep.text>1)await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});
   const max=await page.evaluate(()=>document.documentElement.scrollHeight-innerHeight);
-  let shown=0;
-  for(let y=0;y<=max;y+=Math.round(viewport.height/3)){
+  let shown=0,checked=0;
+  for(let y=0;y<=max;y+=Math.round(sweep.height/3)){
     await page.evaluate(v=>scrollTo(0,v),y);
-    await page.waitForTimeout(500);
-    const state=await page.evaluate(()=>{
-      const visible=document.querySelector<HTMLElement>('[data-sticky-order]')!.dataset.visible==='true';
-      const surfaces=[...document.querySelectorAll<HTMLElement>('[data-hero-actions], .landing-v3-plate, .landing-v4-crave-cta, [data-guide-cta][data-ready="true"], .landing-v4-shop-order, .landing-v4-catering-act, footer')];
-      const inView=surfaces.some(el=>{const b=el.getBoundingClientRect();return b.bottom>0&&b.top<innerHeight&&b.height>0;});
-      return {visible,inView};
-    });
-    if(state.visible){shown++;expect(state.inView,`y=${y}`).toBe(false);}
+    await page.waitForTimeout(650);
+    const state=await pillState(page);
+    if(state.visible)shown++;
+    if(state.ambiguous)continue;
+    checked++;
+    expect(state.visible,`y=${y}: pill ${state.visible?'shown':'hidden'} with a usable control ${state.usable?'on':'off'} screen`).toBe(!state.usable);
   }
-  // It does appear somewhere on the way down (between order surfaces).
+  expect(checked).toBeGreaterThan(5);
+  // It does appear somewhere on the way down (between order controls).
   expect(shown).toBeGreaterThan(0);
 });
 
@@ -91,7 +100,7 @@ test('scroll does not measure or query inline order links',async({page})=>{
   expect(counts).toEqual({rects:0,queries:0});
 });
 
-test('footer takes over; reverse scroll and short viewport recover without a latch',async({page,context,baseURL})=>{
+test('footer takes over; reverse scroll and a short window recover without a latch',async({page,context,baseURL})=>{
  await context.addCookies([{name:'landing_consent',value:'rejected',url:baseURL!}]);
  await page.goto('/');
  const pill=await revealPill(page);
@@ -100,8 +109,9 @@ test('footer takes over; reverse scroll and short viewport recover without a lat
  await expect(pill).toBeHidden();
  await page.evaluate(v=>scrollTo(0,v),y);
  await expect(pill).toBeVisible();
+ // A short window keeps the (compact) pill under the same rule: it shows unless a control is usable.
  await page.setViewportSize({width:375,height:450});
- await expect(pill).toBeHidden();
+ await expect.poll(async()=>{const state=await pillState(page);return state.ambiguous||state.visible===!state.usable;}).toBe(true);
  await page.setViewportSize({width:375,height:812});
- await expect(pill).toBeVisible();
+ await expect.poll(async()=>{const state=await pillState(page);return state.ambiguous||state.visible===!state.usable;}).toBe(true);
 });
