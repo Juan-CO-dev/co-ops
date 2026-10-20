@@ -206,3 +206,24 @@ test('turning on reduced motion mid-visit switches the Field Guide and roster to
   await expect(page.locator('.landing-v3-auto')).toHaveAttribute('aria-pressed','false');
   await expect(page.locator('.landing-v2')).toHaveAttribute('data-calm','true');
 });
+
+test('tapping the order action makes P1 hop onto it (decorative, CSS only, none under reduced motion); the sheet keeps the spin turning', async ({page}) => {
+  await page.goto('/');
+  await page.locator('.landing-v3-auto').click();
+  const cta = page.locator('.landing-v3-plate').getByRole('button',{name:'Order Crunchy Boi'});
+  await cta.scrollIntoViewIfNeeded();
+  await cta.click();
+  await expect(cta).toHaveAttribute('data-hop','');
+  expect(await cta.evaluate(el=>getComputedStyle(el,'::after').backgroundImage)).toContain('pixel-p1-jump');
+  const sheet = page.getByRole('dialog',{name:'Pick a shop for Crunchy Boi'});
+  const spin = sheet.locator('[data-spin-stage]');
+  await expect(spin).toHaveAttribute('aria-hidden','true');
+  await expect(spin).toHaveAttribute('data-spin-ready','true');
+  // Two shop links, each naming its street (and today's close when the shop opens today).
+  await expect(sheet.locator('a[data-landing-placement="lineup"] [data-order-detail]')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await cta.click();
+  expect(await cta.evaluate(el=>getComputedStyle(el,'::after').content)).toBe('none');
+  await expect(sheet.locator('[data-spin-stage]')).toHaveAttribute('data-spin-ready','false');
+});

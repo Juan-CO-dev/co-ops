@@ -22,6 +22,8 @@ for(const language of ['en','es']) test(`consent target and first-visit toggle $
 });
 
 test('mid-page sections carry no repeated shop-link pairs',async({page})=>{
+  // Reduced motion: the Field Guide is static, so its "all six found" order action is already there.
+  await page.emulateMedia({reducedMotion:'reduce'});
   await page.goto('/');
   // v4: the crunch story and the Field Guide end on ONE order action each; their shop pair lives only in its closed sheet.
   await expect(page.locator('#field-guide dialog a[href*="appfront.app"]')).toHaveCount(2);

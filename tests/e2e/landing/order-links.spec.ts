@@ -3,8 +3,9 @@ import { test, expect } from "@playwright/test";
 import { landingTenantConfig } from "../../../config/tenant/landing";
 
 test("all direct and catering destinations match approved tenant config",async ({page})=>{
+  // The Field Guide's order action mounts once all six are found; the static (reduced-motion) guide shows it at once.
+  await page.emulateMedia({reducedMotion:"reduce"});
   await page.goto("/");
-  // The Field Guide's order action mounts once its figure hydrates.
   await expect(page.locator('[data-landing-placement="guide"]').first()).toBeAttached();
   expect(await page.locator("[data-landing-placement]").evaluateAll(links=>[...new Set(links.map(link=>link.getAttribute("data-landing-placement")))].sort())).toEqual([...LANDING_PLACEMENTS].sort());
   for (const store of landingTenantConfig.stores) {

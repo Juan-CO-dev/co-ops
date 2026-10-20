@@ -261,3 +261,22 @@ test('leaving and returning keeps the pinned crunch story scroll-linked',async({
   const after=await page.evaluate(()=>({stage:document.querySelector('[data-crave-stage]')!.getBoundingClientRect().bottom,cta:document.querySelector('.landing-v4-crave-cta')!.getBoundingClientRect().top}));
   expect(after.cta).toBeGreaterThanOrEqual(after.stage-1);
 });
+
+test('finding all six Field Guide ingredients turns into the Crunchy Boi order action',async({page})=>{
+  await page.clock.install();
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await guide.scrollIntoViewIfNeeded();
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  const cta=page.locator('#field-guide .landing-v4-guide-cta');
+  await expect(cta).toHaveAttribute('data-ready','false');
+  await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(0);
+  await page.locator('.landing-v3-guide-figure').scrollIntoViewIfNeeded();
+  await expect.poll(async()=>{await page.clock.runFor(1200);return cta.getAttribute('data-ready');},{timeout:20000}).toBe('true');
+  const button=cta.getByRole('button',{name:'Order Crunchy Boi'});
+  await expect(button).toBeVisible();
+  await button.click();
+  const sheet=page.getByRole('dialog',{name:'Pick a shop for Crunchy Boi'});
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('a[data-landing-placement="guide"]')).toHaveCount(2);
+});
