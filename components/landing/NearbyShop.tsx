@@ -52,7 +52,7 @@ export function NearbyShop({stores,language,labels,ad='unattributed',map}:{store
         <OrderLink href={store.orderUrl} store={store.key} placement="shops" className="landing-v3-cta landing-v4-shop-order">{labels.order[store.key]}</OrderLink>
         {store.directionsUrl && <a href={store.address?directionsHref(store.address,apple):store.directionsUrl} data-directions={store.key} className="landing-v4-directions">{labels.directions?.[store.key]}</a>}
         {store.phone && <a href={`tel:${store.phone.replace(/[^+\d]/g,'')}`} className="inline-flex min-h-11 min-w-11 items-center underline" aria-label={labels.call[store.key]}>{store.phoneDisplay}</a>}
-        {store.uberEatsUrl && <OrderLink href={store.uberEatsUrl} store={store.key} placement="shops" vendor="ubereats" className="inline-flex min-h-11 min-w-11 items-center underline text-sm">{labels.uberEats}</OrderLink>}
+        {store.uberEatsUrl && <OrderLink href={store.uberEatsUrl} store={store.key} placement="shops" vendor="ubereats" className="flex w-fit min-h-11 min-w-11 items-center underline text-sm">{labels.uberEats}</OrderLink>}
         <OfferCode ad={ad} store={store.key} label={labels.offer}/>
       </article>)}
     </div>
