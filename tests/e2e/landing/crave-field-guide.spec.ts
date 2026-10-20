@@ -244,16 +244,27 @@ test('leaving and returning keeps the pinned crunch story scroll-linked',async({
   await page.setViewportSize({width:1440,height:900});
   await page.goto('/');
   const stage=page.locator('[data-crave-stage]');
+  // The story is scroll-linked only once hydrated: wait for that state, never for a fixed time.
+  await expect(stage).toHaveAttribute('data-motion','true');
   await stage.scrollIntoViewIfNeeded();
   await page.locator('#field-guide').scrollIntoViewIfNeeded();
   await expect(stage).toHaveAttribute('data-active','false');
   const top=await stage.evaluate(el=>el.getBoundingClientRect().top+scrollY);
   const travel=await stage.evaluate(el=>el.getBoundingClientRect().height-innerHeight);
-  const offset=()=>stage.locator('[data-texture-photo]').first().evaluate(el=>el.getBoundingClientRect().left);
-  await page.evaluate(y=>scrollTo(0,y),top);
-  const start=await offset();
-  await page.evaluate(y=>scrollTo(0,y),top+travel);
-  await expect.poll(offset).toBeLessThan(start-100);
+  // Read geometry only after the engine has run a rendering update for the new scroll position:
+  // a scroll-driven animation updates in "update the rendering", so a read straight after
+  // scrollTo can still see the PREVIOUS position's frame (Linux/Windows WebKit, seen 1 in 25).
+  const settled=()=>page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+  const geometry=()=>stage.evaluate(el=>({photo:el.querySelector('[data-texture-photo]')!.getBoundingClientRect().left,window:el.querySelector('.landing-v2-crave-window')!.getBoundingClientRect()}));
+  const scrollAndSettle=async(y:number)=>{await page.evaluate(y=>scrollTo(0,y),y);await expect.poll(()=>page.evaluate(()=>scrollY)).toBe(Math.round(y));await settled();};
+  // Returning to the top of the runway: the first photo sits exactly in the window (progress 0).
+  await scrollAndSettle(top);
+  await expect.poll(async()=>{const g=await geometry();return Math.abs(g.photo-g.window.left);}).toBeLessThan(1);
+  const start=(await geometry()).photo;
+  // The end of the runway: the story has slid a full photo width (progress 1), scroll-linked.
+  await scrollAndSettle(top+travel);
+  await expect.poll(async()=>{const g=await geometry();return Math.abs(g.photo-(g.window.left-g.window.width));}).toBeLessThan(1);
+  expect((await geometry()).photo).toBeLessThan(start-100);
   await expect(stage.locator('[data-texture-photo]').nth(1).locator('img')).toHaveCount(1);
   // v4: the runway is 140svh (was 175svh) and the story ends on its order action, right after the stage.
   const runway=await stage.evaluate(el=>el.getBoundingClientRect().height/innerHeight);
