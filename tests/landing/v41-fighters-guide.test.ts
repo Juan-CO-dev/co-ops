@@ -5,12 +5,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import roster from '@/config/tenant/landing-products.json';
 import { products, validateProducts } from '@/lib/landing/products';
 import { LineupPhoto } from '@/components/landing/LineupPhoto';
+import { CARD_VISIBLE, focalPosition, STAGE_VISIBLE } from '@/lib/landing/fighter-select-shared';
 import { foundCount, GUIDE_SCROLL_THRESHOLDS, nextUnfound, scrollFoundTarget } from '@/lib/landing/field-guide-shared';
 
 const css = readFileSync('app/eat/landing-v2.css', 'utf8');
 // Mirrors the CSS: a cover crop showing `visible` of the 2:3 photo's height at object-position p.
 const crop = (focusY: number, visible: number) => {
-  const p = Math.min(1, Math.max(0, (focusY - visible / 2) / (1 - visible)));
+  const p = focalPosition(focusY, visible) / 100;
   return { top: p * (1 - visible), bottom: p * (1 - visible) + visible };
 };
 
@@ -35,11 +36,17 @@ describe('v4.1: every fighter photo is framed on its own sub', () => {
   it('renders the focal point on the photo wrapper and both crops read it', () => {
     for (const product of products) {
       const html = renderToStaticMarkup(createElement(LineupPhoto, { src: product.image, small: product.smallImage, width: product.width, height: product.height, alt: '', focusY: product.focusY }));
-      expect(html, product.id).toContain(`--focal-y:${product.focusY}`);
+      expect(html, product.id).toContain(`--focal-stage:${focalPosition(product.focusY, STAGE_VISIBLE)}%`);
+      expect(html, product.id).toContain(`--focal-card:${focalPosition(product.focusY, CARD_VISIBLE)}%`);
       expect(html, product.id).toContain(`data-focal-y="${product.focusY}"`);
     }
-    expect(css).toContain('.landing-v3-stage-media [data-landing-photo] img { object-position: 50% clamp(0%, calc(var(--focal-y, .5) * 200% - 50%), 100%); }');
-    expect(css).toContain('.landing-v3-roster button img { object-position: 50% clamp(0%, calc(var(--focal-y, .5) * 300% - 100%), 100%); }');
+    // Plain percentages, no calc()/clamp() over a custom property: WebKit resolved that to the top edge.
+    expect(css).toContain('.landing-v3-stage-media [data-landing-photo] img { object-position: 50% var(--focal-stage, 50%); }');
+    expect(css).toContain('.landing-v3-roster button img { object-position: 50% var(--focal-card, 50%); }');
+    expect(focalPosition(0.68, STAGE_VISIBLE)).toBe(86);
+    expect(focalPosition(0.68, CARD_VISIBLE)).toBe(100);
+    expect(focalPosition(0.2, STAGE_VISIBLE)).toBe(0);
+    expect(focalPosition(Number.NaN, STAGE_VISIBLE)).toBe(50);
   });
   it('each crop (4:3 stage, 1:1 card) keeps the sub centre well inside the frame', () => {
     for (const item of roster) {

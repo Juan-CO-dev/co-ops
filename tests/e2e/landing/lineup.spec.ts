@@ -474,7 +474,7 @@ test('every fighter photo is framed on its sub (focal point per item, both crops
   await page.goto('/');
   const strip=page.locator('[data-lineup]');
   await strip.scrollIntoViewIfNeeded();
-  const expected=(focus:number,visible:number)=>Math.min(100,Math.max(0,(focus*(visible===.5?200:300)-(visible===.5?50:100))));
+  const expected=(focus:number,visible:number)=>Math.round(Math.min(1,Math.max(0,(focus-visible/2)/(1-visible)))*1000)/10;
   const cards=strip.locator('li');
   await expect(cards).toHaveCount(10);
   for(const [index,card] of (await cards.all()).entries()){

@@ -325,7 +325,7 @@
 .landing-v2 .landing-v3-guide[data-guide-mode="motion"] .landing-v3-guide-words li { padding: 0; }
 .landing-v2 .landing-v4-guide-word { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; margin: 0; padding: 4px 6px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .landing-v2 .landing-v4-guide-word:focus-visible { outline: 3px solid #ed3308; outline-offset: 2px; }
-/* v4.1: every fighter photo is framed on its own sub. --focal-y is the sub's vertical centre in the
-   2:3 photo; each crop converts it to the object-position that centres it (clamped to the photo). */
-.landing-v2 .landing-v3-stage-media [data-landing-photo] img { object-position: 50% clamp(0%, calc(var(--focal-y, .5) * 200% - 50%), 100%); }
-.landing-v2 .landing-v3-roster button img { object-position: 50% clamp(0%, calc(var(--focal-y, .5) * 300% - 100%), 100%); }
+/* v4.1: every fighter photo is framed on its own sub. The photo wrapper carries, per crop, the
+   object-position (plain %) that centres the sub (lib/landing/fighter-select-shared focalPosition). */
+.landing-v2 .landing-v3-stage-media [data-landing-photo] img { object-position: 50% var(--focal-stage, 50%); }
+.landing-v2 .landing-v3-roster button img { object-position: 50% var(--focal-card, 50%); }
