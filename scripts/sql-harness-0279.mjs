@@ -72,7 +72,7 @@ async function base({ cols = true, sessionsOnly = false } = {}) {
   else if (sessionsOnly) await db.exec(SESSIONS_ONLY);
   return db;
 }
-const FNS = ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "user_admin_role_level(text)", "user_admin_lock(uuid, uuid)",
+const FNS = ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "user_admin_role_level(text)", "user_admin_lock(uuid, uuid)", "user_admin_identity_lock()",
   "user_employment_status(uuid)", "user_employment_rehire(uuid)", "user_admin_phone_key(text)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)", "admin_user_set_active(uuid, uuid, boolean)",
   "admin_user_set_credential(uuid, uuid, text, text)", "admin_user_set_role(uuid, uuid, text)", "admin_user_set_locations(uuid, uuid, uuid[])",
   "admin_user_set_dormant(uuid, uuid, boolean, timestamptz)", "admin_user_update_profile(uuid, uuid, jsonb)",
@@ -457,6 +457,18 @@ try {
   check(await usersCount() === nFlip, "S13 r2 … and nothing was inserted");
   await refuses(() => create(gmD, { phone: "2025550144", confirmed: true, confirmedIds: [flip], reason: "x" }), "rehire_permission_required",
     "S13 r2 … and a GM confirming it is refused (not eligible → owner / CGS)");
+
+  // S14 (Astra BC-007/004 r3): a restricted person's phone edited to the requested phone, committed first (the identity
+  // lock makes the create wait for an edit in flight; sequentially, the edit committed before the create).
+  const moved = await user("employee");
+  await member(moved, SA);
+  await db.query("update public.users set phone = '202-555-0166' where id = $1", [moved]);
+  await ev(gmA, moved, "separated", SEP("no"));
+  await rpc(updateUserProfileCall({ actorId: moo, userId: moved, patch: { phone: "(202) 555-0170" } }));
+  const nMoved = await usersCount();
+  await refuses(() => create(gmD, { phone: "2025550170" }), "rehire_match", "S14 a restricted person's phone edited to the requested phone (committed first) → rehire_match");
+  check(await usersCount() === nMoved, "S14 … and nothing was inserted");
+  check((await create(gmD, { phone: "2025550166" })).id !== undefined, "S14 the person's OLD phone no longer matches (the edit is what counts)");
 
   // the table stays append-only by CHECK too (a superuser insert of a malformed row is refused by the constraints)
   await refuses(() => db.query("insert into public.user_employment_events (user_id, kind, actor_id, separation_type, last_day_worked, reason, rehire) values ($1, 'separated', $2, 'fired', '2026-10-01', 'r', 'no')", [e1, gmA]),

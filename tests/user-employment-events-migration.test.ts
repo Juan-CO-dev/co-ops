@@ -47,7 +47,8 @@ describe("0279_user_employment_events", () => {
       "S13 a match the client OMITTED → rehire_match → rehire_match",
       "S13 the actor demoted between the check and the create → rehire_permission_required → rehire_permission_required",
       "S13 a concurrent duplicate email (23505) on create → email_taken → email_taken",
-      "S13 r2 a rehire setting flipped yes → no before the lock → the unconfirmed create is refused rehire_match → rehire_match", "S12 … and none of the refused creates inserted anyone", "PASS 0279:",
+      "S13 r2 a rehire setting flipped yes → no before the lock → the unconfirmed create is refused rehire_match → rehire_match",
+      "S14 a restricted person's phone edited to the requested phone (committed first) → rehire_match → rehire_match", "S12 … and none of the refused creates inserted anyone", "PASS 0279:",
     ]) expect(out).toContain(s);
   }, 260_000);
 
@@ -77,12 +78,32 @@ describe("0279_user_employment_events", () => {
     const locks = [...gate.matchAll(/where id = (p_actor|p_user) for (share|update)/g)].map((m) => `${m[1]} ${m[2]}`);
     expect(locks).toEqual(["p_actor share", "p_user update", "p_user update", "p_actor share"]);
     expect(gate).toMatch(/if p_actor < p_user then\s+select[^;]+p_actor for share;[\s\S]*?else\s+select[^;]+p_user for update;/);
-    // No other function takes a users row lock or an advisory lock of its own (all go through the gate); the creation
-    // writer locks only its actor (one row: no order to get wrong).
-    const rest = src.replace(gate, "");
+    // No other function takes a users row lock or a per-person advisory lock of its own (all go through the gate); the
+    // creation writer's one FOR SHARE statement locks its rows in ascending id order; the identity lock is its own rank.
+    const identity = src.slice(src.indexOf("create function public.user_admin_identity_lock("), src.indexOf("end $$;", src.indexOf("create function public.user_admin_identity_lock(")));
+    expect(identity).toContain("perform pg_advisory_xact_lock(hashtextextended('co-ops/user-identity', 0));");
+    const rest = src.replace(gate, "").replace(identity, "");
     expect((rest.match(/\bfor update;/g) ?? []).length).toBe(0);
     expect((rest.match(/\bfor share;/g) ?? []).length).toBe(1);
     expect((rest.match(/pg_advisory_xact_lock\(/g) ?? []).length).toBe(0);
+  });
+
+  it("THE IDENTITY LOCK (Astra BC-007/004 r3) is rank 1: first in every phone-changing writer and the create, nowhere else", () => {
+    const body = (name: string) => src.slice(src.indexOf(`create function public.${name}(`), src.indexOf("end $$;", src.indexOf(`create function public.${name}(`)));
+    const callers = [...src.matchAll(/create function public\.([a-z_]+)\(/g)].map((m) => m[1]!).filter((n) => body(n).includes("perform public.user_admin_identity_lock();"));
+    expect(callers.sort()).toEqual(["admin_user_create", "admin_user_update_profile"]);
+    // Every writer that changes a phone is a caller.
+    const phoneWriters = [...src.matchAll(/create function public\.([a-z_]+)\(/g)].map((m) => m[1]!).filter((n) => /update public\.users set phone|insert into public\.users \([^)]*\bphone\b/.test(body(n)));
+    expect(phoneWriters.sort()).toEqual(["admin_user_create", "admin_user_update_profile"]);
+    for (const n of callers) {
+      const b = body(n);
+      const first = b.indexOf("perform public.user_admin_identity_lock();");
+      // Before it: no other lock of any rank (no gate call, no row lock, no advisory lock).
+      expect(b.slice(0, first), n).not.toMatch(/user_admin_lock\(|for share;|for update;|pg_advisory_xact_lock/);
+    }
+    // The gate (rank 2 + 3) never takes the identity lock, so nothing waits for rank 1 while holding rank 2 or 3.
+    expect(body("user_admin_lock")).not.toContain("user_admin_identity_lock");
+    expect(src).toContain("A transaction holding a lock of rank n never waits for one of rank < n, so there is no cycle");
   });
 
   it("Astra BC-007/004 r2: the create's identity candidates are NOT filtered on the rehire setting before the lock", () => {
@@ -103,7 +124,7 @@ describe("0279_user_employment_events", () => {
     expect(src).toContain("grant select on public.user_employment_events to service_role;");
     expect(src).not.toMatch(/grant (insert|update|delete|all)[^;]*user_employment_events/i);
     for (const op of ["select", "insert", "update", "delete"]) expect(src).toContain(`create policy user_employment_events_no_user_${op} on public.user_employment_events for ${op}`);
-    for (const sig of ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "user_admin_role_level(text)", "user_admin_lock(uuid, uuid)",
+    for (const sig of ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "user_admin_role_level(text)", "user_admin_lock(uuid, uuid)", "user_admin_identity_lock()",
       "user_employment_status(uuid)", "user_employment_rehire(uuid)", "user_admin_phone_key(text)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)", "admin_user_set_active(uuid, uuid, boolean)",
       "admin_user_set_credential(uuid, uuid, text, text)", "admin_user_set_role(uuid, uuid, text)", "admin_user_set_locations(uuid, uuid, uuid[])",
       "admin_user_set_dormant(uuid, uuid, boolean, timestamptz)", "admin_user_update_profile(uuid, uuid, jsonb)",

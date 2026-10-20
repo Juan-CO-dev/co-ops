@@ -71,9 +71,27 @@
 --                                                           reason, 'rehire_reason_required'); the override is recorded on
 --                                                           the new account (kind rehire_override, never a status). A
 --                                                           concurrent duplicate email (23505) is 'email_taken'.
---      THE LOCK ORDER (Astra BC-042/040): one advisory lock per call (the target's), then the two users rows in SORTED id
---      order (the lower first, each at its own strength) — so (A,B) and (B,A) queue, never deadlock. A residual 40P01 /
---      55P03 is mapped by the lib to 'user_admin_busy' (409).
+--      THE LOCK ORDER, everywhere (Astra BC-042/040 + BC-007/004 r3):
+--        1. the IDENTITY lock (`user_admin_identity_lock`: ONE fixed transaction-scoped advisory key) — taken FIRST by
+--           admin_user_create (always) and admin_user_update_profile (always; it is the only writer that changes a phone),
+--           and by nothing else;
+--        2. the per-person advisory lock (the target's; one per call, inside user_admin_lock);
+--        3. the users rows, in SORTED id order, each at its own strength.
+--      A transaction holding a lock of rank n never waits for one of rank < n, so there is no cycle; (A,B) and (B,A) queue.
+--      A residual 40P01 / 55P03 is mapped by the lib to 'user_admin_busy' (409).
+--      WHY THE IDENTITY LOCK: a phone edit of a restricted person still UNCOMMITTED while a create runs would be invisible to
+--      the create's identity reads (it would never be locked or checked) and then commit — an account created unchecked
+--      for that identity. Creates and phone edits both take the identity lock first, so the create's identity reads always
+--      see every committed phone; creation and phone edits are rare, so one global serialization point costs nothing.
+--      THE TOAST GUID SIDE IS BOUNDED WITHOUT TOUCHING 0233 (its writers link_toast_employee / unlink_toast_employee are
+--      not re-emitted here — 0279 stays additive): (a) a restricted person is SEPARATED, hence inactive (the employment
+--      writer deactivates and Activate refuses a separated person), and link_toast_employee refuses an inactive user
+--      (`assignment_user_level` reads `users ... and active` → 'assignee_unavailable'), so a restricted person never gains
+--      a NEW link — every link they hold was committed before their separation, and the create's identity read matches
+--      ANY link row (live or unlinked); (b) a link committed for a still-active person while a create runs, followed by
+--      that person's separation, orders the create before both (it observed neither) — and the re-read under the locks
+--      refuses 'rehire_match' when both committed first; (c) the live link is unique per (shop, GUID)
+--      (toast_employee_links_one_active_employee), so the new account cannot take a GUID another account holds there.
 --      The lib writes the audit rows after each (unchanged actions and metadata).
 --
 -- PRIVACY: reason and notes are HR-sensitive. They live only in this table; the lib sends them only to owner / MoO / CGS
@@ -213,7 +231,16 @@ begin
   return v;
 end $$;
 
--- ── 3. THE ONE GATE: the per-person lock, the locked rows, the actor rule ────────────────────────
+-- ── 3. THE IDENTITY LOCK (rank 1 of the lock order) ──────────────────────────────────────────────
+-- ONE fixed transaction-scoped advisory key, taken FIRST by every writer that creates a person or changes a phone
+-- (admin_user_create, admin_user_update_profile) — never after a per-person or a row lock.
+create function public.user_admin_identity_lock()
+returns void language plpgsql security definer set search_path = pg_catalog, public as $$
+begin
+  perform pg_advisory_xact_lock(hashtextextended('co-ops/user-identity', 0));
+end $$;
+
+-- ── 3b. THE ONE GATE: the per-person lock, the locked rows, the actor rule ───────────────────────
 -- The role levels (the twin of lib/roles.ts ROLES; pinned equal by the migration test).
 create function public.user_admin_role_level(p_role text)
 returns integer language sql immutable security definer set search_path = pg_catalog, public as $$
@@ -518,6 +545,8 @@ begin
     if v_key not in ('name', 'phone', 'email') then raise exception 'invalid_payload'; end if;
     if jsonb_typeof(p_patch -> v_key) not in ('string', 'null') then raise exception 'invalid_payload'; end if;
   end loop;
+  -- RANK 1 first: this writer changes phones (Astra BC-007/004 r3) — the identity lock, then the gate (ranks 2 and 3).
+  perform public.user_admin_identity_lock();
   perform public.user_admin_lock(p_actor, p_user);
   select email into v_old_email from public.users where id = p_user;
   if p_patch ? 'name' then
@@ -586,6 +615,10 @@ begin
   v_reason := nullif(btrim(coalesce(p_rehire_reason, '')), '');
   if char_length(v_reason) > 1000 then raise exception 'invalid_payload'; end if;
   v_key := public.user_admin_phone_key(v_phone);
+
+  -- RANK 1: the identity lock, FIRST (Astra BC-007/004 r3). A phone edit in flight finishes (commit or rollback) before
+  -- the identity reads below; a later one waits for this create.
+  perform public.user_admin_identity_lock();
 
   -- THE IDENTITY CANDIDATES, server side (Astra BC-007/004, r2): EVERY person sharing the new person's identity — the same
   -- phone key or the same Toast employee GUID (any of their links), never a name — WHATEVER their status or rehire
@@ -678,6 +711,7 @@ revoke all on function public.user_employment_json_date(jsonb, text) from public
 revoke all on function public.user_employment_text(jsonb, text, integer) from public, anon, authenticated;
 revoke all on function public.user_admin_role_level(text) from public, anon, authenticated;
 revoke all on function public.user_admin_lock(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.user_admin_identity_lock() from public, anon, authenticated;
 revoke all on function public.user_employment_rehire(uuid) from public, anon, authenticated;
 revoke all on function public.user_admin_phone_key(text) from public, anon, authenticated;
 revoke all on function public.user_employment_status(uuid) from public, anon, authenticated;
@@ -693,6 +727,7 @@ grant execute on function public.user_employment_json_date(jsonb, text) to servi
 grant execute on function public.user_employment_text(jsonb, text, integer) to service_role;
 grant execute on function public.user_admin_role_level(text) to service_role;
 grant execute on function public.user_admin_lock(uuid, uuid) to service_role;
+grant execute on function public.user_admin_identity_lock() to service_role;
 grant execute on function public.user_employment_rehire(uuid) to service_role;
 grant execute on function public.user_admin_phone_key(text) to service_role;
 grant execute on function public.user_employment_status(uuid) to service_role;
@@ -741,6 +776,7 @@ begin
     'public.user_employment_text(jsonb, text, integer)'::regprocedure,
     'public.user_admin_role_level(text)'::regprocedure,
     'public.user_admin_lock(uuid, uuid)'::regprocedure,
+    'public.user_admin_identity_lock()'::regprocedure,
     'public.user_employment_rehire(uuid)'::regprocedure,
     'public.user_admin_phone_key(text)'::regprocedure,
     'public.user_employment_status(uuid)'::regprocedure,
