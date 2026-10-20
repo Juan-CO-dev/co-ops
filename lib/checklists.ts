@@ -11,13 +11,9 @@ import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
  *   - confirmInstance     — PIN-attestation, status transition, reasons capture
  *   - rejectIfPrepLocked  — guard for single_submission_only templates
  *
- * Client model: callers pass an authed SupabaseClient (constructed from the
- * session JWT via lib/supabase-server.ts createAuthedClient). Authed-client
- * writes are RLS-checked end-to-end. Service-role writes happen ONLY for
- * (a) audit_log inserts (RLS denies direct user writes) and (b) the prior-
- * completion supersession UPDATE on checklist_completions (RLS denies UPDATE
- * for everyone via checklist_completions_no_user_update; service-role
- * bypasses).
+ * Client model: supplied clients preserve existing read scope. The four R7
+ * writers require a verified ChecklistWriteActor and write through service-only
+ * RPCs (instance creation uses a checked service insert).
  *
  * Audit vocabulary (locked, used consistently here and in /api/checklist/*):
  *   - checklist_instance.create
@@ -51,6 +47,7 @@ import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 
 import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js";
 
+import type { ChecklistWriteActor } from "./checklist-write-actor";
 import { verifyPin } from "./auth";
 import { audit } from "./audit";
 import { getServiceRoleClient } from "./supabase-server";
@@ -63,7 +60,6 @@ import {
   type EffectiveResolvableBuilder,
 } from "./admin/template-builder-shared";
 import {
-  carriedCompletedAt,
   COMPLETION_COLUMNS,
   INSTANCE_COLUMNS,
   type CompletionRow,
@@ -604,6 +600,60 @@ const isUniqueViolation = (e: PostgrestError | null): boolean =>
 // Helpers (private)
 // ─────────────────────────────────────────────────────────────────────────────
 
+function requireChecklistRpcRow<T extends { id: string }>(data: unknown, kind: string): T {
+  // Composite/table RPC results use PostgREST's array representation. JSONB
+  // confirm results contain objects. Accept exactly one row in either shape.
+  if (Array.isArray(data) && data.length === 1) data = data[0];
+  if (!data || typeof data !== "object" || Array.isArray(data) || !("id" in data) || typeof data.id !== "string") {
+    throw new Error(`checklist RPC ${kind} returned invalid cardinality`);
+  }
+  return data as T;
+}
+
+async function throwChecklistWriteError(
+  reader: SupabaseClient, error: { message: string; code?: string }, instanceId: string, actor: ChecklistWriteActor,
+  operation: "completion" | "submission" | "confirm",
+): Promise<never> {
+  if (error.code === "PGRST202") {
+    console.error("[checklist 0276_missing]", { operation, code: error.code });
+  }
+  if (operation === "completion" && error.code === "23505") {
+    throw new ChecklistError("The checklist changed. Re-check and try again.", "concurrent_modification");
+  }
+  if (error.code === "22P02") throw new ChecklistError("Invalid checklist write payload.", "invalid_payload");
+  switch (error.message) {
+    case "instance_not_open": {
+      const { data: current, error: readError } = await reader.from("checklist_instances")
+        .select("status").eq("id", instanceId).maybeSingle<{ status: ChecklistStatus }>();
+      if (!readError && current && current.status !== "open") {
+        throw new ChecklistInstanceClosedError(instanceId, current.status);
+      }
+      throw new ChecklistError("The checklist changed. Re-check and try again.", "concurrent_modification");
+    }
+    case "not_authorized":
+      throw new ChecklistRoleViolationError(3, actor.level, "Writing is not permitted for this instance");
+    case "completion_set_changed":
+      throw new ChecklistError("The list changed — review it again", "completion_set_changed");
+    case "completion_cardinality":
+      throw new ChecklistError("The checklist changed. Re-check and try again.", "concurrent_modification");
+    case "submission_cardinality":
+    case "instance_cardinality":
+    case "reason_cardinality":
+      throw new ChecklistError("The list changed — review it again", error.message);
+    case "item_mismatch":
+      throw new ChecklistRoleViolationError(3, actor.level, "Item does not belong to this checklist");
+    case "invalid_reasons":
+    case "invalid_payload":
+      throw new ChecklistError("Invalid checklist write payload.", "invalid_payload");
+    case "empty_batch":
+    case "completion_not_found":
+    case "completion_wrong_instance":
+    case "completion_wrong_author":
+      throw new ChecklistError(error.message, error.message);
+    default: throw new Error(`checklist RPC failed: ${error.message}`);
+  }
+}
+
 async function loadInstanceOrThrow(
   authed: SupabaseClient,
   instanceId: string,
@@ -759,13 +809,13 @@ export async function getOrCreateInstance(
     templateId: string;
     locationId: string;
     date: string;
-    actor: ChecklistActor & { locations: string[] };
+    actor: ChecklistWriteActor;
     ipAddress?: string | null;
     userAgent?: string | null;
   },
 ): Promise<{ instance: ChecklistInstance; created: boolean }> {
   const { templateId, locationId, date, actor } = args;
-  if (!lockLocationContext(actor, locationId)) {
+  if (!actor.active || (!actor.locations.includes(locationId) && actor.level < 8)) {
     throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
   }
 
@@ -784,7 +834,9 @@ export async function getOrCreateInstance(
     return { instance: rowToInstance(existing), created: false };
   }
   // Reading an existing close is open to staff; starting one retains main's employee floor.
-  if (actor.level < 3) throw new ChecklistRoleViolationError(3, actor.level);
+  if (actor.level < 3 || !actor.locations.includes(locationId)) {
+    throw new ChecklistRoleViolationError(3, actor.level);
+  }
 
   // Build #3 PR 1 — submission gate evaluation. Loads the template's
   // submission_gate_predicate and runs the evaluator if configured. NULL
@@ -799,15 +851,20 @@ export async function getOrCreateInstance(
   const service = getServiceRoleClient();
   const { data: tmplGate, error: tmplGateErr } = await service
     .from("checklist_templates")
-    .select("submission_gate_predicate")
+    .select("submission_gate_predicate, type")
     .eq("id", templateId)
-    .maybeSingle<{ submission_gate_predicate: GatePredicate | null }>();
+    .maybeSingle<{ submission_gate_predicate: GatePredicate | null; type: string }>();
   if (tmplGateErr) {
     throw new Error(`getOrCreateInstance template gate read: ${tmplGateErr.message}`);
   }
   if (!tmplGate) {
     throw new Error(`getOrCreateInstance: template ${templateId} not found`);
   }
+  // Both live INSERT policies are OR alternatives. The original policy already
+  // permits every closing-staff alternative (>=3 + membership), including older
+  // dates and inactive templates. Do not impose the sibling's extra restrictions.
+  const createFloor = ["opening", "prep"].includes(tmplGate.type) ? 4 : 3;
+  if (actor.level < createFloor) throw new ChecklistRoleViolationError(createFloor, actor.level);
   if (tmplGate.submission_gate_predicate) {
     const result = await evaluateGatePredicate(service, {
       predicate: tmplGate.submission_gate_predicate,
@@ -831,7 +888,7 @@ export async function getOrCreateInstance(
   // uses triggered_at as the multi-instance disambiguator. Pre-Build-#2
   // rows have NULL here (back-compat).
   const triggerTimestamp = new Date().toISOString();
-  const { data: inserted, error: insertErr } = await authed
+  const { data: inserted, error: insertErr } = await service
     .from("checklist_instances")
     .insert({
       template_id: templateId,
@@ -897,21 +954,8 @@ export async function getOrCreateInstance(
  * (instance_id, template_item_id), it is marked superseded by the new
  * row's id.
  *
- * Two-phase write: step 1 inserts the new completion via the authed
- * client (RLS-checked); step 2 updates the prior row's superseded_at /
- * superseded_by via service-role (RLS denies UPDATE on completions
- * regardless of caller). Step 2 is synchronous-blocking — completeItem
- * does NOT return success until both steps complete.
- *
- * Edge case: if step 1 succeeds but step 2 fails, the database is in an
- * inconsistent state with two live completions for the same item. The
- * function audits `checklist_completion.supersede_failure` with both
- * completion ids and throws ChecklistSupersedeFailedError carrying the
- * same. The caller (API route) is responsible for cleanup — likely by
- * retrying the supersede, marking the new completion as superseded
- * itself, or surfacing a forensic alert. Surfacing rather than silently
- * tolerating is intentional: in a closing-checklist context, duplicate
- * live completions visible in UI are worse than failing the operation.
+ * 0276 serializes supersession and insertion under the parent row lock.
+ * Every dependent write rolls back together on failure.
  *
  * Validation:
  *   - instance must be 'open' (else ChecklistInstanceClosedError)
@@ -929,7 +973,7 @@ export async function completeItem(
   args: {
     instanceId: string;
     templateItemId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     countValue?: number | null;
     photoId?: string | null;
     notes?: string | null;
@@ -941,6 +985,9 @@ export async function completeItem(
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);
+  if (!actor.active || !actor.locations.includes(instance.location_id)) {
+    throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
+  }
   await requireChecklistTaskAccess(authed, instanceId, actor);
   await rejectIfPrepLocked(authed, instanceId);
 
@@ -968,118 +1015,24 @@ export async function completeItem(
     throw new ChecklistInvalidAnswerError(templateItemId, answerProblem);
   }
 
-  // SUPERSEDE-THEN-INSERT with a bounded retry (concurrency sim fix, migration
-  // 0176). The old order (read-prior → insert → supersede) was a non-atomic
-  // two-phase write: two simultaneous completers both inserted before either
-  // superseded, leaving TWO live heads (reproduced 18/20 under the harness). Now
-  // the partial unique index `checklist_completions_one_live_head` makes a second
-  // live head IMPOSSIBLE, and we claim the slot flip-first: supersede the current
-  // live head, then insert. A racing writer that inserted between our supersede
-  // and our insert trips the index (23505) — we re-read the new live head,
-  // supersede it, and retry. Bounded: last-writer-wins converges in ≤ a few laps.
   const sb = getServiceRoleClient();
-  let inserted: CompletionRow | null = null;
-  let supersededPriorId: string | null = null;
-  let keptCompletedAt = false;
-  for (let attempt = 0; attempt < 5 && !inserted; attempt++) {
-    // Claim: supersede whatever live head currently exists for this item (0 rows
-    // is fine — no prior, or a rival already superseded it). Guarded on
-    // superseded_at IS NULL so we never re-stamp a settled row.
-    //
-    // The stamp is captured as a VALUE, not written inline: the compensation below has
-    // to match on the exact instant we wrote, and a second `new Date()` would produce a
-    // different one and revert nothing.
-    const claimStamp = new Date().toISOString();
-    const { data: superseded, error: supErr } = await sb
-      .from("checklist_completions")
-      .update({ superseded_at: claimStamp })
-      .eq("instance_id", instanceId)
-      .eq("template_item_id", templateItemId)
-      .is("superseded_at", null)
-      .is("revoked_at", null)
-      .select("id, completed_by, completed_at, count_value, photo_id, actual_completer_id");
-    if (supErr) throw new Error(`completeItem supersede: ${supErr.message}`);
-    // B8 #13 — a notes-only re-save by the same person keeps the line's original tick time.
-    const priorHead = (superseded?.[0] ?? null) as Pick<CompletionRow, "completed_by" | "completed_at" | "count_value" | "photo_id" | "actual_completer_id"> | null;
-    const carryAt = carriedCompletedAt(priorHead, {
-      actorId: actor.userId, countValue: args.countValue ?? null, photoId: args.photoId ?? null, inputType: item.input_type,
-    });
-    // What THIS lap claimed, kept apart from the accumulated `supersededPriorId` (which
-    // deliberately carries across laps so the back-pointer survives a 23505 retry).
-    // Compensating with the accumulated id would revert a stamp from an EARLIER lap that
-    // a rival has since settled.
-    const claimed = superseded?.[0]?.id ? { id: superseded[0]!.id, stamp: claimStamp } : null;
-    supersededPriorId = superseded?.[0]?.id ?? supersededPriorId;
-
-    // Insert the new live head (authed; RLS checks completed_by = current_user_id,
-    // instance open, role floor). The index rejects a second live head → 23505.
-    const { data: row, error: insertErr } = await authed
-      .from("checklist_completions")
-      .insert({
-        instance_id: instanceId,
-        template_item_id: templateItemId,
-        completed_by: actor.userId,
-        count_value: args.countValue ?? null,
-        photo_id: args.photoId ?? null,
-        notes: args.notes ?? null,
-        ...(carryAt ? { completed_at: carryAt } : {}),
-      })
-      .select(COMPLETION_COLUMNS)
-      .maybeSingle<CompletionRow>();
-    if (insertErr) {
-      if (insertErr.code === "23505") continue; // a rival won the slot — re-claim + retry
-      // ── COMPENSATION (audit v2 F4, BC-037) ──────────────────────────────────────────
-      // Every OTHER insert error used to throw with the prior head already stamped, and
-      // there is no route back: completeItem 409s on a closed instance, so a previously-
-      // completed item silently reads as NOT DONE. The reachable sequence is ordinary —
-      // the supersede runs service-role (bypasses RLS) while the insert runs authed, so a
-      // GM's confirmInstance landing in between denies our insert; an FK failure on
-      // photo_id does the same with no race at all.
-      //
-      // Revert OUR OWN stamp and nobody else's: an unfiltered revert would lift a
-      // concurrent writer's supersede too. The idiom is lib/cash.ts's compare-and-set.
-      if (claimed) {
-        const { error: revertErr, count: reverted } = await sb
-          .from("checklist_completions")
-          .update({ superseded_at: null }, { count: "exact" })
-          .eq("id", claimed.id)
-          .eq("superseded_at", claimed.stamp);
-        if (revertErr || (reverted ?? 0) === 0) {
-          // Not necessarily a strand: if a rival has since landed a live head, the partial
-          // unique index `checklist_completions_one_live_head` REFUSES this revert, which
-          // is the index doing its job and leaves nothing orphaned. The two cases are
-          // indistinguishable from here, so say what happened rather than what it means —
-          // the LIVE-CHECK is `superseded_at IS NOT NULL AND superseded_by IS NULL AND
-          // revoked_at IS NULL` on this (instance, item).
-          console.error(
-            `[checklists] completeItem could not un-supersede prior head ${claimed.id} after a failed insert on instance ${instanceId} item ${templateItemId}: ${revertErr?.message ?? "no row matched our stamp"} — a rival live head may already cover it; verify before treating it as an orphaned claim.`,
-          );
-        }
-      }
-      throw new Error(`completeItem insert: ${insertErr.message}`);
-    }
-    if (!row) throw new Error(`completeItem insert returned no row`);
-    inserted = row;
-    keptCompletedAt = carryAt !== null;
-  }
-  if (!inserted) {
-    // 5 laps without landing a live head means sustained contention on one item —
-    // a real anomaly worth forensics (never observed; the loop converges fast).
-    await audit({
-      actorId: actor.userId, actorRole: actor.role,
-      action: "checklist_completion.supersede_failure",
-      resourceTable: "checklist_completions", resourceId: instanceId,
-      metadata: { instance_id: instanceId, template_item_id: templateItemId, error: "live-head contention: 5 retries exhausted" },
-      ipAddress: args.ipAddress ?? null, userAgent: args.userAgent ?? null,
-    });
-    throw new ChecklistSupersedeFailedError(instanceId, templateItemId, "live-head contention: retries exhausted");
+  const { data, error } = await sb.rpc("checklist_write_completion", {
+    p_actor: actor.userId, p_instance: instanceId, p_template_item: templateItemId,
+    p_count_value: args.countValue ?? null, p_photo_id: args.photoId ?? null, p_notes: args.notes ?? null,
+  });
+  if (error) await throwChecklistWriteError(authed, error, instanceId, actor, "completion");
+  const result = data as { completion?: unknown; superseded_ids?: unknown; kept_completed_at?: unknown } | null;
+  const inserted = requireChecklistRpcRow<CompletionRow>(result?.completion, "completion");
+  if (!Array.isArray(result?.superseded_ids) || !result.superseded_ids.every(id => typeof id === "string") ||
+      typeof result.kept_completed_at !== "boolean") {
+    throw new Error("checklist RPC completion returned invalid audit metadata");
   }
   const newId = inserted.id;
-  const priorId = supersededPriorId;
-  // Backfill superseded_by → the winning head, so the chain stays coherent.
-  if (priorId) {
-    await sb.from("checklist_completions").update({ superseded_by: newId }).eq("id", priorId).is("superseded_by", null);
-  }
+  // SQL carries time only for exactly one prior head; unlike the former app's
+  // superseded[0] rule, multiple prior heads cannot select an arbitrary timestamp.
+  const priorIds = result.superseded_ids as string[];
+  const priorId = priorIds.length === 1 ? priorIds[0] : null;
+  const keptCompletedAt = result.kept_completed_at;
 
   await audit({
     actorId: actor.userId,
@@ -1091,6 +1044,7 @@ export async function completeItem(
       instance_id: instanceId,
       template_item_id: templateItemId,
       superseded_prior_id: priorId,
+      superseded_prior_ids: priorIds,
       had_count: args.countValue !== undefined && args.countValue !== null,
       had_photo: args.photoId !== undefined && args.photoId !== null,
       kept_completed_at: keptCompletedAt,
@@ -1119,13 +1073,13 @@ export async function completeItem(
  *   - every completionId must exist on this instance and be authored by
  *     the actor (defense against caller passing arbitrary ids)
  *
- * RLS additionally enforces submitted_by = current_user_id() at insert.
+ * The service-only RPC re-checks membership, open state and completion ownership.
  */
 export async function submitBatch(
   authed: SupabaseClient,
   args: {
     instanceId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     completionIds: string[];
     ipAddress?: string | null;
     userAgent?: string | null;
@@ -1139,6 +1093,9 @@ export async function submitBatch(
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);
+  if (!actor.active || !actor.locations.includes(instance.location_id)) {
+    throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
+  }
   await requireChecklistTaskAccess(authed, instanceId, actor);
   await rejectIfPrepLocked(authed, instanceId);
 
@@ -1173,18 +1130,11 @@ export async function submitBatch(
     }
   }
 
-  const { data: inserted, error: insertErr } = await authed
-    .from("checklist_submissions")
-    .insert({
-      instance_id: instanceId,
-      submitted_by: actor.userId,
-      completion_ids: completionIds,
-      is_final_confirmation: false,
-    })
-    .select("id, instance_id, submitted_by, submitted_at, completion_ids, is_final_confirmation")
-    .maybeSingle<SubmissionRow>();
-  if (insertErr) throw new Error(`submitBatch insert: ${insertErr.message}`);
-  if (!inserted) throw new Error(`submitBatch insert returned no row`);
+  const { data, error } = await getServiceRoleClient().rpc("checklist_submit_batch", {
+    p_actor: actor.userId, p_instance: instanceId, p_completion_ids: completionIds,
+  });
+  if (error) await throwChecklistWriteError(authed, error, instanceId, actor, "submission");
+  const inserted = requireChecklistRpcRow<SubmissionRow>(data, "submission");
 
   await audit({
     actorId: actor.userId,
@@ -1241,8 +1191,7 @@ export async function submitBatch(
  * single action.
  *
  * On success:
- *   - Inserts checklist_incomplete_reasons rows (authed; RLS enforces
- *     reported_by = current_user_id()).
+ *   - Service-only RPC inserts reasons attributed to the verified actor.
  *   - Inserts checklist_submissions row with is_final_confirmation=true
  *     and completion_ids=[] (final-confirm event records attestation;
  *     prior submitBatch events captured the per-batch completion ids).
@@ -1257,7 +1206,7 @@ export async function confirmInstance(
   authed: SupabaseClient,
   args: {
     instanceId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     pin: string;
     incompleteReasons: Array<{ templateItemId: string; reason: string }>;
     ipAddress?: string | null;
@@ -1273,9 +1222,16 @@ export async function confirmInstance(
   templateType: string;
 }> {
   const { instanceId, actor, pin, incompleteReasons } = args;
+  if (incompleteReasons.some(reason => typeof reason.templateItemId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reason.templateItemId))) {
+    throw new ChecklistError("Invalid checklist write payload.", "invalid_payload");
+  }
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);
+  if (!actor.active || !actor.locations.includes(instance.location_id)) {
+    throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
+  }
   await requireChecklistTaskAccess(authed, instanceId, actor);
   await rejectIfPrepLocked(authed, instanceId);
 
@@ -1344,6 +1300,8 @@ export async function confirmInstance(
         : `Walk-Out Verification is incomplete (${gate.incompleteItemIds.length} item(s)).`,
     );
   }
+
+  if (actor.level < 3) throw new ChecklistRoleViolationError(3, actor.level);
 
   // Cash deposit HARD gate — no reason-override path, always required.
   // The closing cannot finalize unless the cash report-reference item is
@@ -1446,6 +1404,8 @@ export async function confirmInstance(
   if (extraReasonIds.length > 0) {
     throw new ChecklistExtraReasonError(extraReasonIds);
   }
+  const duplicateReasonIds = callerReasonIds.filter((id, index) => callerReasonIds.indexOf(id) !== index);
+  if (duplicateReasonIds.length > 0) throw new ChecklistExtraReasonError(duplicateReasonIds);
   const blankReasonIds = incompleteReasons
     .filter((r) => typeof r.reason !== "string" || r.reason.trim() === "")
     .map((r) => r.templateItemId);
@@ -1484,7 +1444,7 @@ export async function confirmInstance(
     });
     throw new ChecklistPinMismatchError();
   }
-  const pinOk = await verifyPin(pin, userRow.pin_hash);
+  const pinOk = typeof pin === "string" && /^\d{4}$/.test(pin) && await verifyPin(pin, userRow.pin_hash);
   if (!pinOk) {
     await audit({
       actorId: actor.userId,
@@ -1508,134 +1468,19 @@ export async function confirmInstance(
   const newStatus: ChecklistStatus =
     incompleteRequiredIds.length > 0 ? "incomplete_confirmed" : "confirmed";
 
-  // 1. CLAIM the transition FIRST (flip-first law; council audit 2026-08-08 —
-  //    mirrors confirmPO/recordPlacement: the guarded status flip is the
-  //    linearization point). Under the old order (reasons → submission → flip),
-  //    a lost race left committed orphans: duplicate reason rows plus a second
-  //    is_final_confirmation submission on an instance that never transitioned.
-  //    RLS allows update at level 3+ in this location. Per AGENTS.md UPDATE
-  //    silent-denial footgun, check rowcount and throw on 0.
-  const { data: updatedRow, error: updateErr } = await authed
-    .from("checklist_instances")
-    .update({
-      status: newStatus,
-      confirmed_at: new Date().toISOString(),
-      confirmed_by: actor.userId,
-    })
-    .eq("id", instanceId)
-    .eq("status", "open") // optimistic concurrency: confirm only if still open
-    .select(
-      INSTANCE_COLUMNS,
-    )
-    .maybeSingle<InstanceRow>();
-  if (updateErr) throw new Error(`confirmInstance update instance: ${updateErr.message}`);
-  if (!updatedRow) {
-    // 0 rows = the guarded open→confirmed flip matched nothing. The dominant cause
-    // (sim-2 SIM-22, deterministically reproduced under a two-manager confirm race):
-    // a CONCURRENT confirm — or a client double-submit/retry — already flipped the
-    // status, so this caller is the race-LOSER. flip-first guarantees the winner's
-    // data is intact; the loser should see a clean 409 "already confirmed", NOT the
-    // raw 500 this used to throw. Re-read to distinguish that from a true RLS denial.
-    const { data: cur } = await authed
-      .from("checklist_instances").select("status").eq("id", instanceId).maybeSingle<{ status: ChecklistStatus }>();
-    if (cur && cur.status !== "open") {
-      throw new ChecklistInstanceClosedError(instanceId, cur.status); // → 409 instance_closed
-    }
-    throw new ChecklistRoleViolationError(3, actor.level, "Confirmation is not permitted for this instance");
-  }
-
-  // 2+3. Dependent rows only AFTER owning the claim. If either insert fails,
-  //      revert OUR flip (scoped .eq status+confirmed_by — never undoes a rival)
-  //      and rethrow: no orphaned attestation, no stranded confirm.
-  let reasonRows: ChecklistIncompleteReason[] = [];
-  let submissionRow: SubmissionRow;
-  try {
-    // Reason rows (authed; RLS enforces reported_by = current_user_id).
-    // RETRY-IDEMPOTENT (T5/T6 review): if a prior attempt committed reasons and
-    // then failed on the submission insert, the revert reopened the instance but
-    // append-only keeps those rows. Re-inserting on retry would duplicate them —
-    // reuse any existing row for the same (item, reporter) instead.
-    if (incompleteReasons.length > 0) {
-      const itemIds = incompleteReasons.map((r) => r.templateItemId);
-      const { data: existingReasons, error: exErr } = await authed
-        .from("checklist_incomplete_reasons")
-        .select("id, instance_id, template_item_id, reason, reported_by, reported_at")
-        .eq("instance_id", instanceId)
-        .eq("reported_by", actor.userId)
-        .in("template_item_id", itemIds);
-      if (exErr) throw new Error(`confirmInstance existing reasons: ${exErr.message}`);
-      const existing = (existingReasons ?? []) as ReasonRow[];
-      const have = new Set(existing.map((r) => r.template_item_id));
-      const toInsert = incompleteReasons.filter((r) => !have.has(r.templateItemId));
-      let insertedRows: ReasonRow[] = [];
-      if (toInsert.length > 0) {
-        const { data: insertedReasons, error: reasonErr } = await authed
-          .from("checklist_incomplete_reasons")
-          .insert(
-            toInsert.map((r) => ({
-              instance_id: instanceId,
-              template_item_id: r.templateItemId,
-              reason: r.reason,
-              reported_by: actor.userId,
-            })),
-          )
-          .select("id, instance_id, template_item_id, reason, reported_by, reported_at");
-        if (reasonErr) throw new Error(`confirmInstance insert reasons: ${reasonErr.message}`);
-        insertedRows = (insertedReasons ?? []) as ReasonRow[];
-      }
-      reasonRows = [...existing, ...insertedRows].map(rowToReason);
-    }
-
-    // Final-confirmation submission. The final-confirm submission is an
-    // attestation event, NOT a completion batch — no completions are added at
-    // confirm time. Prior submitBatch() events are the canonical source for
-    // which completions belong to this instance, each scoped to its own
-    // submission. So completion_ids = []. (Schema permits empty UUID array;
-    // checklist_submissions.completion_ids is `UUID[] NOT NULL`.)
-    // is_final_confirmation = true is the discriminator that lets queries find
-    // the attestation event.
-    const { data: insertedSubmission, error: subErr } = await authed
-      .from("checklist_submissions")
-      .insert({
-        instance_id: instanceId,
-        submitted_by: actor.userId,
-        completion_ids: [],
-        is_final_confirmation: true,
-      })
-      .select("id, instance_id, submitted_by, submitted_at, completion_ids, is_final_confirmation")
-      .maybeSingle<SubmissionRow>();
-    if (subErr) throw new Error(`confirmInstance insert submission: ${subErr.message}`);
-    if (!insertedSubmission) throw new Error(`confirmInstance submission insert returned no row`);
-    submissionRow = insertedSubmission;
-  } catch (depErr) {
-    const { error: revertErr, count: revertCount } = await authed
-      .from("checklist_instances")
-      .update({ status: "open", confirmed_at: null, confirmed_by: null }, { count: "exact" })
-      .eq("id", instanceId)
-      .eq("status", newStatus)
-      .eq("confirmed_by", actor.userId);
-    if (revertErr || revertCount === 0) {
-      // Revert failure leaves a confirmed instance without its attestation.
-      // console alone is ephemeral — write a fail-open audit row so the state
-      // is forensically visible; the thrown depErr still surfaces the cause.
-      console.error(`confirmInstance revert failed for ${instanceId}: ${revertErr?.message ?? "rowcount 0"}`);
-      await audit({
-        actorId: actor.userId,
-        actorRole: actor.role,
-        action: "checklist.confirm",
-        resourceTable: "checklist_instances",
-        resourceId: instanceId,
-        metadata: {
-          outcome: "dependent_insert_failed_revert_failed",
-          status_left: newStatus,
-          revert_error: revertErr?.message ?? "rowcount_0",
-        },
-        ipAddress: args.ipAddress ?? null,
-        userAgent: args.userAgent ?? null,
-      });
-    }
-    throw depErr;
-  }
+  // The RPC binds the validated snapshot and atomically claims + inserts both
+  // dependent sets. Failure rolls back in SQL; no app compensation is safe/needed.
+  const { data, error } = await getServiceRoleClient().rpc("checklist_confirm_instance", {
+    p_actor: actor.userId, p_instance: instanceId, p_confirmed_at: new Date().toISOString(),
+    p_reasons: incompleteReasons,
+    p_expected_completion_ids: (liveCompletions ?? []).map((row) => row.id),
+  });
+  if (error) await throwChecklistWriteError(authed, error, instanceId, actor, "confirm");
+  const updatedRow = requireChecklistRpcRow<InstanceRow>(data?.instance, "instance");
+  const submissionRow = requireChecklistRpcRow<SubmissionRow>(data?.submission, "submission");
+  if (!Array.isArray(data?.reasons) || data.reasons.length !== incompleteReasons.length
+    || updatedRow.status !== newStatus) throw new Error("confirmInstance RPC result cardinality/status mismatch");
+  const reasonRows = (data.reasons as ReasonRow[]).map(rowToReason);
 
   await audit({
     actorId: actor.userId,

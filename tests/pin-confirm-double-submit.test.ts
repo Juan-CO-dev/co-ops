@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
 // Launch-day hotfix pins: the PIN confirm must POST once, and a late
@@ -181,5 +181,24 @@ describe("PinKeypad (tile login) fires the PIN POST once (#55)", () => {
 
   it("scheduled timers are cleared on unmount", () => {
     expect(keypad).toMatch(/for \(const id of pending\) window\.clearTimeout\(id\)/);
+  });
+});
+
+describe("PIN confirm reloadable refusals", () => {
+  it.each(["concurrent_modification", "invalid_payload"])("%s requests reload and informs the parent", code => {
+    const start = modal.indexOf(`case "${code}":`);
+    expect(start).toBeGreaterThan(-1);
+    const branch = modal.slice(start, modal.indexOf("return;", start));
+    expect(branch).toContain('triggerError(t("auth.pin_modal.error_reload"))');
+    expect(branch).toContain("onError(body)");
+    // Execute the actual response switch with spies: both failures must reach
+    // the parent with the original body and display the translated reload key.
+    const responseSwitch = modal.slice(modal.indexOf("switch (body.code)"), modal.indexOf("      } catch {", modal.indexOf("switch (body.code)")));
+    const notify = vi.fn();
+    const display = vi.fn();
+    const body = { code, error: "refused" };
+    new Function("body", "triggerError", "t", "onError", responseSwitch)(body, display, (key: string) => key, notify);
+    expect(display).toHaveBeenCalledExactlyOnceWith("auth.pin_modal.error_reload");
+    expect(notify).toHaveBeenCalledExactlyOnceWith(body);
   });
 });

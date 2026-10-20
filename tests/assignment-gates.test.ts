@@ -1,3 +1,4 @@
+import { checklistActor } from "./helpers/checklist-actor";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -136,7 +137,7 @@ describe("generic checklist routes cannot bypass task assignment", () => {
 
   it("blocks complete, submit, confirm, self-revoke and drop before mutation", async () => {
     const { service } = genericClient();
-    const base = { actor, instanceId: "instance" };
+    const base = { actor: checklistActor({ ...actor, locations: ["stored-shop"] }), instanceId: "instance" };
     await expect(completeItem(service, { ...base, templateItemId: "item" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(submitBatch(service, { ...base, completionIds: ["completion"] })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(confirmInstance(service, { ...base, pin: "1234", incompleteReasons: [] })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
