@@ -138,7 +138,8 @@ export function UserActions({
       ) : employed ? (
         <ActionButton label={t("admin.users.action.activate")} onClick={() => setActive({ kind: "activate" })} />
       ) : null}
-      {employed && can.endEmployment ? (
+      {/* Astra BC-036: from on leave, End employment offers the separation directly (never another leave). */}
+      {can.endEmployment ? (
         <ActionButton label={t("admin.users.employment.action.end")} onClick={() => setActive({ kind: "employment", mode: "end" })} />
       ) : null}
       {can.backFromLeave ? (

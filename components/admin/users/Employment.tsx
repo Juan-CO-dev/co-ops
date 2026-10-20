@@ -115,7 +115,10 @@ export function EmploymentDialog({ userId, name, view, mode, onClose, today, ini
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const start = drafts(view.detail, today);
-  const [kind, setKind] = useState<"leave" | "separated">(initialKind ?? (mode === "correct" && view.status === "separated" ? "separated" : "leave"));
+  // From on leave, End employment is a separation only (Astra BC-036): another leave is never offered.
+  const leaveOffered = view.status === "active";
+  const [kind, setKind] = useState<"leave" | "separated">(
+    !leaveOffered && mode === "end" ? "separated" : initialKind ?? (mode === "correct" && view.status === "separated" ? "separated" : "leave"));
   const [leave, setLeave] = useState<LeaveDraft>(start.leave);
   const [sep, setSep] = useState<SepDraft>(start.sep);
   const [note, setNote] = useState("");
@@ -163,7 +166,7 @@ export function EmploymentDialog({ userId, name, view, mode, onClose, today, ini
             <fieldset>
               <legend className="text-sm font-bold text-co-text">{t("admin.users.employment.end.choose")}</legend>
               <div className="mt-2 flex flex-col gap-2">
-                {(["leave", "separated"] as const).map((k) => (
+                {(leaveOffered ? (["leave", "separated"] as const) : (["separated"] as const)).map((k) => (
                   <label key={k} className="flex min-h-[44px] items-center gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3">
                     <input type="radio" name={`end-${userId}`} checked={kind === k} onChange={() => setKind(k)} className="h-5 w-5 accent-co-gold" />
                     <span className="text-sm text-co-text">{t(k === "leave" ? "admin.users.employment.end.leave" : "admin.users.employment.end.separated")}</span>

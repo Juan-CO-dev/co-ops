@@ -83,6 +83,23 @@ function dialog(language: "en" | "es", mode: "end" | "back" | "rehire" | "correc
     userId: "u", name: "Miguel", view: viewFor("owner", state), mode, onClose: () => {}, today: "2026-10-20", initialKind,
   }) }));
 }
+describe("from on leave: End employment → Separated, never another leave (Astra BC-036)", () => {
+  it("the on-leave row offers End employment beside Back from leave", () => {
+    const html = page("en", "gm", users("gm"));
+    const leaveRow = html.slice(html.indexOf(">Danilo<"), html.indexOf("data-group=\"separated\""));
+    expect(leaveRow).toContain("End employment");
+    expect(leaveRow).toContain("Back from leave");
+  });
+  it("the dialog from on leave is the separation only: no leave choice, the separation fields", () => {
+    const html = dialog("en", "end", LEAVE);
+    expect(html).not.toContain("On leave — coming back");
+    expect(html).toContain("Separated — not coming back");
+    for (const s of ["Last day worked", "Eligible for rehire?", "Reason"]) expect(html).toContain(s);
+    expect(html).not.toContain("Reason for leave");
+    expect(dialog("es", "end", LEAVE)).not.toContain("De permiso — va a regresar");
+  });
+});
+
 describe("the dialogs", () => {
   it("End employment: the two branches; the separation asks type, last day, reason, rehire; the privacy line", () => {
     const leave = dialog("en", "end", employmentStateOf([]), "leave");
