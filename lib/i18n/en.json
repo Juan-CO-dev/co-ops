@@ -7342,6 +7342,8 @@
   "schedule.reason.on_primary": "On their primary position ({positionId}).",
   "schedule.reason.on_secondary": "On their secondary position ({positionId}); their primary is {primaryId}.",
   "schedule.reason.flexed": "Flexed to {positionId}: their primary is {primaryId}.",
+  "schedule.reason.strongest_among_primary": "Strongest among the people with this as their primary position.",
+  "schedule.reason.strongest_among_secondary": "Strongest among the people with this as their secondary position.",
   "schedule.reason.manager_duty": "Manager duties (their secondary) on {positionId}; their primary is {primaryId}.",
   "schedule.note.pairing_unmet": "A newer person has no strong partner in this window.",
   "schedule.note.unbudgeted_date": "No budget set for this day.",

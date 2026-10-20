@@ -465,7 +465,13 @@ export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, 
   const K = CANDIDATE_KEY;
   // Rank decided the pick only when it put `c` ahead of someone of a WORSE rank (all of one rank: rank decided nothing).
   const byRank = peers.some((x) => (x.key[K.positionRank] as number) > (c.key[K.positionRank] as number));
-  const strongest = !byRank || skillDecided(c, peers);
+  // Astra BC-042 r3: when the RANK put them ahead of stronger people, "strongest available" would be false — the skill
+  // reason is then QUALIFIED ("strongest among the people with this as their primary / secondary"), and only when skill
+  // decided it among that rank; an hourly lead on manager duties gets no skill claim.
+  const rankNow = c.key[K.positionRank];
+  const strongestKey = !byRank ? "strongest_on_position" as const : !skillDecided(c, peers) ? null
+    : rankNow === POSITION_RANK.primary ? "strongest_among_primary" as const
+    : rankNow === POSITION_RANK.secondary && !isHourlyLeadRole(c.person.role) ? "strongest_among_secondary" as const : null;
   // Juan 2026-10-20: the position rank — on their primary / secondary it says so; placed elsewhere while they HAVE a
   // primary, it is a flex (the reason names the position and their primary). No primary set → nothing (as before).
   const primary = primaryPositionOf(c.person);
@@ -478,10 +484,10 @@ export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, 
   }
   if (c.key[K.fullTimerFirst] === 0) out.push(reason("full_timer_minimum", { userId: c.person.userId }));
   const softMin = c.key[K.softMin];
-  if (softMin === 0 && o.positionId) { if (strongest) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill })); }
+  if (softMin === 0 && o.positionId) { if (strongestKey) out.push(reason(strongestKey, { userId: c.person.userId, positionId: o.positionId, skill: c.skill })); }
   else if (typeof softMin === "number" && softMin < 0) out.push(reason("under_soft_min", { userId: c.person.userId, hoursUnder: -softMin }));
   if (c.key[K.pairing] === -1) out.push(reason("beside_strong", { userId: c.person.userId, positionId: o.positionId }));
-  if (c.key[K.pairing] === 1 && strongest) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
+  if (c.key[K.pairing] === 1 && strongestKey) out.push(reason(strongestKey, { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
   void b;
   void shifts;
   return out;

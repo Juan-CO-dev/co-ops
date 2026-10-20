@@ -28,6 +28,7 @@ import { MOD, segmentHoldProblems } from "@/lib/scheduling/rules-shared";
 import { DATES, H9_EXTRA, I, SMALL_SPECS, day, fixture, type PersonSpec } from "./fixtures/schedule/fixtures";
 
 const MON = DATES[0]!;
+const ES_STRINGS = es as Record<string, string>;
 const EN = en as Record<string, string>;
 const ES = es as Record<string, string>;
 
@@ -332,9 +333,21 @@ describe("the reasons: on primary / on secondary / flexed", () => {
     const o = opts(I.$REG, plan(I.$REG));
     const ranked = rankCandidates(b, week, [], o);
     expect(ranked.slice(0, 2).map((c) => c.person.userId)).toEqual(["u-b-bo", "u-m-mia"]);
-    expect(whyChosen(b, [], ranked[0]!, o, ranked).map((r) => r.key)).toEqual(["on_primary", "strongest_on_position"]);
+    // Stronger flex people exist (the rank decided against them): the skill claim is QUALIFIED (Astra BC-042 r3).
+    expect(whyChosen(b, [], ranked[0]!, o, ranked).map((r) => r.key)).toEqual(["on_primary", "strongest_among_primary"]);
     // Mia, last of her rank: skill decided nothing for her → no "strongest".
     expect(whyChosen(b, [], ranked[1]!, o, ranked).map((r) => r.key)).toEqual(["on_primary"]);
+  });
+  it("Astra BC-042 r3: primaries 0.7 and 0.5 vs a 0.9 flex — the 0.7 is 'strongest among the people with this as their primary', never 'strongest available'", () => {
+    const { b, week } = ctxWith({ "u-m-mia": { coverPositions: [I.$REG] }, "u-f-finn": { coverPositions: [I.$REG] } });
+    b.busiest[MON] = new Set(Array.from({ length: 16 }, (_, i) => 44 + i));
+    const o = opts(I.$REG, plan(I.$REG));
+    const ranked = rankCandidates(b, week, [], o);
+    expect(ranked.slice(0, 3).map((c) => c.person.userId)).toEqual(["u-m-mia", "u-f-finn", "u-b-bo"]);
+    expect(whyChosen(b, [], ranked[0]!, o, ranked).map((r) => r.key)).toEqual(["on_primary", "strongest_among_primary"]);
+    expect(whyChosen(b, [], ranked[1]!, o, ranked).map((r) => r.key)).toEqual(["on_primary"]);
+    expect(whyChosen(b, [], ranked[2]!, o, ranked).map((r) => r.key)).toContain("strongest_on_position"); // Bo, flex: as before
+    expect(ES_STRINGS["schedule.reason.strongest_among_primary"]).toBeTruthy();
   });
   it("no primary set → no position reason (as before); a manager never gets one", () => {
     const keys = (r: Array<{ key: string }>) => r.map((x) => x.key);

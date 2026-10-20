@@ -7342,6 +7342,8 @@
   "schedule.reason.on_primary": "En el puesto principal de esta persona ({positionId}).",
   "schedule.reason.on_secondary": "En el puesto secundario de esta persona ({positionId}); el principal es {primaryId}.",
   "schedule.reason.flexed": "Movido a {positionId}: el puesto principal de esta persona es {primaryId}.",
+  "schedule.reason.strongest_among_primary": "La persona más fuerte entre quienes tienen este como puesto principal.",
+  "schedule.reason.strongest_among_secondary": "La persona más fuerte entre quienes tienen este como puesto secundario.",
   "schedule.reason.manager_duty": "Tareas de gerente (el puesto secundario) en {positionId}; el principal es {primaryId}.",
   "schedule.note.pairing_unmet": "Una persona nueva no tiene un compañero fuerte en esta franja.",
   "schedule.note.unbudgeted_date": "No hay presupuesto para este día.",
