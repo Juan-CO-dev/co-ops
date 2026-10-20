@@ -53,11 +53,14 @@ describe("the position rank (pure)", () => {
     }
     expect(positionRankOf(p("key_holder", [I.$REG]), I.$REG)).toBe(POSITION_RANK.primary);
   });
-  it("withPrimarySecondary keeps the 'can flex to' tail, drops a repeated pick, and clears the list with no primary", () => {
+  it("withPrimarySecondary keeps the 'can flex to' tail behind a secondary; no secondary or no primary CLEARS it — never a silent promotion (Astra BC-013)", () => {
     const list = [I.$REG, I.$WALK, I.$EXPO, I.$BOI];
     expect(withPrimarySecondary(list, I.$EXPO, I.$REG)).toEqual([I.$EXPO, I.$REG, I.$BOI]);
-    expect(withPrimarySecondary(list, I.$WALK, null)).toEqual([I.$WALK, I.$EXPO, I.$BOI]);
-    expect(withPrimarySecondary(list, I.$REG, I.$REG)).toEqual([I.$REG, I.$EXPO, I.$BOI]);
+    expect(withPrimarySecondary(list, I.$REG, I.$EXPO)).toEqual([I.$REG, I.$EXPO, I.$BOI]); // a secondary chosen FROM the tail
+    // Secondary = None with [Register, Walk-ins, Expeditor, ...]: Expeditor must NOT silently become the secondary.
+    expect(withPrimarySecondary(list, I.$REG, null)).toEqual([I.$REG]);
+    expect(withPrimarySecondary(list, I.$WALK, null)).toEqual([I.$WALK]);
+    expect(withPrimarySecondary(list, I.$REG, I.$REG)).toEqual([I.$REG]);
     expect(withPrimarySecondary(list, null, I.$WALK)).toEqual([]);
     expect(withPrimarySecondary([], I.$DISH, I.$PREP)).toEqual([I.$DISH, I.$PREP]);
   });

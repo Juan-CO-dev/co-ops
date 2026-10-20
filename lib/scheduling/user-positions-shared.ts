@@ -60,7 +60,13 @@ export function pickProblems(role: RoleCode, current: PersonSettingsRow | null |
   return positionListProblems({ role, workType: pick.workType ?? defaultWorkType(role), alsoAllowed: current?.alsoAllowed ?? [] }, list, roles);
 }
 
-/** How many "can flex to" entries clearing the primary would drop. */
+/**
+ * How many "can flex to" entries (beyond the two pickers) the picks would CLEAR: all of them with no primary, and with no
+ * secondary too (Astra BC-013: never a silent promotion — the pickers name the count before a save).
+ */
 export function flexDropped(current: PersonSettingsRow | null | undefined, pick: PositionPick): number {
-  return pick.primary === null ? Math.max(0, (current?.coverPositions.length ?? 0) - 2) : 0;
+  const tail = (current?.coverPositions ?? []).slice(2);
+  if (pick.primary === null) return tail.length;
+  if (pick.secondary === null) return tail.filter((x) => x !== pick.primary).length;
+  return 0;
 }

@@ -58,6 +58,7 @@ export function ShopPositionFields({ userId, role, location, shop, pick, onChang
   const suggestion = userId && pick.primary === null ? shop.suggestions[userId] ?? null : null;
   const problems = pickProblems(role, current, pick, shop);
   const dropped = flexDropped(current, pick);
+  const tailCount = flexDropped(current, { ...pick, secondary: null });
   const slot = (s: "primary" | "secondary") => t(s === "primary" ? "schedule.settings.staff.slot_primary" : "schedule.settings.staff.slot_secondary");
   const ids = { wt: `wt-${location.id}`, p: `pr-${location.id}`, s: `se-${location.id}` };
   return (
@@ -92,7 +93,8 @@ export function ShopPositionFields({ userId, role, location, shop, pick, onChang
         <span className={LABEL}>{t("admin.users.positions.secondary")}</span>
         <select id={ids.s} className={SELECT} value={pick.secondary ?? ""} disabled={pick.primary === null} data-pick="secondary"
           onChange={(e) => onChange({ ...pick, secondary: e.target.value || null })}>
-          <option value="">{t("admin.users.positions.none")}</option>
+          {/* Astra BC-013: with "can flex to" entries behind it, None says it clears them — no silent promotion. */}
+          <option value="">{tailCount > 0 ? t("admin.users.positions.none_clear", { count: tailCount }) : t("admin.users.positions.none")}</option>
           {shop.positions.filter((p) => p.id !== pick.primary).map((p) => <option key={p.id} value={p.id}>{label(p)}</option>)}
         </select>
       </label>

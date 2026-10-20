@@ -198,7 +198,9 @@ describe("the row the pickers write: only the work type and the first two positi
   it("nextSettingsRow / pickChanged / flexDropped", () => {
     const cur = row(KH, { leaderSetting: "closes", softMinH: 20, alsoAllowed: ["boh"], coverPositions: [P_REG, P_WALK, P_EXPO] });
     expect(nextSettingsRow(cur, KH, { workType: "boh", primary: P_EXPO, secondary: P_REG })).toEqual({ ...cur, workType: "boh", coverPositions: [P_EXPO, P_REG] });
-    expect(nextSettingsRow(cur, KH, { workType: null, primary: P_WALK, secondary: null })).toEqual({ ...cur, coverPositions: [P_WALK, P_EXPO] });
+    // Astra BC-013: Secondary = None clears the tail (no silent promotion of Expeditor), and the pickers count it first.
+    expect(nextSettingsRow(cur, KH, { workType: null, primary: P_REG, secondary: null })).toEqual({ ...cur, coverPositions: [P_REG] });
+    expect(flexDropped(cur, { workType: null, primary: P_REG, secondary: null })).toBe(1);
     expect(nextSettingsRow(null, EMP, { workType: null, primary: P_REG, secondary: P_WALK })).toEqual(row(EMP, { coverPositions: [P_REG, P_WALK] }));
     expect(pickChanged(cur, pickOf(cur))).toBe(false);
     expect(pickChanged(null, pickOf(null))).toBe(false);
@@ -229,6 +231,15 @@ describe("the admin user screen: the Positions dialog and the Add user form", ()
       expect((h.match(/<select[^>]*>/g) ?? []).find((x) => x.includes('data-pick="secondary"'))).toContain('disabled=""');
       expect(tx).toContain(lang === "es" ? "Expedidor" : "Expeditor");
     }
+  });
+  it("Astra BC-013: with 'can flex to' entries behind the secondary, None says it clears them (and how many) — no silent promotion", () => {
+    const shops = { [A]: pickerShop({ settings: { [EMP]: row(EMP, { coverPositions: [P_EXPO, P_WALK, P_REG] }) } }) };
+    for (const [lang, L] of [["en", EN], ["es", ES]] as const) {
+      const h = wrap(createElement(UserPositionsDialog, { userId: EMP, role: "employee", locations: [LOC], shops, onClose: () => {} }), lang);
+      expect(text(h)).toContain(L["admin.users.positions.none_clear"]!.replace("{count}", "1"));
+    }
+    const cleared = wrap(createElement(UserPositionsDialog, { userId: EMP, role: "employee", locations: [LOC], shops, onClose: () => {}, initialPicksOverride: { [A]: { workType: null, primary: P_EXPO, secondary: null } } }));
+    expect(text(cleared)).toContain(EN["admin.users.positions.clears_flex"]!.replace("{count}", "1"));
   });
   it("a work type that does not allow the primary is named and Save is disabled; scheduling not installed at a shop says so", () => {
     const shops = { [A]: pickerShop() };

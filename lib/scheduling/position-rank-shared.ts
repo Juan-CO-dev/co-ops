@@ -55,14 +55,16 @@ export function primaryPositionOf(p: Pick<RulePerson, "role" | "coverPositions">
 
 /**
  * The ordered list after picking a primary and a secondary, keeping the "can flex to" tail (entries [2..] minus the
- * two picks). No primary → the whole list is cleared (the tail cannot stand without a primary: its first entry would
- * silently become the primary). A secondary equal to the primary is dropped.
+ * two picks). Nothing is ever PROMOTED silently (Astra BC-013): no primary → the whole list is cleared, and no secondary
+ * → the tail is cleared too (its first entry would otherwise become the secondary). The pickers say so before a save
+ * ("None, and clear the N other positions"); choosing a secondary FROM the tail moves it up explicitly. A secondary
+ * equal to the primary counts as none.
  */
 export function withPrimarySecondary(list: readonly string[], primary: string | null, secondary: string | null): string[] {
   if (!primary) return [];
   const second = secondary && secondary !== primary ? secondary : null;
-  const tail = list.slice(2).filter((x) => x !== primary && x !== second);
-  return [primary, ...(second ? [second] : []), ...tail];
+  if (!second) return [primary];
+  return [primary, second, ...list.slice(2).filter((x) => x !== primary && x !== second)];
 }
 
 /** The label role of entry `i` of the ordered list. */
