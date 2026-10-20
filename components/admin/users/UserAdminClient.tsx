@@ -5,7 +5,12 @@
  *
  * Hosts the filter bar (navigates via query params), the user list, and the
  * "Add user" button + CreateUserForm modal. Per-row Tier-B actions render via
- * UserActions, gated by canActOn(actorRole, row.role).
+ * UserActions, gated by userAdminRefusal (strictly below the actor; a GM only for
+ * people whose every shop is the GM's).
+ *
+ * Staff separations (2026-10-20): each row carries its employment chip (everyone)
+ * and, when the server sent it, the employment record (default-collapsed). People
+ * on leave and separated people are grouped below the list, each group collapsed.
  */
 
 import { useState } from "react";
@@ -14,12 +19,14 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { etCalendarDate } from "@/lib/operational-day";
-import { ROLES, canActOn } from "@/lib/roles";
+import { ROLES } from "@/lib/roles";
+import { userAdminRefusal } from "@/lib/admin/user-access-shared";
 import { EmptyState } from "@/components/EmptyState";
 import type { AdminUserListItem } from "@/lib/admin/users";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { CreateUserForm } from "./CreateUserForm";
 import { UserActions } from "./UserActions";
+import { EmploymentChip, EmploymentRecord } from "./Employment";
 import type { UserAdminClientProps } from "./shared";
 
 export function UserAdminClient({
@@ -28,9 +35,15 @@ export function UserAdminClient({
   accessibleLocations,
   assignableRoles,
   actorRole,
+  actorUserId,
+  actorLocations,
+  employmentAvailable,
+  toastPickerEnabled,
+  today,
   currentFilters,
   positionShops,
 }: UserAdminClientProps) {
+  const actor = { userId: actorUserId, role: actorRole, locations: actorLocations };
   const { t, language } = useTranslation();
   const router = useRouter();
   const [creating, setCreating] = useState(false);
@@ -59,11 +72,14 @@ export function UserAdminClient({
     currentFilters.location !== "" ||
     currentFilters.q !== "";
 
-  const dormantUsers = users.filter((u) => u.dormancy.dormant);
+  const statusOf = (u: AdminUserListItem) => u.employment?.status ?? "active";
+  const onLeave = users.filter((u) => statusOf(u) === "on_leave");
+  const separated = users.filter((u) => statusOf(u) === "separated");
+  const dormantUsers = users.filter((u) => u.dormancy.dormant && statusOf(u) === "active");
   const renderRows = (rows: AdminUserListItem[]) => (
       <ul className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {rows.map((u) => {
-          const actionable = canActOn(actorRole, u.role);
+          const actionable = userAdminRefusal(actor, { id: u.id, role: u.role, locationIds: u.locationIds }) === null;
           return (
             <li
               key={u.id}
@@ -72,8 +88,9 @@ export function UserAdminClient({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <div className="text-base font-bold text-co-text">{u.name}</div>
-                  <div className="mt-0.5 text-sm text-co-text-muted">
-                    {t(`role.${u.role}` as TranslationKey)}
+                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-co-text-muted">
+                    <span>{t(`role.${u.role}` as TranslationKey)}</span>
+                    <EmploymentChip view={u.employment} />
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-co-text-muted">
                     <span>
@@ -94,7 +111,8 @@ export function UserAdminClient({
                 </div>
               </div>
 
-              {u.dormancy.dormant && <p className="mt-2 text-sm text-co-text-muted">
+              <EmploymentRecord detail={u.employment?.detail ?? null} />
+              {u.dormancy.dormant && statusOf(u) === "active" && <p className="mt-2 text-sm text-co-text-muted">
                 {u.dormancy.reason === "deactivated" ? t("admin.users.dormancy.deactivated")
                   : t(u.dormancy.reason === "manual" ? "admin.users.dormancy.manual"
                     : u.dormancy.reason === "never_clocked_in" ? "admin.users.dormancy.neverClockedIn" : "admin.users.dormancy.noClockIn",
@@ -107,6 +125,9 @@ export function UserAdminClient({
                     assignableRoles={assignableRoles}
                     accessibleLocations={accessibleLocations}
                     positionShops={positionShops}
+                    actor={actor}
+                    employmentAvailable={employmentAvailable}
+                    today={today}
                   />
                 ) : (
                   <p className="text-[11px] italic text-co-text-muted" title={t("admin.users.cant_act")}>
@@ -203,7 +224,19 @@ export function UserAdminClient({
         />
       ) : (
       <>
-        {renderRows(hasActiveFilters ? users : users.filter((u) => !u.dormancy.dormant))}
+        {renderRows(hasActiveFilters ? users : users.filter((u) => !u.dormancy.dormant && statusOf(u) === "active"))}
+        {!hasActiveFilters && onLeave.length > 0 && <details className="mt-5" data-group="on_leave">
+          <summary className="min-h-[44px] cursor-pointer py-3 font-bold text-co-text">
+            {t("admin.users.group.on_leave", { count: onLeave.length })}
+          </summary>
+          {renderRows(onLeave)}
+        </details>}
+        {!hasActiveFilters && separated.length > 0 && <details className="mt-5" data-group="separated">
+          <summary className="min-h-[44px] cursor-pointer py-3 font-bold text-co-text">
+            {t("admin.users.group.separated", { count: separated.length })}
+          </summary>
+          {renderRows(separated)}
+        </details>}
         {!hasActiveFilters && dormantUsers.length > 0 && <details className="mt-5">
           <summary className="min-h-[44px] cursor-pointer py-3 font-bold text-co-text">
             {t("admin.users.dormancy.title", { count: dormantUsers.length })}
@@ -218,6 +251,7 @@ export function UserAdminClient({
           assignableRoles={assignableRoles}
           accessibleLocations={accessibleLocations}
           positionShops={positionShops}
+          toastPickerEnabled={toastPickerEnabled}
           onClose={() => setCreating(false)}
         />
       ) : null}

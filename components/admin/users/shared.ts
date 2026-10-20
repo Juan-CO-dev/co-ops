@@ -20,6 +20,15 @@ export interface UserAdminClientProps {
   assignableRoles: RoleCode[];
   actorRole: RoleCode;
   actorLevel: number;
+  /** The actor's id and active shops (a GM manages their own shops' people only — userAdminRefusal). */
+  actorUserId: string;
+  actorLocations: string[];
+  /** 0279 is applied: the employment actions are offered. */
+  employmentAvailable: boolean;
+  /** The Add user Toast picker is offered (who's-here on). */
+  toastPickerEnabled: boolean;
+  /** The ET business date. */
+  today: string;
   currentFilters: { role: string; status: string; location: string; q: string };
   /** Juan 2026-10-20: the primary / secondary picker data per accessible shop (null = scheduling not installed there). */
   positionShops?: Record<string, ShopPositionPicker | null>;
@@ -65,14 +74,14 @@ export async function postJson(
  * A POST that also returns the JSON body on success (the Add user flow needs the new `userId` to write the person's
  * positions right after). Same fetch shape as `postJson`.
  */
-export async function postJsonData<T>(url: string, body: unknown): Promise<{ ok: true; data: T } | { ok: false; code: string }> {
+export async function postJsonData<T>(url: string, body: unknown): Promise<{ ok: true; data: T } | { ok: false; code: string; body?: unknown }> {
   try {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), redirect: "manual" });
     let parsed: unknown = null;
     try { parsed = await res.json(); } catch { /* opaque (e.g. a 307 redirect): no body */ }
     if (res.ok) return { ok: true, data: parsed as T };
     const code = parsed && typeof (parsed as { code?: unknown }).code === "string" ? (parsed as { code: string }).code : "generic";
-    return { ok: false, code };
+    return { ok: false, code, body: parsed };
   } catch {
     return { ok: false, code: "generic" };
   }
@@ -100,6 +109,18 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_name",
   "invalid_password",
   "not_found",
+  // Staff separations + GM user management (2026-10-20).
+  "employment_moved",
+  "employment_invalid_transition",
+  "rehire_owner_ok_required",
+  "rehire_owner_required",
+  "rehire_reason_required",
+  "target_outside_shop",
+  "employment_unavailable",
+  "use_back_from_leave",
+  "use_rehire",
+  "rehire_match",
+  "rehire_permission_required",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {

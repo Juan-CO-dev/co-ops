@@ -229,6 +229,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/toast-sales/pull/route.ts": ["A"],
   "app/api/admin/users/[id]/activate/route.ts": ["B"],
   "app/api/admin/users/[id]/deactivate/route.ts": ["B"],
+  // Staff separations (0279): on leave / back / separated / rehire / correction — a user-lifecycle write, Tier B.
+  "app/api/admin/users/[id]/employment/route.ts": ["B"],
   // Display-only dormancy: UserActions.run("B") joins both writers to the same fresh step-up.
   "app/api/admin/users/[id]/dormant/route.ts": ["B"],
   "app/api/admin/users/[id]/wake/route.ts": ["B"],
@@ -336,6 +338,8 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/templates/ParGrid.tsx": ["A"],
   "components/admin/templates/SectionsTab.tsx": ["B"],
   "components/admin/users/CreateUserForm.tsx": ["B"],
+  // EmploymentDialog: the employment route asserts B.
+  "components/admin/users/Employment.tsx": ["B"],
   // Shared `run(tier)` lane; all seven action branches pass "B" (pinned by PR #297).
   "components/admin/users/UserActions.tsx": ["VAR:tier"],
   "components/admin/vendors/CategoryListClient.tsx": ["B"],
