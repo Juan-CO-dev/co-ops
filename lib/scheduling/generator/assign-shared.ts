@@ -439,10 +439,28 @@ export function applyPlacement(shifts: GShift[], c: Candidate, o: PlaceOpts, peo
   }
 }
 
-/** The ranking reason for a chosen candidate (why this person). */
-export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, o: CandidateOpts): Reason[] {
+/**
+ * Did SKILL decide `c`'s place among the candidates of its own position rank? True when the next candidate after `c` with the
+ * same rank first differs from `c` at the skill key (Astra BC-042). No such candidate → false.
+ */
+export function skillDecided(c: Candidate, peers: readonly Candidate[]): boolean {
+  const K = CANDIDATE_KEY;
+  const next = peers.slice(peers.indexOf(c) + 1).find((x) => x.key[K.positionRank] === c.key[K.positionRank]);
+  if (!next || peers.indexOf(c) < 0) return false;
+  const i = c.key.findIndex((v, j) => v !== next.key[j]);
+  return i === K.skill;
+}
+
+/**
+ * The ranking reason for a chosen candidate (why this person). Astra BC-042: a candidate who won on their POSITION RANK
+ * (primary / secondary) is never explained as "strongest available" unless skill actually decided it among the candidates
+ * of the same rank (`peers`, the ranked list); flex candidates keep the reasons exactly as before.
+ */
+export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, o: CandidateOpts, peers: readonly Candidate[] = []): Reason[] {
   const out: Reason[] = [];
   const K = CANDIDATE_KEY;
+  const byRank = c.key[K.positionRank] !== POSITION_RANK.flex;
+  const strongest = !byRank || skillDecided(c, peers);
   // Juan 2026-10-20: the position rank — on their primary / secondary it says so; placed elsewhere while they HAVE a
   // primary, it is a flex (the reason names the position and their primary). No primary set → nothing (as before).
   const primary = primaryPositionOf(c.person);
@@ -454,10 +472,10 @@ export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, 
   }
   if (c.key[K.fullTimerFirst] === 0) out.push(reason("full_timer_minimum", { userId: c.person.userId }));
   const softMin = c.key[K.softMin];
-  if (softMin === 0 && o.positionId) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
+  if (softMin === 0 && o.positionId) { if (strongest) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill })); }
   else if (typeof softMin === "number" && softMin < 0) out.push(reason("under_soft_min", { userId: c.person.userId, hoursUnder: -softMin }));
   if (c.key[K.pairing] === -1) out.push(reason("beside_strong", { userId: c.person.userId, positionId: o.positionId }));
-  if (c.key[K.pairing] === 1) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
+  if (c.key[K.pairing] === 1 && strongest) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
   void b;
   void shifts;
   return out;
@@ -508,7 +526,7 @@ export function fillRun(
       const o: CandidateOpts = { date, plan, positionId, closingLead: t.closingLead, allowOvertime, allowOffDay, allowSoftMax, mod: false, extensionOnly, exclude: opts.exclude };
       const ranked = rankCandidates(b, week, week.built[date]!, o);
       for (const c of ranked.slice(0, 6)) {
-        const why = whyChosen(b, week.built[date]!, c, o);
+        const why = whyChosen(b, week.built[date]!, c, o, ranked);
         // CC chunk H9: named overtime only when THIS placement takes the week past the threshold (a tier allows it; it is not a claim).
         const overtime = allowOvertime && (weekQuarters(week, c.person.userId) + plan.endQ - plan.startQ) / 4 > b.structure.limits.overtimeH;
         if (overtime) why.push(reason("overtime_last_resort", { userId: c.person.userId }));

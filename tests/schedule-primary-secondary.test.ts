@@ -218,6 +218,28 @@ describe("the reasons: on primary / on secondary / flexed", () => {
     expect(why({ "u-m-mia": { coverPositions: [I.$WALK, I.$REG] } }, "u-m-mia", I.$REG)[0]).toEqual({ key: "on_secondary", params: { userId: "u-m-mia", positionId: I.$REG, primaryId: I.$WALK } });
     expect(why({ "u-m-mia": { coverPositions: [I.$WALK] } }, "u-m-mia", I.$REG)[0]).toEqual({ key: "flexed", params: { userId: "u-m-mia", positionId: I.$REG, primaryId: I.$WALK } });
   });
+  it("Astra BC-042: a primary holder who won on RANK over a stronger flex candidate is not called 'strongest' (busiest window)", () => {
+    const { b, week } = ctxWith({ "u-m-mia": { coverPositions: [I.$REG] } });
+    b.busiest[MON] = new Set(Array.from({ length: 16 }, (_, i) => 44 + i));
+    const o = opts(I.$REG, plan(I.$REG));
+    const ranked = rankCandidates(b, week, [], o);
+    expect(ranked[0]!.person.userId).toBe("u-m-mia");
+    const keys = whyChosen(b, [], ranked[0]!, o, ranked).map((r) => r.key);
+    expect(keys).toContain("on_primary");
+    expect(keys).not.toContain("strongest_on_position");
+    // The flex runner-up (Bo 0.9) keeps today's reason: in the busiest window, "strongest available".
+    expect(whyChosen(b, [], ranked[1]!, o, ranked).map((r) => r.key)).toContain("strongest_on_position");
+  });
+  it("Astra BC-042: among two primary holders, the one skill decided IS 'strongest' (and says on_primary too)", () => {
+    const { b, week } = ctxWith({ "u-m-mia": { coverPositions: [I.$REG] }, "u-b-bo": { coverPositions: [I.$REG] } });
+    b.busiest[MON] = new Set(Array.from({ length: 16 }, (_, i) => 44 + i));
+    const o = opts(I.$REG, plan(I.$REG));
+    const ranked = rankCandidates(b, week, [], o);
+    expect(ranked.slice(0, 2).map((c) => c.person.userId)).toEqual(["u-b-bo", "u-m-mia"]);
+    expect(whyChosen(b, [], ranked[0]!, o, ranked).map((r) => r.key)).toEqual(["on_primary", "strongest_on_position"]);
+    // Mia, last of her rank: skill decided nothing for her → no "strongest".
+    expect(whyChosen(b, [], ranked[1]!, o, ranked).map((r) => r.key)).toEqual(["on_primary"]);
+  });
   it("no primary set → no position reason (as before); a manager never gets one", () => {
     const keys = (r: Array<{ key: string }>) => r.map((x) => x.key);
     for (const k of ["on_primary", "on_secondary", "flexed"]) {
