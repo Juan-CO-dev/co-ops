@@ -8,6 +8,9 @@ import { listUsers, type ListUsersFilters } from "@/lib/admin/users";
 import { UserAdminClient } from "@/components/admin/users/UserAdminClient";
 import { PageHeader } from "@/components/ui/PageHeader";
 import type { RoleCode } from "@/lib/roles";
+import { operationalNow } from "@/lib/midshift-shared";
+import { loadUserPositionPickers } from "@/lib/scheduling/user-positions";
+import type { ShopPositionPicker } from "@/lib/scheduling/user-positions-shared";
 
 export default async function AdminUsersPage({
   searchParams,
@@ -32,6 +35,22 @@ export default async function AdminUsersPage({
   const accessibleLocations = actorAll ? allLocations : allLocations.filter((l) => auth.locations.includes(l.id));
   const assignableRoles = Object.values(ROLES).filter((r) => canActOn(auth.user.role, r.code)).map((r) => r.code);
 
+  // Juan 2026-10-20: the primary / secondary pickers (the "Positions" action and the Add user form). Level 8+ here = MoO+,
+  // who may write schedule person settings at any shop. A shop whose scheduling tables are not installed is null (the
+  // pickers say "not available"); any other failure must not take user management down with it — the screen then offers
+  // no Positions action at all (logged), and everything else on it works as before.
+  let positionShops: Record<string, ShopPositionPicker | null> | undefined;
+  try {
+    positionShops = await loadUserPositionPickers(sb, {
+      locationIds: accessibleLocations.map((l) => l.id),
+      people: users.map((u) => ({ userId: u.id, role: u.role, locationIds: u.locationIds })),
+      today: operationalNow(new Date()).date,
+    });
+  } catch (e) {
+    console.error("admin/users: position pickers unavailable", e instanceof Error ? e.message : e);
+    positionShops = undefined;
+  }
+
   return (
     <div>
       <PageHeader
@@ -46,6 +65,7 @@ export default async function AdminUsersPage({
         actorRole={auth.user.role}
         actorLevel={ROLES[auth.user.role].level}
         currentFilters={{ role: sp.role ?? "", status: sp.status ?? "", location: sp.location ?? "", q: sp.q ?? "" }}
+        positionShops={positionShops}
       />
     </div>
   );

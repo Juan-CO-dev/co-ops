@@ -21,15 +21,20 @@ import {
 import { forecastWeek } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import { buildWeek } from "./generator/build-shared";
-import { loadSchedulingDemand, loadWeekHeads } from "./inputs";
+import { loadLatestPersonSettings, loadLiveStructure, loadSchedulingDemand, loadWeekHeads } from "./inputs";
+import { personSettingsSubjectRefusal } from "./access-shared";
+import { mergePositionChanges, parsePositionChanges } from "./user-positions-shared";
 import { STRUCTURE_DEFAULTS_ID, generatorInputFor, type SchedulingInputs } from "./inputs-shared";
+import { defaultWorkType } from "./people-input-shared";
+import { positionListProblems } from "./position-rank-shared";
 import {
-  recordBudgetEntryCall, recordDayTypeCall, recordPersonSettingsCall, recordPinCall, saveShopSettingsCall, saveStructureCall,
+  mergePersonPositionsCall, recordBudgetEntryCall, recordDayTypeCall, recordPinCall, savePersonSettingsCall, saveShopSettingsCall, saveStructureCall,
 } from "./rpc-args-shared";
 import { MOD } from "./rules-shared";
 import { gate, rpcRefusal, type ScheduleDeps } from "./schedules";
-import { validScheduleStructure } from "./structure-shared";
+import { validScheduleStructure, type PositionRole } from "./structure-shared";
 import { addDays, isYmd, isoWeekStart, weekDays } from "./time-shared";
+import { ROLES, type RoleCode } from "@/lib/roles";
 import { loadSchedulingInputs } from "./inputs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -82,13 +87,99 @@ export interface PersonSettingsInput {
   userId: string; workType: "boh" | "foh" | "management" | null; alsoAllowed: Array<"boh" | "foh">; leaderSetting: "opens" | "closes" | "mix" | null;
   coverPositions: string[]; softMinH: number | null; softMaxH: number | null; fullTime: boolean; fullTimeMinH: number | null; rosterInclude: boolean | null;
 }
-export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput }): Promise<Record<string, unknown>> {
+/**
+ * A FULL-ROW write (the staff settings card). Juan 2026-10-20: below MoO, only people below the actor and below GM, never
+ * oneself (`personSettingsSubjectRefusal`). Astra BC-007: `expectedId` is the latest row the card was loaded with (null =
+ * none); a different latest row now is `person_settings_moved` — the card reloads instead of overwriting someone's change.
+ * Astra BC-007/038: ONLY through 0278's lock-held writer — without it this write is `person_settings_unavailable`, never
+ * the 0274 writer (two requests on one head would both append, and the later full row would erase the earlier change).
+ */
+export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput; expectedId: string | null }): Promise<Record<string, unknown>> {
   await gate(deps.service, args.actor, args.locationId, "person_settings");
-  const s = args.settings;
-  if (!s || typeof s.userId !== "string" || !UUID.test(s.userId) || !Array.isArray(s.coverPositions) || !Array.isArray(s.alsoAllowed)) throw new ScheduleError("invalid_payload");
-  const r = await rpc(deps.service, recordPersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s }));
-  await log(args.actor, "schedule.person_settings_update", "schedule_person_settings", args.locationId, { user_id: s.userId, before: r.before ?? null, after: r.after ?? null });
+  const raw = args.settings;
+  if (!raw || typeof raw.userId !== "string" || !UUID.test(raw.userId) || !Array.isArray(raw.coverPositions) || !Array.isArray(raw.alsoAllowed)
+    || !raw.coverPositions.every((x) => typeof x === "string" && UUID.test(x)) || (args.expectedId !== null && typeof args.expectedId !== "string")) {
+    throw new ScheduleError("invalid_payload");
+  }
+  // Astra BC-022/042: every id canonical lowercase at the parse boundary — the subject rule's self check, the role lookup
+  // of the work-type check and the list's own distinctness all compare strings.
+  const s: PersonSettingsInput = { ...raw, userId: raw.userId.toLowerCase(), coverPositions: raw.coverPositions.map((x) => x.toLowerCase()) };
+  const expectedId = args.expectedId === null ? null : args.expectedId.toLowerCase();
+  const role = await subjectRole(deps.service, args.actor, s.userId);
+  // The early read refuses most stale saves with no write; 0278's writer re-checks under the per-person lock (the race).
+  const latest = await loadLatestPersonSettings(deps.service, args.locationId, s.userId);
+  if ((latest?.id ?? null) !== expectedId) throw new ScheduleError("person_settings_moved");
+  await refusePositionRank(deps.service, args.locationId, role, s);
+  const r = await guardedRpc(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId }));
+  return logPersonSettings(args.actor, args.locationId, s.userId, r);
+}
+
+/**
+ * The user screen's primary / secondary pickers (Juan 2026-10-20; Astra BC-007): ONLY the changed fields are sent, with the
+ * id of the row the pickers were loaded from (`expectedId`, null = none). Astra BC-007/042: if the person's latest row is
+ * no longer that one, the save is `person_settings_moved` (the screen reloads, the person retries) — two valid changes
+ * merged blind can make an invalid row (FOH + Register from A, BOH from B → BOH + Register). On the unmoved head the
+ * changed fields are merged under 0278's per-person lock (the same row the pickers saw). No 0274 fallback.
+ */
+export async function recordPersonPositions(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; userId: string; changes: Record<string, unknown>; expectedId: string | null }): Promise<Record<string, unknown>> {
+  await gate(deps.service, args.actor, args.locationId, "person_settings");
+  const changes = parsePositionChanges(args.changes);
+  if (!UUID.test(args.userId) || !changes || (args.expectedId !== null && typeof args.expectedId !== "string")) throw new ScheduleError("invalid_payload");
+  // Astra BC-022/042: canonical lowercase ids (parsePositionChanges lowercases the positions).
+  const userId = args.userId.toLowerCase();
+  const expectedId = args.expectedId === null ? null : args.expectedId.toLowerCase();
+  const role = await subjectRole(deps.service, args.actor, userId);
+  const latest = await loadLatestPersonSettings(deps.service, args.locationId, userId);
+  if ((latest?.id ?? null) !== expectedId) throw new ScheduleError("person_settings_moved");
+  const merged = mergePositionChanges(latest?.row ?? null, userId, changes);
+  await refusePositionRank(deps.service, args.locationId, role, merged);
+  const r = await guardedRpc(deps.service, mergePersonPositionsCall({ actorId: args.actor.userId, locationId: args.locationId, userId, expectedId, changes: { ...changes } }));
+  return logPersonSettings(args.actor, args.locationId, userId, r);
+}
+
+/**
+ * A 0278 writer. Astra BC-007/038: these writes REQUIRE the lock-held writers — when 0278 is not applied (PostgREST: the
+ * function is unknown) the write is refused `person_settings_unavailable` (503), never sent to 0274's writer. Every other
+ * error is the writer's named refusal (or a thrown error), as `rpc`.
+ */
+async function guardedRpc(service: SupabaseClient, call: { fn: string; args: Record<string, unknown> }): Promise<Record<string, unknown>> {
+  const { data, error } = await service.rpc(call.fn, call.args);
+  if (error && (error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message))) throw new ScheduleError("person_settings_unavailable");
+  if (error) rpcRefusal(error);
+  return (data ?? {}) as Record<string, unknown>;
+}
+
+async function logPersonSettings(actor: PeopleActor, locationId: string, userId: string, r: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await log(actor, "schedule.person_settings_update", "schedule_person_settings", locationId, { user_id: userId, before: r.before ?? null, after: r.after ?? null });
   return r;
+}
+
+/** The subject's role, after the subject rule (unknown → person_not_at_shop; refused → schedule_forbidden). */
+async function subjectRole(service: SupabaseClient, actor: PeopleActor, userId: string): Promise<RoleCode> {
+  const { data, error } = await service.from("users").select("role").eq("id", userId).maybeSingle();
+  if (error) throw new Error(`subjectRole: ${error.message}`);
+  const role = (data as { role?: string } | null)?.role;
+  if (!role || !Object.hasOwn(ROLES, role)) throw new ScheduleError("person_not_at_shop");
+  const refusal = personSettingsSubjectRefusal(actor, { userId, role: role as RoleCode });
+  if (refusal) throw new ScheduleError(refusal);
+  return role as RoleCode;
+}
+
+/**
+ * Juan 2026-10-20 (primary / secondary): the ordered list's first two entries must be positions the person may hold —
+ * their EFFECTIVE work type (the setting, else the role default) with "also allowed", and never a manager on the
+ * dish-and-prep position (`positionListProblems`, the same rule the staff settings card shows before it posts). Judged
+ * only once the shop's structure is SAVED (before that every position reads as a line position, so the roles are not
+ * known). Refusal: `position_rank_not_allowed`.
+ */
+async function refusePositionRank(service: SupabaseClient, locationId: string, role: RoleCode, s: PersonSettingsInput): Promise<void> {
+  if (s.coverPositions.length === 0) return;
+  const live = await loadLiveStructure(service, locationId);
+  if (live.source !== "saved") return;
+  const roles: Record<string, PositionRole> = Object.fromEntries(Object.entries(live.structure.positions).map(([id, p]) => [id, p.role]));
+  const problems = positionListProblems({ role, workType: s.workType ?? defaultWorkType(role), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles);
+  const first = problems[0];
+  if (first) throw new ScheduleError("position_rank_not_allowed", { params: { slot: first.slot, positionId: first.positionId, reason: first.code } });
 }
 
 // ─── Day types and pins ──────────────────────────────────────────────────────

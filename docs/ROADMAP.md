@@ -371,6 +371,19 @@ the `*-shared` law so it is finally testable (10 tests incl. a board-parity orac
 
 ## LATER (sequenced, not forgotten)
 
+- **Generator follow-ups (scheduling primary / secondary, PR #497, p2.19).** Primary-first has two known costs in the
+  small-shop fixture, pinned by tests so a fix shows up as a deliberate improvement:
+  - **Cross-day day-off swap (F0f):** a 12-quarter Sunday Walk-ins gap blocks Approve because the people who could cover
+    it are at their 5-day cap after the shift lead's Register / Expo week. The per-day repair search can't swap a day off
+    across dates; a bounded cross-day swap would close it.
+  - **Closer re-shape budget move (F0b-e6):** a budgeted primary block (the shift lead on Register 10:30–4:45) replaced
+    the closer's zero-budget Register coverage, so the budget-limited gap grows 12 → 18 quarters (it does not block
+    Approve). The fix is a repair move that shifts the closer back onto the station (closing hours stay exempt from the
+    budget stop but counted) and spends the freed budgeted hours on the gap.
+  - Measured dead end, NOT a to-do: ordering the repair week-wide, largest gap first (patch kept as
+    `repair-week-reorder.patch` in the build session's scratchpad). It left F0f unclosed (the gap still needs >185
+    chain steps) and made F11 / F13 worse (295 → 303, 323 → 331 uncovered quarters).
+
 - **UX Phase 3 — the two approved proposals** (input-type picker · receipt-attach) from
   the 2026-08-19/20 refresh arc (#253–#262, ten PRs, all merged). Approved, not built.
 - **Go-live batch — PARKED until Juan flips it.** The refresh arc's remaining go-live

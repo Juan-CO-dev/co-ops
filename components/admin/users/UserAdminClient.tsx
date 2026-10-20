@@ -29,6 +29,7 @@ export function UserAdminClient({
   assignableRoles,
   actorRole,
   currentFilters,
+  positionShops,
 }: UserAdminClientProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -105,6 +106,7 @@ export function UserAdminClient({
                     user={u}
                     assignableRoles={assignableRoles}
                     accessibleLocations={accessibleLocations}
+                    positionShops={positionShops}
                   />
                 ) : (
                   <p className="text-[11px] italic text-co-text-muted" title={t("admin.users.cant_act")}>
@@ -215,6 +217,7 @@ export function UserAdminClient({
         <CreateUserForm
           assignableRoles={assignableRoles}
           accessibleLocations={accessibleLocations}
+          positionShops={positionShops}
           onClose={() => setCreating(false)}
         />
       ) : null}

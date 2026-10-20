@@ -9,7 +9,7 @@ import { SCHEDULE_ACTIONS, exactShape } from "@/lib/scheduling/route-shapes-shar
 import { isEditOp } from "@/lib/scheduling/edit-shared";
 import type { HorizonRequest } from "@/lib/scheduling/horizon-shared";
 import { applyHorizon, approveWeek, generateWeek, previewHorizon, saveEdit } from "@/lib/scheduling/schedules";
-import { acceptBudgetSuggestion, keepBudget, recordPersonSettings, setBudget, setDayType, setPin, type PersonSettingsInput } from "@/lib/scheduling/settings";
+import { acceptBudgetSuggestion, keepBudget, recordPersonPositions, recordPersonSettings, setBudget, setDayType, setPin, type PersonSettingsInput } from "@/lib/scheduling/settings";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -85,8 +85,11 @@ export async function POST(req: NextRequest) {
         if (!b.pin || typeof b.pin !== "object") return jsonError(400, "bad_request");
         return jsonOk({ result: await setPin(deps, { actor, locationId, pin: b.pin as Parameters<typeof setPin>[1]["pin"] }) });
       case "person":
-        if (!b.settings || typeof b.settings !== "object") return jsonError(400, "bad_request");
-        return jsonOk({ result: await recordPersonSettings(deps, { actor, locationId, settings: b.settings as PersonSettingsInput }) });
+        if (!b.settings || typeof b.settings !== "object" || !strOrNull(b.expectedId)) return jsonError(400, "bad_request");
+        return jsonOk({ result: await recordPersonSettings(deps, { actor, locationId, settings: b.settings as PersonSettingsInput, expectedId: b.expectedId as string | null }) });
+      case "person_positions":
+        if (!isStr(b.userId) || !b.changes || typeof b.changes !== "object" || Array.isArray(b.changes) || !strOrNull(b.expectedId)) return jsonError(400, "bad_request");
+        return jsonOk({ result: await recordPersonPositions(deps, { actor, locationId, userId: b.userId, changes: b.changes as Record<string, unknown>, expectedId: b.expectedId as string | null }) });
       default:
         return jsonError(400, "bad_request");
     }

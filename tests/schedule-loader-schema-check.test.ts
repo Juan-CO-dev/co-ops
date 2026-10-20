@@ -118,6 +118,12 @@ beforeAll(async () => {
     await inputsMod.loadStationSeedRows(svc, LOC);
     const settingsView = await import("@/lib/scheduling/settings-view");
     await settingsView.loadPresencePeople(svc);
+    // Juan 2026-10-20: the Toast primary suggestion's hours-by-job read (settings page + the admin user screen).
+    const suggest = await import("@/lib/scheduling/position-suggest");
+    await suggest.loadToastJobHours(svc, LOC, "2026-10-21");
+    // Astra BC-007: the save path's one-person latest-row read (the merge and the stale check) and the card's row ids.
+    await inputsMod.loadLatestPersonSettings(svc, LOC, "6f1d2c3e-0000-4000-8000-0000000000c1");
+    await inputsMod.loadPersonSettingsWithIds(svc, LOC);
   } finally {
     if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
     if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;
@@ -151,6 +157,19 @@ describe("loadSchedulingInputs against the real schema", () => {
     }
     expect(rpcs.filter((r) => r.name === "pulse_sales_baseline")).toEqual([{ name: "pulse_sales_baseline", args: { p_location_id: LOC, p_from: "2026-09-23", p_to: "2026-10-20" } }]);
     expect(captured.every((c) => !c.select.some((s) => s.includes("*")))).toBe(true);
+  });
+
+  it("the Toast suggestion read: linked rows only, not deleted, in a date window — hours by job, never a name or a wage", () => {
+    const reads = captured.filter((c) => c.table === "toast_time_entries" && c.select.includes("job_name"));
+    expect(reads).toHaveLength(1);
+    expect(new Set(reads[0]!.filters)).toEqual(new Set(["location_id", "deleted", "user_id", "business_date"]));
+    expect(reads[0]!.select).toEqual(["time_entry_guid", "user_id", "job_name", "hours"]);
+  });
+
+  it("the latest-row read for one person is filtered by shop AND person, newest first", () => {
+    const one = captured.filter((c) => c.table === "schedule_person_settings" && c.filters.includes("user_id"));
+    expect(one).toHaveLength(1);
+    expect(new Set(one[0]!.filters)).toEqual(new Set(["location_id", "user_id"]));
   });
 
   it("the punch read is linked rows only, not deleted, in a date window; the wage read is current hourly rows of linked users", () => {

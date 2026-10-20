@@ -50,6 +50,13 @@ export const SCHEDULE_ERROR_CODES = [
   "gap_certificate_invalid",
   // CC chunk D ruling 3: the validation context a revision would store is past the lib's safe ceiling (well under 0275's CHECK)
   "context_too_large",
+  // Juan 2026-10-20: a primary / secondary position the person's work type does not allow — refused in the save path
+  // before the RPC (position-rank-shared `positionListProblems`); TS only, no SQL twin.
+  "position_rank_not_allowed",
+  // Astra BC-007: a full-row person-settings write based on a row that is no longer the latest (someone saved in between)
+  "person_settings_moved",
+  // Astra BC-007/038: the person-settings writes require 0278's lock-held writers; not applied → refused, never 0274's.
+  "person_settings_unavailable",
 ] as const;
 
 export type ScheduleErrorCode = (typeof SCHEDULE_ERROR_CODES)[number];
@@ -87,12 +94,12 @@ export class ScheduleError extends Error {
 export const SCHEDULE_ERROR_STATUS: Record<ScheduleErrorCode, 400 | 403 | 404 | 409 | 422 | 500 | 503> = {
   schedule_forbidden: 403, schedule_role_refused: 403, shop_not_allowed: 403, roster_include_refused: 403,
   shop_not_enabled: 409, week_not_found: 404, past_week: 409, day_locked: 409, head_moved: 409, edited_week_unconfirmed: 409, preview_stale: 409,
-  rules_failing: 409, unresolved_gaps: 409, history_changed: 409, structure_moved: 409,
+  rules_failing: 409, unresolved_gaps: 409, person_settings_moved: 409, history_changed: 409, structure_moved: 409,
   generator_invalid_output: 500, context_too_large: 500,
   structure_invalid: 422, budget_invalid: 422, horizon_invalid: 422, horizon_too_long: 422, edit_off_grid: 422, edit_overlap: 422, edit_segments_malformed: 422,
-  edit_below_segment_min: 422, pin_invalid: 422, wage_estimate_invalid: 422, shift_over_maximum: 422, gap_certificate_invalid: 422, suggestion_unavailable: 422,
+  edit_below_segment_min: 422, pin_invalid: 422, position_rank_not_allowed: 422, wage_estimate_invalid: 422, shift_over_maximum: 422, gap_certificate_invalid: 422, suggestion_unavailable: 422,
   person_not_at_shop: 404, position_not_at_shop: 404, position_retired: 409,
-  inputs_unavailable: 503, demand_unavailable: 503,
+  inputs_unavailable: 503, demand_unavailable: 503, person_settings_unavailable: 503,
   invalid_payload: 400,
 };
 

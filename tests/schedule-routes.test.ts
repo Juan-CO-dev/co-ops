@@ -19,7 +19,7 @@ vi.mock("@/lib/scheduling/schedules", () => ({
 }));
 vi.mock("@/lib/scheduling/settings", () => ({
   setBudget: vi.fn(async () => ({})), acceptBudgetSuggestion: vi.fn(async () => ({})), keepBudget: vi.fn(async () => ({})), setDayType: vi.fn(async () => ({})),
-  setPin: vi.fn(async () => ({})), recordPersonSettings: vi.fn(async () => ({})), saveStructure: vi.fn(async () => ({})), saveShopSettings: vi.fn(async () => ({})),
+  setPin: vi.fn(async () => ({})), recordPersonSettings: vi.fn(async () => ({})), recordPersonPositions: vi.fn(async () => ({})), saveStructure: vi.fn(async () => ({})), saveShopSettings: vi.fn(async () => ({})),
 }));
 
 const { requireSession } = await import("@/lib/session");
@@ -117,7 +117,8 @@ describe("POST /api/schedule — the tier, asserted before the lib", () => {
       { action: "accept_budget", locationId: SHOP, weekStart: WEEK, digest: "d" },
       { action: "day_type", locationId: SHOP, date: WEEK, dayType: "busy" },
       { action: "pin", locationId: SHOP, pin: { retiresId: HEAD } },
-      { action: "person", locationId: SHOP, settings: { userId: HEAD } },
+      { action: "person", locationId: SHOP, settings: { userId: HEAD }, expectedId: null },
+      { action: "person_positions", locationId: SHOP, userId: HEAD, changes: { primary: null }, expectedId: null },
     ];
     for (const b of bodies) expect((await post(b)).status, b.action).toBe(200);
     expect(tiers()).toEqual([]);

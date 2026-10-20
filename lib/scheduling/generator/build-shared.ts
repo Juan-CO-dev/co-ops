@@ -39,7 +39,7 @@ import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repai
 import { salariedBlocks, templatesFor, templateOrder } from "./templates-shared";
 
 /** Bumped whenever a golden changes; stored on the revision. */
-export const GENERATOR_VERSION = "p2.16";
+export const GENERATOR_VERSION = "p2.19";
 
 // ─── Input / output ──────────────────────────────────────────────────────────
 
@@ -329,6 +329,8 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   }
 
   // 9a. The bounded repair search, per day in order (one cap for the week; the counters started with the fill — CC chunk H11).
+  // Juan 2026-10-20: from here on the build CLOSES GAPS — the position rank yields (BuildCtx.closingGaps).
+  b.closingGaps = true;
   for (const date of builtDates) {
     repairDay(b, week, date, counters);
     enforcePriority(b, week, date);

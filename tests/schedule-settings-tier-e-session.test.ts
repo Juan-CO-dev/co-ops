@@ -25,7 +25,7 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/scheduling/settings", () => ({
   saveStructure: vi.fn(async () => ({ id: "sv-1" })),
   saveShopSettings: vi.fn(async () => ({ id: "ss-1" })),
-  acceptBudgetSuggestion: vi.fn(), keepBudget: vi.fn(), recordPersonSettings: vi.fn(), setBudget: vi.fn(), setDayType: vi.fn(), setPin: vi.fn(),
+  acceptBudgetSuggestion: vi.fn(), keepBudget: vi.fn(), recordPersonSettings: vi.fn(), recordPersonPositions: vi.fn(), setBudget: vi.fn(), setDayType: vi.fn(), setPin: vi.fn(),
 }));
 vi.mock("@/lib/scheduling/schedules", () => ({
   approveWeek: vi.fn(async () => ({ approvalId: "ap-1" })),

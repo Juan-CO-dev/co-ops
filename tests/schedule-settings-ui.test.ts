@@ -173,7 +173,7 @@ describe("staff settings, presence, Add to schedule", () => {
     expect(text(render(offered, "en", { initialPerson: PREP_MGR }))).toContain(en["schedule.settings.staff.include"]);
     const { personBody } = await import("@/lib/scheduling/settings-view-shared");
     const { SCHEDULE_ACTIONS } = await import("@/lib/scheduling/route-shapes-shared");
-    expect(Object.keys(personBody(A, emptySettings(KH))).sort()).toEqual([...SCHEDULE_ACTIONS.person!].sort());
+    expect(Object.keys(personBody(A, emptySettings(KH), null)).sort()).toEqual([...SCHEDULE_ACTIONS.person!].sort());
   });
   it("presence toggles ('Cris in today') and Add to schedule (person, block, positions), both writing pins with the exact body", async () => {
     const v = await view();

@@ -27,6 +27,15 @@ export const REASON_KEYS = [
   "catering_manager_cover",
   // CC chunk H2 (2026-10-16): a salaried manager covers an otherwise-uncovered window on a FLEX block (no hourly cost).
   "salaried_flex_cover",
+  // Juan 2026-10-20 (primary / secondary position): on their primary, on their secondary, or flexed to another position
+  // while they have a primary (params: positionId, primaryId).
+  "on_primary", "on_secondary", "flexed",
+  // Astra BC-042 r3: the skill reason, qualified, when the position rank put them ahead of stronger people.
+  "strongest_among_primary", "strongest_among_secondary",
+  // Juan 2026-10-20: placed off their primary / secondary while the build closed a gap (the repair's yield).
+  "flexed_gap",
+  // Juan 2026-10-20 ("consideration on their managerial duties"): a lead's own shift extended into a manager-on-duty hole.
+  "mod_extension",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

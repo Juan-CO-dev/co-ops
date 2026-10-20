@@ -11,6 +11,7 @@
  * actor acts only at shops in its own memberships; MoO (8)+ acts at any shop.
  */
 import { MOO_LEVEL, GM_LEVEL, OPERATIONAL_LEVEL6_ROLES, canSeeShopLaborTotals, type PeopleActor } from "@/lib/people/access-shared";
+import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import type { ScheduleErrorCode } from "./errors-shared";
 
 /** Every act the scheduling surfaces perform. `budget` covers set / accept / keep the suggestion. */
@@ -53,6 +54,20 @@ export function scheduleActRefusal(actor: PeopleActor, locationId: string, act: 
   if (act === "view") return null;
   if (access.agmAccess === "edit" && AGM_EDIT_ACTS.includes(act)) return null;
   return "schedule_forbidden";
+}
+
+/**
+ * WHOSE schedule settings an actor may change (Juan 2026-10-20: "GMs own their shop"), on top of the act rule
+ * (`person_settings`: GM own shop, MoO+ any, an AGM only with `agm_access = 'edit'`). Below MoO: never their own settings,
+ * never anyone at or above GM level, and never anyone at or above their own level (an AGM with edit access sets people
+ * below AGM). MoO+ is unchanged. Enforced in the save path (lib, before the RPC) and mirrored by the settings card.
+ */
+export function personSettingsSubjectRefusal(actor: PeopleActor, subject: { userId: string; role: RoleCode }): ScheduleErrorCode | null {
+  if (isMooPlus(actor)) return null;
+  const level = getRoleLevel(subject.role);
+  // Astra BC-022/042: ids compared in canonical lowercase (an uppercase spelling of oneself is still oneself).
+  if (subject.userId.toLowerCase() === actor.userId.toLowerCase() || level >= GM_LEVEL || level >= actor.level) return "schedule_forbidden";
+  return null;
 }
 
 /** The board, read (an AGM sees hours, coverage and reasons; money is a separate rule). */

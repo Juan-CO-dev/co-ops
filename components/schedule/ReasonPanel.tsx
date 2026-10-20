@@ -30,9 +30,11 @@ export function ReasonPanel({ row, shift, segment, editable, busy = false, names
   positions: Record<string, { name: string; nameEs: string | null }>;
   onEdit: (op: EditOp) => void;
 }) {
-  const { t, language, name, position, segment: label } = useBoardLine({ names, positions });
+  const { t, language, line, name, position, segment: label } = useBoardLine({ names, positions });
+  // Juan 2026-10-20: a reason's position params read as labels ("Flexed to Register: their primary is Prep").
+  const reasonParams = (r: Reason) => Object.fromEntries(Object.entries(r.params).filter((e): e is [string, string | number] => typeof e[1] === "string" || typeof e[1] === "number"));
   const reason = (r: Reason, i: number) => (
-    <li key={i} data-reason={r.key}>{t(`schedule.reason.${r.key}` as TranslationKey)}</li>
+    <li key={i} data-reason={r.key}>{line({ key: `schedule.reason.${r.key}`, params: reasonParams(r) })}</li>
   );
   const range = (a: number, b: number) => `${formatQ(a, language)}–${formatQ(b, language)}`;
   const focus = segment !== null ? shift.segments[segment] : undefined;
