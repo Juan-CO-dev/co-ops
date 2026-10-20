@@ -15,6 +15,9 @@ export const SCHEDULE_RPC = {
   saveShopSettings: "save_schedule_shop_settings",
   saveStructure: "save_schedule_structure",
   recordPersonSettings: "record_schedule_person_settings",
+  // 0278 (Astra BC-007): the expected head and the changed-field merge INSIDE the per-person lock.
+  savePersonSettings: "save_schedule_person_settings",
+  mergePersonPositions: "merge_schedule_person_positions",
   recordBudgetEntry: "record_schedule_budget_entry",
   recordDayType: "record_schedule_day_type",
   recordPin: "record_schedule_pin",
@@ -59,6 +62,20 @@ export function recordPersonSettingsCall(i: {
       p_full_time: i.fullTime, p_full_time_min_h: i.fullTimeMinH, p_roster_include: i.rosterInclude,
     },
   } as const;
+}
+
+/** 0278: the FULL-ROW write with the expected head (the latest row id the card was based on; null = none yet). */
+export function savePersonSettingsCall(i: Parameters<typeof recordPersonSettingsCall>[0] & { expectedId: string | null }) {
+  const { args } = recordPersonSettingsCall(i);
+  return { fn: SCHEDULE_RPC.savePersonSettings, args: { p_actor: args.p_actor, p_location: args.p_location, p_user: args.p_user, p_expected: i.expectedId,
+    p_work_type: args.p_work_type, p_also_allowed: args.p_also_allowed, p_leader_setting: args.p_leader_setting, p_cover_positions: args.p_cover_positions,
+    p_soft_min_h: args.p_soft_min_h, p_soft_max_h: args.p_soft_max_h, p_full_time: args.p_full_time, p_full_time_min_h: args.p_full_time_min_h,
+    p_roster_include: args.p_roster_include } } as const;
+}
+
+/** 0278: the user screen's changes only (workType / primary / secondary), merged onto the latest row under the lock. */
+export function mergePersonPositionsCall(i: { actorId: string; locationId: string; userId: string; changes: Record<string, unknown> }) {
+  return { fn: SCHEDULE_RPC.mergePersonPositions, args: { p_actor: i.actorId, p_location: i.locationId, p_user: i.userId, p_changes: i.changes } } as const;
 }
 
 export function recordBudgetEntryCall(i: {

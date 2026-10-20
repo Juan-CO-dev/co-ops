@@ -28,7 +28,7 @@ import { STRUCTURE_DEFAULTS_ID, generatorInputFor, type SchedulingInputs } from 
 import { defaultWorkType } from "./people-input-shared";
 import { positionListProblems } from "./position-rank-shared";
 import {
-  recordBudgetEntryCall, recordDayTypeCall, recordPersonSettingsCall, recordPinCall, saveShopSettingsCall, saveStructureCall,
+  mergePersonPositionsCall, recordBudgetEntryCall, recordDayTypeCall, recordPersonSettingsCall, recordPinCall, savePersonSettingsCall, saveShopSettingsCall, saveStructureCall,
 } from "./rpc-args-shared";
 import { MOD } from "./rules-shared";
 import { gate, rpcRefusal, type ScheduleDeps } from "./schedules";
@@ -98,10 +98,14 @@ export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: Pe
   const s = args.settings;
   if (!s || typeof s.userId !== "string" || !UUID.test(s.userId) || !Array.isArray(s.coverPositions) || !Array.isArray(s.alsoAllowed)) throw new ScheduleError("invalid_payload");
   const role = await subjectRole(deps.service, args.actor, s.userId);
-  if (args.expectedId !== undefined) {
-    const latest = await loadLatestPersonSettings(deps.service, args.locationId, s.userId);
-    if ((latest?.id ?? null) !== args.expectedId) throw new ScheduleError("person_settings_moved");
-  }
+  if (args.expectedId === undefined) return writePersonSettings(deps, args.actor, args.locationId, role, s);
+  // The early read refuses most stale saves with no write; 0278's writer re-checks under the per-person lock (the race).
+  const latest = await loadLatestPersonSettings(deps.service, args.locationId, s.userId);
+  if ((latest?.id ?? null) !== args.expectedId) throw new ScheduleError("person_settings_moved");
+  await refusePositionRank(deps.service, args.locationId, role, s);
+  const guarded = await rpcIfInstalled(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId: args.expectedId }));
+  if (guarded) return logPersonSettings(args.actor, args.locationId, s.userId, guarded);
+  // 0278 not applied yet: the 0274 writer (the lib's own checks above stand; the lock-held re-check arrives with 0278).
   return writePersonSettings(deps, args.actor, args.locationId, role, s);
 }
 
@@ -118,7 +122,28 @@ export async function recordPersonPositions(deps: ScheduleDeps, args: { actor: P
   if (!UUID.test(args.userId) || !changes) throw new ScheduleError("invalid_payload");
   const role = await subjectRole(deps.service, args.actor, args.userId);
   const latest = await loadLatestPersonSettings(deps.service, args.locationId, args.userId);
-  return writePersonSettings(deps, args.actor, args.locationId, role, mergePositionChanges(latest?.row ?? null, args.userId, changes, role));
+  const merged = mergePositionChanges(latest?.row ?? null, args.userId, changes, role);
+  // The work-type check judges the row the merge makes now; 0278's writer merges again from the row it reads UNDER the lock.
+  await refusePositionRank(deps.service, args.locationId, role, merged);
+  const guarded = await rpcIfInstalled(deps.service, mergePersonPositionsCall({ actorId: args.actor.userId, locationId: args.locationId, userId: args.userId, changes: { ...changes } }));
+  if (guarded) return logPersonSettings(args.actor, args.locationId, args.userId, guarded);
+  return writePersonSettings(deps, args.actor, args.locationId, role, merged);
+}
+
+/**
+ * A 0278 writer, or null when 0278 is not applied yet (PostgREST: the function is unknown) — the caller then uses the 0274
+ * writer behind the lib's own checks. Every other error is the writer's named refusal (or a thrown error), as `rpc`.
+ */
+async function rpcIfInstalled(service: SupabaseClient, call: { fn: string; args: Record<string, unknown> }): Promise<Record<string, unknown> | null> {
+  const { data, error } = await service.rpc(call.fn, call.args);
+  if (error && (error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message))) return null;
+  if (error) rpcRefusal(error);
+  return (data ?? {}) as Record<string, unknown>;
+}
+
+async function logPersonSettings(actor: PeopleActor, locationId: string, userId: string, r: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await log(actor, "schedule.person_settings_update", "schedule_person_settings", locationId, { user_id: userId, before: r.before ?? null, after: r.after ?? null });
+  return r;
 }
 
 /** The subject's role, after the subject rule (unknown → person_not_at_shop; refused → schedule_forbidden). */
@@ -134,9 +159,7 @@ async function subjectRole(service: SupabaseClient, actor: PeopleActor, userId: 
 
 async function writePersonSettings(deps: ScheduleDeps, actor: PeopleActor, locationId: string, role: RoleCode, s: PersonSettingsInput): Promise<Record<string, unknown>> {
   await refusePositionRank(deps.service, locationId, role, s);
-  const r = await rpc(deps.service, recordPersonSettingsCall({ actorId: actor.userId, locationId, ...s }));
-  await log(actor, "schedule.person_settings_update", "schedule_person_settings", locationId, { user_id: s.userId, before: r.before ?? null, after: r.after ?? null });
-  return r;
+  return logPersonSettings(actor, locationId, s.userId, await rpc(deps.service, recordPersonSettingsCall({ actorId: actor.userId, locationId, ...s })));
 }
 
 /**

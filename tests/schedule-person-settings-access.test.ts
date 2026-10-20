@@ -199,3 +199,29 @@ describe("Astra BC-007 r3 (blocker): the card's values and its expected id are O
     expect(editorBaseOnProps({ dirty: false, baseId: null, seenId: null }, "c")).toEqual({ baseId: "c", seenId: "c", reset: true });
   });
 });
+
+describe("0278: the writes go through the lock-held writers; before 0278 is applied, 0274's writer behind the lib's checks", () => {
+  const gm = actor(GM, "gm", 7, [A]);
+  const one = (t: ReturnType<typeof shopTables>) => { t.schedule_person_settings = [dbRow("ps-1", EMP, "2026-10-01T00:00:00Z", { cover_positions: [P_WALK], full_time: true })]; };
+  it("the full-row write calls save_schedule_person_settings with p_expected; the pickers call merge_schedule_person_positions with ONLY the changes", async () => {
+    const s = shop(one);
+    expect(await code(recordPersonSettings(s.deps, { actor: gm, locationId: A, settings: row(EMP, { coverPositions: [P_REG] }), expectedId: "ps-1" }))).toBe("ok");
+    expect(await code(recordPersonPositions(s.deps, { actor: gm, locationId: A, userId: EMP, changes: { primary: P_REG } }))).toBe("ok");
+    const calls = s.calls.filter((c) => c.fn.includes("person"));
+    expect(calls.map((c) => c.fn)).toEqual(["save_schedule_person_settings", "record_schedule_person_settings", "merge_schedule_person_positions", "record_schedule_person_settings"]);
+    expect(calls[0]!.args.p_expected).toBe("ps-1");
+    expect(calls[2]!.args.p_changes).toEqual({ primary: P_REG });
+  });
+  it("0278 not applied (PGRST202): both writes fall back to record_schedule_person_settings, the lib's stale check and merge still hold", async () => {
+    const t = shopTables();
+    one(t);
+    const st = scheduleStore(t, { no0278: true });
+    const deps = { service: st.client, now: NOW };
+    expect(await code(recordPersonSettings(deps, { actor: gm, locationId: A, settings: row(EMP), expectedId: "stale" }))).toBe("person_settings_moved");
+    expect(await code(recordPersonSettings(deps, { actor: gm, locationId: A, settings: row(EMP), expectedId: "ps-1" }))).toBe("ok");
+    expect(await code(recordPersonPositions(deps, { actor: gm, locationId: A, userId: EMP, changes: { primary: P_REG } }))).toBe("ok");
+    const rec = st.calls.filter((c) => c.fn === "record_schedule_person_settings");
+    expect(rec).toHaveLength(2);
+    expect(rec[1]!.args).toMatchObject({ p_cover_positions: [P_REG], p_full_time: true });
+  });
+});

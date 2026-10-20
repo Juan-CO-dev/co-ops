@@ -7,6 +7,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createFakeDb, type Tables } from "../counts-fake-db";
+import { mergePositionChanges } from "@/lib/scheduling/user-positions-shared";
 
 export const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 export const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -46,6 +47,8 @@ export interface StoreOpts {
   baseline?: () => Promise<Rpc> | Rpc;
   /** ET today for the commit mirror's past_week / day rules (unused by the mirror unless set). */
   failCommitOnWeek?: string;
+  /** 0278 not applied: its two writers are unknown functions (PGRST202), so the lib falls back to 0274's writer. */
+  no0278?: boolean;
 }
 
 export function scheduleStore(tables: Tables, opts: StoreOpts = {}) {
@@ -107,6 +110,11 @@ export function scheduleStore(tables: Tables, opts: StoreOpts = {}) {
     return { data: { approval_id: id, revision_id: head, already_approved: false }, error: null };
   }
 
+  function latestPerson(location: string, user: string): Record<string, unknown> | undefined {
+    return t("schedule_person_settings").filter((r) => r.location_id === location && r.user_id === user)
+      .sort((x, y) => String(y.created_at).localeCompare(String(x.created_at)) || String(y.id).localeCompare(String(x.id)))[0];
+  }
+
   async function rpc(fn: string, args: Record<string, unknown>): Promise<Rpc> {
     calls.push({ fn, args });
     switch (fn) {
@@ -142,6 +150,26 @@ export function scheduleStore(tables: Tables, opts: StoreOpts = {}) {
       }
       case "record_schedule_pin": return { data: { id: newId() }, error: null };
       case "record_schedule_person_settings": return { data: { id: newId(), before: null, after: { user_id: args.p_user } }, error: null };
+      // 0278 mirrors: the expected head / the merge judged against the LATEST stored row, then 0274's writer (recorded).
+      case "save_schedule_person_settings": {
+        if (opts.no0278) return { data: null, error: { code: "PGRST202", message: "Could not find the function public.save_schedule_person_settings" } };
+        const latest = latestPerson(args.p_location as string, args.p_user as string);
+        if (((latest?.id as string | undefined) ?? null) !== args.p_expected) return fail("person_settings_moved");
+        const { p_expected: _e, ...rest } = args;
+        void _e;
+        return rpc("record_schedule_person_settings", rest);
+      }
+      case "merge_schedule_person_positions": {
+        if (opts.no0278) return { data: null, error: { code: "PGRST202", message: "Could not find the function public.merge_schedule_person_positions" } };
+        const r = latestPerson(args.p_location as string, args.p_user as string);
+        const row = r ? { userId: r.user_id as string, workType: r.work_type as never, alsoAllowed: (r.also_allowed ?? []) as never, leaderSetting: r.leader_setting as never,
+          coverPositions: (r.cover_positions ?? []) as string[], softMinH: r.soft_min_h as never, softMaxH: r.soft_max_h as never, fullTime: r.full_time === true,
+          fullTimeMinH: r.full_time_min_h as never, rosterInclude: r.roster_include as never } : null;
+        const m = mergePositionChanges(row, args.p_user as string, args.p_changes as never);
+        return rpc("record_schedule_person_settings", { p_actor: args.p_actor, p_location: args.p_location, p_user: args.p_user, p_work_type: m.workType, p_also_allowed: m.alsoAllowed,
+          p_leader_setting: m.leaderSetting, p_cover_positions: m.coverPositions, p_soft_min_h: m.softMinH, p_soft_max_h: m.softMaxH, p_full_time: m.fullTime,
+          p_full_time_min_h: m.fullTimeMinH, p_roster_include: m.rosterInclude });
+      }
       default: return fail(`unknown rpc ${fn}`);
     }
   }
