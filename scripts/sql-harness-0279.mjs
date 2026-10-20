@@ -441,6 +441,23 @@ try {
   await refuses(() => rpc(updateUserProfileCall({ actorId: moo, userId: p1, patch: { email: "race@example.com" } })), "email_taken", "S13 … and on a profile edit → email_taken");
   await db.exec("drop trigger zz_dup on public.users; drop function public.zz_dup();");
 
+  // S13 r2 (Astra BC-007/004): the candidates are EVERY identity match, filtered on the rehire setting only UNDER the lock.
+  const flip = await user("employee"), twin = await user("employee");
+  await member(flip, SA); await member(twin, SA);
+  await db.query("update public.users set phone = '202-555-0144' where id = $1", [flip]);
+  await db.query("update public.users set phone = '(202) 555-0155' where id = $1", [twin]);   // an EMPLOYED person sharing a phone
+  await ev(gmA, flip, "separated", SEP("yes"));
+  const twinMade = await create(moo3, { phone: "2025550155" });
+  check(typeof twinMade.id === "string" && JSON.stringify(twinMade.rehire_matches) === "[]", "S13 r2 an employed person sharing the phone is a candidate, not a restriction: no confirmation needed");
+  // The lib's check saw "rehire OK" (no warning); the setting flips to `no` and commits before the create takes its locks.
+  const flipSep = (await rows(flip)).find((r) => r.kind === "separated").id;
+  await ev(gmA, flip, "correction", { correctsId: flipSep, ...SEP("no") });
+  const nFlip = await usersCount();
+  await refuses(() => create(gmD, { phone: "+1 (202) 555-0144" }), "rehire_match", "S13 r2 a rehire setting flipped yes → no before the lock → the unconfirmed create is refused rehire_match");
+  check(await usersCount() === nFlip, "S13 r2 … and nothing was inserted");
+  await refuses(() => create(gmD, { phone: "2025550144", confirmed: true, confirmedIds: [flip], reason: "x" }), "rehire_permission_required",
+    "S13 r2 … and a GM confirming it is refused (not eligible → owner / CGS)");
+
   // the table stays append-only by CHECK too (a superuser insert of a malformed row is refused by the constraints)
   await refuses(() => db.query("insert into public.user_employment_events (user_id, kind, actor_id, separation_type, last_day_worked, reason, rehire) values ($1, 'separated', $2, 'fired', '2026-10-01', 'r', 'no')", [e1, gmA]),
     "user_employment_events_separation_fields", "S7 a separation row with rehire = no and no note violates its CHECK");

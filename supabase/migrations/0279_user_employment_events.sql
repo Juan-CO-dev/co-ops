@@ -567,7 +567,7 @@ create function public.admin_user_create(p_actor uuid, p_name text, p_role text,
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_actor_role text; v_actor_active boolean; v_actor_level integer; v_role_level integer; v_name text; v_email text; v_phone text;
   v_desired uuid[] := '{}'::uuid[]; v_mine uuid[]; v_id uuid; v_email_auth boolean; v_key text; v_guid text; v_matches uuid[];
-  v_locked uuid[]; v_m uuid; v_setting text; v_reason text; v_constraint text;
+  v_locked uuid[]; v_m uuid; v_setting text; v_reason text; v_constraint text; v_candidates uuid[]; v_late uuid[];
 begin
   if p_actor is null or p_role is null or p_locations is null or array_position(p_locations, null) is not null
      or p_rehire_confirmed is null or p_rehire_user_ids is null or array_position(p_rehire_user_ids, null) is not null then
@@ -587,18 +587,19 @@ begin
   if char_length(v_reason) > 1000 then raise exception 'invalid_payload'; end if;
   v_key := public.user_admin_phone_key(v_phone);
 
-  -- THE REHIRE MATCH, server side (Astra BC-007/004): separated people whose rehire setting needs authority, by the same
-  -- phone key or the same Toast employee GUID (any of their links) — never by name. A client cannot omit one.
-  select coalesce(array_agg(distinct u.id order by u.id), '{}'::uuid[]) into v_matches
+  -- THE IDENTITY CANDIDATES, server side (Astra BC-007/004, r2): EVERY person sharing the new person's identity — the same
+  -- phone key or the same Toast employee GUID (any of their links), never a name — WHATEVER their status or rehire
+  -- setting. Nothing is filtered on the setting BEFORE the lock: a setting that flips while this create waits is read below.
+  select coalesce(array_agg(distinct u.id order by u.id), '{}'::uuid[]) into v_candidates
     from public.users u
    where u.id <> p_actor
-     and coalesce(public.user_employment_rehire(u.id), 'yes') <> 'yes'
      and ((v_key is not null and public.user_admin_phone_key(u.phone) = v_key)
        or (v_guid is not null and exists (select 1 from public.toast_employee_links t where t.user_id = u.id and t.employee_guid = v_guid)));
 
-  -- THE LOCKS, in sorted id order (one statement, ascending): the actor and every matched person FOR SHARE. A role / shop
-  -- / employment write on any of them (FOR UPDATE through the gate) waits for this create or is seen by it.
-  v_locked := array(select distinct x from unnest(array[p_actor] || v_matches) x order by x);
+  -- THE LOCKS, in sorted id order (one statement, ascending): the actor and EVERY candidate FOR SHARE. A rehire setting
+  -- changes only through record_user_employment_event, whose gate holds that person's users row FOR UPDATE — so a flip
+  -- either committed before these locks (and is read below) or waits for this create to finish.
+  v_locked := array(select distinct x from unnest(array[p_actor] || v_candidates) x order by x);
   perform 1 from public.users where id = any (v_locked) order by id for share;
 
   -- The actor rule on the locked row.
@@ -607,9 +608,19 @@ begin
   v_actor_level := coalesce(public.user_admin_role_level(v_actor_role), 0);
   if v_actor_level < 7 or v_role_level >= v_actor_level then raise exception 'forbidden'; end if;
 
-  -- The match again, now that the matched people are locked: their settings cannot move under us.
+  -- UNDER THE LOCKS: which candidates are RESTRICTED now (separated with a rehire setting that needs authority). Their
+  -- status and setting cannot move under us (corrections applied by user_employment_rehire).
   select coalesce(array_agg(x order by x), '{}'::uuid[]) into v_matches
-    from unnest(v_matches) x where coalesce(public.user_employment_rehire(x), 'yes') <> 'yes';
+    from unnest(v_candidates) x where coalesce(public.user_employment_rehire(x), 'yes') <> 'yes';
+  -- A person who came to share the identity after the candidate read (a phone edit committed in between) is not locked:
+  -- if any of them is restricted, the creator must look again ('rehire_match'), never a silent pass.
+  select coalesce(array_agg(u.id order by u.id), '{}'::uuid[]) into v_late
+    from public.users u
+   where u.id <> p_actor and not (u.id = any (v_locked))
+     and ((v_key is not null and public.user_admin_phone_key(u.phone) = v_key)
+       or (v_guid is not null and exists (select 1 from public.toast_employee_links t where t.user_id = u.id and t.employee_guid = v_guid)))
+     and coalesce(public.user_employment_rehire(u.id), 'yes') <> 'yes';
+  if cardinality(v_late) > 0 then raise exception 'rehire_match'; end if;
   if cardinality(v_matches) > 0 then
     -- The creator saw and confirmed EVERY match (the set confirmed must cover the set found).
     if not p_rehire_confirmed or not (v_matches <@ p_rehire_user_ids) then raise exception 'rehire_match'; end if;

@@ -46,7 +46,8 @@ describe("0279_user_employment_events", () => {
       "S12 the actor moved off the shop first → the create is refused → forbidden",
       "S13 a match the client OMITTED → rehire_match → rehire_match",
       "S13 the actor demoted between the check and the create → rehire_permission_required → rehire_permission_required",
-      "S13 a concurrent duplicate email (23505) on create → email_taken → email_taken", "S12 … and none of the refused creates inserted anyone", "PASS 0279:",
+      "S13 a concurrent duplicate email (23505) on create → email_taken → email_taken",
+      "S13 r2 a rehire setting flipped yes → no before the lock → the unconfirmed create is refused rehire_match → rehire_match", "S12 … and none of the refused creates inserted anyone", "PASS 0279:",
     ]) expect(out).toContain(s);
   }, 260_000);
 
@@ -82,6 +83,19 @@ describe("0279_user_employment_events", () => {
     expect((rest.match(/\bfor update;/g) ?? []).length).toBe(0);
     expect((rest.match(/\bfor share;/g) ?? []).length).toBe(1);
     expect((rest.match(/pg_advisory_xact_lock\(/g) ?? []).length).toBe(0);
+  });
+
+  it("Astra BC-007/004 r2: the create's identity candidates are NOT filtered on the rehire setting before the lock", () => {
+    const fn = src.slice(src.indexOf("create function public.admin_user_create("), src.indexOf("end $$;", src.indexOf("create function public.admin_user_create(")));
+    const beforeLock = fn.slice(fn.indexOf("THE IDENTITY CANDIDATES"), fn.indexOf("perform 1 from public.users where id = any (v_locked) order by id for share;"));
+    expect(beforeLock).toContain("into v_candidates");
+    expect(beforeLock).not.toContain("user_employment_rehire");
+    expect(fn).toContain("v_locked := array(select distinct x from unnest(array[p_actor] || v_candidates) x order by x);");
+    const afterLock = fn.slice(fn.indexOf("perform 1 from public.users where id = any (v_locked) order by id for share;"));
+    expect(afterLock).toContain("from unnest(v_candidates) x where coalesce(public.user_employment_rehire(x), 'yes') <> 'yes'");
+    // The rehire setting moves only through the employment writer, whose gate holds that person's row FOR UPDATE.
+    const writer = src.slice(src.indexOf("create function public.record_user_employment_event("), src.indexOf("end $$;", src.indexOf("create function public.record_user_employment_event(")));
+    expect(writer).toContain("v_ctx := public.user_admin_lock(p_actor, p_user);");
   });
 
   it("the table: deny-all RLS, no PostgREST grant, service_role SELECT only; every function service_role only", () => {
