@@ -7,9 +7,6 @@ import {SpinCanvas} from './SpinCanvas';
 
 export interface SheetShop {key:string;orderUrl:string;label:string;detail:string}
 export interface SheetSpin {frames:readonly string[];width:number;height:number;alt:string}
-/** A press with no end event (lost to the OS, a long hold) stops holding enhancement after this. */
-const PRESS_RELEASE_MS=1500;
-
 /** One order action for one sub: a button that opens a two-shop sheet. Before hydration
  * (and without JavaScript) it is the two native shop links instead. The drawn Crunchy Boi
  * keeps turning inside the sheet (loaded only while it is open; still under reduced motion
@@ -26,34 +23,46 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
     if(hydrated)return;
     const element=fallback.current;
     // The fallback's enhancement state, readable by tests: waiting → pending (queued for idle)
-    // → held (a press or keyboard focus is on a link) → gone (the button + sheet replaced it).
-    const mark=(state:'waiting'|'pending'|'held')=>{if(element)element.dataset.enhance=state;};
-    let idle:number|undefined,timer:ReturnType<typeof setTimeout>|undefined,settleTimer:ReturnType<typeof setTimeout>|undefined,safetyTimer:ReturnType<typeof setTimeout>|undefined;
+    // → held (a press or keyboard focus is on a link) → ending (that press is over; its click,
+    // if any, is still to come) → gone (the button + sheet replaced it).
+    const mark=(state:'waiting'|'pending'|'held'|'ending')=>{if(element)element.dataset.enhance=state;};
+    let idle:number|undefined,timer:ReturnType<typeof setTimeout>|undefined,afterClick:ReturnType<typeof setTimeout>|undefined;
     // Never swap the links out from under keyboard focus: wait until focus leaves them.
     let leave:((event:FocusEvent)=>void)|undefined;
-    // Never swap them out from under a finger or mouse either: a press on a link holds the swap
-    // until the gesture ends (its click has run, or it was cancelled), so the tap is never lost.
-    // An interrupted gesture (capture lost, app switched, window blurred, or no end at all
-    // within PRESS_RELEASE_MS) releases the hold too, so the links can never stay un-enhanced.
-    let pressed=false,held=false;
+    // Never swap them out from under a finger or mouse either. A press on a link holds the swap
+    // for as long as it is down — however long (a long press is still a press; elapsed time
+    // proves nothing). When it ends on the link (pointerup / the touch's lostpointercapture) the
+    // swap still waits for that gesture's click, which follows those events, then runs after the
+    // click has been dispatched. Anything that proves the press is over without a click releases
+    // at once: pointercancel, the page hidden, the window blurred — or, if no end event ever came,
+    // the next sign of life: a press or release elsewhere, a page scroll, focus moving elsewhere,
+    // the page shown again. No timer ever releases a press.
+    let phase:'idle'|'pressed'|'ending'='idle',held=false;
+    const outside=(event:Event)=>!(element&&event.target instanceof Node&&element.contains(event.target));
+    const onDocDown=(event:PointerEvent)=>{if(outside(event))release();};
+    const onDocUp=(event:PointerEvent)=>{if(outside(event))release();else end();};
+    const onFocusIn=(event:FocusEvent)=>{if(outside(event))release();};
     const listen=(on:boolean)=>{
-      if(on){window.addEventListener('pointerup',onUp,true);window.addEventListener('pointercancel',release,true);window.addEventListener('blur',release);document.addEventListener('visibilitychange',onVisibility);element?.addEventListener('lostpointercapture',onUp,true);}
-      else{window.removeEventListener('pointerup',onUp,true);window.removeEventListener('pointercancel',release,true);window.removeEventListener('blur',release);document.removeEventListener('visibilitychange',onVisibility);element?.removeEventListener('lostpointercapture',onUp,true);}
+      const method=on?'addEventListener':'removeEventListener';
+      document[method]('pointerdown',onDocDown as EventListener,true);document[method]('pointerup',onDocUp as EventListener,true);
+      document[method]('focusin',onFocusIn as EventListener,true);document[method]('visibilitychange',release);
+      window[method]('pointercancel',release,true);window[method]('blur',release);window[method]('scroll',release);
+      element?.[method]('lostpointercapture',end,true);
     };
     const release=()=>{
-      clearTimeout(settleTimer);clearTimeout(safetyTimer);listen(false);
-      if(!pressed)return;pressed=false;
+      clearTimeout(afterClick);
+      if(phase==='idle')return;
+      phase='idle';listen(false);
       if(held){held=false;swap();}
     };
-    const onVisibility=()=>{if(document.visibilityState==='hidden')release();};
-    // The click follows pointerup (and the touch's own lostpointercapture, which every touch ends
-    // with); settle after it — a press that ends off the link, or loses capture, gets no click.
-    const onUp=()=>{clearTimeout(settleTimer);settleTimer=setTimeout(release,700);};
-    const onClick=()=>{clearTimeout(settleTimer);settleTimer=setTimeout(release,0);};
-    const onDown=()=>{pressed=true;clearTimeout(settleTimer);clearTimeout(safetyTimer);safetyTimer=setTimeout(release,PRESS_RELEASE_MS);listen(true);};
+    // The press is over on the link: keep the links until its click (or the next sign of life).
+    const end=()=>{if(phase!=='pressed')return;phase='ending';if(held)mark('ending');};
+    // Swap only after the click's dispatch, so the link's own navigation is never cut off.
+    const onClick=()=>{if(phase==='idle')return;clearTimeout(afterClick);afterClick=setTimeout(release,0);};
+    const onDown=()=>{clearTimeout(afterClick);if(phase==='idle')listen(true);phase='pressed';if(held)mark('held');};
     element?.addEventListener('pointerdown',onDown,true);element?.addEventListener('click',onClick,true);
     const swap=()=>{
-      if(pressed){held=true;mark('held');return;}
+      if(phase!=='idle'){held=true;mark(phase==='pressed'?'held':'ending');return;}
       if(element&&element.contains(document.activeElement)){
         mark('held');
         if(leave)return;
@@ -67,7 +76,7 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
       if(typeof window.requestIdleCallback==='function')idle=window.requestIdleCallback(swap,{timeout:1000});
       else timer=setTimeout(swap,50);
     };
-    const stop=()=>{if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);clearTimeout(settleTimer);clearTimeout(safetyTimer);if(leave)element?.removeEventListener('focusout',leave);
+    const stop=()=>{if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);clearTimeout(afterClick);if(leave)element?.removeEventListener('focusout',leave);
       element?.removeEventListener('pointerdown',onDown,true);element?.removeEventListener('click',onClick,true);listen(false);};
     if(!element||typeof IntersectionObserver==='undefined'){enhance();return stop;}
     const near=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){near.disconnect();enhance();}},{rootMargin:'100% 0px'});
