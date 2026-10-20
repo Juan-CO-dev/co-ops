@@ -71,9 +71,8 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       <figcaption>{caption}</figcaption>
     </figure>
     {/* One constant box from the server render on: empty before hydration and until all six are
-        found, then the action. It never changes height (no layout shift). Without JS it is removed. */}
+        found, then the action. It never changes height (no layout shift). Without JS the page's noscript rule removes it. */}
     {cta&&<div className="landing-v4-guide-cta" data-guide-cta data-ready={mode!=='list'&&found}>{mode!=='list'&&found?cta:null}</div>}
-    {cta&&<noscript><style>{'.landing-v2 .landing-v4-guide-cta { display: none; }'}</style></noscript>}
     <svg aria-hidden="true" className="landing-v3-guide-lines">
       {fieldGuideAnchors.map((anchor,index)=>{
         const path=paths[anchor.id];if(!path||mode==='list')return null;

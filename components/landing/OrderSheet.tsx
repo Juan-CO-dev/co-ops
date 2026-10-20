@@ -23,15 +23,27 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
   useEffect(()=>{
     if(hydrated)return;
     let idle:number|undefined,timer:ReturnType<typeof setTimeout>|undefined;
+    // Never swap the links out from under keyboard focus: wait until focus leaves them.
+    let leave:((event:FocusEvent)=>void)|undefined;
+    const swap=()=>{
+      const element=fallback.current;
+      if(element&&element.contains(document.activeElement)){
+        if(leave)return;
+        leave=event=>{if(element.contains(event.relatedTarget as Node|null))return;element.removeEventListener('focusout',leave!);leave=undefined;swap();};
+        element.addEventListener('focusout',leave);return;
+      }
+      setHydrated(true);
+    };
     const enhance=()=>{
-      if(typeof window.requestIdleCallback==='function')idle=window.requestIdleCallback(()=>setHydrated(true),{timeout:1000});
-      else timer=setTimeout(()=>setHydrated(true),50);
+      if(typeof window.requestIdleCallback==='function')idle=window.requestIdleCallback(swap,{timeout:1000});
+      else timer=setTimeout(swap,50);
     };
     const element=fallback.current;
-    if(!element||typeof IntersectionObserver==='undefined'){enhance();return ()=>{if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);};}
+    const stop=()=>{if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);if(leave)element?.removeEventListener('focusout',leave);};
+    if(!element||typeof IntersectionObserver==='undefined'){enhance();return stop;}
     const near=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){near.disconnect();enhance();}},{rootMargin:'100% 0px'});
     near.observe(element);
-    return ()=>{near.disconnect();if(idle!==undefined)window.cancelIdleCallback(idle);clearTimeout(timer);};
+    return ()=>{near.disconnect();stop();};
   },[hydrated]);
   const dialog=useRef<HTMLDialogElement>(null),trigger=useRef<HTMLButtonElement>(null);
   const [open,setOpen]=useState(false);
