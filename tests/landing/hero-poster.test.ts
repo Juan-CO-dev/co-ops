@@ -56,7 +56,10 @@ describe('server-rendered hero poster', () => {
     expect(html).toContain(`<h1 id="hero-title"><span>${lines[0]}</span><span>\n${lines[1]}</span></h1>`);
     expect(html).toContain(serverT(language,'landing.hero.eyebrow'));
     expect(html).toContain(serverT(language,'landing.hero.body'));
-    expect(html).toContain(serverT(language,'landing.hero.foot'));
+    expect(html).toContain(serverT(language,'landing.hero.find-shop'));
+    expect(html).toContain('href="#shops"');
+    // Each hero order button carries its street from tenant config (v4).
+    for (const store of loadLandingConfig({}).stores) expect(html).toContain(store.street);
     expect(html).not.toMatch(/<video\b|opacity-0|visibility:\s*hidden|animate-/);
   });
 });

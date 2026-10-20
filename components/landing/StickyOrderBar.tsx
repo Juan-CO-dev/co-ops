@@ -12,6 +12,9 @@ export function StickyOrderBar({stores,labels}:Props) {
   const ref=useRef<HTMLElement>(null);
   const [visible,setVisible]=useState(false);
   const [minimized,setMinimized]=useState(false);
+  // While the docked consent notice is open (unanswered or reopened), the rail is only its two
+  // order buttons: no hint row, no toggle. The notice's wording and controls are untouched.
+  const [compact,setCompact]=useState(false);
   useEffect(()=>{
     setMinimized(stickyPreference.read());
     // Optional chrome stays inert when boundary observation is unavailable.
@@ -56,6 +59,7 @@ export function StickyOrderBar({stores,labels}:Props) {
     const noticeObserver=new IntersectionObserver(entries=>{noticeInView=entries.some(entry=>entry.isIntersecting);update();});
     if(notice)noticeObserver.observe(notice);
     const measure=()=>{
+      setCompact(notice?.dataset.flow==='false'&&notice.dataset.expanded==='true');
       const safeBottom=parseFloat(getComputedStyle(root).getPropertyValue('--landing-safe-bottom'))||0;
       const desktop=innerWidth>=MOBILE_BREAKPOINT;
       const height=rail.getBoundingClientRect().height;
@@ -78,10 +82,10 @@ export function StickyOrderBar({stores,labels}:Props) {
       for(const name of ['--landing-rail-height','--landing-header-rail-height','--landing-rail-bottom'])root.style.removeProperty(name);
     };
   },[stores.length]);
-  return <nav ref={ref} data-sticky-order data-minimized={minimized} data-visible={visible} inert={!visible} aria-hidden={!visible} aria-label={labels.name} className="landing-v2-sticky">
-    <div id="landing-sticky-heading" className="landing-v2-sticky-heading" hidden={minimized}><span>{labels.hint}</span><span aria-hidden="true" className="landing-v2-cta-accessory"/></div>
+  return <nav ref={ref} data-sticky-order data-minimized={minimized} data-compact={compact} data-visible={visible} inert={!visible} aria-hidden={!visible} aria-label={labels.name} className="landing-v2-sticky">
+    <div id="landing-sticky-heading" className="landing-v2-sticky-heading" hidden={minimized||compact}><span>{labels.hint}</span><span aria-hidden="true" className="landing-v2-cta-accessory"/></div>
     <div className="landing-v2-sticky-links">{stores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement="sticky" className="landing-v2-order">{store.label}</OrderLink>)}
-      <button type="button" aria-controls="landing-sticky-heading" aria-label={minimized?labels.restore:labels.minimize} aria-expanded={!minimized} onClick={()=>{const next=!minimized;stickyPreference.write(next);setMinimized(next);}}>{minimized?'+':'−'}</button>
+      <button type="button" hidden={compact} aria-controls="landing-sticky-heading" aria-label={minimized?labels.restore:labels.minimize} aria-expanded={!minimized} onClick={()=>{const next=!minimized;stickyPreference.write(next);setMinimized(next);}}>{minimized?'+':'−'}</button>
     </div>
   </nav>;
 }

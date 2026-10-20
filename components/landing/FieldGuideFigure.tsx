@@ -1,5 +1,5 @@
 "use client";
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {TexturePhoto} from './CraveScene';
 import {fieldGuideAnchors} from '@/lib/landing/crave-motion-shared';
 import {leaderPath} from '@/lib/landing/field-guide-shared';
@@ -7,14 +7,16 @@ import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
 
 type AnchorId=(typeof fieldGuideAnchors)[number]['id'];
 interface Pickup {src:string;width:number;height:number}
-interface Props {labels:Record<AnchorId,string>;groupLabel:string;counter:string;crossAlt:string;caption:string;pickups:Record<AnchorId,Pickup>}
+interface Props {labels:Record<AnchorId,string>;groupLabel:string;counter:string;crossAlt:string;caption:string;pickups:Record<AnchorId,Pickup>;
+  /** The order action shown once all six are found (static modes: at once). Its box is reserved, so nothing shifts. */
+  cta?:ReactNode}
 
 const STEP_MS=1100;
 
 /** Words (each with its pixel pickup) sit above the cross-section. On arrival one leader
  * line at a time draws from a word to its ingredient, holds, fades, and the word is
  * "collected". Reduced motion / Save-Data show every line at once; without JS the words stay a list. */
-export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pickups}:Props) {
+export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pickups,cta}:Props) {
   const root=useRef<HTMLDivElement>(null),photo=useRef<HTMLDivElement>(null);
   const words=useRef<Partial<Record<AnchorId,HTMLLIElement|null>>>({});
   const [paths,setPaths]=useState<Partial<Record<AnchorId,{d:string;x:number;y:number}>>>({});
@@ -51,6 +53,7 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
     return ()=>{resize.disconnect();observer.disconnect();clearTimeout(timer);unsubscribe();};
   },[]);
   const total=fieldGuideAnchors.length;
+  const found=mode==='static'||collected>=total;
   return <div ref={root} className="landing-v3-guide" data-guide-mode={mode}>
     <div role="group" aria-labelledby="field-guide-labels-title">
     <span id="field-guide-labels-title" className="sr-only">{groupLabel}</span>
@@ -67,6 +70,7 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       <div ref={photo}><TexturePhoto kind="crossSection" alt={crossAlt}/></div>
       <figcaption>{caption}</figcaption>
     </figure>
+    {cta&&mode!=='list'&&<div className="landing-v4-guide-cta" data-ready={found} inert={!found}>{cta}</div>}
     <svg aria-hidden="true" className="landing-v3-guide-lines">
       {fieldGuideAnchors.map((anchor,index)=>{
         const path=paths[anchor.id];if(!path||mode==='list')return null;
