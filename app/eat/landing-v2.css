@@ -284,6 +284,7 @@
 }
 /* While the consent notice is open the rail is only its two order buttons. */
 .landing-v2 .landing-v2-sticky[data-compact="true"] { padding-top: 4px; }
+.landing-v2 .landing-v2-sticky[data-compact="true"] :is(.landing-v2-sticky-heading, .landing-v2-sticky-links > button) { display: none; }
 .landing-v2 .landing-v2-sticky .landing-v2-order { font-size: .875rem; padding: 8px 6px; }
 /* Crunch story ends on one order action, below the pinned photos (never over them). */
 .landing-v2 .landing-v4-crave-cta { max-width: 480px; margin-top: 16px; }
@@ -294,7 +295,7 @@
 .landing-v2 .landing-v3-sheet li { display: grid; }
 /* Field Guide: all six found turns into the order action (reserved, so nothing shifts). */
 .landing-v2 .landing-v4-guide-cta { margin-top: 14px; }
-.landing-v2 .landing-v4-guide-cta[data-ready="false"] { visibility: hidden; }
+.landing-v2 .landing-v4-guide-cta[data-ready="false"] { min-height: 56px; }
 .landing-v2 .landing-v4-guide-cta .landing-v3-cta { margin-top: 0; }
 /* Shop cards sell first: one full-width order action under the hours. */
 .landing-v2 .landing-v4-today { margin-top: 4px; font-weight: 800; }

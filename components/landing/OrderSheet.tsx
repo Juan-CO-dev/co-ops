@@ -1,5 +1,5 @@
 "use client";
-import {useId,useRef,useState,useSyncExternalStore} from 'react';
+import {useEffect,useId,useRef,useState} from 'react';
 import type {LandingItem,LandingPlacement} from '@/lib/landing/tracking-schema-shared';
 import {hop} from '@/lib/landing/hop-shared';
 import {OrderLink} from './OrderLink';
@@ -7,14 +7,23 @@ import {SpinCanvas} from './SpinCanvas';
 
 export interface SheetShop {key:string;orderUrl:string;label:string;detail:string}
 export interface SheetSpin {frames:readonly string[];width:number;height:number;alt:string}
-const noSubscribe=()=>()=>{};
 
 /** One order action for one sub: a button that opens a two-shop sheet. Before hydration
  * (and without JavaScript) it is the two native shop links instead. The drawn Crunchy Boi
  * keeps turning inside the sheet (loaded only while it is open; still under reduced motion
  * or Save-Data). Every shop link is an ordinary outbound order link. */
-export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,spin,onOpen,className='landing-v3-cta'}:{shops:readonly SheetShop[];placement:LandingPlacement;item?:LandingItem;triggerLabel:string;title:string;closeLabel:string;spin?:SheetSpin;onOpen?:()=>void;className?:string}) {
-  const hydrated=useSyncExternalStore(noSubscribe,()=>true,()=>false);
+export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,spin,onOpen,className='landing-v3-cta',eager=false}:{shops:readonly SheetShop[];placement:LandingPlacement;item?:LandingItem;triggerLabel:string;title:string;closeLabel:string;spin?:SheetSpin;onOpen?:()=>void;className?:string;
+  /** Mounted only after the page is interactive (never server-rendered): start as the button. */
+  eager?:boolean}) {
+  // The button + sheet replace the native links when the main thread is idle, never inside
+  // the hydration task (keeps first-load blocking time down; the links work meanwhile).
+  const [hydrated,setHydrated]=useState(eager);
+  useEffect(()=>{
+    if(hydrated)return;
+    const enhance=()=>setHydrated(true);
+    if(typeof window.requestIdleCallback==='function'){const id=window.requestIdleCallback(enhance,{timeout:2000});return ()=>window.cancelIdleCallback(id);}
+    const id=setTimeout(enhance,200);return ()=>clearTimeout(id);
+  },[hydrated]);
   const dialog=useRef<HTMLDialogElement>(null),trigger=useRef<HTMLButtonElement>(null);
   const [open,setOpen]=useState(false);
   const titleId=useId();

@@ -70,7 +70,8 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       <div ref={photo}><TexturePhoto kind="crossSection" alt={crossAlt}/></div>
       <figcaption>{caption}</figcaption>
     </figure>
-    {cta&&mode!=='list'&&<div className="landing-v4-guide-cta" data-ready={found} inert={!found}>{cta}</div>}
+    {/* The action mounts only once all six are found; until then its box is reserved (no shift). */}
+    {cta&&mode!=='list'&&<div className="landing-v4-guide-cta" data-ready={found}>{found?cta:null}</div>}
     <svg aria-hidden="true" className="landing-v3-guide-lines">
       {fieldGuideAnchors.map((anchor,index)=>{
         const path=paths[anchor.id];if(!path||mode==='list')return null;

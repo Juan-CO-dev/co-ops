@@ -13,5 +13,5 @@ export function CrunchyOrder({language,stores,placement,label,now}:{language:Lan
   if(!crunchy||!stores.length)return null;
   const shops=stores.map(store=>({key:store.key,orderUrl:store.orderUrl,label:serverT(language,'landing.order',{shop:store.orderLabel}),detail:orderDetail(store,language,now).line}));
   return <OrderSheet shops={shops} placement={placement} item="crunchy-boi" triggerLabel={label} title={serverT(language,'landing.lineup.sheet-title',{name:crunchy.name})}
-    closeLabel={serverT(language,'landing.lineup.close')} spin={{...spinMedia,alt:serverT(language,'landing.lineup.photo',{name:crunchy.name})}}/>;
+    closeLabel={serverT(language,'landing.lineup.close')} eager={placement==='guide'} spin={{...spinMedia,alt:serverT(language,'landing.lineup.photo',{name:crunchy.name})}}/>;
 }
