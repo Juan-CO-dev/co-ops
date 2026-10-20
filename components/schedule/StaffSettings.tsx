@@ -2,8 +2,11 @@
 /**
  * Staff schedule settings (spec §5.3, §5.5; plan Task 24; mockup v17 "Staff skills, work types…" and "Leader shifts"):
  * one summary row per person (a full-row toggle, single-expand — D7, D8); the drawer edits their work type and what
- * else they may work, the leader setting (Opens only / Closes only / Mix / the role's default), preferred cover
- * positions ORDERED with ↑ ↓ × (44 px), the soft weekly range, full-timer and its minimum, and — only for a role that is
+ * else they may work, the leader setting (Opens only / Closes only / Mix / the role's default), the ORDERED position list
+ * with ↑ ↓ × (44 px) — Juan 2026-10-20: for everyone below shift lead it is "Positions (in order)": #1 Primary, #2
+ * Secondary, the rest "Can flex to", checked against the work type before any post (`positionListProblems`, the save
+ * path's own rule), with a "Use <position>" button when Toast suggests a primary (never saved on its own); for a manager
+ * it stays their preferred cover positions, unchanged — the soft weekly range, full-timer and its minimum, and — only for a role that is
  * off the floor schedule by default (the prep or catering manager; never the CGS or social media manager, who are not
  * listed) — "Include on the schedule". Save posts `{action: person}` (no step-up; audited). A drawer with unsaved work
  * stays open (D10).
@@ -12,19 +15,25 @@ import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { PersonSettingsRow } from "@/lib/scheduling/people-input-shared";
+import { defaultWorkType, type PersonSettingsRow } from "@/lib/scheduling/people-input-shared";
+import { hasPositionRank, positionListProblems, positionSlotOf } from "@/lib/scheduling/position-rank-shared";
 import { personBody, type SettingsMember } from "@/lib/scheduling/settings-view-shared";
+import type { PositionRole } from "@/lib/scheduling/structure-shared";
 import { scheduleErrorKey } from "./schedule-errors";
 import { BUTTON, Check, Fields, GHOST, NumField } from "./settings-fields";
 import { useBoardLine } from "./use-board-line";
 
 const empty = (userId: string): PersonSettingsRow => ({ userId, workType: null, alsoAllowed: [], leaderSetting: null, coverPositions: [], softMinH: null, softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: null });
 
-export function StaffSettings({ locationId, members, positions, names, initialPerson = null, onDirty }: {
+type PositionLabels = Record<string, { name: string; nameEs: string | null; role?: PositionRole }>;
+
+export function StaffSettings({ locationId, members, positions, names, rolesKnown = false, initialPerson = null, onDirty }: {
   locationId: string;
   members: SettingsMember[];
-  positions: Record<string, { name: string; nameEs: string | null }>;
+  positions: PositionLabels;
   names: Record<string, string>;
+  /** The positions' roles are known (the structure is saved): the primary / secondary work-type check runs. */
+  rolesKnown?: boolean;
   /** SSR tests only: the drawer open on this person. */
   initialPerson?: string | null;
   onDirty?: (dirty: boolean) => void;
@@ -47,7 +56,7 @@ export function StaffSettings({ locationId, members, positions, names, initialPe
               <span aria-hidden="true" className="text-co-text-dim">{isOpen ? "⌃" : "⌄"}</span>
             </button>
             {isOpen ? (
-              <PersonEditor locationId={locationId} member={m} positions={positions} names={names}
+              <PersonEditor locationId={locationId} member={m} positions={positions} names={names} rolesKnown={rolesKnown}
                 onDirty={(d) => { setDirtyOf(d ? m.userId : null); onDirty?.(d); }} />
             ) : null}
           </li>
@@ -57,11 +66,12 @@ export function StaffSettings({ locationId, members, positions, names, initialPe
   );
 }
 
-function PersonEditor({ locationId, member, positions, names, onDirty }: {
+function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirty }: {
   locationId: string;
   member: SettingsMember;
-  positions: Record<string, { name: string; nameEs: string | null }>;
+  positions: PositionLabels;
   names: Record<string, string>;
+  rolesKnown: boolean;
   onDirty: (dirty: boolean) => void;
 }) {
   const { t, position } = useBoardLine({ names, positions });
@@ -85,6 +95,13 @@ function PersonEditor({ locationId, member, positions, names, onDirty }: {
     setDirty(false); onDirty(false);
     router.refresh();
   }
+  // Juan 2026-10-20: below shift lead the list is Primary / Secondary / Can flex to; a manager's is their cover order.
+  const ranked = hasPositionRank(member);
+  const roles: Record<string, PositionRole> = {};
+  if (rolesKnown) for (const [pid, p] of Object.entries(positions)) if (p.role) roles[pid] = p.role;
+  const problems = ranked ? positionListProblems({ role: member.role, workType: s.workType ?? defaultWorkType(member.role), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles) : [];
+  const slotLabel = (i: number) => t(`schedule.settings.staff.slot_${positionSlotOf(i)}` as TranslationKey);
+  const suggestion = ranked && s.coverPositions.length === 0 && member.suggestedPrimary && positions[member.suggestedPrimary.positionId] ? member.suggestedPrimary : null;
   const move = (i: number, by: -1 | 1) => edit((x) => { const a = x.coverPositions; const j = i + by; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j]!, a[i]!]; });
   const iconBtn = "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-60";
   return (
@@ -120,12 +137,24 @@ function PersonEditor({ locationId, member, positions, names, onDirty }: {
           ))}
         </div>
       </div>
-      <div className="grid gap-1">
-        <span className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("schedule.settings.staff.cover")}</span>
-        <ol className="grid gap-1">
+      <div className="grid gap-1" data-position-list={ranked ? "ranked" : "cover"}>
+        <span id={`${id}-pos`} className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t(ranked ? "schedule.settings.staff.cover" : "schedule.settings.staff.cover_manager")}</span>
+        {ranked ? <p className="text-xs text-co-text-muted">{t("schedule.settings.staff.cover_help")}</p> : null}
+        {suggestion ? (
+          <div className="flex flex-wrap items-center gap-2" data-toast-suggestion={suggestion.positionId}>
+            <button type="button" className={GHOST} onClick={() => edit((x) => { x.coverPositions = [suggestion.positionId]; })}>
+              {t("schedule.settings.staff.toast_suggest", { position: position(suggestion.positionId) })}
+            </button>
+            <span className="text-xs text-co-text-muted">{t("schedule.settings.staff.toast_suggest_help", { job: suggestion.jobName })}</span>
+          </div>
+        ) : null}
+        <ol className="grid gap-1" aria-labelledby={`${id}-pos`}>
           {s.coverPositions.map((p, i) => (
-            <li key={p} className="flex flex-wrap items-center gap-2 text-sm text-co-text">
-              <span className="min-w-[8rem] flex-1">{i + 1}. {position(p)}</span>
+            <li key={p} data-position-slot={ranked ? positionSlotOf(i) : "cover"} className="flex flex-wrap items-center gap-2 text-sm text-co-text">
+              <span className="min-w-[8rem] flex-1">
+                {ranked ? <span className="mr-2 text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{slotLabel(i)}</span> : null}
+                {i + 1}. {position(p)}
+              </span>
               <button type="button" data-cover-act="up" className={iconBtn} disabled={i === 0} aria-label={t("schedule.settings.staff.cover_up", { position: position(p) })} onClick={() => move(i, -1)}>↑</button>
               <button type="button" data-cover-act="down" className={iconBtn} disabled={i === s.coverPositions.length - 1} aria-label={t("schedule.settings.staff.cover_down", { position: position(p) })} onClick={() => move(i, 1)}>↓</button>
               <button type="button" data-cover-act="remove" className={iconBtn} aria-label={t("schedule.settings.staff.cover_remove", { position: position(p) })} onClick={() => edit((x) => { x.coverPositions = x.coverPositions.filter((y) => y !== p); })}>×</button>
@@ -139,6 +168,11 @@ function PersonEditor({ locationId, member, positions, names, onDirty }: {
           </select>
           <button type="button" className={GHOST} disabled={!adding} onClick={() => { edit((x) => { x.coverPositions = [...x.coverPositions, adding]; }); setAdding(""); }}>{t("schedule.settings.staff.cover_add")}</button>
         </div>
+        {problems.length > 0 ? (
+          <ul role="alert" data-position-problems className="grid gap-1 text-sm font-bold text-co-cta-text">
+            {problems.map((pr) => <li key={pr.slot}>{t("schedule.settings.staff.problem_work_type", { slot: slotLabel(pr.slot === "primary" ? 0 : 1), position: position(pr.positionId) })}</li>)}
+          </ul>
+        ) : null}
       </div>
       <div className="grid gap-1">
         <span className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("schedule.settings.staff.soft_range")}</span>
@@ -156,7 +190,7 @@ function PersonEditor({ locationId, member, positions, names, onDirty }: {
       ) : null}
       {error ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(scheduleErrorKey(error))}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={BUTTON} disabled={busy || !dirty} onClick={save}>{t("schedule.settings.save")}</button>
+        <button type="button" className={BUTTON} disabled={busy || !dirty || problems.length > 0} onClick={save}>{t("schedule.settings.save")}</button>
         {dirty ? <span className="text-xs font-bold text-co-warning-text">{t("schedule.settings.unsaved")}</span> : null}
       </div>
       <span data-person-editor-end hidden />

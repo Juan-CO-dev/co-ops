@@ -10,6 +10,7 @@ import type { SkillTunables } from "@/lib/people/tunables-shared";
 import type { PositionLabel } from "./board-view-shared";
 import type { ScheduleShopSettings } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
+import type { ToastPrimarySuggestion } from "./position-rank-shared";
 import { validScheduleStructure, type ScheduleStructure, type SeededFrom } from "./structure-shared";
 import { Q_PER_DAY, addDays, isoWeekStart, qToWall, wallToQ } from "./time-shared";
 
@@ -36,6 +37,11 @@ export interface SettingsMember {
   settings: PersonSettingsRow | null;
   /** Their role is off the floor schedule by default (prep / catering manager): "Include on the schedule" is offered. */
   includeOffered: boolean;
+  /**
+   * Juan 2026-10-20: a suggested PRIMARY from their most-worked Toast job (last 8 weeks) — only when they have a Toast
+   * link, no primary yet, and a confident match to one of the shop's positions. A button, never saved on its own.
+   */
+  suggestedPrimary?: ToastPrimarySuggestion | null;
 }
 
 export interface SettingsPin { id: string; date: string; userId: string; startQ: number; endQ: number; positions: string[]; kind: "presence" | "added" }
@@ -50,6 +56,11 @@ export interface ScheduleSettingsView {
   closing: { measuredMinutes: number | null; samples: number };
   stationAdvisory: NarrativeLine[];
   positions: Record<string, PositionLabel>;
+  /**
+   * Juan 2026-10-20: the positions' roles are KNOWN (the structure is saved). Before that every position reads as a line
+   * position, so the primary / secondary work-type check is not made (the save path skips it too).
+   */
+  positionRolesKnown?: boolean;
   names: Record<string, string>;
   members: SettingsMember[];
   /** MoO / Owner (presence only): the "in today" toggles. */
