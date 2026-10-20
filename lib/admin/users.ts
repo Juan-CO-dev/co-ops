@@ -24,8 +24,8 @@ import { employmentViewFor, mayProceedPastRehire, type EmploymentView } from "./
 import { findRehireMatches, loadEmploymentStates, stateOf, type RehireMatch } from "./employment";
 import { linkToastEmployee, LinkError } from "@/lib/toast/employee-links";
 import {
-  setUserActiveCall, setUserCredentialCall, setUserDormantCall, setUserLocationsCall, setUserRoleCall, updateUserProfileCall,
-  USER_ADMIN_RPC_ERRORS,
+  createUserCall, setUserActiveCall, setUserCredentialCall, setUserDormantCall, setUserLocationsCall, setUserRoleCall, updateUserProfileCall,
+  USER_ADMIN_BUSY_SQLSTATES, USER_ADMIN_RPC_ERRORS,
 } from "./user-admin-rpc-shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { lastClockIns, clockInsByUser } from "./dormancy";
@@ -216,6 +216,8 @@ async function userAdminRpc(sb: SupabaseClient, call: { fn: string; args: Record
   const { data, error } = await sb.rpc(call.fn, call.args);
   if (error) {
     if (error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message)) throw new AdminUserError(503, "user_admin_unavailable");
+    // The lock order makes a deadlock impossible by construction; a residual one (or a lock timeout) is named, never a 500.
+    if (error.code && USER_ADMIN_BUSY_SQLSTATES.includes(error.code)) throw new AdminUserError(409, "user_admin_busy");
     const known = USER_ADMIN_RPC_ERRORS[error.message];
     if (known) throw new AdminUserError(known.status, known.code);
     throw new Error(`${call.fn} failed: ${error.code ?? "unknown"}`);
@@ -319,26 +321,11 @@ export async function createUser(actor: AuthContext, input: CreateUserInput): Pr
   const pinHash = await hashPin(input.tempPin);
   const passwordHash = emailAuth ? await hashPassword(input.tempPassword as string) : null;
 
-  const { data: row, error: insErr } = await sb
-    .from("users")
-    .insert({
-      name, email, role, active: true,
-      email_verified: emailAuth,
-      email_verified_at: emailAuth ? new Date().toISOString() : null,
-      pin_hash: pinHash, password_hash: passwordHash,
-      phone,
-      created_by: actor.user.id,
-    })
-    .select("id").maybeSingle<{ id: string }>();
-  if (insErr) throw new Error(`createUser insert failed: ${insErr.message}`);
-  if (!row) throw new Error("createUser insert returned no row");
-
-  if (locationIds.length > 0) {
-    const { error: locErr } = await sb.from("user_locations").insert(
-      locationIds.map((location_id) => ({ user_id: row.id, location_id, assigned_by: actor.user.id, active: true })),
-    );
-    if (locErr) throw new Error(`createUser user_locations insert failed: ${locErr.message}`);
-  }
+  // ONE transaction in 0279 (Astra BC-007/004): the actor's row locked FOR SHARE and the actor rule re-checked on it (a
+  // demotion, deactivation or shop removal that committed while the hashes were computed refuses the create), then the
+  // user row (hashes only) and every membership. No fallback: without 0279 → user_admin_unavailable (503).
+  const created = await userAdminRpc(sb, createUserCall({ actorId: actor.user.id, name, role, email, phone, pinHash, passwordHash, locationIds }));
+  const row = { id: String(created.id) };
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role, action: "user.create",

@@ -106,6 +106,13 @@ function client() {
     if (fn.startsWith("admin_user_")) {
       if (missing0279) return chain({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } });
       // The locked writer's refusal is proved in PGlite; here it stores what the lib sends.
+      if (fn === "admin_user_create") {
+        const nid = id(400 + mocks.rpcCalls.length);
+        tables.users!.push({ id: nid, name: String(args.p_name).trim(), email: args.p_email, role: args.p_role, active: true, last_login_at: null,
+          phone: args.p_phone, email_verified: false, created_at: "2026-10-20T00:00:00Z", created_by: args.p_actor, locked_until: null, dormant_at: null });
+        for (const l of args.p_locations as string[]) tables.user_locations!.push({ user_id: nid, location_id: l, active: true });
+        return chain({ data: { id: nid }, error: null });
+      }
       const u = tables.users!.find((x) => x.id === args.p_user)!;
       if (fn === "admin_user_set_active") u.active = args.p_active;
       if (fn === "admin_user_set_credential") u[args.p_kind === "pin" ? "pin_hash" : "password_hash"] = args.p_hash;
@@ -267,6 +274,8 @@ describe("the employment route (Tier B, the head, the transitions, the rehire au
     const act = await json(await activatePost(req(`/api/admin/users/${LEAVE_A}/activate`, {}), params(LEAVE_A)));
     expect(act).toMatchObject({ status: 503, body: { code: "user_admin_unavailable" } });
     expect((await json(await resetPinPost(req(`/api/admin/users/${EMP_A}/reset-pin`, { pin: "1234" }), params(EMP_A)))).body.code).toBe("user_admin_unavailable");
+    const created = await json(await createPost(req("/api/admin/users", { name: "New", role: "employee", tempPin: "1234", email: null, tempPassword: null, locationIds: [A] })));
+    expect(created).toMatchObject({ status: 503, body: { code: "user_admin_unavailable" } });
   });
   it("every user-admin write goes through the locked 0279 writer with the lib's exact arguments (the hash, never the PIN)", async () => {
     as(GM_A);
@@ -278,6 +287,23 @@ describe("the employment route (Tier B, the head, the transitions, the rehire au
     expect(String(fns[0]!.args.p_hash)).not.toContain("4321");
     expect(String(fns[0]!.args.p_hash).length).toBeGreaterThan(20);
     expect(fns[1]!.args).toEqual({ p_actor: GM_A, p_user: EMP_A, p_active: false });
+  });
+  it("Add user is ONE locked writer call (the hashes, never the PIN); a lock refusal is the named user_admin_busy", async () => {
+    as(GM_A);
+    const r = await json(await createPost(req("/api/admin/users", { name: "Rosa", role: "employee", tempPin: "2468", email: null, tempPassword: null, locationIds: [A], phone: "202-555-0123" })));
+    expect(r.status).toBe(201);
+    const calls = mocks.rpcCalls.filter((c) => c.fn === "admin_user_create");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args).toMatchObject({ p_actor: GM_A, p_name: "Rosa", p_role: "employee", p_email: null, p_phone: "202-555-0123", p_password_hash: null, p_locations: [A] });
+    expect(String(calls[0]!.args.p_pin_hash)).not.toContain("2468");
+    expect(tables.user_locations!.filter((m) => m.user_id === r.body.userId)).toHaveLength(1);
+    // A residual deadlock / lock timeout from the writer is named, never a 500.
+    const c = mocks.client as { rpc: (fn: string, args: Record<string, unknown>) => unknown };
+    const origRpc = c.rpc;
+    c.rpc = (fn: string, args: Record<string, unknown>) => fn.startsWith("admin_user_")
+      ? { then: (res: (v: unknown) => unknown) => Promise.resolve({ data: null, error: { code: "40P01", message: "deadlock detected" } }).then(res) }
+      : origRpc(fn, args);
+    expect(await json(await resetPinPost(req(`/api/admin/users/${EMP_A}/reset-pin`, { pin: "1234" }), params(EMP_A)))).toMatchObject({ status: 409, body: { code: "user_admin_busy" } });
   });
 });
 

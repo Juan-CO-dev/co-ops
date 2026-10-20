@@ -6343,6 +6343,7 @@
   "admin.users.error.target_outside_shop": "Esta persona también trabaja en una tienda que no manejas.",
   "admin.users.error.employment_unavailable": "Esto todavía no está disponible.",
   "admin.users.error.user_admin_unavailable": "La gestión de usuarios no está disponible ahora. Inténtalo otra vez en un minuto.",
+  "admin.users.error.user_admin_busy": "Alguien más está cambiando a esta persona ahora mismo. Inténtalo otra vez en un momento.",
   "admin.users.error.use_back_from_leave": "Esta persona está de permiso. Usa Regresó del permiso.",
   "admin.users.error.use_rehire": "Esta persona está de baja. Usa Recontratar.",
   "admin.users.error.rehire_match": "Puede que esta persona ya haya trabajado aquí. Revisa abajo.",

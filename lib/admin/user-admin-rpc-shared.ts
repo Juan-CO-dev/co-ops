@@ -28,6 +28,16 @@ export const setUserDormantCall = (a: { actorId: string; userId: string; dormant
 export const updateUserProfileCall = (a: { actorId: string; userId: string; patch: { name?: string; phone?: string | null; email?: string | null } }) =>
   ({ fn: "admin_user_update_profile", args: { p_actor: a.actorId, p_user: a.userId, p_patch: { ...a.patch } } }) as const;
 
+/** Add user in ONE transaction (Astra BC-007/004): the actor re-checked under its row lock, the user and every membership. */
+export const createUserCall = (a: {
+  actorId: string; name: string; role: string; email: string | null; phone: string | null; pinHash: string; passwordHash: string | null;
+  locationIds: readonly string[];
+}) => ({ fn: "admin_user_create", args: { p_actor: a.actorId, p_name: a.name, p_role: a.role, p_email: a.email, p_phone: a.phone,
+  p_pin_hash: a.pinHash, p_password_hash: a.passwordHash, p_locations: [...a.locationIds] } }) as const;
+
+/** Postgres lock refusals that are not a rule: a deadlock victim (40P01) or a lock not available (55P03). */
+export const USER_ADMIN_BUSY_SQLSTATES: readonly string[] = ["40P01", "55P03"];
+
 /** 0279's named refusals for the user-admin writers → the HTTP status and the code the screen knows. */
 export const USER_ADMIN_RPC_ERRORS: Readonly<Record<string, { status: number; code: string }>> = {
   invalid_payload: { status: 400, code: "invalid_payload" },
@@ -40,4 +50,6 @@ export const USER_ADMIN_RPC_ERRORS: Readonly<Record<string, { status: number; co
   dormancy_changed: { status: 409, code: "dormancy_changed" },
   invalid_name: { status: 400, code: "invalid_name" },
   email_taken: { status: 409, code: "email_taken" },
+  email_required: { status: 400, code: "email_required" },
+  password_required: { status: 400, code: "password_required" },
 };

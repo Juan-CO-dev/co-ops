@@ -26,6 +26,7 @@ import {
   type EmploymentEventKind, type EmploymentView, type RehireSetting,
 } from "./employment-shared";
 import { AdminUserError, loadActionableTarget } from "./users";
+import { USER_ADMIN_BUSY_SQLSTATES } from "./user-admin-rpc-shared";
 
 export { employmentAvailable, loadEmploymentStates, stateOf, type EmploymentStates } from "./employment-read";
 import { ID_CHUNK, loadEmploymentStates, peopleWithEvents, stateOf } from "./employment-read";
@@ -94,6 +95,7 @@ export async function recordEmployment(actor: AuthContext, userId: string, input
   const { data, error } = await sb.rpc(call.fn, call.args);
   if (error) {
     if (error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message)) throw new AdminUserError(503, "employment_unavailable");
+    if (error.code && USER_ADMIN_BUSY_SQLSTATES.includes(error.code)) throw new AdminUserError(409, "user_admin_busy");
     const known = RPC_CODES[error.message];
     if (known) throw new AdminUserError(known.status, known.code);
     throw new Error(`recordEmployment failed: ${error.code ?? "unknown"}`);

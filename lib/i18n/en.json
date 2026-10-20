@@ -6343,6 +6343,7 @@
   "admin.users.error.target_outside_shop": "This person also works at a shop you don't manage.",
   "admin.users.error.employment_unavailable": "This isn't available yet.",
   "admin.users.error.user_admin_unavailable": "User management isn't available right now. Try again in a minute.",
+  "admin.users.error.user_admin_busy": "Someone else is changing this person right now. Try again in a moment.",
   "admin.users.error.use_back_from_leave": "This person is on leave. Use Back from leave.",
   "admin.users.error.use_rehire": "This person is separated. Use Rehire.",
   "admin.users.error.rehire_match": "This person may have worked here before. Check below.",

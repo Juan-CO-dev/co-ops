@@ -6,3 +6,5 @@ alter table public.users add column if not exists email text, add column if not 
   add column if not exists dormant_at timestamptz, add column if not exists dormant_by uuid;
 alter table public.user_locations add column if not exists assigned_by uuid;
 create table if not exists public.sessions (id uuid primary key default gen_random_uuid(), user_id uuid not null references public.users(id), revoked_at timestamptz);
+alter table public.users add column if not exists email_verified boolean not null default false,
+  add column if not exists email_verified_at timestamptz, add column if not exists created_by uuid;

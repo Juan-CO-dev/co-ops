@@ -12,7 +12,7 @@ import {
   REHIRE_SETTINGS, SEPARATION_TYPES,
 } from "@/lib/admin/employment-shared";
 import {
-  setUserActiveCall, setUserCredentialCall, setUserDormantCall, setUserLocationsCall, setUserRoleCall, updateUserProfileCall, USER_ADMIN_RPC_ERRORS,
+  createUserCall, setUserActiveCall, setUserCredentialCall, setUserDormantCall, setUserLocationsCall, setUserRoleCall, updateUserProfileCall, USER_ADMIN_RPC_ERRORS,
 } from "@/lib/admin/user-admin-rpc-shared";
 import { ROLES } from "@/lib/roles";
 
@@ -40,7 +40,10 @@ describe("0279_user_employment_events", () => {
       "S9 a promotion to GM committed first → the GM's password write is refused → forbidden",
       "S9 a second shop committed first → the GM's PIN write is refused → target_outside_shop",
       "S10 a separation committed after the screen read 'active' → the activation is refused use_rehire → use_rehire",
-      "S10 … users.active stays false (login not restored)", "PASS 0279:",
+      "S10 … users.active stays false (login not restored)",
+      "S12 the gate locks the two users rows in SORTED id order (lower first; target FOR UPDATE, actor FOR SHARE), one advisory lock, checks after",
+      "S12 the actor demoted first → the create is refused → forbidden", "S12 the actor deactivated first → the create is refused → forbidden",
+      "S12 the actor moved off the shop first → the create is refused → forbidden", "S12 … and none of the refused creates inserted anyone", "PASS 0279:",
     ]) expect(out).toContain(s);
   }, 260_000);
 
@@ -60,6 +63,22 @@ describe("0279_user_employment_events", () => {
     const fn = src.slice(src.indexOf("create function public.user_admin_role_level("), src.indexOf("$$;", src.indexOf("create function public.user_admin_role_level(")));
     const sql = Object.fromEntries([...fn.matchAll(/when '([a-z_]+)' then (\d+)/g)].map((m) => [m[1], Number(m[2])]));
     expect(sql).toEqual(Object.fromEntries(Object.values(ROLES).map((r) => [r.code, r.level])));
+    // admin_user_create's email-auth rule (level 6 and up) is lib/roles.ts hasEmailAuth.
+    for (const r of Object.values(ROLES)) expect(r.hasEmailAuth, r.code).toBe(r.level >= 6);
+  });
+
+  it("THE LOCK ORDER (Astra BC-042/040): the gate takes one advisory lock, then the two users rows in sorted id order", () => {
+    const gate = src.slice(src.indexOf("create function public.user_admin_lock("), src.indexOf("end $$;", src.indexOf("create function public.user_admin_lock(")));
+    expect((gate.match(/pg_advisory_xact_lock/g) ?? []).length).toBe(1);
+    const locks = [...gate.matchAll(/where id = (p_actor|p_user) for (share|update)/g)].map((m) => `${m[1]} ${m[2]}`);
+    expect(locks).toEqual(["p_actor share", "p_user update", "p_user update", "p_actor share"]);
+    expect(gate).toMatch(/if p_actor < p_user then\s+select[^;]+p_actor for share;[\s\S]*?else\s+select[^;]+p_user for update;/);
+    // No other function takes a users row lock or an advisory lock of its own (all go through the gate); the creation
+    // writer locks only its actor (one row: no order to get wrong).
+    const rest = src.replace(gate, "");
+    expect((rest.match(/\bfor update;/g) ?? []).length).toBe(0);
+    expect((rest.match(/\bfor share;/g) ?? []).length).toBe(1);
+    expect((rest.match(/pg_advisory_xact_lock\(/g) ?? []).length).toBe(0);
   });
 
   it("the table: deny-all RLS, no PostgREST grant, service_role SELECT only; every function service_role only", () => {
@@ -70,7 +89,8 @@ describe("0279_user_employment_events", () => {
     for (const sig of ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "user_admin_role_level(text)", "user_admin_lock(uuid, uuid)",
       "user_employment_status(uuid)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)", "admin_user_set_active(uuid, uuid, boolean)",
       "admin_user_set_credential(uuid, uuid, text, text)", "admin_user_set_role(uuid, uuid, text)", "admin_user_set_locations(uuid, uuid, uuid[])",
-      "admin_user_set_dormant(uuid, uuid, boolean, timestamptz)", "admin_user_update_profile(uuid, uuid, jsonb)"]) {
+      "admin_user_set_dormant(uuid, uuid, boolean, timestamptz)", "admin_user_update_profile(uuid, uuid, jsonb)",
+      "admin_user_create(uuid, text, text, text, text, text, text, uuid[])"]) {
       expect(src).toContain(`revoke all on function public.${sig} from public, anon, authenticated;`);
       expect(src).toContain(`grant execute on function public.${sig} to service_role;`);
     }
@@ -89,10 +109,12 @@ describe("0279_user_employment_events", () => {
       [setUserLocationsCall({ actorId: "a", userId: "u", locationIds: [] }), "p_actor uuid, p_user uuid, p_locations uuid[]"],
       [setUserDormantCall({ actorId: "a", userId: "u", dormant: true, expectedDormantAt: null }), "p_actor uuid, p_user uuid, p_dormant boolean, p_expected timestamptz"],
       [updateUserProfileCall({ actorId: "a", userId: "u", patch: {} }), "p_actor uuid, p_user uuid, p_patch jsonb"],
+      [createUserCall({ actorId: "a", name: "n", role: "employee", email: null, phone: null, pinHash: "h", passwordHash: null, locationIds: [] }),
+        "p_actor uuid, p_name text, p_role text, p_email text, p_phone text, p_pin_hash text,\n  p_password_hash text, p_locations uuid[]"],
     ];
     for (const [call, params] of sigs) {
       expect(src).toContain(`create function public.${call.fn}(${params})`);
-      expect(Object.keys(call.args).join(", ")).toBe(params.split(", ").map((p) => p.split(" ")[0]).join(", "));
+      expect(Object.keys(call.args).join(", ")).toBe(params.split(/,\s*/).map((p) => p.trim().split(" ")[0]).join(", "));
     }
   });
 });

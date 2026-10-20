@@ -34,6 +34,9 @@
  *   S10 Astra BC-007 — Activate vs a separation: the screen read "active", the separation commits, the activation then
  *       runs → `use_rehire`, users.active stays false; on leave → `use_back_from_leave`; a plain deactivation revokes the
  *       sessions in the same transaction and can be activated back
+ *   S12 Astra BC-007/004 — Add user in ONE transaction under the ACTOR's row lock: a demotion, a deactivation and a shop
+ *       removal of the actor committed before the create each refuse it (nothing inserted); the happy path inserts the
+ *       user (hashes only, email lowercased) and every membership together; the lock statements follow SORTED id order
  *   S11 the role / location / dormancy / profile writers: below the actor only, own shops only (a GM never leaves the
  *       person with none), memberships elsewhere left alone, the dormancy compare-and-set, a taken email, sessions revoked
  */
@@ -41,7 +44,7 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { employmentStateOf, recordEmploymentEventCall } from "../lib/admin/employment-core-shared.ts";
 import {
-  setUserActiveCall, setUserCredentialCall, setUserDormantCall, setUserLocationsCall, setUserRoleCall, updateUserProfileCall,
+  createUserCall, setUserActiveCall, setUserCredentialCall, setUserDormantCall, setUserLocationsCall, setUserRoleCall, updateUserProfileCall,
 } from "../lib/admin/user-admin-rpc-shared.ts";
 
 const read = (p) => readFileSync(p, "utf8");
@@ -67,7 +70,8 @@ async function base({ cols = true, sessionsOnly = false } = {}) {
 const FNS = ["user_employment_json_date(jsonb, text)", "user_employment_text(jsonb, text, integer)", "user_admin_role_level(text)", "user_admin_lock(uuid, uuid)",
   "user_employment_status(uuid)", "record_user_employment_event(uuid, uuid, uuid, text, jsonb)", "admin_user_set_active(uuid, uuid, boolean)",
   "admin_user_set_credential(uuid, uuid, text, text)", "admin_user_set_role(uuid, uuid, text)", "admin_user_set_locations(uuid, uuid, uuid[])",
-  "admin_user_set_dormant(uuid, uuid, boolean, timestamptz)", "admin_user_update_profile(uuid, uuid, jsonb)"];
+  "admin_user_set_dormant(uuid, uuid, boolean, timestamptz)", "admin_user_update_profile(uuid, uuid, jsonb)",
+  "admin_user_create(uuid, text, text, text, text, text, text, uuid[])"];
 
 const db = await base();
 async function rpc(call) {
@@ -353,6 +357,42 @@ try {
   const row1 = (await db.query("select name, email from public.users where id = $1", [p1])).rows[0];
   check(pr.email_changed === true && pr.sessions_revoked === 1 && row1.name === "Pat" && row1.email === "pat@example.com", "S11 a profile edit lowercases the email and revokes the sessions on an email change");
   await refuses(() => rpc(updateUserProfileCall({ actorId: gmA, userId: p1, patch: { role: "owner" } })), "invalid_payload", "S11 the profile writer takes name / phone / email only");
+
+  // S12 — Add user under the actor's lock
+  const gate2 = src.slice(src.indexOf("create function public.user_admin_lock("), src.indexOf("end $$;", src.indexOf("create function public.user_admin_lock(")));
+  const sortedBranch = /if p_actor < p_user then\s+select [^;]+ where id = p_actor for share;\s+v_actor_found := found;\s+select [^;]+ where id = p_user for update;[\s\S]*?else\s+select [^;]+ where id = p_user for update;\s+v_target_found := found;\s+select [^;]+ where id = p_actor for share;/;
+  check(sortedBranch.test(gate2) && (gate2.match(/pg_advisory_xact_lock/g) ?? []).length === 1 && gate2.indexOf("if p_actor < p_user") < gate2.indexOf("raise exception 'user_not_found'"),
+    "S12 the gate locks the two users rows in SORTED id order (lower first; target FOR UPDATE, actor FOR SHARE), one advisory lock, checks after");
+  const usersCount = async () => (await db.query("select count(*)::int as n from public.users")).rows[0].n;
+  const SD = await shop();
+  const gmD = await user("gm");
+  await member(gmD, SD);
+  await member(moo, SD);
+  const create = (actor, o = {}) => rpc(createUserCall({ actorId: actor, name: o.name ?? "New Person", role: o.role ?? "employee", email: o.email ?? null,
+    phone: o.phone ?? null, pinHash: hash(8), passwordHash: o.passwordHash ?? null, locationIds: o.locations ?? [SD] }));
+  const made = await create(gmD, { name: "  Rosa  ", email: "Rosa@Example.COM", phone: " 202-555-0123 " });
+  const rosa = (await db.query("select name, email, phone, role, active, pin_hash, password_hash, created_by from public.users where id = $1", [made.id])).rows[0];
+  check(rosa.name === "Rosa" && rosa.email === "rosa@example.com" && rosa.phone === "202-555-0123" && rosa.role === "employee" && rosa.active === true
+    && rosa.pin_hash === hash(8) && rosa.password_hash === null && rosa.created_by === gmD && JSON.stringify(await shopsOf(made.id)) === JSON.stringify([SD]),
+    "S12 happy path: the user (hash only, email lowercased) and the membership in one transaction");
+  await refuses(() => create(gmD, { role: "gm" }), "forbidden", "S12 a GM never creates a GM");
+  await refuses(() => create(gmD, { locations: [SA] }), "forbidden", "S12 a GM creates only at their own shops");
+  await refuses(() => create(gmD, { locations: [] }), "locations_required", "S12 a shop is required below the all-shops roles");
+  await refuses(() => create(gmD, { role: "agm" }), "email_required", "S12 an email-auth role needs an email");
+  await refuses(() => create(gmD, { role: "agm", email: "a@x.com" }), "password_required", "S12 … and a password hash");
+  await refuses(() => create(gmD, { email: "ROSA@example.com" }), "email_taken", "S12 a taken email (case-blind)");
+  let n0 = await usersCount();
+  // The actor's state changes between the lib's checks and the create (each committed first):
+  await shops(moo, gmD, [SC]);
+  await refuses(() => create(gmD), "forbidden", "S12 the actor moved off the shop first → the create is refused");
+  await shops(moo, gmD, [SD]);
+  await role(moo, gmD, "employee");
+  await refuses(() => create(gmD), "forbidden", "S12 the actor demoted first → the create is refused");
+  await role(moo, gmD, "gm");
+  await activeSet(moo, gmD, false);
+  await refuses(() => create(gmD), "forbidden", "S12 the actor deactivated first → the create is refused");
+  check(await usersCount() === n0, "S12 … and none of the refused creates inserted anyone");
+  check(typeof (await create(owner, { locations: [SA, SB] })).id === "string", "S12 the owner creates at any shop");
 
   // the table stays append-only by CHECK too (a superuser insert of a malformed row is refused by the constraints)
   await refuses(() => db.query("insert into public.user_employment_events (user_id, kind, actor_id, separation_type, last_day_worked, reason, rehire) values ($1, 'separated', $2, 'fired', '2026-10-01', 'r', 'no')", [e1, gmA]),
