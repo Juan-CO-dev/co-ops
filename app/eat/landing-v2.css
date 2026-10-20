@@ -1,7 +1,7 @@
 /* Route-only stylesheet. Every selector is bounded to the landing root. */
 /* Scroll-linked motion and the measured dock resize content above the reader; engine
    scroll anchoring (WebKit) would turn those into page jumps, so the landing opts out. */
-.landing-v2 { overflow-anchor: none; --landing-safe-bottom: env(safe-area-inset-bottom, 0px); padding-bottom: calc(var(--landing-dock-height, 120px) + var(--landing-rail-height, 0px) + var(--landing-safe-bottom) + 16px); }
+.landing-v2 { overflow-anchor: none; --landing-safe-bottom: env(safe-area-inset-bottom, 0px); padding-bottom: calc(var(--landing-dock-height, 120px) + var(--landing-safe-bottom) + 16px); }
 .landing-v2 .landing-v2-page { overflow-wrap: anywhere; }
 .landing-v2 .landing-v2-header { min-height: 52px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: space-between; padding: 0 22px; background: #fff9e4; }
 .landing-v2 .landing-v2-header img { width: 120px; height: 36px; }
@@ -74,24 +74,14 @@
 /* Chunk 4: measured chrome reservations. No entrance animation or urgency. */
 
 
-.landing-v2 .landing-v2-sticky { position: fixed; z-index: 31; bottom: var(--landing-rail-bottom, 120px); left: 0; width: 100%; padding: 6px 12px var(--landing-safe-bottom); background: #fff9e4; color: #171712; border-top: 1px solid; }
 /* Visibility + inert keeps inactive chrome measurable without the native hidden reset. */
-.landing-v2 .landing-v2-sticky[data-visible="false"] { visibility: hidden; pointer-events: none; }
-.landing-v2 .landing-v2-sticky-heading[hidden] { display: none; }
-.landing-v2 .landing-v2-sticky-heading { display: flex; justify-content: space-between; align-items: center; font-size: .75rem; line-height: 20px; }
-.landing-v2 .landing-v2-cta-accessory { display: block; width: 20px; height: 20px; }
-.landing-v2 .landing-v2-sticky-links { display: flex; gap: 8px; }
-.landing-v2 .landing-v2-sticky-links button { flex-shrink: 0; min-width: 44px; min-height: 44px; border: 1px solid; font-size: 1.25rem; }
-.landing-v2 .landing-v2-sticky-links .landing-v2-order { flex: 1; }
 .landing-v2 [data-landing-placement] { scroll-margin-block: 110px 250px; }
 @media (prefers-reduced-motion: no-preference) {
-  .landing-v2 [data-landing-placement], .landing-v2 .landing-v2-sticky button { transition: transform 120ms ease-out; }
-  .landing-v2 [data-landing-placement]:active, .landing-v2 .landing-v2-sticky button:active { transform: scale(.98); }
+  .landing-v2 [data-landing-placement], .landing-v2 .landing-v42-pill { transition: transform 120ms ease-out; }
+  .landing-v2 [data-landing-placement]:active, .landing-v2 .landing-v42-pill:active { transform: scale(.98); }
 }
 @media (min-width: 768px) {
-  .landing-v2 .landing-v2-sticky { top: 0; bottom: auto; padding: 6px 16px; display: flex; justify-content: space-between; align-items: center; gap: 24px; border-top: 0; border-bottom: 1px solid; }
-  .landing-v2 .landing-v2-sticky-links { min-width: 420px; margin-left: auto; }
-  .landing-v2 :is(h2,h3) { scroll-margin-top: calc(var(--landing-header-rail-height, 0px) + 16px); }
+  .landing-v2 :is(h2,h3) { scroll-margin-top: 16px; }
 }
 @media (max-width: 329px), (max-height: 499px), (min-width: 768px) and (max-height: 799px) {
   .landing-v2 .landing-v2-consent[data-flow="false"] { bottom: auto; }
@@ -164,11 +154,14 @@
 .landing-v2 .landing-v3-plate p { margin: 8px 0 0; font-size: .9375rem; line-height: 1.4; }
 .landing-v2 .landing-v3-cta { margin-top: 14px; width: 100%; min-height: 52px; display: flex; align-items: center; justify-content: center; padding: 10px 14px; border: 3px solid #171712; background: #ffe560; color: #171712; font-size: 1.0625rem; font-weight: 950; letter-spacing: .02em; text-transform: uppercase; box-shadow: 4px 4px 0 #171712; }
 .landing-v2 .landing-v3-cta:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #171712; }
-.landing-v2 .landing-v3-roster-bar { display: flex; justify-content: flex-end; margin-top: 10px; }
-.landing-v2 .landing-v3-auto { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; padding: 0 14px; border: 2px solid #171712; background: #fff9e4; color: #171712; font-size: .8125rem; font-weight: 800; }
-.landing-v2 .landing-v3-auto::before { content: ''; width: 10px; height: 10px; border: 2px solid #171712; background: transparent; }
-.landing-v2 .landing-v3-auto[aria-pressed="true"]::before { background: #ed3308; }
-.landing-v2 .landing-v3-roster { display: flex; gap: 12px; margin: 0; padding: 38px 6px 12px; overflow-x: auto; list-style: none; scroll-snap-type: x mandatory; scrollbar-width: thin; }
+/* v4.2: the auto-scroll toggle sits in the strip's top margin (beside P1's cursor room), not on its own row. */
+.landing-v2 .landing-v3-roster-bar { position: relative; z-index: 2; height: 0; }
+.landing-v2 .landing-v3-auto { position: absolute; top: 0; right: 0; width: 44px; height: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; color: #171712; }
+.landing-v2 .landing-v42-auto-icon { position: relative; display: block; width: 28px; height: 28px; border: 2px solid #171712; border-radius: 50%; background: #fff9e4; }
+.landing-v2 .landing-v42-auto-icon::before { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-35%, -50%); border-style: solid; border-width: 6px 0 6px 10px; border-color: transparent transparent transparent #171712; }
+.landing-v2 .landing-v3-auto[aria-pressed="true"] .landing-v42-auto-icon::before { transform: translate(-50%, -50%); width: 10px; height: 11px; border-width: 0 3px; border-color: #171712; }
+.landing-v2 .landing-v3-auto:focus-visible { outline: 3px solid #171712; outline-offset: -2px; }
+.landing-v2 .landing-v3-roster { display: flex; gap: 12px; margin: 0; padding: 44px 6px 12px; overflow-x: auto; list-style: none; scroll-snap-type: x mandatory; scrollbar-width: thin; }
 .landing-v2 .landing-v3-roster > li { position: relative; flex: 0 0 104px; scroll-snap-align: center; }
 .landing-v2 .landing-v3-roster button { display: block; width: 100%; padding: 0; border: 3px solid #171712; background: #fff9e4; color: #171712; text-align: left; }
 .landing-v2 .landing-v3-roster button [data-landing-photo] { aspect-ratio: 1 !important; overflow: hidden; }
@@ -282,10 +275,6 @@
 @media (min-width: 768px) {
   .landing-v2 .landing-v4-order-two { padding: 8px 18px; }
 }
-/* While the consent notice is open the rail is only its two order buttons. */
-.landing-v2 .landing-v2-sticky[data-compact="true"] { padding-top: 4px; }
-.landing-v2 .landing-v2-sticky[data-compact="true"] :is(.landing-v2-sticky-heading, .landing-v2-sticky-links > button) { display: none; }
-.landing-v2 .landing-v2-sticky .landing-v2-order { font-size: .875rem; padding: 8px 6px; }
 /* Crunch story ends on one order action, below the pinned photos (never over them). */
 .landing-v2 .landing-v4-crave-cta { max-width: 480px; margin-top: 16px; }
 .landing-v2 .landing-v4-crave-cta .landing-v3-cta { margin-top: 0; }
@@ -329,3 +318,16 @@
    object-position (plain %) that centres the sub (lib/landing/fighter-select-shared focalPosition). */
 .landing-v2 .landing-v3-stage-media [data-landing-photo] img { object-position: 50% var(--focal-stage, 50%); }
 .landing-v2 .landing-v3-roster button img { object-position: 50% var(--focal-card, 50%); }
+
+/* ── v4.2 declutter: one slim Order pill; an answered consent notice leaves the screen ── */
+.landing-v2 .landing-v2-consent[hidden] { display: none !important; }
+.landing-v2 .landing-v2-sticky { position: fixed; z-index: 31; right: 16px; bottom: calc(16px + var(--landing-safe-bottom)); width: auto; pointer-events: none; }
+.landing-v2 .landing-v42-pill { pointer-events: auto; min-height: 48px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0 22px; border: 3px solid #171712; border-radius: 999px; background: #ffe560; color: #171712; font-size: 1rem; font-weight: 950; letter-spacing: .04em; text-transform: uppercase; box-shadow: 3px 3px 0 #171712; }
+.landing-v2 .landing-v42-pill:focus-visible { outline: 3px solid #171712; outline-offset: 3px; }
+/* Hidden = the pill only: its sheet is a sibling and never inherits the hiding. */
+.landing-v2 .landing-v2-sticky[data-visible="false"] .landing-v42-pill { visibility: hidden; pointer-events: none; opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .landing-v2:not([data-calm="true"]) .landing-v42-pill { transition: opacity 150ms ease-out, visibility 150ms, transform 120ms ease-out; }
+}
+/* pointer-events is inherited: the pill's (top-layer) sheet takes taps again. */
+.landing-v2 .landing-v2-sticky dialog { pointer-events: auto; }

@@ -11,6 +11,10 @@ const ConsentContext=createContext<ReactNode>(null);
 export function LandingConsentSlot() { return useContext(ConsentContext); }
 const TrackingContext=createContext<TrackingContextValue>({dispatch:()=>{},sectionView:()=>{},allowed:false});
 export const useLandingTracking=()=>useContext(TrackingContext);
+/** v4.2: the footer's "Privacy settings" opens the same notice (its only way back once answered). */
+interface ConsentControlValue { available: boolean; open: boolean; openSettings: (opener: HTMLElement) => void }
+const ConsentControlContext=createContext<ConsentControlValue>({available:false,open:false,openSettings:()=>{}});
+export const useConsentControl=()=>useContext(ConsentControlContext);
 function signals() { return {doNotTrack:navigator.doNotTrack,globalPrivacyControl:(navigator as Navigator & {globalPrivacyControl?:boolean}).globalPrivacyControl}; }
 function storage(): Storage | undefined { try { return window.sessionStorage; } catch { return undefined; } }
 function clearMarketingCookies() {
@@ -36,6 +40,10 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
   serverApproved:boolean; pixelId?:string; capiEnabled?:boolean; sourceUrl:string; attributionPolicy:AttributionPolicy; allowedStores:readonly string[]; allowedPlacements:readonly string[]; labels:ConsentLabels; children:ReactNode;
 }) {
   const [choice,setChoice]=useState<ConsentChoice>('unknown');
+  // null = the default for the current choice (open until answered, closed after).
+  const [settingsOpen,setSettingsOpen]=useState<boolean|null>(null);
+  const [focusRequest,setFocusRequest]=useState(0);
+  const opener=useRef<HTMLElement|null>(null);
   const [allowed,setAllowed]=useState(false);
   const tracker=useRef<ReturnType<typeof createLandingTracker> | null>(null);
   const attribution=useRef<Attribution>({ad:'unattributed',utm:{}});
@@ -105,6 +113,13 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
     },
     sectionView(section) { if(marketingAllowed(serverApproved,readConsent(document.cookie),signals())) tracker.current?.sectionView(section); else tracker.current?.setConsent(false); },
   };
-  const notice=serverApproved?<ConsentNotice choice={choice} labels={labels} onChoose={choose}/>:null;
-  return <TrackingContext.Provider value={context}><ConsentContext.Provider value={notice}>{children}{new URL(sourceUrl).pathname !== '/' && notice}</ConsentContext.Provider></TrackingContext.Provider>;
+  const open=settingsOpen??choice==='unknown';
+  const setOpen=(next:boolean)=>{
+    setSettingsOpen(next);
+    // Closing what a footer control opened hands focus back to that control.
+    if(!next&&opener.current){const back=opener.current;opener.current=null;requestAnimationFrame(()=>back.focus());}
+  };
+  const control:ConsentControlValue={available:serverApproved,open,openSettings(from){opener.current=from;setSettingsOpen(true);setFocusRequest(value=>value+1);}};
+  const notice=serverApproved?<ConsentNotice choice={choice} labels={labels} onChoose={choose} open={open} setOpen={setOpen} focusRequest={focusRequest}/>:null;
+  return <TrackingContext.Provider value={context}><ConsentControlContext.Provider value={control}><ConsentContext.Provider value={notice}>{children}{new URL(sourceUrl).pathname !== '/' && notice}</ConsentContext.Provider></ConsentControlContext.Provider></TrackingContext.Provider>;
 }

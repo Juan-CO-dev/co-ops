@@ -65,7 +65,7 @@ describe('server-rendered hero poster', () => {
 });
 
  it('server-renders the ordinary consent dock without a hydration layout jump',()=>{
-   const html=renderToStaticMarkup(createElement(ConsentNotice,{choice:'unknown',labels:{notice:'Notice',accept:'Accept',reject:'Reject',settings:'Settings',withdraw:'Withdraw',privacy:'Privacy',language:'en'},onChoose:()=>{}}));
+   const html=renderToStaticMarkup(createElement(ConsentNotice,{choice:'unknown',labels:{notice:'Notice',accept:'Accept',reject:'Reject',settings:'Settings',withdraw:'Withdraw',privacy:'Privacy',language:'en'},onChoose:()=>{},open:true,setOpen:()=>{}}));
    expect(html).toContain('data-flow="false"');
    expect(html).toContain('href="/privacy?lang=en"');
  });

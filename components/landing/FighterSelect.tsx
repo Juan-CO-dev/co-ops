@@ -84,7 +84,7 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
     {/* Without JS every fighter's full menu is visible, not just announced. */}
     <noscript><style>{'.landing-v2 .landing-v3-roster > li { flex-basis: 220px; } .landing-v2 .landing-v3-roster [data-ingredients] { position: static; width: auto; height: auto; margin: 0; padding: 0 6px 8px; overflow: visible; clip: auto; clip-path: none; white-space: normal; font-size: .8125rem; line-height: 1.35; } .landing-v2 .landing-v3-roster-bar { display: none; }'}</style></noscript>
     <div className="landing-v3-roster-bar" hidden={!enhanced}>
-      <button ref={autoButton} type="button" aria-pressed={auto} onClick={()=>setAuto(value=>!value)} className="landing-v3-auto">{labels.auto}</button>
+      <button ref={autoButton} type="button" aria-pressed={auto} onClick={()=>setAuto(value=>!value)} className="landing-v3-auto">{/* A small play/pause glyph; the name stays "Auto-scroll". */}<span aria-hidden="true" className="landing-v42-auto-icon"/><span className="sr-only">{labels.auto}</span></button>
     </div>
     <ul ref={strip} data-lineup aria-label={labels.browse} className="landing-v3-roster">
       {fighters.map((item,index)=><li key={item.id} data-selected={index===selected}>
