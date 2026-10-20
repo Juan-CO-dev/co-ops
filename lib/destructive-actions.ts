@@ -114,6 +114,12 @@ export const DESTRUCTIVE_ACTIONS = [
   "user.reset_password",
   "user.set_pin",
   "user.change_email",
+  // Staff separations (0279): on leave, back from leave, separated, rehired, a correction of the record in force.
+  "user.leave_start",
+  "user.leave_end",
+  "user.separate",
+  "user.rehire",
+  "user.employment_correct",
 
   // Location lifecycle
   "location.create",

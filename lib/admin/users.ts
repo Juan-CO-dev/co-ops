@@ -2,10 +2,15 @@
  * Admin user-management data layer (C.44 Module 2).
  *
  * SERVER-ONLY. Service-role client throughout — admin authorization is enforced
- * APP-LAYER by the calling routes (requireSession → level >= 8 → assertStepUp →
+ * APP-LAYER by the calling routes (requireSession → GM+ (`canOpenUserAdmin`) → assertStepUp →
  * canActOn) and re-checked here for target-bound mutations (defense in depth).
  * Service-role bypasses RLS by design, consistent with the foundation + the
  * Phase 2.5 provisioning pattern.
+ *
+ * GM USER MANAGEMENT (staff separations ADDENDUM, Juan 2026-10-20): a GM manages the people of their own shop(s) only —
+ * strictly below GM, every active membership at one of the GM's shops (`userAdminRefusal`, lib/admin/user-access-shared.ts),
+ * enforced in `loadActionableTarget` for every target-bound write; the list and the detail are scoped the same way.
+ * MoO+ unchanged. Employment status (0279) rides on the list, redacted per viewer (`employmentViewFor`).
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -15,6 +20,10 @@ import { audit } from "@/lib/audit";
 import { isAllLocationsAccess } from "@/lib/locations";
 import { revokeAllUserSessions } from "@/lib/session";
 import { userDormancy, type UserDormancy } from "./dormancy-shared";
+import { userAdminListScope, userAdminRefusal, USER_ADMIN_MIN_LEVEL } from "./user-access-shared";
+import { employmentViewFor, mayProceedPastRehire, type EmploymentView } from "./employment-shared";
+import { findRehireMatches, loadEmploymentStates, stateOf, type RehireMatch } from "./employment";
+import { linkToastEmployee, LinkError } from "@/lib/toast/employee-links";
 import { lastClockIns, clockInsByUser } from "./dormancy";
 import type { AuthContext } from "@/lib/session";
 
@@ -29,7 +38,12 @@ export interface AdminUserListItem {
   dormantAt: string | null;
   dormancy: UserDormancy;
   locationIds: string[]; // active assignments only
+  /** On leave / separated (0279), redacted for the viewer. Absent when listed without a viewer. */
+  employment?: EmploymentView;
 }
+
+/** Who is looking at the list (scope + redaction). */
+export interface UserListViewer { userId: string; role: RoleCode; locations: readonly string[] }
 
 export interface AdminUserDetail extends Omit<AdminUserListItem, "dormancy"> {
   phone: string | null;
@@ -85,11 +99,20 @@ async function activeLocationsByUser(userIds: string[]): Promise<Map<string, str
   return map;
 }
 
-export async function listUsers(filters: ListUsersFilters): Promise<AdminUserListItem[]> {
+export async function listUsers(filters: ListUsersFilters, viewer?: UserListViewer): Promise<AdminUserListItem[]> {
   const sb = getServiceRoleClient();
 
   let idFilter: string[] | null = null;
-  if (filters.locationId) {
+  // A GM's list is their own shops' people (a filter on another shop finds no one).
+  const scope = viewer ? userAdminListScope(viewer) : null;
+  if (scope) {
+    const shops = filters.locationId ? scope.filter((l) => l === filters.locationId) : [...scope];
+    if (shops.length === 0) return [];
+    const { data: ul, error: ulErr } = await sb.from("user_locations").select("user_id").in("location_id", shops).eq("active", true);
+    if (ulErr) throw new Error(`listUsers scope failed: ${ulErr.message}`);
+    idFilter = [...new Set((ul ?? []).map((r) => (r as { user_id: string }).user_id))];
+    if (idFilter.length === 0) return [];
+  } else if (filters.locationId) {
     const { data: ul, error: ulErr } = await sb
       .from("user_locations")
       .select("user_id")
@@ -126,6 +149,7 @@ export async function listUsers(filters: ListUsersFilters): Promise<AdminUserLis
     return null;
   });
   const now = Date.now();
+  const employment = viewer ? await loadEmploymentStates(sb, rows.map((r) => r.id)) : null;
   return rows.map((r) => ({
     id: r.id, name: r.name, email: r.email, role: r.role,
     level: getRoleLevel(r.role), active: r.active, lastLoginAt: r.last_login_at,
@@ -133,6 +157,7 @@ export async function listUsers(filters: ListUsersFilters): Promise<AdminUserLis
     dormantAt: r.dormant_at,
     dormancy: userDormancy({ level: getRoleLevel(r.role), active: r.active, createdAt: r.created_at,
       dormantAt: r.dormant_at, lastClockInAt: clocks?.get(r.id) ?? null, now, clockHistoryKnown: clocks !== null }),
+    ...(employment && viewer ? { employment: employmentViewFor(viewer, locMap.get(r.id) ?? [], stateOf(employment, r.id)) } : {}),
   }));
 }
 
@@ -153,17 +178,31 @@ export async function getUserDetail(id: string): Promise<AdminUserDetail | null>
   };
 }
 
-/** Shared guard for target-bound mutations (used by Task 7 mutators): load target + canActOn. */
+/**
+ * Shared guard for target-bound mutations: load the target, then user management's rule (`userAdminRefusal`):
+ * strictly below the actor (canActOn), and for a GM every active membership of the target at one of the GM's shops.
+ */
 export async function loadActionableTarget(actor: AuthContext, id: string): Promise<AdminUserDetail> {
   const target = await getUserDetail(id);
   if (!target) throw new AdminUserError(404, "not_found", "User not found");
-  if (!canActOn(actor.user.role, target.role)) {
-    throw new AdminUserError(403, "forbidden", "Cannot act on a peer or senior");
-  }
+  const refusal = userAdminRefusal({ userId: actor.user.id, role: actor.user.role, locations: actor.locations },
+    { id: target.id, role: target.role, locationIds: target.locationIds });
+  if (refusal === "target_outside_shop") throw new AdminUserError(403, "target_outside_shop", "That person works at a shop you do not manage");
+  if (refusal) throw new AdminUserError(403, "forbidden", "Cannot act on a peer or senior");
   return target;
 }
 
-export const ADMIN_MIN_LEVEL = 8;
+/** A detail read is scoped like the list: a GM reads their own shops' people only (404 otherwise, no existence leak). */
+export async function getUserDetailFor(actor: AuthContext, id: string): Promise<AdminUserDetail | null> {
+  const detail = await getUserDetail(id);
+  if (!detail) return null;
+  const scope = userAdminListScope({ role: actor.user.role, locations: actor.locations });
+  if (scope && !detail.locationIds.some((l) => scope.includes(l))) return null;
+  return detail;
+}
+
+/** The floor for every user-management route and write (GM). */
+export const ADMIN_MIN_LEVEL = USER_ADMIN_MIN_LEVEL;
 const ALL_LOCATIONS_THRESHOLD = 9; // keep in sync with lib/locations.ts
 
 export interface CreateUserInput {
@@ -173,13 +212,26 @@ export interface CreateUserInput {
   tempPin: string;
   tempPassword: string | null;
   locationIds: string[];
+  /** Optional; also the rehire check's key (normalized). */
+  phone?: string | null;
+  /** Optional: the person's Toast employee at one of the chosen shops — linked after create, and the rehire check's key. */
+  toast?: { locationId: string; employeeGuid: string } | null;
+  /** The actor saw the rehire warning and proceeds (needs the rehire authority for every match). */
+  confirmRehire?: boolean;
 }
+
+/** A create that found separated people needing more authority to rehire: the screen shows them (redacted). */
+export class RehireMatchError extends AdminUserError {
+  constructor(public matches: RehireMatch[], status = 409, code = "rehire_match") { super(status, code); this.name = "RehireMatchError"; }
+}
+
+export interface CreateUserResult { userId: string; toastLink: "linked" | "not_requested" | "failed"; toastLinkCode?: string }
 
 function assertValidPin(pin: string): void {
   if (!/^\d{4}$/.test(pin)) throw new AdminUserError(400, "invalid_pin", "PIN must be exactly 4 digits");
 }
 
-export async function createUser(actor: AuthContext, input: CreateUserInput): Promise<{ userId: string }> {
+export async function createUser(actor: AuthContext, input: CreateUserInput): Promise<CreateUserResult> {
   const sb = getServiceRoleClient();
   const role = input.role;
 
@@ -228,6 +280,20 @@ export async function createUser(actor: AuthContext, input: CreateUserInput): Pr
     if (existing) throw new AdminUserError(409, "email_taken", "Email already in use");
   }
 
+  const phone = typeof input.phone === "string" && input.phone.trim() ? input.phone.trim() : null;
+  if (phone && phone.length > 40) throw new AdminUserError(400, "invalid_payload", "Phone is too long");
+  const toast = input.toast ?? null;
+  if (toast && (!/^[0-9a-f-]{36}$/i.test(toast.locationId) || !/^[A-Za-z0-9-]{1,64}$/.test(toast.employeeGuid) || !locationIds.includes(toast.locationId))) {
+    throw new AdminUserError(400, "invalid_payload", "The Toast employee must be at one of the chosen shops");
+  }
+  // The rehire warning (0279): a separated person whose rehire setting needs authority, by phone or Toast GUID only.
+  const check = await findRehireMatches(sb, { role: actor.user.role, locations: actor.locations },
+    { phone, toastGuids: toast ? [toast.employeeGuid] : [] });
+  if (check.matches.length > 0) {
+    if (!input.confirmRehire) throw new RehireMatchError(check.matches);
+    if (check.matches.some((m) => !mayProceedPastRehire(actor.user.role, m.rehire))) throw new RehireMatchError(check.matches, 403, "rehire_permission_required");
+  }
+
   const pinHash = await hashPin(input.tempPin);
   const passwordHash = emailAuth ? await hashPassword(input.tempPassword as string) : null;
 
@@ -238,6 +304,7 @@ export async function createUser(actor: AuthContext, input: CreateUserInput): Pr
       email_verified: emailAuth,
       email_verified_at: emailAuth ? new Date().toISOString() : null,
       pin_hash: pinHash, password_hash: passwordHash,
+      phone,
       created_by: actor.user.id,
     })
     .select("id").maybeSingle<{ id: string }>();
@@ -257,11 +324,21 @@ export async function createUser(actor: AuthContext, input: CreateUserInput): Pr
     metadata: {
       creation_method: "admin_ui", created_role: role, created_role_level: level,
       created_locations: locationIds, email_pipeline_used: false,
+      // The rehire warning was seen and passed (ids only, never a reason).
+      ...(check.matches.length > 0 ? { rehire_match_override: check.matches.map((m) => m.userId) } : {}),
     },
     ipAddress: null, userAgent: null,
   });
 
-  return { userId: row.id };
+  if (!toast) return { userId: row.id, toastLink: "not_requested" };
+  try {
+    await linkToastEmployee(sb, { actor: { userId: actor.user.id, role: actor.user.role, locations: actor.locations, level: getRoleLevel(actor.user.role) },
+      locationId: toast.locationId, employeeGuid: toast.employeeGuid, userId: row.id });
+    return { userId: row.id, toastLink: "linked" };
+  } catch (e) {
+    // The person exists; only the link was not made (e.g. that Toast employee is linked to another account).
+    return { userId: row.id, toastLink: "failed", toastLinkCode: e instanceof LinkError ? e.code : "link_failed" };
+  }
 }
 
 export async function updateUserProfile(
@@ -344,6 +421,8 @@ export async function setLocations(actor: AuthContext, id: string, locationIds: 
   await loadActionableTarget(actor, id);
   const sb = getServiceRoleClient();
   const desired = new Set(locationIds);
+  // A GM may move a person between their own shops, never leave them with none (they would drop out of the GM's reach).
+  if (getRoleLevel(actor.user.role) < 8 && desired.size === 0) throw new AdminUserError(400, "locations_required");
   const actorAll = isAllLocationsAccess({ role: actor.user.role, locations: actor.locations });
   if (!actorAll) {
     const allowed = new Set(actor.locations);
@@ -379,6 +458,12 @@ export async function setLocations(actor: AuthContext, id: string, locationIds: 
 export async function setActive(actor: AuthContext, id: string, active: boolean): Promise<void> {
   await loadActionableTarget(actor, id);
   const sb = getServiceRoleClient();
+  if (active) {
+    // On leave comes back through "Back from leave"; a separated person only through "Rehire" (its rehire setting).
+    const st = stateOf(await loadEmploymentStates(sb, [id]), id);
+    if (st.status === "on_leave") throw new AdminUserError(409, "use_back_from_leave");
+    if (st.status === "separated") throw new AdminUserError(409, "use_rehire");
+  }
   const { error } = await sb.from("users").update({ active }).eq("id", id);
   if (error) throw new Error(`setActive failed: ${error.message}`);
   if (!active) {
@@ -393,7 +478,7 @@ export async function setActive(actor: AuthContext, id: string, active: boolean)
 
 /** Display-only mutation: do not revoke sessions or modify login authorization. */
 export async function setDormant(actor: AuthContext, id: string, dormant: boolean): Promise<void> {
-  if (getRoleLevel(actor.user.role) < ADMIN_MIN_LEVEL) throw new AdminUserError(403, "forbidden");
+  if (getRoleLevel(actor.user.role) < ADMIN_MIN_LEVEL) throw new AdminUserError(403, "forbidden"); // GM+ (user management's floor)
   // Same target checks as setActive: a display flag must not be harder to set than deactivation.
   const target = await loadActionableTarget(actor, id);
   // A stale marker already cleared by a clock-in can be marked again. Clearing it cannot

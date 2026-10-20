@@ -4,16 +4,14 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { getUserDetail, updateUserProfile, AdminUserError } from "@/lib/admin/users";
-
-const ADMIN_MIN_LEVEL = 8;
+import { getUserDetailFor, updateUserProfile, AdminUserError, ADMIN_MIN_LEVEL } from "@/lib/admin/users";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await requireSession(req, `/api/admin/users/${id}`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < ADMIN_MIN_LEVEL) return jsonError(403, "forbidden");
-  const detail = await getUserDetail(id);
+  const detail = await getUserDetailFor(ctx, id); // a GM reads their own shops' people only
   if (!detail) return jsonError(404, "not_found");
   return jsonOk({ user: detail });
 }

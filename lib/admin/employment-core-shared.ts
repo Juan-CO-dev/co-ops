@@ -17,6 +17,7 @@
  * `yes` the same rule, `only_with_owner_ok` the owner / MoO / CGS, `no` the owner only, with a reason.
  */
 import type { RoleCode } from "../roles";
+import type { TranslationKey } from "../i18n/types";
 
 export const LEAVE_REASONS = ["school", "seasonal", "personal", "other"] as const;
 export type LeaveReason = (typeof LEAVE_REASONS)[number];
@@ -138,6 +139,12 @@ export interface EmploymentView {
   detail: EmploymentDetail | null;
 }
 
+/** The chip's i18n key (`{date}` = the expected-back date when there is one). */
+export function employmentChipKey(chip: EmploymentChip): TranslationKey {
+  if (chip.status === "on_leave") return chip.until ? "admin.users.employment.chip.on_leave_until" : "admin.users.employment.chip.on_leave";
+  return `admin.users.employment.chip.separated_${chip.rehire}` as TranslationKey;
+}
+
 export function employmentChipOf(state: EmploymentState): EmploymentChip | null {
   const c = state.current;
   if (!c) return null;
@@ -157,6 +164,13 @@ export function employmentViewFor(viewer: EmploymentViewer, subjectLocationIds: 
 /** The rehire setting in force for a separated person (null when not separated). */
 export function currentRehire(state: EmploymentState): RehireSetting | null {
   return state.current?.kind === "separated" ? state.current.rehire : null;
+}
+
+/** What the act rules need: the status and, when separated, the rehire setting — from a state OR a redacted view. */
+export interface ActState { status: EmploymentStatus; rehire: RehireSetting | null }
+export function actStateOf(s: { status: EmploymentStatus; current?: EmploymentDetail | null; chip?: EmploymentChip | null }): ActState {
+  const rehire = s.current?.kind === "separated" ? s.current.rehire : s.chip?.status === "separated" ? s.chip.rehire : null;
+  return { status: s.status, rehire };
 }
 
 /** Who may lift a rehire setting: `no` → the owner; `only_with_owner_ok` → owner / MoO / CGS; `yes` → anyone who may act. */

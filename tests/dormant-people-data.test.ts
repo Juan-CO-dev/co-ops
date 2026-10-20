@@ -50,7 +50,8 @@ beforeEach(() => {
 });
 describe("manual dormancy authorization and audit", () => {
   it("rejects below-floor callers before I/O, and peers/seniors", async () => {
-    await expect(setDormant({ ...actor, user: { ...actor.user, role: "gm" } }, "u", true)).rejects.toMatchObject({ code: "forbidden" });
+    // GM opened user management (2026-10-20); below GM (an AGM) is still refused before any I/O.
+    await expect(setDormant({ ...actor, user: { ...actor.user, role: "agm" } }, "u", true)).rejects.toMatchObject({ code: "forbidden" });
     expect(mocks.client).not.toHaveBeenCalled();
     target.role = "owner";
     await expect(setDormant(actor, "u", true)).rejects.toMatchObject({ code: "forbidden" });
