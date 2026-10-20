@@ -252,7 +252,7 @@ export function leaderSettingOf(p: RulePerson, s: ScheduleStructure): LeaderSett
 }
 
 /** The mockup's work-type rule: Management anything; Prep/Dishwasher BOH; Prep BOH or FOH; the line FOH. */
-export function workTypeAllows(p: RulePerson, pos: StructurePosition): boolean {
+export function workTypeAllows(p: Pick<RulePerson, "workType" | "alsoAllowed">, pos: Pick<StructurePosition, "role">): boolean {
   if (p.workType === "management") return true;
   if (pos.role === "prep_dish") return p.workType === "boh" || p.alsoAllowed.includes("boh");
   if (pos.role === "prep") return p.workType === "boh" || p.workType === "foh" || p.alsoAllowed.includes("boh");

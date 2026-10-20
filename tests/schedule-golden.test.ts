@@ -52,11 +52,31 @@ const ASSERT: Record<string, (out: GeneratorOutput) => void> = {
     // CC chunk C ruling 3: the essential closer hours at budget 0 are correct, provided the note shows them.
     expect(out.notes).toContainEqual({ code: "essential_past_budget", date: null, userId: null, positionId: null, params: { hours: out.stats.essentialHours, budgetHours: 0 } });
   },
-  "F0b-tight-budget-essential-plus-6": (out) => { expect(out.gaps.every((g) => g.cause === "budget_limited")).toBe(true); expect(out.stats.hourlyHours - out.stats.essentialHours).toBeLessThanOrEqual(22); },
+  "F0b-tight-budget-essential-plus-6": (out) => {
+    expect(out.gaps.every((g) => g.cause === "budget_limited")).toBe(true); expect(out.stats.hourlyHours - out.stats.essentialHours).toBeLessThanOrEqual(22);
+    // p2.19 KNOWN COST of primary-first (CC ruling 2026-10-20): Gus's Register primary is a budgeted block where the closer Hal
+    // used to cover Register at no budget cost, so the budget-limited gap is 18 quarters (p2.17: 12). Pinned both ways — a fix
+    // (the closer re-shape move, docs/ROADMAP.md) shows up as a deliberate improvement; anything worse fails.
+    expect(out.gaps.map((g) => [g.date, g.positionId, g.fromQ, g.toQ, g.cause])).toEqual([[DATES[0], I.$BOI, 38, 56, "budget_limited"]]);
+  },
   "F0c-no-eligible": (out) => expect(out.gaps.filter((g) => g.positionId === I.$DISH).map((g) => g.cause)).toEqual(["eligibility"]),
-  "F0d-floor-capped": (out) => { const f = out.gaps.filter((g) => g.positionId === I.$EXPO); expect(f.length).toBeGreaterThan(0); expect(f.every((g) => g.cause === "floor_limit")).toBe(true); },
-  "F0e-repair-needed": (out) => { expect(out.gaps).toEqual([]); expect(out.stats.repair.accepted).toBeGreaterThan(0); },
-  "F0f-all-unproven": (out) => expect(out.gaps.filter((g) => !["structure", "eligibility", "availability"].includes(g.cause))).toEqual([]),
+  "F0d-floor-capped": (out) => {
+    // The fixture's point stands: Sunday's GM-only Expo is certified floor_limit. p2.19 (accepted, CC ruling 2026-10-20): one
+    // more Approve-blocking gap by count (6 vs 5) while uncovered time FALLS 165 → 113 quarters.
+    const f = out.gaps.filter((g) => g.positionId === I.$EXPO);
+    expect(f.some((g) => g.date === DATES[6] && g.cause === "floor_limit")).toBe(true);
+    expect(out.gaps.reduce((n, g) => n + g.toQ - g.fromQ, 0)).toBeLessThanOrEqual(113);
+  },
+  // p2.19: Sam's Register PRIMARY puts him on the Register close in the fill, so the repair this fixture once needed is not
+  // needed — no gap, no chain (the chain itself is pinned by F0i / F0j and the repair (a) variant in the generator tests).
+  "F0e-repair-needed": (out) => { expect(out.gaps).toEqual([]); },
+  "F0f-all-unproven": (out) => {
+    // p2.19 KNOWN COST of primary-first (CC ruling 2026-10-20): one Approve-blocking 12-quarter Sunday Walk-ins gap the bounded
+    // repair cannot close — the people who could cover Sunday are at their 5-day cap after Gus's Register / Expo week (a
+    // cross-day day-off swap would fix it; docs/ROADMAP.md). Pinned both ways.
+    expect(out.gaps.filter((g) => !["structure", "eligibility", "availability"].includes(g.cause)).map((g) => [g.date, g.code, g.positionId, g.fromQ, g.toQ, g.cause]))
+      .toEqual([[DATES[6], "coverage_gap", I.$WALK, 44, 56, "unresolved_search"]]);
+  },
   "F0g-history": (out) => { expect(out.days.find((d) => d.date === DATES[0]!)).toMatchObject({ inherited: true, originRevisionId: "rev-1" }); expect(out.shifts.filter((x) => x.userId === "u-x-gone" && x.date !== DATES[0]!)).toEqual([]); },
   "F0h-insufficient-capacity": (out) => expect(out.gaps).toMatchObject([{ cause: "capacity", certificate: { requiredHeads: 2, people: 1, shortBy: 1 } }]),
   "F0i-fourth-donor": (out) => { expect(out.gaps).toEqual([]); expect(out.stats.repair.donorsTried).toBeGreaterThanOrEqual(4); },

@@ -1,5 +1,5 @@
 {
- "_header": "Generator golden p2.16. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
+ "_header": "Generator golden p2.19. Regenerate ONLY with a written reason in the PR, and bump GENERATOR_VERSION.",
  "days": [
   {
    "date": "2026-10-26",
@@ -11,7 +11,7 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "hours": 10.25,
+      "hours": 5.5,
       "max": 40,
       "min": 24
      },
@@ -83,7 +83,7 @@
      "day": "2026-10-26",
      "inherited": false,
      "params": {
-      "hours": 5.5,
+      "hours": 10.25,
       "max": 40,
       "min": 24
      },
@@ -166,32 +166,16 @@
   }
  ],
  "reasons": {
-  "2026-10-26|u-b-bo|42": {
+  "2026-10-26|u-b-bo|46": {
    "alternates": [],
    "segments": [
     [
      {
       "key": "wave_arrival",
       "params": {
-       "fromQ": 42,
-       "positionId": "5c000000-0000-4000-8000-000000000003",
-       "toQ": 67
-      }
-     },
-     {
-      "key": "wave_arrival",
-      "params": {
-       "fromQ": 67,
-       "positionId": "5c000000-0000-4000-8000-000000000003",
-       "toQ": 80
-      }
-     },
-     {
-      "key": "wave_arrival",
-      "params": {
-       "fromQ": 80,
-       "positionId": "5c000000-0000-4000-8000-000000000003",
-       "toQ": 83
+       "fromQ": 46,
+       "positionId": "5c000000-0000-4000-8000-000000000004",
+       "toQ": 68
       }
      }
     ]
@@ -200,46 +184,15 @@
     {
      "key": "wave_arrival",
      "params": {
-      "fromQ": 42,
-      "positionId": "5c000000-0000-4000-8000-000000000003",
-      "toQ": 67
+      "fromQ": 46,
+      "positionId": "5c000000-0000-4000-8000-000000000004",
+      "toQ": 68
      }
     },
     {
      "key": "under_soft_min",
      "params": {
       "hoursUnder": 24,
-      "userId": "u-b-bo"
-     }
-    },
-    {
-     "key": "wave_arrival",
-     "params": {
-      "fromQ": 67,
-      "positionId": "5c000000-0000-4000-8000-000000000003",
-      "toQ": 80
-     }
-    },
-    {
-     "key": "under_soft_min",
-     "params": {
-      "hoursUnder": 17.75,
-      "userId": "u-b-bo"
-     }
-    },
-    {
-     "key": "wave_arrival",
-     "params": {
-      "fromQ": 80,
-      "positionId": "5c000000-0000-4000-8000-000000000003",
-      "toQ": 83
-     }
-    },
-    {
-     "key": "strongest_on_position",
-     "params": {
-      "positionId": "5c000000-0000-4000-8000-000000000003",
-      "skill": 0.9,
       "userId": "u-b-bo"
      }
     }
@@ -355,25 +308,28 @@
    "segments": [
     [
      {
-      "key": "repair_moved",
+      "key": "wave_arrival",
       "params": {
-       "fromPositionId": "5c000000-0000-4000-8000-000000000001",
        "fromQ": 42,
        "positionId": "5c000000-0000-4000-8000-000000000006",
-       "toQ": 68,
-       "userId": "u-f-finn"
+       "toQ": 68
       }
      }
     ]
    ],
    "shift": [
     {
-     "key": "repair_moved",
+     "key": "wave_arrival",
      "params": {
-      "fromPositionId": "5c000000-0000-4000-8000-000000000001",
       "fromQ": 42,
       "positionId": "5c000000-0000-4000-8000-000000000006",
-      "toQ": 68,
+      "toQ": 68
+     }
+    },
+    {
+     "key": "under_soft_min",
+     "params": {
+      "hoursUnder": 24,
       "userId": "u-f-finn"
      }
     }
@@ -446,33 +402,71 @@
     }
    ]
   },
-  "2026-10-26|u-sam|46": {
+  "2026-10-26|u-sam|42": {
    "alternates": [],
    "segments": [
     [
      {
       "key": "wave_arrival",
       "params": {
-       "fromQ": 46,
-       "positionId": "5c000000-0000-4000-8000-000000000004",
-       "toQ": 68
+       "fromQ": 42,
+       "positionId": "5c000000-0000-4000-8000-000000000003",
+       "toQ": 67
+      }
+     },
+     {
+      "key": "extended_to_minimum",
+      "params": {
+       "fromQ": 67,
+       "positionId": "5c000000-0000-4000-8000-000000000003",
+       "toQ": 80
+      }
+     },
+     {
+      "key": "closing_crew",
+      "params": {
+       "fromQ": 80,
+       "positionId": "5c000000-0000-4000-8000-000000000003",
+       "toQ": 83
       }
      }
     ]
    ],
    "shift": [
     {
+     "key": "closing_crew",
+     "params": {
+      "fromQ": 80,
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "toQ": 83
+     }
+    },
+    {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "userId": "u-sam"
+     }
+    },
+    {
      "key": "wave_arrival",
      "params": {
-      "fromQ": 46,
-      "positionId": "5c000000-0000-4000-8000-000000000004",
-      "toQ": 68
+      "fromQ": 42,
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "toQ": 67
+     }
+    },
+    {
+     "key": "on_primary",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000003",
+      "userId": "u-sam"
      }
     },
     {
      "key": "under_soft_min",
      "params": {
-      "hoursUnder": 24,
+      "hoursUnder": 20,
       "userId": "u-sam"
      }
     }
@@ -483,25 +477,60 @@
    "segments": [
     [
      {
-      "key": "repair_moved",
+      "key": "wave_arrival",
       "params": {
-       "fromPositionId": "5c000000-0000-4000-8000-000000000003",
        "fromQ": 42,
        "positionId": "5c000000-0000-4000-8000-000000000005",
-       "toQ": 83,
-       "userId": "u-tess"
+       "toQ": 67
+      }
+     },
+     {
+      "key": "extended_to_minimum",
+      "params": {
+       "fromQ": 67,
+       "positionId": "5c000000-0000-4000-8000-000000000005",
+       "toQ": 80
+      }
+     },
+     {
+      "key": "closing_crew",
+      "params": {
+       "fromQ": 80,
+       "positionId": "5c000000-0000-4000-8000-000000000005",
+       "toQ": 83
       }
      }
     ]
    ],
    "shift": [
     {
-     "key": "repair_moved",
+     "key": "closing_crew",
      "params": {
-      "fromPositionId": "5c000000-0000-4000-8000-000000000003",
+      "fromQ": 80,
+      "positionId": "5c000000-0000-4000-8000-000000000005",
+      "toQ": 83
+     }
+    },
+    {
+     "key": "strongest_on_position",
+     "params": {
+      "positionId": "5c000000-0000-4000-8000-000000000005",
+      "skill": 0.9,
+      "userId": "u-tess"
+     }
+    },
+    {
+     "key": "wave_arrival",
+     "params": {
       "fromQ": 42,
       "positionId": "5c000000-0000-4000-8000-000000000005",
-      "toQ": 83,
+      "toQ": 67
+     }
+    },
+    {
+     "key": "under_soft_min",
+     "params": {
+      "hoursUnder": 20,
       "userId": "u-tess"
      }
     },
@@ -519,17 +548,17 @@
   {
    "closingManager": false,
    "date": "2026-10-26",
-   "endQ": 83,
+   "endQ": 68,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 83,
-     "positionId": "5c000000-0000-4000-8000-000000000003",
-     "startQ": 42
+     "endQ": 68,
+     "positionId": "5c000000-0000-4000-8000-000000000004",
+     "startQ": 46
     }
    ],
-   "startQ": 42,
+   "startQ": 46,
    "userId": "u-b-bo"
   },
   {
@@ -631,17 +660,17 @@
   {
    "closingManager": false,
    "date": "2026-10-26",
-   "endQ": 68,
+   "endQ": 83,
    "flex": false,
    "pinned": false,
    "segments": [
     {
-     "endQ": 68,
-     "positionId": "5c000000-0000-4000-8000-000000000004",
-     "startQ": 46
+     "endQ": 83,
+     "positionId": "5c000000-0000-4000-8000-000000000003",
+     "startQ": 42
     }
    ],
-   "startQ": 46,
+   "startQ": 42,
    "userId": "u-sam"
   },
   {
@@ -672,11 +701,11 @@
    "2026-10-26": 56.75
   },
   "repair": {
-   "accepted": 2,
-   "chainDepth": 2,
-   "donorsTried": 1,
+   "accepted": 0,
+   "chainDepth": 0,
+   "donorsTried": 0,
    "provenEarly": 0,
-   "steps": 7
+   "steps": 0
   },
   "salariedCoverHours": 8,
   "shifts": 9

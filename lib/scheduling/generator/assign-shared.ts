@@ -10,15 +10,16 @@
  *
  * Primitives, in the mockup's order: `planBlock` (a deficit run extended to the minimum shift inside the
  * position's window, then into the next needed position — a multi-position segment), `rankCandidates`
- * (skill-weighted with guardrails: the busiest windows by skill, elsewhere most-under-soft-min first;
- * overtime skipped unless nobody else fits; full-timers below their minimum pulled forward; the pairing
- * tie-break; ties to the lower userId), `fillRun` (insert a free person, or extend their own shift that
+ * (Juan 2026-10-20: the position rank first — primary, then secondary, then flex; then skill-weighted with
+ * guardrails: the busiest windows by skill, elsewhere most-under-soft-min first; overtime skipped unless nobody
+ * else fits; full-timers below their minimum pulled forward; the pairing tie-break; ties to the lower userId), `fillRun` (insert a free person, or extend their own shift that
  * day, else a salaried manager's cover carved out of their MoD block within the floor limit), the priority
  * relabel, the Closing Manager, and the MoD lane fill. Determinism: no Date, no random, every iteration
  * over sorted arrays, ids compared with `<`.
  */
 import type { DayContext, RuleContext, RulePerson } from "../context-shared";
 import { closeScore, skillOf, type SchedPerson, type SkillLookup } from "../people-input-shared";
+import { POSITION_RANK, positionRankOf, primaryPositionOf } from "../position-rank-shared";
 import { noteOrder, reason, type BoardNote, type Reason } from "../reasons-shared";
 import type { FillPlan, FillStep } from "../rules-shared";
 import {
@@ -62,6 +63,13 @@ export interface BuildCtx {
    * (`splitRun`) counts its RETRIES against the same `REPAIR_MAX_STEPS` budget. Absent = no backtracking budget tracked.
    */
   counters?: { steps: number };
+  /**
+   * Juan 2026-10-20 ("so the system knows where to schedule them consistently. And flex them as needed"): the position
+   * rank decides the FIRST placement (the main fill); once the build is CLOSING GAPS (the bounded repair search and every
+   * fill after it) the rank yields — `rankCandidates` ranks everyone as flex, so a primary / secondary holder may be moved,
+   * refilled or relabelled to close a remaining gap like anyone else. Deterministic: a flag, no new search.
+   */
+  closingGaps?: boolean;
 }
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -292,7 +300,14 @@ export function planBlock(shifts: readonly GShift[], day: DayContext, positionId
 
 // ─── Candidates ──────────────────────────────────────────────────────────────
 
-export interface Candidate { person: SchedPerson; own: GShift | null; skill: number; key: Array<number | string> }
+/**
+ * A ranked candidate. `key` is the sort key, compared left to right (Juan 2026-10-20):
+ * [positionRank, fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] — see `CANDIDATE_KEY`.
+ */
+export interface Candidate { person: SchedPerson; own: GShift | null; skill: number; key: Array<number | string>; /** The person's TRUE rank here (the key's is neutral while closing gaps). */ rank: number }
+
+/** The index of each part of `Candidate.key` (one place, so `whyChosen` and the notes never read a stale slot). */
+export const CANDIDATE_KEY = { positionRank: 0, fullTimerFirst: 1, softMin: 2, skill: 3, pairing: 4, userId: 5 } as const;
 
 export interface CandidateOpts {
   date: string;
@@ -341,7 +356,12 @@ function extendsOwn(own: GShift, plan: BlockPlan): boolean {
 }
 
 /**
- * Eligible hourly candidates for a planned block, ranked. Eligibility: an active hourly member, allowed on
+ * Eligible hourly candidates for a planned block, ranked. The ranking (Juan 2026-10-20) is the POSITION RANK first —
+ * on `o.positionId` (the position the deficit is on; for a multi-position block, the block's core position) a person
+ * whose primary it is (0) beats one whose secondary it is (1), who beats everyone else eligible (flex, 2; a null
+ * `positionId` — the MoD lane — ranks everyone flex, so nothing changes there) — then full-timers short of their
+ * minimum, then the busiest-window skill / under-soft-min key, then skill, the pairing tie-break and the userId.
+ * The rank never makes anyone eligible: eligibility is exactly as before. Eligibility: an active hourly member, allowed on
  * every planned position (role, work type, never a manager on Prep/Dishwasher), available over the whole
  * span, their leader setting allows it, no untouchable day, a Closing Manager-eligible closer for the
  * `closingLead`, free that day or extendable from their own adjacent shift, and not over the overtime
@@ -381,7 +401,8 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
     const fullTimerFirst = p.fullTime && p.fullTimeMinH !== null && weekQuarters(week, userId) / 4 < p.fullTimeMinH ? 0 : 1;
     const newer = !!o.positionId && p.newerPositions.includes(o.positionId);
     const pairing = newer ? (strongPartnerOnLine(b, shifts, o.plan.startQ, o.plan.endQ, userId) ? -1 : 1) : 0;
-    out.push({ person: p, own, skill, key: [fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] });
+    const rank = positionRankOf(p, o.positionId);
+    out.push({ person: p, own, skill, rank, key: [b.closingGaps ? POSITION_RANK.flex : rank, fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] });
   }
   out.sort((x, y) => {
     for (let i = 0; i < x.key.length; i++) {
@@ -426,14 +447,45 @@ export function applyPlacement(shifts: GShift[], c: Candidate, o: PlaceOpts, peo
   }
 }
 
-/** The ranking reason for a chosen candidate (why this person). */
-export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, o: CandidateOpts): Reason[] {
+/**
+ * The ranking reason for a chosen candidate (why this person). Astra BC-042: a candidate who won on their POSITION RANK
+ * (primary / secondary) over a WORSE-ranked candidate is never explained as "strongest available"; it gets the QUALIFIED
+ * claim ("strongest among the people with this as their primary / secondary") only when it is the top skill among every
+ * candidate of its rank (`peers`, the ranked list) — else the reason that decided it (a full-timer short of hours…) stands
+ * alone. When every peer shares one rank, the reasons are exactly as before.
+ */
+export function whyChosen(b: BuildCtx, shifts: readonly GShift[], c: Candidate, o: CandidateOpts, peers: readonly Candidate[] = []): Reason[] {
   const out: Reason[] = [];
-  if (c.key[0] === 0) out.push(reason("full_timer_minimum", { userId: c.person.userId }));
-  if (c.key[1] === 0 && o.positionId) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
-  else if (typeof c.key[1] === "number" && c.key[1] < 0) out.push(reason("under_soft_min", { userId: c.person.userId, hoursUnder: -c.key[1] }));
-  if (c.key[3] === -1) out.push(reason("beside_strong", { userId: c.person.userId, positionId: o.positionId }));
-  if (c.key[3] === 1) out.push(reason("strongest_on_position", { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
+  const K = CANDIDATE_KEY;
+  // Rank decided the pick only when it put `c` ahead of someone of a WORSE rank (all of one rank: rank decided nothing).
+  const byRank = peers.some((x) => (x.key[K.positionRank] as number) > (c.key[K.positionRank] as number));
+  // Astra BC-042 r3: when the RANK put them ahead of stronger people, "strongest available" would be false — the skill
+  // reason is then QUALIFIED ("strongest among the people with this as their primary / secondary"), and only when skill
+  // decided it among that rank.
+  // Astra BC-042 r4: the qualified claim only when they ARE the top skill among every eligible candidate of their rank (a
+  // full-timer short of hours can win over a stronger same-rank person — then the full-timer reason names the decider).
+  const rankNow = c.key[K.positionRank];
+  const sameRank = peers.filter((x) => x !== c && x.key[K.positionRank] === rankNow);
+  const topOfRank = sameRank.length > 0 && sameRank.every((x) => x.skill <= c.skill);
+  const strongestKey = !byRank ? "strongest_on_position" as const : !topOfRank ? null
+    : rankNow === POSITION_RANK.primary ? "strongest_among_primary" as const
+    : rankNow === POSITION_RANK.secondary ? "strongest_among_secondary" as const : null;
+  // Juan 2026-10-20: the position rank — on their primary / secondary it says so; placed elsewhere while they HAVE a
+  // primary, it is a flex (the reason names the position and their primary). No primary set → nothing (as before).
+  const primary = primaryPositionOf(c.person);
+  if (o.positionId && primary) {
+    const rank = c.rank;
+    if (rank === POSITION_RANK.primary) out.push(reason("on_primary", { userId: c.person.userId, positionId: o.positionId }));
+    else if (rank === POSITION_RANK.secondary) out.push(reason("on_secondary", { userId: c.person.userId, positionId: o.positionId, primaryId: primary }));
+    // While closing gaps the yield names itself: flexed TO COVER A GAP.
+    else out.push(reason(b.closingGaps ? "flexed_gap" : "flexed", { userId: c.person.userId, positionId: o.positionId, primaryId: primary }));
+  }
+  if (c.key[K.fullTimerFirst] === 0) out.push(reason("full_timer_minimum", { userId: c.person.userId }));
+  const softMin = c.key[K.softMin];
+  if (softMin === 0 && o.positionId) { if (strongestKey) out.push(reason(strongestKey, { userId: c.person.userId, positionId: o.positionId, skill: c.skill })); }
+  else if (typeof softMin === "number" && softMin < 0) out.push(reason("under_soft_min", { userId: c.person.userId, hoursUnder: -softMin }));
+  if (c.key[K.pairing] === -1) out.push(reason("beside_strong", { userId: c.person.userId, positionId: o.positionId }));
+  if (c.key[K.pairing] === 1 && strongestKey) out.push(reason(strongestKey, { userId: c.person.userId, positionId: o.positionId, skill: c.skill }));
   void b;
   void shifts;
   return out;
@@ -484,7 +536,7 @@ export function fillRun(
       const o: CandidateOpts = { date, plan, positionId, closingLead: t.closingLead, allowOvertime, allowOffDay, allowSoftMax, mod: false, extensionOnly, exclude: opts.exclude };
       const ranked = rankCandidates(b, week, week.built[date]!, o);
       for (const c of ranked.slice(0, 6)) {
-        const why = whyChosen(b, week.built[date]!, c, o);
+        const why = whyChosen(b, week.built[date]!, c, o, ranked);
         // CC chunk H9: named overtime only when THIS placement takes the week past the threshold (a tier allows it; it is not a claim).
         const overtime = allowOvertime && (weekQuarters(week, c.person.userId) + plan.endQ - plan.startQ) / 4 > b.structure.limits.overtimeH;
         if (overtime) why.push(reason("overtime_last_resort", { userId: c.person.userId }));
@@ -499,7 +551,7 @@ export function fillRun(
         const ok = guarded(b, week, date, place);
         if (ok) {
           if (overtime) b.notes.push({ code: "overtime_used", date, userId: c.person.userId, positionId, params: {} });
-          if (c.key[3] === 1) b.notes.push({ code: "pairing_unmet", date, userId: c.person.userId, positionId, params: { fromQ: plan.startQ, toQ: plan.endQ } });
+          if (c.key[CANDIDATE_KEY.pairing] === 1) b.notes.push({ code: "pairing_unmet", date, userId: c.person.userId, positionId, params: { fromQ: plan.startQ, toQ: plan.endQ } });
           return "placed";
         }
       }
@@ -1212,6 +1264,13 @@ export function modHoles(b: BuildCtx, date: string, shifts: readonly GShift[]): 
 /**
  * Fill a MoD hole with an eligible hourly manager (SL+, or a KH after the shop's setting time) on a `mod`
  * block reaching the minimum shift inside the shop day; their own adjacent shift may extend instead.
+ *
+ * Juan 2026-10-20 ("consideration on them doing their managerial duties"): FIRST the BARE hole as an EXTENSION of an
+ * eligible lead's own adjacent shift (a station block that ends where the hole starts, or starts where it ends) — the
+ * padded block below can overlap that very shift and so never extends it, which is how a lead held on their primary
+ * station left the hour before or after it without a manager on duty. Every rule still holds (the guard, the daily
+ * maximum, availability, the leader setting, overtime and the soft max via the tiers, the two days off); the extension
+ * carries the reason `mod_extension`.
  */
 export function fillModHole(b: BuildCtx, week: WeekState, date: string, fromQ: number, toQ: number, tiers: readonly RelaxTier[] = RELAX_TIERS): boolean {
   const day = b.ctx.days[date]!;
@@ -1222,13 +1281,15 @@ export function fillModHole(b: BuildCtx, week: WeekState, date: string, fromQ: n
   let z = toQ;
   while (z - a < minQ && z < hi) z++;
   while (z - a < minQ && a > lo) a--;
-  if (z - a < minQ) return false;
-  const plan: BlockPlan = { startQ: a, endQ: z, segments: [{ positionId: MOD, startQ: a, endQ: z, kind: "core" }] };
+  const full: BlockPlan | null = z - a >= minQ ? { startQ: a, endQ: z, segments: [{ positionId: MOD, startQ: a, endQ: z, kind: "core" }] } : null;
+  const bare: BlockPlan = { startQ: fromQ, endQ: toQ, segments: [{ positionId: MOD, startQ: fromQ, endQ: toQ, kind: "core" }] };
+  const plans: Array<{ plan: BlockPlan; extensionOnly: boolean }> = [{ plan: bare, extensionOnly: true }, ...(full ? [{ plan: full, extensionOnly: false }] : [])];
   for (const { allowOvertime, allowOffDay, allowSoftMax } of tiers) {
-    const o: CandidateOpts = { date, plan, positionId: null, closingLead: false, allowOvertime, allowOffDay, allowSoftMax, mod: true, modFromQ: fromQ };
+   for (const { plan, extensionOnly } of plans) {
+    const o: CandidateOpts = { date, plan, positionId: null, closingLead: false, allowOvertime, allowOffDay, allowSoftMax, mod: true, modFromQ: fromQ, extensionOnly };
     const ranked = rankCandidates(b, week, week.built[date]!, o);
     for (const c of ranked.slice(0, 6)) {
-      const r = reason("mod_cover", { fromQ, toQ, userId: c.person.userId });
+      const r = extensionOnly ? reason("mod_extension", { fromQ, toQ, userId: c.person.userId }) : reason("mod_cover", { fromQ, toQ, userId: c.person.userId });
       const ok = guarded(b, week, date, (shifts) => {
         const overtime = allowOvertime && (weekQuarters(week, c.person.userId) + plan.endQ - plan.startQ) / 4 > b.structure.limits.overtimeH;
         applyPlacement(shifts, c, { date, plan, sourceReason: r, closingLead: false, extraReasons: overtime ? [reason("overtime_last_resort", { userId: c.person.userId })] : [] }, b.people, null);
@@ -1236,6 +1297,7 @@ export function fillModHole(b: BuildCtx, week: WeekState, date: string, fromQ: n
       }, (next) => modHoles(b, date, next).reduce((n, [f, t]) => n + (t - f), 0) < modHoles(b, date, week.built[date]!).reduce((n, [f, t]) => n + (t - f), 0));
       if (ok) return true;
     }
+   }
   }
   return false;
 }

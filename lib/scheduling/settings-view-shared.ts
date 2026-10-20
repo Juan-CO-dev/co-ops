@@ -10,6 +10,7 @@ import type { SkillTunables } from "@/lib/people/tunables-shared";
 import type { PositionLabel } from "./board-view-shared";
 import type { ScheduleShopSettings } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
+import type { ToastPrimarySuggestion } from "./position-rank-shared";
 import { validScheduleStructure, type ScheduleStructure, type SeededFrom } from "./structure-shared";
 import { Q_PER_DAY, addDays, isoWeekStart, qToWall, wallToQ } from "./time-shared";
 
@@ -36,6 +37,18 @@ export interface SettingsMember {
   settings: PersonSettingsRow | null;
   /** Their role is off the floor schedule by default (prep / catering manager): "Include on the schedule" is offered. */
   includeOffered: boolean;
+  /**
+   * Juan 2026-10-20: a suggested PRIMARY from their most-worked Toast job (last 8 weeks) — only when they have a Toast
+   * link, no primary yet, and a confident match to one of the shop's positions. A button, never saved on its own.
+   */
+  suggestedPrimary?: ToastPrimarySuggestion | null;
+  /** Astra BC-007: the id of the latest settings row the card shows (null = none yet) — sent back as `expectedId`. */
+  settingsId?: string | null;
+  /**
+   * Juan 2026-10-20 ("GMs own their shop"): may this actor change this person's settings? Below MoO never oneself, anyone at
+   * or above GM, or anyone at or above the actor (`personSettingsSubjectRefusal`); the save path enforces the same rule.
+   */
+  editable?: boolean;
 }
 
 export interface SettingsPin { id: string; date: string; userId: string; startQ: number; endQ: number; positions: string[]; kind: "presence" | "added" }
@@ -50,6 +63,11 @@ export interface ScheduleSettingsView {
   closing: { measuredMinutes: number | null; samples: number };
   stationAdvisory: NarrativeLine[];
   positions: Record<string, PositionLabel>;
+  /**
+   * Juan 2026-10-20: the positions' roles are KNOWN (the structure is saved). Before that every position reads as a line
+   * position, so the primary / secondary work-type check is not made (the save path skips it too).
+   */
+  positionRolesKnown?: boolean;
   names: Record<string, string>;
   members: SettingsMember[];
   /** MoO / Owner (presence only): the "in today" toggles. */
@@ -120,11 +138,24 @@ export const structureBody = (locationId: string, expectedId: string | null, str
 export const shopBody = (locationId: string, s: ScheduleShopSettings) => ({
   action: "shop" as const, locationId, enabled: s.enabled, estimatedHourlyCents: s.estimatedHourlyCents, estimatedSalariedWeeklyCents: s.estimatedSalariedWeeklyCents, agmAccess: s.agmAccess,
 });
-export const personBody = (locationId: string, settings: PersonSettingsRow) => ({ action: "person" as const, locationId, settings: { ...settings } });
+export const personBody = (locationId: string, settings: PersonSettingsRow, expectedId: string | null) => ({ action: "person" as const, locationId, settings: { ...settings }, expectedId });
+/** The user screen's pickers: only what changed, merged server-side onto the latest row (Astra BC-007). */
+export const personPositionsBody = (locationId: string, userId: string, changes: Record<string, unknown>, expectedId: string | null) =>
+  ({ action: "person_positions" as const, locationId, userId, changes: { ...changes }, expectedId });
 export const pinBody = (locationId: string, pin: Omit<SettingsPin, "id">) => ({ action: "pin" as const, locationId, pin: { ...pin, positions: [...pin.positions] } });
 export const retirePinBody = (locationId: string, pinId: string) => ({ action: "pin" as const, locationId, pin: { retiresId: pinId } });
 export const tunablesBody = (locationId: string | null, tunables: SkillTunables) => ({ action: "tunables" as const, locationId, tunables });
 export const prepBody = (locationId: string, s: { pmV2: boolean; prepPositionId: string | null }) => ({ action: "shop" as const, locationId, pmV2: s.pmV2, prepPositionId: s.prepPositionId });
+
+/**
+ * Astra BC-007 (r3): the staff editor's expected row id is bound to its DRAFT. When the props bring a different row (a
+ * refresh, someone else's save) a CLEAN editor adopts it — values AND id together; a DIRTY editor keeps its draft and the
+ * id that draft was based on, so its save is refused `person_settings_moved` instead of overwriting the newer row.
+ */
+export function editorBaseOnProps(cur: { dirty: boolean; baseId: string | null; seenId: string | null }, propsId: string | null): { baseId: string | null; seenId: string | null; reset: boolean } {
+  if (propsId === cur.seenId) return { baseId: cur.baseId, seenId: cur.seenId, reset: false };
+  return cur.dirty ? { baseId: cur.baseId, seenId: propsId, reset: false } : { baseId: propsId, seenId: propsId, reset: true };
+}
 
 /** Dollars typed by a person → cents, or null when blank (a blank estimate stays blank, R2); NaN / negative → "invalid". */
 export function dollarsToCents(v: string): number | null | "invalid" {

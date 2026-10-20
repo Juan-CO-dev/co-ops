@@ -14,6 +14,12 @@
  *
  * canActOn gating happens in the parent (UserRow): this component is only
  * mounted when the actor may act on the target.
+ *
+ * "Positions" (Juan 2026-10-20) is the one action that is NOT a user-lifecycle
+ * mutation: it writes the person's schedule settings (primary / secondary
+ * position per shop) through POST /api/schedule, which takes no step-up — so
+ * it asks for none. Offered below shift lead only (a manager's ordered list is
+ * their cover order, on the schedule settings card).
  */
 
 import { useState } from "react";
@@ -24,7 +30,9 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { type RoleCode } from "@/lib/roles";
 import type { AdminUserListItem } from "@/lib/admin/users";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { hasPositionRank } from "@/lib/scheduling/position-rank-shared";
 import { postJson, resolveErrorKey, type LocationOption } from "./shared";
+import { UserPositionsDialog, type PositionShops } from "./UserPositions";
 
 type ActiveAction =
   | { kind: "reset_pin" }
@@ -36,16 +44,20 @@ type ActiveAction =
   | { kind: "activate" }
   | { kind: "dormant" }
   | { kind: "wake" }
+  | { kind: "positions" }
   | null;
 
 export function UserActions({
   user,
   assignableRoles,
   accessibleLocations,
+  positionShops,
 }: {
   user: AdminUserListItem;
   assignableRoles: RoleCode[];
   accessibleLocations: LocationOption[];
+  /** The primary / secondary picker data per shop (absent = the action is not offered). */
+  positionShops?: PositionShops;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -104,11 +116,30 @@ export function UserActions({
         <ActionButton label={t("admin.users.action.activate")} onClick={() => setActive({ kind: "activate" })} />
       )}
 
+      {positionShops && hasPositionRank(user) ? (
+        <ActionButton label={t("admin.users.action.positions")} onClick={() => setActive({ kind: "positions" })} />
+      ) : null}
+
       {user.active && (!user.dormancy.dormant || user.dormancy.reason === "manual") && (
         <ActionButton label={t(user.dormancy.dormant ? "admin.users.action.wake" : "admin.users.action.dormant")}
           onClick={() => setActive({ kind: user.dormancy.dormant ? "wake" : "dormant" })} />
       )}
-      {active ? (
+      {active?.kind === "positions" && positionShops ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("admin.users.positions.title")}
+          className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-co-text/40 p-4"
+        >
+          <div className="mt-12 w-full max-w-md rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-lg">
+            <h2 className="text-base font-extrabold text-co-text">{user.name} · {t("admin.users.positions.title")}</h2>
+            <div className="mt-4">
+              <UserPositionsDialog userId={user.id} role={user.role} shops={positionShops}
+                locations={accessibleLocations.filter((l) => user.locationIds.includes(l.id))} onClose={close} />
+            </div>
+          </div>
+        </div>
+      ) : active ? (
         <div
           role="dialog"
           aria-modal="true"

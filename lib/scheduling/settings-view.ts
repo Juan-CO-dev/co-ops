@@ -14,12 +14,13 @@ import { loadPeopleShopSettings } from "@/lib/people/settings";
 import { loadShopTunables } from "@/lib/people/skills";
 import { operationalNow } from "@/lib/midshift-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { canEditStructure, canManageShopSwitch, scheduleActRefusal } from "./access-shared";
+import { canEditStructure, canManageShopSwitch, personSettingsSubjectRefusal, scheduleActRefusal } from "./access-shared";
 import type { PositionLabel } from "./board-view-shared";
 import { loadPositionLabelRows } from "./board";
 import { ScheduleError } from "./errors-shared";
-import { loadScheduleShopSettings, loadSchedulingInputs, loadStationSeedRows } from "./inputs";
+import { loadPersonSettingsWithIds, loadScheduleShopSettings, loadSchedulingInputs, loadStationSeedRows } from "./inputs";
 import { gate, type ScheduleDeps } from "./schedules";
+import { loadToastJobHours, toastSuggestions } from "./position-suggest";
 import { presenceDates, presenceWeekStarts, stationAdvisory, type ScheduleSettingsView, type SettingsMember } from "./settings-view-shared";
 import { structureFromStations, type PositionRole } from "./structure-shared";
 
@@ -72,10 +73,26 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
   for (const r of await loadPositionLabelRows(deps.service, locationId)) {
     positions[r.id] = { name: r.name, nameEs: r.name_es, role: live.positions[r.id]?.role ?? "line_other" };
   }
-  const latest = new Map(inputs.personSettings.map((s) => [s.userId, s]));
+  // Astra BC-007 (r3 blocker): the card's VALUES and its row ID come from ONE read of the rows — never the inputs' copy
+  // plus a later query, which could pair revision A's values with revision B's id and let a stale save pass the check.
+  const snapshot = perms.people ? await loadPersonSettingsWithIds(deps.service, locationId) : [];
+  const latestRow = new Map(snapshot.map((x) => [x.row.userId, x]));
+  const latest = new Map(snapshot.map((x) => [x.row.userId, x.row]));
+  const rolesKnown = inputs.structure.source === "saved";
+  // Juan 2026-10-20: the suggested primary from Toast (people with a link and no primary), matched on the live positions.
+  let suggestions: ReturnType<typeof toastSuggestions> = {};
+  if (perms.people) {
+    const listed = inputs.members.filter((m) => !NEVER_INCLUDED.includes(m.role)).map((m) => ({ userId: m.userId, role: m.role, coverPositions: latest.get(m.userId)?.coverPositions ?? [] }));
+    if (listed.some((m) => m.coverPositions.length === 0)) {
+      const livePositionIds = Object.keys(live.positions).filter((id) => positions[id]).sort();
+      suggestions = toastSuggestions(await loadToastJobHours(deps.service, locationId, today), listed,
+        livePositionIds.map((id) => ({ id, name: positions[id]!.name, role: rolesKnown ? live.positions[id]!.role : null })));
+    }
+  }
   const members: SettingsMember[] = perms.people ? inputs.members.filter((m) => !NEVER_INCLUDED.includes(m.role)).map((m) => ({
     userId: m.userId, name: m.name, role: m.role, settings: latest.get(m.userId) ?? null,
-    includeOffered: live.roster.excludedRoles.includes(m.role),
+    includeOffered: live.roster.excludedRoles.includes(m.role), suggestedPrimary: suggestions[m.userId] ?? null,
+    settingsId: latestRow.get(m.userId)?.id ?? null, editable: personSettingsSubjectRefusal(actor, { userId: m.userId, role: m.role }) === null,
   })) : [];
   let presencePeople: ScheduleSettingsView["presencePeople"] = [];
   if (perms.presence) presencePeople = await loadPresencePeople(deps.service);
@@ -85,7 +102,7 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
     state: "ready", locationId, today, dates, perms,
     structure: perms.structure ? { id: inputs.structure.source === "saved" ? inputs.structure.id : null, source: inputs.structure.source, value: live } : null,
     closing: { measuredMinutes: inputs.closing.basis === "measured" ? inputs.closing.minutes : null, samples: inputs.closing.samples },
-    stationAdvisory: advisory, positions, names, members, presencePeople,
+    stationAdvisory: advisory, positions, positionRolesKnown: rolesKnown, names, members, presencePeople,
     pins: perms.presence ? inputs.pins.filter((p) => p.date >= today).map((p) => ({ id: p.id, date: p.date, userId: p.userId, startQ: p.startQ, endQ: p.endQ, positions: [...p.positions], kind: p.kind })) : [],
     shop: perms.shopSwitch ? shopSettings : null,
     tunables: perms.tunables ? await loadShopTunables(deps.service, locationId) : null,

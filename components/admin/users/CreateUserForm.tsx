@@ -8,6 +8,11 @@
  *   - locations multiselect shows ONLY when getRoleLevel(role) < 9
  * Submit: requestStepUp("B") → POST /api/admin/users → close + router.refresh().
  *
+ * Juan 2026-10-20 (adding ~19 staff): below shift lead, each chosen shop shows the work type, PRIMARY and SECONDARY
+ * position pickers (and nothing is required). After the user is created, the picks are written as their schedule person
+ * settings (POST /api/schedule, no step-up). If that second write fails the user still exists: the form says so, names
+ * the refusal, and offers only Close (the positions can be set from the user's "Positions" action).
+ *
  * The tier is TIER B because the server says so: POST /api/admin/users runs
  * assertStepUp(ctx, "B") (WB2-01 — creating a user is a user-lifecycle action).
  * Asking for Tier A here resolved "ok" with NO password prompt whenever the
@@ -24,16 +29,26 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { ROLES, getRoleLevel, type RoleCode } from "@/lib/roles";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { postJson, resolveErrorKey, type LocationOption } from "./shared";
+import { hasPositionRank } from "@/lib/scheduling/position-rank-shared";
+import { pickOf, type PositionPick } from "@/lib/scheduling/user-positions-shared";
+import { scheduleErrorKey } from "@/components/schedule/schedule-errors";
+import { postJsonData, resolveErrorKey, type LocationOption } from "./shared";
+import { ShopPositionFields, anyPickProblem, savePicks, type PositionShops } from "./UserPositions";
 
 export function CreateUserForm({
   assignableRoles,
   accessibleLocations,
+  positionShops,
   onClose,
+  initial,
 }: {
   assignableRoles: RoleCode[];
   accessibleLocations: LocationOption[];
+  /** The primary / secondary picker data per shop (absent = no pickers). */
+  positionShops?: PositionShops;
   onClose: () => void;
+  /** SSR tests / screenshots only: a pre-filled form. */
+  initial?: { role?: RoleCode; locationIds?: string[]; picks?: Record<string, PositionPick> };
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -41,28 +56,34 @@ export function CreateUserForm({
 
   const firstRole = assignableRoles[0];
   const [name, setName] = useState("");
-  const [role, setRole] = useState<RoleCode | "">(firstRole ?? "");
+  const [role, setRole] = useState<RoleCode | "">(initial?.role ?? firstRole ?? "");
   const [email, setEmail] = useState("");
   const [tempPin, setTempPin] = useState("");
   const [tempPassword, setTempPassword] = useState("");
-  const [locationIds, setLocationIds] = useState<string[]>([]);
+  const [locationIds, setLocationIds] = useState<string[]>(initial?.locationIds ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [picks, setPicks] = useState<Record<string, PositionPick>>(initial?.picks ?? {});
+  /** The user exists but their positions were not saved: only Close is offered. */
+  const [createdOnly, setCreatedOnly] = useState(false);
 
   const hasEmailAuth = role !== "" && ROLES[role].hasEmailAuth;
   const needsLocations = role !== "" && getRoleLevel(role) < 9;
+  const offersPositions = !!positionShops && role !== "" && needsLocations && hasPositionRank({ role });
+  const chosenPicks = offersPositions ? Object.fromEntries(locationIds.map((id) => [id, picks[id] ?? pickOf(null)])) : {};
+  const picksBlocked = offersPositions && anyPickProblem(null, role as RoleCode, chosenPicks, positionShops!);
 
   const toggleLocation = (id: string) => {
     setLocationIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const handleSubmit = async () => {
-    if (submitting || role === "") return;
+    if (submitting || role === "" || picksBlocked) return;
     setErrorMsg(null);
     const stepUp = await requestStepUp("B");
     if (stepUp !== "ok") return;
     setSubmitting(true);
-    const result = await postJson("/api/admin/users", {
+    const result = await postJsonData<{ userId?: string }>("/api/admin/users", {
       name: name.trim(),
       role,
       email: hasEmailAuth ? email.trim() : null,
@@ -70,13 +91,25 @@ export function CreateUserForm({
       tempPassword: hasEmailAuth ? tempPassword : null,
       locationIds: needsLocations ? locationIds : [],
     });
-    setSubmitting(false);
-    if (result.ok) {
-      onClose();
-      router.refresh();
-    } else {
+    if (!result.ok) {
+      setSubmitting(false);
       setErrorMsg(t(resolveErrorKey(result.code)));
+      return;
     }
+    const userId = result.data?.userId;
+    if (offersPositions && userId) {
+      const code = await savePicks(userId, chosenPicks, positionShops!);
+      if (code) {
+        setSubmitting(false);
+        setCreatedOnly(true);
+        setErrorMsg(t("admin.users.positions.saved_partial", { error: t(scheduleErrorKey(code)) }));
+        router.refresh();
+        return;
+      }
+    }
+    setSubmitting(false);
+    onClose();
+    router.refresh();
   };
 
   return (
@@ -175,7 +208,20 @@ export function CreateUserForm({
             </fieldset>
           ) : null}
 
-          {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
+          {offersPositions && locationIds.length > 0 ? (
+            <div className="flex flex-col gap-3" data-create-positions>
+              <div>
+                <h3 className="text-sm font-bold text-co-text">{t("admin.users.positions.title")}</h3>
+                <p className="mt-1 text-[11px] text-co-text-muted">{t("admin.users.positions.help")}</p>
+              </div>
+              {accessibleLocations.filter((l) => locationIds.includes(l.id)).map((loc) => (
+                <ShopPositionFields key={loc.id} userId={null} role={role as RoleCode} location={loc} shop={positionShops![loc.id]}
+                  pick={picks[loc.id] ?? pickOf(null)} onChange={(next) => setPicks((cur) => ({ ...cur, [loc.id]: next }))} />
+              ))}
+            </div>
+          ) : null}
+
+          {errorMsg ? <p role="alert" className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
@@ -185,16 +231,16 @@ export function CreateUserForm({
             disabled={submitting}
             className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {t("admin.users.cancel")}
+            {t(createdOnly ? "admin.users.positions.close" : "admin.users.cancel")}
           </button>
-          <button
+          {createdOnly ? null : <button
             type="button"
             onClick={() => void handleSubmit()}
-            disabled={submitting || name.trim() === "" || role === "" || tempPin.length !== 4}
+            disabled={submitting || picksBlocked || name.trim() === "" || role === "" || tempPin.length !== 4}
             className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t("admin.users.create.submit")}
-          </button>
+          </button>}
         </div>
       </div>
     </div>

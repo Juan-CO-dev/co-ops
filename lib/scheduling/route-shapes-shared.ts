@@ -14,7 +14,10 @@ export const SCHEDULE_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   keep_budget: ["action", "locationId", "weekStart", "digest"],
   day_type: ["action", "locationId", "date", "dayType"],
   pin: ["action", "locationId", "pin"],
-  person: ["action", "locationId", "settings"],
+  // Astra BC-007: `expectedId` = the id of the latest settings row the full-row write was based on (null = none existed).
+  person: ["action", "locationId", "settings", "expectedId"],
+  // Juan 2026-10-20 / Astra BC-007: the user screen's pickers send ONLY what changed; the server merges onto the latest row.
+  person_positions: ["action", "locationId", "userId", "changes", "expectedId"],
 };
 
 export const SCHEDULE_SETTINGS_ACTIONS: Readonly<Record<string, readonly string[]>> = {
