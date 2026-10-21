@@ -169,6 +169,23 @@ export function isLineRole(role: PositionRole): boolean {
   return LINE_ROLES.includes(role);
 }
 
+/** r3: maximum heads in a nonempty position window; shared by validation, seeding and draft reconciliation. */
+export function lineFloorLimit(p: StructurePosition): number {
+  return Math.max(p.openQ < p.trimQ ? p.headsBefore : 0, p.trimQ < p.closeQ ? p.headsAfter : 0);
+}
+
+/** Keep existing draft floors within the edited positions. Missing floors stay missing; validation stays strict. */
+export function reconcileLineFloors(s: ScheduleStructure): void {
+  for (const type of CREW_TYPES) {
+    const floors = s.crews[type].lineMinHeads;
+    for (const id of Object.keys(floors)) {
+      const p = Object.hasOwn(s.positions, id) ? s.positions[id] : undefined;
+      if (!p || !isLineRole(p.role)) delete floors[id];
+      else floors[id] = Math.max(0, Math.min(floors[id]!, lineFloorLimit(p)));
+    }
+  }
+}
+
 /** Position ids in canonical order (ascending id, `<`, never a locale compare). */
 export function positionIds(s: ScheduleStructure): string[] {
   return Object.keys(s.positions).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
@@ -421,7 +438,7 @@ function checkCrews(v: unknown, positions: Record<string, StructurePosition>): P
       const key = `${at}.lineMinHeads.${id}`;
       if (!p || !isLineRole(p.role) || !isInt(n, 0, 8)) return key;
       // r3: the floor never exceeds the position's head limits.
-      const limit = Math.max(p.openQ < p.trimQ ? p.headsBefore : 0, p.trimQ < p.closeQ ? p.headsAfter : 0);
+      const limit = lineFloorLimit(p);
       if (n > limit) return key;
     }
   }
@@ -655,7 +672,7 @@ export function structureFromStations(
   for (const id of positionIds(s)) {
     const p = s.positions[id]!;
     if (!isLineRole(p.role)) continue;
-    const limit = Math.max(p.openQ < p.trimQ ? p.headsBefore : 0, p.trimQ < p.closeQ ? p.headsAfter : 0);
+    const limit = lineFloorLimit(p);
     floors[id] = isSecondary(s, id) ? 0 : Math.min(1, limit);
   }
   for (const t of CREW_TYPES) s.crews[t].lineMinHeads = { ...floors };

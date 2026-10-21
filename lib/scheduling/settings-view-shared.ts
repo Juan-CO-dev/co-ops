@@ -5,6 +5,7 @@
  * `route-shapes-shared` and the people settings route).
  */
 import type { NarrativeLine } from "@/lib/people-narrative";
+import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
 import type { SkillTunables } from "@/lib/people/tunables-shared";
 import type { PositionLabel } from "./board-view-shared";
@@ -109,6 +110,26 @@ export function timeToQ(v: string): number | null {
 export function structureSaveRefusal(draft: unknown): string | null {
   const r = validScheduleStructure(draft);
   return r.ok ? null : r.key;
+}
+
+const POSITION_FIELD_LABELS: Record<string, TranslationKey> = {
+  role: "schedule.settings.positions.role", openQ: "schedule.settings.positions.open",
+  trimQ: "schedule.settings.positions.trim", closeQ: "schedule.settings.positions.close",
+  headsBefore: "schedule.settings.positions.heads_before", headsAfter: "schedule.settings.positions.heads_after",
+  allowedRoles: "schedule.settings.positions.allowed",
+};
+
+/** Position params are ids; dayType / field params are translation keys, resolved by the editor in its language. */
+export function structureProblemLine(key: string): { key: TranslationKey; params: Record<string, string> } {
+  const floor = /^crews\.(slow|normal|busy|weekend)\.lineMinHeads\.([^.]+)$/.exec(key);
+  if (floor) return { key: "schedule.error.structure_line_floor", params: { position: floor[2]!, dayType: `schedule.board.day_type.${floor[1]}` } };
+  const position = /^positions\.([^.]+)\.([^.]+)$/.exec(key);
+  if (position && Object.hasOwn(POSITION_FIELD_LABELS, position[2]!)) {
+    return { key: "schedule.error.structure_position", params: { position: position[1]!, field: POSITION_FIELD_LABELS[position[2]!]! } };
+  }
+  const wave = /^crews\.(slow|normal|busy|weekend)\.waveProfile@([0-2]\d:[0-5]\d)$/.exec(key);
+  if (wave) return { key: "schedule.error.structure_wave", params: { dayType: `schedule.board.day_type.${wave[1]}`, time: wave[2]! } };
+  return { key: "schedule.error.structure_invalid", params: { key } };
 }
 
 /**

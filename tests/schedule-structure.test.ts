@@ -5,17 +5,90 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { FLOOR_POSITION, OTHER_POSITION, seededFloors } from "./fixtures/schedule/structure-floors";
 import {
   CASE_DEFAULTS, CASE_POSITION_IDS, expectedStructureKey, loadStructureCases, materializeStructureCase, shopBase,
 } from "../scripts/schedule-structure-cases.mjs";
 import {
-  SCHEDULE_STRUCTURE_DEFAULTS, checklistFits, crewFor, lineBounds, positionLimit, primaryOf, scheduledOut,
+  CREW_TYPES, SCHEDULE_STRUCTURE_DEFAULTS, checklistFits, crewFor, lineBounds, lineFloorLimit, reconcileLineFloors, positionLimit, primaryOf, scheduledOut,
   secondaryOf, structureFromStations, structureProblem, validScheduleStructure, waveProfile, waveSlots, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
 
 interface StructureCase { name: string; valid: boolean; infeasible?: boolean; key?: string }
 const cases = loadStructureCases() as StructureCase[];
 const I = CASE_POSITION_IDS;
+
+describe("draft line floor reconciliation", () => {
+  it("Juan's role edit removes the hidden floor in all four crews", () => {
+    const s = seededFloors();
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(1);
+    s.positions[FLOOR_POSITION]!.role = "prep_dish";
+    expect(structureProblem(s)).toBe(`crews.slow.lineMinHeads.${FLOOR_POSITION}`);
+    reconcileLineFloors(s);
+    for (const type of CREW_TYPES) expect(Object.hasOwn(s.crews[type].lineMinHeads, FLOOR_POSITION)).toBe(false);
+    expect(structureProblem(s)).toBeNull();
+  });
+
+  it("zero heads clamp the floor to zero; raising heads again never raises the floor", () => {
+    const s = seededFloors();
+    const p = s.positions[FLOOR_POSITION]!;
+    p.headsBefore = p.headsAfter = 0;
+    reconcileLineFloors(s);
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(0);
+    expect(structureProblem(s)).toBeNull();
+    p.headsBefore = p.headsAfter = 2;
+    reconcileLineFloors(s);
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(0);
+  });
+
+  it("preserves in-limit floors, deletes retired positions and never adds missing floors", () => {
+    const s = seededFloors();
+    delete s.positions[OTHER_POSITION];
+    delete s.crews.busy.lineMinHeads[FLOOR_POSITION];
+    reconcileLineFloors(s);
+    expect(s.crews.slow.lineMinHeads[FLOOR_POSITION]).toBe(1);
+    expect(Object.hasOwn(s.crews.busy.lineMinHeads, FLOOR_POSITION)).toBe(false);
+    for (const type of CREW_TYPES) expect(Object.hasOwn(s.crews[type].lineMinHeads, OTHER_POSITION)).toBe(false);
+    const once = structuredClone(s);
+    reconcileLineFloors(s);
+    expect(s).toEqual(once);
+    expect(structureProblem(s)).toBeNull();
+  });
+
+  it.each(["openQ", "trimQ", "closeQ"] as const)("clamps after %s makes the staffed window empty", (field) => {
+    const s = seededFloors();
+    const p = s.positions[FLOOR_POSITION]!;
+    p.openQ = 40; p.trimQ = 48; p.closeQ = 56;
+    p.headsBefore = field === "closeQ" ? 0 : 1;
+    p.headsAfter = field === "closeQ" ? 1 : 0;
+    if (field === "openQ") p.openQ = p.trimQ;
+    if (field === "trimQ") p.trimQ = p.openQ;
+    if (field === "closeQ") p.closeQ = p.trimQ;
+    reconcileLineFloors(s);
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(0);
+    expect(structureProblem(s)).toBeNull();
+  });
+
+  it("the shared limit matches strict validation across 250 deterministic random positions", () => {
+    let seed = 1729;
+    const random = (max: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % max; };
+    for (let i = 0; i < 250; i++) {
+      const s = seededFloors();
+      const p = s.positions[FLOOR_POSITION]!;
+      // After service: isolate checkCrews from the separate per-quarter wave constraint.
+      p.openQ = 80 + random(17); p.trimQ = p.openQ + random(97 - p.openQ); p.closeQ = p.trimQ + random(97 - p.trimQ);
+      p.headsBefore = random(9); p.headsAfter = random(9);
+      const limit = lineFloorLimit(p);
+      s.crews.slow.lineMinHeads[FLOOR_POSITION] = limit;
+      for (const type of CREW_TYPES.filter((t) => t !== "slow")) delete s.crews[type].lineMinHeads[FLOOR_POSITION];
+      expect(structureProblem(s)).toBeNull();
+      s.crews.slow.lineMinHeads[FLOOR_POSITION] = limit + 1;
+      expect(structureProblem(s)).toBe(`crews.slow.lineMinHeads.${FLOOR_POSITION}`);
+      reconcileLineFloors(s);
+      expect(s.crews.slow.lineMinHeads[FLOOR_POSITION]).toBe(limit);
+    }
+  });
+});
 
 describe("the shared structure case file against validScheduleStructure", () => {
   it("the case file's defaults ARE SCHEDULE_STRUCTURE_DEFAULTS (the SQL harness starts from the same set)", () => {

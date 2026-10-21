@@ -20,9 +20,9 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
-import { structureBody, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
+import { structureBody, structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
 import {
-  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, isLineRole, positionIds, type PositionRole, type ScheduleStructure,
+  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, isLineRole, positionIds, reconcileLineFloors, type PositionRole, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
 import { runGuarded } from "./horizon-flow-shared";
 import { scheduleErrorKey } from "./schedule-errors";
@@ -58,14 +58,16 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const post = useStepUpPost();
-  const [draft, setDraft] = useState<ScheduleStructure>(() => structuredClone(structure.value));
+  const [draft, setDraft] = useState<ScheduleStructure>(() => {
+    const s = structuredClone(structure.value); reconcileLineFloors(s); return s;
+  });
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(initialError);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [saved, setSaved] = useState(initialSaved);
   const edit = (mutate: (s: ScheduleStructure) => void) => {
-    setDraft((d) => { const n = structuredClone(d); mutate(n); return n; });
+    setDraft((d) => { const n = structuredClone(d); mutate(n); reconcileLineFloors(n); return n; });
     if (!dirty) { setDirty(true); onDirty?.(true); }
     setSaved(false);
   };
@@ -74,7 +76,12 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
   async function save() {
     setKeyError(null); setRefusal(null);
     const key = structureSaveRefusal(draft);
-    if (key) { setKeyError(key); return; }
+    if (key) {
+      setKeyError(key);
+      const input = document.getElementsByName(key)[0];
+      input?.focus(); input?.scrollIntoView?.({ block: "center" });
+      return;
+    }
     setBusy(true);
     const out = await runGuarded({
       tier: "E", requestStepUp: () => requestStepUp("E"),
@@ -90,6 +97,10 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
   const d = draft;
   const roleLabel = (r: RoleCode) => t(`role.${r}` as TranslationKey);
   const lineIds = positionIds(d).filter((id) => isLineRole(d.positions[id]!.role));
+  const problem = keyError ? structureProblemLine(keyError) : null;
+  const problemParams = problem ? Object.fromEntries(Object.entries(problem.params).map(([key, value]) => [key,
+    key === "position" ? position(value) : key === "dayType" || key === "field" ? t(value as TranslationKey) : value,
+  ])) : {};
   return (
     <div className="grid gap-3" data-section="structure-editor">
       <Section id="shop_day" title={t("schedule.settings.section.shop_day")}>
@@ -273,7 +284,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
         </div>
       </Section>
 
-      {keyError ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t("schedule.error.structure_invalid", { key: keyError })}</p> : null}
+      {problem ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(problem.key, problemParams)}</p> : null}
       {refusal ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(scheduleErrorKey(refusal), { key: "—" })}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" data-act="save-structure" disabled={busy} onClick={save} className={BUTTON}>{t("schedule.settings.save")}</button>
