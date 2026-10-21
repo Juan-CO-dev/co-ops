@@ -217,3 +217,14 @@ export async function runAutoLinks(service: SupabaseClient, args: { locationId: 
   }
   return { linked, skipped };
 }
+
+/**
+ * The Add user picker (staff separations, 2026-10-20): one shop's Toast employees (not deleted), names read in memory only,
+ * for choosing the new person's Toast record — linked after create, and the rehire check's GUID key. Same bind as linking.
+ */
+export async function toastRosterForPicker(service: SupabaseClient, args: { actor: LinkActor; locationId: string; deadlineMs?: number }): Promise<Array<{ guid: string; name: string }>> {
+  requireAdmin(args.actor, args.locationId);
+  const employees = await fetchEmployees(service, args.locationId, AbortSignal.timeout(args.deadlineMs ?? 8_000));
+  return employees.filter((e) => !e.deleted).map((e) => ({ guid: e.guid, name: toastDisplayName(e) }))
+    .sort((a, b) => a.name.localeCompare(b.name) || (a.guid < b.guid ? -1 : 1));
+}

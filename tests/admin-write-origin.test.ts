@@ -129,6 +129,7 @@ const mutationRoutes: Record<string, string> = {
   "toast-sales/pull/route.ts": "POST",
   "users/[id]/activate/route.ts": "POST",
   "users/[id]/deactivate/route.ts": "POST",
+  "users/[id]/employment/route.ts": "POST",
   "users/[id]/dormant/route.ts": "POST",
   "users/[id]/locations/route.ts": "POST",
   "users/[id]/reset-pin/route.ts": "POST",
@@ -137,6 +138,8 @@ const mutationRoutes: Record<string, string> = {
   "users/[id]/set-password/route.ts": "POST",
   "users/[id]/wake/route.ts": "POST",
   "users/route.ts": "GET POST",
+  // The rehire check is a read posted as JSON (the phone never rides in a URL): same-origin guarded like a write.
+  "users/rehire-check/route.ts": "POST",
   "vendors/[id]/categories/route.ts": "PUT",
   "vendors/[id]/contacts/[contactId]/route.ts": "PATCH DELETE",
   "vendors/[id]/contacts/route.ts": "POST",
@@ -174,7 +177,8 @@ const readOnlyRoutes: Record<string, string> = {
   "catalog/sku/[id]/share/preview/route.ts": "POST",
   "catalog/sku/[id]/swap/preview/route.ts": "POST",
   "catalog/swaps/[swapId]/back-to-normal/preview/route.ts": "POST",
-  "catalog/pack-requests/[requestId]/additions/[additionId]/photo/route.ts": "GET"
+  "catalog/pack-requests/[requestId]/additions/[additionId]/photo/route.ts": "GET",
+  "users/toast-roster/route.ts": "GET"
 };
 
 // Phase 5 placeholders: constant 501 responses, no authentication, body parsing, or I/O.

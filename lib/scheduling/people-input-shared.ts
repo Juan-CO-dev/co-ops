@@ -198,6 +198,8 @@ export interface ToSchedPeopleInput {
   shopDay: { fromQ: number; toQ: number };
   wages: { byUserCents: Readonly<Record<string, number>>; estimateHourlyCents: number | null };
   skills: SkillLookup | null;
+  /** On leave / separated (0279): never on the roster, whatever their role, settings or account state say. */
+  excludedUserIds?: readonly string[];
 }
 
 /**
@@ -213,7 +215,10 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
   const settings = new Map(input.settings.map((s) => [s.userId, s]));
   const notes: RosterNote[] = [];
   const people: SchedPerson[] = [];
+  const away = new Set(input.excludedUserIds ?? []);
   for (const m of [...input.members].sort((a, b) => cmp(a.userId, b.userId))) {
+    // Staff separations: on leave (while on leave) and separated (always) are off the schedule.
+    if (away.has(m.userId)) continue;
     // Astra chunk B P2-5: never on the roster, whatever the configurable exclusions or a person setting say.
     if (NEVER_INCLUDED.includes(m.role)) continue;
     const st = settings.get(m.userId);

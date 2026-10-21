@@ -32,6 +32,8 @@ import { sevenShiftsStatus } from "@/lib/sevenshifts/config";
 import { displayName } from "@/lib/sevenshifts/links-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { scheduleActRefusal } from "./access-shared";
+import { loadEmploymentStates, stateOf } from "@/lib/admin/employment-read";
+import { employmentChipOf } from "@/lib/admin/employment-core-shared";
 import { ScheduleError } from "./errors-shared";
 import {
   reconcile, type ProposalShift, type ReconcileMember, type ReconcileView, type SevenLinkRow, type SevenPunch, type SevenShiftRow, type SevenStatus,
@@ -87,14 +89,20 @@ export async function loadReconciliation(deps: ReconcileDeps, args: { actor: Peo
   // ── members ──
   const ul = await selectAllRows<{ user_id: string }>((f, t) => service.from("user_locations").select("user_id")
     .eq("location_id", locationId).eq("active", true).order("user_id", { ascending: true }).range(f, t));
+  // Staff separations (0279): an inactive member ON LEAVE or SEPARATED is listed with their status chip (never as missing);
+  // an active member whose record says on leave / separated (reactivated by mistake) carries the chip too.
+  const memberIds = [...new Set(ul.map((r) => r.user_id))];
+  const employment = await loadEmploymentStates(service, memberIds);
   const members: ReconcileMember[] = [];
-  for (const ids of chunks([...new Set(ul.map((r) => r.user_id))])) {
+  for (const ids of chunks(memberIds)) {
     for (const u of await selectAllRows<{ id: string; name: string; role: string; active: boolean }>((f, t) => service.from("users")
       .select("id, name, role, active").in("id", ids).order("id", { ascending: true }).range(f, t))) {
-      if (!u.active || !isRoleCode(u.role) || OFF_FLOOR_ROLES.includes(u.role)) continue;
+      if (!isRoleCode(u.role) || OFF_FLOOR_ROLES.includes(u.role)) continue;
       const level = getRoleLevel(u.role);
       if (level < 1 || level > 7) continue;
-      members.push({ userId: u.id, name: u.name });
+      const chip = employmentChipOf(stateOf(employment, u.id));
+      if (!u.active && !chip) continue;
+      members.push(chip ? { userId: u.id, name: u.name, employment: chip } : { userId: u.id, name: u.name });
     }
   }
 

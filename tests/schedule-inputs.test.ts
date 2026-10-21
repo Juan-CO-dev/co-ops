@@ -252,3 +252,39 @@ describe("the pure assembly (generatorInputFor and its readers)", () => {
     expect(since).toEqual({ [EMP]: "2026-01-01", [EMP2]: "2026-10-05" }); // a first-week punch = present from before the window; a later first punch floors it
   });
 });
+
+describe("staff separations (0279): on leave and separated people never reach the roster; history is untouched", () => {
+  const ev = (userId: string, kind: string, at: string, extra: Record<string, unknown> = {}) => ({ id: `ev-${userId}-${kind}`, user_id: userId, kind, corrects_id: null,
+    leave_reason: kind === "leave_start" ? "school" : null, expected_back: null, separation_type: kind === "separated" ? "fired" : null,
+    last_day_worked: kind === "separated" ? "2026-10-15" : null, reason: kind === "separated" ? "r" : null, rehire: kind === "separated" ? "no" : null,
+    rehire_note: kind === "separated" ? "n" : null, note: null, actor_id: GM, created_at: at, ...extra });
+  const load = async (rows: Record<string, unknown>[] | undefined) => {
+    const t = baseTables();
+    if (rows) t.user_employment_events = rows;
+    // EMP's account is ACTIVE (reactivated by mistake) yet separated; EMP2 is active and on leave; KH came back from leave.
+    t.schedule_pins = [
+      { id: "pin-emp", location_id: A, business_date: "2026-10-27", user_id: EMP, start_q: 40, end_q: 60, positions: [], kind: "added", active: true, retires_id: null },
+      { id: "pin-kh", location_id: A, business_date: "2026-10-27", user_id: KH, start_q: 40, end_q: 60, positions: [], kind: "added", active: true, retires_id: null },
+    ];
+    return loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+  };
+  it("the loader names them; the generator input drops them and their open future pins; the members (history names) stay", async () => {
+    const inputs = await load([ev(EMP, "separated", "2026-10-16T12:00:00Z"), ev(EMP2, "leave_start", "2026-10-16T12:00:00Z"),
+      ev(KH, "leave_start", "2026-10-01T12:00:00Z"), ev(KH, "leave_end", "2026-10-10T12:00:00Z")]);
+    expect([...(inputs.employmentExcluded ?? [])].sort()).toEqual([EMP, EMP2].sort());
+    expect(inputs.members.map((m) => m.userId)).toEqual(expect.arrayContaining([EMP, EMP2, KH]));
+    const g = generatorInputFor(inputs, WEEK, { today: inputs.asOf });
+    const roster = g.people.map((p) => p.userId);
+    expect(roster).not.toContain(EMP);
+    expect(roster).not.toContain(EMP2);
+    expect(roster).toContain(KH);
+    expect(g.pins.map((p) => p.id)).toEqual(["pin-kh"]);
+  });
+  it("no record (or 0279 not applied) excludes nobody: the generator input is unchanged", async () => {
+    const none = await load(undefined);
+    const empty = await load([]);
+    expect(none.employmentExcluded).toEqual([]);
+    expect(JSON.stringify(generatorInputFor(empty, WEEK, { today: empty.asOf }))).toBe(JSON.stringify(generatorInputFor(none, WEEK, { today: none.asOf })));
+    expect(generatorInputFor(none, WEEK, { today: none.asOf }).people.map((p) => p.userId)).toEqual(expect.arrayContaining([EMP, EMP2, KH]));
+  });
+});
