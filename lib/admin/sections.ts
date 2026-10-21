@@ -64,7 +64,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "people-reconcile", i18nKey: "schedule.reconcile.title", href: "/admin/people-reconcile", minLevel: 7, onlyRoles: PM_CRITERIA_EDITOR_ROLES },
   // 0234: customer profiles (stats GM+ own shop / 8+ every shop; contact + consent desk 9+).
   { id: "customers", i18nKey: "customers.title", href: "/admin/customers", minLevel: 7 },
-  { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },
+  // GM and up (staff separations ADDENDUM, 2026-10-20): a GM manages their own shops' people (lib/admin/user-access-shared.ts).
+  { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 7 },
   { id: "vendors",             i18nKey: "admin.section.vendors",             href: "/admin/vendors",             minLevel: 6 },
   { id: "skus",                i18nKey: "admin.section.skus",                href: "/admin/skus",                minLevel: 6 },
   // A product sits ABOVE SKUs in the derivation order (vendors → SKUs →

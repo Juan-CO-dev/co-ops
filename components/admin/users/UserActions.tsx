@@ -20,6 +20,11 @@
  * position per shop) through POST /api/schedule, which takes no step-up — so
  * it asks for none. Offered below shift lead only (a manager's ordered list is
  * their cover order, on the schedule settings card).
+ *
+ * Employment (staff separations, Juan 2026-10-20; 0279): "End employment" sits next to Deactivate (on leave, coming
+ * back · separated, not coming back); a person on leave comes back through "Back from leave" and a separated person
+ * only through "Rehire" (their rehire setting decides who may) — the plain Activate is not offered for either, and the
+ * server refuses it too. "Correct record" adds a correction (append-only). Each opens `EmploymentDialog`, Tier B.
  */
 
 import { useState } from "react";
@@ -33,6 +38,9 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { hasPositionRank } from "@/lib/scheduling/position-rank-shared";
 import { postJson, resolveErrorKey, type LocationOption } from "./shared";
 import { UserPositionsDialog, type PositionShops } from "./UserPositions";
+import { EmploymentDialog, type EmploymentMode } from "./Employment";
+import { actStateOf, employmentActionsFor } from "@/lib/admin/employment-shared";
+import type { UserAdminActor } from "@/lib/admin/user-access-shared";
 
 type ActiveAction =
   | { kind: "reset_pin" }
@@ -45,6 +53,7 @@ type ActiveAction =
   | { kind: "dormant" }
   | { kind: "wake" }
   | { kind: "positions" }
+  | { kind: "employment"; mode: EmploymentMode }
   | null;
 
 export function UserActions({
@@ -52,12 +61,21 @@ export function UserActions({
   assignableRoles,
   accessibleLocations,
   positionShops,
+  actor,
+  employmentAvailable,
+  today,
 }: {
   user: AdminUserListItem;
   assignableRoles: RoleCode[];
   accessibleLocations: LocationOption[];
   /** The primary / secondary picker data per shop (absent = the action is not offered). */
   positionShops?: PositionShops;
+  /** Who is acting (the employment actions are decided by the same pure rule the server runs). */
+  actor: UserAdminActor;
+  /** 0279 is applied (otherwise no employment action is offered). */
+  employmentAvailable: boolean;
+  /** The ET business date (the default last day worked). */
+  today: string;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -102,6 +120,11 @@ export function UserActions({
   };
 
   const base = `/api/admin/users/${user.id}`;
+  const view = user.employment ?? { status: "active" as const, headId: null, chip: null, detail: null, overrides: [] };
+  const can = employmentAvailable
+    ? employmentActionsFor(actor, { id: user.id, role: user.role, locationIds: user.locationIds }, actStateOf(view))
+    : { endEmployment: false, backFromLeave: false, rehire: false, correct: false };
+  const employed = view.status === "active";
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -112,9 +135,22 @@ export function UserActions({
       <ActionButton label={t("admin.users.edit.profile")} onClick={() => setActive({ kind: "edit_profile" })} />
       {user.active ? (
         <ActionButton label={t("admin.users.action.deactivate")} onClick={() => setActive({ kind: "deactivate" })} />
-      ) : (
+      ) : employed ? (
         <ActionButton label={t("admin.users.action.activate")} onClick={() => setActive({ kind: "activate" })} />
-      )}
+      ) : null}
+      {/* Astra BC-036: from on leave, End employment offers the separation directly (never another leave). */}
+      {can.endEmployment ? (
+        <ActionButton label={t("admin.users.employment.action.end")} onClick={() => setActive({ kind: "employment", mode: "end" })} />
+      ) : null}
+      {can.backFromLeave ? (
+        <ActionButton label={t("admin.users.employment.action.back")} onClick={() => setActive({ kind: "employment", mode: "back" })} />
+      ) : null}
+      {can.rehire ? (
+        <ActionButton label={t("admin.users.employment.action.rehire")} onClick={() => setActive({ kind: "employment", mode: "rehire" })} />
+      ) : null}
+      {can.correct && view.detail ? (
+        <ActionButton label={t("admin.users.employment.action.correct")} onClick={() => setActive({ kind: "employment", mode: "correct" })} />
+      ) : null}
 
       {positionShops && hasPositionRank(user) ? (
         <ActionButton label={t("admin.users.action.positions")} onClick={() => setActive({ kind: "positions" })} />
@@ -124,7 +160,9 @@ export function UserActions({
         <ActionButton label={t(user.dormancy.dormant ? "admin.users.action.wake" : "admin.users.action.dormant")}
           onClick={() => setActive({ kind: user.dormancy.dormant ? "wake" : "dormant" })} />
       )}
-      {active?.kind === "positions" && positionShops ? (
+      {active?.kind === "employment" ? (
+        <EmploymentDialog userId={user.id} name={user.name} view={view} mode={active.mode} onClose={close} today={today} />
+      ) : active?.kind === "positions" && positionShops ? (
         <div
           role="dialog"
           aria-modal="true"

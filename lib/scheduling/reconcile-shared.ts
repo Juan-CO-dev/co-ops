@@ -36,6 +36,7 @@
  */
 import { etCalendarDate, etWallMinutesInstant } from "@/lib/operational-day";
 import { Q_MINUTES } from "./time-shared";
+import type { EmploymentChip } from "@/lib/admin/employment-core-shared";
 
 export const RECONCILE_FLAG_CODES = [
   "member_no_toast", "member_no_seven", "toast_clockin_no_user", "seven_user_unlinked",
@@ -53,7 +54,12 @@ export const INFORMATIONAL_FLAGS: readonly ReconcileFlagCode[] = ["proposal_diff
 /** 7shifts as the 7shifts screen reports it; anything but `ready` reads "not connected" on the tick. */
 export type SevenStatus = "ready" | "not_connected" | "sync_off" | "not_supported";
 
-export interface ReconcileMember { userId: string; name: string }
+/**
+ * `employment` (staff separations, 0279): a person ON LEAVE or SEPARATED is listed WITH their status chip — never as a
+ * missing person — and carries no identity flags (they are not expected to clock in). Attendance flags still apply (a
+ * separated person clocking in is exactly what needs a look). The chip never carries a reason.
+ */
+export interface ReconcileMember { userId: string; name: string; employment?: EmploymentChip | null }
 export interface ToastLinkRow { employeeGuid: string; userId: string }
 export interface SevenLinkRow { sevenUserId: string; userId: string }
 export interface SevenUserAtShop { sevenUserId: string; displayName: string; employeeId: string | null }
@@ -105,6 +111,8 @@ export interface ReconcileDay {
 export interface ReconcileRow {
   userId: string;
   name: string;
+  /** On leave / separated (the chip only); null = working. Listed after the working people. */
+  employment: EmploymentChip | null;
   ticks: { coops: true; toast: "linked" | "missing"; seven: "linked" | "missing" | "not_connected" };
   flags: ReconcileFlag[];
   /** How many of `flags` need a look (the informational ones excluded). */
@@ -215,8 +223,9 @@ export function reconcile(input: ReconcileInput): ReconcileView {
     const identity: ReconcileFlag[] = [];
     const hasToast = toastLinkedUsers.has(m.userId);
     const hasSeven = sevenOf.has(m.userId);
-    if (!hasToast) identity.push({ code: "member_no_toast" });
-    if (ready && !hasSeven) identity.push({ code: "member_no_seven" });
+    const away = m.employment ?? null;
+    if (!away && !hasToast) identity.push({ code: "member_no_toast" });
+    if (!away && ready && !hasSeven) identity.push({ code: "member_no_seven" });
     const days: ReconcileDay[] = [];
     for (const date of dates) {
       const k = `${m.userId}|${date}`;
@@ -251,13 +260,13 @@ export function reconcile(input: ReconcileInput): ReconcileView {
     }
     const flags = [...identity, ...days.flatMap((d) => d.flags)];
     return {
-      userId: m.userId, name: m.name,
+      userId: m.userId, name: m.name, employment: away,
       ticks: { coops: true, toast: hasToast ? "linked" : "missing", seven: !ready ? "not_connected" : hasSeven ? "linked" : "missing" },
       flags, lookAt: flags.filter(isActionableFlag).length,
       days,
     };
   });
-  rows.sort((a, b) => Number(b.lookAt > 0) - Number(a.lookAt > 0) || byName(a.name, b.name) || cmp(a.userId, b.userId));
+  rows.sort((a, b) => Number(!!a.employment) - Number(!!b.employment) || Number(b.lookAt > 0) - Number(a.lookAt > 0) || byName(a.name, b.name) || cmp(a.userId, b.userId));
 
   const toastUnlinked: ToastUnlinkedRow[] = [...unlinkedToast]
     .map(([employeeGuid, u]) => ({ employeeGuid, firstName: u.firstName, punchDays: u.days.size, flags: [{ code: "toast_clockin_no_user" as const }] }))

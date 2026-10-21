@@ -87,6 +87,9 @@ beforeAll(async () => {
   await db.exec(read("supabase/migrations/0274_schedule_settings.sql"));
   await db.exec(read("supabase/migrations/0275_schedule_weeks.sql"));
   await db.exec(extract(read("supabase/migrations/0224_toast_time_entries.sql"), "create table public.toast_time_entries (", ");"));
+  // Staff separations (0279): the employment read (0279's pre-flight needs the user-admin columns the stub does not model).
+  await db.exec(read("tests/fixtures/user-admin-columns-stub.sql"));
+  await db.exec(read("supabase/migrations/0279_user_employment_events.sql"));
   // Production columns the stub does not model: 0230 / 0238 station closing settings and the membership's assigned_at
   // (user management spec, docs/superpowers/specs/2026-06-20-user-management-design.md).
   await db.exec(`alter table public.stations add column usually_closes_at time, add column trims jsonb;
@@ -137,7 +140,7 @@ describe("loadSchedulingInputs against the real schema", () => {
     for (const t of ["schedule_shop_settings", "schedule_structures", "schedule_person_settings", "schedule_budget_entries", "schedule_budget_days", "schedule_day_types",
       "schedule_pins", "schedule_weeks", "schedule_revisions", "schedule_revision_shifts", "schedule_revision_days", "schedule_revision_gaps", "schedule_revision_contexts",
       "toast_time_entries", "sevenshifts_user_links", "sevenshifts_wages", "sevenshifts_labor_settings", "catering_pipeline", "catering_quotes", "ezcater_orders", "audit_log",
-      "checklist_submissions"]) expect(tables, t).toContain(t);
+      "checklist_submissions", "user_employment_events"]) expect(tables, t).toContain(t);
   });
 
   it("every captured query on a table with DDL here executes against it (limit 0)", async () => {

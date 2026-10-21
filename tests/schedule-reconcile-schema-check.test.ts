@@ -60,6 +60,9 @@ beforeAll(async () => {
   await db.exec(read("supabase/migrations/0275_schedule_weeks.sql"));
   await db.exec(extract(read("supabase/migrations/0224_toast_time_entries.sql"), "create table public.toast_time_entries (", ");"));
   await db.exec(extract(read("supabase/migrations/0233_whos_here.sql"), "create table public.toast_employee_links (", ");"));
+  // Staff separations (0279): the employment read (0279's pre-flight needs the user-admin columns the stub does not model).
+  await db.exec(read("tests/fixtures/user-admin-columns-stub.sql"));
+  await db.exec(read("supabase/migrations/0279_user_employment_events.sql"));
   const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
   try {
     const { loadReconciliation } = await import("@/lib/scheduling/reconcile");

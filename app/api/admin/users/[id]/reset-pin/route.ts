@@ -4,7 +4,7 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { resetPin, AdminUserError } from "@/lib/admin/users";
+import { resetPin, AdminUserError, ADMIN_MIN_LEVEL } from "@/lib/admin/users";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const origin = assertSameOrigin(req);
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, `/api/admin/users/${id}/reset-pin`);
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < 8) return jsonError(403, "forbidden");
+  if (ROLES[ctx.user.role].level < ADMIN_MIN_LEVEL) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "B");
   if (!su.ok) return jsonError(403, su.code);
   const pin = (parsed as { pin?: unknown }).pin;

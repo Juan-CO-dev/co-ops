@@ -16,6 +16,7 @@ const filters = { role: "", status: "", location: "", q: "" };
 function users(filter = filters) {
   return renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: "en", children: createElement(UserAdminClient, {
     users: [user], allLocations: [], accessibleLocations: [], assignableRoles: [], actorRole: "owner", actorLevel: 9, currentFilters: filter,
+    actorUserId: "actor", actorLocations: [], employmentAvailable: false, toastPickerEnabled: false, today: "2026-10-20",
   }) }));
 }
 describe("user list discoverability", () => {

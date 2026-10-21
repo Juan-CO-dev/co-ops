@@ -39,18 +39,21 @@
     "@electric-sql/pglite": "^0.5.8",
     "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "^4",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/leaflet": "^1.9.21",
     "@types/node": "^22.10.0",
     "@types/pdfkit": "^0.17.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "axe-core": "4.11.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "ignore": "^5.3.2",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5",
-    "vitest": "^4.1.10",
-    "axe-core": "4.11.3"
+    "vitest": "^4.1.10"
   }
 }
