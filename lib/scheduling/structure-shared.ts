@@ -170,9 +170,11 @@ export function clampPositionTimes(p: StructurePosition): StructurePosition {
 /**
  * Refresh the old role's seed defaults while preserving station trim/close overrides. Other edits
  * (open, heads or eligibility) preserve the entire configuration. Persisted positions have no time
- * provenance: a manual trim/close matching a possible station seed is treated as an override too.
+ * provenance in the structure itself; the settings loader supplies station provenance separately.
  */
-export function applyRoleChange(p: StructurePosition, role: PositionRole): StructurePosition {
+export interface PositionTimeProvenance { closeFromStation: boolean; trimFromStation: boolean }
+
+export function applyRoleChange(p: StructurePosition, role: PositionRole, provenance?: PositionTimeProvenance): StructurePosition {
   const old = POSITION_ROLE_DEFAULTS[p.role];
   const sameRoles = p.allowedRoles.length === old.allowedRoles.length && old.allowedRoles.every((r) => p.allowedRoles.includes(r));
   if (role === p.role || p.openQ !== Math.min(old.openQ, p.trimQ) || p.headsBefore !== old.headsBefore || p.headsAfter !== old.headsAfter || !sameRoles) {
@@ -181,8 +183,8 @@ export function applyRoleChange(p: StructurePosition, role: PositionRole): Struc
   const next = POSITION_ROLE_DEFAULTS[role];
   return clampPositionTimes({
     ...next, allowedRoles: [...next.allowedRoles],
-    closeQ: p.closeQ === old.closeQ ? next.closeQ : p.closeQ,
-    trimQ: p.trimQ === Math.min(old.trimQ, p.closeQ) ? next.trimQ : p.trimQ,
+    closeQ: !provenance?.closeFromStation && p.closeQ === old.closeQ ? next.closeQ : p.closeQ,
+    trimQ: !provenance?.trimFromStation && p.trimQ === Math.min(old.trimQ, p.closeQ) ? next.trimQ : p.trimQ,
   });
 }
 
@@ -194,9 +196,16 @@ export function isLineRole(role: PositionRole): boolean {
   return LINE_ROLES.includes(role);
 }
 
-/** r3: maximum heads in a nonempty position window; shared by validation, seeding and draft reconciliation. */
+/** r3: maximum heads in a nonempty position window; the SQL-twin per-position check. */
 export function lineFloorLimit(p: StructurePosition): number {
   return Math.max(p.openQ < p.trimQ ? p.headsBefore : 0, p.trimQ < p.closeQ ? p.headsAfter : 0);
+}
+
+/** Effective floor must fit every open quarter checked by wave bounds (including setup before service). */
+export function effectiveLineFloorLimit(p: StructurePosition, serviceCloseQ: number): number {
+  let limit = lineFloorLimit(p);
+  for (let q = p.openQ; q < Math.min(p.closeQ, serviceCloseQ); q++) limit = Math.min(limit, positionLimit(p, q));
+  return limit;
 }
 
 /** Keep existing draft floors within the edited positions. Missing floors stay missing; validation stays strict. */
@@ -206,7 +215,7 @@ export function reconcileLineFloors(s: ScheduleStructure): void {
     for (const id of Object.keys(floors)) {
       const p = Object.hasOwn(s.positions, id) ? s.positions[id] : undefined;
       if (!p || !isLineRole(p.role)) delete floors[id];
-      else floors[id] = Math.max(0, Math.min(floors[id]!, lineFloorLimit(p)));
+      else floors[id] = Math.max(0, Math.min(floors[id]!, effectiveLineFloorLimit(p, s.shopDay.serviceCloseQ)));
     }
   }
 }

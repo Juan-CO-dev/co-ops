@@ -52,6 +52,38 @@ const render = (view: Parameters<typeof ScheduleSettings>[0]["view"], language: 
 const code = async (p: Promise<unknown>) => { try { await p; return "ok"; } catch (e) { return e instanceof ScheduleError ? e.code : `throw:${(e as Error).message}`; } };
 
 describe("the loader: permissions first, sections by role", () => {
+  it.each(["position", "station"])("loads %s trim provenance even when it equals the default", async (source) => {
+    const v = await loadScheduleSettings(shop((t) => {
+      t.stations![0]!.usually_closes_at = "15:30:00";
+      if (source === "position") t.station_positions![0]!.usually_trims_at = "15:30:00";
+      else t.stations![0]!.trims = [{ at: "15:30", to_count: 1 }];
+    }).deps, { actor: gm, locationId: A });
+    if (v.state !== "ready") throw new Error("not ready");
+    expect(v.timeProvenance[P_REG]).toEqual({ closeFromStation: true, trimFromStation: true });
+  });
+  it("offers only live positions while keeping legacy labels in staff and presence", async () => {
+    const v = await loadScheduleSettings(shop((t) => {
+      t.station_positions![1]!.active = false;
+      t.stations!.push({ ...t.stations![0]!, id: "side", staffed: false });
+      t.station_positions!.push({ ...t.station_positions![0]!, id: "side-position", station_id: "side", name: "Side work" });
+      t.schedule_person_settings!.push({ id: "legacy", location_id: A, user_id: KH, cover_positions: [P_WALK], also_allowed: [], full_time: false, created_at: NOW.toISOString() });
+      t.schedule_pins!.push({ id: "legacy-pin", location_id: A, user_id: KH, business_date: "2026-10-21", start_q: 40, end_q: 60, positions: [P_WALK], kind: "added", active: true, retires_id: null });
+    }).deps, { actor: gm, locationId: A });
+    if (v.state !== "ready") throw new Error("not ready");
+    expect(v.livePositionIds).toEqual([P_REG]);
+    expect(v.positions[P_WALK]!.name).toBe("Walk-ins");
+    expect(v.positions["side-position"]!.name).toBe("Side work");
+    const h = render(v, "en", { initialPerson: KH });
+    const staff = h.split('data-person-editor=')[1]!.split('data-person-editor-end')[0]!;
+    expect(staff).toContain("Walk-ins");
+    expect(staff).not.toContain(`<option value="${P_WALK}"`);
+    expect(staff).not.toContain('<option value="side-position"');
+    expect(staff).toContain(`<option value="${P_REG}"`);
+    const presence = h.split('data-section="presence-add"')[1]!.split('</section>')[0]!;
+    expect(presence).toContain("Walk-ins");
+    expect(presence).not.toContain("Side work");
+    expect(presence).not.toMatch(/type="checkbox"[^>]*\/>Walk-ins/);
+  });
   it("the social media manager is refused by ROLE before any read; 0274 missing → not_installed", async () => {
     expect(await code(loadScheduleSettings({ service: noIoClient(), now: NOW }, { actor: smm, locationId: A }))).toBe("schedule_role_refused");
     expect(await loadScheduleSettings(shop((t) => { delete t.schedule_shop_settings; }).deps, { actor: gm, locationId: A })).toEqual({ state: "not_installed" });
@@ -315,4 +347,18 @@ it("a saved position on a now-unmanned station gets the distinct advisory in bot
     expect(copy.match(/\{positionId\}/g)).toHaveLength(1);
     expect(text(render(after, language))).toContain(copy.split("{positionId}")[1]!.trim());
   }
+});
+
+it.each(["station", "position"])("a retired %s on an unmanned station keeps the retired advisory", async (retired) => {
+  const before = await loadScheduleSettings(shop().deps, { actor: gm, locationId: A });
+  if (before.state !== "ready" || !before.structure) throw new Error("not ready");
+  const after = await loadScheduleSettings(shop((t) => {
+    t.schedule_structures!.push({ id: "saved", location_id: A, structure: before.structure!.value, created_at: NOW.toISOString() });
+    t.stations![0]!.staffed = false;
+    if (retired === "station") t.stations![0]!.active = false;
+    else t.station_positions![0]!.active = false;
+  }).deps, { actor: gm, locationId: A });
+  if (after.state !== "ready") throw new Error("not ready");
+  expect(after.stationAdvisory).toContainEqual({ key: "schedule.settings.advisory.retired_position", params: { positionId: P_REG } });
+  expect(after.stationAdvisory).not.toContainEqual({ key: "schedule.settings.advisory.unmanned_position", params: { positionId: P_REG } });
 });

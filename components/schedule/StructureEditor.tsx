@@ -14,7 +14,7 @@
  * reported dirty so its section stays open (D10).
  */
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
@@ -22,7 +22,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
 import { structureBody, structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
 import {
-  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, applyRoleChange, isLineRole, positionIds, reconcileLineFloors, type PositionRole, type ScheduleStructure,
+  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, applyRoleChange, effectiveLineFloorLimit, isLineRole, positionIds, reconcileLineFloors, type PositionRole, type PositionTimeProvenance, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
 import { runGuarded } from "./horizon-flow-shared";
 import { scheduleErrorKey } from "./schedule-errors";
@@ -43,12 +43,13 @@ function Section({ id, title, children }: { id: string; title: string; children:
   );
 }
 
-export function StructureEditor({ locationId, structure, closing, positions, names, onDirty, initialError = null, initialSaved = false }: {
+export function StructureEditor({ locationId, structure, closing, positions, names, timeProvenance = {}, onDirty, initialError = null, initialSaved = false }: {
   locationId: string;
   structure: { id: string | null; source: "saved" | "defaults"; value: ScheduleStructure };
   closing: { measuredMinutes: number | null; samples: number };
   positions: Record<string, { name: string; nameEs: string | null }>;
   names: Record<string, string>;
+  timeProvenance?: Record<string, PositionTimeProvenance>;
   onDirty?: (dirty: boolean) => void;
   /** SSR tests only. */
   initialError?: string | null;
@@ -58,16 +59,18 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const post = useStepUpPost();
-  const [draft, setDraft] = useState<ScheduleStructure>(() => {
-    const s = structuredClone(structure.value); reconcileLineFloors(s); return s;
-  });
+  const [draft, setDraft] = useState<ScheduleStructure>(() => structuredClone(structure.value));
+  // Preserve manager intent through transient heads, role and time edits.
+  const effective = useMemo(() => {
+    const s = structuredClone(draft); reconcileLineFloors(s); return s;
+  }, [draft]);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(initialError);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [saved, setSaved] = useState(initialSaved);
   const edit = (mutate: (s: ScheduleStructure) => void) => {
-    setDraft((d) => { const n = structuredClone(d); mutate(n); reconcileLineFloors(n); return n; });
+    setDraft((d) => { const n = structuredClone(d); mutate(n); return n; });
     if (!dirty) { setDirty(true); onDirty?.(true); }
     setSaved(false);
   };
@@ -75,7 +78,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
 
   async function save() {
     setKeyError(null); setRefusal(null);
-    const key = structureSaveRefusal(draft);
+    const key = structureSaveRefusal(effective);
     if (key) {
       setKeyError(key);
       const input = document.getElementsByName(key)[0];
@@ -85,7 +88,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
     setBusy(true);
     const out = await runGuarded({
       tier: "E", requestStepUp: () => requestStepUp("E"),
-      post: async () => { const r = await post("/api/schedule/settings", structureBody(locationId, structure.id, draft)); return r.ok ? { ok: true, data: r.data } : { ok: false, code: r.code }; },
+      post: async () => { const r = await post("/api/schedule/settings", structureBody(locationId, structure.id, effective)); return r.ok ? { ok: true, data: r.data } : { ok: false, code: r.code }; },
     });
     setBusy(false);
     if (out.kind === "cancelled") return; // the draft stays exactly as it was
@@ -94,7 +97,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
     router.refresh();
   }
 
-  const d = draft;
+  const d = effective;
   const roleLabel = (r: RoleCode) => t(`role.${r}` as TranslationKey);
   const lineIds = positionIds(d).filter((id) => isLineRole(d.positions[id]!.role));
   const problem = keyError ? structureProblemLine(keyError) : null;
@@ -150,7 +153,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
                   <NumField name={`crews.${ct}.closeWalk`} label={t("schedule.settings.crews.close_walk")} value={c.close.walkHeads} onChange={(v) => edit((s) => { s.crews[ct].close.walkHeads = num(v); })} />
                   <NumField name={`crews.${ct}.closePrepDish`} label={t("schedule.settings.crews.close_prep_dish")} value={c.close.prepDishHeads} onChange={(v) => edit((s) => { s.crews[ct].close.prepDishHeads = num(v); })} />
                   {lineIds.map((id) => (
-                    <NumField key={id} name={`crews.${ct}.lineMinHeads.${id}`} label={t("schedule.settings.crews.line_min", { position: position(id) })} value={c.lineMinHeads[id] ?? 0}
+                    <NumField key={id} name={`crews.${ct}.lineMinHeads.${id}`} label={t("schedule.settings.crews.line_min", { position: position(id) })} value={c.lineMinHeads[id] ?? 0} max={effectiveLineFloorLimit(d.positions[id]!, d.shopDay.serviceCloseQ)}
                       onChange={(v) => edit((s) => { s.crews[ct].lineMinHeads[id] = num(v); })} />
                   ))}
                 </Fields>
@@ -170,7 +173,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
                 <Fields>
                   <SelectField name={`positions.${id}.role`} label={t("schedule.settings.positions.role")} value={p.role}
                     options={POSITION_ROLES.map((r) => ({ value: r, label: t(`schedule.settings.role.${r}` as TranslationKey) }))}
-                    onChange={(v) => edit((s) => { s.positions[id] = applyRoleChange(s.positions[id]!, v as PositionRole); })} />
+                    onChange={(v) => edit((s) => { s.positions[id] = applyRoleChange(s.positions[id]!, v as PositionRole, timeProvenance[id]); })} />
                   <TimeField name={`positions.${id}.openQ`} label={t("schedule.settings.positions.open")} q={p.openQ} onChange={(q) => edit((s) => { s.positions[id]!.openQ = q; })} />
                   <TimeField name={`positions.${id}.trimQ`} label={t("schedule.settings.positions.trim")} q={p.trimQ} onChange={(q) => edit((s) => { s.positions[id]!.trimQ = q; })} />
                   <TimeField name={`positions.${id}.closeQ`} label={t("schedule.settings.positions.close")} q={p.closeQ} onChange={(q) => edit((s) => { s.positions[id]!.closeQ = q; })} />

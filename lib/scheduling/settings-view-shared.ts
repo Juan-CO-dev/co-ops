@@ -12,7 +12,7 @@ import type { PositionLabel } from "./board-view-shared";
 import type { ScheduleShopSettings } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
 import type { ToastPrimarySuggestion } from "./position-rank-shared";
-import { validScheduleStructure, type ScheduleStructure, type SeededFrom } from "./structure-shared";
+import { validScheduleStructure, type PositionTimeProvenance, type ScheduleStructure, type SeededFrom } from "./structure-shared";
 import { Q_PER_DAY, addDays, isoWeekStart, qToWall, wallToQ } from "./time-shared";
 
 export interface SettingsPerms {
@@ -69,6 +69,8 @@ export interface ScheduleSettingsView {
    * position, so the primary / secondary work-type check is not made (the save path skips it too).
    */
   positionRolesKnown?: boolean;
+  livePositionIds: string[];
+  timeProvenance: Record<string, PositionTimeProvenance>;
   names: Record<string, string>;
   members: SettingsMember[];
   /** MoO / Owner (presence only): the "in today" toggles. */

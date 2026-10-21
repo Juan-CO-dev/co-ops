@@ -27,10 +27,11 @@ const empty = (userId: string): PersonSettingsRow => ({ userId, workType: null, 
 
 type PositionLabels = Record<string, { name: string; nameEs: string | null; role?: PositionRole }>;
 
-export function StaffSettings({ locationId, members, positions, names, rolesKnown = false, initialPerson = null, onDirty }: {
+export function StaffSettings({ locationId, members, positions, livePositionIds, names, rolesKnown = false, initialPerson = null, onDirty }: {
   locationId: string;
   members: SettingsMember[];
   positions: PositionLabels;
+  livePositionIds: string[];
   names: Record<string, string>;
   /** The positions' roles are known (the structure is saved): the primary / secondary work-type check runs. */
   rolesKnown?: boolean;
@@ -56,7 +57,7 @@ export function StaffSettings({ locationId, members, positions, names, rolesKnow
               <span aria-hidden="true" className="text-co-text-dim">{isOpen ? "⌃" : "⌄"}</span>
             </button>
             {isOpen ? (
-              <PersonEditor locationId={locationId} member={m} positions={positions} names={names} rolesKnown={rolesKnown}
+              <PersonEditor locationId={locationId} member={m} positions={positions} livePositionIds={livePositionIds} names={names} rolesKnown={rolesKnown}
                 onDirty={(d) => { setDirtyOf(d ? m.userId : null); onDirty?.(d); }} />
             ) : null}
           </li>
@@ -66,10 +67,11 @@ export function StaffSettings({ locationId, members, positions, names, rolesKnow
   );
 }
 
-function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirty }: {
+function PersonEditor({ locationId, member, positions, livePositionIds, names, rolesKnown, onDirty }: {
   locationId: string;
   member: SettingsMember;
   positions: PositionLabels;
+  livePositionIds: string[];
   names: Record<string, string>;
   rolesKnown: boolean;
   onDirty: (dirty: boolean) => void;
@@ -109,7 +111,7 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
   if (rolesKnown) for (const [pid, p] of Object.entries(positions)) if (p.role) roles[pid] = p.role;
   const problems = ranked ? positionListProblems({ role: member.role, workType: s.workType ?? defaultWorkType(member.role), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles) : [];
   const slotLabel = (i: number) => t(`schedule.settings.staff.slot_${positionSlotOf(i)}` as TranslationKey);
-  const suggestion = ranked && s.coverPositions.length === 0 && member.suggestedPrimary && positions[member.suggestedPrimary.positionId] ? member.suggestedPrimary : null;
+  const suggestion = ranked && s.coverPositions.length === 0 && member.suggestedPrimary && livePositionIds.includes(member.suggestedPrimary.positionId) ? member.suggestedPrimary : null;
   const readOnly = member.editable === false;
   const move = (i: number, by: -1 | 1) => edit((x) => { const a = x.coverPositions; const j = i + by; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j]!, a[i]!]; });
   const iconBtn = "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-60";
@@ -178,7 +180,7 @@ function PersonEditor({ locationId, member, positions, names, rolesKnown, onDirt
         <div className="flex flex-wrap items-center gap-2">
           <select aria-label={t("schedule.settings.staff.cover_pick")} className="min-h-[44px] min-w-0 flex-1 rounded-lg border-2 border-co-border bg-co-surface px-2 text-sm" value={adding} onChange={(e) => setAdding(e.target.value)}>
             <option value="">{t("schedule.settings.staff.cover_pick")}</option>
-            {Object.keys(positions).filter((p) => !s.coverPositions.includes(p)).map((p) => <option key={p} value={p}>{position(p)}</option>)}
+            {livePositionIds.filter((p) => !s.coverPositions.includes(p)).map((p) => <option key={p} value={p}>{position(p)}</option>)}
           </select>
           <button type="button" className={GHOST} disabled={!adding} onClick={() => { edit((x) => { x.coverPositions = [...x.coverPositions, adding]; }); setAdding(""); }}>{t("schedule.settings.staff.cover_add")}</button>
         </div>

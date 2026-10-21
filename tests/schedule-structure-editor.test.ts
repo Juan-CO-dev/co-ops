@@ -7,7 +7,7 @@ import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
-import { CREW_TYPES, POSITION_ROLE_DEFAULTS, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
+import { CREW_TYPES, POSITION_ROLE_DEFAULTS, type PositionTimeProvenance, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { FLOOR_POSITION, seededFloors } from "./fixtures/schedule/structure-floors";
 
 const { post, refresh } = vi.hoisted(() => ({ post: vi.fn(), refresh: vi.fn() }));
@@ -17,10 +17,10 @@ vi.mock("@/components/admin/useStepUpPost", () => ({ useStepUpPost: () => post }
 beforeEach(() => { post.mockReset().mockResolvedValue({ ok: true, data: {} }); refresh.mockClear(); });
 afterEach(cleanup);
 
-function mount(value = seededFloors(), onDirty = vi.fn(), initialError: string | null = null, language: "en" | "es" = "en") {
+function mount(value = seededFloors(), onDirty = vi.fn(), initialError: string | null = null, language: "en" | "es" = "en", timeProvenance: Record<string, PositionTimeProvenance> = {}) {
   const children = createElement(StructureEditor, {
     locationId: "shop", structure: { id: null, source: "saved", value }, closing: { measuredMinutes: null, samples: 0 },
-    positions: { [FLOOR_POSITION]: { name: "Prep/Dishwasher", nameEs: "Prep/Lavaplatos" } }, names: {}, onDirty, initialError,
+    positions: { [FLOOR_POSITION]: { name: "Prep/Dishwasher", nameEs: "Prep/Lavaplatos" } }, names: {}, onDirty, initialError, timeProvenance,
   });
   const providerProps = { initialLanguage: language, children };
   return render(createElement(TranslationProvider, providerProps));
@@ -56,6 +56,44 @@ describe("structure problem lines", () => {
 });
 
 describe("structure editor floor edits", () => {
+  it("uses station provenance when changing a role with default-valued times", () => {
+    mount(seededFloors(), vi.fn(), null, "en", { [FLOOR_POSITION]: { closeFromStation: true, trimFromStation: true } });
+    fireEvent.change(input(`positions.${FLOOR_POSITION}.role`), { target: { value: "register" } });
+    expect(input(`positions.${FLOOR_POSITION}.closeQ`).value).toBe("15:30");
+    expect(input(`positions.${FLOOR_POSITION}.trimQ`).value).toBe("15:30");
+  });
+  it("restores floor intent when a time edit temporarily empties the window", () => {
+    mount();
+    const open = input(`positions.${FLOOR_POSITION}.openQ`);
+    fireEvent.change(open, { target: { value: "15:30" } });
+    expect(input(`crews.slow.lineMinHeads.${FLOOR_POSITION}`).value).toBe("0");
+    fireEvent.change(open, { target: { value: "09:30" } });
+    expect(input(`crews.slow.lineMinHeads.${FLOOR_POSITION}`).value).toBe("1");
+  });
+  it("preserves intent through an empty heads input and posts effective floors", async () => {
+    mount();
+    const heads = input(`positions.${FLOOR_POSITION}.headsBefore`);
+    fireEvent.change(heads, { target: { value: "" } });
+    for (const type of CREW_TYPES) expect(input(`crews.${type}.lineMinHeads.${FLOOR_POSITION}`).value).toBe("0");
+    fireEvent.change(heads, { target: { value: "2" } });
+    for (const type of CREW_TYPES) {
+      expect(input(`crews.${type}.lineMinHeads.${FLOOR_POSITION}`).value).toBe("1");
+      expect(input(`crews.${type}.lineMinHeads.${FLOOR_POSITION}`).max).toBe("2");
+    }
+    fireEvent.change(heads, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    const saved = post.mock.calls[0]![1].structure as ScheduleStructure;
+    for (const type of CREW_TYPES) expect(saved.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(0);
+    expect(structureSaveRefusal(saved)).toBeNull();
+  });
+  it("restores floor intent after changing to prep and back", () => {
+    mount();
+    const role = input(`positions.${FLOOR_POSITION}.role`);
+    fireEvent.change(role, { target: { value: "prep" } });
+    fireEvent.change(role, { target: { value: "line_other" } });
+    for (const type of CREW_TYPES) expect(input(`crews.${type}.lineMinHeads.${FLOOR_POSITION}`).value).toBe("1");
+  });
   it("a role change hides all four floors and Save posts a valid structure", async () => {
     const original = seededFloors();
     mount(original);

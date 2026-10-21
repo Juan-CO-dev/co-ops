@@ -21,6 +21,15 @@ const cases = loadStructureCases() as StructureCase[];
 const I = CASE_POSITION_IDS;
 
 describe("draft line floor reconciliation", () => {
+  it.each(["headsBefore", "headsAfter"] as const)("reconciles %s zero inside service", (field) => {
+    const s = seededFloors();
+    s.positions[FLOOR_POSITION] = structuredClone(POSITION_ROLE_DEFAULTS.register);
+    s.positions[FLOOR_POSITION]![field] = 0;
+    expect(structureProblem(s)).toMatch(/waveProfile/);
+    reconcileLineFloors(s);
+    expect(structureProblem(s)).toBeNull();
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(0);
+  });
   it("Juan's role edit removes the hidden floor in all four crews", () => {
     const s = seededFloors();
     for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(1);
@@ -77,17 +86,20 @@ describe("draft line floor reconciliation", () => {
     for (let i = 0; i < 250; i++) {
       const s = seededFloors();
       const p = s.positions[FLOOR_POSITION]!;
-      // After service: isolate checkCrews from the separate per-quarter wave constraint.
-      p.openQ = 80 + random(17); p.trimQ = p.openQ + random(97 - p.openQ); p.closeQ = p.trimQ + random(97 - p.trimQ);
+      // Cover setup, service, after-service and empty windows.
+      p.openQ = random(97); p.trimQ = p.openQ + random(97 - p.openQ); p.closeQ = p.trimQ + random(97 - p.trimQ);
       p.headsBefore = random(9); p.headsAfter = random(9);
       const limit = lineFloorLimit(p);
-      s.crews.slow.lineMinHeads[FLOOR_POSITION] = limit;
+      const quarters = Array.from({ length: Math.max(0, Math.min(p.closeQ, s.shopDay.serviceCloseQ) - p.openQ) }, (_, q) => p.openQ + q);
+      const effective = quarters.length ? Math.min(...quarters.map((q) => q < p.trimQ ? p.headsBefore : p.headsAfter)) : limit;
+      s.crews.slow.lineMinHeads[FLOOR_POSITION] = effective;
       for (const type of CREW_TYPES.filter((t) => t !== "slow")) delete s.crews[type].lineMinHeads[FLOOR_POSITION];
       expect(structureProblem(s)).toBeNull();
       s.crews.slow.lineMinHeads[FLOOR_POSITION] = limit + 1;
       expect(structureProblem(s)).toBe(`crews.slow.lineMinHeads.${FLOOR_POSITION}`);
       reconcileLineFloors(s);
-      expect(s.crews.slow.lineMinHeads[FLOOR_POSITION]).toBe(limit);
+      expect(s.crews.slow.lineMinHeads[FLOOR_POSITION]).toBe(effective);
+      expect(structureProblem(s)).toBeNull();
     }
   });
 });
@@ -350,6 +362,18 @@ describe("round 2: staffed seed and role defaults", () => {
     const r = structureFromStations([{ ...stations[0]!, usuallyClosesAt: "14:00" }], [positions[0]!], {});
     if (!r.ok) throw new Error(r.key);
     expect(applyRoleChange(r.structure.positions[id(1)]!, "register")).toEqual({ ...POSITION_ROLE_DEFAULTS.register, closeQ: 56, trimQ: 56 });
+  });
+
+  it("preserves a station close equal to the old default (15:30)", () => {
+    const p = structuredClone(POSITION_ROLE_DEFAULTS.line_other);
+    expect(applyRoleChange(p, "register", { closeFromStation: true, trimFromStation: false }))
+      .toEqual({ ...POSITION_ROLE_DEFAULTS.register, closeQ: 62, trimQ: 62 });
+  });
+
+  it("preserves a station trim equal to the old default", () => {
+    const p = structuredClone(POSITION_ROLE_DEFAULTS.line_other);
+    expect(applyRoleChange(p, "register", { closeFromStation: false, trimFromStation: true }))
+      .toEqual({ ...POSITION_ROLE_DEFAULTS.register, trimQ: 62 });
   });
 
   it("keeps station trim/close overrides and clamps a later new-role open", () => {

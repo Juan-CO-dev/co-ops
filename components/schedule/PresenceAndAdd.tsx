@@ -15,13 +15,14 @@ import { scheduleErrorKey } from "./schedule-errors";
 import { BUTTON, Check, Fields, GHOST, SelectField, TimeField } from "./settings-fields";
 import { useBoardLine } from "./use-board-line";
 
-export function PresenceAndAdd({ locationId, dates, presencePeople, people, pins, positions, names, defaultBlock }: {
+export function PresenceAndAdd({ locationId, dates, presencePeople, people, pins, positions, livePositionIds, names, defaultBlock }: {
   locationId: string;
   dates: string[];
   presencePeople: Array<{ userId: string; name: string }>;
   people: Array<{ userId: string; name: string }>;
   pins: SettingsPin[];
   positions: Record<string, { name: string; nameEs: string | null }>;
+  livePositionIds: string[];
   names: Record<string, string>;
   defaultBlock: { startQ: number; endQ: number };
 }) {
@@ -71,7 +72,7 @@ export function PresenceAndAdd({ locationId, dates, presencePeople, people, pins
         </Fields>
         <div className="flex flex-wrap gap-x-3">
           <span className="w-full text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("schedule.settings.add.positions")}</span>
-          {Object.keys(positions).map((id) => (
+          {livePositionIds.map((id) => (
             <Check key={id} label={position(id)} checked={chosen.includes(id)} onChange={(on) => setChosen((c) => (on ? [...c, id] : c.filter((x) => x !== id)))} />
           ))}
         </div>
