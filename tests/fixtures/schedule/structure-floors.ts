@@ -6,7 +6,7 @@ export const OTHER_POSITION = "00000000-0000-4000-8000-000000000002";
 /** The pre-role-edit seed: all positions are line_other, every crew floor is 1. */
 export function seededFloors() {
   const result = structureFromStations(
-    [{ id: "station", active: true, roleOnly: false, usuallyClosesAt: null, trims: [] }],
+    [{ id: "station", active: true, staffed: true, roleOnly: false, usuallyClosesAt: null, trims: [] }],
     [FLOOR_POSITION, OTHER_POSITION].map((id) => ({ id, stationId: "station", active: true, usuallyTrimsAt: null })),
     {},
   );

@@ -161,6 +161,31 @@ export const POSITION_ROLE_DEFAULTS: Record<PositionRole, StructurePosition> = {
 
 // ─── Reads over a structure ──────────────────────────────────────────────────
 
+/** Clamp seed/role windows: trim cannot exceed close, open cannot exceed trim. */
+export function clampPositionTimes(p: StructurePosition): StructurePosition {
+  const trimQ = Math.min(p.trimQ, p.closeQ);
+  return { ...p, trimQ, openQ: Math.min(p.openQ, trimQ) };
+}
+
+/**
+ * Refresh the old role's seed defaults while preserving station trim/close overrides. Other edits
+ * (open, heads or eligibility) preserve the entire configuration. Persisted positions have no time
+ * provenance: a manual trim/close matching a possible station seed is treated as an override too.
+ */
+export function applyRoleChange(p: StructurePosition, role: PositionRole): StructurePosition {
+  const old = POSITION_ROLE_DEFAULTS[p.role];
+  const sameRoles = p.allowedRoles.length === old.allowedRoles.length && old.allowedRoles.every((r) => p.allowedRoles.includes(r));
+  if (role === p.role || p.openQ !== Math.min(old.openQ, p.trimQ) || p.headsBefore !== old.headsBefore || p.headsAfter !== old.headsAfter || !sameRoles) {
+    return { ...p, role, allowedRoles: [...p.allowedRoles] };
+  }
+  const next = POSITION_ROLE_DEFAULTS[role];
+  return clampPositionTimes({
+    ...next, allowedRoles: [...next.allowedRoles],
+    closeQ: p.closeQ === old.closeQ ? next.closeQ : p.closeQ,
+    trimQ: p.trimQ === Math.min(old.trimQ, p.closeQ) ? next.trimQ : p.trimQ,
+  });
+}
+
 export function crewFor(s: ScheduleStructure, dayType: CrewType): CrewRow {
   return s.crews[dayType];
 }
@@ -593,11 +618,11 @@ export function assertScheduleStructure(v: unknown): asserts v is ScheduleStruct
 // ─── Seeding from the station columns (J4) ───────────────────────────────────
 
 export interface SeedStation {
-  id: string; active: boolean; usuallyClosesAt: string | null; trims: Array<{ at: string; to_count: number }> | null;
+  id: string; active: boolean; staffed: boolean; usuallyClosesAt: string | null; trims: Array<{ at: string; to_count: number }> | null;
   /**
    * CC chunk H9 (spec §6.2): a station that is a ROLE, not a head (the Closing Manager — carried by one of the closers, checked by
    * the validator's closing rule). Its positions are never seeded as staffed positions. Set by the loader from the station's
-   * system key; this module matches no name.
+   * system key; this module matches no name. Unmanned (`staffed === false`) stations are excluded too.
    */
   roleOnly?: boolean;
 }
@@ -620,7 +645,7 @@ function stationTimeQ(time: string): number | null {
 
 /**
  * The structure a shop's editor opens with the FIRST time: the shipped defaults plus one entry per
- * active position on an active station, its close ← `stations.usually_closes_at`, its trim ←
+ * active position on an active, staffed, non-role-only station (J4), its close ← `stations.usually_closes_at`, its trim ←
  * `station_positions.usually_trims_at`, else the station's first `trims` entry, missing → the role's
  * defaults. Roles come from the manager's mapping (`roles`), never from a name; an unmapped position is
  * `line_other`. A priority pair is seeded only where exactly one position holds each role of it.
@@ -634,9 +659,10 @@ export function structureFromStations(
 ): { ok: true; structure: ScheduleStructure; seededFrom: Record<string, SeededFrom> } | { ok: false; code: "structure_invalid"; key: string } {
   const s: ScheduleStructure = structuredClone(base);
   s.positions = {};
+  s.priority = []; // Rebuild from eligible positions, including when the advisory supplies a saved base.
   const seededFrom: Record<string, SeededFrom> = {};
   const stationById = new Map(stations.map((st) => [st.id, st]));
-  const live = positions.filter((p) => p.active && stationById.get(p.stationId)?.active === true && stationById.get(p.stationId)?.roleOnly !== true)
+  const live = positions.filter((p) => p.active && stationById.get(p.stationId)?.active === true && stationById.get(p.stationId)?.roleOnly !== true && stationById.get(p.stationId)?.staffed !== false)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   for (const p of live) {
     const st = stationById.get(p.stationId)!;
@@ -650,16 +676,16 @@ export function structureFromStations(
       closeQ = q;
       close = "station";
     }
-    let trimQ = Math.min(d.trimQ, closeQ);
+    let trimQ = d.trimQ;
     let trim: SeededFrom["trim"] = "default";
     const trimTime = p.usuallyTrimsAt ?? st.trims?.[0]?.at ?? null;
     if (trimTime) {
       const q = stationTimeQ(trimTime);
       if (q === null) return { ok: false, code: "structure_invalid", key: `positions.${p.id}.trimQ` };
-      trimQ = Math.min(q, closeQ); // a trim at or after the close is moot: the position is closed by then
+      trimQ = q; // clampPositionTimes caps it at close below.
       trim = p.usuallyTrimsAt ? "position" : "station_trims";
     }
-    s.positions[p.id] = { ...d, allowedRoles: [...d.allowedRoles], openQ: Math.min(d.openQ, trimQ), trimQ, closeQ };
+    s.positions[p.id] = clampPositionTimes({ ...d, allowedRoles: [...d.allowedRoles], trimQ, closeQ });
     seededFrom[p.id] = { close, trim };
   }
   const byRole = (role: PositionRole) => Object.keys(s.positions).filter((id) => s.positions[id]!.role === role);

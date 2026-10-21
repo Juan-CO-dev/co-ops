@@ -67,7 +67,9 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
     const rows = await loadStationSeedRows(deps.service, locationId);
     const roles: Record<string, PositionRole> = Object.fromEntries(Object.entries(live.positions).map(([id, p]) => [id, p.role]));
     const seeded = structureFromStations(rows.stations, rows.positions, roles, live);
-    if (seeded.ok) advisory = stationAdvisory(live, seeded.structure, seeded.seededFrom);
+    const unmannedStations = new Set(rows.stations.filter((s) => s.staffed === false).map((s) => s.id));
+    const unmannedPositions = new Set(rows.positions.filter((p) => unmannedStations.has(p.stationId)).map((p) => p.id));
+    if (seeded.ok) advisory = stationAdvisory(live, seeded.structure, seeded.seededFrom, unmannedPositions);
   }
   const positions: Record<string, PositionLabel> = {};
   for (const r of await loadPositionLabelRows(deps.service, locationId)) {

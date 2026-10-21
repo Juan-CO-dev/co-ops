@@ -22,7 +22,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
 import { structureBody, structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
 import {
-  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, isLineRole, positionIds, reconcileLineFloors, type PositionRole, type ScheduleStructure,
+  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, applyRoleChange, isLineRole, positionIds, reconcileLineFloors, type PositionRole, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
 import { runGuarded } from "./horizon-flow-shared";
 import { scheduleErrorKey } from "./schedule-errors";
@@ -170,7 +170,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
                 <Fields>
                   <SelectField name={`positions.${id}.role`} label={t("schedule.settings.positions.role")} value={p.role}
                     options={POSITION_ROLES.map((r) => ({ value: r, label: t(`schedule.settings.role.${r}` as TranslationKey) }))}
-                    onChange={(v) => edit((s) => { s.positions[id]!.role = v as PositionRole; })} />
+                    onChange={(v) => edit((s) => { s.positions[id] = applyRoleChange(s.positions[id]!, v as PositionRole); })} />
                   <TimeField name={`positions.${id}.openQ`} label={t("schedule.settings.positions.open")} q={p.openQ} onChange={(q) => edit((s) => { s.positions[id]!.openQ = q; })} />
                   <TimeField name={`positions.${id}.trimQ`} label={t("schedule.settings.positions.trim")} q={p.trimQ} onChange={(q) => edit((s) => { s.positions[id]!.trimQ = q; })} />
                   <TimeField name={`positions.${id}.closeQ`} label={t("schedule.settings.positions.close")} q={p.closeQ} onChange={(q) => edit((s) => { s.positions[id]!.closeQ = q; })} />

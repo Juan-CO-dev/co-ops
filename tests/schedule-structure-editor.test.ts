@@ -7,7 +7,7 @@ import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
-import { CREW_TYPES, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
+import { CREW_TYPES, POSITION_ROLE_DEFAULTS, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { FLOOR_POSITION, seededFloors } from "./fixtures/schedule/structure-floors";
 
 const { post, refresh } = vi.hoisted(() => ({ post: vi.fn(), refresh: vi.fn() }));
@@ -66,6 +66,7 @@ describe("structure editor floor edits", () => {
     await waitFor(() => expect(post).toHaveBeenCalledOnce());
     const saved = post.mock.calls[0]![1].structure as ScheduleStructure;
     expect(structureSaveRefusal(saved)).toBeNull();
+    expect(saved.positions[FLOOR_POSITION]).toEqual(POSITION_ROLE_DEFAULTS.prep_dish);
     for (const type of CREW_TYPES) expect(Object.hasOwn(saved.crews[type].lineMinHeads, FLOOR_POSITION)).toBe(false);
     expect(original.positions[FLOOR_POSITION]!.role).toBe("line_other");
   });

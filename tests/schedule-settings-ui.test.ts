@@ -292,3 +292,27 @@ describe("Juan 2026-10-16 (decision 2): the hourly estimate defaults to the DC m
     expect(readFileSync("supabase/migrations/0274_schedule_settings.sql", "utf8")).toMatch(/estimated_hourly_cents\s+integer default 1840/);
   });
 });
+
+
+it("a saved position on a now-unmanned station gets the distinct advisory in both languages", async () => {
+  const s = shop();
+  const before = await loadScheduleSettings(s.deps, { actor: gm, locationId: A });
+  if (before.state !== "ready" || !before.structure) throw new Error("not ready");
+  const saved = structuredClone(before.structure.value);
+  const changed = shop((t) => {
+    t.schedule_structures!.push({ id: "sv-unmanned", location_id: A, structure: saved, created_at: "2026-10-21T10:00:00Z" });
+    t.stations![0]!.staffed = false;
+  });
+  const after = await loadScheduleSettings(changed.deps, { actor: gm, locationId: A });
+  if (after.state !== "ready") throw new Error("not ready");
+  expect(after.stationAdvisory).toEqual([P_REG, P_WALK].sort().map((positionId) => ({
+    key: "schedule.settings.advisory.unmanned_position", params: { positionId },
+  })));
+  expect(after.structure!.value).toEqual(saved);
+  for (const language of ["en", "es"] as const) {
+    const dict = language === "en" ? en : es;
+    const copy = dict["schedule.settings.advisory.unmanned_position"];
+    expect(copy.match(/\{positionId\}/g)).toHaveLength(1);
+    expect(text(render(after, language))).toContain(copy.split("{positionId}")[1]!.trim());
+  }
+});

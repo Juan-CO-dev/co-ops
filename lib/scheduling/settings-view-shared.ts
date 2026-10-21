@@ -135,16 +135,16 @@ export function structureProblemLine(key: string): { key: TranslationKey; params
 /**
  * The station-column advisory (plan J4): after the structure is saved it is the scheduler's single source; a station
  * time that later differs from it (`stations.usually_closes_at`, a position's trim), a position added on the station
- * admin, or one retired there, is SHOWN — never applied silently.
+ * admin, or one retired or marked unmanned there, is SHOWN — never applied silently.
  */
-export function stationAdvisory(saved: ScheduleStructure, seeded: ScheduleStructure, seededFrom: Readonly<Record<string, SeededFrom>>): NarrativeLine[] {
+export function stationAdvisory(saved: ScheduleStructure, seeded: ScheduleStructure, seededFrom: Readonly<Record<string, SeededFrom>>, unmannedPositionIds: ReadonlySet<string> = new Set()): NarrativeLine[] {
   const out: NarrativeLine[] = [];
   const ids = [...new Set([...Object.keys(saved.positions), ...Object.keys(seeded.positions)])].sort();
   for (const id of ids) {
     const a = saved.positions[id];
     const b = seeded.positions[id];
     if (!a && b) { out.push({ key: "schedule.settings.advisory.new_position", params: { positionId: id } }); continue; }
-    if (a && !b) { out.push({ key: "schedule.settings.advisory.retired_position", params: { positionId: id } }); continue; }
+    if (a && !b) { out.push({ key: unmannedPositionIds.has(id) ? "schedule.settings.advisory.unmanned_position" : "schedule.settings.advisory.retired_position", params: { positionId: id } }); continue; }
     if (!a || !b) continue;
     const from = seededFrom[id];
     if (from?.close === "station" && a.closeQ !== b.closeQ) out.push({ key: "schedule.settings.advisory.close", params: { positionId: id, savedQ: a.closeQ, stationQ: b.closeQ } });

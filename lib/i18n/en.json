@@ -7857,6 +7857,7 @@
   "schedule.settings.advisory.close": "{positionId}: the station admin now says it closes at {stationQ}; the schedule uses {savedQ}.",
   "schedule.settings.advisory.trim": "{positionId}: the station admin now trims at {stationQ}; the schedule uses {savedQ}.",
   "schedule.settings.advisory.new_position": "{positionId} is new on the station admin and isn't in the schedule yet.",
+  "schedule.settings.advisory.unmanned_position": "{positionId} is on a station now marked unstaffed but is still in the schedule.",
   "schedule.settings.advisory.retired_position": "{positionId} is no longer on the station admin but is still in the schedule.",
   "schedule.board.settings_link": "Schedule settings",
   "schedule.board.budget.set_link": "Set one",

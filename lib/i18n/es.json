@@ -7857,6 +7857,7 @@
   "schedule.settings.advisory.close": "{positionId}: la administración de estaciones ahora dice que cierra a las {stationQ}; el horario usa {savedQ}.",
   "schedule.settings.advisory.trim": "{positionId}: la administración de estaciones ahora reduce a las {stationQ}; el horario usa {savedQ}.",
   "schedule.settings.advisory.new_position": "{positionId} es nuevo en la administración de estaciones y todavía no está en el horario.",
+  "schedule.settings.advisory.unmanned_position": "{positionId} está en una estación ahora marcada sin personal pero sigue en el horario.",
   "schedule.settings.advisory.retired_position": "{positionId} ya no está en la administración de estaciones pero sigue en el horario.",
   "schedule.board.settings_link": "Ajustes del horario",
   "schedule.board.budget.set_link": "Ponle uno",

@@ -90,13 +90,14 @@ export async function loadLiveStructure(service: SupabaseClient, locationId: str
 
 /** The station columns the structure is seeded from (0230 / 0238 / the position trims), as `structureFromStations` reads them. */
 export async function loadStationSeedRows(service: SupabaseClient, locationId: string): Promise<{ stations: SeedStation[]; positions: SeedPosition[] }> {
-  const stations = await selectAllRows<{ id: string; name: string; active: boolean; usually_closes_at: string | null; trims: Array<{ at: string; to_count: number }> | null }>((from, to) => service
-    .from("stations").select("id, name, active, usually_closes_at, trims").eq("location_id", locationId).order("id", { ascending: true }).range(from, to));
+  const stations = await selectAllRows<{ id: string; name: string; active: boolean; staffed: boolean; usually_closes_at: string | null; trims: Array<{ at: string; to_count: number }> | null }>((from, to) => service
+    .from("stations").select("id, name, active, staffed, usually_closes_at, trims").eq("location_id", locationId).order("id", { ascending: true }).range(from, to));
   const positions = await selectAllRows<{ id: string; station_id: string; active: boolean; usually_trims_at: string | null }>((from, to) => service
     .from("station_positions").select("id, station_id, active, usually_trims_at").eq("location_id", locationId).order("id", { ascending: true }).range(from, to));
   return {
+    // Unmanned stations are excluded alongside role-only sections by the seed.
     // CC chunk H9 (spec §6.2): the Closing Manager section is a ROLE, never a staffed position (matched on its English system key).
-    stations: stations.map((s) => ({ id: s.id, active: s.active, usuallyClosesAt: s.usually_closes_at, trims: s.trims, ...(s.name === CLOSING_MANAGER_STATION ? { roleOnly: true } : {}) })),
+    stations: stations.map((s) => ({ id: s.id, active: s.active, staffed: s.staffed, usuallyClosesAt: s.usually_closes_at, trims: s.trims, ...(s.name === CLOSING_MANAGER_STATION ? { roleOnly: true } : {}) })),
     positions: positions.map((p) => ({ id: p.id, stationId: p.station_id, active: p.active, usuallyTrimsAt: p.usually_trims_at })),
   };
 }
