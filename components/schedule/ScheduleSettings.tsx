@@ -68,19 +68,19 @@ export function ScheduleSettings({ view, initialStructureError = null, initialSa
               {v.stationAdvisory.map((l, i) => <li key={i}>{line(l)}</li>)}
             </ul>
           ) : null}
-          <StructureEditor locationId={v.locationId} structure={v.structure} closing={v.closing} positions={v.positions} names={v.names}
+          <StructureEditor locationId={v.locationId} structure={v.structure} timeProvenance={v.timeProvenance} closing={v.closing} positions={v.positions} names={v.names}
             onDirty={mark("structure")} initialError={initialStructureError} initialSaved={initialSaved} />
         </Section>
       ) : null}
       {v.perms.people ? (
         <Section id="staff" title={t("schedule.settings.staff.title")} count={t("schedule.settings.count", { n: v.members.length })} locked={!!dirty.staff}>
-          <StaffSettings locationId={v.locationId} members={v.members} positions={v.positions} names={v.names} rolesKnown={v.positionRolesKnown ?? false} initialPerson={initialPerson} onDirty={mark("staff")} />
+          <StaffSettings locationId={v.locationId} members={v.members} livePositionIds={v.livePositionIds} positions={v.positions} names={v.names} rolesKnown={v.positionRolesKnown ?? false} initialPerson={initialPerson} onDirty={mark("staff")} />
         </Section>
       ) : null}
       {v.perms.presence ? (
         <Section id="presence" title={t("schedule.settings.presence.section")} locked={false}>
           <PresenceAndAdd locationId={v.locationId} dates={v.dates} presencePeople={v.presencePeople} people={[...v.members.map((m) => ({ userId: m.userId, name: m.name })), ...v.presencePeople]}
-            pins={v.pins} positions={v.positions} names={v.names} defaultBlock={block} />
+            pins={v.pins} livePositionIds={v.livePositionIds} positions={v.positions} names={v.names} defaultBlock={block} />
         </Section>
       ) : null}
       {v.shop ? (

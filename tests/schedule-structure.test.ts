@@ -5,17 +5,104 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { FLOOR_POSITION, OTHER_POSITION, seededFloors } from "./fixtures/schedule/structure-floors";
 import {
   CASE_DEFAULTS, CASE_POSITION_IDS, expectedStructureKey, loadStructureCases, materializeStructureCase, shopBase,
 } from "../scripts/schedule-structure-cases.mjs";
 import {
-  SCHEDULE_STRUCTURE_DEFAULTS, checklistFits, crewFor, lineBounds, positionLimit, primaryOf, scheduledOut,
+  CREW_TYPES, POSITION_ROLE_DEFAULTS, applyRoleChange, SCHEDULE_STRUCTURE_DEFAULTS, checklistFits, crewFor, lineBounds, lineFloorLimit, reconcileLineFloors, positionLimit, primaryOf, scheduledOut,
   secondaryOf, structureFromStations, structureProblem, validScheduleStructure, waveProfile, waveSlots, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
+
+import { stationAdvisory } from "@/lib/scheduling/settings-view-shared";
 
 interface StructureCase { name: string; valid: boolean; infeasible?: boolean; key?: string }
 const cases = loadStructureCases() as StructureCase[];
 const I = CASE_POSITION_IDS;
+
+describe("draft line floor reconciliation", () => {
+  it.each(["headsBefore", "headsAfter"] as const)("reconciles %s zero inside service", (field) => {
+    const s = seededFloors();
+    s.positions[FLOOR_POSITION] = structuredClone(POSITION_ROLE_DEFAULTS.register);
+    s.positions[FLOOR_POSITION]![field] = 0;
+    expect(structureProblem(s)).toMatch(/waveProfile/);
+    reconcileLineFloors(s);
+    expect(structureProblem(s)).toBeNull();
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(0);
+  });
+  it("Juan's role edit removes the hidden floor in all four crews", () => {
+    const s = seededFloors();
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(1);
+    s.positions[FLOOR_POSITION]!.role = "prep_dish";
+    expect(structureProblem(s)).toBe(`crews.slow.lineMinHeads.${FLOOR_POSITION}`);
+    reconcileLineFloors(s);
+    for (const type of CREW_TYPES) expect(Object.hasOwn(s.crews[type].lineMinHeads, FLOOR_POSITION)).toBe(false);
+    expect(structureProblem(s)).toBeNull();
+  });
+
+  it("zero heads clamp the floor to zero; raising heads again never raises the floor", () => {
+    const s = seededFloors();
+    const p = s.positions[FLOOR_POSITION]!;
+    p.headsBefore = p.headsAfter = 0;
+    reconcileLineFloors(s);
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(0);
+    expect(structureProblem(s)).toBeNull();
+    p.headsBefore = p.headsAfter = 2;
+    reconcileLineFloors(s);
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(0);
+  });
+
+  it("preserves in-limit floors, deletes retired positions and never adds missing floors", () => {
+    const s = seededFloors();
+    delete s.positions[OTHER_POSITION];
+    delete s.crews.busy.lineMinHeads[FLOOR_POSITION];
+    reconcileLineFloors(s);
+    expect(s.crews.slow.lineMinHeads[FLOOR_POSITION]).toBe(1);
+    expect(Object.hasOwn(s.crews.busy.lineMinHeads, FLOOR_POSITION)).toBe(false);
+    for (const type of CREW_TYPES) expect(Object.hasOwn(s.crews[type].lineMinHeads, OTHER_POSITION)).toBe(false);
+    const once = structuredClone(s);
+    reconcileLineFloors(s);
+    expect(s).toEqual(once);
+    expect(structureProblem(s)).toBeNull();
+  });
+
+  it.each(["openQ", "trimQ", "closeQ"] as const)("clamps after %s makes the staffed window empty", (field) => {
+    const s = seededFloors();
+    const p = s.positions[FLOOR_POSITION]!;
+    p.openQ = 40; p.trimQ = 48; p.closeQ = 56;
+    p.headsBefore = field === "closeQ" ? 0 : 1;
+    p.headsAfter = field === "closeQ" ? 1 : 0;
+    if (field === "openQ") p.openQ = p.trimQ;
+    if (field === "trimQ") p.trimQ = p.openQ;
+    if (field === "closeQ") p.closeQ = p.trimQ;
+    reconcileLineFloors(s);
+    for (const type of CREW_TYPES) expect(s.crews[type].lineMinHeads[FLOOR_POSITION]).toBe(0);
+    expect(structureProblem(s)).toBeNull();
+  });
+
+  it("the shared limit matches strict validation across 250 deterministic random positions", () => {
+    let seed = 1729;
+    const random = (max: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % max; };
+    for (let i = 0; i < 250; i++) {
+      const s = seededFloors();
+      const p = s.positions[FLOOR_POSITION]!;
+      // Cover setup, service, after-service and empty windows.
+      p.openQ = random(97); p.trimQ = p.openQ + random(97 - p.openQ); p.closeQ = p.trimQ + random(97 - p.trimQ);
+      p.headsBefore = random(9); p.headsAfter = random(9);
+      const limit = lineFloorLimit(p);
+      const quarters = Array.from({ length: Math.max(0, Math.min(p.closeQ, s.shopDay.serviceCloseQ) - p.openQ) }, (_, q) => p.openQ + q);
+      const effective = quarters.length ? Math.min(...quarters.map((q) => q < p.trimQ ? p.headsBefore : p.headsAfter)) : limit;
+      s.crews.slow.lineMinHeads[FLOOR_POSITION] = effective;
+      for (const type of CREW_TYPES.filter((t) => t !== "slow")) delete s.crews[type].lineMinHeads[FLOOR_POSITION];
+      expect(structureProblem(s)).toBeNull();
+      s.crews.slow.lineMinHeads[FLOOR_POSITION] = limit + 1;
+      expect(structureProblem(s)).toBe(`crews.slow.lineMinHeads.${FLOOR_POSITION}`);
+      reconcileLineFloors(s);
+      expect(s.crews.slow.lineMinHeads[FLOOR_POSITION]).toBe(effective);
+      expect(structureProblem(s)).toBeNull();
+    }
+  });
+});
 
 describe("the shared structure case file against validScheduleStructure", () => {
   it("the case file's defaults ARE SCHEDULE_STRUCTURE_DEFAULTS (the SQL harness starts from the same set)", () => {
@@ -170,9 +257,9 @@ describe("structureFromStations: seeded once from the station columns (J4)", () 
   const ST_BOI = "57000000-0000-4000-8000-000000000002";
   const ST_THIRD = "57000000-0000-4000-8000-000000000003";
   const stations = [
-    { id: ST_LINE, active: true, usuallyClosesAt: null, trims: null },
-    { id: ST_BOI, active: true, usuallyClosesAt: "14:00:00", trims: null },
-    { id: ST_THIRD, active: true, usuallyClosesAt: "15:30", trims: [{ at: "15:00", to_count: 1 }] },
+    { id: ST_LINE, active: true, staffed: true, usuallyClosesAt: null, trims: null },
+    { id: ST_BOI, active: true, staffed: true, usuallyClosesAt: "14:00:00", trims: null },
+    { id: ST_THIRD, active: true, staffed: true, usuallyClosesAt: "15:30", trims: [{ at: "15:00", to_count: 1 }] },
   ];
   const positions = [
     { id: I.$REG, stationId: ST_LINE, active: true, usuallyTrimsAt: "16:00:00" },
@@ -224,5 +311,78 @@ describe("no Date.now and no position names in the structure module", () => {
     const src = readFileSync("lib/scheduling/structure-shared.ts", "utf8") + readFileSync("lib/scheduling/time-shared.ts", "utf8");
     expect(src).not.toMatch(/Date\.now|new Date\(\)/);
     expect(src).not.toMatch(/Crunchy|Walk-ins|Register &|Expeditor|Prep\/Dish|'EM'|'MEP'|"EM"|"MEP"/);
+  });
+});
+
+
+describe("round 2: staffed seed and role defaults", () => {
+  const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  // P Street shape: six manned stations (two with two positions), four side-work sections and a role-only closer.
+  const stations = Array.from({ length: 11 }, (_, i) => ({
+    id: id(i + 100), active: true, staffed: i < 6 || i === 10, roleOnly: i === 10, usuallyClosesAt: null, trims: null,
+  }));
+  const positions = [0, 0, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((station, i) => ({
+    id: id(i + 1), stationId: stations[station]!.id, active: true, usuallyTrimsAt: null,
+  }));
+
+  it("seeds exactly eight manned positions; no unmanned or role-only priorities or floors", () => {
+    const r = structureFromStations(stations, positions, { [id(1)]: "register", [id(9)]: "expo" });
+    if (!r.ok) throw new Error(r.key);
+    expect(Object.keys(r.structure.positions)).toEqual(positions.slice(0, 8).map((p) => p.id));
+    expect(r.structure.priority).toEqual([]);
+    for (const crew of CREW_TYPES) expect(Object.keys(r.structure.crews[crew].lineMinHeads)).toEqual(positions.slice(0, 8).map((p) => p.id));
+    expect(validScheduleStructure(r.structure)).toEqual({ ok: true });
+  });
+
+  it("a now-unmanned paired position surfaces an advisory with accurate copy, including with a saved base", () => {
+    const roles = { [id(1)]: "register", [id(9)]: "expo" } as const;
+    const before = structureFromStations(stations.map((s) => ({ ...s, staffed: true })), positions, roles);
+    if (!before.ok) throw new Error(before.key);
+    expect(before.structure.priority).toHaveLength(1);
+    const snapshot = structuredClone(before.structure);
+    const after = structureFromStations(stations, positions, roles, before.structure);
+    if (!after.ok) throw new Error(after.key);
+    expect(after.structure.priority).toEqual([]);
+    expect(stationAdvisory(before.structure, after.structure, after.seededFrom)).toContainEqual({ key: "schedule.settings.advisory.retired_position", params: { positionId: id(9) } });
+    const lines = stationAdvisory(before.structure, after.structure, after.seededFrom, new Set(positions.slice(8, 12).map((p) => p.id)));
+    expect(lines).toHaveLength(4);
+    expect(lines.every((l) => l.key === "schedule.settings.advisory.unmanned_position")).toBe(true);
+    expect(before.structure).toEqual(snapshot);
+  });
+
+  it.each(["register", "walk_online", "prep_dish"] as const)("untouched line_other adopts %s defaults without mutation", (role) => {
+    const p = structuredClone(POSITION_ROLE_DEFAULTS.line_other);
+    const changed = applyRoleChange(p, role);
+    expect(changed).toEqual(POSITION_ROLE_DEFAULTS[role]);
+    expect(changed.allowedRoles).not.toBe(POSITION_ROLE_DEFAULTS[role].allowedRoles);
+    expect(p).toEqual(POSITION_ROLE_DEFAULTS.line_other);
+  });
+
+  it("preserves a station close at 14:00 and clamps the new trim", () => {
+    const r = structureFromStations([{ ...stations[0]!, usuallyClosesAt: "14:00" }], [positions[0]!], {});
+    if (!r.ok) throw new Error(r.key);
+    expect(applyRoleChange(r.structure.positions[id(1)]!, "register")).toEqual({ ...POSITION_ROLE_DEFAULTS.register, closeQ: 56, trimQ: 56 });
+  });
+
+  it("preserves a station close equal to the old default (15:30)", () => {
+    const p = structuredClone(POSITION_ROLE_DEFAULTS.line_other);
+    expect(applyRoleChange(p, "register", { closeFromStation: true, trimFromStation: false }))
+      .toEqual({ ...POSITION_ROLE_DEFAULTS.register, closeQ: 62, trimQ: 62 });
+  });
+
+  it("preserves a station trim equal to the old default", () => {
+    const p = structuredClone(POSITION_ROLE_DEFAULTS.line_other);
+    expect(applyRoleChange(p, "register", { closeFromStation: false, trimFromStation: true }))
+      .toEqual({ ...POSITION_ROLE_DEFAULTS.register, trimQ: 62 });
+  });
+
+  it("keeps station trim/close overrides and clamps a later new-role open", () => {
+    const p = { ...POSITION_ROLE_DEFAULTS.prep, trimQ: 40, closeQ: 44 };
+    expect(applyRoleChange(p, "register")).toEqual({ ...POSITION_ROLE_DEFAULTS.register, openQ: 40, trimQ: 40, closeQ: 44 });
+  });
+
+  it.each([{ openQ: 36 }, { headsBefore: 2 }, { headsAfter: 0 }, { allowedRoles: ["employee"] as const }])("preserves a hand-edited configuration: %j", (overrides) => {
+    const p = { ...structuredClone(POSITION_ROLE_DEFAULTS.line_other), ...overrides, allowedRoles: [...(overrides.allowedRoles ?? POSITION_ROLE_DEFAULTS.line_other.allowedRoles)] };
+    expect(applyRoleChange(p, "register")).toEqual({ ...p, role: "register" });
   });
 });

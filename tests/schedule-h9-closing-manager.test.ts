@@ -6,7 +6,7 @@
  * closing rule (the flagged eligible closer). The station is recognised by its ENGLISH system key (AGENTS: match keys on the
  * English original, like the Walk-Out Verification gate), in the loader — `structureFromStations` itself matches no name.
  * The other checklist-only stations (Shut Down Back Line, Clean front of house, Walk-Out Verification, Prep Fridge) are left
- * as they are for Juan's structure review.
+ * out of the seed when marked unmanned (round 2).
  */
 import { describe, expect, it } from "vitest";
 import { CLOSING_MANAGER_STATION } from "@/lib/checklist-constants";
@@ -22,8 +22,8 @@ const P_WALKOUT = uid(43);
 function tablesWithClosingSections() {
   const t = shopTables();
   t.stations!.push(
-    { id: ST_CM, location_id: A, name: "Closing Manager", name_es: "Gerente de cierre", sort: 9, active: true, usually_closes_at: null, trims: null },
-    { id: ST_WALKOUT, location_id: A, name: "Walk-Out Verification", name_es: "Verificación de salida", sort: 10, active: true, usually_closes_at: null, trims: null },
+    { id: ST_CM, location_id: A, name: "Closing Manager", name_es: "Gerente de cierre", sort: 9, active: true, staffed: true, usually_closes_at: null, trims: null },
+    { id: ST_WALKOUT, location_id: A, name: "Walk-Out Verification", name_es: "Verificación de salida", sort: 10, active: true, staffed: false, usually_closes_at: null, trims: null },
   );
   t.station_positions!.push(
     { id: P_CM, station_id: ST_CM, location_id: A, name: "Closing Manager", name_es: null, sort: 1, active: true, usually_trims_at: null },
@@ -39,8 +39,8 @@ describe("H9 fix 4: the Closing Manager station is never a staffed headcount pos
 
   it("structureFromStations skips every position of a ROLE-ONLY station (by flag, never by name)", () => {
     const stations = [
-      { id: ST, active: true, usuallyClosesAt: null, trims: null },
-      { id: ST_CM, active: true, usuallyClosesAt: null, trims: null, roleOnly: true },
+      { id: ST, active: true, staffed: true, usuallyClosesAt: null, trims: null },
+      { id: ST_CM, active: true, staffed: true, usuallyClosesAt: null, trims: null, roleOnly: true },
     ];
     const positions = [
       { id: P_REG, stationId: ST, active: true, usuallyTrimsAt: null },
@@ -58,9 +58,10 @@ describe("H9 fix 4: the Closing Manager station is never a staffed headcount pos
     expect(rows.stations.filter((s) => s.roleOnly).map((s) => s.id)).toEqual([ST_CM]);
     const live = await loadLiveStructure(client, A);
     expect(live.source).toBe("defaults");
-    expect(Object.keys(live.structure.positions).sort()).toEqual([P_REG, P_WALK, P_WALKOUT].sort());
+    expect(Object.keys(live.structure.positions).sort()).toEqual([P_REG, P_WALK].sort());
     expect(live.structure.positions[P_CM]).toBeUndefined();
-    // Walk-Out Verification is a checklist-only section left for Juan's review: still seeded, as an unmapped line_other.
-    expect(live.structure.positions[P_WALKOUT]).toMatchObject({ role: "line_other", openQ: 38, trimQ: 62, closeQ: 62 });
+    // Unmanned checklist sections are never scheduled.
+    expect(rows.stations.find((s) => s.id === ST_WALKOUT)?.staffed).toBe(false);
+    expect(live.structure.positions[P_WALKOUT]).toBeUndefined();
   });
 });

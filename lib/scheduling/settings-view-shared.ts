@@ -5,13 +5,14 @@
  * `route-shapes-shared` and the people settings route).
  */
 import type { NarrativeLine } from "@/lib/people-narrative";
+import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
 import type { SkillTunables } from "@/lib/people/tunables-shared";
 import type { PositionLabel } from "./board-view-shared";
 import type { ScheduleShopSettings } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
 import type { ToastPrimarySuggestion } from "./position-rank-shared";
-import { validScheduleStructure, type ScheduleStructure, type SeededFrom } from "./structure-shared";
+import { validScheduleStructure, type PositionTimeProvenance, type ScheduleStructure, type SeededFrom } from "./structure-shared";
 import { Q_PER_DAY, addDays, isoWeekStart, qToWall, wallToQ } from "./time-shared";
 
 export interface SettingsPerms {
@@ -68,6 +69,8 @@ export interface ScheduleSettingsView {
    * position, so the primary / secondary work-type check is not made (the save path skips it too).
    */
   positionRolesKnown?: boolean;
+  livePositionIds: string[];
+  timeProvenance: Record<string, PositionTimeProvenance>;
   names: Record<string, string>;
   members: SettingsMember[];
   /** MoO / Owner (presence only): the "in today" toggles. */
@@ -111,19 +114,39 @@ export function structureSaveRefusal(draft: unknown): string | null {
   return r.ok ? null : r.key;
 }
 
+const POSITION_FIELD_LABELS: Record<string, TranslationKey> = {
+  role: "schedule.settings.positions.role", openQ: "schedule.settings.positions.open",
+  trimQ: "schedule.settings.positions.trim", closeQ: "schedule.settings.positions.close",
+  headsBefore: "schedule.settings.positions.heads_before", headsAfter: "schedule.settings.positions.heads_after",
+  allowedRoles: "schedule.settings.positions.allowed",
+};
+
+/** Position params are ids; dayType / field params are translation keys, resolved by the editor in its language. */
+export function structureProblemLine(key: string): { key: TranslationKey; params: Record<string, string> } {
+  const floor = /^crews\.(slow|normal|busy|weekend)\.lineMinHeads\.([^.]+)$/.exec(key);
+  if (floor) return { key: "schedule.error.structure_line_floor", params: { position: floor[2]!, dayType: `schedule.board.day_type.${floor[1]}` } };
+  const position = /^positions\.([^.]+)\.([^.]+)$/.exec(key);
+  if (position && Object.hasOwn(POSITION_FIELD_LABELS, position[2]!)) {
+    return { key: "schedule.error.structure_position", params: { position: position[1]!, field: POSITION_FIELD_LABELS[position[2]!]! } };
+  }
+  const wave = /^crews\.(slow|normal|busy|weekend)\.waveProfile@([0-2]\d:[0-5]\d)$/.exec(key);
+  if (wave) return { key: "schedule.error.structure_wave", params: { dayType: `schedule.board.day_type.${wave[1]}`, time: wave[2]! } };
+  return { key: "schedule.error.structure_invalid", params: { key } };
+}
+
 /**
  * The station-column advisory (plan J4): after the structure is saved it is the scheduler's single source; a station
  * time that later differs from it (`stations.usually_closes_at`, a position's trim), a position added on the station
- * admin, or one retired there, is SHOWN — never applied silently.
+ * admin, or one retired or marked unmanned there, is SHOWN — never applied silently.
  */
-export function stationAdvisory(saved: ScheduleStructure, seeded: ScheduleStructure, seededFrom: Readonly<Record<string, SeededFrom>>): NarrativeLine[] {
+export function stationAdvisory(saved: ScheduleStructure, seeded: ScheduleStructure, seededFrom: Readonly<Record<string, SeededFrom>>, unmannedPositionIds: ReadonlySet<string> = new Set()): NarrativeLine[] {
   const out: NarrativeLine[] = [];
   const ids = [...new Set([...Object.keys(saved.positions), ...Object.keys(seeded.positions)])].sort();
   for (const id of ids) {
     const a = saved.positions[id];
     const b = seeded.positions[id];
     if (!a && b) { out.push({ key: "schedule.settings.advisory.new_position", params: { positionId: id } }); continue; }
-    if (a && !b) { out.push({ key: "schedule.settings.advisory.retired_position", params: { positionId: id } }); continue; }
+    if (a && !b) { out.push({ key: unmannedPositionIds.has(id) ? "schedule.settings.advisory.unmanned_position" : "schedule.settings.advisory.retired_position", params: { positionId: id } }); continue; }
     if (!a || !b) continue;
     const from = seededFrom[id];
     if (from?.close === "station" && a.closeQ !== b.closeQ) out.push({ key: "schedule.settings.advisory.close", params: { positionId: id, savedQ: a.closeQ, stationQ: b.closeQ } });

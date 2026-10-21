@@ -14,15 +14,15 @@
  * reported dirty so its section stays open (D10).
  */
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
-import { structureBody, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
+import { structureBody, structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
 import {
-  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, isLineRole, positionIds, type PositionRole, type ScheduleStructure,
+  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, applyRoleChange, effectiveLineFloorLimit, isLineRole, isSecondary, positionIds, reconcileLineFloors, reconcilePriorityPairs, type PositionRole, type PositionTimeProvenance, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
 import { runGuarded } from "./horizon-flow-shared";
 import { scheduleErrorKey } from "./schedule-errors";
@@ -34,6 +34,18 @@ const ALL_ROLES: RoleCode[] = ["cgs", "owner", "moo", "gm", "agm", "catering_mgr
 const LEADER_ROLES: RoleCode[] = ["key_holder", "shift_lead", "agm", "gm", "moo", "owner"];
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+// Structure values are JSON; compare object keys independently of their insertion order.
+function sameStructureValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => sameStructureValue(v, b[i]));
+  }
+  const left = a as Record<string, unknown>, right = b as Record<string, unknown>;
+  return Object.keys(left).length === Object.keys(right).length
+    && Object.keys(left).every((key) => Object.hasOwn(right, key) && sameStructureValue(left[key], right[key]));
+}
+
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
     <fieldset data-structure-section={id} className="grid gap-3 rounded-lg border border-co-border p-3">
@@ -43,12 +55,13 @@ function Section({ id, title, children }: { id: string; title: string; children:
   );
 }
 
-export function StructureEditor({ locationId, structure, closing, positions, names, onDirty, initialError = null, initialSaved = false }: {
+export function StructureEditor({ locationId, structure, closing, positions, names, timeProvenance = {}, onDirty, initialError = null, initialSaved = false }: {
   locationId: string;
   structure: { id: string | null; source: "saved" | "defaults"; value: ScheduleStructure };
   closing: { measuredMinutes: number | null; samples: number };
   positions: Record<string, { name: string; nameEs: string | null }>;
   names: Record<string, string>;
+  timeProvenance?: Record<string, PositionTimeProvenance>;
   onDirty?: (dirty: boolean) => void;
   /** SSR tests only. */
   initialError?: string | null;
@@ -59,7 +72,19 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
   const { requestStepUp } = useStepUp();
   const post = useStepUpPost();
   const [draft, setDraft] = useState<ScheduleStructure>(() => structuredClone(structure.value));
-  const [dirty, setDirty] = useState(false);
+  // Preserve manager intent through transient heads, role and time edits.
+  const effective = useMemo(() => {
+    const s = structuredClone(draft); reconcilePriorityPairs(s); reconcileLineFloors(s); return s;
+  }, [draft]);
+  const [initiallyAdjusted] = useState(() => structure.source === "saved" && !sameStructureValue(effective, structure.value));
+  const [dirty, setDirty] = useState(initiallyAdjusted);
+  const notifiedInitialAdjustment = useRef(false);
+  useEffect(() => {
+    if (initiallyAdjusted && !notifiedInitialAdjustment.current) {
+      notifiedInitialAdjustment.current = true;
+      onDirty?.(true);
+    }
+  }, [initiallyAdjusted, onDirty]);
   const [busy, setBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(initialError);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -73,12 +98,17 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
 
   async function save() {
     setKeyError(null); setRefusal(null);
-    const key = structureSaveRefusal(draft);
-    if (key) { setKeyError(key); return; }
+    const key = structureSaveRefusal(effective);
+    if (key) {
+      setKeyError(key);
+      const input = document.getElementsByName(key)[0];
+      input?.focus(); input?.scrollIntoView?.({ block: "center" });
+      return;
+    }
     setBusy(true);
     const out = await runGuarded({
       tier: "E", requestStepUp: () => requestStepUp("E"),
-      post: async () => { const r = await post("/api/schedule/settings", structureBody(locationId, structure.id, draft)); return r.ok ? { ok: true, data: r.data } : { ok: false, code: r.code }; },
+      post: async () => { const r = await post("/api/schedule/settings", structureBody(locationId, structure.id, effective)); return r.ok ? { ok: true, data: r.data } : { ok: false, code: r.code }; },
     });
     setBusy(false);
     if (out.kind === "cancelled") return; // the draft stays exactly as it was
@@ -87,9 +117,13 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
     router.refresh();
   }
 
-  const d = draft;
+  const d = effective;
   const roleLabel = (r: RoleCode) => t(`role.${r}` as TranslationKey);
   const lineIds = positionIds(d).filter((id) => isLineRole(d.positions[id]!.role));
+  const problem = keyError ? structureProblemLine(keyError) : null;
+  const problemParams = problem ? Object.fromEntries(Object.entries(problem.params).map(([key, value]) => [key,
+    key === "position" ? position(value) : key === "dayType" || key === "field" ? t(value as TranslationKey) : value,
+  ])) : {};
   return (
     <div className="grid gap-3" data-section="structure-editor">
       <Section id="shop_day" title={t("schedule.settings.section.shop_day")}>
@@ -138,10 +172,11 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
                   <NumField name={`crews.${ct}.closeRegister`} label={t("schedule.settings.crews.close_register")} value={c.close.registerHeads} onChange={(v) => edit((s) => { s.crews[ct].close.registerHeads = num(v); })} />
                   <NumField name={`crews.${ct}.closeWalk`} label={t("schedule.settings.crews.close_walk")} value={c.close.walkHeads} onChange={(v) => edit((s) => { s.crews[ct].close.walkHeads = num(v); })} />
                   <NumField name={`crews.${ct}.closePrepDish`} label={t("schedule.settings.crews.close_prep_dish")} value={c.close.prepDishHeads} onChange={(v) => edit((s) => { s.crews[ct].close.prepDishHeads = num(v); })} />
-                  {lineIds.map((id) => (
-                    <NumField key={id} name={`crews.${ct}.lineMinHeads.${id}`} label={t("schedule.settings.crews.line_min", { position: position(id) })} value={c.lineMinHeads[id] ?? 0}
-                      onChange={(v) => edit((s) => { s.crews[ct].lineMinHeads[id] = num(v); })} />
-                  ))}
+                  {lineIds.map((id) => {
+                    const max = isSecondary(d, id) ? 0 : effectiveLineFloorLimit(d.positions[id]!, d.shopDay.serviceCloseQ);
+                    return <NumField key={id} name={`crews.${ct}.lineMinHeads.${id}`} label={t("schedule.settings.crews.line_min", { position: position(id) })} value={c.lineMinHeads[id] ?? 0} max={max}
+                      onChange={(v) => edit((s) => { s.crews[ct].lineMinHeads[id] = isSecondary(d, id) ? 0 : Math.min(num(v), max); })} />;
+                  })}
                 </Fields>
               </div>
             );
@@ -159,7 +194,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
                 <Fields>
                   <SelectField name={`positions.${id}.role`} label={t("schedule.settings.positions.role")} value={p.role}
                     options={POSITION_ROLES.map((r) => ({ value: r, label: t(`schedule.settings.role.${r}` as TranslationKey) }))}
-                    onChange={(v) => edit((s) => { s.positions[id]!.role = v as PositionRole; })} />
+                    onChange={(v) => edit((s) => { s.positions[id] = applyRoleChange(s.positions[id]!, v as PositionRole, timeProvenance[id]); })} />
                   <TimeField name={`positions.${id}.openQ`} label={t("schedule.settings.positions.open")} q={p.openQ} onChange={(q) => edit((s) => { s.positions[id]!.openQ = q; })} />
                   <TimeField name={`positions.${id}.trimQ`} label={t("schedule.settings.positions.trim")} q={p.trimQ} onChange={(q) => edit((s) => { s.positions[id]!.trimQ = q; })} />
                   <TimeField name={`positions.${id}.closeQ`} label={t("schedule.settings.positions.close")} q={p.closeQ} onChange={(q) => edit((s) => { s.positions[id]!.closeQ = q; })} />
@@ -184,7 +219,21 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
               return (
                 <li key={i} className="flex flex-wrap items-center gap-2 text-sm text-co-text">
                   <span>{t("schedule.settings.positions.priority", { primary: position(pr.primary), secondary: position(secondary) })}</span>
-                  <button type="button" className={GHOST} onClick={() => edit((s) => { s.priority[i]!.primary = secondary; })}>{t("schedule.settings.positions.swap")}</button>
+                  <button type="button" className={GHOST} onClick={() => edit((s) => {
+                    // Move intent with the priority, including absent entries, in every crew.
+                    for (const ct of CREW_TYPES) {
+                      const floors = s.crews[ct].lineMinHeads;
+                      const primaryFloor = floors[pr.primary], secondaryFloor = floors[secondary];
+                      const hadPrimary = Object.hasOwn(floors, pr.primary), hadSecondary = Object.hasOwn(floors, secondary);
+                      if (hadSecondary) floors[pr.primary] = secondaryFloor!;
+                      else delete floors[pr.primary];
+                      if (hadPrimary) floors[secondary] = primaryFloor!;
+                      else delete floors[secondary];
+                    }
+                    const pair = s.priority.find((p) => p.pair.every((id) => pr.pair.includes(id)));
+                    if (pair) pair.primary = secondary;
+                    else s.priority.push({ pair: [...pr.pair], primary: secondary });
+                  })}>{t("schedule.settings.positions.swap")}</button>
                 </li>
               );
             })}
@@ -273,8 +322,9 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
         </div>
       </Section>
 
-      {keyError ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t("schedule.error.structure_invalid", { key: keyError })}</p> : null}
+      {problem ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(problem.key, problemParams)}</p> : null}
       {refusal ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(scheduleErrorKey(refusal), { key: "—" })}</p> : null}
+      {initiallyAdjusted && !saved ? <p className="text-sm text-co-text">{t("schedule.settings.structure_adjusted")}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" data-act="save-structure" disabled={busy} onClick={save} className={BUTTON}>{t("schedule.settings.save")}</button>
         {dirty ? <span className="text-xs font-bold text-co-warning-text">{t("schedule.settings.unsaved")}</span> : null}

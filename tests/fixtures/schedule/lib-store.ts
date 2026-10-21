@@ -27,7 +27,7 @@ export function shopTables(opts: { enabled?: boolean } = {}): Tables {
     users: [...people.map((p) => ({ ...p, active: true })), { id: GM_B, name: "John", role: "gm", active: true }],
     user_locations: [...people.filter((p) => p.id !== MOO).map((p) => ({ user_id: p.id, location_id: A, active: true, assigned_at: "2026-01-01T12:00:00Z" })),
       { user_id: GM_B, location_id: B, active: true, assigned_at: "2026-01-01T12:00:00Z" }],
-    stations: [{ id: ST, location_id: A, name: "Line", name_es: "Línea", sort: 1, active: true, usually_closes_at: "21:00:00", trims: null }],
+    stations: [{ id: ST, location_id: A, name: "Line", name_es: "Línea", sort: 1, active: true, staffed: true, usually_closes_at: "21:00:00", trims: null }],
     station_positions: [
       { id: P_REG, station_id: ST, location_id: A, name: "Register", name_es: null, sort: 1, active: true, usually_trims_at: null },
       { id: P_WALK, station_id: ST, location_id: A, name: "Walk-ins", name_es: null, sort: 2, active: true, usually_trims_at: null },

@@ -63,11 +63,24 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
   const live = inputs.structure.structure;
   // The station-column advisory: only once a structure is SAVED (before that the editor opens on the seeded values).
   let advisory: ScheduleSettingsView["stationAdvisory"] = [];
-  if (perms.structure && inputs.structure.source === "saved") {
-    const rows = await loadStationSeedRows(deps.service, locationId);
+  const timeProvenance: ScheduleSettingsView["timeProvenance"] = {};
+  const rows = perms.structure ? await loadStationSeedRows(deps.service, locationId) : null;
+  if (rows) {
+    const stations = new Map(rows.stations.map((s) => [s.id, s]));
+    for (const p of rows.positions) {
+      const station = stations.get(p.stationId);
+      timeProvenance[p.id] = {
+        closeFromStation: station?.usuallyClosesAt != null,
+        trimFromStation: p.usuallyTrimsAt != null || station?.trims?.[0] != null,
+      };
+    }
+  }
+  if (rows && inputs.structure.source === "saved") {
     const roles: Record<string, PositionRole> = Object.fromEntries(Object.entries(live.positions).map(([id, p]) => [id, p.role]));
     const seeded = structureFromStations(rows.stations, rows.positions, roles, live);
-    if (seeded.ok) advisory = stationAdvisory(live, seeded.structure, seeded.seededFrom);
+    const unmannedStations = new Set(rows.stations.filter((s) => s.active && s.staffed === false).map((s) => s.id));
+    const unmannedPositions = new Set(rows.positions.filter((p) => p.active && unmannedStations.has(p.stationId)).map((p) => p.id));
+    if (seeded.ok) advisory = stationAdvisory(live, seeded.structure, seeded.seededFrom, unmannedPositions);
   }
   const positions: Record<string, PositionLabel> = {};
   for (const r of await loadPositionLabelRows(deps.service, locationId)) {
@@ -102,7 +115,7 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
     state: "ready", locationId, today, dates, perms,
     structure: perms.structure ? { id: inputs.structure.source === "saved" ? inputs.structure.id : null, source: inputs.structure.source, value: live } : null,
     closing: { measuredMinutes: inputs.closing.basis === "measured" ? inputs.closing.minutes : null, samples: inputs.closing.samples },
-    stationAdvisory: advisory, positions, positionRolesKnown: rolesKnown, names, members, presencePeople,
+    stationAdvisory: advisory, positions, livePositionIds: Object.keys(live.positions).sort(), timeProvenance, positionRolesKnown: rolesKnown, names, members, presencePeople,
     pins: perms.presence ? inputs.pins.filter((p) => p.date >= today).map((p) => ({ id: p.id, date: p.date, userId: p.userId, startQ: p.startQ, endQ: p.endQ, positions: [...p.positions], kind: p.kind })) : [],
     shop: perms.shopSwitch ? shopSettings : null,
     tunables: perms.tunables ? await loadShopTunables(deps.service, locationId) : null,

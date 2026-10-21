@@ -92,7 +92,7 @@ beforeAll(async () => {
   await db.exec(read("supabase/migrations/0279_user_employment_events.sql"));
   // Production columns the stub does not model: 0230 / 0238 station closing settings and the membership's assigned_at
   // (user management spec, docs/superpowers/specs/2026-06-20-user-management-design.md).
-  await db.exec(`alter table public.stations add column usually_closes_at time, add column trims jsonb;
+  await db.exec(`alter table public.stations add column staffed boolean not null default true, add column usually_closes_at time, add column trims jsonb;
     alter table public.station_positions add column usually_trims_at time;
     alter table public.user_locations add column assigned_at timestamptz;`);
   const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
