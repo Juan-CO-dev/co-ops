@@ -2,6 +2,7 @@
 import {useEffect,useId,useRef,useState} from 'react';
 import type {LandingItem,LandingPlacement} from '@/lib/landing/tracking-schema-shared';
 import {hop} from '@/lib/landing/hop-shared';
+import {registerOrderControl} from '@/lib/landing/sticky-order-shared';
 import {OrderLink} from './OrderLink';
 import {SpinCanvas} from './SpinCanvas';
 
@@ -84,16 +85,18 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
     return ()=>{near.disconnect();stop();};
   },[hydrated]);
   const dialog=useRef<HTMLDialogElement>(null),trigger=useRef<HTMLButtonElement>(null);
+  // The Order pill watches this action's CURRENT control (the native links, then the button).
+  useEffect(()=>{const element=hydrated?trigger.current:fallback.current;return element?registerOrderControl(element):undefined;},[hydrated]);
   const [open,setOpen]=useState(false);
   const titleId=useId();
   // One accessible name, read in order: "Order Capitol Hill · 8th St SE · til 6 PM".
   const link=(shop:SheetShop)=><OrderLink key={shop.key} href={shop.orderUrl} store={shop.key} placement={placement} item={item} className="landing-v2-order landing-v4-order-two">
     <span>{shop.label}</span><span className="sr-only"> · </span><span className="landing-v4-order-detail" data-order-detail>{shop.detail}</span>
   </OrderLink>;
-  if(!hydrated)return <div ref={fallback} data-enhance="waiting" className="landing-v3-direct-orders">{shops.map(link)}</div>;
+  if(!hydrated)return <div ref={fallback} data-order-control data-enhance="waiting" className="landing-v3-direct-orders">{shops.map(link)}</div>;
   const show=()=>{if(trigger.current)hop(trigger.current);onOpen?.();dialog.current?.showModal();setOpen(true);};
   return <>
-    <button ref={trigger} type="button" onClick={show} aria-haspopup="dialog" className={className}>{triggerLabel}</button>
+    <button ref={trigger} data-order-control type="button" onClick={show} aria-haspopup="dialog" className={className}>{triggerLabel}</button>
     <dialog ref={dialog} className="landing-v3-sheet" aria-labelledby={titleId} onClose={()=>{setOpen(false);trigger.current?.focus();}} onClick={event=>{if(event.target===dialog.current)dialog.current?.close();}}>
       <div>
         {/* The sheet is a modal: its own top-level heading, not a sub-heading of the card behind it. */}

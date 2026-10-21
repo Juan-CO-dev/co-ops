@@ -466,3 +466,85 @@ test('a long press (2.5 s) with enhancement arriving mid-press navigates exactly
   await expectOneOrderEvent(page,baseURL!,sent,browserName);
   expect(orders).toHaveLength(1);
 });
+
+// v4.1 (Juan's iPhone check): every fighter photo frames its own sub, on the card and on the stage.
+test('every fighter photo is framed on its sub (focal point per item, both crops)',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/');
+  const strip=page.locator('[data-lineup]');
+  await strip.scrollIntoViewIfNeeded();
+  const expected=(focus:number,visible:number)=>Math.round(Math.min(1,Math.max(0,(focus-visible/2)/(1-visible)))*1000)/10;
+  const cards=strip.locator('li');
+  await expect(cards).toHaveCount(10);
+  for(const [index,card] of (await cards.all()).entries()){
+    const photo=card.locator('[data-landing-photo]');
+    const focus=Number(await photo.getAttribute('data-focal-y'));
+    expect(focus,`card ${index}`).toBeGreaterThan(0);expect(focus).toBeLessThan(1);expect(focus).not.toBe(.5);
+    await card.scrollIntoViewIfNeeded();
+    const img=photo.locator('img');
+    await expect(img).toHaveCount(1);
+    const [x,y]=(await img.evaluate(el=>getComputedStyle(el).objectPosition)).split(' ').map(parseFloat);
+    expect(x).toBeCloseTo(50,0);expect(y!).toBeCloseTo(expected(focus,2/3),0);
+    // The stage shows the same item framed for its 4:3 crop (the Crunchy Boi's stage is the spin).
+    await card.getByRole('button').click();
+    const stagePhoto=page.locator('.landing-v3-stage-media [data-landing-photo] img');
+    if(index===0){await expect(page.locator('.landing-v3-stage [data-spin-stage]')).toHaveCount(1);continue;}
+    await expect(stagePhoto).toHaveCount(1);
+    const stageY=parseFloat((await stagePhoto.evaluate(el=>getComputedStyle(el).objectPosition)).split(' ')[1]!);
+    expect(stageY).toBeCloseTo(expected(focus,.5),0);
+  }
+});
+
+// v4.2 (Juan): Auto-scroll is a small icon toggle in the strip's top margin, not its own row.
+for(const language of ['en','es'] as const)test(`auto-scroll is a compact named toggle that adds no row (${language})`, async ({page}) => {
+  await page.setViewportSize({width:390,height:844});
+  await page.goto(`/?lang=${language}`);
+  await page.locator('[data-lineup]').scrollIntoViewIfNeeded();
+  const auto=page.getByRole('button',{name:language==='en'?'Auto-scroll':'Avance automático'});
+  await expect(auto).toBeVisible();
+  await expect(auto).toHaveAttribute('aria-pressed',/true|false/);
+  const box=(await auto.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(44);expect(box.width).toBeGreaterThanOrEqual(44);
+  expect(box.width).toBeLessThanOrEqual(48); // visually small: no text label box
+  const geometry=await page.evaluate(()=>{
+    const stage=document.querySelector('.landing-v3-stage')!.getBoundingClientRect();
+    const bar=document.querySelector('.landing-v3-roster-bar')!.getBoundingClientRect();
+    const strip=document.querySelector('[data-lineup]')!.getBoundingClientRect();
+    const toggle=document.querySelector('.landing-v3-auto')!.getBoundingClientRect();
+    return {barHeight:bar.height,gap:strip.top-stage.bottom,toggleInsideStrip:toggle.top>=strip.top-1&&toggle.bottom<=strip.top+48};
+  });
+  expect(geometry.barHeight).toBe(0);
+  expect(geometry.gap).toBeLessThanOrEqual(1); // the strip starts right under the card
+  expect(geometry.toggleInsideStrip).toBe(true);
+  const pressed=await auto.getAttribute('aria-pressed');
+  await auto.click();
+  await expect(auto).toHaveAttribute('aria-pressed',pressed==='true'?'false':'true');
+});
+
+for(const language of ['en','es'] as const)for(const scale of ['100%','200%'] as const)test(`strip labels wrap only between words and stay inside their cards (390x844, ${scale} text, ${language})`,async({page},testInfo)=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto(`/?lang=${language}`);
+  await page.evaluate(size=>{document.documentElement.style.fontSize=size;},scale);
+  const strip=page.locator('[data-lineup]');
+  await strip.scrollIntoViewIfNeeded();
+  // Measure with the real web font, and let the visible cards' photos decode for the capture.
+  await page.evaluate(()=>document.fonts.ready);
+  await expect.poll(()=>strip.locator('li img:not(.landing-v3-cursor)').first().evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
+  const report=await strip.evaluate(list=>[...list.querySelectorAll<HTMLElement>('button > span:not(.sr-only)')].map(label=>{
+    const node=[...label.childNodes].find(child=>child.nodeType===Node.TEXT_NODE)!;
+    const text=node.textContent??'';
+    // A word split across lines has two client rects for its own range.
+    const split=[...text.matchAll(/\S+/g)].filter(match=>{
+      const range=document.createRange();range.setStart(node,match.index!);range.setEnd(node,match.index!+match[0].length);
+      return [...range.getClientRects()].filter(rect=>rect.width>0).length!==1;
+    }).map(match=>match[0]);
+    const box=label.getBoundingClientRect(),card=label.closest('button')!.getBoundingClientRect();
+    return {text,split,overflow:label.scrollWidth>label.clientWidth+1,outside:box.left<card.left-.5||box.right>card.right+.5,style:getComputedStyle(label).overflowWrap};
+  }));
+  expect(report).toHaveLength(10);
+  expect(report.filter(label=>label.split.length||label.overflow||label.outside)).toEqual([]);
+  for(const label of report)expect(label.style).toBe('normal');
+  await page.screenshot({path:testInfo.outputPath(`strip-${language}-${scale}.png`)});
+});

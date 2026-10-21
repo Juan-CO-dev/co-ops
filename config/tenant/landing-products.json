@@ -7,6 +7,7 @@
     "smallImage": "/media/frex-lineup-001-480-517d10fd7598.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.68,
     "ingredientsKey": "landing.lineup.ingredients.frex"
   },
   {
@@ -17,6 +18,7 @@
     "smallImage": "/media/hot-pants-lineup-005-480-343abd691c3f.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.52,
     "ingredientsKey": "landing.lineup.ingredients.hot-pants"
   },
   {
@@ -27,6 +29,7 @@
     "smallImage": "/media/teamster-lineup-011-480-986e5e108a02.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.63,
     "ingredientsKey": "landing.lineup.ingredients.teamster"
   },
   {
@@ -37,6 +40,7 @@
     "smallImage": "/media/crunchy-boi-lineup-014-480-ed44ac35b10b.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.66,
     "ingredientsKey": "landing.lineup.ingredients.crunchy-boi"
   },
   {
@@ -47,6 +51,7 @@
     "smallImage": "/media/sicky-wicky-lineup-024-480-634275f3b822.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.64,
     "ingredientsKey": "landing.lineup.ingredients.sicky-wicky"
   },
   {
@@ -57,6 +62,7 @@
     "smallImage": "/media/never-been-cheddar-lineup-029-480-4fc09dc6adbe.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.6,
     "ingredientsKey": "landing.lineup.ingredients.never-been-cheddar"
   },
   {
@@ -67,6 +73,7 @@
     "smallImage": "/media/turkey-caesar-lineup-033-480-4faa0ad0b824.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.55,
     "ingredientsKey": "landing.lineup.ingredients.turkey-caesar"
   },
   {
@@ -77,6 +84,7 @@
     "smallImage": "/media/farmers-market-lineup-037-480-4ec2dca44de4.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.72,
     "ingredientsKey": "landing.lineup.ingredients.farmers-market"
   },
   {
@@ -87,6 +95,7 @@
     "smallImage": "/media/french-dip-lineup-040-480-06427ec29381.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.64,
     "ingredientsKey": "landing.lineup.ingredients.french-dip"
   },
   {
@@ -97,6 +106,7 @@
     "smallImage": "/media/vesuvio-lineup-047-480-cf5baf4c9974.webp",
     "width": 750,
     "height": 1125,
+    "focusY": 0.59,
     "ingredientsKey": "landing.lineup.ingredients.vesuvio"
   }
 ]

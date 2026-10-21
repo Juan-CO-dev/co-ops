@@ -9,3 +9,12 @@ export function nextFighter(current:number,count:number,advanced:number):number|
 export function rosterOrder<T extends {id:string}>(items:readonly T[]):T[] {
   return [...items.filter(item=>item.id==='crunchy-boi'),...items.filter(item=>item.id!=='crunchy-boi')];
 }
+/** Fighter photos are 2:3. A cover crop shows `visible` of the photo's height (the 4:3 stage:
+ * 1/2, the square card: 2/3); this is the object-position (in %) that centres the sub's focal
+ * point in that crop, clamped to the photo. Computed here (not in CSS calc) so every engine agrees. */
+export const STAGE_VISIBLE=1/2, CARD_VISIBLE=2/3;
+export function focalPosition(focusY:number,visible:number):number {
+  if(!Number.isFinite(focusY)||!(visible>0&&visible<1))return 50;
+  const position=(focusY-visible/2)/(1-visible);
+  return Math.round(Math.min(1,Math.max(0,position))*1000)/10;
+}

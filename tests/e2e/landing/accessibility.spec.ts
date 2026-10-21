@@ -18,7 +18,8 @@ for (const state of ['initial','settings open','accepted','rejected','privacy'] 
     await expect.poll(() => page.evaluate(() => document.cookie)).toContain('landing_consent=rejected');
   }
   if (state === 'settings open') {
-    await page.locator('aside button[aria-expanded]').click();
+    // v4.2: an answered notice leaves the screen; the footer control reopens it.
+    await page.locator('footer [data-privacy-settings]').click();
     await expect(notice).toBeVisible();
     await expect(page.locator('aside button[aria-expanded]')).toHaveAttribute('aria-expanded','true');
   }

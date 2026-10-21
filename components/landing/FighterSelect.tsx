@@ -7,7 +7,7 @@ import {nextFighter,AUTO_ADVANCE_MS} from '@/lib/landing/fighter-select-shared';
 import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
 import {isAllowed,LANDING_ITEMS} from '@/lib/landing/tracking-schema-shared';
 
-export interface Fighter {id:string;name:string;image:string;smallImage:string;width:number;height:number;ingredients:string;photoAlt:string}
+export interface Fighter {id:string;name:string;image:string;smallImage:string;width:number;height:number;focusY:number;ingredients:string;photoAlt:string}
 export interface FighterShop {key:string;name:string;address?:string;orderUrl:string;orderLabel:string;detail:string}
 interface Sprite {src:string;width:number;height:number}
 export interface FighterLabels {order:string;sheetTitle:string;close:string;auto:string;p1:string;spin:string;spinValue:string;browse:string}
@@ -68,7 +68,7 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
       <div key={`${fighter.id}-${picked}`} className="landing-v3-stage-media" data-pop={picked>0||selected!==0}>
         {fighter.id==='crunchy-boi'
           ? <SpinCanvas frames={spin.frames} width={spin.width} height={spin.height} label={fill(labels.spin,{name:fighter.name})} stillLabel={fighter.photoAlt} valueText={degrees=>fill(labels.spinValue,{degrees})}/>
-          : <LineupPhoto src={fighter.image} small={fighter.smallImage} width={fighter.width} height={fighter.height} alt={fighter.photoAlt}/>}
+          : <LineupPhoto src={fighter.image} small={fighter.smallImage} width={fighter.width} height={fighter.height} focusY={fighter.focusY} alt={fighter.photoAlt}/>}
       </div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       {picked>0&&<img key={picked} src={sprites.selected.src} width={sprites.selected.width} height={sprites.selected.height} alt="" aria-hidden="true" loading="lazy" decoding="async" className="landing-v3-pixel landing-v3-stage-cheer"/>}
@@ -84,7 +84,7 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
     {/* Without JS every fighter's full menu is visible, not just announced. */}
     <noscript><style>{'.landing-v2 .landing-v3-roster > li { flex-basis: 220px; } .landing-v2 .landing-v3-roster [data-ingredients] { position: static; width: auto; height: auto; margin: 0; padding: 0 6px 8px; overflow: visible; clip: auto; clip-path: none; white-space: normal; font-size: .8125rem; line-height: 1.35; } .landing-v2 .landing-v3-roster-bar { display: none; }'}</style></noscript>
     <div className="landing-v3-roster-bar" hidden={!enhanced}>
-      <button ref={autoButton} type="button" aria-pressed={auto} onClick={()=>setAuto(value=>!value)} className="landing-v3-auto">{labels.auto}</button>
+      <button ref={autoButton} type="button" aria-pressed={auto} onClick={()=>setAuto(value=>!value)} className="landing-v3-auto">{/* A small play/pause glyph; the name stays "Auto-scroll". */}<span aria-hidden="true" className="landing-v42-auto-icon"/><span className="sr-only">{labels.auto}</span></button>
     </div>
     <ul ref={strip} data-lineup aria-label={labels.browse} className="landing-v3-roster">
       {fighters.map((item,index)=><li key={item.id} data-selected={index===selected}>
@@ -92,7 +92,7 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
           // eslint-disable-next-line @next/next/no-img-element
           <img key={`cursor-${picked}`} src={(picked>0?sprites.jump:sprites.idle).src} width={sprites.idle.width} height={sprites.idle.height} alt="" aria-hidden="true" loading="lazy" decoding="async" className="landing-v3-pixel landing-v3-cursor"/>}
         <button type="button" aria-pressed={index===selected} onClick={()=>choose(index)}>
-          <LineupPhoto src={item.image} small={item.smallImage} width={item.width} height={item.height} alt=""/>
+          <LineupPhoto src={item.image} small={item.smallImage} width={item.width} height={item.height} focusY={item.focusY} alt=""/>
           <span>{item.name}</span>
           {/* The full menu stays in the document for every fighter, not only the one on stage. */}
           <span data-ingredients className="sr-only">{item.ingredients}</span>

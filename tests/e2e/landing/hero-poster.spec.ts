@@ -22,8 +22,8 @@ test('hydration preserves the original server-rendered hero poster before scroll
   });
   await page.goto('/?lang=en', { waitUntil: 'load' });
   // SSR starts with unknown consent. Only the TrackingProvider effect reads
-  // the rejected cookie and collapses this panel; no click/scroll is needed.
-  await expect(page.locator('aside > button[aria-expanded]')).toHaveAttribute('aria-expanded', 'false');
+  // the rejected cookie; an answered notice leaves the screen (v4.2). No click/scroll is needed.
+  await expect(page.locator('.landing-v2-consent')).toBeHidden();
   expect(await page.evaluate(() => {
     const probe = (window as Window & { heroPosterProbe?: { original: Element | null; removed: boolean } }).heroPosterProbe;
     return { captured: !!probe?.original, removed: probe?.removed, same: probe?.original === document.querySelector('#hero img'), scrollY };
