@@ -1,78 +1,84 @@
-import {describe,expect,it} from 'vitest';
-import {heroActionsPassed,createStickyPreference,createStickyVisibility} from '@/lib/landing/sticky-order-shared';
+import {describe,expect,it,vi} from 'vitest';
+import {readFileSync} from 'node:fs';
+import {blocksPill,createPillPolicy,PILL_COMPACT_MAX_HEIGHT,PILL_SHOW_DWELL_MS,registerOrderControl,STATIC_ORDER_CONTROL_SELECTOR,ORDER_CONTROL_SELECTOR,REGISTERED_ORDER_CONTROL_SELECTOR,stickyPillVisible,subscribeOrderControls,USABLE_RATIO,usableRatio,type PillFacts} from '@/lib/landing/sticky-order-shared';
 
-describe('sticky order eligibility and session preference',()=>{
-  it('waits for the entire hero group to pass above the viewport, including reverse scroll',()=>{
-    for(const bottom of [667,44,1,0]) expect(heroActionsPassed(bottom)).toBe(false);
-    expect(heroActionsPassed(-1)).toBe(true);
-    expect(heroActionsPassed(1)).toBe(false);
-    expect(heroActionsPassed(Number.NaN)).toBe(false);
+const clear:PillFacts={orderInView:false,consentShowing:false,pageHidden:false,sheetOpen:false};
+describe('v4.2 Order pill: shows only where no other order control is usable on screen',()=>{
+  it('is hidden by a usable order control, the consent notice or a hidden page — never by viewport height',()=>{
+    expect(stickyPillVisible(clear)).toBe(true);
+    for(const patch of [{orderInView:true},{consentShowing:true},{pageHidden:true}])
+      expect(stickyPillVisible({...clear,...patch}),JSON.stringify(patch)).toBe(false);
+    expect(Object.keys(clear)).not.toContain('visualHeight');
   });
-  it('persists minimize and explicit restore, independently of consent',()=>{
-    const values=new Map<string,string>();
-    const storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value);}};
-    const first=createStickyPreference(()=>storage);
-    expect(first.read()).toBe(false);first.write(true);
-    const next=createStickyPreference(()=>storage);
-    expect(next.read()).toBe(true);next.write(false);
-    expect(first.read()).toBe(false);
-    expect([...values.keys()]).toEqual(['landing_order_minimized']);
+  it('never pulls its trigger out from under its own open sheet',()=>{
+    expect(stickyPillVisible({...clear,orderInView:true,consentShowing:true,sheetOpen:true})).toBe(true);
   });
-  it('retains in-memory choice when storage access is denied',()=>{
-    const preference=createStickyPreference(()=>{throw new Error('denied');});
-    preference.write(true);expect(preference.read()).toBe(true);
-    preference.write(false);expect(preference.read()).toBe(false);
+  it('watches the order controls themselves, never their cards or sections',()=>{
+    const selectors=STATIC_ORDER_CONTROL_SELECTOR.split(', ');
+    for(const selector of ['.landing-v2-header [data-landing-placement]','[data-hero-actions] [data-landing-placement]','[data-guide-cta]','#shops [data-landing-placement]','.landing-v4-catering-act [data-landing-placement]','footer [data-landing-placement]'])
+      expect(selectors).toContain(selector);
+    // v4.2's whole-container targets are gone: a card heading or ingredients on screen is not a way to order.
+    for(const container of ['[data-hero-actions]','.landing-v3-plate','.landing-v4-crave-cta','.landing-v4-catering-act','footer'])
+      expect(selectors).not.toContain(container);
+    // The sheet triggers register their current element (links, then the button).
+    const sheet=readFileSync('components/landing/OrderSheet.tsx','utf8');
+    expect(sheet).toContain('registerOrderControl(element)');
+    expect(sheet.match(/data-order-control/g)).toHaveLength(2);
+  });
+  it('a control counts once half of it is on screen',()=>{
+    expect(USABLE_RATIO).toBe(.5);
+    expect(usableRatio(.49)).toBe(false);
+    expect(usableRatio(.5)).toBe(true);
+  });
+  it('a reserved Field Guide slot blocks only once its action is revealed',()=>{
+    const el=(ready:string|null)=>({getAttribute:(name:string)=>name==='data-ready'?ready:null});
+    expect(blocksPill(el('false'))).toBe(false);
+    expect(blocksPill(el('true'))).toBe(true);
+    expect(blocksPill(el(null))).toBe(true);
+  });
+  it('short and landscape viewports keep a compact pill (CSS at the same boundary)',()=>{
+    const css=readFileSync('app/eat/landing-v2.css','utf8');
+    expect(css).toContain(`@media (max-height: ${PILL_COMPACT_MAX_HEIGHT}px) {\n  .landing-v2 .landing-v2-sticky { right: 8px;`);
+    expect(css).toMatch(/@media \(max-height: 499px\) \{[^}]*\}\s*\.landing-v2 \.landing-v42-pill \{ min-height: 44px;/);
+  });
+});
+describe('order-control registry',()=>{
+  it('replays current controls to a new subscriber and reports swaps',()=>{
+    const a={id:'a'} as unknown as Element,b={id:'b'} as unknown as Element;
+    const offA=registerOrderControl(a);
+    const listener=vi.fn();
+    const unsubscribe=subscribeOrderControls(listener);
+    expect(listener).toHaveBeenCalledWith(a,true);
+    offA();expect(listener).toHaveBeenCalledWith(a,false);
+    const offB=registerOrderControl(b);expect(listener).toHaveBeenCalledWith(b,true);
+    unsubscribe();offB();
+    expect(listener).not.toHaveBeenCalledWith(b,false);
+  });
+});
+describe('show dwell: hide at once, appear only after the screen stays clear',()=>{
+  it('waits the dwell before showing, and restarts it after any hide',()=>{
+    const policy=createPillPolicy();
+    expect(policy.update(clear,0)).toEqual({visible:false,wait:PILL_SHOW_DWELL_MS});
+    expect(policy.update(clear,PILL_SHOW_DWELL_MS-1)).toEqual({visible:false,wait:1});
+    expect(policy.update(clear,PILL_SHOW_DWELL_MS).visible).toBe(true);
+    expect(policy.update({...clear,orderInView:true},1000)).toEqual({visible:false,wait:null});
+    expect(policy.update(clear,1001).visible).toBe(false);
+    expect(policy.update(clear,1001+PILL_SHOW_DWELL_MS).visible).toBe(true);
+  });
+  it('an open sheet shows at once and stays',()=>{
+    const policy=createPillPolicy();
+    expect(policy.update({...clear,sheetOpen:true,orderInView:true},0).visible).toBe(true);
+    expect(policy.update(clear,1).visible).toBe(true);
   });
 });
 
-const clear={clearance:Infinity,heroBottom:-121,suppressed:false};
-it('requires hero/footer hysteresis and sustained dwell, then stays visible between boundaries',()=>{
- const policy=createStickyVisibility();
- expect(policy.update({...clear,now:0,heroBottom:-1}).visible).toBe(false);
- expect(policy.update({...clear,now:100}).visible).toBe(false);
- expect(policy.update({...clear,now:499}).visible).toBe(false);
- expect(policy.update({...clear,now:500}).visible).toBe(true);
- expect(policy.update({...clear,now:1000,clearance:0,heroBottom:-1}).visible).toBe(true);
- expect(policy.update({...clear,now:1100,clearance:-1}).visible).toBe(false);
- expect(policy.update({...clear,now:1500,clearance:119}).visible).toBe(false);
- expect(policy.update({...clear,now:1600}).visible).toBe(false);
- expect(policy.update({...clear,now:2000}).visible).toBe(true);
- expect(policy.update({...clear,now:2500,heroBottom:0}).visible).toBe(false);
-});
-it('returns after transient suppression clears without a position change or latch',()=>{
- const policy=createStickyVisibility();
- policy.update({...clear,now:0});
- expect(policy.update({...clear,now:400}).visible).toBe(true);
- expect(policy.update({...clear,now:900,suppressed:true}).visible).toBe(false);
- expect(policy.update({...clear,now:1000}).visible).toBe(false);
- expect(policy.update({...clear,now:1399}).visible).toBe(false);
- expect(policy.update({...clear,now:1400}).visible).toBe(true);
-});
-it('requires at least 400 ms between every hide and subsequent show through dwell alone',()=>{
- for(const delay of [0,1,100,399,400,1000])for(const blocker of [{suppressed:true},{heroBottom:0},{clearance:-1}]){
-  const policy=createStickyVisibility();
-  policy.update({...clear,now:0});
-  expect(policy.update({...clear,now:400}).visible).toBe(true);
-  const hiddenAt=500;
-  expect(policy.update({...clear,...blocker,now:hiddenAt}).visible).toBe(false);
-  expect(policy.update({...clear,now:hiddenAt+delay})).toEqual({visible:false,wait:400});
-  expect(policy.update({...clear,now:hiddenAt+delay+399})).toEqual({visible:false,wait:1});
-  const shownAt=hiddenAt+delay+400;
-  expect(policy.update({...clear,now:shownAt}).visible).toBe(true);
-  expect(shownAt-hiddenAt).toBeGreaterThanOrEqual(400);
- }
-});
-it('resets release dwell when hovering at either boundary',()=>{
- for(const boundary of [{heroBottom:-119},{clearance:119}]){
-  const policy=createStickyVisibility();
-  policy.update({...clear,now:0});
-  expect(policy.update({...clear,...boundary,now:399}).visible).toBe(false);
-  expect(policy.update({...clear,now:400}).visible).toBe(false);
-  expect(policy.update({...clear,now:799}).visible).toBe(false);
-  expect(policy.update({...clear,now:800}).visible).toBe(true);
- }
-});
-it('keeps a restored in-memory preference when storage writes fail but old reads succeed',()=>{
- const preference=createStickyPreference(()=>({getItem:()=> 'true',setItem:()=>{throw new Error('quota');}}));
- expect(preference.read()).toBe(true);preference.write(false);expect(preference.read()).toBe(false);
+it('one definition of an on-page order control serves the pill and the browser tests',()=>{
+  expect(ORDER_CONTROL_SELECTOR).toBe(`${STATIC_ORDER_CONTROL_SELECTOR}, ${REGISTERED_ORDER_CONTROL_SELECTOR}`);
+  expect(REGISTERED_ORDER_CONTROL_SELECTOR).toBe('[data-order-control]');
+  const helper=readFileSync('tests/e2e/landing/helpers/sticky.ts','utf8');
+  expect(helper).toContain('ORDER_CONTROLS=ORDER_CONTROL_SELECTOR');
+  expect(helper).not.toMatch(/ORDER_CONTROLS\s*=\s*['"`]/);
+  // Every outbound order/catering-order link the page renders sits inside a listed scope.
+  const header=readFileSync('app/eat/page.tsx','utf8');
+  expect(header).toMatch(/<header className="landing-v2-header">.*<CateringLink/);
 });

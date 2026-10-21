@@ -26,6 +26,8 @@ console.log(JSON.stringify({width:out.width,height:out.height,bytes:data.length,
 
 // Phase 1: original real frames only. V4 is a separate, deferred lane.
 const lineup = [];
+// Hand-set facts (ingredients key, photo focal point) survive a re-export.
+const previousLineup = JSON.parse(readFileSync('config/tenant/landing-products.json','utf8'));
 for (const product of source.products.filter(p => p.eligible)) {
  const src = approvedSource(source, product.representative);
  if (sha256(src.path) !== src.sha256) throw new Error('Original source changed');
@@ -53,7 +55,7 @@ for (const product of source.products.filter(p => p.eligible)) {
  const small={...entry,quality:smallQuality,id:entry.id+'-480',publicPath:smallPath,sha256:sha256(smallDest),bytes:smallData.length,width:smallMeta.width,height:smallMeta.height,sidecar:entry.sidecar.replace('.json','-480.json')};
  writeFileSync(small.sidecar,JSON.stringify(small,null,2)+'\n');
  manifest.media=manifest.media.filter(e=>e.id!==small.id);manifest.media.push(small);
- lineup.push({id:product.id,name:product.name,sourceId:src.representative,image:publicPath,smallImage:smallPath,width:out.width,height:out.height});
+ lineup.push({...previousLineup.find(item=>item.id===product.id),id:product.id,name:product.name,sourceId:src.representative,image:publicPath,smallImage:smallPath,width:out.width,height:out.height});
  if(sha256(src.path)!==src.sha256) throw new Error('Original source changed');
 }
 writeFileSync('assets/approved-media.json',JSON.stringify(manifest,null,2)+'\n');

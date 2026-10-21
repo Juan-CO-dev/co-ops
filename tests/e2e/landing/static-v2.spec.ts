@@ -24,7 +24,9 @@ for(const language of ['en','es']) for(const height of [667,812]) test(`static A
     expect(b.height).toBeGreaterThanOrEqual(44);
     await link.focus();await expect(link).toBeFocused();
   }
-  await expect(page.locator('[data-sticky-order]')).toBeHidden();
+  // v4.2: only the pill hides (its sheet is a sibling); never shown beside the hero's own order buttons.
+  await expect(page.locator('[data-sticky-order]')).toHaveAttribute('data-visible','false');
+  await expect(page.locator('[data-sticky-order] .landing-v42-pill')).toBeHidden();
   await expect(page.locator('#hero video,[data-playful-touch]')).toHaveCount(0);
   await page.screenshot({path:test.info().outputPath(`static-${language}-${height}.png`)});
 });

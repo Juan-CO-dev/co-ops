@@ -1,17 +1,39 @@
 import {expect,type Page} from '@playwright/test';
-/** Move beyond the hero's release buffer and wait for the real policy dwell. */
-export async function clearRailPosition(page:Page) {
-  // This attribute is written by consent's mounted measurement effect.
-  await expect(page.locator('.landing-v2')).toHaveAttribute('data-consent-flow',/^(true|false)$/);
-  await page.evaluate(async()=>{
-    await document.fonts.ready;
-    await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
-    const hero=document.querySelector('[data-hero-actions]')!;
-    const notice=document.querySelector<HTMLElement>('.landing-v2-consent')!;
-    const bottom=Math.max(hero.getBoundingClientRect().bottom,notice.dataset.flow==='true'?notice.getBoundingClientRect().bottom:-Infinity);
-    scrollTo(0,scrollY+bottom+160);
-  });
-  await expect.poll(()=>page.locator('[data-hero-actions]').evaluate(el=>el.getBoundingClientRect().bottom),'hero actions clear the 120px release guard').toBeLessThan(-120);
-  await expect.poll(()=>page.locator('.landing-v2-consent').evaluate(el=>el.getAttribute('data-flow')!=='true'||el.getBoundingClientRect().bottom<0),'in-flow consent is fully outside the viewport').toBe(true);
-  await expect(page.locator('[data-sticky-order]')).toBeVisible();
+import {ORDER_CONTROL_SELECTOR} from '../../../../lib/landing/sticky-order-shared';
+/** v4.2: the Order pill shows only where no other order control is on screen and consent is
+ * answered. Walk down from the hero until it appears (after its show dwell). */
+export async function revealPill(page:Page) {
+  await expect(page.locator('.landing-v2-consent')).toBeHidden();
+  const pill=page.locator('[data-sticky-order] .landing-v42-pill');
+  const start=await page.locator('[data-hero-actions]').evaluate(el=>el.getBoundingClientRect().bottom+scrollY);
+  const max=await page.evaluate(()=>document.documentElement.scrollHeight-innerHeight);
+  for(let y=start+40;y<=max;y+=120){
+    await page.evaluate(v=>scrollTo(0,v),y);
+    await page.waitForTimeout(450);
+    if(await pill.isVisible())return pill;
+  }
+  await expect(pill).toBeVisible();
+  return pill;
+}
+/** Answer consent through the notice's own buttons (accept = first, reject = second). */
+export async function answerConsent(page:Page,choice:'accepted'|'rejected') {
+  await page.locator('[data-landing-consent] button').nth(choice==='accepted'?0:1).click();
+  await expect(page.locator('.landing-v2-consent')).toBeHidden();
+}
+/** Every way to order that is ON the page itself (the pill's own sheet excluded): each control
+ * on its own, never its card. The SAME constant the pill observes, so test and code cannot drift. */
+export const ORDER_CONTROLS=ORDER_CONTROL_SELECTOR;
+/** The pill vs the usable controls at this scroll position. A control is usable when at least half
+ * of it is on screen; `ambiguous` = none usable but one sits right at that boundary (±5%). */
+export async function pillState(page:Page) {
+  return page.evaluate(selector=>{
+    const rail=document.querySelector<HTMLElement>('[data-sticky-order]')!;
+    const fractions=[...document.querySelectorAll<HTMLElement>(selector)].filter(el=>!rail.contains(el)&&!el.closest('dialog')&&el.getAttribute('data-ready')!=='false').map(el=>{
+      const b=el.getBoundingClientRect();if(!b.width||!b.height)return 0;
+      const w=Math.max(0,Math.min(b.right,innerWidth)-Math.max(b.left,0)),h=Math.max(0,Math.min(b.bottom,innerHeight)-Math.max(b.top,0));
+      return w*h/(b.width*b.height);
+    });
+    const usable=fractions.some(f=>f>=.55);
+    return {visible:rail.dataset.visible==='true',usable,ambiguous:!usable&&fractions.some(f=>f>=.45)};
+  },ORDER_CONTROLS);
 }

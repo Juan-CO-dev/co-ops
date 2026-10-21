@@ -82,7 +82,7 @@ test('accept initializes once and withdrawal prevents subsequent sends',async({p
   expect(new URL(page.url()).searchParams.get('fbclid')).toBe('Valid_123');
   const stored=await page.evaluate(()=>sessionStorage.getItem('landing_attribution'));expect(stored).toContain('Valid_123');expect(stored).not.toContain('email');
   expect(await page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='PageView').length)).toBe(1);
-  await page.locator('aside').filter({has:page.locator('button[aria-expanded]')}).getByRole('button').first().click();
+  await page.locator('footer [data-privacy-settings]').click(); // v4.2: an answered notice is reopened from the footer
   await page.locator('[data-landing-consent]').getByRole('button').nth(1).click();
   expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();
   expect(await page.evaluate(()=>window.fbq?.queue?.at(-1))).toEqual(['consent','revoke']);
@@ -133,7 +133,7 @@ test('withdrawal during registry lookup cannot persist attribution or initialize
  await page.goto('/?ad=campaign-new');await page.locator('[data-landing-consent]').getByRole('button').first().click();
  await expect.poll(()=>started).toBe(true);
  await page.locator('a[href$="catering-inquiry"]').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
- await page.locator('aside').filter({has:page.locator('button[aria-expanded]')}).getByRole('button').first().click();
+ await page.locator('footer [data-privacy-settings]').click(); // v4.2: an answered notice is reopened from the footer
  await page.locator('[data-landing-consent]').getByRole('button').nth(1).click();release();await page.waitForTimeout(1100);
  expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
  expect(sends).toEqual([]);
@@ -211,4 +211,33 @@ test('native navigation during held lookup delivers exactly one unattributed ser
  } finally {
    release();relay.closeAllConnections();await new Promise<void>((resolve,reject)=>relay.close(error=>error?reject(error):resolve()));
  }
+});
+
+test('v4.2: the footer "Privacy settings" reopens the same notice and withdrawal stops every send',async({page})=>{
+  await isolateMeta(page);
+  const events:Record<string,unknown>[]=[],counters:Record<string,unknown>[]=[];
+  await page.route('**/api/landing/events',route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});
+  await page.route('**/api/landing/order-click',route=>{counters.push(route.request().postDataJSON());return route.fulfill({status:204});});
+  await page.goto('/');
+  await page.locator('[data-landing-consent]').getByRole('button').first().click();
+  await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
+  const notice=page.locator('.landing-v2-consent');
+  await expect(notice).toBeHidden();
+  await page.evaluate(()=>document.addEventListener('click',event=>{if((event.target as Element).closest('a[href*="appfront"]'))event.preventDefault();},true));
+  // Consented: one tap sends one counter + one event.
+  const order=page.locator('#shops .landing-v4-shop-order').first();
+  await order.click();await expect.poll(()=>counters.length).toBe(1);await expect.poll(()=>events.length).toBe(1);
+  const settings=page.locator('footer [data-privacy-settings]');
+  await settings.click();
+  await expect(notice).toBeVisible();
+  // Same notice: same wording, and the second action now withdraws.
+  await expect(notice.locator('[data-landing-consent] p')).toHaveText('With your permission, we count order clicks and, when configured, share visits and clicks with Meta to understand our ads. Ordering works either way.');
+  await expect(notice.locator('[data-landing-consent] button').nth(1)).toHaveText('Withdraw permission');
+  await notice.locator('[data-landing-consent] button').nth(1).click();
+  await expect(notice).toBeHidden();
+  await expect(settings).toBeFocused();
+  await expect.poll(()=>page.evaluate(()=>document.cookie)).toContain('landing_consent=rejected');
+  expect(await page.evaluate(()=>window.fbq?.queue?.at(-1))).toEqual(['consent','revoke']);
+  await order.click();await page.waitForTimeout(800);
+  expect(counters).toHaveLength(1);expect(events).toHaveLength(1);
 });
