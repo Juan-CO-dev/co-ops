@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createElement } from "react";
+import { createElement, StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StructureEditor } from "@/components/schedule/StructureEditor";
 import { TranslationProvider } from "@/lib/i18n/provider";
@@ -8,7 +8,7 @@ import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
 import { CREW_TYPES, POSITION_ROLE_DEFAULTS, type PositionTimeProvenance, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
-import { FLOOR_POSITION, seededFloors, PSTREET_ROLES, pStreetSeed } from "./fixtures/schedule/structure-floors";
+import { FLOOR_POSITION, OTHER_POSITION, seededFloors, PSTREET_ROLES, pStreetSeed } from "./fixtures/schedule/structure-floors";
 
 const { post, refresh } = vi.hoisted(() => ({ post: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
@@ -17,13 +17,13 @@ vi.mock("@/components/admin/useStepUpPost", () => ({ useStepUpPost: () => post }
 beforeEach(() => { post.mockReset().mockResolvedValue({ ok: true, data: {} }); refresh.mockClear(); });
 afterEach(cleanup);
 
-function mount(value = seededFloors(), onDirty = vi.fn(), initialError: string | null = null, language: "en" | "es" = "en", timeProvenance: Record<string, PositionTimeProvenance> = {}) {
+function mount(value = seededFloors(), onDirty = vi.fn(), initialError: string | null = null, language: "en" | "es" = "en", timeProvenance: Record<string, PositionTimeProvenance> = {}, source: "saved" | "defaults" = "saved") {
   const children = createElement(StructureEditor, {
-    locationId: "shop", structure: { id: null, source: "saved", value }, closing: { measuredMinutes: null, samples: 0 },
+    locationId: "shop", structure: { id: null, source, value }, closing: { measuredMinutes: null, samples: 0 },
     positions: { [FLOOR_POSITION]: { name: "Prep/Dishwasher", nameEs: "Prep/Lavaplatos" } }, names: {}, onDirty, initialError, timeProvenance,
   });
   const providerProps = { initialLanguage: language, children };
-  return render(createElement(TranslationProvider, providerProps));
+  return render(createElement(StrictMode, null, createElement(TranslationProvider, providerProps)));
 }
 const input = (name: string) => document.getElementsByName(name)[0] as HTMLInputElement;
 
@@ -56,6 +56,44 @@ describe("structure problem lines", () => {
 });
 
 describe("structure editor floor edits", () => {
+  it.each([0, undefined])("swaps floor intent and presence across all crews (secondary %s), then restores it", async (secondaryFloor) => {
+    const s = seededFloors();
+    s.positions[FLOOR_POSITION]!.role = "register";
+    s.positions[OTHER_POSITION]!.role = "expo";
+    s.priority = [{ pair: [FLOOR_POSITION, OTHER_POSITION], primary: FLOOR_POSITION }];
+    for (const type of CREW_TYPES) {
+      if (secondaryFloor === undefined) delete s.crews[type].lineMinHeads[OTHER_POSITION];
+      else s.crews[type].lineMinHeads[OTHER_POSITION] = secondaryFloor;
+    }
+    mount(s);
+    const swap = () => fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.positions.swap"] }));
+    swap();
+    for (const type of CREW_TYPES) {
+      expect(input(`crews.${type}.lineMinHeads.${OTHER_POSITION}`).value).toBe("1");
+      expect(input(`crews.${type}.lineMinHeads.${FLOOR_POSITION}`).value).toBe("0");
+    }
+    swap();
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    const saved = post.mock.calls[0]![1].structure as ScheduleStructure;
+    for (const type of CREW_TYPES) expect(saved.crews[type].lineMinHeads).toEqual(s.crews[type].lineMinHeads);
+  });
+  it("clamps floor intent when typed, so raising heads cannot resurrect it", () => {
+    mount();
+    const floor = input(`crews.slow.lineMinHeads.${FLOOR_POSITION}`);
+    expect(floor.max).toBe("1");
+    fireEvent.change(floor, { target: { value: "3" } });
+    expect(floor.value).toBe("1");
+    fireEvent.change(input(`positions.${FLOOR_POSITION}.headsBefore`), { target: { value: "3" } });
+    expect(floor.value).toBe("1");
+  });
+  it("leaves an unchanged saved structure clean", () => {
+    const onDirty = vi.fn();
+    mount(seededFloors(), onDirty);
+    expect(onDirty).not.toHaveBeenCalled();
+    expect(screen.queryByText(en["schedule.settings.structure_adjusted"])).toBeNull();
+  });
+
   it("maps the unmapped seed, swaps a newly derived pair and saves its effective floors", async () => {
     mount(pStreetSeed());
     for (const [id, role] of Object.entries(PSTREET_ROLES)) {
@@ -145,13 +183,15 @@ describe("structure editor floor edits", () => {
     fireEvent.change(input(`positions.${FLOOR_POSITION}.headsBefore`), { target: { value: "0" } });
     for (const type of CREW_TYPES) expect(input(`crews.${type}.lineMinHeads.${FLOOR_POSITION}`).value).toBe("0");
   });
-  it("repairs the initial draft without marking it dirty or mutating the prop", async () => {
+  it.each(["saved", "defaults"] as const)("makes initial normalization visible only for %s structures", async (source) => {
     const s = seededFloors();
     s.positions[FLOOR_POSITION]!.role = "prep_dish";
     const onDirty = vi.fn();
-    mount(s, onDirty);
-    expect(onDirty).not.toHaveBeenCalled();
-    expect(screen.queryByText(en["schedule.settings.unsaved"])).toBeNull();
+    mount(s, onDirty, null, "en", {}, source);
+    expect(onDirty).toHaveBeenCalledTimes(source === "saved" ? 1 : 0);
+    if (source === "saved") expect(onDirty).toHaveBeenCalledWith(true);
+    expect(Boolean(screen.queryByText(en["schedule.settings.unsaved"]))).toBe(source === "saved");
+    expect(Boolean(screen.queryByText(en["schedule.settings.structure_adjusted"]))).toBe(source === "saved");
     expect(s.crews.slow.lineMinHeads[FLOOR_POSITION]).toBe(1);
     fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
     await waitFor(() => expect(post).toHaveBeenCalledOnce());

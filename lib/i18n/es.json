@@ -7688,6 +7688,7 @@
   "schedule.settings.structure_seeded": "Todavía sin guardar: empiezan con los horarios de las estaciones y los valores de fábrica. Guarda para que sean de la tienda.",
   "schedule.settings.save": "Guardar",
   "schedule.settings.saved": "Guardado.",
+  "schedule.settings.structure_adjusted": "Se ajustaron algunas configuraciones para adaptarlas a los puestos (pares de respaldo y mínimo de personas). Revísalas y luego guarda los cambios.",
   "schedule.settings.unsaved": "Cambios sin guardar",
   "schedule.settings.count": "{n}",
   "schedule.settings.section.shop_day": "Día de la tienda",

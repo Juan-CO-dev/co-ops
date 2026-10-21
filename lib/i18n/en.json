@@ -7688,6 +7688,7 @@
   "schedule.settings.structure_seeded": "Not saved yet: these start from the station admin's times and the shipped defaults. Save to make them the shop's own.",
   "schedule.settings.save": "Save",
   "schedule.settings.saved": "Saved.",
+  "schedule.settings.structure_adjusted": "Some settings were adjusted to fit the positions (backup pairs and minimum people). Review them, then save.",
   "schedule.settings.unsaved": "Unsaved changes",
   "schedule.settings.count": "{n}",
   "schedule.settings.section.shop_day": "Shop day",
