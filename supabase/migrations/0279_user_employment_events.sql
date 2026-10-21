@@ -1,5 +1,5 @@
 -- Migration 0279_user_employment_events
--- AUTHORED 2026-10-20.
+-- AUTHORED 2026-10-20. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word).
 -- APPLIED TO SIM 2026-10-20 (schema_migrations version 20261020234409, name '0279_user_employment_events')
 -- APPLIED TO PROD 2026-10-20 (schema_migrations version 20261021013900, name '0279_user_employment_events')
 -- Provenance: staff separations, "End employment" (feat/staff-separations; Juan approved the design 2026-10-20, packet

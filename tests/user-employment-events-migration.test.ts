@@ -1,6 +1,6 @@
 /**
  * Migration 0279 (user_employment_events: on leave / separated / rehired; staff separations, Juan 2026-10-20) —
- * AUTHORED, NOT APPLIED. Pins: the house header and gate line; the executable PGlite proof (scripts/sql-harness-0279.mjs:
+ * APPLIED (sim + prod 2026-10-20). Pins: the house header, gate line and apply stamps; the executable PGlite proof (scripts/sql-harness-0279.mjs:
  * the ceilings, the actor rule, the transitions, the head, the payload, the rehire gate, corrections); service_role-only
  * grants; the SQL vocabularies equal the TS ones; the lib's builder names the SQL arguments.
  */
@@ -20,11 +20,12 @@ const src = readFileSync("supabase/migrations/0279_user_employment_events.sql", 
 const inList = (xs: readonly string[]) => xs.map((x) => `'${x}'`).join(", ");
 
 describe("0279_user_employment_events", () => {
-  it("house header and gate line (file only, not applied)", () => {
-    const [first, gate] = src.split("\n");
+  it("house header, gate line and apply stamps", () => {
+    const [first, gate, sim, prod] = src.split("\n");
     expect(first).toBe("-- Migration 0279_user_employment_events");
     expect(gate).toBe("-- AUTHORED 2026-10-20. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word).");
-    expect(src).not.toMatch(/APPLIED TO (SIM|PROD)/);
+    expect(sim).toBe("-- APPLIED TO SIM 2026-10-20 (schema_migrations version 20261020234409, name '0279_user_employment_events')");
+    expect(prod).toBe("-- APPLIED TO PROD 2026-10-20 (schema_migrations version 20261021013900, name '0279_user_employment_events')");
   });
 
   it("the executable proof runs green (PGlite: the stub, sessions, the REAL 0228 level helper, then 0279)", () => {
