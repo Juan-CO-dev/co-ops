@@ -21,6 +21,8 @@ export type PositionRole = "prep" | "prep_dish" | "register" | "expo" | "walk" |
 export const POSITION_ROLES: readonly PositionRole[] = ["prep", "prep_dish", "register", "expo", "walk", "walk_online", "line_other"];
 export const LINE_ROLES: readonly PositionRole[] = ["register", "expo", "walk", "walk_online", "line_other"];
 export const BOH_ROLES: readonly PositionRole[] = ["prep", "prep_dish"];
+/** Canonical seed/reconciliation order; the first role supplies the default primary. */
+export const PRIORITY_ROLE_PAIRS = [["prep_dish", "prep"], ["register", "expo"], ["walk_online", "walk"]] as const;
 
 export type CrewType = "slow" | "normal" | "busy" | "weekend";
 export const CREW_TYPES: readonly CrewType[] = ["slow", "normal", "busy", "weekend"];
@@ -208,14 +210,41 @@ export function effectiveLineFloorLimit(p: StructurePosition, serviceCloseQ: num
   return limit;
 }
 
-/** Keep existing draft floors within the edited positions. Missing floors stay missing; validation stays strict. */
+/** Reconcile an effective copy, retaining valid manager swaps and refusing ambiguous new mappings. */
+export function reconcilePriorityPairs(s: ScheduleStructure): void {
+  const priority: ScheduleStructure["priority"] = [];
+  const used = new Set<string>();
+  const ids = positionIds(s);
+  for (const [primaryRole, secondaryRole] of PRIORITY_ROLE_PAIRS) {
+    for (const entry of s.priority) {
+      const [a, b] = entry.pair;
+      if (!Object.hasOwn(s.positions, a) || !Object.hasOwn(s.positions, b)
+        || a === b || used.has(a) || used.has(b) || !entry.pair.includes(entry.primary)) continue;
+      const ar = s.positions[a]!.role, br = s.positions[b]!.role;
+      if (!((ar === primaryRole && br === secondaryRole) || (ar === secondaryRole && br === primaryRole))) continue;
+      priority.push(entry);
+      used.add(a); used.add(b);
+    }
+    const a = ids.filter((id) => s.positions[id]!.role === primaryRole);
+    const b = ids.filter((id) => s.positions[id]!.role === secondaryRole);
+    if (a.length === 1 && b.length === 1 && !used.has(a[0]!) && !used.has(b[0]!)) {
+      priority.push({ pair: [a[0]!, b[0]!], primary: a[0]! });
+      used.add(a[0]!); used.add(b[0]!);
+    }
+  }
+  s.priority = priority;
+}
+
+/** Keep effective floors within edited positions; secondaries follow the seed's zero-floor rule.
+ * Missing floors stay missing; validation stays strict. Reconcile priority pairs first.
+ */
 export function reconcileLineFloors(s: ScheduleStructure): void {
   for (const type of CREW_TYPES) {
     const floors = s.crews[type].lineMinHeads;
     for (const id of Object.keys(floors)) {
       const p = Object.hasOwn(s.positions, id) ? s.positions[id] : undefined;
       if (!p || !isLineRole(p.role)) delete floors[id];
-      else floors[id] = Math.max(0, Math.min(floors[id]!, effectiveLineFloorLimit(p, s.shopDay.serviceCloseQ)));
+      else floors[id] = isSecondary(s, id) ? 0 : Math.max(0, Math.min(floors[id]!, effectiveLineFloorLimit(p, s.shopDay.serviceCloseQ)));
     }
   }
 }
@@ -697,12 +726,7 @@ export function structureFromStations(
     s.positions[p.id] = clampPositionTimes({ ...d, allowedRoles: [...d.allowedRoles], trimQ, closeQ });
     seededFrom[p.id] = { close, trim };
   }
-  const byRole = (role: PositionRole) => Object.keys(s.positions).filter((id) => s.positions[id]!.role === role);
-  for (const [primaryRole, secondaryRole] of [["prep_dish", "prep"], ["register", "expo"], ["walk_online", "walk"]] as const) {
-    const a = byRole(primaryRole);
-    const b = byRole(secondaryRole);
-    if (a.length === 1 && b.length === 1) s.priority.push({ pair: [a[0]!, b[0]!], primary: a[0]! });
-  }
+  reconcilePriorityPairs(s);
   const floors: Record<string, number> = {};
   for (const id of positionIds(s)) {
     const p = s.positions[id]!;

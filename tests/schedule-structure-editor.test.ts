@@ -8,7 +8,7 @@ import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
 import { CREW_TYPES, POSITION_ROLE_DEFAULTS, type PositionTimeProvenance, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
-import { FLOOR_POSITION, seededFloors } from "./fixtures/schedule/structure-floors";
+import { FLOOR_POSITION, seededFloors, PSTREET_ROLES, pStreetSeed } from "./fixtures/schedule/structure-floors";
 
 const { post, refresh } = vi.hoisted(() => ({ post: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
@@ -56,6 +56,38 @@ describe("structure problem lines", () => {
 });
 
 describe("structure editor floor edits", () => {
+  it("maps the unmapped seed, swaps a newly derived pair and saves its effective floors", async () => {
+    mount(pStreetSeed());
+    for (const [id, role] of Object.entries(PSTREET_ROLES)) {
+      fireEvent.change(input(`positions.${id}.role`), { target: { value: role } });
+    }
+    const register = Object.keys(PSTREET_ROLES).find((id) => PSTREET_ROLES[id] === "register")!;
+    const expo = Object.keys(PSTREET_ROLES).find((id) => PSTREET_ROLES[id] === "expo")!;
+    const swaps = () => screen.getAllByRole("button", { name: en["schedule.settings.positions.swap"] });
+    expect(swaps()).toHaveLength(3);
+    for (const type of CREW_TYPES) {
+      expect(input(`crews.${type}.lineMinHeads.${expo}`).value).toBe("0");
+      expect(input(`crews.${type}.lineMinHeads.${expo}`).max).toBe("0");
+    }
+    fireEvent.click(swaps()[1]!);
+    // Remove an earlier pair: the next swap must still target the displayed pair, not its draft index.
+    const prep = Object.keys(PSTREET_ROLES).find((id) => PSTREET_ROLES[id] === "prep")!;
+    fireEvent.change(input(`positions.${prep}.role`), { target: { value: "line_other" } });
+    fireEvent.click(swaps()[0]!);
+    fireEvent.click(swaps()[0]!);
+    fireEvent.change(input(`positions.${expo}.role`), { target: { value: "line_other" } });
+    expect(input(`crews.slow.lineMinHeads.${register}`).value).toBe("1");
+    fireEvent.change(input(`positions.${expo}.role`), { target: { value: "expo" } });
+    for (const type of CREW_TYPES) {
+      expect(input(`crews.${type}.lineMinHeads.${register}`).value).toBe("0");
+      expect(input(`crews.${type}.lineMinHeads.${expo}`).value).toBe("1");
+    }
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    const saved = post.mock.calls[0]![1].structure as ScheduleStructure;
+    expect(saved.priority.find((p) => p.pair.includes(register))?.primary).toBe(expo);
+    expect(structureSaveRefusal(saved)).toBeNull();
+  });
   it("uses station provenance when changing a role with default-valued times", () => {
     mount(seededFloors(), vi.fn(), null, "en", { [FLOOR_POSITION]: { closeFromStation: true, trimFromStation: true } });
     fireEvent.change(input(`positions.${FLOOR_POSITION}.role`), { target: { value: "register" } });

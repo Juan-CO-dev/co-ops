@@ -22,7 +22,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
 import { structureBody, structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
 import {
-  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, applyRoleChange, effectiveLineFloorLimit, isLineRole, positionIds, reconcileLineFloors, type PositionRole, type PositionTimeProvenance, type ScheduleStructure,
+  CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, applyRoleChange, effectiveLineFloorLimit, isLineRole, isSecondary, positionIds, reconcileLineFloors, reconcilePriorityPairs, type PositionRole, type PositionTimeProvenance, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
 import { runGuarded } from "./horizon-flow-shared";
 import { scheduleErrorKey } from "./schedule-errors";
@@ -62,7 +62,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
   const [draft, setDraft] = useState<ScheduleStructure>(() => structuredClone(structure.value));
   // Preserve manager intent through transient heads, role and time edits.
   const effective = useMemo(() => {
-    const s = structuredClone(draft); reconcileLineFloors(s); return s;
+    const s = structuredClone(draft); reconcilePriorityPairs(s); reconcileLineFloors(s); return s;
   }, [draft]);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -153,7 +153,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
                   <NumField name={`crews.${ct}.closeWalk`} label={t("schedule.settings.crews.close_walk")} value={c.close.walkHeads} onChange={(v) => edit((s) => { s.crews[ct].close.walkHeads = num(v); })} />
                   <NumField name={`crews.${ct}.closePrepDish`} label={t("schedule.settings.crews.close_prep_dish")} value={c.close.prepDishHeads} onChange={(v) => edit((s) => { s.crews[ct].close.prepDishHeads = num(v); })} />
                   {lineIds.map((id) => (
-                    <NumField key={id} name={`crews.${ct}.lineMinHeads.${id}`} label={t("schedule.settings.crews.line_min", { position: position(id) })} value={c.lineMinHeads[id] ?? 0} max={effectiveLineFloorLimit(d.positions[id]!, d.shopDay.serviceCloseQ)}
+                    <NumField key={id} name={`crews.${ct}.lineMinHeads.${id}`} label={t("schedule.settings.crews.line_min", { position: position(id) })} value={c.lineMinHeads[id] ?? 0} max={isSecondary(d, id) ? 0 : effectiveLineFloorLimit(d.positions[id]!, d.shopDay.serviceCloseQ)}
                       onChange={(v) => edit((s) => { s.crews[ct].lineMinHeads[id] = num(v); })} />
                   ))}
                 </Fields>
@@ -198,7 +198,11 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
               return (
                 <li key={i} className="flex flex-wrap items-center gap-2 text-sm text-co-text">
                   <span>{t("schedule.settings.positions.priority", { primary: position(pr.primary), secondary: position(secondary) })}</span>
-                  <button type="button" className={GHOST} onClick={() => edit((s) => { s.priority[i]!.primary = secondary; })}>{t("schedule.settings.positions.swap")}</button>
+                  <button type="button" className={GHOST} onClick={() => edit((s) => {
+                    const pair = s.priority.find((p) => p.pair.every((id) => pr.pair.includes(id)));
+                    if (pair) pair.primary = secondary;
+                    else s.priority.push({ pair: [...pr.pair], primary: secondary });
+                  })}>{t("schedule.settings.positions.swap")}</button>
                 </li>
               );
             })}
