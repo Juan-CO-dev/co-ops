@@ -1,5 +1,7 @@
 -- Migration 0279_user_employment_events
 -- AUTHORED 2026-10-20. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word).
+-- APPLIED TO SIM 2026-10-20 (schema_migrations version 20261020234409, name '0279_user_employment_events')
+-- APPLIED TO PROD 2026-10-20 (schema_migrations version 20261021013900, name '0279_user_employment_events')
 -- Provenance: staff separations, "End employment" (feat/staff-separations; Juan approved the design 2026-10-20, packet
 --   "Staff separations" + its ADDENDUM: GMs manage their own shop's users).
 --
@@ -92,6 +94,9 @@
 --      that person's separation, orders the create before both (it observed neither) — and the re-read under the locks
 --      refuses 'rehire_match' when both committed first; (c) the live link is unique per (shop, GUID)
 --      (toast_employee_links_one_active_employee), so the new account cannot take a GUID another account holds there.
+--      PINNED DEPENDENCY for (a): the read is `... and active FOR SHARE` (0217 `assignment_user_level`). That share lock
+--      is why (a) holds under concurrency: a separation's UPDATE of users.active waits for an in-flight link to commit,
+--      so no link lands after a separation commits. Any rewrite of assignment_user_level must keep the FOR SHARE.
 --      The lib writes the audit rows after each (unchanged actions and metadata).
 --
 -- PRIVACY: reason and notes are HR-sensitive. They live only in this table; the lib sends them only to owner / MoO / CGS
