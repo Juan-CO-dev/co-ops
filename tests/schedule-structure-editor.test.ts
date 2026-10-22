@@ -27,6 +27,88 @@ function mount(value = seededFloors(), onDirty = vi.fn(), initialError: string |
 }
 const input = (name: string) => document.getElementsByName(name)[0] as HTMLInputElement;
 
+describe("crew structure editor", () => {
+  it("represents and saves the end-of-day quarter without clamping it", async () => {
+    const structure = seededFloors();
+    structure.shopDay.outLatestQ = 96;
+    mount(structure);
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.shift_types.add"] }));
+    expect(input("shiftTypes.0.toQ").value).toBe("24:00");
+    expect(screen.getByRole("option", { name: en["schedule.settings.shift_types.end_of_day"] })).toBeTruthy();
+    fireEvent.change(input("shiftTypes.0.toQ"), { target: { value: "23:45" } });
+    fireEvent.change(input("shiftTypes.0.toQ"), { target: { value: "24:00" } });
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    expect(post.mock.calls[0]![1].structure.shiftTypes[0].toQ).toBe(96);
+  });
+  it.each(["en", "es"] as const)("edits whole shift types and catering and saves stable IDs in %s", async (language) => {
+    const dict = language === "en" ? en : es;
+    mount(seededFloors(), vi.fn(), null, language);
+    fireEvent.click(screen.getByRole("button", { name: dict["schedule.settings.shift_types.add"] }));
+    const id = document.querySelector("[data-shift-type]")!.getAttribute("data-shift-type");
+    fireEvent.change(input("shiftTypes.0.name"), { target: { value: "Morning" } });
+    fireEvent.change(input("shiftTypes.0.fromQ"), { target: { value: "08:00" } });
+    fireEvent.change(input("shiftTypes.0.toQ"), { target: { value: "16:00" } });
+    fireEvent.change(input("shiftTypes.0.startFlexQ"), { target: { value: "60" } });
+    fireEvent.change(input("shiftTypes.0.minLengthQ"), { target: { value: "240" } });
+    fireEvent.change(input("shiftTypes.0.headcount.busy"), { target: { value: "4" } });
+    fireEvent.change(input("shiftTypes.0.stations"), { target: { value: FLOOR_POSITION } });
+    fireEvent.click(input("shiftTypes.0.countsTowardMod"));
+    fireEvent.change(input("engine"), { target: { value: "crew" } });
+    fireEvent.click(input("catering.crewShift.enabled"));
+    fireEvent.change(input("catering.crewShift.typeId"), { target: { value: id } });
+    fireEvent.change(input("catering.crewShift.extraHeads"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: dict["schedule.settings.save"] }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    const saved = post.mock.calls[0]![1].structure as ScheduleStructure;
+    expect(saved.shiftTypes).toEqual([{ id, name: "Morning", fromQ: 32, toQ: 64, startFlexQ: 4, minLengthQ: 16, headcount: { slow: 0, normal: 0, busy: 4, weekend: 0 }, stations: [FLOOR_POSITION], countsTowardMod: false }]);
+    expect(saved.engine).toBe("crew");
+    expect(saved.catering.crewShift).toEqual({ enabled: true, typeId: id, extraHeads: 2 });
+    expect(structureSaveRefusal(saved)).toBeNull();
+  });
+  it("reorders types and stations without changing IDs and removes a type", async () => {
+    mount();
+    const add = () => fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.shift_types.add"] }));
+    add();
+    fireEvent.change(input("shiftTypes.0.name"), { target: { value: "Morning" } });
+    const id = document.querySelector("[data-shift-type]")!.getAttribute("data-shift-type");
+    fireEvent.change(input("shiftTypes.0.stations"), { target: { value: FLOOR_POSITION } });
+    fireEvent.change(input("shiftTypes.0.stations"), { target: { value: OTHER_POSITION } });
+    const stationDown = document.querySelector("[data-shift-type] ol button[aria-label^='Move'][aria-label$='down']")!;
+    fireEvent.click(stationDown);
+    add();
+    fireEvent.change(input("shiftTypes.1.name"), { target: { value: "Evening" } });
+    fireEvent.click(screen.getByRole("button", { name: "Move Evening up" }));
+    expect(document.querySelectorAll("[data-shift-type]")[1]!.getAttribute("data-shift-type")).toBe(id);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Evening" }));
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    const saved = post.mock.calls[0]![1].structure as ScheduleStructure;
+    expect(saved.shiftTypes).toHaveLength(1);
+    expect(saved.shiftTypes![0]!.id).toBe(id);
+    expect(saved.shiftTypes![0]!.stations).toEqual([OTHER_POSITION, FLOOR_POSITION]);
+  });
+  it("refuses crew without types and keeps a removed catering reference visible for correction", () => {
+    mount();
+    fireEvent.change(input("engine"), { target: { value: "crew" } });
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
+    expect(screen.getByRole("alert").textContent).toContain(en["schedule.error.structure_shift_types"]);
+    expect(post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.shift_types.add"] }));
+    const id = document.querySelector("[data-shift-type]")!.getAttribute("data-shift-type");
+    fireEvent.change(input("catering.crewShift.typeId"), { target: { value: id } });
+    fireEvent.click(screen.getByRole("button", { name: `Remove ${en["schedule.settings.shift_types.unnamed"]}` }));
+    expect(input("catering.crewShift.typeId").value).toBe(id);
+    expect(screen.getByRole("option", { name: en["schedule.settings.shift_types.removed_type"] })).toBeTruthy();
+    fireEvent.change(input("engine"), { target: { value: "stations" } });
+    fireEvent.click(input("catering.crewShift.enabled"));
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
+    expect(screen.getByRole("alert").textContent).toContain(en["schedule.settings.shift_types.catering_type"]);
+    expect(document.activeElement).toBe(input("catering.crewShift.typeId"));
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
 describe("structure problem lines", () => {
   it.each(CREW_TYPES)("maps %s floors and wave bounds", (type) => {
     expect(structureProblemLine(`crews.${type}.lineMinHeads.${FLOOR_POSITION}`)).toEqual({

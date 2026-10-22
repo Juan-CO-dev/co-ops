@@ -28,6 +28,8 @@ import { runGuarded } from "./horizon-flow-shared";
 import { scheduleErrorKey } from "./schedule-errors";
 import { BUTTON, Check, Fields, GHOST, NumField, SelectField, TimeField } from "./settings-fields";
 import { useBoardLine } from "./use-board-line";
+import { ShiftTypesEditor } from "./ShiftTypesEditor";
+import { CREW_CATERING_DEFAULTS, scheduleEngine } from "@/lib/scheduling/structure-shared";
 
 const FLOOR_ROLES: RoleCode[] = ["trainee", "employee", "trainer", "key_holder", "shift_lead", "agm", "gm", "moo", "owner"];
 const ALL_ROLES: RoleCode[] = ["cgs", "owner", "moo", "gm", "agm", "catering_mgr", "prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "trainer", "employee", "trainee"];
@@ -126,6 +128,22 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
   ])) : {};
   return (
     <div className="grid gap-3" data-section="structure-editor">
+      <Section id="shift_types" title={t("schedule.settings.shift_types.title")}>
+        <SelectField name="engine" label={t("schedule.settings.shift_types.engine")} value={scheduleEngine(d)} options={[
+          { value: "stations", label: t("schedule.settings.shift_types.engine_stations") },
+          { value: "crew", label: t("schedule.settings.shift_types.engine_crew") },
+        ]} onChange={(engine) => edit((s) => { s.engine = engine as "stations" | "crew"; })} />
+        <ShiftTypesEditor value={d.shiftTypes ?? []} structure={d} positions={positions} onChange={(types) => edit((s) => { s.shiftTypes = types; })} />
+        <Check name="catering.crewShift.enabled" label={t("schedule.settings.shift_types.catering_enabled")} checked={(d.catering.crewShift ?? CREW_CATERING_DEFAULTS).enabled} onChange={(enabled) => edit((s) => { s.catering.crewShift = { ...(s.catering.crewShift ?? CREW_CATERING_DEFAULTS), enabled }; })} />
+        <Fields>
+          <SelectField name="catering.crewShift.typeId" label={t("schedule.settings.shift_types.catering_type")} value={(d.catering.crewShift ?? CREW_CATERING_DEFAULTS).typeId ?? ""} options={[
+            { value: "", label: t("schedule.settings.shift_types.choose_type") },
+            ...(d.shiftTypes ?? []).map((type) => ({ value: type.id, label: type.name })),
+            ...((d.catering.crewShift?.typeId && !(d.shiftTypes ?? []).some((type) => type.id === d.catering.crewShift?.typeId)) ? [{ value: d.catering.crewShift.typeId, label: t("schedule.settings.shift_types.removed_type") }] : []),
+          ]} onChange={(typeId) => edit((s) => { s.catering.crewShift = { ...(s.catering.crewShift ?? CREW_CATERING_DEFAULTS), typeId: typeId || null }; })} />
+          <NumField name="catering.crewShift.extraHeads" label={t("schedule.settings.shift_types.catering_heads")} value={(d.catering.crewShift ?? CREW_CATERING_DEFAULTS).extraHeads} min={1} max={20} onChange={(extraHeads) => edit((s) => { s.catering.crewShift = { ...(s.catering.crewShift ?? CREW_CATERING_DEFAULTS), extraHeads: extraHeads ?? 0 }; })} />
+        </Fields>
+      </Section>
       <Section id="shop_day" title={t("schedule.settings.section.shop_day")}>
         <Fields>
           <TimeField name="shopDay.prepStartQ" label={t("schedule.settings.shop_day.prep_start")} q={d.shopDay.prepStartQ} onChange={(q) => edit((s) => { s.shopDay.prepStartQ = q; })} />

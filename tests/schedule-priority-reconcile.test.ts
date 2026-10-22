@@ -42,6 +42,9 @@ describe("effective priority reconciliation", () => {
     const db = new PGlite();
     try {
       await db.exec(sql.slice(sql.indexOf("create function public.schedule_json_num"), sql.indexOf("create table public.schedule_shop_settings")));
+      const crewSql = readFileSync("supabase/migrations/0283_schedule_crew_structure.sql", "utf8");
+      const start = crewSql.indexOf("create or replace function public.valid_schedule_structure(");
+      await db.exec(crewSql.slice(start, crewSql.indexOf("end $$;", start) + 7));
       const result = await db.query<{ valid: boolean }>("select public.valid_schedule_structure($1::jsonb) as valid", [JSON.stringify(s)]);
       expect(result.rows).toEqual([{ valid: true }]);
     } finally { await db.close(); }

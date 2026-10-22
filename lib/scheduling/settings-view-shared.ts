@@ -12,7 +12,7 @@ import type { PositionLabel } from "./board-view-shared";
 import type { ScheduleShopSettings } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
 import type { ToastPrimarySuggestion } from "./position-rank-shared";
-import { validScheduleStructure, type PositionTimeProvenance, type ScheduleStructure, type SeededFrom } from "./structure-shared";
+import { withCrewStructureDefaults, validScheduleStructure, type PositionTimeProvenance, type ScheduleStructure, type SeededFrom } from "./structure-shared";
 import { Q_PER_DAY, addDays, isoWeekStart, qToWall, wallToQ } from "./time-shared";
 
 export interface SettingsPerms {
@@ -123,6 +123,14 @@ const POSITION_FIELD_LABELS: Record<string, TranslationKey> = {
 
 /** Position params are ids; dayType / field params are translation keys, resolved by the editor in its language. */
 export function structureProblemLine(key: string): { key: TranslationKey; params: Record<string, string> } {
+  if (key === "engine") return { key: "schedule.error.structure_engine", params: {} };
+  if (key === "shiftTypes") return { key: "schedule.error.structure_shift_types", params: {} };
+  const shift = /^shiftTypes\.(\d+)(?:\.([^.]+))?/.exec(key);
+  const shiftFields: Record<string, string> = { id: "id", name: "name", fromQ: "from", toQ: "to", startFlexQ: "flex", minLengthQ: "minimum", headcount: "headcount_label", stations: "stations", countsTowardMod: "mod" };
+  if (shift) return { key: "schedule.error.structure_shift_type", params: { number: String(Number(shift[1]) + 1), field: `schedule.settings.shift_types.${shiftFields[shift[2] ?? ""] ?? "title"}` } };
+  const catering = /^catering\.crewShift(?:\.([^.]+))?$/.exec(key);
+  const cateringFields: Record<string, string> = { enabled: "catering_enabled", typeId: "catering_type", extraHeads: "catering_heads" };
+  if (catering) return { key: "schedule.error.structure_crew_catering", params: { field: `schedule.settings.shift_types.${cateringFields[catering[1] ?? ""] ?? "catering_enabled"}` } };
   const floor = /^crews\.(slow|normal|busy|weekend)\.lineMinHeads\.([^.]+)$/.exec(key);
   if (floor) return { key: "schedule.error.structure_line_floor", params: { position: floor[2]!, dayType: `schedule.board.day_type.${floor[1]}` } };
   const position = /^positions\.([^.]+)\.([^.]+)$/.exec(key);
@@ -157,7 +165,7 @@ export function stationAdvisory(saved: ScheduleStructure, seeded: ScheduleStruct
 
 // ─── The exact bodies ────────────────────────────────────────────────────────
 
-export const structureBody = (locationId: string, expectedId: string | null, structure: ScheduleStructure) => ({ action: "structure" as const, locationId, expectedId, structure });
+export const structureBody = (locationId: string, expectedId: string | null, structure: ScheduleStructure) => ({ action: "structure" as const, locationId, expectedId, structure: withCrewStructureDefaults(structure) });
 export const shopBody = (locationId: string, s: ScheduleShopSettings) => ({
   action: "shop" as const, locationId, enabled: s.enabled, estimatedHourlyCents: s.estimatedHourlyCents, estimatedSalariedWeeklyCents: s.estimatedSalariedWeeklyCents, agmAccess: s.agmAccess,
 });

@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
 import { extractFunction, normalize } from "../scripts/recipe-versions/reemit-mods";
-import { CASE_DEFAULTS, shopBase } from "../scripts/schedule-structure-cases.mjs";
+import { LEGACY_CASE_DEFAULTS, shopBase } from "../scripts/schedule-structure-cases.mjs";
 import { ROLES } from "@/lib/roles";
 import { SCHEDULE_ERROR_CODES } from "@/lib/scheduling/errors-shared";
 import {
@@ -134,7 +134,7 @@ describe("0274_schedule_settings", () => {
     let validSeen = 0;
     const N = Number(process.env.TWIN_FUZZ_N ?? 400); // CI: 400; a deeper local run: TWIN_FUZZ_N=3000
     for (let i = 0; i < N; i++) {
-      const v = structuredClone(rnd() < 0.5 ? shopBase() : CASE_DEFAULTS) as Record<string, unknown>;
+      const v = structuredClone(rnd() < 0.5 ? shopBase() : LEGACY_CASE_DEFAULTS) as Record<string, unknown>;
       const log: string[] = [];
       for (let m = 0, n = 1 + Math.floor(rnd() * 2); m < n; m++) {
         const all = paths(v);
