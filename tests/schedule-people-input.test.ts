@@ -46,7 +46,7 @@ describe("punchPatterns (r2 P2-10): a person-specific denominator", () => {
     expect(Object.keys(p)).toEqual(["u-a", "u-shop"]);
   });
 
-  it("weeksObserved starts at the person's first punch (or their membership, when later) and counts only weeks the SHOP punched that weekday", () => {
+  it("weeksObserved starts at the person's first shop punch (or an explicit shop-history floor) and counts only weeks the SHOP punched that weekday", () => {
     const shop = shopOpen().filter((e) => !(e.businessDate >= MONDAYS[3]! && e.businessDate < addDays(MONDAYS[3]!, 7))); // the shop closed week 4
     const entries = [...shop, ...MONDAYS.slice(5).map((mon) => punch("u-new", addDays(mon, 4), "10:00", "16:00"))];
     const p = punchPatterns(entries, { asOf: ASOF });

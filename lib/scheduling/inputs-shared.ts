@@ -108,7 +108,7 @@ export interface SchedulingInputs {
 /**
  * Astra chunk E P2-4: `user_locations.assigned_at` (an instant) as the OPERATIONAL business date (America/New_York, the
  * same clock the punch dates and `operationalNow` use) — never its UTC date: a Sunday-night ET assignment is Sunday,
- * not Monday, so the observation window of the punch patterns keeps its week. Null / unparseable → null.
+ * not Monday. This app assignment date never floors punch history. Null / unparseable → null.
  */
 export function memberSinceDate(assignedAt: string | null | undefined): string | null {
   if (!assignedAt) return null;
@@ -169,9 +169,9 @@ export function closingFacts(f: { closingInstances: ClosingInstanceFact[]; closi
 }
 
 /**
- * The person-specific first counted day (J15): the later of their membership and their first punch at the shop. The
+ * The person-specific first counted day: the first punch at this shop. App membership is not employment history. The
  * loader reads the punches of the pattern window only: a person who punched in the window's FIRST week is treated as
- * present from before it (the membership floor still applies).
+ * present from before it.
  */
 export function firstSeenFor(members: readonly MemberRow[], punches: readonly PunchEntry[], windowStart: string): Record<string, string> {
   const firstPunch = new Map<string, string>();
@@ -180,9 +180,7 @@ export function firstSeenFor(members: readonly MemberRow[], punches: readonly Pu
   for (const m of members) {
     const fp = firstPunch.get(m.userId);
     const punchFloor = fp && fp >= addDays(windowStart, 7) ? fp : null;
-    const candidates = [m.memberSince, punchFloor].filter((x): x is string => !!x).sort();
-    const v = candidates[candidates.length - 1];
-    if (v) out[m.userId] = v;
+    if (punchFloor) out[m.userId] = punchFloor;
   }
   return out;
 }

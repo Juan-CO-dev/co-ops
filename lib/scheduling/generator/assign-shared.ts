@@ -302,12 +302,12 @@ export function planBlock(shifts: readonly GShift[], day: DayContext, positionId
 
 /**
  * A ranked candidate. `key` is the sort key, compared left to right (Juan 2026-10-20):
- * [positionRank, fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] — see `CANDIDATE_KEY`.
+ * [positionRank, algorithmOff, fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] — see `CANDIDATE_KEY`.
  */
 export interface Candidate { person: SchedPerson; own: GShift | null; skill: number; key: Array<number | string>; /** The person's TRUE rank here (the key's is neutral while closing gaps). */ rank: number }
 
 /** The index of each part of `Candidate.key` (one place, so `whyChosen` and the notes never read a stale slot). */
-export const CANDIDATE_KEY = { positionRank: 0, fullTimerFirst: 1, softMin: 2, skill: 3, pairing: 4, userId: 5 } as const;
+export const CANDIDATE_KEY = { positionRank: 0, algorithmOff: 1, fullTimerFirst: 2, softMin: 3, skill: 4, pairing: 5, userId: 6 } as const;
 
 export interface CandidateOpts {
   date: string;
@@ -402,8 +402,15 @@ export function rankCandidates(b: BuildCtx, week: WeekState, shifts: readonly GS
     const newer = !!o.positionId && p.newerPositions.includes(o.positionId);
     const pairing = newer ? (strongPartnerOnLine(b, shifts, o.plan.startQ, o.plan.endQ, userId) ? -1 : 1) : 0;
     const rank = positionRankOf(p, o.positionId);
-    out.push({ person: p, own, skill, rank, key: [b.closingGaps ? POSITION_RANK.flex : rank, fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] });
+    // After position rank, relax a manager-set backup day before an algorithm-chosen off day.
+    const algorithmOff = !own && o.allowOffDay !== false && b.offPreferred?.[userId]?.has(o.date)
+      && !p.offPreferredDates?.includes(o.date) ? 1 : 0;
+    out.push({ person: p, own, skill, rank, key: [b.closingGaps ? POSITION_RANK.flex : rank, algorithmOff, fullTimerFirst, busiest ? 0 : -underSoftMin, -skill, pairing, userId] });
   }
+  // Preserve the existing ordering unless an eligible manager backup competes at this position rank.
+  const backupRanks = new Set(out.filter((c) => c.person.offPreferredDates?.includes(o.date))
+    .map((c) => c.key[CANDIDATE_KEY.positionRank]));
+  for (const c of out) if (!backupRanks.has(c.key[CANDIDATE_KEY.positionRank])) c.key[CANDIDATE_KEY.algorithmOff] = 0;
   out.sort((x, y) => {
     for (let i = 0; i < x.key.length; i++) {
       const a = x.key[i]!;

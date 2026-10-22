@@ -3,6 +3,7 @@ import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { peopleActorFromAuth } from "@/lib/people/access-shared";
 import { assertSameOrigin } from "@/lib/portal/csrf";
+import { isPersonAvailability } from "@/lib/scheduling/availability-shared";
 import { stepUpFor } from "@/lib/scheduling/access-shared";
 import { ScheduleError, scheduleErrorStatus } from "@/lib/scheduling/errors-shared";
 import { SCHEDULE_ACTIONS, exactShape } from "@/lib/scheduling/route-shapes-shared";
@@ -86,6 +87,7 @@ export async function POST(req: NextRequest) {
         return jsonOk({ result: await setPin(deps, { actor, locationId, pin: b.pin as Parameters<typeof setPin>[1]["pin"] }) });
       case "person":
         if (!b.settings || typeof b.settings !== "object" || !strOrNull(b.expectedId)) return jsonError(400, "bad_request");
+        if ("availability" in b.settings && !isPersonAvailability(b.settings.availability)) return jsonError(scheduleErrorStatus("invalid_payload"), "invalid_payload");
         return jsonOk({ result: await recordPersonSettings(deps, { actor, locationId, settings: b.settings as PersonSettingsInput, expectedId: b.expectedId as string | null }) });
       case "person_positions":
         if (!isStr(b.userId) || !b.changes || typeof b.changes !== "object" || Array.isArray(b.changes) || !strOrNull(b.expectedId)) return jsonError(400, "bad_request");

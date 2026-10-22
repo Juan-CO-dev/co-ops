@@ -17,15 +17,22 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { defaultWorkType, type PersonSettingsRow } from "@/lib/scheduling/people-input-shared";
 import { pickerPositionAllowed, hasPositionRank, isHourlyLeadRole, positionListProblems, positionSlotOf } from "@/lib/scheduling/position-rank-shared";
 import { editorBaseOnProps, personBody, type SettingsMember } from "@/lib/scheduling/settings-view-shared";
+import { isPersonAvailability } from "@/lib/scheduling/availability-shared";
 import type { RoleCode } from "@/lib/roles";
 import { canWorkAs, effectiveScheduleRole, WORKS_AS_ROLES, type WorksAsRole } from "@/lib/scheduling/works-as-shared";
 import { workTypeAllows } from "@/lib/scheduling/rules-shared";
 import type { PositionRole } from "@/lib/scheduling/structure-shared";
 import { scheduleErrorKey } from "./schedule-errors";
-import { BUTTON, Check, Fields, GHOST, NumField } from "./settings-fields";
+import { BUTTON, Check, Fields, GHOST, NumField, TimeField } from "./settings-fields";
 import { useBoardLine } from "./use-board-line";
 
 const empty = (userId: string): PersonSettingsRow => ({ userId, workType: null, alsoAllowed: [], leaderSetting: null, coverPositions: [], softMinH: null, softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: null });
+
+const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+const newAvailability = (): NonNullable<PersonSettingsRow["availability"]> => ({
+  1: { mode: "works" }, 2: { mode: "works" }, 3: { mode: "works" }, 4: { mode: "works" },
+  5: { mode: "works" }, 6: { mode: "works" }, 7: { mode: "works" },
+});
 
 type PositionLabels = Record<string, { name: string; nameEs: string | null; role?: PositionRole; allowedRoles?: RoleCode[] }>;
 
@@ -100,7 +107,10 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
     setS((cur) => { const n = structuredClone(cur); f(n); return n; });
     if (!dirty) { setDirty(true); onDirty(true); }
   };
+  const allDaysOff = !!s.availability && WEEKDAYS.every((day) => s.availability![day].mode === "off");
   async function save() {
+    if (allDaysOff) return;
+    if (!isPersonAvailability(s.availability ?? null)) { setError("invalid_payload"); return; }
     setBusy(true); setError(null);
     const r = await post("/api/schedule", personBody(locationId, s, base.baseId));
     setBusy(false);
@@ -134,6 +144,40 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
         </select>
       </label> : null}
       {(!["cgs", "social_media_mgr"].includes(member.role) || s.worksAs) ? <>
+      <fieldset className="grid min-w-0 gap-2" data-availability-editor>
+        <legend className="text-sm font-bold">{t("schedule.settings.staff.availability")}</legend>
+        <p className="text-xs text-co-text-muted">{t(s.availability ? "schedule.settings.staff.availability_help" : "schedule.settings.staff.availability_toast")}</p>
+        {s.availability ? <>
+          {WEEKDAYS.map((day) => {
+            const stored = s.availability![day];
+            const salaried = role === "gm" || role === "agm";
+            const value = salaried && stored.mode === "if_needed" ? { ...stored, mode: "works" as const } : stored;
+            return <fieldset key={day} className="grid min-w-0 gap-1 rounded-lg border border-co-border p-2" data-availability-day={day}>
+              <legend className="px-1 text-sm font-bold">{t(`schedule.settings.staff.weekday_${day}` as TranslationKey)}</legend>
+              <div className="grid grid-cols-3 gap-1">
+                {(salaried ? ["works", "off"] as const : ["works", "if_needed", "off"] as const).map((mode) => <label key={mode} className="flex min-h-[44px] min-w-0 items-center gap-1 text-sm">
+                  <input type="radio" className="h-5 w-5 shrink-0" name={`${id}-availability-${day}`} checked={value.mode === mode}
+                    onChange={() => edit((x) => { x.availability![day] = mode === "off" ? { mode } : { ...x.availability![day], mode }; })} />
+                  {t(`schedule.settings.staff.availability_${mode}` as TranslationKey)}
+                </label>)}
+              </div>
+              {value.mode !== "off" ? <>
+                <Check label={t("schedule.settings.staff.availability_times")} checked={value.fromQ !== undefined}
+                  onChange={(on) => edit((x) => { const d = x.availability![day]; x.availability![day] = on ? { ...d, fromQ: 28, toQ: 96 } : { mode: d.mode }; })} />
+                {value.fromQ !== undefined ? <>
+                  <Fields>
+                    <TimeField name={`availability.${day}.fromQ`} label={t("schedule.settings.staff.availability_from")} q={value.fromQ} onChange={(q) => edit((x) => { x.availability![day].fromQ = q; })} />
+                    {value.toQ !== 96 ? <TimeField name={`availability.${day}.toQ`} label={t("schedule.settings.staff.availability_to")} q={value.toQ!} onChange={(q) => edit((x) => { x.availability![day].toQ = q; })} /> : null}
+                  </Fields>
+                  <Check label={t("schedule.settings.staff.availability_midnight")} checked={value.toQ === 96} onChange={(on) => edit((x) => { x.availability![day].toQ = on ? 96 : 95; })} />
+                  {value.fromQ >= value.toQ! ? <p role="alert" className="text-sm text-co-cta-text">{t("schedule.settings.staff.availability_time_error")}</p> : null}
+                </> : null}
+              </> : null}
+            </fieldset>;
+          })}
+          <button type="button" className={GHOST} onClick={() => edit((x) => { x.availability = null; })}>{t("schedule.settings.staff.availability_clear")}</button>
+        </> : <button type="button" className={GHOST} onClick={() => edit((x) => { x.availability = newAvailability(); })}>{t("schedule.settings.staff.availability_set")}</button>}
+      </fieldset>
       <div className="grid gap-1" role="radiogroup" aria-labelledby={`${id}-wt`}>
         <span id={`${id}-wt`} className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("schedule.settings.staff.work_type")}</span>
         <div className="flex flex-wrap gap-x-3">
@@ -220,9 +264,10 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
       {member.includeOffered && !s.worksAs && !["cgs", "social_media_mgr"].includes(member.role) ? (
         <Check label={t("schedule.settings.staff.include")} checked={s.rosterInclude === true} onChange={(on) => edit((x) => { x.rosterInclude = on ? true : null; })} />
       ) : null}
+      {allDaysOff ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t("schedule.settings.staff.availability_all_off")}</p> : null}
       {error ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(scheduleErrorKey(error))}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={BUTTON} disabled={busy || !dirty || problems.some((pr) => pr.code === "work_type")} onClick={save}>{t("schedule.settings.save")}</button>
+        <button type="button" className={BUTTON} disabled={busy || !dirty || allDaysOff || !isPersonAvailability(s.availability ?? null) || problems.some((pr) => pr.code === "work_type")} onClick={save}>{t("schedule.settings.save")}</button>
         {dirty ? <span className="text-xs font-bold text-co-warning-text">{t("schedule.settings.unsaved")}</span> : null}
       </div>
       </fieldset>

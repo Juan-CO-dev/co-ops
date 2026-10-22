@@ -654,3 +654,21 @@ describe("CC addendum A (2026-10-16): the 40 h is a target — a hand-scheduled 
     }
   });
 });
+
+
+it("labels manager-set availability without claiming it was assumed from Toast", () => {
+  const source = structuredClone(boardSource());
+  for (const person of Object.values(source.week!.people)) {
+    for (const window of Object.values(person.availability)) if (window) window.source = "manager_set";
+  }
+  const view = boardView(source);
+  expect(view.banners.some((b) => b.id === "manager_set_availability")).toBe(true);
+  expect(view.banners.some((b) => b.id === "assumed_availability")).toBe(false);
+  const rows = view.days.flatMap((d) => d.rows).filter((r) => r.shifts.length > 0);
+  expect(rows.some((r) => r.managerSetAvailability)).toBe(true);
+  expect(rows.every((r) => !r.assumedAvailability)).toBe(true);
+  for (const language of ["en", "es"] as const) {
+    const dict = language === "en" ? en : es;
+    expect(text(renderBoard({ state: "ready", ...view }, language))).toContain(dict["schedule.board.flag.manager_set_availability"]);
+  }
+});

@@ -28,7 +28,7 @@ export const BOARD_LABEL_KEYS = [
   "schedule.board.money.ot_risk", "schedule.board.money.flex_used", "schedule.board.money.manager_floor", "schedule.board.money.manager_mod", "schedule.board.money.blank",
   "schedule.board.money.errand_set_wage", "schedule.board.money.hidden",
   "schedule.board.day_tab.done",
-  "schedule.board.flag.assumed_availability", "schedule.board.flag.starting_point", "schedule.board.flag.not_linked", "schedule.board.flag.flex_later",
+  "schedule.board.flag.assumed_availability", "schedule.board.flag.manager_set_availability", "schedule.board.flag.starting_point", "schedule.board.flag.not_linked", "schedule.board.flag.flex_later",
   "schedule.board.gap.unresolved_try", "schedule.board.problem.earlier", "schedule.board.demand.basis", "schedule.board.ready_for_7shifts",
   "schedule.diff.cost_partial",
 ] as const;

@@ -88,6 +88,7 @@ beforeAll(async () => {
   await db.exec(read("supabase/migrations/0275_schedule_weeks.sql"));
   await db.exec(read("supabase/migrations/0278_schedule_person_settings_guarded.sql"));
   await db.exec(read("supabase/migrations/0280_schedule_person_works_as.sql"));
+  await db.exec(read("supabase/migrations/0281_schedule_person_availability.sql"));
   await db.exec(extract(read("supabase/migrations/0224_toast_time_entries.sql"), "create table public.toast_time_entries (", ");"));
   // Staff separations (0279): the employment read (0279's pre-flight needs the user-admin columns the stub does not model).
   await db.exec(read("tests/fixtures/user-admin-columns-stub.sql"));

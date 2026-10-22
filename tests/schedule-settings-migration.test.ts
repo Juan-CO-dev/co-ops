@@ -98,7 +98,7 @@ describe("0274_schedule_settings", () => {
       recordDayTypeCall({ actorId: "a", locationId: "l", date: "2026-10-26", dayType: "auto" }),
       recordPinCall({ actorId: "a", locationId: "l", date: null, userId: null, startQ: null, endQ: null, positions: null, kind: null, retiresId: null }),
     ];
-    for (const c of calls) expect(Object.keys(c.args).filter((key) => key !== "p_works_as"), c.fn).toEqual(sqlParams(c.fn));
+    for (const c of calls) expect(Object.keys(c.args).filter((key) => key !== "p_works_as" && key !== "p_availability"), c.fn).toEqual(sqlParams(c.fn));
   });
 
   it("every refusal a writer raises is a ScheduleErrorCode (the closed vocabulary, en + es)", () => {

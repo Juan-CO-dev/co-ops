@@ -25,6 +25,7 @@ import { loadLatestPersonSettings, loadLiveStructure, loadSchedulingDemand, load
 import { personSettingsSubjectRefusal } from "./access-shared";
 import { mergePositionChanges, parsePositionChanges } from "./user-positions-shared";
 import { STRUCTURE_DEFAULTS_ID, generatorInputFor, type SchedulingInputs } from "./inputs-shared";
+import { isPersonAvailability, type PersonAvailability } from "./availability-shared";
 import { canWorkAs, effectiveScheduleRole, worksAsRefusal, type WorksAsRole } from "./works-as-shared";
 import { defaultWorkType } from "./people-input-shared";
 import { positionListProblems } from "./position-rank-shared";
@@ -85,6 +86,8 @@ export async function saveShopSettings(deps: ScheduleDeps, args: {
 // ─── Person settings ─────────────────────────────────────────────────────────
 
 export interface PersonSettingsInput {
+  /** Missing availability clears to null: this is a full-row writer guarded by expectedId, not a partial patch. */
+  availability?: PersonAvailability | null;
   worksAs?: WorksAsRole | null;
   userId: string; workType: "boh" | "foh" | "management" | null; alsoAllowed: Array<"boh" | "foh">; leaderSetting: "opens" | "closes" | "mix" | null;
   coverPositions: string[]; softMinH: number | null; softMaxH: number | null; fullTime: boolean; fullTimeMinH: number | null; rosterInclude: boolean | null;
@@ -99,7 +102,7 @@ export interface PersonSettingsInput {
 export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput; expectedId: string | null }): Promise<Record<string, unknown>> {
   await gate(deps.service, args.actor, args.locationId, "person_settings");
   const raw = args.settings;
-  if (!raw || typeof raw.userId !== "string" || !UUID.test(raw.userId) || !Array.isArray(raw.coverPositions) || !Array.isArray(raw.alsoAllowed)
+  if (!raw || (raw.availability !== undefined && !isPersonAvailability(raw.availability)) || typeof raw.userId !== "string" || !UUID.test(raw.userId) || !Array.isArray(raw.coverPositions) || !Array.isArray(raw.alsoAllowed)
     || !raw.coverPositions.every((x) => typeof x === "string" && UUID.test(x)) || (args.expectedId !== null && typeof args.expectedId !== "string")) {
     throw new ScheduleError("invalid_payload");
   }

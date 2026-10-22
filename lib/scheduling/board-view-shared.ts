@@ -141,6 +141,7 @@ export interface PersonRowView {
   otRisk: boolean;
   shifts: ShiftView[];
   assumedAvailability: boolean;
+  managerSetAvailability?: boolean;
   startingPoint: boolean;
   /** The worked skill profile as BANDS on the positions they may work (no number, no wage). */
   profile: Array<{ positionId: string; band: SchedSkillBand }>;
@@ -312,7 +313,7 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
     const hours = (weekQ.get(userId) ?? 0) / Q_PER_HOUR;
     return {
       userId, name: src.names[userId] ?? userId, role: p?.role ?? src.roles[userId] ?? null, salaried: !!p?.salaried, presenceOnly: !!p?.presenceOnly,
-      weekHours: hours, otRisk: isHourly(p) && hours > overtimeH, shifts, assumedAvailability: assumed(p, date), startingPoint, profile,
+      weekHours: hours, otRisk: isHourly(p) && hours > overtimeH, shifts, assumedAvailability: assumed(p, date), ...(p?.availability[date]?.source === "manager_set" ? { managerSetAvailability: true } : {}), startingPoint, profile,
     };
   });
   return rows.sort((a, b) => (a.shifts[0]?.startQ ?? 0) - (b.shifts[0]?.startQ ?? 0) || cmp(a.name, b.name) || cmp(a.userId, b.userId));
@@ -381,6 +382,10 @@ export function boardView(src: BoardSource): BoardView {
   }
   if (week && week.shifts.some((sh) => assumed(week.people[sh.userId], sh.date))) {
     banners.push({ id: "assumed_availability", tone: "info", line: { key: "schedule.board.flag.assumed_availability" } });
+  }
+
+  if (week && week.shifts.some((sh) => week.people[sh.userId]?.availability[sh.date]?.source === "manager_set")) {
+    banners.push({ id: "manager_set_availability", tone: "info", line: { key: "schedule.board.flag.manager_set_availability" } });
   }
 
   const advisory: NarrativeLine[] = src.advisory.map((a) => ({
