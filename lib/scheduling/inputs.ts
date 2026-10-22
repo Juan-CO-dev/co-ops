@@ -1,3 +1,4 @@
+import { validUsualShift } from "./usual-shift-shared";
 /**
  * `loadSchedulingInputs` — THE ONE BATCH LOADER of scheduling (Scheduling Phase 2, Task 16). Server-only, service
  * role. It gathers, for ONE shop and a set of ISO weeks, every fact the generator, the validator, the budget and the
@@ -118,11 +119,11 @@ async function loadMembersWithSince(service: SupabaseClient, locationId: string)
   return out.sort((a, b) => (a.userId < b.userId ? -1 : 1));
 }
 
-type PersonSettingsDbRow = { id: string; user_id: string; works_as: PersonSettingsRow["worksAs"]; availability: PersonSettingsRow["availability"]; work_type: PersonSettingsRow["workType"]; also_allowed: Array<"boh" | "foh">; leader_setting: PersonSettingsRow["leaderSetting"];
+type PersonSettingsDbRow = { usual_shift: unknown; id: string; user_id: string; works_as: PersonSettingsRow["worksAs"]; availability: PersonSettingsRow["availability"]; work_type: PersonSettingsRow["workType"]; also_allowed: Array<"boh" | "foh">; leader_setting: PersonSettingsRow["leaderSetting"];
   cover_positions: string[]; soft_min_h: number | string | null; soft_max_h: number | string | null; full_time: boolean; full_time_min_h: number | string | null; roster_include: boolean | null; created_at: string };
-const PERSON_SETTINGS_COLUMNS = "id, user_id, works_as, availability, work_type, also_allowed, leader_setting, cover_positions, soft_min_h, soft_max_h, full_time, full_time_min_h, roster_include, created_at";
+const PERSON_SETTINGS_COLUMNS = "id, user_id, works_as, availability, usual_shift, work_type, also_allowed, leader_setting, cover_positions, soft_min_h, soft_max_h, full_time, full_time_min_h, roster_include, created_at";
 const personSettingsOf = (r: PersonSettingsDbRow): PersonSettingsRow => ({
-  userId: r.user_id, worksAs: r.works_as ?? null, availability: isPersonAvailability(r.availability) ? r.availability : null, workType: r.work_type, alsoAllowed: r.also_allowed ?? [], leaderSetting: r.leader_setting, coverPositions: r.cover_positions ?? [],
+  usualShift: validUsualShift(r.usual_shift) ? r.usual_shift : null, userId: r.user_id, worksAs: r.works_as ?? null, availability: isPersonAvailability(r.availability) ? r.availability : null, workType: r.work_type, alsoAllowed: r.also_allowed ?? [], leaderSetting: r.leader_setting, coverPositions: r.cover_positions ?? [],
   softMinH: num(r.soft_min_h), softMaxH: num(r.soft_max_h), fullTime: r.full_time === true, fullTimeMinH: num(r.full_time_min_h), rosterInclude: r.roster_include,
 });
 

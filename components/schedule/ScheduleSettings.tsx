@@ -74,7 +74,7 @@ export function ScheduleSettings({ view, initialStructureError = null, initialSa
       ) : null}
       {v.perms.people ? (
         <Section id="staff" title={t("schedule.settings.staff.title")} count={t("schedule.settings.count", { n: v.members.length })} locked={!!dirty.staff}>
-          <StaffSettings locationId={v.locationId} members={v.members} livePositionIds={v.livePositionIds} positions={v.positions} names={v.names} rolesKnown={v.positionRolesKnown ?? false} initialPerson={initialPerson} onDirty={mark("staff")} />
+          <StaffSettings shiftTypes={v.shiftTypes ?? []} locationId={v.locationId} members={v.members} livePositionIds={v.livePositionIds} positions={v.positions} names={v.names} rolesKnown={v.positionRolesKnown ?? false} initialPerson={initialPerson} onDirty={mark("staff")} />
         </Section>
       ) : null}
       {v.perms.presence ? (

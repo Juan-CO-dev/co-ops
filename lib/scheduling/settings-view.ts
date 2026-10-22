@@ -1,3 +1,5 @@
+import { guessUsualShift } from "./usual-shift-shared";
+import { shiftTypesOf } from "./structure-shared";
 /**
  * `loadScheduleSettings` — the schedule SETTINGS page's one loader (Scheduling Phase 2, chunk F, Task 24). Server-only,
  * service role, read-only.
@@ -102,6 +104,7 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
     }
   }
   const members: SettingsMember[] = perms.people ? inputs.members.map((m) => ({
+    suggestedUsualShift: guessUsualShift(inputs.punches, { userId: m.userId, asOf: today, shiftTypes: shiftTypesOf(live) }),
     userId: m.userId, name: m.name, role: m.role, settings: latest.get(m.userId) ?? null,
     includeOffered: !(canWorkAs(m.role) && latest.get(m.userId)?.worksAs) && live.roster.excludedRoles.includes(m.role), suggestedPrimary: suggestions[m.userId] ?? null,
     settingsId: latestRow.get(m.userId)?.id ?? null, editable: personSettingsSubjectRefusal(actor, { userId: m.userId, role: m.role }) === null,
@@ -111,7 +114,7 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
   const names: Record<string, string> = Object.fromEntries([...inputs.members.map((m) => [m.userId, m.name] as const), ...presencePeople.map((p) => [p.userId, p.name] as const)]);
   const dates = presenceDates(today);
   return {
-    state: "ready", locationId, today, dates, perms,
+    state: "ready", locationId, today, dates, perms, shiftTypes: perms.people ? shiftTypesOf(live) : [],
     structure: perms.structure ? { id: inputs.structure.source === "saved" ? inputs.structure.id : null, source: inputs.structure.source, value: live } : null,
     closing: { measuredMinutes: inputs.closing.basis === "measured" ? inputs.closing.minutes : null, samples: inputs.closing.samples },
     stationAdvisory: advisory, positions, livePositionIds: Object.keys(live.positions).sort(), timeProvenance, positionRolesKnown: rolesKnown, names, members, presencePeople,

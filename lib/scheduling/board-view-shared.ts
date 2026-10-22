@@ -325,6 +325,9 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
   const money = src.perms.canSeeMoney;
   const shifts = week.shifts.filter((sh) => sh.date === date);
   const notes: NarrativeLine[] = [];
+  for (const p of Object.values(week.people).sort((a, b) => a.userId < b.userId ? -1 : 1)) {
+    if (p.usualShift?.deletedTypeId) notes.push({ key: "schedule.note.usual_shift_deleted", params: { userId: p.userId, typeId: p.usualShift.deletedTypeId } });
+  }
   if (ctx?.inputs.demandKind === "no_history") notes.push({ key: "schedule.note.no_history" });
   if (ctx?.need.shapeNote === "zero_demand") notes.push({ key: "schedule.note.zero_demand" });
   if (ctx?.need.shapeNote === "zero_profile") notes.push({ key: "schedule.note.zero_profile" });

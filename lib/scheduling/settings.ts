@@ -1,3 +1,5 @@
+import { validUsualShift, type UsualShift } from "./usual-shift-shared";
+import { shiftTypesOf } from "./structure-shared";
 /**
  * THE SCHEDULING SETTINGS WRITERS — structure, shop switch + wage estimates, person settings, budgets (set / accept /
  * keep the suggestion), day-type overrides, pins (Scheduling Phase 2, Task 17). Server-only, service role, every write
@@ -88,6 +90,7 @@ export async function saveShopSettings(deps: ScheduleDeps, args: {
 export interface PersonSettingsInput {
   /** Missing availability clears to null: this is a full-row writer guarded by expectedId, not a partial patch. */
   availability?: PersonAvailability | null;
+  usualShift?: UsualShift | null;
   worksAs?: WorksAsRole | null;
   userId: string; workType: "boh" | "foh" | "management" | null; alsoAllowed: Array<"boh" | "foh">; leaderSetting: "opens" | "closes" | "mix" | null;
   coverPositions: string[]; softMinH: number | null; softMaxH: number | null; fullTime: boolean; fullTimeMinH: number | null; rosterInclude: boolean | null;
@@ -102,7 +105,7 @@ export interface PersonSettingsInput {
 export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput; expectedId: string | null }): Promise<Record<string, unknown>> {
   await gate(deps.service, args.actor, args.locationId, "person_settings");
   const raw = args.settings;
-  if (!raw || (raw.availability !== undefined && !isPersonAvailability(raw.availability)) || typeof raw.userId !== "string" || !UUID.test(raw.userId) || !Array.isArray(raw.coverPositions) || !Array.isArray(raw.alsoAllowed)
+  if (!raw || (raw.usualShift !== undefined && !validUsualShift(raw.usualShift)) || (raw.availability !== undefined && !isPersonAvailability(raw.availability)) || typeof raw.userId !== "string" || !UUID.test(raw.userId) || !Array.isArray(raw.coverPositions) || !Array.isArray(raw.alsoAllowed)
     || !raw.coverPositions.every((x) => typeof x === "string" && UUID.test(x)) || (args.expectedId !== null && typeof args.expectedId !== "string")) {
     throw new ScheduleError("invalid_payload");
   }
@@ -119,6 +122,10 @@ export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: Pe
   if (!canWorkAs(role)) s.worksAs = null;
   const overrideRefusal = worksAsRefusal(role, s.worksAs);
   if (overrideRefusal) throw new ScheduleError(overrideRefusal);
+  if (s.usualShift) {
+    const live = await loadLiveStructure(deps.service, args.locationId);
+    if (!shiftTypesOf(live.structure).some((t) => t.id === s.usualShift!.typeId)) throw new ScheduleError("invalid_payload");
+  }
   await refusePositionRank(deps.service, args.locationId, role, s);
   const r = await guardedRpc(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId }));
   return logPersonSettings(args.actor, args.locationId, s.userId, r);

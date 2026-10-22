@@ -115,6 +115,7 @@ export interface GeneratorOutput {
 
 function toRulePerson(p: SchedPerson): RulePerson {
   return {
+    ...(p.usualShift ? { usualShift: p.usualShift, workModes: p.workModes } : {}),
     userId: p.userId, role: p.role, activeMember: p.activeMember, workType: p.workType, alsoAllowed: [...p.alsoAllowed].sort(), leaderSetting: p.leaderSetting,
     coverPositions: [...p.coverPositions], salaried: p.salaried, presenceOnly: p.presenceOnly, softMinH: p.softMinH, softMaxH: p.softMaxH,
     availability: Object.fromEntries(Object.keys(p.availability).sort().map((d) => [d, p.availability[d] ?? null])),

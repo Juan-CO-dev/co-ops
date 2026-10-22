@@ -235,7 +235,7 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
   const { people } = toSchedPeople({
     members: inputs.members.map((m) => ({ userId: m.userId, role: m.role, active: true })),
     excludedUserIds: [...excluded],
-    settings: inputs.personSettings, patterns, dates, structure: s,
+    settings: inputs.personSettings, patterns, dates, structure: s, punches: inputs.punches, asOf: inputs.asOf,
     shopDay: { fromQ: s.shopDay.prepStartQ, toQ: s.shopDay.outLatestQ },
     wages: { byUserCents: inputs.wages.byUserCents, estimateHourlyCents: inputs.shopSettings.estimatedHourlyCents }, skills,
   });

@@ -8157,5 +8157,14 @@
   "recipes.error.ambiguous_output": "Esta receta tiene más de un producto resultante coincidente. Vuelve a cargarla y revisa lo que produce."
 ,
   "schedule.error.structure_shift_identity": "Tipo de turno {number}: Dos tipos de turno tienen la misma identidad — elimina uno y agrégalo de nuevo.",
-  "schedule.settings.advisory.shift_station_removed": "{shiftType}: {positionId} ya no es una estación con personal. Elimínala de este tipo de turno."
+  "schedule.settings.advisory.shift_station_removed": "{shiftType}: {positionId} ya no es una estación con personal. Elimínala de este tipo de turno.",
+  "schedule.settings.staff.usual_shift": "Turno habitual",
+  "schedule.settings.staff.usual_shift_guess": "Estimado con Toast: {name}, {from}–{to}",
+  "schedule.settings.staff.usual_shift_deleted": "Se eliminó el tipo de turno {typeId}. Elige otro tipo o usa la estimación.",
+  "schedule.settings.staff.usual_shift_type": "Tipo de turno",
+  "schedule.settings.staff.usual_shift_times": "Usar su propio horario",
+  "schedule.settings.staff.usual_shift_flex": "Esta entrada está fuera de la flexibilidad del tipo de turno.",
+  "schedule.settings.staff.usual_shift_clear": "Usar la estimación",
+  "schedule.settings.staff.usual_shift_set": "Definir turno habitual",
+  "schedule.note.usual_shift_deleted": "{userId}: se eliminó su tipo de turno habitual {typeId}; se usa la estimación de Toast si está disponible."
 }

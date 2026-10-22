@@ -1,3 +1,4 @@
+import type { ResolvedUsualShift } from "./usual-shift-shared";
 /**
  * THE VALIDATION CONTEXT — what `checkScheduleRules` judges against, and its persisted SNAPSHOT
  * (Scheduling Phase 2, r3 P2-4 + r4 P2; plan "Original validation vs current inputs").
@@ -22,6 +23,8 @@ export const WORK_TYPES: readonly WorkType[] = ["boh", "foh", "management"];
 export interface AvailabilityWindow { fromQ: number; toQ: number; source: "toast_pattern" | "insufficient_history" | "manager_set" }
 
 export interface RulePerson {
+  usualShift?: ResolvedUsualShift;
+  workModes?: Record<string, "works" | "if_needed" | "off" | null>;
   userId: string;
   role: RoleCode;
   /** An ACTIVE member of the shop (user_locations.active × users.active). */

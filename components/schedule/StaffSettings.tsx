@@ -10,6 +10,9 @@
  * Off-floor accounts can choose a separate floor role per shop. Save posts `{action: person}` (no step-up; audited).
  * A drawer with unsaved work stays open (D10).
  */
+import { UsualShiftEditor } from "./UsualShiftEditor";
+import { validUsualShift } from "@/lib/scheduling/usual-shift-shared";
+import type { ShiftType } from "@/lib/scheduling/structure-shared";
 import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
@@ -36,8 +39,9 @@ const newAvailability = (): NonNullable<PersonSettingsRow["availability"]> => ({
 
 type PositionLabels = Record<string, { name: string; nameEs: string | null; role?: PositionRole; allowedRoles?: RoleCode[] }>;
 
-export function StaffSettings({ locationId, members, positions, livePositionIds, names, rolesKnown = false, initialPerson = null, onDirty }: {
+export function StaffSettings({ shiftTypes = [], locationId, members, positions, livePositionIds, names, rolesKnown = false, initialPerson = null, onDirty }: {
   locationId: string;
+  shiftTypes?: readonly ShiftType[];
   members: SettingsMember[];
   positions: PositionLabels;
   livePositionIds: string[];
@@ -66,7 +70,7 @@ export function StaffSettings({ locationId, members, positions, livePositionIds,
               <span aria-hidden="true" className="text-co-text-dim">{isOpen ? "⌃" : "⌄"}</span>
             </button>
             {isOpen ? (
-              <PersonEditor locationId={locationId} member={m} positions={positions} livePositionIds={livePositionIds} names={names} rolesKnown={rolesKnown}
+              <PersonEditor shiftTypes={shiftTypes} locationId={locationId} member={m} positions={positions} livePositionIds={livePositionIds} names={names} rolesKnown={rolesKnown}
                 onDirty={(d) => { setDirtyOf(d ? m.userId : null); onDirty?.(d); }} />
             ) : null}
           </li>
@@ -76,8 +80,9 @@ export function StaffSettings({ locationId, members, positions, livePositionIds,
   );
 }
 
-function PersonEditor({ locationId, member, positions, livePositionIds, names, rolesKnown, onDirty }: {
+function PersonEditor({ shiftTypes, locationId, member, positions, livePositionIds, names, rolesKnown, onDirty }: {
   locationId: string;
+  shiftTypes: readonly ShiftType[];
   member: SettingsMember;
   positions: PositionLabels;
   livePositionIds: string[];
@@ -110,7 +115,7 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
   const allDaysOff = !!s.availability && WEEKDAYS.every((day) => s.availability![day].mode === "off");
   async function save() {
     if (allDaysOff) return;
-    if (!isPersonAvailability(s.availability ?? null)) { setError("invalid_payload"); return; }
+    if (!validUsualShift(s.usualShift ?? null) || !isPersonAvailability(s.availability ?? null)) { setError("invalid_payload"); return; }
     setBusy(true); setError(null);
     const r = await post("/api/schedule", personBody(locationId, s, base.baseId));
     setBusy(false);
@@ -178,6 +183,7 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
           <button type="button" className={GHOST} onClick={() => edit((x) => { x.availability = null; })}>{t("schedule.settings.staff.availability_clear")}</button>
         </> : <button type="button" className={GHOST} onClick={() => edit((x) => { x.availability = newAvailability(); })}>{t("schedule.settings.staff.availability_set")}</button>}
       </fieldset>
+      <UsualShiftEditor value={s.usualShift ?? null} guess={member.suggestedUsualShift ?? null} types={shiftTypes} onChange={(v) => edit((x) => { x.usualShift = v; })} />
       <div className="grid gap-1" role="radiogroup" aria-labelledby={`${id}-wt`}>
         <span id={`${id}-wt`} className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("schedule.settings.staff.work_type")}</span>
         <div className="flex flex-wrap gap-x-3">
@@ -267,7 +273,7 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
       {allDaysOff ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t("schedule.settings.staff.availability_all_off")}</p> : null}
       {error ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(scheduleErrorKey(error))}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={BUTTON} disabled={busy || !dirty || allDaysOff || !isPersonAvailability(s.availability ?? null) || problems.some((pr) => pr.code === "work_type")} onClick={save}>{t("schedule.settings.save")}</button>
+        <button type="button" className={BUTTON} disabled={busy || !dirty || allDaysOff || !validUsualShift(s.usualShift ?? null) || !isPersonAvailability(s.availability ?? null) || problems.some((pr) => pr.code === "work_type")} onClick={save}>{t("schedule.settings.save")}</button>
         {dirty ? <span className="text-xs font-bold text-co-warning-text">{t("schedule.settings.unsaved")}</span> : null}
       </div>
       </fieldset>

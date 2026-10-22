@@ -8157,5 +8157,14 @@
   "recipes.error.ambiguous_output": "This recipe has more than one matching output. Reload and review its outputs."
 ,
   "schedule.error.structure_shift_identity": "Shift type {number}: Two shift types have the same identity — remove one and add it again.",
-  "schedule.settings.advisory.shift_station_removed": "{shiftType}: {positionId} is no longer a staffed station. Remove it from this shift type."
+  "schedule.settings.advisory.shift_station_removed": "{shiftType}: {positionId} is no longer a staffed station. Remove it from this shift type.",
+  "schedule.settings.staff.usual_shift": "Usual shift",
+  "schedule.settings.staff.usual_shift_guess": "Guessed from Toast: {name}, {from}–{to}",
+  "schedule.settings.staff.usual_shift_deleted": "Shift type {typeId} was removed. Choose another type or use the guess.",
+  "schedule.settings.staff.usual_shift_type": "Shift type",
+  "schedule.settings.staff.usual_shift_times": "Use their own times",
+  "schedule.settings.staff.usual_shift_flex": "This start is outside the shift type's start flexibility.",
+  "schedule.settings.staff.usual_shift_clear": "Use the guess",
+  "schedule.settings.staff.usual_shift_set": "Set usual shift",
+  "schedule.note.usual_shift_deleted": "{userId}: usual shift type {typeId} was removed; using the Toast guess when available."
 }

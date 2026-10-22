@@ -1,3 +1,5 @@
+import type { UsualShiftGuess } from "./usual-shift-shared";
+import type { ShiftType } from "./structure-shared";
 /**
  * THE SCHEDULE SETTINGS VIEW — pure (Scheduling Phase 2, chunk F, Task 24). The view-model the settings page renders,
  * the helpers its editors share (quarter ↔ clock text, the TS structure validator naming the key BEFORE any post, the
@@ -31,6 +33,7 @@ export interface SettingsPerms {
 }
 
 export interface SettingsMember {
+  suggestedUsualShift?: UsualShiftGuess | null;
   userId: string;
   name: string;
   role: RoleCode;
@@ -55,6 +58,7 @@ export interface SettingsMember {
 export interface SettingsPin { id: string; date: string; userId: string; startQ: number; endQ: number; positions: string[]; kind: "presence" | "added" }
 
 export interface ScheduleSettingsView {
+  shiftTypes?: readonly ShiftType[];
   locationId: string;
   today: string;
   /** The dates presence / Add to schedule may target (today on, two weeks). */
