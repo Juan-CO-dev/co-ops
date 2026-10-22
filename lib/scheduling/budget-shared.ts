@@ -19,7 +19,7 @@ import { canonicalJson, digest64, type DayNeed } from "./context-shared";
 import type { DemandResult } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import { buildDayNeed, type NeedCatering } from "./need-shared";
-import type { CrewType, ScheduleStructure } from "./structure-shared";
+import { scheduleEngine, shiftTypesOf, type CrewType, type ScheduleStructure } from "./structure-shared";
 import { addDays, isoDowOf, isYmd, weekDays } from "./time-shared";
 
 export const BUDGET_LINE_KEYS = [
@@ -156,11 +156,19 @@ export interface NeedDayInput { dayType: CrewType; scheduledOutQ: number; hourly
 
 /** The structure delta of one date: need hours under the LIVE structure − under the reference revision's, both over the target forecast. */
 export function structureDeltaHours(input: { live: ScheduleStructure; ref: ScheduleStructure; day: NeedDayInput }): number {
-  return needHours(buildDayNeed({ structure: input.live, ...input.day }).need) - needHours(buildDayNeed({ structure: input.ref, ...input.day }).need);
+  const hours = (s: ScheduleStructure) => scheduleEngine(s) === "crew"
+    ? crewTypeHours(s, input.day.dayType)
+    : needHours(buildDayNeed({ structure: s, ...input.day }).need);
+  return hours(input.live) - hours(input.ref);
 }
 
 /** The hours of the structural minimum crew that day: the line floor (an all-zero forecast shapes to it) + BOH + closing crew; no catering. */
+export function crewTypeHours(s: ScheduleStructure, dayType: CrewType): number {
+  return shiftTypesOf(s).reduce((n, t) => n + t.headcount[dayType] * (t.toQ - t.fromQ) / 4, 0);
+}
+
 export function minCrewHours(s: ScheduleStructure, dayType: CrewType, scheduledOutQ: number): number {
+  if (scheduleEngine(s) === "crew") return crewTypeHours(s, dayType);
   return needHours(buildDayNeed({ structure: s, dayType, scheduledOutQ, hourlyCents: new Array<number>(24).fill(0), demandKind: "ok", catering: [] }).need);
 }
 

@@ -31,7 +31,7 @@ import { useBoardLine } from "./use-board-line";
 import { ShiftTypesEditor } from "./ShiftTypesEditor";
 import { CREW_CATERING_DEFAULTS, scheduleEngine } from "@/lib/scheduling/structure-shared";
 
-export const CREW_ENGINE_SELECTABLE = false;
+export const CREW_ENGINE_SELECTABLE = true;
 
 const FLOOR_ROLES: RoleCode[] = ["trainee", "employee", "trainer", "key_holder", "shift_lead", "agm", "gm", "moo", "owner"];
 const ALL_ROLES: RoleCode[] = ["cgs", "owner", "moo", "gm", "agm", "catering_mgr", "prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "trainer", "employee", "trainee"];

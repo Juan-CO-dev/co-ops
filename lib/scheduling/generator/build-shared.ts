@@ -59,6 +59,8 @@ export interface BuildDayInput {
 export interface Pin { id: string; date: string; userId: string; startQ: number; endQ: number; positions: string[]; kind: "presence" | "added" }
 
 export interface HeadSnapshot {
+  /** Original day contexts, including crew edit tombstones and notes. */
+  dayContexts?: RuleContext["days"];
   revisionId: string;
   shifts: Shift[];
   days: DayRecord[];

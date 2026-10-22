@@ -26,8 +26,10 @@ import { shiftKey, type Reason, type ShiftReasons } from "./reasons-shared";
 import { MOD, approvalRefusal, modCountsOn, shiftCountsAsMod, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
 import { strengthWindows, teamStrength, type WindowStrength } from "./strength-shared";
 import type { CrewType, PositionRole } from "./structure-shared";
-import { positionIds, scheduleEngine } from "./structure-shared";
+import { positionIds, scheduleEngine, shiftTypesOf } from "./structure-shared";
 import { Q_PER_HOUR, weekDays } from "./time-shared";
+import { crewOpenItems } from "./crew-gap-verifier-shared";
+import { CREW_REJECTION_CODES } from "./crew-contracts-shared";
 
 export interface BoardPerms {
   canSeeMoney: boolean;
@@ -44,6 +46,7 @@ export interface BoardPerms {
 }
 
 export interface BoardWeekSource {
+  historicalCrewDates?: string[];
   headRevisionId: string;
   approvedRevisionId: string | null;
   edited: boolean;
@@ -121,6 +124,7 @@ export interface SegmentView {
   modFromQ?: number | null;
 }
 export interface ShiftView {
+  crewType?: { id: string | null; name: string | null };
   ref: { date: string; userId: string; startQ: number };
   startQ: number;
   endQ: number;
@@ -148,7 +152,13 @@ export interface PersonRowView {
   profile: Array<{ positionId: string; band: SchedSkillBand }>;
 }
 
+export interface OpenShiftView {
+  typeId: string; name: string; fromQ: number; toQ: number; missing: number; reasons: NarrativeLine[];
+}
+export interface ShortStretchView { positionId: string; fromQ: number; toQ: number; missing: number }
 export interface DayView {
+  /** Absent on historical station boards, preserving their serialized contract. */
+  crew?: { openShifts: OpenShiftView[]; shortStretches: ShortStretchView[] };
   date: string;
   locked: boolean;
   inherited: boolean;
@@ -198,6 +208,7 @@ export interface BoardView {
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const isHourly = (p: RulePerson | undefined) => !!p && !p.salaried && !p.presenceOnly;
+const crewNoteReasons = new Set<string>([...CREW_REJECTION_CODES, "pin_blocked_by_manual", "manual_person_unavailable", "budget_displaced_essential", "mod_reserved", "no_fit"]);
 
 // ─── Gaps ────────────────────────────────────────────────────────────────────
 
@@ -297,7 +308,9 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
     const s = ctx?.structure;
     const shifts = mine.map((sh): ShiftView => {
       const r = storedReasons(week.reasons[shiftKey(sh.date, sh.userId, sh.startQ)]);
+      const meta = ctx?.crew?.shifts.find((m) => m.userId === sh.userId && m.startQ === sh.startQ);
       return {
+        ...(ctx && scheduleEngine(ctx.structure) === "crew" ? { crewType: { id: meta?.typeId ?? null, name: shiftTypesOf(ctx.structure).find((t) => t.id === meta?.typeId)?.name ?? null } } : {}),
         ref: { date: sh.date, userId: sh.userId, startQ: sh.startQ }, startQ: sh.startQ, endQ: sh.endQ, closingManager: sh.closingManager, flex: sh.flex, pinned: sh.pinned, locked,
         segments: sh.segments.map((g, i) => {
           const mf = modFromQOf(p, ctx, g, sh);
@@ -330,12 +343,16 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
   const money = src.perms.canSeeMoney;
   const shifts = week.shifts.filter((sh) => sh.date === date);
   const notes: NarrativeLine[] = [];
+  if (week.historicalCrewDates?.includes(date)) notes.push({ key: "schedule.note.crew_history_preserved" });
   if (ctx && scheduleEngine(ctx.structure) === "crew") for (const note of ctx.crew?.notes ?? []) {
     const params: Record<string, string | number> = {};
     for (const [key, value] of Object.entries(note.params)) if (typeof value === "string" || typeof value === "number") params[key] = value;
+    if (Array.isArray(note.params.userIds)) params.people = note.params.userIds.map((id) => src.names[String(id)] ?? String(id)).join(", ");
     if (note.userId) params.userId = note.userId;
     if (note.positionId) params.positionId = note.positionId;
-    notes.push({ key: `schedule.note.${note.code}`, params });
+    notes.push({ key: note.code === "crew_block_skipped" && typeof params.reason === "string" && crewNoteReasons.has(params.reason)
+      ? `schedule.crew.rejection.${params.reason}` : `schedule.note.${note.code}`, params });
+    if (params.people && note.code !== "over_soft_max") notes.push({ key: "schedule.crew.note_people", params: { count: params.count ?? 1, people: params.people } });
   }
   if (showDeletedUsualShifts) for (const p of Object.values(week.people).sort((a, b) => a.userId < b.userId ? -1 : 1)) {
     if (p.usualShift?.deletedTypeId) notes.push({ key: "schedule.note.usual_shift_deleted", params: { userId: p.userId } });
@@ -343,7 +360,25 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
   if (ctx?.inputs.demandKind === "no_history") notes.push({ key: "schedule.note.no_history" });
   if (ctx?.need.shapeNote === "zero_demand") notes.push({ key: "schedule.note.zero_demand" });
   if (ctx?.need.shapeNote === "zero_profile") notes.push({ key: "schedule.note.zero_profile" });
+  // A failed search is still an opening. Certificates explain the evidence; they are
+  // not the inventory of missing seats, which comes from the saved type/shift context.
+  const openShifts: OpenShiftView[] = ctx && scheduleEngine(ctx.structure) === "crew"
+    ? crewOpenItems(date, { locationId: src.locationId, weekStart: src.weekStart, shifts: week.shifts, days: week.days, gaps: week.gaps }, ruleContext(src, week)).map((item) => {
+      const certified = week.gaps.flatMap((g) => g.date === date && g.cause === "crew_shortfall" && g.certificate.kind === "open_shifts" ? g.certificate.items : [])
+        .find((i) => i.typeId === item.typeId);
+      return { typeId: item.typeId, name: shiftTypesOf(ctx.structure).find((t) => t.id === item.typeId)?.name ?? item.typeId,
+        fromQ: item.fromQ, toQ: item.toQ, missing: item.missing,
+        reasons: certified ? [...new Set(certified.rejected.flatMap((r) => r.codes))].sort(cmp).map((code) => ({ key: `schedule.crew.rejection.${code}` }))
+          : [{ key: "schedule.gap.certificate.unresolved_search" }],
+      };
+    }) : [];
   const base = {
+    ...(ctx && scheduleEngine(ctx.structure) === "crew" ? { crew: {
+      openShifts,
+      shortStretches: week.gaps.flatMap((g): ShortStretchView[] => g.date === date && g.positionId && g.cause === "crew_shortfall" && g.certificate.kind === "station_short"
+        ? [{ positionId: g.positionId, fromQ: g.fromQ, toQ: g.toQ, missing: g.certificate.required - g.certificate.assigned }] : [])
+        .sort((a, b) => cmp(a.positionId, b.positionId) || a.fromQ - b.fromQ),
+    } } : {}),
     date, locked: date < src.today, inherited: !!record?.inherited, dayType: ctx?.dayType ?? null, demandKind: ctx?.inputs.demandKind ?? null,
     rows: rowsFor(src, week, date, ctx, weekQ, wages), notes, gaps: gaps.filter((g) => g.date === date),
   };

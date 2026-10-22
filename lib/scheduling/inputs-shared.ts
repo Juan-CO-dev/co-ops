@@ -70,6 +70,8 @@ export interface StoredWeek {
   head: StoredHead | null;
   /** An 'edited' revision is newer than the newest generated / regenerated one (J12). */
   edited: boolean;
+  /** Edited origins without crew provenance are retained, including after regeneration. */
+  historicalEditedDates?: string[];
 }
 
 export interface SchedulingInputs {
@@ -191,6 +193,13 @@ export function overrideFor(rows: readonly DayTypeRow[], date: string): { id: st
   return mine[0] ? { id: mine[0].id, dayType: mine[0].dayType } : null;
 }
 
+/** Missing edit provenance cannot safely be reconstructed from changed shift keys. */
+export function historicalCrewDates(week: StoredWeek | undefined): string[] {
+  if (!week?.head) return [];
+  if (week.historicalEditedDates !== undefined) return week.historicalEditedDates;
+  return week.edited ? week.head.days.filter((d) => !week.head!.context.days[d.date]?.crew).map((d) => d.date) : [];
+}
+
 /** The head as the generator's snapshot (null when the week has no revision). */
 export function headSnapshotFor(week: StoredWeek | undefined): HeadSnapshot | null {
   const h = week?.head;
@@ -198,6 +207,7 @@ export function headSnapshotFor(week: StoredWeek | undefined): HeadSnapshot | nu
   return {
     revisionId: h.revision.id, shifts: h.shifts, days: h.days, gaps: h.gaps, reasons: h.reasons,
     closingWindowByDate: h.context.closingWindowByDate ?? {},
+    ...(Object.values(h.context.days).some((d) => d.crew) ? { dayContexts: h.context.days } : {}),
   };
 }
 
@@ -213,7 +223,8 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
   const s = inputs.overtimeH === null ? inputs.structure.structure
     : { ...inputs.structure.structure, limits: { ...inputs.structure.structure.limits, overtimeH: inputs.overtimeH } };
   const dates = weekDays(weekStart);
-  const buildDays = (opts.buildDays ?? dates).filter((d) => dates.includes(d) && d >= opts.today);
+  const preserved = scheduleEngine(s) === "crew" ? historicalCrewDates(inputs.weeks[weekStart]) : [];
+  const buildDays = (opts.buildDays ?? dates).filter((d) => dates.includes(d) && d >= opts.today && !preserved.includes(d));
   const forecastOf = (date: string): DayForecast | null => (inputs.demand.kind === "unavailable" ? null : inputs.demand.days.find((d) => d.date === date) ?? null);
   const closing = resolveClosingMinutes({ override: s.limits.closingMinutesOverride, measured: inputs.closing });
   const outQ = scheduledOut(s, closing.minutes);

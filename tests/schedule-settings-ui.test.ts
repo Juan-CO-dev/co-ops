@@ -127,6 +127,8 @@ describe("the structure editor", () => {
   it("every mockup section; crews as stacked cards (one per day type); managers' floor 32 h; limits incl. min shift 4 h; the closing line; labor target % + basis (Total labor)", async () => {
     const h = render(await view());
     const t = text(h);
+    expect(h).toContain('name="engine"');
+    expect(h).toContain('value="crew"');
     for (const k of ["shop_day", "day_types", "crews", "positions", "leadership", "managers", "limits", "catering", "labor", "roster"]) {
       expect(h, k).toContain(`data-structure-section="${k}"`);
       expect(t, k).toContain(en[`schedule.settings.section.${k}` as keyof typeof en]);

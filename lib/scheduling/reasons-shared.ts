@@ -58,7 +58,7 @@ export function shiftKey(date: string, userId: string, startQ: number): string {
 }
 
 export const NOTE_CODES = [
-  "crew_block_skipped", "usual_type_deleted", "over_soft_max", "crew_mod_start_mismatch",
+  "crew_block_skipped", "usual_type_deleted", "over_soft_max", "crew_mod_start_mismatch", "crew_history_preserved",
   "pairing_unmet", "unbudgeted_date", "no_history", "zero_demand", "zero_profile", "rush_moved",
   "cover_position_retired", "excluded_role_included", "salaried_block_skipped", "overtime_used", "budget_stopped", "waves_capped",
   // CC chunk C ruling 3: essential closer hours are exempt from the budget CAP but counted — named when they pass it.

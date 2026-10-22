@@ -20,6 +20,8 @@ import { boardView, type BoardSource, type BoardView, type PositionLabel } from 
 import { ruleContextFromSnapshot, type DayContext } from "./context-shared";
 import { ScheduleError } from "./errors-shared";
 import { loadScheduleShopSettings, loadSchedulingInputs } from "./inputs";
+import { historicalCrewDates } from "./inputs-shared";
+import { scheduleEngine } from "./structure-shared";
 import { effectiveScheduleRole } from "./works-as-shared";
 import { makeSkillLookup } from "./people-input-shared";
 import { adviseFromInputs, gate, type ScheduleDeps } from "./schedules";
@@ -131,6 +133,7 @@ export async function loadBoard(deps: ScheduleDeps, args: { actor: PeopleActor; 
     salariedWeeklyCents: inputs.shopSettings.estimatedSalariedWeeklyCents, forecastWeekCents,
     budget: budgetForDates(inputs.budget.entries, inputs.budget.rows, dates), suggestion, advisory,
     week: head && w ? {
+      ...(scheduleEngine(structure) === "crew" ? { historicalCrewDates: historicalCrewDates(w).filter((d) => d >= today) } : {}),
       headRevisionId: head.revision.id, approvedRevisionId: w.approvedRevisionId, edited: w.edited, structureVersionId: head.revision.structureVersionId,
       shifts: head.shifts, days: head.days, gaps: head.gaps, reasons: head.reasons, dayContexts, people, closingWindowByDate: head.context.closingWindowByDate,
     } : null,

@@ -228,6 +228,25 @@ export async function loadWeekHeads(service: SupabaseClient, locationId: string,
       gaps: gaps.map((g) => ({ date: g.business_date, code: g.code, positionId: g.position_id, fromQ: g.from_q, toQ: g.to_q, cause: g.cause, certificate: g.certificate } as DeclaredGap)),
       reasons, context: ruleContextFromSnapshot(ctx.context),
     };
+    // Edited revisions persist only their changed date. Resolve every inherited date from its
+    // original revision, so a second edit cannot erase an earlier day's tombstones or notes.
+    const hasCrewHistory = h.generator_version.startsWith("crew.") || Object.values(sw.head.context.days).some((d) => d.crew);
+    const missingOrigins = hasCrewHistory ? [...new Set(dayRows.filter((d) => !sw.head!.context.days[d.date] && d.originRevisionId).map((d) => d.originRevisionId!))] : [];
+    for (const originId of missingOrigins) {
+      const origin = await firstRow<{ context: unknown }>(service.from("schedule_revision_contexts").select("context").eq("revision_id", originId).limit(1));
+      if (!origin) throw new Error(`loadWeekHeads: origin ${originId} has no context`);
+      const original = ruleContextFromSnapshot(origin.context);
+      for (const d of dayRows.filter((d) => d.originRevisionId === originId && !sw.head!.context.days[d.date])) {
+        const day = original.days[d.date];
+        if (!day) throw new Error(`loadWeekHeads: origin ${originId} has no day ${d.date}`);
+        sw.head.context.days[d.date] = day;
+      }
+    }
+    const editedIds = new Set(revs.filter((r) => r.kind === "edited").map((r) => r.id));
+    const identified = dayRows.filter((d) => d.originRevisionId && editedIds.has(d.originRevisionId) && !sw.head!.context.days[d.date]?.crew).map((d) => d.date);
+    sw.historicalEditedDates = identified.length ? identified : sw.edited && !dayRows.some((d) => sw.head!.context.days[d.date]?.crew)
+      ? dayRows.map((d) => d.date) : [];
+
   }
   return out;
 }
