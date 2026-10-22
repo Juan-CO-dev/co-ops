@@ -1,7 +1,7 @@
 /** Replays every unchanged 0275 harness assertion under 0284, then exercises crew admission. Synthetic PGlite only. */
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { createRequire } from "node:module";
+import { createRequire, stripTypeScriptTypes } from "node:module";
 import { resolve } from "node:path";
 const read = (p) => readFileSync(p, "utf8");
 const require = createRequire(import.meta.url);
@@ -18,6 +18,16 @@ source = source.replace('  check(true, "0275 applied with every SQL guard");', `
   await refuses(() => db.exec(m0284), "0284: already applied", "0284 repeat apply");
   await db.exec("rollback");
   check(true, "0284 applied with every SQL guard");`);
+// Native TS imports need explicit URLs; keep the production comparator as the parity oracle.
+const orderUrl = pathToFileURL(resolve("lib/scheduling/order-shared.ts")).href;
+const shapesSource = read("lib/scheduling/shapes-shared.ts").replace('"./order-shared"', JSON.stringify(orderUrl));
+const { validCrewGapCertificateShape } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(shapesSource)).toString("base64")}`);
+const unicodePairs = [["", "\u{1F600}"], ["\uE000", "\u{1F600}"], ["\u{1F600}", "\uE000"], ["\uFFFF", "\u{10000}"], ["\u{10000}", "\uFFFF"]];
+const unicodeCases = unicodePairs.flatMap((ids) => [
+  { kind: "station_short", required: 2, assigned: 1, onShiftUserIds: ids },
+  { kind: "open_shifts", items: ids.map((id) => ({typeId:id,fromQ:40,toQ:60,required:1,placed:0,missing:1,rejected:[]})) },
+  { kind: "open_shifts", items: [{typeId:"mid",fromQ:40,toQ:60,required:1,placed:0,missing:1,rejected:ids.map(userId => ({userId,codes:["off"]}))}] },
+]);
 const extra = `
  {
   // Isolated week preserves every unchanged legacy assertion and its fixture counts.
@@ -42,6 +52,8 @@ const extra = `
     {...open.certificate,items:[item,{...item,typeId:"pm",fromQ:41}]},
     {...open.certificate,items:[{...item,rejected:[{userId:"b",codes:["off"]},{userId:"a",codes:["off"]}]}]}];
   for (const value of malformed) check(await shape(value) === false,"0284 malformed crew shape refused");
+  for (const [value, expected] of ${JSON.stringify(unicodeCases.map(value => [value, validCrewGapCertificateShape(value)]))})
+    check(await shape(value) === expected, "0284 Unicode ordering matches TS");
   const crewCtx = ctx(SA, dates, 10.5, crewWeek);
   for (const d of dates) Object.assign(crewCtx.days[d], {structure:{...crewCtx.days[d].structure,engine:"crew"},crew:{version:1,shifts:[],manualOverrides:[],notes:[]}});
   const args = {week:crewWeek,days:dates.map(d=>dayRec(d)),context:crewCtx};

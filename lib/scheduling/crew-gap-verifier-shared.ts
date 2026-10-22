@@ -1,3 +1,4 @@
+import { compareCodePoint } from "./order-shared";
 import { validCrewGapCertificateShape } from "./shapes-shared";
 import { canonicalJson, type DayContext, type RuleContext, type RulePerson } from "./context-shared";
 import type { CrewGapCertificate, CrewRejectionCode, OpenShiftItem } from "./crew-contracts-shared";
@@ -20,7 +21,7 @@ export function shiftCountsAsMod(shift: Shift, person: RulePerson, day: DayConte
 /** Candidates are the complete active, auto-schedulable roster, not a caller-supplied shortlist. */
 export function crewCandidates(day: DayContext, ctx: RuleContext): RulePerson[] {
   return Object.values(ctx.people).filter((p) => p.activeMember && !neverGenerated(p))
-    .sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
+    .sort((a, b) => compareCodePoint(a.userId, b.userId));
 }
 
 /** Conservative fixed-crew exclusions. Unknown policy/search failures deliberately have no proof. */
@@ -76,7 +77,7 @@ export function crewOpenItems(date: string, s: WeekSchedule, ctx: RuleContext): 
     if (placed >= required) return [];
     return [{ typeId: type.id, fromQ: type.fromQ, toQ: type.toQ, required, placed, missing: required - placed,
       rejected: crewCandidates(day, ctx).map((p) => ({ userId: p.userId, codes: crewCandidateRejections(p, type, date, s, ctx) })) }];
-  }).sort((a, b) => a.fromQ - b.fromQ || (a.typeId < b.typeId ? -1 : a.typeId > b.typeId ? 1 : 0));
+  }).sort((a, b) => a.fromQ - b.fromQ || compareCodePoint(a.typeId, b.typeId));
 }
 
 export function crewOpenGroups(date: string, s: WeekSchedule, ctx: RuleContext): Array<{ fromQ: number; toQ: number; items: OpenShiftItem[] }> {
@@ -100,7 +101,7 @@ export function crewStationShorts(date: string, positionId: string, s: WeekSched
     const onClock = shifts.filter((sh) => sh.startQ <= q && q < sh.endQ);
     const assigned = new Set(onClock.filter((sh) => sh.segments.some((seg) => seg.positionId === positionId && seg.startQ <= q && q < seg.endQ)).map((sh) => sh.userId)).size;
     if (required <= assigned) continue;
-    const certificate: StationEvidence = { kind: "station_short", required, assigned, onShiftUserIds: [...new Set(onClock.map((sh) => sh.userId))].sort() };
+    const certificate: StationEvidence = { kind: "station_short", required, assigned, onShiftUserIds: [...new Set(onClock.map((sh) => sh.userId))].sort(compareCodePoint) };
     const last = result[result.length - 1];
     if (last && last.toQ === q && canonicalJson(last.certificate) === canonicalJson(certificate)) last.toQ++;
     else result.push({ fromQ: q, toQ: q + 1, certificate });

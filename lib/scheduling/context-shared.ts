@@ -1,5 +1,5 @@
 import type { ResolvedUsualShift } from "./usual-shift-shared";
-import type { CrewDaySnapshot } from "./crew-contracts-shared";
+import { assertCrewDayFits, type CrewDaySnapshot } from "./crew-contracts-shared";
 /**
  * THE VALIDATION CONTEXT — what `checkScheduleRules` judges against, and its persisted SNAPSHOT
  * (Scheduling Phase 2, r3 P2-4 + r4 P2; plan "Original validation vs current inputs").
@@ -172,6 +172,9 @@ export function jsonbTextBytes(v: unknown): number {
 
 /** The context a revision will store fits, well under the CHECK — else `context_too_large` (en + es), before any RPC. */
 export function assertContextFits(ctx: unknown): { bytes: number } {
+  if (ctx && typeof ctx === "object" && "days" in ctx) {
+    for (const day of Object.values((ctx as RuleContext).days ?? {})) if (day.crew) assertCrewDayFits(day.crew);
+  }
   const bytes = jsonbTextBytes(ctx);
   if (bytes > CONTEXT_SAFE_MAX_BYTES) throw new ScheduleError("context_too_large", { params: { bytes, max: CONTEXT_SAFE_MAX_BYTES } });
   return { bytes };
@@ -182,6 +185,7 @@ export function assertContextFits(ctx: unknown): { bytes: number } {
  * quick comparison only, never a substitute for the snapshot.
  */
 export function toContextSnapshot(ctx: RuleContext): { context: RuleContext; json: string; digest: string; bytes: number } {
+  for (const day of Object.values(ctx.days)) if (day.crew) assertCrewDayFits(day.crew);
   const json = canonicalJson(ctx);
   return { context: JSON.parse(json) as RuleContext, json, digest: digest64(json), bytes: new TextEncoder().encode(json).length };
 }
@@ -207,7 +211,7 @@ export type AdvisoryCode =
 export interface AdvisoryItem { code: AdvisoryCode; date: string | null; userId: string | null; params: Record<string, string | number | null> }
 
 const sameJson = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
-const memberSettings = ({ availability: _availability, usualShift, ...rest }: RulePerson) => ({
+const memberSettings = ({ availability: _availability, workModes: _workModes, usualShift, ...rest }: RulePerson) => ({
   ...rest,
   ...(usualShift?.source === "manager" ? { usualShift: usualShift.value } : usualShift?.deletedTypeId ? { usualShift: { deletedTypeId: usualShift.deletedTypeId } } : {}),
 });
@@ -234,7 +238,7 @@ export function contextAdvisory(snapshot: RuleContext, live: RuleContext): Advis
     const { availability: na } = now;
     if (!sameJson(memberSettings(was), memberSettings(now))) out.push({ code: "member_changed", date: null, userId: id, params: {} });
     for (const d of snapshot.dates) {
-      if (!sameJson(wa[d] ?? "absent", na[d] ?? "absent")) out.push({ code: "availability_changed", date: d, userId: id, params: {} });
+      if (!sameJson(wa[d] ?? "absent", na[d] ?? "absent") || (was.workModes?.[d] ?? null) !== (now.workModes?.[d] ?? null)) out.push({ code: "availability_changed", date: d, userId: id, params: {} });
     }
   }
   for (const d of snapshot.dates) {

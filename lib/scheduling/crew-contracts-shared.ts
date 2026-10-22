@@ -1,3 +1,4 @@
+import { ScheduleError } from "./errors-shared";
 /** Persisted crew-engine evidence. Historical station revisions omit these fields. */
 import type { ShiftRef } from "./edit-shared";
 import type { BoardNote } from "./reasons-shared";
@@ -43,3 +44,12 @@ export interface OpenShiftItem {
 export type CrewGapCertificate =
   | { kind: "open_shifts"; items: OpenShiftItem[] }
   | { kind: "station_short"; required: number; assigned: number; onShiftUserIds: string[] };
+
+/** Evidence is bounded per day; never discard edits or notes to make a revision fit. */
+export const CREW_MAX_MANUAL_OVERRIDES_PER_DAY = 5;
+export const CREW_MAX_NOTES_PER_DAY = 32;
+export function assertCrewDayFits(day: CrewDaySnapshot): void {
+  for (const [field, max] of [["manualOverrides", CREW_MAX_MANUAL_OVERRIDES_PER_DAY], ["notes", CREW_MAX_NOTES_PER_DAY]] as const) {
+    if (day[field].length > max) throw new ScheduleError("crew_snapshot_limit", { params: { field, count: day[field].length, max } });
+  }
+}

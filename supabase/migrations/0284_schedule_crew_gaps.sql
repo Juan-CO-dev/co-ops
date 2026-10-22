@@ -9,6 +9,10 @@
 --     and routine_name in ('valid_gap_certificate','commit_schedule_revision'); -- service_role (+ postgres) only
 -- ROLLBACK: revert application first; retain this backward-compatible validator while crew rows exist.
 -- Never delete or rewrite append-only history. Restore 0275 only in a database without crew rows.
+-- In that database restore BOTH 0275 function bodies and its table CHECKs:
+--   schedule_revision_gaps_code_check: code in ('coverage_gap', 'mod_missing', 'closing_manager_missing')
+--   schedule_revision_gaps_cause_check: cause in ('budget_limited', 'floor_limit', 'eligibility', 'availability', 'capacity', 'structure', 'unresolved_search')
+-- Drop/re-add those named CHECKs in the same transaction as restoring the functions.
 
 begin;
 do $$

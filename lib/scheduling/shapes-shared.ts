@@ -1,3 +1,4 @@
+import { compareCodePoint } from "./order-shared";
 /**
  * THE PERSISTED SHAPES — the TS twins of 0275's `valid_schedule_segments` and `valid_gap_certificate` (Scheduling
  * Phase 2, Task 14). Pure, total, never throws. Both run the shared case files tests/fixtures/schedule/segment-cases.json
@@ -111,7 +112,7 @@ export function validCrewGapCertificateShape(c: unknown): c is CrewGapCertificat
   const codes = ["off", "time_off", "unavailable", "already_scheduled", "position", "leader_setting",
     "minimum_length", "maximum_length", "day_limit", "soft_max", "overtime", "budget", "manager_limit"];
   const sortedStrings = (v: unknown): v is string[] => Array.isArray(v)
-    && v.every((x, i) => typeof x === "string" && x.length > 0 && (i === 0 || v[i - 1] < x));
+    && v.every((x, i) => typeof x === "string" && x.length > 0 && (i === 0 || compareCodePoint(v[i - 1], x) < 0));
   if (!isObj(c)) return false;
   if (c.kind === "station_short") {
     return exact(c, ["kind", "required", "assigned", "onShiftUserIds"])
@@ -123,7 +124,7 @@ export function validCrewGapCertificateShape(c: unknown): c is CrewGapCertificat
   let previous = "";
   for (const item of c.items) {
     if (!exact(item, ["typeId", "fromQ", "toQ", "required", "placed", "missing", "rejected"])
-      || typeof item.typeId !== "string" || item.typeId <= previous || !isQ(item.fromQ) || !isQ(item.toQ)
+      || typeof item.typeId !== "string" || compareCodePoint(item.typeId, previous) <= 0 || !isQ(item.fromQ) || !isQ(item.toQ)
       || item.fromQ >= item.toQ || (start !== undefined && item.fromQ !== start)
       || !isInt(item.required, 1, 1000) || !isInt(item.placed, 0, 1000) || !isInt(item.missing, 1, 1000)
       || item.required - item.placed !== item.missing || !Array.isArray(item.rejected)) return false;
@@ -131,7 +132,7 @@ export function validCrewGapCertificateShape(c: unknown): c is CrewGapCertificat
     previous = item.typeId;
     let lastUser = "";
     for (const rejection of item.rejected) {
-      if (!exact(rejection, ["userId", "codes"]) || typeof rejection.userId !== "string" || rejection.userId <= lastUser
+      if (!exact(rejection, ["userId", "codes"]) || typeof rejection.userId !== "string" || compareCodePoint(rejection.userId, lastUser) <= 0
         || !Array.isArray(rejection.codes) || !rejection.codes.length
         || new Set(rejection.codes).size !== rejection.codes.length
         || rejection.codes.some((code) => !codes.includes(code))) return false;

@@ -12,7 +12,7 @@ function body(source: string, name: string): string {
 describe("0284 crew gap migration", () => {
   it("replays all unchanged 0275 assertions and crew shape/admission/inheritance/approval cases", () => {
     const output = execFileSync(process.execPath, ["scripts/sql-harness-0284.mjs"], { encoding: "utf8", timeout: 240_000 });
-    expect(output).toContain("PASS 0284: 156 checks (including unchanged 0275 assertions)");
+    expect(output).toContain("PASS 0284: 171 checks (including unchanged 0275 assertions)");
   }, 250_000);
   it("retains every legacy certificate branch verbatim", () => {
     const actual = body(sql, "valid_gap_certificate")

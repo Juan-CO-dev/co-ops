@@ -239,7 +239,7 @@ function problemLines(week: BoardWeekSource): ProblemLine[] {
       const params: Record<string, string | number> = {};
       for (const [k, v] of Object.entries(p.params)) if (typeof v === "number" || typeof v === "string") params[k] = v;
       out.push({ code: p.code, severity: p.severity, date: p.day, userId: p.userId ?? null, positionId: p.positionId ?? null, q: p.q ?? null,
-        line: { key: `schedule.rule.${p.code}`, params }, inherited: d.inherited || p.inherited });
+        line: { key: p.code === "open_shift" && p.params.proven !== true ? "schedule.rule.open_shift_unresolved" : `schedule.rule.${p.code}`, params }, inherited: d.inherited || p.inherited });
     }
   }
   return out;
@@ -302,7 +302,7 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
         segments: sh.segments.map((g, i) => {
           const mf = modFromQOf(p, ctx, g, sh);
           const unassigned = g.positionId === MOD && ctx && scheduleEngine(ctx.structure) === "crew" && g.reasonKey === "schedule.reason.crew_unassigned";
-          return { positionId: g.positionId, startQ: g.startQ, endQ: g.endQ, mod: g.positionId === MOD, lastResort: !!g.lastResort, reasons: r.segments[i] ?? [], ...(mf !== undefined ? { modFromQ: mf } : {}), ...(unassigned ? { crewUnassigned: true } : {}) };
+          return { positionId: g.positionId, startQ: g.startQ, endQ: g.endQ, mod: g.positionId === MOD && (!unassigned || (!!p && !!ctx && shiftCountsAsMod(sh, p, ctx, g.startQ))), lastResort: !!g.lastResort, reasons: r.segments[i] ?? [], ...(mf !== undefined ? { modFromQ: mf } : {}), ...(unassigned ? { crewUnassigned: true } : {}) };
         }),
         reasons: r.shift,
         alternates: r.alternates.map((a) => {
