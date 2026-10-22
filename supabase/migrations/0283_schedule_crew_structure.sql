@@ -3,7 +3,7 @@
 -- Provenance: CC-approved crew Phase 1 plan, chunk 2.
 -- Re-emits the 0274 immutable validator, admitting optional crew structure fields.
 -- No historical row, writer authorization, grants or scheduling behavior is changed.
--- ROLLOUT: apply 0282 then 0283 before deploying code that saves the new structure fields.
+-- ROLLOUT: apply 0274 then 0283 before deploying code that saves the new structure fields.
 -- VERIFY AFTER APPLY:
 --   select strpos(pg_get_functiondef('public.valid_schedule_structure(jsonb)'::regprocedure), '0283 crew structure') > 0; -- true
 --   select count(*) from public.schedule_structures where not public.valid_schedule_structure(structure); -- 0
@@ -17,9 +17,8 @@ begin;
 do $$
 begin
   if to_regprocedure('public.valid_schedule_structure(jsonb)') is null
-     or not exists (select 1 from information_schema.columns where table_schema = 'public'
-       and table_name = 'schedule_person_settings' and column_name = 'usual_shift') then
-    raise exception '0283: 0282 must be applied first';
+     or to_regprocedure('public.schedule_json_exact_keys(jsonb,text[])') is null then
+    raise exception '0283: 0274 must be applied first';
   end if;
   if strpos(pg_get_functiondef('public.valid_schedule_structure(jsonb)'::regprocedure), '0283 crew structure') > 0 then
     raise exception '0283: already applied';
@@ -176,7 +175,7 @@ begin
 
   -- catering
   v_cat := p -> 'catering';
-  if not public.schedule_json_exact_keys(v_cat - 'crewShift', array['minHeadcount', 'extraPrepDishHeads', 'defaultStartQ', 'defaultEndQ', 'leadMinutes']) then return false; end if;
+  if not public.schedule_json_exact_keys(case when jsonb_typeof(v_cat) = 'object' then v_cat - 'crewShift' else v_cat end, array['minHeadcount', 'extraPrepDishHeads', 'defaultStartQ', 'defaultEndQ', 'leadMinutes']) then return false; end if;
   if not public.schedule_json_int(v_cat -> 'minHeadcount', 0, 10000) or not public.schedule_json_int(v_cat -> 'extraPrepDishHeads', 0, 8)
      or not public.schedule_json_quarter(v_cat -> 'defaultStartQ') or not public.schedule_json_quarter(v_cat -> 'defaultEndQ')
      or (v_cat ->> 'defaultEndQ')::numeric <= (v_cat ->> 'defaultStartQ')::numeric

@@ -50,9 +50,9 @@ const M0282 = read("supabase/migrations/0282_schedule_person_usual_shift.sql");
 const M0283 = read("supabase/migrations/0283_schedule_crew_structure.sql");
 const db = await base();
 try {
-  await refuses(() => db.exec(M0283), "0282 must be applied first", "prerequisite");
-  await db.exec("rollback");
-  await db.exec(M0278); await db.exec(M0280); await db.exec(M0281); await db.exec(M0282);
+  const missing = await base({ m0274: false });
+  try { await refuses(() => missing.exec(M0283), "0274 must be applied first", "prerequisite"); } finally { await missing.close(); }
+  // 0283 is independent of the person-settings migrations 0278 and 0280-0282.
   await db.exec(M0283);
   const actor = (await db.query("insert into public.users(role, active) values ('owner', true) returning id")).rows[0].id;
   const loc = (await db.query("insert into public.locations(active) values(true) returning id")).rows[0].id;

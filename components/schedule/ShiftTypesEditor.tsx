@@ -7,6 +7,13 @@ import { Check, Fields, GHOST, NumField, SelectField, TimeField } from "./settin
 import { useBoardLine } from "./use-board-line";
 import { formatQ, qToWall, wallToQ } from "@/lib/scheduling/time-shared";
 
+let shiftTypeIdCounter = 0;
+/** Local draft identities work on HTTP and older browsers as well as secure origins. */
+export function newShiftTypeId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+  return `shift-${Date.now().toString(36)}-${(shiftTypeIdCounter++).toString(36)}`;
+}
+
 /** Array order is scheduling priority; IDs survive renames, edits and reordering. */
 export function ShiftTypesEditor({ value, structure, positions, onChange }: {
   value: ShiftType[];
@@ -56,7 +63,7 @@ export function ShiftTypesEditor({ value, structure, positions, onChange }: {
       </div>
     </fieldset>)}
     <button type="button" className={GHOST} onClick={() => onChange([...value, {
-      id: crypto.randomUUID(), name: t("schedule.settings.shift_types.unnamed"),
+      id: newShiftTypeId(), name: t("schedule.settings.shift_types.unnamed"),
       fromQ: structure.shopDay.prepStartQ, toQ: structure.shopDay.outLatestQ,
       startFlexQ: 0, minLengthQ: Math.min(structure.limits.minimumShiftQ, structure.shopDay.outLatestQ - structure.shopDay.prepStartQ),
       headcount: { slow: 0, normal: 0, busy: 0, weekend: 0 }, stations: [], countsTowardMod: true,

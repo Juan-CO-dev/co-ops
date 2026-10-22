@@ -12,7 +12,7 @@ import type { PositionLabel } from "./board-view-shared";
 import type { ScheduleShopSettings } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
 import type { ToastPrimarySuggestion } from "./position-rank-shared";
-import { withCrewStructureDefaults, validScheduleStructure, type PositionTimeProvenance, type ScheduleStructure, type SeededFrom } from "./structure-shared";
+import { shiftTypesOf, withCrewStructureDefaults, validScheduleStructure, type PositionTimeProvenance, type ScheduleStructure, type SeededFrom } from "./structure-shared";
 import { Q_PER_DAY, addDays, isoWeekStart, qToWall, wallToQ } from "./time-shared";
 
 export interface SettingsPerms {
@@ -126,6 +126,7 @@ export function structureProblemLine(key: string): { key: TranslationKey; params
   if (key === "engine") return { key: "schedule.error.structure_engine", params: {} };
   if (key === "shiftTypes") return { key: "schedule.error.structure_shift_types", params: {} };
   const shift = /^shiftTypes\.(\d+)(?:\.([^.]+))?/.exec(key);
+  if (shift?.[2] === "id") return { key: "schedule.error.structure_shift_identity", params: { number: String(Number(shift[1]) + 1) } };
   const shiftFields: Record<string, string> = { id: "id", name: "name", fromQ: "from", toQ: "to", startFlexQ: "flex", minLengthQ: "minimum", headcount: "headcount_label", stations: "stations", countsTowardMod: "mod" };
   if (shift) return { key: "schedule.error.structure_shift_type", params: { number: String(Number(shift[1]) + 1), field: `schedule.settings.shift_types.${shiftFields[shift[2] ?? ""] ?? "title"}` } };
   const catering = /^catering\.crewShift(?:\.([^.]+))?$/.exec(key);
@@ -159,6 +160,11 @@ export function stationAdvisory(saved: ScheduleStructure, seeded: ScheduleStruct
     const from = seededFrom[id];
     if (from?.close === "station" && a.closeQ !== b.closeQ) out.push({ key: "schedule.settings.advisory.close", params: { positionId: id, savedQ: a.closeQ, stationQ: b.closeQ } });
     if (from && from.trim !== "default" && a.trimQ !== b.trimQ) out.push({ key: "schedule.settings.advisory.trim", params: { positionId: id, savedQ: a.trimQ, stationQ: b.trimQ } });
+  }
+  for (const type of shiftTypesOf(saved)) {
+    for (const id of type.stations) if (!Object.hasOwn(seeded.positions, id)) {
+      out.push({ key: "schedule.settings.advisory.shift_station_removed", params: { shiftType: type.name, positionId: id } });
+    }
   }
   return out;
 }

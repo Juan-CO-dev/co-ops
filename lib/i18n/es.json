@@ -8155,4 +8155,7 @@
   "catalog.error.menu_price_catering_required": "Establece un precio antes de ofrecer este artículo para catering.",
   "recipes.output.edit_yield": "Cambia el rendimiento",
   "recipes.error.ambiguous_output": "Esta receta tiene más de un producto resultante coincidente. Vuelve a cargarla y revisa lo que produce."
+,
+  "schedule.error.structure_shift_identity": "Tipo de turno {number}: Dos tipos de turno tienen la misma identidad — elimina uno y agrégalo de nuevo.",
+  "schedule.settings.advisory.shift_station_removed": "{shiftType}: {positionId} ya no es una estación con personal. Elimínala de este tipo de turno."
 }

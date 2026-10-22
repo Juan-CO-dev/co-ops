@@ -8155,4 +8155,7 @@
   "catalog.error.menu_price_catering_required": "Set a price before offering this item for catering.",
   "recipes.output.edit_yield": "Change yield",
   "recipes.error.ambiguous_output": "This recipe has more than one matching output. Reload and review its outputs."
+,
+  "schedule.error.structure_shift_identity": "Shift type {number}: Two shift types have the same identity — remove one and add it again.",
+  "schedule.settings.advisory.shift_station_removed": "{shiftType}: {positionId} is no longer a staffed station. Remove it from this shift type."
 }

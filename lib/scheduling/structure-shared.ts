@@ -138,7 +138,7 @@ const crew = (prepHeads: number, prepUntilQ: number, setup: number, service: num
  * `structureFromStations` seeds them). Pinned equal to the case file's CASE_DEFAULTS.
  */
 export const SCHEDULE_STRUCTURE_DEFAULTS: ScheduleStructure = {
-  version: 1, engine: "stations", shiftTypes: [],
+  version: 1,
   shopDay: { prepStartQ: 28, prepDishArrivalQ: 34, serviceStartQ: 42, serviceCloseQ: 80, outEarliestQ: 82, outLatestQ: 84 },
   dayTypes: { slowBelowCents: 400000, busyAboveCents: 480000, weekendIsoDows: [6, 7] },
   crews: {
@@ -160,7 +160,7 @@ export const SCHEDULE_STRUCTURE_DEFAULTS: ScheduleStructure = {
     managerFloorH: 32, gmMinimumH: 8, agmMinimumH: 8, closingMinutesOverride: null, segmentMinQ: 2, rushShiftMaxQ: 4, maxShiftH: 10.5, salariedStayLonger: true,
     salariedTargetWeekH: 40, salariedFlexH: 10,
   },
-  catering: { minHeadcount: 30, extraPrepDishHeads: 1, defaultStartQ: 34, defaultEndQ: 52, leadMinutes: 210, crewShift: { ...CREW_CATERING_DEFAULTS } },
+  catering: { minHeadcount: 30, extraPrepDishHeads: 1, defaultStartQ: 34, defaultEndQ: 52, leadMinutes: 210 },
   labor: { targetPct: 28, basis: "total", strong: 0.8, watch: 0.65, budgetDeadbandH: 2 },
   roster: { excludedRoles: ["cgs", "social_media_mgr"] },
 };
@@ -792,6 +792,7 @@ export function structureFromStations(
     floors[id] = isSecondary(s, id) ? 0 : Math.min(1, limit);
   }
   for (const t of CREW_TYPES) s.crews[t].lineMinHeads = { ...floors };
+  if (s.shiftTypes) s.shiftTypes = s.shiftTypes.map((type) => ({ ...type, stations: type.stations.filter((id) => Object.hasOwn(s.positions, id)) }));
   const key = structureProblem(s);
   if (key !== null) return { ok: false, code: "structure_invalid", key };
   return { ok: true, structure: s, seededFrom };

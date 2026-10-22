@@ -28,6 +28,44 @@ function mount(value = seededFloors(), onDirty = vi.fn(), initialError: string |
 const input = (name: string) => document.getElementsByName(name)[0] as HTMLInputElement;
 
 describe("crew structure editor", () => {
+  it("hides the engine, places shift types below Shop day, and preserves a saved engine", async () => {
+    const structure = seededFloors();
+    structure.engine = "crew";
+    structure.shiftTypes = [{ id: "morning", name: "Morning", fromQ: 28, toQ: 60, startFlexQ: 0, minLengthQ: 16,
+      headcount: { slow: 0, normal: 0, busy: 0, weekend: 0 }, stations: [], countsTowardMod: true }];
+    mount(structure);
+    expect(input("engine")).toBeUndefined();
+    expect(Array.from(document.querySelectorAll("[data-structure-section]")).slice(0, 2).map((el) => el.getAttribute("data-structure-section"))).toEqual(["shop_day", "shift_types"]);
+    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    expect(post.mock.calls[0]![1].structure.engine).toBe("crew");
+  });
+  it("adds distinct identities without randomUUID", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
+    Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: undefined });
+    try {
+      mount();
+      for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.shift_types.add"] }));
+      const ids = Array.from(document.querySelectorAll("[data-shift-type]")).map((el) => el.getAttribute("data-shift-type"));
+      expect(new Set(ids).size).toBe(2);
+      expect(ids.every(Boolean)).toBe(true);
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis.crypto, "randomUUID", descriptor);
+      else Reflect.deleteProperty(globalThis.crypto, "randomUUID");
+    }
+  });
+  it.each(["en", "es"] as const)("focuses the card name for an invalid identity in %s", (language) => {
+    const structure = seededFloors();
+    structure.shiftTypes = [{ id: "", name: "Morning", fromQ: 28, toQ: 60, startFlexQ: 0, minLengthQ: 16,
+      headcount: { slow: 0, normal: 0, busy: 0, weekend: 0 }, stations: [], countsTowardMod: true }];
+    mount(structure, vi.fn(), null, language);
+    const dict = language === "en" ? en : es;
+    fireEvent.click(screen.getByRole("button", { name: dict["schedule.settings.save"] }));
+    expect(document.activeElement).toBe(input("shiftTypes.0.name"));
+    expect(screen.getByRole("alert").textContent).toContain(dict["schedule.error.structure_shift_identity"].replace("{number}", "1"));
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("represents and saves the end-of-day quarter without clamping it", async () => {
     const structure = seededFloors();
     structure.shopDay.outLatestQ = 96;
@@ -54,7 +92,7 @@ describe("crew structure editor", () => {
     fireEvent.change(input("shiftTypes.0.headcount.busy"), { target: { value: "4" } });
     fireEvent.change(input("shiftTypes.0.stations"), { target: { value: FLOOR_POSITION } });
     fireEvent.click(input("shiftTypes.0.countsTowardMod"));
-    fireEvent.change(input("engine"), { target: { value: "crew" } });
+    expect(input("engine")).toBeUndefined();
     fireEvent.click(input("catering.crewShift.enabled"));
     fireEvent.change(input("catering.crewShift.typeId"), { target: { value: id } });
     fireEvent.change(input("catering.crewShift.extraHeads"), { target: { value: "2" } });
@@ -62,7 +100,7 @@ describe("crew structure editor", () => {
     await waitFor(() => expect(post).toHaveBeenCalledOnce());
     const saved = post.mock.calls[0]![1].structure as ScheduleStructure;
     expect(saved.shiftTypes).toEqual([{ id, name: "Morning", fromQ: 32, toQ: 64, startFlexQ: 4, minLengthQ: 16, headcount: { slow: 0, normal: 0, busy: 4, weekend: 0 }, stations: [FLOOR_POSITION], countsTowardMod: false }]);
-    expect(saved.engine).toBe("crew");
+    expect(saved.engine).toBe("stations");
     expect(saved.catering.crewShift).toEqual({ enabled: true, typeId: id, extraHeads: 2 });
     expect(structureSaveRefusal(saved)).toBeNull();
   });
@@ -88,19 +126,16 @@ describe("crew structure editor", () => {
     expect(saved.shiftTypes![0]!.id).toBe(id);
     expect(saved.shiftTypes![0]!.stations).toEqual([OTHER_POSITION, FLOOR_POSITION]);
   });
-  it("refuses crew without types and keeps a removed catering reference visible for correction", () => {
+  it("keeps a removed catering reference visible for correction", () => {
     mount();
-    fireEvent.change(input("engine"), { target: { value: "crew" } });
-    fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
-    expect(screen.getByRole("alert").textContent).toContain(en["schedule.error.structure_shift_types"]);
-    expect(post).not.toHaveBeenCalled();
+    expect(input("engine")).toBeUndefined();
     fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.shift_types.add"] }));
     const id = document.querySelector("[data-shift-type]")!.getAttribute("data-shift-type");
     fireEvent.change(input("catering.crewShift.typeId"), { target: { value: id } });
     fireEvent.click(screen.getByRole("button", { name: `Remove ${en["schedule.settings.shift_types.unnamed"]}` }));
     expect(input("catering.crewShift.typeId").value).toBe(id);
     expect(screen.getByRole("option", { name: en["schedule.settings.shift_types.removed_type"] })).toBeTruthy();
-    fireEvent.change(input("engine"), { target: { value: "stations" } });
+
     fireEvent.click(input("catering.crewShift.enabled"));
     fireEvent.click(screen.getByRole("button", { name: en["schedule.settings.save"] }));
     expect(screen.getByRole("alert").textContent).toContain(en["schedule.settings.shift_types.catering_type"]);
