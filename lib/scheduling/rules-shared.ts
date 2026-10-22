@@ -1563,7 +1563,9 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
       const { steps, donorsTried, chainDepth } = c.searched;
       for (const n of [steps, donorsTried, chainDepth]) if (!Number.isInteger(n) || n < 0) return false;
       if (steps > L.REPAIR_MAX_STEPS || chainDepth > L.maxChainDepth) return false;
-      const hitLimit = steps === L.REPAIR_MAX_STEPS || chainDepth === L.maxChainDepth;
+      // Crew generation exhausts whole-block choices, not the station repair search. Its honest
+      // unresolved leadership gaps may have zero station-search steps; proofs still take precedence.
+      const hitLimit = steps === L.REPAIR_MAX_STEPS || chainDepth === L.maxChainDepth || scheduleEngine(st) === "crew";
       if (!hitLimit || !Array.isArray(c.candidateIds) || c.candidateIds.some((x) => typeof x !== "string")) return false;
       // Honest only when no PROVEN cause certifies the same deficit.
       return depth > 0 || proveGap(g, s, ctx) === null;

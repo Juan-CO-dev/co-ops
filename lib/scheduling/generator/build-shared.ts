@@ -72,6 +72,11 @@ export interface HeadSnapshot {
 }
 
 export interface GeneratorInput {
+  /** Consumed only by the crew engine; station generation ignores this evidence. */
+  crew?: {
+    manualOverridesByDate?: Record<string, import("../crew-contracts-shared").CrewManualOverride[]>;
+    headContext?: RuleContext;
+  };
   locationId: string;
   weekStart: string;
   today: string;

@@ -26,7 +26,7 @@ import { ScheduleError } from "./errors-shared";
 import type { BuildDayInput, GeneratorInput, HeadSnapshot, Pin } from "./generator/build-shared";
 import { makeSkillLookup, punchPatterns, toSchedPeople, type PersonSettingsRow, type PunchEntry } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, Shift } from "./rules-shared";
-import { scheduledOut, type ScheduleStructure } from "./structure-shared";
+import { scheduleEngine, scheduledOut, type ScheduleStructure } from "./structure-shared";
 import { addDays, isoWeekStart, weekDays } from "./time-shared";
 
 /** The structure version id of the seeded defaults (no saved structure). SQL stores NULL for it. */
@@ -242,6 +242,7 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
   const budget = budgetForDates(inputs.budget.entries, inputs.budget.rows, dates);
   return {
     locationId: inputs.locationId, weekStart, today: opts.today, days, structure: s, structureVersionId: inputs.structure.id, people, skills,
+    ...(scheduleEngine(s) === "crew" && inputs.weeks[weekStart]?.head ? { crew: { headContext: inputs.weeks[weekStart]!.head!.context } } : {}),
     pins: inputs.pins.filter((p) => dates.includes(p.date) && !excluded.has(p.userId)), budgetByDate: budget.byDate, head: headSnapshotFor(inputs.weeks[weekStart]),
   };
 }

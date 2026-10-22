@@ -37,6 +37,7 @@ export const REASON_KEYS = [
   // Juan 2026-10-20 ("consideration on their managerial duties"): a lead's own shift extended into a manager-on-duty hole.
   "mod_extension",
   "crew_unassigned",
+  "crew_usual", "crew_fill",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 
@@ -57,6 +58,7 @@ export function shiftKey(date: string, userId: string, startQ: number): string {
 }
 
 export const NOTE_CODES = [
+  "crew_block_skipped", "usual_type_deleted",
   "pairing_unmet", "unbudgeted_date", "no_history", "zero_demand", "zero_profile", "rush_moved",
   "cover_position_retired", "excluded_role_included", "salaried_block_skipped", "overtime_used", "budget_stopped", "waves_capped",
   // CC chunk C ruling 3: essential closer hours are exempt from the budget CAP but counted — named when they pass it.
