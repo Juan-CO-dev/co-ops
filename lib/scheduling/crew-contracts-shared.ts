@@ -46,10 +46,11 @@ export type CrewGapCertificate =
   | { kind: "station_short"; required: number; assigned: number; onShiftUserIds: string[] };
 
 /** Evidence is bounded per day; never discard edits or notes to make a revision fit. */
-export const CREW_MAX_MANUAL_OVERRIDES_PER_DAY = 5;
+export const CREW_MAX_MANUAL_OVERRIDES_PER_DAY = 60;
+/** Fixture sizing reference only: generator notes are aggregated, never capped. */
 export const CREW_MAX_NOTES_PER_DAY = 32;
 export function assertCrewDayFits(day: CrewDaySnapshot): void {
-  for (const [field, max] of [["manualOverrides", CREW_MAX_MANUAL_OVERRIDES_PER_DAY], ["notes", CREW_MAX_NOTES_PER_DAY]] as const) {
+  for (const [field, max] of [["manualOverrides", CREW_MAX_MANUAL_OVERRIDES_PER_DAY]] as const) {
     if (day[field].length > max) throw new ScheduleError("crew_snapshot_limit", { params: { field, count: day[field].length, max } });
   }
 }

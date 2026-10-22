@@ -8179,5 +8179,7 @@
   "schedule.gap.cause.crew_shortfall": "Crew shortfall",
   "schedule.gap.certificate.crew_shortfall": "Verified shortfall with the scheduled crew.",
   "schedule.gap.certificate.open_shifts": "{missing} open shifts; every candidate has a verified exclusion.",
-  "schedule.gap.certificate.station_short": "Station short: {assigned} assigned, {required} required."
+  "schedule.gap.certificate.station_short": "Station short: {assigned} assigned, {required} required.",
+  "schedule.note.over_soft_max": "Usual shifts exceed the preferred weekly maximum for {count} people: {people}.",
+  "schedule.note.crew_mod_start_mismatch": "No shift type starts before {earliestQ} — set the shop's prep start or an earlier Opener."
 }

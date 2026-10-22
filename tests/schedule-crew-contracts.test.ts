@@ -90,8 +90,8 @@ it("uses Unicode code-point order for every certificate id sequence", () => {
   }
 });
 
-it("caps daily crew evidence without dropping notes or overrides", () => {
-  for (const [field, cap] of [["manualOverrides", CREW_MAX_MANUAL_OVERRIDES_PER_DAY], ["notes", CREW_MAX_NOTES_PER_DAY]] as const) {
+it("caps only manual overrides without dropping notes", () => {
+  for (const [field, cap] of [["manualOverrides", CREW_MAX_MANUAL_OVERRIDES_PER_DAY]] as const) {
     const ctx = context({ built: [THU] });
     const crew: CrewDaySnapshot = { version: 1, shifts: [], manualOverrides: [], notes: [] };
     ctx.days[THU]!.crew = crew;
@@ -119,12 +119,37 @@ it("fits a seven-day crew snapshot with a full 40-person roster and every daily 
     ctx.days[date]!.structure.shiftTypes = [{ id: "mid", name: "Mid", fromQ: 40, toQ: 80, startFlexQ: 0, minLengthQ: 16,
       stations: [], headcount: { slow: 20, normal: 20, busy: 20, weekend: 20 }, countsTowardMod: false }];
     ctx.days[date]!.crew = { version: 1, shifts: ids.map((userId) => ({ userId, startQ: 40, typeId: "mid", source: "usual" })),
-      manualOverrides: ids.slice(0, CREW_MAX_MANUAL_OVERRIDES_PER_DAY).map((userId) => ({ original: { date, userId, startQ: 40 },
-        replacement: shift(userId, date, 40, 80, "mod", { segments: Array.from({ length: 10 }, (_, i) => ({ positionId: "mod", startQ: 40 + i * 4, endQ: 44 + i * 4, reasonKey: "schedule.reason.crew_unassigned" })) }) })),
+      manualOverrides: Array.from({ length: CREW_MAX_MANUAL_OVERRIDES_PER_DAY }, (_, edit) => { const userId = ids[edit % ids.length]!; return ({ original: { date, userId, startQ: 40 + Math.floor(edit / ids.length) },
+        replacement: shift(userId, date, 40, 80, "mod", { segments: Array.from({ length: 10 }, (_, i) => ({ positionId: "mod", startQ: 40 + i * 4, endQ: 44 + i * 4, reasonKey: "schedule.reason.crew_unassigned" })) }) }); }),
       notes: Array.from({ length: CREW_MAX_NOTES_PER_DAY }, (_, i) => ({ code: "budget_stopped", date, userId: ids[i]!, positionId: null, params: { hours: 40, limit: 40 } })) };
   }
-  expect(jsonbTextBytes(ctx)).toBeLessThan(CONTEXT_SAFE_MAX_BYTES);
+  const stored = toContextSnapshot(ctx);
+  const bytes = jsonbTextBytes(stored.context);
+  console.log(`Crew 60 overrides/day ? 7 days snapshot: ${bytes} jsonb bytes`);
+  expect(bytes).toBeLessThan(CONTEXT_SAFE_MAX_BYTES);
+  expect(ruleContextFromSnapshot(stored.context)).toEqual(ctx);
+  expect(ruleContextFromSnapshot(stored.json)).toEqual(ctx);
+  for (const day of Object.values(ctx.days)) expect(day.crew!.manualOverrides).toHaveLength(60);
   expect(() => assertContextFits(ctx)).not.toThrow();
+});
+
+it("does not cap generator notes and preserves compact override tombstones and optional segment fields", () => {
+  const ctx = context({ built: [THU] });
+  const replacements = Array.from({ length: 60 }, (_, i) => ({
+    original: { date: THU, userId: U.ben, startQ: i },
+    replacement: i % 3 === 0 ? null : shift(U.ben, THU, 40, 80, "mod", {}, {
+      ...(i % 2 ? { lastResort: false } : { lastResort: true, coverFor: U.maya }),
+      reasonKey: "schedule.reason.crew_unassigned",
+    }),
+  }));
+  ctx.days[THU]!.crew = { version: 1, shifts: [], manualOverrides: replacements,
+    notes: Array.from({ length: 100 }, () => ({ code: "usual_type_deleted", date: THU, userId: null, positionId: null,
+      params: { count: 40, userIds: [U.ben, U.maya], typeId: "retired" } })) };
+  expect(() => assertContextFits(ctx)).not.toThrow();
+  const snapshot = toContextSnapshot(ctx);
+  expect(ruleContextFromSnapshot(snapshot.json)).toEqual(ctx);
+  expect(snapshot.context.days[THU]!.crew!.manualOverrides).toEqual([]);
+  expect(ctx.days[THU]!.crew!.manualOverrides).toHaveLength(60);
 });
 
 it("a work-mode edit raises only availability_changed, including when the window is unchanged", () => {

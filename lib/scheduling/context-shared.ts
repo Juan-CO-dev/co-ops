@@ -1,5 +1,6 @@
 import type { ResolvedUsualShift } from "./usual-shift-shared";
 import { assertCrewDayFits, type CrewDaySnapshot } from "./crew-contracts-shared";
+import { decodeCrewContext, encodeCrewContext } from "./crew-snapshot-codec-shared";
 /**
  * THE VALIDATION CONTEXT — what `checkScheduleRules` judges against, and its persisted SNAPSHOT
  * (Scheduling Phase 2, r3 P2-4 + r4 P2; plan "Original validation vs current inputs").
@@ -175,7 +176,7 @@ export function assertContextFits(ctx: unknown): { bytes: number } {
   if (ctx && typeof ctx === "object" && "days" in ctx) {
     for (const day of Object.values((ctx as RuleContext).days ?? {})) if (day.crew) assertCrewDayFits(day.crew);
   }
-  const bytes = jsonbTextBytes(ctx);
+  const bytes = jsonbTextBytes(ctx && typeof ctx === "object" && "days" in ctx ? encodeCrewContext(ctx as RuleContext) : ctx);
   if (bytes > CONTEXT_SAFE_MAX_BYTES) throw new ScheduleError("context_too_large", { params: { bytes, max: CONTEXT_SAFE_MAX_BYTES } });
   return { bytes };
 }
@@ -186,7 +187,7 @@ export function assertContextFits(ctx: unknown): { bytes: number } {
  */
 export function toContextSnapshot(ctx: RuleContext): { context: RuleContext; json: string; digest: string; bytes: number } {
   for (const day of Object.values(ctx.days)) if (day.crew) assertCrewDayFits(day.crew);
-  const json = canonicalJson(ctx);
+  const json = canonicalJson(encodeCrewContext(ctx));
   return { context: JSON.parse(json) as RuleContext, json, digest: digest64(json), bytes: new TextEncoder().encode(json).length };
 }
 
@@ -199,7 +200,7 @@ export function ruleContextFromSnapshot(stored: unknown): RuleContext {
     || !o.days || !o.people || !o.budgetByDate || !o.closingWindowByDate) {
     throw new Error("ruleContextFromSnapshot: not a version-1 rule context");
   }
-  return JSON.parse(canonicalJson(v)) as RuleContext;
+  return decodeCrewContext(JSON.parse(canonicalJson(v)) as RuleContext);
 }
 
 // ─── The current-inputs advisory ─────────────────────────────────────────────

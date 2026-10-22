@@ -446,3 +446,152 @@ describe("crew station assignment and deterministic invariants", () => {
     }
   }, 60000);
 });
+
+
+describe("chunk 5 independent review regressions", () => {
+  it("keeps Tio's entire 52.5-hour usual week above the 40-hour soft maximum", () => {
+    const st = shop((s) => {
+      s.shopDay.serviceCloseQ = 82; s.shopDay.outEarliestQ = 82; s.shopDay.outLatestQ = 84;
+      s.shiftTypes = [type({ fromQ: 40, toQ: 82 })];
+    });
+    const i = input([{ id: "tio", role: "employee", softMax: 40 }], st, DATES.slice(0, 5));
+    i.days.forEach((d) => { d.scheduledOutQ = 82; }); usual(i, "tio");
+    const out = buildCrewWeek(i);
+    expect(out.shifts).toHaveLength(5);
+    expect(out.stats.hourlyHours).toBe(52.5);
+    expect(Object.values(out.context.days).flatMap((d) => d.crew!.shifts).every((m) => m.typeId === "mid" && m.source === "usual")).toBe(true);
+    expect(out.notes.some((n) => n.code === "over_soft_max")).toBe(true); clean(out);
+  });
+  it("flexes a closes key holder's 10:00 Mid start forward to 10:30", () => {
+    const st = shop((s) => {
+      s.shopDay = { prepStartQ: 28, prepDishArrivalQ: 28, serviceStartQ: 42, serviceCloseQ: 80, outEarliestQ: 82, outLatestQ: 84 };
+      s.leadership.modRequired = true; s.leadership.keyHolderModAfterQ = 42;
+      s.leadership.closingRoles = ["key_holder", "gm"];
+      s.shiftTypes = [type({ id: "open", fromQ: 28, toQ: 60 }), type({ fromQ: 40, toQ: 82, startFlexQ: 4 })];
+    });
+    const i = input([{ id: "gm", role: "gm", leader: "opens" }, { id: "kh", role: "key_holder", leader: "closes" }], st);
+    i.days[0]!.scheduledOutQ = 82; usual(i, "gm", "open"); usual(i, "kh");
+    const out = buildCrewWeek(i);
+    expect(out.shifts.find((s) => s.userId === "kh")).toMatchObject({ startQ: 42, endQ: 82, closingManager: true });
+    expect(out.gaps.filter((g) => ["open_shift", "mod_missing", "closing_manager_missing"].includes(g.code))).toEqual([]); clean(out);
+  });
+  it("tries end flexibility in both directions after start attempts", () => {
+    const i = input([{ id: "a", role: "shift_lead", leader: "opens" }], shop((s) => {
+      s.shiftTypes = [type({ fromQ: 44, toQ: 64, startFlexQ: 2 })];
+    })); usual(i, "a");
+    const out = buildCrewWeek(i); expect(out.shifts[0]).toMatchObject({ startQ: 44, endQ: 63 }); clean(out);
+    const short = input([{ id: "a", role: "employee" }], shop((s) => {
+      s.shopDay.prepStartQ = 44; s.shiftTypes = [type({ fromQ: 44, toQ: 59, startFlexQ: 1 })];
+    })); usual(short, "a");
+    expect(buildCrewWeek(short).shifts[0]).toMatchObject({ startQ: 44, endQ: 60 });
+  });
+  it("aggregates forty deleted-type notices into one day/type note", () => {
+    const i = input(Array.from({ length: 40 }, (_, n) => ({ id: `p${n}`, role: "employee" as const })));
+    for (const p of i.people) p.usualShift = { value: null, deletedTypeId: "retired", source: "manager" };
+    const out = buildCrewWeek(i);
+    const notes = out.context.days[MON]!.crew!.notes.filter((n) => n.code === "usual_type_deleted");
+    expect(notes).toHaveLength(1); expect(notes[0]!.params.count).toBe(40);
+    expect(notes[0]!.params.userIds).toHaveLength(40); clean(out);
+  });
+  it("explains pins blocked by manual deletions and drops separated or time-off replacements", () => {
+    const i = input();
+    i.pins = [{ id: "pin", userId: "a", date: MON, startQ: 44, endQ: 64, positions: [I.$REG], kind: "added" }];
+    i.crew = { manualOverridesByDate: { [MON]: [{ original: { userId: "a", date: MON, startQ: 44 }, replacement: null }] } };
+    expect(buildCrewWeek(i).notes.some((n) => n.params.reason === "pin_blocked_by_manual")).toBe(true);
+    i.pins = [];
+    const replacement = { userId: "gone", date: MON, startQ: 44, endQ: 64, segments: [{ positionId: I.$REG, startQ: 44, endQ: 64 }], closingManager: false, flex: false, pinned: false };
+    i.crew.manualOverridesByDate![MON]![0]!.replacement = replacement;
+    let out = buildCrewWeek(i); expect(out.notes.some((n) => n.params.reason === "manual_person_unavailable")).toBe(true); clean(out);
+    replacement.userId = "a"; i.people[0]!.untouchableDates = [MON];
+    out = buildCrewWeek(i); expect(out.shifts).toEqual([]); clean(out);
+  });
+  it("matches pins by greatest qualifying overlap with code-point ties", () => {
+    const i = input([{ id: "kh", role: "key_holder", leader: "mix" }], shop((s) => {
+      s.leadership.keyHolderModAfterQ = 40;
+      s.shiftTypes = [type({ id: "z", fromQ: 40, toQ: 60 }), type({ id: "a", fromQ: 44, toQ: 64 })];
+    }));
+    usual(i, "kh", "z");
+    i.pins = [{ id: "pin", userId: "kh", date: MON, startQ: 45, endQ: 64, positions: [I.$REG], kind: "added" }];
+    let out = buildCrewWeek(i); expect(out.context.days[MON]!.crew!.shifts[0]!.typeId).toBe("a");
+    expect(shiftCountsAsMod(out.shifts[0]!, out.context.people.kh!, out.context.days[MON]!, 48)).toBe(true);
+    i.structure.shiftTypes![0]!.fromQ = 44; i.structure.shiftTypes![0]!.toQ = 64;
+    out = buildCrewWeek(i); expect(out.context.days[MON]!.crew!.shifts[0]!.typeId).toBe("a");
+  });
+  it("certifies the prep-before-first-type MoD hole and names its settings fix", () => {
+    const i = input([{ id: "gm", role: "gm", leader: "mix" }], shop((s) => {
+      s.leadership.modRequired = true; s.shopDay.prepStartQ = 28; s.shopDay.prepDishArrivalQ = 28;
+      s.shiftTypes = [type({ id: "opener", fromQ: 30, toQ: 64 })];
+    })); usual(i, "gm", "opener");
+    const out = buildCrewWeek(i);
+    expect(out.gaps).toContainEqual(expect.objectContaining({ code: "mod_missing", fromQ: 28, toQ: 30, cause: "structure" }));
+    expect(out.notes).toContainEqual(expect.objectContaining({ code: "crew_mod_start_mismatch", params: expect.objectContaining({ earliestQ: 30 }) })); clean(out);
+  });
+  it("spends scarce usual-block budget on higher-demand dates, earlier ties, then later user IDs", () => {
+    const i = input([{ id: "a", role: "employee" }, { id: "z", role: "employee" }], shop(), DATES.slice(0, 3));
+    usual(i, "a"); usual(i, "z"); i.days[0]!.dayCents = 100; i.days[1]!.dayCents = 200; i.days[2]!.dayCents = 200;
+    for (const d of i.days) i.budgetByDate[d.date] = 5;
+    const out = buildCrewWeek(i);
+    expect(users(out, MON)).toEqual([]); expect(users(out, TUE)).toEqual(["a", "z"]); expect(users(out, DATES[2]!)).toEqual(["z"]); clean(out);
+  });
+  it("does not change usual weekly day-cap choices when an ample budget is supplied", () => {
+    const i = input([{ id: "a", role: "employee" }], shop(), DATES); usual(i, "a");
+    i.days.forEach((d, n) => { d.dayCents = (n + 1) * 100; });
+    const unbudgeted = buildCrewWeek(i);
+    for (const date of DATES) i.budgetByDate[date] = 100;
+    const ample = buildCrewWeek(i);
+    expect(ample.shifts).toEqual(unbudgeted.shifts);
+    expect(ample.shifts.map((s) => s.date)).toEqual(DATES.slice(0, 5)); clean(ample);
+  });
+  it("builds a 25-person seven-day week within the generous CI performance bound", () => {
+    const i = input(Array.from({ length: 25 }, (_, n) => ({ id: `person-${String(n).padStart(2, "0")}`, role: "employee" as const })), shop(), DATES);
+    for (const p of i.people) usual(i, p.userId);
+    const start = performance.now(); const out = buildCrewWeek(i); const elapsed = performance.now() - start;
+    process.stdout.write(`crew 25-person/7-day generation: ${elapsed.toFixed(1)} ms\n`);
+    expect(elapsed).toBeLessThan(3000); clean(out);
+  });
+});
+
+
+it("keeps station continuity throughout an unchanged multi-station week", () => {
+  const st = shop((s) => {
+    s.positions[I.$EXPO] = { ...s.positions[I.$REG]!, role: "expo" };
+    s.shiftTypes![0]!.headcount = { slow: 2, normal: 2, busy: 2, weekend: 2 };
+    s.shiftTypes![0]!.stations = [I.$REG, I.$EXPO];
+    for (const dt of ["slow", "normal", "busy", "weekend"] as const) { s.crews[dt].lineMinHeads[I.$EXPO] = 1; s.crews[dt].waves.setup.heads = 2; }
+  });
+  const i = input([{ id: "a", role: "employee", cover: [I.$REG, I.$EXPO] }, { id: "b", role: "employee", cover: [I.$REG, I.$EXPO] }], st, DATES);
+  const out = buildCrewWeek(i);
+  for (const sh of out.shifts) expect(sh.segments).toHaveLength(1);
+  clean(out);
+});
+
+it("names an essential-exemption displacement instead of blaming the candidate's own hours", () => {
+  const st = shop((s) => {
+    s.shopDay.serviceCloseQ = 60;
+    s.shiftTypes![0]!.headcount = { slow: 2, normal: 2, busy: 2, weekend: 2 };
+    for (const dt of ["slow", "normal", "busy", "weekend"] as const) s.crews[dt].close.registerHeads = 1;
+  });
+  const i = input([{ id: "a", role: "employee", skills: { [I.$REG]: [0.3, 1] } }, { id: "z", role: "employee", skills: { [I.$REG]: [1, 1] } }], st);
+  usual(i, "a"); i.budgetByDate[MON] = 0;
+  const out = buildCrewWeek(i);
+  expect(users(out)).toEqual(["a"]);
+  expect(out.notes.some((n) => n.userId === "z" && n.params.reason === "budget_displaced_essential")).toBe(true);
+  clean(out);
+});
+
+
+it("measures a budgeted 25-person week with salaried leadership and two stations", () => {
+  const st = shop((s) => {
+    s.leadership.modRequired = true;
+    s.positions[I.$EXPO] = { ...s.positions[I.$REG]!, role: "expo" };
+    s.shiftTypes = [type({ fromQ: 40, stations: [I.$REG, I.$EXPO], headcount: { slow: 4, normal: 4, busy: 4, weekend: 4 } })];
+    for (const dt of ["slow", "normal", "busy", "weekend"] as const) { s.crews[dt].lineMinHeads[I.$EXPO] = 1; s.crews[dt].waves.setup.heads = 2; }
+  });
+  const specs: PersonSpec[] = [{ id: "gm", role: "gm", leader: "mix", cover: [I.$REG, I.$EXPO] }, { id: "agm", role: "agm", leader: "mix", cover: [I.$EXPO, I.$REG] },
+    ...Array.from({ length: 23 }, (_, n) => ({ id: `worker-${n}`, role: "employee" as const, cover: [I.$REG, I.$EXPO] }))];
+  const i = input(specs, st, DATES); for (const p of i.people) usual(i, p.userId);
+  for (const date of DATES) i.budgetByDate[date] = 100;
+  const start = performance.now(); const out = buildCrewWeek(i); const elapsed = performance.now() - start;
+  process.stdout.write(`crew budgeted 25-person/7-day with GM+AGM: ${elapsed.toFixed(1)} ms\n`);
+  expect(elapsed).toBeLessThan(3000); clean(out);
+});

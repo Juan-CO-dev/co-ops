@@ -607,6 +607,12 @@ function budgetMayExcuse(g: GapSubject, ctx: RuleContext): boolean {
 
 // ─── Structure infeasibility (the `structure` cause) ─────────────────────────
 
+/** Earliest typed MoD block, including personal times and start flexibility. */
+export function crewEarliestModStart(st: ScheduleStructure, roster: readonly RulePerson[]): number {
+  return Math.min(96, ...shiftTypesOf(st).filter((t) => t.countsTowardMod).map((t) => Math.min(t.fromQ,
+    ...roster.filter((p) => p.usualShift?.value?.typeId === t.id).map((p) => p.usualShift!.value!.fromQ ?? t.fromQ)) - t.startFlexQ));
+}
+
 function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly RulePerson[]): StructureCertificate[] {
   const out: StructureCertificate[] = [];
   if (g.code === "coverage_gap" && g.positionId) {
@@ -617,6 +623,12 @@ function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly R
       for (let q = g.fromQ; q < g.toQ; q++) if (positionLimit(pp, q) > 0) { closed = false; break; }
       if (closed) out.push({ rule: "primary_window_closed", detail: { positionId: g.positionId, primaryId: primary! } });
     }
+  }
+  // No typed crew block can reach this required interval. Reuse the SQL-approved
+  // no_mod_member certificate: no member can count as MoD before a type starts.
+  if (g.code === "mod_missing" && scheduleEngine(st) === "crew") {
+    const earliestQ = crewEarliestModStart(st, roster);
+    if (g.fromQ < g.toQ && g.toQ <= earliestQ) out.push({ rule: "no_mod_member", detail: { earliestTypeStartQ: earliestQ } });
   }
   if (g.code === "mod_missing" && !roster.some((p) => eligibleInWindow(p, "mod_missing", null, st, g.fromQ, g.toQ))) {
     out.push({ rule: "no_mod_member", detail: {} });

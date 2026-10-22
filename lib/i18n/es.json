@@ -8179,5 +8179,7 @@
   "schedule.gap.cause.crew_shortfall": "Falta de personal",
   "schedule.gap.certificate.crew_shortfall": "Falta verificada con el personal programado.",
   "schedule.gap.certificate.open_shifts": "{missing} turnos abiertos; cada candidato tiene una exclusión verificada.",
-  "schedule.gap.certificate.station_short": "Falta en la estación: {assigned} asignados, {required} necesarios."
+  "schedule.gap.certificate.station_short": "Falta en la estación: {assigned} asignados, {required} necesarios.",
+  "schedule.note.over_soft_max": "Los turnos habituales superan el máximo semanal preferido de {count} personas: {people}.",
+  "schedule.note.crew_mod_start_mismatch": "Ningún tipo de turno empieza antes de {earliestQ}: ajusta el inicio de preparación de la tienda o crea un turno de apertura más temprano."
 }

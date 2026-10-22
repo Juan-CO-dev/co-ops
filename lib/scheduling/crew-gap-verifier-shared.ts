@@ -38,8 +38,8 @@ export function crewCandidateRejections(p: RulePerson, type: ShiftType, date: st
   // to certify an opening merely because the standard block fails while their own block fits.
   const usual = p.usualShift?.value;
   const own = usual?.typeId === type.id ? usual : null;
-  const from = Math.max(st.shopDay.prepStartQ, av?.fromQ ?? 0, Math.min(type.fromQ - type.startFlexQ, own?.fromQ ?? type.fromQ));
-  const to = Math.min(day.scheduledOutQ, av?.toQ ?? 96, Math.max(type.toQ, own?.toQ ?? type.toQ));
+  const from = Math.max(st.shopDay.prepStartQ, av?.fromQ ?? 0, Math.min(type.fromQ, own?.fromQ ?? type.fromQ) - type.startFlexQ);
+  const to = Math.min(day.scheduledOutQ, av?.toQ ?? 96, Math.max(type.toQ, own?.toQ ?? type.toQ) + type.startFlexQ);
   const minimum = Math.max(type.minLengthQ, st.limits.minimumShiftQ,
     p.salaried ? (p.role === "gm" ? st.limits.gmMinimumH * 4 : p.role === "agm" ? st.limits.agmMinimumH * 4 : 0) : 0);
   if (av !== null && to <= from) codes.push("unavailable");

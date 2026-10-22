@@ -18,7 +18,7 @@ export interface LineContext {
 }
 
 /** Clock-time params (quarters of the day). */
-const CLOCK_Q = new Set(["q", "fromQ", "toQ", "startQ", "endQ", "atQ", "savedQ", "stationQ"]);
+const CLOCK_Q = new Set(["q", "fromQ", "toQ", "startQ", "endQ", "atQ", "savedQ", "stationQ", "earliestQ"]);
 const DATE_PARAMS = new Set(["date", "from", "to", "referenceWeek", "weekStart"]);
 
 export function positionLabel(ctx: Pick<LineContext, "language" | "positions" | "t">, id: string | null | undefined): string {
