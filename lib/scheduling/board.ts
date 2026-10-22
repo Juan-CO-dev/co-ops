@@ -20,6 +20,7 @@ import { boardView, type BoardSource, type BoardView, type PositionLabel } from 
 import { ruleContextFromSnapshot, type DayContext } from "./context-shared";
 import { ScheduleError } from "./errors-shared";
 import { loadScheduleShopSettings, loadSchedulingInputs } from "./inputs";
+import { effectiveScheduleRole } from "./works-as-shared";
 import { makeSkillLookup } from "./people-input-shared";
 import { adviseFromInputs, gate, type ScheduleDeps } from "./schedules";
 import { budgetSuggestion } from "./settings";
@@ -94,7 +95,8 @@ export async function loadBoard(deps: ScheduleDeps, args: { actor: PeopleActor; 
   }
   const people = head?.context.people ?? {};
   const names: Record<string, string> = Object.fromEntries(inputs.members.map((m) => [m.userId, m.name]));
-  const roles = Object.fromEntries(inputs.members.map((m) => [m.userId, m.role]));
+  const personSettings = new Map(inputs.personSettings.map((s) => [s.userId, s]));
+  const roles = Object.fromEntries(inputs.members.map((m) => [m.userId, effectiveScheduleRole(m.role, personSettings.get(m.userId)?.worksAs)]));
   // Server-side only: the view-model drops wages for anyone who may not see money, and uses them for an AGM only inside
   // the labor-target card's HEAD maths (its $ lines and fields are absent then — chunk C's contract).
   const wageCentsByUser: Record<string, number | null> = Object.fromEntries(Object.values(people).map((p) => [p.userId, inputs.wages.byUserCents[p.userId] ?? inputs.shopSettings.estimatedHourlyCents]));

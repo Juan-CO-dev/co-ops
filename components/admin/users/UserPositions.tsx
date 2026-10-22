@@ -18,8 +18,10 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
+import { effectiveScheduleRole } from "@/lib/scheduling/works-as-shared";
+import { defaultWorkType } from "@/lib/scheduling/people-input-shared";
 import type { WorkType } from "@/lib/scheduling/context-shared";
-import { isHourlyLeadRole } from "@/lib/scheduling/position-rank-shared";
+import { pickerPositionAllowed, isHourlyLeadRole } from "@/lib/scheduling/position-rank-shared";
 import { personPositionsBody } from "@/lib/scheduling/settings-view-shared";
 import {
   flexDropped, pickChanged, pickOf, pickProblems, positionChangesOf, type PickerPosition, type PositionPick, type ShopPositionPicker,
@@ -53,6 +55,9 @@ export function ShopPositionFields({ userId, role, location, shop, pick, onChang
     );
   }
   const current = userId ? shop.settings[userId] : null;
+  role = effectiveScheduleRole(role, current?.worksAs);
+  const person = { role, workType: pick.workType ?? defaultWorkType(role), alsoAllowed: current?.alsoAllowed ?? [] };
+  const allowed = (p: PickerPosition) => pickerPositionAllowed(person, shop.rolesKnown ? p : {});
   const label = (p: PickerPosition) => (language === "es" && p.nameEs ? p.nameEs : p.name);
   const byId = new Map(shop.positions.map((p) => [p.id, p]));
   const name = (id: string) => { const p = byId.get(id); return p ? label(p) : ""; };
@@ -79,10 +84,10 @@ export function ShopPositionFields({ userId, role, location, shop, pick, onChang
         <select id={ids.p} className={SELECT} value={pick.primary ?? ""} data-pick="primary"
           onChange={(e) => { const v = e.target.value || null; onChange({ ...pick, primary: v, secondary: v === null || v === pick.secondary ? null : pick.secondary }); }}>
           <option value="">{t("admin.users.positions.none")}</option>
-          {shop.positions.map((p) => <option key={p.id} value={p.id}>{label(p)}</option>)}
+          {shop.positions.filter((p) => allowed(p) || p.id === pick.primary).map((p) => <option key={p.id} value={p.id} disabled={!allowed(p)}>{label(p)}</option>)}
         </select>
       </label>
-      {suggestion && byId.has(suggestion.positionId) ? (
+      {suggestion && byId.has(suggestion.positionId) && allowed(byId.get(suggestion.positionId)!) ? (
         <div className="flex flex-wrap items-center gap-2" data-toast-suggestion={suggestion.positionId}>
           <button type="button" className={GHOST_BTN} onClick={() => onChange({ ...pick, primary: suggestion.positionId })}>
             {t("schedule.settings.staff.toast_suggest", { position: name(suggestion.positionId) })}
@@ -96,14 +101,14 @@ export function ShopPositionFields({ userId, role, location, shop, pick, onChang
           onChange={(e) => onChange({ ...pick, secondary: e.target.value || null })}>
           {/* Astra BC-013: with "can flex to" entries behind it, None says it clears them — no silent promotion. */}
           <option value="">{tailCount === 1 ? t("admin.users.positions.none_clear_one") : tailCount > 1 ? t("admin.users.positions.none_clear_other", { count: tailCount }) : t("admin.users.positions.none")}</option>
-          {shop.positions.filter((p) => p.id !== pick.primary).map((p) => <option key={p.id} value={p.id}>{label(p)}</option>)}
+          {shop.positions.filter((p) => p.id !== pick.primary && (allowed(p) || p.id === pick.secondary)).map((p) => <option key={p.id} value={p.id} disabled={!allowed(p)}>{label(p)}</option>)}
         </select>
       </label>
       {isHourlyLeadRole(role) ? <p data-lead-note className="text-xs text-co-text-muted">{t("schedule.settings.staff.lead_note")}</p> : null}
       {dropped > 0 ? <p className="text-xs font-bold text-co-warning-text">{dropped === 1 ? t("admin.users.positions.clears_flex_one") : t("admin.users.positions.clears_flex_other", { count: dropped })}</p> : null}
       {problems.length > 0 ? (
         <ul role="alert" data-position-problems className="grid gap-1 text-sm font-bold text-co-cta-text">
-          {problems.map((pr) => <li key={pr.slot}>{t("schedule.settings.staff.problem_work_type", { slot: slot(pr.slot), position: name(pr.positionId) })}</li>)}
+          {problems.map((pr) => <li key={pr.slot}>{t(pr.code === "work_type" ? "schedule.settings.staff.problem_work_type" : "schedule.settings.staff.problem_ineligible", { slot: slot(pr.slot), position: name(pr.positionId) })}</li>)}
         </ul>
       ) : null}
     </fieldset>
@@ -117,7 +122,7 @@ export function initialPicks(userId: string | null, locationIds: readonly string
 
 /** Any blocking problem across the shops? */
 export function anyPickProblem(userId: string | null, role: RoleCode, picks: Record<string, PositionPick>, shops: PositionShops): boolean {
-  return Object.entries(picks).some(([id, pick]) => { const shop = shops[id]; return !!shop && pickProblems(role, userId ? shop.settings[userId] : null, pick, shop).length > 0; });
+  return Object.entries(picks).some(([id, pick]) => { const shop = shops[id]; return !!shop && pickProblems(role, userId ? shop.settings[userId] : null, pick, shop).some((pr) => pr.code === "work_type"); });
 }
 
 /**

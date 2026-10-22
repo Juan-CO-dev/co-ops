@@ -20,6 +20,7 @@ import { etCalendarDate, etClockTime } from "@/lib/operational-day";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import type { SkillMatrix } from "@/lib/people/skill-matrix-shared";
 import type { AvailabilityWindow, RulePerson, WorkType } from "./context-shared";
+import { effectiveScheduleRole, type WorksAsRole } from "./works-as-shared";
 import { eligibleForPosition, workTypeAllows } from "./rules-shared";
 import { positionIds, type LeaderSetting, type ScheduleStructure, type StructurePosition } from "./structure-shared";
 import { addDays, isoDowOf, isoWeekStart, Q_MINUTES, Q_PER_DAY } from "./time-shared";
@@ -151,6 +152,7 @@ export function assumedAvailability(pattern: DowPattern | undefined, shopDay: { 
 
 export interface MemberInput { userId: string; role: RoleCode; active: boolean }
 export interface PersonSettingsRow {
+  worksAs?: WorksAsRole | null;
   userId: string;
   workType: WorkType | null;
   alsoAllowed: Array<"boh" | "foh">;
@@ -204,7 +206,8 @@ export interface ToSchedPeopleInput {
 
 /**
  * Members → `SchedPerson[]`, canonical (sorted by userId). Excluded roles and levels < 2 are dropped
- * unless `rosterInclude` (never cgs / social media); MoO / Owner are presence-only; role defaults for
+ * unless `rosterInclude`; CGS / social media require a valid shop-specific `worksAs`. That effective
+ * role drives every scheduling rule. MoO / Owner are presence-only; role defaults for
  * work type and leader setting apply and person settings override; cover preferences outside the shop's
  * active positions are dropped and reported; salaried = GM / AGM; wage = 7shifts else the estimate else
  * null. Availability comes from the pattern per weekday (assumed, flagged).
@@ -219,11 +222,13 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
   for (const m of [...input.members].sort((a, b) => cmp(a.userId, b.userId))) {
     // Staff separations: on leave (while on leave) and separated (always) are off the schedule.
     if (away.has(m.userId)) continue;
-    // Astra chunk B P2-5: never on the roster, whatever the configurable exclusions or a person setting say.
-    if (NEVER_INCLUDED.includes(m.role)) continue;
+    // An off-floor account joins through its explicit shop-specific floor role.
     const st = settings.get(m.userId);
-    const excluded = structure.roster.excludedRoles.includes(m.role) || getRoleLevel(m.role) < 2;
-    const presenceOnly = PRESENCE_ONLY.includes(m.role);
+    const role = effectiveScheduleRole(m.role, st?.worksAs);
+    if (NEVER_INCLUDED.includes(role)) continue;
+    // A valid works_as intentionally bypasses this shop's excludedRoles: it explicitly opts this person into floor work.
+    const excluded = role === m.role && (structure.roster.excludedRoles.includes(role) || getRoleLevel(role) < 2);
+    const presenceOnly = PRESENCE_ONLY.includes(role);
     if (excluded && !presenceOnly) {
       if (!st?.rosterInclude) continue;
       notes.push({ code: "excluded_role_included", userId: m.userId, positionId: null });
@@ -236,11 +241,11 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
     const availability: Record<string, AvailabilityWindow | null> = {};
     for (const d of input.dates) availability[d] = assumedAvailability(pattern?.byDow[isoDowOf(d)], input.shopDay);
     const mean = pattern?.meanWeeklyHours ?? null;
-    const salaried = SALARIED.includes(m.role);
+    const salaried = SALARIED.includes(role);
     const wage = input.wages.byUserCents[m.userId];
     const person: SchedPerson = {
-      userId: m.userId, role: m.role, activeMember: m.active,
-      workType: st?.workType ?? defaultWorkType(m.role), alsoAllowed: [...(st?.alsoAllowed ?? [])].sort(),
+      userId: m.userId, role, activeMember: m.active,
+      workType: st?.workType ?? defaultWorkType(role), alsoAllowed: [...(st?.alsoAllowed ?? [])].sort(),
       leaderSetting: st?.leaderSetting ?? null, coverPositions: cover, salaried, presenceOnly,
       softMinH: salaried || presenceOnly ? null : st?.softMinH ?? (mean === null ? 0 : Math.max(0, Math.round((mean - 4) * 4) / 4)),
       softMaxH: salaried || presenceOnly ? null : st?.softMaxH ?? (mean === null ? 40 : Math.round((mean + 4) * 4) / 4),

@@ -289,3 +289,109 @@ describe("the admin user screen: the Positions dialog and the Add user form", ()
     expect(bad).toMatch(/<button[^>]*disabled=""[^>]*>Create user/);
   });
 });
+
+
+describe("effective shift role and eligible position choices", () => {
+  it("lists CGS with a translated Works shifts as selector, and floor controls once set", async () => {
+    const base = await ready(shop((t) => { t.users!.find((u) => u.id === EMP)!.role = "cgs"; }));
+    const cgs = base.members.find((m) => m.role === "cgs")!;
+    expect(cgs).toBeDefined();
+    for (const lang of ["en", "es"] as const) {
+      const L = lang === "en" ? EN : ES;
+      const none = drawer(render(base, lang, cgs.userId));
+      expect(text(none)).toContain(L["schedule.settings.staff.works_as"]);
+      expect(none).not.toContain('data-position-list=');
+      const assigned = drawer(render(withSettings(base, cgs.userId, { worksAs: "key_holder" }), lang, cgs.userId));
+      expect(assigned).toContain('data-position-list="ranked"');
+      expect(assigned).toContain('data-lead-note');
+    }
+  });
+  it("filters Prep/Dishwasher for a FOH key holder and warns on saved flex", async () => {
+    const base = withSettings(await ready(shop()), KH, { coverPositions: [P_REG, P_WALK, P_EXPO] });
+    const v: View = { ...base, positionRolesKnown: true, positions: { ...base.positions, [P_EXPO]: { ...base.positions[P_EXPO]!, role: "prep_dish" } } };
+    const d = drawer(render(v, "en", KH));
+    expect(d).toContain(`data-ineligible-position="${P_EXPO}"`);
+    expect(d).not.toContain(`<option value="${P_EXPO}">`);
+    const clean = drawer(render(withSettings(v, KH, { coverPositions: [] }), "en", KH));
+    expect(clean).not.toContain(`<option value="${P_EXPO}">`);
+    const restricted: View = { ...v, positions: { ...v.positions, [P_REG]: { ...v.positions[P_REG]!, allowedRoles: ["employee"] } } };
+    expect(drawer(render(withSettings(restricted, KH, { coverPositions: [] }), "en", KH))).not.toContain(`<option value="${P_REG}">`);
+  });
+  it("admin pickers preserve a saved ineligible option disabled and warn using effective role", () => {
+    const shop: ShopPositionPicker = { locationId: A, rolesKnown: true,
+      positions: [{ id: P_REG, name: "Register", nameEs: null, role: "register", allowedRoles: ["key_holder"] }, { id: P_WALK, name: "Prep/Dishwasher", nameEs: null, role: "prep_dish", allowedRoles: ["key_holder"] }],
+      settings: { [EMP]: row(EMP, { worksAs: "key_holder", coverPositions: [P_REG, P_WALK] }) }, suggestions: {} };
+    const h = wrapIn(createElement(UserPositionsDialog, { userId: EMP, role: "cgs", locations: [{ id: A, code: "A", name: "Shop" }], shops: { [A]: shop }, onClose: () => {} }), "en");
+    expect(h).toContain(`value="${P_WALK}" disabled="" selected=""`);
+    expect(text(h)).toContain("Prep/Dishwasher: their work type doesn't allow this position");
+    expect(h).toContain('data-lead-note');
+  });
+});
+
+
+it("UserActions offers CGS Positions only with a floor role at an accessible member shop; authorization still uses CGS", async () => {
+  const { UserActions } = await import("@/components/admin/users/UserActions");
+  const { userAdminRefusal } = await import("@/lib/admin/user-access-shared");
+  const user: import("@/lib/admin/users").AdminUserListItem = {
+    id: EMP, name: "Office account", email: null, role: "cgs", level: 10, active: true,
+    lastLoginAt: null, dormantAt: null, dormancy: { dormant: false }, locationIds: [A],
+  };
+  const picker: ShopPositionPicker = { locationId: A, positions: [], rolesKnown: true, settings: {}, suggestions: {} };
+  const props: Parameters<typeof UserActions>[0] = {
+    user, assignableRoles: [], accessibleLocations: [{ id: A, name: "Shop", code: "A" }],
+    positionShops: { [A]: picker }, actor: { userId: GM, role: "gm", locations: [A] },
+    employmentAvailable: false, today: "2026-10-21",
+  };
+  const positionsButton = `>${EN["admin.users.action.positions"]}</button>`;
+  expect(wrapIn(createElement(UserActions, props), "en")).not.toContain(positionsButton);
+  picker.settings[EMP] = row(EMP, { worksAs: "key_holder" });
+  expect(wrapIn(createElement(UserActions, props), "en")).toContain(positionsButton);
+  expect(wrapIn(createElement(UserActions, { ...props, accessibleLocations: [] }), "en")).not.toContain(positionsButton);
+  expect(wrapIn(createElement(UserActions, { ...props, user: { ...user, locationIds: [] } }), "en")).not.toContain(positionsButton);
+  // The parent authorizes on the unchanged account role; the floor role grants no admin authority over CGS.
+  expect(userAdminRefusal(props.actor, user)).toBe("forbidden");
+  expect(user.role).toBe("cgs");
+});
+
+
+describe("round 2: cover lists and advisory eligibility", () => {
+  it.each(["catering_mgr", "prep_mgr", "gm", "agm"] as const)("%s retains settings and all cover choices without placement warnings", async (role) => {
+    const v = await ready(shop());
+    const view = { ...v, positionRolesKnown: true,
+      positions: { ...v.positions, [P_REG]: { ...v.positions[P_REG]!, role: "prep_dish" as const, allowedRoles: ["employee" as const] } },
+      members: v.members.map((m) => m.userId === EMP ? { ...m, role, settings: row(EMP, { coverPositions: [P_WALK] }) } : m) };
+    const d = drawer(render(view, "en", EMP));
+    expect(d).toContain('data-position-list="cover"');
+    expect(d).toContain(`value="${P_REG}"`);
+    expect(d).not.toContain("data-ineligible-position");
+    expect(d).not.toContain("data-position-problems");
+  });
+
+  it("a saved ineligible flex entry stays visible with the work-type reason", async () => {
+    const v = withSettings(await ready(shop()), KH, { coverPositions: [P_WALK, P_EXPO, P_REG] });
+    const view = { ...v, positionRolesKnown: true,
+      positions: { ...v.positions, [P_REG]: { ...v.positions[P_REG]!, role: "prep_dish" as const } } };
+    const d = drawer(render(view, "en", KH));
+    expect(d).toContain(`data-ineligible-position="${P_REG}"`);
+    expect(text(d)).toContain("because of their work type");
+    expect(d).not.toContain("data-position-problems");
+  });
+});
+
+
+it("a role-ineligible primary warns but does not disable the admin save", () => {
+  const picker: ShopPositionPicker = { locationId: A, rolesKnown: true,
+    positions: [{ id: P_REG, name: "Register", nameEs: null, role: "register", allowedRoles: ["employee"] }],
+    settings: { [KH]: row(KH, { coverPositions: [P_REG] }) }, suggestions: {} };
+  const h = wrapIn(createElement(UserPositionsDialog, { userId: KH, role: "key_holder",
+    locations: [{ id: A, code: "A", name: "Shop" }], shops: { [A]: picker }, onClose: () => {} }), "en");
+  expect(text(h)).toContain("because of their shift role");
+  expect(h).not.toMatch(/<button[^>]*disabled=""[^>]*>Save positions/);
+});
+
+it("a new role-ineligible position is accepted by the server", async () => {
+  const s = shop((t) => { t.schedule_structures = [{ id: "sv-1", location_id: A, created_at: "2026-10-01T12:00:00Z",
+    structure: { positions: { [P_REG]: { role: "register", allowedRoles: ["employee"] } } } }]; });
+  await recordPersonSettings(s.deps, { actor: gm, locationId: A, settings: row(KH, { coverPositions: [P_REG] }), expectedId: null });
+  expect(s.calls.some((c) => c.fn === "save_schedule_person_settings")).toBe(true);
+});

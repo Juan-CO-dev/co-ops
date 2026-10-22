@@ -15,6 +15,7 @@ import { loadPositionLabelRows } from "./board";
 import { ScheduleError } from "./errors-shared";
 import { loadLiveStructure, loadPersonSettingsWithIds } from "./inputs";
 import { loadToastJobHours, toastSuggestions } from "./position-suggest";
+import { effectiveScheduleRole } from "./works-as-shared";
 import type { PickerPosition, ShopPositionPicker } from "./user-positions-shared";
 
 const notInstalled = (e: unknown) =>
@@ -33,13 +34,13 @@ export async function loadUserPositionPickers(service: SupabaseClient, args: {
       const labels = new Map((await loadPositionLabelRows(service, locationId)).map((r) => [r.id, r]));
       const positions: PickerPosition[] = Object.keys(live.structure.positions).filter((id) => labels.has(id)).map((id) => {
         const l = labels.get(id)!;
-        return { id, name: l.name, nameEs: l.name_es, role: rolesKnown ? live.structure.positions[id]!.role : null };
+        return { id, name: l.name, nameEs: l.name_es, role: rolesKnown ? live.structure.positions[id]!.role : null, allowedRoles: live.structure.positions[id]!.allowedRoles };
       }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1));
       // The values and their row ids from ONE read (the picks send the id back as their expected head).
       const snapshot = await loadPersonSettingsWithIds(service, locationId);
       const settings = Object.fromEntries(snapshot.map((x) => [x.row.userId, x.row]));
       const settingsIds = Object.fromEntries(snapshot.map((x) => [x.row.userId, x.id]));
-      const members = args.people.filter((p) => p.locationIds.includes(locationId)).map((p) => ({ userId: p.userId, role: p.role, coverPositions: settings[p.userId]?.coverPositions ?? [] }));
+      const members = args.people.filter((p) => p.locationIds.includes(locationId)).map((p) => ({ userId: p.userId, role: effectiveScheduleRole(p.role, settings[p.userId]?.worksAs), coverPositions: settings[p.userId]?.coverPositions ?? [] }));
       const suggestions = members.some((m) => m.coverPositions.length === 0)
         ? toastSuggestions(await loadToastJobHours(service, locationId, args.today), members, positions)
         : {};

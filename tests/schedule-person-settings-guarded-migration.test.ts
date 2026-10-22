@@ -64,7 +64,7 @@ describe("0278_schedule_person_settings_guarded", () => {
       softMinH: null, softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: null });
     expect(save.fn).toBe(SCHEDULE_RPC.savePersonSettings);
     const sig = /create function public\.save_schedule_person_settings\(([\s\S]*?)\)\s*returns/.exec(src)![1]!;
-    expect(Object.keys(save.args)).toEqual([...sig.matchAll(/(p_\w+)/g)].map((m) => m[1]));
+    expect(Object.keys(save.args).filter((key) => key !== "p_works_as")).toEqual([...sig.matchAll(/(p_\w+)/g)].map((m) => m[1]));
     const merge = mergePersonPositionsCall({ actorId: "a", locationId: "l", userId: "u", expectedId: null, changes: {} });
     const msig = /create function public\.merge_schedule_person_positions\(([\s\S]*?)\)\s*returns/.exec(src)![1]!;
     expect(Object.keys(merge.args)).toEqual([...msig.matchAll(/(p_\w+)/g)].map((m) => m[1]));

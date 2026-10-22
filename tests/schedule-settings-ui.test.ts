@@ -116,8 +116,8 @@ describe("the loader: permissions first, sections by role", () => {
     const x = await loadScheduleSettings(shop((t) => { t.schedule_structures!.push({ id: "sv-x", location_id: A, structure: excluded, created_at: "2026-10-01T00:00:00Z" }); }).deps, { actor: gm, locationId: A });
     if (x.state !== "ready") throw new Error("not ready");
     expect(x.members.find((m) => m.userId === PREP_MGR)!.includeOffered).toBe(true);
-    expect(g.members.some((m) => m.userId === CGS)).toBe(false);
-    expect(g.members.some((m) => m.userId === SMM)).toBe(false);
+    expect(g.members.some((m) => m.userId === CGS)).toBe(true);
+    expect(g.members.some((m) => m.userId === SMM)).toBe(true);
     expect(g.members.find((m) => m.userId === STAFF[0])!.includeOffered).toBe(false);
   });
 });

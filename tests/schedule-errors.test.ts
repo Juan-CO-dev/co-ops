@@ -33,6 +33,8 @@ describe("ScheduleErrorCode", () => {
       "person_settings_moved",
       // Astra BC-007/038: 0278 not applied → the person-settings writes refuse
       "person_settings_unavailable",
+      // 0280: only off-floor accounts may carry a separate shift role.
+      "works_as_refused",
     ].sort());
   });
 

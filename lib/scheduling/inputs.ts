@@ -117,11 +117,11 @@ async function loadMembersWithSince(service: SupabaseClient, locationId: string)
   return out.sort((a, b) => (a.userId < b.userId ? -1 : 1));
 }
 
-type PersonSettingsDbRow = { id: string; user_id: string; work_type: PersonSettingsRow["workType"]; also_allowed: Array<"boh" | "foh">; leader_setting: PersonSettingsRow["leaderSetting"];
+type PersonSettingsDbRow = { id: string; user_id: string; works_as: PersonSettingsRow["worksAs"]; work_type: PersonSettingsRow["workType"]; also_allowed: Array<"boh" | "foh">; leader_setting: PersonSettingsRow["leaderSetting"];
   cover_positions: string[]; soft_min_h: number | string | null; soft_max_h: number | string | null; full_time: boolean; full_time_min_h: number | string | null; roster_include: boolean | null; created_at: string };
-const PERSON_SETTINGS_COLUMNS = "id, user_id, work_type, also_allowed, leader_setting, cover_positions, soft_min_h, soft_max_h, full_time, full_time_min_h, roster_include, created_at";
+const PERSON_SETTINGS_COLUMNS = "id, user_id, works_as, work_type, also_allowed, leader_setting, cover_positions, soft_min_h, soft_max_h, full_time, full_time_min_h, roster_include, created_at";
 const personSettingsOf = (r: PersonSettingsDbRow): PersonSettingsRow => ({
-  userId: r.user_id, workType: r.work_type, alsoAllowed: r.also_allowed ?? [], leaderSetting: r.leader_setting, coverPositions: r.cover_positions ?? [],
+  userId: r.user_id, worksAs: r.works_as ?? null, workType: r.work_type, alsoAllowed: r.also_allowed ?? [], leaderSetting: r.leader_setting, coverPositions: r.cover_positions ?? [],
   softMinH: num(r.soft_min_h), softMaxH: num(r.soft_max_h), fullTime: r.full_time === true, fullTimeMinH: num(r.full_time_min_h), rosterInclude: r.roster_include,
 });
 

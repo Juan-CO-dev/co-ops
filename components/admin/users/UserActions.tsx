@@ -35,6 +35,7 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { type RoleCode } from "@/lib/roles";
 import type { AdminUserListItem } from "@/lib/admin/users";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { effectiveScheduleRole } from "@/lib/scheduling/works-as-shared";
 import { hasPositionRank } from "@/lib/scheduling/position-rank-shared";
 import { postJson, resolveErrorKey, type LocationOption } from "./shared";
 import { UserPositionsDialog, type PositionShops } from "./UserPositions";
@@ -125,6 +126,8 @@ export function UserActions({
     ? employmentActionsFor(actor, { id: user.id, role: user.role, locationIds: user.locationIds }, actStateOf(view))
     : { endEmployment: false, backFromLeave: false, rehire: false, correct: false };
   const employed = view.status === "active";
+  const positionLocations = accessibleLocations.filter((l) => user.locationIds.includes(l.id) &&
+    hasPositionRank({ role: effectiveScheduleRole(user.role, positionShops?.[l.id]?.settings[user.id]?.worksAs) }));
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -152,7 +155,7 @@ export function UserActions({
         <ActionButton label={t("admin.users.employment.action.correct")} onClick={() => setActive({ kind: "employment", mode: "correct" })} />
       ) : null}
 
-      {positionShops && hasPositionRank(user) ? (
+      {positionShops && (hasPositionRank(user) || positionLocations.length > 0) ? (
         <ActionButton label={t("admin.users.action.positions")} onClick={() => setActive({ kind: "positions" })} />
       ) : null}
 
@@ -173,7 +176,7 @@ export function UserActions({
             <h2 className="text-base font-extrabold text-co-text">{user.name} · {t("admin.users.positions.title")}</h2>
             <div className="mt-4">
               <UserPositionsDialog userId={user.id} role={user.role} shops={positionShops}
-                locations={accessibleLocations.filter((l) => user.locationIds.includes(l.id))} onClose={close} />
+                locations={positionLocations} onClose={close} />
             </div>
           </div>
         </div>

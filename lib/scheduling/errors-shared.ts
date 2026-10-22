@@ -9,6 +9,7 @@
 
 export const SCHEDULE_ERROR_CODES = [
   "schedule_forbidden",
+  "works_as_refused",
   "schedule_role_refused",
   "shop_not_enabled",
   "shop_not_allowed",
@@ -92,7 +93,7 @@ export class ScheduleError extends Error {
  * for every code.
  */
 export const SCHEDULE_ERROR_STATUS: Record<ScheduleErrorCode, 400 | 403 | 404 | 409 | 422 | 500 | 503> = {
-  schedule_forbidden: 403, schedule_role_refused: 403, shop_not_allowed: 403, roster_include_refused: 403,
+  works_as_refused: 422, schedule_forbidden: 403, schedule_role_refused: 403, shop_not_allowed: 403, roster_include_refused: 403,
   shop_not_enabled: 409, week_not_found: 404, past_week: 409, day_locked: 409, head_moved: 409, edited_week_unconfirmed: 409, preview_stale: 409,
   rules_failing: 409, unresolved_gaps: 409, person_settings_moved: 409, history_changed: 409, structure_moved: 409,
   generator_invalid_output: 500, context_too_large: 500,
