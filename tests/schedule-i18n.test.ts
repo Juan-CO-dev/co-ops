@@ -31,7 +31,7 @@ describe("every scheduling key has an en and an es string", () => {
     expect(families.rule).toHaveLength(Object.keys(RULE_CODES).length);
     expect(families.reason).toHaveLength(REASON_KEYS.length + 1);
     expect(families.note).toHaveLength(NOTE_CODES.length);
-    expect([...GAP_CAUSES].sort()).toEqual([...PROVEN_CAUSE_ORDER, "unresolved_search"].sort());
+    expect([...GAP_CAUSES].sort()).toEqual([...PROVEN_CAUSE_ORDER, "unresolved_search", "crew_shortfall"].sort());
     expect(families.certificate).toHaveLength(GAP_CAUSES.length);
     expect(families.structure).toHaveLength(STRUCTURE_RULE_KEYS.length);
     expect(new Set(all).size).toBe(all.length);

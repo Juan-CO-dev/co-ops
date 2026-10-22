@@ -33,7 +33,8 @@ export function positionLabel(ctx: Pick<LineContext, "language" | "positions" | 
  * CC chunk H9: a segment's label. A MoD-lane segment the person only counts on from a later quarter reads "On the clock · manager
  * on duty from 7:00 PM" (none of it: "On the clock · not manager on duty") — never "Manager on duty" over time that is not.
  */
-export function segmentLabel(ctx: Pick<LineContext, "language" | "positions" | "t">, g: { positionId: string; startQ: number; endQ: number; modFromQ?: number | null }): string {
+export function segmentLabel(ctx: Pick<LineContext, "language" | "positions" | "t">, g: { positionId: string; startQ: number; endQ: number; modFromQ?: number | null; crewUnassigned?: boolean }): string {
+  if (g.positionId === "mod" && g.crewUnassigned) return ctx.t("schedule.board.crew_unassigned");
   if (g.positionId === "mod" && g.modFromQ !== undefined) {
     return g.modFromQ === null ? ctx.t("schedule.board.mod_not_counted") : ctx.t("schedule.board.mod_from", { time: formatQ(g.modFromQ, ctx.language) });
   }

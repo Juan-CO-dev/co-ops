@@ -1,4 +1,5 @@
 import type { ResolvedUsualShift } from "./usual-shift-shared";
+import type { CrewDaySnapshot } from "./crew-contracts-shared";
 /**
  * THE VALIDATION CONTEXT — what `checkScheduleRules` judges against, and its persisted SNAPSHOT
  * (Scheduling Phase 2, r3 P2-4 + r4 P2; plan "Original validation vs current inputs").
@@ -78,6 +79,8 @@ export interface DayInputs {
 }
 
 export interface DayContext {
+  /** Absent in historical station revisions; all crew provenance survives replay. */
+  crew?: CrewDaySnapshot;
   structureVersionId: string;
   structure: ScheduleStructure;
   dayType: CrewType;

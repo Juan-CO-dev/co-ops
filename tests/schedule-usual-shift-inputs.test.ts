@@ -72,6 +72,9 @@ describe("usual shift inference and resolution", () => {
     input.structure.shiftTypes = [type()];
     const person = input.people[0]!;
     person.usualShift = { value: null, source: "none", deletedTypeId: "deleted-morning" };
+    // Chunk 4 validates crew snapshots; generation arrives in chunk 5. Exercise the
+    // people snapshot through an inherited-only week, without invoking a crew build.
+    input.days = [];
     const output = buildWeek(input);
     const context = JSON.parse(JSON.stringify(output.context)) as typeof output.context;
     expect(context.people[person.userId]?.usualShift?.deletedTypeId).toBe("deleted-morning");
@@ -112,6 +115,7 @@ describe("usual shift save paths", () => {
 
     const crewInput = structuredClone(stationInput);
     crewInput.structure.engine = "crew";
+    crewInput.days = []; // Crew generation is chunk 5; this test exercises the persisted people context.
     const crew = buildWeek(crewInput).context;
     const changed = structuredClone(crew);
     changed.people[crewInput.people[0]!.userId]!.usualShift = { value: { typeId: "other" }, source: "manager", deletedTypeId: null };

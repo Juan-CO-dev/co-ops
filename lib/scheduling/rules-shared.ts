@@ -20,6 +20,10 @@
  * totals (overtime, the floor, the soft range, the budget) COUNT inherited hours but attribute a
  * problem only to a built day.
  */
+import type { CrewGapCertificate } from "./crew-contracts-shared";
+import { crewOpenGroups, shiftCountsAsMod, verifyCrewGap } from "./crew-gap-verifier-shared";
+export { shiftCountsAsMod, verifyCrewGap } from "./crew-gap-verifier-shared";
+import { scheduleEngine, shiftTypesOf } from "./structure-shared";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import {
   checklistFits, isLineRole, positionLimit, primaryOf, secondaryOf, type LeaderSetting, type ScheduleStructure, type StructurePosition,
@@ -48,8 +52,8 @@ export const CATERING_MANAGER_COVER = "schedule.reason.catering_manager_cover";
 export interface Segment { positionId: string; startQ: number; endQ: number; lastResort?: boolean; coverFor?: string; reasonKey?: string }
 export interface Shift { userId: string; date: string; startQ: number; endQ: number; segments: Segment[]; closingManager: boolean; flex: boolean; pinned: boolean }
 
-export type GapCode = "coverage_gap" | "mod_missing" | "closing_manager_missing";
-export type GapCause = "budget_limited" | "floor_limit" | "eligibility" | "availability" | "capacity" | "structure" | "unresolved_search";
+export type GapCode = "open_shift" | "coverage_gap" | "mod_missing" | "closing_manager_missing";
+export type GapCause = "crew_shortfall" | "budget_limited" | "floor_limit" | "eligibility" | "availability" | "capacity" | "structure" | "unresolved_search";
 /** The fixed order in which a deficit takes the FIRST proven cause that certifies (generator step 9a.6). */
 export const PROVEN_CAUSE_ORDER = ["structure", "eligibility", "capacity", "availability", "floor_limit", "budget_limited"] as const;
 
@@ -121,6 +125,7 @@ export interface UnresolvedSearchCertificate {
 
 interface GapBase { code: GapCode; date: string; positionId: string | null; fromQ: number; toQ: number }
 export type DeclaredGap = GapBase & (
+  | { cause: "crew_shortfall"; certificate: CrewGapCertificate }
   | { cause: "budget_limited"; certificate: BudgetLimitedCertificate }
   | { cause: "floor_limit"; certificate: FloorLimitCertificate }
   | { cause: "eligibility"; certificate: EligibilityCertificate }
@@ -190,7 +195,8 @@ export const RULE_CODES = {
   flex_used: "warning",
   pairing_unmet: "warning",
 } as const satisfies Record<string, RuleSeverity>;
-export type RuleCode = keyof typeof RULE_CODES;
+export const CREW_RULE_CODES = { open_shift: "gap" } as const satisfies Record<string, RuleSeverity>;
+export type RuleCode = keyof typeof RULE_CODES | keyof typeof CREW_RULE_CODES;
 
 /**
  * CC addendum A (2026-10-16): the salaried week checks are warnings for a person editing a week, but the GENERATOR keeps the
@@ -440,7 +446,7 @@ function dayCoverage(shifts: readonly Shift[], day: DayContext, ctx: RuleContext
       if (!arr) { arr = new Array<number>(96).fill(0); byPosition.set(g.positionId, arr); }
       for (let q = Math.max(0, g.startQ); q < Math.min(96, g.endQ); q++) { arr[q]!++; onClock.add(q); }
     }
-    if (p) for (const q of onClock) if (modCountsOn(p, day, q)) managers[q]!++;
+    if (p) for (const q of onClock) if (shiftCountsAsMod(sh, p, day, q)) managers[q]!++;
     if (sh.closingManager && p && closingManagerEligible(p, day.structure)) for (const q of onClock) closingManagerAt[q] = 1;
   }
   return { byPosition, managers, closingManagerAt, closingRequired: closingManagerRequired(day) };
@@ -1481,6 +1487,19 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
   const day = ctx.days[g.date];
   if (!day || g.toQ <= g.fromQ) return false;
   const st = day.structure;
+  if (g.cause === "crew_shortfall") return verifyCrewGap(g, s, ctx);
+  if (g.code === "open_shift") {
+    if (g.cause !== "unresolved_search" || scheduleEngine(st) !== "crew") return false;
+    const group = crewOpenGroups(g.date, s, ctx).find((x) => x.fromQ === g.fromQ && x.toQ === g.toQ);
+    const c = g.certificate;
+    return !!group && c.limits.REPAIR_MAX_STEPS === REPAIR_LIMITS.REPAIR_MAX_STEPS
+      && c.limits.maxDonors === REPAIR_LIMITS.maxDonors
+      && c.limits.maxChainDepth === REPAIR_LIMITS.maxChainDepth
+      && Number.isInteger(c.searched.steps) && c.searched.steps >= 0 && c.searched.steps <= REPAIR_LIMITS.REPAIR_MAX_STEPS
+      && Number.isInteger(c.searched.donorsTried) && c.searched.donorsTried >= 0
+      && Number.isInteger(c.searched.chainDepth) && c.searched.chainDepth >= 0 && c.searched.chainDepth <= REPAIR_LIMITS.maxChainDepth
+      && Array.isArray(c.candidateIds) && c.candidateIds.every((x) => typeof x === "string");
+  }
   switch (g.cause) {
     case "budget_limited": {
       // Astra chunk A P1: essential coverage is budget-exempt and can never be excused by budget — the MoD,
@@ -1565,7 +1584,7 @@ export function checkCertificate(g: DeclaredGap, s: WeekSchedule, ctx: RuleConte
  */
 export function proveGap(subject: GapSubject, s: WeekSchedule, ctx: RuleContext): { cause: Exclude<GapCause, "unresolved_search">; certificate: GapCertificate } | null {
   const day = ctx.days[subject.date];
-  if (!day || subject.toQ <= subject.fromQ) return null;
+  if (!day || subject.toQ <= subject.fromQ || subject.code === "open_shift") return null;
   const tryCert = (g: DeclaredGap) => (verify(g, s, ctx, 1) ? { cause: g.cause as Exclude<GapCause, "unresolved_search">, certificate: g.certificate } : null);
   const rules = structureRules(day.structure, subject, Object.values(ctx.people));
   if (rules[0]) return tryCert({ ...subject, cause: "structure", certificate: rules[0] });
@@ -1637,12 +1656,13 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
   const out: RuleProblem[] = [];
   const push = (code: RuleCode, day: string, extra: Partial<Omit<RuleProblem, "code" | "severity" | "day" | "inherited">> = {}) => {
     // CC addendum A: on a manager-edited week the station floor (32 h) WARNS; a generated week keeps it an error.
-    const severity: RuleSeverity = code === "manager_floor_exceeded" && opts.managerEdited ? "warning" : RULE_CODES[code];
+    const severity: RuleSeverity = code === "manager_floor_exceeded" && opts.managerEdited ? "warning" : code === "open_shift" ? CREW_RULE_CODES[code] : RULE_CODES[code];
     const p: RuleProblem = { code, severity, day, params: {}, inherited: false };
     if (extra.userId !== undefined) p.userId = extra.userId;
     if (extra.positionId !== undefined) p.positionId = extra.positionId;
     if (extra.q !== undefined) p.q = extra.q;
     if (extra.params) p.params = extra.params;
+    if (code === "outside_assumed_availability" && scheduleEngine(ctx.days[day]!.structure) === "crew") p.severity = "error";
     out.push(p);
   };
 
@@ -1667,6 +1687,14 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
       const u = sh.userId;
       if (!p.activeMember) push("not_member", date, { userId: u, q: sh.startQ });
       if (malformed(sh)) push("segments_malformed", date, { userId: u, q: sh.startQ });
+      if (scheduleEngine(st) === "crew") {
+        const meta = day.crew?.shifts.filter((m) => m.userId === u && m.startQ === sh.startQ) ?? [];
+        const type = meta.length === 1 ? shiftTypesOf(st).find((t) => t.id === meta[0]!.typeId) : undefined;
+        if (meta.length !== 1 || (meta[0]!.typeId !== null && !type)
+          || (meta[0]!.typeId === null && ["usual", "fill"].includes(meta[0]!.source))) push("segments_malformed", date, { userId: u, q: sh.startQ });
+        if (type && sh.endQ - sh.startQ < type.minLengthQ) push("shift_below_minimum", date, { userId: u, q: sh.startQ, params: { minutes: (sh.endQ - sh.startQ) * 15, minimumMinutes: type.minLengthQ * 15 } });
+        if (p.workModes?.[date] === "off" && !p.untouchableDates.includes(date)) push("untouchable_day", date, { userId: u, q: sh.startQ });
+      }
       const flexDay = sh.flex && p.flexDates.includes(date) && st.limits.flexUsesPer2w > 0;
       const minQ = flexDay ? st.limits.flexMinimumQ : st.limits.minimumShiftQ;
       if (sh.endQ - sh.startQ < minQ) push("shift_below_minimum", date, { userId: u, q: sh.startQ, params: { minutes: (sh.endQ - sh.startQ) * 15, minimumMinutes: minQ * 15 } });
@@ -1764,6 +1792,22 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
         }));
         if (!partnered) push("pairing_unmet", date, { userId: sh.userId, positionId: g.positionId, q: g.startQ });
       }
+    }
+
+    // Crew openings have no fake position or shift. Validate every required start group, plus
+    // every declared row (including stale rows that no longer intersect an actual deficit).
+    if (scheduleEngine(st) === "crew") {
+      if (!day.crew || day.crew.version !== 1 || day.crew.shifts.some((m) => shifts.filter((sh) => sh.userId === m.userId && sh.startQ === m.startQ).length !== 1)) push("segments_malformed", date);
+      for (const group of crewOpenGroups(date, s, ctx)) {
+        if (!s.gaps.some((g) => g.date === date && g.code === "open_shift" && g.fromQ === group.fromQ && g.toQ === group.toQ)) {
+          push("undeclared_gap", date, { q: group.fromQ, params: { gap: "open_shift", fromQ: group.fromQ, toQ: group.toQ } });
+        }
+      }
+    }
+    for (const g of s.gaps.filter((g) => g.date === date && (g.code === "open_shift" || g.cause === "crew_shortfall"))) {
+      const ok = checkCertificate(g, s, ctx);
+      if (!ok) push("uncertified_gap", date, { q: g.fromQ, params: { gap: g.code, cause: g.cause, fromQ: g.fromQ, toQ: g.toQ } });
+      else if (g.code === "open_shift") push("open_shift", date, { q: g.fromQ, params: { cause: g.cause, fromQ: g.fromQ, toQ: g.toQ, proven: g.cause !== "unresolved_search" } });
     }
 
     // Gap-class deficits: declared and certified, or an error.

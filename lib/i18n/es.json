@@ -8166,5 +8166,12 @@
   "schedule.settings.staff.usual_shift_flex": "Esta entrada está fuera de la flexibilidad del tipo de turno.",
   "schedule.settings.staff.usual_shift_clear": "Usar la estimación",
   "schedule.settings.staff.usual_shift_set": "Definir turno habitual",
-  "schedule.note.usual_shift_deleted": "{userId}: se seleccionó un tipo de turno eliminado; se usa la estimación de Toast si está disponible."
+  "schedule.note.usual_shift_deleted": "{userId}: se seleccionó un tipo de turno eliminado; se usa la estimación de Toast si está disponible.",
+  "schedule.rule.open_shift": "Turno abierto: nadie puede cubrir este turno completo.",
+  "schedule.reason.crew_unassigned": "En turno, disponible para cubrir una estación.",
+  "schedule.board.crew_unassigned": "En turno · sin estación asignada",
+  "schedule.gap.cause.crew_shortfall": "Falta de personal",
+  "schedule.gap.certificate.crew_shortfall": "Falta verificada con el personal programado.",
+  "schedule.gap.certificate.open_shifts": "{missing} turnos abiertos; cada candidato tiene una exclusión verificada.",
+  "schedule.gap.certificate.station_short": "Falta en la estación: {assigned} asignados, {required} necesarios."
 }

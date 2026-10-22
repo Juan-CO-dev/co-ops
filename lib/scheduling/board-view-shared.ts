@@ -23,10 +23,10 @@ import type { AdvisoryItem, DayContext, RuleContext, RulePerson } from "./contex
 import { laborTarget, type LaborTarget } from "./labor-target-shared";
 import { skillOf, type SchedSkillBand, type SkillLookup } from "./people-input-shared";
 import { shiftKey, type Reason, type ShiftReasons } from "./reasons-shared";
-import { MOD, approvalRefusal, modCountsOn, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
+import { MOD, approvalRefusal, modCountsOn, shiftCountsAsMod, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
 import { strengthWindows, teamStrength, type WindowStrength } from "./strength-shared";
 import type { CrewType, PositionRole } from "./structure-shared";
-import { positionIds } from "./structure-shared";
+import { positionIds, scheduleEngine } from "./structure-shared";
 import { Q_PER_HOUR, weekDays } from "./time-shared";
 
 export interface BoardPerms {
@@ -113,6 +113,7 @@ export interface GapLine {
 
 export interface SegmentView {
   positionId: string; startQ: number; endQ: number; mod: boolean; lastResort: boolean; reasons: Reason[];
+  crewUnassigned?: boolean;
   /**
    * CC chunk H9: on a MoD-lane segment the person does NOT count on from its start (a key holder before the shop's KH time): the
    * first quarter they do count (null = none of it). Absent = the whole segment is manager-on-duty time (or a station).
@@ -203,6 +204,9 @@ const isHourly = (p: RulePerson | undefined) => !!p && !p.salaried && !p.presenc
 /** The certificate as the board words it (CC chunk D design ruling: "Over budget: needs at least ~W h (best fill found)"). */
 export function gapLine(g: DeclaredGap): NarrativeLine {
   switch (g.cause) {
+    case "crew_shortfall": return g.certificate.kind === "open_shifts"
+      ? { key: "schedule.gap.certificate.open_shifts", params: { missing: g.certificate.items.reduce((n, i) => n + i.missing, 0) } }
+      : { key: "schedule.gap.certificate.station_short", params: { required: g.certificate.required, assigned: g.certificate.assigned } };
     case "budget_limited": return { key: "schedule.gap.certificate.budget_limited", params: { fillHours: g.certificate.fillHours, remainingHours: g.certificate.remainingHours } };
     case "floor_limit": return { key: "schedule.gap.certificate.floor_limit", params: { limitH: g.certificate.limitH } };
     case "capacity": return { key: "schedule.gap.certificate.capacity", params: { requiredHeads: g.certificate.requiredHeads, people: g.certificate.people, shortBy: g.certificate.shortBy } };
@@ -275,9 +279,9 @@ function assumed(p: RulePerson | undefined, date: string): boolean {
  * rule) when that is not its start; null when they never count on it; undefined for a station, an unknown person or day, or a
  * segment that is manager-on-duty time throughout.
  */
-export function modFromQOf(p: RulePerson | undefined, day: Pick<DayContext, "structure" | "inputs"> | null, g: { positionId: string; startQ: number; endQ: number }): number | null | undefined {
+export function modFromQOf(p: RulePerson | undefined, day: Pick<DayContext, "structure" | "inputs"> | null, g: { positionId: string; startQ: number; endQ: number }, shift?: Shift): number | null | undefined {
   if (g.positionId !== MOD || !p || !day) return undefined;
-  for (let q = g.startQ; q < g.endQ; q++) if (modCountsOn(p, day, q)) return q === g.startQ ? undefined : q;
+  for (let q = g.startQ; q < g.endQ; q++) if (shift ? shiftCountsAsMod(shift, p, day as DayContext, q) : modCountsOn(p, day, q)) return q === g.startQ ? undefined : q;
   return null;
 }
 
@@ -296,8 +300,9 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
       return {
         ref: { date: sh.date, userId: sh.userId, startQ: sh.startQ }, startQ: sh.startQ, endQ: sh.endQ, closingManager: sh.closingManager, flex: sh.flex, pinned: sh.pinned, locked,
         segments: sh.segments.map((g, i) => {
-          const mf = modFromQOf(p, ctx, g);
-          return { positionId: g.positionId, startQ: g.startQ, endQ: g.endQ, mod: g.positionId === MOD, lastResort: !!g.lastResort, reasons: r.segments[i] ?? [], ...(mf !== undefined ? { modFromQ: mf } : {}) };
+          const mf = modFromQOf(p, ctx, g, sh);
+          const unassigned = g.positionId === MOD && ctx && scheduleEngine(ctx.structure) === "crew" && g.reasonKey === "schedule.reason.crew_unassigned";
+          return { positionId: g.positionId, startQ: g.startQ, endQ: g.endQ, mod: g.positionId === MOD, lastResort: !!g.lastResort, reasons: r.segments[i] ?? [], ...(mf !== undefined ? { modFromQ: mf } : {}), ...(unassigned ? { crewUnassigned: true } : {}) };
         }),
         reasons: r.shift,
         alternates: r.alternates.map((a) => {
@@ -325,6 +330,13 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
   const money = src.perms.canSeeMoney;
   const shifts = week.shifts.filter((sh) => sh.date === date);
   const notes: NarrativeLine[] = [];
+  if (ctx && scheduleEngine(ctx.structure) === "crew") for (const note of ctx.crew?.notes ?? []) {
+    const params: Record<string, string | number> = {};
+    for (const [key, value] of Object.entries(note.params)) if (typeof value === "string" || typeof value === "number") params[key] = value;
+    if (note.userId) params.userId = note.userId;
+    if (note.positionId) params.positionId = note.positionId;
+    notes.push({ key: `schedule.note.${note.code}`, params });
+  }
   if (showDeletedUsualShifts) for (const p of Object.values(week.people).sort((a, b) => a.userId < b.userId ? -1 : 1)) {
     if (p.usualShift?.deletedTypeId) notes.push({ key: "schedule.note.usual_shift_deleted", params: { userId: p.userId } });
   }
