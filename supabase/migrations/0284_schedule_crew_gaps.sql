@@ -1,5 +1,6 @@
 -- Migration 0284_schedule_crew_gaps
 -- AUTHORED 2026-10-22. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0283.
+-- APPLIED TO SIM 2026-10-22 (schema_migrations version 20261022194041, name '0284_schedule_crew_gaps').
 -- Provenance: CC-approved crew Phase 1 plan section 4, binding ruling R4.
 -- ROLLOUT: apply 0275 and 0283 first, then 0284 before deploying crew gap writers.
 -- VERIFY AFTER APPLY:
