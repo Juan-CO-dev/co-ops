@@ -1,5 +1,6 @@
 -- Migration 0283_schedule_crew_structure
 -- AUTHORED 2026-10-22. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0282.
+-- APPLIED TO SIM 2026-10-22 (schema_migrations version 20261022182920, name '0283_schedule_crew_structure').
 -- Provenance: CC-approved crew Phase 1 plan, chunk 2.
 -- Re-emits the 0274 immutable validator, admitting optional crew structure fields.
 -- No historical row, writer authorization, grants or scheduling behavior is changed.

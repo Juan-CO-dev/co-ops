@@ -1,5 +1,6 @@
 -- Migration 0282_schedule_person_usual_shift
 -- AUTHORED 2026-10-22. NOT YET APPLIED — sim first, prod on Juan's word, AFTER 0281.
+-- APPLIED TO SIM 2026-10-22 (schema_migrations version 20261022182919, name '0282_schedule_person_usual_shift').
 -- Provenance: feat/crew-first-phase1, CC-approved Phase 1 chunk 1.
 -- Nullable usual shift; shape only. Type existence is a TS concern, not a SQL lookup.
 -- Re-emits 0281 writers, preserving authorization, locks, expected-head checks and audit.
