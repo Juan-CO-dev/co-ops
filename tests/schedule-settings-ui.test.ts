@@ -362,3 +362,45 @@ it.each(["station", "position"])("a retired %s on an unmanned station keeps the 
   expect(after.stationAdvisory).toContainEqual({ key: "schedule.settings.advisory.retired_position", params: { positionId: P_REG } });
   expect(after.stationAdvisory).not.toContainEqual({ key: "schedule.settings.advisory.unmanned_position", params: { positionId: P_REG } });
 });
+
+
+describe("manager-set days they work", () => {
+  it.each(["gm", "agm"] as const)("hides If needed for salaried %s and blocks all-Off saves in both languages", async (role) => {
+    const v = await loadScheduleSettings(shop().deps, { actor: moo, locationId: A });
+    if (v.state !== "ready") throw new Error("not ready");
+    const availability = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [i + 1, { mode: "off" as const }])) as import("@/lib/scheduling/availability-shared").PersonAvailability;
+    const explicit = { ...v, members: v.members.map((m) => m.userId === KH ? { ...m, role, settings: { ...emptySettings(KH), availability } } : m) };
+    for (const language of ["en", "es"] as const) {
+      const html = render(explicit, language, { initialPerson: KH });
+      const dict = language === "en" ? en : es;
+      expect(html.match(/type="radio"[^>]*name="[^"]*availability-/g)).toHaveLength(14);
+      expect(text(html)).toContain(dict["schedule.settings.staff.availability_all_off"]);
+    }
+  });
+
+  it("renders all seven days, optional quarter-hour times and the Toast reset in both languages", async () => {
+    const v = await loadScheduleSettings(shop().deps, { actor: moo, locationId: A });
+    if (v.state !== "ready") throw new Error("not ready");
+    const availability = {
+      1: { mode: "off" as const }, 2: { mode: "off" as const }, 3: { mode: "off" as const },
+      4: { mode: "off" as const }, 5: { mode: "if_needed" as const },
+      6: { mode: "works" as const, fromQ: 64, toQ: 84 }, 7: { mode: "works" as const, fromQ: 64, toQ: 96 },
+    };
+    const explicit = { ...v, members: v.members.map((m) => m.userId === KH ? { ...m, settings: { ...(m.settings ?? emptySettings(KH)), availability } } : m) };
+    for (const language of ["en", "es"] as const) {
+      const dict = language === "en" ? en : es;
+      const html = render(explicit, language, { initialPerson: KH });
+      expect(html.match(/data-availability-day=/g)).toHaveLength(7);
+      expect(text(html)).toContain(dict["schedule.settings.staff.availability_clear"]);
+      expect(html).toMatch(/name="availability.6.fromQ"[^>]*value="16:00"/);
+      expect(html).toMatch(/name="availability.6.toQ"[^>]*value="21:00"/);
+      // Midnight has its own control: TimeField clamps 96 and must never misrepresent it as 23:45.
+      expect(html).not.toContain('name="availability.7.toQ"');
+      expect(text(html)).toContain(dict["schedule.settings.staff.availability_midnight"]);
+      for (let day = 1; day <= 7; day++) expect(text(html)).toContain((dict as Record<string, string>)[`schedule.settings.staff.weekday_${day}`]);
+    }
+    const guessed = render(v, "en", { initialPerson: KH });
+    expect(text(guessed)).toContain(en["schedule.settings.staff.availability_toast"]);
+    expect(text(guessed)).toContain(en["schedule.settings.staff.availability_set"]);
+  });
+});

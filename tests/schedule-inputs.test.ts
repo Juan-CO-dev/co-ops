@@ -146,6 +146,14 @@ describe("Astra chunk E P2-4: the membership date is the OPERATIONAL (America/Ne
 });
 
 describe("loadSchedulingInputs — the one batch loader", () => {
+  it.each([{}, [], { 1: { mode: "works" } }])("falls back to Toast when stored availability has a bad shape: %j", async (availability) => {
+    const tables = baseTables();
+    tables.schedule_person_settings!.push({ id: "bad-availability", location_id: A, user_id: EMP,
+      work_type: null, created_at: NOW.toISOString(), availability });
+    const inputs = await loadSchedulingInputs(client(tables, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+    expect(inputs.personSettings.find((p) => p.userId === EMP)?.availability).toBeNull();
+  });
+
   it("gathers every fact for the weeks: settings, the seeded structure, members with their since date, demand, catering, punches, closing, kept digests", async () => {
     const inputs = await loadSchedulingInputs(client(baseTables(), emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
     expect(inputs.asOf).toBe("2026-10-21");
@@ -249,7 +257,7 @@ describe("the pure assembly (generatorInputFor and its readers)", () => {
     expect(ev).toEqual([{ id: "ez1", date: "2026-10-29", name: "ezCater", headcount: 40, valueCents: 50000, eventQ: 44 }]);
     const since = firstSeenFor([{ userId: EMP, name: "E", role: "employee", memberSince: "2026-01-01" }, { userId: EMP2, name: "Z", role: "employee", memberSince: "2026-01-01" }],
       [{ userId: EMP, businessDate: "2026-08-25", inAt: "", outAt: null, hours: 4, deleted: false }, { userId: EMP2, businessDate: "2026-10-05", inAt: "", outAt: null, hours: 4, deleted: false }], "2026-08-24");
-    expect(since).toEqual({ [EMP]: "2026-01-01", [EMP2]: "2026-10-05" }); // a first-week punch = present from before the window; a later first punch floors it
+    expect(since).toEqual({ [EMP2]: "2026-10-05" }); // a first-week punch = present from before the window; a later first punch floors it
   });
 });
 

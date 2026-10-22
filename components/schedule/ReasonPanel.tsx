@@ -84,6 +84,7 @@ export function ReasonPanel({ row, shift, segment, editable, busy = false, names
           : t("schedule.board.reason.nobody_else")}</p>
       </div>
       {row.assumedAvailability ? <p className="text-xs text-co-warning-text">{t("schedule.board.flag.assumed_availability")}</p> : null}
+      {row.managerSetAvailability ? <p className="text-xs text-co-text-muted">{t("schedule.board.flag.manager_set_availability")}</p> : null}
       {row.startingPoint ? <p className="text-xs text-co-warning-text">{t("schedule.board.flag.starting_point")}</p> : null}
       {editable ? (
         <div className="grid gap-2 border-t border-co-border pt-2" aria-label={t("schedule.board.nudge.label")}>

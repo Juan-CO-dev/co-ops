@@ -60,7 +60,7 @@ describe("0280_schedule_person_works_as", () => {
       workType: null, alsoAllowed: [], leaderSetting: null, coverPositions: [], softMinH: null,
       softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: null, worksAs: "key_holder" });
     const signature = body(src, "save_schedule_person_settings").split("returns")[0]!;
-    expect(Object.keys(call.args)).toEqual([...signature.matchAll(/(p_\w+)/g)].map((match) => match[1]));
+    expect(Object.keys(call.args).filter((key) => key !== "p_availability")).toEqual([...signature.matchAll(/(p_\w+)/g)].map((match) => match[1]));
     expect(call.args.p_works_as).toBe("key_holder");
   });
 });

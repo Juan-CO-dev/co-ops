@@ -18,8 +18,8 @@ import type { CrewType, LeaderSetting, ScheduleStructure } from "./structure-sha
 export type WorkType = "boh" | "foh" | "management";
 export const WORK_TYPES: readonly WorkType[] = ["boh", "foh", "management"];
 
-/** A person's assumed availability on a date (Phase 2: assumed from Toast punches, flagged). */
-export interface AvailabilityWindow { fromQ: number; toQ: number; source: "toast_pattern" | "insufficient_history" }
+/** A person's availability on a date, with its manager-set or Toast-estimate provenance. */
+export interface AvailabilityWindow { fromQ: number; toQ: number; source: "toast_pattern" | "insufficient_history" | "manager_set" }
 
 export interface RulePerson {
   userId: string;

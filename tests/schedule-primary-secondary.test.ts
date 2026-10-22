@@ -178,7 +178,7 @@ describe("rankCandidates: the position rank first (Juan 2026-10-20)", () => {
     const ranked = rankCandidates(b, week, [], opts(I.$REG, plan(I.$REG)));
     expect(ranked[0]!.person.userId).toBe("u-b-bo");
     expect(ranked.every((c) => c.key[CANDIDATE_KEY.positionRank] === POSITION_RANK.flex)).toBe(true);
-    expect(ranked.every((c) => c.key.length === 6 && c.key[CANDIDATE_KEY.userId] === c.person.userId)).toBe(true);
+    expect(ranked.every((c) => c.key.length === 7 && c.key[CANDIDATE_KEY.userId] === c.person.userId)).toBe(true);
   });
   it("a PRIMARY beats a higher-skill non-primary (Mia 0.7 with Register as her primary over Bo 0.9)", () => {
     const { b, week } = ctxWith({ "u-m-mia": { coverPositions: [I.$REG] } });

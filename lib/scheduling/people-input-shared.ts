@@ -4,7 +4,7 @@
  * Three things, all zero-I/O:
  *   - `punchPatterns`: the usual Toast punch pattern per person × ISO weekday over the last `weeks` ISO
  *     weeks, with a PERSON-SPECIFIC denominator (r2 P2-10): `weeksObserved` counts only weeks since the
- *     person's first punch at the shop (or their membership, whichever is later) in which the SHOP had
+ *     person's first punch at the shop in which the SHOP had
  *     any punch that weekday — a closed holiday is not "didn't work".
  *   - `assumedAvailability`: ≥ 3 observed weeks and a share ≥ 25% → [p10 in − 30 min, p90 out + 30 min]
  *     snapped to the grid and clamped to the shop day; ≥ 3 weeks and a share < 25% → not that weekday;
@@ -20,6 +20,7 @@ import { etCalendarDate, etClockTime } from "@/lib/operational-day";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import type { SkillMatrix } from "@/lib/people/skill-matrix-shared";
 import type { AvailabilityWindow, RulePerson, WorkType } from "./context-shared";
+import type { PersonAvailability } from "./availability-shared";
 import { effectiveScheduleRole, type WorksAsRole } from "./works-as-shared";
 import { eligibleForPosition, workTypeAllows } from "./rules-shared";
 import { positionIds, type LeaderSetting, type ScheduleStructure, type StructurePosition } from "./structure-shared";
@@ -77,8 +78,8 @@ function quantile(sorted: readonly number[], p: number): number {
 
 /**
  * Per user × ISO weekday over the last `weeks` COMPLETE ISO weeks before `asOf`'s week. `firstSeen[userId]`
- * (the later of the first punch at the shop and `user_locations.created_at`, as a date) floors the
- * person's observed weeks and is never overridden by the window (Astra chunk B P2-3); without it the
+ * (the first punch at the shop, never the app membership date) floors the
+ * person's observed weeks; without it the
  * person's first punch in the window does. Entries with
  * `deleted` or no `userId` are skipped; an open entry (no `outAt`) counts its day and its in time, never
  * an out time.
@@ -104,14 +105,13 @@ export function punchPatterns(
   for (const userId of [...byUser.keys()].sort(cmp)) {
     const mine = byUser.get(userId)!;
     const firstPunch = mine.map((e) => e.businessDate).sort(cmp)[0]!;
-    // Astra chunk B P2-3: the supplied historical start (the later of the first punch at the shop and the
-    // membership, from the loader) WINS; the truncated window's first punch is only the fallback.
+    // The supplied shop punch history wins; the truncated window's first punch is the fallback.
     const seen = opts.firstSeen?.[userId];
     const firstWeek = isoWeekStart(seen ?? firstPunch);
     const byDow: Record<number, DowPattern> = {};
     for (let dow = 1; dow <= 7; dow++) {
       const observed = weekStarts.filter((w) => w >= firstWeek && shopPunched.has(`${w}/${dow}`));
-      // Punches before the person's first counted week (a membership that started later) count for nothing.
+      // Only punches in the person's observed weeks count.
       const punches = mine.filter((e) => isoDowOf(e.businessDate) === dow && isoWeekStart(e.businessDate) >= firstWeek);
       const workedWeeks = new Set(punches.map((e) => isoWeekStart(e.businessDate))).size;
       const ins = punches.map((e) => wallQ(e.inAt, "floor", e.businessDate)).sort((a, b) => a - b);
@@ -152,6 +152,7 @@ export function assumedAvailability(pattern: DowPattern | undefined, shopDay: { 
 
 export interface MemberInput { userId: string; role: RoleCode; active: boolean }
 export interface PersonSettingsRow {
+  availability?: PersonAvailability | null;
   worksAs?: WorksAsRole | null;
   userId: string;
   workType: WorkType | null;
@@ -167,6 +168,8 @@ export interface PersonSettingsRow {
 export type WageSource = "sevenshifts" | "estimate";
 
 export interface SchedPerson extends RulePerson {
+  /** Explicit If needed dates: preferred off even when the weekly day cap leaves room. */
+  offPreferredDates?: string[];
   wageCents: number | null;
   wageSource: WageSource | null;
   fullTime: boolean;
@@ -210,7 +213,7 @@ export interface ToSchedPeopleInput {
  * role drives every scheduling rule. MoO / Owner are presence-only; role defaults for
  * work type and leader setting apply and person settings override; cover preferences outside the shop's
  * active positions are dropped and reported; salaried = GM / AGM; wage = 7shifts else the estimate else
- * null. Availability comes from the pattern per weekday (assumed, flagged).
+ * null. Manager-set availability replaces the weekday punch pattern; otherwise the estimate is flagged.
  */
 export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[]; notes: RosterNote[] } {
   const { structure } = input;
@@ -239,7 +242,14 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
     }
     const pattern = input.patterns[m.userId];
     const availability: Record<string, AvailabilityWindow | null> = {};
-    for (const d of input.dates) availability[d] = assumedAvailability(pattern?.byDow[isoDowOf(d)], input.shopDay);
+    const offPreferredDates: string[] = [];
+    for (const d of input.dates) {
+      const explicit = st?.availability?.[isoDowOf(d) as keyof PersonAvailability];
+      availability[d] = explicit
+        ? explicit.mode === "off" ? null : { fromQ: explicit.fromQ ?? input.shopDay.fromQ, toQ: explicit.toQ ?? input.shopDay.toQ, source: "manager_set" }
+        : assumedAvailability(pattern?.byDow[isoDowOf(d)], input.shopDay);
+      if (explicit?.mode === "if_needed") offPreferredDates.push(d);
+    }
     const mean = pattern?.meanWeeklyHours ?? null;
     const salaried = SALARIED.includes(role);
     const wage = input.wages.byUserCents[m.userId];
@@ -254,10 +264,13 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
       wageSource: salaried || presenceOnly ? null : wage !== undefined ? "sevenshifts" : input.wages.estimateHourlyCents !== null ? "estimate" : null,
       fullTime: st?.fullTime ?? false, fullTimeMinH: st?.fullTimeMinH ?? null, rosterIncluded: excluded,
     };
+    if (st?.availability) person.offPreferredDates = offPreferredDates;
     const share: Record<number, number> = {};
     for (let dow = 1; dow <= 7; dow++) {
       const dp = pattern?.byDow[dow];
-      if (dp && dp.weeksObserved >= PATTERN_MIN_WEEKS) share[dow] = Math.round(dp.share * 1000) / 1000;
+      const explicit = st?.availability?.[dow as keyof PersonAvailability];
+      if (explicit) share[dow] = explicit.mode === "works" ? 1 : explicit.mode === "if_needed" ? 0.1 : 0;
+      else if (dp && dp.weeksObserved >= PATTERN_MIN_WEEKS) share[dow] = Math.round(dp.share * 1000) / 1000;
     }
     if (Object.keys(share).length > 0) person.observedDowShare = share;
     if (input.skills) {

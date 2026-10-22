@@ -570,6 +570,10 @@ function chooseOffDays(
     }
     out[p.userId] = off;
   });
+  // Manager-set If needed days are fallback days regardless of how many dates are available.
+  for (const p of people) {
+    if (p.offPreferredDates?.length) out[p.userId] = new Set([...(out[p.userId] ?? []), ...p.offPreferredDates.filter((d) => builtDates.includes(d))]);
+  }
   return out;
 }
 

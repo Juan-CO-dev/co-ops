@@ -70,7 +70,7 @@ const FNS = [
 const db = await base();
 async function rpc(call) {
   // Historical migration harness: works_as first exists in 0280.
-  const keys = Object.keys(call.args).filter((key) => key !== "p_works_as");
+  const keys = Object.keys(call.args).filter((key) => key !== "p_works_as" && key !== "p_availability");
   const vals = keys.map((k) => {
     const v = call.args[k];
     const scalarArray = Array.isArray(v) && v.every((x) => x === null || typeof x !== "object");
