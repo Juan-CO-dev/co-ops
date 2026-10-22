@@ -204,6 +204,10 @@ export type AdvisoryCode =
 export interface AdvisoryItem { code: AdvisoryCode; date: string | null; userId: string | null; params: Record<string, string | number | null> }
 
 const sameJson = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+const memberSettings = ({ availability: _availability, usualShift, ...rest }: RulePerson) => ({
+  ...rest,
+  ...(usualShift?.source === "manager" ? { usualShift: usualShift.value } : usualShift?.deletedTypeId ? { usualShift: { deletedTypeId: usualShift.deletedTypeId } } : {}),
+});
 const byKey = (a: AdvisoryItem, b: AdvisoryItem) =>
   (a.date ?? "").localeCompare(b.date ?? "") || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0)
   || ((a.userId ?? "") < (b.userId ?? "") ? -1 : (a.userId ?? "") > (b.userId ?? "") ? 1 : 0);
@@ -223,9 +227,9 @@ export function contextAdvisory(snapshot: RuleContext, live: RuleContext): Advis
     if (was?.activeMember && !now?.activeMember) { out.push({ code: "member_removed", date: null, userId: id, params: {} }); continue; }
     if (!was?.activeMember && now?.activeMember) { out.push({ code: "member_added", date: null, userId: id, params: {} }); continue; }
     if (!was || !now) continue;
-    const { availability: wa, ...wRest } = was;
-    const { availability: na, ...nRest } = now;
-    if (!sameJson(wRest, nRest)) out.push({ code: "member_changed", date: null, userId: id, params: {} });
+    const { availability: wa } = was;
+    const { availability: na } = now;
+    if (!sameJson(memberSettings(was), memberSettings(now))) out.push({ code: "member_changed", date: null, userId: id, params: {} });
     for (const d of snapshot.dates) {
       if (!sameJson(wa[d] ?? "absent", na[d] ?? "absent")) out.push({ code: "availability_changed", date: d, userId: id, params: {} });
     }

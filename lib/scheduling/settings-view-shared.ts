@@ -59,6 +59,7 @@ export interface SettingsPin { id: string; date: string; userId: string; startQ:
 
 export interface ScheduleSettingsView {
   shiftTypes?: readonly ShiftType[];
+  shopDay: Pick<ScheduleStructure["shopDay"], "prepStartQ" | "outLatestQ">;
   locationId: string;
   today: string;
   /** The dates presence / Add to schedule may target (today on, two weeks). */

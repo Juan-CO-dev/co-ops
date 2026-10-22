@@ -39,9 +39,10 @@ const newAvailability = (): NonNullable<PersonSettingsRow["availability"]> => ({
 
 type PositionLabels = Record<string, { name: string; nameEs: string | null; role?: PositionRole; allowedRoles?: RoleCode[] }>;
 
-export function StaffSettings({ shiftTypes = [], locationId, members, positions, livePositionIds, names, rolesKnown = false, initialPerson = null, onDirty }: {
+export function StaffSettings({ shiftTypes = [], shopDay, locationId, members, positions, livePositionIds, names, rolesKnown = false, initialPerson = null, onDirty }: {
   locationId: string;
   shiftTypes?: readonly ShiftType[];
+  shopDay: { prepStartQ: number; outLatestQ: number };
   members: SettingsMember[];
   positions: PositionLabels;
   livePositionIds: string[];
@@ -70,7 +71,7 @@ export function StaffSettings({ shiftTypes = [], locationId, members, positions,
               <span aria-hidden="true" className="text-co-text-dim">{isOpen ? "⌃" : "⌄"}</span>
             </button>
             {isOpen ? (
-              <PersonEditor shiftTypes={shiftTypes} locationId={locationId} member={m} positions={positions} livePositionIds={livePositionIds} names={names} rolesKnown={rolesKnown}
+              <PersonEditor shiftTypes={shiftTypes} shopDay={shopDay} locationId={locationId} member={m} positions={positions} livePositionIds={livePositionIds} names={names} rolesKnown={rolesKnown}
                 onDirty={(d) => { setDirtyOf(d ? m.userId : null); onDirty?.(d); }} />
             ) : null}
           </li>
@@ -80,9 +81,10 @@ export function StaffSettings({ shiftTypes = [], locationId, members, positions,
   );
 }
 
-function PersonEditor({ shiftTypes, locationId, member, positions, livePositionIds, names, rolesKnown, onDirty }: {
+function PersonEditor({ shiftTypes, shopDay, locationId, member, positions, livePositionIds, names, rolesKnown, onDirty }: {
   locationId: string;
   shiftTypes: readonly ShiftType[];
+  shopDay: { prepStartQ: number; outLatestQ: number };
   member: SettingsMember;
   positions: PositionLabels;
   livePositionIds: string[];
@@ -183,7 +185,7 @@ function PersonEditor({ shiftTypes, locationId, member, positions, livePositionI
           <button type="button" className={GHOST} onClick={() => edit((x) => { x.availability = null; })}>{t("schedule.settings.staff.availability_clear")}</button>
         </> : <button type="button" className={GHOST} onClick={() => edit((x) => { x.availability = newAvailability(); })}>{t("schedule.settings.staff.availability_set")}</button>}
       </fieldset>
-      <UsualShiftEditor value={s.usualShift ?? null} guess={member.suggestedUsualShift ?? null} types={shiftTypes} onChange={(v) => edit((x) => { x.usualShift = v; })} />
+      <UsualShiftEditor value={s.usualShift ?? null} guess={member.suggestedUsualShift ?? null} types={shiftTypes} shopDay={shopDay} onChange={(v) => edit((x) => { x.usualShift = v; })} />
       <div className="grid gap-1" role="radiogroup" aria-labelledby={`${id}-wt`}>
         <span id={`${id}-wt`} className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("schedule.settings.staff.work_type")}</span>
         <div className="flex flex-wrap gap-x-3">

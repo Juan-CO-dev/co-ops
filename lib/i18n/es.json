@@ -8160,11 +8160,11 @@
   "schedule.settings.advisory.shift_station_removed": "{shiftType}: {positionId} ya no es una estación con personal. Elimínala de este tipo de turno.",
   "schedule.settings.staff.usual_shift": "Turno habitual",
   "schedule.settings.staff.usual_shift_guess": "Estimado con Toast: {name}, {from}–{to}",
-  "schedule.settings.staff.usual_shift_deleted": "Se eliminó el tipo de turno {typeId}. Elige otro tipo o usa la estimación.",
+  "schedule.settings.staff.usual_shift_deleted": "Se seleccionó un tipo de turno eliminado. Elige otro tipo o usa la estimación.",
   "schedule.settings.staff.usual_shift_type": "Tipo de turno",
   "schedule.settings.staff.usual_shift_times": "Usar su propio horario",
   "schedule.settings.staff.usual_shift_flex": "Esta entrada está fuera de la flexibilidad del tipo de turno.",
   "schedule.settings.staff.usual_shift_clear": "Usar la estimación",
   "schedule.settings.staff.usual_shift_set": "Definir turno habitual",
-  "schedule.note.usual_shift_deleted": "{userId}: se eliminó su tipo de turno habitual {typeId}; se usa la estimación de Toast si está disponible."
+  "schedule.note.usual_shift_deleted": "{userId}: se seleccionó un tipo de turno eliminado; se usa la estimación de Toast si está disponible."
 }

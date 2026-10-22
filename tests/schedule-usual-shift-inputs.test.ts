@@ -15,6 +15,7 @@ import { boardSource } from "./fixtures/schedule/board-source";
 import { FIXTURES } from "./fixtures/schedule/fixtures";
 import { buildWeek } from "@/lib/scheduling/generator/build-shared";
 import { boardView } from "@/lib/scheduling/board-view-shared";
+import { contextAdvisory } from "@/lib/scheduling/context-shared";
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => undefined) }));
 vi.mock("@/lib/session", () => ({ requireSession: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
@@ -58,7 +59,7 @@ describe("usual shift inference and resolution", () => {
     expect(resolveUsualShift({ typeId: "removed" }, null, []).value).toBeNull();
   });
   it("carries explicit Off separately from availability and resolved usual shifts", () => {
-    const s = structure(); s.shiftTypes = [type()];
+    const s = structure(); s.engine = "crew"; s.shiftTypes = [type()];
     const row = { userId, workType: null, alsoAllowed: [], leaderSetting: null, coverPositions: [], softMinH: null, softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: null, usualShift: { typeId: "removed" }, availability: { 1: { mode: "off" as const }, 2: { mode: "works" as const }, 3: { mode: "works" as const }, 4: { mode: "if_needed" as const }, 5: { mode: "works" as const }, 6: { mode: "works" as const }, 7: { mode: "works" as const } } };
     const result = toSchedPeople({ members: [{ userId, role: "employee", active: true }], settings: [row], patterns: {}, dates: ["2026-10-19"], structure: s, shopDay: { fromQ: 28, toQ: 84 }, wages: { byUserCents: {}, estimateHourlyCents: null }, skills: null, punches: history, asOf: args.asOf }).people[0]!;
     expect(result.workModes).toEqual({ "2026-10-19": "off" });
@@ -67,6 +68,8 @@ describe("usual shift inference and resolution", () => {
   });
   it("persists a deleted-type note in the person context and renders it after JSON reload even without a shift", () => {
     const input = FIXTURES["F0c-no-eligible"]!();
+    input.structure.engine = "crew";
+    input.structure.shiftTypes = [type()];
     const person = input.people[0]!;
     person.usualShift = { value: null, source: "none", deletedTypeId: "deleted-morning" };
     const output = buildWeek(input);
@@ -76,13 +79,15 @@ describe("usual shift inference and resolution", () => {
     source.week!.people = context.people;
     source.week!.shifts = [];
     const view = boardView(source);
-    expect(view.days[0]!.notes).toContainEqual({ key: "schedule.note.usual_shift_deleted", params: { userId: person.userId, typeId: "deleted-morning" } });
+    expect(view.days.flatMap((day) => day.notes).filter((note) => note.key === "schedule.note.usual_shift_deleted")).toEqual([
+      { key: "schedule.note.usual_shift_deleted", params: { userId: person.userId } },
+    ]);
   });
 });
 
 describe("usual shift save paths", () => {
-  function shop(value: unknown = { typeId: "morning", fromQ: 30, toQ: 64 }) {
-    const tables = shopTables(), s = structure(); s.shiftTypes = [type()];
+  function shop(value: unknown = { typeId: "morning", fromQ: 30, toQ: 64 }, types: ShiftType[] = [type()]) {
+    const tables = shopTables(), s = structure(); s.shiftTypes = types;
     tables.schedule_structures!.push({ id: "structure", location_id: A, structure: s, created_at: "2026-10-01" });
     tables.schedule_person_settings!.push({ id: "settings", location_id: A, user_id: userId, usual_shift: value, work_type: null, leader_setting: null, soft_min_h: null, soft_max_h: null, full_time_min_h: null, roster_include: null, created_at: "2026-10-01" });
     return scheduleStore(tables);
@@ -96,6 +101,34 @@ describe("usual shift save paths", () => {
     expect(store.calls.at(-1)?.args.p_usual_shift).toEqual(loaded.row.usualShift);
     expect((await loadLatestPersonSettings(store.client, A, userId))?.row.usualShift).toEqual(loaded.row.usualShift);
     expect(mergePositionChanges(loaded.row, userId, { workType: "foh" }).usualShift).toEqual(loaded.row.usualShift);
+  });
+  it("keeps crew preferences out of stations revisions and compares manager choices but not Toast guess drift on crew", () => {
+    const stationInput = FIXTURES["F0c-no-eligible"]!();
+    stationInput.structure.shiftTypes = [type()];
+    stationInput.people[0]!.usualShift = { value: { typeId: "morning" }, source: "manager", deletedTypeId: null };
+    stationInput.people[0]!.workModes = { [stationInput.days[0]!.date]: "works" };
+    const station = buildWeek(stationInput).context;
+    expect(station.people[stationInput.people[0]!.userId]?.usualShift).toBeUndefined();
+
+    const crewInput = structuredClone(stationInput);
+    crewInput.structure.engine = "crew";
+    const crew = buildWeek(crewInput).context;
+    const changed = structuredClone(crew);
+    changed.people[crewInput.people[0]!.userId]!.usualShift = { value: { typeId: "other" }, source: "manager", deletedTypeId: null };
+    expect(contextAdvisory(crew, changed).map((x) => x.code)).toContain("member_changed");
+    const guessed = structuredClone(crew);
+    crew.people[crewInput.people[0]!.userId]!.usualShift = { value: { typeId: "morning", fromQ: 30, toQ: 62 }, source: "toast", deletedTypeId: null };
+    guessed.people[crewInput.people[0]!.userId]!.usualShift = { value: { typeId: "morning", fromQ: 32, toQ: 64 }, source: "toast", deletedTypeId: null };
+    expect(contextAdvisory(crew, guessed).map((x) => x.code)).not.toContain("member_changed");
+  });
+  it("carries a removed type through an unrelated save and still lets the manager clear it when every type is gone", async () => {
+    const store = shop({ typeId: "mid", fromQ: 48, toQ: 80 }, []);
+    let loaded = (await loadLatestPersonSettings(store.client, A, userId))!;
+    await recordPersonSettings({ service: store.client }, { actor, locationId: A, expectedId: loaded.id, settings: { ...loaded.row, softMaxH: 36 } });
+    expect((await loadLatestPersonSettings(store.client, A, userId))?.row.usualShift).toEqual({ typeId: "mid", fromQ: 48, toQ: 80 });
+    loaded = (await loadLatestPersonSettings(store.client, A, userId))!;
+    await recordPersonSettings({ service: store.client }, { actor, locationId: A, expectedId: loaded.id, settings: { ...loaded.row, usualShift: null } });
+    expect(store.calls.at(-1)?.args.p_usual_shift).toBeNull();
   });
   it("decodes malformed stored values as null", async () => {
     expect((await loadLatestPersonSettings(shop({ typeId: 4 }).client, A, userId))?.row.usualShift).toBeNull();
@@ -130,10 +163,11 @@ describe("usual shift save paths", () => {
 
 describe("usual shift editor", () => {
   it.each(["en", "es"] as const)("renders the hint, deleted-type note, time error and flexible-start warning in %s", (language) => {
-    const render = (value: Parameters<typeof UsualShiftEditor>[0]["value"], types = [type()]) => renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children: createElement(UsualShiftEditor, { value, types, guess: guessUsualShift(history, args), onChange: () => {} }) }));
+    const render = (value: Parameters<typeof UsualShiftEditor>[0]["value"], types = [type()]) => renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children: createElement(UsualShiftEditor, { value, types, shopDay: { prepStartQ: 36, outLatestQ: 88 }, guess: guessUsualShift(history, args), onChange: () => {} }) }));
     expect(render(null, [])).toBe("");
     expect(render(null)).toContain(language === "en" ? "Guessed from Toast" : "Estimado con Toast");
-    expect(render({ typeId: "gone" })).toContain(language === "en" ? "was removed" : "Se eliminó");
+    const deleted = render({ typeId: "internal-deleted-id" }, []);
+    expect(deleted).toContain(language === "en" ? "removed shift type" : "tipo de turno eliminado");
     expect(render({ typeId: "morning", fromQ: 40, toQ: 96 })).toContain(language === "en" ? "outside" : "fuera");
     expect(render({ typeId: "morning", fromQ: 40, toQ: 40 })).toContain('role="alert"');
     expect(render(null)).toContain("min-h-[44px]");

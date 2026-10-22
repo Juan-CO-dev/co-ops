@@ -1,5 +1,5 @@
 import { guessUsualShift, resolveUsualShift, type UsualShift } from "./usual-shift-shared";
-import { shiftTypesOf } from "./structure-shared";
+import { scheduleEngine, shiftTypesOf } from "./structure-shared";
 /**
  * PEOPLE INPUT — pure (Scheduling Phase 2, Task 5; plan "Data reality", J15, J16, J19).
  *
@@ -269,7 +269,7 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
       wageSource: salaried || presenceOnly ? null : wage !== undefined ? "sevenshifts" : input.wages.estimateHourlyCents !== null ? "estimate" : null,
       fullTime: st?.fullTime ?? false, fullTimeMinH: st?.fullTimeMinH ?? null, rosterIncluded: excluded,
     };
-    if (shiftTypesOf(structure).length || st?.usualShift) {
+    if (scheduleEngine(structure) === "crew") {
       const types = shiftTypesOf(structure);
       person.usualShift = resolveUsualShift(st?.usualShift ?? null, input.asOf ? guessUsualShift(input.punches ?? [], { userId: m.userId, asOf: input.asOf, shiftTypes: types }) : null, types);
       person.workModes = Object.fromEntries(input.dates.map((d) => [d, st?.availability?.[isoDowOf(d) as keyof PersonAvailability]?.mode ?? null]));

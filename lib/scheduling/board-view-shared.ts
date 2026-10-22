@@ -319,14 +319,14 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
   return rows.sort((a, b) => (a.shifts[0]?.startQ ?? 0) - (b.shifts[0]?.startQ ?? 0) || cmp(a.name, b.name) || cmp(a.userId, b.userId));
 }
 
-function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: Map<string, number>, wages: Record<string, number | null>, gaps: GapLine[]): DayView {
+function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: Map<string, number>, wages: Record<string, number | null>, gaps: GapLine[], showDeletedUsualShifts: boolean): DayView {
   const ctx = week.dayContexts[date] ?? null;
   const record = week.days.find((d) => d.date === date);
   const money = src.perms.canSeeMoney;
   const shifts = week.shifts.filter((sh) => sh.date === date);
   const notes: NarrativeLine[] = [];
-  for (const p of Object.values(week.people).sort((a, b) => a.userId < b.userId ? -1 : 1)) {
-    if (p.usualShift?.deletedTypeId) notes.push({ key: "schedule.note.usual_shift_deleted", params: { userId: p.userId, typeId: p.usualShift.deletedTypeId } });
+  if (showDeletedUsualShifts) for (const p of Object.values(week.people).sort((a, b) => a.userId < b.userId ? -1 : 1)) {
+    if (p.usualShift?.deletedTypeId) notes.push({ key: "schedule.note.usual_shift_deleted", params: { userId: p.userId } });
   }
   if (ctx?.inputs.demandKind === "no_history") notes.push({ key: "schedule.note.no_history" });
   if (ctx?.need.shapeNote === "zero_demand") notes.push({ key: "schedule.note.zero_demand" });
@@ -422,7 +422,7 @@ export function boardView(src: BoardSource): BoardView {
     week: { headRevisionId: week.headRevisionId, approved, edited: week.edited },
     strip, budgetLines: src.budget.lines, suggestion: src.perms.canBudget ? src.suggestion : null, advisory,
     tabs: dayTabs({ dates, today: src.today, ctx, shifts: week.shifts, wageCentsByUser: wages }, { canSeeMoney: money }),
-    days: dates.map((d) => dayView(src, week, d, weekQ, wages, gaps)),
+    days: dates.map((d) => dayView(src, week, d, weekQ, wages, gaps, d === week.days.find((day) => !day.inherited)?.date)),
     rules: { fresh: problems.filter((p) => !p.inherited), inherited: problems.filter((p) => p.inherited) },
     gaps,
     approve: { allowed: approveRefusal === null, refusal: approveRefusal },

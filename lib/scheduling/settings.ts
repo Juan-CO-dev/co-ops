@@ -124,7 +124,8 @@ export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: Pe
   if (overrideRefusal) throw new ScheduleError(overrideRefusal);
   if (s.usualShift) {
     const live = await loadLiveStructure(deps.service, args.locationId);
-    if (!shiftTypesOf(live.structure).some((t) => t.id === s.usualShift!.typeId)) throw new ScheduleError("invalid_payload");
+    const carriedTypeId = latest?.row.usualShift?.typeId;
+    if (s.usualShift.typeId !== carriedTypeId && !shiftTypesOf(live.structure).some((t) => t.id === s.usualShift!.typeId)) throw new ScheduleError("invalid_payload");
   }
   await refusePositionRank(deps.service, args.locationId, role, s);
   const r = await guardedRpc(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId }));

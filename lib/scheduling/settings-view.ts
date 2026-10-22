@@ -114,7 +114,7 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
   const names: Record<string, string> = Object.fromEntries([...inputs.members.map((m) => [m.userId, m.name] as const), ...presencePeople.map((p) => [p.userId, p.name] as const)]);
   const dates = presenceDates(today);
   return {
-    state: "ready", locationId, today, dates, perms, shiftTypes: perms.people ? shiftTypesOf(live) : [],
+    state: "ready", locationId, today, dates, perms, shiftTypes: perms.people ? shiftTypesOf(live) : [], shopDay: { prepStartQ: live.shopDay.prepStartQ, outLatestQ: live.shopDay.outLatestQ },
     structure: perms.structure ? { id: inputs.structure.source === "saved" ? inputs.structure.id : null, source: inputs.structure.source, value: live } : null,
     closing: { measuredMinutes: inputs.closing.basis === "measured" ? inputs.closing.minutes : null, samples: inputs.closing.samples },
     stationAdvisory: advisory, positions, livePositionIds: Object.keys(live.positions).sort(), timeProvenance, positionRolesKnown: rolesKnown, names, members, presencePeople,
