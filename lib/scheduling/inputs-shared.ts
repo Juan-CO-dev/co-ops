@@ -217,13 +217,13 @@ export function headSnapshotFor(week: StoredWeek | undefined): HeadSnapshot | nu
  * One week's `GeneratorInput`. `buildDays` = the dates to (re)build; every other date of the week is carried from the
  * head. `today` is the ET business date. Refuses `demand_unavailable` when demand did not load (never a flat curve).
  */
-export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, opts: { today: string; buildDays?: readonly string[] }): GeneratorInput {
+export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, opts: { today: string; buildDays?: readonly string[]; confirmEdited?: boolean }): GeneratorInput {
   if (inputs.demand.kind === "unavailable") throw new ScheduleError("demand_unavailable", { params: { cause: inputs.demand.cause } });
   // 7shifts' weekly overtime line, once synced, overrides the structure's default (plan "Data reality").
   const s = inputs.overtimeH === null ? inputs.structure.structure
     : { ...inputs.structure.structure, limits: { ...inputs.structure.structure.limits, overtimeH: inputs.overtimeH } };
   const dates = weekDays(weekStart);
-  const preserved = scheduleEngine(s) === "crew" ? historicalCrewDates(inputs.weeks[weekStart]) : [];
+  const preserved = scheduleEngine(s) === "crew" && !opts.confirmEdited ? historicalCrewDates(inputs.weeks[weekStart]) : [];
   const buildDays = (opts.buildDays ?? dates).filter((d) => dates.includes(d) && d >= opts.today && !preserved.includes(d));
   const forecastOf = (date: string): DayForecast | null => (inputs.demand.kind === "unavailable" ? null : inputs.demand.days.find((d) => d.date === date) ?? null);
   const closing = resolveClosingMinutes({ override: s.limits.closingMinutesOverride, measured: inputs.closing });

@@ -91,6 +91,7 @@ describe("crew structure editor", () => {
   });
   it.each(["en", "es"] as const)("edits whole shift types and catering and saves stable IDs in %s", async (language) => {
     const dict = language === "en" ? en : es;
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     mount(seededFloors(), vi.fn(), null, language);
     fireEvent.click(screen.getByRole("button", { name: dict["schedule.settings.shift_types.add"] }));
     const id = document.querySelector("[data-shift-type]")!.getAttribute("data-shift-type");
@@ -108,7 +109,12 @@ describe("crew structure editor", () => {
     fireEvent.change(input("catering.crewShift.typeId"), { target: { value: id } });
     fireEvent.change(input("catering.crewShift.extraHeads"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: dict["schedule.settings.save"] }));
+    expect(confirm).toHaveBeenCalledWith(dict["schedule.settings.shift_types.engine_confirm"]);
+    expect(post).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: dict["schedule.settings.save"] }));
     await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    confirm.mockRestore();
     const saved = post.mock.calls[0]![1].structure as ScheduleStructure;
     expect(saved.shiftTypes).toEqual([{ id, name: "Morning", fromQ: 32, toQ: 64, startFlexQ: 4, minLengthQ: 16, headcount: { slow: 0, normal: 0, busy: 4, weekend: 0 }, stations: [FLOOR_POSITION], countsTowardMod: false }]);
     expect(saved.engine).toBe("crew");

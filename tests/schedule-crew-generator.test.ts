@@ -103,7 +103,7 @@ describe("crew dispatch and usual blocks", () => {
     expect(out.context.days[MON]!.crew!.shifts).toEqual([{ userId: "a", startQ: 44, typeId: "mid", source: "usual" }]);
     clean(out);
   });
-  it("clips a usual block to availability without extending it", () => {
+  it("clips only a usual block start to availability without extending it", () => {
     const i = input([{ id: "a", role: "employee", window: { fromQ: 48, toQ: 68 } }]); usual(i, "a");
     const out = buildCrewWeek(i);
     expect(out.shifts).toMatchObject([{ startQ: 48, endQ: 64 }]); clean(out);
@@ -478,11 +478,11 @@ describe("chunk 5 independent review regressions", () => {
   it("tries end flexibility in both directions after start attempts", () => {
     const i = input([{ id: "a", role: "shift_lead", leader: "opens" }], shop((s) => {
       s.shiftTypes = [type({ fromQ: 44, toQ: 64, startFlexQ: 2 })];
-    })); usual(i, "a");
+    }));
     const out = buildCrewWeek(i); expect(out.shifts[0]).toMatchObject({ startQ: 44, endQ: 63 }); clean(out);
     const short = input([{ id: "a", role: "employee" }], shop((s) => {
       s.shopDay.prepStartQ = 44; s.shiftTypes = [type({ fromQ: 44, toQ: 59, startFlexQ: 1 })];
-    })); usual(short, "a");
+    }));
     expect(buildCrewWeek(short).shifts[0]).toMatchObject({ startQ: 44, endQ: 60 });
   });
   it("aggregates forty deleted-type notices into one day/type note", () => {
@@ -580,7 +580,7 @@ it("names an essential-exemption displacement instead of blaming the candidate's
 });
 
 
-it("measures a budgeted 25-person week with salaried leadership and two stations", () => {
+it("measures a budgeted 43-person week with salaried leadership and two stations", () => {
   const st = shop((s) => {
     s.leadership.modRequired = true;
     s.positions[I.$EXPO] = { ...s.positions[I.$REG]!, role: "expo" };
@@ -588,10 +588,59 @@ it("measures a budgeted 25-person week with salaried leadership and two stations
     for (const dt of ["slow", "normal", "busy", "weekend"] as const) { s.crews[dt].lineMinHeads[I.$EXPO] = 1; s.crews[dt].waves.setup.heads = 2; }
   });
   const specs: PersonSpec[] = [{ id: "gm", role: "gm", leader: "mix", cover: [I.$REG, I.$EXPO] }, { id: "agm", role: "agm", leader: "mix", cover: [I.$EXPO, I.$REG] },
-    ...Array.from({ length: 23 }, (_, n) => ({ id: `worker-${n}`, role: "employee" as const, cover: [I.$REG, I.$EXPO] }))];
+    ...Array.from({ length: 41 }, (_, n) => ({ id: `worker-${n}`, role: "employee" as const, cover: [I.$REG, I.$EXPO] }))];
   const i = input(specs, st, DATES); for (const p of i.people) usual(i, p.userId);
   for (const date of DATES) i.budgetByDate[date] = 100;
   const start = performance.now(); const out = buildCrewWeek(i); const elapsed = performance.now() - start;
-  process.stdout.write(`crew budgeted 25-person/7-day with GM+AGM: ${elapsed.toFixed(1)} ms\n`);
+  process.stdout.write(`crew budgeted 43-person/7-day with GM+AGM: ${elapsed.toFixed(1)} ms\n`);
   expect(elapsed).toBeLessThan(3000); clean(out);
+});
+
+
+describe("round 5 leadership regressions", () => {
+  it("places a lone opens manager instead of reserving incomparable evening coverage", () => {
+    const st = shop((s) => {
+      s.leadership.modRequired = true;
+      s.shopDay = { prepStartQ: 30, prepDishArrivalQ: 30, serviceStartQ: 42, serviceCloseQ: 80, outEarliestQ: 82, outLatestQ: 82 };
+      s.shiftTypes = [type({ id: "opener", fromQ: 30, toQ: 64, minLengthQ: 24 }), type({ fromQ: 40, toQ: 82, startFlexQ: 4, minLengthQ: 20 })];
+    });
+    const i = input([{ id: "gm", role: "gm", leader: "opens" }, { id: "sl", role: "shift_lead", leader: "mix" }], st, [MON, TUE]);
+    i.days.forEach((d) => { d.scheduledOutQ = 82; });
+    i.people.find((p) => p.userId === "sl")!.workModes = { [MON]: "off", [TUE]: "off" };
+    const out = buildCrewWeek(i);
+    expect(out.shifts.filter((s) => s.userId === "gm")).toMatchObject([{ startQ: 30, endQ: 64 }, { startQ: 30, endQ: 64 }]);
+    for (const date of [MON, TUE]) expect(out.gaps).toContainEqual(expect.objectContaining({ date, code: "mod_missing", fromQ: 64, toQ: 82 }));
+    expect(out.notes.some((n) => n.params.reason === "budget")).toBe(false); clean(out);
+  });
+  it("uses opener start flex to cover the real prep-start hole", () => {
+    const st = shop((s) => {
+      s.leadership.modRequired = true; s.shopDay.prepStartQ = 28; s.shopDay.prepDishArrivalQ = 28;
+      s.shiftTypes = [type({ id: "opener", fromQ: 30, toQ: 64, startFlexQ: 4, minLengthQ: 24 })];
+    });
+    for (const role of ["gm", "shift_lead"] as const) {
+      const i = input([{ id: "leader", role, leader: "mix" }], st);
+      const out = buildCrewWeek(i);
+      expect(out.shifts[0]).toMatchObject({ startQ: 28, endQ: 64 });
+      expect(out.gaps.filter((g) => g.code === "mod_missing")).toEqual([]); clean(out);
+    }
+  });
+  it("refuses a usual end beyond availability or the shop day for hourly and salaried people", () => {
+    for (const role of ["employee", "gm"] as const) for (const boundary of ["availability", "shop"] as const) {
+      const i = input([{ id: "a", role, leader: "mix", window: { fromQ: 40, toQ: boundary === "availability" ? 62 : 68 } }]);
+      usual(i, "a");
+      if (boundary === "shop") i.days[0]!.scheduledOutQ = 62;
+      const out = buildCrewWeek(i);
+      expect(out.shifts, `${role}/${boundary}`).toEqual([]);
+      expect(out.notes).toContainEqual(expect.objectContaining({ userId: "a", params: expect.objectContaining({ reason: "unavailable" }) }));
+      expect(out.gaps.some((g) => g.code === "open_shift")).toBe(true); clean(out);
+    }
+  });
+  it("rejects an opens usual block instead of trimming its end to satisfy leadership", () => {
+    const i = input([{ id: "a", role: "shift_lead", leader: "opens" }], shop((s) => {
+      s.shiftTypes = [type({ fromQ: 44, toQ: 64, startFlexQ: 2 })];
+    })); usual(i, "a");
+    const out = buildCrewWeek(i);
+    expect(out.shifts).toEqual([]);
+    expect(out.notes).toContainEqual(expect.objectContaining({ userId: "a", params: expect.objectContaining({ reason: "leader_setting" }) })); clean(out);
+  });
 });

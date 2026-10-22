@@ -7,6 +7,7 @@
  * exact labor-card intermediate (spread, demand share, max hours, quarter counts behind the tone). A NEW path fails here
  * until it is reviewed and added (Astra chunk F P2-1, CC: an allowlist, unknown fields fail). */
 export const AGM_BOARD_PATHS: readonly string[] = [
+  ".generate.engine", ".generate.historicalEditedDates[]", ".days[].notes[].params.peopleIds",
   // Crew cards carry type names, clock quarters, headcounts and named explanations only.
   ".days[].crew.openShifts[].typeId", ".days[].crew.openShifts[].name", ".days[].crew.openShifts[].fromQ", ".days[].crew.openShifts[].toQ",
   ".days[].crew.openShifts[].missing", ".days[].crew.openShifts[].reasons[].key",

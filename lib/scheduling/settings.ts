@@ -322,6 +322,7 @@ export async function budgetSuggestion(deps: ScheduleDeps, args: { actor: People
   return suggestBudget({
     asOf, targetWeekStart: args.weekStart, reference, demand: inputs.demand, cateringHoursByDate, structureDeltaByDate, minCrewHoursByDate,
     currentBudgetTotal: current.unbudgetedDates.length === 7 ? null : current.total, deadbandH: live.labor.budgetDeadbandH, structureDeltaUnknown,
+    structureEngineChanged: ref !== null && scheduleEngine(ref) !== scheduleEngine(live),
   });
 }
 

@@ -109,6 +109,7 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
       input?.focus(); input?.scrollIntoView?.({ block: "center" });
       return;
     }
+    if (scheduleEngine(effective) !== scheduleEngine(structure.value) && !window.confirm(t("schedule.settings.shift_types.engine_confirm"))) return;
     setBusy(true);
     const out = await runGuarded({
       tier: "E", requestStepUp: () => requestStepUp("E"),

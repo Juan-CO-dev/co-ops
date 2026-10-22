@@ -13,7 +13,7 @@
   "schedule.settings.shift_types.name": "Name",
   "schedule.settings.shift_types.from": "Starts at",
   "schedule.settings.shift_types.to": "Ends at",
-  "schedule.settings.shift_types.flex": "Start flexibility (minutes)",
+  "schedule.settings.shift_types.flex": "Flex (start or end)",
   "schedule.settings.shift_types.minimum": "Minimum length (minutes)",
   "schedule.settings.shift_types.headcount": "People — {day}",
   "schedule.settings.shift_types.mod": "Eligible people can serve as manager on duty",
@@ -8207,6 +8207,10 @@
   "schedule.crew.rejection.pin_blocked_by_manual": "A pinned shift was skipped because a manual edit already reserves this person's day.",
   "schedule.crew.rejection.manual_person_unavailable": "A manual replacement was dropped because the person is no longer active or has approved leave or time off.",
   "schedule.crew.rejection.budget_displaced_essential": "This shift was skipped because it would make another shift lose its essential-hours budget exemption.",
-  "schedule.crew.rejection.mod_reserved": "This shift was skipped to preserve manager-on-duty coverage.",
-  "schedule.crew.rejection.no_fit": "No whole shift fits this person's scheduling limits."
+  "schedule.crew.rejection.mod_reserved": "Reserved for another shift that covers more manager-on-duty gaps.",
+  "schedule.crew.rejection.no_fit": "No whole shift fits this person's scheduling limits.",
+  "schedule.board.horizon.crew_edited_warning": "Rebuilding keeps the shifts you changed by hand.",
+  "schedule.board.horizon.crew_history_warning": "Days edited before the new scheduler was turned on will be rebuilt.",
+  "schedule.settings.shift_types.engine_confirm": "Switching changes how every future day is built. Existing weeks will show 'settings changed' until you regenerate them.",
+  "schedule.budget.reference_engine_changed": "The reference week used a different scheduler. The structure change is not included in this suggestion."
 }

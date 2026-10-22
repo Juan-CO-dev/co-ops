@@ -490,6 +490,16 @@ describe("Task 23 — the horizon builder, What changed, Approve", () => {
     expect(t).toContain(en["schedule.board.banner.further_out"]);
   });
 
+  it("crew warnings retain hand edits and only warn about historical dates when present", async () => {
+    for (const lang of ["en", "es"] as const) for (const historical of [false, true]) {
+      const copy = structuredClone(preview);
+      for (const w of copy.weeks) Object.assign(w, { engine: "crew", historicalEditedDates: historical ? [w.weekStart] : [] });
+      const html = text(await H({ initialPreview: copy }, lang)); const strings = lang === "en" ? en : es;
+      expect(html).toContain(strings["schedule.board.horizon.crew_edited_warning"]);
+      expect(html.includes(strings["schedule.board.horizon.crew_history_warning"])).toBe(historical);
+      expect(html).not.toContain(strings["schedule.board.horizon.edited_warning"]);
+    }
+  });
   it("an edited week warns and asks per week (a 44 px label); Apply needs Tier B ONLY when an edited week is checked; unchecked edited weeks are skipped and say so", async () => {
     const h = await H({ initialPreview: preview });
     expect(text(h)).toContain(en["schedule.board.horizon.edited_warning"]);

@@ -12,6 +12,8 @@ export interface CrewShiftMeta {
 }
 
 export interface CrewManualOverride {
+  /** Present only when the manager added the shift; absent keeps legacy deletion semantics. */
+  added?: true;
   original: ShiftRef;
   /** null preserves an intentional deletion across regeneration. */
   replacement: Shift | null;

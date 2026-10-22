@@ -13,7 +13,7 @@
   "schedule.settings.shift_types.name": "Nombre",
   "schedule.settings.shift_types.from": "Empieza a las",
   "schedule.settings.shift_types.to": "Termina a las",
-  "schedule.settings.shift_types.flex": "Flexibilidad de entrada (minutos)",
+  "schedule.settings.shift_types.flex": "Margen (inicio o fin)",
   "schedule.settings.shift_types.minimum": "Duración mínima (minutos)",
   "schedule.settings.shift_types.headcount": "Personas — {day}",
   "schedule.settings.shift_types.mod": "Las personas calificadas pueden ser responsables de turno",
@@ -8207,6 +8207,10 @@
   "schedule.crew.rejection.pin_blocked_by_manual": "Se omitió un turno fijado porque un cambio manual ya reserva el día de esta persona.",
   "schedule.crew.rejection.manual_person_unavailable": "Se descartó un reemplazo manual porque la persona ya no está activa o tiene una licencia o ausencia aprobada.",
   "schedule.crew.rejection.budget_displaced_essential": "Se omitió este turno porque haría que otro perdiera la exención de presupuesto por horas esenciales.",
-  "schedule.crew.rejection.mod_reserved": "Se omitió este turno para mantener la cobertura del responsable de turno.",
-  "schedule.crew.rejection.no_fit": "Ningún turno completo cabe dentro de los límites de horario de esta persona."
+  "schedule.crew.rejection.mod_reserved": "Se reserva para otro turno que cubra más huecos de responsable de turno.",
+  "schedule.crew.rejection.no_fit": "Ningún turno completo cabe dentro de los límites de horario de esta persona.",
+  "schedule.board.horizon.crew_edited_warning": "Al reconstruir, se conservan los turnos que cambiaste a mano.",
+  "schedule.board.horizon.crew_history_warning": "Los días editados antes de activar el nuevo planificador se reconstruirán.",
+  "schedule.settings.shift_types.engine_confirm": "Cambiar el planificador cambia cómo se organiza cada día futuro. Las semanas existentes mostrarán 'configuración cambiada' hasta que las regeneres.",
+  "schedule.budget.reference_engine_changed": "La semana de referencia usó otro planificador. El cambio de estructura no se incluye en esta sugerencia."
 }

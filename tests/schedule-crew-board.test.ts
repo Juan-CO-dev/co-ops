@@ -75,12 +75,26 @@ describe("crew board outcomes", () => {
     expect(boardView(src).days[0]!.notes).toContainEqual({ key: "schedule.note.crew_history_preserved" });
     expect(JSON.stringify(src.week.dayContexts)).toBe(before);
   });
+  it("unknown note people render the translated fallback without ids", () => {
+    const src = crewSource(); delete src.names.absent;
+    for (const language of ["en", "es"] as const) {
+      const html = render(src, language);
+      expect(html).toContain((language === "en" ? en : es)["schedule.board.person_unknown"]);
+      expect(html).not.toContain("(absent)");
+    }
+  });
+  it("historical dates still request confirmation after an intervening generated revision", () => {
+    const src = crewSource(); src.liveEngine = "crew"; src.week!.edited = false; src.week!.historicalCrewDates = [MON];
+    expect(boardView(src).generate).toMatchObject({ edited: true, engine: "crew", historicalEditedDates: [MON] });
+    src.liveEngine = "stations"; expect(boardView(src).generate.edited).toBe(false);
+    src.liveEngine = "crew"; src.today = DATES[1]!; expect(boardView(src).generate.edited).toBe(false);
+  });
   it("reload preserves outcomes and deleted-type notes for people with no shift", () => {
     const src = crewSource();
     expect(boardView(JSON.parse(JSON.stringify(src)))).toEqual(boardView(src));
     const day = boardView(src).days[0]!;
     expect(day.crew?.openShifts[0]).toMatchObject({ name: "Mid", missing: 1, reasons: [{ key: "schedule.crew.rejection.off" }] });
-    expect(day.notes.find((n) => n.key === "schedule.note.usual_type_deleted")?.params).toMatchObject({ people: "Absent Person", count: 1 });
+    expect(day.notes.find((n) => n.key === "schedule.note.usual_type_deleted")?.params).toMatchObject({ peopleIds: JSON.stringify(["absent"]), count: 1 });
     expect(day.rows.flatMap((r) => r.shifts).every((s) => s.crewType?.name === "Mid")).toBe(true);
     expect(day.mod.every((m) => m.userIds.length === 0)).toBe(true);
   });

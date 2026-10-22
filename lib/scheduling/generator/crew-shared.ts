@@ -153,7 +153,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     && roster[sh.userId] && !roster[sh.userId]!.salaried && !roster[sh.userId]!.presenceOnly && !essential(sh) ? hours(sh) : 0), 0);
   const minimum = (p: SchedPerson, t: ShiftType) => Math.max(t.minLengthQ, st.limits.minimumShiftQ,
     p.salaried ? (p.role === "gm" ? st.limits.gmMinimumH * 4 : p.role === "agm" ? st.limits.agmMinimumH * 4 : 0) : 0);
-  function candidate(p: SchedPerson, t: ShiftType, date: string, source: Source): { block?: Block; rejection?: string } {
+  function candidate(p: SchedPerson, t: ShiftType, date: string, source: Source, holes: readonly number[] = [], required: readonly number[] = []): { block?: Block; rejection?: string } {
     const fail = (rejection: string) => ({ rejection });
     const day = ctx.days[date]!;
     if (!p.activeMember || neverGenerated(p)) return fail("position");
@@ -164,11 +164,18 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const own = p.usualShift?.value?.typeId === t.id ? p.usualShift.value : null;
     const av = p.availability[date];
     const baseStart = Math.max(st.shopDay.prepStartQ, own?.fromQ ?? t.fromQ, av?.fromQ ?? 0);
-    const baseEnd = Math.min(day.scheduledOutQ, own?.toQ ?? t.toQ, av?.toQ ?? 96);
+    const usualEnd = own?.toQ ?? t.toQ;
+    const baseEnd = Math.min(day.scheduledOutQ, usualEnd, av?.toQ ?? 96);
+    // A usual block may move its start, but an earlier availability/shop end cannot trim it.
+    if ((own || source === "usual") && baseEnd < usualEnd) return fail("unavailable");
     const offsets = [0, ...Array.from({ length: t.startFlexQ }, (_, n) => [n + 1, -n - 1]).flat()];
     const attempts = [[baseStart, baseEnd] as const,
       ...offsets.map((o) => [(own?.fromQ ?? t.fromQ) + o, baseEnd] as const),
-      ...offsets.map((o) => [baseStart, (own?.toQ ?? t.toQ) + o] as const)];
+      ...(source !== "fill" || own ? [] : offsets.map((o) => [baseStart, t.toQ + o] as const))];
+    const coverage = (attempt: readonly [number, number], qs: readonly number[]) => t.countsTowardMod
+      ? qs.filter((q) => attempt[0] <= q && q < attempt[1] && modCountsOn(p, day, q)).length : 0;
+    // Stable sort retains the specified offset order for equal coverage.
+    if (holes.length) attempts.sort((a, b) => coverage(b, required) - coverage(a, required) || coverage(b, holes) - coverage(a, holes));
     let rejection = "minimum_length";
     let flexFromQ = baseEnd;
     if (atDayCap(p, schedule, date, maxDaysPerWeek(st))) return fail("day_limit");
@@ -211,7 +218,8 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
       + (budgetedDates.includes(sh.date) && !roster[sh.userId]!.salaried && !roster[sh.userId]!.presenceOnly ? hours(sh) : 0);
     const needsAssignment = (budgetedDates.length > 0 && rawCharge > budgetHours)
       || roster[sh.userId]!.salaried || schedule.shifts.some((s) => roster[s.userId]?.salaried);
-    const saved = needsAssignment ? schedule.shifts.map((s) => structuredClone(s)) : [];
+    // Assignment replaces generated segment arrays; retain the old arrays for rollback.
+    const saved = needsAssignment ? schedule.shifts.map((s) => ({ ...s })) : [];
     schedule.shifts.push(sh); blocks.set(key(sh), block); addMeta(sh, block.type.id, block.source);
     if (needsAssignment) assignStations(sh.date);
     // Budget belongs to the complete allocation. Distinguish a new block's charge
@@ -237,18 +245,27 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
   function preservesMod(block: Block): boolean {
     if (!st.leadership.modRequired) return true;
     const sh = block.shift, day = ctx.days[sh.date]!, p = roster[sh.userId]!;
-    for (let q = st.shopDay.prepStartQ; q < day.scheduledOutQ; q++) {
-      if (schedule.shifts.some((s) => s.date === sh.date && s.startQ <= q && q < s.endQ && roster[s.userId] && shiftCountsAsMod(s, roster[s.userId]!, day, q))) continue;
-      if (block.type.countsTowardMod && sh.startQ <= q && q < sh.endQ && modCountsOn(p, day, q)) continue;
-      const possible = (person: SchedPerson) => types.some((t) => {
-        const b = candidate(person, t, sh.date, "fill").block;
-        return b && t.countsTowardMod && b.shift.startQ <= q && q < b.shift.endQ && modCountsOn(person, day, q);
-      });
-      if (possible(p) && !input.people.some((other) => other.userId !== p.userId && possible(other))) return false;
+    const holes = modHoles(sh.date);
+    if (!holes.some((q) => modCountsOn(p, day, q))) return true;
+    const covers = (b: Block, q: number) => b.type.countsTowardMod && b.shift.startQ <= q && q < b.shift.endQ
+      && modCountsOn(roster[b.shift.userId]!, day, q);
+    const possible = (person: SchedPerson, q: number) => types.some((t) => {
+      const b = candidate(person, t, sh.date, "fill", [q]).block;
+      return b && covers(b, q);
+    });
+    const exclusive = holes.filter((q) => possible(p, q)
+      && !input.people.some((other) => other.userId !== p.userId && possible(other, q)));
+    const covered = exclusive.filter((q) => covers(block, q));
+    // Incomparable morning/evening blocks cannot reserve each other forever.
+    // Reserve only when another block for this person covers a strict superset.
+    for (const t of types) {
+      const alternative = candidate(p, t, sh.date, "fill", exclusive, covered).block;
+      if (alternative && covered.every((q) => covers(alternative, q))
+        && exclusive.filter((q) => covers(alternative, q)).length > covered.length) return false;
     }
     return true;
   }
-  // B. Usual shifts are whole availability-clipped blocks, even above the type headcount.
+  // B. Usual shifts retain their end, with availability-clipped starts, even above the type headcount.
   for (const d of buildDays) for (const p of input.people) {
     if (p.usualShift?.deletedTypeId) note(d.date, p.userId, "usual_type_deleted", p.usualShift.deletedTypeId);
   }
@@ -264,13 +281,13 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
   // An ample budget must not change day-cap choices or scarce-role reservations.
   // Restart only after an actual usual block was refused by the allocation's budget.
   if (usualBudgetRefused && !prioritizeUsualBudget) return buildCrewWeekAttempt(raw, true);
-  const modHoles = (date: string) => {
+  function modHoles(date: string) {
     const day = ctx.days[date]!;
     if (!st.leadership.modRequired) return [] as number[];
     return Array.from({ length: day.scheduledOutQ - st.shopDay.prepStartQ }, (_, i) => st.shopDay.prepStartQ + i)
       .filter((q) => !schedule.shifts.some((sh) => sh.date === date && sh.startQ <= q && q < sh.endQ
         && roster[sh.userId] && shiftCountsAsMod(sh, roster[sh.userId]!, day, q)));
-  };
+  }
   // C. Scarce MoD dates first, then highest demand: target exhaustion cannot simply drop Friday.
   const managerDays = [...buildDays].sort((a, b) => {
     const count = (date: string) => input.people.filter((p) => types.some((t) => t.countsTowardMod
@@ -279,18 +296,26 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
   });
   for (const d of managerDays) for (const p of input.people.filter((p) => p.salaried && p.workModes?.[d.date] !== "if_needed")) {
     const own = types.find((t) => t.id === p.usualShift?.value?.typeId);
-    const choices = own ? [own] : [...types].sort((a, b) => {
-      const score = (t: ShiftType) => modHoles(d.date).filter((q) => t.countsTowardMod && q >= t.fromQ && q < t.toQ && modCountsOn(p, ctx.days[d.date]!, q)).length;
-      return score(b) - score(a) || cmp(a.id, b.id);
-    });
+    const holes = modHoles(d.date);
+    const choices = (own ? [own] : types).map((t) => ({ t, c: candidate(p, t, d.date, "salaried", holes) }))
+      .sort((a, b) => {
+        const score = (c: typeof a.c) => c.block ? holes.filter((q) => c.block!.type.countsTowardMod
+          && c.block!.shift.startQ <= q && q < c.block!.shift.endQ && modCountsOn(p, ctx.days[d.date]!, q)).length : -1;
+        return score(b.c) - score(a.c) || (a.c.block?.shift.startQ ?? 96) - (b.c.block?.shift.startQ ?? 96) || cmp(a.t.id, b.t.id);
+      });
     let placed = false;
     let rejection = "no_fit";
-    for (const t of choices) {
-      const c = candidate(p, t, d.date, "salaried");
-      rejection = c.rejection ?? "budget";
-      if (c.block && preservesMod(c.block) && place(c.block, "salaried_minimum")) { placed = true; break; }
+    for (const { c } of choices) {
+      if (!c.block) {
+        if (!c.rejection) throw new Error("Crew candidate missing rejection");
+        rejection = c.rejection; continue;
+      }
+      if (!preservesMod(c.block)) { rejection = "mod_reserved"; continue; }
+      if (place(c.block, "salaried_minimum")) { placed = true; break; }
+      // place records its precise allocation failure itself.
+      rejection = "";
     }
-    if (!placed && choices.length) note(d.date, p.userId, rejection, own?.id ?? null);
+    if (!placed && choices.length && rejection) note(d.date, p.userId, rejection, own?.id ?? null);
   }
   // Reserve whole legal leadership blocks before seat fill. This is the MoD lookahead: a headcount
   // choice cannot consume the only remaining leader on a type that cannot cover the leadership hole.
@@ -298,12 +323,12 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     while (modHoles(d.date).length) {
       const holes = modHoles(d.date);
       const candidates = input.people.flatMap((p) => types.flatMap((t) => {
-        const c = candidate(p, t, d.date, "fill").block;
+        const c = candidate(p, t, d.date, "fill", holes).block;
         if (!c || !t.countsTowardMod) return [];
         const gain = holes.filter((q) => c.shift.startQ <= q && q < c.shift.endQ && modCountsOn(p, ctx.days[d.date]!, q)).length;
         return gain ? [{ block: c, gain }] : [];
-      })).sort((a, b) => b.gain - a.gain || Number(roster[a.block.shift.userId]!.salaried) - Number(roster[b.block.shift.userId]!.salaried)
-        || cmp(a.block.shift.userId, b.block.shift.userId) || cmp(a.block.type.id, b.block.type.id));
+      })).sort((a, b) => b.gain - a.gain || a.block.shift.startQ - b.block.shift.startQ || cmp(a.block.type.id, b.block.type.id)
+        || Number(roster[a.block.shift.userId]!.salaried) - Number(roster[b.block.shift.userId]!.salaried) || cmp(a.block.shift.userId, b.block.shift.userId));
       if (!candidates.some((c) => preservesMod(c.block) && place(c.block, "mod_cover"))) break;
     }
   }
@@ -424,9 +449,12 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const reassign = (sh: Shift) => !fixed.has(key(sh)) && (!fromDate || cmp(sh.date, fromDate) >= 0);
     // Rebuild generated segments only. Fixed evidence is never relabelled.
     for (const sh of schedule.shifts) if (reassign(sh)) sh.segments = [];
-    const floorUsed = new Map(input.people.map((p) => [p.userId, floorHours({ shifts: schedule.shifts.filter((s) => !reassign(s)) }, p.userId) * 4]));
-    const flexUsed = new Map(input.people.map((p) => [p.userId, salariedWeek({ shifts: schedule.shifts.filter((s) => fixed.has(key(s))) }, p.userId).flexH * 4]));
-    const reservedFlex = new Map(input.people.map((p) => [p.userId, (flexUsed.get(p.userId) ?? 0)
+    const managers = input.people.filter((p) => p.salaried);
+    const retained = schedule.shifts.filter((s) => !reassign(s));
+    const fixedShifts = schedule.shifts.filter((s) => fixed.has(key(s)));
+    const floorUsed = new Map(managers.map((p) => [p.userId, floorHours({ shifts: retained }, p.userId) * 4]));
+    const flexUsed = new Map(managers.map((p) => [p.userId, salariedWeek({ shifts: fixedShifts }, p.userId).flexH * 4]));
+    const reservedFlex = new Map(managers.map((p) => [p.userId, (flexUsed.get(p.userId) ?? 0)
       + [...blocks.values()].filter((b) => b.shift.userId === p.userId).reduce((n, b) => n + b.shift.endQ - b.flexFromQ, 0)]));
     const floorFlex = new Map<string, number>();
     for (const sh of schedule.shifts.filter((s) => !fixed.has(key(s)) && !reassign(s))) {

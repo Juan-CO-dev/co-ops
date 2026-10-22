@@ -108,7 +108,9 @@ export function recordCrewManualOverride(prior: readonly CrewManualOverride[], b
   if (replacement === undefined) refuse("head_moved");
   const result = structuredClone([...prior]);
   const index = result.findIndex((o) => o.replacement !== null && sameRef(o.replacement, original));
-  const entry = { original: index >= 0 ? result[index]!.original : { ...original }, replacement: replacement ? cloneShift(replacement) : null };
+  const added = op.kind === "addShift" || (index >= 0 && result[index]!.added === true);
+  if (op.kind === "removeShift" && added) { result.splice(index, 1); return result; }
+  const entry: CrewManualOverride = { ...(added ? { added: true } : {}), original: index >= 0 ? result[index]!.original : { ...original }, replacement: replacement ? cloneShift(replacement) : null };
   if (index >= 0) result[index] = entry; else result.push(entry);
   return result;
 }

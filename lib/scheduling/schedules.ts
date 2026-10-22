@@ -37,7 +37,8 @@ import { type GeneratorOutput } from "./generator/build-shared";
 import { generateWeek as generateScheduleWeek } from "./generator/dispatch-shared";
 import { horizonActions, planHorizon, type HorizonRequest } from "./horizon-shared";
 import { loadScheduleShopSettings, loadSchedulingInputs, loadWeekHeads } from "./inputs";
-import { generatorInputFor, sqlStructureVersion, type SchedulingInputs, type StoredWeek } from "./inputs-shared";
+import { scheduleEngine } from "./structure-shared";
+import { generatorInputFor, historicalCrewDates, sqlStructureVersion, type SchedulingInputs, type StoredWeek } from "./inputs-shared";
 import { approveWeekCall, commitRevisionCall } from "./rpc-args-shared";
 import { approvalRefusal, checkScheduleRules, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
@@ -115,8 +116,8 @@ export function problemsSummary(problems: readonly RuleProblem[]): Record<string
 }
 
 /** Build one week from the inputs (pure apart from the generator-invalid audit). */
-async function build(inputs: SchedulingInputs, weekStart: string, today: string, buildDays: readonly string[] | undefined, actor: PeopleActor | null): Promise<{ out: GeneratorOutput; inputsDigest: string }> {
-  const gi = generatorInputFor(inputs, weekStart, { today, buildDays });
+async function build(inputs: SchedulingInputs, weekStart: string, today: string, buildDays: readonly string[] | undefined, actor: PeopleActor | null, confirmEdited = false): Promise<{ out: GeneratorOutput; inputsDigest: string }> {
+  const gi = generatorInputFor(inputs, weekStart, { today, buildDays, confirmEdited });
   try {
     return { out: generateScheduleWeek(gi), inputsDigest: digest64(canonicalJson(gi)) };
   } catch (e) {
@@ -175,11 +176,12 @@ export async function generateWeek(deps: ScheduleDeps, args: { actor: PeopleActo
   await gate(deps.service, args.actor, args.locationId, head ? "regenerate" : "generate");
   const inputs = await loader(deps)(deps.service, { locationId: args.locationId, weekStarts: [args.weekStart], now: nowOf(deps) });
   if (!inputs.shopSettings.enabled) throw new ScheduleError("shop_not_enabled");
-  const w = inputs.weeks[args.weekStart];
+  const stored = inputs.weeks[args.weekStart];
+  const w = stored && { ...stored, edited: stored.edited || (scheduleEngine(inputs.structure.structure) === "crew" && historicalCrewDates(stored).some((d) => d >= todayOf(deps))) };
   if ((w?.headRevisionId ?? null) !== args.expectedHead) throw new ScheduleError("head_moved");
   if (w?.edited && !args.confirmEdited) throw new ScheduleError("edited_week_unconfirmed");
   const today = todayOf(deps);
-  const { out, inputsDigest } = await build(inputs, args.weekStart, today, undefined, args.actor);
+  const { out, inputsDigest } = await build(inputs, args.weekStart, today, undefined, args.actor, args.confirmEdited);
   const kind = head ? "regenerated" : "generated";
   const { revisionId } = await commit(deps.service, {
     actor: args.actor, locationId: args.locationId, weekStart: args.weekStart, expectedHead: args.expectedHead, kind, structureVersionId: inputs.structure.id,
@@ -194,6 +196,7 @@ export async function generateWeek(deps: ScheduleDeps, args: { actor: PeopleActo
 // ─── The horizon ─────────────────────────────────────────────────────────────
 
 export interface PreviewWeek {
+  engine?: "stations" | "crew"; historicalEditedDates?: string[];
   weekStart: string; buildDays: string[]; keptDays: string[]; confidence: "normal" | "further_out"; edited: boolean; headRevisionId: string | null;
   /** Each gap with its certificate as the board words it (chunk F, Task 23) — never the raw certificate. */
   whatChanged: WeekDiff; problems: ProblemsSplit; gaps: Array<Pick<DeclaredGap, "date" | "code" | "positionId" | "fromQ" | "toQ" | "cause"> & { line: NarrativeLine }>; hourlyHoursOnBudgetedDates: number;
@@ -208,8 +211,10 @@ async function previewOf(deps: ScheduleDeps, actor: PeopleActor, locationId: str
   if (inputs.demand.kind === "unavailable") throw new ScheduleError("demand_unavailable", { params: { cause: inputs.demand.cause } });
   const built: Array<{ plan: (typeof plan)[number]; out: GeneratorOutput; inputsDigest: string; week: StoredWeek | undefined }> = [];
   for (const p of plan) {
-    const { out, inputsDigest } = await build(inputs, p.weekStart, today, p.buildDays, actor);
-    built.push({ plan: p, out, inputsDigest, week: inputs.weeks[p.weekStart] });
+    const { out, inputsDigest } = await build(inputs, p.weekStart, today, p.buildDays, actor, true);
+    const stored = inputs.weeks[p.weekStart];
+    const week = stored && { ...stored, edited: stored.edited || (scheduleEngine(inputs.structure.structure) === "crew" && historicalCrewDates(stored).some((d) => p.buildDays.includes(d))) };
+    built.push({ plan: p, out, inputsDigest, week });
   }
   const token = digest64(canonicalJson({
     v: 1, locationId, request, today, structureVersionId: inputs.structure.id, demand: inputs.demand.kind,
@@ -224,6 +229,7 @@ export async function previewHorizon(deps: ScheduleDeps, args: { actor: PeopleAc
   return {
     token,
     weeks: built.map((b) => ({
+      engine: scheduleEngine(inputs.structure.structure), historicalEditedDates: historicalCrewDates(b.week).filter((d) => b.plan.buildDays.includes(d)),
       weekStart: b.plan.weekStart, buildDays: b.plan.buildDays, keptDays: b.plan.keptDays, confidence: b.plan.confidence, edited: !!b.week?.edited,
       headRevisionId: b.week?.headRevisionId ?? null, whatChanged: diffOf(inputs, args.actor, b.week, b.out), problems: splitProblems(b.out),
       gaps: b.out.gaps.map((g) => ({ date: g.date, code: g.code, positionId: g.positionId, fromQ: g.fromQ, toQ: g.toQ, cause: g.cause, line: gapLine(g) })),

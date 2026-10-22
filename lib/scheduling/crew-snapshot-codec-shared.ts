@@ -8,7 +8,7 @@ import type { Segment } from "./rules-shared";
  */
 type PackedSegment = [number, number, number, Partial<Omit<Segment, "positionId" | "startQ" | "endQ" | "reasonKey" | "coverFor">>, number | null, number | null];
 type PackedShift = [number, number, number, number, boolean, boolean, boolean, number];
-type PackedOverride = [number, number, number, PackedShift | null];
+type PackedOverride = [number, number, number, PackedShift | null, true?];
 interface PackedOverrides { version: 1; strings: string[]; segments: PackedSegment[][]; rows: PackedOverride[] }
 type WireCrew = CrewDaySnapshot & { manualOverridesPacked?: PackedOverrides };
 
@@ -28,9 +28,12 @@ function pack(overrides: CrewManualOverride[]): PackedOverrides {
     if (found !== undefined) return found;
     const n = segments.length; segments.push(tuples); segmentIds.set(key, n); return n;
   };
-  const rows: PackedOverride[] = overrides.map(({ original: o, replacement: r }) => [id(o.date), id(o.userId), o.startQ,
-    r === null ? null : [id(r.date), id(r.userId), r.startQ, r.endQ, r.closingManager, r.flex, r.pinned,
-      segmentId(r.segments)]]);
+  const rows: PackedOverride[] = overrides.map(({ original: o, replacement: r, added }) => {
+    const row: PackedOverride = [id(o.date), id(o.userId), o.startQ,
+      r === null ? null : [id(r.date), id(r.userId), r.startQ, r.endQ, r.closingManager, r.flex, r.pinned, segmentId(r.segments)]];
+    if (added) row[4] = true;
+    return row;
+  });
   return { version: 1, strings, segments, rows };
 }
 
@@ -41,7 +44,7 @@ function unpack(p: PackedOverrides): CrewManualOverride[] {
     if (!Number.isInteger(i) || typeof s !== "string") throw new Error("Invalid crew override string index");
     return s;
   };
-  return p.rows.map(([date, userId, startQ, r]) => ({ original: { date: str(date), userId: str(userId), startQ },
+  return p.rows.map(([date, userId, startQ, r, added]) => ({ ...(added ? { added: true as const } : {}), original: { date: str(date), userId: str(userId), startQ },
     replacement: r === null ? null : { date: str(r[0]), userId: str(r[1]), startQ: r[2], endQ: r[3],
       closingManager: r[4], flex: r[5], pinned: r[6], segments: p.segments[r[7]]!.map(([pos, start, end, rest, reason, cover]) => ({
         ...rest, positionId: str(pos), startQ: start, endQ: end,

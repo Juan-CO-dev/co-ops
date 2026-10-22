@@ -51,6 +51,7 @@ export function formatParams(params: Readonly<Record<string, string | number>> |
   for (const [k, v] of Object.entries(params ?? {})) {
     if (typeof v === "number" && /Cents$/.test(k)) out[k] = formatCentsWhole(v, ctx.language);
     else if (typeof v === "number" && CLOCK_Q.has(k)) out[k] = formatQ(v, ctx.language);
+    else if (k === "peopleIds" && typeof v === "string") out.people = (JSON.parse(v) as string[]).map((id) => personName(ctx, id)).join(", ");
     else if (k === "userId" && typeof v === "string") out[k] = personName(ctx, v);
     else if ((k === "positionId" || k === "primaryId") && typeof v === "string") out[k] = positionLabel(ctx, v);
     else if (DATE_PARAMS.has(k) && typeof v === "string" && isYmd(v)) out[k] = formatDateLabel(v, ctx.language);

@@ -75,6 +75,7 @@ export interface BoardSource {
   perms: BoardPerms;
   /** The live structure id (the defaults sentinel when none is saved). */
   liveStructureId: string;
+  liveEngine?: "stations" | "crew";
   demand: "ok" | "no_history" | "unavailable";
   names: Record<string, string>;
   roles: Record<string, RoleCode>;
@@ -190,7 +191,7 @@ export interface BoardView {
   weeksAhead: number;
   perms: BoardPerms;
   banners: BoardBanner[];
-  generate: { disabled: boolean; expectedHead: string | null; edited: boolean };
+  generate: { disabled: boolean; expectedHead: string | null; edited: boolean; engine?: "stations" | "crew"; historicalEditedDates?: string[] };
   week: { headRevisionId: string; approved: boolean; edited: boolean } | null;
   strip: MoneyStrip | null;
   budgetLines: NarrativeLine[];
@@ -347,12 +348,12 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
   if (ctx && scheduleEngine(ctx.structure) === "crew") for (const note of ctx.crew?.notes ?? []) {
     const params: Record<string, string | number> = {};
     for (const [key, value] of Object.entries(note.params)) if (typeof value === "string" || typeof value === "number") params[key] = value;
-    if (Array.isArray(note.params.userIds)) params.people = note.params.userIds.map((id) => src.names[String(id)] ?? String(id)).join(", ");
+    if (Array.isArray(note.params.userIds)) params.peopleIds = JSON.stringify(note.params.userIds);
     if (note.userId) params.userId = note.userId;
     if (note.positionId) params.positionId = note.positionId;
     notes.push({ key: note.code === "crew_block_skipped" && typeof params.reason === "string" && crewNoteReasons.has(params.reason)
       ? `schedule.crew.rejection.${params.reason}` : `schedule.note.${note.code}`, params });
-    if (params.people && note.code !== "over_soft_max") notes.push({ key: "schedule.crew.note_people", params: { count: params.count ?? 1, people: params.people } });
+    if (params.peopleIds && note.code !== "over_soft_max") notes.push({ key: "schedule.crew.note_people", params: { count: params.count ?? 1, peopleIds: params.peopleIds } });
   }
   if (showDeletedUsualShifts) for (const p of Object.values(week.people).sort((a, b) => a.userId < b.userId ? -1 : 1)) {
     if (p.usualShift?.deletedTypeId) notes.push({ key: "schedule.note.usual_shift_deleted", params: { userId: p.userId } });
@@ -465,7 +466,7 @@ export function boardView(src: BoardSource): BoardView {
   const approveRefusal = !src.perms.canApprove ? "forbidden" as const : refusal ?? (approved ? "approved" as const : null);
   return {
     locationId: src.locationId, weekStart: src.weekStart, today: src.today, dates, weeksAhead: src.weeksAhead, perms: src.perms, banners,
-    generate: { disabled: src.demand === "unavailable" || !src.perms.canEdit, expectedHead: week.headRevisionId, edited: week.edited },
+    generate: { disabled: src.demand === "unavailable" || !src.perms.canEdit, expectedHead: week.headRevisionId, edited: week.edited || (src.liveEngine === "crew" && !!week.historicalCrewDates?.some((d) => d >= src.today)), engine: src.liveEngine, historicalEditedDates: src.liveEngine === "crew" ? week.historicalCrewDates?.filter((d) => d >= src.today) : [] },
     week: { headRevisionId: week.headRevisionId, approved, edited: week.edited },
     strip, budgetLines: src.budget.lines, suggestion: src.perms.canBudget ? src.suggestion : null, advisory,
     tabs: dayTabs({ dates, today: src.today, ctx, shifts: week.shifts, wageCentsByUser: wages }, { canSeeMoney: money }),

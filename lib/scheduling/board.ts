@@ -127,7 +127,7 @@ export async function loadBoard(deps: ScheduleDeps, args: { actor: PeopleActor; 
       canSeeMoney: money, canEdit: scheduleActRefusal(actor, locationId, "edit", access) === null, canApprove: canApproveSchedule(actor, locationId),
       canEditStructure: canEditStructure(actor, locationId), canManageSwitch: canManageShopSwitch(actor), canBudget,
     },
-    liveStructureId: inputs.structure.id, demand, names, roles, positions,
+    liveStructureId: inputs.structure.id, liveEngine: scheduleEngine(structure), demand, names, roles, positions,
     skills: makeSkillLookup(inputs.skills, inputs.skillBands),
     wageCentsByUser, shopEstimateHourlyCents: inputs.shopSettings.estimatedHourlyCents,
     salariedWeeklyCents: inputs.shopSettings.estimatedSalariedWeeklyCents, forecastWeekCents,

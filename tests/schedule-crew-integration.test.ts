@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { generateWeek } from "@/lib/scheduling/generator/dispatch-shared";
 import { buildWeek } from "@/lib/scheduling/generator/build-shared";
-import { applyEdit } from "@/lib/scheduling/edit-shared";
+import { applyEdit, recordCrewManualOverride } from "@/lib/scheduling/edit-shared";
 import { minCrewHours, structureDeltaHours } from "@/lib/scheduling/budget-shared";
 import { historicalCrewDates, type StoredWeek } from "@/lib/scheduling/inputs-shared";
 import { toContextSnapshot, ruleContextFromSnapshot } from "@/lib/scheduling/context-shared";
@@ -11,6 +11,7 @@ import type { WeekSchedule } from "@/lib/scheduling/rules-shared";
 function crewInput() {
   const s = onePosition((s) => {
     s.engine = "crew"; s.leadership.modRequired = false;
+    s.shopDay.outEarliestQ = 64; // The usual block must fit whole; no end clipping.
     s.shiftTypes = [{ id: "day", name: "Day", fromQ: 44, toQ: 64, minLengthQ: 16, startFlexQ: 0, headcount: { slow: 1, normal: 1, busy: 1, weekend: 1 }, stations: [I.$REG], countsTowardMod: true }];
   });
   const i = fixture({ structure: s, specs: [{ id: "worker", role: "employee", cover: [I.$REG] }] });
@@ -46,6 +47,21 @@ describe("crew entry-point persistence", () => {
     const regenerated = generateWeek({ ...i, head: { revisionId: "deleted", ...deleted.schedule, closingWindowByDate: snap.closingWindowByDate }, crew: { headContext: snap } });
     expect(regenerated.shifts.some((x) => x.date === sh.date && x.userId === sh.userId)).toBe(false);
     expect(regenerated.gaps.some((g) => g.code === "open_shift")).toBe(true);
+  });
+  it("deleting an added shift drops its override after edits and packed reload", () => {
+    const i = crewInput(); const out = generateWeek(i); const sh = out.shifts[0]!;
+    const before = { ...schedule(out, i), shifts: [] };
+    const add = { kind: "addShift" as const, date: sh.date, userId: sh.userId, startQ: sh.startQ, endQ: sh.endQ, positionId: I.$REG };
+    const added = recordCrewManualOverride([], before, add, schedule(out, i));
+    expect(added[0]!.added).toBe(true);
+    out.context.days[sh.date]!.crew!.manualOverrides = Array.from({ length: 6 }, (_, n) => ({ ...added[0]!, original: { ...added[0]!.original, userId: `added-${n}` } }));
+    const loaded = ruleContextFromSnapshot(toContextSnapshot(out.context).context).days[sh.date]!.crew!.manualOverrides;
+    expect(loaded).toEqual(out.context.days[sh.date]!.crew!.manualOverrides);
+    const moved = { ...sh, startQ: sh.startQ + 1 };
+    const after = { ...schedule(out, i), shifts: [moved] };
+    const edited = recordCrewManualOverride([loaded[0]!], schedule(out, i), { kind: "start", shift: sh, toQ: moved.startQ }, after);
+    expect(edited[0]!.added).toBe(true);
+    expect(recordCrewManualOverride(edited, after, { kind: "removeShift", shift: moved }, before)).toEqual([]);
   });
   it("retains dates lacking historical provenance without guessing the edited person", () => {
     const i = crewInput(); const out = generateWeek(i);

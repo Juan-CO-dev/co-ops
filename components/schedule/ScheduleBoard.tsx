@@ -235,7 +235,7 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
           </button>
           {confirming ? (
             <div role="alertdialog" aria-labelledby="schedule-regen-warning" className="grid gap-2 rounded-lg border-2 border-co-warning bg-co-warning-surface p-3" data-section="regenerate-confirm">
-              <p id="schedule-regen-warning" className="text-sm font-bold text-co-warning-text">{t("schedule.board.horizon.edited_warning")}</p>
+              <p id="schedule-regen-warning" className="text-sm font-bold text-co-warning-text">{t(view.generate.engine === "crew" ? "schedule.board.horizon.crew_edited_warning" : "schedule.board.horizon.edited_warning")}{view.generate.engine === "crew" && !!view.generate.historicalEditedDates?.length && <> {t("schedule.board.horizon.crew_history_warning")}</>}</p>
               <div className="flex flex-wrap gap-2">
                 <button type="button" data-act="regenerate-confirm" onClick={() => answerConfirm(true)}
                   className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text">{t("schedule.board.horizon.confirm_week")}</button>
