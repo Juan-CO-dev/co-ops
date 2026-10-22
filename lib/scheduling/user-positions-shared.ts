@@ -8,13 +8,14 @@
  * The rest of the person's settings row (also allowed, leader setting, soft range, full-timer, the "can flex to" tail) is
  * carried over untouched: the write is the person's latest row with only the work type and the first two positions changed.
  */
+import { effectiveScheduleRole } from "./works-as-shared";
 import type { RoleCode } from "@/lib/roles";
 import type { WorkType } from "./context-shared";
 import { defaultWorkType, type PersonSettingsRow } from "./people-input-shared";
 import { positionListProblems, withPrimarySecondary, type PositionListProblem, type ToastPrimarySuggestion } from "./position-rank-shared";
 import type { PositionRole } from "./structure-shared";
 
-export interface PickerPosition { id: string; name: string; nameEs: string | null; role: PositionRole | null }
+export interface PickerPosition { id: string; name: string; nameEs: string | null; role: PositionRole | null; allowedRoles?: RoleCode[] }
 
 /** One shop's picker data: its live positions, whether their roles are known, every member's latest settings, suggestions. */
 export interface ShopPositionPicker {
@@ -103,10 +104,11 @@ export function pickChanged(current: PersonSettingsRow | null | undefined, pick:
 
 /** The work-type problems of the picks (the save path's own rule; roles only when the shop's structure is saved). */
 export function pickProblems(role: RoleCode, current: PersonSettingsRow | null | undefined, pick: PositionPick, shop: Pick<ShopPositionPicker, "positions" | "rolesKnown">): PositionListProblem[] {
+  role = effectiveScheduleRole(role, current?.worksAs);
   const roles: Record<string, PositionRole> = {};
   if (shop.rolesKnown) for (const p of shop.positions) if (p.role) roles[p.id] = p.role;
   const list = withPrimarySecondary(current?.coverPositions ?? [], pick.primary, pick.secondary);
-  return positionListProblems({ role, workType: pick.workType ?? defaultWorkType(role), alsoAllowed: current?.alsoAllowed ?? [] }, list, roles);
+  return positionListProblems({ role, workType: pick.workType ?? defaultWorkType(role), alsoAllowed: current?.alsoAllowed ?? [] }, list, roles, Object.fromEntries(shop.positions.filter((p) => p.allowedRoles).map((p) => [p.id, p.allowedRoles!])));
 }
 
 /**

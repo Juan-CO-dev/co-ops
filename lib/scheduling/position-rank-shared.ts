@@ -30,7 +30,7 @@
  */
 import type { RoleCode } from "@/lib/roles";
 import type { RulePerson, WorkType } from "./context-shared";
-import { isManagerRole, workTypeAllows } from "./rules-shared";
+import { eligibleForPosition, isManagerRole, workTypeAllows } from "./rules-shared";
 import type { PositionRole } from "./structure-shared";
 
 // ─── The rank ────────────────────────────────────────────────────────────────
@@ -92,16 +92,17 @@ export function positionSlotOf(i: number): "primary" | "secondary" | "flex" {
 // ─── Save-time validation ────────────────────────────────────────────────────
 
 export interface PositionListPerson { role: RoleCode; workType: WorkType; alsoAllowed: ReadonlyArray<"boh" | "foh"> }
-export interface PositionListProblem { slot: "primary" | "secondary"; positionId: string; code: "work_type" }
+export interface PositionListProblem { slot: "primary" | "secondary"; positionId: string; code: "work_type" | "ineligible" }
 
 /**
  * The primary and secondary (entries 0 and 1) the person may never hold: their work type (with "also allowed") does not
- * allow the position. `workType` is the EFFECTIVE one (the setting, else the role default). Positions whose role is
+ * allow the position (blocking), or the effective role is refused by placement rules (warning only).
+ * `workType` is the EFFECTIVE one (the setting, else the role default). Positions whose role is
  * unknown are skipped: until the shop's structure is SAVED every position reads as a line position, so a check there
  * would refuse a correct BOH primary — the caller passes only known roles. The "can flex to" tail is not judged (it
  * never makes anyone eligible either), and a manager's list (their cover order) is not judged at all — unchanged.
  */
-export function positionListProblems(person: PositionListPerson, list: readonly string[], roles: Readonly<Record<string, PositionRole>>): PositionListProblem[] {
+export function positionListProblems(person: PositionListPerson, list: readonly string[], roles: Readonly<Record<string, PositionRole>>, allowedRoles: Readonly<Record<string, readonly RoleCode[]>> = {}): PositionListProblem[] {
   if (!hasPositionRank(person)) return [];
   const out: PositionListProblem[] = [];
   const asPerson = { workType: person.workType, alsoAllowed: [...person.alsoAllowed] };
@@ -109,6 +110,7 @@ export function positionListProblems(person: PositionListPerson, list: readonly 
     // Astra BC-022/042: structure keys are canonical lowercase uuids — an uppercase id must never skip the check.
     const role = roles[positionId.toLowerCase()];
     if (role && !workTypeAllows(asPerson, { role })) out.push({ slot: i === 0 ? "primary" : "secondary", positionId, code: "work_type" });
+    else if (role && !pickerPositionAllowed(person, { role, allowedRoles: allowedRoles[positionId.toLowerCase()] })) out.push({ slot: i === 0 ? "primary" : "secondary", positionId, code: "ineligible" });
   });
   return out;
 }
@@ -166,3 +168,15 @@ export function suggestPrimaryFromToast(hoursByJob: Readonly<Record<string, numb
 
 /** How many days of Toast punches the suggestion reads (8 weeks). */
 export const TOAST_SUGGESTION_DAYS = 56;
+
+/** Choices use the scheduler's placement rule, including the manager Prep/Dishwasher ban.
+ * Unknown roles retain the unsaved-structure behavior. */
+export function pickerPositionAllowed(person: PositionListPerson, position: { role?: PositionRole | null; allowedRoles?: readonly RoleCode[] } | undefined): boolean {
+  if (!position) return false;
+  if (!position.role) return true;
+  return eligibleForPosition({
+    userId: "", role: person.role, activeMember: true, workType: person.workType, alsoAllowed: [...person.alsoAllowed],
+    leaderSetting: null, coverPositions: [], salaried: false, presenceOnly: false, softMinH: null, softMaxH: null,
+    availability: {}, flexDates: [], untouchableDates: [], newerPositions: [], strongPositions: [],
+  }, { role: position.role, allowedRoles: [...(position.allowedRoles ?? [person.role])], openQ: 0, trimQ: 0, closeQ: 96, headsBefore: 0, headsAfter: 0 });
+}

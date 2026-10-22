@@ -60,7 +60,7 @@ export interface BoardWeekSource {
   closingWindowByDate: Record<string, { fromQ: number; toQ: number }>;
 }
 
-export interface PositionLabel { name: string; nameEs: string | null; role: PositionRole }
+export interface PositionLabel { name: string; nameEs: string | null; role: PositionRole; allowedRoles?: RoleCode[] }
 
 export interface BoardSource {
   locationId: string;

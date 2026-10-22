@@ -22,11 +22,10 @@ import { loadPersonSettingsWithIds, loadScheduleShopSettings, loadSchedulingInpu
 import { gate, type ScheduleDeps } from "./schedules";
 import { loadToastJobHours, toastSuggestions } from "./position-suggest";
 import { presenceDates, presenceWeekStarts, stationAdvisory, type ScheduleSettingsView, type SettingsMember } from "./settings-view-shared";
+import { canWorkAs, effectiveScheduleRole } from "./works-as-shared";
 import { structureFromStations, type PositionRole } from "./structure-shared";
 
 const notInstalled = (e: unknown) => e instanceof ScheduleError && e.code === "inputs_unavailable";
-/** Roles that are never put on the floor schedule, so never offered "Include on the schedule" (R6). */
-const NEVER_INCLUDED = ["cgs", "social_media_mgr"];
 
 /** The MoO / Owner (presence only: the "in today" toggles), active, by id. */
 export async function loadPresencePeople(service: ScheduleDeps["service"]): Promise<Array<{ userId: string; name: string }>> {
@@ -84,7 +83,7 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
   }
   const positions: Record<string, PositionLabel> = {};
   for (const r of await loadPositionLabelRows(deps.service, locationId)) {
-    positions[r.id] = { name: r.name, nameEs: r.name_es, role: live.positions[r.id]?.role ?? "line_other" };
+    positions[r.id] = { name: r.name, nameEs: r.name_es, role: live.positions[r.id]?.role ?? "line_other", allowedRoles: live.positions[r.id]?.allowedRoles };
   }
   // Astra BC-007 (r3 blocker): the card's VALUES and its row ID come from ONE read of the rows — never the inputs' copy
   // plus a later query, which could pair revision A's values with revision B's id and let a stale save pass the check.
@@ -95,16 +94,16 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
   // Juan 2026-10-20: the suggested primary from Toast (people with a link and no primary), matched on the live positions.
   let suggestions: ReturnType<typeof toastSuggestions> = {};
   if (perms.people) {
-    const listed = inputs.members.filter((m) => !NEVER_INCLUDED.includes(m.role)).map((m) => ({ userId: m.userId, role: m.role, coverPositions: latest.get(m.userId)?.coverPositions ?? [] }));
+    const listed = inputs.members.map((m) => ({ userId: m.userId, role: effectiveScheduleRole(m.role, latest.get(m.userId)?.worksAs), coverPositions: latest.get(m.userId)?.coverPositions ?? [] }));
     if (listed.some((m) => m.coverPositions.length === 0)) {
       const livePositionIds = Object.keys(live.positions).filter((id) => positions[id]).sort();
       suggestions = toastSuggestions(await loadToastJobHours(deps.service, locationId, today), listed,
         livePositionIds.map((id) => ({ id, name: positions[id]!.name, role: rolesKnown ? live.positions[id]!.role : null })));
     }
   }
-  const members: SettingsMember[] = perms.people ? inputs.members.filter((m) => !NEVER_INCLUDED.includes(m.role)).map((m) => ({
+  const members: SettingsMember[] = perms.people ? inputs.members.map((m) => ({
     userId: m.userId, name: m.name, role: m.role, settings: latest.get(m.userId) ?? null,
-    includeOffered: live.roster.excludedRoles.includes(m.role), suggestedPrimary: suggestions[m.userId] ?? null,
+    includeOffered: !(canWorkAs(m.role) && latest.get(m.userId)?.worksAs) && live.roster.excludedRoles.includes(m.role), suggestedPrimary: suggestions[m.userId] ?? null,
     settingsId: latestRow.get(m.userId)?.id ?? null, editable: personSettingsSubjectRefusal(actor, { userId: m.userId, role: m.role }) === null,
   })) : [];
   let presencePeople: ScheduleSettingsView["presencePeople"] = [];

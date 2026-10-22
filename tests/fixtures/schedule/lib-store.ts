@@ -165,11 +165,11 @@ export function scheduleStore(tables: Tables, opts: StoreOpts = {}) {
         if (((r?.id as string | undefined) ?? null) !== args.p_expected) return fail("person_settings_moved");
         const row = r ? { userId: r.user_id as string, workType: r.work_type as never, alsoAllowed: (r.also_allowed ?? []) as never, leaderSetting: r.leader_setting as never,
           coverPositions: (r.cover_positions ?? []) as string[], softMinH: r.soft_min_h as never, softMaxH: r.soft_max_h as never, fullTime: r.full_time === true,
-          fullTimeMinH: r.full_time_min_h as never, rosterInclude: r.roster_include as never } : null;
+          fullTimeMinH: r.full_time_min_h as never, rosterInclude: r.roster_include as never, worksAs: (r.works_as ?? null) as never } : null;
         const m = mergePositionChanges(row, args.p_user as string, args.p_changes as never);
         return rpc("record_schedule_person_settings", { p_actor: args.p_actor, p_location: args.p_location, p_user: args.p_user, p_work_type: m.workType, p_also_allowed: m.alsoAllowed,
           p_leader_setting: m.leaderSetting, p_cover_positions: m.coverPositions, p_soft_min_h: m.softMinH, p_soft_max_h: m.softMaxH, p_full_time: m.fullTime,
-          p_full_time_min_h: m.fullTimeMinH, p_roster_include: m.rosterInclude });
+          p_full_time_min_h: m.fullTimeMinH, p_roster_include: m.rosterInclude, p_works_as: m.worksAs ?? null });
       }
       default: return fail(`unknown rpc ${fn}`);
     }

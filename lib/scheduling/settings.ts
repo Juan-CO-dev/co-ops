@@ -25,6 +25,7 @@ import { loadLatestPersonSettings, loadLiveStructure, loadSchedulingDemand, load
 import { personSettingsSubjectRefusal } from "./access-shared";
 import { mergePositionChanges, parsePositionChanges } from "./user-positions-shared";
 import { STRUCTURE_DEFAULTS_ID, generatorInputFor, type SchedulingInputs } from "./inputs-shared";
+import { canWorkAs, effectiveScheduleRole, worksAsRefusal, type WorksAsRole } from "./works-as-shared";
 import { defaultWorkType } from "./people-input-shared";
 import { positionListProblems } from "./position-rank-shared";
 import {
@@ -84,6 +85,7 @@ export async function saveShopSettings(deps: ScheduleDeps, args: {
 // ─── Person settings ─────────────────────────────────────────────────────────
 
 export interface PersonSettingsInput {
+  worksAs?: WorksAsRole | null;
   userId: string; workType: "boh" | "foh" | "management" | null; alsoAllowed: Array<"boh" | "foh">; leaderSetting: "opens" | "closes" | "mix" | null;
   coverPositions: string[]; softMinH: number | null; softMaxH: number | null; fullTime: boolean; fullTimeMinH: number | null; rosterInclude: boolean | null;
 }
@@ -109,6 +111,11 @@ export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: Pe
   // The early read refuses most stale saves with no write; 0278's writer re-checks under the per-person lock (the race).
   const latest = await loadLatestPersonSettings(deps.service, args.locationId, s.userId);
   if ((latest?.id ?? null) !== expectedId) throw new ScheduleError("person_settings_moved");
+  // A carried override becomes stale when the account moves onto the floor. A NEW override still refuses.
+  if (!canWorkAs(role) && s.worksAs != null && s.worksAs !== latest?.row.worksAs) throw new ScheduleError("works_as_refused");
+  if (!canWorkAs(role)) s.worksAs = null;
+  const overrideRefusal = worksAsRefusal(role, s.worksAs);
+  if (overrideRefusal) throw new ScheduleError(overrideRefusal);
   await refusePositionRank(deps.service, args.locationId, role, s);
   const r = await guardedRpc(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId }));
   return logPersonSettings(args.actor, args.locationId, s.userId, r);
@@ -132,6 +139,7 @@ export async function recordPersonPositions(deps: ScheduleDeps, args: { actor: P
   const latest = await loadLatestPersonSettings(deps.service, args.locationId, userId);
   if ((latest?.id ?? null) !== expectedId) throw new ScheduleError("person_settings_moved");
   const merged = mergePositionChanges(latest?.row ?? null, userId, changes);
+  if (!canWorkAs(role)) merged.worksAs = null;
   await refusePositionRank(deps.service, args.locationId, role, merged);
   const r = await guardedRpc(deps.service, mergePersonPositionsCall({ actorId: args.actor.userId, locationId: args.locationId, userId, expectedId, changes: { ...changes } }));
   return logPersonSettings(args.actor, args.locationId, userId, r);
@@ -167,18 +175,19 @@ async function subjectRole(service: SupabaseClient, actor: PeopleActor, userId: 
 
 /**
  * Juan 2026-10-20 (primary / secondary): the ordered list's first two entries must be positions the person may hold —
- * their EFFECTIVE work type (the setting, else the role default) with "also allowed", and never a manager on the
- * dish-and-prep position (`positionListProblems`, the same rule the staff settings card shows before it posts). Judged
+ * their EFFECTIVE work type (the setting, else the role default) with "also allowed". Role ineligibility is a warning, not a save refusal
+ * (`positionListProblems`, the same rule the staff settings card shows before it posts). Judged
  * only once the shop's structure is SAVED (before that every position reads as a line position, so the roles are not
  * known). Refusal: `position_rank_not_allowed`.
  */
 async function refusePositionRank(service: SupabaseClient, locationId: string, role: RoleCode, s: PersonSettingsInput): Promise<void> {
+  role = effectiveScheduleRole(role, s.worksAs);
   if (s.coverPositions.length === 0) return;
   const live = await loadLiveStructure(service, locationId);
   if (live.source !== "saved") return;
   const roles: Record<string, PositionRole> = Object.fromEntries(Object.entries(live.structure.positions).map(([id, p]) => [id, p.role]));
-  const problems = positionListProblems({ role, workType: s.workType ?? defaultWorkType(role), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles);
-  const first = problems[0];
+  const problems = positionListProblems({ role, workType: s.workType ?? defaultWorkType(role), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles, Object.fromEntries(Object.entries(live.structure.positions).map(([id, p]) => [id, p.allowedRoles])));
+  const first = problems.find((problem) => problem.code === "work_type");
   if (first) throw new ScheduleError("position_rank_not_allowed", { params: { slot: first.slot, positionId: first.positionId, reason: first.code } });
 }
 

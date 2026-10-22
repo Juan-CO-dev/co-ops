@@ -34,6 +34,8 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { scheduleActRefusal } from "./access-shared";
 import { loadEmploymentStates, stateOf } from "@/lib/admin/employment-read";
 import { employmentChipOf } from "@/lib/admin/employment-core-shared";
+import { loadPersonSettings } from "./inputs";
+import { effectiveScheduleRole } from "./works-as-shared";
 import { ScheduleError } from "./errors-shared";
 import {
   reconcile, type ProposalShift, type ReconcileMember, type ReconcileView, type SevenLinkRow, type SevenPunch, type SevenShiftRow, type SevenStatus,
@@ -93,12 +95,15 @@ export async function loadReconciliation(deps: ReconcileDeps, args: { actor: Peo
   // an active member whose record says on leave / separated (reactivated by mistake) carries the chip too.
   const memberIds = [...new Set(ul.map((r) => r.user_id))];
   const employment = await loadEmploymentStates(service, memberIds);
+  const personSettings = new Map((await loadPersonSettings(service, locationId)).map((s) => [s.userId, s]));
   const members: ReconcileMember[] = [];
   for (const ids of chunks(memberIds)) {
     for (const u of await selectAllRows<{ id: string; name: string; role: string; active: boolean }>((f, t) => service.from("users")
       .select("id, name, role, active").in("id", ids).order("id", { ascending: true }).range(f, t))) {
-      if (!isRoleCode(u.role) || OFF_FLOOR_ROLES.includes(u.role)) continue;
-      const level = getRoleLevel(u.role);
+      if (!isRoleCode(u.role)) continue;
+      const role = effectiveScheduleRole(u.role, personSettings.get(u.id)?.worksAs);
+      if (OFF_FLOOR_ROLES.includes(role)) continue;
+      const level = getRoleLevel(role);
       if (level < 1 || level > 7) continue;
       const chip = employmentChipOf(stateOf(employment, u.id));
       if (!u.active && !chip) continue;

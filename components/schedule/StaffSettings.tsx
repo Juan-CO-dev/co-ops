@@ -6,18 +6,20 @@
  * with ↑ ↓ × (44 px) — Juan 2026-10-20: for everyone below shift lead it is "Positions (in order)": #1 Primary, #2
  * Secondary, the rest "Can flex to", checked against the work type before any post (`positionListProblems`, the save
  * path's own rule), with a "Use <position>" button when Toast suggests a primary (never saved on its own); for a manager
- * it stays their preferred cover positions, unchanged — the soft weekly range, full-timer and its minimum, and — only for a role that is
- * off the floor schedule by default (the prep or catering manager; never the CGS or social media manager, who are not
- * listed) — "Include on the schedule". Save posts `{action: person}` (no step-up; audited). A drawer with unsaved work
- * stays open (D10).
+ * it stays their preferred cover positions. The drawer also edits the soft weekly range and full-time minimum.
+ * Off-floor accounts can choose a separate floor role per shop. Save posts `{action: person}` (no step-up; audited).
+ * A drawer with unsaved work stays open (D10).
  */
 import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { defaultWorkType, type PersonSettingsRow } from "@/lib/scheduling/people-input-shared";
-import { hasPositionRank, isHourlyLeadRole, positionListProblems, positionSlotOf } from "@/lib/scheduling/position-rank-shared";
+import { pickerPositionAllowed, hasPositionRank, isHourlyLeadRole, positionListProblems, positionSlotOf } from "@/lib/scheduling/position-rank-shared";
 import { editorBaseOnProps, personBody, type SettingsMember } from "@/lib/scheduling/settings-view-shared";
+import type { RoleCode } from "@/lib/roles";
+import { canWorkAs, effectiveScheduleRole, WORKS_AS_ROLES, type WorksAsRole } from "@/lib/scheduling/works-as-shared";
+import { workTypeAllows } from "@/lib/scheduling/rules-shared";
 import type { PositionRole } from "@/lib/scheduling/structure-shared";
 import { scheduleErrorKey } from "./schedule-errors";
 import { BUTTON, Check, Fields, GHOST, NumField } from "./settings-fields";
@@ -25,7 +27,7 @@ import { useBoardLine } from "./use-board-line";
 
 const empty = (userId: string): PersonSettingsRow => ({ userId, workType: null, alsoAllowed: [], leaderSetting: null, coverPositions: [], softMinH: null, softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: null });
 
-type PositionLabels = Record<string, { name: string; nameEs: string | null; role?: PositionRole }>;
+type PositionLabels = Record<string, { name: string; nameEs: string | null; role?: PositionRole; allowedRoles?: RoleCode[] }>;
 
 export function StaffSettings({ locationId, members, positions, livePositionIds, names, rolesKnown = false, initialPerson = null, onDirty }: {
   locationId: string;
@@ -80,7 +82,8 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
   const router = useRouter();
   const post = useStepUpPost();
   const id = useId();
-  const [s, setS] = useState<PersonSettingsRow>(() => structuredClone(member.settings ?? empty(member.userId)));
+  const [draft, setS] = useState<PersonSettingsRow>(() => structuredClone(member.settings ?? empty(member.userId)));
+  const s = canWorkAs(member.role) ? draft : { ...draft, worksAs: null };
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,12 +109,15 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
     router.refresh();
   }
   // Juan 2026-10-20: below shift lead the list is Primary / Secondary / Can flex to; a manager's is their cover order.
-  const ranked = hasPositionRank(member);
+  const role = effectiveScheduleRole(member.role, s.worksAs);
+  const ranked = hasPositionRank({ role });
+  const person = { role, workType: s.workType ?? defaultWorkType(role), alsoAllowed: s.alsoAllowed };
+  const allowed = (pid: string) => !ranked || pickerPositionAllowed(person, rolesKnown ? positions[pid] : positions[pid] ? {} : undefined);
   const roles: Record<string, PositionRole> = {};
   if (rolesKnown) for (const [pid, p] of Object.entries(positions)) if (p.role) roles[pid] = p.role;
-  const problems = ranked ? positionListProblems({ role: member.role, workType: s.workType ?? defaultWorkType(member.role), alsoAllowed: s.alsoAllowed }, s.coverPositions, roles) : [];
+  const problems = ranked ? positionListProblems(person, s.coverPositions, roles, Object.fromEntries(Object.entries(positions).filter(([, p]) => p.allowedRoles).map(([pid, p]) => [pid, p.allowedRoles!]))) : [];
   const slotLabel = (i: number) => t(`schedule.settings.staff.slot_${positionSlotOf(i)}` as TranslationKey);
-  const suggestion = ranked && s.coverPositions.length === 0 && member.suggestedPrimary && livePositionIds.includes(member.suggestedPrimary.positionId) ? member.suggestedPrimary : null;
+  const suggestion = ranked && s.coverPositions.length === 0 && member.suggestedPrimary && livePositionIds.includes(member.suggestedPrimary.positionId) && allowed(member.suggestedPrimary.positionId) ? member.suggestedPrimary : null;
   const readOnly = member.editable === false;
   const move = (i: number, by: -1 | 1) => edit((x) => { const a = x.coverPositions; const j = i + by; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j]!, a[i]!]; });
   const iconBtn = "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-60";
@@ -120,6 +126,14 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
       {readOnly ? <p className="text-sm font-bold text-co-text-muted" data-person-read-only>{t("schedule.settings.staff.read_only")}</p> : null}
       {/* Juan 2026-10-20: a person this actor may not change (themselves, a GM or above) — every control disabled; the save path refuses too. */}
       <fieldset disabled={readOnly} className="contents">
+      {canWorkAs(member.role) ? <label className="grid gap-1">
+        <span className="text-sm font-bold">{t("schedule.settings.staff.works_as")}</span>
+        <select className="min-h-[44px] rounded-lg border-2 border-co-border bg-co-surface px-2" value={s.worksAs ?? ""} onChange={(e) => edit((x) => { x.worksAs = (e.target.value || null) as WorksAsRole | null; })}>
+          <option value="">{t("schedule.settings.staff.works_as_none")}</option>
+          {WORKS_AS_ROLES.map((r) => <option key={r} value={r}>{t(`role.${r}` as TranslationKey)}</option>)}
+        </select>
+      </label> : null}
+      {(!["cgs", "social_media_mgr"].includes(member.role) || s.worksAs) ? <>
       <div className="grid gap-1" role="radiogroup" aria-labelledby={`${id}-wt`}>
         <span id={`${id}-wt`} className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t("schedule.settings.staff.work_type")}</span>
         <div className="flex flex-wrap gap-x-3">
@@ -155,7 +169,7 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
         <span id={`${id}-pos`} className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{t(ranked ? "schedule.settings.staff.cover" : "schedule.settings.staff.cover_manager")}</span>
         {ranked ? <p className="text-xs text-co-text-muted">{t("schedule.settings.staff.cover_help")}</p> : null}
         {/* Juan 2026-10-20: a lead's manager duties are implicit — never a list entry; one line says so. */}
-        {isHourlyLeadRole(member.role) ? <p data-lead-note className="text-xs text-co-text-muted">{t("schedule.settings.staff.lead_note")}</p> : null}
+        {isHourlyLeadRole(role) ? <p data-lead-note className="text-xs text-co-text-muted">{t("schedule.settings.staff.lead_note")}</p> : null}
         {suggestion ? (
           <div className="flex flex-wrap items-center gap-2" data-toast-suggestion={suggestion.positionId}>
             <button type="button" className={GHOST} onClick={() => edit((x) => { x.coverPositions = [suggestion.positionId]; })}>
@@ -170,6 +184,7 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
               <span className="grid min-w-[8rem] flex-1">
                 {ranked ? <span className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{slotLabel(i)}</span> : null}
                 <span>{i + 1}. {position(p)}</span>
+                {!allowed(p) ? <span data-ineligible-position={p} className="text-co-warning-text">{t(positions[p]?.role && !workTypeAllows(person, { role: positions[p]!.role! }) ? "schedule.settings.staff.warning_work_type" : "schedule.settings.staff.problem_ineligible", { slot: slotLabel(i), position: position(p) })}</span> : null}
               </span>
               <button type="button" data-cover-act="up" className={iconBtn} disabled={i === 0} aria-label={t("schedule.settings.staff.cover_up", { position: position(p) })} onClick={() => move(i, -1)}>↑</button>
               <button type="button" data-cover-act="down" className={iconBtn} disabled={i === s.coverPositions.length - 1} aria-label={t("schedule.settings.staff.cover_down", { position: position(p) })} onClick={() => move(i, 1)}>↓</button>
@@ -180,13 +195,13 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
         <div className="flex flex-wrap items-center gap-2">
           <select aria-label={t("schedule.settings.staff.cover_pick")} className="min-h-[44px] min-w-0 flex-1 rounded-lg border-2 border-co-border bg-co-surface px-2 text-sm" value={adding} onChange={(e) => setAdding(e.target.value)}>
             <option value="">{t("schedule.settings.staff.cover_pick")}</option>
-            {livePositionIds.filter((p) => !s.coverPositions.includes(p)).map((p) => <option key={p} value={p}>{position(p)}</option>)}
+            {livePositionIds.filter((p) => !s.coverPositions.includes(p) && allowed(p)).map((p) => <option key={p} value={p}>{position(p)}</option>)}
           </select>
-          <button type="button" className={GHOST} disabled={!adding} onClick={() => { edit((x) => { x.coverPositions = [...x.coverPositions, adding]; }); setAdding(""); }}>{t("schedule.settings.staff.cover_add")}</button>
+          <button type="button" className={GHOST} disabled={!adding || !allowed(adding)} onClick={() => { edit((x) => { x.coverPositions = [...x.coverPositions, adding]; }); setAdding(""); }}>{t("schedule.settings.staff.cover_add")}</button>
         </div>
         {problems.length > 0 ? (
           <ul role="alert" data-position-problems className="grid gap-1 text-sm font-bold text-co-cta-text">
-            {problems.map((pr) => <li key={pr.slot}>{t("schedule.settings.staff.problem_work_type", { slot: slotLabel(pr.slot === "primary" ? 0 : 1), position: position(pr.positionId) })}</li>)}
+            {problems.map((pr) => <li key={pr.slot}>{t(pr.code === "work_type" ? "schedule.settings.staff.problem_work_type" : "schedule.settings.staff.problem_ineligible", { slot: slotLabel(pr.slot === "primary" ? 0 : 1), position: position(pr.positionId) })}</li>)}
           </ul>
         ) : null}
       </div>
@@ -201,12 +216,13 @@ function PersonEditor({ locationId, member, positions, livePositionIds, names, r
         <Check label={t("schedule.settings.staff.full_time")} checked={s.fullTime} onChange={(on) => edit((x) => { x.fullTime = on; if (!on) x.fullTimeMinH = null; })} />
         {s.fullTime ? <NumField name="fullTimeMinH" label={t("schedule.settings.staff.full_time_min")} value={s.fullTimeMinH} step={0.25} onChange={(v) => edit((x) => { x.fullTimeMinH = v; })} /> : null}
       </div>
-      {member.includeOffered ? (
+      </> : null}
+      {member.includeOffered && !s.worksAs && !["cgs", "social_media_mgr"].includes(member.role) ? (
         <Check label={t("schedule.settings.staff.include")} checked={s.rosterInclude === true} onChange={(on) => edit((x) => { x.rosterInclude = on ? true : null; })} />
       ) : null}
       {error ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(scheduleErrorKey(error))}</p> : null}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={BUTTON} disabled={busy || !dirty || problems.length > 0} onClick={save}>{t("schedule.settings.save")}</button>
+        <button type="button" className={BUTTON} disabled={busy || !dirty || problems.some((pr) => pr.code === "work_type")} onClick={save}>{t("schedule.settings.save")}</button>
         {dirty ? <span className="text-xs font-bold text-co-warning-text">{t("schedule.settings.unsaved")}</span> : null}
       </div>
       </fieldset>

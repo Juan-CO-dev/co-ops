@@ -52,14 +52,14 @@ export function recordPersonSettingsCall(i: {
   actorId: string; locationId: string; userId: string;
   workType: "boh" | "foh" | "management" | null; alsoAllowed: Array<"boh" | "foh">; leaderSetting: "opens" | "closes" | "mix" | null;
   coverPositions: string[]; softMinH: number | null; softMaxH: number | null; fullTime: boolean; fullTimeMinH: number | null;
-  rosterInclude: boolean | null;
+  rosterInclude: boolean | null; worksAs?: "employee" | "trainer" | "key_holder" | "shift_lead" | null;
 }) {
   return {
     fn: SCHEDULE_RPC.recordPersonSettings,
     args: {
       p_actor: i.actorId, p_location: i.locationId, p_user: i.userId, p_work_type: i.workType, p_also_allowed: i.alsoAllowed,
       p_leader_setting: i.leaderSetting, p_cover_positions: i.coverPositions, p_soft_min_h: i.softMinH, p_soft_max_h: i.softMaxH,
-      p_full_time: i.fullTime, p_full_time_min_h: i.fullTimeMinH, p_roster_include: i.rosterInclude,
+      p_full_time: i.fullTime, p_full_time_min_h: i.fullTimeMinH, p_roster_include: i.rosterInclude, p_works_as: i.worksAs ?? null,
     },
   } as const;
 }
@@ -70,7 +70,7 @@ export function savePersonSettingsCall(i: Parameters<typeof recordPersonSettings
   return { fn: SCHEDULE_RPC.savePersonSettings, args: { p_actor: args.p_actor, p_location: args.p_location, p_user: args.p_user, p_expected: i.expectedId,
     p_work_type: args.p_work_type, p_also_allowed: args.p_also_allowed, p_leader_setting: args.p_leader_setting, p_cover_positions: args.p_cover_positions,
     p_soft_min_h: args.p_soft_min_h, p_soft_max_h: args.p_soft_max_h, p_full_time: args.p_full_time, p_full_time_min_h: args.p_full_time_min_h,
-    p_roster_include: args.p_roster_include } } as const;
+    p_roster_include: args.p_roster_include, p_works_as: args.p_works_as } } as const;
 }
 
 /** 0278: the user screen's changes only (workType / primary / secondary) + the head they were based on, merged under the lock. */
