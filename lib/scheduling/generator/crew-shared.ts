@@ -1,7 +1,7 @@
 /** Whole crew blocks first, stations second. No station-generator repair or fill passes. */
 import { canonicalJson, assertContextFits, type DayContext, type RuleContext, type RulePerson } from "../context-shared";
 import type { CrewShiftMeta } from "../crew-contracts-shared";
-import { crewOpenGroups, crewRequired, crewStationShorts, shiftCountsAsMod } from "../crew-gap-verifier-shared";
+import { crewCandidateHoursEvidence, crewOpenGroups, crewRequired, crewStationShorts, shiftCountsAsMod } from "../crew-gap-verifier-shared";
 import { ScheduleError } from "../errors-shared";
 import { buildDayNeed } from "../need-shared";
 import { compareCodePoint as cmp } from "../order-shared";
@@ -153,7 +153,13 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     && roster[sh.userId] && !roster[sh.userId]!.salaried && !roster[sh.userId]!.presenceOnly && !essential(sh) ? hours(sh) : 0), 0);
   const minimum = (p: SchedPerson, t: ShiftType) => Math.max(t.minLengthQ, st.limits.minimumShiftQ,
     p.salaried ? (p.role === "gm" ? st.limits.gmMinimumH * 4 : p.role === "agm" ? st.limits.agmMinimumH * 4 : 0) : 0);
-  function candidate(p: SchedPerson, t: ShiftType, date: string, source: Source, holes: readonly number[] = [], required: readonly number[] = []): { block?: Block; rejection?: string } {
+  const shorter = (a: number, z: number, minQ: number): Array<readonly [number, number]> => {
+    const result: Array<readonly [number, number]> = [];
+    // Longest first; equal lengths retain the anchor end before the anchor start.
+    for (let length = z - a - 1; length >= minQ; length--) result.push([z - length, z], [a, a + length]);
+    return result;
+  };
+  function candidate(p: SchedPerson, t: ShiftType, date: string, source: Source, holes: readonly number[] = [], required: readonly number[] = [], shorten = false, budgetRefused: ReadonlySet<string> = new Set()): { block?: Block; rejection?: string } {
     const fail = (rejection: string) => ({ rejection });
     const day = ctx.days[date]!;
     if (!p.activeMember || neverGenerated(p)) return fail("position");
@@ -179,19 +185,21 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     let rejection = "minimum_length";
     let flexFromQ = baseEnd;
     if (atDayCap(p, schedule, date, maxDaysPerWeek(st))) return fail("day_limit");
-    const match = attempts.find(([a, z]) => {
+    const hoursFailed: Array<readonly [number, number]> = [];
+    const accepts = ([a, z]: readonly [number, number]) => {
       if (a < Math.max(st.shopDay.prepStartQ, av?.fromQ ?? 0) || z > Math.min(day.scheduledOutQ, av?.toQ ?? 96)) return false;
       if (z - a < minimum(p, t)) { rejection = "minimum_length"; return false; }
-      if (z - a > st.limits.maxShiftH * 4) { rejection = "maximum_length"; return false; }
       if (!leaderSettingAllows(p, st, a, z)) { rejection = "leader_setting"; return false; }
-      const h = (z - a) / 4;
-      if (!p.salaried && source !== "usual" && p.softMaxH !== null && totalH(p.userId) + h > p.softMaxH) { rejection = "soft_max"; return false; }
-      if (!p.salaried && source !== "usual" && totalH(p.userId) + h > st.limits.overtimeH) { rejection = "overtime"; return false; }
       const fit = t.stations.length ? t.stations : Object.keys(st.positions).sort(cmp);
       let canHold = false;
       for (let q = a; q < z && !canHold; q++) canHold = fit.some((id) => legalHoldPath(p, id, day, date, q))
         || (t.countsTowardMod && modCountsOn(p, day, q));
       if (!canHold) { rejection = "position"; return false; }
+      const h = (z - a) / 4;
+      const hourFail = (code: string) => { rejection = code; hoursFailed.push([a, z]); return false; };
+      if (h > st.limits.maxShiftH) return hourFail("maximum_length");
+      if (!p.salaried && source !== "usual" && p.softMaxH !== null && totalH(p.userId) + h > p.softMaxH) return hourFail("soft_max");
+      if (!p.salaried && source !== "usual" && totalH(p.userId) + h > st.limits.overtimeH) return hourFail("overtime");
       flexFromQ = z;
       if (p.salaried) {
         const w = salariedWeek(schedule, p.userId);
@@ -200,14 +208,26 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
           || w.totalH + h > st.limits.salariedTargetWeekH + st.limits.salariedFlexH) { rejection = "manager_limit"; return false; }
         flexFromQ = z - extra * 4;
       }
+      if (budgetRefused.has(`${a}|${z}`)) return hourFail("budget");
       return true;
-    });
+    };
+    let match = attempts.find(accepts);
+    if (shorten && !p.salaried && hoursFailed.length) {
+      // Compare all lengths after an hours refusal, including a legal flex alternative.
+      // Revisit the original anchors after a budget failure, not just the last trimmed block.
+      const trims = [...(match ? [match] : []), ...hoursFailed.flatMap(([a, z]) => shorter(a, z, minimum(p, t)))];
+      const unique = [...new Map(trims.map((b) => [`${b[0]}|${b[1]}`, b])).values()]
+        .sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
+      match = unique.find(accepts);
+    }
     if (!match) return fail(rejection);
     const [startQ, endQ] = match;
     return { block: { shift: { userId: p.userId, date, startQ, endQ, segments: [unassigned(startQ, endQ)],
       closingManager: false, flex: false, pinned: false }, type: t, source, flexFromQ } };
   }
+  let lastPlaceHoursRefused = false;
   function place(block: Block, why: ReasonKey): boolean {
+    lastPlaceHoursRefused = false;
     const sh = block.shift;
     // Candidate checks are incremental. Station feasibility is guaranteed by the legal matching;
     // run the complete validator only after the day allocations are complete.
@@ -234,6 +254,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
         || (after.flexH > st.limits.salariedFlexH && after.flexH > before.flexH);
     });
     if (budgetRefused || managerRefused) {
+      lastPlaceHoursRefused = budgetRefused && !managerRefused;
       if (budgetRefused && block.source === "usual") usualBudgetRefused = true;
       schedule.shifts = saved; blocks.delete(key(sh));
       ctx.days[sh.date]!.crew!.shifts = ctx.days[sh.date]!.crew!.shifts.filter((m) => !(m.userId === sh.userId && m.startQ === sh.startQ));
@@ -342,8 +363,16 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const candidates = [...input.people].sort((a, b) => tier(a) - tier(b) || rank(a) - rank(b) || deficit(b) - deficit(a) || skill(b) - skill(a) || cmp(a.userId, b.userId));
     for (const p of candidates) {
       if (count() >= crewRequired(t, ctx.days[d.date]!)) break;
-      const c = candidate(p, t, d.date, "fill");
-      if (c.block && preservesMod(c.block)) place(c.block, p.salaried ? "manager_cover" : "crew_fill");
+      // A refused Step-1 usual must not be smuggled back as a trimmed fill.
+      const canShorten = !p.salaried && !(p.workModes?.[d.date] === "works" && p.usualShift?.value?.typeId === t.id);
+      const budgetRefused = new Set<string>();
+      while (true) {
+        const c = candidate(p, t, d.date, "fill", [], [], canShorten, budgetRefused);
+        if (!c.block || !preservesMod(c.block)) break;
+        if (place(c.block, p.salaried ? "manager_cover" : "crew_fill") || !canShorten || !lastPlaceHoursRefused) break;
+        // Budget is allocation-dependent: each trial uses the normal transactional rollback.
+        budgetRefused.add(`${c.block.shift.startQ}|${c.block.shift.endQ}`);
+      }
     }
   }
   assignStations();
@@ -358,6 +387,13 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const day = ctx.days[d.date]!;
     day.crew!.shifts.sort((a, b) => cmp(a.userId, b.userId) || a.startQ - b.startQ);
     for (const group of crewOpenGroups(d.date, schedule, ctx)) {
+      for (const item of group.items) for (const rejected of item.rejected) {
+        const type = types.find((t) => t.id === item.typeId)!;
+        for (const e of crewCandidateHoursEvidence(people[rejected.userId]!, type, d.date, schedule, ctx)) {
+          notes.push({ code: "crew_block_skipped", date: d.date, userId: rejected.userId, positionId: null,
+            params: { reason: e.code, typeId: type.id, hours: e.hours, limit: e.limit, minLengthQ: e.minLengthQ } });
+        }
+      }
       const base = { code: "open_shift" as const, date: d.date, positionId: null, fromQ: group.fromQ, toQ: group.toQ };
       schedule.gaps.push(group.items.every((i) => i.rejected.every((p) => p.codes.length))
         ? { ...base, cause: "crew_shortfall", certificate: { kind: "open_shifts", items: group.items } }
@@ -417,7 +453,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
   }
   const aggregated = new Map<string, BoardNote>();
   for (const n of notes) {
-    const k = canonicalJson([n.date, n.code, n.params.reason ?? null, n.params.typeId ?? null]);
+    const k = canonicalJson([n.date, n.code, n.params.reason ?? null, n.params.typeId ?? null, n.params.minLengthQ === undefined ? null : [n.userId, n.params.hours, n.params.limit, n.params.minLengthQ]]);
     const old = aggregated.get(k);
     const ids = [...new Set([...(old?.params.userIds as string[] | undefined ?? []), ...(n.userId ? [n.userId] : [])])].sort(cmp);
     aggregated.set(k, { ...(old ?? n), userId: ids.length === 1 ? ids[0]! : null, params: { ...(old ?? n).params, count: ids.length || 1, userIds: ids } });

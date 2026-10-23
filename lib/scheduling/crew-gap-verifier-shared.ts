@@ -56,9 +56,51 @@ export function crewCandidateRejections(p: RulePerson, type: ShiftType, date: st
   if (!canHold && to > from && av !== null && !p.untouchableDates.includes(date)) codes.push("position");
   if (atDayCap(p, s, date)) codes.push("day_limit");
   const hours = s.shifts.filter((sh) => sh.userId === p.userId).reduce((n, sh) => n + sh.endQ - sh.startQ, 0) / 4;
-  if (!p.salaried && p.softMaxH !== null && hours + minimum / 4 > p.softMaxH) codes.push("soft_max");
+  codes.push(...crewCandidateHoursEvidence(p, type, date, s, ctx).map((e) => e.code).filter((code) => !codes.includes(code)));
   if (p.salaried && hours + minimum / 4 > st.limits.salariedTargetWeekH + st.limits.salariedFlexH) codes.push("manager_limit");
   return codes.sort();
+}
+
+/** Numeric evidence lives in crew notes: the SQL rejection wire shape stays {userId,codes}.
+ * Every hours exclusion proves that even the minimum block fails, never just the standard block. */
+export function crewCandidateHoursEvidence(p: RulePerson, type: ShiftType, date: string, s: WeekSchedule, ctx: RuleContext):
+  Array<{ code: CrewRejectionCode; hours: number; limit: number; minLengthQ: number }> {
+  if (p.salaried) return [];
+  const day = ctx.days[date]!, st = day.structure;
+  const minLengthQ = Math.max(type.minLengthQ, st.limits.minimumShiftQ);
+  const hours = s.shifts.filter((sh) => sh.userId === p.userId).reduce((n, sh) => n + (sh.endQ - sh.startQ) / 4, 0);
+  const evidence: ReturnType<typeof crewCandidateHoursEvidence> = [];
+  for (const [code, used, limit] of [["overtime", hours, st.limits.overtimeH], ["soft_max", hours, p.softMaxH],
+    ["maximum_length", 0, st.limits.maxShiftH]] as const) {
+    if (limit !== null && used + minLengthQ / 4 > limit) evidence.push({ code, hours: used, limit, minLengthQ });
+  }
+  // A conservative budget lower bound: only charge shifts that cannot possibly gain
+  // the essential-closing exemption after reassignment. Possible exemptions stay unresolved.
+  const canBeEssential = (person: RulePerson, d: string, fromQ: number, toQ: number) => {
+    const context = ctx.days[d], cw = ctx.closingWindowByDate[d];
+    if (!context || !cw) return true;
+    for (let q = Math.max(fromQ, cw.fromQ); q < Math.min(toQ, cw.toQ); q++) {
+      if (Object.keys(context.structure.positions).some((id) => (context.need.positions[id]?.[q] ?? 0) > 0
+        && legalHoldPath(person, id, context, d, q))) return true;
+    }
+    return false;
+  };
+  const dates = ctx.dates.filter((d) => ctx.budgetByDate[d] != null);
+  const av = p.availability[date], own = p.usualShift?.value?.typeId === type.id ? p.usualShift.value : null;
+  const fromQ = Math.max(st.shopDay.prepStartQ, av?.fromQ ?? 0, Math.min(type.fromQ, own?.fromQ ?? type.fromQ) - type.startFlexQ);
+  const toQ = Math.min(day.scheduledOutQ, av?.toQ ?? 96, Math.max(type.toQ, own?.toQ ?? type.toQ) + type.startFlexQ);
+  if (!p.presenceOnly && dates.includes(date) && !canBeEssential(p, date, fromQ, toQ)) {
+    const limit = dates.reduce((n, d) => n + ctx.budgetByDate[d]!, 0);
+    const used = s.shifts.reduce((n, sh) => {
+      const person = ctx.people[sh.userId];
+      return n + (person && !person.salaried && !person.presenceOnly && dates.includes(sh.date)
+        && !sh.segments.some((seg) => seg.positionId !== "mod" && seg.startQ < (ctx.closingWindowByDate[sh.date]?.toQ ?? 0)
+          && seg.endQ > (ctx.closingWindowByDate[sh.date]?.fromQ ?? 96))
+        && !canBeEssential(person, sh.date, sh.startQ, sh.endQ) ? (sh.endQ - sh.startQ) / 4 : 0);
+    }, 0);
+    if (used + minLengthQ / 4 > limit) evidence.push({ code: "budget", hours: used, limit, minLengthQ });
+  }
+  return evidence;
 }
 
 export function crewRequired(type: ShiftType, day: DayContext): number {

@@ -25,16 +25,21 @@ function exact(name: string, days: number[], fromQ: number, toQ: number) {
 describe("P Street crew acceptance, 2026-10-19 (snapshot + R14)", () => {
   it("explains every day outside 7-8 distinct people with honest whole open-shift evidence", () => {
     const counts = DATES.map((date) => new Set(out.shifts.filter((s) => s.date === date).map((s) => s.userId)).size);
-    expect(counts).toEqual([7, 7, 7, 6, 5, 6, 6]);
+    expect(counts).toEqual([7, 7, 7, 7, 5, 6, 6]);
     for (const [i, date] of DATES.entries()) {
       const open = crewOpenItems(date, schedule(out), out.context);
+      process.stdout.write(`${date}: ${counts[i]} people\n`);
       if (counts[i]! >= 7 && counts[i]! <= 8) continue;
       expect(open.length).toBeGreaterThan(0);
       expect(open.every((x) => x.typeId === "mid" && x.missing > 0)).toBe(true);
-      expect(out.gaps).toContainEqual(expect.objectContaining({ date, code: "open_shift", cause: "unresolved_search", fromQ: 40, toQ: 82 }));
-      process.stdout.write(`${date}: ${counts[i]} people; ${open.map((x) => `${x.typeId} ${x.placed}/${x.required}, ${x.missing} open`).join("; ")}; unresolved_search (not approvable).\n`);
+      expect(out.gaps).toContainEqual(expect.objectContaining({ date, code: "open_shift", cause: date === DATES[4] ? "unresolved_search" : "crew_shortfall", fromQ: 40, toQ: 82 }));
+      process.stdout.write(`${date}: ${counts[i]} people; ${open.map((x) => `${x.typeId} ${x.placed}/${x.required}, ${x.missing} open`).join("; ")}; ${out.gaps.find((g) => g.date === date && g.code === "open_shift")!.cause}.\n`);
       process.stdout.write(`  Candidate evidence: ${open.flatMap((x) => x.rejected.map((r) => `${r.userId.replace("person-", "")}: ${r.codes.join("+") || "unproven"}`)).join("; ")}\n`);
     }
+  });
+  it("fills Akia's Thursday seat with the longest legal Mid after 31.5 hours", () => {
+    expect(shifts("Akia").map((s) => [s.startQ, s.endQ])).toEqual([[40, 82], [40, 82], [40, 82], [48, 82]]);
+    expect(out.gaps.some((g) => g.date === DATES[3] && g.code === "open_shift")).toBe(false);
   });
   it("keeps every shift above type minimum with one contiguous shift per person/day, no fragments", () => {
     const seen = new Set<string>();

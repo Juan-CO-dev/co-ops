@@ -174,7 +174,7 @@ describe("crew fixed inputs and weekly accounting", () => {
   });
   it("does not let a Step-2 block cross the overtime threshold", () => {
     const i = input(undefined, shop((s) => { s.limits.overtimeH = 4; }));
-    const out = buildCrewWeek(i); expect(out.shifts).toEqual([]); clean(out);
+    const out = buildCrewWeek(i); expect(out.shifts).toMatchObject([{ startQ: 48, endQ: 64 }]); clean(out);
   });
   it("counts inherited hours against the Step-2 overtime guard", () => {
     const firstInput = input(); usual(firstInput, "a"); const first = buildCrewWeek(firstInput);
@@ -222,9 +222,10 @@ describe("crew fill, leadership and catering", () => {
       { id: "z", role: "employee", cover: [I.$REG], softMin: 10, skills: { [I.$REG]: [0.6, 1] } }]);
     const out = buildCrewWeek(i); expect(users(out)).toEqual(["z"]); clean(out);
   });
-  it("respects the weekly day cap and soft maximum rather than adding a partial seat", () => {
+  it("respects the weekly day cap and fills a seat with the longest block under soft maximum", () => {
     const i = input([{ id: "a", role: "employee", softMax: 9 }], shop(), [MON, TUE]);
-    const out = buildCrewWeek(i); expect(out.shifts).toHaveLength(1); clean(out);
+    const out = buildCrewWeek(i); expect(out.shifts).toHaveLength(2);
+    expect(out.shifts.map((s) => s.endQ - s.startQ)).toEqual([20, 16]); clean(out);
     const all = input([{ id: "a", role: "employee", softMax: 50 }], shop(), DATES);
     const whole = buildCrewWeek(all);
     expect(new Set(whole.shifts.map((sh) => sh.date)).size).toBeLessThanOrEqual(5); clean(whole);
@@ -574,7 +575,9 @@ it("names an essential-exemption displacement instead of blaming the candidate's
   const i = input([{ id: "a", role: "employee", skills: { [I.$REG]: [0.3, 1] } }, { id: "z", role: "employee", skills: { [I.$REG]: [1, 1] } }], st);
   usual(i, "a"); i.budgetByDate[MON] = 0;
   const out = buildCrewWeek(i);
-  expect(users(out)).toEqual(["a"]);
+  expect(users(out)).toEqual(["a", "z"]);
+  expect(out.shifts.find((s) => s.userId === "z")!.endQ - out.shifts.find((s) => s.userId === "z")!.startQ).toBeLessThan(20);
+  expect(out.stats.hourlyHours - out.stats.essentialHours).toBe(0);
   expect(out.notes.some((n) => n.userId === "z" && n.params.reason === "budget_displaced_essential")).toBe(true);
   clean(out);
 });
@@ -642,5 +645,74 @@ describe("round 5 leadership regressions", () => {
     const out = buildCrewWeek(i);
     expect(out.shifts).toEqual([]);
     expect(out.notes).toContainEqual(expect.objectContaining({ userId: "a", params: expect.objectContaining({ reason: "leader_setting" }) })); clean(out);
+  });
+});
+
+
+describe("Fix F minimum-length hours proof", () => {
+  it("does not invent a fragment seat or station shortage when another shift covers the remainder", () => {
+    const i = input([{ id: "a", role: "employee" }, { id: "b", role: "employee", softMax: 4 }], shop((s) => {
+      s.shiftTypes![0]!.headcount = { slow: 2, normal: 2, busy: 2, weekend: 2 };
+    }));
+    usual(i, "a");
+    const out = buildCrewWeek(i);
+    expect(out.shifts).toMatchObject([{ userId: "a", startQ: 44, endQ: 64 }, { userId: "b", startQ: 48, endQ: 64 }]);
+    expect(out.gaps).toEqual([]); clean(out);
+  });
+  it("honors a shop minimum above the type minimum", () => {
+    const i = input(undefined, shop((s) => { s.limits.minimumShiftQ = 18; s.limits.overtimeH = 4.25; }));
+    const out = buildCrewWeek(i);
+    expect(out.shifts).toEqual([]);
+    expect(out.notes).toContainEqual(expect.objectContaining({ params: expect.objectContaining({ reason: "overtime", minLengthQ: 18 }) }));
+    clean(out);
+  });
+  it("keeps the start when an end-anchored trim cannot hold a station", () => {
+    const i = input(undefined, shop((s) => {
+      s.limits.overtimeH = 4;
+      s.shiftTypes![0]!.countsTowardMod = false;
+      s.positions[I.$REG]!.trimQ = 48; s.positions[I.$REG]!.closeQ = 48;
+    }));
+    const out = buildCrewWeek(i);
+    expect(out.shifts).toMatchObject([{ startQ: 44, endQ: 60 }]);
+    clean(out);
+  });
+  it.each(["overtime", "soft_max", "maximum_length", "budget"] as const)("shortens a fill for %s and proves rejection below minimum", (code) => {
+    const i = input();
+    if (code === "overtime") i.structure.limits.overtimeH = 4.5;
+    if (code === "soft_max") i.people[0]!.softMaxH = 4.5;
+    if (code === "maximum_length") i.structure.limits.maxShiftH = 4.5;
+    if (code === "budget") i.budgetByDate[MON] = 4.5;
+    const out = buildCrewWeek(i);
+    expect(out.shifts).toMatchObject([{ startQ: 46, endQ: 64 }]);
+    expect(out.gaps.filter((g) => g.code === "open_shift")).toEqual([]);
+    clean(out);
+    if (code === "overtime") i.structure.limits.overtimeH = 3.75;
+    if (code === "soft_max") i.people[0]!.softMaxH = 3.75;
+    if (code === "maximum_length") i.structure.limits.maxShiftH = 3.75;
+    if (code === "budget") i.budgetByDate[MON] = 3.75;
+    const refused = buildCrewWeek(i);
+    expect(refused.shifts).toEqual([]);
+    const gap = refused.gaps.find((g) => g.code === "open_shift")!;
+    expect(gap.cause).toBe("crew_shortfall");
+    expect(verifyCrewGap(gap, week(refused), refused.context)).toBe(true);
+    expect(refused.notes).toContainEqual(expect.objectContaining({ userId: "a", params: expect.objectContaining({ reason: code, hours: 0, limit: 3.75, minLengthQ: 16 }) }));
+    clean(refused);
+  });
+  it("proves 38 inherited hours plus a five-hour minimum exceeds 40 and rejects forged evidence", () => {
+    const firstInput = input(undefined, shop(), DATES.slice(0, 4));
+    usual(firstInput, "a");
+    const first = buildCrewWeek(firstInput);
+    const inherited = first.shifts.map((sh) => ({ ...sh, startQ: 26, endQ: 64,
+      segments: [{ positionId: I.$REG, startQ: 26, endQ: 64 }] }));
+    const date = DATES[4]!;
+    const i = input(undefined, shop((s) => { s.shiftTypes![0]!.minLengthQ = 20; }), [date]); i.today = date;
+    i.head = { revisionId: "head", shifts: inherited, days: first.days, gaps: [], reasons: {}, closingWindowByDate: first.context.closingWindowByDate ?? {} };
+    const out = buildCrewWeek(i);
+    expect(users(out, date)).toEqual([]);
+    const gap = out.gaps.find((g) => g.date === date && g.code === "open_shift")!;
+    expect(verifyCrewGap(gap, week(out), out.context)).toBe(true);
+    expect(out.notes).toContainEqual(expect.objectContaining({ date, userId: "a", params: expect.objectContaining({ reason: "overtime", hours: 38, limit: 40, minLengthQ: 20 }) }));
+    const changed = structuredClone(out.context); changed.days[date]!.structure.limits.overtimeH = 50;
+    expect(verifyCrewGap(gap, week(out), changed)).toBe(false);
   });
 });
