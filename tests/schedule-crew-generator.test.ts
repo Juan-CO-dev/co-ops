@@ -594,6 +594,7 @@ describe("chunk 5 independent review regressions", () => {
     for (const p of i.people) usual(i, p.userId);
     const start = performance.now(); const out = buildCrewWeek(i); const elapsed = performance.now() - start;
     process.stdout.write(`crew 25-person/7-day generation: ${elapsed.toFixed(1)} ms\n`);
+    process.stdout.write(`[isolated benchmark] 25-person: ${elapsed.toFixed(1)} ms / 500 ms target\n`);
     expect(elapsed).toBeLessThan(15000); clean(out);
   });
 });

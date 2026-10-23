@@ -15,8 +15,9 @@ export function weekTable(out: ReturnType<typeof run>): string {
 }
 let out: ReturnType<typeof run>;
 beforeAll(() => {
-  const start = performance.now(); out = run();
-  process.stdout.write(`P STREET build: ${(performance.now() - start).toFixed(1)} ms\n${weekTable(out)}\n`);
+  const start = performance.now(); out = run(); const ms = performance.now() - start;
+  process.stdout.write(`P STREET build: ${ms.toFixed(1)} ms\n${weekTable(out)}\n`);
+  process.stdout.write(`[isolated benchmark] P Street: ${ms.toFixed(1)} ms / 1500 ms target\n`);
 }, 60000);
 const shifts = (name: string, result = out) => result.shifts.filter((s) => s.userId === personId(name));
 function exact(name: string, days: number[], fromQ: number, toQ: number) {
@@ -133,6 +134,7 @@ describe("P Street crew acceptance, 2026-10-19 (snapshot + R14)", () => {
     const g = generatorInputFor(input, WEEK, { today: WEEK }); expect(g.people).toHaveLength(43);
     const start = performance.now(); const result = generateWeek(g); const ms = performance.now() - start;
     process.stdout.write(`43-person crew week: ${ms.toFixed(1)} ms; ${result.shifts.length} shifts\n`);
+    process.stdout.write(`[isolated benchmark] 43-person: ${ms.toFixed(1)} ms / 3000 ms target\n`);
     expect(result.days).toHaveLength(7);
     expect(result.shifts.every((s) => s.endQ > s.startQ)).toBe(true);
   }, 60000);

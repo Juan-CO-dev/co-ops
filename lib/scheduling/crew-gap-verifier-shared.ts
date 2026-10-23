@@ -1,10 +1,11 @@
+import { legalHoldPath, modCountsOn, neverGenerated } from "./people-rules-shared";
 import { crewBlockAttempts } from "./crew-block-attempts-shared";
 import { compareCodePoint } from "./order-shared";
 import { validCrewGapCertificateShape } from "./shapes-shared";
 import { canonicalJson, type DayContext, type RuleContext, type RulePerson } from "./context-shared";
 import type { CrewGapCertificate, CrewRejectionCode, OpenShiftItem } from "./crew-contracts-shared";
 import { scheduleEngine, shiftTypesOf, type ShiftType } from "./structure-shared";
-import { atDayCap, maxDaysPerWeek, salariedWeek, legalHoldPath, modCountsOn, neverGenerated, type DeclaredGap, type Shift, type WeekSchedule } from "./rules-shared";
+import { atDayCap, maxDaysPerWeek, salariedWeek, type DeclaredGap, type Shift, type WeekSchedule } from "./rules-shared";
 
 /** Type flags restrict the existing role/time rule; they can never grant MoD authority. */
 export function shiftCountsAsMod(shift: Shift, person: RulePerson, day: DayContext, q: number): boolean {

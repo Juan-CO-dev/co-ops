@@ -1,3 +1,4 @@
+import { crewLegalityCache } from "../crew-legality-cache-shared";
 import { crewBlockAttempts } from "../crew-block-attempts-shared";
 /** Whole crew blocks first, stations second. No station-generator repair or fill passes. */
 import { canonicalJson, assertContextFits, type DayContext, type RuleContext, type RulePerson } from "../context-shared";
@@ -12,7 +13,7 @@ import { reason, shiftKey, type BoardNote, type ReasonIndex, type ReasonKey, typ
 import {
   MOD, SALARIED_FLEX_REASON, CATERING_MANAGER_COVER, REPAIR_LIMITS,
   atDayCap, checkScheduleRules, crewEarliestModStart, closingManagerEligible, coversClosingWindow, floorHours,
-  generatorRefuses, legalHoldPath, maxDaysPerWeek, modCountsOn,
+  generatorRefuses, maxDaysPerWeek,
   neverGenerated, proveGap, salariedWeek, type DeclaredGap, type GapSubject, type Segment, type Shift, type WeekSchedule,
 } from "../rules-shared";
 import { isSecondary, lineOrder, shiftTypesOf, type ShiftType } from "../structure-shared";
@@ -34,6 +35,8 @@ export function buildCrewWeek(raw: GeneratorInput): GeneratorOutput {
 }
 
 function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolean): GeneratorOutput {
+  const legality = crewLegalityCache();
+  const { legalHoldPath, modCountsOn } = legality;
   const input = structuredClone(raw);
   input.people.sort((a, b) => cmp(a.userId, b.userId));
   input.days.sort((a, b) => cmp(a.date, b.date));
@@ -177,7 +180,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
       }
       if (budgetRefused.has(`${a}|${z}`)) return "budget";
       return null;
-    }, { holes, required, shorten });
+    }, { holes, required, shorten, legality });
     const match = replay.match;
     if (!match) return fail(replay.rejection);
     const [startQ, endQ] = match;
@@ -560,10 +563,10 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
       }
     }
   }
-}
 
-function segment(p: RulePerson, id: string, startQ: number, endQ: number, day: DayContext): Segment {
-  const path = legalHoldPath(p, id, day, "", startQ);
-  return { positionId: id, startQ, endQ, ...(path !== "eligible" ? { lastResort: true } : {}),
-    ...(path === "catering_cover" ? { reasonKey: CATERING_MANAGER_COVER } : {}) };
+  function segment(p: RulePerson, id: string, startQ: number, endQ: number, day: DayContext): Segment {
+    const path = legalHoldPath(p, id, day, "", startQ);
+    return { positionId: id, startQ, endQ, ...(path !== "eligible" ? { lastResort: true } : {}),
+      ...(path === "catering_cover" ? { reasonKey: CATERING_MANAGER_COVER } : {}) };
+  }
 }

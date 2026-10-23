@@ -1,7 +1,8 @@
 import type { DayContext, RulePerson } from "./context-shared";
 import type { CrewRejectionCode, CrewShiftMeta } from "./crew-contracts-shared";
 import type { ShiftType } from "./structure-shared";
-import { leaderSettingAllows, legalHoldPath, modCountsOn } from "./rules-shared";
+import { leaderSettingAllows } from "./people-rules-shared";
+import { crewLegalityCache } from "./crew-legality-cache-shared";
 import { compareCodePoint } from "./order-shared";
 
 export type CrewBlockAttempt = readonly [number, number];
@@ -12,7 +13,9 @@ export const crewMinimumQ = (p: RulePerson, t: ShiftType, day: DayContext) => Ma
  * usual blocks retain their end. The callback supplies the current week/allocation limits. */
 export function crewBlockAttempts(p: RulePerson, t: ShiftType, date: string, day: DayContext,
   source: CrewShiftMeta["source"], reject: (a: number, z: number) => CrewRejectionCode | null,
-  options: { holes?: readonly number[]; required?: readonly number[]; shorten?: boolean } = {}) {
+  options: { holes?: readonly number[]; required?: readonly number[]; shorten?: boolean;
+    legality?: ReturnType<typeof crewLegalityCache> } = {}) {
+  const { legalHoldPath, modCountsOn } = options.legality ?? crewLegalityCache();
   const st = day.structure, av = p.availability[date];
   const own = p.usualShift?.value?.typeId === t.id ? p.usualShift.value : null;
   const usualBlock = source === "usual" || (source === "salaried" && own !== null);
@@ -20,19 +23,43 @@ export function crewBlockAttempts(p: RulePerson, t: ShiftType, date: string, day
   const lo = Math.max(st.shopDay.prepStartQ, av?.fromQ ?? 0), hi = Math.min(day.scheduledOutQ, av?.toQ ?? 96);
   const baseStart = Math.max(lo, anchorStart), baseEnd = Math.min(hi, anchorEnd);
   const minimum = crewMinimumQ(p, t, day);
-  const offsets = [0, ...Array.from({ length: t.startFlexQ }, (_, n) => [n + 1, -n - 1]).flat()];
-  const pairs = usualBlock ? [] : offsets.flatMap((a) => offsets.filter((z) => a !== 0 && z !== 0).map((z) => [a, z] as const))
-    .sort((a, b) => Math.abs(a[0]) + Math.abs(a[1]) - Math.abs(b[0]) - Math.abs(b[1]) || a[0] - b[0] || a[1] - b[1]
-      || compareCodePoint(`${a[0]}|${a[1]}`, `${b[0]}|${b[1]}`));
-  const attempts: CrewBlockAttempt[] = [[baseStart, baseEnd], ...offsets.map((o) => [anchorStart + o, baseEnd] as const),
-    ...(usualBlock ? [] : offsets.map((o) => [baseStart, anchorEnd + o] as const)),
-    ...pairs.map(([a, z]) => [anchorStart + a, anchorEnd + z] as const).filter(([a, z]) => z - a <= st.limits.maxShiftH * 4)];
-  const coverage = ([a, z]: CrewBlockAttempt, qs: readonly number[]) => t.countsTowardMod
-    ? qs.filter((q) => a <= q && q < z && modCountsOn(p, day, q)).length : 0;
-  if (options.holes?.length) attempts.sort((a, b) => coverage(b, options.required ?? []) - coverage(a, options.required ?? [])
-    || coverage(b, options.holes!) - coverage(a, options.holes!));
+  function* offsets() {
+    yield 0;
+    for (let n = 1; n <= t.startFlexQ; n++) { yield n; yield -n; }
+  }
+  function* attempts(): Generator<CrewBlockAttempt> {
+    yield [baseStart, baseEnd];
+    for (const o of offsets()) yield [anchorStart + o, baseEnd];
+    if (usualBlock) return;
+    for (const o of offsets()) yield [baseStart, anchorEnd + o];
+    // The old pair sort: Manhattan distance, then numeric start, then numeric end.
+    // Enumerate that order directly; no quadratic pair array or sort on ordinary calls.
+    for (let distance = 2; distance <= 2 * t.startFlexQ; distance++) {
+      for (let a = -t.startFlexQ; a <= t.startFlexQ; a++) {
+        const z = distance - Math.abs(a);
+        if (a === 0 || z < 1 || z > t.startFlexQ) continue;
+        for (const end of [-z, z]) {
+          const block: CrewBlockAttempt = [anchorStart + a, anchorEnd + end];
+          if (block[1] - block[0] <= st.limits.maxShiftH * 4) yield block;
+        }
+      }
+    }
+  }
+  function* ordered(): Generator<CrewBlockAttempt> {
+    if (!options.holes?.length || !t.countsTowardMod) { yield* attempts(); return; }
+    const required = (options.required ?? []).filter((q) => modCountsOn(p, day, q));
+    const holes = options.holes.filter((q) => modCountsOn(p, day, q));
+    if (!required.length && !holes.length) { yield* attempts(); return; }
+    const coverage = ([a, z]: CrewBlockAttempt, qs: readonly number[]) => qs.filter((q) => a <= q && q < z).length;
+    // Only coverage-prioritized searches need all candidates. Score each once;
+    // stable sorting preserves the original attempt order on equal coverage.
+    const scored = Array.from(attempts(), (block) => ({ block, required: coverage(block, required), holes: coverage(block, holes) }));
+    scored.sort((a, b) => b.required - a.required || b.holes - a.holes);
+    for (const { block } of scored) yield block;
+  }
   const tried: Array<{ block: CrewBlockAttempt; code: CrewRejectionCode | null }> = [];
   const hoursFailed: CrewBlockAttempt[] = [];
+  const fit = t.stations.length ? t.stations : Object.keys(st.positions).sort(compareCodePoint);
   const accepts = (block: CrewBlockAttempt) => {
     const [a, z] = block;
     let code: CrewRejectionCode | null = null;
@@ -40,7 +67,6 @@ export function crewBlockAttempts(p: RulePerson, t: ShiftType, date: string, day
     else if (z - a < minimum) code = "minimum_length";
     else if (!leaderSettingAllows(p, st, a, z)) code = "leader_setting";
     else {
-      const fit = t.stations.length ? t.stations : Object.keys(st.positions).sort(compareCodePoint);
       let canHold = false;
       for (let q = a; q < z && !canHold; q++) canHold = fit.some((id) => legalHoldPath(p, id, day, date, q))
         || (t.countsTowardMod && modCountsOn(p, day, q));
@@ -50,12 +76,30 @@ export function crewBlockAttempts(p: RulePerson, t: ShiftType, date: string, day
     if (code && ["maximum_length", "soft_max", "overtime", "budget"].includes(code)) hoursFailed.push(block);
     return code === null;
   };
-  let match = [...new Map(attempts.map((b) => [`${b[0]}|${b[1]}`, b])).values()].find(accepts);
+  function firstAccepted(blocks: Iterable<CrewBlockAttempt>) {
+    const seen = new Set<string>();
+    for (const block of blocks) {
+      const key = `${block[0]}|${block[1]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (accepts(block)) return block;
+    }
+  }
+  let match = firstAccepted(ordered());
   if (options.shorten && !p.salaried && hoursFailed.length) {
-    const trims: CrewBlockAttempt[] = match ? [match] : [];
-    for (const [a, z] of hoursFailed) for (let length = z - a - 1; length >= minimum; length--) trims.push([z - length, z], [a, a + length]);
-    const unique = [...new Map(trims.map((b) => [`${b[0]}|${b[1]}`, b])).values()].sort((a, b) => b[1] - b[0] - (a[1] - a[0]));
-    match = unique.find(accepts);
+    const accepted = match;
+    // accepts records further refusals: freeze the pre-trim sources, as before.
+    const failed = hoursFailed.slice();
+    function* trims(): Generator<CrewBlockAttempt> {
+      const longest = failed.reduce((n, [a, z]) => Math.max(n, z - a - 1), accepted ? accepted[1] - accepted[0] : minimum - 1);
+      for (let length = longest; length >= minimum; length--) {
+        if (accepted && accepted[1] - accepted[0] === length) yield accepted;
+        for (const [a, z] of failed) if (z - a > length) {
+          yield [z - length, z]; yield [a, a + length];
+        }
+      }
+    }
+    match = firstAccepted(trims());
   }
   return { match, tried, rejection: tried.at(-1)?.code ?? "minimum_length" };
 }
