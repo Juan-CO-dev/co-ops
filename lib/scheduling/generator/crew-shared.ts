@@ -354,7 +354,11 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     }
   }
   // D/E. Target includes the catering increment once per qualifying date, by configured type ID.
-  for (const d of buildDays) for (const t of types) {
+  // Fill busiest days first without changing usual shifts or the prior MoD reservations.
+  const dayPriority = { weekend: 0, busy: 0, normal: 1, slow: 2 };
+  const fillDays = [...buildDays].sort((a, b) => dayPriority[a.dayType] - dayPriority[b.dayType]
+    || (b.dayCents ?? 0) - (a.dayCents ?? 0) || cmp(a.date, b.date));
+  for (const d of fillDays) for (const t of types) {
     const count = () => ctx.days[d.date]!.crew!.shifts.filter((m) => m.typeId === t.id).length;
     const rank = (p: SchedPerson) => Math.min(2, ...t.stations.map((id) => positionRankOf(p, id)));
     const deficit = (p: SchedPerson) => Math.max(0, Math.max(p.softMinH ?? 0, p.fullTime ? p.fullTimeMinH ?? 0 : 0) - totalH(p.userId));

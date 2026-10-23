@@ -25,21 +25,38 @@ function exact(name: string, days: number[], fromQ: number, toQ: number) {
 describe("P Street crew acceptance, 2026-10-19 (snapshot + R14)", () => {
   it("explains every day outside 7-8 distinct people with honest whole open-shift evidence", () => {
     const counts = DATES.map((date) => new Set(out.shifts.filter((s) => s.date === date).map((s) => s.userId)).size);
-    expect(counts).toEqual([7, 7, 7, 7, 5, 6, 6]);
+    expect(counts).toEqual([6, 5, 5, 5, 8, 8, 8]);
     for (const [i, date] of DATES.entries()) {
       const open = crewOpenItems(date, schedule(out), out.context);
       process.stdout.write(`${date}: ${counts[i]} people\n`);
-      if (counts[i]! >= 7 && counts[i]! <= 8) continue;
+      if (!open.length) { expect(counts[i]).toBeGreaterThanOrEqual(7); continue; }
       expect(open.length).toBeGreaterThan(0);
       expect(open.every((x) => x.typeId === "mid" && x.missing > 0)).toBe(true);
-      expect(out.gaps).toContainEqual(expect.objectContaining({ date, code: "open_shift", cause: date === DATES[4] ? "unresolved_search" : "crew_shortfall", fromQ: 40, toQ: 82 }));
+      expect(out.gaps).toContainEqual(expect.objectContaining({ date, code: "open_shift", cause: i < 4 ? "unresolved_search" : "crew_shortfall", fromQ: 40, toQ: 82 }));
       process.stdout.write(`${date}: ${counts[i]} people; ${open.map((x) => `${x.typeId} ${x.placed}/${x.required}, ${x.missing} open`).join("; ")}; ${out.gaps.find((g) => g.date === date && g.code === "open_shift")!.cause}.\n`);
       process.stdout.write(`  Candidate evidence: ${open.flatMap((x) => x.rejected.map((r) => `${r.userId.replace("person-", "")}: ${r.codes.join("+") || "unproven"}`)).join("; ")}\n`);
     }
   });
-  it("fills Akia's Thursday seat with the longest legal Mid after 31.5 hours", () => {
-    expect(shifts("Akia").map((s) => [s.startQ, s.endQ])).toEqual([[40, 82], [40, 82], [40, 82], [48, 82]]);
-    expect(out.gaps.some((g) => g.date === DATES[3] && g.code === "open_shift")).toBe(false);
+  it("fills Akia's Monday seat with the remaining 8.5 hours after prioritizing Fri-Sun", () => {
+    expect(shifts("Akia").map((s) => [s.date, s.startQ, s.endQ])).toEqual([
+      [DATES[0], 48, 82], ...DATES.slice(4).map((date) => [date, 40, 82]),
+    ]);
+    expect(DATES.slice(4).map((date) => crewOpenItems(date, schedule(out), out.context).reduce((n, x) => n + x.missing, 0))).toEqual([0, 1, 0]);
+  });
+  it("reports the hourly Mid capacity separately from leadership reservations and unresolved seats", () => {
+    const input = generatorInputFor(acceptanceInputs(), WEEK, { today: WEEK });
+    const mids = input.people.filter((p) => !p.salaried && !p.presenceOnly && p.usualShift?.value?.typeId === "mid");
+    const available = mids.reduce((n, p) => n + Math.min(p.softMaxH ?? Infinity, input.structure.limits.overtimeH), 0);
+    const midShifts = out.shifts.filter((s) => out.context.days[s.date]!.crew!.shifts.some((m) => m.userId === s.userId && m.startQ === s.startQ && m.typeId === "mid"));
+    const hours = (ss: typeof out.shifts) => ss.reduce((n, s) => n + (s.endQ - s.startQ) / 4, 0);
+    const reserved = hours(out.shifts.filter((s) => mids.some((p) => p.userId === s.userId) && !midShifts.includes(s)));
+    const salaried = hours(midShifts.filter((s) => out.context.people[s.userId]!.salaried));
+    const needed = DATES.reduce((n, date) => {
+      const d = out.context.days[date]!, t = d.structure.shiftTypes!.find((t) => t.id === "mid")!;
+      return n + t.headcount[d.dayType] * (t.toQ - t.fromQ) / 4;
+    }, 0);
+    expect([available, reserved, salaried, needed, hours(midShifts)]).toEqual([200, 35.5, 9.75, 252, 161.25]);
+    process.stdout.write(`Mid hours: ${mids.length} hourly people x 40 = ${available}; ${reserved} reserved as openers; ${available - reserved} left for Mid + ${salaried} salaried Mid; ${needed} full seat-hours needed; unavoidable deficit ${needed - (available - reserved + salaried)} h. Actual Mid ${hours(midShifts)} h; ${needed - hours(midShifts)} h short, including 13 unused Islam hours (unresolved, not a proven hours refusal).\n`);
   });
   it("keeps every shift above type minimum with one contiguous shift per person/day, no fragments", () => {
     const seen = new Set<string>();

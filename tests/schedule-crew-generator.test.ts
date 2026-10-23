@@ -87,6 +87,50 @@ function stationHolds(out: GeneratorOutput, label: string): void {
   }
 }
 
+describe("busiest-first fill", () => {
+  it.each([9, 5])("spends a limited %i-hour pool on Saturday before a slow weekday", (softMax) => {
+    const sat = DATES[5]!;
+    const i = input([{ id: "a", role: "employee", softMax }], shop(), [MON, sat]);
+    i.days[0]!.dayType = "slow"; i.days[0]!.dayCents = 999999;
+    i.days[1]!.dayType = "weekend"; i.days[1]!.dayCents = 1;
+    const out = buildCrewWeek(i);
+    expect(out.shifts.find((s) => s.date === sat)).toMatchObject({ startQ: 44, endQ: 64 });
+    if (softMax === 9) expect(out.shifts.find((s) => s.date === MON)).toMatchObject({ startQ: 48, endQ: 64 });
+    else expect(users(out, MON)).toEqual([]);
+    i.days.reverse(); i.people.reverse();
+    expect(JSON.stringify(buildCrewWeek(i))).toBe(JSON.stringify(out)); clean(out);
+  });
+  it("orders equal-tier days by demand then date, and seats by configured type order", () => {
+    const i = input([{ id: "a", role: "employee", softMax: 5 }], shop((s) => {
+      s.shiftTypes = [type({ id: "z-first" }), type({ id: "a-second" })];
+    }), DATES.slice(0, 4));
+    i.days.forEach((d, n) => { d.dayType = n === 0 ? "normal" : n === 1 ? "weekend" : "busy"; d.dayCents = [9999, 10, 20, 20][n]!; });
+    const out = buildCrewWeek(i);
+    expect(out.shifts.map((s) => s.date)).toEqual([DATES[2]]);
+    expect(out.context.days[DATES[2]!]!.crew!.shifts[0]!.typeId).toBe("z-first");
+    clean(out);
+  });
+  it("reserves MoD on every date before busy-first non-MoD seats consume leaders", () => {
+    const i = input([
+      { id: "lead-weekday", role: "shift_lead", leader: "mix", softMax: 25, off: [6, 7] },
+      { id: "lead-weekend", role: "shift_lead", leader: "mix", softMax: 10, off: [1, 2, 3, 4, 5] },
+      { id: "worker", role: "employee", softMax: 9 },
+    ], shop((s) => {
+      s.shopDay.prepStartQ = 44; s.leadership.modRequired = true;
+      s.shiftTypes = [type({ id: "non-mod", countsTowardMod: false }), type({ id: "leader" })];
+    }), DATES);
+    i.days.forEach((d, n) => { d.dayType = n >= 5 ? "weekend" : "slow"; });
+    const out = buildCrewWeek(i);
+    for (const date of DATES) for (let q = 44; q < 64; q++) {
+      expect(out.shifts.some((s) => s.date === date && shiftCountsAsMod(s, out.context.people[s.userId]!, out.context.days[date]!, q))).toBe(true);
+    }
+    expect(out.shifts.filter((s) => s.userId === "worker").map((s) => s.date)).toEqual(DATES.slice(5));
+    expect(out.gaps.filter((g) => g.code === "mod_missing")).toEqual([]);
+    i.days.reverse(); i.people.reverse();
+    expect(JSON.stringify(buildCrewWeek(i))).toBe(JSON.stringify(out)); clean(out);
+  });
+});
+
 describe("crew dispatch and usual blocks", () => {
   it("dispatches without changing the station path or its version", () => {
     const station = input(); station.structure.engine = "stations";
