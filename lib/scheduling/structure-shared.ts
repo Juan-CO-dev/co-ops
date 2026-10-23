@@ -29,6 +29,21 @@ export const CREW_TYPES: readonly CrewType[] = ["slow", "normal", "busy", "weeke
 export type LeaderSetting = "opens" | "closes" | "mix";
 export const LEADER_SETTINGS: readonly LeaderSetting[] = ["opens", "closes", "mix"];
 
+export type ScheduleEngine = "stations" | "crew";
+export interface ShiftType {
+  id: string; name: string; fromQ: number; toQ: number; startFlexQ: number; minLengthQ: number;
+  headcount: Record<CrewType, number>; stations: string[]; countsTowardMod: boolean;
+}
+export interface CrewCateringSetting { enabled: boolean; typeId: string | null; extraHeads: number }
+export const CREW_CATERING_DEFAULTS: CrewCateringSetting = { enabled: false, typeId: null, extraHeads: 1 };
+export const scheduleEngine = (s: ScheduleStructure): ScheduleEngine => s.engine ?? "stations";
+export const shiftTypesOf = (s: ScheduleStructure): readonly ShiftType[] => s.shiftTypes ?? [];
+/** Explicit defaults on new saves; old revision snapshots remain untouched. */
+export function withCrewStructureDefaults(s: ScheduleStructure): ScheduleStructure {
+  return { ...s, engine: scheduleEngine(s), shiftTypes: [...shiftTypesOf(s)],
+    catering: { ...s.catering, crewShift: s.catering.crewShift ?? { ...CREW_CATERING_DEFAULTS } } };
+}
+
 export interface CrewRow {
   prepHeads: number;
   prepUntilQ: number;
@@ -51,6 +66,8 @@ export interface StructurePosition {
 
 export interface ScheduleStructure {
   version: 1;
+  engine?: ScheduleEngine;
+  shiftTypes?: ShiftType[];
   shopDay: { prepStartQ: number; prepDishArrivalQ: number; serviceStartQ: number; serviceCloseQ: number; outEarliestQ: number; outLatestQ: number };
   dayTypes: { slowBelowCents: number; busyAboveCents: number; weekendIsoDows: number[] };
   crews: Record<CrewType, CrewRow>;
@@ -104,7 +121,7 @@ export interface ScheduleStructure {
      */
     salariedFlexH: number;
   };
-  catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number };
+  catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number; crewShift?: CrewCateringSetting };
   labor: { targetPct: number; basis: "hourly" | "total"; strong: number; watch: number; budgetDeadbandH: number };
   roster: { excludedRoles: RoleCode[] };
 }
@@ -574,7 +591,7 @@ function checkLimits(v: unknown, shopDay: ScheduleStructure["shopDay"]): Problem
 
 function checkCatering(v: unknown): Problem {
   if (!isObj(v)) return "catering";
-  const k = exactKeys(v, ["minHeadcount", "extraPrepDishHeads", "defaultStartQ", "defaultEndQ", "leadMinutes"], "catering.");
+  const k = exactKeys(v, ["minHeadcount", "extraPrepDishHeads", "defaultStartQ", "defaultEndQ", "leadMinutes", ...("crewShift" in v ? ["crewShift"] : [])], "catering.");
   if (k) return k;
   if (!isInt(v.minHeadcount, 0, 10000)) return "catering.minHeadcount";
   if (!isInt(v.extraPrepDishHeads, 0, 8)) return "catering.extraPrepDishHeads";
@@ -619,10 +636,49 @@ function checkWaveBounds(s: ScheduleStructure): Problem {
   return null;
 }
 
+/** Optional additions admit historical snapshots without rewriting them. */
+function checkCrewStructure(s: ScheduleStructure): Problem {
+  if (Object.hasOwn(s, "engine") && s.engine !== "stations" && s.engine !== "crew") return "engine";
+  if (Object.hasOwn(s, "shiftTypes") && !Array.isArray(s.shiftTypes)) return "shiftTypes";
+  const types = shiftTypesOf(s), ids = new Set<string>();
+  if (scheduleEngine(s) === "crew" && !types.length) return "shiftTypes";
+  for (let i = 0; i < types.length; i++) {
+    const t: unknown = types[i], at = `shiftTypes.${i}`;
+    if (!isObj(t)) return at;
+    const shape = exactKeys(t, ["id", "name", "fromQ", "toQ", "startFlexQ", "minLengthQ", "headcount", "stations", "countsTowardMod"], `${at}.`);
+    if (shape) return shape;
+    if (typeof t.id !== "string" || !t.id.trim() || ids.has(t.id)) return `${at}.id`;
+    ids.add(t.id);
+    if (typeof t.name !== "string" || !t.name.trim()) return `${at}.name`;
+    if (!isQuarter(t.fromQ) || t.fromQ < s.shopDay.prepStartQ) return `${at}.fromQ`;
+    if (!isQuarter(t.toQ) || t.toQ <= t.fromQ || t.toQ > s.shopDay.outLatestQ) return `${at}.toQ`;
+    if (!isInt(t.startFlexQ, 0, 96)) return `${at}.startFlexQ`;
+    if (!isInt(t.minLengthQ, 1, t.toQ - t.fromQ)) return `${at}.minLengthQ`;
+    if (!isObj(t.headcount)) return `${at}.headcount`;
+    const heads = exactKeys(t.headcount, CREW_TYPES, `${at}.headcount.`);
+    if (heads) return heads;
+    for (const ct of CREW_TYPES) if (!isInt(t.headcount[ct], 0, 20)) return `${at}.headcount.${ct}`;
+    if (!Array.isArray(t.stations) || t.stations.some((id) => typeof id !== "string" || !Object.hasOwn(s.positions, id))
+      || new Set(t.stations).size !== t.stations.length) return `${at}.stations`;
+    if (typeof t.countsTowardMod !== "boolean") return `${at}.countsTowardMod`;
+  }
+  if (Object.hasOwn(s.catering, "crewShift")) {
+    const c: unknown = s.catering.crewShift, at = "catering.crewShift";
+    if (!isObj(c)) return at;
+    const shape = exactKeys(c, ["enabled", "typeId", "extraHeads"], `${at}.`);
+    if (shape) return shape;
+    if (typeof c.enabled !== "boolean") return `${at}.enabled`;
+    if (c.typeId !== null && (typeof c.typeId !== "string" || !c.typeId.trim())) return `${at}.typeId`;
+    if (c.enabled && (typeof c.typeId !== "string" || !ids.has(c.typeId))) return `${at}.typeId`;
+    if (!isInt(c.extraHeads, 1, 20)) return `${at}.extraHeads`;
+  }
+  return null;
+}
+
 /** The first failing key (a dotted path), or null when the structure is valid. Never throws. */
 export function structureProblem(v: unknown): string | null {
   if (!isObj(v)) return "structure";
-  const top = exactKeys(v, TOP_KEYS, "");
+  const top = exactKeys(v, [...TOP_KEYS, ...["engine", "shiftTypes"].filter((k) => Object.hasOwn(v, k))], "");
   if (top) return top;
   if (v.version !== 1) return "version";
   const sd = checkShopDay(v.shopDay);
@@ -639,7 +695,8 @@ export function structureProblem(v: unknown): string | null {
     ?? checkCatering(v.catering)
     ?? checkLabor(v.labor)
     ?? checkRoster(v.roster)
-    ?? checkWaveBounds(v as unknown as ScheduleStructure);
+    ?? checkWaveBounds(v as unknown as ScheduleStructure)
+    ?? checkCrewStructure(v as unknown as ScheduleStructure);
 }
 
 export function validScheduleStructure(v: unknown): { ok: true } | { ok: false; key: string } {
@@ -735,6 +792,7 @@ export function structureFromStations(
     floors[id] = isSecondary(s, id) ? 0 : Math.min(1, limit);
   }
   for (const t of CREW_TYPES) s.crews[t].lineMinHeads = { ...floors };
+  if (s.shiftTypes) s.shiftTypes = s.shiftTypes.map((type) => ({ ...type, stations: type.stations.filter((id) => Object.hasOwn(s.positions, id)) }));
   const key = structureProblem(s);
   if (key !== null) return { ok: false, code: "structure_invalid", key };
   return { ok: true, structure: s, seededFrom };

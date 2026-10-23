@@ -18,7 +18,7 @@ export interface LineContext {
 }
 
 /** Clock-time params (quarters of the day). */
-const CLOCK_Q = new Set(["q", "fromQ", "toQ", "startQ", "endQ", "atQ", "savedQ", "stationQ"]);
+const CLOCK_Q = new Set(["q", "fromQ", "toQ", "startQ", "endQ", "atQ", "savedQ", "stationQ", "earliestQ"]);
 const DATE_PARAMS = new Set(["date", "from", "to", "referenceWeek", "weekStart"]);
 
 export function positionLabel(ctx: Pick<LineContext, "language" | "positions" | "t">, id: string | null | undefined): string {
@@ -33,7 +33,8 @@ export function positionLabel(ctx: Pick<LineContext, "language" | "positions" | 
  * CC chunk H9: a segment's label. A MoD-lane segment the person only counts on from a later quarter reads "On the clock · manager
  * on duty from 7:00 PM" (none of it: "On the clock · not manager on duty") — never "Manager on duty" over time that is not.
  */
-export function segmentLabel(ctx: Pick<LineContext, "language" | "positions" | "t">, g: { positionId: string; startQ: number; endQ: number; modFromQ?: number | null }): string {
+export function segmentLabel(ctx: Pick<LineContext, "language" | "positions" | "t">, g: { positionId: string; startQ: number; endQ: number; modFromQ?: number | null; crewUnassigned?: boolean }): string {
+  if (g.positionId === "mod" && g.crewUnassigned) return ctx.t("schedule.board.crew_unassigned");
   if (g.positionId === "mod" && g.modFromQ !== undefined) {
     return g.modFromQ === null ? ctx.t("schedule.board.mod_not_counted") : ctx.t("schedule.board.mod_from", { time: formatQ(g.modFromQ, ctx.language) });
   }
@@ -50,6 +51,7 @@ export function formatParams(params: Readonly<Record<string, string | number>> |
   for (const [k, v] of Object.entries(params ?? {})) {
     if (typeof v === "number" && /Cents$/.test(k)) out[k] = formatCentsWhole(v, ctx.language);
     else if (typeof v === "number" && CLOCK_Q.has(k)) out[k] = formatQ(v, ctx.language);
+    else if (k === "peopleIds" && typeof v === "string") out.people = (JSON.parse(v) as string[]).map((id) => personName(ctx, id)).join(", ");
     else if (k === "userId" && typeof v === "string") out[k] = personName(ctx, v);
     else if ((k === "positionId" || k === "primaryId") && typeof v === "string") out[k] = positionLabel(ctx, v);
     else if (DATE_PARAMS.has(k) && typeof v === "string" && isYmd(v)) out[k] = formatDateLabel(v, ctx.language);

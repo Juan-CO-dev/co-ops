@@ -5,7 +5,7 @@
  * construction (the families are derived, never copied); a new board label is added to BOARD_LABEL_KEYS.
  */
 import { SCHEDULE_ERROR_CODES } from "./errors-shared";
-import { RULE_CODES, type StructureRule } from "./rules-shared";
+import { CREW_RULE_CODES, RULE_CODES, type StructureRule } from "./rules-shared";
 import { NOTE_CODES, REASON_KEYS } from "./reasons-shared";
 import { GAP_CAUSES } from "./shapes-shared";
 import { LABOR_LINE_KEYS } from "./labor-target-shared";
@@ -31,6 +31,7 @@ export const BOARD_LABEL_KEYS = [
   "schedule.board.flag.assumed_availability", "schedule.board.flag.manager_set_availability", "schedule.board.flag.starting_point", "schedule.board.flag.not_linked", "schedule.board.flag.flex_later",
   "schedule.board.gap.unresolved_try", "schedule.board.problem.earlier", "schedule.board.demand.basis", "schedule.board.ready_for_7shifts",
   "schedule.diff.cost_partial",
+  "schedule.board.crew_unassigned", "schedule.gap.certificate.open_shifts", "schedule.gap.certificate.station_short",
 ] as const;
 
 /** Every key, by family, in a fixed order. */
@@ -38,6 +39,7 @@ export function scheduleI18nKeys(): Record<string, readonly string[]> {
   return {
     error: SCHEDULE_ERROR_CODES.map((c) => `schedule.error.${c}`),
     rule: Object.keys(RULE_CODES).map((c) => `schedule.rule.${c}`),
+    crewRule: Object.keys(CREW_RULE_CODES).map((c) => `schedule.rule.${c}`),
     reason: [...REASON_KEYS.map((k) => `schedule.reason.${k}`), "schedule.reason.callout_last_resort"],
     note: NOTE_CODES.map((c) => `schedule.note.${c}`),
     cause: GAP_CAUSES.map((c) => `schedule.gap.cause.${c}`),

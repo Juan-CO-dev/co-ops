@@ -14,6 +14,6 @@ export function useBoardLine(lookup: Pick<LineContext, "names" | "positions">) {
     name: (id: string | null | undefined) => personName(ctx, id),
     position: (id: string | null | undefined) => positionLabel(ctx, id),
     /** CC chunk H9: a segment's truthful label (a MoD-lane segment only partly manager-on-duty time says so). */
-    segment: (g: { positionId: string; startQ: number; endQ: number; modFromQ?: number | null }) => segmentLabel(ctx, g),
+    segment: (g: { positionId: string; startQ: number; endQ: number; modFromQ?: number | null; crewUnassigned?: boolean }) => segmentLabel(ctx, g),
   };
 }

@@ -56,6 +56,27 @@ function shop(opts: Parameters<typeof scheduleStore>[1] = {}, tablesMut: (t: Ret
 }
 const commits = (calls: Array<{ fn: string; args: Record<string, unknown> }>) => calls.filter((c) => c.fn === "commit_schedule_revision");
 
+it("historical crew dates require confirmation even after the latest generated revision", async () => {
+  const s = shop();
+  const first = await lib.generateWeek(s.deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: null });
+  const deps = { ...s.deps, loadInputs: withMut((i) => {
+    i.structure.structure.engine = "crew";
+    i.weeks[WEEK]!.edited = false;
+    i.weeks[WEEK]!.historicalEditedDates = [WEEK];
+  }) };
+  expect(await code(lib.generateWeek(deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: first.revisionId }))).toBe("edited_week_unconfirmed");
+  const request = { mode: "next_week" as const };
+  const preview = await lib.previewHorizon(deps, { actor: gm, locationId: A, request });
+  expect(preview.weeks[0]).toMatchObject({ edited: true, engine: "crew", historicalEditedDates: [WEEK] });
+  expect(lib.overwritesConfirmedEdits(preview, [WEEK])).toBe(true);
+  const skipped = await lib.applyHorizon(deps, { actor: gm, locationId: A, request, token: preview.token, confirmedWeekStarts: [] });
+  expect(skipped.skipped).toEqual([{ weekStart: WEEK, code: "edited_week_unconfirmed" }]);
+  expect(skipped.landed).toEqual([]);
+  await lib.generateWeek(deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: first.revisionId, confirmEdited: true });
+  const last = commits(s.calls).at(-1)!;
+  expect((last.args.p_meta as Record<string, unknown>).confirmed_overwrite).toBe(true);
+});
+
 describe("every act runs access-shared BEFORE any I/O", () => {
   it("SMM by role, a GM of another shop, an AGM approving, a non-MoO switching the shop: refused with ZERO queries", async () => {
     const deps = { service: noIoClient(), now: NOW };

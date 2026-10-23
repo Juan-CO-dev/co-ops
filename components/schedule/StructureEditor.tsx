@@ -28,6 +28,10 @@ import { runGuarded } from "./horizon-flow-shared";
 import { scheduleErrorKey } from "./schedule-errors";
 import { BUTTON, Check, Fields, GHOST, NumField, SelectField, TimeField } from "./settings-fields";
 import { useBoardLine } from "./use-board-line";
+import { ShiftTypesEditor } from "./ShiftTypesEditor";
+import { CREW_CATERING_DEFAULTS, scheduleEngine } from "@/lib/scheduling/structure-shared";
+
+export const CREW_ENGINE_SELECTABLE = true;
 
 const FLOOR_ROLES: RoleCode[] = ["trainee", "employee", "trainer", "key_holder", "shift_lead", "agm", "gm", "moo", "owner"];
 const ALL_ROLES: RoleCode[] = ["cgs", "owner", "moo", "gm", "agm", "catering_mgr", "prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "trainer", "employee", "trainee"];
@@ -101,10 +105,11 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
     const key = structureSaveRefusal(effective);
     if (key) {
       setKeyError(key);
-      const input = document.getElementsByName(key)[0];
+      const input = document.getElementsByName(key.replace(/^(shiftTypes\.\d+)\.id$/, "$1.name"))[0];
       input?.focus(); input?.scrollIntoView?.({ block: "center" });
       return;
     }
+    if (scheduleEngine(effective) !== scheduleEngine(structure.value) && !window.confirm(t("schedule.settings.shift_types.engine_confirm"))) return;
     setBusy(true);
     const out = await runGuarded({
       tier: "E", requestStepUp: () => requestStepUp("E"),
@@ -134,6 +139,22 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
           <TimeField name="shopDay.serviceCloseQ" label={t("schedule.settings.shop_day.service_close")} q={d.shopDay.serviceCloseQ} onChange={(q) => edit((s) => { s.shopDay.serviceCloseQ = q; })} />
           <TimeField name="shopDay.outEarliestQ" label={t("schedule.settings.shop_day.out_earliest")} q={d.shopDay.outEarliestQ} onChange={(q) => edit((s) => { s.shopDay.outEarliestQ = q; })} />
           <TimeField name="shopDay.outLatestQ" label={t("schedule.settings.shop_day.out_latest")} q={d.shopDay.outLatestQ} onChange={(q) => edit((s) => { s.shopDay.outLatestQ = q; })} />
+        </Fields>
+      </Section>
+      <Section id="shift_types" title={t("schedule.settings.shift_types.title")}>
+        {CREW_ENGINE_SELECTABLE && <SelectField name="engine" label={t("schedule.settings.shift_types.engine")} value={scheduleEngine(d)} options={[
+          { value: "stations", label: t("schedule.settings.shift_types.engine_stations") },
+          { value: "crew", label: t("schedule.settings.shift_types.engine_crew") },
+        ]} onChange={(engine) => edit((s) => { s.engine = engine as "stations" | "crew"; })} />}
+        <ShiftTypesEditor value={d.shiftTypes ?? []} structure={d} positions={positions} onChange={(types) => edit((s) => { s.shiftTypes = types; })} />
+        <Check name="catering.crewShift.enabled" label={t("schedule.settings.shift_types.catering_enabled")} checked={(d.catering.crewShift ?? CREW_CATERING_DEFAULTS).enabled} onChange={(enabled) => edit((s) => { s.catering.crewShift = { ...(s.catering.crewShift ?? CREW_CATERING_DEFAULTS), enabled }; })} />
+        <Fields>
+          <SelectField name="catering.crewShift.typeId" label={t("schedule.settings.shift_types.catering_type")} value={(d.catering.crewShift ?? CREW_CATERING_DEFAULTS).typeId ?? ""} options={[
+            { value: "", label: t("schedule.settings.shift_types.choose_type") },
+            ...(d.shiftTypes ?? []).map((type) => ({ value: type.id, label: type.name })),
+            ...((d.catering.crewShift?.typeId && !(d.shiftTypes ?? []).some((type) => type.id === d.catering.crewShift?.typeId)) ? [{ value: d.catering.crewShift.typeId, label: t("schedule.settings.shift_types.removed_type") }] : []),
+          ]} onChange={(typeId) => edit((s) => { s.catering.crewShift = { ...(s.catering.crewShift ?? CREW_CATERING_DEFAULTS), typeId: typeId || null }; })} />
+          <NumField name="catering.crewShift.extraHeads" label={t("schedule.settings.shift_types.catering_heads")} value={(d.catering.crewShift ?? CREW_CATERING_DEFAULTS).extraHeads} min={1} max={20} onChange={(extraHeads) => edit((s) => { s.catering.crewShift = { ...(s.catering.crewShift ?? CREW_CATERING_DEFAULTS), extraHeads: extraHeads ?? 0 }; })} />
         </Fields>
       </Section>
 

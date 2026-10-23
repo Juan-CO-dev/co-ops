@@ -215,6 +215,16 @@ describe("the pure assembly (generatorInputFor and its readers)", () => {
     mut(t);
     return loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
   };
+  it("confirmed crew rebuilds release historical dates; unconfirmed builds preserve them", async () => {
+    const inputs = await inputsWith();
+    inputs.structure.structure.engine = "crew";
+    const prior = generatorInputFor(inputs, WEEK, { today: inputs.asOf });
+    const { generateWeek } = await import("@/lib/scheduling/generator/dispatch-shared");
+    const out = generateWeek(prior);
+    inputs.weeks[WEEK] = { weekStart: WEEK, weekId: "week", headRevisionId: "head", approvedRevisionId: null, edited: false, historicalEditedDates: [WEEK], head: { revision: { id: "head" } as never, shifts: out.shifts, days: out.days, gaps: out.gaps, reasons: out.reasons, context: out.context } };
+    expect(generatorInputFor(inputs, WEEK, { today: inputs.asOf }).days.map((d) => d.date)).not.toContain(WEEK);
+    expect(generatorInputFor(inputs, WEEK, { today: inputs.asOf, confirmEdited: true }).days.map((d) => d.date)).toContain(WEEK);
+  });
   it("the manager's override wins the day type; budgets are per DATE (newest entry); kept days come from the head", async () => {
     const inputs = await inputsWith((t) => {
       t.schedule_day_types = [

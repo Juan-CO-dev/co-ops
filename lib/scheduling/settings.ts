@@ -1,3 +1,5 @@
+import { validUsualShift, type UsualShift } from "./usual-shift-shared";
+import { scheduleEngine, shiftTypesOf } from "./structure-shared";
 /**
  * THE SCHEDULING SETTINGS WRITERS — structure, shop switch + wage estimates, person settings, budgets (set / accept /
  * keep the suggestion), day-type overrides, pins (Scheduling Phase 2, Task 17). Server-only, service role, every write
@@ -20,7 +22,7 @@ import {
 } from "./budget-shared";
 import { forecastWeek } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
-import { buildWeek } from "./generator/build-shared";
+import { generateWeek } from "./generator/dispatch-shared";
 import { loadLatestPersonSettings, loadLiveStructure, loadSchedulingDemand, loadWeekHeads } from "./inputs";
 import { personSettingsSubjectRefusal } from "./access-shared";
 import { mergePositionChanges, parsePositionChanges } from "./user-positions-shared";
@@ -88,6 +90,7 @@ export async function saveShopSettings(deps: ScheduleDeps, args: {
 export interface PersonSettingsInput {
   /** Missing availability clears to null: this is a full-row writer guarded by expectedId, not a partial patch. */
   availability?: PersonAvailability | null;
+  usualShift?: UsualShift | null;
   worksAs?: WorksAsRole | null;
   userId: string; workType: "boh" | "foh" | "management" | null; alsoAllowed: Array<"boh" | "foh">; leaderSetting: "opens" | "closes" | "mix" | null;
   coverPositions: string[]; softMinH: number | null; softMaxH: number | null; fullTime: boolean; fullTimeMinH: number | null; rosterInclude: boolean | null;
@@ -102,7 +105,7 @@ export interface PersonSettingsInput {
 export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; settings: PersonSettingsInput; expectedId: string | null }): Promise<Record<string, unknown>> {
   await gate(deps.service, args.actor, args.locationId, "person_settings");
   const raw = args.settings;
-  if (!raw || (raw.availability !== undefined && !isPersonAvailability(raw.availability)) || typeof raw.userId !== "string" || !UUID.test(raw.userId) || !Array.isArray(raw.coverPositions) || !Array.isArray(raw.alsoAllowed)
+  if (!raw || (raw.usualShift !== undefined && !validUsualShift(raw.usualShift)) || (raw.availability !== undefined && !isPersonAvailability(raw.availability)) || typeof raw.userId !== "string" || !UUID.test(raw.userId) || !Array.isArray(raw.coverPositions) || !Array.isArray(raw.alsoAllowed)
     || !raw.coverPositions.every((x) => typeof x === "string" && UUID.test(x)) || (args.expectedId !== null && typeof args.expectedId !== "string")) {
     throw new ScheduleError("invalid_payload");
   }
@@ -119,6 +122,11 @@ export async function recordPersonSettings(deps: ScheduleDeps, args: { actor: Pe
   if (!canWorkAs(role)) s.worksAs = null;
   const overrideRefusal = worksAsRefusal(role, s.worksAs);
   if (overrideRefusal) throw new ScheduleError(overrideRefusal);
+  if (s.usualShift) {
+    const live = await loadLiveStructure(deps.service, args.locationId);
+    const carriedTypeId = latest?.row.usualShift?.typeId;
+    if (s.usualShift.typeId !== carriedTypeId && !shiftTypesOf(live.structure).some((t) => t.id === s.usualShift!.typeId)) throw new ScheduleError("invalid_payload");
+  }
   await refusePositionRank(deps.service, args.locationId, role, s);
   const r = await guardedRpc(deps.service, savePersonSettingsCall({ actorId: args.actor.userId, locationId: args.locationId, ...s, expectedId }));
   return logPersonSettings(args.actor, args.locationId, s.userId, r);
@@ -246,6 +254,12 @@ export async function setBudget(deps: ScheduleDeps, args: { actor: PeopleActor; 
 }
 
 /** The reference revision's hourly hours and catering-rule hours per date, from its STORED snapshot and reasons. */
+function crewCateringHours(s: import("./structure-shared").ScheduleStructure, events: readonly { headcount: number }[]): number {
+  const setting = s.catering.crewShift;
+  const type = setting?.enabled ? shiftTypesOf(s).find((t) => t.id === setting.typeId) : undefined;
+  return type && events.some((e) => e.headcount >= s.catering.minHeadcount) ? (type.toQ - type.fromQ) / 4 * setting!.extraHeads : 0;
+}
+
 function referenceFacts(w: NonNullable<Awaited<ReturnType<typeof loadWeekHeads>>[string]["head"]>) {
   const hoursByDate: Record<string, number> = {};
   const cateringHoursByDate: Record<string, number> = {};
@@ -256,6 +270,9 @@ function referenceFacts(w: NonNullable<Awaited<ReturnType<typeof loadWeekHeads>>
     sh.segments.forEach((g, i) => {
       if (g.positionId !== MOD && (stored?.segments?.[i] ?? []).some((r) => r.key === "catering_prep")) cateringHoursByDate[sh.date] = (cateringHoursByDate[sh.date] ?? 0) + (g.endQ - g.startQ) / 4;
     });
+  }
+  for (const [date, day] of Object.entries(w.context.days)) if (scheduleEngine(day.structure) === "crew") {
+    cateringHoursByDate[date] = crewCateringHours(day.structure, day.inputs.cateringEvents);
   }
   return { hoursByDate, cateringHoursByDate };
 }
@@ -285,7 +302,7 @@ export async function budgetSuggestion(deps: ScheduleDeps, args: { actor: People
     reference = { weekStart: refStart, complete: true, hoursByDate: f.hoursByDate, salesCentsByDate, cateringHoursByDate: f.cateringHoursByDate, budgetTotal: null };
   }
   const gi = generatorInputFor(inputs, args.weekStart, { today: weekDays(args.weekStart)[0]! < asOf ? asOf : weekDays(args.weekStart)[0]! });
-  const ctx = buildWeek(gi).context;
+  const ctx = generateWeek(gi).context;
   const live = inputs.structure.structure;
   // Astra chunk E P2-3: the reference week's ACTUAL structure (stored with its revision); never the live one. Unknown →
   // the delta is not applied and the suggestion says so.
@@ -296,7 +313,8 @@ export async function budgetSuggestion(deps: ScheduleDeps, args: { actor: People
   const minCrewHoursByDate: Record<string, number> = {};
   for (const d of gi.days) {
     const need = ctx.days[d.date]?.need;
-    cateringHoursByDate[d.date] = (need?.sources ?? []).filter((r) => r.source === "catering").reduce((n, r) => n + (r.heads * (r.toQ - r.fromQ)) / 4, 0);
+    cateringHoursByDate[d.date] = scheduleEngine(live) === "crew" ? crewCateringHours(live, d.catering)
+      : (need?.sources ?? []).filter((r) => r.source === "catering").reduce((n, r) => n + (r.heads * (r.toQ - r.fromQ)) / 4, 0);
     structureDeltaByDate[d.date] = ref === null ? 0 : structureDeltaHours({ live, ref, day: { dayType: d.dayType, scheduledOutQ: d.scheduledOutQ, hourlyCents: d.hourlyCents, demandKind: d.demandKind, catering: d.catering } });
     minCrewHoursByDate[d.date] = minCrewHours(live, d.dayType, d.scheduledOutQ);
   }
@@ -304,6 +322,7 @@ export async function budgetSuggestion(deps: ScheduleDeps, args: { actor: People
   return suggestBudget({
     asOf, targetWeekStart: args.weekStart, reference, demand: inputs.demand, cateringHoursByDate, structureDeltaByDate, minCrewHoursByDate,
     currentBudgetTotal: current.unbudgetedDates.length === 7 ? null : current.total, deadbandH: live.labor.budgetDeadbandH, structureDeltaUnknown,
+    structureEngineChanged: ref !== null && scheduleEngine(ref) !== scheduleEngine(live),
   });
 }
 

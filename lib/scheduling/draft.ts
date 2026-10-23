@@ -17,7 +17,7 @@ import { operationalNow } from "@/lib/midshift-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { assertContextFits, canonicalJson, digest64, toContextSnapshot } from "./context-shared";
 import { ScheduleError, type ScheduleErrorCode } from "./errors-shared";
-import { GENERATOR_VERSION, buildWeek } from "./generator/build-shared";
+import { generateWeek } from "./generator/dispatch-shared";
 import { loadSchedulingInputs } from "./inputs";
 import { generatorInputFor, sqlStructureVersion } from "./inputs-shared";
 import { commitRevisionCall } from "./rpc-args-shared";
@@ -85,7 +85,7 @@ export async function runWednesdayDraft(deps: { service: SupabaseClient; now: Da
       const gi = generatorInputFor(inputs, weekStart, { today: et.date });
       let built;
       try {
-        built = buildWeek(gi);
+        built = generateWeek(gi);
       } catch (e) {
         if (e instanceof ScheduleError && e.code === "generator_invalid_output") {
           await log("schedule.generator_invalid", locationId, { week_start: weekStart, params: e.params });
@@ -100,7 +100,7 @@ export async function runWednesdayDraft(deps: { service: SupabaseClient; now: Da
         actorId: null, locationId, weekStart, expectedHead: null, kind: "generated", structureVersionId: sqlStructureVersion(gi.structureVersionId),
         shifts: built.shifts, days: built.days.map((d) => ({ ...d, structureVersionId: sqlStructureVersion(d.structureVersionId) as string })), gaps: built.gaps,
         context: snap.context, reasons: built.reasons,
-        meta: { actorContext: "cron", inputsDigest: digest64(canonicalJson(gi)), generatorVersion: GENERATOR_VERSION, problemsSummary: problemsSummary(built.problems), contextDigest: snap.digest },
+        meta: { actorContext: "cron", inputsDigest: digest64(canonicalJson(gi)), generatorVersion: built.version, problemsSummary: problemsSummary(built.problems), contextDigest: snap.digest },
       });
       const { data, error } = await deps.service.rpc(call.fn, call.args);
       if (error) {
@@ -114,7 +114,7 @@ export async function runWednesdayDraft(deps: { service: SupabaseClient; now: Da
       }
       const revisionId = String((data as { revision_id: string }).revision_id);
       const demand = inputs.demand.kind === "ok" ? "ok" : "no_history";
-      await log("schedule.draft_auto", locationId, { week_start: weekStart, revision_id: revisionId, demand, gaps: built.gaps.length, generator_version: GENERATOR_VERSION });
+      await log("schedule.draft_auto", locationId, { week_start: weekStart, revision_id: revisionId, demand, gaps: built.gaps.length, generator_version: built.version });
       out.push({ locationId, outcome: "built", weekStart, revisionId, demand });
     } catch (e) {
       out.push({ locationId, outcome: "skipped", weekStart, reason: e instanceof ScheduleError ? e.code : "error" });

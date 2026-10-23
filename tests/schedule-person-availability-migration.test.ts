@@ -51,7 +51,7 @@ describe("0281_schedule_person_availability", () => {
       workType: null, alsoAllowed: [], leaderSetting: null, coverPositions: [], softMinH: null,
       softMaxH: null, fullTime: false, fullTimeMinH: null, rosterInclude: null, availability: null });
     const signature = body(src, "save_schedule_person_settings").split("returns")[0]!;
-    expect(Object.keys(call.args)).toEqual([...signature.matchAll(/(p_\w+)/g)].map((match) => match[1]));
+    expect(Object.keys(call.args).filter((key) => key !== "p_usual_shift")).toEqual([...signature.matchAll(/(p_\w+)/g)].map((match) => match[1]));
     expect(call.args.p_availability).toBeNull();
   });
 });

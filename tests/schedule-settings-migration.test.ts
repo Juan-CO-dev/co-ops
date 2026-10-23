@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
 import { extractFunction, normalize } from "../scripts/recipe-versions/reemit-mods";
-import { CASE_DEFAULTS, shopBase } from "../scripts/schedule-structure-cases.mjs";
+import { crewStructureCases, LEGACY_CASE_DEFAULTS, shopBase } from "../scripts/schedule-structure-cases.mjs";
 import { ROLES } from "@/lib/roles";
 import { SCHEDULE_ERROR_CODES } from "@/lib/scheduling/errors-shared";
 import {
@@ -98,7 +98,7 @@ describe("0274_schedule_settings", () => {
       recordDayTypeCall({ actorId: "a", locationId: "l", date: "2026-10-26", dayType: "auto" }),
       recordPinCall({ actorId: "a", locationId: "l", date: null, userId: null, startQ: null, endQ: null, positions: null, kind: null, retiresId: null }),
     ];
-    for (const c of calls) expect(Object.keys(c.args).filter((key) => key !== "p_works_as" && key !== "p_availability"), c.fn).toEqual(sqlParams(c.fn));
+    for (const c of calls) expect(Object.keys(c.args).filter((key) => key !== "p_usual_shift").filter((key) => key !== "p_works_as" && key !== "p_availability"), c.fn).toEqual(sqlParams(c.fn));
   });
 
   it("every refusal a writer raises is a ScheduleErrorCode (the closed vocabulary, en + es)", () => {
@@ -117,11 +117,16 @@ describe("0274_schedule_settings", () => {
     expect(list).toEqual(Object.keys(ROLES).sort());
   });
 
-  it("THE TWIN, fuzzed: valid_schedule_structure ≡ validScheduleStructure on 400 random mutations of both case-file bases", async () => {
+  it.each(["0274", "0283"])("%s THE TWIN, fuzzed: valid_schedule_structure ≡ validScheduleStructure on 400 random mutations of both case-file bases", async (version) => {
     const start = raw.indexOf("-- ── THE STRUCTURE RULE SET");
     const end = raw.indexOf("-- ── THE TABLES");
     const db = new PGlite();
     await db.exec(raw.slice(start, end));
+    if (version === "0283") {
+      const newer = readFileSync("supabase/migrations/0283_schedule_crew_structure.sql", "utf8");
+      const fn = newer.indexOf("create or replace function public.valid_schedule_structure(");
+      await db.exec(newer.slice(fn, newer.indexOf("end $$;", fn) + 7));
+    }
     let seed = 0x5eed0274;
     const rnd = () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     const pick = <T>(a: readonly T[]): T => a[Math.floor(rnd() * a.length)]!;
@@ -134,7 +139,7 @@ describe("0274_schedule_settings", () => {
     let validSeen = 0;
     const N = Number(process.env.TWIN_FUZZ_N ?? 400); // CI: 400; a deeper local run: TWIN_FUZZ_N=3000
     for (let i = 0; i < N; i++) {
-      const v = structuredClone(rnd() < 0.5 ? shopBase() : CASE_DEFAULTS) as Record<string, unknown>;
+      const v = structuredClone(rnd() < 0.5 ? shopBase() : LEGACY_CASE_DEFAULTS) as Record<string, unknown>;
       const log: string[] = [];
       for (let m = 0, n = 1 + Math.floor(rnd() * 2); m < n; m++) {
         const all = paths(v);
@@ -154,6 +159,21 @@ describe("0274_schedule_settings", () => {
       const sql = (await db.query<{ v: boolean }>("select public.valid_schedule_structure($1::jsonb) as v", [JSON.stringify(v)])).rows[0]!.v;
       if (ts === sql) agree++; else console.error(`twin disagrees (TS ${ts}, SQL ${sql}) at`, log.join(" | "), JSON.stringify(log.map((p) => p.split(".").reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], v))));
       if (ts) validSeen++;
+    }
+    if (version === "0283") {
+      // Every node, including containers and the root: no malformed JSON kind may throw.
+      const base = crewStructureCases().find((c) => c.name === "crew")!.value;
+      for (const path of [[], ...paths(base)]) for (const replacement of [null, true, 1, "x", [], {}]) {
+        let value: unknown = structuredClone(base);
+        if (!path.length) value = replacement;
+        else {
+          let parent = value as Record<string, unknown>;
+          for (const key of path.slice(0, -1)) parent = parent[key] as Record<string, unknown>;
+          parent[path[path.length - 1]!] = replacement;
+        }
+        const result = (await db.query<{ v: boolean }>("select public.valid_schedule_structure($1::jsonb) as v", [JSON.stringify(value)])).rows[0]!.v;
+        expect(result, `${path.join(".")} = ${JSON.stringify(replacement)}`).toBe(validScheduleStructure(value).ok);
+      }
     }
     await db.close();
     expect(agree).toBe(N);

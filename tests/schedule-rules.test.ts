@@ -514,6 +514,7 @@ describe("determinism and cost", () => {
     for (let i = 0; i < 2; i++) checkScheduleRules(week(shifts), ctx); // warm the JIT
     // The best of three runs: a complexity guard, not a benchmark of a busy 2-core desktop.
     const times = [0, 1, 2].map(() => { const t0 = performance.now(); checkScheduleRules(week(shifts), ctx); return performance.now() - t0; });
+    process.stdout.write(`[station benchmark] 500 shifts: ${Math.min(...times).toFixed(1)} ms / 50 ms limit\n`);
     expect(Math.min(...times)).toBeLessThan(50);
   });
 });

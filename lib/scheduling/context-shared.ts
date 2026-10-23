@@ -1,3 +1,6 @@
+import type { ResolvedUsualShift } from "./usual-shift-shared";
+import { assertCrewDayFits, type CrewDaySnapshot } from "./crew-contracts-shared";
+import { decodeCrewContext, encodeCrewContext } from "./crew-snapshot-codec-shared";
 /**
  * THE VALIDATION CONTEXT — what `checkScheduleRules` judges against, and its persisted SNAPSHOT
  * (Scheduling Phase 2, r3 P2-4 + r4 P2; plan "Original validation vs current inputs").
@@ -22,6 +25,8 @@ export const WORK_TYPES: readonly WorkType[] = ["boh", "foh", "management"];
 export interface AvailabilityWindow { fromQ: number; toQ: number; source: "toast_pattern" | "insufficient_history" | "manager_set" }
 
 export interface RulePerson {
+  usualShift?: ResolvedUsualShift;
+  workModes?: Record<string, "works" | "if_needed" | "off" | null>;
   userId: string;
   role: RoleCode;
   /** An ACTIVE member of the shop (user_locations.active × users.active). */
@@ -75,6 +80,8 @@ export interface DayInputs {
 }
 
 export interface DayContext {
+  /** Absent in historical station revisions; all crew provenance survives replay. */
+  crew?: CrewDaySnapshot;
   structureVersionId: string;
   structure: ScheduleStructure;
   dayType: CrewType;
@@ -166,7 +173,10 @@ export function jsonbTextBytes(v: unknown): number {
 
 /** The context a revision will store fits, well under the CHECK — else `context_too_large` (en + es), before any RPC. */
 export function assertContextFits(ctx: unknown): { bytes: number } {
-  const bytes = jsonbTextBytes(ctx);
+  if (ctx && typeof ctx === "object" && "days" in ctx) {
+    for (const day of Object.values((ctx as RuleContext).days ?? {})) if (day.crew) assertCrewDayFits(day.crew);
+  }
+  const bytes = jsonbTextBytes(ctx && typeof ctx === "object" && "days" in ctx ? encodeCrewContext(ctx as RuleContext) : ctx);
   if (bytes > CONTEXT_SAFE_MAX_BYTES) throw new ScheduleError("context_too_large", { params: { bytes, max: CONTEXT_SAFE_MAX_BYTES } });
   return { bytes };
 }
@@ -176,7 +186,8 @@ export function assertContextFits(ctx: unknown): { bytes: number } {
  * quick comparison only, never a substitute for the snapshot.
  */
 export function toContextSnapshot(ctx: RuleContext): { context: RuleContext; json: string; digest: string; bytes: number } {
-  const json = canonicalJson(ctx);
+  for (const day of Object.values(ctx.days)) if (day.crew) assertCrewDayFits(day.crew);
+  const json = canonicalJson(encodeCrewContext(ctx));
   return { context: JSON.parse(json) as RuleContext, json, digest: digest64(json), bytes: new TextEncoder().encode(json).length };
 }
 
@@ -189,7 +200,7 @@ export function ruleContextFromSnapshot(stored: unknown): RuleContext {
     || !o.days || !o.people || !o.budgetByDate || !o.closingWindowByDate) {
     throw new Error("ruleContextFromSnapshot: not a version-1 rule context");
   }
-  return JSON.parse(canonicalJson(v)) as RuleContext;
+  return decodeCrewContext(JSON.parse(canonicalJson(v)) as RuleContext);
 }
 
 // ─── The current-inputs advisory ─────────────────────────────────────────────
@@ -201,6 +212,10 @@ export type AdvisoryCode =
 export interface AdvisoryItem { code: AdvisoryCode; date: string | null; userId: string | null; params: Record<string, string | number | null> }
 
 const sameJson = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+const memberSettings = ({ availability: _availability, workModes: _workModes, usualShift, ...rest }: RulePerson) => ({
+  ...rest,
+  ...(usualShift?.source === "manager" ? { usualShift: usualShift.value } : usualShift?.deletedTypeId ? { usualShift: { deletedTypeId: usualShift.deletedTypeId } } : {}),
+});
 const byKey = (a: AdvisoryItem, b: AdvisoryItem) =>
   (a.date ?? "").localeCompare(b.date ?? "") || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0)
   || ((a.userId ?? "") < (b.userId ?? "") ? -1 : (a.userId ?? "") > (b.userId ?? "") ? 1 : 0);
@@ -220,11 +235,11 @@ export function contextAdvisory(snapshot: RuleContext, live: RuleContext): Advis
     if (was?.activeMember && !now?.activeMember) { out.push({ code: "member_removed", date: null, userId: id, params: {} }); continue; }
     if (!was?.activeMember && now?.activeMember) { out.push({ code: "member_added", date: null, userId: id, params: {} }); continue; }
     if (!was || !now) continue;
-    const { availability: wa, ...wRest } = was;
-    const { availability: na, ...nRest } = now;
-    if (!sameJson(wRest, nRest)) out.push({ code: "member_changed", date: null, userId: id, params: {} });
+    const { availability: wa } = was;
+    const { availability: na } = now;
+    if (!sameJson(memberSettings(was), memberSettings(now))) out.push({ code: "member_changed", date: null, userId: id, params: {} });
     for (const d of snapshot.dates) {
-      if (!sameJson(wa[d] ?? "absent", na[d] ?? "absent")) out.push({ code: "availability_changed", date: d, userId: id, params: {} });
+      if (!sameJson(wa[d] ?? "absent", na[d] ?? "absent") || (was.workModes?.[d] ?? null) !== (now.workModes?.[d] ?? null)) out.push({ code: "availability_changed", date: d, userId: id, params: {} });
     }
   }
   for (const d of snapshot.dates) {

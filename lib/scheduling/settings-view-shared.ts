@@ -1,3 +1,5 @@
+import type { UsualShiftGuess } from "./usual-shift-shared";
+import type { ShiftType } from "./structure-shared";
 /**
  * THE SCHEDULE SETTINGS VIEW — pure (Scheduling Phase 2, chunk F, Task 24). The view-model the settings page renders,
  * the helpers its editors share (quarter ↔ clock text, the TS structure validator naming the key BEFORE any post, the
@@ -12,7 +14,7 @@ import type { PositionLabel } from "./board-view-shared";
 import type { ScheduleShopSettings } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
 import type { ToastPrimarySuggestion } from "./position-rank-shared";
-import { validScheduleStructure, type PositionTimeProvenance, type ScheduleStructure, type SeededFrom } from "./structure-shared";
+import { shiftTypesOf, withCrewStructureDefaults, validScheduleStructure, type PositionTimeProvenance, type ScheduleStructure, type SeededFrom } from "./structure-shared";
 import { Q_PER_DAY, addDays, isoWeekStart, qToWall, wallToQ } from "./time-shared";
 
 export interface SettingsPerms {
@@ -31,6 +33,7 @@ export interface SettingsPerms {
 }
 
 export interface SettingsMember {
+  suggestedUsualShift?: UsualShiftGuess | null;
   userId: string;
   name: string;
   role: RoleCode;
@@ -55,6 +58,8 @@ export interface SettingsMember {
 export interface SettingsPin { id: string; date: string; userId: string; startQ: number; endQ: number; positions: string[]; kind: "presence" | "added" }
 
 export interface ScheduleSettingsView {
+  shiftTypes?: readonly ShiftType[];
+  shopDay: Pick<ScheduleStructure["shopDay"], "prepStartQ" | "outLatestQ">;
   locationId: string;
   today: string;
   /** The dates presence / Add to schedule may target (today on, two weeks). */
@@ -123,6 +128,15 @@ const POSITION_FIELD_LABELS: Record<string, TranslationKey> = {
 
 /** Position params are ids; dayType / field params are translation keys, resolved by the editor in its language. */
 export function structureProblemLine(key: string): { key: TranslationKey; params: Record<string, string> } {
+  if (key === "engine") return { key: "schedule.error.structure_engine", params: {} };
+  if (key === "shiftTypes") return { key: "schedule.error.structure_shift_types", params: {} };
+  const shift = /^shiftTypes\.(\d+)(?:\.([^.]+))?/.exec(key);
+  if (shift?.[2] === "id") return { key: "schedule.error.structure_shift_identity", params: { number: String(Number(shift[1]) + 1) } };
+  const shiftFields: Record<string, string> = { id: "id", name: "name", fromQ: "from", toQ: "to", startFlexQ: "flex", minLengthQ: "minimum", headcount: "headcount_label", stations: "stations", countsTowardMod: "mod" };
+  if (shift) return { key: "schedule.error.structure_shift_type", params: { number: String(Number(shift[1]) + 1), field: `schedule.settings.shift_types.${shiftFields[shift[2] ?? ""] ?? "title"}` } };
+  const catering = /^catering\.crewShift(?:\.([^.]+))?$/.exec(key);
+  const cateringFields: Record<string, string> = { enabled: "catering_enabled", typeId: "catering_type", extraHeads: "catering_heads" };
+  if (catering) return { key: "schedule.error.structure_crew_catering", params: { field: `schedule.settings.shift_types.${cateringFields[catering[1] ?? ""] ?? "catering_enabled"}` } };
   const floor = /^crews\.(slow|normal|busy|weekend)\.lineMinHeads\.([^.]+)$/.exec(key);
   if (floor) return { key: "schedule.error.structure_line_floor", params: { position: floor[2]!, dayType: `schedule.board.day_type.${floor[1]}` } };
   const position = /^positions\.([^.]+)\.([^.]+)$/.exec(key);
@@ -152,12 +166,17 @@ export function stationAdvisory(saved: ScheduleStructure, seeded: ScheduleStruct
     if (from?.close === "station" && a.closeQ !== b.closeQ) out.push({ key: "schedule.settings.advisory.close", params: { positionId: id, savedQ: a.closeQ, stationQ: b.closeQ } });
     if (from && from.trim !== "default" && a.trimQ !== b.trimQ) out.push({ key: "schedule.settings.advisory.trim", params: { positionId: id, savedQ: a.trimQ, stationQ: b.trimQ } });
   }
+  for (const type of shiftTypesOf(saved)) {
+    for (const id of type.stations) if (!Object.hasOwn(seeded.positions, id)) {
+      out.push({ key: "schedule.settings.advisory.shift_station_removed", params: { shiftType: type.name, positionId: id } });
+    }
+  }
   return out;
 }
 
 // ─── The exact bodies ────────────────────────────────────────────────────────
 
-export const structureBody = (locationId: string, expectedId: string | null, structure: ScheduleStructure) => ({ action: "structure" as const, locationId, expectedId, structure });
+export const structureBody = (locationId: string, expectedId: string | null, structure: ScheduleStructure) => ({ action: "structure" as const, locationId, expectedId, structure: withCrewStructureDefaults(structure) });
 export const shopBody = (locationId: string, s: ScheduleShopSettings) => ({
   action: "shop" as const, locationId, enabled: s.enabled, estimatedHourlyCents: s.estimatedHourlyCents, estimatedSalariedWeeklyCents: s.estimatedSalariedWeeklyCents, agmAccess: s.agmAccess,
 });
