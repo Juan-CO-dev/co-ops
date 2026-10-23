@@ -1,9 +1,10 @@
+import { crewBlockAttempts } from "./crew-block-attempts-shared";
 import { compareCodePoint } from "./order-shared";
 import { validCrewGapCertificateShape } from "./shapes-shared";
 import { canonicalJson, type DayContext, type RuleContext, type RulePerson } from "./context-shared";
 import type { CrewGapCertificate, CrewRejectionCode, OpenShiftItem } from "./crew-contracts-shared";
 import { scheduleEngine, shiftTypesOf, type ShiftType } from "./structure-shared";
-import { atDayCap, leaderSettingOf, legalHoldPath, modCountsOn, neverGenerated, type DeclaredGap, type Shift, type WeekSchedule } from "./rules-shared";
+import { atDayCap, maxDaysPerWeek, salariedWeek, legalHoldPath, modCountsOn, neverGenerated, type DeclaredGap, type Shift, type WeekSchedule } from "./rules-shared";
 
 /** Type flags restrict the existing role/time rule; they can never grant MoD authority. */
 export function shiftCountsAsMod(shift: Shift, person: RulePerson, day: DayContext, q: number): boolean {
@@ -34,30 +35,22 @@ export function crewCandidateRejections(p: RulePerson, type: ShiftType, date: st
   const av = p.availability[date];
   if (av === null) codes.push("unavailable");
   if (s.shifts.some((sh) => sh.userId === p.userId && sh.date === date)) codes.push("already_scheduled");
-  // Consider the widest possible legal block, including a person's own usual times. This refuses
-  // to certify an opening merely because the standard block fails while their own block fits.
-  const usual = p.usualShift?.value;
-  const own = usual?.typeId === type.id ? usual : null;
-  const from = Math.max(st.shopDay.prepStartQ, av?.fromQ ?? 0, Math.min(type.fromQ, own?.fromQ ?? type.fromQ) - type.startFlexQ);
-  const to = Math.min(day.scheduledOutQ, av?.toQ ?? 96, Math.max(type.toQ, own?.toQ ?? type.toQ) + type.startFlexQ);
-  const minimum = Math.max(type.minLengthQ, st.limits.minimumShiftQ,
-    p.salaried ? (p.role === "gm" ? st.limits.gmMinimumH * 4 : p.role === "agm" ? st.limits.agmMinimumH * 4 : 0) : 0);
-  if (av !== null && to <= from) codes.push("unavailable");
-  if (av !== null && to - from < minimum) codes.push("minimum_length");
-  if (minimum > st.limits.maxShiftH * 4) codes.push("maximum_length");
-  const setting = leaderSettingOf(p, st);
-  if ((setting === "opens" && from + minimum >= st.shopDay.serviceCloseQ)
-    || (setting === "closes" && to - Math.max(from, st.shopDay.serviceStartQ) < minimum)) codes.push("leader_setting");
-  let canHold = false;
-  for (let q = from; q < to && !canHold; q++) {
-    canHold = (type.countsTowardMod && modCountsOn(p, day, q))
-      || Object.keys(st.positions).some((id) => legalHoldPath(p, id, day, date, q) !== null);
-  }
-  if (!canHold && to > from && av !== null && !p.untouchableDates.includes(date)) codes.push("position");
-  if (atDayCap(p, s, date)) codes.push("day_limit");
+  if (atDayCap(p, s, date, maxDaysPerWeek(st))) codes.push("day_limit");
   const hours = s.shifts.filter((sh) => sh.userId === p.userId).reduce((n, sh) => n + sh.endQ - sh.startQ, 0) / 4;
-  codes.push(...crewCandidateHoursEvidence(p, type, date, s, ctx).map((e) => e.code).filter((code) => !codes.includes(code)));
-  if (p.salaried && hours + minimum / 4 > st.limits.salariedTargetWeekH + st.limits.salariedFlexH) codes.push("manager_limit");
+  const evidence = crewCandidateHoursEvidence(p, type, date, s, ctx);
+  codes.push(...evidence.map((e) => e.code).filter((code) => !codes.includes(code)));
+  const replay = crewBlockAttempts(p, type, date, day, "fill", (a, z) => {
+    const h = (z - a) / 4;
+    if (!p.salaried && p.softMaxH !== null && hours + h > p.softMaxH) return "soft_max";
+    if (!p.salaried && hours + h > st.limits.overtimeH) return "overtime";
+    if (p.salaried) {
+      const w = salariedWeek(s, p.userId);
+      const extra = Math.max(0, h - Math.max(0, st.limits.salariedTargetWeekH - w.baseH));
+      if (extra + w.flexH > st.limits.salariedFlexH || w.totalH + h > st.limits.salariedTargetWeekH + st.limits.salariedFlexH) return "manager_limit";
+    }
+    return evidence.some((e) => e.code === "budget") ? "budget" : null;
+  }, { shorten: !p.salaried && !(p.workModes?.[date] === "works" && p.usualShift?.value?.typeId === type.id) });
+  if (!replay.match) for (const { code } of replay.tried) if (code && !codes.includes(code)) codes.push(code);
   return codes.sort();
 }
 

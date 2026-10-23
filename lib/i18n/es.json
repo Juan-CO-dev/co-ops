@@ -8173,6 +8173,8 @@
   "schedule.reason.crew_unassigned": "En turno, disponible para cubrir una estación.",
   "schedule.reason.crew_usual": "Turno habitual en un día regular de trabajo.",
   "schedule.reason.crew_fill": "Se agregó un turno completo para alcanzar la dotación prevista.",
+  "schedule.crew.partly_filled": "Turno parcial: {from}–{to} sin cubrir",
+  "schedule.note.usual_over_cap": "Se omitió el turno habitual porque se alcanzó el límite semanal de días u horas; los días con más demanda tienen prioridad.",
   "schedule.note.crew_block_skipped": "No se pudo asignar un turno completo dentro de los límites de programación.",
   "schedule.note.usual_type_deleted": "El tipo de turno habitual guardado ya no existe. Revisa el turno habitual de esta persona.",
   "schedule.board.crew_unassigned": "En turno · sin estación asignada",

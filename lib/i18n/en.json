@@ -8173,6 +8173,8 @@
   "schedule.reason.crew_unassigned": "On the clock, available to cover a station.",
   "schedule.reason.crew_usual": "Usual shift on a regular workday.",
   "schedule.reason.crew_fill": "Added a whole shift to meet the crew target.",
+  "schedule.crew.partly_filled": "Partly filled: {from}–{to} open",
+  "schedule.note.usual_over_cap": "Usual shift skipped because the weekly day or hours cap was reached; busier days take priority.",
   "schedule.note.crew_block_skipped": "A whole shift could not be placed within the scheduling limits.",
   "schedule.note.usual_type_deleted": "The saved usual shift type no longer exists. Review this person's usual shift.",
   "schedule.board.crew_unassigned": "On the clock · no station assigned",

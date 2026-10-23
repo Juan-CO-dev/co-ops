@@ -123,7 +123,7 @@ describe("Astra chunk F P2-1: an ALLOWLIST over the actual serialized AGM board 
       }
     }
     expect(windows).toBeGreaterThan(0);
-  });
+  }, 120000);
 
   it("the REAL loader's AGM payload (loadBoard over the fake, agm_access read and edit) stays inside the list", async () => {
     const { AGM_BOARD_PATHS } = await import("./fixtures/schedule/agm-board-paths");

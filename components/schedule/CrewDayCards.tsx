@@ -15,6 +15,9 @@ export function CrewDayCards({ day, positions, names, onSelect }: {
         <strong className="block">{row.name} · {shift.crewType?.name ?? t("schedule.crew.custom_shift")}</strong>
         <span>{formatQ(shift.startQ, language)}–{formatQ(shift.endQ, language)}</span>
       </button>
+      {shift.crewType?.open?.map((span) => <p key={span.fromQ} className="text-sm" data-partial-seat>
+        {t("schedule.crew.partly_filled", { from: formatQ(span.fromQ, language), to: formatQ(span.toQ, language) })}
+      </p>)}
       {shift.segments.map((g, index) => <button type="button" key={index} className={control} onClick={() => onSelect(shift, index)}>
         {segment(g)} · {formatQ(g.startQ, language)}–{formatQ(g.endQ, language)}
       </button>)}

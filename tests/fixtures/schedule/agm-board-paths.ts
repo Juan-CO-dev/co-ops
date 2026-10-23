@@ -8,6 +8,7 @@
  * until it is reviewed and added (Astra chunk F P2-1, CC: an allowlist, unknown fields fail). */
 export const AGM_BOARD_PATHS: readonly string[] = [
   ".generate.engine", ".generate.historicalEditedDates[]", ".days[].notes[].params.peopleIds",
+  ".days[].rows[].shifts[].crewType.open[].fromQ", ".days[].rows[].shifts[].crewType.open[].toQ",
   // Crew cards carry type names, clock quarters, headcounts and named explanations only.
   ".days[].crew.openShifts[].typeId", ".days[].crew.openShifts[].name", ".days[].crew.openShifts[].fromQ", ".days[].crew.openShifts[].toQ",
   ".days[].crew.openShifts[].missing", ".days[].crew.openShifts[].reasons[].key",

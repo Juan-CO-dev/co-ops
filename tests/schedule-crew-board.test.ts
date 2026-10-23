@@ -118,3 +118,22 @@ describe("crew board outcomes", () => {
     expect(view.days.every((d) => !("crew" in d) && d.rows.every((r) => r.shifts.every((s) => !("crewType" in s))))).toBe(true);
   });
 });
+
+it.each(["en", "es"] as const)("labels both uncovered ends of a fill seat without changing seat accounting (%s)", (language) => {
+  const src = crewSource();
+  const sh = src.week!.shifts.find((s) => s.date === MON)!;
+  const meta = src.week!.dayContexts[MON]!.crew!.shifts.find((m) => m.userId === sh.userId && m.startQ === sh.startQ)!;
+  meta.source = "fill";
+  sh.startQ = 48; sh.endQ = 78; meta.startQ = 48;
+  const before = JSON.stringify(src.week!.gaps);
+  const view = boardView(src), card = view.days[0]!.rows.flatMap((r) => r.shifts).find((s) => s.ref.userId === sh.userId)!;
+  expect(card.crewType?.open).toEqual([{ fromQ: 40, toQ: 48 }, { fromQ: 78, toQ: 82 }]);
+  expect(view.days[0]!.crew!.openShifts[0]!.missing).toBe(1);
+  expect(JSON.stringify(src.week!.gaps)).toBe(before);
+  const html = render(src, language);
+  expect(html).toContain(language === "en" ? "Partly filled:" : "Turno parcial:");
+  expect(html).toContain("data-partial-seat");
+  const allowed = new Set(AGM_BOARD_PATHS);
+  expect(allowed.has(".days[].rows[].shifts[].crewType.open[].fromQ")).toBe(true);
+  expect(allowed.has(".days[].rows[].shifts[].crewType.open[].toQ")).toBe(true);
+});

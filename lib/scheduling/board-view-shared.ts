@@ -125,7 +125,7 @@ export interface SegmentView {
   modFromQ?: number | null;
 }
 export interface ShiftView {
-  crewType?: { id: string | null; name: string | null };
+  crewType?: { id: string | null; name: string | null; open?: Array<{ fromQ: number; toQ: number }> };
   ref: { date: string; userId: string; startQ: number };
   startQ: number;
   endQ: number;
@@ -310,8 +310,13 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
     const shifts = mine.map((sh): ShiftView => {
       const r = storedReasons(week.reasons[shiftKey(sh.date, sh.userId, sh.startQ)]);
       const meta = ctx?.crew?.shifts.find((m) => m.userId === sh.userId && m.startQ === sh.startQ);
+      const type = ctx ? shiftTypesOf(ctx.structure).find((t) => t.id === meta?.typeId) : undefined;
+      const open = meta?.source === "fill" && type ? [
+        { fromQ: type.fromQ, toQ: Math.min(type.toQ, sh.startQ) },
+        { fromQ: Math.max(type.fromQ, sh.endQ), toQ: type.toQ },
+      ].filter((span) => span.fromQ < span.toQ) : [];
       return {
-        ...(ctx && scheduleEngine(ctx.structure) === "crew" ? { crewType: { id: meta?.typeId ?? null, name: shiftTypesOf(ctx.structure).find((t) => t.id === meta?.typeId)?.name ?? null } } : {}),
+        ...(ctx && scheduleEngine(ctx.structure) === "crew" ? { crewType: { id: meta?.typeId ?? null, name: type?.name ?? null, ...(open.length ? { open } : {}) } } : {}),
         ref: { date: sh.date, userId: sh.userId, startQ: sh.startQ }, startQ: sh.startQ, endQ: sh.endQ, closingManager: sh.closingManager, flex: sh.flex, pinned: sh.pinned, locked,
         segments: sh.segments.map((g, i) => {
           const mf = modFromQOf(p, ctx, g, sh);
