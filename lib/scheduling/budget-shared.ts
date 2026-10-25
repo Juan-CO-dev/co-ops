@@ -19,7 +19,7 @@ import { canonicalJson, digest64, type DayNeed } from "./context-shared";
 import type { DemandResult } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import { buildDayNeed, type NeedCatering } from "./need-shared";
-import type { CrewType, ScheduleStructure } from "./structure-shared";
+import { scheduleEngine, shiftTypesOf, type CrewType, type ScheduleStructure } from "./structure-shared";
 import { addDays, isoDowOf, isYmd, weekDays } from "./time-shared";
 
 export const BUDGET_LINE_KEYS = [
@@ -31,7 +31,7 @@ export const BUDGET_LINE_KEYS = [
   "schedule.budget.errand.no_reference", "schedule.budget.errand.reference_not_ended", "schedule.budget.errand.incomplete_reference",
   "schedule.budget.errand.demand_not_ok", "schedule.budget.errand.no_matched_days", "schedule.budget.errand.zero_reference_sales",
   // Astra chunk E P2-3: the reference week's structure could not be loaded — the structure delta is UNKNOWN, and said so.
-  "schedule.budget.reference_structure_unavailable",
+  "schedule.budget.reference_structure_unavailable", "schedule.budget.reference_engine_changed",
 ] as const;
 export type BudgetLineKey = (typeof BUDGET_LINE_KEYS)[number];
 
@@ -156,11 +156,20 @@ export interface NeedDayInput { dayType: CrewType; scheduledOutQ: number; hourly
 
 /** The structure delta of one date: need hours under the LIVE structure − under the reference revision's, both over the target forecast. */
 export function structureDeltaHours(input: { live: ScheduleStructure; ref: ScheduleStructure; day: NeedDayInput }): number {
-  return needHours(buildDayNeed({ structure: input.live, ...input.day }).need) - needHours(buildDayNeed({ structure: input.ref, ...input.day }).need);
+  if (scheduleEngine(input.live) !== scheduleEngine(input.ref)) return 0;
+  const hours = (s: ScheduleStructure) => scheduleEngine(s) === "crew"
+    ? crewTypeHours(s, input.day.dayType)
+    : needHours(buildDayNeed({ structure: s, ...input.day }).need);
+  return hours(input.live) - hours(input.ref);
 }
 
 /** The hours of the structural minimum crew that day: the line floor (an all-zero forecast shapes to it) + BOH + closing crew; no catering. */
+export function crewTypeHours(s: ScheduleStructure, dayType: CrewType): number {
+  return shiftTypesOf(s).reduce((n, t) => n + t.headcount[dayType] * (t.toQ - t.fromQ) / 4, 0);
+}
+
 export function minCrewHours(s: ScheduleStructure, dayType: CrewType, scheduledOutQ: number): number {
+  if (scheduleEngine(s) === "crew") return crewTypeHours(s, dayType);
   return needHours(buildDayNeed({ structure: s, dayType, scheduledOutQ, hourlyCents: new Array<number>(24).fill(0), demandKind: "ok", catering: [] }).need);
 }
 
@@ -200,6 +209,7 @@ export interface SuggestBudgetInput {
    * not applied, and the suggestion SAYS so (`schedule.budget.reference_structure_unavailable`) — never a silent zero.
    */
   structureDeltaUnknown?: boolean;
+  structureEngineChanged?: boolean;
 }
 
 /**
@@ -255,6 +265,7 @@ export function suggestBudget(input: SuggestBudgetInput): BudgetSuggestion {
   const clamped: string[] = [];
   const lines: NarrativeLine[] = [{ key: "schedule.budget.ratio", params: { pct: Math.round((ratio - 1) * 100), referenceWeek: ref.weekStart, matched: matchedDows.join(","), matchedDays: matchedDows.length } }];
   if (input.structureDeltaUnknown) lines.push({ key: "schedule.budget.reference_structure_unavailable", params: { referenceWeek: ref.weekStart } });
+  if (input.structureEngineChanged) lines.push({ key: "schedule.budget.reference_engine_changed" });
   const deltaLines: NarrativeLine[] = [];
   let unmatchedDays = 0;
   let unmatchedRefH = 0;
@@ -262,7 +273,7 @@ export function suggestBudget(input: SuggestBudgetInput): BudgetSuggestion {
     const dow = isoDowOf(d);
     const refH = refByDow(dow, ref.hoursByDate);
     const cat = (input.cateringHoursByDate[d] ?? 0) - refByDow(dow, ref.cateringHoursByDate);
-    const str = input.structureDeltaUnknown ? 0 : input.structureDeltaByDate[d] ?? 0;
+    const str = input.structureDeltaUnknown || input.structureEngineChanged ? 0 : input.structureDeltaByDate[d] ?? 0;
     if (cat !== 0) deltaLines.push({ key: "schedule.budget.catering_delta", params: { date: d, hours: cat } });
     if (str !== 0) deltaLines.push({ key: "schedule.budget.structure_delta", params: { date: d, hours: str } });
     if (matchedDows.includes(dow)) {

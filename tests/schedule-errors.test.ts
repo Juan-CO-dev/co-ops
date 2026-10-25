@@ -27,6 +27,8 @@ describe("ScheduleErrorCode", () => {
       "gap_certificate_invalid",
       // CC chunk D ruling 3: the stored context past the lib's safe ceiling (well under 0275's CHECK)
       "context_too_large",
+      // Crew evidence must fit its named daily caps without dropping edits or notes.
+      "crew_snapshot_limit",
       // Juan 2026-10-20: a primary / secondary position the person's work type does not allow
       "position_rank_not_allowed",
       // Astra BC-007: a stale full-row person-settings write

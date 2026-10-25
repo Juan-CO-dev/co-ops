@@ -26,6 +26,9 @@ import { BudgetSetter } from "./BudgetSetter";
 import { BudgetSuggestion } from "./BudgetSuggestion";
 import { DayTabs } from "./DayTabs";
 import { DayTimeline } from "./DayTimeline";
+import { CrewDayCards } from "./CrewDayCards";
+import { OpenShiftList } from "./OpenShiftList";
+import { ShortStretchList } from "./ShortStretchList";
 import { ApproveBar, HorizonBuilder } from "./HorizonBuilder";
 import { regenerateBody, runRegenerate } from "./horizon-flow-shared";
 import { LaborTargetCard } from "./LaborTargetCard";
@@ -200,13 +203,17 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
 
       {day ? (
         <section className="grid min-w-0 gap-2" aria-label={formatDateLabel(day.date, language)} data-day={day.date}>
+          {day.crew ? <OpenShiftList items={day.crew.openShifts} /> : null}
           {day.notes.map((n, i) => <p key={i} className="text-sm text-co-text-muted">{line(n)}</p>)}
           <EditNotice state={edit} />
-          <DayTimeline key={`${day.date}|${edit.snapBack}`} day={day} names={view.names} positions={view.positions}
+          {day.crew ? <>
+            <CrewDayCards day={day} names={view.names} positions={view.positions} onSelect={onSelect} />
+            <ShortStretchList items={day.crew.shortStretches} positions={view.positions} />
+          </> : <DayTimeline key={`${day.date}|${edit.snapBack}`} day={day} names={view.names} positions={view.positions}
             renderRows={(axis) => day.rows.map((row) => (
               <PersonRow key={row.userId} row={row} axis={axis} {...rowEditProps(editable, !!edit.pending)} focusMemo={focusMemo} positions={view.positions} names={view.names}
                 roleOf={roleOf} selectedKey={pickedShift ? shiftKeyOf(pickedShift) : null} onSelect={onSelect} onEdit={submitEdit} />
-            ))} />
+            ))} />}
           {pickedRow && pickedShift ? (
             <ReasonPanel row={pickedRow} shift={pickedShift} segment={picked?.segment ?? null} editable={editable && !pickedShift.locked} busy={!!edit.pending}
               names={view.names} positions={view.positions} onEdit={submitEdit} />
@@ -228,7 +235,7 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
           </button>
           {confirming ? (
             <div role="alertdialog" aria-labelledby="schedule-regen-warning" className="grid gap-2 rounded-lg border-2 border-co-warning bg-co-warning-surface p-3" data-section="regenerate-confirm">
-              <p id="schedule-regen-warning" className="text-sm font-bold text-co-warning-text">{t("schedule.board.horizon.edited_warning")}</p>
+              <p id="schedule-regen-warning" className="text-sm font-bold text-co-warning-text">{t(view.generate.engine === "crew" ? "schedule.board.horizon.crew_edited_warning" : "schedule.board.horizon.edited_warning")}{view.generate.engine === "crew" && !!view.generate.historicalEditedDates?.length && <> {t("schedule.board.horizon.crew_history_warning")}</>}</p>
               <div className="flex flex-wrap gap-2">
                 <button type="button" data-act="regenerate-confirm" onClick={() => answerConfirm(true)}
                   className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 font-bold text-co-text">{t("schedule.board.horizon.confirm_week")}</button>

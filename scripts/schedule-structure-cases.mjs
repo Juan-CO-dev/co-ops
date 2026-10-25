@@ -31,8 +31,8 @@ const crew = (prepHeads, prepUntilQ, setup, service, rush, closeWalk) => ({
   lineMinHeads: {},
 });
 
-/** THE shipped defaults (equal to SCHEDULE_STRUCTURE_DEFAULTS; vitest pins it). */
-export const CASE_DEFAULTS = {
+/** Historical 0274 defaults: keep its case inputs unchanged. */
+export const LEGACY_CASE_DEFAULTS = {
   version: 1,
   shopDay: { prepStartQ: 28, prepDishArrivalQ: 34, serviceStartQ: 42, serviceCloseQ: 80, outEarliestQ: 82, outLatestQ: 84 },
   dayTypes: { slowBelowCents: 400000, busyAboveCents: 480000, weekendIsoDows: [6, 7] },
@@ -60,12 +60,16 @@ export const CASE_DEFAULTS = {
   roster: { excludedRoles: ["cgs", "social_media_mgr"] },
 };
 
+/** Current shipped defaults (equal to SCHEDULE_STRUCTURE_DEFAULTS; vitest pins it). */
+export const CASE_DEFAULTS = { ...LEGACY_CASE_DEFAULTS, engine: "stations", shiftTypes: [],
+  catering: { ...LEGACY_CASE_DEFAULTS.catering, crewShift: { enabled: false, typeId: null, extraHeads: 1 } } };
+
 const I = CASE_POSITION_IDS;
 const pos = (role, openQ, trimQ, closeQ, allowedRoles = ALL_FLOOR) => ({ role, openQ, trimQ, closeQ, headsBefore: 1, headsAfter: 1, allowedRoles });
 
 /** The mockup v17 Capitol Hill set (times from its defaultStructure.stations, × 4). */
 export function shopBase() {
-  const s = structuredClone(CASE_DEFAULTS);
+  const s = structuredClone(LEGACY_CASE_DEFAULTS);
   s.positions = {
     [I.$PREP]: pos("prep", 28, 60, 68),
     [I.$DISH]: pos("prep_dish", 28, 68, 84, ["trainee", "employee", "trainer"]),
@@ -104,7 +108,7 @@ function setPath(obj, path, value) {
 /** One case → the value both validators judge. */
 export function materializeStructureCase(c) {
   if (Object.prototype.hasOwnProperty.call(c, "raw")) return expandValue(structuredClone(c.raw));
-  const v = c.base === "shop" ? shopBase() : structuredClone(CASE_DEFAULTS);
+  const v = c.base === "shop" ? shopBase() : structuredClone(LEGACY_CASE_DEFAULTS);
   for (const [path, value] of Object.entries(c.set ?? {})) setPath(v, path, value);
   if (c.extra) setPath(v, c.extra.path, c.extra.value);
   return v;
@@ -117,4 +121,49 @@ export function expectedStructureKey(c) {
 
 export function loadStructureCases(path = "tests/fixtures/schedule/structure-cases.json") {
   return JSON.parse(readFileSync(path, "utf8")).cases;
+}
+
+/** New cases are deliberately separate: 0274 still receives its original legacy inputs. */
+export function crewStructureCases() {
+  const base = { ...shopBase(), engine: "crew", shiftTypes: [{ id: "morning", name: "Morning",
+    fromQ: 28, toQ: 60, startFlexQ: 4, minLengthQ: 16,
+    headcount: { slow: 0, normal: 2, busy: 20, weekend: 3 },
+    stations: [I.$PREP, I.$DISH], countsTowardMod: true }] };
+  base.catering.crewShift = { enabled: true, typeId: "morning", extraHeads: 1 };
+  const cases = [{ name: "legacy", value: shopBase(), key: null },
+    { name: "new defaults", value: structuredClone(CASE_DEFAULTS), key: null },
+    { name: "crew", value: base, key: null }];
+  const bad = (name, path, value, key = path) => {
+    const v = structuredClone(base); setPath(v, path, value); cases.push({ name, value: v, key });
+  };
+  bad("engine", "engine", "other"); bad("null engine", "engine", null);
+  bad("no types", "shiftTypes", []); bad("types not array", "shiftTypes", null);
+  bad("duplicate type", "shiftTypes", [base.shiftTypes[0], base.shiftTypes[0]], "shiftTypes.1.id");
+  for (const [field, value] of [["id", ""], ["name", "  "], ["fromQ", 27], ["fromQ", 28.5],
+    ["toQ", 85], ["toQ", 28], ["startFlexQ", -1], ["startFlexQ", 97], ["minLengthQ", 0],
+    ["minLengthQ", 33], ["countsTowardMod", "true"], ["stations", [I.$PREP, I.$PREP]],
+    ["stations", ["missing"]], ["headcount", null]]) bad(`${field}:${JSON.stringify(value)}`, `shiftTypes.0.${field}`, value);
+  for (const whitespace of ["\t", "\u00a0", "\u1680", "\u2000", "\u2028", "\u202f", "\u3000", "\ufeff"]) {
+    bad(`blank id ${whitespace.codePointAt(0)}`, "shiftTypes.0.id", whitespace);
+    bad(`blank name ${whitespace.codePointAt(0)}`, "shiftTypes.0.name", whitespace);
+    bad(`blank catering type ${whitespace.codePointAt(0)}`, "catering.crewShift.typeId", whitespace);
+  }
+  const letterV = structuredClone(base); letterV.shiftTypes[0].name = "v";
+  cases.push({ name: "letter v is not whitespace", value: letterV, key: null });
+  bad("unknown type field", "shiftTypes.0.extra", 1);
+  bad("missing type field", "shiftTypes.0.name", "__drop__");
+  bad("headcount missing", "shiftTypes.0.headcount.slow", "__drop__");
+  bad("headcount overflow", "shiftTypes.0.headcount.busy", 21);
+  bad("headcount fraction", "shiftTypes.0.headcount.normal", 1.5);
+  bad("unknown headcount", "shiftTypes.0.headcount.extra", 1);
+  bad("catering null", "catering.crewShift", null);
+  bad("catering missing type", "catering.crewShift.typeId", "gone");
+  bad("catering null type", "catering.crewShift.typeId", null);
+  bad("catering boolean", "catering.crewShift.enabled", "true");
+  bad("catering extra zero", "catering.crewShift.extraHeads", 0);
+  bad("catering extra high", "catering.crewShift.extraHeads", 21);
+  bad("catering extra fraction", "catering.crewShift.extraHeads", 1.5);
+  const disabled = structuredClone(base); disabled.catering.crewShift = { enabled: false, typeId: null, extraHeads: 1 };
+  cases.push({ name: "disabled catering", value: disabled, key: null });
+  return cases;
 }

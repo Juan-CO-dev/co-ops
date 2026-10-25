@@ -1,0 +1,26 @@
+{
+  "fixture": "crew-p-street-2026-10-19.ts",
+  "test": "../../schedule-crew-acceptance.test.ts",
+  "source": "tmp/crew-acceptance-snapshot.json, sanitized settings captured 2026-10-22; source file excluded from patch",
+  "weekStart": "2026-10-19",
+  "idPolicy": "Every person, shop, position, structure, budget and override id is synthetic. Original position UUIDs remapped consistently in positions, priorities, headcounts and cover positions.",
+  "preserved": ["Entire snapshot structure including prepStartQ 28, serviceCloseQ 80, outEarliestQ/outLatestQ 82", "350 hour week budget, apportioned evenly at 50 hours/day", "Roles, works-as, leader settings, positions, full-time settings and supplied availability"],
+  "addedEvidence": ["R14 explicit usual shifts; J Sun-Thu and Henry Tue-Sat availability", "Spec 4.1 shift types: Opener 30-64 flex4 min24 heads3/3/3/3; Mid 40-82 flex4 min20 heads3/3/4/4; PM closer 64-82 flex0 min16 heads1/1/1/1", "Friday busy override; Saturday/Sunday weekend rule; other dates use no-history fallback", "No fabricated sales, wages, skill evidence or punch history", "Quinn and Lucas are synthetic negative controls explicitly employment-excluded; absent from the sanitized source roster"],
+  "expectedDistinctPeopleMonToSun": [7, 7, 7, 7, 5, 6, 6],
+  "openShiftEvidence": [
+    { "date": "2026-10-23", "type": "mid", "placed": 1, "required": 4, "missing": 3, "cause": "unresolved_search", "unprovenCandidates": ["Santos", "Veronica"] },
+    { "date": "2026-10-24", "type": "mid", "placed": 1, "required": 4, "missing": 3, "cause": "crew_shortfall", "unprovenCandidates": [] },
+    { "date": "2026-10-25", "type": "mid", "placed": 2, "required": 4, "missing": 2, "cause": "crew_shortfall", "unprovenCandidates": [] }
+  ],
+  "limitations": [
+    "Friday has three unresolved Mid seats: Santos and Veronica hold BOH positions outside the Mid type station list, but the conservative verifier considers all shop positions, so it cannot prove their exclusion. Saturday and Sunday open Mids now have complete verified minimum-length hours evidence.",
+    "Fix F: Akia works three 10.5h Mids plus Thursday 12:00-20:30 (8.5h), exactly 40h. Her remaining Mid exclusions prove 40 + 5 > 40. Numeric evidence is in persisted crew notes; rejection certificates retain the unchanged SQL {userId,codes} shape.",
+    "J is 45.75h, within 40+10: Mon-Thu 07:00-16:00 and Sun 10:00-19:45 Mid instead of usual Opener; the Sunday Opener attempt reports minimum_length. Islam fills Fri-Sun 07:00-16:00 Opener despite usual Mid because the snapshot default is opens.",
+    "Henry's exact Tue-Sat 07:30-16:00 usual week is 42.5h; overtime and soft-range warnings are asserted, not hidden.",
+    "Unstaffed stations retain coverage-gap evidence; the no-fragments assertion refers to whole shifts, with uninterrupted segments within each shift.",
+    "Default closing duration 45min exceeds fixed 20:30 out limit and produces checklist_past_max warnings; the snapshot was not relaxed."
+  ],
+  "shortageVariant": "Mark Henry and Tio Off Friday; Santos and Veronica may then fill Friday. Baseline has neither on Friday.",
+  "performanceVariant": "Extend roster with synthetic employee copies of Akia until generatorInputFor produces exactly 43 people; measure generateWeek and print duration. Timing is observational to avoid flaky CI thresholds.",
+  "verification": "npx.cmd vitest run tests/schedule-crew-acceptance.test.ts; 11 tests. Week table and per-day candidate rejection evidence printed to stdout. Root runs touched-file TypeScript and full suite."
+}

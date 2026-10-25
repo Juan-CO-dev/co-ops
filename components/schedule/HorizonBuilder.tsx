@@ -152,7 +152,7 @@ function PreviewWeekCard({ w, names, positions, confirmed, onConfirm }: {
       {w.confidence === "further_out" ? <p className="text-xs text-co-text-muted">{t("schedule.board.banner.further_out")}</p> : null}
       {w.edited ? (
         <div className="grid gap-1 rounded-lg border-2 border-co-warning bg-co-warning-surface p-2">
-          <p className="text-sm font-bold text-co-warning-text">{t("schedule.board.horizon.edited_warning")}</p>
+          <p className="text-sm font-bold text-co-warning-text">{t(w.engine === "crew" ? "schedule.board.horizon.crew_edited_warning" : "schedule.board.horizon.edited_warning")}{w.engine === "crew" && !!w.historicalEditedDates?.length && <> {t("schedule.board.horizon.crew_history_warning")}</>}</p>
           <label data-confirm-week={w.weekStart} className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
             <input type="checkbox" className="h-5 w-5" checked={confirmed} onChange={(e) => onConfirm(e.target.checked)} />
             {t("schedule.board.horizon.confirm_week")}

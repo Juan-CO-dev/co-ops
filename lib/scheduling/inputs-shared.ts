@@ -26,7 +26,7 @@ import { ScheduleError } from "./errors-shared";
 import type { BuildDayInput, GeneratorInput, HeadSnapshot, Pin } from "./generator/build-shared";
 import { makeSkillLookup, punchPatterns, toSchedPeople, type PersonSettingsRow, type PunchEntry } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, Shift } from "./rules-shared";
-import { scheduledOut, type ScheduleStructure } from "./structure-shared";
+import { scheduleEngine, scheduledOut, type ScheduleStructure } from "./structure-shared";
 import { addDays, isoWeekStart, weekDays } from "./time-shared";
 
 /** The structure version id of the seeded defaults (no saved structure). SQL stores NULL for it. */
@@ -70,6 +70,8 @@ export interface StoredWeek {
   head: StoredHead | null;
   /** An 'edited' revision is newer than the newest generated / regenerated one (J12). */
   edited: boolean;
+  /** Edited origins without crew provenance are retained, including after regeneration. */
+  historicalEditedDates?: string[];
 }
 
 export interface SchedulingInputs {
@@ -191,6 +193,13 @@ export function overrideFor(rows: readonly DayTypeRow[], date: string): { id: st
   return mine[0] ? { id: mine[0].id, dayType: mine[0].dayType } : null;
 }
 
+/** Missing edit provenance cannot safely be reconstructed from changed shift keys. */
+export function historicalCrewDates(week: StoredWeek | undefined): string[] {
+  if (!week?.head) return [];
+  if (week.historicalEditedDates !== undefined) return week.historicalEditedDates;
+  return week.edited ? week.head.days.filter((d) => !week.head!.context.days[d.date]?.crew).map((d) => d.date) : [];
+}
+
 /** The head as the generator's snapshot (null when the week has no revision). */
 export function headSnapshotFor(week: StoredWeek | undefined): HeadSnapshot | null {
   const h = week?.head;
@@ -198,6 +207,7 @@ export function headSnapshotFor(week: StoredWeek | undefined): HeadSnapshot | nu
   return {
     revisionId: h.revision.id, shifts: h.shifts, days: h.days, gaps: h.gaps, reasons: h.reasons,
     closingWindowByDate: h.context.closingWindowByDate ?? {},
+    ...(Object.values(h.context.days).some((d) => d.crew) ? { dayContexts: h.context.days } : {}),
   };
 }
 
@@ -207,13 +217,14 @@ export function headSnapshotFor(week: StoredWeek | undefined): HeadSnapshot | nu
  * One week's `GeneratorInput`. `buildDays` = the dates to (re)build; every other date of the week is carried from the
  * head. `today` is the ET business date. Refuses `demand_unavailable` when demand did not load (never a flat curve).
  */
-export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, opts: { today: string; buildDays?: readonly string[] }): GeneratorInput {
+export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, opts: { today: string; buildDays?: readonly string[]; confirmEdited?: boolean }): GeneratorInput {
   if (inputs.demand.kind === "unavailable") throw new ScheduleError("demand_unavailable", { params: { cause: inputs.demand.cause } });
   // 7shifts' weekly overtime line, once synced, overrides the structure's default (plan "Data reality").
   const s = inputs.overtimeH === null ? inputs.structure.structure
     : { ...inputs.structure.structure, limits: { ...inputs.structure.structure.limits, overtimeH: inputs.overtimeH } };
   const dates = weekDays(weekStart);
-  const buildDays = (opts.buildDays ?? dates).filter((d) => dates.includes(d) && d >= opts.today);
+  const preserved = scheduleEngine(s) === "crew" && !opts.confirmEdited ? historicalCrewDates(inputs.weeks[weekStart]) : [];
+  const buildDays = (opts.buildDays ?? dates).filter((d) => dates.includes(d) && d >= opts.today && !preserved.includes(d));
   const forecastOf = (date: string): DayForecast | null => (inputs.demand.kind === "unavailable" ? null : inputs.demand.days.find((d) => d.date === date) ?? null);
   const closing = resolveClosingMinutes({ override: s.limits.closingMinutesOverride, measured: inputs.closing });
   const outQ = scheduledOut(s, closing.minutes);
@@ -235,13 +246,14 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
   const { people } = toSchedPeople({
     members: inputs.members.map((m) => ({ userId: m.userId, role: m.role, active: true })),
     excludedUserIds: [...excluded],
-    settings: inputs.personSettings, patterns, dates, structure: s,
+    settings: inputs.personSettings, patterns, dates, structure: s, punches: inputs.punches, asOf: inputs.asOf,
     shopDay: { fromQ: s.shopDay.prepStartQ, toQ: s.shopDay.outLatestQ },
     wages: { byUserCents: inputs.wages.byUserCents, estimateHourlyCents: inputs.shopSettings.estimatedHourlyCents }, skills,
   });
   const budget = budgetForDates(inputs.budget.entries, inputs.budget.rows, dates);
   return {
     locationId: inputs.locationId, weekStart, today: opts.today, days, structure: s, structureVersionId: inputs.structure.id, people, skills,
+    ...(scheduleEngine(s) === "crew" && inputs.weeks[weekStart]?.head ? { crew: { headContext: inputs.weeks[weekStart]!.head!.context } } : {}),
     pins: inputs.pins.filter((p) => dates.includes(p.date) && !excluded.has(p.userId)), budgetByDate: budget.byDate, head: headSnapshotFor(inputs.weeks[weekStart]),
   };
 }

@@ -23,11 +23,13 @@ import type { AdvisoryItem, DayContext, RuleContext, RulePerson } from "./contex
 import { laborTarget, type LaborTarget } from "./labor-target-shared";
 import { skillOf, type SchedSkillBand, type SkillLookup } from "./people-input-shared";
 import { shiftKey, type Reason, type ShiftReasons } from "./reasons-shared";
-import { MOD, approvalRefusal, modCountsOn, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
+import { MOD, approvalRefusal, modCountsOn, shiftCountsAsMod, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
 import { strengthWindows, teamStrength, type WindowStrength } from "./strength-shared";
 import type { CrewType, PositionRole } from "./structure-shared";
-import { positionIds } from "./structure-shared";
+import { positionIds, scheduleEngine, shiftTypesOf } from "./structure-shared";
 import { Q_PER_HOUR, weekDays } from "./time-shared";
+import { crewOpenItems } from "./crew-gap-verifier-shared";
+import { CREW_REJECTION_CODES } from "./crew-contracts-shared";
 
 export interface BoardPerms {
   canSeeMoney: boolean;
@@ -44,6 +46,7 @@ export interface BoardPerms {
 }
 
 export interface BoardWeekSource {
+  historicalCrewDates?: string[];
   headRevisionId: string;
   approvedRevisionId: string | null;
   edited: boolean;
@@ -72,6 +75,7 @@ export interface BoardSource {
   perms: BoardPerms;
   /** The live structure id (the defaults sentinel when none is saved). */
   liveStructureId: string;
+  liveEngine?: "stations" | "crew";
   demand: "ok" | "no_history" | "unavailable";
   names: Record<string, string>;
   roles: Record<string, RoleCode>;
@@ -113,6 +117,7 @@ export interface GapLine {
 
 export interface SegmentView {
   positionId: string; startQ: number; endQ: number; mod: boolean; lastResort: boolean; reasons: Reason[];
+  crewUnassigned?: boolean;
   /**
    * CC chunk H9: on a MoD-lane segment the person does NOT count on from its start (a key holder before the shop's KH time): the
    * first quarter they do count (null = none of it). Absent = the whole segment is manager-on-duty time (or a station).
@@ -120,6 +125,7 @@ export interface SegmentView {
   modFromQ?: number | null;
 }
 export interface ShiftView {
+  crewType?: { id: string | null; name: string | null; open?: Array<{ fromQ: number; toQ: number }> };
   ref: { date: string; userId: string; startQ: number };
   startQ: number;
   endQ: number;
@@ -147,7 +153,13 @@ export interface PersonRowView {
   profile: Array<{ positionId: string; band: SchedSkillBand }>;
 }
 
+export interface OpenShiftView {
+  typeId: string; name: string; fromQ: number; toQ: number; missing: number; reasons: NarrativeLine[];
+}
+export interface ShortStretchView { positionId: string; fromQ: number; toQ: number; missing: number }
 export interface DayView {
+  /** Absent on historical station boards, preserving their serialized contract. */
+  crew?: { openShifts: OpenShiftView[]; shortStretches: ShortStretchView[] };
   date: string;
   locked: boolean;
   inherited: boolean;
@@ -179,7 +191,7 @@ export interface BoardView {
   weeksAhead: number;
   perms: BoardPerms;
   banners: BoardBanner[];
-  generate: { disabled: boolean; expectedHead: string | null; edited: boolean };
+  generate: { disabled: boolean; expectedHead: string | null; edited: boolean; engine?: "stations" | "crew"; historicalEditedDates?: string[] };
   week: { headRevisionId: string; approved: boolean; edited: boolean } | null;
   strip: MoneyStrip | null;
   budgetLines: NarrativeLine[];
@@ -197,12 +209,16 @@ export interface BoardView {
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const isHourly = (p: RulePerson | undefined) => !!p && !p.salaried && !p.presenceOnly;
+const crewNoteReasons = new Set<string>([...CREW_REJECTION_CODES, "pin_blocked_by_manual", "manual_person_unavailable", "budget_displaced_essential", "mod_reserved", "no_fit"]);
 
 // ─── Gaps ────────────────────────────────────────────────────────────────────
 
 /** The certificate as the board words it (CC chunk D design ruling: "Over budget: needs at least ~W h (best fill found)"). */
 export function gapLine(g: DeclaredGap): NarrativeLine {
   switch (g.cause) {
+    case "crew_shortfall": return g.certificate.kind === "open_shifts"
+      ? { key: "schedule.gap.certificate.open_shifts", params: { missing: g.certificate.items.reduce((n, i) => n + i.missing, 0) } }
+      : { key: "schedule.gap.certificate.station_short", params: { required: g.certificate.required, assigned: g.certificate.assigned } };
     case "budget_limited": return { key: "schedule.gap.certificate.budget_limited", params: { fillHours: g.certificate.fillHours, remainingHours: g.certificate.remainingHours } };
     case "floor_limit": return { key: "schedule.gap.certificate.floor_limit", params: { limitH: g.certificate.limitH } };
     case "capacity": return { key: "schedule.gap.certificate.capacity", params: { requiredHeads: g.certificate.requiredHeads, people: g.certificate.people, shortBy: g.certificate.shortBy } };
@@ -235,7 +251,7 @@ function problemLines(week: BoardWeekSource): ProblemLine[] {
       const params: Record<string, string | number> = {};
       for (const [k, v] of Object.entries(p.params)) if (typeof v === "number" || typeof v === "string") params[k] = v;
       out.push({ code: p.code, severity: p.severity, date: p.day, userId: p.userId ?? null, positionId: p.positionId ?? null, q: p.q ?? null,
-        line: { key: `schedule.rule.${p.code}`, params }, inherited: d.inherited || p.inherited });
+        line: { key: p.code === "open_shift" && p.params.proven !== true ? "schedule.rule.open_shift_unresolved" : `schedule.rule.${p.code}`, params }, inherited: d.inherited || p.inherited });
     }
   }
   return out;
@@ -275,9 +291,9 @@ function assumed(p: RulePerson | undefined, date: string): boolean {
  * rule) when that is not its start; null when they never count on it; undefined for a station, an unknown person or day, or a
  * segment that is manager-on-duty time throughout.
  */
-export function modFromQOf(p: RulePerson | undefined, day: Pick<DayContext, "structure" | "inputs"> | null, g: { positionId: string; startQ: number; endQ: number }): number | null | undefined {
+export function modFromQOf(p: RulePerson | undefined, day: Pick<DayContext, "structure" | "inputs"> | null, g: { positionId: string; startQ: number; endQ: number }, shift?: Shift): number | null | undefined {
   if (g.positionId !== MOD || !p || !day) return undefined;
-  for (let q = g.startQ; q < g.endQ; q++) if (modCountsOn(p, day, q)) return q === g.startQ ? undefined : q;
+  for (let q = g.startQ; q < g.endQ; q++) if (shift ? shiftCountsAsMod(shift, p, day as DayContext, q) : modCountsOn(p, day, q)) return q === g.startQ ? undefined : q;
   return null;
 }
 
@@ -293,11 +309,19 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
     const s = ctx?.structure;
     const shifts = mine.map((sh): ShiftView => {
       const r = storedReasons(week.reasons[shiftKey(sh.date, sh.userId, sh.startQ)]);
+      const meta = ctx?.crew?.shifts.find((m) => m.userId === sh.userId && m.startQ === sh.startQ);
+      const type = ctx ? shiftTypesOf(ctx.structure).find((t) => t.id === meta?.typeId) : undefined;
+      const open = meta?.source === "fill" && type ? [
+        { fromQ: type.fromQ, toQ: Math.min(type.toQ, sh.startQ) },
+        { fromQ: Math.max(type.fromQ, sh.endQ), toQ: type.toQ },
+      ].filter((span) => span.fromQ < span.toQ) : [];
       return {
+        ...(ctx && scheduleEngine(ctx.structure) === "crew" ? { crewType: { id: meta?.typeId ?? null, name: type?.name ?? null, ...(open.length ? { open } : {}) } } : {}),
         ref: { date: sh.date, userId: sh.userId, startQ: sh.startQ }, startQ: sh.startQ, endQ: sh.endQ, closingManager: sh.closingManager, flex: sh.flex, pinned: sh.pinned, locked,
         segments: sh.segments.map((g, i) => {
-          const mf = modFromQOf(p, ctx, g);
-          return { positionId: g.positionId, startQ: g.startQ, endQ: g.endQ, mod: g.positionId === MOD, lastResort: !!g.lastResort, reasons: r.segments[i] ?? [], ...(mf !== undefined ? { modFromQ: mf } : {}) };
+          const mf = modFromQOf(p, ctx, g, sh);
+          const unassigned = g.positionId === MOD && ctx && scheduleEngine(ctx.structure) === "crew" && g.reasonKey === "schedule.reason.crew_unassigned";
+          return { positionId: g.positionId, startQ: g.startQ, endQ: g.endQ, mod: g.positionId === MOD && (!unassigned || (!!p && !!ctx && shiftCountsAsMod(sh, p, ctx, g.startQ))), lastResort: !!g.lastResort, reasons: r.segments[i] ?? [], ...(mf !== undefined ? { modFromQ: mf } : {}), ...(unassigned ? { crewUnassigned: true } : {}) };
         }),
         reasons: r.shift,
         alternates: r.alternates.map((a) => {
@@ -319,16 +343,48 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
   return rows.sort((a, b) => (a.shifts[0]?.startQ ?? 0) - (b.shifts[0]?.startQ ?? 0) || cmp(a.name, b.name) || cmp(a.userId, b.userId));
 }
 
-function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: Map<string, number>, wages: Record<string, number | null>, gaps: GapLine[]): DayView {
+function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: Map<string, number>, wages: Record<string, number | null>, gaps: GapLine[], showDeletedUsualShifts: boolean): DayView {
   const ctx = week.dayContexts[date] ?? null;
   const record = week.days.find((d) => d.date === date);
   const money = src.perms.canSeeMoney;
   const shifts = week.shifts.filter((sh) => sh.date === date);
   const notes: NarrativeLine[] = [];
+  if (week.historicalCrewDates?.includes(date)) notes.push({ key: "schedule.note.crew_history_preserved" });
+  if (ctx && scheduleEngine(ctx.structure) === "crew") for (const note of ctx.crew?.notes ?? []) {
+    const params: Record<string, string | number> = {};
+    for (const [key, value] of Object.entries(note.params)) if (typeof value === "string" || typeof value === "number") params[key] = value;
+    if (Array.isArray(note.params.userIds)) params.peopleIds = JSON.stringify(note.params.userIds);
+    if (note.userId) params.userId = note.userId;
+    if (note.positionId) params.positionId = note.positionId;
+    notes.push({ key: note.code === "crew_block_skipped" && typeof params.reason === "string" && crewNoteReasons.has(params.reason)
+      ? `schedule.crew.rejection.${params.reason}` : `schedule.note.${note.code}`, params });
+    if (params.peopleIds && note.code !== "over_soft_max") notes.push({ key: "schedule.crew.note_people", params: { count: params.count ?? 1, peopleIds: params.peopleIds } });
+  }
+  if (showDeletedUsualShifts) for (const p of Object.values(week.people).sort((a, b) => a.userId < b.userId ? -1 : 1)) {
+    if (p.usualShift?.deletedTypeId) notes.push({ key: "schedule.note.usual_shift_deleted", params: { userId: p.userId } });
+  }
   if (ctx?.inputs.demandKind === "no_history") notes.push({ key: "schedule.note.no_history" });
   if (ctx?.need.shapeNote === "zero_demand") notes.push({ key: "schedule.note.zero_demand" });
   if (ctx?.need.shapeNote === "zero_profile") notes.push({ key: "schedule.note.zero_profile" });
+  // A failed search is still an opening. Certificates explain the evidence; they are
+  // not the inventory of missing seats, which comes from the saved type/shift context.
+  const openShifts: OpenShiftView[] = ctx && scheduleEngine(ctx.structure) === "crew"
+    ? crewOpenItems(date, { locationId: src.locationId, weekStart: src.weekStart, shifts: week.shifts, days: week.days, gaps: week.gaps }, ruleContext(src, week)).map((item) => {
+      const certified = week.gaps.flatMap((g) => g.date === date && g.cause === "crew_shortfall" && g.certificate.kind === "open_shifts" ? g.certificate.items : [])
+        .find((i) => i.typeId === item.typeId);
+      return { typeId: item.typeId, name: shiftTypesOf(ctx.structure).find((t) => t.id === item.typeId)?.name ?? item.typeId,
+        fromQ: item.fromQ, toQ: item.toQ, missing: item.missing,
+        reasons: certified ? [...new Set(certified.rejected.flatMap((r) => r.codes))].sort(cmp).map((code) => ({ key: `schedule.crew.rejection.${code}` }))
+          : [{ key: "schedule.gap.certificate.unresolved_search" }],
+      };
+    }) : [];
   const base = {
+    ...(ctx && scheduleEngine(ctx.structure) === "crew" ? { crew: {
+      openShifts,
+      shortStretches: week.gaps.flatMap((g): ShortStretchView[] => g.date === date && g.positionId && g.cause === "crew_shortfall" && g.certificate.kind === "station_short"
+        ? [{ positionId: g.positionId, fromQ: g.fromQ, toQ: g.toQ, missing: g.certificate.required - g.certificate.assigned }] : [])
+        .sort((a, b) => cmp(a.positionId, b.positionId) || a.fromQ - b.fromQ),
+    } } : {}),
     date, locked: date < src.today, inherited: !!record?.inherited, dayType: ctx?.dayType ?? null, demandKind: ctx?.inputs.demandKind ?? null,
     rows: rowsFor(src, week, date, ctx, weekQ, wages), notes, gaps: gaps.filter((g) => g.date === date),
   };
@@ -415,11 +471,11 @@ export function boardView(src: BoardSource): BoardView {
   const approveRefusal = !src.perms.canApprove ? "forbidden" as const : refusal ?? (approved ? "approved" as const : null);
   return {
     locationId: src.locationId, weekStart: src.weekStart, today: src.today, dates, weeksAhead: src.weeksAhead, perms: src.perms, banners,
-    generate: { disabled: src.demand === "unavailable" || !src.perms.canEdit, expectedHead: week.headRevisionId, edited: week.edited },
+    generate: { disabled: src.demand === "unavailable" || !src.perms.canEdit, expectedHead: week.headRevisionId, edited: week.edited || (src.liveEngine === "crew" && !!week.historicalCrewDates?.some((d) => d >= src.today)), engine: src.liveEngine, historicalEditedDates: src.liveEngine === "crew" ? week.historicalCrewDates?.filter((d) => d >= src.today) : [] },
     week: { headRevisionId: week.headRevisionId, approved, edited: week.edited },
     strip, budgetLines: src.budget.lines, suggestion: src.perms.canBudget ? src.suggestion : null, advisory,
     tabs: dayTabs({ dates, today: src.today, ctx, shifts: week.shifts, wageCentsByUser: wages }, { canSeeMoney: money }),
-    days: dates.map((d) => dayView(src, week, d, weekQ, wages, gaps)),
+    days: dates.map((d) => dayView(src, week, d, weekQ, wages, gaps, d === week.days.find((day) => !day.inherited)?.date)),
     rules: { fresh: problems.filter((p) => !p.inherited), inherited: problems.filter((p) => p.inherited) },
     gaps,
     approve: { allowed: approveRefusal === null, refusal: approveRefusal },

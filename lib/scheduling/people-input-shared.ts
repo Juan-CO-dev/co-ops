@@ -1,3 +1,5 @@
+import { guessUsualShift, resolveUsualShift, type UsualShift } from "./usual-shift-shared";
+import { scheduleEngine, shiftTypesOf } from "./structure-shared";
 /**
  * PEOPLE INPUT — pure (Scheduling Phase 2, Task 5; plan "Data reality", J15, J16, J19).
  *
@@ -152,6 +154,7 @@ export function assumedAvailability(pattern: DowPattern | undefined, shopDay: { 
 
 export interface MemberInput { userId: string; role: RoleCode; active: boolean }
 export interface PersonSettingsRow {
+  usualShift?: UsualShift | null;
   availability?: PersonAvailability | null;
   worksAs?: WorksAsRole | null;
   userId: string;
@@ -194,6 +197,8 @@ export function defaultWorkType(role: RoleCode): WorkType {
 }
 
 export interface ToSchedPeopleInput {
+  punches?: readonly PunchEntry[];
+  asOf?: string;
   members: readonly MemberInput[];
   settings: readonly PersonSettingsRow[];
   patterns: Readonly<Record<string, PersonPattern>>;
@@ -264,6 +269,11 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
       wageSource: salaried || presenceOnly ? null : wage !== undefined ? "sevenshifts" : input.wages.estimateHourlyCents !== null ? "estimate" : null,
       fullTime: st?.fullTime ?? false, fullTimeMinH: st?.fullTimeMinH ?? null, rosterIncluded: excluded,
     };
+    if (scheduleEngine(structure) === "crew") {
+      const types = shiftTypesOf(structure);
+      person.usualShift = resolveUsualShift(st?.usualShift ?? null, input.asOf ? guessUsualShift(input.punches ?? [], { userId: m.userId, asOf: input.asOf, shiftTypes: types }) : null, types);
+      person.workModes = Object.fromEntries(input.dates.map((d) => [d, st?.availability?.[isoDowOf(d) as keyof PersonAvailability]?.mode ?? null]));
+    }
     if (st?.availability) person.offPreferredDates = offPreferredDates;
     const share: Record<number, number> = {};
     for (let dow = 1; dow <= 7; dow++) {

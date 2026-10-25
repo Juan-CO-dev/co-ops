@@ -1,3 +1,4 @@
+import { validUsualShift } from "@/lib/scheduling/usual-shift-shared";
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
         return jsonOk({ result: await setPin(deps, { actor, locationId, pin: b.pin as Parameters<typeof setPin>[1]["pin"] }) });
       case "person":
         if (!b.settings || typeof b.settings !== "object" || !strOrNull(b.expectedId)) return jsonError(400, "bad_request");
+        if ("usualShift" in b.settings && !validUsualShift(b.settings.usualShift)) return jsonError(scheduleErrorStatus("invalid_payload"), "invalid_payload");
         if ("availability" in b.settings && !isPersonAvailability(b.settings.availability)) return jsonError(scheduleErrorStatus("invalid_payload"), "invalid_payload");
         return jsonOk({ result: await recordPersonSettings(deps, { actor, locationId, settings: b.settings as PersonSettingsInput, expectedId: b.expectedId as string | null }) });
       case "person_positions":

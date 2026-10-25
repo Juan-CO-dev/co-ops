@@ -1,3 +1,4 @@
+import { compareCodePoint } from "./order-shared";
 /**
  * THE PERSISTED SHAPES — the TS twins of 0275's `valid_schedule_segments` and `valid_gap_certificate` (Scheduling
  * Phase 2, Task 14). Pure, total, never throws. Both run the shared case files tests/fixtures/schedule/segment-cases.json
@@ -7,6 +8,8 @@
  * A certificate's SHAPE is not its proof: whether it VERIFIES is `checkCertificate` (rules-shared), replayed against
  * the revision's own context snapshot. These only say "this is a certificate of that cause at all".
  */
+
+import type { CrewGapCertificate } from "./crew-contracts-shared";
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -56,7 +59,7 @@ function validFillStep(v: unknown): boolean {
   return !("hours" in v) || nonneg(v.hours);
 }
 
-export const GAP_CAUSES = ["budget_limited", "floor_limit", "eligibility", "availability", "capacity", "structure", "unresolved_search"] as const;
+export const GAP_CAUSES = ["budget_limited", "floor_limit", "eligibility", "availability", "capacity", "structure", "unresolved_search", "crew_shortfall"] as const;
 const STRUCTURE_RULES = ["primary_window_closed", "no_mod_member", "no_closing_role", "max_shift"];
 /** The floor_limit exclusions (rules-shared FloorExclusion), spelled here so the shape stays dependency-free like the SQL twin. */
 /** The floor_limit reasons (rules-shared FloorReason), spelled here so the shape stays dependency-free like the SQL twin. */
@@ -66,6 +69,7 @@ const FLOOR_REASONS = ["unavailable", "flex_exhausted", "day_at_max", "never_gen
 export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
   if (!isObj(c)) return false;
   switch (cause) {
+    case "crew_shortfall": return validCrewGapCertificateShape(c);
     case "budget_limited":
       // CC chunk D design ruling: R (remainingHours, may be negative) < W (fillHours), with the witness fill's steps.
       return exact(c, ["budgetedDates", "budgetHours", "usedHours", "essentialHours", "remainingHours", "fillHours", "witness"]) && strings(c.budgetedDates)
@@ -100,4 +104,40 @@ export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
     default:
       return false;
   }
+}
+
+/** 0284's strict crew certificate shape; proof is replayed separately against the snapshot. */
+export function validCrewGapCertificateShape(c: unknown): c is CrewGapCertificate {
+  // Kept dependency-free for Node's native TS SQL harness; parity is pinned in crew-contract tests.
+  const codes = ["off", "time_off", "unavailable", "already_scheduled", "position", "leader_setting",
+    "minimum_length", "maximum_length", "day_limit", "soft_max", "overtime", "budget", "manager_limit"];
+  const sortedStrings = (v: unknown): v is string[] => Array.isArray(v)
+    && v.every((x, i) => typeof x === "string" && x.length > 0 && (i === 0 || compareCodePoint(v[i - 1], x) < 0));
+  if (!isObj(c)) return false;
+  if (c.kind === "station_short") {
+    return exact(c, ["kind", "required", "assigned", "onShiftUserIds"])
+      && isInt(c.required, 1, 1000) && isInt(c.assigned, 0, 1000) && c.assigned < c.required
+      && sortedStrings(c.onShiftUserIds);
+  }
+  if (c.kind !== "open_shifts" || !exact(c, ["kind", "items"]) || !Array.isArray(c.items) || !c.items.length) return false;
+  let start: number | undefined;
+  let previous = "";
+  for (const item of c.items) {
+    if (!exact(item, ["typeId", "fromQ", "toQ", "required", "placed", "missing", "rejected"])
+      || typeof item.typeId !== "string" || compareCodePoint(item.typeId, previous) <= 0 || !isQ(item.fromQ) || !isQ(item.toQ)
+      || item.fromQ >= item.toQ || (start !== undefined && item.fromQ !== start)
+      || !isInt(item.required, 1, 1000) || !isInt(item.placed, 0, 1000) || !isInt(item.missing, 1, 1000)
+      || item.required - item.placed !== item.missing || !Array.isArray(item.rejected)) return false;
+    start = item.fromQ;
+    previous = item.typeId;
+    let lastUser = "";
+    for (const rejection of item.rejected) {
+      if (!exact(rejection, ["userId", "codes"]) || typeof rejection.userId !== "string" || compareCodePoint(rejection.userId, lastUser) <= 0
+        || !Array.isArray(rejection.codes) || !rejection.codes.length
+        || new Set(rejection.codes).size !== rejection.codes.length
+        || rejection.codes.some((code) => !codes.includes(code))) return false;
+      lastUser = rejection.userId;
+    }
+  }
+  return true;
 }

@@ -256,6 +256,15 @@ describe("Astra chunk E P2-3: the reference week's ACTUAL structure, never the l
     expect(referenceStructureOf(head({ [refDates[0]!]: { structureVersionId: "sv-other", structure: live } }), { "sv-live": live })).toBeNull();
     expect(referenceStructureOf(head({}), {})).toBeNull();
   });
+  it("different engines skip the delta and disclose the omission", () => {
+    const ref = structure(); const live = { ...ref, engine: "crew" as const };
+    expect(structureDeltaHours({ live, ref, day: { dayType: "normal", scheduledOutQ: 82, hourlyCents: null, demandKind: "no_history", catering: [] } })).toBe(0);
+    const s = suggestBudget(suggestion({ structureEngineChanged: true, structureDeltaByDate: Object.fromEntries(targetDates.map((d) => [d, 999])) }));
+    expect(s.kind).toBe("suggestion");
+    if (s.kind !== "suggestion") return;
+    expect(s.lines).toContainEqual({ key: "schedule.budget.reference_engine_changed" });
+    expect(s.lines.some((l) => l.key === "schedule.budget.structure_delta")).toBe(false);
+  });
   it("an unknown reference structure is SHOWN: the explicit line, and no structure-delta line (never a silent zero)", () => {
     const s = suggestBudget(suggestion({ structureDeltaUnknown: true, structureDeltaByDate: Object.fromEntries(targetDates.map((d) => [d, 5])) }));
     expect(s.kind).toBe("suggestion");

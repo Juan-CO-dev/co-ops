@@ -27,7 +27,7 @@ import {
   MOD, PROVEN_CAUSE_ORDER, REPAIR_LIMITS, checkScheduleRules, cheapestFill, closingManagerEligible, eligibleFor, proveGap, type DayRecord, type DeclaredGap, type GapSubject, type RuleProblem, type Shift,
 } from "../rules-shared";
 import { atDayCap, availableOn, eligibleForPosition, generatorRefuses, isManagerRole, leaderSettingAllows, maxDaysPerWeek, modCountsOn, neverGenerated, workedDates } from "../rules-shared";
-import { scheduledOut, type CrewType, type ScheduleStructure } from "../structure-shared";
+import { scheduleEngine, scheduledOut, type CrewType, type ScheduleStructure } from "../structure-shared";
 import { skillOf } from "../people-input-shared";
 import { teamStrength, type WindowStrength } from "../strength-shared";
 import { isoDowOf, weekDays } from "../time-shared";
@@ -59,6 +59,8 @@ export interface BuildDayInput {
 export interface Pin { id: string; date: string; userId: string; startQ: number; endQ: number; positions: string[]; kind: "presence" | "added" }
 
 export interface HeadSnapshot {
+  /** Original day contexts, including crew edit tombstones and notes. */
+  dayContexts?: RuleContext["days"];
   revisionId: string;
   shifts: Shift[];
   days: DayRecord[];
@@ -72,6 +74,11 @@ export interface HeadSnapshot {
 }
 
 export interface GeneratorInput {
+  /** Consumed only by the crew engine; station generation ignores this evidence. */
+  crew?: {
+    manualOverridesByDate?: Record<string, import("../crew-contracts-shared").CrewManualOverride[]>;
+    headContext?: RuleContext;
+  };
   locationId: string;
   weekStart: string;
   today: string;
@@ -113,8 +120,9 @@ export interface GeneratorOutput {
 
 // ─── Canonical input ─────────────────────────────────────────────────────────
 
-function toRulePerson(p: SchedPerson): RulePerson {
+function toRulePerson(p: SchedPerson, crew: boolean): RulePerson {
   return {
+    ...(crew ? { ...(p.usualShift ? { usualShift: p.usualShift } : {}), workModes: p.workModes } : {}),
     userId: p.userId, role: p.role, activeMember: p.activeMember, workType: p.workType, alsoAllowed: [...p.alsoAllowed].sort(), leaderSetting: p.leaderSetting,
     coverPositions: [...p.coverPositions], salaried: p.salaried, presenceOnly: p.presenceOnly, softMinH: p.softMinH, softMaxH: p.softMaxH,
     availability: Object.fromEntries(Object.keys(p.availability).sort().map((d) => [d, p.availability[d] ?? null])),
@@ -197,7 +205,7 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   for (const d of builtDates) if (budgetByDate[d] === null) notes.push({ code: "unbudgeted_date", date: d, userId: null, positionId: null, params: {} });
   const ctx: RuleContext = {
     version: 1, locationId: input.locationId, weekStart: input.weekStart, today: input.today, dates, days, budgetByDate, closingWindowByDate,
-    people: Object.fromEntries(input.people.map((p) => [p.userId, toRulePerson(p)])),
+    people: Object.fromEntries(input.people.map((p) => [p.userId, toRulePerson(p, scheduleEngine(input.structure) === "crew")])),
   };
   const busiest: Record<string, Set<number>> = Object.fromEntries(buildDays.map((d) => [d.date, busiestQuarters(d, s)]));
   const b: BuildCtx = {

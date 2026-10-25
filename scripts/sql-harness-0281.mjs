@@ -48,7 +48,7 @@ const M0280 = read("supabase/migrations/0280_schedule_person_works_as.sql");
 const M0281 = read("supabase/migrations/0281_schedule_person_availability.sql");
 const db = await base();
 async function rpc(call) {
-  const keys = Object.keys(call.args);
+  const keys = Object.keys(call.args).filter((key) => key !== "p_usual_shift");
   const vals = keys.map((k) => {
     const v = call.args[k];
     if (k === "p_availability" && v !== null) return JSON.stringify(v);

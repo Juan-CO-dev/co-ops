@@ -14,7 +14,7 @@ vi.mock("@/components/schedule/use-board-line", () => ({ useBoardLine: () => ({
 }) }));
 afterEach(() => { cleanup(); post.mockClear(); });
 function editor() {
-  return render(createElement(StaffSettings, { locationId: "shop", members: [{ userId: "worker", name: "Worker",
+  return render(createElement(StaffSettings, { locationId: "shop", shopDay: { prepStartQ: 28, outLatestQ: 84 }, members: [{ userId: "worker", name: "Worker",
     role: "employee", settings: null, includeOffered: false }], positions: {}, livePositionIds: [], names: {}, initialPerson: "worker" }));
 }
 it("seeds Works, defaults specific times to 7 AM through close, and preserves 4 PM through close", () => {

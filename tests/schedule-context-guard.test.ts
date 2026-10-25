@@ -4,9 +4,11 @@
  * measures the jsonb text form (`jsonbTextBytes`, proved equal to Postgres on PGlite), keeps a 32 KiB margin under the
  * CHECK (`CONTEXT_SAFE_MAX_BYTES`), and refuses past it by name (`context_too_large`, en + es) before any RPC.
  */
+import { LEGACY_CASE_DEFAULTS } from "../scripts/schedule-structure-cases.mjs";
+import { structureFromStations, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CONTEXT_MAX_BYTES, CONTEXT_SAFE_MAX_BYTES, assertContextFits, jsonbTextBytes } from "@/lib/scheduling/context-shared";
+import { contextAdvisory, CONTEXT_MAX_BYTES, CONTEXT_SAFE_MAX_BYTES, assertContextFits, jsonbTextBytes } from "@/lib/scheduling/context-shared";
 import { ScheduleError } from "@/lib/scheduling/errors-shared";
 import { buildWeek } from "@/lib/scheduling/generator/build-shared";
 import en from "@/lib/i18n/en.json";
@@ -71,4 +73,18 @@ describe("assertContextFits: a named refusal well under the CHECK", () => {
     expect((es as Record<string, string>)[k]).toMatch(/\S/);
     expect((es as Record<string, string>)[k]).not.toMatch(/\busted\b|\bsu\b/i);
   });
+});
+
+
+it("a pre-0283 snapshot and a live structure seeded from defaults have no structure change", () => {
+  const context = buildWeek(FIXTURES["F1-mockup-v17"]!()).context;
+  const snapshot = structuredClone(context), live = structuredClone(context);
+  const rebuilt = structureFromStations([], [], {});
+  expect(rebuilt.ok).toBe(true);
+  if (!rebuilt.ok) return;
+  for (const date of snapshot.dates) {
+    snapshot.days[date]!.structure = structuredClone(LEGACY_CASE_DEFAULTS) as ScheduleStructure;
+    live.days[date]!.structure = rebuilt.structure;
+  }
+  expect(contextAdvisory(snapshot, live).filter((item) => item.code === "structure_changed")).toEqual([]);
 });

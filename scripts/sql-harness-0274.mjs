@@ -93,7 +93,7 @@ const db = await base();
 /** Call a writer exactly as the lib does: its name and NAMED arguments from rpc-args-shared. */
 async function rpc(call) {
   // Historical migration harness: works_as first exists in 0280.
-  const keys = Object.keys(call.args).filter((key) => key !== "p_works_as" && key !== "p_availability");
+  const keys = Object.keys(call.args).filter((key) => key !== "p_usual_shift").filter((key) => key !== "p_works_as" && key !== "p_availability");
   const vals = keys.map((k) => {
     const v = call.args[k];
     const scalarArray = Array.isArray(v) && v.every((x) => x === null || typeof x !== "object");

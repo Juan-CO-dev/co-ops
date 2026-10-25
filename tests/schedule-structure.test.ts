@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { FLOOR_POSITION, OTHER_POSITION, seededFloors } from "./fixtures/schedule/structure-floors";
 import {
-  CASE_DEFAULTS, CASE_POSITION_IDS, expectedStructureKey, loadStructureCases, materializeStructureCase, shopBase,
+  LEGACY_CASE_DEFAULTS, CASE_DEFAULTS, CASE_POSITION_IDS, expectedStructureKey, loadStructureCases, materializeStructureCase, shopBase,
 } from "../scripts/schedule-structure-cases.mjs";
 import {
   CREW_TYPES, POSITION_ROLE_DEFAULTS, applyRoleChange, SCHEDULE_STRUCTURE_DEFAULTS, checklistFits, crewFor, lineBounds, lineFloorLimit, reconcileLineFloors, positionLimit, primaryOf, scheduledOut,
@@ -106,7 +106,7 @@ describe("draft line floor reconciliation", () => {
 
 describe("the shared structure case file against validScheduleStructure", () => {
   it("the case file's defaults ARE SCHEDULE_STRUCTURE_DEFAULTS (the SQL harness starts from the same set)", () => {
-    expect(CASE_DEFAULTS).toEqual(SCHEDULE_STRUCTURE_DEFAULTS);
+    expect(LEGACY_CASE_DEFAULTS).toEqual(SCHEDULE_STRUCTURE_DEFAULTS);
   });
 
   it("the defaults validate and the labor basis defaults to TOTAL (R4), 28%", () => {

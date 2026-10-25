@@ -13,9 +13,12 @@
  * deficits are re-declared with their certificates (an unprovable one stays an `undeclared_gap` the board shows),
  * and its day record's `originRevisionId` becomes the new revision. Every other day is untouched.
  */
+import type { CrewManualOverride } from "./crew-contracts-shared";
+import { crewOpenGroups, crewStationShorts } from "./crew-gap-verifier-shared";
+import { scheduleEngine, shiftTypesOf } from "./structure-shared";
 import type { RuleContext } from "./context-shared";
 import { ScheduleError, type ScheduleErrorCode } from "./errors-shared";
-import { MOD, checkScheduleRules, proveGap, type DayRecord, type DeclaredGap, type GapCode, type RuleProblem, type Segment, type Shift, type WeekSchedule } from "./rules-shared";
+import { MOD, REPAIR_LIMITS, neverGenerated, checkScheduleRules, proveGap, type DayRecord, type DeclaredGap, type GapCode, type RuleProblem, type Segment, type Shift, type WeekSchedule } from "./rules-shared";
 import { Q_PER_DAY } from "./time-shared";
 
 export interface ShiftRef { date: string; userId: string; startQ: number }
@@ -95,6 +98,23 @@ function validateShape(sh: Shift, minQ: number, maxQ: number): void {
   if (sh.endQ - sh.startQ > maxQ) refuse("shift_over_maximum", { minutes: (sh.endQ - sh.startQ) * 15, maximumMinutes: maxQ * 15 });
 }
 
+/** Collapse repeated edits onto the original generated identity; deletion remains a tombstone. */
+export function recordCrewManualOverride(prior: readonly CrewManualOverride[], before: WeekSchedule, op: EditOp, after: WeekSchedule): CrewManualOverride[] {
+  const original = op.kind === "addShift" ? { date: op.date, userId: op.userId, startQ: op.startQ } : op.shift;
+  const previous = op.kind === "addShift" ? undefined : before.shifts.find((sh) => sameRef(sh, original));
+  if (op.kind !== "addShift" && !previous) refuse("head_moved");
+  const nextStart = op.kind === "move" ? original.startQ + op.deltaQ : op.kind === "start" ? op.toQ : original.startQ;
+  const replacement = op.kind === "removeShift" ? null : after.shifts.find((sh) => sameRef(sh, { ...original, startQ: nextStart }));
+  if (replacement === undefined) refuse("head_moved");
+  const result = structuredClone([...prior]);
+  const index = result.findIndex((o) => o.replacement !== null && sameRef(o.replacement, original));
+  const added = op.kind === "addShift" || (index >= 0 && result[index]!.added === true);
+  if (op.kind === "removeShift" && added) { result.splice(index, 1); return result; }
+  const entry: CrewManualOverride = { ...(added ? { added: true } : {}), original: index >= 0 ? result[index]!.original : { ...original }, replacement: replacement ? cloneShift(replacement) : null };
+  if (index >= 0) result[index] = entry; else result.push(entry);
+  return result;
+}
+
 /** Apply one edit. `ctx` is the CURRENT validation context (it must hold the edited date); `today` is the ET business date. */
 export function applyEdit(schedule: WeekSchedule, op: EditOp, ctx: RuleContext, opts: { today: string; newRevisionId: string }): EditResult {
   const date = op.kind === "addShift" ? op.date : op.shift.date;
@@ -170,6 +190,20 @@ export function applyEdit(schedule: WeekSchedule, op: EditOp, ctx: RuleContext, 
   }
   shifts.sort((x, y) => cmp(x.date, y.date) || cmp(x.userId, y.userId) || x.startQ - y.startQ);
 
+  if (scheduleEngine(s) === "crew") {
+    const prior = dayCtx!.crew ?? { version: 1 as const, shifts: [], manualOverrides: [], notes: [] };
+    const overrides = recordCrewManualOverride(prior.manualOverrides, schedule, op, { ...schedule, shifts });
+    const oldRef = op.kind === "addShift" ? null : op.shift;
+    const priorType = oldRef ? prior.shifts.find((m) => m.userId === oldRef.userId && m.startQ === oldRef.startQ)?.typeId : undefined;
+    const meta = prior.shifts.filter((m) => !oldRef || m.userId !== oldRef.userId || m.startQ !== oldRef.startQ);
+    if (edited && op.kind !== "removeShift") {
+      const matched = shiftTypesOf(s).map((t) => ({ t, overlap: Math.min(t.toQ, edited!.endQ) - Math.max(t.fromQ, edited!.startQ) }))
+        .filter(({ t, overlap }) => overlap >= t.minLengthQ).sort((a, b) => b.overlap - a.overlap || cmp(a.t.id, b.t.id))[0]?.t;
+      meta.push({ userId: edited.userId, startQ: edited.startQ, source: "manual", typeId: priorType !== undefined && shiftTypesOf(s).some((t) => t.id === priorType) ? priorType : matched?.id ?? null });
+    }
+    dayCtx!.crew = { ...prior, shifts: meta, manualOverrides: overrides };
+  }
+
   // Re-validate the edited day under the CURRENT context; every other day is carried as it is (inherited view).
   const others: DayRecord[] = ctx.dates.filter((d) => d !== date).map((d) => schedule.days.find((r) => r.date === d)
     ?? { date: d, originRevisionId: null, structureVersionId: dayCtx!.structureVersionId, inherited: true, problems: [] }).map((r) => ({ ...r, inherited: true }));
@@ -177,10 +211,22 @@ export function applyEdit(schedule: WeekSchedule, op: EditOp, ctx: RuleContext, 
   const keptGaps = schedule.gaps.filter((g) => g.date !== date);
   const probe = { locationId: schedule.locationId, weekStart: schedule.weekStart, shifts, gaps: keptGaps, days: others };
   const gaps: DeclaredGap[] = [];
+  if (scheduleEngine(s) === "crew") {
+    for (const group of crewOpenGroups(date, probe, vctx)) {
+      const subject = { code: "open_shift" as const, date, positionId: null, fromQ: group.fromQ, toQ: group.toQ };
+      gaps.push(group.items.every((item) => item.rejected.every((r) => r.codes.length > 0))
+        ? { ...subject, cause: "crew_shortfall", certificate: { kind: "open_shifts", items: group.items } }
+        : { ...subject, cause: "unresolved_search", certificate: { searched: { steps: 0, donorsTried: 0, chainDepth: 0 }, limits: { ...REPAIR_LIMITS }, candidateIds: Object.values(ctx.people).filter((p) => p.activeMember && !neverGenerated(p)).map((p) => p.userId).sort(cmp) } });
+    }
+    for (const id of Object.keys(dayCtx!.need.positions)) for (const run of crewStationShorts(date, id, probe, vctx)) {
+      gaps.push({ code: "coverage_gap", cause: "crew_shortfall", date, positionId: id, ...run });
+    }
+  }
   // CC addendum A: a manager's edit — the station floor (32 h) warns, never blocks.
-  for (const p of checkScheduleRules(probe, vctx, { managerEdited: true })) {
+  for (const p of checkScheduleRules({ ...probe, gaps: [...keptGaps, ...gaps] }, vctx, { managerEdited: true })) {
     if (p.code !== "undeclared_gap" || p.day !== date) continue;
     const subject = { code: p.params.gap as GapCode, date, positionId: p.positionId ?? null, fromQ: Number(p.params.fromQ), toQ: Number(p.params.toQ) };
+    if (gaps.some((g) => g.code === subject.code && g.positionId === subject.positionId && g.fromQ === subject.fromQ && g.toQ === subject.toQ)) continue;
     const proof = proveGap(subject, probe, vctx);
     if (proof) gaps.push({ ...subject, cause: proof.cause, certificate: proof.certificate } as DeclaredGap);
   }

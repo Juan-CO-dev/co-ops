@@ -20,9 +20,22 @@
  * totals (overtime, the floor, the soft range, the budget) COUNT inherited hours but attribute a
  * problem only to a built day.
  */
-import { getRoleLevel, type RoleCode } from "@/lib/roles";
+import type { CrewGapCertificate } from "./crew-contracts-shared";
+import { crewOpenGroups, shiftCountsAsMod, verifyCrewGap } from "./crew-gap-verifier-shared";
+export { shiftCountsAsMod, verifyCrewGap } from "./crew-gap-verifier-shared";
+import { scheduleEngine, shiftTypesOf } from "./structure-shared";
 import {
-  checklistFits, isLineRole, positionLimit, primaryOf, secondaryOf, type LeaderSetting, type ScheduleStructure, type StructurePosition,
+  LEADER_ROLES, isManagerRole, modCountsAt, modCountsOn, leaderSettingOf, neverGenerated,
+  eligibleForPosition, segmentHoldProblems, legalHoldPath, leaderSettingAllows,
+} from "./people-rules-shared";
+export {
+  CALLOUT_LAST_RESORT, CATERING_MANAGER_COVER, isManagerRole, modCountsAt, modCountsOn, leaderSettingOf,
+  workTypeAllows, neverGenerated, eligibleForPosition, segmentHoldProblems, legalHoldPath, cateringWindows,
+  leaderSettingAllows, type Segment, type HoldPath,
+} from "./people-rules-shared";
+import type { Segment } from "./people-rules-shared";
+import {
+  checklistFits, isLineRole, positionLimit, primaryOf, secondaryOf, type ScheduleStructure, type StructurePosition,
 } from "./structure-shared";
 import { canonicalJson, type DayContext, type RuleContext, type RulePerson } from "./context-shared";
 import type { ScheduleErrorCode } from "./errors-shared";
@@ -31,25 +44,16 @@ import type { ScheduleErrorCode } from "./errors-shared";
 
 /** The Manager-on-duty lane's pseudo position. */
 export const MOD = "mod";
-/** The reason key that marks the call-out last resort (rule d's exemption; Phase 2 never emits it). */
-export const CALLOUT_LAST_RESORT = "schedule.reason.callout_last_resort";
 /**
  * Juan 2026-10-16 (decision 4): the segment marker of a salaried manager's FLEX quarters — a zero-hourly-cost fill (staying
  * longer, or covering a station from the MoD lane in place of hourly hours). Flex quarters are outside the BASE week
  * (`limits.salariedTargetWeekH`, station time `limits.managerFloorH`) and inside the flex pool (`limits.salariedFlexH`).
  */
 export const SALARIED_FLEX_REASON = "schedule.reason.salaried_flex";
-/**
- * Juan 2026-10-16 (decision 8): the segment marker of a catering manager covering a station — ONLY as a last resort
- * (`lastResort: true`), never on Prep/Dishwasher, and never inside a booked catering window (`cateringWindows`).
- */
-export const CATERING_MANAGER_COVER = "schedule.reason.catering_manager_cover";
-
-export interface Segment { positionId: string; startQ: number; endQ: number; lastResort?: boolean; coverFor?: string; reasonKey?: string }
 export interface Shift { userId: string; date: string; startQ: number; endQ: number; segments: Segment[]; closingManager: boolean; flex: boolean; pinned: boolean }
 
-export type GapCode = "coverage_gap" | "mod_missing" | "closing_manager_missing";
-export type GapCause = "budget_limited" | "floor_limit" | "eligibility" | "availability" | "capacity" | "structure" | "unresolved_search";
+export type GapCode = "open_shift" | "coverage_gap" | "mod_missing" | "closing_manager_missing";
+export type GapCause = "crew_shortfall" | "budget_limited" | "floor_limit" | "eligibility" | "availability" | "capacity" | "structure" | "unresolved_search";
 /** The fixed order in which a deficit takes the FIRST proven cause that certifies (generator step 9a.6). */
 export const PROVEN_CAUSE_ORDER = ["structure", "eligibility", "capacity", "availability", "floor_limit", "budget_limited"] as const;
 
@@ -121,6 +125,7 @@ export interface UnresolvedSearchCertificate {
 
 interface GapBase { code: GapCode; date: string; positionId: string | null; fromQ: number; toQ: number }
 export type DeclaredGap = GapBase & (
+  | { cause: "crew_shortfall"; certificate: CrewGapCertificate }
   | { cause: "budget_limited"; certificate: BudgetLimitedCertificate }
   | { cause: "floor_limit"; certificate: FloorLimitCertificate }
   | { cause: "eligibility"; certificate: EligibilityCertificate }
@@ -190,7 +195,8 @@ export const RULE_CODES = {
   flex_used: "warning",
   pairing_unmet: "warning",
 } as const satisfies Record<string, RuleSeverity>;
-export type RuleCode = keyof typeof RULE_CODES;
+export const CREW_RULE_CODES = { open_shift: "gap" } as const satisfies Record<string, RuleSeverity>;
+export type RuleCode = keyof typeof RULE_CODES | keyof typeof CREW_RULE_CODES;
 
 /**
  * CC addendum A (2026-10-16): the salaried week checks are warnings for a person editing a week, but the GENERATOR keeps the
@@ -220,64 +226,6 @@ export interface WeekSchedule { locationId: string; weekStart: string; shifts: S
 
 // ─── People rules ────────────────────────────────────────────────────────────
 
-const LEADER_ROLES: readonly RoleCode[] = ["key_holder", "shift_lead", "agm", "gm", "moo", "owner"];
-
-/** Managers (MoD-eligible, rule d / i) = shift lead and up (§5.7). */
-export function isManagerRole(role: RoleCode): boolean {
-  return getRoleLevel(role) >= 5;
-}
-
-/**
- * Does this person COUNT as the manager on duty at quarter q? Shift lead and up always; a key holder only
- * when the shop's setting "KH may be manager on duty after <time>" is ON and q is at or after that time
- * (CC 2026-10-16; default OFF). Pinned MoO / Owner presence counts like any manager.
- */
-export function modCountsAt(p: Pick<RulePerson, "role">, s: ScheduleStructure, q: number): boolean {
-  if (isManagerRole(p.role)) return true;
-  const after = s.leadership.keyHolderModAfterQ;
-  return p.role === "key_holder" && after !== null && q >= after;
-}
-
-/**
- * CC addendum B3 (2026-10-16): the manager on duty on a built DATE — `modCountsAt`, except that a (pinned) catering manager
- * counts only OUTSIDE that date's booked catering windows (`cateringWindows`): inside one they are doing catering.
- */
-export function modCountsOn(p: Pick<RulePerson, "role">, day: Pick<DayContext, "structure" | "inputs">, q: number): boolean {
-  if (!modCountsAt(p, day.structure, q)) return false;
-  return p.role !== "catering_mgr" || !cateringWindows(day).some(([a, z]) => q >= a && q < z);
-}
-
-export function leaderSettingOf(p: RulePerson, s: ScheduleStructure): LeaderSetting {
-  return p.leaderSetting ?? s.leadership.leaderDefaults[p.role] ?? "mix";
-}
-
-/** The mockup's work-type rule: Management anything; Prep/Dishwasher BOH; Prep BOH or FOH; the line FOH. */
-export function workTypeAllows(p: Pick<RulePerson, "workType" | "alsoAllowed">, pos: Pick<StructurePosition, "role">): boolean {
-  if (p.workType === "management") return true;
-  if (pos.role === "prep_dish") return p.workType === "boh" || p.alsoAllowed.includes("boh");
-  if (pos.role === "prep") return p.workType === "boh" || p.workType === "foh" || p.alsoAllowed.includes("boh");
-  return p.workType === "foh" || p.alsoAllowed.includes("foh");
-}
-
-/**
- * Juan 2026-10-16 (decision 8): the catering manager is ON the roster but the generator never plans them: their own shifts
- * come only from a manager pin or the presence settings, and a station sees them only as the last-resort cover outside the
- * booked catering windows (`CATERING_MANAGER_COVER`). So they are never "eligible" for a placement, a fill or a proof.
- */
-export function neverGenerated(p: Pick<RulePerson, "role" | "presenceOnly">): boolean {
-  // CC addendum B2 (2026-10-16): a prep manager's MoD shifts are NEVER generated either (CO has no prep manager) — pins /
-  // presence only.
-  return p.presenceOnly || p.role === "catering_mgr" || p.role === "prep_mgr";
-}
-
-/** May this person be placed on this position at all (role, Prep/Dishwasher never for a manager, work type)? */
-export function eligibleForPosition(p: RulePerson, pos: StructurePosition | undefined): boolean {
-  if (!pos || !p.activeMember || neverGenerated(p)) return false;
-  if (!pos.allowedRoles.includes(p.role)) return false;
-  if (pos.role === "prep_dish" && isManagerRole(p.role)) return false;
-  return workTypeAllows(p, pos);
-}
-
 /** May this member be placed to fill a deficit of this kind (for MoD: from the window's first quarter on)? */
 export function eligibleFor(p: RulePerson, code: GapCode, positionId: string | null, s: ScheduleStructure, fromQ: number): boolean {
   if (!p.activeMember || neverGenerated(p)) return false;
@@ -294,51 +242,6 @@ export function eligibleFor(p: RulePerson, code: GapCode, positionId: string | n
 export function eligibleInWindow(p: RulePerson, code: GapCode, positionId: string | null, s: ScheduleStructure, fromQ: number, toQ: number): boolean {
   for (let q = fromQ; q < Math.max(toQ, fromQ + 1); q++) if (eligibleFor(p, code, positionId, s, q)) return true;
   return false;
-}
-
-/**
- * CC chunk H8 — THE ONE position-holding rule set, shared by the validator and the floor certificate. The problems a segment of
- * `p` on `positionId` over [startQ, endQ) with these flags raises (the validator's rules d / i and decision 8), each with the
- * validator's own params: `role_not_allowed` (the call-out exemption for a manager on Prep / Dishwasher and the catering manager's
- * marked cover excepted), `catering_cover_in_catering_window`, `manager_on_boh` (call-out excepted), `cover_outside_preferences`
- * (a manager outside their cover list unless marked last resort), `work_type_not_allowed`. Window, membership and the untouchable
- * day are the shift-level rules beside it.
- */
-export function segmentHoldProblems(
-  p: RulePerson, positionId: string, g: Pick<Segment, "startQ" | "endQ" | "lastResort" | "coverFor" | "reasonKey">,
-  day: Pick<DayContext, "structure" | "inputs">,
-): Array<{ code: RuleCode; params?: Record<string, string | number | boolean | null> }> {
-  const pos = day.structure.positions[positionId];
-  const manager = isManagerRole(p.role);
-  const out: Array<{ code: RuleCode; params?: Record<string, string | number | boolean | null> }> = [];
-  const callout = !!g.coverFor && g.reasonKey === CALLOUT_LAST_RESORT;
-  // Decision 8: a catering manager may cover a station (never Prep/Dishwasher) as a marked last resort.
-  const cateringCover = p.role === "catering_mgr" && !!g.lastResort && g.reasonKey === CATERING_MANAGER_COVER && !!pos && pos.role !== "prep_dish";
-  if (!pos?.allowedRoles.includes(p.role) && !(pos?.role === "prep_dish" && manager && callout) && !cateringCover) out.push({ code: "role_not_allowed", params: { role: p.role } });
-  if (cateringCover && cateringWindows(day).some(([a, z]) => g.startQ < z && g.endQ > a)) out.push({ code: "catering_cover_in_catering_window" });
-  if (pos?.role === "prep_dish" && manager && !callout) out.push({ code: "manager_on_boh" });
-  if (manager && !p.coverPositions.includes(positionId) && !g.lastResort) out.push({ code: "cover_outside_preferences" });
-  if (pos && !workTypeAllows(p, pos)) out.push({ code: "work_type_not_allowed", params: { workType: p.workType } });
-  return out;
-}
-
-/** The ways a person may hold a station: plainly, as a manager's marked last-resort cover, or as the catering manager's marked cover. */
-export type HoldPath = "eligible" | "last_resort" | "catering_cover";
-const HOLD_FLAGS: ReadonlyArray<[HoldPath, Pick<Segment, "lastResort" | "reasonKey">]> = [
-  ["eligible", {}], ["last_resort", { lastResort: true }], ["catering_cover", { lastResort: true, reasonKey: CATERING_MANAGER_COVER }],
-];
-
-/**
- * CC chunk H8: may `p` LEGALLY hold `positionId` at quarter q on `date` by ANY path the validator accepts — an active member,
- * not on an untouchable day, inside the position's window, and a segment [q, q+1) with one of the flag sets (plain · last resort ·
- * the catering manager's cover) raising none of `segmentHoldProblems`? The path, or null. (A call-out — `coverFor` + the call-out
- * reason — is a Phase 3 event about a real absent person, not a way to staff a gap, so it is not a path here.)
- */
-export function legalHoldPath(p: RulePerson, positionId: string, day: Pick<DayContext, "structure" | "inputs">, date: string, q: number): HoldPath | null {
-  const pos = day.structure.positions[positionId];
-  if (!pos || !p.activeMember || p.untouchableDates.includes(date) || q < pos.openQ || q >= pos.closeQ) return null;
-  for (const [path, flags] of HOLD_FLAGS) if (segmentHoldProblems(p, positionId, { startQ: q, endQ: q + 1, ...flags }, day).length === 0) return path;
-  return null;
 }
 
 /** CC chunk H8: everyone on the roster who may legally hold `positionId` at quarter q on `date` (`legalHoldPath`), id order. */
@@ -440,7 +343,7 @@ function dayCoverage(shifts: readonly Shift[], day: DayContext, ctx: RuleContext
       if (!arr) { arr = new Array<number>(96).fill(0); byPosition.set(g.positionId, arr); }
       for (let q = Math.max(0, g.startQ); q < Math.min(96, g.endQ); q++) { arr[q]!++; onClock.add(q); }
     }
-    if (p) for (const q of onClock) if (modCountsOn(p, day, q)) managers[q]!++;
+    if (p) for (const q of onClock) if (shiftCountsAsMod(sh, p, day, q)) managers[q]!++;
     if (sh.closingManager && p && closingManagerEligible(p, day.structure)) for (const q of onClock) closingManagerAt[q] = 1;
   }
   return { byPosition, managers, closingManagerAt, closingRequired: closingManagerRequired(day) };
@@ -508,25 +411,6 @@ export function splitSalariedRelabel(fromQ: number, toQ: number, baseRoomQ: numb
 /** The quarters of flex a salaried manager has left this week (decision 4). */
 export function flexLeftQ(s: Pick<WeekSchedule, "shifts">, userId: string, st: ScheduleStructure): number {
   return Math.max(0, Math.round(st.limits.salariedFlexH * 4) - Math.round(salariedWeek(s, userId).flexH * 4));
-}
-
-/**
- * The BOOKED catering windows of a built date (decision 8), from the booked-catering input: [event − lead, event) for an
- * event with a time, else the structure's default catering window — every booked event, whatever its headcount.
- */
-export function cateringWindows(day: Pick<DayContext, "structure" | "inputs">): Array<[number, number]> {
-  const c = day.structure.catering;
-  return [...day.inputs.cateringEvents].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((ev): [number, number] =>
-    ev.eventQ === null ? [c.defaultStartQ, c.defaultEndQ] : [Math.max(0, ev.eventQ - c.leadMinutes / 15), ev.eventQ]);
-}
-
-/** The leader open / close setting allows a shift spanning [fromQ, toQ)? (opens: ends before service close; closes: starts at or after service start) */
-export function leaderSettingAllows(p: RulePerson, s: ScheduleStructure, fromQ: number, toQ: number): boolean {
-  if (!LEADER_ROLES.includes(p.role)) return true;
-  const setting = leaderSettingOf(p, s);
-  if (setting === "opens") return toQ < s.shopDay.serviceCloseQ;
-  if (setting === "closes") return fromQ >= s.shopDay.serviceStartQ;
-  return true;
 }
 
 /**
@@ -601,6 +485,12 @@ function budgetMayExcuse(g: GapSubject, ctx: RuleContext): boolean {
 
 // ─── Structure infeasibility (the `structure` cause) ─────────────────────────
 
+/** Earliest typed MoD block, including personal times and start flexibility. */
+export function crewEarliestModStart(st: ScheduleStructure, roster: readonly RulePerson[]): number {
+  return Math.min(96, ...shiftTypesOf(st).filter((t) => t.countsTowardMod).map((t) => Math.min(t.fromQ,
+    ...roster.filter((p) => p.usualShift?.value?.typeId === t.id).map((p) => p.usualShift!.value!.fromQ ?? t.fromQ)) - t.startFlexQ));
+}
+
 function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly RulePerson[]): StructureCertificate[] {
   const out: StructureCertificate[] = [];
   if (g.code === "coverage_gap" && g.positionId) {
@@ -611,6 +501,12 @@ function structureRules(st: ScheduleStructure, g: GapSubject, roster: readonly R
       for (let q = g.fromQ; q < g.toQ; q++) if (positionLimit(pp, q) > 0) { closed = false; break; }
       if (closed) out.push({ rule: "primary_window_closed", detail: { positionId: g.positionId, primaryId: primary! } });
     }
+  }
+  // No typed crew block can reach this required interval. Reuse the SQL-approved
+  // no_mod_member certificate: no member can count as MoD before a type starts.
+  if (g.code === "mod_missing" && scheduleEngine(st) === "crew") {
+    const earliestQ = crewEarliestModStart(st, roster);
+    if (g.fromQ < g.toQ && g.toQ <= earliestQ) out.push({ rule: "no_mod_member", detail: { earliestTypeStartQ: earliestQ } });
   }
   if (g.code === "mod_missing" && !roster.some((p) => eligibleInWindow(p, "mod_missing", null, st, g.fromQ, g.toQ))) {
     out.push({ rule: "no_mod_member", detail: {} });
@@ -1481,6 +1377,19 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
   const day = ctx.days[g.date];
   if (!day || g.toQ <= g.fromQ) return false;
   const st = day.structure;
+  if (g.cause === "crew_shortfall") return verifyCrewGap(g, s, ctx);
+  if (g.code === "open_shift") {
+    if (g.cause !== "unresolved_search" || scheduleEngine(st) !== "crew") return false;
+    const group = crewOpenGroups(g.date, s, ctx).find((x) => x.fromQ === g.fromQ && x.toQ === g.toQ);
+    const c = g.certificate;
+    return !!group && c.limits.REPAIR_MAX_STEPS === REPAIR_LIMITS.REPAIR_MAX_STEPS
+      && c.limits.maxDonors === REPAIR_LIMITS.maxDonors
+      && c.limits.maxChainDepth === REPAIR_LIMITS.maxChainDepth
+      && Number.isInteger(c.searched.steps) && c.searched.steps >= 0 && c.searched.steps <= REPAIR_LIMITS.REPAIR_MAX_STEPS
+      && Number.isInteger(c.searched.donorsTried) && c.searched.donorsTried >= 0
+      && Number.isInteger(c.searched.chainDepth) && c.searched.chainDepth >= 0 && c.searched.chainDepth <= REPAIR_LIMITS.maxChainDepth
+      && Array.isArray(c.candidateIds) && c.candidateIds.every((x) => typeof x === "string");
+  }
   switch (g.cause) {
     case "budget_limited": {
       // Astra chunk A P1: essential coverage is budget-exempt and can never be excused by budget — the MoD,
@@ -1544,7 +1453,9 @@ function verify(g: DeclaredGap, s: WeekSchedule, ctx: RuleContext, depth: number
       const { steps, donorsTried, chainDepth } = c.searched;
       for (const n of [steps, donorsTried, chainDepth]) if (!Number.isInteger(n) || n < 0) return false;
       if (steps > L.REPAIR_MAX_STEPS || chainDepth > L.maxChainDepth) return false;
-      const hitLimit = steps === L.REPAIR_MAX_STEPS || chainDepth === L.maxChainDepth;
+      // Crew generation exhausts whole-block choices, not the station repair search. Its honest
+      // unresolved leadership gaps may have zero station-search steps; proofs still take precedence.
+      const hitLimit = steps === L.REPAIR_MAX_STEPS || chainDepth === L.maxChainDepth || scheduleEngine(st) === "crew";
       if (!hitLimit || !Array.isArray(c.candidateIds) || c.candidateIds.some((x) => typeof x !== "string")) return false;
       // Honest only when no PROVEN cause certifies the same deficit.
       return depth > 0 || proveGap(g, s, ctx) === null;
@@ -1565,7 +1476,7 @@ export function checkCertificate(g: DeclaredGap, s: WeekSchedule, ctx: RuleConte
  */
 export function proveGap(subject: GapSubject, s: WeekSchedule, ctx: RuleContext): { cause: Exclude<GapCause, "unresolved_search">; certificate: GapCertificate } | null {
   const day = ctx.days[subject.date];
-  if (!day || subject.toQ <= subject.fromQ) return null;
+  if (!day || subject.toQ <= subject.fromQ || subject.code === "open_shift") return null;
   const tryCert = (g: DeclaredGap) => (verify(g, s, ctx, 1) ? { cause: g.cause as Exclude<GapCause, "unresolved_search">, certificate: g.certificate } : null);
   const rules = structureRules(day.structure, subject, Object.values(ctx.people));
   if (rules[0]) return tryCert({ ...subject, cause: "structure", certificate: rules[0] });
@@ -1637,12 +1548,13 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
   const out: RuleProblem[] = [];
   const push = (code: RuleCode, day: string, extra: Partial<Omit<RuleProblem, "code" | "severity" | "day" | "inherited">> = {}) => {
     // CC addendum A: on a manager-edited week the station floor (32 h) WARNS; a generated week keeps it an error.
-    const severity: RuleSeverity = code === "manager_floor_exceeded" && opts.managerEdited ? "warning" : RULE_CODES[code];
+    const severity: RuleSeverity = code === "manager_floor_exceeded" && opts.managerEdited ? "warning" : code === "open_shift" ? CREW_RULE_CODES[code] : RULE_CODES[code];
     const p: RuleProblem = { code, severity, day, params: {}, inherited: false };
     if (extra.userId !== undefined) p.userId = extra.userId;
     if (extra.positionId !== undefined) p.positionId = extra.positionId;
     if (extra.q !== undefined) p.q = extra.q;
     if (extra.params) p.params = extra.params;
+    if (code === "outside_assumed_availability" && scheduleEngine(ctx.days[day]!.structure) === "crew") p.severity = "error";
     out.push(p);
   };
 
@@ -1667,6 +1579,14 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
       const u = sh.userId;
       if (!p.activeMember) push("not_member", date, { userId: u, q: sh.startQ });
       if (malformed(sh)) push("segments_malformed", date, { userId: u, q: sh.startQ });
+      if (scheduleEngine(st) === "crew") {
+        const meta = day.crew?.shifts.filter((m) => m.userId === u && m.startQ === sh.startQ) ?? [];
+        const type = meta.length === 1 ? shiftTypesOf(st).find((t) => t.id === meta[0]!.typeId) : undefined;
+        if (meta.length !== 1 || (meta[0]!.typeId !== null && !type)
+          || (meta[0]!.typeId === null && ["usual", "fill"].includes(meta[0]!.source))) push("segments_malformed", date, { userId: u, q: sh.startQ });
+        if (type && sh.endQ - sh.startQ < type.minLengthQ) push("shift_below_minimum", date, { userId: u, q: sh.startQ, params: { minutes: (sh.endQ - sh.startQ) * 15, minimumMinutes: type.minLengthQ * 15 } });
+        if (p.workModes?.[date] === "off" && !p.untouchableDates.includes(date)) push("untouchable_day", date, { userId: u, q: sh.startQ });
+      }
       const flexDay = sh.flex && p.flexDates.includes(date) && st.limits.flexUsesPer2w > 0;
       const minQ = flexDay ? st.limits.flexMinimumQ : st.limits.minimumShiftQ;
       if (sh.endQ - sh.startQ < minQ) push("shift_below_minimum", date, { userId: u, q: sh.startQ, params: { minutes: (sh.endQ - sh.startQ) * 15, minimumMinutes: minQ * 15 } });
@@ -1764,6 +1684,22 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
         }));
         if (!partnered) push("pairing_unmet", date, { userId: sh.userId, positionId: g.positionId, q: g.startQ });
       }
+    }
+
+    // Crew openings have no fake position or shift. Validate every required start group, plus
+    // every declared row (including stale rows that no longer intersect an actual deficit).
+    if (scheduleEngine(st) === "crew") {
+      if (!day.crew || day.crew.version !== 1 || day.crew.shifts.some((m) => shifts.filter((sh) => sh.userId === m.userId && sh.startQ === m.startQ).length !== 1)) push("segments_malformed", date);
+      for (const group of crewOpenGroups(date, s, ctx)) {
+        if (!s.gaps.some((g) => g.date === date && g.code === "open_shift" && g.fromQ === group.fromQ && g.toQ === group.toQ)) {
+          push("undeclared_gap", date, { q: group.fromQ, params: { gap: "open_shift", fromQ: group.fromQ, toQ: group.toQ } });
+        }
+      }
+    }
+    for (const g of s.gaps.filter((g) => g.date === date && (g.code === "open_shift" || g.cause === "crew_shortfall"))) {
+      const ok = checkCertificate(g, s, ctx);
+      if (!ok) push("uncertified_gap", date, { q: g.fromQ, params: { gap: g.code, cause: g.cause, fromQ: g.fromQ, toQ: g.toQ } });
+      else if (g.code === "open_shift") push("open_shift", date, { q: g.fromQ, params: { cause: g.cause, fromQ: g.fromQ, toQ: g.toQ, proven: g.cause !== "unresolved_search" } });
     }
 
     // Gap-class deficits: declared and certified, or an error.
