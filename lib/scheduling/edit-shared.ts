@@ -14,11 +14,11 @@
  * and its day record's `originRevisionId` becomes the new revision. Every other day is untouched.
  */
 import type { CrewManualOverride } from "./crew-contracts-shared";
-import { crewOpenGroups, crewStationShorts } from "./crew-gap-verifier-shared";
+import { isCrewCandidate, crewOpenGroups, crewStationShorts } from "./crew-gap-verifier-shared";
 import { scheduleEngine, shiftTypesOf } from "./structure-shared";
 import type { RuleContext } from "./context-shared";
 import { ScheduleError, type ScheduleErrorCode } from "./errors-shared";
-import { MOD, REPAIR_LIMITS, neverGenerated, checkScheduleRules, proveGap, type DayRecord, type DeclaredGap, type GapCode, type RuleProblem, type Segment, type Shift, type WeekSchedule } from "./rules-shared";
+import { MOD, REPAIR_LIMITS, checkScheduleRules, proveGap, type DayRecord, type DeclaredGap, type GapCode, type RuleProblem, type Segment, type Shift, type WeekSchedule } from "./rules-shared";
 import { Q_PER_DAY } from "./time-shared";
 
 export interface ShiftRef { date: string; userId: string; startQ: number }
@@ -216,7 +216,7 @@ export function applyEdit(schedule: WeekSchedule, op: EditOp, ctx: RuleContext, 
       const subject = { code: "open_shift" as const, date, positionId: null, fromQ: group.fromQ, toQ: group.toQ };
       gaps.push(group.items.every((item) => item.rejected.every((r) => r.codes.length > 0))
         ? { ...subject, cause: "crew_shortfall", certificate: { kind: "open_shifts", items: group.items } }
-        : { ...subject, cause: "unresolved_search", certificate: { searched: { steps: 0, donorsTried: 0, chainDepth: 0 }, limits: { ...REPAIR_LIMITS }, candidateIds: Object.values(ctx.people).filter((p) => p.activeMember && !neverGenerated(p)).map((p) => p.userId).sort(cmp) } });
+        : { ...subject, cause: "unresolved_search", certificate: { searched: { steps: 0, donorsTried: 0, chainDepth: 0 }, limits: { ...REPAIR_LIMITS }, candidateIds: Object.values(ctx.people).filter(isCrewCandidate).map((p) => p.userId).sort(cmp) } });
     }
     for (const id of Object.keys(dayCtx!.need.positions)) for (const run of crewStationShorts(date, id, probe, vctx)) {
       gaps.push({ code: "coverage_gap", cause: "crew_shortfall", date, positionId: id, ...run });

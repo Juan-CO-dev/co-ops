@@ -179,7 +179,9 @@ describe("P Street Backup cover acceptance", () => {
     expect(backup.stats.hourlyCostCents).toBe(out.stats.hourlyCostCents);
     expect(checkScheduleRules(schedule(backup), backup.context).filter((p) => p.severity === "error")).toEqual([]);
     const report = lines.join("\n") + "\n";
-    mkdirSync("tmp", { recursive: true }); writeFileSync("tmp/crew-backup-cover-acceptance.txt", report);
+    if (process.env.SCHEDULE_ACCEPTANCE_REPORT === "1") {
+      mkdirSync("tmp", { recursive: true }); writeFileSync("tmp/crew-backup-cover-acceptance.txt", report);
+    }
     process.stdout.write(report);
     inputs.members.reverse(); inputs.personSettings.reverse(); inputs.budget.rows.reverse(); inputs.dayTypes.reverse();
     expect(JSON.stringify(run(inputs))).toBe(JSON.stringify(backup));

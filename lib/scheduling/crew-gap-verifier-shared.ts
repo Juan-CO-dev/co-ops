@@ -20,9 +20,14 @@ export function shiftCountsAsMod(shift: Shift, person: RulePerson, day: DayConte
   return shiftTypesOf(day.structure).find((t) => t.id === meta.typeId)?.countsTowardMod === true;
 }
 
+/** Shared eligibility for generated crew and unresolved-search evidence. */
+export function isCrewCandidate(p: RulePerson): boolean {
+  return p.activeMember && (!neverGenerated(p) || p.backupCover === true);
+}
+
 /** Candidates are the complete active, auto-schedulable roster, not a caller-supplied shortlist. */
 export function crewCandidates(day: DayContext, ctx: RuleContext): RulePerson[] {
-  return Object.values(ctx.people).filter((p) => p.activeMember && (!neverGenerated(p) || p.backupCover))
+  return Object.values(ctx.people).filter(isCrewCandidate)
     .sort((a, b) => compareCodePoint(a.userId, b.userId));
 }
 

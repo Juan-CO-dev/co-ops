@@ -3,7 +3,7 @@ import { crewBlockAttempts } from "../crew-block-attempts-shared";
 /** Whole crew blocks first, stations second. No station-generator repair or fill passes. */
 import { canonicalJson, assertContextFits, type DayContext, type RuleContext, type RulePerson } from "../context-shared";
 import type { CrewShiftMeta } from "../crew-contracts-shared";
-import { crewBackupCoverAtCap, crewCandidateHoursEvidence, crewOpenGroups, crewRequired, crewStationShorts, shiftCountsAsMod } from "../crew-gap-verifier-shared";
+import { isCrewCandidate, crewBackupCoverAtCap, crewCandidateHoursEvidence, crewOpenGroups, crewRequired, crewStationShorts, shiftCountsAsMod } from "../crew-gap-verifier-shared";
 import { ScheduleError } from "../errors-shared";
 import { buildDayNeed } from "../need-shared";
 import { compareCodePoint as cmp } from "../order-shared";
@@ -147,6 +147,9 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
   }
   schedule.shifts.sort(order);
   const totalH = (id: string) => schedule.shifts.filter((s) => s.userId === id).reduce((n, s) => n + hours(s), 0);
+  const backupH = (id: string) => schedule.shifts.filter((sh) => sh.userId === id
+    && ctx.days[sh.date]?.crew?.shifts.some((meta) => meta.userId === id && meta.startQ === sh.startQ && meta.source === "backup_cover"))
+    .reduce((n, sh) => n + hours(sh), 0);
   const budgetedDates = dates.filter((d) => ctx.budgetByDate[d] !== null);
   const budgetHours = budgetedDates.reduce((n, d) => n + ctx.budgetByDate[d]!, 0);
   const essential = (sh: Shift) => {
@@ -330,7 +333,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const deficit = (p: SchedPerson) => Math.max(0, Math.max(p.softMinH ?? 0, p.fullTime ? p.fullTimeMinH ?? 0 : 0) - totalH(p.userId));
     const skill = (p: SchedPerson) => Math.max(0, ...t.stations.map((id) => skillOf(input.skills, p, id, st.positions[id]).value));
     const tier = (p: SchedPerson) => p.backupCover ? 3 : p.salaried ? 2 : p.workModes?.[d.date] === "if_needed" && p.usualShift?.value?.typeId === t.id ? 0 : 1;
-    const candidates = [...input.people].sort((a, b) => tier(a) - tier(b) || (a.backupCover && b.backupCover ? totalH(a.userId) - totalH(b.userId) || cmp(a.userId, b.userId) : 0) || rank(a) - rank(b) || deficit(b) - deficit(a) || skill(b) - skill(a) || cmp(a.userId, b.userId));
+    const candidates = [...input.people].sort((a, b) => tier(a) - tier(b) || (a.backupCover && b.backupCover ? backupH(a.userId) - backupH(b.userId) || cmp(a.userId, b.userId) : 0) || rank(a) - rank(b) || deficit(b) - deficit(a) || skill(b) - skill(a) || cmp(a.userId, b.userId));
     for (const p of candidates) {
       if (count() >= crewRequired(t, ctx.days[d.date]!)) break;
       // A refused Step-1 usual must not be smuggled back as a trimmed fill.
@@ -352,7 +355,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     if (sh && !schedule.shifts.some((s) => s.date === d.date && s.closingManager)) sh.closingManager = true;
   }
   schedule.shifts.sort(order);
-  const unresolved = () => ({ searched: { steps: 0, donorsTried: 0, chainDepth: 0 }, limits: { ...REPAIR_LIMITS }, candidateIds: input.people.filter((p) => p.activeMember && (!neverGenerated(p) || p.backupCover)).map((p) => p.userId) });
+  const unresolved = () => ({ searched: { steps: 0, donorsTried: 0, chainDepth: 0 }, limits: { ...REPAIR_LIMITS }, candidateIds: input.people.filter(isCrewCandidate).map((p) => p.userId) });
   for (const d of buildDays) {
     const day = ctx.days[d.date]!;
     day.crew!.shifts.sort((a, b) => cmp(a.userId, b.userId) || a.startQ - b.startQ);
@@ -403,7 +406,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const introduced = hard.filter((p) => !fixedProblems.some((f) => f.code === p.code && f.day === p.day && f.userId === p.userId && f.positionId === p.positionId && f.q === p.q));
     if (introduced.length) throw new ScheduleError("generator_invalid_output", { params: { problems: canonicalJson(introduced) } });
   }
-  for (const p of input.people) if (!p.salaried && !p.presenceOnly && totalH(p.userId) > st.limits.overtimeH) {
+  for (const p of input.people) if (!p.salaried && !p.backupCover && totalH(p.userId) > st.limits.overtimeH) {
     const date = schedule.shifts.filter((s) => s.userId === p.userId && built.has(s.date)).map((s) => s.date).sort(cmp).pop();
     if (date) notes.push({ code: "overtime_used", date, userId: p.userId, positionId: null, params: { hours: totalH(p.userId), limit: st.limits.overtimeH } });
   }
@@ -417,7 +420,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
   const budgetedHourly = schedule.shifts.filter((s) => budgetedDates.includes(s.date) && roster[s.userId] && !roster[s.userId]!.salaried && !roster[s.userId]!.presenceOnly);
   const essentialPastBudget = Math.max(0, Math.min(budgetedHourly.filter(essential).reduce((n, s) => n + hours(s), 0), budgetedHourly.reduce((n, s) => n + hours(s), 0) - budgetHours));
   if (essentialPastBudget > 0) notes.push({ code: "essential_past_budget", date: null, userId: null, positionId: null, params: { hours: essentialPastBudget, budgetHours } });
-  for (const p of input.people) if (!p.salaried && !p.presenceOnly && p.softMaxH !== null && totalH(p.userId) > p.softMaxH) {
+  for (const p of input.people) if (!p.salaried && !p.backupCover && p.softMaxH !== null && totalH(p.userId) > p.softMaxH) {
     const date = schedule.shifts.filter((s) => s.userId === p.userId && built.has(s.date)).map((s) => s.date).sort(cmp).pop();
     if (date) notes.push({ code: "over_soft_max", date, userId: p.userId, positionId: null, params: { hours: totalH(p.userId), limit: p.softMaxH } });
   }

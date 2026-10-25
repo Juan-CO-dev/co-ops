@@ -4,6 +4,7 @@ import { buildWeek, type GeneratorOutput } from "@/lib/scheduling/generator/buil
 import { generateWeek } from "@/lib/scheduling/generator/dispatch-shared";
 import { crewOpenItems, verifyCrewGap } from "@/lib/scheduling/crew-gap-verifier-shared";
 import { checkCertificate, checkScheduleRules, generatorRefuses, MOD, type WeekSchedule } from "@/lib/scheduling/rules-shared";
+import { applyEdit } from "@/lib/scheduling/edit-shared";
 import { DATES, I, day, fixture, structure, type PersonSpec } from "./fixtures/schedule/fixtures";
 
 const MON = DATES[0]!;
@@ -100,13 +101,62 @@ describe("crew Backup cover", () => {
     const refused = buildCrewWeek(i); expect(refused.shifts).toEqual([]);
     expect(crewOpenItems(MON, week(refused), refused.context)[0]!.rejected[0]!.codes).toContain("position"); clean(refused);
   });
-  it.each(["usual", "pin"] as const)("counts a %s backup person toward the cap", (source) => {
+  it.each(["manual", "pin"] as const)("counts a %s backup person toward the cap", (source) => {
     const i = input();
-    if (source === "usual") i.people[0]!.usualShift = { value: { typeId: "mid" }, source: "manager", deletedTypeId: null };
-    else i.pins = [{ id: "pin-a", userId: "a", date: MON, startQ: 44, endQ: 64, positions: [I.$REG], kind: "added" }];
+    if (source === "manual") i.crew = { manualOverridesByDate: { [MON]: [{
+      original: { userId: "b", date: MON, startQ: 44 },
+      replacement: { userId: "b", date: MON, startQ: 44, endQ: 64, segments: [{ positionId: I.$REG, startQ: 44, endQ: 64 }], closingManager: false, flex: false, pinned: false },
+    }] } };
+    else i.pins = [{ id: "pin-b", userId: "b", date: MON, startQ: 44, endQ: 64, positions: [I.$REG], kind: "added" }];
     const out = buildCrewWeek(i);
-    expect(out.shifts.map((s) => s.userId)).toEqual(["a"]);
-    expect(crewOpenItems(MON, week(out), out.context)[0]!.rejected.find((r) => r.userId === "b")!.codes).toContain("backup_cover_cap"); clean(out);
+    expect(out.shifts.map((s) => s.userId)).toEqual(["b"]);
+    expect(out.context.days[MON]!.crew!.shifts[0]!.source).toBe(source);
+    expect(crewOpenItems(MON, week(out), out.context)[0]!.rejected.find((r) => r.userId === "a")!.codes).toContain("backup_cover_cap"); clean(out);
+  });
+  it("retains overtime and soft-max notes for presence pins without opt-in", () => {
+    const i = input([{ id: "moo", role: "moo", cover: [I.$REG] }]);
+    i.people[0]!.backupCover = false; i.people[0]!.softMaxH = 3;
+    i.structure.limits.overtimeH = 4;
+    i.pins = [{ id: "presence", userId: "moo", date: MON, startQ: 44, endQ: 64, positions: [], kind: "presence" }];
+    const out = buildCrewWeek(i);
+    expect(out.problems).toContainEqual(expect.objectContaining({ code: "overtime" }));
+    for (const code of ["overtime_used", "over_soft_max"]) expect(out.notes).toContainEqual(expect.objectContaining({ code, userId: "moo" }));
+  });
+  it("balances generated backup hours only, ignoring Pete's 20 presence hours", () => {
+    const i = input([{ id: "cristian", role: "moo", cover: [I.$REG] }, { id: "pete", role: "owner", cover: [I.$REG] }], 1, 1, DATES.slice(0, 6));
+    // Reserve 20 presence hours first. Cristian gets the first generated block;
+    // Pete must get the next despite having more total on-clock hours.
+    i.pins = DATES.slice(0, 4).map((date) => ({ id: `presence-${date}`, userId: "pete", date, startQ: 44, endQ: 64, positions: [], kind: "presence" as const }));
+    const out = buildCrewWeek(i);
+    expect(out.shifts.filter((s) => DATES.slice(4, 6).includes(s.date)).map((s) => s.userId)).toEqual(["cristian", "pete"]);
+    clean(out);
+  });
+  it.each(["employee", "gm"] as const)("tries %s tier before backup", (role) => {
+    const i = input([{ id: "a", role: "moo", cover: [I.$REG] }, { id: "z", role, cover: [I.$REG] }], 1, 1);
+    const p = i.people[1]!;
+    p.workModes![MON] = "if_needed"; p.leaderSetting = "mix"; i.structure.limits.gmMinimumH = 4;
+    if (role === "employee") {
+      p.workModes![MON] = "if_needed";
+      p.usualShift = { value: { typeId: "mid" }, source: "manager", deletedTypeId: null };
+    }
+    const out = buildCrewWeek(i);
+    expect(out.shifts.map((s) => s.userId)).toEqual(["z"]); clean(out);
+  });
+  it("cap two places two of three opt-ins and certifies the third's cap refusal", () => {
+    const i = input(["a", "b", "c"].map((id) => ({ id, role: "moo", cover: [I.$REG] })), 2, 3);
+    const out = buildCrewWeek(i);
+    expect(out.shifts.map((s) => s.userId)).toEqual(["a", "b"]);
+    expect(crewOpenItems(MON, week(out), out.context)[0]!.rejected.find((r) => r.userId === "c")!.codes).toContain("backup_cover_cap"); clean(out);
+  });
+  it("includes available backup candidates in an edit's unresolved search", () => {
+    const i = input(undefined, 2, 2);
+    const out = buildCrewWeek(i);
+    const sh = out.shifts[0]!;
+    const edited = applyEdit(week(out), { kind: "removeShift", shift: sh }, out.context, { today: MON, newRevisionId: "edited" });
+    const gap = edited.schedule.gaps.find((g) => g.code === "open_shift");
+    expect(gap?.cause).toBe("unresolved_search");
+    if (gap?.cause !== "unresolved_search") throw new Error("expected unresolved search");
+    expect(gap.certificate.candidateIds).toEqual(["a", "b"]);
   });
   it("records a below-cap refusal using existing evidence and rejects missing evidence", () => {
     const i = input([{ id: "a", role: "moo", cover: [I.$REG], off: [1] }]);
