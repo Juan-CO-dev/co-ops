@@ -68,8 +68,8 @@ export function crewBlockAttempts(p: RulePerson, t: ShiftType, date: string, day
     else if (!leaderSettingAllows(p, st, a, z)) code = "leader_setting";
     else {
       let canHold = false;
-      for (let q = a; q < z && !canHold; q++) canHold = fit.some((id) => legalHoldPath(p, id, day, date, q))
-        || (t.countsTowardMod && modCountsOn(p, day, q));
+      for (let q = a; q < z && !canHold; q++) canHold = fit.some((id) => (!p.backupCover || p.coverPositions.includes(id)) && legalHoldPath(p, id, day, date, q))
+        || (!p.backupCover && t.countsTowardMod && modCountsOn(p, day, q));
       code = !canHold ? "position" : z - a > st.limits.maxShiftH * 4 ? "maximum_length" : reject(a, z);
     }
     tried.push({ block, code });

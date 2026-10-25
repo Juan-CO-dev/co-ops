@@ -123,7 +123,7 @@ export interface ScheduleStructure {
   };
   catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number; crewShift?: CrewCateringSetting };
   labor: { targetPct: number; basis: "hourly" | "total"; strong: number; watch: number; budgetDeadbandH: number };
-  roster: { excludedRoles: RoleCode[] };
+  roster: { excludedRoles: RoleCode[]; backupCoverPerDay?: number };
 }
 
 const crew = (prepHeads: number, prepUntilQ: number, setup: number, service: number, rush: number, closeWalk: number): CrewRow => ({
@@ -613,10 +613,16 @@ function checkLabor(v: unknown): Problem {
   return null;
 }
 
+/** Maximum distinct backup-cover people per date in the crew engine; historical structures default to one. */
+export function backupCoverPerDay(structure: ScheduleStructure): number {
+  return structure.roster.backupCoverPerDay ?? 1;
+}
+
 function checkRoster(v: unknown): Problem {
   if (!isObj(v)) return "roster";
-  const k = exactKeys(v, ["excludedRoles"], "roster.");
+  const k = exactKeys(v, ["excludedRoles", ...(Object.hasOwn(v, "backupCoverPerDay") ? ["backupCoverPerDay"] : [])], "roster.");
   if (k) return k;
+  if (Object.hasOwn(v, "backupCoverPerDay") && (typeof v.backupCoverPerDay !== "number" || !Number.isInteger(v.backupCoverPerDay) || v.backupCoverPerDay < 0 || v.backupCoverPerDay > 3)) return "roster.backupCoverPerDay";
   return checkRoleList(v.excludedRoles, "roster.excludedRoles");
 }
 

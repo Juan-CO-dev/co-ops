@@ -29,7 +29,7 @@ import { scheduleErrorKey } from "./schedule-errors";
 import { BUTTON, Check, Fields, GHOST, NumField, SelectField, TimeField } from "./settings-fields";
 import { useBoardLine } from "./use-board-line";
 import { ShiftTypesEditor } from "./ShiftTypesEditor";
-import { CREW_CATERING_DEFAULTS, scheduleEngine } from "@/lib/scheduling/structure-shared";
+import { CREW_CATERING_DEFAULTS, scheduleEngine, backupCoverPerDay } from "@/lib/scheduling/structure-shared";
 
 export const CREW_ENGINE_SELECTABLE = true;
 
@@ -335,6 +335,8 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
       </Section>
 
       <Section id="roster" title={t("schedule.settings.section.roster")}>
+        <NumField name="roster.backupCoverPerDay" label={t("schedule.settings.roster.backup_cover_per_day")} value={backupCoverPerDay(d)} min={0} max={3} onChange={(v) => edit((s) => { if (v === null) delete s.roster.backupCoverPerDay; else s.roster.backupCoverPerDay = v; })} />
+        <p className="text-xs text-co-text-muted">{t("schedule.settings.roster.backup_cover_help")}</p>
         <div className="flex flex-wrap gap-x-3">
           {ALL_ROLES.map((r) => (
             <Check key={r} label={roleLabel(r)} checked={d.roster.excludedRoles.includes(r)}

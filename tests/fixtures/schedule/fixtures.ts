@@ -66,7 +66,7 @@ export function person(spec: PersonSpec, dates: readonly string[] = DATES): Sche
   });
   return {
     userId: spec.id, role, activeMember: spec.active ?? true, workType: spec.workType ?? level, alsoAllowed: [...(spec.alsoAllowed ?? [])].sort(),
-    leaderSetting: spec.leader ?? null, coverPositions: spec.cover ?? [], salaried, presenceOnly,
+    leaderSetting: spec.leader ?? null, coverPositions: spec.cover ?? [], salaried, presenceOnly, backupCover: false,
     softMinH: salaried || presenceOnly ? null : spec.softMin === undefined ? 24 : spec.softMin, softMaxH: salaried || presenceOnly ? null : spec.softMax === undefined ? 40 : spec.softMax,
     availability, flexDates: [], untouchableDates: [], newerPositions: [], strongPositions: [],
     wageCents: salaried || presenceOnly ? null : spec.wage === undefined ? 1900 : spec.wage, wageSource: salaried || presenceOnly ? null : "estimate",

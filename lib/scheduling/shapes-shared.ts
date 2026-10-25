@@ -110,7 +110,7 @@ export function validGapCertificateShape(cause: unknown, c: unknown): boolean {
 export function validCrewGapCertificateShape(c: unknown): c is CrewGapCertificate {
   // Kept dependency-free for Node's native TS SQL harness; parity is pinned in crew-contract tests.
   const codes = ["off", "time_off", "unavailable", "already_scheduled", "position", "leader_setting",
-    "minimum_length", "maximum_length", "day_limit", "soft_max", "overtime", "budget", "manager_limit"];
+    "minimum_length", "maximum_length", "day_limit", "soft_max", "overtime", "budget", "manager_limit", "backup_cover_cap"];
   const sortedStrings = (v: unknown): v is string[] => Array.isArray(v)
     && v.every((x, i) => typeof x === "string" && x.length > 0 && (i === 0 || compareCodePoint(v[i - 1], x) < 0));
   if (!isObj(c)) return false;

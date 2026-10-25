@@ -3,7 +3,7 @@ import { crewBlockAttempts } from "../crew-block-attempts-shared";
 /** Whole crew blocks first, stations second. No station-generator repair or fill passes. */
 import { canonicalJson, assertContextFits, type DayContext, type RuleContext, type RulePerson } from "../context-shared";
 import type { CrewShiftMeta } from "../crew-contracts-shared";
-import { crewCandidateHoursEvidence, crewOpenGroups, crewRequired, crewStationShorts, shiftCountsAsMod } from "../crew-gap-verifier-shared";
+import { crewBackupCoverAtCap, crewCandidateHoursEvidence, crewOpenGroups, crewRequired, crewStationShorts, shiftCountsAsMod } from "../crew-gap-verifier-shared";
 import { ScheduleError } from "../errors-shared";
 import { buildDayNeed } from "../need-shared";
 import { compareCodePoint as cmp } from "../order-shared";
@@ -52,7 +52,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     people[p.userId] = {
       userId: p.userId, role: p.role, activeMember: p.activeMember, workType: p.workType,
       alsoAllowed: [...p.alsoAllowed].sort(cmp), leaderSetting: p.leaderSetting, coverPositions: p.coverPositions,
-      salaried: p.salaried, presenceOnly: p.presenceOnly, softMinH: p.softMinH, softMaxH: p.softMaxH,
+      salaried: p.salaried, presenceOnly: p.presenceOnly, ...(p.backupCover ? { backupCover: true } : {}), softMinH: p.softMinH, softMaxH: p.softMaxH,
       availability: p.availability, workModes: p.workModes, usualShift: p.usualShift,
       flexDates: [...p.flexDates].sort(cmp), untouchableDates: [...p.untouchableDates].sort(cmp),
       newerPositions: [...p.newerPositions].sort(cmp), strongPositions: [...p.strongPositions].sort(cmp),
@@ -158,7 +158,8 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
   function candidate(p: SchedPerson, t: ShiftType, date: string, source: Source, holes: readonly number[] = [], required: readonly number[] = [], shorten = false, budgetRefused: ReadonlySet<string> = new Set()): { block?: Block; rejection?: string } {
     const fail = (rejection: string) => ({ rejection });
     const day = ctx.days[date]!;
-    if (!p.activeMember || neverGenerated(p)) return fail("position");
+    if (!p.activeMember || (neverGenerated(p) && !(p.backupCover && source === "backup_cover"))) return fail("position");
+    if (p.backupCover && source === "backup_cover" && crewBackupCoverAtCap(date, schedule, ctx)) return fail("backup_cover_cap");
     if (p.workModes?.[date] === "off") return fail("off");
     if (p.untouchableDates.includes(date)) return fail("time_off");
     if (blocked.has(`${date}|${p.userId}`) || schedule.shifts.some((s) => s.date === date && s.userId === p.userId)) return fail("already_scheduled");
@@ -168,8 +169,8 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const replay = crewBlockAttempts(p, t, date, day, source, (a, z) => {
       const h = (z - a) / 4;
       if (h > st.limits.maxShiftH) return "maximum_length";
-      if (!p.salaried && source !== "usual" && p.softMaxH !== null && totalH(p.userId) + h > p.softMaxH) return "soft_max";
-      if (!p.salaried && source !== "usual" && totalH(p.userId) + h > st.limits.overtimeH) return "overtime";
+      if (!p.salaried && !p.presenceOnly && source !== "usual" && p.softMaxH !== null && totalH(p.userId) + h > p.softMaxH) return "soft_max";
+      if (!p.salaried && !p.presenceOnly && source !== "usual" && totalH(p.userId) + h > st.limits.overtimeH) return "overtime";
       flexFromQ = z;
       if (p.salaried) {
         const w = salariedWeek(schedule, p.userId);
@@ -208,7 +209,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     // from a previously exempt shift losing its closing assignment.
     const ownCharge = budgetedDates.includes(sh.date) && !roster[sh.userId]!.salaried && !roster[sh.userId]!.presenceOnly && !essential(sh) ? hours(sh) : 0;
     const chargedAfter = chargedHours();
-    const budgetRefused = budgetedDates.length > 0 && chargedAfter > budgetHours && chargedAfter > chargedBefore;
+    const budgetRefused = !roster[sh.userId]!.backupCover && budgetedDates.length > 0 && chargedAfter > budgetHours && chargedAfter > chargedBefore;
     const managerRefused = input.people.some((p) => {
       if (!p.salaried) return false;
       const before = salariedWeek({ shifts: saved }, p.userId), after = salariedWeek(schedule, p.userId);
@@ -328,17 +329,17 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const rank = (p: SchedPerson) => Math.min(2, ...t.stations.map((id) => positionRankOf(p, id)));
     const deficit = (p: SchedPerson) => Math.max(0, Math.max(p.softMinH ?? 0, p.fullTime ? p.fullTimeMinH ?? 0 : 0) - totalH(p.userId));
     const skill = (p: SchedPerson) => Math.max(0, ...t.stations.map((id) => skillOf(input.skills, p, id, st.positions[id]).value));
-    const tier = (p: SchedPerson) => p.salaried ? 2 : p.workModes?.[d.date] === "if_needed" && p.usualShift?.value?.typeId === t.id ? 0 : 1;
-    const candidates = [...input.people].sort((a, b) => tier(a) - tier(b) || rank(a) - rank(b) || deficit(b) - deficit(a) || skill(b) - skill(a) || cmp(a.userId, b.userId));
+    const tier = (p: SchedPerson) => p.backupCover ? 3 : p.salaried ? 2 : p.workModes?.[d.date] === "if_needed" && p.usualShift?.value?.typeId === t.id ? 0 : 1;
+    const candidates = [...input.people].sort((a, b) => tier(a) - tier(b) || (a.backupCover && b.backupCover ? totalH(a.userId) - totalH(b.userId) || cmp(a.userId, b.userId) : 0) || rank(a) - rank(b) || deficit(b) - deficit(a) || skill(b) - skill(a) || cmp(a.userId, b.userId));
     for (const p of candidates) {
       if (count() >= crewRequired(t, ctx.days[d.date]!)) break;
       // A refused Step-1 usual must not be smuggled back as a trimmed fill.
-      const canShorten = !p.salaried && !(p.workModes?.[d.date] === "works" && p.usualShift?.value?.typeId === t.id);
+      const canShorten = !p.salaried && (p.backupCover || !(p.workModes?.[d.date] === "works" && p.usualShift?.value?.typeId === t.id));
       const budgetRefused = new Set<string>();
       while (true) {
-        const c = candidate(p, t, d.date, "fill", [], [], canShorten, budgetRefused);
+        const c = candidate(p, t, d.date, p.backupCover ? "backup_cover" : "fill", [], [], canShorten, budgetRefused);
         if (!c.block || !preservesMod(c.block)) break;
-        if (place(c.block, p.salaried ? "manager_cover" : "crew_fill") || !canShorten || !lastPlaceHoursRefused) break;
+        if (place(c.block, p.backupCover ? "backup_cover" : p.salaried ? "manager_cover" : "crew_fill") || !canShorten || !lastPlaceHoursRefused) break;
         // Budget is allocation-dependent: each trial uses the normal transactional rollback.
         budgetRefused.add(`${c.block.shift.startQ}|${c.block.shift.endQ}`);
       }
@@ -351,7 +352,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     if (sh && !schedule.shifts.some((s) => s.date === d.date && s.closingManager)) sh.closingManager = true;
   }
   schedule.shifts.sort(order);
-  const unresolved = () => ({ searched: { steps: 0, donorsTried: 0, chainDepth: 0 }, limits: { ...REPAIR_LIMITS }, candidateIds: input.people.filter((p) => p.activeMember && !neverGenerated(p)).map((p) => p.userId) });
+  const unresolved = () => ({ searched: { steps: 0, donorsTried: 0, chainDepth: 0 }, limits: { ...REPAIR_LIMITS }, candidateIds: input.people.filter((p) => p.activeMember && (!neverGenerated(p) || p.backupCover)).map((p) => p.userId) });
   for (const d of buildDays) {
     const day = ctx.days[d.date]!;
     day.crew!.shifts.sort((a, b) => cmp(a.userId, b.userId) || a.startQ - b.startQ);
@@ -402,7 +403,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const introduced = hard.filter((p) => !fixedProblems.some((f) => f.code === p.code && f.day === p.day && f.userId === p.userId && f.positionId === p.positionId && f.q === p.q));
     if (introduced.length) throw new ScheduleError("generator_invalid_output", { params: { problems: canonicalJson(introduced) } });
   }
-  for (const p of input.people) if (!p.salaried && totalH(p.userId) > st.limits.overtimeH) {
+  for (const p of input.people) if (!p.salaried && !p.presenceOnly && totalH(p.userId) > st.limits.overtimeH) {
     const date = schedule.shifts.filter((s) => s.userId === p.userId && built.has(s.date)).map((s) => s.date).sort(cmp).pop();
     if (date) notes.push({ code: "overtime_used", date, userId: p.userId, positionId: null, params: { hours: totalH(p.userId), limit: st.limits.overtimeH } });
   }
@@ -416,7 +417,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
   const budgetedHourly = schedule.shifts.filter((s) => budgetedDates.includes(s.date) && roster[s.userId] && !roster[s.userId]!.salaried && !roster[s.userId]!.presenceOnly);
   const essentialPastBudget = Math.max(0, Math.min(budgetedHourly.filter(essential).reduce((n, s) => n + hours(s), 0), budgetedHourly.reduce((n, s) => n + hours(s), 0) - budgetHours));
   if (essentialPastBudget > 0) notes.push({ code: "essential_past_budget", date: null, userId: null, positionId: null, params: { hours: essentialPastBudget, budgetHours } });
-  for (const p of input.people) if (!p.salaried && p.softMaxH !== null && totalH(p.userId) > p.softMaxH) {
+  for (const p of input.people) if (!p.salaried && !p.presenceOnly && p.softMaxH !== null && totalH(p.userId) > p.softMaxH) {
     const date = schedule.shifts.filter((s) => s.userId === p.userId && built.has(s.date)).map((s) => s.date).sort(cmp).pop();
     if (date) notes.push({ code: "over_soft_max", date, userId: p.userId, positionId: null, params: { hours: totalH(p.userId), limit: p.softMaxH } });
   }
@@ -485,6 +486,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
         const primary = (id: string) => st.priority.find((p) => p.pair.includes(id) && p.primary !== id)?.primary;
         const can = (sh: Shift, id: string) => {
           const p = roster[sh.userId]!; const b = blocks.get(key(sh))!;
+          if (p.backupCover && !p.coverPositions.includes(id)) return false;
           if (!legalHoldPath(p, id, day, d.date, q)) return false;
           const last = sh.segments[sh.segments.length - 1];
           const holdQ = last?.positionId === id ? 1 : st.limits.segmentMinQ;

@@ -37,7 +37,7 @@ export const REASON_KEYS = [
   // Juan 2026-10-20 ("consideration on their managerial duties"): a lead's own shift extended into a manager-on-duty hole.
   "mod_extension",
   "crew_unassigned",
-  "crew_usual", "crew_fill",
+  "crew_usual", "crew_fill", "backup_cover",
 ] as const;
 export type ReasonKey = (typeof REASON_KEYS)[number];
 

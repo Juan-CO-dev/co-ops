@@ -8214,5 +8214,11 @@
   "schedule.board.horizon.crew_edited_warning": "Al reconstruir, se conservan los turnos que cambiaste a mano.",
   "schedule.board.horizon.crew_history_warning": "Los días editados antes de activar el nuevo planificador se reconstruirán.",
   "schedule.settings.shift_types.engine_confirm": "Cambiar el planificador cambia cómo se organiza cada día futuro. Las semanas existentes mostrarán 'configuración cambiada' hasta que las regeneres.",
-  "schedule.budget.reference_engine_changed": "La semana de referencia usó otro planificador. El cambio de estructura no se incluye en esta sugerencia."
+  "schedule.budget.reference_engine_changed": "La semana de referencia usó otro planificador. El cambio de estructura no se incluye en esta sugerencia.",
+  "schedule.settings.staff.backup_cover": "Cobertura de respaldo",
+  "schedule.settings.staff.backup_cover_help": "Solo se programa cuando un turno quedaría sin cubrir.",
+  "schedule.settings.roster.backup_cover_per_day": "Cobertura de respaldo por día",
+  "schedule.settings.roster.backup_cover_help": "Máximo de personas de respaldo (propietario, director de operaciones) que el motor puede agregar en un día. 0 lo desactiva.",
+  "schedule.reason.backup_cover": "Cobertura de respaldo",
+  "schedule.crew.rejection.backup_cover_cap": "Se alcanzó el límite diario de cobertura de respaldo."
 }

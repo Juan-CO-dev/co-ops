@@ -171,6 +171,8 @@ export interface PersonSettingsRow {
 export type WageSource = "sevenshifts" | "estimate";
 
 export interface SchedPerson extends RulePerson {
+  /** Presence-only person explicitly opted into the crew engine's final fill tier at this shop. */
+  backupCover: boolean;
   /** Explicit If needed dates: preferred off even when the weekly day cap leaves room. */
   offPreferredDates?: string[];
   wageCents: number | null;
@@ -261,7 +263,7 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
     const person: SchedPerson = {
       userId: m.userId, role, activeMember: m.active,
       workType: st?.workType ?? defaultWorkType(role), alsoAllowed: [...(st?.alsoAllowed ?? [])].sort(),
-      leaderSetting: st?.leaderSetting ?? null, coverPositions: cover, salaried, presenceOnly,
+      leaderSetting: st?.leaderSetting ?? null, coverPositions: cover, salaried, presenceOnly, backupCover: presenceOnly && st?.rosterInclude === true,
       softMinH: salaried || presenceOnly ? null : st?.softMinH ?? (mean === null ? 0 : Math.max(0, Math.round((mean - 4) * 4) / 4)),
       softMaxH: salaried || presenceOnly ? null : st?.softMaxH ?? (mean === null ? 40 : Math.round((mean + 4) * 4) / 4),
       availability, flexDates: [], untouchableDates: [], newerPositions: [], strongPositions: [],

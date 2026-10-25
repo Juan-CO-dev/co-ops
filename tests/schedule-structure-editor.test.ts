@@ -350,3 +350,18 @@ describe("structure editor floor edits", () => {
     expect(post).not.toHaveBeenCalled();
   });
 });
+
+
+describe("backup cover roster editor", () => {
+  it.each(["en", "es"] as const)("saves the daily cap including zero (%s)", async (language) => {
+    mount(seededFloors(), vi.fn(), null, language);
+    const dict = language === "en" ? en : es;
+    expect(screen.getByLabelText(dict["schedule.settings.roster.backup_cover_per_day"])).toBe(input("roster.backupCoverPerDay"));
+    expect(input("roster.backupCoverPerDay").value).toBe("1");
+    expect(screen.getByText(dict["schedule.settings.roster.backup_cover_help"])).toBeTruthy();
+    fireEvent.change(input("roster.backupCoverPerDay"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: dict["schedule.settings.save"] }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    expect(post.mock.calls[0]![1].structure.roster.backupCoverPerDay).toBe(0);
+  });
+});

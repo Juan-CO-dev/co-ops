@@ -406,3 +406,20 @@ describe("manager-set days they work", () => {
     expect(text(guessed)).toContain(en["schedule.settings.staff.availability_set"]);
   });
 });
+
+
+describe("backup cover staff setting", () => {
+  it.each(["moo", "owner"] as const)("offers %s opt-in even when the role is not excluded", async (role) => {
+    const v = await loadScheduleSettings(shop().deps, { actor: moo, locationId: A });
+    if (v.state !== "ready") throw new Error("not ready");
+    const edited = { ...v, members: v.members.map((m) => m.userId === KH ? { ...m, role, includeOffered: false } : m) };
+    for (const language of ["en", "es"] as const) {
+      const dict = language === "en" ? en : es;
+      const html = render(edited, language, { initialPerson: KH });
+      const drawer = html.match(/<div[^>]*data-person-editor="[^"]*"[\s\S]*?data-person-editor-end/)![0];
+      expect(text(drawer)).toContain(dict["schedule.settings.staff.backup_cover"]);
+      expect(text(drawer)).toContain(dict["schedule.settings.staff.backup_cover_help"]);
+      expect(text(drawer)).not.toContain(dict["schedule.settings.staff.include"]);
+    }
+  });
+});

@@ -137,3 +137,15 @@ it.each(["en", "es"] as const)("labels both uncovered ends of a fill seat withou
   expect(allowed.has(".days[].rows[].shifts[].crewType.open[].fromQ")).toBe(true);
   expect(allowed.has(".days[].rows[].shifts[].crewType.open[].toQ")).toBe(true);
 });
+
+
+it("labels backup-cover shifts on the board in both languages", () => {
+  const src = crewSource();
+  const sh = src.week!.shifts.find((s) => s.date === MON)!;
+  src.week!.reasons[`${sh.date}|${sh.userId}|${sh.startQ}`] = { shift: [{ key: "backup_cover", params: { typeId: "mid" } }], segments: sh.segments.map(() => []), alternates: [] };
+  for (const language of ["en", "es"] as const) {
+    const html = render(src, language);
+    expect(html).toContain("data-backup-cover");
+    expect(html).toContain((language === "en" ? en : es)["schedule.reason.backup_cover"]);
+  }
+});

@@ -13,6 +13,7 @@ export function CrewDayCards({ day, positions, names, onSelect }: {
     {day.rows.flatMap((row) => row.shifts.map((shift) => <article key={`${row.userId}-${shift.startQ}`} className="co-card grid min-w-0 gap-2 p-3">
       <button type="button" className={control} onClick={() => onSelect(shift, null)} aria-label={t("schedule.crew.select", { name: row.name, from: formatQ(shift.startQ, language), to: formatQ(shift.endQ, language) })}>
         <strong className="block">{row.name} · {shift.crewType?.name ?? t("schedule.crew.custom_shift")}</strong>
+        {shift.reasons.some((r) => r.key === "backup_cover") ? <span className="block" data-backup-cover>{t("schedule.reason.backup_cover")}</span> : null}
         <span>{formatQ(shift.startQ, language)}–{formatQ(shift.endQ, language)}</span>
       </button>
       {shift.crewType?.open?.map((span) => <p key={span.fromQ} className="text-sm" data-partial-seat>

@@ -127,6 +127,7 @@ function PersonEditor({ shiftTypes, shopDay, locationId, member, positions, live
   }
   // Juan 2026-10-20: below shift lead the list is Primary / Secondary / Can flex to; a manager's is their cover order.
   const role = effectiveScheduleRole(member.role, s.worksAs);
+  const backupCoverRole = role === "moo" || role === "owner";
   const ranked = hasPositionRank({ role });
   const person = { role, workType: s.workType ?? defaultWorkType(role), alsoAllowed: s.alsoAllowed };
   const allowed = (pid: string) => !ranked || pickerPositionAllowed(person, rolesKnown ? positions[pid] : positions[pid] ? {} : undefined);
@@ -269,8 +270,11 @@ function PersonEditor({ shiftTypes, shopDay, locationId, member, positions, live
         {s.fullTime ? <NumField name="fullTimeMinH" label={t("schedule.settings.staff.full_time_min")} value={s.fullTimeMinH} step={0.25} onChange={(v) => edit((x) => { x.fullTimeMinH = v; })} /> : null}
       </div>
       </> : null}
-      {member.includeOffered && !s.worksAs && !["cgs", "social_media_mgr"].includes(member.role) ? (
-        <Check label={t("schedule.settings.staff.include")} checked={s.rosterInclude === true} onChange={(on) => edit((x) => { x.rosterInclude = on ? true : null; })} />
+      {(member.includeOffered || backupCoverRole) && !s.worksAs && !["cgs", "social_media_mgr"].includes(member.role) ? (
+        <div className="grid gap-1">
+          <Check label={t(backupCoverRole ? "schedule.settings.staff.backup_cover" : "schedule.settings.staff.include")} checked={s.rosterInclude === true} onChange={(on) => edit((x) => { x.rosterInclude = on ? true : null; })} />
+          {backupCoverRole ? <p className="text-xs text-co-text-muted">{t("schedule.settings.staff.backup_cover_help")}</p> : null}
+        </div>
       ) : null}
       {allDaysOff ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t("schedule.settings.staff.availability_all_off")}</p> : null}
       {error ? <p role="alert" className="text-sm font-bold text-co-cta-text">{t(scheduleErrorKey(error))}</p> : null}
