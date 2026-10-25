@@ -28,6 +28,16 @@ function mount(value = seededFloors(), onDirty = vi.fn(), initialError: string |
 const input = (name: string) => document.getElementsByName(name)[0] as HTMLInputElement;
 
 describe("crew structure editor", () => {
+  it.each(["en", "es"] as const)("shows backup cover cap only for the crew engine (%s)", (language) => {
+    const s = seededFloors(); s.engine = "stations";
+    mount(s, vi.fn(), null, language);
+    const label = (language === "en" ? en : es)["schedule.settings.roster.backup_cover_per_day"];
+    expect(screen.queryByLabelText(label)).toBeNull();
+    fireEvent.change(input("engine"), { target: { value: "crew" } });
+    expect(screen.getByLabelText(label)).toBeTruthy();
+    fireEvent.change(input("engine"), { target: { value: "stations" } });
+    expect(screen.queryByLabelText(label)).toBeNull();
+  });
   it.each(["en", "es"] as const)("refuses selecting crew without shift types before posting (%s)", (language) => {
     mount(seededFloors(), vi.fn(), null, language);
     const dict = language === "en" ? en : es;
@@ -348,5 +358,23 @@ describe("structure editor floor edits", () => {
     expect(document.activeElement).toBe(field);
     expect(screen.getByRole("alert").textContent).toContain("Prep/Dishwasher");
     expect(post).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("backup cover roster editor", () => {
+  it.each(["en", "es"] as const)("saves the daily cap including zero (%s)", async (language) => {
+    const s = seededFloors(); s.engine = "crew";
+    s.shiftTypes = [{ id: "morning", name: "Morning", fromQ: 28, toQ: 60, startFlexQ: 0, minLengthQ: 16,
+      headcount: { slow: 0, normal: 0, busy: 0, weekend: 0 }, stations: [], countsTowardMod: true }];
+    mount(s, vi.fn(), null, language);
+    const dict = language === "en" ? en : es;
+    expect(screen.getByLabelText(dict["schedule.settings.roster.backup_cover_per_day"])).toBe(input("roster.backupCoverPerDay"));
+    expect(input("roster.backupCoverPerDay").value).toBe("1");
+    expect(screen.getByText(dict["schedule.settings.roster.backup_cover_help"])).toBeTruthy();
+    fireEvent.change(input("roster.backupCoverPerDay"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: dict["schedule.settings.save"] }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    expect(post.mock.calls[0]![1].structure.roster.backupCoverPerDay).toBe(0);
   });
 });

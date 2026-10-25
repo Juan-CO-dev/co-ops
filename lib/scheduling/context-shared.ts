@@ -38,8 +38,10 @@ export interface RulePerson {
   /** Ordered preferred cover positions (managers); [] = any cover is last resort until set (J17). */
   coverPositions: string[];
   salaried: boolean;
-  /** MoO / Owner: appear only through presence pins and "Add to schedule", never auto-scheduled. */
+  /** MoO / Owner accounting: pins/manual placement, or opted-in Backup cover in the crew engine. */
   presenceOnly: boolean;
+  /** Opted-in presence-only crew cover; omitted in historical/station contexts. */
+  backupCover?: boolean;
   softMinH: number | null;
   softMaxH: number | null;
   /** Per business date: a window, or null = not available that day. A date absent = no information (available). */

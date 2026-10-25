@@ -8214,5 +8214,11 @@
   "schedule.board.horizon.crew_edited_warning": "Rebuilding keeps the shifts you changed by hand.",
   "schedule.board.horizon.crew_history_warning": "Days edited before the new scheduler was turned on will be rebuilt.",
   "schedule.settings.shift_types.engine_confirm": "Switching changes how every future day is built. Existing weeks will show 'settings changed' until you regenerate them.",
-  "schedule.budget.reference_engine_changed": "The reference week used a different scheduler. The structure change is not included in this suggestion."
+  "schedule.budget.reference_engine_changed": "The reference week used a different scheduler. The structure change is not included in this suggestion.",
+  "schedule.settings.staff.backup_cover": "Backup cover",
+  "schedule.settings.staff.backup_cover_help": "Scheduled only when a shift would otherwise stay open.",
+  "schedule.settings.roster.backup_cover_per_day": "Backup cover per day",
+  "schedule.settings.roster.backup_cover_help": "Most backup-cover people (owner, director of operations) the engine may add on one day. 0 turns it off.",
+  "schedule.reason.backup_cover": "Backup cover",
+  "schedule.crew.rejection.backup_cover_cap": "The daily backup cover limit has been reached."
 }

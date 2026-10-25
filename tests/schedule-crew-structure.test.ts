@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { crewStructureCases, shopBase } from "../scripts/schedule-structure-cases.mjs";
-import { structureFromStations, scheduleEngine, shiftTypesOf, structureProblem, withCrewStructureDefaults, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
+import { structureFromStations, backupCoverPerDay, scheduleEngine, shiftTypesOf, structureProblem, withCrewStructureDefaults, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { stationAdvisory, structureBody } from "@/lib/scheduling/settings-view-shared";
 
 describe("crew structure contracts", () => {
@@ -29,5 +29,28 @@ describe("station refresh with shift types", () => {
     expect(stationAdvisory(saved, rebuilt.structure, rebuilt.seededFrom)).toContainEqual({
       key: "schedule.settings.advisory.shift_station_removed", params: { shiftType: "Morning", positionId: id },
     });
+  });
+});
+
+
+describe("backup cover per-day structure setting", () => {
+  it("defaults an absent key to one without mutating the structure", () => {
+    const st = shopBase() as ScheduleStructure;
+    expect(structureProblem(st)).toBeNull();
+    expect(backupCoverPerDay(st)).toBe(1);
+    expect(st.roster).not.toHaveProperty("backupCoverPerDay");
+  });
+  it.each([0, 1, 2, 3])("accepts %s", (cap) => {
+    const st = shopBase() as ScheduleStructure; st.roster.backupCoverPerDay = cap;
+    expect(structureProblem(st)).toBeNull(); expect(backupCoverPerDay(st)).toBe(cap);
+  });
+  it.each([4, -1, 1.5, "1", null])("rejects %s", (cap) => {
+    const st = shopBase() as ScheduleStructure;
+    Object.assign(st.roster, { backupCoverPerDay: cap });
+    expect(structureProblem(st)).toBe("roster.backupCoverPerDay");
+  });
+  it("continues refusing other roster keys", () => {
+    const st = shopBase() as ScheduleStructure; Object.assign(st.roster, { backupCover: 1 });
+    expect(structureProblem(st)).toBe("roster.backupCover");
   });
 });

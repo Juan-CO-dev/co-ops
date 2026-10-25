@@ -1583,7 +1583,7 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
         const meta = day.crew?.shifts.filter((m) => m.userId === u && m.startQ === sh.startQ) ?? [];
         const type = meta.length === 1 ? shiftTypesOf(st).find((t) => t.id === meta[0]!.typeId) : undefined;
         if (meta.length !== 1 || (meta[0]!.typeId !== null && !type)
-          || (meta[0]!.typeId === null && ["usual", "fill"].includes(meta[0]!.source))) push("segments_malformed", date, { userId: u, q: sh.startQ });
+          || (meta[0]!.typeId === null && ["usual", "fill", "backup_cover"].includes(meta[0]!.source))) push("segments_malformed", date, { userId: u, q: sh.startQ });
         if (type && sh.endQ - sh.startQ < type.minLengthQ) push("shift_below_minimum", date, { userId: u, q: sh.startQ, params: { minutes: (sh.endQ - sh.startQ) * 15, minimumMinutes: type.minLengthQ * 15 } });
         if (p.workModes?.[date] === "off" && !p.untouchableDates.includes(date)) push("untouchable_day", date, { userId: u, q: sh.startQ });
       }
@@ -1745,7 +1745,7 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
     const st = ctx.days[last]!.structure;
     const hours = mine.reduce((n, x) => n + (x.endQ - x.startQ), 0) / 4;
     // Decision 4: a salaried week is governed by its target + flex (below), never the hourly overtime warning.
-    if (!p.salaried && hours > st.limits.overtimeH) push("overtime", last, { userId: u, params: { hours, limit: st.limits.overtimeH } });
+    if (!p.salaried && !(scheduleEngine(st) === "crew" && p.backupCover) && hours > st.limits.overtimeH) push("overtime", last, { userId: u, params: { hours, limit: st.limits.overtimeH } });
     if (isHourly(p) && ((p.softMaxH !== null && hours > p.softMaxH) || (p.softMinH !== null && hours < p.softMinH))) {
       push("soft_range", last, { userId: u, params: { hours, min: p.softMinH, max: p.softMaxH } });
     }

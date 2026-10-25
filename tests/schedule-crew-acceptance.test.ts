@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { generatorInputFor } from "@/lib/scheduling/inputs-shared";
 import { generateWeek } from "@/lib/scheduling/generator/dispatch-shared";
@@ -137,5 +139,51 @@ describe("P Street crew acceptance, 2026-10-19 (snapshot + R14)", () => {
     process.stdout.write(`[isolated benchmark] 43-person: ${ms.toFixed(1)} ms / 3000 ms target\n`);
     expect(result.days).toHaveLength(7);
     expect(result.shifts.every((s) => s.endQ > s.startQ)).toBe(true);
+  }, 60000);
+});
+
+
+describe("P Street Backup cover acceptance", () => {
+  it("preserves the pre-change no-opt-in output byte-for-byte", () => {
+    expect(createHash("sha256").update(JSON.stringify(out)).digest("hex"))
+      .toBe("da62a198c0372debc3efa1a0f0507988d3d9137d4d8202db47a1fcd474499269");
+  });
+  it("adds one legal backup person per open date and reports remaining proven gaps", () => {
+    const inputs = acceptanceInputs(); inputs.structure.structure.roster.backupCoverPerDay = 1;
+    for (const name of ["Cristian", "Pete"]) inputs.personSettings.find((p) => p.userId === personId(name))!.rosterInclude = true;
+    const start = performance.now(); const backup = run(inputs); const elapsed = performance.now() - start;
+    const added = backup.shifts.filter((s) => backup.context.people[s.userId]!.backupCover);
+    const lines = ["Backup cover acceptance: P Street, 2026-10-19", `Build: ${elapsed.toFixed(1)} ms (target 1500 ms)`, "", "Date | Person | Type | Times | Hours", "--- | --- | --- | --- | ---"];
+    for (const s of added) {
+      const name = inputs.members.find((p) => p.userId === s.userId)!.name;
+      const type = backup.context.days[s.date]!.crew!.shifts.find((m) => m.userId === s.userId && m.startQ === s.startQ)!.typeId;
+      lines.push(`${s.date} | ${name} | ${type} | ${clock(s.startQ)}-${clock(s.endQ)} | ${(s.endQ - s.startQ) / 4}`);
+      expect(s.segments.some((segment) => backup.context.people[s.userId]!.coverPositions.includes(segment.positionId))).toBe(true);
+    }
+    lines.push("", "Remaining open seats and evidence:");
+    for (const date of DATES) {
+      const previous = crewOpenItems(date, schedule(out), out.context);
+      expect(added.filter((s) => s.date === date)).toHaveLength(previous.length ? 1 : 0);
+      const open = crewOpenItems(date, schedule(backup), backup.context);
+      if (!open.length) lines.push(`${date}: no open seats.`);
+      for (const item of open) {
+        const gap = backup.gaps.find((g) => g.date === date && g.code === "open_shift" && g.fromQ <= item.fromQ && g.toQ >= item.toQ)!;
+        expect(gap.cause).toBe("crew_shortfall"); expect(verifyCrewGap(gap, schedule(backup), backup.context)).toBe(true);
+        lines.push(`${date}: ${item.typeId} ${item.placed}/${item.required}, ${item.missing} open; ${gap.cause}.`);
+        lines.push(`  ${item.rejected.map((r) => `${r.userId.replace("person-", "")}: ${r.codes.join("+")}`).join("; ")}`);
+      }
+    }
+    lines.push("", "Other gaps:", ...backup.gaps.filter((g) => g.code !== "open_shift").map((g) => `${g.date}: ${g.code} ${clock(g.fromQ)}-${clock(g.toQ)}; ${g.cause}`));
+    expect(backup.gaps.filter((g) => g.cause === "unresolved_search")).toEqual([]);
+    expect(backup.stats.hourlyHours).toBe(out.stats.hourlyHours);
+    expect(backup.stats.hourlyCostCents).toBe(out.stats.hourlyCostCents);
+    expect(checkScheduleRules(schedule(backup), backup.context).filter((p) => p.severity === "error")).toEqual([]);
+    const report = lines.join("\n") + "\n";
+    if (process.env.SCHEDULE_ACCEPTANCE_REPORT === "1") {
+      mkdirSync("tmp", { recursive: true }); writeFileSync("tmp/crew-backup-cover-acceptance.txt", report);
+    }
+    process.stdout.write(report);
+    inputs.members.reverse(); inputs.personSettings.reverse(); inputs.budget.rows.reverse(); inputs.dayTypes.reverse();
+    expect(JSON.stringify(run(inputs))).toBe(JSON.stringify(backup));
   }, 60000);
 });

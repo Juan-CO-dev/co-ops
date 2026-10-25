@@ -4,7 +4,7 @@ import { compareCodePoint } from "./order-shared";
 import { validCrewGapCertificateShape } from "./shapes-shared";
 import { canonicalJson, type DayContext, type RuleContext, type RulePerson } from "./context-shared";
 import type { CrewGapCertificate, CrewRejectionCode, OpenShiftItem } from "./crew-contracts-shared";
-import { scheduleEngine, shiftTypesOf, type ShiftType } from "./structure-shared";
+import { backupCoverPerDay, scheduleEngine, shiftTypesOf, type ShiftType } from "./structure-shared";
 import { atDayCap, maxDaysPerWeek, salariedWeek, type DeclaredGap, type Shift, type WeekSchedule } from "./rules-shared";
 
 /** Type flags restrict the existing role/time rule; they can never grant MoD authority. */
@@ -20,10 +20,21 @@ export function shiftCountsAsMod(shift: Shift, person: RulePerson, day: DayConte
   return shiftTypesOf(day.structure).find((t) => t.id === meta.typeId)?.countsTowardMod === true;
 }
 
+/** Shared eligibility for generated crew and unresolved-search evidence. */
+export function isCrewCandidate(p: RulePerson): boolean {
+  return p.activeMember && (!neverGenerated(p) || p.backupCover === true);
+}
+
 /** Candidates are the complete active, auto-schedulable roster, not a caller-supplied shortlist. */
 export function crewCandidates(day: DayContext, ctx: RuleContext): RulePerson[] {
-  return Object.values(ctx.people).filter((p) => p.activeMember && !neverGenerated(p))
+  return Object.values(ctx.people).filter(isCrewCandidate)
     .sort((a, b) => compareCodePoint(a.userId, b.userId));
+}
+
+/** Count people, not blocks, including pins, manual edits and usual shifts. */
+export function crewBackupCoverAtCap(date: string, s: Pick<WeekSchedule, "shifts">, ctx: RuleContext): boolean {
+  const count = new Set(s.shifts.filter((sh) => sh.date === date && ctx.people[sh.userId]?.backupCover).map((sh) => sh.userId)).size;
+  return count >= backupCoverPerDay(ctx.days[date]!.structure);
 }
 
 /** Conservative fixed-crew exclusions. Unknown policy/search failures deliberately have no proof. */
@@ -31,6 +42,7 @@ export function crewCandidateRejections(p: RulePerson, type: ShiftType, date: st
   const day = ctx.days[date]!;
   const st = day.structure;
   const codes: CrewRejectionCode[] = [];
+  if (p.backupCover && crewBackupCoverAtCap(date, s, ctx)) codes.push("backup_cover_cap");
   if (p.workModes?.[date] === "off") codes.push("off");
   if (p.untouchableDates.includes(date)) codes.push("time_off");
   const av = p.availability[date];
@@ -40,17 +52,17 @@ export function crewCandidateRejections(p: RulePerson, type: ShiftType, date: st
   const hours = s.shifts.filter((sh) => sh.userId === p.userId).reduce((n, sh) => n + sh.endQ - sh.startQ, 0) / 4;
   const evidence = crewCandidateHoursEvidence(p, type, date, s, ctx);
   codes.push(...evidence.map((e) => e.code).filter((code) => !codes.includes(code)));
-  const replay = crewBlockAttempts(p, type, date, day, "fill", (a, z) => {
+  const replay = crewBlockAttempts(p, type, date, day, p.backupCover ? "backup_cover" : "fill", (a, z) => {
     const h = (z - a) / 4;
-    if (!p.salaried && p.softMaxH !== null && hours + h > p.softMaxH) return "soft_max";
-    if (!p.salaried && hours + h > st.limits.overtimeH) return "overtime";
+    if (!p.salaried && !p.presenceOnly && p.softMaxH !== null && hours + h > p.softMaxH) return "soft_max";
+    if (!p.salaried && !p.presenceOnly && hours + h > st.limits.overtimeH) return "overtime";
     if (p.salaried) {
       const w = salariedWeek(s, p.userId);
       const extra = Math.max(0, h - Math.max(0, st.limits.salariedTargetWeekH - w.baseH));
       if (extra + w.flexH > st.limits.salariedFlexH || w.totalH + h > st.limits.salariedTargetWeekH + st.limits.salariedFlexH) return "manager_limit";
     }
     return evidence.some((e) => e.code === "budget") ? "budget" : null;
-  }, { shorten: !p.salaried && !(p.workModes?.[date] === "works" && p.usualShift?.value?.typeId === type.id) });
+  }, { shorten: !p.salaried && (p.backupCover || !(p.workModes?.[date] === "works" && p.usualShift?.value?.typeId === type.id)) });
   if (!replay.match) for (const { code } of replay.tried) if (code && !codes.includes(code)) codes.push(code);
   return codes.sort();
 }
@@ -64,7 +76,7 @@ export function crewCandidateHoursEvidence(p: RulePerson, type: ShiftType, date:
   const minLengthQ = Math.max(type.minLengthQ, st.limits.minimumShiftQ);
   const hours = s.shifts.filter((sh) => sh.userId === p.userId).reduce((n, sh) => n + (sh.endQ - sh.startQ) / 4, 0);
   const evidence: ReturnType<typeof crewCandidateHoursEvidence> = [];
-  for (const [code, used, limit] of [["overtime", hours, st.limits.overtimeH], ["soft_max", hours, p.softMaxH],
+  for (const [code, used, limit] of [["overtime", hours, p.presenceOnly ? null : st.limits.overtimeH], ["soft_max", hours, p.presenceOnly ? null : p.softMaxH],
     ["maximum_length", 0, st.limits.maxShiftH]] as const) {
     if (limit !== null && used + minLengthQ / 4 > limit) evidence.push({ code, hours: used, limit, minLengthQ });
   }

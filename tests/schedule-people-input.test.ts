@@ -211,3 +211,19 @@ describe("Astra chunk B review — people input (failing first)", () => {
     expect(r.notes).toEqual([]);
   });
 });
+
+
+describe("backup cover opt-in", () => {
+  it.each(["moo", "owner", "employee"] as const)("requires explicit opt-in for %s and preserves cost exclusions", (role) => {
+    for (const rosterInclude of [null, false, true]) {
+      const { people } = toSchedPeople({ members: [{ userId: "backup", role, active: true }],
+        settings: [{ userId: "backup", rosterInclude, workType: null, alsoAllowed: [], leaderSetting: null,
+          coverPositions: [], softMinH: 20, softMaxH: 40, fullTime: false, fullTimeMinH: null }],
+        dates: ["2026-10-26"], structure: S, shopDay: SHOP, skills: null, patterns: {},
+        wages: { byUserCents: { backup: 2500 }, estimateHourlyCents: 1900 } });
+      expect(people[0]?.backupCover).toBe(role !== "employee" && rosterInclude === true);
+      if (role !== "employee") expect(people[0]).toMatchObject({ presenceOnly: true, wageCents: null, wageSource: null, softMinH: null, softMaxH: null });
+      else expect(people[0]).toMatchObject({ presenceOnly: false, wageCents: 2500, softMinH: 20, softMaxH: 40 });
+    }
+  });
+});
