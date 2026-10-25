@@ -1,5 +1,6 @@
 -- Migration 0285_schedule_backup_cover
 -- AUTHORED 2026-10-24. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0284.
+-- APPLIED TO SIM 2026-10-24 (schema_migrations version 20261025030559, name '0285_schedule_backup_cover').
 -- Provenance: CC-cleared Backup cover implementation, Juan's 2026-10-24 crew-engine ruling.
 -- Re-emits 0283 structure validation with only the optional roster.backupCoverPerDay key.
 -- Re-emits 0284 gap validation with only the backup_cover_cap rejection reason.
