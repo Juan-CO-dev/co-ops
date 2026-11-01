@@ -11,6 +11,8 @@ export const digest = (value: unknown): string => createHash("sha256").update(ca
 export function captureCrewInput(raw: GeneratorInput): void {
   const input = structuredClone(raw);
   for (const p of input.people) p.backupCover = false;
+  // The weekly setting cannot affect a no-opt-in build; retain the pre-0286 input identity.
+  delete input.structure.roster.backupCoverPerPersonWeek;
   for (const role of ["moo", "owner"] as const) {
     if (input.people.some((p) => p.role === role)) continue;
     const added = person({ id: `invariance-${role}`, role }, input.days.map((d) => d.date));

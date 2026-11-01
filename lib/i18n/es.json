@@ -8220,5 +8220,8 @@
   "schedule.settings.roster.backup_cover_per_day": "Cobertura de respaldo por día",
   "schedule.settings.roster.backup_cover_help": "Máximo de personas de respaldo (propietario, director de operaciones) que el motor puede agregar en un día. 0 lo desactiva.",
   "schedule.reason.backup_cover": "Cobertura de respaldo",
-  "schedule.crew.rejection.backup_cover_cap": "Se alcanzó el límite diario de cobertura de respaldo."
+  "schedule.crew.rejection.backup_cover_cap": "Se alcanzó el límite diario de cobertura de respaldo.",
+  "schedule.settings.roster.backup_cover_per_person_week": "Días de cobertura de respaldo por persona por semana",
+  "schedule.settings.roster.backup_cover_week_help": "El motor deja de agregar a una persona de cobertura de respaldo cuando ya está en el horario esta cantidad de días en la semana. Los días que tú la programas también cuentan. 0 lo desactiva.",
+  "schedule.crew.rejection.backup_cover_week_cap": "Esta persona alcanzó el límite semanal de cobertura de respaldo."
 }

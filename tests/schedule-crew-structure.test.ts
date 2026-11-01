@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { crewStructureCases, shopBase } from "../scripts/schedule-structure-cases.mjs";
-import { structureFromStations, backupCoverPerDay, scheduleEngine, shiftTypesOf, structureProblem, withCrewStructureDefaults, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
+import { structureFromStations, backupCoverPerPersonWeek, backupCoverPerDay, scheduleEngine, shiftTypesOf, structureProblem, withCrewStructureDefaults, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { stationAdvisory, structureBody } from "@/lib/scheduling/settings-view-shared";
 
 describe("crew structure contracts", () => {
@@ -52,5 +52,30 @@ describe("backup cover per-day structure setting", () => {
   it("continues refusing other roster keys", () => {
     const st = shopBase() as ScheduleStructure; Object.assign(st.roster, { backupCover: 1 });
     expect(structureProblem(st)).toBe("roster.backupCover");
+  });
+});
+
+
+describe("backup cover weekly structure setting", () => {
+  it("defaults absent to two without mutating historical structures", () => {
+    const st = shopBase() as ScheduleStructure;
+    expect(backupCoverPerPersonWeek(st)).toBe(2);
+    expect(st.roster).not.toHaveProperty("backupCoverPerPersonWeek");
+    expect(structureProblem(st)).toBeNull();
+  });
+  it.each([0, 1, 2, 3, 4, 5, 6, 7])("accepts %s alone and with a daily cap", (cap) => {
+    const st = shopBase() as ScheduleStructure;
+    st.roster.backupCoverPerPersonWeek = cap;
+    expect(structureProblem(st)).toBeNull();
+    expect(backupCoverPerPersonWeek(st)).toBe(cap);
+    st.roster.backupCoverPerDay = 0;
+    expect(structureProblem(st)).toBeNull();
+    Object.assign(st.roster, { invented: 1 });
+    expect(structureProblem(st)).toBe("roster.invented");
+  });
+  it.each([8, -1, 1.5, "1", null])("rejects %s at the weekly key", (cap) => {
+    const st = shopBase() as ScheduleStructure;
+    Object.assign(st.roster, { backupCoverPerPersonWeek: cap });
+    expect(structureProblem(st)).toBe("roster.backupCoverPerPersonWeek");
   });
 });

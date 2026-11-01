@@ -123,7 +123,7 @@ export interface ScheduleStructure {
   };
   catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number; crewShift?: CrewCateringSetting };
   labor: { targetPct: number; basis: "hourly" | "total"; strong: number; watch: number; budgetDeadbandH: number };
-  roster: { excludedRoles: RoleCode[]; backupCoverPerDay?: number };
+  roster: { excludedRoles: RoleCode[]; backupCoverPerDay?: number; backupCoverPerPersonWeek?: number };
 }
 
 const crew = (prepHeads: number, prepUntilQ: number, setup: number, service: number, rush: number, closeWalk: number): CrewRow => ({
@@ -618,11 +618,17 @@ export function backupCoverPerDay(structure: ScheduleStructure): number {
   return structure.roster.backupCoverPerDay ?? 1;
 }
 
+/** Maximum distinct scheduled dates for a backup-cover person; absent means two. */
+export function backupCoverPerPersonWeek(structure: ScheduleStructure): number {
+  return structure.roster.backupCoverPerPersonWeek ?? 2;
+}
+
 function checkRoster(v: unknown): Problem {
   if (!isObj(v)) return "roster";
-  const k = exactKeys(v, ["excludedRoles", ...(Object.hasOwn(v, "backupCoverPerDay") ? ["backupCoverPerDay"] : [])], "roster.");
+  const k = exactKeys(v, ["excludedRoles", ...["backupCoverPerDay", "backupCoverPerPersonWeek"].filter((key) => Object.hasOwn(v, key))], "roster.");
   if (k) return k;
   if (Object.hasOwn(v, "backupCoverPerDay") && (typeof v.backupCoverPerDay !== "number" || !Number.isInteger(v.backupCoverPerDay) || v.backupCoverPerDay < 0 || v.backupCoverPerDay > 3)) return "roster.backupCoverPerDay";
+  if (Object.hasOwn(v, "backupCoverPerPersonWeek") && (typeof v.backupCoverPerPersonWeek !== "number" || !Number.isInteger(v.backupCoverPerPersonWeek) || v.backupCoverPerPersonWeek < 0 || v.backupCoverPerPersonWeek > 7)) return "roster.backupCoverPerPersonWeek";
   return checkRoleList(v.excludedRoles, "roster.excludedRoles");
 }
 

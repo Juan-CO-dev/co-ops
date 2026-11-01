@@ -33,10 +33,13 @@ describe("crew structure editor", () => {
     mount(s, vi.fn(), null, language);
     const label = (language === "en" ? en : es)["schedule.settings.roster.backup_cover_per_day"];
     expect(screen.queryByLabelText(label)).toBeNull();
+    expect(screen.queryByLabelText((language === "en" ? en : es)["schedule.settings.roster.backup_cover_per_person_week"])).toBeNull();
     fireEvent.change(input("engine"), { target: { value: "crew" } });
     expect(screen.getByLabelText(label)).toBeTruthy();
+    expect(screen.getByLabelText((language === "en" ? en : es)["schedule.settings.roster.backup_cover_per_person_week"])).toBeTruthy();
     fireEvent.change(input("engine"), { target: { value: "stations" } });
     expect(screen.queryByLabelText(label)).toBeNull();
+    expect(screen.queryByLabelText((language === "en" ? en : es)["schedule.settings.roster.backup_cover_per_person_week"])).toBeNull();
   });
   it.each(["en", "es"] as const)("refuses selecting crew without shift types before posting (%s)", (language) => {
     mount(seededFloors(), vi.fn(), null, language);
@@ -371,10 +374,16 @@ describe("backup cover roster editor", () => {
     const dict = language === "en" ? en : es;
     expect(screen.getByLabelText(dict["schedule.settings.roster.backup_cover_per_day"])).toBe(input("roster.backupCoverPerDay"));
     expect(input("roster.backupCoverPerDay").value).toBe("1");
+    const weekly = input("roster.backupCoverPerPersonWeek");
+    expect(screen.getByLabelText(dict["schedule.settings.roster.backup_cover_per_person_week"])).toBe(weekly);
+    expect(weekly.value).toBe("2"); expect(weekly.min).toBe("0"); expect(weekly.max).toBe("7");
+    expect(screen.getByText(dict["schedule.settings.roster.backup_cover_week_help"])).toBeTruthy();
+    fireEvent.change(weekly, { target: { value: "0" } });
     expect(screen.getByText(dict["schedule.settings.roster.backup_cover_help"])).toBeTruthy();
     fireEvent.change(input("roster.backupCoverPerDay"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: dict["schedule.settings.save"] }));
     await waitFor(() => expect(post).toHaveBeenCalledOnce());
     expect(post.mock.calls[0]![1].structure.roster.backupCoverPerDay).toBe(0);
+    expect(post.mock.calls[0]![1].structure.roster.backupCoverPerPersonWeek).toBe(0);
   });
 });

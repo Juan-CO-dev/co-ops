@@ -3,7 +3,7 @@ import { crewBlockAttempts } from "../crew-block-attempts-shared";
 /** Whole crew blocks first, stations second. No station-generator repair or fill passes. */
 import { canonicalJson, assertContextFits, type DayContext, type RuleContext, type RulePerson } from "../context-shared";
 import type { CrewShiftMeta } from "../crew-contracts-shared";
-import { isCrewCandidate, crewBackupCoverAtCap, crewCandidateHoursEvidence, crewOpenGroups, crewRequired, crewStationShorts, shiftCountsAsMod } from "../crew-gap-verifier-shared";
+import { isCrewCandidate, crewBackupCoverAtCap, crewBackupCoverWeekAtCap, crewCandidateHoursEvidence, crewOpenGroups, crewRequired, crewStationShorts, shiftCountsAsMod } from "../crew-gap-verifier-shared";
 import { ScheduleError } from "../errors-shared";
 import { buildDayNeed } from "../need-shared";
 import { compareCodePoint as cmp } from "../order-shared";
@@ -163,6 +163,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     const day = ctx.days[date]!;
     if (!p.activeMember || (neverGenerated(p) && !(p.backupCover && source === "backup_cover"))) return fail("position");
     if (p.backupCover && source === "backup_cover" && crewBackupCoverAtCap(date, schedule, ctx)) return fail("backup_cover_cap");
+    if (p.backupCover && source === "backup_cover" && crewBackupCoverWeekAtCap(p, date, schedule, ctx)) return fail("backup_cover_week_cap");
     if (p.workModes?.[date] === "off") return fail("off");
     if (p.untouchableDates.includes(date)) return fail("time_off");
     if (blocked.has(`${date}|${p.userId}`) || schedule.shifts.some((s) => s.date === date && s.userId === p.userId)) return fail("already_scheduled");

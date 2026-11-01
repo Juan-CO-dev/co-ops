@@ -28,7 +28,7 @@ export interface CrewDaySnapshot {
 
 export const CREW_REJECTION_CODES = [
   "off", "time_off", "unavailable", "already_scheduled", "position", "leader_setting",
-  "minimum_length", "maximum_length", "day_limit", "soft_max", "overtime", "budget", "manager_limit", "backup_cover_cap",
+  "minimum_length", "maximum_length", "day_limit", "soft_max", "overtime", "budget", "manager_limit", "backup_cover_cap", "backup_cover_week_cap",
 ] as const;
 export type CrewRejectionCode = (typeof CREW_REJECTION_CODES)[number];
 
