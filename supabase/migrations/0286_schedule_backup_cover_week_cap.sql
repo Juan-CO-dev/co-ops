@@ -1,5 +1,6 @@
 -- Migration 0286_schedule_backup_cover_week_cap
 -- AUTHORED 2026-11-01. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0285.
+-- APPLIED TO SIM 2026-11-01 (schema_migrations version 20261101144251, name '0286_schedule_backup_cover_week_cap').
 -- Provenance: CC-cleared implementation, Juan's 2026-11-01 two-days-per-person ruling.
 -- Re-emits both 0285 validators with only the optional weekly cap and its rejection reason.
 -- ROLLOUT: apply AFTER 0285, before deploying weekly cap structure or gap writers.
