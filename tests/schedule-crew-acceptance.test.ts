@@ -152,6 +152,9 @@ describe("P Street Backup cover acceptance", () => {
     const inputs = acceptanceInputs(); inputs.structure.structure.roster.backupCoverPerDay = 1;
     for (const name of ["Cristian", "Pete"]) inputs.personSettings.find((p) => p.userId === personId(name))!.rosterInclude = true;
     const start = performance.now(); const backup = run(inputs); const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThanOrEqual(1500);
+    expect(inputs.structure.structure.roster.backupCoverPerPersonWeek).toBeUndefined();
+    for (const name of ["Cristian", "Pete"]) expect(new Set(backup.shifts.filter((s) => s.userId === personId(name)).map((s) => s.date)).size).toBeLessThanOrEqual(2);
     const added = backup.shifts.filter((s) => backup.context.people[s.userId]!.backupCover);
     const lines = ["Backup cover acceptance: P Street, 2026-10-19", `Build: ${elapsed.toFixed(1)} ms (target 1500 ms)`, "", "Date | Person | Type | Times | Hours", "--- | --- | --- | --- | ---"];
     for (const s of added) {

@@ -81,6 +81,7 @@ describe("crew Backup cover", () => {
   });
   it("excludes backup hours from budget, costs and soft/overtime notes", () => {
     const i = input(undefined, 1, 1, DATES);
+    i.structure.roster.backupCoverPerPersonWeek = 7;
     i.structure.limits.overtimeH = 1;
     for (const p of i.people) { p.softMaxH = 1; p.softMinH = 40; p.wageCents = 9999; }
     for (const date of DATES) i.budgetByDate[date] = 0;
@@ -124,6 +125,7 @@ describe("crew Backup cover", () => {
   });
   it("balances generated backup hours only, ignoring Pete's 20 presence hours", () => {
     const i = input([{ id: "cristian", role: "moo", cover: [I.$REG] }, { id: "pete", role: "owner", cover: [I.$REG] }], 1, 1, DATES.slice(0, 6));
+    i.structure.roster.backupCoverPerPersonWeek = 7;
     // Reserve 20 presence hours first. Cristian gets the first generated block;
     // Pete must get the next despite having more total on-clock hours.
     i.pins = DATES.slice(0, 4).map((date) => ({ id: `presence-${date}`, userId: "pete", date, startQ: 44, endQ: 64, positions: [], kind: "presence" as const }));

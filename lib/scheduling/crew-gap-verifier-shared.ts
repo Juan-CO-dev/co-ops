@@ -4,7 +4,7 @@ import { compareCodePoint } from "./order-shared";
 import { validCrewGapCertificateShape } from "./shapes-shared";
 import { canonicalJson, type DayContext, type RuleContext, type RulePerson } from "./context-shared";
 import type { CrewGapCertificate, CrewRejectionCode, OpenShiftItem } from "./crew-contracts-shared";
-import { backupCoverPerDay, scheduleEngine, shiftTypesOf, type ShiftType } from "./structure-shared";
+import { backupCoverPerDay, backupCoverPerPersonWeek, scheduleEngine, shiftTypesOf, type ShiftType } from "./structure-shared";
 import { atDayCap, maxDaysPerWeek, salariedWeek, type DeclaredGap, type Shift, type WeekSchedule } from "./rules-shared";
 
 /** Type flags restrict the existing role/time rule; they can never grant MoD authority. */
@@ -37,12 +37,20 @@ export function crewBackupCoverAtCap(date: string, s: Pick<WeekSchedule, "shifts
   return count >= backupCoverPerDay(ctx.days[date]!.structure);
 }
 
+/** Count distinct dates, not blocks, from every source, including pins, manual edits and usual shifts.
+ * Meaningful only for an opted-in backup-cover person. */
+export function crewBackupCoverWeekAtCap(p: RulePerson, date: string, s: Pick<WeekSchedule, "shifts">, ctx: RuleContext): boolean {
+  const count = new Set(s.shifts.filter((sh) => sh.userId === p.userId).map((sh) => sh.date)).size;
+  return count >= backupCoverPerPersonWeek(ctx.days[date]!.structure);
+}
+
 /** Conservative fixed-crew exclusions. Unknown policy/search failures deliberately have no proof. */
 export function crewCandidateRejections(p: RulePerson, type: ShiftType, date: string, s: WeekSchedule, ctx: RuleContext): CrewRejectionCode[] {
   const day = ctx.days[date]!;
   const st = day.structure;
   const codes: CrewRejectionCode[] = [];
   if (p.backupCover && crewBackupCoverAtCap(date, s, ctx)) codes.push("backup_cover_cap");
+  if (p.backupCover && crewBackupCoverWeekAtCap(p, date, s, ctx)) codes.push("backup_cover_week_cap");
   if (p.workModes?.[date] === "off") codes.push("off");
   if (p.untouchableDates.includes(date)) codes.push("time_off");
   const av = p.availability[date];

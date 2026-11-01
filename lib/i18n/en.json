@@ -8220,5 +8220,8 @@
   "schedule.settings.roster.backup_cover_per_day": "Backup cover per day",
   "schedule.settings.roster.backup_cover_help": "Most backup-cover people (owner, director of operations) the engine may add on one day. 0 turns it off.",
   "schedule.reason.backup_cover": "Backup cover",
-  "schedule.crew.rejection.backup_cover_cap": "The daily backup cover limit has been reached."
+  "schedule.crew.rejection.backup_cover_cap": "The daily backup cover limit has been reached.",
+  "schedule.settings.roster.backup_cover_per_person_week": "Backup cover shifts per person per week",
+  "schedule.settings.roster.backup_cover_week_help": "Most days in one week the engine may add the same backup-cover person. 0 turns it off.",
+  "schedule.crew.rejection.backup_cover_week_cap": "This person has reached the weekly backup cover limit."
 }
