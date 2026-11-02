@@ -1,5 +1,7 @@
 -- Migration 0280_schedule_person_works_as
 -- AUTHORED 2026-10-21. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0278).
+-- APPLIED TO SIM 2026-10-22 (schema_migrations version 20261022054023, name '0280_schedule_person_works_as').
+-- APPLIED TO PROD 2026-10-22 (schema_migrations version 20261022055115, name '0280_schedule_person_works_as').
 -- Provenance: feat/schedule-works-as, CC-approved tmp/works-as-plan.md.
 --
 -- Per-shop floor role for off-floor accounts; account permissions remain unchanged.
