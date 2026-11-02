@@ -1,6 +1,7 @@
 import type { TranslationKey } from "@/lib/i18n/types";
 import { OPERATIONAL_LEVEL6_ROLES, PM_CRITERIA_EDITOR_ROLES } from "@/lib/people/access-shared";
 import type { RoleCode } from "@/lib/roles";
+import { PARS_VIEW_ROLES } from "@/lib/admin/pars-shared";
 
 /**
  * Admin section registry — single source of truth for the /admin hub.
@@ -100,7 +101,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // 0220 — who gets the closing / all-shops / catering digests (and, later, the accountant
   // package). GM views (7); level 9+ manages (lib/report-recipients.ts).
   { id: "report-recipients",   i18nKey: "admin.section.report-recipients",   href: "/admin/report-recipients",   minLevel: 7 },
-  { id: "pars",                i18nKey: "admin.section.pars",               href: "/admin/pars",                minLevel: 7, comingSoon: true },
+  { id: "pars",                i18nKey: "admin.section.pars",               href: "/admin/pars",                minLevel: 6, onlyRoles: PARS_VIEW_ROLES },
   { id: "locations",           i18nKey: "admin.section.locations",           href: "/admin/locations",           minLevel: 9, comingSoon: true },
   { id: "audit",               i18nKey: "admin.section.audit",               href: "/admin/audit",               minLevel: 9, comingSoon: true },
 ];
