@@ -1,6 +1,7 @@
 -- Migration 0287_checklist_corrections_serialized
 -- AUTHORED 2026-11-01. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0286.
 -- APPLIED TO SIM 2026-11-01 (schema_migrations version 20261102005815, name '0287_checklist_corrections_serialized').
+-- APPLIED TO PROD 2026-11-01 (schema_migrations version 20261102011046, name '0287_checklist_corrections_serialized').
 -- Provenance: Track 3 chunk 1, CC's binding track3-rulings.md after Opus plan review.
 -- Global lock order: AM instance -> closing instance -> completion rows.
 -- New parent locks use FOR NO KEY UPDATE; existing 0276 confirmation is preserved.
