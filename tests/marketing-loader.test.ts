@@ -135,7 +135,9 @@ it('builds only the baseline and reuses its data for per-shop snapshots', async 
   const result = await buildMarketingBaseline(viewer, { client: db as unknown as MarketingDeps['client'], env });
   expect(result.payload.byLocation.one?.coverage).toEqual(result.coverage);
   expect(db.from.mock.calls.map(([table]) => table)).toEqual(['marketing_milestones', 'locations']);
-  expect(db.rpc.mock.calls.map(([name]) => name)).toEqual(['marketing_scorecard_days', 'sales_report_catering_values']);
+  // One 28-day sales read; catering values per baseline week, exactly like the live loader (no drift).
+  expect(db.rpc.mock.calls.map(([name]) => name)).toEqual(['marketing_scorecard_days', ...Array(4).fill('sales_report_catering_values')]);
+  expect(result.payload.pipeline.events.value).toBe(4);
 });
 it('refuses a snapshot without D before reading sales', async () => {
   const db = baselineDb(null);

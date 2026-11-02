@@ -175,9 +175,11 @@ export async function buildMarketingBaseline(viewer: Viewer, deps: MarketingDeps
   const milestones = marketingHeads(await readRows<Milestone>(sb, "marketing_milestones", "id,kind,milestone_date,corrects_id"));
   const milestone = milestones.find(row => row.kind === "first_ad_spend");
   if (!milestone) throw new Error("no_first_ad_spend");
-  const window = scorecardWindows(milestone.milestone_date, (deps.now ?? new Date()).toISOString()).baseline!;
+  const windows = scorecardWindows(milestone.milestone_date, (deps.now ?? new Date()).toISOString());
+  const window = windows.baseline!;
   const locations = await readRows<MarketingLocation>(sb, "locations", "id,name,code");
-  const input = await readWindowInput(sb, locations, window);
+  // Same weekly pipeline slices as the live loader, so the locked baseline never drifts from it.
+  const input = await readWindowInput(sb, locations, window, windows.baselineWeeks);
   const live = computeScorecard(input);
   const byLocation: Record<string, Score> = {};
   for (const location of locations) byLocation[location.id] = computeScorecard({ ...input, locationIds: [location.id] });
