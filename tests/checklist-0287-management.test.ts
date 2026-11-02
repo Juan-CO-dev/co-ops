@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fixture, fixtureSQL, retireSQL, pairings, corrections, calls, correctionSQL,
+import { fixture as rawFixture, calls as rawCalls, fixtureSQL, retireSQL, pairings, corrections, correctionSQL,
   refusalSQL, rollbackQuery, fixturePreflight, requiredColumns, runProof,
 } from '../scripts/sim/checklist-0287-lock-check-management.mjs';
 import { transactionSQL, proveRace } from '../scripts/sim/checklist-0276-lock-check-management.mjs';
 import { signatures } from '../scripts/preflight-0276.mjs';
 import { managementQuery, projectRef, SIM_REF, PROD_REF } from '../scripts/supabase-management-query.mjs';
+
+// The .mjs factories are untyped; TypeScript infers Object.fromEntries as a string map.
+type FixtureCase = { instance: string; old: string; reference: string; prep: string };
+type Fixture = { actor: string; authority: string; shop: string; template: string; item: string;
+  quickItem: string; referenceItem: string; prepItem: string; tag: string; cases: FixtureCase[] };
+const fixture = rawFixture as unknown as () => Fixture;
+const calls = rawCalls as unknown as (f: Fixture, c: FixtureCase, quick: string) => Record<string, string>;
 
 const columns = Object.entries(requiredColumns).flatMap(([table_name,names]) =>
   (names as string[]).map(column_name=>({table_name,column_name})));
@@ -38,7 +45,7 @@ describe('0287 Management API proof (offline only)',()=>{
     for(const id of [a.actor,a.authority,a.shop,a.template,a.item,a.quickItem,a.referenceItem,a.prepItem]) expect(retired).toContain(id);
   });
   it('binds correction targets and distinct authority, with real writer signatures',()=>{
-    const f=fixture(),c=f.cases[0],quick='00000000-0000-4000-8000-000000000001';
+    const f=fixture(),c=f.cases[0]!,quick='00000000-0000-4000-8000-000000000001';
     const ops=calls(f,c,quick);
     expect(ops.revoke).toContain(`('${quick}','${f.actor}')`);
     expect(ops.reason).toContain(`('${c.old}','${f.actor}','other'`);
@@ -50,7 +57,7 @@ describe('0287 Management API proof (offline only)',()=>{
   it('asserts exact SQLSTATE and refusal without swallowing unexpected success/errors',()=>{
     const f=fixture();
     for(const expected of ['instance_not_open','reference_row_not_correctable','prep_data_not_correctable']) {
-      const sql=refusalSQL(correctionSQL('reason',f,f.cases[0].old),expected);
+      const sql=refusalSQL(correctionSQL('reason',f,f.cases[0]!.old),expected);
       expect(sql).toContain("exception when sqlstate 'P0001'");
       expect(sql).toContain(`if sqlerrm = '${expected}' then return; end if; raise;`);
       expect(sql).toContain("raise exception 'expected refusal missing' using errcode='XX000'");
