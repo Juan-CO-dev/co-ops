@@ -124,7 +124,8 @@ afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 it('classifies every route and runtime HTTP export, including aliases and re-exports', async () => {
   const files = readdirSync('app', { recursive: true }).map(String).map(p => p.replaceAll('\\', '/'))
     .map(p => 'app/' + p).filter(p => /(^|\/)route\.(ts|tsx|js|jsx|mts|mjs|cts|cjs)$/.test(p)).sort();
-  // Reuse the admin test's adjudicated maps, parsed as AST (do not run its tests twice).
+  // Reuse the admin test's adjudicated maps, including every marketing mutation,
+  // parsed as AST (do not run its tests twice).
   const admin = ts.createSourceFile('admin', readFileSync('tests/admin-write-origin.test.ts', 'utf8'), ts.ScriptTarget.Latest, true);
   const adminInventory: Record<string, string> = {};
   for (const n of admin.statements) if (ts.isVariableStatement(n)) for (const d of n.declarationList.declarations) {

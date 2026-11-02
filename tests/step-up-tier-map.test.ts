@@ -84,6 +84,13 @@ function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => bo
 
 // ── THE SERVER HALF: route file → the tiers it asserts ────────────────────────
 const SERVER_TIER_MAP: Record<string, string[]> = {
+  "app/api/admin/marketing/milestones/route.ts": ["B"],
+  "app/api/admin/marketing/milestones/[id]/correct/route.ts": ["B"],
+  "app/api/admin/marketing/entries/route.ts": ["A"],
+  "app/api/admin/marketing/entries/[id]/correct/route.ts": ["A"],
+  "app/api/admin/marketing/baseline-snapshot/route.ts": ["B"],
+  "app/api/admin/marketing/ad-codes/route.ts": ["A"],
+  "app/api/admin/marketing/ad-codes/[code]/retire/route.ts": ["B"],
   "app/api/admin/catalog/sku/[id]/share/route.ts": ["E"],
   "app/api/admin/catalog/recipe/[id]/share/route.ts": ["E"],
   "app/api/admin/catalog/menu-item/[id]/share/route.ts": ["E"],
@@ -263,6 +270,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
+  "components/admin/marketing/MarketingWriteForms.tsx": ["A", "B"],
+  "app/admin/marketing/ad-codes/AdCodesClient.tsx": ["VAR:retireCode"],
   "components/catalog/jobs/SwapVendorJob.tsx": ["E"],
   "components/catalog/ShareWithEveryShop.tsx": ["E"],
   "components/catalog/ItemJobsStrip.tsx": ["E"],
