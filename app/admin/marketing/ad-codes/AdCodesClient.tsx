@@ -21,7 +21,8 @@ export function AdCodesClient({ rows, language }: { rows: AdCodeRow[]; language:
     if (busy) return;
     setBusy(true); setMessage('');
     try {
-      if (await requestStepUp(retireCode ? 'B' : 'A') !== 'ok') return;
+      const unlocked = retireCode ? await requestStepUp('B') : await requestStepUp('A');
+      if (unlocked !== 'ok') return;
       const result = await post(retireCode ? `/api/admin/marketing/ad-codes/${encodeURIComponent(retireCode)}/retire` : '/api/admin/marketing/ad-codes', retireCode ? {} : { code });
       if (!result.ok) { setMessage(adCodeRefusal(language, result.code)); return; }
       setMessage(copy.saved); setCreating(false); setRetiring(null); setCode(''); router.refresh();

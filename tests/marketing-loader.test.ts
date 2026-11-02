@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ROLES } from '@/lib/roles';
 import { canReadMarketing, marketingTileVisible } from '@/lib/marketing/access-shared';
-import { loadMarketingScorecard, marketingHeads, marketingBaselineDrift, type MarketingDeps } from '@/lib/marketing/scorecard';
+import { buildMarketingBaseline, loadMarketingScorecard, marketingHeads, marketingBaselineDrift, type MarketingDeps } from '@/lib/marketing/scorecard';
 import { classifyLandingHost } from '@/lib/landing/host-shared';
 import { proxy } from '@/proxy';
 import { NextRequest } from 'next/server';
@@ -95,6 +95,58 @@ it('uses the frozen baseline, flags live drift, and excludes future days from cu
   expect(data.baselineDrift).toBe(true);
   const current = data.series.at(-1)!;
   expect(current.window.daysSoFar).toBe(3);
-  expect(current.score.coverage.expectedDays).toBe(3);
+  expect(current.score.coverage.expectedDays).toBe(2);
   expect(current.costPerExtraOrder.value).toBeNull();
+});
+
+
+it.each(['42501', '57014', 'PGRST000'])('reports unexpected loader error %s without logging source details', async code => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const db = client({ code });
+    expect(await loadMarketingScorecard(viewer, null, { client: db as unknown as MarketingDeps['client'], env })).toEqual({ state: 'load_failed' });
+    expect(log).toHaveBeenCalledWith('marketing_scorecard_load_failed');
+  } finally { log.mockRestore(); }
+});
+
+function baselineDb(first: string | null = '2026-10-19') {
+  const from = vi.fn((table: string) => {
+    const data = table === 'locations' ? [{ id: 'one', name: 'One', code: 'one' }] : table === 'marketing_milestones' && first ? [{ id: 'first', kind: 'first_ad_spend', milestone_date: first, corrects_id: null }] : [];
+    const query = { select: () => query, order: () => query, range: async () => ({ data, error: null }) }; return query;
+  });
+  const rpc = vi.fn(async (name: string, args: { p_from: string; p_to: string }) => ({ error: null, data: name === 'marketing_order_taps' ? [] : name === 'sales_report_catering_values' ? { completed_events: 1, completed_value_cents: 100, completed_unvalued: 0 } : {
+    channels: [], direct_online_orders: [], captured_days: [args.p_from], large_checks: [], unknown_labels: [], ezcater: [],
+  } }));
+  return { from, rpc };
+}
+it('reads baseline sales once and slices four weeks without rereading sales', async () => {
+  const db = baselineDb();
+  const data = await loadMarketingScorecard(viewer, null, { client: db as unknown as MarketingDeps['client'], env, now: new Date('2026-10-28T17:00:00Z') });
+  if (data.state !== 'ok') throw new Error('missing scorecard');
+  const baselineCalls = db.rpc.mock.calls.filter(([name, args]) => name === 'marketing_scorecard_days' && args.p_from < '2026-10-19');
+  expect(baselineCalls).toEqual([['marketing_scorecard_days', { p_location_id: 'one', p_from: '2026-09-21', p_to: '2026-10-18' }]]);
+  expect(data.baselineSeries).toHaveLength(4);
+  expect(data.baselineSeries.map(row => row.score.coverage.capturedDays)).toEqual([1, 0, 0, 0]);
+  expect(data.baseline?.pipeline.events.value).toBe(4);
+  expect(data.baselineSeries.map(row => row.score.pipeline.events.value)).toEqual([1, 1, 1, 1]);
+});
+it('builds only the baseline and reuses its data for per-shop snapshots', async () => {
+  const db = baselineDb();
+  const result = await buildMarketingBaseline(viewer, { client: db as unknown as MarketingDeps['client'], env });
+  expect(result.payload.byLocation.one?.coverage).toEqual(result.coverage);
+  expect(db.from.mock.calls.map(([table]) => table)).toEqual(['marketing_milestones', 'locations']);
+  expect(db.rpc.mock.calls.map(([name]) => name)).toEqual(['marketing_scorecard_days', 'sales_report_catering_values']);
+});
+it('refuses a snapshot without D before reading sales', async () => {
+  const db = baselineDb(null);
+  await expect(buildMarketingBaseline(viewer, { client: db as unknown as MarketingDeps['client'], env })).rejects.toThrow('no_first_ad_spend');
+  expect(db.rpc).not.toHaveBeenCalled();
+});
+it('has zero eligible capture days on D and never queries a reversed sales window', async () => {
+  const db = baselineDb();
+  const data = await loadMarketingScorecard(viewer, null, { client: db as unknown as MarketingDeps['client'], env, now: new Date('2026-10-19T17:00:00Z') });
+  if (data.state !== 'ok') throw new Error('missing scorecard');
+  expect(data.series[0]?.score.coverage.expectedDays).toBe(0);
+  expect(data.series[0]?.score.directOnlineOrders.value).toBeNull();
+  expect(db.rpc.mock.calls.every(([, args]) => args.p_from <= args.p_to)).toBe(true);
 });

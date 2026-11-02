@@ -271,7 +271,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/marketing/MarketingWriteForms.tsx": ["A", "B"],
-  "app/admin/marketing/ad-codes/AdCodesClient.tsx": ["VAR:retireCode"],
+  "app/admin/marketing/ad-codes/AdCodesClient.tsx": ["A", "B"],
   "components/catalog/jobs/SwapVendorJob.tsx": ["E"],
   "components/catalog/ShareWithEveryShop.tsx": ["E"],
   "components/catalog/ItemJobsStrip.tsx": ["E"],
@@ -476,4 +476,8 @@ describe("step-up grant map", () => {
 it.each(["requestStepUp('A')", 'requestStepUp("A")', 'requestStepUp(`A`)'])("extracts quoted tier and rejects an unpinned call: %s", source => {
   expect(tiersIn(source, "requestStepUp")).toEqual(["A"]);
   expect(extract("requestStepUp", () => true, ["unlisted.tsx"], () => source)).toEqual({ "unlisted.tsx": ["A"] });
+});
+
+it("pins AdCodesClient create to A and retire to B", () => {
+  expect(read("app/admin/marketing/ad-codes/AdCodesClient.tsx")).toContain("retireCode ? await requestStepUp('B') : await requestStepUp('A')");
 });

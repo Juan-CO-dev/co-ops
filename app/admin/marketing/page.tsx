@@ -18,6 +18,6 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
   return <div className="space-y-6"><ScorecardClient data={data} lang={auth.user.language} />
     {data.state === "ok" && <a href="/admin/marketing/ad-codes" className="inline-flex min-h-11 items-center underline">{serverT(auth.user.language, "marketing.adcodes.title")}</a>}
     {data.state === "ok" && <MarketingWriteForms lang={auth.user.language} locations={data.locations}
-      milestones={data.milestones} entries={data.entries} snapshotId={data.snapshots.find(row => row.milestone_id === milestone?.id)?.id} />}
+      milestones={data.milestones} entries={data.entries} weeks={data.series.map(row => row.window)} canCorrectBaseline={auth.role === "owner" || auth.role === "cgs"} snapshotId={data.snapshots.find(row => row.milestone_id === milestone?.id)?.id} />}
   </div>;
 }

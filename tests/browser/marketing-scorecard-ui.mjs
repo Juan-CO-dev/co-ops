@@ -15,8 +15,9 @@ const bundled = await build({
     import React from "react";
     import { renderToStaticMarkup } from "react-dom/server";
     import ScorecardClient from "./app/admin/marketing/ScorecardClient";
+    import { TranslationProvider } from "./lib/i18n/provider";
     import { data } from "./tests/fixtures/marketing-scorecard";
-    export function render(language) { return renderToStaticMarkup(<main className="min-w-0 p-4"><ScorecardClient data={data} lang={language}/></main>); }
+    export function render(language) { return renderToStaticMarkup(<TranslationProvider initialLanguage={language}><main className="min-w-0 p-4"><ScorecardClient data={data} lang={language}/></main></TranslationProvider>); }
   ` },
   bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
   define: { "process.env.NODE_ENV": '"production"' },

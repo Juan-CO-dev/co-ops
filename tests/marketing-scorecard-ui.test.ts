@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
-import { createElement } from "react";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { createElement, type ReactElement } from "react";
+import { render as renderBase, screen, fireEvent, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import ScorecardClient from "@/app/admin/marketing/ScorecardClient";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 
 import { data } from "./fixtures/marketing-scorecard";
+import { TranslationProvider } from "@/lib/i18n/provider";
+function render(ui: ReactElement) {
+  const lang = (ui.props as { lang?: "en" | "es"; children?: ReactElement<{ lang?: "en" | "es" }> }).lang
+    ?? (ui.props as { children?: ReactElement<{ lang?: "en" | "es" }> }).children?.props.lang ?? "en";
+  return renderBase(createElement(TranslationProvider, { initialLanguage: lang, children: ui }));
+}
 afterEach(cleanup);
 describe("marketing scorecard UI", () => {
   it("has exact en/es key and interpolation parity for every marketing surface", () => {
@@ -49,4 +55,31 @@ describe("marketing scorecard UI", () => {
     expect(screen.getByRole("status").textContent).toBe(en["marketing.state.not_switched_on"]);
     expect(screen.queryByRole("button")).toBeNull();
   });
+});
+
+it("shows share changes in points and keeps weekly tap detail behind a drawer", () => {
+  render(createElement(ScorecardClient, { data, lang: "en" }));
+  const row = screen.getByRole("button", { name: new RegExp(en["marketing.kpi.online_share"]) });
+  expect(row.textContent).toMatch(/Change: .* pts/);
+  fireEvent.click(screen.getByRole("button", { name: /Order taps by ad code/ }));
+  expect(screen.getByText(en["marketing.taps.campaign"])).toBeTruthy();
+  const weekly = screen.getByRole("button", { name: en["marketing.taps.by_week"] });
+  expect(weekly.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(weekly);
+  expect(weekly.getAttribute("aria-expanded")).toBe("true");
+});
+it("counts an overlapping misaligned spend entry as missing", () => {
+  if (data.state !== "ok") throw new Error("fixture not ready");
+  const week = data.series[0]!.window;
+  const entry = { id: "entry", kind: "meta_spend", location_id: null, platform: null, period_start: "2026-01-01", period_end: "2026-12-31", amount_cents: 500, list_count: null, note: null, corrects_id: null };
+  const first = render(createElement(ScorecardClient, { data: { ...data, entries: [entry] }, lang: "en" }));
+  expect(screen.getByRole("button", { name: /3 missing this week/ })).toBeTruthy();
+  first.unmount();
+  render(createElement(ScorecardClient, { data: { ...data, entries: [{ ...entry, period_start: week.from, period_end: week.to }] }, lang: "en" }));
+  expect(screen.getByRole("button", { name: /2 missing this week/ })).toBeTruthy();
+});
+it("shows load failure separately from no captured sales", () => {
+  render(createElement(ScorecardClient, { data: { state: "load_failed" }, lang: "en" }));
+  expect(screen.getByRole("status").textContent).toBe(en["marketing.state.load_failed"]);
+  expect(screen.queryByText(en["marketing.state.no_capture"])).toBeNull();
 });

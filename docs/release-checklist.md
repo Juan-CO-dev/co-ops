@@ -56,3 +56,5 @@ Evidence record for each manual gate: owner, date, exact revision/URL, private e
 - [ ] MoO/Owner/CGS only (GM/SMM refused); same-origin and A/B tiers tested. Append-only corrections retain reasons/history; retired ad codes never reactivated/reused.
 - [ ] Planned first_ad_spend recorded; 28-day pre-spend baseline and complete-week comparisons verified. Lock baseline numbers when spend starts; gaps/null amounts remain partial, unknown labels never bucketed, Toast-only >$5k exclusions shown, ET tap days verified.
 - [ ] Approved ad codes created, every destination points to bare landing with its exact ?ad= code; taps labeled consenting-visitor taps, never orders. Manual weekly all-shop Meta spend, per-shop/platform promo and as-of email counts checked; no invented zeroes.
+
+- [ ] Manual scorecard phone QA: `node tests/browser/marketing-scorecard-ui.mjs` proves English/Spanish at 375px, no horizontal overflow and controls at least 44px. Record the result; this browser check is not in CI.

@@ -15,9 +15,9 @@ export async function POST(req: NextRequest) {
   const ctx = await requireSession(req, '/api/admin/marketing/ad-codes');
   if (ctx instanceof Response) return ctx;
   if (!MARKETING_SCORECARD_ROLES.some(role => role === ctx.user.role)) return jsonError(403, 'role_not_allowed');
+  if (process.env.MARKETING_SCORECARD !== '1') return jsonError(503, 'marketing_unavailable');
   const su = assertStepUp(ctx, 'A');
   if (!su.ok) return jsonError(403, su.code);
-  if (process.env.MARKETING_SCORECARD !== '1') return jsonError(503, 'marketing_unavailable');
   const body = await parseJsonBody(req);
   if (body instanceof Response) return body;
   if (!body || typeof body !== 'object' || !('code' in body) || !validAdCandidate(body.code)) return jsonError(400, 'code_invalid');

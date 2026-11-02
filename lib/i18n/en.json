@@ -8374,7 +8374,7 @@
   "marketing.form.kind": "Kind",
   "marketing.form.reason": "Reason for correction",
   "marketing.form.note": "Note (no names or contact details)",
-  "marketing.form.amount": "Amount (cents)",
+  "marketing.form.amount": "Amount ($)",
   "marketing.form.count": "List size",
   "marketing.form.location": "Shop",
   "marketing.form.all": "All shops",
@@ -8439,5 +8439,15 @@
   "marketing.platform.uber_eats": "Uber Eats",
   "marketing.platform.doordash": "DoorDash",
   "marketing.platform.grubhub": "Grubhub",
-  "marketing.platform.other": "Other"
+  "marketing.platform.other": "Other",
+  "marketing.state.load_failed": "Could not load marketing results. Try again.",
+  "marketing.refusal.entry_week_misaligned": "Choose a week shown in the scorecard.",
+  "marketing.refusal.no_first_ad_spend": "Record the first ad spend date before locking the baseline.",
+  "marketing.form.entry_week_misaligned": "Choose a week shown in the scorecard.",
+  "marketing.form.no_first_ad_spend": "Record the first ad spend date before locking the baseline.",
+  "marketing.history.older_weeks": "Older weeks are not shown. History includes the latest 12 complete spend weeks and the baseline.",
+  "marketing.form.week": "Week",
+  "marketing.taps.campaign": "Whole campaign",
+  "marketing.taps.by_week": "By week",
+  "marketing.change_points": "{points} pts"
 }

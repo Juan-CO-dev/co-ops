@@ -53,6 +53,7 @@ it('uses Tier A for create and fresh Tier B for retire', async () => {
 });
 it('ships OFF without touching the database', async () => {
   vi.stubEnv('MARKETING_SCORECARD', '0');
+  vi.mocked(requireSession).mockResolvedValue(ctx('owner', false, false));
   expect((await create(req())).status).toBe(503); expect((await retireCode()).status).toBe(503);
   expect(await loadAdCodes(ctx())).toEqual({ state: 'not_switched_on', rows: [] });
   expect(getServiceRoleClient).not.toHaveBeenCalled();

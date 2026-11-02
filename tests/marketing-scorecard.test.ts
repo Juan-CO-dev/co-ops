@@ -242,3 +242,12 @@ describe("ET order taps and derived metrics", () => {
     expect((MARKETING_SCORECARD_ROLES as readonly string[]).includes(role)).toBe(["moo", "owner", "cgs"].includes(role));
   });
 });
+
+it('caps spend history at twelve complete weeks plus the current week', () => {
+  const result = scorecardWindows('2025-01-01', '2026-11-01T17:00:00Z');
+  expect(result.weeks.filter(week => week.complete)).toHaveLength(12);
+  expect(result.weeks.filter(week => !week.complete)).toHaveLength(1);
+  expect(result.olderWeeksHidden).toBe(true);
+  expect(result.baselineWeeks).toHaveLength(4);
+  expect(result.baseline).toEqual({ from: '2024-12-04', to: '2024-12-31' });
+});

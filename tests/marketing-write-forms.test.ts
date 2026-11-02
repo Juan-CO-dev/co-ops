@@ -9,7 +9,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }
 vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ requestStepUp: mocks.prompt }) }));
 vi.mock("@/components/admin/useStepUpPost", () => ({ useStepUpPost: () => mocks.post }));
 const id = "11111111-1111-4111-8111-111111111111";
-const props = { lang: "en" as const, locations: [{ id, name: "Shop" }], milestones: [{ id, kind: "first_ad_spend", milestone_date: "2026-11-01", corrects_id: null }], entries: [] };
+const props = { lang: "en" as const, locations: [{ id, name: "Shop" }], milestones: [{ id, kind: "first_ad_spend", milestone_date: "2026-11-01", corrects_id: null }], entries: [], weeks: [{ from: "2026-11-01", to: "2026-11-07" }], canCorrectBaseline: true };
 beforeEach(() => { vi.clearAllMocks(); mocks.prompt.mockResolvedValue("ok"); mocks.post.mockResolvedValue({ ok: true }); });
 afterEach(cleanup);
 it("opens milestone correction on demand and prompts Tier B", async () => {
@@ -28,9 +28,8 @@ it("records all-shop weekly Meta spend using Tier A and maps overlap refusal", a
   render(createElement(MarketingWriteForms, props));
   fireEvent.click(screen.getByText("Manual entry"));
   expect(screen.queryByLabelText("Shop")).toBeNull();
-  fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-01" } });
-  fireEvent.change(screen.getByLabelText("Through"), { target: { value: "2026-11-07" } });
-  fireEvent.change(screen.getByLabelText("Amount (cents)"), { target: { value: "450" } });
+  fireEvent.change(screen.getByLabelText("Week"), { target: { value: "2026-11-01" } });
+  fireEvent.change(screen.getByLabelText("Amount ($)"), { target: { value: "4.50" } });
   fireEvent.click(screen.getByText("Save"));
   await waitFor(() => expect(mocks.post).toHaveBeenCalledWith("/api/admin/marketing/entries", expect.objectContaining({ kind: "meta_spend", amountCents: 450, locationId: null, platform: null, from: "2026-11-01", to: "2026-11-07" })));
   expect(mocks.prompt).toHaveBeenCalledWith("A");
@@ -52,4 +51,19 @@ it("cancelled password confirmation never writes", async () => {
   fireEvent.click(screen.getByText(marketingWriteCopy("es").save));
   await waitFor(() => expect(mocks.prompt).toHaveBeenCalledOnce());
   expect(mocks.post).not.toHaveBeenCalled();
+});
+
+it("offers exactly the scorecard weeks and hides the end-date input", () => {
+  render(createElement(MarketingWriteForms, { ...props, weeks: [...props.weeks, { from: "2026-11-08", to: "2026-11-14" }] }));
+  fireEvent.click(screen.getByText("Manual entry"));
+  const picker = screen.getByLabelText("Week") as HTMLSelectElement;
+  expect(Array.from(picker.options).map(option => option.value)).toEqual(["2026-11-01", "2026-11-08"]);
+  expect(screen.queryByLabelText("Through")).toBeNull();
+});
+it("hides protected corrections from MoO and offers only unrecorded milestone kinds", () => {
+  render(createElement(MarketingWriteForms, { ...props, snapshotId: id, canCorrectBaseline: false }));
+  expect(screen.queryByText("Lock baseline numbers")).toBeNull();
+  fireEvent.click(screen.getByText("Milestone"));
+  expect(Array.from((screen.getByLabelText("Correct record") as HTMLSelectElement).options).map(option => option.value)).toEqual([""]);
+  expect(Array.from((screen.getByLabelText("Kind") as HTMLSelectElement).options).map(option => option.value)).toEqual(["landing_live", "counter_on", "capi_on"]);
 });

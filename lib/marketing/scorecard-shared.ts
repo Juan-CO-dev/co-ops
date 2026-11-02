@@ -52,14 +52,14 @@ export function scorecardWindows(firstAdSpend: string | null, nowIso: string) {
     }
   } else {
     const elapsed = dateNumber(today) - dateNumber(firstAdSpend!);
-    for (let index = 0; index <= Math.floor(elapsed / 7); index++) {
+    for (let index = Math.max(0, Math.floor(elapsed / 7) - 12); index <= Math.floor(elapsed / 7); index++) {
       const from = addDays(firstAdSpend!, index * 7);
       const to = addDays(from, 6);
       const complete = to < today;
       weeks.push({ from, to, week: index + 1, complete, daysSoFar: complete ? 7 : elapsed % 7 + 1, compare: complete });
     }
   }
-  return { today, baseline, baselineWeeks, weeks, noBaseline: firstAdSpend === null,
+  return { today, baseline, baselineWeeks, weeks, olderWeeksHidden: !beforeSpend && weeks[0]!.week > 1, noBaseline: firstAdSpend === null,
     yoy: { state: "unavailable" as const, captureBegan: CAPTURE_BEGAN } };
 }
 
@@ -142,7 +142,8 @@ export interface ScorecardInput {
 
 /** Shares are fractions (0..1). Sum cents/counts across shops BEFORE division. */
 export function computeScorecard(input: ScorecardInput) {
-  const dates = windowDays(input.window);
+  // On the first day of a week the nightly capture has no eligible days yet.
+  const dates = input.window.to < input.window.from ? [] : windowDays(input.window);
   const shops = new Set(input.locationIds);
   const accepts = (row: { locationId: string; day: string }) => shops.has(row.locationId) && inside(row.day, input.window);
   const captures = input.capturedDays.filter(accepts);
@@ -214,7 +215,8 @@ export interface TapDay { day: string; storeKey: string; adCode: string; active:
 export const tapEtDay = (instant: string): string => etCalendarDate(instant);
 export function computeOrderTaps(input: { window: DateWindow; installed: boolean; counterOn: string | null;
   rows: readonly TapDay[]; storeKeys: readonly string[] }) {
-  const days = windowDays(input.window);
+  dateNumber(input.window.from);
+  dateNumber(input.window.to);
   const stores = new Set(input.storeKeys);
   const rows = input.rows.filter(row => stores.has(row.storeKey) && inside(row.day, input.window)
     && input.counterOn !== null && row.day >= input.counterOn);
@@ -227,7 +229,7 @@ export function computeOrderTaps(input: { window: DateWindow; installed: boolean
   }
   const state = (count: number): Metric => !input.installed ? unavailable("counter_not_installed")
     : input.counterOn === null || input.window.to < input.counterOn ? unavailable("counter_off")
-      : metric(count, days.some(day => day < input.counterOn!) ? ["counter_off"] : []);
+      : metric(count, input.window.from < input.counterOn! ? ["counter_off"] : []);
   return { total: state(rows.reduce((total, row) => total + row.clickCount, 0)),
     coded: state(rows.filter(row => row.adCode !== "unattributed").reduce((total, row) => total + row.clickCount, 0)), groups: [...groups.values()] };
 }

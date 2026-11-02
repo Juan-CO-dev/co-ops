@@ -11,9 +11,9 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   const ctx = await requireSession(req, "/api/admin/marketing/milestones");
   if (ctx instanceof Response) return ctx;
   if (!marketingRoleAllowed(ctx.user.role)) return jsonError(403, "role_not_allowed");
+  if (process.env.MARKETING_SCORECARD !== "1") return jsonError(503, "marketing_unavailable");
   const step = assertStepUp(ctx, "B");
   if (!step.ok) return jsonError(403, step.code);
-  if (process.env.MARKETING_SCORECARD !== "1") return jsonError(503, "marketing_unavailable");
   const body = await parseJsonBody(req);
   if (body instanceof Response) return body;
   if (!isBody(body) || !validMarketingBody(body, false)) return jsonError(400, "entry_invalid");
