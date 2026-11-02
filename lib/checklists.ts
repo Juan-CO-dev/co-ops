@@ -1235,12 +1235,13 @@ export async function confirmInstance(
   await requireChecklistTaskAccess(authed, instanceId, actor);
   await rejectIfPrepLocked(authed, instanceId);
 
-  // Live (non-superseded) completions for this instance.
+  // Live (non-superseded, non-revoked) completions for gates and SQL snapshot.
   const { data: liveCompletions, error: liveErr } = await authed
     .from("checklist_completions")
     .select("id, template_item_id")
     .eq("instance_id", instanceId)
-    .is("superseded_at", null);
+    .is("superseded_at", null)
+    .is("revoked_at", null);
   if (liveErr) throw new Error(`confirmInstance load completions: ${liveErr.message}`);
   const completedItemIds = new Set((liveCompletions ?? []).map((r) => r.template_item_id as string));
 
@@ -1682,6 +1683,32 @@ async function loadLiveCompletionOrThrow(
 // revokeCompletion — silent within-60s self-untick (no reason, no note).
 // ─────────────────────────────────────────────────────────────────────────────
 
+function throwCorrectionError(error: PostgrestError, completionId: string, actor: ChecklistActor, operation: "revoke" | "revoke_with_reason" | "revoke_by_authority"): never {
+  let details: Record<string, number> = {};
+  try { details = JSON.parse(error.details || "{}"); } catch { /* Non-JSON database details. */ }
+  switch (error.message) {
+    case "not_self": throw new ChecklistNotSelfError(completionId);
+    case "outside_quick_window": throw new ChecklistOutsideQuickWindowError(completionId, details.elapsed_ms ?? QUICK_WINDOW_MS);
+    case "revocation_note_required": throw new ChecklistRevocationNoteRequiredError(completionId);
+    case "revoke_hierarchy_violation": throw new ChecklistRevokeHierarchyViolationError(completionId, details.actor_level ?? actor.level, details.completer_level ?? actor.level + 1);
+    case "not_authorized":
+    case "role_level_insufficient": throw new ChecklistRoleViolationError(details.required ?? 4, details.actual ?? actor.level);
+    case "concurrent_modification": throw new ChecklistConcurrentModificationError(completionId, operation);
+    case "instance_not_open":
+    case "reference_row_not_correctable":
+    case "prep_data_not_correctable":
+    case "completion_not_found":
+    case "use_quick_revoke":
+    case "use_self_revoke":
+    case "completer_not_found":
+    case "invalid_payload": throw new ChecklistError(error.message, error.message);
+    default:
+      if (error.code === "22P02") throw new ChecklistError("Invalid correction payload.", "invalid_payload");
+      if (error.code === "PGRST202") console.error("[checklist 0287_missing]", { code: error.code });
+      throw new Error(`checklist correction RPC failed: ${error.message}`);
+  }
+}
+
 /**
  * Silent self-revoke for a just-tapped completion. Window is QUICK_WINDOW_MS
  * (60s) measured from the live row's completed_at. Self-only.
@@ -1697,8 +1724,7 @@ async function loadLiveCompletionOrThrow(
  * checklist_completion.revoke with metadata.in_quick_window=true and
  * reason='error_tap'.
  *
- * Service-role for the UPDATE (existing checklist_completions_no_user_update
- * RLS denies UPDATE for everyone; same pattern as supersede in completeItem).
+ * Service-only RPC serializes on the parent instance before validating and writing.
  */
 export async function revokeCompletion(
   authed: SupabaseClient,
@@ -1710,41 +1736,17 @@ export async function revokeCompletion(
   },
 ): Promise<{ completion: ChecklistCompletion }> {
   const { completionId, actor } = args;
-
-  const completion = await loadLiveCompletionOrThrow(authed, completionId);
-  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
-
-  if (completion.completed_by !== actor.userId) {
-    throw new ChecklistNotSelfError(completionId);
-  }
-
-  const elapsed = elapsedSinceCompleted(completion.completed_at);
-  if (elapsed >= QUICK_WINDOW_MS) {
-    throw new ChecklistOutsideQuickWindowError(completionId, elapsed);
-  }
-
-  const sb = getServiceRoleClient();
-  const nowIso = new Date().toISOString();
-  const { data: updatedRows, error: updateErr } = await sb
-    .from("checklist_completions")
-    .update({
-      revoked_at: nowIso,
-      revoked_by: actor.userId,
-      revocation_reason: "error_tap",
-    })
-    .eq("id", completionId)
-    .is("revoked_at", null)
-    .is("superseded_at", null)
-    .select(COMPLETION_COLUMNS);
-
-  if (updateErr) {
-    throw new Error(`revokeCompletion update: ${updateErr.message}`);
-  }
-  if (!updatedRows || updatedRows.length === 0) {
-    throw new ChecklistConcurrentModificationError(completionId, "revoke");
-  }
-
-  const updatedRow = updatedRows[0] as CompletionRow;
+  const target = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireChecklistTaskAccess(authed, target.instance_id, actor);
+  // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
+  const { data, error } = await getServiceRoleClient().rpc("checklist_revoke_completion", {
+    p_completion: completionId, p_actor: actor.userId,
+  });
+  if (error) throwCorrectionError(error, completionId, actor, "revoke");
+  const result = data as { completion: CompletionRow; elapsed_ms: number; completer_level: number; actor_level: number };
+  const completion = requireChecklistRpcRow<CompletionRow>(result?.completion, "correction");
+  const updatedRow = completion;
+  const elapsed = result.elapsed_ms;
 
   await audit({
     actorId: actor.userId,
@@ -1804,63 +1806,18 @@ export async function revokeWithReason(
   },
 ): Promise<{ completion: ChecklistCompletion }> {
   const { completionId, actor, reason } = args;
-
-  // Reject 'error_tap' explicitly — that path is reserved for the silent
-  // revokeCompletion route, where in_quick_window=true is part of the audit
-  // contract. Allowing 'error_tap' here would muddy the forensic distinction.
-  if ((reason as string) === "error_tap") {
-    throw new ChecklistError(
-      `revokeWithReason does not accept reason='error_tap'; use revokeCompletion (silent within-60s path).`,
-      "invalid_payload",
-    );
-  }
-
   const note = args.note?.trim() ?? "";
-  if (reason === "other" && note.length === 0) {
-    throw new ChecklistRevocationNoteRequiredError(completionId);
-  }
-
-  const completion = await loadLiveCompletionOrThrow(authed, completionId);
-  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
-
-  if (completion.completed_by !== actor.userId) {
-    throw new ChecklistNotSelfError(completionId);
-  }
-
-  const elapsed = elapsedSinceCompleted(completion.completed_at);
-  if (elapsed < QUICK_WINDOW_MS) {
-    // Caller is still within silent window — they should use revokeCompletion.
-    // We surface a ChecklistError rather than auto-routing because UI clarity:
-    // the caller should know which path it's on (silent vs structured).
-    throw new ChecklistError(
-      `Completion ${completionId} is still within the silent-revoke window (${QUICK_WINDOW_MS - elapsed}ms remaining); use revokeCompletion.`,
-      "use_quick_revoke",
-    );
-  }
-
-  const sb = getServiceRoleClient();
-  const nowIso = new Date().toISOString();
-  const { data: updatedRows, error: updateErr } = await sb
-    .from("checklist_completions")
-    .update({
-      revoked_at: nowIso,
-      revoked_by: actor.userId,
-      revocation_reason: reason,
-      revocation_note: reason === "other" ? note : null,
-    })
-    .eq("id", completionId)
-    .is("revoked_at", null)
-    .is("superseded_at", null)
-    .select(COMPLETION_COLUMNS);
-
-  if (updateErr) {
-    throw new Error(`revokeWithReason update: ${updateErr.message}`);
-  }
-  if (!updatedRows || updatedRows.length === 0) {
-    throw new ChecklistConcurrentModificationError(completionId, "revoke_with_reason");
-  }
-
-  const updatedRow = updatedRows[0] as CompletionRow;
+  const target = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireChecklistTaskAccess(authed, target.instance_id, actor);
+  // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
+  const { data, error } = await getServiceRoleClient().rpc("checklist_revoke_with_reason", {
+    p_completion: completionId, p_actor: actor.userId, p_reason: reason, p_note: note,
+  });
+  if (error) throwCorrectionError(error, completionId, actor, "revoke_with_reason");
+  const result = data as { completion: CompletionRow; elapsed_ms: number; completer_level: number; actor_level: number };
+  const completion = requireChecklistRpcRow<CompletionRow>(result?.completion, "correction");
+  const updatedRow = completion;
+  const elapsed = result.elapsed_ms;
 
   await audit({
     actorId: actor.userId,
@@ -1933,91 +1890,19 @@ export async function markNotDoneByAuthority(
   },
 ): Promise<{ completion: ChecklistCompletion }> {
   const { completionId, actor } = args;
-
-  // Note required unconditionally.
   const note = args.note?.trim() ?? "";
-  if (note.length === 0) {
-    throw new ChecklistRevocationNoteRequiredError(completionId);
-  }
-
-  const completion = await loadLiveCompletionOrThrow(authed, completionId);
-  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
-
-  // Cross-user only. Self-correction has its own (C.28) path.
-  if (completion.completed_by === actor.userId) {
-    throw new ChecklistError(
-      `markNotDoneByAuthority is cross-user only; actor is the completer of ${completionId} — use revokeWithReason / revokeCompletion for self-correction.`,
-      "use_self_revoke",
-    );
-  }
-
-  // Floor: KH+ (level >= 4, post-renumber). Below KH stays self-only.
-  if (actor.level < 4) {
-    throw new ChecklistRoleViolationError(
-      4,
-      actor.level,
-      `Cross-user mark-not-done requires KH+ (level >= 4).`,
-    );
-  }
-
-  // Window: post-60s only. The completer's own silent-undo owns the first 60s.
-  const elapsed = elapsedSinceCompleted(completion.completed_at);
-  if (elapsed < QUICK_WINDOW_MS) {
-    throw new ChecklistError(
-      `Completion ${completionId} is still within the completer's silent window (${QUICK_WINDOW_MS - elapsed}ms remaining); cross-user mark-not-done is post-60s only.`,
-      "use_quick_revoke",
-    );
-  }
-
-  // Resolve the completer's CURRENT level server-side (consistency-with-tag).
-  const sb = getServiceRoleClient();
-  const { data: completerUser, error: completerErr } = await sb
-    .from("users")
-    .select("role")
-    .eq("id", completion.completed_by)
-    .maybeSingle<{ role: RoleCode }>();
-  if (completerErr) {
-    throw new Error(`markNotDoneByAuthority completer lookup: ${completerErr.message}`);
-  }
-  if (!completerUser) {
-    // completed_by is a NOT NULL FK to users, so this should be unreachable;
-    // treat a missing completer as a hard error rather than silently
-    // defaulting the level (which would make the at-or-below bound vacuous).
-    throw new ChecklistError(
-      `Completer ${completion.completed_by} of completion ${completionId} not found.`,
-      "completer_not_found",
-    );
-  }
-  const completerLevel = getRoleLevel(completerUser.role);
-
-  // Bound: at-or-below (actor.level >= completer level; peers included).
-  if (actor.level < completerLevel) {
-    throw new ChecklistRevokeHierarchyViolationError(completionId, actor.level, completerLevel);
-  }
-
-  // Soft-revoke UPDATE via service-role (_no_user_update RLS denies everyone).
-  const nowIso = new Date().toISOString();
-  const { data: updatedRows, error: updateErr } = await sb
-    .from("checklist_completions")
-    .update({
-      revoked_at: nowIso,
-      revoked_by: actor.userId,
-      revocation_reason: "not_actually_done",
-      revocation_note: note,
-    })
-    .eq("id", completionId)
-    .is("revoked_at", null)
-    .is("superseded_at", null)
-    .select(COMPLETION_COLUMNS);
-
-  if (updateErr) {
-    throw new Error(`markNotDoneByAuthority update: ${updateErr.message}`);
-  }
-  if (!updatedRows || updatedRows.length === 0) {
-    throw new ChecklistConcurrentModificationError(completionId, "revoke_by_authority");
-  }
-
-  const updatedRow = updatedRows[0] as CompletionRow;
+  const target = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireChecklistTaskAccess(authed, target.instance_id, actor);
+  // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
+  const { data, error } = await getServiceRoleClient().rpc("checklist_mark_not_done", {
+    p_completion: completionId, p_actor: actor.userId, p_note: note,
+  });
+  if (error) throwCorrectionError(error, completionId, actor, "revoke_by_authority");
+  const result = data as { completion: CompletionRow; elapsed_ms: number; completer_level: number; actor_level: number };
+  const completion = requireChecklistRpcRow<CompletionRow>(result?.completion, "correction");
+  const updatedRow = completion;
+  const elapsed = result.elapsed_ms;
+  const completerLevel = result.completer_level;
 
   await audit({
     actorId: actor.userId,
@@ -2030,7 +1915,7 @@ export async function markNotDoneByAuthority(
       template_item_id: completion.template_item_id,
       completed_by: completion.completed_by,
       completer_level: completerLevel,
-      actor_level: actor.level,
+      actor_level: result.actor_level,
       reason: "not_actually_done",
       note,
       elapsed_ms: elapsed,
@@ -2093,6 +1978,10 @@ export async function tagActualCompleter(
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
   await requireChecklistTaskAccess(authed, completion.instance_id, actor);
 
+  const item = await loadTemplateItemOrThrow(authed, completion.template_item_id);
+  if (item.report_reference_type) throw new ChecklistError("Reference rows use their report correction path.", "reference_row_not_correctable");
+  if (completion.prep_data != null) throw new ChecklistError("Prep rows use their prep correction path.", "prep_data_not_correctable");
+
   // Window check: tagging blocked during the actor's silent-correction window.
   const elapsed = elapsedSinceCompleted(completion.completed_at);
   if (elapsed < QUICK_WINDOW_MS) {
@@ -2115,7 +2004,6 @@ export async function tagActualCompleter(
   // Load template_item to enforce min_role_level on the candidate, and the
   // instance to derive location_id for picker scope.
   const instance = await loadInstanceOrThrow(authed, completion.instance_id);
-  const item = await loadTemplateItemOrThrow(authed, completion.template_item_id);
 
   // Picker-scope check on the proposed actualCompleterId.
   const candidates = await loadPickerCandidates({
@@ -2171,7 +2059,7 @@ export async function tagActualCompleter(
   // UPDATE via service-role (existing _no_user_update RLS denies for everyone).
   const sb = getServiceRoleClient();
   const nowIso = new Date().toISOString();
-  const { data: updatedRows, error: updateErr } = await sb
+  let update = sb
     .from("checklist_completions")
     .update({
       actual_completer_id: actualCompleterId,
@@ -2180,14 +2068,16 @@ export async function tagActualCompleter(
     })
     .eq("id", completionId)
     .is("revoked_at", null)
-    .is("superseded_at", null)
-    .select(COMPLETION_COLUMNS);
+    .is("superseded_at", null);
+  update = priorActualCompleterId === null ? update.is("actual_completer_id", null) : update.eq("actual_completer_id", priorActualCompleterId);
+  update = priorTaggerId === null ? update.is("actual_completer_tagged_by", null) : update.eq("actual_completer_tagged_by", priorTaggerId);
+  const { data: updatedRows, error: updateErr } = await update.select(COMPLETION_COLUMNS);
 
   if (updateErr) {
     throw new Error(`tagActualCompleter update: ${updateErr.message}`);
   }
   if (!updatedRows || updatedRows.length === 0) {
-    throw new ChecklistConcurrentModificationError(completionId, "tag_actual_completer");
+    throw new ChecklistError("The tag changed. Reload before correcting it.", "tag_changed");
   }
 
   const updatedRow = updatedRows[0] as CompletionRow;

@@ -1,3 +1,8 @@
+import { readFileSync } from "node:fs";
+import { mapChecklistError } from "../app/api/checklist/_helpers";
+import { ChecklistError } from "../lib/checklists";
+import en from "../lib/i18n/en.json";
+import es from "../lib/i18n/es.json";
 import { describe, expect, it } from "vitest";
 import { getRoleLevel, type RoleCode } from "../lib/roles";
 import { canWriteChecklistCompletion, canSubmitChecklistBatch,
@@ -42,5 +47,25 @@ describe("R7 shared authorization case table", () => {
       templateType: "closing", itemMinRoleLevel: 3, itemActive: false,
       itemMatchesTemplate: false, reportReferenceType: "cash_report",
       refTrackItemCompletion: true, referencesTemplateItemId: "ref" })).toBe(true);
+  });
+});
+
+describe("correction error and route guard contract", () => {
+  it.each(["instance_not_open", "reference_row_not_correctable", "prep_data_not_correctable", "tag_changed"])("maps and translates %s", async code => {
+    const response = mapChecklistError(new ChecklistError(code, code));
+    expect(response.status).toBe(["instance_not_open", "tag_changed"].includes(code) ? 409 : 400);
+    expect(await response.json()).toMatchObject({ code });
+    const key = `closing.error.${code}` as keyof typeof en;
+    expect(en[key]).toBeTruthy(); expect(es[key]).toBeTruthy(); expect(es[key]).not.toBe(en[key]);
+    const component = readFileSync("components/ChecklistItem.tsx", "utf8");
+    expect(component).toContain(`case "${code}":`);
+    expect(component).toContain(`t("${key}")`);
+  });
+  it.each(["revoke", "revoke-with-reason", "mark-not-done", "tag-actual-completer"])("%s retains origin guard before params/auth/body and resolves actor", name => {
+    const source = readFileSync(`app/api/checklist/completions/[id]/${name}/route.ts`, "utf8");
+    const body = source.slice(source.indexOf("export async function POST"));
+    expect(body.indexOf("assertSameOrigin(req)")).toBeLessThan(body.indexOf("await params"));
+    expect(body).toContain("actor: await resolveChecklistWriteActor(ctx)");
+    expect(body).not.toContain("actor: { userId:");
   });
 });

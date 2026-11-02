@@ -6,6 +6,9 @@
 import { pathToFileURL } from "node:url";
 
 export const signatures = [
+  "public.checklist_revoke_completion(uuid,uuid)",
+  "public.checklist_revoke_with_reason(uuid,uuid,text,text)",
+  "public.checklist_mark_not_done(uuid,uuid,text)",
   "public.checklist_write_completion(uuid,uuid,uuid,numeric,uuid,text)",
   "public.checklist_submit_batch(uuid,uuid,uuid[])",
   "public.checklist_confirm_instance(uuid,uuid,timestamp with time zone,jsonb,uuid[])",

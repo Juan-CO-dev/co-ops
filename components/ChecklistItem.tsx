@@ -311,6 +311,10 @@ const roleBadgeShort = (t: TFn, role: RoleCode): string => {
 
 // Closed set of ChecklistError codes from lib/checklists.ts.
 type ChecklistErrorCode =
+  | "instance_not_open"
+  | "reference_row_not_correctable"
+  | "prep_data_not_correctable"
+  | "tag_changed"
   | "instance_closed"
   | "single_submission_locked"
   | "role_level_insufficient"
@@ -339,6 +343,14 @@ type ChecklistErrorCode =
 const errorMessageFor = (t: TFn, err: ChecklistApiError): string => {
   const code = err.code as ChecklistErrorCode;
   switch (code) {
+    case "instance_not_open":
+      return t("closing.error.instance_not_open");
+    case "reference_row_not_correctable":
+      return t("closing.error.reference_row_not_correctable");
+    case "prep_data_not_correctable":
+      return t("closing.error.prep_data_not_correctable");
+    case "tag_changed":
+      return t("closing.error.tag_changed");
     case "instance_closed":
       return t("closing.error.instance_closed");
     case "single_submission_locked":

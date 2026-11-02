@@ -11,16 +11,18 @@ describe("session-derived checklist actor", () => {
   let session: Record<string, unknown>;
   let user: Record<string, unknown>;
   let membershipError: unknown;
+  let membershipRows: { location_id: string }[];
   let filters: Array<[string, string, unknown]>;
   beforeEach(() => {
     session = { id: "session", user_id: "user", revoked_at: null,
       expires_at: new Date(Date.now() + 60_000).toISOString() };
     user = { id: "user", role: "employee", active: true };
     membershipError = null;
+    membershipRows = [{ location_id: "fresh-location" }];
     filters = [];
     dbMock.from.mockImplementation((table: string) => {
       const result = { data: table === "sessions" ? session : table === "users" ? user
-        : [{ location_id: "fresh-location" }], error: table === "user_locations" ? membershipError : null };
+        : membershipRows, error: table === "user_locations" ? membershipError : null };
       const query = { select: () => query,
         eq: (key: string, value: unknown) => { filters.push([table, key, value]); return query; },
         maybeSingle: async () => result,
@@ -34,6 +36,13 @@ describe("session-derived checklist actor", () => {
     expect(filters).toEqual([["sessions", "id", "session"], ["users", "id", "user"],
       ["user_locations", "user_id", "user"], ["user_locations", "active", true]]);
     expect(Object.isFrozen(actor.locations)).toBe(true);
+  });
+  it.each(["moo", "owner", "cgs"])("preserves fresh %s identity without inventing membership for correction parity", async role => {
+    user.role = role; membershipRows = [];
+    const actor = await resolveChecklistWriteActor(auth);
+    expect(actor.level).toBeGreaterThanOrEqual(8);
+    expect(actor.locations).toEqual([]);
+    expect(actor.role).toBe(role);
   });
   it("distinguishes a transient membership read failure from authorization denial", async () => {
     membershipError = { message: "read failed" };

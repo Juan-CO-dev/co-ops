@@ -16,10 +16,14 @@ vi.mock("next/server", async original => ({ ...await original<typeof import("nex
 vi.mock("@/lib/catering/toast-sales", () => ({ pullSalesSystemTrigger: vi.fn() }));
 vi.mock("@/lib/report-digests", () => ({ runClosingDigests: vi.fn() }));
 vi.mock("@/lib/whos-here-tick", () => ({ releaseAfterSettledClose: vi.fn() }));
-import { completeItem, submitBatch, confirmInstance, getOrCreateInstance } from "@/lib/checklists";
+import { revokeCompletion, revokeWithReason, markNotDoneByAuthority, tagActualCompleter, completeItem, submitBatch, confirmInstance, getOrCreateInstance } from "@/lib/checklists";
 import { POST as complete } from "@/app/api/checklist/completions/route";
 import { POST as submit } from "@/app/api/checklist/submissions/route";
 import { POST as confirm } from "@/app/api/checklist/confirm/route";
+import { POST as revoke } from "@/app/api/checklist/completions/[id]/revoke/route";
+import { POST as reasonRevoke } from "@/app/api/checklist/completions/[id]/revoke-with-reason/route";
+import { POST as markNotDone } from "@/app/api/checklist/completions/[id]/mark-not-done/route";
+import { POST as tag } from "@/app/api/checklist/completions/[id]/tag-actual-completer/route";
 import { POST as create } from "@/app/api/checklist/instances/route";
 
 let instance: Record<string, unknown>;
@@ -32,6 +36,8 @@ let memberships: { location_id: string; active: boolean }[];
 let exists: boolean;
 let insertResult: unknown;
 let rpcError: string | null;
+let tagRace: boolean;
+let tagFilters: Record<string, unknown>;
 const actor = checklistActor();
 const completionArgs = { instanceId: "instance", templateItemId: "00000000-0000-4000-8000-000000000001", actor };
 const confirmArgs = { instanceId: "instance", actor, pin: "1234", incompleteReasons: [] };
@@ -43,25 +49,40 @@ function client(service: boolean): SupabaseClient {
     rpc: service ? mocks.rpc : () => { throw new Error("authenticated RPC mutation"); },
     from(table: string) {
       let inserting = false;
+      let updating: Record<string, unknown> | null = null;
       const filters: Record<string, unknown> = {};
       const result = (single: boolean) => {
-        let data: unknown = table === "sessions" ? session : table === "users" ? user
+        let data: unknown = table === "sessions" ? single ? session : [session] : table === "users" ? single ? user : [user]
           : table === "user_locations" ? memberships.filter(row => filters.active === undefined || row.active === filters.active)
           : table === "checklist_instances" ? exists || inserting ? instance : null
           : table === "checklist_templates" ? template
           : table === "checklist_template_items" ? single ? items.find(row => row.id === (filters.id ?? "00000000-0000-4000-8000-000000000001")) : items
           : table === "checklist_completions" ? filters.superseded_by ? [] : completions : [];
+        if (table === "checklist_completions") {
+          if (updating && tagRace) {
+            // A GM won after this KH read the old tag. Matching the prior pair
+            // must exclude the now-updated row, even though it remains live.
+            completions[0]!.actual_completer_id = "gm-completer";
+            completions[0]!.actual_completer_tagged_by = "gm-tagger";
+          }
+          const rows = completions.filter(row => Object.entries(filters).every(([key, value]) => (row[key] ?? null) === value));
+          data = single ? rows[0] ?? null : rows;
+          if (updating) {
+            tagFilters = { ...filters };
+            data = rows.map(row => ({ ...row, ...updating }));
+          }
+        }
         if (inserting && insertResult !== undefined) data = insertResult;
         return { data, error: null };
       };
       const q = {
         select: () => q, eq: (key: string, value: unknown) => { filters[key] = value; return q; },
-        is: () => q, in: () => q,
+        is: (key: string, value: unknown) => { filters[key] = value; return q; }, in: () => q, gte: () => q,
         insert: (payload: unknown) => {
           if (!service || table !== "checklist_instances") throw new Error("unexpected table INSERT");
           mocks.insert(payload); inserting = true; return q;
         },
-        update: () => { throw new Error("unexpected table UPDATE/compensation"); },
+        update: (payload: Record<string, unknown>) => { if (!service || table !== "checklist_completions" || !("actual_completer_id" in payload)) throw new Error("unexpected table UPDATE/compensation"); updating = payload; return q; },
         delete: () => { throw new Error("unexpected DELETE"); },
         maybeSingle: async () => result(true),
         then: (resolve: (value: unknown) => unknown) => Promise.resolve(result(false)).then(resolve),
@@ -72,20 +93,23 @@ function client(service: boolean): SupabaseClient {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks(); exists = true; insertResult = undefined; rpcError = null;
+  vi.clearAllMocks(); tagRace = false; tagFilters = {}; exists = true; insertResult = undefined; rpcError = null;
   instance = { id: "instance", template_id: "template", location_id: "shop", date: "2026-10-19", status: "open" };
   template = { id: "template", location_id: "shop", active: true, type: "closing", single_submission_only: false, submission_gate_predicate: null };
   items = [{ id: "00000000-0000-4000-8000-000000000001", template_id: "template", active: true, min_role_level: 3, required: true,
     label: "Task", station: null, hard_gate: false, report_reference_type: null, expects_count: false,
     expects_photo: false, input_type: null }];
-  completions = [{ id: "completion", instance_id: "instance", template_item_id: "00000000-0000-4000-8000-000000000001", completed_by: "actor" }];
-  user = { id: "actor", role: "key_holder", active: true, pin_hash: "test-hash" };
+  completions = [{ id: "completion", instance_id: "instance", template_item_id: "00000000-0000-4000-8000-000000000001", completed_by: "actor", completed_at: new Date(Date.now() - 90000).toISOString(), revoked_at: null, superseded_at: null, actual_completer_id: null, actual_completer_tagged_by: null, prep_data: null }];
+  user = { id: "actor", name: "Actor", role: "key_holder", active: true, pin_hash: "test-hash" };
   session = { id: "session", user_id: "actor", revoked_at: null, expires_at: new Date(Date.now() + 60000).toISOString() };
   memberships = [{ location_id: "shop", active: true }];
   mocks.pin.mockResolvedValue(true); mocks.access.mockResolvedValue(true);
   mocks.reader = client(false); mocks.writer = client(true);
   mocks.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
     if (rpcError) return { data: null, error: { message: rpcError, code: rpcError === "22P02" ? "22P02" : "P0001" } };
+    if (["checklist_revoke_completion", "checklist_revoke_with_reason", "checklist_mark_not_done"].includes(name)) {
+      return { data: { completion: { ...completions[0], revoked_at: "2026-11-01T12:00:00Z" }, elapsed_ms: 60001, actor_level: 4, completer_level: 3 }, error: null };
+    }
     if (instance.status !== "open") return { data: null, error: { message: "instance_not_open" } };
     if (name === "checklist_write_completion") return { data: { completion: { ...completions[0], id: "new", completed_at: new Date().toISOString() }, superseded_ids: [], kept_completed_at: false }, error: null };
     const submission = { id: "submission", instance_id: "instance", submitted_by: args.p_actor,
@@ -309,5 +333,75 @@ describe("chunk-2 review regressions", () => {
     expect(response.status).toBe(403);
     expect(mocks.insert).not.toHaveBeenCalled();
     expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+});
+
+const correctionEndpoints = [
+  ["revoke", revoke, {}, "checklist_revoke_completion"],
+  ["revoke-with-reason", reasonRevoke, { reason: "other", note: "Wrong task" }, "checklist_revoke_with_reason"],
+  ["mark-not-done", markNotDone, { note: "Still dirty" }, "checklist_mark_not_done"],
+  ["tag-actual-completer", tag, { actualCompleterId: "actor" }, null],
+] as const;
+const correctionContext = { params: Promise.resolve({ id: "completion" }) };
+describe("serialized corrections and tag CAS", () => {
+  it.each(correctionEndpoints)("%s resolves fresh authority and ignores spoofed body", async (name, post, body, rpc) => {
+    const response = await post(request(name, { ...body, actor: { userId: "spoof", level: 10 } }), correctionContext);
+    expect(response.status).toBe(200);
+    if (rpc) expect(mocks.rpc).toHaveBeenCalledWith(rpc, expect.objectContaining({ p_actor: "actor", p_completion: "completion" }));
+    else expect(tagFilters).toMatchObject({ actual_completer_id: null, actual_completer_tagged_by: null });
+  });
+  for (const state of ["revoked", "expired", "inactive"] as const) {
+    it.each(correctionEndpoints)(`%s refuses ${state} authority before mutation`, async (name, post, body) => {
+      if (state === "revoked") session.revoked_at = new Date().toISOString();
+      if (state === "expired") session.expires_at = new Date(0).toISOString();
+      if (state === "inactive") user.active = false;
+      expect((await post(request(name, body), correctionContext)).status).toBe(403);
+      expect(mocks.rpc).not.toHaveBeenCalled(); expect(tagFilters).toEqual({});
+    });
+  }
+  it.each(["instance_not_open", "reference_row_not_correctable", "prep_data_not_correctable", "not_self", "use_quick_revoke", "outside_quick_window", "revocation_note_required"])("maps locked SQL refusal %s", async code => {
+    rpcError = code;
+    const response = await revoke(request("revoke", {}), correctionContext);
+    expect(response.status).toBe(["instance_not_open", "outside_quick_window"].includes(code) ? 409 : code === "not_self" ? 403 : 400);
+    expect(await response.json()).toMatchObject({ code });
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it.each([revokeCompletion, revokeWithReason, markNotDoneByAuthority])("uses locked timing in success audit", async write => {
+    await write(mocks.reader, { completionId: "completion", actor, reason: "other", note: "Wrong task" });
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ elapsed_ms: 60001 }) }));
+  });
+  it.each([null, "actor"])("tag CAS rejects stale prior pair %s with 409 and no success audit", async prior => {
+    completions[0]!.actual_completer_id = prior; completions[0]!.actual_completer_tagged_by = prior;
+    tagRace = true;
+    const response = await tag(request("tag", { actualCompleterId: "actor" }), correctionContext);
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "tag_changed" });
+    expect(tagFilters).toMatchObject({ actual_completer_id: prior, actual_completer_tagged_by: prior });
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(completions[0]).toMatchObject({ actual_completer_id: "gm-completer", actual_completer_tagged_by: "gm-tagger" });
+  });
+  it.each(["reference", "prep"])("tag refuses %s row", async kind => {
+    if (kind === "reference") items[0]!.report_reference_type = "cash_report";
+    else completions[0]!.prep_data = {};
+    await expect(tagActualCompleter(mocks.reader, { completionId: "completion", actor, actualCompleterId: "actor" }))
+      .rejects.toMatchObject({ code: kind === "reference" ? "reference_row_not_correctable" : "prep_data_not_correctable" });
+    expect(tagFilters).toEqual({});
+  });
+  it("tag remains retrospective", async () => {
+    instance.status = "confirmed";
+    expect((await tag(request("tag", { actualCompleterId: "actor" }), correctionContext)).status).toBe(200);
+  });
+  it.each(["required", "walk-out", "hard", "cash"])("revoked %s item fails confirm", async gate => {
+    completions[0]!.revoked_at = new Date().toISOString();
+    if (gate === "walk-out") items[0]!.station = "Walk-Out Verification";
+    if (gate === "hard") items[0]!.hard_gate = true;
+    if (gate === "cash") items[0]!.report_reference_type = "cash_report";
+    await expect(confirmInstance(mocks.reader, confirmArgs)).rejects.toMatchObject({ code:
+      gate === "required" ? "missing_reasons" : gate === "walk-out" ? "finalize_not_authorized" : gate === "hard" ? "hard_gate_incomplete" : "cash_deposit_required" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("revoked required item accepts its reason instead of reporting extra_reasons, and sends filtered IDs", async () => {
+    completions[0]!.revoked_at = new Date().toISOString();
+    await confirmInstance(mocks.reader, { ...confirmArgs, incompleteReasons: [{ templateItemId: items[0]!.id as string, reason: "Not done" }] });
+    expect(mocks.rpc).toHaveBeenCalledWith("checklist_confirm_instance", expect.objectContaining({ p_expected_completion_ids: [] }));
   });
 });

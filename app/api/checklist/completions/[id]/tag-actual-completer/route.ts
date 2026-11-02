@@ -35,6 +35,7 @@ import { type NextRequest } from "next/server";
 import { ChecklistError, tagActualCompleter } from "@/lib/checklists";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
+import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError, ChecklistActorTransientError } from "@/lib/checklist-write-actor";
 import { createAuthedClient } from "@/lib/supabase-server";
 
 import { mapChecklistError } from "../../../_helpers";
@@ -81,7 +82,7 @@ export async function POST(
   try {
     const result = await tagActualCompleter(authed, {
       completionId,
-      actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
+      actor: await resolveChecklistWriteActor(ctx),
       actualCompleterId: parsed.actualCompleterId,
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),
@@ -92,6 +93,8 @@ export async function POST(
       replacedPriorTag: result.replacedPriorTag,
     });
   } catch (err) {
+    if (err instanceof ChecklistActorTransientError) return jsonError(503, "checklist_actor_unavailable");
+    if (err instanceof ChecklistActorNotAuthorizedError) return jsonError(403, "role_level_insufficient", { message: "Writing is not permitted for this session" });
     if (err instanceof ChecklistError) return mapChecklistError(err);
     const msg = err instanceof Error ? err.message : String(err);
     console.error(
