@@ -1,5 +1,7 @@
 import { etCalendarDate, etYmdMinusDays } from "../operational-day";
 
+export { MARKETING_SCORECARD_ROLES } from "./access-shared";
+
 export const LARGE_CHECK_CENTS = 500000;
 export const CAPTURE_BEGAN = "2026-10-07";
 export type MetricReason = "no_capture" | "coverage_gap" | "amount_missing" | "unknown_share"
@@ -128,7 +130,9 @@ export interface PipelineDay { locationId: string; day: string; completedEvents:
 export interface ScorecardInput {
   window: DateWindow; locationIds: readonly string[];
   capturedDays: readonly { locationId: string; day: string }[];
-  channels: readonly ChannelDay[]; ezcater: readonly EzcaterDay[];
+  channels: readonly ChannelDay[];
+  /** null means the independent ezCater read failed or is absent; [] is a successful empty read. */
+  ezcater: readonly EzcaterDay[] | null;
   /** Authoritative distinct orders across ALL direct-online channels/providers, from the read RPC. */
   directOnlineOrders: readonly { locationId: string; day: string; orders: number }[];
   unknownLabels: readonly UnknownLabel[]; largeChecks: readonly LargeCheck[];
@@ -148,7 +152,10 @@ export function computeScorecard(input: ScorecardInput) {
   const coverage = { capturedDays: captured.size, expectedDays, capturedCalendarDays };
   const coverageReasons: MetricReason[] = captured.size < expectedDays ? ["coverage_gap"] : [];
   const rows = input.channels.filter(accepts);
-  const ez = input.ezcater.filter(accepts);
+  const ez = input.ezcater?.filter(accepts) ?? [];
+  const ezReasons: MetricReason[] = ez.some(row => row.amountMissing || row.cents === null) ? ["amount_missing"] : [];
+  const ezValue = (number: number, reasons: MetricReason[] = []): Metric => input.ezcater === null
+    ? unavailable("no_capture") : metric(number, reasons);
   const known = rows.filter(row => row.channel !== "unknown");
   const sum = (values: readonly ChannelDay[], key: "cents" | "checks" | "orders") => values.reduce((total, row) => total + (row[key] ?? 0), 0);
   const online = known.filter(row => ["online", "app", "delivery"].includes(row.channel));
@@ -164,7 +171,7 @@ export function computeScorecard(input: ScorecardInput) {
   const unknownTooHigh = unknownCents > classifiedCents * 0.02;
   const missing = known.some(row => row.amountMissing || row.cents === null) || ez.some(row => row.amountMissing || row.cents === null)
     || unknownLabels.some(row => row.amountMissing || row.cents === null);
-  const moneyReasons: MetricReason[] = [...coverageReasons, ...(missing ? ["amount_missing" as const] : [])];
+  const moneyReasons: MetricReason[] = [...coverageReasons, ...(input.ezcater === null ? ["coverage_gap" as const] : []), ...(missing ? ["amount_missing" as const] : [])];
   const shareReasons: MetricReason[] = [...moneyReasons, ...(unknownTooHigh ? ["unknown_share" as const] : [])];
   const value = (number: number, reasons = coverageReasons): Metric => captured.size === 0 ? unavailable("no_capture") : metric(number, reasons);
   const share = (numerator: number, denominator: number, reasons = shareReasons): Metric => captured.size === 0
@@ -195,7 +202,9 @@ export function computeScorecard(input: ScorecardInput) {
     pipeline: pipeline === undefined ? { events: unavailable("no_capture"), cents: unavailable("no_capture") }
       : { events: metric(pipeline.reduce((total, row) => total + row.completedEvents, 0)),
         cents: metric(pipeline.reduce((total, row) => total + (row.cents ?? 0), 0), pipeline.some(row => row.cents === null) ? ["amount_missing"] : []) },
-    ezcater: { orders: value(ezOrders), cents: value(ezCents, moneyReasons), averageTicket: share(ezCents, ezOrders, moneyReasons),
+    ezcater: { orders: ezValue(ezOrders), cents: ezValue(ezCents, ezReasons),
+      averageTicket: input.ezcater === null ? unavailable("no_capture")
+        : ezOrders === 0 ? unavailable("zero_denominator") : metric(ezCents / ezOrders, ezReasons),
       largeOrders: ez.reduce((total, row) => total + row.largeOrders, 0), reconciliation },
   };
 }

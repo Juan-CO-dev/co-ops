@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { ROLES } from "../lib/roles";
-import { MARKETING_SCORECARD_ROLES } from "../lib/marketing/access-shared";
+import { MARKETING_SCORECARD_ROLES } from "../lib/marketing/scorecard-shared";
 import {
   baselineDrift, baselineWeeklyAverage, classifyToastChecks, computeOrderTaps, computeScorecard,
   costPerExtraDirectOnlineOrder, costPerTap, ezcaterLargeOrder, LARGE_CHECK_CENTS, manualMetric,
@@ -143,6 +143,23 @@ describe("sales classification", () => {
 });
 
 describe("coverage and all shops", () => {
+  it("keeps ezCater coverage independent of Toast and missing amounts in other sources", () => {
+    const ezcater = [{ locationId: "shop-a", day, orders: 2, cents: 12000,
+      amountMissing: false, largeOrders: 0, reconciliation: { matched: 2 } }];
+    for (const capturedDays of [[], [{ locationId: "shop-a", day }]]) {
+      const result = computeScorecard(input({ capturedDays, ezcater, channels: [channel({ cents: null, amountMissing: true })] }));
+      expect(result.ezcater.orders).toEqual({ state: "ok", value: 2 });
+      expect(result.ezcater.cents).toEqual({ state: "ok", value: 12000 });
+      expect(result.ezcater.averageTicket).toEqual({ state: "ok", value: 6000 });
+    }
+    expect(computeScorecard(input({ capturedDays: [], ezcater: [] })).ezcater.orders).toEqual({ state: "ok", value: 0 });
+    const absent = computeScorecard(input({ ezcater: null })).ezcater;
+    for (const metric of [absent.orders, absent.cents, absent.averageTicket]) expect(metric.state).toBe("unavailable");
+    const missing = computeScorecard(input({ capturedDays: [], ezcater: [{ ...ezcater[0]!, cents: null, amountMissing: true }] })).ezcater;
+    expect(missing.orders).toEqual({ state: "ok", value: 2 });
+    expect(missing.cents).toMatchObject({ state: "partial", reasons: ["amount_missing"] });
+    expect(missing.averageTicket).toMatchObject({ state: "partial", reasons: ["amount_missing"] });
+  });
   it("distinguishes a captured zero day from no capture", () => {
     expect(computeScorecard(input()).directOnlineOrders).toEqual({ state: "ok", value: 0 });
     expect(computeScorecard(input({ capturedDays: [] })).directOnlineOrders).toEqual({ state: "unavailable", value: null, reasons: ["no_capture"] });

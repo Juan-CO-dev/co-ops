@@ -33,10 +33,10 @@ describe("file-only landing counter migration contract", () => {
     expect(etSql).toContain("add primary key(day_et, store_key, ad_slot)");
     expect(etSql).toContain("on conflict(day_et, store_key, ad_slot)");
     expect(etSql).toContain("0289: counter must be empty");
-    expect(etSql).toContain("(now() at time zone 'UTC')::date");
+    expect(etSql).toContain("(clock_timestamp() at time zone 'UTC')::date");
     expect(sql).toContain("landing_order_click_counts.click_count + 1");
-    // Deliberate relaxation: the registry is managed by service_role; the counter
-    // itself retains its original SELECT-only grant ceiling.
+    // 0273 allowed direct registry management; 0289 makes registry writes RPC-only.
+    // Both tables now retain a SELECT-only service_role grant ceiling.
     expect(sql).not.toMatch(/GRANT\s+[^;]*\b(?:UPDATE|DELETE|INSERT|ALL)\b[^;]*ON\s+(?:TABLE\s+)?public\.landing_order_click_counts\b/i);
   });
   it("pins the finite lifetime registry and narrow management grants", () => {

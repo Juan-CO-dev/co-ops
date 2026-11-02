@@ -1,6 +1,8 @@
 -- Migration 0289_marketing_scorecard
 -- AUTHORED 2026-11-01. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0287 (0288 reserved).
 -- Provenance: reviewed marketing-scorecard BUILD SPEC and CC's binding rulings.
+-- REFUSALS: entry_overlaps (overlapping live spend periods); code_not_found (missing
+-- registry code; its i18n key ships in chunk 5), already_retired (existing inactive code).
 -- ROLLOUT: keep all flags OFF; verify the counter is empty, apply on sim, run the
 -- Management API concurrency proof, then apply on prod only on Juan's word.
 -- VERIFY: run scripts/sql-harness-0289.mjs offline; inspect effective ACLs and
@@ -44,10 +46,10 @@ begin
   select code, slot into v_ad, v_slot from public.landing_ad_codes
     where code = p_ad_code and active for share;
   if not found then
-    select code, slot into v_ad, v_slot from public.landing_ad_codes where code = 'unattributed' for share;
+    select code, slot into v_ad, v_slot from public.landing_ad_codes where code = 'unattributed';
   end if;
   insert into public.landing_order_click_counts(day_utc, day_et, store_key, ad_code, ad_slot, click_count)
-  values ((now() at time zone 'UTC')::date, (now() at time zone 'America/New_York')::date,
+  values ((clock_timestamp() at time zone 'UTC')::date, (now() at time zone 'America/New_York')::date,
     p_store_key, v_ad, v_slot, 1)
   on conflict(day_et, store_key, ad_slot) do update
     set click_count = public.landing_order_click_counts.click_count + 1;
@@ -172,8 +174,9 @@ begin
     or (p_kind = 'email_list_size' and (p_to <> p_from or p_list_count is null or p_list_count < 0 or p_amount_cents is not null))
     or (p_kind <> 'email_list_size' and (p_to <> p_from + 6 or p_amount_cents is null or p_amount_cents not between 0 and 100000000 or p_list_count is not null))
   then raise exception 'entry_invalid'; end if;
+  -- Serialize the whole series so different overlapping periods cannot race.
   -- JSON encoding keeps nullable identity fields distinct without sentinel collisions.
-  perform pg_advisory_xact_lock(hashtextextended('marketing:entry:' || jsonb_build_array(p_kind,p_location_id,p_platform,p_from,p_to)::text, 0));
+  perform pg_advisory_xact_lock(hashtextextended('marketing:entry:' || jsonb_build_array(p_kind,p_location_id,p_platform)::text, 0));
   select e.* into v_head from public.marketing_manual_entries e
     where kind = p_kind and location_id is not distinct from p_location_id and platform is not distinct from p_platform
     and period_start = p_from and period_end = p_to
@@ -181,6 +184,14 @@ begin
   if v_head.id is not null and p_corrects is null then raise exception 'entry_exists_use_correct'; end if;
   if p_corrects is distinct from v_head.id then raise exception 'correction_target_not_head'; end if;
   if p_corrects is not null and nullif(btrim(p_reason),'') is null then raise exception 'reason_required'; end if;
+  if p_kind <> 'email_list_size' and exists(
+    select 1 from public.marketing_manual_entries e
+    where e.kind = p_kind and e.location_id is not distinct from p_location_id
+      and e.platform is not distinct from p_platform
+      and e.period_start <= p_to and e.period_end >= p_from
+      and e.id is distinct from p_corrects
+      and not exists(select 1 from public.marketing_manual_entries c where c.corrects_id = e.id)
+  ) then raise exception 'entry_overlaps'; end if;
   insert into public.marketing_manual_entries(kind,location_id,platform,period_start,period_end,amount_cents,list_count,note,corrects_id,reason,recorded_by)
     values(p_kind,p_location_id,p_platform,p_from,p_to,p_amount_cents,p_list_count,p_note,p_corrects,nullif(btrim(p_reason),''),p_actor) returning id into v_id;
   return v_id;
@@ -236,7 +247,10 @@ begin
   if p_code = 'unattributed' then raise exception 'code_reserved'; end if;
   if p_code is null or p_code !~ '^[a-z0-9][a-z0-9_-]{0,63}$' then raise exception 'code_invalid'; end if;
   update public.landing_ad_codes set active = false where code = p_code and active;
-  if not found then raise exception 'already_retired'; end if;
+  if not found then
+    if not exists(select 1 from public.landing_ad_codes where code = p_code) then raise exception 'code_not_found'; end if;
+    raise exception 'already_retired';
+  end if;
 end $$;
 
 create function public.marketing_scorecard_days(p_location_id uuid, p_from date, p_to date)

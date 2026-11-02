@@ -75,6 +75,13 @@ try {
   await refuses(db,snapshot(owner,head,date(-29),date(-2),'1::smallint',"'{}'", "'{}'",snap,'stale'),'correction_target_not_head');
   const future = await scalar(db,milestone(cgs,'first_ad_spend',date(2),head,'future'));
   await refuses(db,snapshot(owner,future,date(-26),date(1)),'baseline_not_due');
+  const tomorrow = await scalar(db,milestone(moo,'first_ad_spend',date(1),future,'future correction'));
+  check(tomorrow !== future,'MoO corrects future first_ad_spend head');
+  await refuses(db,snapshot(owner,tomorrow,date(-27),date(0)),'baseline_not_due');
+  const due = await scalar(db,milestone(moo,'first_ad_spend',date(0),tomorrow,'start today'));
+  check(await scalar(db,snapshot(moo,due,date(-28),date(-1))) !== null,'baseline ending yesterday allowed');
+  const counter = await scalar(db,milestone(owner,'counter_on',date(-1)));
+  check(await scalar(db,milestone(moo,'counter_on',date(0),counter,'correct counter')) !== counter,'MoO corrects another milestone kind');
   const entry = (overrides={}) => {
     const a = {actor:owner,kind:'meta_spend',location:null,platform:null,from:today,to:null,amount:0,count:null,note:null,corrects:null,reason:null,...overrides};
     return `select record_marketing_manual_entry(${q(a.actor)},${q(a.kind)},${q(a.location)},${q(a.platform)},${q(a.from)},${a.to===null ? date(6) : q(a.to)},${q(a.amount)},${q(a.count)},${q(a.note)},${q(a.corrects)},${q(a.reason)})`;
@@ -89,7 +96,12 @@ try {
   await refuses(db,entry({corrects:ent}),'reason_required');
   check(await scalar(db,entry({corrects:ent,reason:'fix',amount:100000000}))!==ent,'entry append correction at amount ceiling');
   await refuses(db,entry({corrects:ent,reason:'stale'}),'correction_target_not_head');
-  await scalar(db,entry({kind:'email_list_size',amount:null,count:0,to:today})); checks++;
+  const offset = async n => scalar(db,`select ${date(n)}::text`);
+  for (const n of [-6,1,6]) await refuses(db,entry({from:await offset(n),to:await offset(n+6)}),'entry_overlaps');
+  for (const n of [-7,7]) check(await scalar(db,entry({from:await offset(n),to:await offset(n+6)})) !== null,'adjacent spend week allowed');
+  const email = await scalar(db,entry({kind:'email_list_size',amount:null,count:0,to:today}));
+  await refuses(db,entry({kind:'email_list_size',amount:null,count:1,to:today}),'entry_exists_use_correct');
+  check(await scalar(db,entry({kind:'email_list_size',amount:null,count:1,to:today,corrects:email,reason:'fix'})) !== email,'email snapshot correction allowed');
   await scalar(db,entry({kind:'promo_spend',platform:'other',location:loc})); checks++;
   const create = (code,actor=owner) => `select landing_ad_code_create(${q(actor)},${q(code)})`;
   const retire = code => `select landing_ad_code_retire('${owner}',${q(code)})`;
@@ -102,12 +114,16 @@ try {
   await refuses(db,create('campaign'),'code_taken');
   await db.exec("select increment_landing_order_click('dupont','campaign'); select increment_landing_order_click('dupont','campaign');");
   await db.exec(retire('campaign'));
-  await refuses(db,retire('campaign'),'already_retired'); await refuses(db,retire('absent'),'already_retired');
+  await refuses(db,retire('campaign'),'already_retired'); await refuses(db,retire('absent'),'code_not_found');
   await refuses(db,create('campaign'),'code_taken');
   await db.exec("select increment_landing_order_click('dupont','campaign'); select increment_landing_order_click('dupont','unregistered');");
   const taps = (await db.query(`select * from marketing_order_taps(${date(0)},${date(0)})`)).rows;
   check(taps.length===2 && taps.some(t=>t.ad_code==='campaign' && !t.active && Number(t.click_count)===2) && taps.some(t=>t.ad_code==='unattributed' && Number(t.click_count)===2),'retired attribution preserved; future retired and unknown taps unattributed');
   check(await scalar(db,`select bool_and(day_et=${date(0)} and day_et=(now() at time zone 'America/New_York')::date) from landing_order_click_counts`),'counter uses ET day');
+  // Owner fixture deliberately separates ET and UTC, regardless of the execution clock.
+  await db.exec("insert into landing_order_click_counts(day_et,day_utc,store_key,ad_code,ad_slot,click_count) select '2026-11-01','2026-11-02','capitol-hill',code,slot,7 from landing_ad_codes where code='campaign'");
+  check(Number(await scalar(db,"select coalesce(sum(click_count),0) from marketing_order_taps('2026-10-31','2026-11-01') where store_key='capitol-hill' and ad_code='campaign'"))===7,'tap window ending Nov 1 includes ET row');
+  check(Number(await scalar(db,"select coalesce(sum(click_count),0) from marketing_order_taps('2026-11-02','2026-11-03') where store_key='capitol-hill' and ad_code='campaign'"))===0,'tap window starting Nov 2 excludes ET row');
   for (const sql of ["select increment_landing_order_click(null,'a')","select increment_landing_order_click('bad','a')"]) await refuses(db,sql,'invalid_store');
   for (const ad of ['null',q('a'.repeat(65))]) await refuses(db,`select increment_landing_order_click('dupont',${ad})`,'invalid_ad');
   await db.exec("insert into landing_ad_codes(code,slot) values('last-slot',1024)");
