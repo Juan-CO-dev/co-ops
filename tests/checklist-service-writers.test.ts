@@ -37,6 +37,7 @@ let exists: boolean;
 let insertResult: unknown;
 let rpcError: string | null;
 let tagRace: boolean;
+let tagGone: "revoked_at" | "superseded_at" | null;
 let tagFilters: Record<string, unknown>;
 const actor = checklistActor();
 const completionArgs = { instanceId: "instance", templateItemId: "00000000-0000-4000-8000-000000000001", actor };
@@ -59,6 +60,7 @@ function client(service: boolean): SupabaseClient {
           : table === "checklist_template_items" ? single ? items.find(row => row.id === (filters.id ?? "00000000-0000-4000-8000-000000000001")) : items
           : table === "checklist_completions" ? filters.superseded_by ? [] : completions : [];
         if (table === "checklist_completions") {
+          if (updating && tagGone) completions[0]![tagGone] = new Date().toISOString();
           if (updating && tagRace) {
             // A GM won after this KH read the old tag. Matching the prior pair
             // must exclude the now-updated row, even though it remains live.
@@ -93,7 +95,7 @@ function client(service: boolean): SupabaseClient {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks(); tagRace = false; tagFilters = {}; exists = true; insertResult = undefined; rpcError = null;
+  vi.clearAllMocks(); tagRace = false; tagGone = null; tagFilters = {}; exists = true; insertResult = undefined; rpcError = null;
   instance = { id: "instance", template_id: "template", location_id: "shop", date: "2026-10-19", status: "open" };
   template = { id: "template", location_id: "shop", active: true, type: "closing", single_submission_only: false, submission_gate_predicate: null };
   items = [{ id: "00000000-0000-4000-8000-000000000001", template_id: "template", active: true, min_role_level: 3, required: true,
@@ -403,5 +405,43 @@ describe("serialized corrections and tag CAS", () => {
     completions[0]!.revoked_at = new Date().toISOString();
     await confirmInstance(mocks.reader, { ...confirmArgs, incompleteReasons: [{ templateItemId: items[0]!.id as string, reason: "Not done" }] });
     expect(mocks.rpc).toHaveBeenCalledWith("checklist_confirm_instance", expect.objectContaining({ p_expected_completion_ids: [] }));
+  });
+});
+
+
+describe("CC correction fix regressions", () => {
+  for (const [name, post, body] of correctionEndpoints.slice(0, 3)) {
+    it.each(["PGRST202", "42883", "missing-message"])(`${name} maps missing RPC %s to 503`, async code => {
+      mocks.rpc.mockResolvedValueOnce({ data: null, error: { code,
+        message: code === "missing-message" ? "Could not find the function public.checklist_revoke_completion in the schema cache" : "Unavailable function" } });
+      const response = await post(request(name, body), correctionContext);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "checklist_corrections_unavailable" });
+      expect(mocks.audit).not.toHaveBeenCalled();
+    });
+    it(`${name} maps missing parent to 404`, async () => {
+      rpcError = "instance_not_found";
+      const response = await post(request(name, body), correctionContext);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: "instance_not_found" });
+    });
+  }
+  it.each([revokeCompletion, revokeWithReason])("self denial preserves hidden-completion refusal", async write => {
+    rpcError = "not_authorized";
+    await expect(write(mocks.reader, { completionId: "completion", actor, reason: "other", note: "Wrong task" }))
+      .rejects.toMatchObject({ code: "completion_not_found" });
+  });
+  it.each([revokeWithReason, markNotDoneByAuthority])("blank note precedes lookup and mutable-state checks", async write => {
+    completions = [];
+    await expect(write(mocks.reader, { completionId: "completion", actor, reason: "other", note: " " }))
+      .rejects.toMatchObject({ code: "revocation_note_required" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it.each(["revoked_at", "superseded_at"] as const)("tag losing to %s preserves concurrent_modification", async state => {
+    tagGone = state;
+    const response = await tag(request("tag", { actualCompleterId: "actor" }), correctionContext);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "concurrent_modification" });
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 });

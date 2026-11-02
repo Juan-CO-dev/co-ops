@@ -7,7 +7,10 @@
 -- remain app prechecks. Correction membership mirrors the existing RLS read scope:
 -- a location membership (including an inactive row) OR current level >= 8.
 -- ROLLOUT: apply SQL before the app; CC first checks for revoked report-reference
--- heads in prod. Deploy filtered confirmation snapshots and serialized corrections,
+-- heads in prod. App-before-0287 makes every confirm on a closing with a revoked
+-- head fail 409 completion_set_changed. scripts/preflight-0276.mjs passing against
+-- PROD is a BLOCKING step before merging the app PR.
+-- Deploy filtered confirmation snapshots and serialized corrections,
 -- then drain old deployments before claiming cooperating correction writers.
 -- Confirmation accepts legacy unfiltered OR filtered expected IDs during the drain.
 -- A later tightening migration MUST accept filtered-only after old deployments drain.
@@ -29,7 +32,7 @@ declare
   v_parent uuid; v_instance public.checklist_instances%rowtype;
   v_completion public.checklist_completions%rowtype;
   v_level integer; v_completer_level integer; v_n integer;
-  v_at timestamptz; v_elapsed numeric;
+  v_at timestamptz; v_elapsed bigint;
 begin
   -- Resolve identity only before the parent lock; every mutable field is re-read.
   select instance_id into v_parent from public.checklist_completions where id = p_completion;
@@ -37,8 +40,15 @@ begin
   select * into v_instance from public.checklist_instances where id = v_parent for no key update;
   if not found then raise exception 'instance_not_found'; end if;
   if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;
+  -- Reference/prep identity is immutable after insert; refuse before target lock.
+  select * into v_completion from public.checklist_completions where id = p_completion;
+  if exists(select 1 from public.checklist_template_items
+    where id = v_completion.template_item_id and report_reference_type is not null) then
+    raise exception 'reference_row_not_correctable';
+  end if;
+  if v_completion.prep_data is not null then raise exception 'prep_data_not_correctable'; end if;
   select * into v_completion from public.checklist_completions
-    where id = p_completion and instance_id = v_parent for update;
+    where id = p_completion and instance_id = v_parent for no key update;
   if not found or v_completion.revoked_at is not null or v_completion.superseded_at is not null then
     raise exception 'completion_not_found';
   end if;
@@ -51,14 +61,9 @@ begin
     perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id for share;
     if not found then raise exception 'not_authorized'; end if;
   end if;
-  if exists(select 1 from public.checklist_template_items
-    where id = v_completion.template_item_id and report_reference_type is not null) then
-    raise exception 'reference_row_not_correctable';
-  end if;
-  if v_completion.prep_data is not null then raise exception 'prep_data_not_correctable'; end if;
   if v_completion.completed_by is distinct from p_actor then raise exception 'not_self'; end if;
   v_at := clock_timestamp(); -- after parent/target/authority lock waits
-  v_elapsed := extract(epoch from (v_at - v_completion.completed_at)) * 1000;
+  v_elapsed := floor(extract(epoch from (v_at - v_completion.completed_at)) * 1000)::bigint;
   if v_elapsed >= 60000 then raise exception 'outside_quick_window'
     using detail = jsonb_build_object('elapsed_ms', v_elapsed)::text; end if;
 
@@ -78,16 +83,26 @@ declare
   v_parent uuid; v_instance public.checklist_instances%rowtype;
   v_completion public.checklist_completions%rowtype;
   v_level integer; v_completer_level integer; v_n integer;
-  v_at timestamptz; v_elapsed numeric; v_note text;
+  v_at timestamptz; v_elapsed bigint; v_note text;
 begin
+  v_note := btrim(coalesce(p_note, ''), U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF');
+  if p_reason is null or p_reason not in ('not_actually_done', 'other') then raise exception 'invalid_payload'; end if;
+  if p_reason = 'other' and v_note = '' then raise exception 'revocation_note_required'; end if;
   -- Resolve identity only before the parent lock; every mutable field is re-read.
   select instance_id into v_parent from public.checklist_completions where id = p_completion;
   if not found then raise exception 'completion_not_found'; end if;
   select * into v_instance from public.checklist_instances where id = v_parent for no key update;
   if not found then raise exception 'instance_not_found'; end if;
   if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;
+  -- Reference/prep identity is immutable after insert; refuse before target lock.
+  select * into v_completion from public.checklist_completions where id = p_completion;
+  if exists(select 1 from public.checklist_template_items
+    where id = v_completion.template_item_id and report_reference_type is not null) then
+    raise exception 'reference_row_not_correctable';
+  end if;
+  if v_completion.prep_data is not null then raise exception 'prep_data_not_correctable'; end if;
   select * into v_completion from public.checklist_completions
-    where id = p_completion and instance_id = v_parent for update;
+    where id = p_completion and instance_id = v_parent for no key update;
   if not found or v_completion.revoked_at is not null or v_completion.superseded_at is not null then
     raise exception 'completion_not_found';
   end if;
@@ -100,18 +115,10 @@ begin
     perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id for share;
     if not found then raise exception 'not_authorized'; end if;
   end if;
-  if exists(select 1 from public.checklist_template_items
-    where id = v_completion.template_item_id and report_reference_type is not null) then
-    raise exception 'reference_row_not_correctable';
-  end if;
-  if v_completion.prep_data is not null then raise exception 'prep_data_not_correctable'; end if;
   if v_completion.completed_by is distinct from p_actor then raise exception 'not_self'; end if;
   v_at := clock_timestamp(); -- after parent/target/authority lock waits
-  v_elapsed := extract(epoch from (v_at - v_completion.completed_at)) * 1000;
+  v_elapsed := floor(extract(epoch from (v_at - v_completion.completed_at)) * 1000)::bigint;
   if v_elapsed < 60000 then raise exception 'use_quick_revoke'; end if;
-  v_note := btrim(coalesce(p_note, ''), U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF');
-  if p_reason is null or p_reason not in ('not_actually_done', 'other') then raise exception 'invalid_payload'; end if;
-  if p_reason = 'other' and v_note = '' then raise exception 'revocation_note_required'; end if;
   update public.checklist_completions set revoked_at = v_at, revoked_by = p_actor,
     revocation_reason = p_reason, revocation_note = case when p_reason = 'other' then v_note else null end
     where id = p_completion and instance_id = v_parent and revoked_at is null and superseded_at is null
@@ -128,16 +135,25 @@ declare
   v_parent uuid; v_instance public.checklist_instances%rowtype;
   v_completion public.checklist_completions%rowtype;
   v_level integer; v_completer_level integer; v_n integer;
-  v_at timestamptz; v_elapsed numeric; v_note text;
+  v_at timestamptz; v_elapsed bigint; v_note text;
 begin
+  v_note := btrim(coalesce(p_note, ''), U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF');
+  if v_note = '' then raise exception 'revocation_note_required'; end if;
   -- Resolve identity only before the parent lock; every mutable field is re-read.
   select instance_id into v_parent from public.checklist_completions where id = p_completion;
   if not found then raise exception 'completion_not_found'; end if;
   select * into v_instance from public.checklist_instances where id = v_parent for no key update;
   if not found then raise exception 'instance_not_found'; end if;
   if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;
+  -- Reference/prep identity is immutable after insert; refuse before target lock.
+  select * into v_completion from public.checklist_completions where id = p_completion;
+  if exists(select 1 from public.checklist_template_items
+    where id = v_completion.template_item_id and report_reference_type is not null) then
+    raise exception 'reference_row_not_correctable';
+  end if;
+  if v_completion.prep_data is not null then raise exception 'prep_data_not_correctable'; end if;
   select * into v_completion from public.checklist_completions
-    where id = p_completion and instance_id = v_parent for update;
+    where id = p_completion and instance_id = v_parent for no key update;
   if not found or v_completion.revoked_at is not null or v_completion.superseded_at is not null then
     raise exception 'completion_not_found';
   end if;
@@ -150,21 +166,14 @@ begin
     perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id for share;
     if not found then raise exception 'not_authorized'; end if;
   end if;
-  if exists(select 1 from public.checklist_template_items
-    where id = v_completion.template_item_id and report_reference_type is not null) then
-    raise exception 'reference_row_not_correctable';
-  end if;
-  if v_completion.prep_data is not null then raise exception 'prep_data_not_correctable'; end if;
   if v_completion.completed_by = p_actor then raise exception 'use_self_revoke'; end if;
   if v_level < 4 then raise exception 'role_level_insufficient'
     using detail = jsonb_build_object('required', 4, 'actual', v_level)::text; end if;
   v_completer_level := public.assignment_author_level(v_completion.completed_by);
   if v_completer_level is null then raise exception 'completer_not_found'; end if;
   v_at := clock_timestamp(); -- after parent/target/authority lock waits
-  v_elapsed := extract(epoch from (v_at - v_completion.completed_at)) * 1000;
+  v_elapsed := floor(extract(epoch from (v_at - v_completion.completed_at)) * 1000)::bigint;
   if v_elapsed < 60000 then raise exception 'use_quick_revoke'; end if;
-  v_note := btrim(coalesce(p_note, ''), U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF');
-  if v_note = '' then raise exception 'revocation_note_required'; end if;
   if v_level < v_completer_level then raise exception 'revoke_hierarchy_violation'
     using detail = jsonb_build_object('actor_level', v_level, 'completer_level', v_completer_level)::text; end if;
   update public.checklist_completions set revoked_at = v_at, revoked_by = p_actor,

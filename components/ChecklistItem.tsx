@@ -314,6 +314,7 @@ type ChecklistErrorCode =
   | "instance_not_open"
   | "reference_row_not_correctable"
   | "prep_data_not_correctable"
+  | "checklist_corrections_unavailable"
   | "tag_changed"
   | "instance_closed"
   | "single_submission_locked"
@@ -349,6 +350,8 @@ const errorMessageFor = (t: TFn, err: ChecklistApiError): string => {
       return t("closing.error.reference_row_not_correctable");
     case "prep_data_not_correctable":
       return t("closing.error.prep_data_not_correctable");
+    case "checklist_corrections_unavailable":
+      return t("closing.error.checklist_corrections_unavailable");
     case "tag_changed":
       return t("closing.error.tag_changed");
     case "instance_closed":

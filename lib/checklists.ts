@@ -124,6 +124,13 @@ export class ChecklistError extends Error {
   }
 }
 
+export class ChecklistCorrectionsUnavailableError extends ChecklistError {
+  constructor() {
+    super("Checklist corrections are temporarily unavailable.", "checklist_corrections_unavailable");
+    this.name = "ChecklistCorrectionsUnavailableError";
+  }
+}
+
 export class ChecklistInstanceClosedError extends ChecklistError {
   constructor(public readonly instanceId: string, public readonly status: ChecklistStatus) {
     super(`Instance ${instanceId} is ${status}; only open instances accept writes.`, "instance_closed");
@@ -1684,6 +1691,10 @@ async function loadLiveCompletionOrThrow(
 // ─────────────────────────────────────────────────────────────────────────────
 
 function throwCorrectionError(error: PostgrestError, completionId: string, actor: ChecklistActor, operation: "revoke" | "revoke_with_reason" | "revoke_by_authority"): never {
+  if (error.code === "PGRST202" || error.code === "42883" ||
+      /(?:could not find the function|function .* does not exist)/i.test(error.message)) {
+    throw new ChecklistCorrectionsUnavailableError();
+  }
   let details: Record<string, number> = {};
   try { details = JSON.parse(error.details || "{}"); } catch { /* Non-JSON database details. */ }
   switch (error.message) {
@@ -1692,8 +1703,12 @@ function throwCorrectionError(error: PostgrestError, completionId: string, actor
     case "revocation_note_required": throw new ChecklistRevocationNoteRequiredError(completionId);
     case "revoke_hierarchy_violation": throw new ChecklistRevokeHierarchyViolationError(completionId, details.actor_level ?? actor.level, details.completer_level ?? actor.level + 1);
     case "not_authorized":
+      // The old user-context lookup hid rows outside the actor's read scope.
+      if (operation !== "revoke_by_authority") throw new ChecklistError("Completion not found.", "completion_not_found");
+      throw new ChecklistRoleViolationError(4, actor.level);
     case "role_level_insufficient": throw new ChecklistRoleViolationError(details.required ?? 4, details.actual ?? actor.level);
     case "concurrent_modification": throw new ChecklistConcurrentModificationError(completionId, operation);
+    case "instance_not_found":
     case "instance_not_open":
     case "reference_row_not_correctable":
     case "prep_data_not_correctable":
@@ -1704,7 +1719,6 @@ function throwCorrectionError(error: PostgrestError, completionId: string, actor
     case "invalid_payload": throw new ChecklistError(error.message, error.message);
     default:
       if (error.code === "22P02") throw new ChecklistError("Invalid correction payload.", "invalid_payload");
-      if (error.code === "PGRST202") console.error("[checklist 0287_missing]", { code: error.code });
       throw new Error(`checklist correction RPC failed: ${error.message}`);
   }
 }
@@ -1807,6 +1821,8 @@ export async function revokeWithReason(
 ): Promise<{ completion: ChecklistCompletion }> {
   const { completionId, actor, reason } = args;
   const note = args.note?.trim() ?? "";
+  if (!["not_actually_done", "other"].includes(reason)) throw new ChecklistError("Invalid correction reason.", "invalid_payload");
+  if (reason === "other" && note.length === 0) throw new ChecklistRevocationNoteRequiredError(completionId);
   const target = await loadLiveCompletionOrThrow(authed, completionId);
   await requireChecklistTaskAccess(authed, target.instance_id, actor);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
@@ -1891,6 +1907,7 @@ export async function markNotDoneByAuthority(
 ): Promise<{ completion: ChecklistCompletion }> {
   const { completionId, actor } = args;
   const note = args.note?.trim() ?? "";
+  if (note.length === 0) throw new ChecklistRevocationNoteRequiredError(completionId);
   const target = await loadLiveCompletionOrThrow(authed, completionId);
   await requireChecklistTaskAccess(authed, target.instance_id, actor);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
@@ -2077,6 +2094,13 @@ export async function tagActualCompleter(
     throw new Error(`tagActualCompleter update: ${updateErr.message}`);
   }
   if (!updatedRows || updatedRows.length === 0) {
+    const { data: current, error: readError } = await sb.from("checklist_completions")
+      .select("revoked_at, superseded_at").eq("id", completionId)
+      .maybeSingle<{ revoked_at: string | null; superseded_at: string | null }>();
+    if (readError) throw new Error(`tagActualCompleter re-read: ${readError.message}`);
+    if (!current || current.revoked_at !== null || current.superseded_at !== null) {
+      throw new ChecklistConcurrentModificationError(completionId, "tag_actual_completer");
+    }
     throw new ChecklistError("The tag changed. Reload before correcting it.", "tag_changed");
   }
 

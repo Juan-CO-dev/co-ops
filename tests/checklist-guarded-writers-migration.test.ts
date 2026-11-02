@@ -73,7 +73,11 @@ describe("0287 serialized corrections (file only)", () => {
       expect(body).not.toBe("");
       const parent=body.indexOf("for no key update;");
       expect(parent).toBeGreaterThan(0);
-      expect(body.indexOf("for update;")).toBeGreaterThan(parent);
+      expect(body.lastIndexOf("for no key update;")).toBeGreaterThan(parent);
+      expect(body).not.toContain("for update;");
+      for (const code of ["reference_row_not_correctable", "prep_data_not_correctable"]) {
+        expect(body.indexOf(`raise exception '${code}'`)).toBeLessThan(body.lastIndexOf("for no key update;"));
+      }
       expect(body.indexOf("clock_timestamp()")).toBeGreaterThan(parent);
       for (const code of ["instance_not_open", "reference_row_not_correctable", "prep_data_not_correctable"]) expect(body).toContain(`raise exception '${code}'`);
       expect(correctionsSql).toMatch(new RegExp(`revoke all on function public\\.${name}\\([^;]+from public, anon, authenticated;`));

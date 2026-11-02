@@ -1,4 +1,6 @@
 /** Read-only deployment preflight; CC runs before promoting the app.
+ * Also requires the 0287 correction functions: failure on any DB without 0287
+ * is an intentional deployment gate.
  * Set CHECKLIST_PREFLIGHT_DATABASE_URL in the process environment explicitly.
  * Never loads .env, calls a writer RPC, or prints connection details.
  * Requires pg installed by the operator. Catalog reads only, READ ONLY txn.

@@ -146,6 +146,14 @@ async function corrections(db) {
     await expectRefusal(db,correctionCalls.authority.replace("'not done'","' '"),'revocation_note_required','authority note required');
     for (const call of Object.values(correctionCalls)) await expectRefusal(db,call.replace(quote(completion),quote(id(999))),'completion_not_found','missing target');
   });
+  for (const setup of ["update checklist_completions set completed_at=clock_timestamp()",
+    "update checklist_instances set status='confirmed'", "update users set active=false"]) {
+    await isolated(db,setup,async()=> {
+      await expectRefusal(db,correctionCalls.reason.replace("'other','a correction'","'other',' '"),'revocation_note_required','note precedes state');
+      await expectRefusal(db,correctionCalls.reason.replace("'other'","'bogus'"),'invalid_payload','reason precedes state');
+      await expectRefusal(db,correctionCalls.authority.replace("'not done'","' '"),'revocation_note_required','authority note precedes state');
+    });
+  }
   for (const [age,quick,reason] of [['30 seconds',true,false],['60 seconds',false,true],['61 seconds',false,true]]) {
     await isolated(db,`update checklist_completions set completed_at=clock_timestamp()-interval '${age}'`,async()=> {
       check((await attempt(db,correctionCalls.quick)==='allowed')===quick,`quick boundary ${age}`);
@@ -161,10 +169,11 @@ async function corrections(db) {
     await expectRefusal(db,correctionCalls.quick,'outside_quick_window','wall clock crosses 60s during transaction');
     check(await attempt(db,correctionCalls.reason)==='allowed','structured correction after transaction crosses 60s');
   });
-  // now() stays frozen at BEGIN. Moving the row to exactly transaction-start minus
-  // 60s, then checking the audit elapsed proves use of a post-lock wall clock.
+  // This checks boundary acceptance and stored audit/attribution fields only.
+  // The 59.95s + 100ms block above is the real now() vs wall-clock proof.
   await isolated(db,"update checklist_completions set completed_at=now()-interval '60 seconds'",async()=> {
     const result=(await db.query(correctionCalls.reason+' as result')).rows[0].result;
+    check(Number.isInteger(result.elapsed_ms),'integer audit elapsed_ms');
     check(result.elapsed_ms>=60000,'elapsed measured at/after 60s boundary');
     check(new Date(result.completion.revoked_at).getTime()>=new Date(result.completion.completed_at).getTime()+60000,'stored correction timestamp is after boundary');
     check(result.completion.completed_by===actor && result.completion.revoked_by===actor,'append-only completion attribution');
@@ -232,7 +241,7 @@ async function contracts(db) {
     const body=row.definition.replace(/--[^\n]*/g,'');
     check(/for no key update/i.test(body),`${row.proname} parent NO KEY UPDATE`);
     check(body.indexOf('clock_timestamp()')>body.toLowerCase().indexOf('for no key update'),`${row.proname} clock after parent lock`);
-    check(body.toLowerCase().indexOf('for update')>body.toLowerCase().indexOf('for no key update'),`${row.proname} completion lock after parent`);
+    check(body.toLowerCase().lastIndexOf('for no key update')>body.toLowerCase().indexOf('for no key update'),`${row.proname} completion lock after parent`);
   }
   for (const role of ['anon','authenticated']) {
     await db.exec(`set role ${role}`);

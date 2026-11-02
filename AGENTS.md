@@ -50,7 +50,7 @@ Live in production (co-ops-ashy.vercel.app, two locations): auth + checklists (o
 
 ### Checklist corrections (0287, authored 2026-11-01, NOT applied)
 
-- **Global checklist lock order:** AM instance → closing instance → completion rows. New parent locks use `FOR NO KEY UPDATE` (compatible with FK key-share checks); never acquire a parent after locking a completion. Existing 0276 writers keep their established lock mode.
+- **Global checklist lock order:** AM instance → closing instance → completion rows. New parent locks use `FOR NO KEY UPDATE` (compatible with FK key-share checks); NEW writers must never acquire a parent after locking a completion. Opening/prep phase writers (0215/0186) are audited in chunk 3. Existing 0276 writers keep their established lock mode.
 - **Corrections require OPEN under the parent lock:** revoke, revoke-with-reason and mark-not-done refuse `instance_not_open`; timestamps and the 60-second boundary are evaluated after waiting. Report-reference rows and rows carrying `prep_data` refuse generic corrections. Tagging remains retrospective, with a compare-and-set on the prior actual-completer/tagger pair (`tag_changed`).
 - **SQL before app:** 0287 retains the exact 0277-asserted confirmation signature and temporarily accepts either the legacy unsuperseded ID set or the unsuperseded, unrevoked set sent by the new app. A later migration must tighten to filtered-only after old deployments drain. During dual-accept, a pre-revoke filtered set can equal the post-revoke legacy set; that ambiguous race cannot be detected from IDs alone. Offline harness evidence is not a two-session proof; CC runs `scripts/sim/checklist-0287-lock-check.mjs` on sim separately.
 

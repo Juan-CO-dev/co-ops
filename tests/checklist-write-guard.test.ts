@@ -51,9 +51,9 @@ describe("R7 shared authorization case table", () => {
 });
 
 describe("correction error and route guard contract", () => {
-  it.each(["instance_not_open", "reference_row_not_correctable", "prep_data_not_correctable", "tag_changed"])("maps and translates %s", async code => {
+  it.each(["instance_not_open", "reference_row_not_correctable", "prep_data_not_correctable", "tag_changed", "checklist_corrections_unavailable"])("maps and translates %s", async code => {
     const response = mapChecklistError(new ChecklistError(code, code));
-    expect(response.status).toBe(["instance_not_open", "tag_changed"].includes(code) ? 409 : 400);
+    expect(response.status).toBe(code === "checklist_corrections_unavailable" ? 503 : ["instance_not_open", "tag_changed"].includes(code) ? 409 : 400);
     expect(await response.json()).toMatchObject({ code });
     const key = `closing.error.${code}` as keyof typeof en;
     expect(en[key]).toBeTruthy(); expect(es[key]).toBeTruthy(); expect(es[key]).not.toBe(en[key]);

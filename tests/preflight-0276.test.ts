@@ -3,6 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import { preflight, signatures } from "../scripts/preflight-0276.mjs";
 
 describe("0276 deployment preflight", () => {
+  it.each([
+    "public.checklist_revoke_completion(uuid,uuid)",
+    "public.checklist_revoke_with_reason(uuid,uuid,text,text)",
+    "public.checklist_mark_not_done(uuid,uuid,text)",
+  ])("blocks deployment without 0287 function %s", async missing => {
+    expect(signatures).toContain(missing);
+    const query = vi.fn(async (sql: string) => ({ rows: sql.includes("unnest")
+      ? signatures.map(signature => ({ signature, present: signature !== missing, executable: true })) : [] }));
+    await expect(preflight({ query })).rejects.toThrow(missing);
+    expect(query.mock.calls.at(-1)).toEqual(["rollback"]);
+  });
   it.each(["complete", "missing", "no-execute", "query-error"])("catalog-only read transaction: %s", async state => {
     const query = vi.fn(async (sql: string) => {
       if (!sql.includes("unnest")) return { rows: [] };
@@ -12,7 +23,7 @@ describe("0276 deployment preflight", () => {
         executable: state !== "no-execute" || index !== 0,
       })) };
     });
-    if (state === "complete") await expect(preflight({ query })).resolves.toHaveLength(6);
+    if (state === "complete") await expect(preflight({ query })).resolves.toHaveLength(9);
     else await expect(preflight({ query })).rejects.toThrow(state === "query-error" ? "catalog failed" : "0276_missing");
     expect(query.mock.calls[0]).toEqual(["begin read only"]);
     expect(query.mock.calls.at(-1)).toEqual(["rollback"]);

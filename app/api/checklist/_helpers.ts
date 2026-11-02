@@ -208,6 +208,8 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
   if (err instanceof ChecklistFinalizeGateError) {
     return jsonError(403, err.code, { message: err.message, reason: err.reason });
   }
+  if (err.code === "checklist_corrections_unavailable") return jsonError(503, err.code, { message: err.message });
+  if (err.code === "instance_not_found") return jsonError(404, err.code, { message: err.message });
   if (["instance_not_open", "tag_changed", "concurrent_modification", "completion_set_changed", "completion_cardinality",
     "submission_cardinality", "instance_cardinality", "reason_cardinality"].includes(err.code)) {
     return jsonError(409, err.code, { message: err.message });
