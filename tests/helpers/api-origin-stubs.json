@@ -1,0 +1,10 @@
+{
+  "ai/route.ts": "import { NextResponse } from \"next/server\";\nexport async function POST() {\n    return NextResponse.json({ error: \"Not implemented — AI proxy lands in Phase 6.\" }, { status: 501 });\n}\n",
+  "notifications/route.ts": "import { NextResponse } from \"next/server\";\nexport async function GET() {\n    return NextResponse.json({ error: \"Not implemented — notifications API lands in Phase 6.\" }, { status: 501 });\n}\nexport const POST = GET;\n",
+  "shifts/route.ts": "import { NextResponse } from \"next/server\";\nexport async function GET() {\n    return NextResponse.json({ error: \"Not implemented — 7shifts adapter is scaffolded but not yet wired.\" }, { status: 501 });\n}\nexport const POST = GET;\n",
+  "toast/route.ts": "import { NextResponse } from \"next/server\";\nexport async function GET() {\n    return NextResponse.json({ error: \"Not implemented — Toast adapter is scaffolded but not yet wired.\" }, { status: 501 });\n}\nexport const POST = GET;\n",
+  "sms/process-queue/route.ts": "import { NextResponse } from \"next/server\";\nexport async function POST() {\n    return NextResponse.json({ error: \"Not implemented — SMS queue processor lands in Phase 6.\" }, { status: 501 });\n}\n",
+  "views/mark-read/route.ts": "import { NextResponse } from \"next/server\";\nexport async function POST() {\n    return NextResponse.json({ error: \"Not implemented — read-receipt API lands in Phase 6.\" }, { status: 501 });\n}\n",
+  "checklist/instances/[id]/route.ts": "import { NextResponse } from \"next/server\";\nconst NOT_IMPLEMENTED = NextResponse.json({ error: \"Not implemented — checklist instance API lands in Phase 6.\" }, { status: 501 });\nexport async function GET() {\n    return NOT_IMPLEMENTED;\n}\nexport async function PATCH() {\n    return NOT_IMPLEMENTED;\n}\n",
+  "checklist/prep/generate/route.ts": "import { NextResponse } from \"next/server\";\nexport async function POST() {\n    return NextResponse.json({ error: \"Not implemented — prep generator lands in Phase 6.\" }, { status: 501 });\n}\n"
+}

@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -6,6 +7,8 @@ import { recordProduction, ProductionError, PRODUCE_MIN, type RecordProductionIn
 
 // Log a production run (SKU → item conversion). Employee+ (PRODUCE_MIN = 3), location-bound (checked in recordProduction).
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/operations/production");

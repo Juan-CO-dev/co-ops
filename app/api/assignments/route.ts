@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { AssignmentError, assignTask, endShift, retractTask, writeStationEvent, writeStationBreak } from "@/lib/assignments";
@@ -6,6 +7,8 @@ import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/assignments");
   if (ctx instanceof Response) return ctx;
   const body = await parseJsonBody(req);

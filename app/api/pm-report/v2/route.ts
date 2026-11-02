@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
@@ -40,6 +41,8 @@ async function onLocationRoster(service: ReturnType<typeof getServiceRoleClient>
 }
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/pm-report/v2");
   if (ctx instanceof Response) return ctx;
   const raw = await parseJsonBody(req);

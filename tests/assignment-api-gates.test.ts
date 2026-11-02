@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -26,7 +26,7 @@ const USER = "44444444-4444-4444-8444-444444444444";
 const DATE = "2026-10-07";
 const ctx = { user: { id: USER }, role: "employee", level: 3, locations: [SHOP] };
 function req(body: unknown): NextRequest {
-  return new Request("http://localhost/api/test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) as NextRequest;
+  return new NextRequest("http://localhost/api/test", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 const cashBody = { locationId: SHOP, date: DATE, pin: "1234", projectedCents: 0, cashTipsCents: 0, countMethod: "hand", drawerTotalCents: 0 };
 

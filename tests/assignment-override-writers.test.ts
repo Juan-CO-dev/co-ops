@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { NextRequest } from "next/server";
+import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assignTask, retractTask, writeStationEvent, type AssignmentActor } from "@/lib/assignments";
 import type { OverrideReason } from "@/lib/assignments-shared";
@@ -69,7 +69,7 @@ describe.each(operations)("%s reason contract", (_label, write) => {
 });
 it("API rejects invalid reason input before acquiring a write client", async () => {
   vi.mocked(requireSession).mockResolvedValue({ user: { id: actorId }, role: "key_holder", level: 4, locations: [shop] } as Awaited<ReturnType<typeof requireSession>>);
-  const response = await POST(new Request("http://localhost/api/assignments", { method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ locationId: shop, action: "task_retract", assignmentId: id, reasonCode: "other", reasonNote: "" }) }) as NextRequest);
+  const response = await POST(new NextRequest("http://localhost/api/assignments", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" },
+    body: JSON.stringify({ locationId: shop, action: "task_retract", assignmentId: id, reasonCode: "other", reasonNote: "" }) }));
   expect(response.status).toBe(400);
 });

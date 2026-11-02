@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { hasTaskAccess } from "@/lib/assignments";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -13,6 +14,8 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const isCents = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/cash");
   if (ctx instanceof Response) return ctx;
   const raw = await parseJsonBody(req);
