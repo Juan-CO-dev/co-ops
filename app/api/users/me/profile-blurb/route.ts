@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * PATCH /api/users/me/profile-blurb — set/clear the actor's profile blurb.
  *
@@ -33,6 +34,8 @@ function isBlurbBody(raw: unknown): raw is BlurbBody {
 }
 
 export async function PATCH(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   if (!isBlurbBody(parsed)) {

@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { canViewPeople, peopleActorFromAuth } from "@/lib/people/access-shared";
@@ -18,6 +19,8 @@ const FIELDS: Record<string, { required: readonly string[]; optional: readonly s
  * precedent; plan J8). No email, no notification.
  */
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/people/skills");
   if (ctx instanceof Response) return ctx;
   const body = await parseJsonBody(req);

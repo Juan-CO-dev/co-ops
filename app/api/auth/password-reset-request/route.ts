@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/auth/password-reset-request — request a password reset email.
  *
@@ -54,6 +55,8 @@ function constantOk() {
 }
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // Parse the body but don't leak shape on failure — even malformed input
   // returns the constant 200 to keep the enumeration surface flat.
   const parsed = await parseJsonBody(req);

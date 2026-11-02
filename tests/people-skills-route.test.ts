@@ -30,7 +30,7 @@ const OTHER = "99999999-9999-4999-8999-999999999999";
 const USER = "33333333-3333-4333-8333-333333333333";
 const POS = "44444444-4444-4444-8444-444444444444";
 const req = (path: string, body: unknown) => new NextRequest(`http://localhost${path}`, {
-  method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" },
+  method: "POST", body: JSON.stringify(body), headers: { origin: "http://localhost", "content-type": "application/json" },
 });
 const postSkills = (body: unknown) => skills.POST(req("/api/people/skills", body));
 const postSettings = (body: unknown) => settings.POST(req("/api/people/settings", body));

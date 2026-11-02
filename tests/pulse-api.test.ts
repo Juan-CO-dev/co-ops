@@ -27,7 +27,7 @@ const SHOP = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
 const ctx = (level: number, locations = [SHOP]) => ({ user: { id: "u1", role: "employee", language: "en" }, role: level >= 7 ? "gm" : level >= 4 ? "key_holder" : "employee", level, locations });
 const get = (qs: string) => sectionGet(new NextRequest(`https://x.test/api/pulse/section?${qs}`));
-const post = (fn: typeof layoutPost, body: unknown) => fn(new NextRequest("https://x.test/api/pulse/x", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+const post = (fn: typeof layoutPost, body: unknown) => fn(new NextRequest("https://x.test/api/pulse/x", { method: "POST", headers: { origin: "https://x.test", "content-type": "application/json" }, body: JSON.stringify(body) }));
 
 beforeEach(() => {
   vi.clearAllMocks();

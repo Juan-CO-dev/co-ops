@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/auth/step-up — re-authenticate with password to unlock destructive
  * admin actions for the current session.
@@ -50,6 +51,8 @@ function isStepUpBody(raw: unknown): raw is StepUpBody {
 }
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // 1. Parse + validate
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
