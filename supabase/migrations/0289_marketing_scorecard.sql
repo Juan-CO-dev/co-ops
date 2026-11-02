@@ -1,6 +1,7 @@
 -- Migration 0289_marketing_scorecard
 -- AUTHORED 2026-11-01. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0287 (0288 reserved).
 -- APPLIED TO SIM 2026-11-01 (schema_migrations version 20261102033734, name '0289_marketing_scorecard').
+-- APPLIED TO PROD 2026-11-02 (schema_migrations version 20261102054004, name '0289_marketing_scorecard').
 -- Provenance: reviewed marketing-scorecard BUILD SPEC and CC's binding rulings.
 -- REFUSALS: entry_overlaps (overlapping live spend periods); code_not_found (missing
 -- registry code; its i18n key ships in chunk 5), already_retired (existing inactive code).
