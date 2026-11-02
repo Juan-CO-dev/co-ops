@@ -363,7 +363,7 @@ describe("D-47 · Prep Demand names the lead behind each line", () => {
 describe("D-48 · lead phone through the pipeline routes", () => {
   const PHONE = "(202) 555-0147";
   const req = (url: string, method: "POST" | "PATCH", body: unknown) =>
-    new NextRequest(`http://localhost${url}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    new NextRequest(`http://localhost${url}`, { method, headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify(body) });
   const create = (body: Record<string, unknown>) => createLeadRoute(req("/api/catering/pipeline", "POST", { contactName: "Ana", locationId: A, ...body }));
   const patch = (id: string, body: Record<string, unknown>) =>
     patchLeadRoute(req(`/api/catering/pipeline/${id}`, "PATCH", body), { params: Promise.resolve({ id }) });
@@ -433,7 +433,7 @@ describe("D-48 · lead phone through the pipeline routes", () => {
 // ── r5 · confirming a quote with an unkinded package line is LOUD, never a silent zero ─────
 describe("r5 · Confirm refuses a quote whose package line was saved without its kind", () => {
   const req = (body: unknown) =>
-    new NextRequest("http://localhost/api/catering/pipeline/l-c", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    new NextRequest("http://localhost/api/catering/pipeline/l-c", { method: "PATCH", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify(body) });
   const confirm = () => patchLeadRoute(req({ stage: "confirmed" }), { params: Promise.resolve({ id: "l-c" }) });
   const line = (id: string, extra: Row): Row => ({
     id, quote_id: "q-c", item_id: null, menu_item_id: null, package_id: "pkg-plat", quantity: 1, portion: null,

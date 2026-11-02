@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -6,6 +7,8 @@ import { createCompany, CateringCompanyError, COMPANY_WRITE_MIN } from "@/lib/ca
 
 // POST — create a catering company account (catering_mgr+ >= 6), with optional corporate domains.
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/catering/companies");

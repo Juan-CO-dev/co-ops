@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -6,6 +7,8 @@ import { transferCateringLead } from "@/lib/catering/transfers";
 import { TRANSFER_REASONS } from "@/lib/catering/transfers-shared";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const actor = await requireSession(req, `/api/catering/pipeline/${id}/transfer`);
   if (actor instanceof Response) return actor;

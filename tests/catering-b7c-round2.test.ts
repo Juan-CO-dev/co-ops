@@ -286,7 +286,7 @@ describe("A · quote writers store the line kind", () => {
 // ── C · email on Add lead ──────────────────────────────────────────────────────────────
 describe("C · Add lead takes an optional email and links the lead's customer", () => {
   const req = (body: unknown) =>
-    new NextRequest("http://localhost/api/catering/pipeline", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    new NextRequest("http://localhost/api/catering/pipeline", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify(body) });
   const add = async (body: Record<string, unknown>) => {
     const res = await createLeadRoute(req({ contactName: "Typed Name", company: "Typed Co", locationId: A, ...body }));
     const json = await res.json();
@@ -404,7 +404,7 @@ describe("C · Add lead takes an optional email and links the lead's customer", 
 describe("r4 · the quotes POST refuses outdated lines BEFORE it resolves the customer", () => {
   const post = (body: Record<string, unknown>) =>
     createQuoteRoute(new NextRequest("http://localhost/api/catering/quotes", {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" },
       body: JSON.stringify({ locationId: A, contactName: "Typed", ...body }),
     }));
   const staleLines = [{ description: "16 pc platter", quantity: 1, unitPriceCents: 11500, packageId: "pkg-plat" }]; // no lineKind
