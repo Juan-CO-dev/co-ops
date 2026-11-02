@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/prep/submit — AM Prep submission per SPEC_AMENDMENTS.md C.18 +
  * C.42 + C.44 + C.46.
@@ -180,6 +181,8 @@ function validateBody(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // 1. Auth.
   const ctx = await requireSession(req, "/api/prep/submit");
   if (ctx instanceof Response) return ctx;

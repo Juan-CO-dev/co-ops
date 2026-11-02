@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { OpeningRoleViolationError, canAccessOpeningInstance } from "@/lib/opening";
 /**
  * POST /api/opening/phase1/draft — autosave the UNSUBMITTED Phase 1 opening form.
@@ -81,6 +82,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // 1. Auth.
   const ctx = await requireSession(req, "/api/opening/phase1/draft");
   if (ctx instanceof Response) return ctx;

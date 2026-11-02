@@ -108,7 +108,7 @@ const endpoints = [
 ] as const;
 function request(name: string, body: unknown) {
   return new NextRequest(`https://example.test/api/checklist/${name}`, { method: "POST",
-    headers: { "content-type": "application/json", cookie: "co_session=verified-test-cookie" }, body: JSON.stringify(body) });
+    headers: { origin: "https://example.test", "content-type": "application/json", cookie: "co_session=verified-test-cookie" }, body: JSON.stringify(body) });
 }
 
 describe("verified route authority and separate read/write clients", () => {

@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/checklist/completions/[id]/revoke-with-reason — post-60s structured self-revoke.
  *
@@ -42,6 +43,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id: completionId } = await params;
 
   const parsed = await parseJsonBody(req);

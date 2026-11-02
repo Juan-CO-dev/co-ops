@@ -44,7 +44,7 @@ it.each([
   ["report update", (req: NextRequest) => PATCH(req, { params: Promise.resolve({ id: "10000000-0000-4000-8000-000000000001" }) }), { body: "report" }],
 ] as const)("%s returns the existing JSON envelope with 503 and never writes", async (_name, handler, body) => {
   const req = new NextRequest("http://localhost/api/test", {
-    method: "POST", headers: { "content-type": "application/json", cookie: "session=test" }, body: JSON.stringify(body),
+    method: "POST", headers: { origin: "http://localhost", "content-type": "application/json", cookie: "session=test" }, body: JSON.stringify(body),
   });
   const response = await handler(req);
   expect(response.status).toBe(503);

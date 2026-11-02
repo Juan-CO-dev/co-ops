@@ -47,7 +47,7 @@ function serviceWithInstance() {
 const req = (body: Record<string, unknown>) =>
   new NextRequest("https://example.com/api/prep/submit", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { origin: "https://example.com", "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 

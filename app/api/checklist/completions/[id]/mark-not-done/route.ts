@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/checklist/completions/[id]/mark-not-done — cross-user mark-not-done
  * by authority (per SPEC_AMENDMENTS.md C.55).
@@ -51,6 +52,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id: completionId } = await params;
 
   const parsed = await parseJsonBody(req);

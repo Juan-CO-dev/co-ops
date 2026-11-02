@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * PATCH /api/written-reports/[id] — self-edit a report inside the 3-hour window.
  *
@@ -20,6 +21,8 @@ import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError, Checklist
 import { updateWrittenReport, validateWrittenReportDraft } from "@/lib/written-reports";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!UUID_RE.test(id)) {

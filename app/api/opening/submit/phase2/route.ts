@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { canAccessOpeningInstance } from "@/lib/opening";
 /**
  * POST /api/opening/submit/phase2 — Opening Phase 2 FINALIZE per C.53 §3 +
@@ -46,6 +47,8 @@ import { mapOpeningError } from "../../_helpers";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // 1. Auth.
   const ctx = await requireSession(req, "/api/opening/submit/phase2");
   if (ctx instanceof Response) return ctx;

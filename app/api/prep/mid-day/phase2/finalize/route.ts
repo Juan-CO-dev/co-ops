@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { PrepRoleViolationError } from "@/lib/prep";
 import { hasTaskAccess } from "@/lib/assignments";
 /**
@@ -19,6 +20,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/prep/mid-day/phase2/finalize");
   if (ctx instanceof Response) return ctx;
 

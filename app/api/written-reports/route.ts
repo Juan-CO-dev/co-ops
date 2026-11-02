@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/written-reports — author a new written report.
  *
@@ -20,6 +21,8 @@ import { createWrittenReport, validateWrittenReportDraft } from "@/lib/written-r
 import { WRITTEN_REPORT_WRITE_MIN_LEVEL } from "@/lib/written-reports-shared";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
 
