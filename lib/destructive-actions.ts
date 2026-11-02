@@ -36,6 +36,12 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  "marketing.milestone_record",
+  "marketing.milestone_correct",
+  "marketing.manual_entry_correct",
+  "marketing.baseline_snapshot",
+  "landing_ad_code.create",
+  "landing_ad_code.retire",
   "ezcater.review.dismiss",
   "ezcater.item_map.approve",
   "ezcater.item_map.ignore",

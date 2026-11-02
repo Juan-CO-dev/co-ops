@@ -7,6 +7,13 @@ import ts from "typescript";
 // Every admin route is explicitly classified: mutations, reads, or inert stubs.
 // List every exported HTTP method explicitly; additions require deliberate classification.
 const mutationRoutes: Record<string, string> = {
+  "marketing/milestones/route.ts": "POST",
+  "marketing/milestones/[id]/correct/route.ts": "POST",
+  "marketing/entries/route.ts": "POST",
+  "marketing/entries/[id]/correct/route.ts": "POST",
+  "marketing/baseline-snapshot/route.ts": "POST",
+  "marketing/ad-codes/route.ts": "POST",
+  "marketing/ad-codes/[code]/retire/route.ts": "POST",
   "catering/ezcater-review/route.ts": "POST",
   "vendors/[id]/import/route.ts": "POST",
   "vendors/[id]/order-guide/route.ts": "GET POST",

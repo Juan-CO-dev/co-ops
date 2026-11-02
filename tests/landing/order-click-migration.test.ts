@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { LANDING_STORE_KEYS } from "@/lib/landing/tracking-schema-shared";
 const sql = readFileSync("supabase/migrations/0273_landing_order_click_counts.sql", "utf8");
+const etSql = readFileSync("supabase/migrations/0289_marketing_scorecard.sql", "utf8");
 describe("file-only landing counter migration contract", () => {
   it('wraps the file atomically and asserts both table owners, with expected FK lint', () => {
     expect(sql.replace(/^--.*$/gm, '').trim()).toMatch(/^begin;/);
@@ -18,17 +19,24 @@ describe("file-only landing counter migration contract", () => {
     expect(sql).toContain("click_count bigint NOT NULL CHECK (click_count > 0)");
     expect(sql).not.toMatch(/\b(ip_address|user_agent|event_id|fbclid|cookie|customer_id)\b/i);
   });
-  it("pins privileged increment-only RPC and UTC server date", () => {
+  it("pins privileged increment-only RPC and the 0289 ET server date", () => {
     expect(sql).toContain("NOT APPLIED");
     expect(sql).toContain("ENABLE ROW LEVEL SECURITY");
     expect(sql).toContain("SECURITY DEFINER");
     expect(sql).toContain("SET search_path = pg_catalog, public");
     expect(sql).toContain("FROM PUBLIC, anon, authenticated, service_role");
     expect(sql).toContain("GRANT EXECUTE ON FUNCTION public.increment_landing_order_click(text, text) TO service_role");
-    expect(sql).toContain("AT TIME ZONE 'UTC'");
+    expect(sql).toContain("20261019191513");
+    expect(sql).toContain("20261019191606");
+    expect(etSql).toContain("(now() at time zone 'America/New_York')::date");
+    expect(etSql).toContain("add column day_et date not null");
+    expect(etSql).toContain("add primary key(day_et, store_key, ad_slot)");
+    expect(etSql).toContain("on conflict(day_et, store_key, ad_slot)");
+    expect(etSql).toContain("0289: counter must be empty");
+    expect(etSql).toContain("(clock_timestamp() at time zone 'UTC')::date");
     expect(sql).toContain("landing_order_click_counts.click_count + 1");
-    // Deliberate relaxation: the registry is managed by service_role; the counter
-    // itself retains its original SELECT-only grant ceiling.
+    // 0273 allowed direct registry management; 0289 makes registry writes RPC-only.
+    // Both tables now retain a SELECT-only service_role grant ceiling.
     expect(sql).not.toMatch(/GRANT\s+[^;]*\b(?:UPDATE|DELETE|INSERT|ALL)\b[^;]*ON\s+(?:TABLE\s+)?public\.landing_order_click_counts\b/i);
   });
   it("pins the finite lifetime registry and narrow management grants", () => {

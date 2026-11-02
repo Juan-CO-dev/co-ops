@@ -1,5 +1,8 @@
 -- Migration 0273_landing_order_click_counts
 -- AUTHORED 2026-10-16. FILE ONLY, NOT APPLIED. CC/Juan own review and activation.
+-- APPLIED TO SIM 2026-10-19 (schema_migrations version 20261019191513, name '0273_landing_order_click_counts').
+-- APPLIED TO PROD 2026-10-19 (schema_migrations version 20261019191606, name '0273_landing_order_click_counts').
+-- Applied versions and empty counter confirmed by CC 2026-11-01; historical gate/evidence below retained.
 -- Provenance: approved landing phase-1 BUILD r4, A5 independent KPI counter.
 -- REVISED 2026-10-18, landing v2 chunk 9: registry-backed attribution.
 -- CC read-only evidence 2026-10-18: unapplied in prod bgcvurheqzylyfehqgzh

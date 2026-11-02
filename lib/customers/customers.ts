@@ -566,6 +566,21 @@ export interface ConsentOverview {
   metaEnabled: boolean;
 }
 
+/** Aggregate-only boundary for all-shop viewers; never reads contact rows. */
+export async function loadConsentAggregate(viewer: Pick<CustomerViewer, "level">,
+  deps: CustomerDeps & { env?: Record<string, string | undefined> } = {}): Promise<{ optedIn: number; lastImportDate: string | null }> {
+  if (!customerProfilesEnabled(deps.env ?? process.env)) throw new CustomerError(404, "not_enabled");
+  if (viewer.level < 8) throw new CustomerError(403, "role_insufficient");
+  const sb = deps.client ?? getServiceRoleClient();
+  const count = await sb.from("customer_consent_current").select("customer_id", { count: "exact", head: true })
+    .eq("channel", "email").eq("status", "opted_in");
+  if (count.error) throw count.error;
+  const imports = await sb.from("customer_consent_imports").select("export_date")
+    .eq("status", "completed").order("export_date", { ascending: false }).limit(1);
+  if (imports.error) throw imports.error;
+  return { optedIn: count.count ?? 0, lastImportDate: imports.data?.[0]?.export_date ?? null };
+}
+
 export async function loadConsentOverview(viewer: CustomerViewer, deps: CustomerDeps = {}): Promise<ConsentOverview> {
   requireEnabled();
   requireContact(viewer);
