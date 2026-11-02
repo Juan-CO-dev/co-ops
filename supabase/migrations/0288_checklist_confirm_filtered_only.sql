@@ -1,5 +1,6 @@
 -- Migration 0288_checklist_confirm_filtered_only
 -- AUTHORED 2026-11-01. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0287.
+-- APPLIED TO SIM 2026-11-01 (schema_migrations version 20261102040200, name '0288_checklist_confirm_filtered_only').
 -- Provenance: planned post-drain tightening of 0287, PR #508 (merge a6b2a0ca).
 -- ROLLOUT: apply only after every deployment older than #508's merge a6b2a0ca
 -- has drained. The app already sends filtered snapshots and needs no change.
