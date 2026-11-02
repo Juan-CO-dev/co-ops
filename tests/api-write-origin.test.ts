@@ -213,7 +213,7 @@ it.each(mutations.filter(e => exceptions[`${e.path} ${e.method}`]?.kind === 'web
   vi.stubEnv('STRIPE_WEBHOOK_SECRET', 'test-only-stripe-webhook');
   vi.stubEnv('EZCATER_WEBHOOK_SECRET', 'test-only-ez-secret');
   vi.stubEnv('EZCATER_API_TOKEN', 'test-only-ez-token');
-  vi.stubEnv('RESEND_INBOUND_SECRET', 'whsec_dGVzdC1vbmx5LXN2aXgta2V5');
+  vi.stubEnv('RESEND_INBOUND_SECRET', `whsec_${Buffer.from('test-only-svix-key').toString('base64')}`);
   vi.stubEnv('TWILIO_AUTH_TOKEN', 'test-only-twilio-token');
   mocks.rate.mockResolvedValue(true);
   mocks.db.mockReturnValue({}); // Stripe shop resolution is an explicit mocked read, never a live DB.
