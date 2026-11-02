@@ -1,4 +1,6 @@
 /** Read-only deployment preflight; CC runs before promoting the app.
+ * Also requires the 0287 correction functions: failure on any DB without 0287
+ * is an intentional deployment gate.
  * Set CHECKLIST_PREFLIGHT_DATABASE_URL in the process environment explicitly.
  * Never loads .env, calls a writer RPC, or prints connection details.
  * Requires pg installed by the operator. Catalog reads only, READ ONLY txn.
@@ -6,6 +8,9 @@
 import { pathToFileURL } from "node:url";
 
 export const signatures = [
+  "public.checklist_revoke_completion(uuid,uuid)",
+  "public.checklist_revoke_with_reason(uuid,uuid,text,text)",
+  "public.checklist_mark_not_done(uuid,uuid,text)",
   "public.checklist_write_completion(uuid,uuid,uuid,numeric,uuid,text)",
   "public.checklist_submit_batch(uuid,uuid,uuid[])",
   "public.checklist_confirm_instance(uuid,uuid,timestamp with time zone,jsonb,uuid[])",
