@@ -264,13 +264,14 @@ export async function getOrCreatePmReport(
   args: { locationId: string; date: string; actor: PmActor },
 ): Promise<{ id: string; format: PmReportFormat }> {
   await requirePmTask(service, args.actor, args.locationId);
-  const { data: existing } = await service
+  const { data: existing, error: readError } = await service
     .from("pm_reports")
     .select("*")
     .eq("location_id", args.locationId)
     .eq("report_date", args.date)
     .is("superseded_at", null)
     .maybeSingle<{ id: string; format?: string | null }>();
+  if (readError) throw new Error(`getOrCreatePmReport read: ${readError.message}`);
   if (existing) return { id: existing.id, format: existing.format === "v2" ? "v2" : "v1" };
   const format = await newDayFormat(service, args.locationId);
   const { data, error } = await service
@@ -278,6 +279,19 @@ export async function getOrCreatePmReport(
     .insert({ location_id: args.locationId, report_date: args.date, status: "open", created_by: args.actor.userId, ...(format === "v2" ? { format: "v2" } : {}) })
     .select("id")
     .single<{ id: string }>();
+  // Another caller created this live day after our initial read.
+  if (error?.code === "23505") {
+    const { data: winner, error: raceError } = await service
+      .from("pm_reports")
+      .select("*")
+      .eq("location_id", args.locationId)
+      .eq("report_date", args.date)
+      .is("superseded_at", null)
+      .maybeSingle<{ id: string; format?: string | null }>();
+    if (raceError) throw new Error(`getOrCreatePmReport race re-read: ${raceError.message}`);
+    if (!winner) throw new Error("getOrCreatePmReport race: 23505 raised but no row visible on re-read");
+    return { id: winner.id, format: winner.format === "v2" ? "v2" : "v1" };
+  }
   if (error) throw new Error(`getOrCreatePmReport: ${error.message}`);
   await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "pm_report", operation: "pm_report.create" });
   return { id: data.id, format };
