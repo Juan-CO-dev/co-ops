@@ -1,3 +1,4 @@
+import { itemOrderUrl } from '../../../lib/landing/item-order-url-shared';
 import { test, expect } from '@playwright/test';
 import { landingTenantConfig } from '../../../config/tenant/landing';
 import { spinMedia } from '../../../lib/landing/media';
@@ -44,7 +45,7 @@ test('selecting a fighter swaps the stage and the one CTA opens a two-shop sheet
   const links = sheet.locator('a[data-landing-placement="lineup"]');
   await expect(links).toHaveCount(2);
   for (const [index,link] of (await links.all()).entries()) {
-    await expect(link).toHaveAttribute('href',landingTenantConfig.stores[index]!.orderUrl);
+    await expect(link).toHaveAttribute('href',itemOrderUrl(landingTenantConfig.stores[index]!, 'frex'));
     expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
   await page.keyboard.press('Escape');
@@ -123,7 +124,7 @@ test('without JavaScript every menu is visible and each shop is a native order l
   await expect(links).toHaveCount(2);
   for (const [index,link] of (await links.all()).entries()) {
     await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute('href',landingTenantConfig.stores[index]!.orderUrl);
+    await expect(link).toHaveAttribute('href',itemOrderUrl(landingTenantConfig.stores[index]!, 'crunchy-boi'));
     expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
   await expect(select.locator('.landing-v3-auto')).toBeHidden();
@@ -332,7 +333,7 @@ test('a press on a native shop link survives enhancement arriving mid-gesture (m
   await expect(link).toBeAttached();
   await expect(page.locator('.landing-v3-select .landing-v3-cta')).toHaveCount(0);
   await page.mouse.up();
-  await expect(page).toHaveURL(landingTenantConfig.stores[0]!.orderUrl);
+  await expect(page).toHaveURL(itemOrderUrl(landingTenantConfig.stores[0]!, 'crunchy-boi'));
   expect(orders).toHaveLength(1);
   await expectOneOrderEvent(page,baseURL!,sent,browserName);
   expect(orders).toHaveLength(1);
@@ -360,7 +361,7 @@ test('a touch on a native shop link survives enhancement arriving mid-gesture (t
   await page.waitForTimeout(150);
   await expect(link).toBeAttached();
   await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
-  await expect(page).toHaveURL(landingTenantConfig.stores[0]!.orderUrl);
+  await expect(page).toHaveURL(itemOrderUrl(landingTenantConfig.stores[0]!, 'crunchy-boi'));
   expect(orders).toHaveLength(1);
   await expectOneOrderEvent(page,baseURL!,sent,browserName);
   expect(orders).toHaveLength(1);
@@ -425,7 +426,7 @@ test('lostpointercapture ends the press at once; the links wait for its click, w
   await expect(lineupFallback(page)).toHaveAttribute('data-enhance','ending',PROMPT);
   await expect(link).toBeAttached();
   await link.dispatchEvent('click');
-  await expect(page).toHaveURL(landingTenantConfig.stores[0]!.orderUrl);
+  await expect(page).toHaveURL(itemOrderUrl(landingTenantConfig.stores[0]!, 'crunchy-boi'));
   expect(orders).toHaveLength(1);
 });
 
@@ -461,7 +462,7 @@ test('a long press (2.5 s) with enhancement arriving mid-press navigates exactly
   await expect(link).toBeAttached();
   await expect(lineupButton(page)).toHaveCount(0);
   await page.mouse.up();
-  await expect(page).toHaveURL(landingTenantConfig.stores[0]!.orderUrl);
+  await expect(page).toHaveURL(itemOrderUrl(landingTenantConfig.stores[0]!, 'crunchy-boi'));
   expect(orders).toHaveLength(1);
   await expectOneOrderEvent(page,baseURL!,sent,browserName);
   expect(orders).toHaveLength(1);

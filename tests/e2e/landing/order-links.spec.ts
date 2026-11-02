@@ -1,6 +1,7 @@
 import { LANDING_PLACEMENTS } from "../../../lib/landing/tracking-schema-shared";
 import { test, expect } from "@playwright/test";
 import { landingTenantConfig } from "../../../config/tenant/landing";
+import { itemOrderUrl } from '../../../lib/landing/item-order-url-shared';
 
 test("all direct and catering destinations match approved tenant config",async ({page})=>{
   // The Field Guide's order action mounts once all six are found; the static (reduced-motion) guide shows it at once.
@@ -9,6 +10,9 @@ test("all direct and catering destinations match approved tenant config",async (
   await expect(page.locator('[data-landing-placement="guide"]').first()).toBeAttached();
   expect(await page.locator("[data-landing-placement]").evaluateAll(links=>[...new Set(links.map(link=>link.getAttribute("data-landing-placement")))].sort())).toEqual([...LANDING_PLACEMENTS].sort());
   for (const store of landingTenantConfig.stores) {
+    for (const placement of ['lineup', 'crave', 'guide']) {
+      await expect(page.locator(`a[data-landing-placement="${placement}"]`).filter({hasText:store.orderLabel})).toHaveAttribute('href',itemOrderUrl(store,'crunchy-boi'));
+    }
     const links = page.getByRole("link",{name:`Order ${store.orderLabel}`,exact:true});
     // Shop card and footer; the select screen's, crunch story's and Field Guide's copies sit in closed sheets.
     await expect(links).toHaveCount(2);
