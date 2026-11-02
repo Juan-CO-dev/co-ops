@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { canAccessOpeningInstance } from "@/lib/opening";
 /**
  * POST /api/opening/submit/phase1 — Opening Phase 1 atomic submission per
@@ -314,6 +315,8 @@ function validateBody(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // 1. Auth.
   const ctx = await requireSession(req, "/api/opening/submit/phase1");
   if (ctx instanceof Response) return ctx;

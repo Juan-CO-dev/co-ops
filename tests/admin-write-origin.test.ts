@@ -121,6 +121,8 @@ const mutationRoutes: Record<string, string> = {
   "template-builder/[id]/publish/route.ts": "POST",
   "toast-employees/route.ts": "POST",
   "toast-map/[id]/route.ts": "POST",
+  // Drift can classify confirmed mappings as stale; POST is guarded, without step-up.
+  "toast-map/drift/route.ts": "POST",
   "toast-map/location/route.ts": "POST",
   "toast-map/manual/route.ts": "POST",
   "toast-map/match/route.ts": "POST",
@@ -161,8 +163,6 @@ const mutationRoutes: Record<string, string> = {
 const readOnlyRoutes: Record<string, string> = {
   "checklist-templates/route.ts": "GET",
   "checklist-templates/[id]/route.ts": "GET",
-  // Read-time classifier: driftReport may audit confirmed-to-stale observations; no operator mutation.
-  "toast-map/drift/route.ts": "GET",
   "toast-sales/consumption/route.ts": "GET",
   "catalog/jobs/new-sandwich/preview/route.ts": "POST",
   "catalog/jobs/new-sandwich/reconcile/route.ts": "POST",

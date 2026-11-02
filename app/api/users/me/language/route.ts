@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * PATCH /api/users/me/language — update the actor's language preference.
  *
@@ -36,6 +37,8 @@ function isLanguageBody(raw: unknown): raw is LanguageBody {
 }
 
 export async function PATCH(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   if (!isLanguageBody(parsed)) {

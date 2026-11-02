@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { loadEzcaterOrderDetail } from "@/lib/catering/ezcater-detail";
@@ -51,6 +52,8 @@ const EDIT_KEYS = [
 //   { stage, note? }  → append-only stage move
 //   any EDIT_KEYS     → edit the lead's mutable CRM fields
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

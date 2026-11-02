@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/checklist/completions/[id]/revoke — silent within-60s self-untick.
  *
@@ -30,6 +31,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id: completionId } = await params;
 
   const ctx = await requireSession(req, `/api/checklist/completions/${completionId}/revoke`);

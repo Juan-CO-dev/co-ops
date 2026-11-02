@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/pulse/layout — save the shop's 3D floor arrangement (GM+; spec "GM+ can drag stations
  * once to match the real shop (saved per shop, audited)"). Body: { locationId, layout: { [stationId]:
@@ -11,6 +12,8 @@ import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/pulse/layout");
   if (ctx instanceof Response) return ctx;
   if (!pulseV2Enabled()) return jsonError(404, "not_found");

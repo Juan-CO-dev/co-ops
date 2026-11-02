@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/pulse/handoff — AM→PM handoff notes (AGM+). Body:
  *   { locationId, action: "create", audience: "crew"|"managers"|"all", body }
@@ -14,6 +15,8 @@ import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/pulse/handoff");
   if (ctx instanceof Response) return ctx;
   if (!pulseV2Enabled()) return jsonError(404, "not_found");

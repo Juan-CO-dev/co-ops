@@ -38,7 +38,7 @@ beforeEach(() => {
 });
 function request(method: string, extra: Record<string, unknown> = {}) {
   return new NextRequest(`http://localhost/api/written-reports/${reportId}`, {
-    method, headers: { "content-type": "application/json" }, body: JSON.stringify({ ...draft, ...extra }),
+    method, headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ ...draft, ...extra }),
   });
 }
 

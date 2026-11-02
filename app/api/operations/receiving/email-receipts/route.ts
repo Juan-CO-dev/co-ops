@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * /api/operations/receiving/email-receipts — thin adapter over lib/email-receipts.ts.
  *
@@ -73,6 +74,8 @@ export async function GET(req: NextRequest) {
 
 // ── POST multipart/form-data ───────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/operations/receiving/email-receipts");
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < RECEIPT_MIN) return jsonError(403, "forbidden");
@@ -118,6 +121,8 @@ export async function POST(req: NextRequest) {
 
 // ── PATCH JSON { deliveryId, action, receiptId?, verdict?, note? } ─────────────────────
 export async function PATCH(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
 

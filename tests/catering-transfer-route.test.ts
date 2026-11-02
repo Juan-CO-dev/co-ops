@@ -11,7 +11,7 @@ const ctx = { params: Promise.resolve({ id: "lead" }) };
 const actor = { user: { id: "actor", role: "catering_mgr" } };
 function request(body: unknown) {
   return new NextRequest("https://example.test/api/catering/pipeline/lead/transfer", {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    method: "POST", headers: { origin: "https://example.test", "content-type": "application/json" }, body: JSON.stringify(body),
   });
 }
 beforeEach(() => {

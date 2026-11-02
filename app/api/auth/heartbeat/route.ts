@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/auth/heartbeat — Phase 2 Session 4.
  *
@@ -22,6 +23,8 @@ import { requireSession } from "@/lib/session";
 import { jsonOk } from "@/lib/api-helpers";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const auth = await requireSession(req, "/api/auth/heartbeat");
   if (auth instanceof Response) return auth;
   return jsonOk({ ok: true });

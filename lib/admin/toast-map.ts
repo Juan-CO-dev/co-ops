@@ -1,7 +1,8 @@
 /**
  * Toast crosswalk admin data layer (read-track 1). SERVER-ONLY, service-role;
  * authz = requireSession → level floor at the route + re-checked here, writes
- * behind Tier-A step-up at the route (mirrors lib/admin/catering/menu.ts).
+ * behind Tier-A step-up at the route (mirrors lib/admin/catering/menu.ts),
+ * except the no-step-up drift classifier, invoked by a guarded POST.
  *
  * The crosswalk maps CO entities → Toast menu-item GUIDs per location
  * (toast_menu_map, migration 0146; multi-guid since 0151 — ONE entity may hold
@@ -399,7 +400,8 @@ export interface DriftReport {
 }
 
 /** Advisory drift: live/fixture pull vs confirmed mappings vs CO prices. The ONLY write is
- *  flipping vanished mappings to 'stale' (audited) — read-time-classifier precedent (W4c-a). */
+ *  flipping vanished mappings to 'stale' (audited). The explicit POST check retains
+ *  the classifier's no-step-up contract (W4c-a). */
 export async function driftReport(actor: AuthContext, locationId: string): Promise<DriftReport> {
   requireLevel(actor, TOAST_MAP_MIN);
   assertLocationAccess(actor, locationId);

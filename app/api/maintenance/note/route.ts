@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/maintenance/note — log a maintenance note against a piece of equipment
  * or a free-text label (C.XX Maintenance Log).
@@ -22,6 +23,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // 1. Auth.
   const ctx = await requireSession(req, "/api/maintenance/note");
   if (ctx instanceof Response) return ctx;

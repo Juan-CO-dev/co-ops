@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError, ChecklistActorTransientError } from "@/lib/checklist-write-actor";
 /**
  * POST /api/checklist/submissions — record a non-final submission event
@@ -43,6 +44,8 @@ function isSubmitBody(raw: unknown): raw is SubmitBody {
 }
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   if (!isSubmitBody(parsed)) {

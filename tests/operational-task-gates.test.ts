@@ -1,3 +1,5 @@
+import { NextRequest } from "next/server";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -91,7 +93,7 @@ function countPost(ctx: AuthContext, writer: (...args: unknown[]) => Promise<unk
   const fn = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "POST")!;
   const js = ts.transpile(fn.getText(ast).replace(/^export /, ""), { target: ts.ScriptTarget.ES2022 });
   const deps = {
-    ROLES, assertStepUp, COUNT_WRITE_MIN: 4, COUNT_READ_MIN: 6, CountError: DomainError,
+    ROLES, assertStepUp, assertSameOrigin, COUNT_WRITE_MIN: 4, COUNT_READ_MIN: 6, CountError: DomainError,
     requireSession: async () => ctx,
     parseJsonBody: async () => ({ locationId, pin, lines: [{ skuId: "sku", levelLabel: "each", qty: 1 }] }),
     verifyActorPin: async (_userId: string, supplied: string) => supplied === "1234",
@@ -99,7 +101,7 @@ function countPost(ctx: AuthContext, writer: (...args: unknown[]) => Promise<unk
     jsonError: (status: number, code: string) => Response.json({ code }, { status }),
     jsonOk: (body: unknown, status: number) => Response.json(body, { status }),
   };
-  return new Function(...Object.keys(deps), `${js}; return POST;`)(...Object.values(deps))({}) as Promise<Response>;
+  return new Function(...Object.keys(deps), `${js}; return POST;`)(...Object.values(deps))(new NextRequest("http://localhost/api/operations/counts", { method: "POST", headers: { origin: "http://localhost" } })) as Promise<Response>;
 }
 
 describe("count API step-up and assignment boundary", () => {

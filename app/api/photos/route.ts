@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/photos — upload a photo (photo uploader seam, 0164).
  *
@@ -21,6 +22,8 @@ import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { uploadPhoto, PhotoError } from "@/lib/photos";
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/photos");
   if (ctx instanceof Response) return ctx;
 

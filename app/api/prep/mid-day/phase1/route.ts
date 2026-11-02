@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { PrepRoleViolationError } from "@/lib/prep";
 import { hasTaskAccess } from "@/lib/assignments";
 /**
@@ -51,6 +52,8 @@ function validateBody(
 }
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/prep/mid-day/phase1");
   if (ctx instanceof Response) return ctx;
 

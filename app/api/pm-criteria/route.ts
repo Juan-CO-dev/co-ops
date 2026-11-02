@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
@@ -19,6 +20,8 @@ const FIELDS: Record<string, readonly string[]> = {
  * notification.
  */
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/pm-criteria");
   if (ctx instanceof Response) return ctx;
   const body = await parseJsonBody(req);

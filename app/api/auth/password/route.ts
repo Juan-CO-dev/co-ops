@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * POST /api/auth/password — email + password sign-in (level 6+ only).
  *
@@ -48,6 +49,8 @@ function isPasswordSignInBody(raw: unknown): raw is PasswordSignInBody {
 }
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // 1. Parse + validate
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

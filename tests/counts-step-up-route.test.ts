@@ -16,7 +16,7 @@ vi.mock("@/lib/counts", () => ({
 
 function request(pin?: string) {
   return new NextRequest("https://example.test/api/operations/counts", {
-    method: "POST", headers: { "content-type": "application/json" },
+    method: "POST", headers: { origin: "https://example.test", "content-type": "application/json" },
     body: JSON.stringify({ locationId: "shop", pin, lines: [{ skuId: "sku", levelLabel: "case", qty: 1 }] }),
   });
 }

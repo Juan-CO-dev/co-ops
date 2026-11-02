@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -44,6 +45,8 @@ type Action = "accept" | "dismiss" | "revert";
 const ACTIONS: ReadonlySet<string> = new Set<Action>(["accept", "dismiss", "revert"]);
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, "/api/operations/ordering/suggestion");

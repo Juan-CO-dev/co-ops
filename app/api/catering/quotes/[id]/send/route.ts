@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { assertStepUp } from "@/lib/admin/step-up";
@@ -16,6 +17,8 @@ import { sendQuote, CateringQuoteError, QUOTE_WRITE_MIN } from "@/lib/catering/q
  * client opens the password modal and retries.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const ctx = await requireSession(req, `/api/catering/quotes/${id}/send`);
   if (ctx instanceof Response) return ctx;

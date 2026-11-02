@@ -4,9 +4,9 @@
  * ToastTab — the Toast crosswalk surface (read-track 1). Per location: the
  * restaurant-GUID field, Run match / Check drift actions, the candidate
  * confirm queue, confirmed/stale mappings, and the advisory drift report.
- * Every write is Tier-A step-up gated (same PasswordModal retry pattern as
- * MenuClient); successful writes router.refresh() so the server-loaded state
- * re-renders. Drift reports are per-location local state (advisory reads).
+ * Curated mapping writes are Tier-A step-up gated (same PasswordModal retry
+ * pattern as MenuClient). Drift checks retain no-step-up classifier semantics;
+ * both refresh server state. Drift reports are per-location local state.
  */
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -92,7 +92,7 @@ export function ToastTab({ state, ezcater, payments, canWrite }: { state: ToastM
   };
   const checkDrift = (locId: string) => {
     setBusy(`${locId}:drift`);
-    void api(`/api/admin/toast-map/drift?locationId=${locId}`, "GET", undefined, (data) => {
+    void api("/api/admin/toast-map/drift", "POST", { locationId: locId }, (data) => {
       const r = (data as { report?: DriftReport }).report;
       if (r) setDrift((prev) => ({ ...prev, [locId]: r }));
       router.refresh(); // stale flips may have landed

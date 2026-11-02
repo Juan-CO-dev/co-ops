@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { canAccessOpeningInstance } from "@/lib/opening";
 /**
  * POST /api/opening/prep/item — Phase-2-aware per-item §8.4 SAVE per C.53 §3 +
@@ -203,6 +204,8 @@ function validateBody(
 }
 
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   // 1. Auth.
   const ctx = await requireSession(req, "/api/opening/prep/item");
   if (ctx instanceof Response) return ctx;

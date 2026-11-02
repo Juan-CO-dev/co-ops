@@ -31,7 +31,7 @@ beforeEach(() => {
   });
   h.session.mockResolvedValue({ user: { id: USER, role: "gm" }, session: { id: SESSION } });
 });
-const call = (body: unknown) => POST(new NextRequest("http://localhost/api/auth/step-up", { method: "POST", body: JSON.stringify(body) }));
+const call = (body: unknown) => POST(new NextRequest("http://localhost/api/auth/step-up", { method: "POST", headers: { origin: "http://localhost" }, body: JSON.stringify(body) }));
 const session = () => (h.db.tables.sessions as Row[])[0]!;
 const grants = () => h.db.tables.step_up_grants as Row[];
 

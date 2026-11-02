@@ -1,3 +1,4 @@
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -32,6 +33,8 @@ const EDIT_KEYS = ["name", "company", "contactPerson", "email", "phone", "notes"
 
 // PATCH — one concern per call (write >= 6): { active } toggle | edit fields.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const { id } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;

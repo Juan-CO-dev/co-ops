@@ -299,7 +299,7 @@ describe("P2 — the lead link is bound to the location it authorized", () => {
 
 // ── Review 2 — through the routes ────────────────────────────────────────────────────────
 const json = (url: string, body: unknown) =>
-  new NextRequest(`http://localhost${url}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  new NextRequest(`http://localhost${url}`, { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify(body) });
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
 describe("R2 + option b — Send on a quote whose client is another shop's customer", () => {
