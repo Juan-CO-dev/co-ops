@@ -5,6 +5,7 @@ import {hop} from '@/lib/landing/hop-shared';
 import {registerOrderControl} from '@/lib/landing/sticky-order-shared';
 import {OrderLink} from './OrderLink';
 import {SpinCanvas} from './SpinCanvas';
+import {itemOrderUrl} from '@/lib/landing/item-order-url-shared';
 
 export interface SheetShop {key:string;orderUrl:string;label:string;detail:string}
 export interface SheetSpin {frames:readonly string[];width:number;height:number;alt:string}
@@ -90,7 +91,7 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
   const [open,setOpen]=useState(false);
   const titleId=useId();
   // One accessible name, read in order: "Order Capitol Hill · 8th St SE · til 6 PM".
-  const link=(shop:SheetShop)=><OrderLink key={shop.key} href={shop.orderUrl} store={shop.key} placement={placement} item={item} className="landing-v2-order landing-v4-order-two">
+  const link=(shop:SheetShop)=><OrderLink key={shop.key} href={itemOrderUrl(shop,item)} store={shop.key} placement={placement} item={item} className="landing-v2-order landing-v4-order-two">
     <span>{shop.label}</span><span className="sr-only"> · </span><span className="landing-v4-order-detail" data-order-detail>{shop.detail}</span>
   </OrderLink>;
   if(!hydrated)return <div ref={fallback} data-order-control data-enhance="waiting" className="landing-v3-direct-orders">{shops.map(link)}</div>;
