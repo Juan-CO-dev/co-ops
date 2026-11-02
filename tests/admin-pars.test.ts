@@ -6,7 +6,7 @@ import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { EMPTY_PAR_SILENCE, type WalkerParSuggestion } from "@/lib/dynamic-pars-shared";
 import type { LocationSkuOverlay } from "@/lib/location-sku-shared";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
-import { canViewPars, filterPars, parSlots } from "@/lib/admin/pars-shared";
+import { canViewPars, filterPars, parSectionKey, parSlots } from "@/lib/admin/pars-shared";
 import { adminSectionsFor } from "@/lib/admin/sections";
 
 const h = vi.hoisted(() => ({ db: vi.fn(), walk: vi.fn(), packs: vi.fn(), measures: vi.fn(), products: vi.fn(), guides: vi.fn(), task: vi.fn() }));
@@ -20,6 +20,7 @@ vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: h.task }
 import { loadPars } from "@/lib/admin/pars";
 
 const SHOP = "6f1d2c3e-0000-4000-8000-00000000000a";
+const FOREIGN_SHOP = "6f1d2c3e-0000-4000-8000-00000000000b";
 const actor = (role: RoleCode = "agm", level = getRoleLevel(role)) => ({ user: { role, language: "en" }, role, level, locations: [SHOP] }) as AuthContext;
 const sku = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: id, vendor_id: "v", location_id: null, active: true, product_id: null,
   weekday_par: 3, weekend_par: null, pack_format: "case", each_container_label: "bag", units_per_pack: 3, each_size: 10, each_measure: "lb", avg_oz_per_each: null, ...extra });
@@ -55,8 +56,13 @@ describe("Pars authorization", () => {
     expect(adminSectionsFor(getRoleLevel(role), role).find((s) => s.id === "pars")?.comingSoon).not.toBe(true);
   });
   it.each(["agm", "prep_mgr", "catering_mgr", "gm", "moo"] as RoleCode[])("binds %s to membership before I/O", async (role) => {
-    await expect(loadPars(actor(role), "other")).rejects.toMatchObject({ status: 404 });
+    await expect(loadPars(actor(role), FOREIGN_SHOP)).rejects.toMatchObject({ status: 404 });
     expect(h.db).not.toHaveBeenCalled(); expect(h.task).not.toHaveBeenCalled();
+  });
+  it("admits a level-9 owner at a foreign shop", async () => {
+    await expect(loadPars(actor("owner", 9), FOREIGN_SHOP)).resolves.toHaveProperty("rows");
+    expect(h.task).toHaveBeenCalledWith(actor("owner", 9), FOREIGN_SHOP, "ordering");
+    expect(h.walk).toHaveBeenCalledWith(actor("owner", 9), FOREIGN_SHOP);
   });
   it("honors the ordering task gate before loading data", async () => {
     h.task.mockResolvedValue(false);
@@ -76,6 +82,12 @@ describe("Pars authorization", () => {
 });
 
 describe("Pars read model", () => {
+  it.each([false, true])("carries the walk day-class (weekend %s)", async (isWeekendPar) => {
+    h.walk.mockResolvedValue({ isWeekendPar, vendors: [{ skus: [{ skuId: "a", parSuggestion: suggestion }] }], parSilence: EMPTY_PAR_SILENCE });
+    const view = await loadPars(actor(), SHOP);
+    expect(view.dayClass).toBe(isWeekendPar ? "weekend" : "weekday");
+    expect(view.rows[0]?.suggestion?.suggestedPar).toBe(4);
+  });
   it("uses the shared stamped pack loader once for the whole catalog, with current shop units and weight", async () => {
     chains.set("a", [{ id: "c", label: "crate", containsQty: 2, containsLevelId: null, containsMeasureUnit: "lb", displayOrdinal: 0 }]);
     const view = await loadPars(actor(), SHOP);
@@ -128,7 +140,7 @@ describe("Pars read model", () => {
     h.guides.mockResolvedValue(new Map([["z", { position: 1, section: "First" }], ["b", { position: 2, section: "Second" }]]));
     const view = await loadPars(actor(), SHOP);
     expect(view.rows.map((r) => r.skuId)).toEqual(["z", "b", "a"]);
-    expect(filterPars(view.rows, "v", "First").map((r) => r.skuId)).toEqual(["z"]);
+    expect(filterPars(view.rows, "v", parSectionKey({ vendorId: "v", section: "First" })).map((r) => r.skuId)).toEqual(["z"]);
     expect(filterPars(view.rows, "other", "")).toEqual([]);
     expect(db.log).toHaveLength(2); expect(h.guides).toHaveBeenCalledTimes(1);
   });

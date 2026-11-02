@@ -57,6 +57,8 @@ export async function loadPars(actor: AuthContext, locationId: string): Promise<
       if (error) throw new Error(`loadPars vendors: ${error.message}`);
       return { data };
     }),
+    // Pay for the full walk read to preserve equivalence with its final suggestions,
+    // including deduplication, retirement, backup routing and silence eligibility.
     loadWalkerData(actor, locationId),
   ]);
   const owned = skus.filter((s) => s.location_id == null || s.location_id === locationId);
@@ -85,5 +87,5 @@ export async function loadPars(actor: AuthContext, locationId: string): Promise<
       reroutedFromName: walked?.reroutedFromSkuId ? names.get(walked.reroutedFromSkuId) ?? walked.reroutedFromSkuId : null,
     });
   }
-  return { rows: filterPars(rows, "", ""), silence: walk.parSilence };
+  return { rows: filterPars(rows, "", ""), dayClass: walk.isWeekendPar ? "weekend" : "weekday", silence: walk.parSilence };
 }

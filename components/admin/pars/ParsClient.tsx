@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { filterPars, type ParsSlot, type ParsView } from "@/lib/admin/pars-shared";
+import { filterPars, parSectionKey, type ParsSlot, type ParsView } from "@/lib/admin/pars-shared";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
@@ -12,8 +12,8 @@ export function ParsClient({ view }: { view: ParsView }) {
   const [vendor, setVendor] = useState("");
   const [section, setSection] = useState("");
   const vendors = [...new Map(view.rows.map((r) => [r.vendorId, r.vendorName])).entries()];
-  const sections = [...new Set(view.rows.filter((r) => !vendor || r.vendorId === vendor)
-    .flatMap((r) => r.section ? [r.section] : []))];
+  const sections = [...new Map(view.rows.filter((r) => !vendor || r.vendorId === vendor)
+    .flatMap((r) => r.section ? [[parSectionKey(r), vendor ? r.section : `${r.vendorName} · ${r.section}`] as const] : [])).entries()];
   const rows = filterPars(view.rows, vendor, section);
   const number = (n: number) => new Intl.NumberFormat(language, { maximumFractionDigits: 2 }).format(n);
   return (
@@ -30,27 +30,29 @@ export function ParsClient({ view }: { view: ParsView }) {
         <label className="min-w-0 text-sm font-bold">{t("admin.pars.section")}
           <select className="mt-1 min-h-[44px] w-full min-w-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3" value={section} onChange={(e) => setSection(e.target.value)}>
             <option value="">{t("admin.pars.all_sections")}</option>
-            {sections.map((s) => <option key={s} value={s}>{s}</option>)}
+            {sections.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select>
         </label>
       </div>
-      <p role="status" className="text-sm text-co-text-muted">{t("admin.pars.count", { n: rows.length })}</p>
+      <p role="status" className="text-sm text-co-text-muted">{t(rows.length === 1 ? "admin.pars.count_one" : "admin.pars.count_other", { n: rows.length })}</p>
       {rows.length === 0 && <p className="text-sm text-co-text-muted">{t("admin.pars.empty")}</p>}
       <ul className="space-y-3">
         {rows.map((row) => {
           const suggestion = row.suggestion?.slotCreation ? null : row.suggestion;
+          const suggestionText = suggestion ? t(`admin.pars.today.${view.dayClass}`, {
+            pair: t(suggestion.tier === "auto" ? (view.silence.shadowMode ? "ordering.shadow.would_tune" : "ordering.auto.tuned") : "ordering.suggestion.pair", {
+              current: number(suggestion.currentPar), suggested: number(suggestion.suggestedPar),
+            }),
+          }) : null;
           return <li key={row.skuId} className="co-card min-w-0 space-y-3 p-4">
             <div><h2 className="font-bold text-co-text">{row.name}</h2>
               <p className="text-xs text-co-text-muted">{row.vendorName}{row.section ? ` · ${row.section}` : ""}</p></div>
             <dl className="grid min-w-0 grid-cols-2 gap-3">
-              <Slot title={t("admin.pars.weekday")} slot={row.weekday} unit={row.unit} />
-              <Slot title={t("admin.pars.weekend")} slot={row.weekend} unit={row.unit} />
+              <Slot title={t("admin.pars.weekday")} slot={row.weekday} unit={row.unit} suggestion={view.dayClass === "weekday" ? suggestionText : null} />
+              <Slot title={t("admin.pars.weekend")} slot={row.weekend} unit={row.unit} suggestion={view.dayClass === "weekend" ? suggestionText : null} />
             </dl>
             {row.weekendFallback && <p className="text-xs text-co-text-muted">{t("admin.pars.weekend_fallback")}</p>}
             {row.reroutedFromName && <p className="text-sm text-co-text-dim">{t("admin.pars.rerouted", { name: row.reroutedFromName })}</p>}
-            {suggestion && <p className="text-sm font-bold">{t(suggestion.tier === "auto" ? (view.silence.shadowMode ? "ordering.shadow.would_tune" : "ordering.auto.tuned") : "ordering.suggestion.pair", {
-              current: number(suggestion.currentPar), suggested: number(suggestion.suggestedPar),
-            })}</p>}
             <CollapsibleSection idBase={`pars-details-${row.skuId}`} title={t("admin.pars.details", { name: row.name })}>
               <div className="space-y-2 text-sm text-co-text-dim">
                 <p>{row.section ? t("admin.pars.guide_section", { section: row.section }) : t("admin.pars.no_section")}</p>
@@ -70,7 +72,7 @@ export function ParsClient({ view }: { view: ParsView }) {
   );
 }
 
-function Slot({ title, slot, unit }: { title: string; slot: ParsSlot; unit: string | null }) {
+function Slot({ title, slot, unit, suggestion }: { title: string; slot: ParsSlot; unit: string | null; suggestion: string | null }) {
   const { t, language } = useTranslation();
   const number = (n: number) => new Intl.NumberFormat(language, { maximumFractionDigits: 2 }).format(n);
   return <div className="min-w-0 space-y-1">
@@ -79,5 +81,6 @@ function Slot({ title, slot, unit }: { title: string; slot: ParsSlot; unit: stri
       t("admin.pars.quantity", { n: number(slot.value), unit: unit ?? t("admin.pars.order_units") })}</dd>
     {slot.value != null && <dd className="text-xs text-co-text-muted">{slot.pounds == null ? t("admin.pars.weight_unknown") : t("admin.pars.weight", { n: number(slot.pounds) })}</dd>}
     <dd className="text-xs text-co-text-muted">{t(`admin.pars.lane.${slot.lane}`)}</dd>
+    {suggestion && <dd className="text-sm font-bold">{suggestion}</dd>}
   </div>;
 }
