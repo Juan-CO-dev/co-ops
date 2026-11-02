@@ -1,5 +1,7 @@
 -- Migration 0281_schedule_person_availability
 -- AUTHORED 2026-10-22. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0280).
+-- APPLIED TO SIM 2026-10-22 (schema_migrations version 20261022092749, name 'schedule_person_availability').
+-- APPLIED TO PROD 2026-10-22 (schema_migrations version 20261022102429, name 'schedule_person_availability').
 -- Provenance: feat/schedule-availability, CC-approved availability plan.
 --
 -- Manager-set per-shop weekday availability; NULL preserves the Toast guess.

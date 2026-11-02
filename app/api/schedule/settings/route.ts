@@ -18,10 +18,10 @@ export const runtime = "nodejs";
  * No email, no notification.
  */
 export async function POST(req: NextRequest) {
+  const origin = assertSameOrigin(req);
+  if (origin) return origin;
   const ctx = await requireSession(req, "/api/schedule/settings");
   if (ctx instanceof Response) return ctx;
-  const bad = assertSameOrigin(req);
-  if (bad) return bad;
   const body = await parseJsonBody(req);
   if (body instanceof Response) return body;
   if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "bad_request");

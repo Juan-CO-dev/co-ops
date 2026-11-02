@@ -1,5 +1,7 @@
 -- Migration 0277_postgrest_checklist_write_lockdown
 -- AUTHORED 2026-10-19. FILE ONLY; NOT APPLIED. CC review -> sim -> prod on Juan's word.
+-- APPLIED TO SIM 2026-10-19 (schema_migrations version 20261020023407, name '0277_postgrest_checklist_write_lockdown').
+-- APPLIED TO PROD 2026-10-20 (schema_migrations version 20261020145515, name '0277_postgrest_checklist_write_lockdown').
 -- Apply AFTER 0276 and the reviewed app cutover. No service_role ceiling (R4):
 -- the 0276 SECURITY INVOKER functions depend on service_role retaining table DML.
 -- Preserve all SELECT grants/policies and explicit false policies. This migration

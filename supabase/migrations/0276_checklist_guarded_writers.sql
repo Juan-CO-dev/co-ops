@@ -1,5 +1,7 @@
 -- Migration 0276_checklist_guarded_writers
 -- AUTHORED 2026-10-19. FILE ONLY; NOT APPLIED. CC review -> sim -> prod on Juan's word.
+-- APPLIED TO SIM 2026-10-19 (schema_migrations version 20261019191628, name '0276_checklist_guarded_writers').
+-- APPLIED TO PROD 2026-10-19 (schema_migrations version 20261019191754, name '0276_checklist_guarded_writers').
 -- R7 prerequisite for the application cutover; 0277 is the separate lockdown.
 -- No table grants/policies or existing writers change here. Old deployment writers
 -- must be drained before claiming serialization. PIN, assignments, answer validation,
