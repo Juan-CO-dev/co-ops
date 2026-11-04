@@ -284,6 +284,14 @@ export class PrepAutoCompleteError extends PrepError {
   }
 }
 
+/** A concurrent closing reference replacement requires a fresh submission. */
+export class PrepClosingRefBusyError extends PrepError {
+  constructor() {
+    super("Closing reference changed during submission", "prep_closing_ref_busy");
+    this.name = "PrepClosingRefBusyError";
+  }
+}
+
 /**
  * Thrown when the prep instance is not in 'open' status (e.g., already
  * confirmed). Maps to HTTP 409 conflict.
@@ -1927,30 +1935,7 @@ export async function autoCompleteClosingMidDayRef(
 // Closing report-reference reconcile (pull-based; order-independent)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Replace the live auto-complete tick of one closing report-reference item: SUPERSEDE FIRST, INSERT SECOND
- * (the 0199 / 0056 order).
- *
- * WHY THE ORDER IS LAW: 0196's checklist_completions_one_live_head_per_phase is UNIQUE
- * (instance_id, template_item_id, coalesce(prep_data ? 'phase2', false)) over live rows. A closing tick carries
- * no prep_data, so a replacement inserted while its predecessor is still live shares the key and is a 23505 -
- * which the closing page's reconcile catch used to log and move past, leaving the old count/time on the line.
- * (The count-change supersede on main had the same insert-first order, so it was broken the same way.)
- *
- *   1. COMPARE-AND-SWAP: UPDATE ... SET superseded_at WHERE id = <the head THIS writer read> AND
- *      superseded_at IS NULL AND revoked_at IS NULL. It never supersedes "whatever is live": if another writer
- *      moved first (replaced the head, or a C.55 reopen revoked it) the rowcount is 0 and this returns "lost" -
- *      the caller re-reads the live head and re-evaluates (ensureClosingRefCompletion). A lost INSERT with no
- *      head (23505: a concurrent first tick) is "lost" too.
- *   2. INSERT the replacement. If it fails, the line would be left with no live tick (worse than a stale one),
- *      so the rows this call superseded are restored (compensation) and the failure is thrown. If the restore
- *      ALSO fails, the thrown message says so, loudly - no silent path leaves the line unticked.
- *   3. Link superseded_by now that the replacement's id exists (0199's provenance link).
- *
- * NOT atomic across the three statements. A crash BETWEEN steps 1 and 2 leaves the line unticked (superseded
- * head, no live row, not revoked) until the next closing load, whose reconcile sees no head and re-inserts it
- * (tested). The real fix is an atomic replace RPC (migration) - filed as a follow-up, not built here.
- */
+/** Replace under the closing parent lock in one transaction (0290); never compensate in JS. */
 async function replaceLiveClosingRefCompletion(
   service: SupabaseClient,
   args: {
@@ -1959,75 +1944,31 @@ async function replaceLiveClosingRefCompletion(
     refItemId: string;
     actor: PrepActor;
     meta: Record<string, unknown>;
-    /** The live head THIS writer read (compare-and-swap target), or null when it read none. */
+    /** The head THIS writer read; SQL reloads and compares it under the parent lock. */
     headId: string | null;
-    nowIso: string;
   },
-): Promise<"inserted" | "superseded" | "lost"> {
-  const { label, nowIso } = args;
-  const key = { instance_id: args.closingInstanceId, template_item_id: args.refItemId };
-
-  let supersededCount = 0;
-  if (args.headId) {
-    const { error: supErr, count } = await service
-      .from("checklist_completions")
-      .update({ superseded_at: nowIso }, { count: "exact" })
-      .eq("id", args.headId)
-      .eq("instance_id", key.instance_id)
-      .eq("template_item_id", key.template_item_id)
-      .is("superseded_at", null)
-      .is("revoked_at", null);
-    if (supErr) throw new Error(`${label}: supersede: ${supErr.message}`);
-    if (!count) return "lost"; // another writer moved first (replaced or revoked it): re-read, never clobber
-    supersededCount = count;
+): Promise<"inserted" | "superseded" | "lost" | "skipped"> {
+  const { data, error } = await service.rpc("checklist_replace_closing_ref", {
+    p_instance: args.closingInstanceId,
+    p_item: args.refItemId,
+    p_actor: args.actor.userId,
+    p_expected_head: args.headId,
+    p_meta: args.meta,
+  });
+  if (error) {
+    // Historical manager revokes and ambiguous heads must be left for repair, never re-ticked.
+    if (error.message === "closing_ref_multiple_heads") {
+      console.warn(`${args.label}: closing reference skipped`, {
+        instanceId: args.closingInstanceId, itemId: args.refItemId, reason: error.message,
+      });
+      return "skipped";
+    }
+    if (error.message === "closing_ref_revoked") return "skipped";
+    throw new Error(`${args.label}: replace: ${error.message}`);
   }
-
-  const restore = async (): Promise<string | null> => {
-    if (supersededCount === 0) return null;
-    const { error } = await service
-      .from("checklist_completions")
-      .update({ superseded_at: null })
-      .eq("instance_id", key.instance_id)
-      .eq("template_item_id", key.template_item_id)
-      .eq("superseded_at", nowIso)
-      .is("superseded_by", null);
-    return error ? error.message : null;
-  };
-
-  const { data: inserted, error: insErr } = await service
-    .from("checklist_completions")
-    .insert({
-      ...key,
-      completed_by: args.actor.userId,
-      completed_at: nowIso,
-      auto_complete_meta: args.meta,
-    })
-    .select("id")
-    .maybeSingle<{ id: string }>();
-  if (!args.headId && insErr?.code === "23505") return "lost"; // a concurrent first tick won the index
-  if (insErr || !inserted) {
-    const reason = insErr?.message ?? "insert returned no row";
-    const restoreErr = await restore();
-    throw new Error(
-      restoreErr === null
-        ? `${label}: insert: ${reason}${supersededCount ? " (the prior tick was restored)" : ""}`
-        : `${label}: insert: ${reason} AND restoring the superseded prior tick failed: ${restoreErr} - the line is UNTICKED until the next closing load repairs it`,
-    );
-  }
-
-  if (supersededCount > 0) {
-    const { error: linkErr } = await service
-      .from("checklist_completions")
-      .update({ superseded_by: inserted.id })
-      .eq("instance_id", key.instance_id)
-      .eq("template_item_id", key.template_item_id)
-      .eq("superseded_at", nowIso)
-      .is("superseded_by", null)
-      .neq("id", inserted.id);
-    if (linkErr) throw new Error(`${label}: supersede link: ${linkErr.message}`);
-    return "superseded";
-  }
-  return "inserted";
+  const result = (data as { result?: unknown } | null)?.result;
+  if (result === "inserted" || result === "superseded" || result === "lost" || result === "skipped") return result;
+  throw new Error(`${args.label}: replace returned an invalid result`);
 }
 
 /**
@@ -2160,7 +2101,16 @@ async function ensureClosingRefCompletion(
         revoked_at: string | null;
         auto_complete_meta: { count?: number; reportInstanceId?: string; reportSubmittedAt?: string } | null;
       }>();
-    if (headErr) throw new Error(`${label}: head lookup: ${headErr.message}`);
+    if (headErr) {
+      if (headErr.code !== "PGRST116") throw new Error(`${label}: head lookup: ${headErr.message}`);
+      // An ambiguous optimistic read is diagnosed again under the SQL parent lock.
+      const result = await replaceLiveClosingRefCompletion(service, {
+        label, closingInstanceId: args.closingInstanceId, refItemId: args.refItemId,
+        actor: args.actor, meta: args.meta, headId: null,
+      });
+      if (result !== "lost") return result;
+      continue;
+    }
 
     if (head) {
       // The most recent tick for this line is a manager's REVOKE (C.55 reopen): never re-tick over it -
@@ -2196,7 +2146,6 @@ async function ensureClosingRefCompletion(
       actor: args.actor,
       meta: args.meta,
       headId: head?.id ?? null,
-      nowIso: new Date().toISOString(),
     });
     if (result !== "lost") return result;
   }
@@ -2930,6 +2879,11 @@ interface SubmitRpcResult {
   submissionId: string;
   completionIds: string[];
   autoCompleteId: string | null;
+  closingRefSkip?: {
+    instanceId: string;
+    itemId: string;
+    reason: "closing_ref_revoked" | "closing_ref_multiple_heads";
+  } | null;
   /** C.46 update path: edit_count of the new submission (0 on original; 1-3 on update). */
   editCount: number;
   /** C.46 update path: chain head submission id (null on original; FK on update). */
@@ -3203,6 +3157,9 @@ export async function submitAmPrep(
     // foreign_key_violation = case (b) auto-complete failure (no closing
     // instance for today). check_violation = pessimistic guard tripped
     // (instance not open).
+    if (rpcErr.code === "P0001" && rpcErr.message === "closing_ref_changed") {
+      throw new PrepClosingRefBusyError();
+    }
     if (rpcErr.code === "23503") {
       void audit({
         actorId: args.actor.userId,
@@ -3265,6 +3222,7 @@ export async function submitAmPrep(
       assignment_id: args.activeAssignmentId,
       closing_report_ref_item_id: args.closingReportRefItemId,
       closing_auto_complete_id: result.autoCompleteId,
+      closing_ref_skip: result.closingRefSkip ?? null,
       report_type: "am_prep",
       skipped_bad_rows: skipped.map((r) => r.templateItemId),
     },

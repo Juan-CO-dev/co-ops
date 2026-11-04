@@ -356,6 +356,7 @@ const KNOWN_ERROR_CODES = new Set([
   "prep_role_violation",
   "prep_instance_not_open",
   "prep_auto_complete_failed",
+  "prep_closing_ref_busy",
   "prep_shape",
   "prep_invariant",
   "location_access_denied",

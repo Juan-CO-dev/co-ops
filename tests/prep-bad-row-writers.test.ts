@@ -28,11 +28,15 @@ vi.mock("@/lib/prep-consumption", async (importOriginal) => ({
   loadBatchDerivedForItems: vi.fn(async () => new Map()),
 }));
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
+import { audit } from "@/lib/audit";
+
+import { PostgrestError, type SupabaseClient } from "@supabase/supabase-js";
 
 import { loadBatchContextForItems } from "@/lib/batch-prep";
 import type { BatchItemContext } from "@/lib/batch-prep-shared";
 import {
+  PrepClosingRefBusyError,
   PrepInvariantError,
   PrepShapeError,
   excludeSkippedTargets,
@@ -220,6 +224,39 @@ describe("AM prep submit", () => {
     };
   }
   const rpcOk = () => ({ instance: instance("confirmed"), completionIds: ["c-1"], autoCompleteId: null, submissionId: "s-1" });
+
+  it.each(["closing_ref_changed"])(
+    "maps %s to the retry-oriented busy error", async (message) => {
+      const { service } = fakeService(amTables(), rpcOk);
+      vi.spyOn(service, "rpc").mockResolvedValue({
+        success: false,
+        data: null, error: new PostgrestError({ code: "P0001", message, details: "", hint: "" }),
+        count: null, status: 400, statusText: "Bad Request",
+      });
+      const result = submitAmPrep(service, {
+        instanceId: INSTANCE, actor: ACTOR,
+        entries: [{ templateItemId: GOOD, inputs: { total: 3 } }],
+        closingReportRefItemId: "closing-ref", activeAssignmentId: null,
+      });
+      await expect(result).rejects.toBeInstanceOf(PrepClosingRefBusyError);
+      await expect(result).rejects.toMatchObject({ code: "prep_closing_ref_busy" });
+    },
+  );
+
+  it.each(["closing_ref_revoked", "closing_ref_multiple_heads"])("audits %s without failing AM", async (reason) => {
+    const closingRefSkip = { instanceId: "closing-1", itemId: "closing-ref", reason };
+    const { service } = fakeService(amTables(), () => ({ ...rpcOk(), closingRefSkip }));
+    const result = await submitAmPrep(service, {
+      instanceId: INSTANCE, actor: ACTOR,
+      entries: [{ templateItemId: GOOD, inputs: { total: 3 } }],
+      closingReportRefItemId: "closing-ref", activeAssignmentId: null,
+    });
+    expect(result.closingAutoCompleteId).toBeNull();
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "prep.submit", resourceId: INSTANCE,
+      metadata: expect.objectContaining({ outcome: "success", closing_ref_skip: closingRefSkip }),
+    }));
+  });
 
   it("submits with one bad row it is not writing, and reports that row as skipped", async () => {
     const { service, rpcCalls } = fakeService(amTables(), rpcOk);
