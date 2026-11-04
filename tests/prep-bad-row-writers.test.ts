@@ -28,11 +28,12 @@ vi.mock("@/lib/prep-consumption", async (importOriginal) => ({
   loadBatchDerivedForItems: vi.fn(async () => new Map()),
 }));
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { PostgrestError, type SupabaseClient } from "@supabase/supabase-js";
 
 import { loadBatchContextForItems } from "@/lib/batch-prep";
 import type { BatchItemContext } from "@/lib/batch-prep-shared";
 import {
+  PrepAutoCompleteError,
   PrepInvariantError,
   PrepShapeError,
   excludeSkippedTargets,
@@ -220,6 +221,24 @@ describe("AM prep submit", () => {
     };
   }
   const rpcOk = () => ({ instance: instance("confirmed"), completionIds: ["c-1"], autoCompleteId: null, submissionId: "s-1" });
+
+  it.each(["closing_ref_revoked", "closing_ref_multiple_heads", "closing_ref_changed"])(
+    "maps %s to the existing recoverable auto-complete refusal", async (message) => {
+      const { service } = fakeService(amTables(), rpcOk);
+      vi.spyOn(service, "rpc").mockResolvedValue({
+        success: false,
+        data: null, error: new PostgrestError({ code: "P0001", message, details: "", hint: "" }),
+        count: null, status: 400, statusText: "Bad Request",
+      });
+      const result = submitAmPrep(service, {
+        instanceId: INSTANCE, actor: ACTOR,
+        entries: [{ templateItemId: GOOD, inputs: { total: 3 } }],
+        closingReportRefItemId: "closing-ref", activeAssignmentId: null,
+      });
+      await expect(result).rejects.toBeInstanceOf(PrepAutoCompleteError);
+      await expect(result).rejects.toMatchObject({ code: "prep_auto_complete_failed", cause: message });
+    },
+  );
 
   it("submits with one bad row it is not writing, and reports that row as skipped", async () => {
     const { service, rpcCalls } = fakeService(amTables(), rpcOk);

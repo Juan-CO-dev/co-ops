@@ -26,15 +26,14 @@ type Head = { id: string; revoked_at: string | null; auto_complete_meta: Record<
 const liveHead = (meta: Record<string, unknown>, id = "head-1"): Head => ({ id, revoked_at: null, auto_complete_meta: meta });
 
 /**
- * Chainable Supabase fake. `checklist_completions` is STATEFUL and ENFORCES the 0196 index
- * (one live row per instance + item + phase kind): an INSERT while a live row shares the key is a 23505,
- * exactly what production does - so insert-before-supersede cannot pass this fake.
+ * Stateful client fake: the RPC snapshots/rolls back its writes, and table INSERTs enforce 0196.
+ * SQL transaction behavior itself is independently exercised by sql-harness-0290.mjs.
  */
 function reconcileService(midDayRows: MdRow[], head: Head = null, opts: {
-  failInsert?: boolean; failRestore?: boolean;
-  /** Runs once, just before this writer's first supersede UPDATE (a concurrent writer moves first). */
+  failInsert?: boolean; failLink?: boolean;
+  /** A concurrent writer commits before the replacement RPC takes its parent lock. */
   beforeSupersede?: (rows: Completion[]) => void;
-  /** Runs once, just before this writer's first INSERT. */
+  /** A concurrent first writer commits before the replacement RPC takes its parent lock. */
   beforeInsert?: (rows: Completion[]) => void;
 } = {}) {
   const completions: Completion[] = head ? [{
@@ -50,7 +49,7 @@ function reconcileService(midDayRows: MdRow[], head: Head = null, opts: {
   const from = (table: string) => {
     const eq = new Map<string, unknown>();
     const filters: Array<(c: Completion) => boolean> = [];
-    let op: "select" | "insert" | "update" = "select";
+    let op: "select" | "insert" = "select";
     let payload: Record<string, unknown> = {};
     const matches = () => completions.filter((c) => filters.every((f) => f(c)));
     const run = (): { data?: unknown; error: { message: string; code?: string } | null; count?: number } => {
@@ -72,20 +71,7 @@ function reconcileService(midDayRows: MdRow[], head: Head = null, opts: {
         completions.push(row);
         return { data: { id: row.id }, error: null };
       }
-      if (op === "update") {
-        const un = payload.superseded_at === null;
-        if (opts.beforeSupersede && !hookedSupersede && !un && !("superseded_by" in payload)) { hookedSupersede = true; opts.beforeSupersede(completions); }
-        calls.push(un ? "restore" : "superseded_by" in payload ? "link" : "supersede");
-        if (un && opts.failRestore) return { error: { message: "injected restore failure" } };
-        const rows = matches();
-        // Un-superseding can itself hit the index (a live row now shares the key) - enforce it too.
-        if (un && rows.some((r) => completions.some((c) => c !== r && isLive(c) && phaseKey(c) === phaseKey(r)))) {
-          return { error: { message: 'duplicate key value violates unique constraint "checklist_completions_one_live_head_per_phase"', code: "23505" } };
-        }
-        rows.forEach((r) => Object.assign(r, payload));
-        return { error: null, count: rows.length };
-      }
-      return { data: matches()[0] ?? null, error: null };
+      return matches().length > 1 ? { data: null, error: { message: "multiple rows", code: "PGRST116" } } : { data: matches()[0] ?? null, error: null };
     };
     const q: Record<string, unknown> = {
       select: () => q, returns: () => q, order: () => q, limit: () => q, in: () => q, lte: () => q, gte: () => q, or: () => q, not: () => q,
@@ -97,7 +83,6 @@ function reconcileService(midDayRows: MdRow[], head: Head = null, opts: {
       is: (k: string, v: unknown) => { filters.push((c) => (c as unknown as Record<string, unknown>)[k] === v); return q; },
       neq: (k: string, v: unknown) => { filters.push((c) => (c as unknown as Record<string, unknown>)[k] !== v); return q; },
       insert: (row: Record<string, unknown>) => { op = "insert"; payload = row; return q; },
-      update: (row: Record<string, unknown>) => { op = "update"; payload = row; return q; },
       maybeSingle: async () => {
         if (table === "checklist_completions" && op === "select") return run();
         if (table === "checklist_completions") return run();
@@ -116,10 +101,44 @@ function reconcileService(midDayRows: MdRow[], head: Head = null, opts: {
     };
     return q;
   };
-  const inserts = { get length() { return calls.filter((c) => c === "insert").length; } };
+  const rpc = vi.fn(async (name: string, args: {
+    p_instance: string; p_item: string; p_actor: string; p_expected_head: string | null; p_meta: Record<string, unknown>;
+  }) => {
+    expect(name).toBe("checklist_replace_closing_ref");
+    calls.push("replace");
+    // Interleavings happen before the transaction acquires the parent lock.
+    if (args.p_expected_head && opts.beforeSupersede && !hookedSupersede) {
+      hookedSupersede = true; opts.beforeSupersede(completions);
+    }
+    if (!args.p_expected_head && opts.beforeInsert && !hookedInsert) {
+      hookedInsert = true; opts.beforeInsert(completions);
+    }
+    const heads = completions.filter((c) => c.instance_id === args.p_instance && c.template_item_id === args.p_item && c.superseded_at === null);
+    if (heads.length > 1) return { data: null, error: { message: "closing_ref_multiple_heads" } };
+    const current = heads[0];
+    if (current?.revoked_at) return { data: null, error: { message: "closing_ref_revoked" } };
+    if ((current?.id ?? null) !== args.p_expected_head) return { data: { result: "lost" }, error: null };
+    const snapshot = structuredClone(completions);
+    try {
+      if (current) current.superseded_at = new Date().toISOString();
+      if (opts.failInsert) throw new Error("injected insert failure");
+      const row: Completion = {
+        id: `new-${++seq}`, instance_id: args.p_instance, template_item_id: args.p_item,
+        revoked_at: null, superseded_at: null, superseded_by: null, prep_data: null, auto_complete_meta: args.p_meta,
+      };
+      completions.push(row);
+      if (opts.failLink) throw new Error("injected link failure");
+      if (current) current.superseded_by = row.id;
+      return { data: { result: current ? "superseded" : "inserted", completionId: row.id }, error: null };
+    } catch (error) {
+      completions.splice(0, completions.length, ...snapshot);
+      return { data: null, error: { message: (error as Error).message } };
+    }
+  });
+  const inserts = { get length() { return completions.filter((c) => c.id.startsWith("new-")).length; } };
   return {
-    service: { from } as unknown as SupabaseClient,
-    completions, calls, inserts,
+    service: { from, rpc } as unknown as SupabaseClient,
+    completions, calls, inserts, rpc,
     live: () => completions.filter(isLive),
   };
 }
@@ -189,7 +208,7 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
     const stale = reconcileService(rows, oldTick());
     expect((await reconcile(stale.service)).ticked).toBe(1);
-    expect(stale.calls).toEqual(["supersede", "insert", "link"]); // supersede BEFORE insert
+    expect(stale.calls).toEqual(["replace"]); // supersede BEFORE insert
     expect(stale.live()).toHaveLength(1);
     const live = stale.live()[0]!;
     expect(live.id).not.toBe("head-1");
@@ -225,37 +244,41 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     expect(f.calls).toEqual([]);
   });
 
-  it("a failed insert after the supersede is LOUD and restores the prior tick (the line is never left unticked)", async () => {
+  it("a failed transactional insert leaves the prior head intact without compensation", async () => {
     eveningOpen();
     const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
     const f = reconcileService(rows, oldTick(), { failInsert: true });
-    await expect(reconcile(f.service)).rejects.toThrow(/insert: injected insert failure.*prior tick was restored/);
-    expect(f.calls).toEqual(["supersede", "insert", "restore"]);
+    await expect(reconcile(f.service)).rejects.toThrow(/replace: injected insert failure/);
+    expect(f.calls).toEqual(["replace"]);
     expect(f.live().map((c) => c.id)).toEqual(["head-1"]);
     expect(f.live()[0]!.superseded_by).toBeNull();
   });
 
-  it("if the compensating restore ALSO fails, the error says the line is unticked", async () => {
+  it("a failed provenance link rolls the entire transaction back", async () => {
     eveningOpen();
     const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
-    const f = reconcileService(rows, oldTick(), { failInsert: true, failRestore: true });
-    await expect(reconcile(f.service)).rejects.toThrow(/restoring the superseded prior tick failed.*UNTICKED/);
+    const f = reconcileService(rows, oldTick(), { failLink: true });
+    await expect(reconcile(f.service)).rejects.toThrow(/replace: injected link failure/);
+    expect(f.completions).toHaveLength(1);
+    expect(f.live().map((c) => c.id)).toEqual(["head-1"]);
+    expect(f.live()[0]!.superseded_by).toBeNull();
+    expect(f.calls).toEqual(["replace"]);
   });
 
-  it("the finalize-time push (autoCompleteClosingMidDayRef) also supersedes before it inserts", async () => {
+  it("the finalize-time push (autoCompleteClosingMidDayRef) uses the same replacement RPC", async () => {
     eveningOpen();
     const f = reconcileService([
       { id: "md-1", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:00:00Z" },
       { id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" },
     ], oldTick()); // head covers 1 report; two are finalized now
     await autoCompleteClosingMidDayRef(f.service, { locationId: "loc", date: "2026-10-11", midDayInstanceId: "md-2", actor: { userId: "u1" } as never });
-    expect(f.calls).toEqual(["supersede", "insert", "link"]);
+    expect(f.calls).toEqual(["replace"]);
     expect(f.live()).toHaveLength(1);
     expect(metaOf(f.live()[0]).reportInstanceId).toBe("md-2");
   });
 
 
-  it("CAS: writer A reads head H, writer B replaces H with count 3, A's swap on H updates 0 rows -> A re-reads, sees count 3 is newer, and writes NOTHING", async () => {
+  it("CAS: a lost replacement re-reads the winning head and cannot regress its count", async () => {
     eveningOpen();
     const rows: MdRow[] = [
       { id: "md-1", triggered_at: "2026-10-11T17:00:00Z", confirmed_at: "2026-10-11T18:00:00Z" },
@@ -269,7 +292,7 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
       },
     });
     expect((await reconcile(f.service)).ticked).toBe(0);
-    expect(f.calls).toEqual(["supersede"]); // A's CAS attempt only: no insert, no restore, no link
+    expect(f.calls).toEqual(["replace"]); // One lost RPC attempt; the newer count prevents another call.
     expect(f.live().map((c) => c.id)).toEqual(["B-row"]);
     expect(metaOf(f.live()[0]).count).toBe(3);
   });
@@ -293,7 +316,7 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     expect(f.completions.find((c) => c.id === "B-row")!.superseded_by).toBe(f.live()[0]!.id);
   });
 
-  it("CAS: two first-ticks racing - the loser's insert is a 23505, it re-reads, and finds the line already true", async () => {
+  it("CAS: two first ticks racing - the loser re-reads and finds one correct head", async () => {
     eveningOpen();
     const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
     const f = reconcileService(rows, null, {
@@ -307,6 +330,32 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     expect(f.live().map((c) => c.id)).toEqual(["B-row"]);
   });
 
+  it.each([false, true])("a manager revoke committed after the optimistic read wins (existing head: %s)", async (existing) => {
+    eveningOpen();
+    const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
+    const revoke = (all: Completion[]) => {
+      if (!all.length) all.push({ id: "revoked-head", instance_id: "closing-1", template_item_id: "mid-ref-item",
+        superseded_at: null, superseded_by: null, revoked_at: null, prep_data: null, auto_complete_meta: {} });
+      all[0]!.revoked_at = "2026-10-11T23:00:00Z";
+    };
+    const f = reconcileService(rows, existing ? oldTick() : null, { beforeSupersede: revoke, beforeInsert: revoke });
+    expect((await reconcile(f.service)).ticked).toBe(0);
+    expect(f.live()).toHaveLength(0);
+    expect(f.completions).toHaveLength(1);
+    expect(f.calls).toEqual(["replace"]);
+    expect(f.rpc.mock.calls[0]?.[1]).toMatchObject({ p_expected_head: existing ? "head-1" : null, p_actor: "u1" });
+  });
+
+  it("multiple unsuperseded heads are refused under the RPC lock without changing either row", async () => {
+    eveningOpen();
+    const f = reconcileService([{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }], oldTick());
+    f.completions.push({ ...f.completions[0]!, id: "ambiguous-head" });
+    const before = structuredClone(f.completions);
+    expect((await reconcile(f.service)).ticked).toBe(0);
+    expect(f.completions).toEqual(before);
+    expect(f.calls).toEqual(["replace"]);
+  });
+
   it("the finalize-time push does NOT re-tick over a manager's revoke (same rule as the page-load reconcile)", async () => {
     eveningOpen();
     const f = reconcileService([{ id: "md-2", triggered_at: "2026-10-11T18:30:00Z", confirmed_at: "2026-10-11T19:00:00Z" }],
@@ -317,14 +366,14 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     expect(f.live()).toHaveLength(0);
   });
 
-  it("crash between supersede and insert (superseded head, nothing live, not revoked): the next closing load re-inserts the tick", async () => {
+  it("a gap left by a legacy nontransactional writer is repaired on the next closing load", async () => {
     eveningOpen();
     const rows: MdRow[] = [{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }];
     const f = reconcileService(rows, oldTick());
     f.completions[0]!.superseded_at = "2026-10-11T23:59:30.000Z"; // the state a crash would leave
     expect(f.live()).toHaveLength(0);
     expect((await reconcile(f.service)).ticked).toBe(1);
-    expect(f.calls).toEqual(["insert"]);
+    expect(f.calls).toEqual(["replace"]);
     expect(f.live()).toHaveLength(1);
     expect(metaOf(f.live()[0]).reportSubmittedAt).toBe("2026-10-11T19:00:00Z");
   });
@@ -402,7 +451,7 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
     eveningOpen();
     const f = reconcileService([{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }]);
     await reconcile(f.service);
-    expect(f.calls).toEqual(["insert"]);
+    expect(f.calls).toEqual(["replace"]);
   });
 
   it("a head with no stored time is repaired; a wrong stored instance is repaired; an unknown true time never churns", () => {
