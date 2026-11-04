@@ -1,5 +1,6 @@
 -- Migration 0290_checklist_closing_ref_atomic
 -- AUTHORED 2026-11-03. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0288.
+-- APPLIED TO SIM 2026-11-03 (schema_migrations version 20261104004057, name '0290_checklist_closing_ref_atomic'); re-applied on SIM after the report_type_enum cast fix (record statements updated).
 -- Provenance: Track 3 chunk 2, open-items-plan.md and CC track3-rulings.md (3,7,10-12).
 -- 0288/0289 are occupied; this is the rulings' replacement RPC renumbered 0290.
 -- Global lock order: AM instance -> closing instance -> completion rows.
@@ -61,7 +62,7 @@ begin
   if not exists(select 1 from public.checklist_templates where id = v_instance.template_id and type = 'closing')
     or not exists(select 1 from public.checklist_template_items
       where id = p_item and template_id = v_instance.template_id
-        and (report_reference_type = p_meta->>'reportType'
+        and (report_reference_type::text = p_meta->>'reportType'
           or (ref_track_item_completion and references_template_item_id is not null
             and p_meta->'refTrack' = 'true'::jsonb
             and references_template_item_id::text = p_meta->>'referencedTemplateItemId'))) then

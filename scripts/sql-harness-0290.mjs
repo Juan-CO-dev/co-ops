@@ -33,8 +33,9 @@ async function setup(migration = sql) {
       create table user_locations(user_id uuid references users, location_id uuid, active boolean default true);
       create table sessions(id uuid primary key,user_id uuid references users,revoked_at timestamptz,expires_at timestamptz);
       create table checklist_templates(id uuid primary key,location_id uuid,type text,active boolean default true);
+      create type report_type_enum as enum('am_prep','mid_day_prep','cash_report','opening_report','training_report','special_report','pm_report','receiving','counts','ordering');
       create table checklist_template_items(id uuid primary key,template_id uuid references checklist_templates,
-        min_role_level integer,active boolean,report_reference_type text,ref_track_item_completion boolean,
+        min_role_level integer,active boolean,report_reference_type report_type_enum,ref_track_item_completion boolean,
         references_template_item_id uuid,input_type text);
       create table checklist_instances(id uuid primary key default gen_random_uuid(),template_id uuid references checklist_templates,
         location_id uuid,date date default current_date,status text default 'open',confirmed_at timestamptz,confirmed_by uuid references users);
