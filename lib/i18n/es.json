@@ -8472,5 +8472,9 @@
   "marketing.form.week": "Semana",
   "marketing.taps.campaign": "Toda la campaña",
   "marketing.taps.by_week": "Por semana",
-  "marketing.change_points": "{points} pts"
+  "marketing.change_points": "{points} pts",
+  "admin.pars.edit_hint": "Escribe los niveles par entre semana y del fin de semana en {unit}. Deja el campo en blanco para quitar tu ajuste.",
+  "admin.pars.changed": "Alguien cambió este nivel par o su empaque. Se están actualizando los valores; revísalos antes de guardar de nuevo.",
+  "admin.pars.saved": "Guardado. Se están actualizando los valores.",
+  "admin.pars.refresh": "Actualizar valores"
 }

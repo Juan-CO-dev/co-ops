@@ -1261,6 +1261,7 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
   // iterates every location on purpose. There is no session to bind it to.
 
   const sb = getServiceRoleClient();
+  if (input.actorKind !== "machine") await requireParSkuAtShop(sb, input.skuId, input.locationId);
   // Refuse UP FRONT, before anything is read or written: a human verdict that cannot be
   // recorded may not move a par (0182 carries par_suggestion_actions).
   if (input.actorKind !== "machine" && !(await parSuggestionActionsReady(sb))) {
@@ -1374,6 +1375,7 @@ export async function dismissSuggestion(
   // shop's graduation gate. Bound before the arbiter, exactly like the write path.
   requireLocation(actor, args.locationId);
   const sb = getServiceRoleClient();
+  await requireParSkuAtShop(sb, args.skuId, args.locationId);
   await recordSuggestionAction(sb, {
     locationId: args.locationId, skuId: args.skuId, dayClass: args.dayClass,
     generationId: args.generationId, action: "dismiss",
@@ -1389,6 +1391,16 @@ export async function dismissSuggestion(
     },
     ipAddress: null, userAgent: null,
   });
+}
+
+/** A valid shop membership never authorizes an opaque SKU owned by another shop. */
+async function requireParSkuAtShop(sb: ReturnType<typeof getServiceRoleClient>, skuId: string, locationId: string) {
+  const { data, error } = await sb.from("vendor_items").select("id, location_id").eq("id", skuId)
+    .maybeSingle<{ id: string; location_id: string | null }>();
+  if (error) throw new Error(`par SKU scope: ${error.message}`);
+  if (!data || (data.location_id != null && data.location_id !== locationId)) {
+    throw new DynamicParsError(404, "not_found", "SKU not found at this shop");
+  }
 }
 
 /**
