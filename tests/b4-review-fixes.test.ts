@@ -348,12 +348,30 @@ describe("#16 reconcile carries the real mid-day submission time", () => {
 
   it("multiple unsuperseded heads are refused under the RPC lock without changing either row", async () => {
     eveningOpen();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const f = reconcileService([{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }], oldTick());
     f.completions.push({ ...f.completions[0]!, id: "ambiguous-head" });
     const before = structuredClone(f.completions);
     expect((await reconcile(f.service)).ticked).toBe(0);
     expect(f.completions).toEqual(before);
     expect(f.calls).toEqual(["replace"]);
+    expect(warn).toHaveBeenCalledWith(expect.any(String), {
+      instanceId: "closing-1", itemId: "mid-ref-item", reason: "closing_ref_multiple_heads",
+    });
+    warn.mockRestore();
+  });
+
+  it("warns when ambiguity appears after the optimistic head read", async () => {
+    eveningOpen();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const f = reconcileService([{ id: "md-1", triggered_at: "2026-10-11T18:00:00Z", confirmed_at: "2026-10-11T19:00:00Z" }], oldTick(), {
+      beforeSupersede: (all) => { all.push({ ...all[0]!, id: "late-ambiguous-head" }); },
+    });
+    expect((await reconcile(f.service)).ticked).toBe(0);
+    expect(warn).toHaveBeenCalledWith(expect.any(String), {
+      instanceId: "closing-1", itemId: "mid-ref-item", reason: "closing_ref_multiple_heads",
+    });
+    warn.mockRestore();
   });
 
   it("the finalize-time push does NOT re-tick over a manager's revoke (same rule as the page-load reconcile)", async () => {

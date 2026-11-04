@@ -19,7 +19,7 @@ describe("0290 closing reference SQL harness", () => {
     const old = readFileSync("supabase/migrations/0186_am_prep_chain_edit_supersede.sql", "utf8").replace(/\r\n/g, "\n");
     const current = readFileSync("supabase/migrations/0290_checklist_closing_ref_atomic.sql", "utf8").replace(/\r\n/g, "\n");
     const start = old.indexOf("  ELSE\n    -- ================================================================");
-    const end = old.indexOf("$function$;", start);
+    const end = old.indexOf("  RETURN jsonb_build_object(", start);
     expect(start).toBeGreaterThan(0);
     expect(current).toContain(old.slice(start, end));
     const originalStart = old.indexOf("    -- 1. Insert one checklist_completion per entry.");
@@ -29,4 +29,15 @@ describe("0290 closing reference SQL harness", () => {
     expect(current).toContain(old.slice(originalStart, originalEnd));
     expect(current).not.toMatch(/drop\s+function/i);
   });
+  it("keeps en/es key parity and supplies the known AM retry message", () => {
+    const en = JSON.parse(readFileSync("lib/i18n/en.json", "utf8"));
+    const es = JSON.parse(readFileSync("lib/i18n/es.json", "utf8"));
+    expect(Object.keys(en).sort()).toEqual(Object.keys(es).sort());
+    expect(en["am_prep.error.prep_closing_ref_busy"]).toContain("submit again");
+    expect(es["am_prep.error.prep_closing_ref_busy"]).toContain("vuelve a enviar");
+    const form = readFileSync("components/prep/AmPrepForm.tsx", "utf8");
+    expect(form.slice(form.indexOf("const KNOWN_ERROR_CODES"), form.indexOf("interface SubmitResponseBodyError")))
+      .toContain('"prep_closing_ref_busy"');
+  });
+
 });

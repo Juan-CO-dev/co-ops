@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/prep/submit/route";
 import { consumeAmPrepDraft } from "@/lib/am-prep-draft";
-import { PrepInstanceNotOpenError, submitAmPrep } from "@/lib/prep";
+import { PrepClosingRefBusyError, PrepInstanceNotOpenError, submitAmPrep } from "@/lib/prep";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -93,6 +93,14 @@ describe("POST /api/prep/submit — the draft is consumed only by a successful s
     vi.mocked(submitAmPrep).mockRejectedValue(new PrepInstanceNotOpenError(INSTANCE, "confirmed"));
     const res = await POST(req({ instanceId: INSTANCE, entries: [] }));
     expect(res.status).toBe(409);
+    expect(consumeAmPrepDraft).not.toHaveBeenCalled();
+  });
+
+  it("maps a closing reference race to 409 retry copy and keeps the draft", async () => {
+    vi.mocked(submitAmPrep).mockRejectedValue(new PrepClosingRefBusyError());
+    const res = await POST(req({ instanceId: INSTANCE, entries: [] }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "prep_closing_ref_busy" });
     expect(consumeAmPrepDraft).not.toHaveBeenCalled();
   });
 

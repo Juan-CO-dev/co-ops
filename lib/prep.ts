@@ -284,6 +284,14 @@ export class PrepAutoCompleteError extends PrepError {
   }
 }
 
+/** A concurrent closing reference replacement requires a fresh submission. */
+export class PrepClosingRefBusyError extends PrepError {
+  constructor() {
+    super("Closing reference changed during submission", "prep_closing_ref_busy");
+    this.name = "PrepClosingRefBusyError";
+  }
+}
+
 /**
  * Thrown when the prep instance is not in 'open' status (e.g., already
  * confirmed). Maps to HTTP 409 conflict.
@@ -1949,7 +1957,13 @@ async function replaceLiveClosingRefCompletion(
   });
   if (error) {
     // Historical manager revokes and ambiguous heads must be left for repair, never re-ticked.
-    if (error.message === "closing_ref_revoked" || error.message === "closing_ref_multiple_heads") return "skipped";
+    if (error.message === "closing_ref_multiple_heads") {
+      console.warn(`${args.label}: closing reference skipped`, {
+        instanceId: args.closingInstanceId, itemId: args.refItemId, reason: error.message,
+      });
+      return "skipped";
+    }
+    if (error.message === "closing_ref_revoked") return "skipped";
     throw new Error(`${args.label}: replace: ${error.message}`);
   }
   const result = (data as { result?: unknown } | null)?.result;
@@ -2865,6 +2879,11 @@ interface SubmitRpcResult {
   submissionId: string;
   completionIds: string[];
   autoCompleteId: string | null;
+  closingRefSkip?: {
+    instanceId: string;
+    itemId: string;
+    reason: "closing_ref_revoked" | "closing_ref_multiple_heads";
+  } | null;
   /** C.46 update path: edit_count of the new submission (0 on original; 1-3 on update). */
   editCount: number;
   /** C.46 update path: chain head submission id (null on original; FK on update). */
@@ -3138,8 +3157,10 @@ export async function submitAmPrep(
     // foreign_key_violation = case (b) auto-complete failure (no closing
     // instance for today). check_violation = pessimistic guard tripped
     // (instance not open).
-    if (rpcErr.code === "23503" || (rpcErr.code === "P0001" &&
-      (rpcErr.message === "closing_ref_revoked" || rpcErr.message === "closing_ref_multiple_heads" || rpcErr.message === "closing_ref_changed"))) {
+    if (rpcErr.code === "P0001" && rpcErr.message === "closing_ref_changed") {
+      throw new PrepClosingRefBusyError();
+    }
+    if (rpcErr.code === "23503") {
       void audit({
         actorId: args.actor.userId,
         actorRole: args.actor.role,
@@ -3148,7 +3169,7 @@ export async function submitAmPrep(
         resourceId: args.instanceId,
         metadata: {
           outcome: "auto_complete_failed",
-          cause: rpcErr.code === "23503" ? "no closing instance for operational date" : rpcErr.message,
+          cause: "no closing instance for operational date",
           closing_report_ref_item_id: args.closingReportRefItemId,
           rpc_error: rpcErr.message,
         },
@@ -3201,6 +3222,7 @@ export async function submitAmPrep(
       assignment_id: args.activeAssignmentId,
       closing_report_ref_item_id: args.closingReportRefItemId,
       closing_auto_complete_id: result.autoCompleteId,
+      closing_ref_skip: result.closingRefSkip ?? null,
       report_type: "am_prep",
       skipped_bad_rows: skipped.map((r) => r.templateItemId),
     },

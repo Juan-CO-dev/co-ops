@@ -82,6 +82,27 @@ export async function main() {
     await begin(a);
     await assert.rejects(a.query(calls.revoke.sql,[head.id,args.actor]),error=>error.code==='P0001' && error.message==='reference_row_not_correctable');
     await a.query('rollback');
+    // Exercise the revised AM skip contract with temporary legacy fixtures.
+    // Generic corrections cannot create a revoked reference under 0287.
+    for (const reason of ['closing_ref_revoked','closing_ref_multiple_heads']) {
+      await begin(a);
+      await a.query('select id from public.checklist_instances where id=$1 for no key update',[args.am]);
+      await a.query('select id from public.checklist_instances where id=$1 for no key update',[args.closing]);
+      if (reason==='closing_ref_revoked') {
+        await a.query('update public.checklist_completions set revoked_at=clock_timestamp() where id=$1',[head.id]);
+      } else {
+        await a.query(`insert into public.checklist_completions(instance_id,template_item_id,completed_by,completed_at,revoked_at)
+          values($1,$2,$3,clock_timestamp(),clock_timestamp())`,[args.closing,args['ref-item'],args.actor]);
+      }
+      const readHeads=()=>a.query('select * from public.checklist_completions where instance_id=$1 and template_item_id=$2 order by id',[args.closing,args['ref-item']]);
+      const before=(await readHeads()).rows;
+      const result=(await invoke(a,calls.am)).rows[0].submit_am_prep_atomic;
+      assert.equal(result.autoCompleteId,null);
+      assert.equal(result.instance.status,'confirmed');
+      assert.deepEqual(result.closingRefSkip,{instanceId:args.closing,itemId:args['ref-item'],reason});
+      assert.deepEqual((await readHeads()).rows,before);
+      await a.query('rollback');
+    }
     // Fail before racing if a fixture cannot exercise any real writer.
     for (const call of Object.values(calls)) {
       await begin(a); await invoke(a,call); await a.query('rollback');

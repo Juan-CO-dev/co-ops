@@ -196,15 +196,37 @@ async function behavior(db) {
     check(isDeepStrictEqual((await rows(db)).find(row=>row.id===result.completionId).auto_complete_meta,tracked),'tracked reference provenance preserved');
   });
   // AM submit exercises the actual re-emitted function, including its full
-  // transaction: refusal must undo its submission and prep status transition.
+  // transaction: AM commits while revoked/ambiguous closing heads stay untouched.
   for (const [change,code] of [
     [`update checklist_completions set revoked_at=clock_timestamp()`,'closing_ref_revoked'],
     [`insert into checklist_completions(instance_id,template_item_id,completed_by,revoked_at)
       values('${instance}','${item}','${actor}',clock_timestamp())`,'closing_ref_multiple_heads'],
   ]) await isolated(db,change,async()=> {
-    await refuses(db,()=>db.query('select public.submit_am_prep_atomic($1,$2,$3,$4)',[id(11),actor,'[]',item]),code);
-    check((await db.query('select status from checklist_instances where id=$1',[id(11)])).rows[0].status==='open','refused AM push restores prep state');
-    check((await db.query('select count(*)::int as n from checklist_submissions')).rows[0].n===0,'refused AM push restores submissions');
+    const before=await rows(db);
+    const result=(await db.query('select public.submit_am_prep_atomic($1,$2,$3,$4) as result',[id(11),actor,'[]',item])).rows[0].result;
+    check(result.autoCompleteId===null,'skipped push has no completion id');
+    check(isDeepStrictEqual(result.closingRefSkip,{instanceId:instance,itemId:item,reason:code}),'skip carries audit identifiers/reason');
+    check((await db.query('select status from checklist_instances where id=$1',[id(11)])).rows[0].status==='confirmed','AM commits despite skipped push');
+    check((await db.query('select count(*)::int as n from checklist_submissions')).rows[0].n===1,'AM submission retained');
+    check(isDeepStrictEqual(await rows(db),before),'closing line untouched, manager revoke wins');
+  });
+  await isolated(db,`update checklist_instances set status='confirmed' where id='${id(11)}';
+    update checklist_instances set date=date+1 where id='${instance}'`,async()=> {
+    await db.exec('savepoint precedence');
+    let error;
+    try { await db.query('select public.submit_am_prep_atomic($1,$2,$3,$4)',[id(11),actor,'[]',item]); } catch(e) { error=e; }
+    await db.exec('rollback to savepoint precedence');
+    check(error?.code==='23514','already confirmed AM precedes missing closing');
+  });
+  // Inject an uncooperative head change between pre-check and RPC CAS.
+  await isolated(db,`alter function public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,jsonb) rename to original_replace;
+    create function public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,jsonb) returns jsonb
+    language sql as $$ select '{"result":"lost"}'::jsonb $$;`,async()=> {
+    const before=await rows(db);
+    await refuses(db,()=>db.query('select public.submit_am_prep_atomic($1,$2,$3,$4)',[id(11),actor,'[]',item]),'closing_ref_changed');
+    check((await db.query('select status from checklist_instances where id=$1',[id(11)])).rows[0].status==='open','true race rolls AM back');
+    check((await db.query('select count(*)::int as n from checklist_submissions')).rows[0].n===0,'true race rolls submission back');
+    check(isDeepStrictEqual(await rows(db),before),'true race preserves closing');
   });
   await isolated(db,'',async()=> {
     const result=(await db.query('select public.submit_am_prep_atomic($1,$2,$3,$4) as result',[id(11),actor,'[]',item])).rows[0].result;

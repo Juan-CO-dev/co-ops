@@ -33,6 +33,7 @@ import {
   ChecklistEditAccessDeniedError,
   ChecklistEditLimitExceededError,
   PrepAutoCompleteError,
+  PrepClosingRefBusyError,
   PrepError,
   PrepInstanceNotOpenError,
   PrepInvariantError,
@@ -57,6 +58,7 @@ export function mapPrepError(err: PrepError): NextResponse {
       status: err.status,
     });
   }
+  if (err instanceof PrepClosingRefBusyError) return jsonError(409, err.code);
   if (err instanceof PrepAutoCompleteError) {
     return jsonError(422, err.code, {
       message: err.message,

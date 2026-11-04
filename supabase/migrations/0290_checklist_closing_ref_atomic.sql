@@ -10,6 +10,9 @@
 -- Other opening/phase SQL writers remain an explicit chunk-3 audit boundary.
 -- Existing ambiguous heads must be diagnosed/repaired in a separately reviewed
 -- transaction under the closing lock; this RPC refuses rather than choosing one.
+-- AM skips revoked/ambiguous reference heads and returns the reason for app audit.
+-- Closing completed_at uses the replacement RPC clock_timestamp(), slightly after
+-- the AM v_submitted_at preserved in reportSubmittedAt; RPC signature is unchanged.
 -- VERIFY AFTER APPLY:
 --   select pg_get_functiondef('public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,jsonb)'::regprocedure);
 --   select pg_get_functiondef('public.submit_am_prep_atomic(uuid,uuid,jsonb,uuid,boolean,uuid,jsonb,text,text)'::regprocedure);
@@ -146,11 +149,21 @@ DECLARE
   -- revoked/ambiguous heads instead of treating them as an empty key.
   v_superseded_completion_id uuid;
   v_ref_result jsonb;
+  v_ref_heads uuid[];
+  v_ref_skip_reason text := NULL;
 BEGIN
   -- 0290: lock ALL parents before either branch takes completion/chain locks.
   -- Global order: AM instance -> closing instance -> completion rows.
   PERFORM 1 FROM public.checklist_instances
     WHERE id = p_prep_instance_id FOR NO KEY UPDATE;
+  -- Preserve 0186 refusal precedence before resolving the closing parent.
+  IF NOT p_is_update AND NOT EXISTS (
+    SELECT 1 FROM public.checklist_instances
+    WHERE id = p_prep_instance_id AND status = 'open'
+  ) THEN
+    RAISE EXCEPTION 'submit_am_prep_atomic: prep instance % is not open or does not exist', p_prep_instance_id
+      USING ERRCODE = 'check_violation';
+  END IF;
   IF NOT p_is_update AND p_closing_report_ref_item_id IS NOT NULL THEN
       SELECT ci.id
       INTO v_closing_instance_id
@@ -237,24 +250,31 @@ BEGIN
 
     -- 4. Auto-complete the closing's report-reference item if one exists.
     IF p_closing_report_ref_item_id IS NOT NULL THEN
-      -- 0290: the parent is already held; bind the exact head seen under it.
-      -- Do not filter revoked heads. The shared RPC refuses them (and ambiguity).
-      SELECT id INTO v_superseded_completion_id
+      -- Parent is held: manager revocation/ambiguity must not wedge AM submit.
+      SELECT array_agg(id ORDER BY id) INTO v_ref_heads
       FROM checklist_completions
       WHERE instance_id = v_closing_instance_id
         AND template_item_id = p_closing_report_ref_item_id
         AND superseded_at IS NULL
         AND NOT coalesce(prep_data ? 'phase2', false);
-      v_ref_result := public.checklist_replace_closing_ref(
-        v_closing_instance_id, p_closing_report_ref_item_id, p_actor_id,
-        v_superseded_completion_id,
-        jsonb_build_object('reportType', 'am_prep',
-          'reportInstanceId', p_prep_instance_id,
-          'reportSubmittedAt', to_jsonb(v_submitted_at)));
-      IF v_ref_result->>'result' = 'lost' THEN
-        RAISE EXCEPTION 'closing_ref_changed';
+      IF cardinality(v_ref_heads) > 1 THEN
+        v_ref_skip_reason := 'closing_ref_multiple_heads';
+      ELSIF EXISTS (SELECT 1 FROM checklist_completions
+        WHERE id = v_ref_heads[1] AND revoked_at IS NOT NULL) THEN
+        v_ref_skip_reason := 'closing_ref_revoked';
+      ELSE
+        v_superseded_completion_id := v_ref_heads[1];
+        v_ref_result := public.checklist_replace_closing_ref(
+          v_closing_instance_id, p_closing_report_ref_item_id, p_actor_id,
+          v_superseded_completion_id,
+          jsonb_build_object('reportType', 'am_prep',
+            'reportInstanceId', p_prep_instance_id,
+            'reportSubmittedAt', to_jsonb(v_submitted_at)));
+        IF v_ref_result->>'result' = 'lost' THEN
+          RAISE EXCEPTION 'closing_ref_changed';
+        END IF;
+        v_auto_complete_id := (v_ref_result->>'completionId')::uuid;
       END IF;
-      v_auto_complete_id := (v_ref_result->>'completionId')::uuid;
     END IF;
 
   ELSE
@@ -480,6 +500,9 @@ BEGIN
     'submissionId', v_submission_id,
     'completionIds', to_jsonb(v_completion_ids),
     'autoCompleteId', v_auto_complete_id,
+    'closingRefSkip', CASE WHEN v_ref_skip_reason IS NOT NULL THEN jsonb_build_object(
+      'instanceId', v_closing_instance_id, 'itemId', p_closing_report_ref_item_id,
+      'reason', v_ref_skip_reason) ELSE NULL END,
     'editCount', CASE WHEN p_is_update THEN v_new_edit_count ELSE 0 END,
     'originalSubmissionId', CASE WHEN p_is_update THEN p_original_submission_id ELSE NULL END
   );
@@ -490,4 +513,20 @@ revoke all on function public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,
 grant execute on function public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,jsonb) to service_role;
 revoke all on function public.submit_am_prep_atomic(uuid,uuid,jsonb,uuid,boolean,uuid,jsonb,text,text) from public, anon, authenticated;
 grant execute on function public.submit_am_prep_atomic(uuid,uuid,jsonb,uuid,boolean,uuid,jsonb,text,text) to service_role;
+do $$
+declare f regprocedure;
+begin
+  foreach f in array array[
+    'public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,jsonb)'::regprocedure
+  ] loop
+    if has_function_privilege('anon', f, 'EXECUTE') or has_function_privilege('authenticated', f, 'EXECUTE')
+      or not has_function_privilege('service_role', f, 'EXECUTE') then
+      raise exception '0290: RPC execution grant escaped';
+    end if;
+    if exists(select 1 from pg_proc where oid = f and (prosecdef or
+      not ('search_path=pg_catalog, public' = any(coalesce(proconfig, '{}'::text[]))))) then
+      raise exception '0290: RPC execution context escaped';
+    end if;
+  end loop;
+end $$;
 commit;
