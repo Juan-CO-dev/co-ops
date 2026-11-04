@@ -4,6 +4,9 @@ import { pairings, main, fixture, calls, fixtureSQL, retireSQL, functionalProbes
 } from '../scripts/sim/checklist-0290-lock-check-management.mjs';
 import { SIM_REF, PROD_REF, projectRef } from '../scripts/supabase-management-query.mjs';
 
+type Case = Record<'closing'|'am'|'old'|'generic'|'extra'|'stale', string>;
+type Fixture = { cases: Case[]; tag: string; actor: string; referenceItem: string; amTemplate: string };
+
 describe('0290 Management API proof (offline only)',()=>{
   it('pins all eight ordered pairs, including AM submit against closing confirm',()=>{
     expect(pairings).toEqual([
@@ -24,7 +27,7 @@ describe('0290 Management API proof (offline only)',()=>{
     } finally { vi.unstubAllGlobals(); }
   });
   it('allocates isolated fixture cases and scopes retirement to owned configuration',()=>{
-    const f=fixture();
+    const f=fixture() as unknown as Fixture;
     expect(f.cases).toHaveLength(13);
     expect(f.tag).toMatch(/^SIM-0290-/);
     const sql=fixtureSQL(f),retired=retireSQL(f);
