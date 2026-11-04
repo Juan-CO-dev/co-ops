@@ -6,6 +6,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { ParSilencePanel } from "@/components/ordering/ParSilencePanel";
+import { ParEditor } from "./ParEditor";
 
 export function ParsClient({ view }: { view: ParsView }) {
   const { t, language } = useTranslation();
@@ -64,6 +65,7 @@ export function ParsClient({ view }: { view: ParsView }) {
                   {suggestion.reasonCode === "below_band_resolution" && <p>{t("ordering.suggestion.manual_only")}</p>}
                 </div> : <p>{t("admin.pars.no_suggestion")}</p>}
               </div>
+              {row.edit && view.locationId && <ParEditor row={row} view={view} edit={row.edit} locationId={view.locationId} />}
             </CollapsibleSection>
           </li>;
         })}

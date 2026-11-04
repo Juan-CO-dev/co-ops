@@ -35,7 +35,7 @@ beforeEach(() => {
   tables = { vendor_items: [sku("a")], vendors: [{ id: "v", name: "Vendor", active: true, source_kind: "vendor" }] };
   db = createFakeDb(tables); h.db.mockReturnValue(db.client);
   overlays = new Map(); chains = new Map();
-  h.packs.mockImplementation(async () => ({ overlayBySku: overlays, chainsBySku: chains }));
+  h.packs.mockImplementation(async () => ({ overlayBySku: overlays, chainsBySku: chains, epochs: new Map() }));
   h.task.mockResolvedValue(true);
   h.walk.mockResolvedValue({ vendors: [], parSilence: EMPTY_PAR_SILENCE });
   h.measures.mockResolvedValue(new Map([["lb", { dimension: "weight", toBaseFactor: 16 }]]));
@@ -82,6 +82,25 @@ describe("Pars authorization", () => {
 });
 
 describe("Pars read model", () => {
+  it("gives GM raw human values and the current pack epoch while keeping AGM read-only", async () => {
+    overlays.set("a", { activeOverride: true, weekdayPar: null, weekendPar: 5 });
+    h.packs.mockResolvedValue({ overlayBySku: overlays, chainsBySku: chains, epochs: new Map([["a", 3]]) });
+    h.walk.mockResolvedValue({ vendors: [{ skus: [{ skuId: "a", parSuggestion: suggestion }] }], parSilence: EMPTY_PAR_SILENCE });
+    const writable = await loadPars(actor("gm"), SHOP);
+    expect(writable.locationId).toBe(SHOP);
+    expect(writable.rows[0]?.edit).toEqual({ activeOverride: true, weekdayPar: null, weekendPar: 5, packEpoch: 3, poundsPerUnit: 30 });
+    expect(writable.rows[0]?.suggestion).toEqual(suggestion);
+    expect((await loadPars(actor("agm"), SHOP)).rows[0]?.edit).toBeUndefined();
+    h.walk.mockResolvedValue({ vendors: [{ skus: [{ skuId: "a", parSuggestion: { ...suggestion, canAct: false } }] }], parSilence: EMPTY_PAR_SILENCE });
+    expect((await loadPars(actor("gm"), SHOP)).rows[0]?.suggestion?.canAct).toBe(false);
+  });
+  it("refreshes through the page's same loadPars and walk loaders, without an alternate row reader", () => {
+    expect(readFileSync("components/admin/pars/ParEditor.tsx", "utf8")).toContain("router.refresh()");
+    expect(readFileSync("app/admin/pars/page.tsx", "utf8")).toContain("await loadPars(auth, locationId)");
+    const source = readFileSync("lib/admin/pars.ts", "utf8");
+    expect(source).toContain("loadWalkerData(actor, locationId)");
+    expect(source).toContain("loadPackAwareOverlay(sb, locationId, ids)");
+  });
   it.each([false, true])("carries the walk day-class (weekend %s)", async (isWeekendPar) => {
     h.walk.mockResolvedValue({ isWeekendPar, vendors: [{ skus: [{ skuId: "a", parSuggestion: suggestion }] }], parSilence: EMPTY_PAR_SILENCE });
     const view = await loadPars(actor(), SHOP);

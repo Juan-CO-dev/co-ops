@@ -77,26 +77,29 @@ const fieldCls =
 
 export function SkuLocationOverlay({
   skuId,
+  ownerLocationId,
   locations,
   overlays,
 }: {
   skuId: string;
+  ownerLocationId: string | null;
   /** Active locations (both shops). */
   locations: SkuFormLocationOption[];
   /** This SKU's existing overlay rows (empty when none). */
   overlays: LocationSkuOverlayView[];
 }) {
   const { t } = useTranslation();
+  const visibleLocations = ownerLocationId == null ? locations : locations.filter((loc) => loc.id === ownerLocationId);
 
   return (
     <CollapsibleSection
       idBase={`sku-location-overlay-${skuId}`}
       title={t("admin.skus.location_overlay.title")}
-      count={t("admin.skus.location_overlay.count", { n: String(locations.length) })}
+      count={t("admin.skus.location_overlay.count", { n: String(visibleLocations.length) })}
     >
       <div className="flex flex-col gap-3">
         <p className="text-xs text-co-text-muted">{t("admin.skus.location_overlay.intro")}</p>
-        {locations.map((loc) => (
+        {visibleLocations.map((loc) => (
           <LocationRow
             key={loc.id}
             skuId={skuId}

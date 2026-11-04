@@ -11,6 +11,8 @@ export function canViewPars(role: RoleCode): boolean {
 }
 export interface ParsSlot { value: number | null; lane: ParLane; pounds: number | null }
 export interface ParsRow extends GuideSortKey {
+  /** Present only for writers; raw human values, never resolved fallback values. */
+  edit?: { activeOverride: boolean | null; weekdayPar: number | null; weekendPar: number | null; packEpoch: number; poundsPerUnit: number | null };
   skuId: string;
   vendorId: string;
   vendorName: string;
@@ -21,7 +23,7 @@ export interface ParsRow extends GuideSortKey {
   suggestion: WalkerParSuggestion | null;
   reroutedFromName: string | null;
 }
-export interface ParsView { rows: ParsRow[]; dayClass: "weekday" | "weekend"; silence: ParSilenceSummary }
+export interface ParsView { rows: ParsRow[]; dayClass: "weekday" | "weekend"; silence: ParSilenceSummary; locationId?: string }
 
 export function parSlots(overlay: LocationSkuOverlay | null, global: GlobalSkuPar, oz: number | null) {
   const weekday = resolveParSlot(overlay, global, "weekday");

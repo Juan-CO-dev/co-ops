@@ -8473,5 +8473,9 @@
   "marketing.form.week": "Week",
   "marketing.taps.campaign": "Whole campaign",
   "marketing.taps.by_week": "By week",
-  "marketing.change_points": "{points} pts"
+  "marketing.change_points": "{points} pts",
+  "admin.pars.edit_hint": "Enter weekday and weekend pars in {unit}. Leave blank to remove your override.",
+  "admin.pars.changed": "Someone changed this par or its pack. Refreshing the current values; review them before saving again.",
+  "admin.pars.saved": "Saved. Refreshing the current values.",
+  "admin.pars.refresh": "Refresh values"
 }
