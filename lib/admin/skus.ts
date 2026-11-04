@@ -1,4 +1,5 @@
 import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
+import { loadShopPackEpochs } from "@/lib/prep-consumption";
 /**
  * Admin SKU-catalog data layer (Item/Inventory Spine — vendor mini-arc, Slice C1).
  *
@@ -1156,6 +1157,8 @@ export function overlayBaselineConflicts(
 }
 
 export interface UpsertLocationSkuSettingsInput {
+  /** Pars editor's order-unit snapshot; omitted by legacy overlay clients. */
+  expectedPackEpoch?: number;
   skuId: string;
   locationId: string;
   /** null = inherit global active / true = on here / false = off here. */
@@ -1206,12 +1209,24 @@ export async function upsertLocationSkuSettings(
   const sb = getServiceRoleClient();
   const { data: sku, error: sErr } = await sb
     .from("vendor_items")
-    .select("id")
+    .select("id, location_id")
     .eq("id", input.skuId)
-    .maybeSingle<{ id: string }>();
+    .maybeSingle<{ id: string; location_id: string | null }>();
   if (sErr) throw new Error(`upsertLocationSkuSettings sku check failed: ${sErr.message}`);
   if (!sku) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
+  if (sku.location_id != null && sku.location_id !== input.locationId) {
+    throw new AdminSkuError(404, "not_found", "SKU not found at this shop");
+  }
   await assertLocationActive(input.locationId);
+  if (input.expectedPackEpoch !== undefined) {
+    if (!Number.isSafeInteger(input.expectedPackEpoch) || input.expectedPackEpoch < 0) {
+      throw new AdminSkuError(400, "invalid_payload");
+    }
+    const epochs = await loadShopPackEpochs([input.skuId], input.locationId);
+    if ((epochs.get(input.skuId) ?? 0) !== input.expectedPackEpoch) {
+      throw new AdminSkuError(409, "overlay_changed", "The order pack changed — reload before editing");
+    }
+  }
 
   // Find the existing (location, sku) row (the UNIQUE guarantees at most one). The two par
   // columns come back too: a slot is "directly edited" only when its VALUE CHANGED, and

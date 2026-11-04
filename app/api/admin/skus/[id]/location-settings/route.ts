@@ -38,6 +38,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
+  if (b.expectedPackEpoch !== undefined && (typeof b.expectedPackEpoch !== "number" || !Number.isSafeInteger(b.expectedPackEpoch) || b.expectedPackEpoch < 0)) {
+    return jsonError(400, "invalid_payload", { field: "expectedPackEpoch" });
+  }
   if (typeof b.locationId !== "string" || !b.locationId) {
     return jsonError(400, "invalid_payload", { field: "locationId" });
   }
@@ -106,6 +109,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     await upsertLocationSkuSettings(ctx, {
       skuId: id,
+      expectedPackEpoch: b.expectedPackEpoch as number | undefined,
       locationId: b.locationId,
       activeOverride,
       weekdayPar,
