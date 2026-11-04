@@ -839,7 +839,7 @@ export function SkuBuilder({
           locations are present and we're editing an existing SKU. ── */}
       {isEdit && overlays !== undefined && locations.length > 0 ? (
         <div className="border-t-2 border-co-border pt-3">
-          <SkuLocationOverlay skuId={initial!.id} locations={locations} overlays={overlays} />
+          <SkuLocationOverlay ownerLocationId={initial!.locationId} skuId={initial!.id} locations={locations} overlays={overlays} />
         </div>
       ) : null}
 

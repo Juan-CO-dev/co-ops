@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { ParsRow, ParsView } from "@/lib/admin/pars-shared";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -20,36 +20,49 @@ export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view:
   const send = useStepUpPost();
   const [refreshing, startRefresh] = useTransition();
   const [snapshot, setSnapshot] = useState(row);
+  const [baseline, setBaseline] = useState(edit);
+  const inFlight = useRef(false);
   const [weekday, setWeekday] = useState(edit.weekdayPar?.toString() ?? "");
   const [weekend, setWeekend] = useState(edit.weekendPar?.toString() ?? "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [awaitingRead, setAwaitingRead] = useState(false);
-  // A refresh preserves React state. Rebaseline even when a conflict returned the
-  // same human values (e.g. the pack changed); never guess the stored row from a POST.
+  // A refreshed object acknowledges the read, but only changed edit values
+  // invalidate a draft. Saving another row must not erase this row's typing.
   if (snapshot !== row) {
     setSnapshot(row);
+    setAwaitingRead(false);
+  }
+  if (baseline.activeOverride !== edit.activeOverride || baseline.weekdayPar !== edit.weekdayPar ||
+      baseline.weekendPar !== edit.weekendPar || baseline.packEpoch !== edit.packEpoch) {
+    setBaseline(edit);
     setWeekday(edit.weekdayPar?.toString() ?? "");
     setWeekend(edit.weekendPar?.toString() ?? "");
-    setAwaitingRead(false);
   }
   const disabled = busy || refreshing || awaitingRead;
   const number = (n: number) => new Intl.NumberFormat(language, { maximumFractionDigits: 2 }).format(n);
   const refresh = () => { setAwaitingRead(true); startRefresh(() => router.refresh()); };
-  const finish = (result: PostResult) => {
+  const finish = (result: PostResult, action?: "accept" | "dismiss") => {
     setBusy(false);
     setFailed(!result.ok);
     if (result.ok) {
-      setMessage(t("admin.pars.saved"));
+      setMessage(action === "dismiss"
+        ? t("ordering.suggestion.dismissed", { n: suggestion!.currentPar })
+        : action === "accept"
+          ? t("ordering.suggestion.accepted", { n: typeof result.data.par === "number" ? result.data.par : suggestion!.suggestedPar })
+          : t("admin.pars.saved"));
       refresh();
-    } else if (["overlay_changed", "suggestion_superseded", "suggestion_already_actioned", "nothing_to_revert"].includes(result.code)) {
+    } else if (result.code === "nothing_to_revert") {
+      setMessage(t("ordering.error.nothing_to_revert"));
+    } else if (["overlay_changed", "suggestion_superseded", "suggestion_already_actioned"].includes(result.code)) {
       setMessage(t("admin.pars.changed"));
       refresh();
     } else setMessage(t(resolveErrorKey(result.code)));
   };
   const save = async () => {
-    if (disabled) return;
+    if (disabled || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true); setMessage(null);
     try {
       if ((await requestStepUp("E")) !== "ok") { setBusy(false); return; }
@@ -61,15 +74,19 @@ export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view:
         expected: { activeOverride, weekdayPar, weekendPar }, expectedPackEpoch: packEpoch,
       }, "PUT"));
     } catch { finish({ ok: false, code: "generic" }); }
+    finally { inFlight.current = false; }
   };
   const suggestion = row.suggestion?.slotCreation ? null : row.suggestion;
-  const act = async (action: "accept" | "dismiss" | "revert") => {
-    if (disabled || !suggestion?.canAct) return;
+  const act = async (action: "accept" | "dismiss") => {
+    if (disabled || inFlight.current || !suggestion?.canAct) return;
+    inFlight.current = true;
     setBusy(true); setMessage(null);
-    finish(await postJson("/api/operations/ordering/suggestion", {
-      locationId, skuId: row.skuId, dayClass: view.dayClass,
-      generationId: suggestion.generationId, action,
-    }));
+    try {
+      finish(await postJson("/api/operations/ordering/suggestion", {
+        locationId, skuId: row.skuId, dayClass: view.dayClass,
+        generationId: suggestion.generationId, action,
+      }), action);
+    } finally { inFlight.current = false; }
   };
   return <div className="min-w-0 space-y-3 border-t border-co-border pt-3" aria-busy={disabled}>
     <form className="min-w-0 space-y-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
@@ -96,8 +113,8 @@ export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view:
       <button type="button" className={`${control} inline-flex`} disabled={disabled} onClick={() => void act("dismiss")}
         aria-label={t("ordering.suggestion.dismiss_aria", { sku: row.name, n: suggestion.currentPar })}>{t("ordering.suggestion.dismiss")}</button>
       {suggestion.tier === "auto" && <button type="button" className={`${control} inline-flex`}
-        disabled={disabled || view.silence.shadowMode} onClick={() => void act("revert")}
-        title={view.silence.shadowMode ? t("ordering.shadow.revert_disabled") : undefined}
+        disabled
+        title={view.silence.shadowMode ? t("ordering.shadow.revert_disabled") : t("ordering.error.nothing_to_revert")}
         aria-label={t("ordering.auto.revert_aria", { sku: row.name, n: suggestion.currentPar })}>{t("ordering.auto.revert")}</button>}
     </div>}
     {disabled && <p role="status" className="text-sm">{t("ordering.suggestion.working")}</p>}

@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import { act } from "react";
+import { SkuLocationOverlay } from "@/components/admin/skus/SkuLocationOverlay";
+import en from "@/lib/i18n/en.json";
+import es from "@/lib/i18n/es.json";
 import { jsx } from "react/jsx-runtime";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -62,12 +66,13 @@ it("handles a canceled password prompt and forgets an expired server window", as
   await waitFor(() => expect(h.forget).toHaveBeenCalledTimes(1)); expect(screen.getByRole("alert")).toBeTruthy();
 });
 
-it.each(["accept", "dismiss", "revert"] as const)("%s uses the existing walk endpoint without a password, then refreshes", async (action) => {
+it.each(["accept", "dismiss"] as const)("%s uses the existing walk endpoint without a password, then refreshes", async (action) => {
   const r = row(); r.suggestion = { ...suggestion, tier: "auto" };
   render(tree(view(r, false))); open();
   const name = action === "accept" ? /Set the par/ : action === "dismiss" ? /Keep the par/ : /Undo|Restore|Revert/i;
   fireEvent.click(screen.getByRole("button", { name }));
   await waitFor(() => expect(h.refresh).toHaveBeenCalledTimes(1)); expect(h.unlock).not.toHaveBeenCalled();
+  expect(screen.getByText(action === "accept" ? "Par set to 4." : "Left at 2.")).toBeTruthy();
   expect(h.fetch.mock.calls[0]![0]).toBe("/api/operations/ordering/suggestion");
   expect(JSON.parse(h.fetch.mock.calls[0]![1].body)).toEqual({ locationId: "shop-a", skuId: "sku", dayClass: "weekday", generationId: "generation", action });
 });
@@ -88,4 +93,61 @@ it("shows errors without claiming success and prevents duplicate taps while pend
   expect((accept as HTMLButtonElement).disabled).toBe(true); resolve(reply("generic"));
   await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy()); expect(h.refresh).not.toHaveBeenCalled();
   expect(screen.queryByText("Saved. Refreshing the current values.")).toBeNull();
+});
+
+
+it.each([true, false])("keeps revert disabled without applied-move evidence (shadow=%s)", (shadow) => {
+  const r = row(); r.suggestion = { ...suggestion, tier: "auto" };
+  render(tree(view(r, shadow))); open();
+  const button = screen.getByRole("button", { name: /Undo|Restore|Revert/i });
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(button); expect(h.fetch).not.toHaveBeenCalled();
+});
+
+it.each(["en", "es"] as const)("uses distinct nothing-to-revert copy in %s", async (language) => {
+  const dictionary = language === "en" ? en : es;
+  render(tree(view(), language));
+  fireEvent.click(screen.getByRole("button", { name: dictionary["admin.pars.details"].replace("{name}", "Fixture SKU") }));
+  h.fetch.mockResolvedValueOnce(reply("nothing_to_revert"));
+  fireEvent.click(screen.getByRole("button", { name: dictionary["admin.skus.save"] }));
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(dictionary["ordering.error.nothing_to_revert"]));
+  expect(h.refresh).not.toHaveBeenCalled();
+});
+
+it("preserves row B typing when saving A refreshes both row objects", async () => {
+  const a = row(); const b = { ...row(), skuId: "sku-b", name: "SKU B" };
+  const mounted = render(tree({ ...view(a), rows: [a, b] })); open();
+  fireEvent.click(screen.getByRole("button", { name: "Details for SKU B" }));
+  fireEvent.change(screen.getAllByRole("spinbutton", { name: /Weekday/ })[1]!, { target: { value: "19" } });
+  fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]!);
+  await waitFor(() => expect(h.refresh).toHaveBeenCalledTimes(1));
+  mounted.rerender(tree({ ...view(), rows: [{ ...a, edit: { ...a.edit!, weekdayPar: 4 } }, { ...b, edit: { ...b.edit! } }] }));
+  expect((screen.getAllByRole("spinbutton", { name: /Weekday/ })[1] as HTMLInputElement).value).toBe("19");
+});
+
+it("rebaselines a changed pack even when the stored par values are unchanged", () => {
+  const mounted = render(tree(view())); open();
+  fireEvent.change(screen.getByRole("spinbutton", { name: /Weekday/ }), { target: { value: "19" } });
+  const fresh = row(); fresh.edit!.packEpoch++;
+  mounted.rerender(tree(view(fresh)));
+  expect((screen.getByRole("spinbutton", { name: /Weekday/ }) as HTMLInputElement).value).toBe("");
+});
+
+it.each(["save", "accept", "dismiss"] as const)("latches same-frame double %s before React commits state", async (action) => {
+  render(tree(view())); open();
+  const button = screen.getByRole("button", { name: action === "save" ? "Save" : action === "accept" ? /Set the par/ : /Keep the par/ });
+  act(() => { button.click(); button.click(); });
+  await waitFor(() => expect(h.refresh).toHaveBeenCalledTimes(1));
+  expect(h.fetch).toHaveBeenCalledTimes(1);
+  expect(h.unlock).toHaveBeenCalledTimes(action === "save" ? 1 : 0);
+});
+
+it.each([null, "shop-a"])("limits SKU overlay rows to the persisted owner %s", (ownerLocationId) => {
+  render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(SkuLocationOverlay, {
+    skuId: "sku", ownerLocationId, locations: [{ id: "shop-a", name: "Shop A" }, { id: "shop-b", name: "Shop B" }], overlays: [],
+  }) }));
+  fireEvent.click(screen.getByRole("button"));
+  expect(screen.getByText("Shop A")).toBeTruthy();
+  expect(screen.queryByText("Shop B") !== null).toBe(ownerLocationId === null);
+  expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(ownerLocationId === null ? 2 : 1);
 });

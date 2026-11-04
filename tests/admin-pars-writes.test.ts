@@ -124,3 +124,24 @@ describe("Pars suggestion verbs use the walk route and real libraries without st
     expect(h.session).not.toHaveBeenCalled(); expect(h.db).not.toHaveBeenCalled();
   });
 });
+
+
+it("allows an owner-shop store-copy SKU through the overlay library", async () => {
+  tables.vendor_items![0]!.location_id = SHOP;
+  await upsertLocationSkuSettings(actor(), input());
+  expect(tables.location_sku_settings![0]!.weekday_par).toBe(4);
+});
+
+it("accepts a legacy PUT without expectedPackEpoch", async () => {
+  const { expectedPackEpoch: _epoch, ...legacy } = input();
+  expect((await put(legacy)).status).toBe(200);
+  expect(tables.location_sku_settings![0]!.weekday_par).toBe(4);
+});
+
+it.each(["accept", "dismiss", "revert"] as const)("allows owner-shop store-copy SKU for %s", async (action) => {
+  tables.vendor_items![0]!.location_id = SHOP;
+  const res = await POST(request({ ...verdict(), action }, "POST"));
+  expect(res.status).toBe(200);
+  expect(db.writes.length).toBeGreaterThan(0);
+  expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action: action === "revert" ? "par.auto_tune_revert" : `par.suggestion_${action}` }));
+});
