@@ -19,7 +19,7 @@ for(const lang of ['en','es'])test(`consent showing: the bottom chrome is only t
     await expect(page.locator(pillLocator)).toBeHidden();
     const chrome=await page.evaluate(()=>innerHeight-document.querySelector('.landing-v2-consent')!.getBoundingClientRect().top);
     // v3: 176 px (en) / 199 px (es) of bar + notice; v4 compact: ≤ 150; v4.2: the notice alone (97 px measured).
-    expect(chrome).toBeLessThanOrEqual(lang==='es'?120:100);
+    expect(chrome).toBeLessThanOrEqual(100);
   }
 });
 

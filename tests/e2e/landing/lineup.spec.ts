@@ -244,7 +244,7 @@ async function holdIdle(page:import('@playwright/test').Page) {
 const runIdle=(page:import('@playwright/test').Page)=>page.evaluate(()=>{const queue=(window as unknown as {__idle:IdleRequestCallback[]}).__idle.splice(0);for(const callback of queue)callback({didTimeout:false,timeRemaining:()=>50});return queue.length;});
 async function countOrders(page:import('@playwright/test').Page) {
   const orders:string[]=[];
-  await page.route('https://complimentsonlysubs.appfront.app/**',route=>{orders.push(route.request().url());return route.fulfill({contentType:'text/html',body:'<h1>Ordering destination fixture</h1>'});});
+  await page.route('https://order.complimentsonlysubs.com/**',route=>{orders.push(route.request().url());return route.fulfill({contentType:'text/html',body:'<h1>Ordering destination fixture</h1>'});});
   return orders;
 }
 /** The select screen's own fallback links: readiness is bound to THIS sheet's enhancement state. */

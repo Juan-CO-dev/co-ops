@@ -41,7 +41,7 @@ export function validMetaCookie(value: unknown, kind: "fbc" | "fbp", now: number
 export const LANDING_ITEM_PLACEMENTS = ["lineup", "crave", "guide"] as const;
 /** Bounded sub context belongs only to direct pickup/delivery taps at item placements. */
 export function validItemEvent(item: unknown, name: unknown, store: unknown, vendor: unknown, placement: unknown, mode?: unknown): boolean {
-  return isAllowed(LANDING_ITEMS, item) && name === "OrderClick" && ((mode === "pickup" && isAllowed(LANDING_STORE_KEYS, store)) || (mode === "delivery" && store === undefined)) && vendor === undefined && isAllowed(LANDING_ITEM_PLACEMENTS, placement);
+  return isAllowed(LANDING_ITEMS, item) && name === "OrderClick" && (((mode === "pickup" || mode === undefined) && isAllowed(LANDING_STORE_KEYS, store)) || (mode === "delivery" && store === undefined)) && vendor === undefined && isAllowed(LANDING_ITEM_PLACEMENTS, placement);
 }
 /** Direct item placements require a sub for pickup; delivery may retain the same bounded context. */
 export function validActionDetails(name: unknown, details: {store?: unknown; vendor?: unknown; mode?: unknown; item?: unknown; placement?: unknown}): boolean {
@@ -50,7 +50,8 @@ export function validActionDetails(name: unknown, details: {store?: unknown; ven
   if (name === "OrderClick") {
     if (vendor !== undefined) {
       if (mode !== undefined || !validVendorPlacement(vendor, placement, store)) return false;
-    } else if (mode === "pickup") {
+    // drain shim: remove after 2026-12-01
+    } else if (mode === "pickup" || mode === undefined) {
       if (!isAllowed(LANDING_STORE_KEYS, store)) return false;
       if (isAllowed(LANDING_ITEM_PLACEMENTS, placement) && item === undefined) return false;
     } else if (mode !== "delivery" || store !== undefined) return false;

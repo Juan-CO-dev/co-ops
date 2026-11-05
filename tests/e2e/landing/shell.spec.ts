@@ -6,7 +6,7 @@ test("eight-section skeleton stays useful without JavaScript", async ({browser,b
   await page.goto(baseURL!);
   await expect(page.locator("main h1")).toHaveCount(1);
   expect(await page.locator('main > section').evaluateAll(sections=>sections.map(section=>section.id))).toEqual(['hero','crave','lineup','field-guide','catering','shops','footer']);
-  await expect(page.getByRole("link",{name:"Pickup at Capitol Hill"}).first()).toBeVisible();
+  await expect(page.getByRole("link",{name:"Pick up at Capitol Hill"}).first()).toBeVisible();
   // v4: the one-question FAQ is gone; the Field Guide words are the content that must stay readable.
   await expect(page.locator('details')).toHaveCount(0);
   await expect(page.locator('#field-guide [data-anatomy-label]').first()).toBeVisible();

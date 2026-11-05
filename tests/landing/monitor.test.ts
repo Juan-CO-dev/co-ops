@@ -51,7 +51,7 @@ describe('launch monitor', () => {
   it('resolves exactly six destinations and follows the active catering flag', () => {
     const active = destinations('https://landing.example', 'https://staff.example', true);
     expect(active).toHaveLength(6)
-    expect(active.find((x: { name: string }) => x.name === "delivery")?.url).toBe("https://complimentsonlysubs.appfront.app/order/?servingOptionType=delivery");
+    expect(active.find((x: { name: string }) => x.name === "delivery")?.url).toBe("https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery");
     expect(active.find((x: { name: string }) => x.name === 'catering')?.url).toBe('https://staff.example/order');
   });
   it('runs all destinations independently and signals broken orders', async () => {

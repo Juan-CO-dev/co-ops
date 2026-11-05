@@ -6,6 +6,16 @@ import { handleMetaEvent } from "@/lib/landing/meta-server";
 const env = { LANDING_HOSTS: "eat.example.com", SITE_ORIGIN: "https://eat.example.com", STAFF_ORIGIN: "https://staff.example.com", META_PIXEL_ID: "12345", NEXT_PUBLIC_META_PIXEL_ID: "12345", META_CAPI_ACCESS_TOKEN: "test-secret", META_GRAPH_API_VERSION: "v25.0", LANDING_CAPI_ENABLED: "true", LANDING_META_UA_APPROVED: "true", LANDING_WAF_STATE: "active", LANDING_WAF_VERIFIED_AT: "2026-10-16", LANDING_WAF_RULE_IDS: "ip,aggregate" };
 const payload = { event_name: "OrderClick", mode: "pickup", event_id: "d7e520f5-d054-4146-90bb-d7821f0780b6", event_time: 1792108800, consent: "accepted", source_url: "https://eat.example.com/", store: "dupont", ad: "subsim-photo", placement: "hero", fbc: "fb.1.1792108800000.real-click" };
 const now = () => payload.event_time * 1000;
+it.each([{}, {placement:"lineup",item:"frex"}])("forwards a legacy order shape without mode: %j",async details=>{
+  const send=vi.fn(async()=>new Response(null,{status:200}));
+  const {mode: _mode,...legacy}=payload;
+  const response=await handleMetaEvent(request({...legacy,...details}),{env,now,send});
+  expect(response.status).toBe(204);
+  const calls=send.mock.calls as unknown as [string,RequestInit][];
+  const data=JSON.parse(calls[0]![1].body as string).data[0];
+  expect(data.custom_data).toMatchObject({store:"dupont",...details});
+  expect(data.custom_data).not.toHaveProperty("mode");
+});
 function request(body: unknown = payload, headers: Record<string, string | undefined> = {}) { return new Request("https://eat.example.com/api/landing/events", { method: "POST", headers: { host: "eat.example.com", origin: env.SITE_ORIGIN, "content-type": "application/json", cookie: "landing_consent=accepted", "user-agent": "test-browser", ...Object.fromEntries(Object.entries(headers).filter(([, value]) => value !== undefined)) }, body: JSON.stringify(body) }); }
 describe("public landing CAPI boundary", () => {
   it("no-ops with missing or partial config after validation", async () => {

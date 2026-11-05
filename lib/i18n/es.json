@@ -160,9 +160,9 @@
   "landing.privacy.title": "Privacidad y tus opciones",
   "landing.privacy.link": "Privacidad",
   "landing.privacy.body": "Los pedidos se hacen en el sitio del proveedor de pedidos. Esta página no tiene formularios para clientes. La medición opcional empieza solo si aceptas y se desactiva con Do Not Track o Global Privacy Control. Contamos clics aproximados por día, tienda y código de anuncio aprobado, no compras ni personas únicas. No guardamos identificadores personales en ese contador. El contador también registra los clics para obtener indicaciones y distingue la intención de recogida, entrega a domicilio o visita. La entrega a domicilio no se asigna a una tienda.",
-  "landing.privacy.meta": "Si está habilitado y aceptas, Meta recibe visitas a la página y sus secciones y clics para pedidos o catering. La atribución aprobada del anuncio y un identificador válido de clic de Facebook pueden guardarse durante esta sesión. Meta puede usar sus propios identificadores del navegador. La medición del servidor puede enviar el mismo clic con su identificador de evento e identificadores aprobados del navegador para evitar duplicados. Con tu permiso, la medición del servidor también puede enviar a Meta información del navegador (agente de usuario). Nuestra aplicación no envía tu IP en eventos del servidor ni recoge aquí tu nombre, correo o teléfono; Meta recibe información de red como tu IP cuando se conecta su Pixel. No guardamos estos identificadores del navegador ni los eventos del servidor en nuestra base de datos o registros. Meta procesa los datos según sus propias políticas. Puedes rechazar o retirar tu permiso para la medición opcional aquí cuando quieras. También medimos los clics para obtener indicaciones. Los clics para pedidos registran recogida o entrega a domicilio.",
+  "landing.privacy.meta": "Si está habilitado y aceptas, Meta recibe visitas a la página y sus secciones y clics para pedidos o catering. La atribución aprobada del anuncio y un identificador válido de clic de Facebook pueden guardarse durante esta sesión. Meta puede usar sus propios identificadores del navegador. La medición del servidor puede enviar el mismo clic con su identificador de evento e identificadores aprobados del navegador para evitar duplicados. Con tu permiso, la medición del servidor también puede enviar a Meta información del navegador (agente de usuario). Nuestra aplicación no envía tu IP en eventos del servidor ni recoge aquí tu nombre, correo o teléfono; Meta recibe información de red como tu IP cuando se conecta su Pixel. No guardamos estos identificadores del navegador ni los eventos del servidor en nuestra base de datos o registros. Meta procesa los datos según sus propias políticas. Puedes rechazar o retirar tu permiso para la medición opcional aquí cuando quieras. Meta también recibe los toques de indicaciones, y los toques de pedido incluyen si elegiste recoger o entrega.",
   "landing.privacy.back": "Vuelve al almuerzo",
-  "landing.consent.notice": "Con tu permiso, contamos clics de pedidos y, si está configurado, compartimos visitas y clics con Meta para entender nuestros anuncios. Puedes pedir con cualquier opción. Esto incluye los clics para obtener indicaciones y las opciones de recogida o entrega a domicilio.",
+  "landing.consent.notice": "Con tu permiso, contamos clics de pedidos y, si está configurado, compartimos visitas y clics con Meta para entender nuestros anuncios. Puedes pedir con cualquier opción. Indicaciones y recogida/entrega.",
   "landing.consent.accept": "Aceptar medición",
   "landing.consent.reject": "Rechazar medición",
   "landing.consent.settings": "Opciones de privacidad",
@@ -8309,7 +8309,7 @@
   "marketing.state.no_lift": "No se ha medido un aumento",
   "marketing.state.incomplete_week": "Semana todavía en curso",
   "marketing.section.history": "Historial",
-  "marketing.section.taps": "Toques para pedir por código de anuncio / indicaciones",
+  "marketing.section.taps": "Toques para pedir por código de anuncio",
   "marketing.section.entries": "Registros manuales",
   "marketing.section.milestones": "Hitos",
   "marketing.section.readiness": "Preparación del lanzamiento",
@@ -8494,5 +8494,5 @@
   "marketing.taps.intent.legacy": "Anteriores",
   "marketing.taps.intent.pickup": "Recogida",
   "marketing.taps.intent.delivery": "Entrega a domicilio",
-  "marketing.taps.intent.visit": "Visita"
+  "marketing.taps.intent.visit": "Indicaciones / visitas"
 }

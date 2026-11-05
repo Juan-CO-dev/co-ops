@@ -46,6 +46,16 @@ async function setup() {
 const db = await setup();
 try {
   await db.exec(migration);
+  for (const [change, refusal] of [
+    ['alter table landing_ad_codes owner to other_owner', '0292: landing table owner mismatch'],
+    ['alter table landing_ad_codes owner to other_owner; alter table landing_order_click_counts owner to other_owner', '0292: function owner must own both landing tables'],
+  ]) {
+    await db.exec(change);
+    await refuses(db,intentMigration,refusal);
+    await db.exec('rollback');
+    check(!await scalar(db,"select exists(select 1 from information_schema.columns where table_name='landing_order_click_counts' and column_name='intent')"),'owner mismatch rolls back schema changes');
+    await db.exec('alter table landing_ad_codes owner to postgres; alter table landing_order_click_counts owner to postgres');
+  }
   await db.exec("select increment_landing_order_click('dupont','subsim-photo')");
   const window = "(now() at time zone 'America/New_York')::date";
   const total = () => scalar(db, `select sum(click_count)::int from marketing_order_taps(${window},${window})`);
@@ -53,6 +63,9 @@ try {
   await db.exec(intentMigration);
   check(await total() === before, 'migration preserves existing scorecard total');
   check(await scalar(db,"select bool_and(intent='legacy') from landing_order_click_counts"), 'existing rows become legacy');
+  await refuses(db,intentMigration,'landing_order_click_counts_store_key_check');
+  await db.exec('rollback');
+  check(await total() === before,'re-application fails closed without changing counts');
   const call = (store,intent) => db.query('select increment_landing_order_click($1,$2,$3)',[store,'subsim-photo',intent]);
   async function partition() {
     for (const intent of ['legacy','pickup','delivery','visit']) {
@@ -61,8 +74,8 @@ try {
     }
     const rows = (await db.query("select intent,click_count::int n from landing_order_click_counts order by intent")).rows;
     check(rows.length===4 && rows.every(row=>row.n===(row.intent==='legacy'?3:2)), 'each intent increments its own row');
-    check(await total()===9, 'old scorecard total includes all intent rows once');
-    check(await scalar(db,`select sum(click_count)::int from marketing_order_tap_intents(${window},${window})`)===9, 'split equals old scorecard total');
+    check(await total()===7, 'old scorecard total excludes visits');
+    check(await scalar(db,`select sum(click_count)::int from marketing_order_tap_intents(${window},${window})`)===9, 'intent split includes visits separately');
   }
   const definition=await scalar(db,"select pg_get_functiondef('increment_landing_order_click(text,text,text)'::regprocedure)");
   await db.exec('begin');
@@ -74,7 +87,7 @@ try {
   console.log('EXPECTED FAIL 0292 broken variant: intent collapsed to legacy; partition proof rejected it');
   await partition();
   await db.exec("set role service_role; select increment_landing_order_click(p_ad_code=>'subsim-photo',p_store_key=>'dupont'); reset role");
-  check(await total()===10,'named two-argument default remains executable');
+  check(await total()===8,'named two-argument default remains executable');
   for (const intent of [null,'bad']) await refuses(db,`select increment_landing_order_click('dupont','subsim-photo',${q(intent)})`,'invalid_intent');
   for (const intent of ['legacy','pickup','visit']) await refuses(db,`select increment_landing_order_click('any','subsim-photo','${intent}')`,'invalid_store');
   for (const store of [null,'dupont','capitol-hill','bad']) await refuses(db,`select increment_landing_order_click(${q(store)},'subsim-photo','delivery')`,'invalid_store');

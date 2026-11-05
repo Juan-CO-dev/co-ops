@@ -11,8 +11,8 @@ test('actual order actions share Pixel/CAPI IDs and count once per click',async(
   await page.goto('/?ad=subsim-photo&fbclid=Valid_123');
   await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
   // Keep the page available to inspect dispatch; this does not replace the native href/navigation tests.
-  await page.evaluate(()=>document.addEventListener('click',event=>{if((event.target as Element).closest('a[href*="appfront"]'))event.preventDefault();},true));
-  const order=page.locator('a[href*="appfront"]').first();await order.click();
+  await page.evaluate(()=>document.addEventListener('click',event=>{if((event.target as Element).closest('a[data-landing-mode]'))event.preventDefault();},true));
+  const order=page.locator('a[data-landing-mode]').first();await order.click();
   await expect.poll(()=>counts.length).toBe(1);await expect.poll(()=>events.length).toBe(1);
   const first=events[0]!;expect(first.event_name).toBe('OrderClick');expect(first.ad).toBe('subsim-photo');
   const pixel=await page.evaluate(()=>window.fbq?.queue?.find(args=>args[1]==='OrderClick'));
@@ -28,7 +28,7 @@ for(const placement of ['sticky','shops','footer']) test(`${placement} hover and
   await page.route('**/api/landing/events',route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});
   await page.route('**/api/landing/order-click',route=>{counters.push(route.request().postDataJSON());return route.fulfill({status:204});});
   await page.goto('/');await page.locator('[data-landing-consent]').getByRole('button').first().click();
-  await page.evaluate(()=>document.addEventListener('click',event=>{if((event.target as Element).closest('a[href*="appfront"]'))event.preventDefault();},true));
+  await page.evaluate(()=>document.addEventListener('click',event=>{if((event.target as Element).closest('a[data-landing-mode]'))event.preventDefault();},true));
   // v4.2: the sticky links live in the Order pill's shop sheet; opening it emits nothing.
   if(placement==='sticky'){await (await revealPill(page)).click();await page.waitForTimeout(300);expect(events).toEqual([]);expect(counters).toEqual([]);}
   const link=page.locator(`[data-landing-placement="${placement}"][data-landing-mode="pickup"]`).first();

@@ -31,9 +31,9 @@ export interface LandingTenantConfig {
   attribution: { ads: readonly string[]; utm: Record<string, readonly string[]> };
 }
 export const landingTenantConfig: LandingTenantConfig = {
-  deliveryUrl: "https://complimentsonlysubs.appfront.app/order/?servingOptionType=delivery",
+  deliveryUrl: "https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery",
   stores: [
-    { key: "capitol-hill", locationCode: "MEP", orderLabel: "Capitol Hill", branchId: "69bdd5a0daeb710cb2cbdb0d", pickupUrl: "https://complimentsonlysubs.appfront.app/order/?branchId=69bdd5a0daeb710cb2cbdb0d&servingOptionType=pickup",
+    { key: "capitol-hill", locationCode: "MEP", orderLabel: "Capitol Hill", branchId: "69bdd5a0daeb710cb2cbdb0d", pickupUrl: "https://order.complimentsonlysubs.com/order/?branchId=69bdd5a0daeb710cb2cbdb0d&servingOptionType=pickup",
       active: true, name: "Capitol Hill",
       address: "526 8th St SE Ste A, Washington, DC 20003",
       street: "8th St SE",
@@ -43,7 +43,7 @@ export const landingTenantConfig: LandingTenantConfig = {
       openingHours: {"days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], "opens": "10:30", "closes": "18:00"},
       hours: {"en": "Daily 10:30am–6pm", "es": "Todos los días de 10:30 a. m. a 6:00 p. m."},
       coordinates: {"latitude": 38.8817492, "longitude": -76.9947597} },
-    { key: "dupont", locationCode: "EM", orderLabel: "Dupont", branchId: "69bdddee7150a60c8dc37f73", pickupUrl: "https://complimentsonlysubs.appfront.app/order/?branchId=69bdddee7150a60c8dc37f73&servingOptionType=pickup",
+    { key: "dupont", locationCode: "EM", orderLabel: "Dupont", branchId: "69bdddee7150a60c8dc37f73", pickupUrl: "https://order.complimentsonlysubs.com/order/?branchId=69bdddee7150a60c8dc37f73&servingOptionType=pickup",
       active: true, name: "Dupont",
       address: "2029 P St NW Front 1, Washington, DC 20036",
       street: "P St NW",

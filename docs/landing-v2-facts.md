@@ -1,4 +1,4 @@
-> 2026-11-05 correction: legacy order-mode guidance is superseded. Shop URLs use pickup; delivery uses the tenant URL without a branch. Keep the Appfront host.
+> 2026-11-05 correction: CC verified the branded ordering host we own for Meta domain verification. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
 
 # Landing v2: verified facts (CC, 2026-10-16)
 

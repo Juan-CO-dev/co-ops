@@ -50,7 +50,7 @@ end $$;
 revoke all on function public.increment_landing_order_click(text,text,text) from public, anon, authenticated, service_role;
 grant execute on function public.increment_landing_order_click(text,text,text) to service_role;
 
--- Preserve the original read shape and aggregate totals for older deployments.
+-- Preserve the original order-only read shape for older deployments; visits are separate.
 create or replace function public.marketing_order_taps(p_from date, p_to date)
 returns table(day date, store_key text, ad_code text, active boolean, click_count bigint)
 language plpgsql stable security definer set search_path = pg_catalog, public as $$
@@ -58,7 +58,7 @@ begin
   if p_from is null or p_to is null or p_to < p_from or p_to - p_from > 365 then raise exception 'taps_window_invalid'; end if;
   return query select c.day_et, c.store_key, c.ad_code, a.active, sum(c.click_count)::bigint
     from public.landing_order_click_counts c join public.landing_ad_codes a on a.slot = c.ad_slot
-    where c.day_et between p_from and p_to
+    where c.day_et between p_from and p_to and c.intent <> 'visit'
     group by c.day_et,c.store_key,c.ad_code,a.active,c.ad_slot order by c.day_et,c.store_key,c.ad_slot;
 end $$;
 

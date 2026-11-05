@@ -21,9 +21,9 @@ it("adds intent disclosure without removing any previous privacy or consent text
       expect(current[key].length).toBeGreaterThan(before[lang][key].length);
     }
   }
-  expect(en["landing.privacy.meta"]).toContain("Directions taps");
+  expect(en["landing.privacy.meta"]).toContain("Meta also receives directions taps");
   expect(en["landing.privacy.meta"]).toContain("pickup or delivery");
-  expect(es["landing.privacy.meta"]).toContain("Tambi\u00e9n medimos");
+  expect(es["landing.privacy.meta"]).toContain("Meta tambi\u00e9n recibe los toques de indicaciones");
   expect(es["landing.privacy.body"]).toContain("intenci\u00f3n");
   expect(es["marketing.taps.by_intent"]).toBe("Clics por intenci\u00f3n");
 });

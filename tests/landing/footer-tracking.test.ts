@@ -8,6 +8,12 @@ import { projectLandingStores } from '@/lib/landing/stores';
 const {dispatch} = vi.hoisted(() => ({dispatch:vi.fn()}));
 vi.mock('@/components/landing/TrackingProvider', () => ({useLandingTracking:()=>({dispatch})}));
 vi.mock('react',async importOriginal=>({...await importOriginal<typeof import('react')>(),useState:(initial:unknown)=>[typeof initial==='function'?initial():initial,vi.fn()],useEffect:()=>{}}));
+it('marks food and catering order controls, but excludes directions from sticky and order CSS selectors',()=>{
+  for (const event of ['OrderClick','CateringClick','FindLocation'] as const) {
+    const link=OrderLink({href:'https://example.test/',children:'Action',placement:'shops',event});
+    expect(link.props['data-landing-placement']).toBe(event==='FindLocation'?undefined:'shops');
+  }
+});
 it('DoorDash invokes the tracked footer link while Uber Eats is scoped to Dupont', () => {
   const config = {...loadLandingConfig(), footerLinks:[{key:'uber-eats' as const,url:'https://example.test/uber'},{key:'doordash' as const,url:'https://example.test/dash'}]};
   const links: ReturnType<typeof OrderLink>[] = [];

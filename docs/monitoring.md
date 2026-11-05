@@ -1,4 +1,4 @@
-> 2026-11-05 correction: legacy order-mode guidance is superseded. Shop URLs use pickup; delivery uses the tenant URL without a branch. Keep the Appfront host.
+> 2026-11-05 correction: CC verified the branded ordering host we own for Meta domain verification. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
 
 # Launch monitoring (E5)
 
@@ -23,7 +23,7 @@ Add the reviewed, non-secret `docs/landing-monitor-baseline.json` only after ins
   "probes": {
     "landing": { "hosts": ["<approved host>"], "sha256": "<64 lowercase hex>" },
     "order-capitol-hill": {
-      "hosts": ["<approved order host>"], "sha256": "<shell hash>",
+      "hosts": ["order.complimentsonlysubs.com"], "sha256": "<shell hash>",
       "data": {
         "url": "<merchant-inspected public HTTPS payload URL>",
         "hosts": ["<approved payload host>"],
@@ -34,8 +34,8 @@ Add the reviewed, non-secret `docs/landing-monitor-baseline.json` only after ins
         "branchSha256": "<normalized branch digest>"
       }
     },
-    "order-dupont": { "hosts": ["<approved order host>"], "sha256": "<shell hash>", "data": "<same object shape, merchant-reviewed for Dupont>" },
-    "delivery": { "hosts": ["complimentsonlysubs.appfront.app"], "sha256": "<reviewed delivery shell hash>" },
+    "order-dupont": { "hosts": ["order.complimentsonlysubs.com"], "sha256": "<shell hash>", "data": "<same object shape, merchant-reviewed for Dupont>" },
+    "delivery": { "hosts": ["order.complimentsonlysubs.com"], "sha256": "<reviewed delivery shell hash>" },
     "catering": { "hosts": ["<active catering host>"], "sha256": "<response hash>" },
     "inquiry": { "hosts": ["<approved inquiry host>"], "sha256": "<response hash>" }
   }
@@ -94,4 +94,4 @@ CC reads back the generated JSON, confirms it contains only reviewed non-secret 
 
 Production landingOrigin is the bare domain `https://complimentsonlyoperations.com`. `https://www.complimentsonlyoperations.com` is expected to return **308** to bare and must never serve staff. Verify www separately during deployment smoke: the money-path monitor targets bare and continues to refuse unexpected redirects. Do not put www in LANDING_HOSTS or approve its redirect as the bare-origin baseline.
 
-2026-11-05: delivery uses `https://complimentsonlysubs.appfront.app/order/?servingOptionType=delivery` (no shop selected; Appfront resolves it from the address). The probe confirms HTTP evidence only; manually verify the Delivery tab before approving its baseline. Existing per-shop baseline names remain `order-capitol-hill` and `order-dupont`, now checking pickup URLs. CC verified pickup at Dupont and the branch-qualified delivery redirect at Capitol Hill.
+2026-11-05: CC verified branded-host pickup at Capitol Hill and the no-branch `/find-location/?servingOptionType=delivery` Delivery tab ("Where should we deliver?"). The no-branch `/order/` delivery URL is blocked by a location-selection modal. Existing per-shop baseline names remain `order-capitol-hill` and `order-dupont`. Shell and payload hashes still require reviewed baselines; these flow checks do not supply hashes.

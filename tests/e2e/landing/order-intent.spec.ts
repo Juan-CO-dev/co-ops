@@ -22,7 +22,7 @@ for(const language of ['en','es'])test(`every direct order group sends its picku
       const link=links.filter({hasText:store.orderLabel});
       await expect(link).toHaveAttribute('data-landing-mode','pickup');
       await expect(link).toHaveAttribute('href',itemOrderUrl(store,item));
-      await expect(link).toContainText(language==='en'?'Pickup at':'Recoger en');
+      await expect(link).toContainText(language==='en'?'Pick up at':'Recoger en');
       await link.evaluate(el=>(el as HTMLAnchorElement).click());
       await expect.poll(()=>events.length).toBe(++taps);
       await expect.poll(()=>counts.length).toBe(taps);
@@ -50,6 +50,11 @@ test('directions require consent and send FindLocation plus visit intent for eac
   await page.goto('/');
   await page.evaluate(()=>document.addEventListener('click',event=>{if((event.target as Element).closest('a'))event.preventDefault();},true));
   const directions=page.locator('a[data-directions]');
+  await expect(page.locator('a[data-directions][data-landing-placement]')).toHaveCount(0);
+  for (const direction of await directions.all()) {
+    expect(await direction.evaluate(el=>getComputedStyle(el).scrollMarginBlockStart)).toBe('0px');
+    expect(await direction.evaluate(el=>getComputedStyle(el).transitionProperty)).not.toContain('transform');
+  }
   await directions.first().evaluate(el=>(el as HTMLAnchorElement).click());
   expect(events).toEqual([]);expect(counts).toEqual([]);
   await page.locator('[data-landing-consent] button').first().click();

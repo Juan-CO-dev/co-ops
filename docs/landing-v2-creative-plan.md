@@ -1,4 +1,4 @@
-> 2026-11-05 correction: legacy order-mode guidance is superseded. Shop URLs use pickup; delivery uses the tenant URL without a branch. Keep the Appfront host.
+> 2026-11-05 correction: historical evidence below is preserved verbatim. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
 
 # CO-OPS landing v2 — creative plan
 
@@ -108,7 +108,7 @@ Use CC's `docs/landing-v2-facts.md` (official site and OSM evidence as of 2026-1
 
 Capitol Hill shares a building with Jeni's: pin the supplied coordinates and pair with the exact suite/address; inspect directions endpoint rather than assuming the first building result is the entrance. Use text/directions links before an interactive map; maintain OSM attribution if using OSM data/tiles. No geolocation prompt on load. Valid coordinates enable the existing opt-in nearby-shop path; test denial and straight-line-distance labeling.
 
-Keep the configured Appfront order links/branch IDs and servingOptionType=pickup unchanged until the merchant flow is verified. Catering remains the supplied Toast URL while portal is not live. Footer additions: Instagram, order/app hub, DoorDash, Uber Eats Dupont, careers (without callback), privacy and shop contacts. URLs are exactly those in the facts file. No Facebook, speculative gift cards or unverified app-store badges. Add `careers` to the footer key/type/label map. Preserve existing vendor event handling for delivery links. Public address/phone currently come from the allowlisted DB projection, hours/geo from tenant config; reconcile the public projection with these facts during implementation without a production data write. Prefer a tenant-owned verified fallback so an optional DB outage cannot erase all shop/structured-data content.
+Keep the configured Appfront order links/branch IDs and servingOptionType=a unchanged until the merchant flow is verified. Catering remains the supplied Toast URL while portal is not live. Footer additions: Instagram, order/app hub, DoorDash, Uber Eats Dupont, careers (without callback), privacy and shop contacts. URLs are exactly those in the facts file. No Facebook, speculative gift cards or unverified app-store badges. Add `careers` to the footer key/type/label map. Preserve existing vendor event handling for delivery links. Public address/phone currently come from the allowlisted DB projection, hours/geo from tenant config; reconcile the public projection with these facts during implementation without a production data write. Prefer a tenant-owned verified fallback so an optional DB outage cannot erase all shop/structured-data content.
 
 ### L083 Field Guide and all ten ingredient lists
 

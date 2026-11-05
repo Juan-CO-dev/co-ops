@@ -14,12 +14,12 @@ describe("central landing configuration", () => {
     expect(config.landingHosts).toEqual([]);
     const urls = config.stores.map((s) => new URL(s.pickupUrl));
     expect(new Set(urls.map((u) => u.searchParams.get("branchId"))).size).toBe(2);
-    expect(config.deliveryUrl).toBe("https://complimentsonlysubs.appfront.app/order/?servingOptionType=delivery");
+    expect(config.deliveryUrl).toBe("https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery");
     expect(getLandingLinks(config).delivery).toBe(config.deliveryUrl);
     for (const [index,url] of urls.entries()) {
       expect(url.searchParams.get("branchId")).toBe(config.stores[index]!.branchId);
       expect(url.protocol).toBe("https:");
-      expect(url.hostname).toBe("complimentsonlysubs.appfront.app");
+      expect(url.hostname).toBe("order.complimentsonlysubs.com");
       expect([...url.searchParams.keys()].sort()).toEqual(["branchId", "servingOptionType"]);
       expect(url.searchParams.get("servingOptionType")).toBe("pickup");
     }

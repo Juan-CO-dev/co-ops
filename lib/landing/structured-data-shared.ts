@@ -25,7 +25,6 @@ export function shopStructuredData(origin: string, brand: string, image: string 
         addressCountry: store.structuredAddress.addressCountry,
       },
       ...(store.coordinates ? { geo: { '@type': 'GeoCoordinates', latitude: store.coordinates.latitude, longitude: store.coordinates.longitude } } : {}),
-      potentialAction: { '@type': 'OrderAction', target: store.pickupUrl },
       telephone: store.phone,
       openingHoursSpecification: [{ '@type': 'OpeningHoursSpecification', dayOfWeek: [...store.openingHours.days], opens: store.openingHours.opens, closes: store.openingHours.closes }],
     })),

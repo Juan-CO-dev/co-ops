@@ -14,7 +14,7 @@ it('projects only the exact public facts, two restaurants and seven-day hours', 
   expect(graph['@graph']).toHaveLength(2);
   for (const [i,node] of graph['@graph'].entries()) {
     const store=landingTenantConfig.stores[i]!;
-    expect(node).toEqual({'@type':'Restaurant','@id':`https://eat.example.test/#${store.key}`,name:`Brand — ${store.name}`,image:'https://eat.example.test/media/hero.webp',url:`https://eat.example.test/#${store.key}`,address:{'@type':'PostalAddress',...store.structuredAddress},geo:{'@type':'GeoCoordinates',...store.coordinates},potentialAction:{'@type':'OrderAction',target:store.pickupUrl},telephone:store.phone,openingHoursSpecification:[{'@type':'OpeningHoursSpecification',dayOfWeek:store.openingHours.days,opens:'10:30',closes:store.openingHours.closes}]});
+    expect(node).toEqual({'@type':'Restaurant','@id':`https://eat.example.test/#${store.key}`,name:`Brand — ${store.name}`,image:'https://eat.example.test/media/hero.webp',url:`https://eat.example.test/#${store.key}`,address:{'@type':'PostalAddress',...store.structuredAddress},geo:{'@type':'GeoCoordinates',...store.coordinates},telephone:store.phone,openingHoursSpecification:[{'@type':'OpeningHoursSpecification',dayOfWeek:store.openingHours.days,opens:'10:30',closes:store.openingHours.closes}]});
     expect(node.openingHoursSpecification[0]!.dayOfWeek).toHaveLength(7);
   }
   expect(graph['@graph'].map(n=>n.telephone)).toEqual(['+12026218645','+12027944638']);

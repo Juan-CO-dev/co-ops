@@ -28,15 +28,15 @@ test('mid-page sections carry no repeated shop-link pairs',async({page})=>{
   // v4: the crunch story and the Field Guide end on ONE order action each; their shop pair lives only in its closed sheet.
   // A sheet replaces its native shop links only as its section nears the viewport (then at idle).
   for(const section of ['crave','lineup','field-guide']) await page.locator(`#${section}`).scrollIntoViewIfNeeded();
-  await expect(page.locator('#field-guide dialog a[href*="appfront.app"]')).toHaveCount(3);
+  await expect(page.locator('#field-guide dialog a[data-landing-mode]')).toHaveCount(3);
   for(const section of ['crave','field-guide']) {
-    await expect(page.locator(`#${section} a[href*="appfront.app"]:not(dialog a)`)).toHaveCount(0);
-    await expect(page.locator(`#${section} dialog a[href*="appfront.app"]`)).toHaveCount(3);
+    await expect(page.locator(`#${section} a[data-landing-mode]:not(dialog a)`)).toHaveCount(0);
+    await expect(page.locator(`#${section} dialog a[data-landing-mode]`)).toHaveCount(3);
     await expect(page.locator(`#${section} dialog`)).toBeHidden();
   }
   // The select screen's shop choice lives only in its closed sheet.
-  await expect(page.locator('#lineup a[href*="appfront.app"]')).toHaveCount(3);
-  await expect(page.locator('#lineup dialog a[href*="appfront.app"]')).toHaveCount(3);
+  await expect(page.locator('#lineup a[data-landing-mode]')).toHaveCount(3);
+  await expect(page.locator('#lineup dialog a[data-landing-mode]')).toHaveCount(3);
   await expect(page.locator('#lineup dialog')).toBeHidden();
-  await expect(page.locator('#footer a[href*="appfront.app"]')).toHaveCount(3);
+  await expect(page.locator('#footer a[data-landing-mode]')).toHaveCount(3);
 });

@@ -1,4 +1,4 @@
-> 2026-11-05 correction: legacy order-mode guidance is superseded. Shop URLs use pickup; delivery uses the tenant URL without a branch. Keep the Appfront host.
+> 2026-11-05 correction: historical evidence below is preserved verbatim. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
 
 # Landing page phase 1 — BUILD PLAN
 
@@ -138,16 +138,16 @@ All outbound destinations live in `config/tenant/landing.ts`, through `lib/landi
 
 | Key | Exact destination |
 |---|---|
-| `capitolHill` | `https://complimentsonlysubs.appfront.app/order/?branchId=69bdd5a0daeb710cb2cbdb0d&servingOptionType=pickup` |
-| `dupont` | `https://complimentsonlysubs.appfront.app/order/?branchId=69bdddee7150a60c8dc37f73&servingOptionType=pickup` |
+| `capitolHill` | `https://complimentsonlysubs.appfront.app/order/?branchId=69bdd5a0daeb710cb2cbdb0d&servingOptionType=a` |
+| `dupont` | `https://complimentsonlysubs.appfront.app/order/?branchId=69bdddee7150a60c8dc37f73&servingOptionType=a` |
 | `cateringOrder` | `https://www.toasttab.com/catering/compliments-only-capitol-hill-526-8th-street-southeast` |
 | `cateringInquiry` | `https://complimentsonlysubs.com/washington-capitol-hill-compliments-only-catering-inquiry` |
 
-Prefer branded https://order.complimentsonlysubs.com/order/?branchId=<id>&servingOptionType=pickup if BOTH branches behave identically in merchant flow. The table is the supplied baseline, not final canonical-host selection. Validate selected store and undocumented servingOptionType=pickup behavior; do not infer from status. Record exact working parameter form, host and dated evidence alongside the typed tenant config, avoiding double-encoded %253D= artifacts. Juan confirms below. Resolve the inquiry against the existing main site, never the new landing host. Concurrent spec §4 clarification confirms official links and Toast catering for now; the future fully-live CO-OPS `/order` portal is selected by the single `cateringPortalLive` flag described above, default false; this phase tests both destinations but does not activate the portal. Use `servingOptionType=pickup` for shop choices and the tenant delivery URL for delivery (Juan 2026-11-05). Gift cards, app, Uber Eats, DoorDash and social destinations must be sourced from the main site and confirmed before adding to this same config. `tel:` links get syntax tests; every configured HTTP(S) URL gets the live 200 test.
+Prefer branded https://order.complimentsonlysubs.com/order/?branchId=<id>&servingOptionType=a if BOTH branches behave identically in merchant flow. The table is the supplied baseline, not final canonical-host selection. Validate selected store and undocumented servingOptionType=a behavior; do not infer from status. Record exact working parameter form, host and dated evidence alongside the typed tenant config, avoiding double-encoded %253D= artifacts. Juan confirms below. Resolve the inquiry against the existing main site, never the new landing host. Concurrent spec §4 clarification confirms official links and Toast catering for now; the future fully-live CO-OPS `/order` portal is selected by the single `cateringPortalLive` flag described above, default false; this phase tests both destinations but does not activate the portal. Keep `servingOptionType=a` exactly as Juan supplied; do not reinterpret it as pickup/delivery. Gift cards, app, Uber Eats, DoorDash and social destinations must be sourced from the main site and confirmed before adding to this same config. `tel:` links get syntax tests; every configured HTTP(S) URL gets the live 200 test.
 
 Blocking CI is deterministic: config shape/hosts/branch IDs plus Playwright asserting every rendered href equals its config value. Outbound HTTP(S) anchors set `referrerPolicy="origin"` and `rel="noopener"`, asserted in tests, so Referer excludes ad/fbclid queries.
 
-Live probes are non-blocking in ordinary CI, blocking at launch, and scheduled after deployment in E5. GET, bounded redirects, 15 s timeout and at most one transient retry; record status/final host/response digest. Require 200/approved host; challenge/403/429/timeouts are failure or explicit blocked evidence, never pass. Toast/inquiry can geo-gate non-US runners: use an external US runner. Changed digest raises drift alarm. Assert branch existence from Appfront data payload, not identical SPA shells. Capture manual selected-store and servingOptionType=pickup checks for both branches on launch day. Automation never places orders.
+Live probes are non-blocking in ordinary CI, blocking at launch, and scheduled after deployment in E5. GET, bounded redirects, 15 s timeout and at most one transient retry; record status/final host/response digest. Require 200/approved host; challenge/403/429/timeouts are failure or explicit blocked evidence, never pass. Toast/inquiry can geo-gate non-US runners: use an external US runner. Changed digest raises drift alarm. Assert branch existence from Appfront data payload, not identical SPA shells. Capture manual selected-store and servingOptionType=a checks for both branches on launch day. Automation never places orders.
 
 ### Appfront research: supported versus unknown
 
@@ -222,7 +222,7 @@ Every task starts with the listed failing tests, then the smallest implementatio
 
 **Tests first:** config shape, branch separation, inquiry host, every rendered href equals config, origin-only referrer policy/noopener. Live fixtures cover redirects/challenges/missing branches/digest drift. JS-off anchor navigation remains native.
 
-**Acceptance:** targeted unit/Playwright pass deterministically. npm run test:links is separate, non-blocking in ordinary CI and blocking at launch. Preserve both-branch branded-host equivalence and servingOptionType=pickup merchant-flow evidence; exact working form in the typed tenant config.
+**Acceptance:** targeted unit/Playwright pass deterministically. npm run test:links is separate, non-blocking in ordinary CI and blocking at launch. Preserve both-branch branded-host equivalence and servingOptionType=a merchant-flow evidence; exact working form in the typed tenant config.
 
 #### Task A3 — attribution and offers
 

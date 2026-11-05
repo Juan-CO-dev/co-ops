@@ -5,9 +5,19 @@ import { parseOrderClick } from "@/lib/landing/order-click-shared";
 const now = 1792108800000;
 const base = {event_name:"OrderClick", event_id:"d7e520f5-d054-4146-90bb-d7821f0780b6", event_time:now/1000, consent:"accepted",source_url:"https://eat.example/",ad:"unattributed",placement:"hero",mode:"pickup",store:"dupont"};
 const parse = (patch:Record<string,unknown>) => parseLandingEvent({...base,...patch},"https://eat.example",now);
+it("accepts draining store and item OrderClicks without inventing mode",()=>{
+  for (const patch of [{mode:undefined}, {mode:undefined,placement:"lineup",item:"frex"}]) {
+    const event=parse(patch);
+    expect(event).not.toBeNull();
+    expect(event?.mode).toBeUndefined();
+    expect(event?.store).toBe("dupont");
+  }
+  expect(parse({mode:undefined,store:undefined})).toBeNull();
+  expect(parse({mode:undefined,store:"other"})).toBeNull();
+});
 it("requires a bounded direct mode and binds stores to pickup only",()=>{
   expect(parse({})).not.toBeNull();
-  for(const mode of [undefined,null,"", "curbside", "a"]) expect(parse({mode})).toBeNull();
+  for(const mode of [null,"", "curbside", "a"]) expect(parse({mode})).toBeNull();
   expect(parse({store:undefined})).toBeNull();
   expect(parse({mode:"delivery",store:undefined})).not.toBeNull();
   expect(parse({mode:"delivery"})).toBeNull();
