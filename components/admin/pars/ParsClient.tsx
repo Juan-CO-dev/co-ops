@@ -10,6 +10,8 @@ import { ParEditor } from "./ParEditor";
 
 export function ParsClient({ view }: { view: ParsView }) {
   const { t, language } = useTranslation();
+  const [offOpen, setOffOpen] = useState(false);
+  const [activationNotice, setActivationNotice] = useState<"off" | "on" | null>(null);
   const [vendor, setVendor] = useState("");
   const [section, setSection] = useState("");
   const vendors = [...new Map(view.rows.map((r) => [r.vendorId, r.vendorName])).entries()];
@@ -19,6 +21,9 @@ export function ParsClient({ view }: { view: ParsView }) {
   const number = (n: number) => new Intl.NumberFormat(language, { maximumFractionDigits: 2 }).format(n);
   return (
     <div className="min-w-0 space-y-4 break-words [overflow-wrap:anywhere] [&_button_span]:min-w-0">
+      <p role="status" aria-live="polite" aria-atomic="true" className="text-sm text-co-confirm-text">
+        {activationNotice && t(activationNotice === "off" ? "admin.pars.moved_off" : "admin.pars.back_on")}
+      </p>
       <ParSilencePanel silence={view.silence} />
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <label className="min-w-0 text-sm font-bold">{t("admin.pars.vendor")}
@@ -37,9 +42,11 @@ export function ParsClient({ view }: { view: ParsView }) {
       </div>
       <p role="status" className="text-sm text-co-text-muted">{t(rows.length === 1 ? "admin.pars.count_one" : "admin.pars.count_other", { n: rows.length })}</p>
       {rows.length === 0 && <p className="text-sm text-co-text-muted">{t("admin.pars.empty")}</p>}
-      <ul className="space-y-3">
-        {rows.map((row) => {
-          const suggestion = row.suggestion?.slotCreation ? null : row.suggestion;
+      {[false, true].map((off) => {
+        const group = rows.filter((row) => Boolean(row.offHere) === off);
+        const list = <ul className="space-y-3">
+        {group.map((row) => {
+          const suggestion = row.offHere || row.suggestion?.slotCreation ? null : row.suggestion;
           const suggestionText = suggestion ? t(`admin.pars.today.${view.dayClass}`, {
             pair: t(suggestion.tier === "auto" ? (view.silence.shadowMode ? "ordering.shadow.would_tune" : "ordering.auto.tuned") : "ordering.suggestion.pair", {
               current: number(suggestion.currentPar), suggested: number(suggestion.suggestedPar),
@@ -65,11 +72,13 @@ export function ParsClient({ view }: { view: ParsView }) {
                   {suggestion.reasonCode === "below_band_resolution" && <p>{t("ordering.suggestion.manual_only")}</p>}
                 </div> : <p>{t("admin.pars.no_suggestion")}</p>}
               </div>
-              {row.edit && view.locationId && <ParEditor row={row} view={view} edit={row.edit} locationId={view.locationId} />}
+              {row.edit && view.locationId && <ParEditor row={row} view={view} edit={row.edit} locationId={view.locationId} onActivationSaved={(off) => { setActivationNotice(off ? "off" : "on"); if (off) setOffOpen(true); }} />}
             </CollapsibleSection>
           </li>;
         })}
-      </ul>
+      </ul>;
+        return off ? group.length > 0 && <CollapsibleSection key="off" idBase="pars-off" open={offOpen} onToggle={() => setOffOpen((value) => !value)} title={t("admin.pars.off_group", { n: group.length })}>{list}</CollapsibleSection> : <div key="on">{list}</div>;
+      })}
     </div>
   );
 }

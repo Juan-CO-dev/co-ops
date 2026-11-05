@@ -88,7 +88,7 @@ describe("Pars read model", () => {
     h.walk.mockResolvedValue({ vendors: [{ skus: [{ skuId: "a", parSuggestion: suggestion }] }], parSilence: EMPTY_PAR_SILENCE });
     const writable = await loadPars(actor("gm"), SHOP);
     expect(writable.locationId).toBe(SHOP);
-    expect(writable.rows[0]?.edit).toEqual({ activeOverride: true, weekdayPar: null, weekendPar: 5, packEpoch: 3, poundsPerUnit: 30 });
+    expect(writable.rows[0]?.edit).toEqual({ globalActive: true, activeOverride: true, weekdayPar: null, weekendPar: 5, packEpoch: 3, poundsPerUnit: 30 });
     expect(writable.rows[0]?.suggestion).toEqual(suggestion);
     expect((await loadPars(actor("agm"), SHOP)).rows[0]?.edit).toBeUndefined();
     h.walk.mockResolvedValue({ vendors: [{ skus: [{ skuId: "a", parSuggestion: { ...suggestion, canAct: false } }] }], parSilence: EMPTY_PAR_SILENCE });
@@ -141,7 +141,7 @@ describe("Pars read model", () => {
     overlays.set("off", { weekdayPar: null, weekendPar: null, activeOverride: false });
     overlays.set("on", { weekdayPar: null, weekendPar: null, activeOverride: true });
     h.products.mockResolvedValue({ byProduct: new Map([["p", { resolution: { reason: "retired_product" } }]]) });
-    expect((await loadPars(actor(), SHOP)).rows.map((r) => r.skuId)).toEqual(["a", "mine", "on"]);
+    expect((await loadPars(actor(), SHOP)).rows.map((r) => r.skuId)).toEqual(["a", "mine", "off", "on"]);
   });
   it("takes suggestions ONLY from final walked rows (dedupe/backup eligibility), without actions; reuses aggregate unchanged", async () => {
     tables.vendor_items = [sku("a"), sku("twin"), sku("backup", { weekday_par: null }), sku("source", { active: false })];
@@ -190,4 +190,15 @@ describe("Pars read model", () => {
     expect(readFileSync("app/api/admin/pars/route.ts", "utf8")).toContain("501");
     expect(parSlots(null, { weekdayPar: 3, weekendPar: null }, 480)).toMatchObject({ weekendFallback: true, weekend: { value: 3, pounds: 90 } });
   });
+});
+
+it("keeps off rows for viewers and pins their exclusion to the walk predicate", async () => {
+  const { resolveActive, walkDisposition } = await import("@/lib/location-sku-shared");
+  for (const activeOverride of [false, null, true]) {
+    overlays.set("a", { weekdayPar: null, weekendPar: null, activeOverride });
+    const row = (await loadPars(actor(), SHOP)).rows[0]!;
+    expect(row.offHere).toBe(activeOverride === false);
+    expect(walkDisposition({ productRetired: false, vendorKnown: true, skuActive: resolveActive(activeOverride, true), par: row.weekday.value }) === "skuInactive").toBe(row.offHere);
+    expect(row.edit).toBeUndefined();
+  }
 });

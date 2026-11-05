@@ -13,7 +13,7 @@ const control = "min-h-[44px] min-w-0 items-center rounded-lg border-2 border-co
 
 /** Mounted only for writers inside the row's disclosure. Reads always come back via
  * router.refresh -> the page's loadPars -> the walk's pack/suggestion loaders. */
-export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view: ParsView; edit: NonNullable<ParsRow["edit"]>; locationId: string }) {
+export function ParEditor({ row, view, edit, locationId, onActivationSaved }: { row: ParsRow; view: ParsView; edit: NonNullable<ParsRow["edit"]>; locationId: string; onActivationSaved: (off: boolean) => void }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
@@ -60,19 +60,21 @@ export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view:
       refresh();
     } else setMessage(t(resolveErrorKey(result.code)));
   };
-  const save = async () => {
+  const save = async (activation?: boolean | null) => {
     if (disabled || inFlight.current) return;
     inFlight.current = true;
     setBusy(true); setMessage(null);
     try {
       if ((await requestStepUp("E")) !== "ok") { setBusy(false); return; }
       const { activeOverride, weekdayPar, weekendPar, packEpoch } = edit;
-      finish(await send(`/api/admin/skus/${row.skuId}/location-settings`, {
-        locationId, activeOverride,
-        weekdayPar: weekday.trim() === "" ? null : Number(weekday),
-        weekendPar: weekend.trim() === "" ? null : Number(weekend),
+      const result = await send(`/api/admin/skus/${row.skuId}/location-settings`, {
+        locationId, activeOverride: activation === undefined ? activeOverride : activation,
+        weekdayPar: activation !== undefined ? weekdayPar : weekday.trim() === "" ? null : Number(weekday),
+        weekendPar: activation !== undefined ? weekendPar : weekend.trim() === "" ? null : Number(weekend),
         expected: { activeOverride, weekdayPar, weekendPar }, expectedPackEpoch: packEpoch,
-      }, "PUT"));
+      }, "PUT");
+      if (result.ok && activation !== undefined && (activation === false || activeOverride === false)) onActivationSaved(activation === false);
+      finish(result);
     } catch { finish({ ok: false, code: "generic" }); }
     finally { inFlight.current = false; }
   };
@@ -89,7 +91,20 @@ export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view:
     } finally { inFlight.current = false; }
   };
   return <div className="min-w-0 space-y-3 border-t border-co-border pt-3" aria-busy={disabled}>
-    <form className="min-w-0 space-y-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+    {edit.activeOverride !== true ? <button type="button" role="switch" aria-checked={edit.activeOverride === false}
+      className={`${control} flex w-full justify-between gap-3`} disabled={disabled}
+      onClick={() => void save(edit.activeOverride === false ? (edit.globalActive ? null : true) : false)}>
+      {t("admin.pars.off_here")}
+      <span>{t(`admin.skus.location_overlay.active.${edit.activeOverride === false ? "off" : "inherit"}`)}</span>
+    </button> :
+    <label className="block text-sm">{t("admin.skus.location_overlay.activation")}
+      <select className={`${control} mt-1 w-full`} disabled={disabled}
+        value={edit.activeOverride === null ? "inherit" : edit.activeOverride ? "on" : "off"}
+        onChange={(e) => void save(e.target.value === "inherit" ? null : e.target.value === "on")}>
+        {(["inherit", "on", "off"] as const).map((value) => <option key={value} value={value}>{t(`admin.skus.location_overlay.active.${value}`)}</option>)}
+      </select>
+    </label>}
+    {!row.offHere && <form className="min-w-0 space-y-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
       <p className="text-sm">{t("admin.pars.edit_hint", { unit: row.unit ?? t("admin.pars.order_units") })}</p>
       <div className="grid min-w-0 grid-cols-2 gap-3">
         {(["weekday", "weekend"] as const).map((day) => {
@@ -106,8 +121,8 @@ export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view:
         })}
       </div>
       <button className={`${control} inline-flex border-co-gold-deep bg-co-gold font-bold`} disabled={disabled} type="submit">{t("admin.skus.save")}</button>
-    </form>
-    {suggestion?.canAct && <div className="flex flex-wrap gap-2">
+    </form>}
+    {!row.offHere && suggestion?.canAct && <div className="flex flex-wrap gap-2">
       <button type="button" className={`${control} inline-flex`} disabled={disabled} onClick={() => void act("accept")}
         aria-label={t("ordering.suggestion.accept_aria", { sku: row.name, n: suggestion.suggestedPar })}>{t("ordering.suggestion.accept", { n: suggestion.suggestedPar })}</button>
       <button type="button" className={`${control} inline-flex`} disabled={disabled} onClick={() => void act("dismiss")}
