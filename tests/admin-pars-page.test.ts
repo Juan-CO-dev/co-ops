@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { createFakeDb } from "./fixtures/counts-fake-db";
 import { pickShopId } from "@/lib/shop-context-shared";
 import { EMPTY_PAR_SILENCE } from "@/lib/dynamic-pars-shared";
-const h = vi.hoisted(() => ({ auth: vi.fn(), load: vi.fn(), db: vi.fn(), resolve: vi.fn() }));
+const h = vi.hoisted(() => ({ auth: vi.fn(), load: vi.fn(), db: vi.fn(), resolve: vi.fn(), prep: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: h.auth }));
 vi.mock("@/lib/admin/pars", () => ({ loadPars: h.load }));
@@ -10,6 +10,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: h.db }));
 vi.mock("@/lib/shop-context", () => ({ resolveShopId: h.resolve }));
 vi.mock("@/lib/ordering", () => ({ OrderingError: class extends Error { constructor(public status: number, public code: string) { super(code); } } }));
 vi.mock("@/components/admin/pars/ParsClient", () => ({ ParsClient: () => null }));
+vi.mock("@/lib/admin/templates", () => ({ loadChecklistLocationView: h.prep }));
 import Page from "@/app/admin/pars/page";
 import { OrderingError } from "@/lib/ordering";
 const A = "6f1d2c3e-0000-4000-8000-00000000000a", B = "6f1d2c3e-0000-4000-8000-00000000000b";
@@ -67,4 +68,13 @@ it("does not load data when there are no allowed active shops", async () => {
   h.auth.mockResolvedValue({ user: { role: "agm", language: "en" }, level: 6, locations: [] });
   await Page({ searchParams: Promise.resolve({}) });
   expect(h.load).not.toHaveBeenCalled();
+});
+
+it("loads only the resolved shop through the checklist reader for the URL prep tab", async () => {
+  h.prep.mockResolvedValue({ items: [], parContext: {} });
+  const result = await Page({ searchParams: Promise.resolve({ tab: "prep", location: A }) });
+  expect(h.load).not.toHaveBeenCalled();
+  expect(h.prep.mock.calls.map((call) => [call[1].id, call[2]])).toEqual([[A, "am_prep"], [A, "mid_day_prep"]]);
+  expect(result.props.children[2].props.tab).toBe("prep");
+  expect(result.props.children[2].props.children.props.views.map((view: { subtype: string }) => view.subtype)).toEqual(["am_prep", "mid_day_prep"]);
 });

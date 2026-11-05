@@ -194,8 +194,10 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
         const alts = expr.split(",").map((a) => {
           const [col, op, ...rest] = a.split(".");
           const val = rest.join(".");
+          if (op === "not" && val === "is.null") return (r: Row) => r[col!] != null;
           if (op === "is" && val === "null") return (r: Row) => (r[col!] ?? null) === null;
           if (op === "eq") return (r: Row) => String(r[col!]) === val;
+          if (op === "lte") return (r: Row) => r[col!] != null && cmp(r[col!], val) <= 0;
           throw new Error(`fake db: or ${a}`);
         });
         preds.push((r) => alts.some((f) => f(r))); return q;

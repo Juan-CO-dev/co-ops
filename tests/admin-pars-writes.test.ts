@@ -145,3 +145,25 @@ it.each(["accept", "dismiss", "revert"] as const)("allows owner-shop store-copy 
   expect(db.writes.length).toBeGreaterThan(0);
   expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action: action === "revert" ? "par.auto_tune_revert" : `par.suggestion_${action}` }));
 });
+
+it("off-here PUT preserves both pars and restores inheritance through the same writer", async () => {
+  expect((await put({ ...input(), weekdayPar: 2, activeOverride: false })).status).toBe(200);
+  expect(tables.location_sku_settings![0]).toMatchObject({ active_override: false, weekday_par: 2, weekend_par: 3 });
+  expect((await put({ ...input(), weekdayPar: 2, activeOverride: null, expected: { ...baseline, activeOverride: false } })).status).toBe(200);
+  expect(tables.location_sku_settings![0]).toMatchObject({ active_override: null, weekday_par: 2, weekend_par: 3 });
+});
+it.each(["agm", "social_media_mgr"] as const)("off-here PUT refuses %s", async (role) => {
+  h.session.mockResolvedValue(actor(role));
+  expect((await put({ ...input(), activeOverride: false })).status).toBe(403);
+  expect(db.writes).toEqual([]);
+});
+it("off-here PUT refuses a missing window, stale snapshot, foreign shop and foreign owner", async () => {
+  const ctx = actor(); ctx.session.catalogEditUnlockedAt = null; h.session.mockResolvedValue(ctx);
+  expect((await put({ ...input(), activeOverride: false })).status).toBe(403);
+  h.session.mockResolvedValue(actor());
+  expect((await put({ ...input(), activeOverride: false, expected: { ...baseline, weekdayPar: 99 } })).status).toBe(409);
+  expect((await put({ ...input(), activeOverride: false, locationId: OTHER })).status).toBe(404);
+  tables.vendor_items![0]!.location_id = OTHER;
+  expect((await put({ ...input(), activeOverride: false })).status).toBe(404);
+  expect(db.writes).toEqual([]);
+});

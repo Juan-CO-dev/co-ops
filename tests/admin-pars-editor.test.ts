@@ -18,7 +18,7 @@ const suggestion: WalkerParSuggestion = { currentPar: 2, suggestedPar: 4, genera
   coverThroughDate: "2026-11-05", coveredDayCount: 2, cushionPct: 0.1, flooredByPeak: false, velocityApplied: false, slotCreation: false, canAct: true };
 const row = (): ParsRow => ({ skuId: "sku", name: "Fixture SKU", vendorId: "vendor", vendorName: "Fixture vendor", unit: "case", position: 1, section: null,
   weekday: { value: 2, pounds: 10, lane: "global" }, weekend: { value: 3, pounds: 15, lane: "human" }, weekendFallback: false,
-  suggestion, reroutedFromName: null, edit: { activeOverride: true, weekdayPar: null, weekendPar: 3, packEpoch: 2, poundsPerUnit: 5 } });
+  suggestion, reroutedFromName: null, edit: { globalActive: true, activeOverride: true, weekdayPar: null, weekendPar: 3, packEpoch: 2, poundsPerUnit: 5 } });
 const view = (r = row(), shadowMode = true): ParsView => ({ rows: [r], dayClass: "weekday", locationId: "shop-a", silence: { ...EMPTY_PAR_SILENCE, shadowMode } });
 const tree = (v: ParsView, language: "en" | "es" = "en") => jsx(TranslationProvider, { initialLanguage: language, children: jsx(ParsClient, { view: v }) });
 const open = () => fireEvent.click(screen.getByRole("button", { name: "Details for Fixture SKU" }));
@@ -150,4 +150,64 @@ it.each([null, "shop-a"])("limits SKU overlay rows to the persisted owner %s", (
   expect(screen.getByText("Shop A")).toBeTruthy();
   expect(screen.queryByText("Shop B") !== null).toBe(ownerLocationId === null);
   expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(ownerLocationId === null ? 2 : 1);
+});
+
+it("toggles off without submitting unsaved pars, groups the reread, then restores inherit", async () => {
+  const current = row(); current.edit!.activeOverride = null;
+  const ui = render(tree(view(current))); open();
+  fireEvent.change(screen.getByRole("spinbutton", { name: /Weekday/ }), { target: { value: "99" } });
+  fireEvent.click(screen.getByRole("switch"));
+  await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(1));
+  expect(JSON.parse(h.fetch.mock.calls[0]![1].body)).toMatchObject({ activeOverride: false, weekdayPar: null, weekendPar: 3, expected: { activeOverride: null }, expectedPackEpoch: 2 });
+  expect(h.unlock).toHaveBeenCalledWith("E");
+  const off = { ...current, offHere: true, edit: { ...current.edit!, activeOverride: false } };
+  ui.rerender(tree(view(off)));
+  expect(screen.getByText("Moved to Off at this shop").getAttribute("aria-live")).toBe("polite");
+  expect(screen.getByRole("button", { name: "Off at this shop (1)" }).getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByText("Fixture SKU")).toBeTruthy(); open();
+  expect(screen.queryByRole("spinbutton")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Accept/ })).toBeNull();
+  fireEvent.click(screen.getByRole("switch"));
+  await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(h.fetch.mock.calls[1]![1].body)).toMatchObject({ activeOverride: null, expected: { activeOverride: false } });
+  ui.rerender(tree(view({ ...current, offHere: false, edit: { ...current.edit!, activeOverride: null } })));
+  expect(screen.getByText("Fixture SKU")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Off at this shop (1)" })).toBeNull();
+  expect(screen.getByText("Back on at this shop")).toBeTruthy();
+});
+it("refreshes a stale off-here toggle and offers all three overlay states", async () => {
+  h.fetch.mockResolvedValue(reply("overlay_changed"));
+  render(tree(view())); open();
+  expect(screen.getByRole("combobox", { name: "Active here" })).toBeTruthy();
+  expect(screen.queryByRole("switch")).toBeNull();
+  fireEvent.change(screen.getByRole("combobox", { name: "Active here" }), { target: { value: "off" } });
+  await waitFor(() => expect(h.refresh).toHaveBeenCalled());
+  expect(screen.getByRole("alert").textContent).toContain("Someone changed");
+});
+
+it("off-here rows remain read-only without an edit DTO", () => {
+  const readOnly = { ...row(), offHere: true, edit: undefined };
+  render(tree(view(readOnly)));
+  fireEvent.click(screen.getByRole("button", { name: "Off at this shop (1)" })); open();
+  expect(screen.queryByRole("switch")).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Active here" })).toBeNull();
+  expect(screen.queryByRole("spinbutton")).toBeNull();
+});
+
+it.each([true, false])("restores a globally active=%s SKU without losing it", async (globalActive) => {
+  const off = row(); off.offHere = true; off.edit = { ...off.edit!, globalActive, activeOverride: false };
+  render(tree(view(off)));
+  fireEvent.click(screen.getByRole("button", { name: "Off at this shop (1)" })); open();
+  fireEvent.click(screen.getByRole("switch"));
+  await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(1));
+  expect(JSON.parse(h.fetch.mock.calls[0]![1].body).activeOverride).toBe(globalActive ? null : true);
+  expect(screen.getByText("Back on at this shop")).toBeTruthy();
+});
+
+it("preserves explicit on with the three-state select and no switch", () => {
+  render(tree(view())); open();
+  expect(screen.queryByRole("switch")).toBeNull();
+  const select = screen.getByRole("combobox", { name: "Active here" }) as HTMLSelectElement;
+  expect(select.value).toBe("on");
+  expect([...select.options].map((o) => o.value)).toEqual(["inherit", "on", "off"]);
 });
