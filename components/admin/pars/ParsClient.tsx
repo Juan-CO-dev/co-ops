@@ -37,9 +37,11 @@ export function ParsClient({ view }: { view: ParsView }) {
       </div>
       <p role="status" className="text-sm text-co-text-muted">{t(rows.length === 1 ? "admin.pars.count_one" : "admin.pars.count_other", { n: rows.length })}</p>
       {rows.length === 0 && <p className="text-sm text-co-text-muted">{t("admin.pars.empty")}</p>}
-      <ul className="space-y-3">
-        {rows.map((row) => {
-          const suggestion = row.suggestion?.slotCreation ? null : row.suggestion;
+      {[false, true].map((off) => {
+        const group = rows.filter((row) => Boolean(row.offHere) === off);
+        const list = <ul className="space-y-3">
+        {group.map((row) => {
+          const suggestion = row.offHere || row.suggestion?.slotCreation ? null : row.suggestion;
           const suggestionText = suggestion ? t(`admin.pars.today.${view.dayClass}`, {
             pair: t(suggestion.tier === "auto" ? (view.silence.shadowMode ? "ordering.shadow.would_tune" : "ordering.auto.tuned") : "ordering.suggestion.pair", {
               current: number(suggestion.currentPar), suggested: number(suggestion.suggestedPar),
@@ -69,7 +71,9 @@ export function ParsClient({ view }: { view: ParsView }) {
             </CollapsibleSection>
           </li>;
         })}
-      </ul>
+      </ul>;
+        return off ? group.length > 0 && <CollapsibleSection key="off" idBase="pars-off" title={t("admin.pars.off_group", { n: group.length })}>{list}</CollapsibleSection> : <div key="on">{list}</div>;
+      })}
     </div>
   );
 }

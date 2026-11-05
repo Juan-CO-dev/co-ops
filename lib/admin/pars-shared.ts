@@ -13,6 +13,7 @@ export interface ParsSlot { value: number | null; lane: ParLane; pounds: number 
 export interface ParsRow extends GuideSortKey {
   /** Present only for writers; raw human values, never resolved fallback values. */
   edit?: { activeOverride: boolean | null; weekdayPar: number | null; weekendPar: number | null; packEpoch: number; poundsPerUnit: number | null };
+  offHere?: boolean;
   skuId: string;
   vendorId: string;
   vendorName: string;

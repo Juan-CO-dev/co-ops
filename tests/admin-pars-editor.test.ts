@@ -151,3 +151,42 @@ it.each([null, "shop-a"])("limits SKU overlay rows to the persisted owner %s", (
   expect(screen.queryByText("Shop B") !== null).toBe(ownerLocationId === null);
   expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(ownerLocationId === null ? 2 : 1);
 });
+
+it("toggles off without submitting unsaved pars, groups the reread, then restores inherit", async () => {
+  const current = row();
+  const ui = render(tree(view(current))); open();
+  fireEvent.change(screen.getByRole("spinbutton", { name: /Weekday/ }), { target: { value: "99" } });
+  fireEvent.click(screen.getByRole("switch"));
+  await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(1));
+  expect(JSON.parse(h.fetch.mock.calls[0]![1].body)).toMatchObject({ activeOverride: false, weekdayPar: null, weekendPar: 3, expected: { activeOverride: true }, expectedPackEpoch: 2 });
+  expect(h.unlock).toHaveBeenCalledWith("E");
+  const off = { ...current, offHere: true, edit: { ...current.edit!, activeOverride: false } };
+  ui.rerender(tree(view(off)));
+  expect(screen.queryByText("Fixture SKU")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Off at this shop (1)" })); open();
+  expect(screen.queryByRole("spinbutton")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Accept/ })).toBeNull();
+  fireEvent.click(screen.getByRole("switch"));
+  await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(h.fetch.mock.calls[1]![1].body)).toMatchObject({ activeOverride: null, expected: { activeOverride: false } });
+  ui.rerender(tree(view({ ...current, offHere: false, edit: { ...current.edit!, activeOverride: null } })));
+  expect(screen.getByText("Fixture SKU")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Off at this shop (1)" })).toBeNull();
+});
+it("refreshes a stale off-here toggle and offers all three overlay states", async () => {
+  h.fetch.mockResolvedValue(reply("overlay_changed"));
+  render(tree(view())); open();
+  expect(screen.getByRole("combobox", { name: "Active here" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("switch"));
+  await waitFor(() => expect(h.refresh).toHaveBeenCalled());
+  expect(screen.getByRole("alert").textContent).toContain("Someone changed");
+});
+
+it("off-here rows remain read-only without an edit DTO", () => {
+  const readOnly = { ...row(), offHere: true, edit: undefined };
+  render(tree(view(readOnly)));
+  fireEvent.click(screen.getByRole("button", { name: "Off at this shop (1)" })); open();
+  expect(screen.queryByRole("switch")).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Active here" })).toBeNull();
+  expect(screen.queryByRole("spinbutton")).toBeNull();
+});

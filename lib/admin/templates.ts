@@ -2478,6 +2478,35 @@ export async function loadItemRegistry(sb: SupabaseClient, scope: VersionScope =
   }));
 }
 
+/** Shared location reader for checklist settings and the Pars prep tab. */
+export async function loadChecklistLocationView(
+  actor: AuthContext,
+  loc: { id: string; name: string; code: string },
+  subtype: PrepSubtype,
+): Promise<ChecklistLocationView> {
+  if (!lockLocationContext(actorLocationShape(actor), loc.id)) {
+    throw new AdminTemplateError(404, "location_not_found");
+  }
+  const sb = getServiceRoleClient();
+  const templateId = await resolveActivePrepTemplateId(sb, loc.id, subtype);
+  if (!templateId) {
+    return { locationId: loc.id, name: loc.name, code: loc.code, templateId: null, items: [], parContext: {}, enabledItemIds: [] };
+  }
+  const detail = await getPrepTemplateDetail(actor, templateId);
+  const enabledItemIds = detail.items
+    .map((it) => it.itemId)
+    .filter((v): v is string => typeof v === "string");
+  return {
+    locationId: loc.id,
+    name: loc.name,
+    code: loc.code,
+    templateId,
+    items: detail.items,
+    parContext: detail.parContext,
+    enabledItemIds,
+  };
+}
+
 export async function loadChecklistAdminView(
   actor: AuthContext,
   subtype: PrepSubtype,
@@ -2499,24 +2528,7 @@ export async function loadChecklistAdminView(
 
   const locations: ChecklistLocationView[] = [];
   for (const loc of accessible) {
-    const templateId = await resolveActivePrepTemplateId(sb, loc.id, subtype);
-    if (!templateId) {
-      locations.push({ locationId: loc.id, name: loc.name, code: loc.code, templateId: null, items: [], parContext: {}, enabledItemIds: [] });
-      continue;
-    }
-    const detail = await getPrepTemplateDetail(actor, templateId);
-    const enabledItemIds = detail.items
-      .map((it) => it.itemId)
-      .filter((v): v is string => typeof v === "string");
-    locations.push({
-      locationId: loc.id,
-      name: loc.name,
-      code: loc.code,
-      templateId,
-      items: detail.items,
-      parContext: detail.parContext,
-      enabledItemIds,
-    });
+    locations.push(await loadChecklistLocationView(actor, loc, subtype));
   }
 
   // First-class sections (active, by displayOrder) — editable display labels.

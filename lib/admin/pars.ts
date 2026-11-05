@@ -76,14 +76,14 @@ export async function loadPars(actor: AuthContext, locationId: string): Promise<
   const canEdit = getRoleLevel(actor.user.role) >= PAR_WRITE_MIN;
   for (const s of owned) {
     const overlay = packs.overlayBySku.get(s.id) ?? null;
-    if (!s.vendor_id || !vendorNames.has(s.vendor_id) || !resolveActive(overlay?.activeOverride, s.active)) continue;
+    if (!s.vendor_id || !vendorNames.has(s.vendor_id) || (!resolveActive(overlay?.activeOverride, s.active) && overlay?.activeOverride !== false)) continue;
     if (s.product_id && products.byProduct.get(s.product_id)?.resolution.reason === "retired_product") continue;
     const chain = packs.chainsBySku.get(s.id) ?? null;
     const oz = perOrderUnitOz({ packFormat: s.pack_format, eachContainerLabel: s.each_container_label,
       unitsPerPack: s.units_per_pack, eachSize: numeric(s.each_size), eachMeasure: s.each_measure,
       avgOzPerEach: numeric(s.avg_oz_per_each), packChain: chain }, chain, measures);
     const walked = walkRows.get(s.id);
-    rows.push({ skuId: s.id, name: s.name, vendorId: s.vendor_id, vendorName: vendorNames.get(s.vendor_id)!,
+    rows.push({ offHere: overlay?.activeOverride === false, skuId: s.id, name: s.name, vendorId: s.vendor_id, vendorName: vendorNames.get(s.vendor_id)!,
       unit: orderUnitLabel(s.pack_format, chain), position: guides.get(s.id)?.position ?? null, section: guides.get(s.id)?.section ?? null,
       ...parSlots(overlay, { weekdayPar: numeric(s.weekday_par), weekendPar: numeric(s.weekend_par) }, oz),
       ...(canEdit ? { edit: { activeOverride: overlay?.activeOverride ?? null,

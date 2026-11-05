@@ -8477,5 +8477,10 @@
   "admin.pars.edit_hint": "Enter weekday and weekend pars in {unit}. Leave blank to remove your override.",
   "admin.pars.changed": "Someone changed this par or its pack. Refreshing the current values; review them before saving again.",
   "admin.pars.saved": "Saved. Refreshing the current values.",
-  "admin.pars.refresh": "Refresh values"
+  "admin.pars.refresh": "Refresh values",
+  "admin.pars.tab.vendor": "Vendor pars",
+  "admin.pars.tab.prep": "Prep pars",
+  "admin.pars.off_here": "Off here",
+  "admin.pars.off_group": "Off at this shop ({n})",
+  "admin.pars.prep_empty": "No prep lines at this shop."
 }
