@@ -37,6 +37,9 @@ jobs:
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v6
+      # The container runs as root over a runner-owned checkout; git refuses it without this
+      # (scripts/landing/e2e-nearby-fixture.mjs runs `git ls-files`).
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
