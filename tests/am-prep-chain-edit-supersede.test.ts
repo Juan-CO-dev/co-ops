@@ -220,16 +220,16 @@ describe("live-path tripwire — the am-prep chain edit HAS a caller, and it is 
     expect(fn).not.toContain("superseded_by");
   });
 
-  it("a 23505 from that RPC is unmapped — which is why the failure is opaque", () => {
+  it("a 23505 from that RPC becomes an already_submitted conflict", () => {
     const prep = read("lib", "prep.ts");
     const fn = prep.slice(prep.indexOf("async function submitAmPrepUpdate("));
     const errorMapping = fn.slice(fn.indexOf("if (rpcErr) {"), fn.indexOf("if (!rpcData) {"));
 
     expect(errorMapping).toContain('rpcErr.code === "P0001"');
     expect(errorMapping).toContain('rpcErr.code === "23514"');
-    // No unique_violation branch: the throw falls to the generic Error → a 500 reading
-    // "Submission failed", with the whole prep transaction rolled back.
-    expect(errorMapping).not.toContain("23505");
+    // A unique violation must remain a typed conflict, never a generic 500.
+    expect(errorMapping).toContain("23505");
+    expect(errorMapping).toContain("already_submitted");
     expect(errorMapping).toContain("update RPC failed");
   });
 });

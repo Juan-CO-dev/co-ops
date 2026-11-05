@@ -1,4 +1,5 @@
 /** Operator: SUPABASE_ACCESS_TOKEN in environment, node scripts/preflight-0276-management.mjs --ref=<ref>.
+ * Requires the shared 0291 eleven-argument prep signature (nine prior args plus key/hash).
  * Any project allowed. One READ ONLY transaction, no .env, no writes. */
 import { pathToFileURL } from 'node:url';
 import { signatures } from './preflight-0276.mjs';

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
 /**
  * Prep instance lifecycle — Phase 3 / Module #1 Build #2 PR 1.
@@ -2875,6 +2876,7 @@ export async function resolveClosingReportRefItemId(
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SubmitRpcResult {
+  replayed?: boolean;
   instance: InstanceRow;
   submissionId: string;
   completionIds: string[];
@@ -2996,9 +2998,58 @@ async function computeChangedFields(
  * Audit emission (post-RPC, JS-side for IP/UA capture):
  *   - prep.submit with metadata.outcome = 'success' (or per error path)
  */
+/** Fingerprint only user intent; object/entry ordering and server snapshots are irrelevant. */
+export function hashAmPrepIntent(args: {
+  entries: Array<{ templateItemId: string; inputs: PrepInputs }>;
+  isUpdate?: boolean;
+  originalSubmissionId?: string;
+}): string {
+  const entries = args.entries.map(e => ({
+    templateItemId: e.templateItemId.toLowerCase(),
+    inputs: Object.fromEntries(Object.entries(e.inputs).sort(([a], [b]) => a.localeCompare(b))),
+  })).sort((a, b) => a.templateItemId.localeCompare(b.templateItemId));
+  return createHash("sha256").update(JSON.stringify({
+    isUpdate: args.isUpdate === true,
+    originalSubmissionId: args.isUpdate ? args.originalSubmissionId?.toLowerCase() : null,
+    entries,
+  })).digest("hex");
+}
+
+/** Authorized callers only. SQL rechecks identity/hash under its parent/chain locks. */
+async function replayAmPrep(service: SupabaseClient, args: {
+  instanceId: string; actor: PrepActor; clientRequestId?: string;
+  entries: Array<{ templateItemId: string; inputs: PrepInputs }>;
+  isUpdate?: boolean; originalSubmissionId?: string;
+}) {
+  if (!args.clientRequestId) return null;
+  const { data, error } = await service.from("checklist_submissions")
+    .select("id").eq("instance_id", args.instanceId)
+    .eq("submitted_by", args.actor.userId).eq("client_request_id", args.clientRequestId)
+    .maybeSingle<{ id: string }>();
+  if (error) throw new Error(`submitAmPrep: replay lookup: ${error.message}`);
+  if (!data) return null;
+  const { data: replay, error: rpcError } = await service.rpc("submit_am_prep_atomic", {
+    p_prep_instance_id: args.instanceId, p_actor_id: args.actor.userId,
+    p_entries: [], p_closing_report_ref_item_id: null,
+    p_is_update: args.isUpdate ?? false,
+    p_original_submission_id: args.originalSubmissionId ?? null,
+    p_client_request_id: args.clientRequestId,
+    p_client_request_hash: hashAmPrepIntent(args),
+  });
+  if (rpcError?.message === "prep_request_key_reused") throw new PrepError("Request key already used for different counts", "prep_request_key_reused");
+  if (rpcError?.code === "23505") throw new PrepError("Already submitted", "already_submitted");
+  if (rpcError) throw new Error(`submitAmPrep: replay RPC: ${rpcError.message}`);
+  if (!replay || !(replay as SubmitRpcResult).replayed) throw new Error("submitAmPrep: replay result missing");
+  const result = replay as SubmitRpcResult;
+  return { instance: rowToInstance(result.instance), submittedCompletionIds: result.completionIds,
+    closingAutoCompleteId: result.autoCompleteId, editCount: result.editCount,
+    originalSubmissionId: result.originalSubmissionId, skipped: [], replayed: true };
+}
+
 export async function submitAmPrep(
   service: SupabaseClient,
   args: {
+    clientRequestId?: string;
     instanceId: string;
     actor: PrepActor;
     entries: Array<{
@@ -3017,6 +3068,7 @@ export async function submitAmPrep(
     originalSubmissionId?: string;
   },
 ): Promise<{
+  replayed?: boolean;
   instance: ChecklistInstance;
   submittedCompletionIds: string[];
   /** Always `null` on update path per C.46 A4 (closing auto-complete row untouched). */
@@ -3055,6 +3107,7 @@ export async function submitAmPrep(
     // The update path inherits the chain head's own snapshots (C.44) and refuses an edit to an
     // item whose latest live completion is malformed (D-66 review 2); it reports those as skipped.
     return submitAmPrepUpdate(service, {
+      clientRequestId: args.clientRequestId,
       instanceId: args.instanceId,
       actor: args.actor,
       entries: args.entries,
@@ -3063,6 +3116,9 @@ export async function submitAmPrep(
       userAgent: args.userAgent ?? null,
     });
   }
+
+  const replay = await replayAmPrep(service, args);
+  if (replay) return replay;
 
   // 2. Pre-flight: load the instance + template items so we can build snapshots
   //    per C.44. The RPC itself doesn't read template items — it just inserts
@@ -3081,7 +3137,7 @@ export async function submitAmPrep(
     }>();
   if (instErr) throw new Error(`submitAmPrep: load instance: ${instErr.message}`);
   if (!instRow) throw new Error(`submitAmPrep: instance ${args.instanceId} not found`);
-  if (instRow.status !== "open") {
+  if (!args.clientRequestId && instRow.status !== "open") {
     throw new PrepInstanceNotOpenError(args.instanceId, instRow.status);
   }
 
@@ -3149,10 +3205,13 @@ export async function submitAmPrep(
     p_prep_instance_id: args.instanceId,
     p_actor_id: args.actor.userId,
     p_entries: rpcEntries,
+    ...(args.clientRequestId ? { p_client_request_id: args.clientRequestId, p_client_request_hash: hashAmPrepIntent(args) } : {}),
     p_closing_report_ref_item_id: args.closingReportRefItemId,
   });
 
   if (rpcErr) {
+    if (rpcErr.message === "prep_request_key_reused") throw new PrepError("Request key already used", "prep_request_key_reused");
+    if (rpcErr.code === "23505") throw new PrepError("Already submitted", "already_submitted");
     // Map specific Postgres errcodes to typed PrepError subclasses.
     // foreign_key_violation = case (b) auto-complete failure (no closing
     // instance for today). check_violation = pessimistic guard tripped
@@ -3197,7 +3256,7 @@ export async function submitAmPrep(
         ipAddress: args.ipAddress ?? null,
         userAgent: args.userAgent ?? null,
       });
-      throw new PrepInstanceNotOpenError(args.instanceId, "concurrent_close");
+      throw new PrepError("AM prep already submitted", "already_submitted");
     }
     throw new Error(`submitAmPrep: RPC failed: ${rpcErr.message}`);
   }
@@ -3208,7 +3267,7 @@ export async function submitAmPrep(
   const result = rpcData as SubmitRpcResult;
 
   // 6. Audit success.
-  void audit({
+  if (!result.replayed) void audit({
     actorId: args.actor.userId,
     actorRole: args.actor.role,
     action: "prep.submit",
@@ -3230,9 +3289,10 @@ export async function submitAmPrep(
     userAgent: args.userAgent ?? null,
   });
 
-  await auditPrepOverride(service, args, "am_prep", "submitAmPrep");
+  if (!result.replayed) await auditPrepOverride(service, args, "am_prep", "submitAmPrep");
 
   return {
+    replayed: result.replayed ?? false,
     instance: rowToInstance(result.instance),
     submittedCompletionIds: result.completionIds,
     closingAutoCompleteId: result.autoCompleteId,
@@ -3269,6 +3329,7 @@ export async function submitAmPrep(
 async function submitAmPrepUpdate(
   service: SupabaseClient,
   args: {
+    clientRequestId?: string;
     instanceId: string;
     actor: PrepActor;
     entries: Array<{ templateItemId: string; inputs: PrepInputs }>;
@@ -3277,6 +3338,7 @@ async function submitAmPrepUpdate(
     userAgent: string | null;
   },
 ): Promise<{
+  replayed?: boolean;
   instance: ChecklistInstance;
   submittedCompletionIds: string[];
   closingAutoCompleteId: string | null;
@@ -3318,6 +3380,13 @@ async function submitAmPrepUpdate(
       `submitAmPrep: chain head ${args.originalSubmissionId} is for instance ${chainHeadRow.instance_id}, not ${args.instanceId}`,
     );
   }
+
+  // Identity authorization is separate from mutable closing/cap state.
+  const identity = canEditReport({ actor: args.actor, originalSubmitterId: chainHeadRow.submitted_by,
+    closingStatus: null, currentEditCount: 0 });
+  if (!identity.canEdit) throw new ChecklistEditAccessDeniedError(identity.reason);
+  const replay = await replayAmPrep(service, { ...args, isUpdate: true });
+  if (replay) return replay;
 
   // 2. Load max edit_count across chain.
   const { data: chainCounts, error: countErr } = await service
@@ -3387,10 +3456,12 @@ async function submitAmPrepUpdate(
     actor: { userId: args.actor.userId, level: args.actor.level },
     originalSubmitterId: chainHeadRow.submitted_by,
     closingStatus,
-    currentEditCount,
+    currentEditCount: args.clientRequestId ? 0 : currentEditCount,
   });
 
   if (!access.canEdit) {
+    const concurrentReplay = await replayAmPrep(service, { ...args, isUpdate: true });
+    if (concurrentReplay) return concurrentReplay;
     void audit({
       actorId: args.actor.userId,
       actorRole: args.actor.role,
@@ -3493,6 +3564,7 @@ async function submitAmPrepUpdate(
       p_prep_instance_id: args.instanceId,
       p_actor_id: args.actor.userId,
       p_entries: rpcEntries,
+      ...(args.clientRequestId ? { p_client_request_id: args.clientRequestId, p_client_request_hash: hashAmPrepIntent({ ...args, isUpdate: true }) } : {}),
       p_closing_report_ref_item_id: null,
       p_is_update: true,
       p_original_submission_id: args.originalSubmissionId,
@@ -3521,6 +3593,8 @@ async function submitAmPrepUpdate(
       userAgent: args.userAgent,
     });
 
+    if (rpcErr.message === "prep_request_key_reused") throw new PrepError("Request key already used", "prep_request_key_reused");
+    if (rpcErr.code === "23505") throw new PrepError("Already submitted", "already_submitted");
     // P0001 = application-defined exception — RPC raises this when the
     // post-lock cap check sees edit_count >= 3 (race past lib pre-check).
     if (rpcErr.code === "P0001") {
@@ -3551,9 +3625,10 @@ async function submitAmPrepUpdate(
   // 8. NO JS-side success audit on update path. RPC emitted report.update
   //    inside its transaction (per C.46 A7) atomically with the chain write.
 
-  await auditPrepOverride(service, args, "am_prep", "submitAmPrepUpdate");
+  if (!result.replayed) await auditPrepOverride(service, args, "am_prep", "submitAmPrepUpdate");
 
   return {
+    replayed: result.replayed ?? false,
     instance: rowToInstance(result.instance),
     submittedCompletionIds: result.completionIds,
     closingAutoCompleteId: null,  // per A4: update path doesn't touch closing auto-complete

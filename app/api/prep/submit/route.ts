@@ -65,11 +65,7 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  * No rate-limiting in this PR (per Phase 2 Session 3 deferral pattern;
  * per-IP throttling lands when KV infra arrives).
  *
- * No idempotency tokens in this PR (per same deferral pattern; idempotency-
- * key infra lands when KV arrives). Real-world risk on update path is
- * small given KH+ correction frequency and UI submit-button disabled
- * state during request. If duplicate updates surface operationally,
- * capture as a future amendment with the idempotency-token pattern.
+ * Request UUIDs bind frozen user intent; known replays suppress success audits.
  */
 
 import { type NextRequest } from "next/server";
@@ -95,6 +91,7 @@ import { mapPrepError } from "../_helpers";
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SubmitBody {
+  clientRequestId?: string;
   instanceId: string;
   entries: Array<{
     templateItemId: string;
@@ -128,6 +125,7 @@ function validateBody(
   if (typeof r.instanceId !== "string" || !UUID_RE.test(r.instanceId)) {
     return { ok: false, field: "instanceId" };
   }
+  if (r.clientRequestId !== undefined && (typeof r.clientRequestId !== "string" || !UUID_RE.test(r.clientRequestId))) return { ok: false, field: "clientRequestId" };
   if (!Array.isArray(r.entries)) return { ok: false, field: "entries" };
 
   const entries: SubmitBody["entries"] = [];
@@ -168,6 +166,7 @@ function validateBody(
   return {
     ok: true,
     body: {
+      ...(typeof r.clientRequestId === "string" ? { clientRequestId: r.clientRequestId } : {}),
       instanceId: r.instanceId,
       entries,
       ...(isUpdate !== undefined ? { isUpdate } : {}),
@@ -193,7 +192,7 @@ export async function POST(req: NextRequest) {
 
   const validation = validateBody(parsed);
   if (!validation.ok) {
-    return jsonError(400, "invalid_payload", {
+    return jsonError(400, validation.field === "clientRequestId" ? "invalid_request_key" : "invalid_payload", {
       message:
         "Body must include instanceId (uuid) and entries (Array<{templateItemId: uuid, inputs: PrepInputs}>).",
       field: validation.field,
@@ -271,6 +270,7 @@ export async function POST(req: NextRequest) {
   // just threads ipAddress + userAgent through.
   try {
     const result = await submitAmPrep(service, {
+      clientRequestId: body.clientRequestId,
       instanceId: body.instanceId,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
       entries: body.entries,
@@ -300,6 +300,7 @@ export async function POST(req: NextRequest) {
       }
     }
     return jsonOk({
+      replayed: result.replayed ?? false,
       instance: result.instance,
       submittedCompletionIds: result.submittedCompletionIds,
       closingAutoCompleteId: result.closingAutoCompleteId,

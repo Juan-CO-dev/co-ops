@@ -1,5 +1,5 @@
 /** Read-only deployment preflight; CC runs before promoting the app.
- * Also requires the 0287 corrections and 0290 reference writer: failure without them
+ * Also requires the 0287 corrections and 0290 reference writer and 0291 prep request identity: failure without them
  * is an intentional deployment gate.
  * Set CHECKLIST_PREFLIGHT_DATABASE_URL in the process environment explicitly.
  * Never loads .env, calls a writer RPC, or prints connection details.
@@ -8,6 +8,7 @@
 import { pathToFileURL } from "node:url";
 
 export const signatures = [
+  "public.submit_am_prep_atomic(uuid,uuid,jsonb,uuid,boolean,uuid,jsonb,text,text,uuid,text)",
   "public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,jsonb)",
   "public.checklist_revoke_completion(uuid,uuid)",
   "public.checklist_revoke_with_reason(uuid,uuid,text,text)",
