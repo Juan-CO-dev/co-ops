@@ -88,7 +88,7 @@ describe("Pars read model", () => {
     h.walk.mockResolvedValue({ vendors: [{ skus: [{ skuId: "a", parSuggestion: suggestion }] }], parSilence: EMPTY_PAR_SILENCE });
     const writable = await loadPars(actor("gm"), SHOP);
     expect(writable.locationId).toBe(SHOP);
-    expect(writable.rows[0]?.edit).toEqual({ activeOverride: true, weekdayPar: null, weekendPar: 5, packEpoch: 3, poundsPerUnit: 30 });
+    expect(writable.rows[0]?.edit).toEqual({ globalActive: true, activeOverride: true, weekdayPar: null, weekendPar: 5, packEpoch: 3, poundsPerUnit: 30 });
     expect(writable.rows[0]?.suggestion).toEqual(suggestion);
     expect((await loadPars(actor("agm"), SHOP)).rows[0]?.edit).toBeUndefined();
     h.walk.mockResolvedValue({ vendors: [{ skus: [{ skuId: "a", parSuggestion: { ...suggestion, canAct: false } }] }], parSilence: EMPTY_PAR_SILENCE });

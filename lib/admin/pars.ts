@@ -86,7 +86,7 @@ export async function loadPars(actor: AuthContext, locationId: string): Promise<
     rows.push({ offHere: overlay?.activeOverride === false, skuId: s.id, name: s.name, vendorId: s.vendor_id, vendorName: vendorNames.get(s.vendor_id)!,
       unit: orderUnitLabel(s.pack_format, chain), position: guides.get(s.id)?.position ?? null, section: guides.get(s.id)?.section ?? null,
       ...parSlots(overlay, { weekdayPar: numeric(s.weekday_par), weekendPar: numeric(s.weekend_par) }, oz),
-      ...(canEdit ? { edit: { activeOverride: overlay?.activeOverride ?? null,
+      ...(canEdit ? { edit: { globalActive: s.active, activeOverride: overlay?.activeOverride ?? null,
         weekdayPar: overlay?.weekdayPar ?? null, weekendPar: overlay?.weekendPar ?? null,
         packEpoch: packs.epochs.get(s.id) ?? 0, poundsPerUnit: oz != null && oz > 0 ? oz / 16 : null } } : {}),
       suggestion: walked?.parSuggestion && !walked.parSuggestion.slotCreation ? { ...walked.parSuggestion, canAct: canEdit && walked.parSuggestion.canAct } : null,

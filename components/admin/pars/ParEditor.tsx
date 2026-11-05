@@ -13,7 +13,7 @@ const control = "min-h-[44px] min-w-0 items-center rounded-lg border-2 border-co
 
 /** Mounted only for writers inside the row's disclosure. Reads always come back via
  * router.refresh -> the page's loadPars -> the walk's pack/suggestion loaders. */
-export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view: ParsView; edit: NonNullable<ParsRow["edit"]>; locationId: string }) {
+export function ParEditor({ row, view, edit, locationId, onActivationSaved }: { row: ParsRow; view: ParsView; edit: NonNullable<ParsRow["edit"]>; locationId: string; onActivationSaved: (off: boolean) => void }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
@@ -67,12 +67,14 @@ export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view:
     try {
       if ((await requestStepUp("E")) !== "ok") { setBusy(false); return; }
       const { activeOverride, weekdayPar, weekendPar, packEpoch } = edit;
-      finish(await send(`/api/admin/skus/${row.skuId}/location-settings`, {
+      const result = await send(`/api/admin/skus/${row.skuId}/location-settings`, {
         locationId, activeOverride: activation === undefined ? activeOverride : activation,
         weekdayPar: activation !== undefined ? weekdayPar : weekday.trim() === "" ? null : Number(weekday),
         weekendPar: activation !== undefined ? weekendPar : weekend.trim() === "" ? null : Number(weekend),
         expected: { activeOverride, weekdayPar, weekendPar }, expectedPackEpoch: packEpoch,
-      }, "PUT"));
+      }, "PUT");
+      if (result.ok && activation !== undefined && (activation === false || activeOverride === false)) onActivationSaved(activation === false);
+      finish(result);
     } catch { finish({ ok: false, code: "generic" }); }
     finally { inFlight.current = false; }
   };
@@ -89,19 +91,19 @@ export function ParEditor({ row, view, edit, locationId }: { row: ParsRow; view:
     } finally { inFlight.current = false; }
   };
   return <div className="min-w-0 space-y-3 border-t border-co-border pt-3" aria-busy={disabled}>
-    <button type="button" role="switch" aria-checked={edit.activeOverride === false}
+    {edit.activeOverride !== true ? <button type="button" role="switch" aria-checked={edit.activeOverride === false}
       className={`${control} flex w-full justify-between gap-3`} disabled={disabled}
-      onClick={() => void save(edit.activeOverride === false ? null : false)}>
+      onClick={() => void save(edit.activeOverride === false ? (edit.globalActive ? null : true) : false)}>
       {t("admin.pars.off_here")}
-      <span>{t(`admin.skus.location_overlay.active.${edit.activeOverride === false ? "off" : edit.activeOverride === true ? "on" : "inherit"}`)}</span>
-    </button>
+      <span>{t(`admin.skus.location_overlay.active.${edit.activeOverride === false ? "off" : "inherit"}`)}</span>
+    </button> :
     <label className="block text-sm">{t("admin.skus.location_overlay.activation")}
       <select className={`${control} mt-1 w-full`} disabled={disabled}
         value={edit.activeOverride === null ? "inherit" : edit.activeOverride ? "on" : "off"}
         onChange={(e) => void save(e.target.value === "inherit" ? null : e.target.value === "on")}>
         {(["inherit", "on", "off"] as const).map((value) => <option key={value} value={value}>{t(`admin.skus.location_overlay.active.${value}`)}</option>)}
       </select>
-    </label>
+    </label>}
     {!row.offHere && <form className="min-w-0 space-y-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
       <p className="text-sm">{t("admin.pars.edit_hint", { unit: row.unit ?? t("admin.pars.order_units") })}</p>
       <div className="grid min-w-0 grid-cols-2 gap-3">

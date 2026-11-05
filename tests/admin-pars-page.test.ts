@@ -76,4 +76,5 @@ it("loads only the resolved shop through the checklist reader for the URL prep t
   expect(h.load).not.toHaveBeenCalled();
   expect(h.prep.mock.calls.map((call) => [call[1].id, call[2]])).toEqual([[A, "am_prep"], [A, "mid_day_prep"]]);
   expect(result.props.children[2].props.tab).toBe("prep");
+  expect(result.props.children[2].props.children.props.views.map((view: { subtype: string }) => view.subtype)).toEqual(["am_prep", "mid_day_prep"]);
 });

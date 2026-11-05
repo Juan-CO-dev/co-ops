@@ -8480,6 +8480,8 @@
   "admin.pars.refresh": "Actualizar valores",
   "admin.pars.tab.vendor": "Niveles de proveedores",
   "admin.pars.tab.prep": "Niveles de preparación",
+  "admin.pars.moved_off": "Lo desactivaste en esta tienda",
+  "admin.pars.back_on": "Lo volviste a activar en esta tienda",
   "admin.pars.off_here": "Desactivar aquí",
   "admin.pars.off_group": "Desactivados en esta tienda ({n})",
   "admin.pars.prep_empty": "No hay líneas de preparación en esta tienda."

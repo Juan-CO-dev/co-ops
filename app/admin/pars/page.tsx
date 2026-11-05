@@ -1,6 +1,6 @@
 import { ParsTabs } from "@/components/admin/pars/ParsTabs";
-import { PrepParsClient } from "@/components/admin/pars/PrepParsClient";
-import { loadChecklistLocationView, type ChecklistLocationView } from "@/lib/admin/templates";
+import { PrepParsClient, type PrepParsView } from "@/components/admin/pars/PrepParsClient";
+import { loadChecklistLocationView } from "@/lib/admin/templates";
 import { getRoleLevel } from "@/lib/roles";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -34,13 +34,14 @@ export default async function AdminParsPage({ searchParams }: {
   const locations = (data ?? []).filter((l) => lockLocationContext(actor, l.id));
   if (explicit && !locations.some((l) => l.id === explicit)) redirect("/dashboard");
   const locationId = await resolveShopId(locations.map((l) => l.id), explicit);
-  let prepViews: ChecklistLocationView[] = [];
+  let prepViews: PrepParsView[] = [];
   let view: ParsView | null = null;
   if (locationId) {
     try {
       if (tab === "prep") {
+        // Prep pars use checklist par authority, not the ordering task permission.
         const loc = locations.find((l) => l.id === locationId)!;
-        prepViews = await Promise.all((["am_prep", "mid_day_prep"] as const).map((subtype) => loadChecklistLocationView(auth, loc, subtype)));
+        prepViews = await Promise.all((["am_prep", "mid_day_prep"] as const).map(async (subtype) => ({ ...await loadChecklistLocationView(auth, loc, subtype), subtype })));
       } else view = await loadPars(auth, locationId);
     }
     catch (e) {

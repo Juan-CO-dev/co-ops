@@ -8480,6 +8480,8 @@
   "admin.pars.refresh": "Refresh values",
   "admin.pars.tab.vendor": "Vendor pars",
   "admin.pars.tab.prep": "Prep pars",
+  "admin.pars.moved_off": "Moved to Off at this shop",
+  "admin.pars.back_on": "Back on at this shop",
   "admin.pars.off_here": "Off here",
   "admin.pars.off_group": "Off at this shop ({n})",
   "admin.pars.prep_empty": "No prep lines at this shop."

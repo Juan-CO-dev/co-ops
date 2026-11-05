@@ -25,7 +25,7 @@ describe("Pars read-only UI", () => {
   it.each(["en", "es"] as const)("pluralizes zero, one and many SKUs in %s", (language) => {
     for (const n of [0, 1, 2]) {
       mount(Array.from({ length: n }, (_, i) => row(String(i))), language);
-      expect(screen.getByRole("status").textContent).toBe(`${n} ${n === 1 ? "SKU" : "SKUs"}`);
+      expect(screen.getByText(`${n} ${n === 1 ? "SKU" : "SKUs"}`).getAttribute("role")).toBe("status");
       cleanup();
     }
   });

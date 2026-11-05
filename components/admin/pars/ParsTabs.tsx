@@ -11,7 +11,7 @@ export function ParsTabs({ tab, locationId, children }: { tab: "vendor" | "prep"
   return <div className="min-w-0 space-y-4">
     <div role="tablist" aria-label={t("admin.pars.title")} className="grid grid-cols-2 gap-2">
       {(["vendor", "prep"] as const).map((value, index) => <button key={value} type="button" role="tab"
-        id={`pars-tab-${value}`} aria-selected={tab === value} aria-controls={`pars-panel-${value}`}
+        id={`pars-tab-${value}`} aria-selected={tab === value} aria-controls={tab === value ? `pars-panel-${value}` : undefined}
         tabIndex={tab === value ? 0 : -1}
         className={`min-h-[44px] min-w-0 rounded-lg border-2 px-3 font-bold ${tab === value ? "border-co-gold-deep bg-co-surface-2" : "border-co-border bg-co-surface"}`}
         onClick={() => select(value)} onKeyDown={(event) => {
