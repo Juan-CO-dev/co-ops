@@ -120,6 +120,7 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
                 className="co-card co-card-interactive p-4 text-base font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
               >
                 {serverT(lang, s.i18nKey)}
+                {s.id === "sandwiches" && <span className="mt-1 block text-sm font-normal text-co-text-muted">{serverT(lang, "admin.sandwiches.subtitle")}</span>}
                 {(counts[s.id] ?? 0) > 0 ? (
                   <AlertPill tone="danger" uppercase={false} className="ml-2">
                     {serverT(lang, "readiness.hub.count", { count: counts[s.id]! })}

@@ -356,7 +356,7 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/admin/catering/fulfillment/page.tsx": "/admin/catering/fulfillment",
   "app/(authed)/catering/quotes/page.tsx": "/catering/quotes",
   "app/(authed)/catering/pipeline/page.tsx": "/catering/pipeline", // B8 #3 — add-lead default shop
-  "app/admin/menu-costing/page.tsx": "/admin/menu-costing", // catalog Phase 2a — the costing board's shop switcher
+  "app/admin/sandwiches/page.tsx": "/admin/sandwiches", // catalog Phase 2a — the costing board's shop switcher
   "app/admin/pars/page.tsx": "/admin/pars",
   // catalog Phase 2b — the item page's shop switcher (a prefix route: /admin/catalog/sku/[id]).
   "app/admin/catalog/sku/[id]/page.tsx": "/admin/catalog/sku/7d0c1f2e-0000-4000-8000-000000000001",
@@ -477,7 +477,7 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/admin/pm-criteria/page.tsx": /await resolveShop\(locations, shopParamFor\("\/admin\/pm-criteria", /,
   "app/ordering/page.tsx": /location \?\? \(await resolveShopId\(accessible\.map/,
   // Catalog Phase 2a: "global" is the explicit All-shops view; otherwise the one resolver over the readable shops.
-  "app/admin/menu-costing/page.tsx": /explicit === "global" \? null : await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit \?\? null\)/,
+  "app/admin/sandwiches/page.tsx": /await resolveShopId\(shops\.map\(shop => shop\.id\), explicit === "global" \? undefined : explicit\)/,
   // Catalog Phase 3a: an explicit shop goes through the one resolver; absent / "global" is the default (not remembered).
   "app/admin/recipes/page.tsx": /explicit && explicit !== "global" && shops\.some\(\(s\) => s\.id === explicit\)\s*\? await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit\) : null/,
   "app/admin/items/page.tsx": /explicit && explicit !== "global" && shops\.some\(\(s\) => s\.id === explicit\)\s*\? await resolveShopId\(shops\.map\(\(s\) => s\.id\), explicit\) : null/,

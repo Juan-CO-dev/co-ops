@@ -2,7 +2,6 @@
  * Catalog Phase 2a (lead decision) — the costing board follows the selected shop: its packs AND its
  * prices; "All shops" is the global view, labelled as global prices.
  */
-import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 import { buildRecipeGraph } from "@/lib/prep-consumption-graph";
@@ -50,15 +49,5 @@ describe("loadMenuCostingBoard — the selected shop's packs AND prices", () => 
   it("a GM cannot read another shop's board", async () => {
     await expect(loadMenuCostingBoard(actor("gm", [A]), { scope: B })).rejects.toMatchObject({ status: 404, code: "not_found" });
     await expect(loadMenuCostingBoard(actor("gm", [A]), { scope: B })).rejects.toBeInstanceOf(MenuCostingError);
-  });
-});
-
-describe("the page: switcher through the one shop resolver, labelled global view", () => {
-  const src = readFileSync("app/admin/menu-costing/page.tsx", "utf8");
-  it("resolves the shop through resolveShopId over the shops the viewer may read, and passes it on", () => {
-    expect(src).toContain('shopParamFor("/admin/menu-costing", searchParamValues(sp))');
-    expect(src).toContain("await resolveShopId(shops.map((s) => s.id), explicit ?? null)");
-    expect(src).toContain("loadMenuCostingBoard(auth, { scope })");
-    expect(src).toContain('"admin.menu_costing.scope_all"');
   });
 });

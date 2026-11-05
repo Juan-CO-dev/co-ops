@@ -184,7 +184,7 @@ describe("the costing drawer opens the menu item page", () => {
     expect(board(null, "es")).toContain(es["catalog.menu.open_page"]);
   });
   it("the page passes its scope", () => {
-    expect(readFileSync("app/admin/menu-costing/page.tsx", "utf8")).toContain("scope={scope}");
+    expect(readFileSync("app/admin/sandwiches/page.tsx", "utf8")).toContain("scope={scope}");
   });
 });
 

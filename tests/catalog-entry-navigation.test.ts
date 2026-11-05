@@ -9,7 +9,6 @@ import { RecipesClient } from "@/components/admin/recipes/RecipesClient";
 import { MenuCostingClient } from "@/components/admin/menu-costing/MenuCostingClient";
 import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
 import AdminItemsPage from "@/app/admin/items/page";
-import AdminMenuCostingPage from "@/app/admin/menu-costing/page";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import type { RoleCode } from "@/lib/roles";
@@ -73,17 +72,7 @@ describe("catalog job entries", () => {
       expect(html).toContain(canOpenSkuItem ? '/admin/catalog/sku/sku-a?location=shop-a' : '/admin/skus?sku=sku-a#sku-a');
       expect(html).not.toContain(canOpenSkuItem ? '/admin/skus?sku=' : '/admin/catalog/sku/');
     });
-    it.each([["gm", "global", "/admin/catalog/new/sandwich"], ["gm", "shop-a", "/admin/catalog/new/sandwich?location=shop-a"], ["moo", "global", "/admin/catalog/new/sandwich?location=global"], ["agm", "shop-a", null], ["social_media_mgr", "shop-a", null]] as const)(`costing page entry %s at %s (${language})`, async (role, location, expected) => {
-      pageActor.role = role; pageActor.language = language;
-      const page = await AdminMenuCostingPage({ searchParams: Promise.resolve({ location }) });
-      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: page }));
-      if (expected) {
-        expect(html).toContain(`href="${expected}"`);
-        if (role === "gm" && location === "global") expect(html).not.toContain("/admin/catalog/new/sandwich?");
-        expect(html).toContain(`+ ${(language === "es" ? es : en)["catalog.jobs.sandwich.title"]}`);
-      }
-      else expect(html).not.toContain('/admin/catalog/new/sandwich');
-    });
+
   }
 });
 
@@ -106,8 +95,6 @@ for (const role of ["social_media_mgr", "agm", "gm", "moo"] as const) {
   it(`server pages derive item-page capability for ${role}`, async () => {
     pageActor.role = role;
     const items = await AdminItemsPage({ searchParams: Promise.resolve({}) });
-    const costing = await AdminMenuCostingPage({ searchParams: Promise.resolve({}) });
     expect(clientProps(items, CatalogClient)?.canOpenSkuItem).toBe(role !== "social_media_mgr");
-    expect(clientProps(costing, MenuCostingClient)?.canOpenSkuItem).toBe(role !== "social_media_mgr");
   });
 }

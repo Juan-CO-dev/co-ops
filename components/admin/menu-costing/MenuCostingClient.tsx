@@ -238,7 +238,7 @@ export function MenuCostingClient({
                     {row.canEditPrice ? <MenuPriceEditor key={`${row.id}:${row.typedPrice}`} row={row} /> :
                       <p className="mb-2 text-xs text-co-text-muted">{t("admin.menu_costing.price.label")}: {row.includedInSubPrice ? t("admin.menu_costing.price.included") : money(row.menuPrice)}</p>}
                     <a href={menuItemPageHref(row.id, { shopId: scope })} className={drawerLinkCls}>{t("catalog.menu.open_page")}</a>
-                    <RowDrawer
+                    <MenuCostDrawer
                       canOpenSkuItem={canOpenSkuItem}
                       scope={scope}
                       row={row}
@@ -338,7 +338,7 @@ function RowBadges({
   return <>{badges}</>;
 }
 
-function RowDrawer({
+export function MenuCostDrawer({
   canOpenSkuItem,
   scope,
   row,
