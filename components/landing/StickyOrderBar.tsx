@@ -1,9 +1,10 @@
 "use client";
 import {useEffect,useRef,useState} from 'react';
 import {blocksPill,createPillPolicy,STATIC_ORDER_CONTROL_SELECTOR,subscribeOrderControls,USABLE_RATIO,usableRatio} from '@/lib/landing/sticky-order-shared';
-import {OrderSheet,type SheetShop} from './OrderSheet';
+import {OrderSheet,type SheetShop,type DeliveryChoice} from './OrderSheet';
 interface Props {
   shops: SheetShop[];
+  delivery: DeliveryChoice;
   labels: {order:string;title:string;close:string};
 }
 /** v4.2: one slim "Order" pill (bottom corner) that opens the shop chooser — both shops with
@@ -11,7 +12,7 @@ interface Props {
  * It shows only when no other order control is usable on screen (each control observed on its
  * own, never its card) and the consent notice is not showing. Short / landscape viewports keep a
  * compact pill. Observers, attribute changes and registrations only; nothing is read on scroll. */
-export function StickyOrderBar({shops,labels}:Props) {
+export function StickyOrderBar({shops,labels,delivery}:Props) {
   const ref=useRef<HTMLDivElement>(null);
   const [visible,setVisible]=useState(false);
   const sheetOpen=useRef(false);
@@ -66,7 +67,7 @@ export function StickyOrderBar({shops,labels}:Props) {
   },[shops.length]);
   // Only the pill itself hides (CSS visibility): its sheet is a sibling and never inherits it.
   return <div ref={ref} data-sticky-order data-visible={visible} className="landing-v2-sticky">
-    <OrderSheet eager shops={shops} placement="sticky" triggerLabel={labels.order} title={labels.title} closeLabel={labels.close} className="landing-v42-pill"
+    <OrderSheet delivery={delivery} eager shops={shops} placement="sticky" triggerLabel={labels.order} title={labels.title} closeLabel={labels.close} className="landing-v42-pill"
       onOpen={()=>{sheetOpen.current=true;recompute.current();}}/>
   </div>;
 }

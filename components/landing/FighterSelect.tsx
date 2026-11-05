@@ -1,14 +1,14 @@
 "use client";
 import {useEffect,useRef,useState} from 'react';
 import {LineupPhoto} from './LineupPhoto';
-import {OrderSheet} from './OrderSheet';
+import {OrderSheet,type DeliveryChoice} from './OrderSheet';
 import {SpinCanvas} from './SpinCanvas';
 import {nextFighter,AUTO_ADVANCE_MS} from '@/lib/landing/fighter-select-shared';
 import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
 import {isAllowed,LANDING_ITEMS} from '@/lib/landing/tracking-schema-shared';
 
 export interface Fighter {id:string;name:string;image:string;smallImage:string;width:number;height:number;focusY:number;ingredients:string;photoAlt:string}
-export interface FighterShop {key:string;name:string;address?:string;orderUrl:string;orderLabel:string;detail:string}
+export interface FighterShop {key:string;name:string;address?:string;pickupUrl:string;orderLabel:string;detail:string}
 interface Sprite {src:string;width:number;height:number}
 export interface FighterLabels {order:string;sheetTitle:string;close:string;auto:string;p1:string;spin:string;spinValue:string;browse:string}
 
@@ -18,7 +18,7 @@ const fill=(template:string,values:Record<string,string|number>)=>template.repla
  * control; any touch or focus inside the screen stops it, one loop at most); tapping a card
  * selects it; one CTA (above the ingredients, so name + spin + CTA share a phone screen) opens the shop sheet. The drawn spin is only ever the Crunchy Boi's
  * stage object and is never morphed into or out of a real photo. */
-export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:readonly Fighter[];shops:readonly FighterShop[];spin:{frames:readonly string[];width:number;height:number};sprites:{idle:Sprite;jump:Sprite;selected:Sprite};labels:FighterLabels}) {
+export function FighterSelect({fighters,shops,delivery,spin,sprites,labels}:{delivery:DeliveryChoice;fighters:readonly Fighter[];shops:readonly FighterShop[];spin:{frames:readonly string[];width:number;height:number};sprites:{idle:Sprite;jump:Sprite;selected:Sprite};labels:FighterLabels}) {
   const root=useRef<HTMLDivElement>(null),strip=useRef<HTMLUListElement>(null);
   const autoButton=useRef<HTMLButtonElement>(null);
   const [selected,setSelected]=useState(0);
@@ -75,7 +75,7 @@ export function FighterSelect({fighters,shops,spin,sprites,labels}:{fighters:rea
       <div className="landing-v3-plate">
         <span aria-hidden="true" className="landing-v3-p1">{labels.p1}</span>
         <h3>{fighter.name}</h3>
-        <OrderSheet shops={shops.map(shop=>({key:shop.key,orderUrl:shop.orderUrl,label:shop.orderLabel,detail:shop.detail}))} placement="lineup" item={isAllowed(LANDING_ITEMS,fighter.id)?fighter.id:undefined}
+        <OrderSheet delivery={delivery} shops={shops.map(shop=>({key:shop.key,pickupUrl:shop.pickupUrl,label:shop.orderLabel,detail:shop.detail}))} placement="lineup" item={isAllowed(LANDING_ITEMS,fighter.id)?fighter.id:undefined}
           triggerLabel={fill(labels.order,{name:fighter.name})} title={fill(labels.sheetTitle,{name:fighter.name})} closeLabel={labels.close} onOpen={()=>setAuto(false)}
           spin={fighter.id==='crunchy-boi'?{...spin,alt:fighter.photoAlt}:undefined}/>
         <p data-stage-ingredients>{fighter.ingredients}</p>

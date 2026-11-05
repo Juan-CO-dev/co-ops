@@ -8,6 +8,12 @@ import { projectLandingStores } from '@/lib/landing/stores';
 const {dispatch} = vi.hoisted(() => ({dispatch:vi.fn()}));
 vi.mock('@/components/landing/TrackingProvider', () => ({useLandingTracking:()=>({dispatch})}));
 vi.mock('react',async importOriginal=>({...await importOriginal<typeof import('react')>(),useState:(initial:unknown)=>[typeof initial==='function'?initial():initial,vi.fn()],useEffect:()=>{}}));
+it('marks food and catering order controls, but excludes directions from sticky and order CSS selectors',()=>{
+  for (const event of ['OrderClick','CateringClick','FindLocation'] as const) {
+    const link=OrderLink({href:'https://example.test/',children:'Action',placement:'shops',event});
+    expect(link.props['data-landing-placement']).toBe(event==='FindLocation'?undefined:'shops');
+  }
+});
 it('DoorDash invokes the tracked footer link while Uber Eats is scoped to Dupont', () => {
   const config = {...loadLandingConfig(), footerLinks:[{key:'uber-eats' as const,url:'https://example.test/uber'},{key:'doordash' as const,url:'https://example.test/dash'}]};
   const links: ReturnType<typeof OrderLink>[] = [];
@@ -18,15 +24,16 @@ it('DoorDash invokes the tracked footer link while Uber Eats is scoped to Dupont
     else walk(node.props.children);
   }
   walk(Footer({config,stores:[],language:'en'}));
-  expect(links).toHaveLength(1);
+  expect(links).toHaveLength(2);
   // A tapped link also gets the decorative P1 hop (a data attribute on the element itself).
   const tap=()=>({currentTarget:{dataset:{},offsetWidth:0}});
   for (const link of links) link.props.onClick(tap());
   expect(dispatch.mock.calls).toEqual([
+    ['OrderClick',{store:undefined,placement:'footer',vendor:undefined,mode:'delivery'}],
     ['OrderClick',{store:undefined,placement:'footer',vendor:'doordash'}],
   ]);
   const stores=projectLandingStores([{code:'MEP',name:'',address:null,phone:null},{code:'EM',name:'',address:null,phone:null}],config);
-  walk(NearbyShop({stores,language:'en',labels:{nearest:'Nearest',locating:'Locating',unavailable:'Unavailable',straightLine:'Straight line',distance:'{distance} miles',offer:'Offer',call:{},order:{},uberEats:'Uber Eats (Dupont)'}}));
+  walk(NearbyShop({delivery:{href:config.deliveryUrl,label:"Delivery"},stores,language:'en',labels:{nearest:'Nearest',locating:'Locating',unavailable:'Unavailable',straightLine:'Straight line',distance:'{distance} miles',offer:'Offer',call:{},order:{},uberEats:'Uber Eats (Dupont)'}}));
   const uber=links.filter(link=>link.props.href==='https://example.test/uber');
   expect(uber).toHaveLength(1);
   uber[0]!.props.onClick(tap());

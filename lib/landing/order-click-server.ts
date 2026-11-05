@@ -5,7 +5,7 @@ import { boundedJson, emptyResponse, guardLandingRequest, type LandingServerEnv 
 import { landingRateLimit } from "./rate-limit";
 
 async function incrementOrderClick(click: OrderClick): Promise<void> {
-  const { error } = await getServiceRoleClient().rpc("increment_landing_order_click", { p_store_key: click.store, p_ad_code: click.ad }).abortSignal(AbortSignal.timeout(2000));
+  const { error } = await getServiceRoleClient().rpc("increment_landing_order_click", { p_store_key: click.store ?? "any", p_ad_code: click.ad, p_intent: click.intent }).abortSignal(AbortSignal.timeout(2000));
   if (error) throw new Error("counter_unavailable");
 }
 interface Dependencies { env?: LandingServerEnv; increment?: (click: OrderClick) => Promise<void> }

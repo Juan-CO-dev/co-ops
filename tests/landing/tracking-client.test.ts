@@ -9,11 +9,11 @@ describe('landing dispatch', () => {
     return {tracker,pixel,post,loadPixel,revokePixel};
   }
   it('denies all sends without consent or server approval', () => {
-    for (const approved of [true,false]) { const f=fixture({serverApproved:approved}); if (!approved) f.tracker.setConsent(true); f.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'}); expect(f.post).not.toHaveBeenCalled(); expect(f.pixel).not.toHaveBeenCalled(); }
+    for (const approved of [true,false]) { const f=fixture({serverApproved:approved}); if (!approved) f.tracker.setConsent(true); f.tracker.dispatch('OrderClick',{mode:'pickup',store:'dupont',placement:'hero'}); expect(f.post).not.toHaveBeenCalled(); expect(f.pixel).not.toHaveBeenCalled(); }
   });
   it.each(['OrderClick','CateringClick'] as const)('sends %s immediately during resolution, server only, exactly once',name=>{
     const f=fixture();f.tracker.beginResolution();
-    const details=vi.fn(()=>({store:'dupont',placement:'hero',ad:'unresolved',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'}));
+    const details=vi.fn(()=>({mode:name==='OrderClick'?'pickup' as const:undefined,store:'dupont',placement:'hero',ad:'unresolved',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'}));
     f.tracker.dispatch(name,details,{id:'original',time:123000});
     expect(details).toHaveBeenCalledWith(true);
     expect(f.loadPixel).not.toHaveBeenCalled();expect(f.pixel).not.toHaveBeenCalled();
@@ -23,7 +23,7 @@ describe('landing dispatch', () => {
     expect(f.post).toHaveBeenCalledTimes(name==='OrderClick'?2:1);
     f.tracker.setAcceptedAd('new-campaign');f.tracker.setConsent(true);f.tracker.flushPending('new-campaign');f.tracker.flushPending('new-campaign');
     expect(f.pixel).not.toHaveBeenCalled();expect(f.post).toHaveBeenCalledTimes(name==='OrderClick'?2:1);
-    if(name==='OrderClick')expect(f.post.mock.calls[0]).toEqual(['/api/landing/order-click',{store:'dupont',ad:'unattributed'},{unload:true}]);
+    if(name==='OrderClick')expect(f.post.mock.calls[0]).toEqual(['/api/landing/order-click',{store:'dupont',ad:'unattributed',intent:'pickup'},{unload:true}]);
   });
   it('flushes a buffered Lead with fresh details and its original ID/time exactly once',()=>{
     const f=fixture();const current: {fbc?:string;fbp?:string}={};
@@ -37,9 +37,9 @@ describe('landing dispatch', () => {
     expect(f.pixel.mock.calls[0]?.[3]).toBe('id-1');
   });
   it('keeps resolution sends gated by server approval and CAPI flag',()=>{
-    const denied=fixture({serverApproved:false});denied.tracker.beginResolution();denied.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'});expect(denied.post).not.toHaveBeenCalled();
-    const counter=fixture({capiEnabled:false});counter.tracker.beginResolution();counter.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'});
-    expect(counter.post).toHaveBeenCalledExactlyOnceWith('/api/landing/order-click',{store:'dupont',ad:'unattributed'},{unload:true});
+    const denied=fixture({serverApproved:false});denied.tracker.beginResolution();denied.tracker.dispatch('OrderClick',{mode:'pickup',store:'dupont',placement:'hero'});expect(denied.post).not.toHaveBeenCalled();
+    const counter=fixture({capiEnabled:false});counter.tracker.beginResolution();counter.tracker.dispatch('OrderClick',{mode:'pickup',store:'dupont',placement:'hero'});
+    expect(counter.post).toHaveBeenCalledExactlyOnceWith('/api/landing/order-click',{store:'dupont',ad:'unattributed',intent:'pickup'},{unload:true});
   });
   it.each(['withdrawal','generation'])('drops the prior buffer on %s',reason=>{
     const f=fixture();f.tracker.beginResolution();f.tracker.dispatch('Lead',{placement:'hero'});f.tracker.sectionView('hero');
@@ -59,26 +59,26 @@ describe('landing dispatch', () => {
   });
   it('shares action IDs, uses custom semantics and one independent counter without retries', () => {
     const f=fixture(); f.tracker.setConsent(true);
-    f.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero',ad:'subsim-photo'});
-    f.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero'});
+    f.tracker.dispatch('OrderClick',{mode:'pickup',store:'dupont',placement:'hero',ad:'subsim-photo'});
+    f.tracker.dispatch('OrderClick',{mode:'pickup',store:'dupont',placement:'hero'});
     expect(f.pixel.mock.calls[0]?.slice(0,2)).toEqual(['trackCustom','OrderClick']);
     expect(f.pixel.mock.calls[0]?.[3]).toBe('id-1'); expect(f.post.mock.calls[0]?.[1].event_id).toBe('id-1');
     expect(f.post.mock.calls.filter(c=>c[0].endsWith('order-click'))).toHaveLength(2);
-    expect(f.post.mock.calls[1]?.[1]).toEqual({store:'dupont',ad:'subsim-photo'});
+    expect(f.post.mock.calls[1]?.[1]).toEqual({store:'dupont',ad:'subsim-photo',intent:'pickup'});
     expect(f.pixel.mock.calls[1]?.[3]).toBe('id-2');
   });
   it('counter works with Meta absent and excludes vendors', () => {
     const f=fixture({pixelId:undefined,capiEnabled:false}); f.tracker.setConsent(true);
-    f.tracker.dispatch('OrderClick',{store:'dupont',placement:'hero',ad:'unknown'});
+    f.tracker.dispatch('OrderClick',{mode:'pickup',store:'dupont',placement:'hero',ad:'unknown'});
     f.tracker.dispatch('OrderClick',{store:'dupont',placement:'footer',vendor:'ubereats'});
-    expect(f.post).toHaveBeenCalledExactlyOnceWith('/api/landing/order-click',{store:'dupont',ad:'unattributed'});
+    expect(f.post).toHaveBeenCalledExactlyOnceWith('/api/landing/order-click',{store:'dupont',ad:'unattributed',intent:'pickup'});
     expect(f.loadPixel).not.toHaveBeenCalled(); expect(f.pixel).not.toHaveBeenCalled();
   });
   it('standard Lead and custom CateringClick; never arbitrary metadata', () => {
     const f=fixture(); f.tracker.setConsent(true);
     f.tracker.dispatch('Lead',{placement:'hero'}); f.tracker.dispatch('CateringClick',{placement:'hero'});
     expect(f.pixel.mock.calls.map(c=>c.slice(0,2))).toEqual([['track','Lead'],['trackCustom','CateringClick']]);
-    f.tracker.dispatch('OrderClick',{store:'unknown',placement:'hero'}); expect(f.pixel).toHaveBeenCalledTimes(2);
+    f.tracker.dispatch('OrderClick',{mode:'pickup',store:'unknown',placement:'hero'}); expect(f.pixel).toHaveBeenCalledTimes(2);
   });
   it('CAPI can operate without a browser Pixel ID', () => {
     const f=fixture({pixelId:undefined});f.tracker.setConsent(true);
@@ -91,10 +91,10 @@ describe('landing dispatch', () => {
 it.each(['sticky','shops','footer'])('keeps %s consent-gated with one dispatch per action',placement=>{
   const pixel=vi.fn(),post=vi.fn();
   const tracker=createLandingTracker({serverApproved:true,pixelId:'123',capiEnabled:true,sourceUrl:'https://eat.example/',allowedStores:['dupont'],allowedAds:[],allowedPlacements:[placement]}, {pixel,post,loadPixel:vi.fn(),revokePixel:vi.fn(),uuid:()=> 'action-id',now:()=>123000});
-  tracker.dispatch('OrderClick',{placement,store:'dupont'});expect(post).not.toHaveBeenCalled();
-  tracker.setConsent(true);tracker.dispatch('OrderClick',{placement,store:'dupont'});
+  tracker.dispatch('OrderClick',{mode:'pickup',placement,store:'dupont'});expect(post).not.toHaveBeenCalled();
+  tracker.setConsent(true);tracker.dispatch('OrderClick',{mode:'pickup',placement,store:'dupont'});
   expect(pixel).toHaveBeenCalledOnce();expect(post).toHaveBeenCalledTimes(2);
-  tracker.setConsent(false);tracker.dispatch('OrderClick',{placement,store:'dupont'});expect(post).toHaveBeenCalledTimes(2);
+  tracker.setConsent(false);tracker.dispatch('OrderClick',{mode:'pickup',placement,store:'dupont'});expect(post).toHaveBeenCalledTimes(2);
 });
 
 describe('browser transport unload delivery', () => {

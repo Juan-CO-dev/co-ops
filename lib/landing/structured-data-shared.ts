@@ -1,6 +1,6 @@
 import type { LandingStoreConfig } from '@/config/tenant/landing';
 
-type PublicShopFacts = Pick<LandingStoreConfig, 'key' | 'name' | 'structuredAddress' | 'coordinates' | 'phone' | 'openingHours' | 'orderUrl'>;
+type PublicShopFacts = Pick<LandingStoreConfig, 'key' | 'name' | 'structuredAddress' | 'coordinates' | 'phone' | 'openingHours' | 'pickupUrl'>;
 
 export function structuredDataImage(inventory: readonly { id: string; path: string }[]): string | undefined {
   return inventory.find(asset => asset.id === 'v2-p013-1280')?.path;

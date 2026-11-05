@@ -17,10 +17,10 @@ describe('opt-in shop distances', () => {
     expect(distanceKm({latitude:38,longitude:-77},{latitude:38,longitude:-77})).toBe(0);
   });
   it('sorts known distances while retaining every shop and its link', () => {
-    const stores = [{key:'far',coordinates:{latitude:0,longitude:2},orderUrl:'https://example.test/far'}, {key:'unknown',coordinates:null,orderUrl:'https://example.test/unknown'}, {key:'near',coordinates:{latitude:0,longitude:1},orderUrl:'https://example.test/near'}];
+    const stores = [{key:'far',coordinates:{latitude:0,longitude:2},pickupUrl:'https://example.test/far'}, {key:'unknown',coordinates:null,pickupUrl:'https://example.test/unknown'}, {key:'near',coordinates:{latitude:0,longitude:1},pickupUrl:'https://example.test/near'}];
     expect(nearestStores(stores,{latitude:0,longitude:0}).map(s=>s.key)).toEqual(['near','far','unknown']);
     expect(stores.map(s=>s.key)).toEqual(['far','unknown','near']);
-    expect(nearestStores(stores,{latitude:0,longitude:0})[0]?.orderUrl).toBe(stores[2]?.orderUrl);
+    expect(nearestStores(stores,{latitude:0,longitude:0})[0]?.pickupUrl).toBe(stores[2]?.pickupUrl);
   });
   it('retains source order when user coordinates are invalid', () => {
     const stores=[{key:'a',coordinates:null},{key:'b',coordinates:{latitude:0,longitude:1}}];

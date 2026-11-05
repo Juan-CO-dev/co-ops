@@ -25,7 +25,7 @@ it('accepts every rendered CTA placement on both client and server', () => {
   for (const placement of placements) {
     const post = vi.fn(), pixel = vi.fn();
     const tracker = createLandingTracker({serverApproved:true,pixelId:'123456789',capiEnabled:true,sourceUrl:'https://eat.example/',allowedStores:['dupont'],allowedAds:[],allowedPlacements}, {post,pixel,loadPixel:vi.fn(),revokePixel:vi.fn(),uuid:()=> '12345678-1234-4123-8123-123456789abc',now:()=>123000});
-    tracker.setConsent(true); tracker.dispatch('OrderClick',{store:'dupont',placement});
+    tracker.setConsent(true); tracker.dispatch('OrderClick',{store:'dupont',placement,mode:'pickup',...(['lineup','crave','guide'].includes(placement)?{item:'frex'}:{})});
     expect(pixel, placement).toHaveBeenCalledOnce();
     expect(post, placement).toHaveBeenCalledTimes(2);
     expect(parseLandingEvent(post.mock.calls[0]?.[1], 'https://eat.example', 123000),placement).not.toBeNull();

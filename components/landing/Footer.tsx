@@ -14,7 +14,7 @@ export function Footer({config,stores,language}:{config:LandingConfig;stores:rea
   const delivery=(key:LandingFooterKey)=>!!DELIVERY_VENDORS[key];
   const links=config.footerLinks.filter(link=>link.key !== 'uber-eats').sort((a,b)=>Number(delivery(a.key))-Number(delivery(b.key)));
   return <footer className="mt-6">
-    <div className="landing-v2-orders">{stores.map(store=><OrderLink key={store.key} href={store.orderUrl} store={store.key} placement="footer" className="landing-v2-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}</div>
+    <div className="landing-v2-orders">{stores.map(store=><OrderLink key={store.key} href={store.pickupUrl} store={store.key} mode="pickup" placement="footer" className="landing-v2-order">{serverT(language,"landing.order",{shop:store.orderLabel})}</OrderLink>)}<OrderLink href={config.deliveryUrl} mode="delivery" placement="footer" className="landing-v2-order">{serverT(language,"landing.delivery")}</OrderLink></div>
     <div className="flex flex-wrap gap-x-10 gap-y-4">{stores.filter(store=>store.address).map(store=><address key={store.key} className="not-italic"><span className="font-bold">{store.name}</span><br/>{store.address}</address>)}</div>
     {/* The consent choice is changed or withdrawn here once answered (no bar stays on screen). */}
     <div className="mt-4 flex flex-wrap items-center gap-x-6"><a href={`/privacy?lang=${language}`} className="inline-flex min-h-11 items-center underline">{serverT(language,'landing.privacy.link')}</a><PrivacySettingsButton label={serverT(language,'landing.consent.settings')}/></div>

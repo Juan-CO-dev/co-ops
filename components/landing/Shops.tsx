@@ -1,3 +1,4 @@
+import { landingTenantConfig } from '@/config/tenant/landing';
 import type { LandingStore } from '@/lib/landing/stores';
 import type { Language } from '@/lib/i18n/types';
 import { NearbyShop } from './NearbyShop';
@@ -22,5 +23,5 @@ export function Shops({stores,language,ad,now,details}:{stores:readonly LandingS
     hours:Object.fromEntries(stores.map(store=>[store.key,scheduleLine(store,language)])),
     today:Object.fromEntries(stores.map(store=>{const until=lines[store.key]?.until;return [store.key,until?serverT(language,'landing.shops.today',{until}):undefined];}))};
   const map={...landingMap,labels:{map:serverT(language,'landing.shops.map'),you:serverT(language,'landing.shops.you'),attribution:serverT(language,'landing.shops.map-attribution'),attributionHref:'https://www.openstreetmap.org/copyright',offMap:serverT(language,'landing.shops.off-map')}};
-  return <NearbyShop stores={stores} language={language} labels={{...labels,uberEats:serverT(language,'landing.footer.uber-eats')}} ad={ad} map={map}/>;
+  return <NearbyShop delivery={{href:landingTenantConfig.deliveryUrl,label:serverT(language,"landing.delivery")}} stores={stores} language={language} labels={{...labels,uberEats:serverT(language,'landing.footer.uber-eats')}} ad={ad} map={map}/>;
 }

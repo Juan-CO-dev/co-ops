@@ -305,11 +305,12 @@
 /* Fighter card: name, then the order action, then the full ingredients. */
 .landing-v2 .landing-v3-plate .landing-v3-direct-orders { margin-top: 12px; }
 .landing-v2 .landing-v3-plate [data-stage-ingredients] { margin-top: 14px; }
-/* Short phones (iPhone SE class): the hero keeps the photo at ≥40% of the screen with the v4
-   street lines and the find-your-shop link by tightening the headline and copy padding only. */
+/* Short phones (iPhone SE class): reclaim vertical spacing for the pickup/delivery row,
+   including Spanish street lines. Controls retain their minimum tap-target heights. */
 @media (max-width: 767px) and (max-height: 700px) {
-  .landing-v2 .landing-v2-hero-copy { padding: 4px 22px; gap: 2px; }
+  .landing-v2 .landing-v2-hero-copy { padding: 0 22px; gap: 0; }
   .landing-v2 .landing-v2-hero-copy h1 { font-size: 3.5rem; }
+  .landing-v2 .landing-v2-hero-copy .landing-v2-order { padding-block: 0; }
 }
 /* v4.1: Field Guide words are tap targets while the find game runs (same look as the chip). */
 .landing-v2 .landing-v3-guide[data-guide-mode="motion"] .landing-v3-guide-words li { padding: 0; }

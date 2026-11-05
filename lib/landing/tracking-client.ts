@@ -1,8 +1,8 @@
 import { UNATTRIBUTED, validAdCandidate } from './ad-codes-shared';
 import { ATTRIBUTION_KEY } from './attribution-shared';
-import { validItemEvent, validVendorPlacement } from './tracking-schema-shared';
-export type LandingAction = 'OrderClick' | 'CateringClick' | 'Lead';
-export interface ActionDetails { store?: string; ad?: string; placement: string; vendor?: string; item?: string; fbc?: string; fbp?: string }
+import { validActionDetails } from './tracking-schema-shared';
+export type LandingAction = 'OrderClick' | 'CateringClick' | 'Lead' | 'FindLocation';
+export interface ActionDetails { mode?: "pickup" | "delivery"; store?: string; ad?: string; placement: string; vendor?: string; item?: string; fbc?: string; fbp?: string }
 export type DetailsFactory = (cookiesOnly: boolean) => ActionDetails;
 export interface TrackerConfig { serverApproved: boolean; pixelId?: string; capiEnabled?: boolean; sourceUrl: string; allowedStores: readonly string[]; allowedAds: readonly string[]; allowedPlacements: readonly string[] }
 export interface TrackingTransport {
@@ -51,25 +51,31 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       sections.add(section); safe(() => transport.pixel('track','ViewContent',{content_name:section},eventId ?? transport.uuid()));
     },
     dispatch(name: LandingAction, intent: ActionDetails | DetailsFactory, event?: { id: string; time: number }): void {
-      const navigating = resolving && config.serverApproved && (name === 'OrderClick' || name === 'CateringClick');
+      const navigating = resolving && config.serverApproved && (name === 'OrderClick' || name === 'CateringClick' || name === 'FindLocation');
       if (resolving && !navigating && config.serverApproved && buffered.length < 10) {
         const original = event ?? { id: transport.uuid(), time: transport.now() };
         const resolveDetails = typeof intent === 'function' ? intent : () => ({ ...intent });
         buffered.push(ad => tracker.dispatch(name, { ...resolveDetails(false), ad }, original)); return;
       }
       const details = typeof intent === 'function' ? intent(navigating) : intent;
-      if ((!consent && !navigating) || !['OrderClick','CateringClick','Lead'].includes(name) || !config.allowedPlacements.includes(details.placement)) return;
+      if ((!consent && !navigating) || !['OrderClick','CateringClick','Lead','FindLocation'].includes(name) || !config.allowedPlacements.includes(details.placement)) return;
       if (details.store && !config.allowedStores.includes(details.store)) return;
-      if (name === 'OrderClick' && !details.store && !details.vendor) return;
+      if (!validActionDetails(name, details)) return;
       const ad = !navigating && details.ad && config.allowedAds.includes(details.ad) ? details.ad : 'unattributed';
       const params: Record<string,string> = {ad,placement:details.placement};
       if (details.store) params.store = details.store;
-      if (details.vendor) { if (name !== 'OrderClick' || !validVendorPlacement(details.vendor,details.placement,details.store)) return; params.vendor = details.vendor; }
-      // Which sub (bounded roster id) rides to Meta only; our own counter stays {store, ad}.
-      if (details.item !== undefined) { if (!validItemEvent(details.item,name,details.store,details.vendor,details.placement)) return; params.item = details.item; }
+      if (details.vendor) params.vendor = details.vendor;
+      if (details.mode) params.mode = details.mode;
+      // Item context goes to Meta only; the aggregate counter retains no item data.
+      if (details.item) params.item = details.item;
       const id = event?.id ?? transport.uuid();
-      if (!navigating && hasPixel) safe(() => transport.pixel(name === 'Lead' ? 'track' : 'trackCustom',name,params,id));
-      const countClick = () => { if (name === 'OrderClick' && details.store && !details.vendor) safe(() => navigating ? transport.post('/api/landing/order-click',{store:details.store,ad},{unload:true}) : transport.post('/api/landing/order-click',{store:details.store,ad})); };
+      if (!navigating && hasPixel) safe(() => transport.pixel(name === 'Lead' || name === 'FindLocation' ? 'track' : 'trackCustom',name,params,id));
+      const countClick = () => {
+        if ((name === 'OrderClick' && !details.vendor) || name === 'FindLocation') {
+          const payload = { ...(details.store ? {store:details.store} : {}), ad, intent: name === 'FindLocation' ? 'visit' : details.mode };
+          safe(() => navigating ? transport.post('/api/landing/order-click',payload,{unload:true}) : transport.post('/api/landing/order-click',payload));
+        }
+      };
       // On a departing page our own order count is queued first, the Meta copy second.
       // (Linux WebKit has been seen delivering only one of the two; real browsers deliver both.)
       if (navigating) countClick();

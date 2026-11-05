@@ -1,3 +1,5 @@
+> 2026-11-05 correction: historical evidence below is preserved verbatim. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
+
 # Landing page, phase 1: spec (CC initial plan)
 
 **Owner:** CC (initial plan) · **Builder:** Astra writes the build plan and builds · **Review:** CO CC or Aggie per chunk; Juan approves section by section on his phone

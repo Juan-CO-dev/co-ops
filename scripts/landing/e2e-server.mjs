@@ -53,7 +53,7 @@ const locations = createServer(async (req, res) => {
     }
     let input;
     try { input = JSON.parse(body); } catch { res.writeHead(400); res.end(); return; }
-    if (!input || Object.keys(input).length !== 2 || !['capitol-hill','dupont'].includes(input.p_store_key) || !['subsim-photo','unattributed'].includes(input.p_ad_code)) {
+    if (!input || Object.keys(input).length !== 3 || !['pickup','delivery','visit'].includes(input.p_intent) || !(input.p_intent === 'delivery' ? input.p_store_key === 'any' : ['capitol-hill','dupont'].includes(input.p_store_key)) || !['subsim-photo','unattributed'].includes(input.p_ad_code)) {
       res.writeHead(400); res.end(); return;
     }
     if (input.p_store_key === 'capitol-hill' && input.p_ad_code === 'unattributed') capitolHillUnattributed++;
