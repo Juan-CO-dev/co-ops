@@ -28,7 +28,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.landing == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # Normal run ~29 min; a throttled Ubuntu apt mirror during `playwright install --with-deps`
+    # (seen 2026-11-04: 154 kB/s, 15-32 min) pushed PR #515 past the old 35-min cap twice.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
