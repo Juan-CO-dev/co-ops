@@ -1,5 +1,7 @@
 -- Migration 0292_landing_click_intent
 -- AUTHORED 2026-11-05. FILE ONLY, NOT APPLIED.
+-- APPLIED TO SIM 2026-11-05 (schema_migrations version 20261105192733, name '0292_landing_click_intent').
+-- APPLIED TO PROD 2026-11-05 (schema_migrations version 20261105194036, name '0292_landing_click_intent').
 -- Provenance: Juan's landing pickup/delivery/visit measurement ruling.
 -- ROLLOUT: SQL before app, after 0289. Named two-argument calls retain legacy
 -- behavior during deployment drain. DROP/CREATE avoids PGRST203 overloads.
