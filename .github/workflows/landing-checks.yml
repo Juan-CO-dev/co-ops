@@ -28,8 +28,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.landing == 'true'
     runs-on: ubuntu-latest
-    # Normal run ~29 min; a throttled Ubuntu apt mirror during `playwright install --with-deps`
-    # (seen 2026-11-04: 154 kB/s, 15-32 min) pushed PR #515 past the old 35-min cap twice.
+    # Browsers and their system libraries come prebuilt in the Playwright image (pinned to the
+    # package.json version). `playwright install --with-deps` pulled them from a throttled
+    # Ubuntu apt mirror and hit the job cap on #515 and twice on #519 (2026-11-04/05).
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v6
@@ -43,7 +47,6 @@ jobs:
       - run: npx tsc --noEmit --incremental false
       - run: npx vitest run tests/landing tests/security-headers.test.ts tests/sim-isolation.test.ts --pool=threads --no-cache --maxWorkers=3
       - run: node --experimental-strip-types scripts/landing/order-click-sql-check.ts
-      - run: npx playwright install --with-deps chromium webkit
       # webServer builds without landing env and starts both enabled and disabled hosts.
       - run: npm run test:e2e
       - run: npx playwright test lineup.spec.ts tracking.spec.ts --repeat-each=2
