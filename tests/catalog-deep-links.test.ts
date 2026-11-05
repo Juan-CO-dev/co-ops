@@ -101,7 +101,7 @@ describe("no catalog deep link lands on a whole list any more", () => {
   });
 
   it("the costing drawer links every name it blames", () => {
-    const src = read("components/admin/menu-costing/MenuCostingClient.tsx");
+    const src = read("components/admin/menu-costing/MenuCostDrawer.tsx");
     expect(src).toContain('href={canOpenSkuItem ? skuItemHref(id, { shopId: scope, job: "price" }) : skuCatalogHref(id)}');
     expect(src).toContain("id => prepItemHref(id, scope ?? undefined)");
     // The CALL SITE, not the import line (the import also contains "productHref,").

@@ -40,7 +40,7 @@ it("uses only the selected shop's Toast fallback and same-as price", async () =>
   for (const [scope, price] of [[A, 4], [B, 5]] as const) {
     const view = await loadSandwiches(OWNER_ACTOR, scope);
     expect(view.rows.find(row => row.id === "m-pickle-side")).toMatchObject({ menuPrice: price, toastStatus: "linked" });
-    expect(view.rows.find(row => row.id === "m-italian-lunch")).toMatchObject({ menuPrice: price, toastStatus: "not_linked" });
+    expect(view.rows.find(row => row.id === "m-italian-lunch")).toMatchObject({ menuPrice: price, toastStatus: "linked_via_parent" });
   }
 });
 
@@ -82,4 +82,41 @@ it("refuses SMM by role and foreign shops before I/O; keeps AGM read-only", asyn
   await expect(loadSandwiches(OWNER_ACTOR, "global")).rejects.toMatchObject({ status: 404 });
   expect(h.db).not.toHaveBeenCalled();
   expect((await loadSandwiches(agm, A)).rows.every(row => !row.canEditPrice)).toBe(true);
+});
+
+it("refuses SMM in the shared costing loader before I/O while AGM still reads", async () => {
+  await expect(loadMenuCostingBoard({ ...OWNER_ACTOR, user: { ...OWNER_ACTOR.user, role: "social_media_mgr" } }, { scope: A })).rejects.toMatchObject({ status: 403 });
+  expect(h.db).not.toHaveBeenCalled();
+  const agm = { ...OWNER_ACTOR, user: { ...OWNER_ACTOR.user, role: "agm" as const }, level: 6, locations: [A] };
+  expect((await loadMenuCostingBoard(agm, { scope: A })).rows.length).toBeGreaterThan(0);
+});
+
+it("off-here unlinked, uncosted, over-target rows never add problems", async () => {
+  const view = await loadSandwiches(OWNER_ACTOR, A);
+  const off = { ...view.rows[0]!, id: "off", soldHere: false, toastStatus: "not_linked" as const, overThreshold: true,
+    rollup: { ...view.rows[0]!.rollup, cost: null } };
+  expect(sandwichProblems([...view.rows, off])).toEqual(sandwichProblems(view.rows));
+  expect(sandwichProblems([{ ...off, soldHere: true }])).toMatchObject({ count: 1, causes: { over_threshold: [expect.objectContaining({ id: "off" })] } });
+});
+
+it("parent-linked children are not missing Toast links", async () => {
+  tables.menu_items!.find(row => row.id === "m-italian-lunch")!.price_same_as_id = "m-pickle-side";
+  const child = (await loadSandwiches(OWNER_ACTOR, A)).rows.find(row => row.id === "m-italian-lunch")!;
+  expect(child.toastStatus).toBe("linked_via_parent");
+  expect(sandwichProblems([child]).causes.not_linked).toEqual([]);
+});
+
+it("a shop without a Toast GUID has unavailable row status and no missing-link problems", async () => {
+  tables.locations!.find(row => row.id === A)!.toast_restaurant_guid = null;
+  const view = await loadSandwiches(OWNER_ACTOR, A);
+  expect(view.toastDisconnected).toBe(true);
+  expect(view.rows.every(row => row.toastStatus === "unavailable")).toBe(true);
+  expect(sandwichProblems(view.rows).causes.not_linked).toEqual([]);
+});
+
+it("exposes ownership for shared and shop-owned rows", async () => {
+  tables.menu_items!.find(row => row.id === "m-pickle-side")!.location_id = A;
+  const view = await loadSandwiches(OWNER_ACTOR, A);
+  expect(view.rows.find(row => row.id === "m-pickle-side")?.ownerLocationId).toBe(A);
+  expect(view.rows.find(row => row.id === "m-italian")?.ownerLocationId).toBeNull();
 });

@@ -63,6 +63,12 @@ beforeEach(() => {
 });
 
 describe("refusals happen before any report read", () => {
+  it.each([6, 9])("SMM cannot export costing even with supplied level %s", async level => {
+    session("social_media_mgr", level, [SHOP_A]);
+    const res = await get(`family=costing&format=csv&location=${SHOP_A}`);
+    expect(res.status).toBe(403);
+    expect(getServiceRoleClient).not.toHaveBeenCalled();
+  });
   it("unknown family / format → 400", async () => {
     session("gm", 7, [SHOP_A]);
     expect((await get(`family=payroll&format=csv&location=${SHOP_A}`)).status).toBe(400);

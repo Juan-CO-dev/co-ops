@@ -8,18 +8,20 @@ export function canViewSandwiches(role: RoleCode): boolean {
 }
 export type SandwichRow = MenuCostRow & {
   soldHere: boolean;
-  toastStatus: "linked" | "not_linked" | "price_differs" | "unavailable";
+  toastStatus: "linked" | "linked_via_parent" | "not_linked" | "price_differs" | "unavailable";
   marginPct: number | null;
 };
 export type SandwichFilter = "sold" | "off" | "all";
-export const SANDWICH_PROBLEMS = ["no_cost", "not_linked", "price_differs"] as const;
+export const SANDWICH_PROBLEMS = ["no_cost", "not_linked", "price_differs", "over_threshold"] as const;
 export type SandwichProblem = typeof SANDWICH_PROBLEMS[number];
 
 export function sandwichProblems(rows: readonly SandwichRow[]) {
-  const causes: Record<SandwichProblem, SandwichRow[]> = { no_cost: [], not_linked: [], price_differs: [] };
+  const causes: Record<SandwichProblem, SandwichRow[]> = { no_cost: [], not_linked: [], price_differs: [], over_threshold: [] };
   let count = 0;
   for (const row of rows) {
+    if (!row.soldHere) continue;
     const problems: SandwichProblem[] = [];
+    if (row.overThreshold) problems.push("over_threshold");
     if (row.rollup.cost === null) problems.push("no_cost");
     if (row.toastStatus === "not_linked") problems.push("not_linked");
     if (row.toastStatus === "price_differs") problems.push("price_differs");

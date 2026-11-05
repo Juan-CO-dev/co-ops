@@ -14,7 +14,6 @@ import { perUnitSkuOzForMenuItemFromGraph } from "@/lib/prep-consumption-graph";
 it("org-wide owned-row renderers disclose the owning shop name through the shared translated label", () => {
   for (const file of [
     "components/admin/catalog/CatalogClient.tsx",
-    "components/admin/menu-costing/MenuCostingClient.tsx",
     "components/admin/weights/WeightBoardClient.tsx",
     "components/admin/recipes/RecipesClient.tsx",
   ]) {

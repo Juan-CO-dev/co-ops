@@ -6,7 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { adminSectionsFor } from "@/lib/admin/sections";
 import { RecipesClient } from "@/components/admin/recipes/RecipesClient";
-import { MenuCostingClient } from "@/components/admin/menu-costing/MenuCostingClient";
+import { MenuCostDrawer } from "@/components/admin/menu-costing/MenuCostDrawer";
+import SandwichesPage from "@/app/admin/sandwiches/page";
+import { SandwichesClient } from "@/components/admin/sandwiches/SandwichesClient";
+import { catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
+import { getRoleLevel } from "@/lib/roles";
 import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
 import AdminItemsPage from "@/app/admin/items/page";
 import en from "@/lib/i18n/en.json";
@@ -23,6 +27,7 @@ vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => ({ user
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ from: () => ({ select: () => ({ eq: () => ({ order: () => ({ returns: async () => ({ data: [{ id: "shop-a", name: "Shop A" }] }) }) }) }) }) }) }));
 vi.mock("@/lib/shop-context", () => ({ resolveShopId: async (_shops: string[], explicit?: string) => explicit ?? "shop-a" }));
 vi.mock("@/lib/admin/menu-costing", () => ({ MENU_COSTING_READ_MIN: 6, loadMenuCostingBoard: async () => ({ rows: [], totals: {}, skuNames: {}, itemNames: {}, productNames: {}, notSoldHere: [] }) }));
+vi.mock("@/lib/admin/sandwiches", () => ({ loadSandwiches: async () => ({ rows: [] }) }));
 vi.mock("@/components/reports-export/ExportLinks", () => ({ ExportLinks: () => null }));
 vi.mock("@/lib/i18n/server", async () => {
   const { default: english } = await import("@/lib/i18n/en.json");
@@ -49,8 +54,8 @@ describe("catalog job entries", () => {
       });
     }
     it.each([true, false])(`costing repair respects item-page access %s in ${language}`, (canOpenSkuItem) => {
-      const props = { canOpenSkuItem, scope: "shop-a", rows: [{ id: "menu", name: "Sandwich", rollup: { status: "unpriced", unpricedSkuIds: ["sku-a"], pricedLineCount: 0 }, canEditPrice: false }], totals: {}, skuNames: { "sku-a": "Item" }, itemNames: {}, productNames: {} } as unknown as Parameters<typeof MenuCostingClient>[0];
-      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostingClient, props) }));
+      const props = { canOpenSkuItem, scope: "shop-a", row: { id: "menu", name: "Sandwich", rollup: { status: "unpriced", unpricedSkuIds: ["sku-a"], pricedLineCount: 0 }, canEditPrice: false }, language, money: String, t: (key: keyof typeof en) => (language === "es" ? es : en)[key], skuNames: { "sku-a": "Item" }, itemNames: {}, productNames: {} } as unknown as Parameters<typeof MenuCostDrawer>[0];
+      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostDrawer, props) }));
       expect(html).toContain(canOpenSkuItem ? '/admin/catalog/sku/sku-a?location=shop-a&amp;job=price' : '/admin/skus?sku=sku-a#sku-a');
       expect(html).not.toContain(canOpenSkuItem ? '/admin/skus?sku=' : '/admin/catalog/sku/');
     });
@@ -62,8 +67,8 @@ describe("catalog job entries", () => {
   });
   for (const language of ["en", "es"] as const) {
     it.each(["inconsistent", "unweighed"] as const)(`%s repair preserves shop and item anchor (${language})`, status => {
-      const props = { scope: "shop-a", rows: [{ id: "menu", name: "Sandwich", rollup: { status, inconsistentItemIds: ["prep-a"], unweighedItemIds: ["prep-a"], unpricedSkuIds: [] }, canEditPrice: false }], totals: {}, skuNames: {}, itemNames: { "prep-a": { en: "Prep", es: "Prep ES" } }, productNames: {} } as unknown as Parameters<typeof MenuCostingClient>[0];
-      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostingClient, props) }));
+      const props = { scope: "shop-a", row: { id: "menu", name: "Sandwich", rollup: { status, inconsistentItemIds: ["prep-a"], unweighedItemIds: ["prep-a"], unpricedSkuIds: [] }, canEditPrice: false }, language, money: String, t: (key: keyof typeof en) => (language === "es" ? es : en)[key], skuNames: {}, itemNames: { "prep-a": { en: "Prep", es: "Prep ES" } }, productNames: {} } as unknown as Parameters<typeof MenuCostDrawer>[0];
+      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostDrawer, props) }));
       expect(html).toContain('/admin/items?view=registry&amp;location=shop-a#prep-a');
     });
     it.each([true, false])(`catalog SKU edge respects item-page access %s (${language})`, (canOpenSkuItem) => {
@@ -96,5 +101,9 @@ for (const role of ["social_media_mgr", "agm", "gm", "moo"] as const) {
     pageActor.role = role;
     const items = await AdminItemsPage({ searchParams: Promise.resolve({}) });
     expect(clientProps(items, CatalogClient)?.canOpenSkuItem).toBe(role !== "social_media_mgr");
+    if (role !== "social_media_mgr") {
+      const sandwiches = await SandwichesPage({ searchParams: Promise.resolve({}) });
+      expect(clientProps(sandwiches, SandwichesClient)?.canOpenSkuItem).toBe(catalogWriteRoleAllowed(role, getRoleLevel(role)));
+    }
   });
 }

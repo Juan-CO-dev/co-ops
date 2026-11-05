@@ -1000,7 +1000,6 @@
   "admin.section.locations": "Locations",
   "admin.section.audit": "Audit Log",
   "admin.section.recipes": "Recipes",
-  "admin.section.menu-costing": "Menu Costing",
   "admin.menu_costing.title": "Menu Costing",
   "admin.menu_costing.subtitle": "What every menu item costs to make, against what it sells for. Any ingredient we can't price yet is counted on the row, never guessed at.",
   "admin.menu_costing.empty": "No active menu items yet.",
@@ -8520,7 +8519,13 @@
   "admin.sandwiches.toast.unavailable": "Link status unavailable",
   "admin.sandwiches.margin_pct": "Margin %",
   "admin.sandwiches.details": "Details for {name}",
-  "admin.sandwiches.edit_shop": "Change shop price, name or sold-here",
+  "admin.sandwiches.edit_shop": "Change the price, name or availability at this shop",
   "admin.sandwiches.global_price": "Global default price",
-  "admin.sandwiches.global_help": "This edits the default price. To change only this shop, open the shop settings above."
+  "admin.sandwiches.global_help": "This price applies to every shop that doesn't set its own price. To change only this shop, use the shop link above.",
+  "admin.sandwiches.owned_price": "This shop's price",
+  "admin.sandwiches.owned_help": "This item is only sold here, so this is its only price. Open the item page to edit its price or recipe.",
+  "admin.sandwiches.problem.over_threshold": "Food cost above target: {n}",
+  "admin.sandwiches.over_threshold": "Food cost is {pct}, above the {threshold}% target.",
+  "admin.sandwiches.toast.linked_via_parent": "Linked via parent",
+  "admin.sandwiches.toast_disconnected": "This shop isn't connected to Toast yet"
 }

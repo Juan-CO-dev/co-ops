@@ -14,7 +14,7 @@ export async function loadSandwiches(actor: AuthContext, scope: string) {
   const rows: SandwichRow[] = board.rows.map(row => ({
     ...row,
     soldHere: !off.has(row.id),
-    toastStatus: row.priceFlag ? "price_differs" : linked.has(row.id) ? "linked" : board.toastLinksKnown ? "not_linked" : "unavailable",
+    toastStatus: board.toastDisconnected ? "unavailable" : row.priceSameAsId ? "linked_via_parent" : row.priceFlag ? "price_differs" : linked.has(row.id) ? "linked" : board.toastLinksKnown ? "not_linked" : "unavailable",
     marginPct: row.marginDollars !== null && row.menuPrice !== null && row.menuPrice > 0 ? row.marginDollars / row.menuPrice * 100 : null,
   }));
   return { ...board, rows };

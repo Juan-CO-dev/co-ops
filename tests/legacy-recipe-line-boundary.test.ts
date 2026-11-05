@@ -30,8 +30,10 @@ import es from "@/lib/i18n/es.json";
 
 const { RecipeBuilder } = await import("@/components/admin/recipes/RecipeBuilder");
 const { RecipesClient } = await import("@/components/admin/recipes/RecipesClient");
-const { MenuCostingClient } = await import("@/components/admin/menu-costing/MenuCostingClient");
-const { summarizeMenuCostRows, toMenuCostRow } = await import("@/lib/menu-costing-shared");
+const { SandwichesClient } = await import("@/components/admin/sandwiches/SandwichesClient");
+const { sandwichesView } = await import("./fixtures/sandwiches-view");
+vi.mock("@/components/ui/CollapsibleSection", () => ({ CollapsibleSection: ({ children }: { children: ReactNode }) => children }));
+const { toMenuCostRow } = await import("@/lib/menu-costing-shared");
 
 const gm = { user: { id: "u", role: "gm" } } as never;
 const agm = { user: { id: "u", role: "agm" } } as never;
@@ -171,17 +173,13 @@ describe("a readiness warning at a shop opens that shop's view", () => {
 describe("the costing drawer opens the menu item page", () => {
   const row = toMenuCostRow({ id: "m1", name: "Italian", nameEs: "Italiano", section: "Subs", menuPrice: 12, typedPrice: null, priceSource: "toast", toastPriceCents: 1200 },
     { status: "costed", cost: 3, pricedCost: 3, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [], retiredProductIds: [] });
-  const board = (scope: string | null, language: Language = "en") => render(createElement(MenuCostingClient, {
-    rows: [row], totals: summarizeMenuCostRows([row]), skuNames: {}, itemNames: {}, productNames: {}, scope,
+  const board = (scope: string, language: Language = "en") => render(createElement(SandwichesClient, {
+    view: sandwichesView([row], scope), scope, canEditShop: false,
   }), language);
   it("a shop's board → that shop's view of the item", () => {
     const html = board(SHOP);
     expect(html).toContain(`href="/admin/catalog/menu-item/m1?location=${SHOP}"`);
     expect(html).toContain(en["catalog.menu.open_page"]);
-  });
-  it("the all-shops board → the global menu", () => {
-    expect(board(null)).toContain(`href="/admin/catalog/menu-item/m1?location=global"`);
-    expect(board(null, "es")).toContain(es["catalog.menu.open_page"]);
   });
   it("the page passes its scope", () => {
     expect(readFileSync("app/admin/sandwiches/page.tsx", "utf8")).toContain("scope={scope}");

@@ -1000,7 +1000,6 @@
   "admin.section.locations": "Ubicaciones",
   "admin.section.audit": "Registro de Auditoría",
   "admin.section.recipes": "Recetas",
-  "admin.section.menu-costing": "Costeo del Menú",
   "admin.menu_costing.title": "Costeo del Menú",
   "admin.menu_costing.subtitle": "Lo que cuesta hacer cada platillo, contra lo que se vende. Cualquier ingrediente que todavía no podemos costear se cuenta en la fila; nunca lo adivinamos.",
   "admin.menu_costing.empty": "Todavía no hay platillos activos.",
@@ -8520,7 +8519,13 @@
   "admin.sandwiches.toast.unavailable": "Estado del enlace no disponible",
   "admin.sandwiches.margin_pct": "Margen %",
   "admin.sandwiches.details": "Detalles de {name}",
-  "admin.sandwiches.edit_shop": "Cambia el precio, nombre o disponibilidad aquí",
+  "admin.sandwiches.edit_shop": "Cambia el precio, el nombre o la disponibilidad en esta tienda",
   "admin.sandwiches.global_price": "Precio predeterminado global",
-  "admin.sandwiches.global_help": "Esto cambia el precio predeterminado. Para cambiar solo esta tienda, abre los ajustes de arriba."
+  "admin.sandwiches.global_help": "Este precio se aplica a todas las tiendas que no establecen su propio precio. Para cambiar solo esta tienda, usa el enlace de arriba.",
+  "admin.sandwiches.owned_price": "Precio de esta tienda",
+  "admin.sandwiches.owned_help": "Este producto solo se vende aquí, así que este es su único precio. Abre la página del producto para editar su precio o receta.",
+  "admin.sandwiches.problem.over_threshold": "Costo de alimentos por encima del objetivo: {n}",
+  "admin.sandwiches.over_threshold": "El costo de alimentos es {pct}, por encima del objetivo del {threshold}%.",
+  "admin.sandwiches.toast.linked_via_parent": "Enlazado mediante el producto principal",
+  "admin.sandwiches.toast_disconnected": "Esta tienda todavía no está conectada a Toast"
 }

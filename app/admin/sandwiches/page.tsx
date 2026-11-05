@@ -8,6 +8,7 @@ import { canViewSandwiches } from "@/lib/admin/sandwiches-shared";
 import { newSandwichJobHref } from "@/lib/catalog/jobs-shared";
 import { serverT } from "@/lib/i18n/server";
 import { canReadReportLocation } from "@/lib/locations";
+import { catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
 import { getRoleLevel } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShopId } from "@/lib/shop-context";
@@ -47,7 +48,7 @@ export default async function SandwichesPage({ searchParams }: {
       </Link>}
       <ExportLinks family="costing" language={lang} query={{ location: scope }}
         caption={serverT(lang, "admin.menu_costing.export_scope", { scope: shops.find(shop => shop.id === scope)?.name ?? "" })} />
-      <SandwichesClient key={scope} view={view} scope={scope} canEditShop={canEditShop} />
+      <SandwichesClient key={scope} view={view} scope={scope} canEditShop={canEditShop} canOpenSkuItem={catalogWriteRoleAllowed(auth.user.role, getRoleLevel(auth.user.role))} />
     </> : <p>{serverT(lang, "admin.pars.no_location")}</p>}
   </div>;
 }
