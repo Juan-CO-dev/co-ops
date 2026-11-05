@@ -1,3 +1,5 @@
+> 2026-11-05 correction: historical evidence below is preserved verbatim. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
+
 # Landing page phase 1 — BUILD PLAN
 
 Date: 2026-10-16. Revision **r5**, Chunk A review amendments and authorized Chunk B implementation contract. Supersedes r2's standalone scaffolding following Juan's decision: build inside CO-OPS beside the catering portal, on its own host. Reuse the portal look, avoid a new project, and make the later catering hand-off seamless. Base `origin/main` b1aa4c67; branch `feat/landing-p1`; dedicated clone `C:/Users/conta/co-ops-landing`. Source: `docs/superpowers/specs/2026-10-16-landing-page-phase1-design.md`. The r3 plan/spec were committed at `4cbd3b12` (base `b1aa4c67`); r4 was committed at 051d5100 and Chunk A at df131fa7. R5 applies Aggie's Chunk A review and the lead rulings below before authorized B1-B3 work. All current changes stay UNCOMMITTED; no fetch, push, merge, deployment or production writes.

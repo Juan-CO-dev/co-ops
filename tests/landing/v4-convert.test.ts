@@ -127,12 +127,12 @@ describe('tracking: crave + guide placements and the item field', () => {
   it('sends the sub to Meta (Pixel + CAPI) but never to our own counter', () => {
     const { tracker, post, pixel } = fixture();
     tracker.setConsent(true);
-    tracker.dispatch('OrderClick', { store: 'dupont', placement: 'crave', item: 'crunchy-boi' });
-    expect(pixel).toHaveBeenCalledWith('trackCustom', 'OrderClick', { ad: 'unattributed', placement: 'crave', store: 'dupont', item: 'crunchy-boi' }, expect.any(String));
+    tracker.dispatch('OrderClick', { mode:'pickup', store: 'dupont', placement: 'crave', item: 'crunchy-boi' });
+    expect(pixel).toHaveBeenCalledWith('trackCustom', 'OrderClick', { mode:'pickup', ad: 'unattributed', placement: 'crave', store: 'dupont', item: 'crunchy-boi' }, expect.any(String));
     const events = post.mock.calls.find(call => call[0] === '/api/landing/events')![1];
     expect(parseLandingEvent(events, 'https://eat.example', 123000)).toMatchObject({ placement: 'crave', item: 'crunchy-boi', store: 'dupont' });
     const counter = post.mock.calls.find(call => call[0] === '/api/landing/order-click')![1];
-    expect(counter).toEqual({ store: 'dupont', ad: 'unattributed' });
+    expect(counter).toEqual({ store: 'dupont', ad: 'unattributed', intent:'pickup' });
     expect(parseOrderClick({ ...counter, item: 'crunchy-boi' })).toBeNull();
   });
   it('refuses an item outside the roster, on a non-item placement, with a vendor, or on a non-order event', () => {
@@ -151,11 +151,11 @@ describe('tracking: crave + guide placements and the item field', () => {
   });
   it('sends nothing at all without consent', () => {
     const { tracker, post, pixel } = fixture();
-    tracker.dispatch('OrderClick', { store: 'dupont', placement: 'guide', item: 'crunchy-boi' });
+    tracker.dispatch('OrderClick', { mode:'pickup', store: 'dupont', placement: 'guide', item: 'crunchy-boi' });
     expect(pixel).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled();
   });
   it('the server schema bounds item the same way', () => {
-    const base = { event_name: 'OrderClick', event_id: '12345678-1234-4123-8123-123456789abc', event_time: 123, consent: 'accepted', source_url: 'https://eat.example/', store: 'capitol-hill', ad: 'unattributed', placement: 'lineup' };
+    const base = { event_name: 'OrderClick', mode:'pickup', event_id: '12345678-1234-4123-8123-123456789abc', event_time: 123, consent: 'accepted', source_url: 'https://eat.example/', store: 'capitol-hill', ad: 'unattributed', placement: 'lineup' };
     expect(parseLandingEvent({ ...base, item: 'frex' }, 'https://eat.example', 123000)).not.toBeNull();
     for (const patch of [{ item: 'not-a-sub' }, { item: 'frex', placement: 'sticky' }, { item: 'frex', event_name: 'CateringClick', store: undefined }, { item: 'frex', store: undefined }, { item: 7 }])
       expect(parseLandingEvent({ ...base, ...patch }, 'https://eat.example', 123000), JSON.stringify(patch)).toBeNull();

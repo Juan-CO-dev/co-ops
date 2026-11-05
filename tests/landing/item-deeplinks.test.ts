@@ -14,7 +14,7 @@ describe('shop-specific item destinations', () => {
       const id = product.orderItems?.[store.key];
       expect(id).toMatch(/^[a-f0-9]{24}$/);
       const url = new URL(itemOrderUrl(store, product.id));
-      expect(url.origin).toBe(new URL(store.orderUrl).origin);
+      expect(url.origin).toBe(new URL(store.pickupUrl).origin);
       expect(url.pathname).toBe(`/order/items/${id}/`);
       expect([...url.searchParams]).toEqual([['branchId', store.branchId], ['servingOptionType', 'pickup']]);
       expect(product.orderItems?.['capitol-hill']).not.toBe(product.orderItems?.dupont);
@@ -22,9 +22,9 @@ describe('shop-specific item destinations', () => {
   });
   it('uses the menu when the item or its shop mapping is missing', () => {
     for (const store of landingTenantConfig.stores) {
-      for (const item of [undefined, 'unknown']) expect(itemOrderUrl(store, item)).toBe(store.orderUrl);
+      for (const item of [undefined, 'unknown']) expect(itemOrderUrl(store, item)).toBe(store.pickupUrl);
       for (const orderItems of [undefined, {}, {[store.key === 'dupont' ? 'capitol-hill' : 'dupont']: products[0]!.orderItems![store.key]}]) {
-        expect(itemOrderUrl(store, 'frex', [{id:'frex', orderItems}])).toBe(store.orderUrl);
+        expect(itemOrderUrl(store, 'frex', [{id:'frex', orderItems}])).toBe(store.pickupUrl);
       }
     }
   });
@@ -37,11 +37,11 @@ describe('shop-specific item destinations', () => {
   it('renders item links for every item placement, including the native no-JS fallback', () => {
     const shops = landingTenantConfig.stores.map(store => ({...store, label:store.name, detail:store.street}));
     for (const placement of LANDING_ITEM_PLACEMENTS) for (const eager of [false, true]) {
-      const html = renderToStaticMarkup(createElement(OrderSheet, {shops, placement, item:'crunchy-boi', eager, triggerLabel:'Order', title:'Shop', closeLabel:'Close'}));
+      const html = renderToStaticMarkup(createElement(OrderSheet, {delivery:{href:landingTenantConfig.deliveryUrl,label:"Delivery"},shops, placement, item:'crunchy-boi', eager, triggerLabel:'Order', title:'Shop', closeLabel:'Close'}));
       for (const store of shops) expect(html).toContain(itemOrderUrl(store, 'crunchy-boi').replaceAll('&', '&amp;'));
     }
-    const html = renderToStaticMarkup(createElement(OrderSheet, {shops, placement:'sticky', eager:true, triggerLabel:'Order', title:'Shop', closeLabel:'Close'}));
-    for (const store of shops) expect(html).toContain(store.orderUrl.replaceAll('&', '&amp;'));
+    const html = renderToStaticMarkup(createElement(OrderSheet, {delivery:{href:landingTenantConfig.deliveryUrl,label:"Delivery"},shops, placement:'sticky', eager:true, triggerLabel:'Order', title:'Shop', closeLabel:'Close'}));
+    for (const store of shops) expect(html).toContain(store.pickupUrl.replaceAll('&', '&amp;'));
     expect(html).not.toContain('/order/items/');
   });
 });

@@ -1,3 +1,5 @@
+> 2026-11-05 correction: historical evidence below is preserved verbatim. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
+
 # LANDING v2 — BUILD plan: A, Crunch in Motion
 
 2026-10-16 | Plan only | REVISION r2 | CC re-review pending.

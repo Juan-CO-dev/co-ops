@@ -210,7 +210,8 @@ export function computeScorecard(input: ScorecardInput) {
   };
 }
 
-export interface TapDay { day: string; storeKey: string; adCode: string; active: boolean; clickCount: number }
+export type TapIntent = "legacy" | "pickup" | "delivery" | "visit";
+export interface TapDay { intent?: TapIntent; day: string; storeKey: string; adCode: string; active: boolean; clickCount: number }
 /** Used only for instant-valued source data; RPC day_et dates must remain dates. */
 export const tapEtDay = (instant: string): string => etCalendarDate(instant);
 export function computeOrderTaps(input: { window: DateWindow; installed: boolean; counterOn: string | null;
@@ -220,8 +221,13 @@ export function computeOrderTaps(input: { window: DateWindow; installed: boolean
   const stores = new Set(input.storeKeys);
   const rows = input.rows.filter(row => stores.has(row.storeKey) && inside(row.day, input.window)
     && input.counterOn !== null && row.day >= input.counterOn);
+  const intents = new Map<string, { adCode: string; active: boolean; legacy: number; pickup: number; delivery: number; visit: number }>();
   const groups = new Map<string, { storeKey: string; adCode: string; active: boolean; clickCount: number }>();
   for (const row of rows) {
+    const split = intents.get(row.adCode) ?? { adCode: row.adCode, active: row.active, legacy: 0, pickup: 0, delivery: 0, visit: 0 };
+    split[row.intent ?? "legacy"] += row.clickCount;
+    intents.set(row.adCode, split);
+    if (row.intent === "visit") continue;
     const key = JSON.stringify([row.storeKey, row.adCode]);
     const group = groups.get(key) ?? { storeKey: row.storeKey, adCode: row.adCode, active: row.active, clickCount: 0 };
     group.clickCount += row.clickCount;
@@ -230,8 +236,8 @@ export function computeOrderTaps(input: { window: DateWindow; installed: boolean
   const state = (count: number): Metric => !input.installed ? unavailable("counter_not_installed")
     : input.counterOn === null || input.window.to < input.counterOn ? unavailable("counter_off")
       : metric(count, input.window.from < input.counterOn! ? ["counter_off"] : []);
-  return { total: state(rows.reduce((total, row) => total + row.clickCount, 0)),
-    coded: state(rows.filter(row => row.adCode !== "unattributed").reduce((total, row) => total + row.clickCount, 0)), groups: [...groups.values()] };
+  return { total: state(rows.filter(row => row.intent !== "visit").reduce((total, row) => total + row.clickCount, 0)),
+    coded: state(rows.filter(row => row.intent !== "visit" && row.adCode !== "unattributed").reduce((total, row) => total + row.clickCount, 0)), groups: [...groups.values()], intents: [...intents.values()] };
 }
 
 /** null means not entered; explicit zero is a real observation. Spend is all shops. */

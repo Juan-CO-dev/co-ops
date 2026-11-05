@@ -21,7 +21,7 @@ export function assessProbe(evidence:ProbeEvidence,baseline:{host:string;branchI
 async function main() {
   const config = loadLandingConfig();
   const links = getLandingLinks(config);
-  const destinations = [...links.orders.map((order)=>({key:order.store,url:order.href})),{key:"catering",url:links.catering},{key:"inquiry",url:links.inquiry},...links.footer.map((link)=>({key:link.key,url:link.url}))];
+  const destinations = [...links.orders.map((order)=>({key:order.store,url:order.href})),{key:"delivery",url:links.delivery},{key:"catering",url:links.catering},{key:"inquiry",url:links.inquiry},...links.footer.map((link)=>({key:link.key,url:link.url}))];
   for (const destination of destinations) {
     try {
       const response = await fetch(destination.url,{redirect:"follow",signal:AbortSignal.timeout(15000)});

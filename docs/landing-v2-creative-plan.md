@@ -1,3 +1,5 @@
+> 2026-11-05 correction: historical evidence below is preserved verbatim. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
+
 # CO-OPS landing v2 — creative plan
 
 2026-10-16 · PLAN + THROWAWAY PROTOTYPE ONLY · CC review pending.

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { LandingStore } from '@/lib/landing/stores';
 import { formatDistanceMiles, nearestStores, nearbyEnabled, validCoordinates } from '@/lib/landing/nearby-shared';
 import type { Language } from '@/lib/i18n/types';
+import type { DeliveryChoice } from './OrderSheet';
 import { OrderLink } from './OrderLink';
 import { OfferCode } from './OfferCode';
 import { ShopMapView } from './ShopMapView';
@@ -14,7 +15,7 @@ export interface NearbyLabels {nearest:string;locating:string;unavailable:string
   /** Today's closing line per shop ("Today: til 6 PM"), absent when the shop is closed today. */
   today?:Record<string,string|undefined>}
 export interface NearbyMap extends MapProjection {image:string;width:number;height:number;labels:{map:string;you:string;attribution:string;attributionHref:string;offMap:string}}
-export function NearbyShop({stores,language,labels,ad='unattributed',map}:{stores:readonly LandingStore[];language:Language;labels:NearbyLabels;ad?:string;map?:NearbyMap}) {
+export function NearbyShop({stores,language,labels,delivery,ad='unattributed',map}:{delivery:DeliveryChoice;stores:readonly LandingStore[];language:Language;labels:NearbyLabels;ad?:string;map?:NearbyMap}) {
   const [ordered,setOrdered]=useState(()=>stores.map(store=>({...store,distance:null as number|null})));
   const [status,setStatus]=useState<'idle'|'pending'|'ready'|'unavailable'>('idle');
   const canLocate=nearbyEnabled(stores);
@@ -37,6 +38,7 @@ export function NearbyShop({stores,language,labels,ad='unattributed',map}:{store
   };
   const nearest=status==='ready'?ordered[0]?.key??null:null;
   return <div className="mt-6">
+    <OrderLink href={delivery.href} mode="delivery" placement="shops" className="landing-v3-cta">{delivery.label}</OrderLink>
     {map&&<ShopMapView src={map.image} width={map.width} height={map.height} user={you} nearest={nearest} labels={map.labels}
       shops={stores.filter(store=>store.coordinates).map(store=>({key:store.key,name:store.name,point:projectPoint(map,store.coordinates!)}))}/>}
     {canLocate && <button type="button" disabled={status==='pending'} onClick={locate} className="inline-flex min-h-11 min-w-11 items-center rounded-xl border border-co-text px-4 py-3 font-bold">{status==='pending'?labels.locating:labels.nearest}</button>}
@@ -49,8 +51,8 @@ export function NearbyShop({stores,language,labels,ad='unattributed',map}:{store
         {labels.today?.[store.key] && <p className="landing-v4-today">{labels.today[store.key]}</p>}
         {store.distance!==null && <p className="mt-2 text-sm">{formatDistanceMiles(store.distance,language,labels.distance,labels.distanceOne??labels.distance)}</p>}
         {/* Sell first: the order action right under the hours, directions and phone below it. */}
-        <OrderLink href={store.orderUrl} store={store.key} placement="shops" className="landing-v3-cta landing-v4-shop-order">{labels.order[store.key]}</OrderLink>
-        {store.directionsUrl && <a href={store.address?directionsHref(store.address,apple):store.directionsUrl} data-directions={store.key} className="landing-v4-directions">{labels.directions?.[store.key]}</a>}
+        <OrderLink href={store.pickupUrl} store={store.key} mode="pickup" placement="shops" className="landing-v3-cta landing-v4-shop-order">{labels.order[store.key]}</OrderLink>
+        {store.directionsUrl && <OrderLink href={store.address?directionsHref(store.address,apple):store.directionsUrl} store={store.key} event="FindLocation" placement="shops" dataDirections={store.key} className="landing-v4-directions">{labels.directions?.[store.key]}</OrderLink>}
         {store.phone && <a href={`tel:${store.phone.replace(/[^+\d]/g,'')}`} className="inline-flex min-h-11 min-w-11 items-center underline" aria-label={labels.call[store.key]}>{store.phoneDisplay}</a>}
         {store.uberEatsUrl && <OrderLink href={store.uberEatsUrl} store={store.key} placement="shops" vendor="ubereats" className="flex w-fit min-h-11 min-w-11 items-center underline text-sm">{labels.uberEats}</OrderLink>}
         <OfferCode ad={ad} store={store.key} label={labels.offer}/>

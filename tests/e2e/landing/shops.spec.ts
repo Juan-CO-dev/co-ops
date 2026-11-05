@@ -37,7 +37,7 @@ for (const javaScriptEnabled of [true,false]) test(`shop facts and native links 
 // Exercise the client with fictional coordinates, independently of the tenant facts.
 const fixtureSource=`import React from 'react';import {createRoot} from 'react-dom/client';import {NearbyShop} from './components/landing/NearbyShop';
 const root=document.createElement('div');root.id='nearby-fixture';document.body.append(root);
-createRoot(root).render(<NearbyShop language="en" labels={{nearest:'Find my nearest shop',locating:'Locating',unavailable:'You can still choose either shop',straightLine:'Sorted by straight-line distance',distance:'{distance} miles away',offer:'Offer',call:{},order:{'capitol-hill':'Order far','dupont':'Order near'}}} stores={[{key:'capitol-hill',name:'Far fixture',orderLabel:'Far fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:2},orderUrl:'https://example.test/far'},{key:'dupont',name:'Near fixture',orderLabel:'Near fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:1},orderUrl:'https://example.test/near'}]}/>);`;
+createRoot(root).render(<NearbyShop delivery={{href:"https://example.test/delivery",label:"Delivery"}} language="en" labels={{nearest:'Find my nearest shop',locating:'Locating',unavailable:'You can still choose either shop',straightLine:'Sorted by straight-line distance',distance:'{distance} miles away',offer:'Offer',call:{},order:{'capitol-hill':'Order far','dupont':'Order near'}}} stores={[{key:'capitol-hill',name:'Far fixture',orderLabel:'Far fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:2},pickupUrl:'https://example.test/far'},{key:'dupont',name:'Near fixture',orderLabel:'Near fixture',address:null,phone:null,hours:null,coordinates:{latitude:0,longitude:1},pickupUrl:'https://example.test/near'}]}/>);`;
 
 for(const outcome of ['granted','denied','timeout','unavailable'] as const)test(`nearest shop is click-only and preserves links: ${outcome}`,async({page})=>{
   await page.emulateMedia({reducedMotion:'reduce'});
@@ -64,7 +64,7 @@ for(const outcome of ['granted','denied','timeout','unavailable'] as const)test(
     await expect(fixture.locator('article').first()).toContainText('Far fixture');
     await expect(fixture.getByRole('status')).toContainText('You can still choose either shop');
   }
-  await expect(fixture.getByRole('link')).toHaveCount(2);
+  await expect(fixture.getByRole('link')).toHaveCount(3);
   expect(await page.evaluate(()=>({local:{...localStorage},session:{...sessionStorage},cookie:document.cookie}))).toEqual(before);
 });
 

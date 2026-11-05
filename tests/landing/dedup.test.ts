@@ -8,8 +8,8 @@ const origin = 'https://landing.example';
 const instant = Date.UTC(2026, 10, 1, 12, 30, 15, 789);
 const paths: [LandingAction, ActionDetails][] = [
   ['Lead', { placement: 'hero' }], ['CateringClick', { placement: 'catering' }],
-  ['OrderClick', { placement: 'hero', store: 'dupont' }],
-  ['OrderClick', { placement: 'lineup', store: 'dupont', item: 'crunchy-boi' }],
+  ['OrderClick', { mode:'pickup', placement: 'hero', store: 'dupont' }],
+  ['OrderClick', { mode:'pickup', placement: 'lineup', store: 'dupont', item: 'crunchy-boi' }],
   ['OrderClick', { placement: 'shops', store: 'dupont', vendor: 'ubereats' }],
   ['OrderClick', { placement: 'footer', vendor: 'ubereats' }],
   ['OrderClick', { placement: 'footer', vendor: 'doordash' }],
@@ -57,7 +57,7 @@ describe('pixel / CAPI dedup contract', () => {
   it.each(['OrderClick', 'CateringClick'] as const)('navigating %s is server-only and retains supplied identity/time', async name => {
     for (const explicit of [false, true]) {
       const f = fixture(); f.tracker.beginResolution(); const event = explicit ? { id: randomUUID(), time: instant } : undefined;
-      f.tracker.dispatch(name, () => ({ placement: 'hero', store: 'dupont' }), event);
+      f.tracker.dispatch(name, () => ({ mode:name==='OrderClick'?'pickup':undefined, placement: 'hero', store: 'dupont' }), event);
       const capi = await upstream(f.post.mock.calls.find(call => call[0] === '/api/landing/events')![1]);
       expect(f.pixel).not.toHaveBeenCalled(); expect(capi.event_name).toBe(name);
       if (event) expect(capi.event_id).toBe(event.id);

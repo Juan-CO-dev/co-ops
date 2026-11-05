@@ -1,3 +1,5 @@
+> 2026-11-05 correction: CC verified the branded ordering host we own for Meta domain verification. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
+
 # Landing v2: verified facts (CC, 2026-10-16)
 
 ## Shops
@@ -9,7 +11,7 @@ Source: complimentsonlysubs.com (official site), fetched 2026-10-16. Coordinates
 | Phone | (202) 621-8645 | (202) 794-4638 |
 | Hours | 10:30am–6pm daily | 10:30am–8pm daily |
 | Lat/long | 38.8817492, -76.9947597 (building shared with Jeni's) | 38.9098292, -77.0462506 |
-| Order (Appfront) | branchId 69bdd5a0daeb710cb2cbdb0d, servingOptionType=a | branchId 69bdddee7150a60c8dc37f73, servingOptionType=a |
+| Order (Appfront) | branchId 69bdd5a0daeb710cb2cbdb0d, servingOptionType=pickup | branchId 69bdddee7150a60c8dc37f73, servingOptionType=pickup |
 
 The official site shows only one hours line per shop, so the page presents it as "daily". Juan can correct this.
 

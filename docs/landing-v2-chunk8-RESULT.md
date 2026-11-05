@@ -1,3 +1,5 @@
+> 2026-11-05 correction: historical evidence below is preserved verbatim. Current pickup links use https://order.complimentsonlysubs.com/order/?branchId=<shop>&servingOptionType=pickup; delivery uses https://order.complimentsonlysubs.com/find-location/?servingOptionType=delivery (CC verified).
+
 # Landing v2 chunk 8 — production indexing and shop structured data
 
 2026-10-18. UNCOMMITTED on `feat/landing-v2`, base/HEAD `0ab3fe7066ae615ee8a750964428bbb422b8779e`, worktree `C:/Users/conta/co-ops-landing`. No commit, push, merge, deployment, persistent environment/domain change or DB write.

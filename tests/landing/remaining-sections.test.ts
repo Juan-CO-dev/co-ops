@@ -39,7 +39,7 @@ describe('remaining landing sections',()=>{
     const html=renderToStaticMarkup(createElement(Shops,{stores,language:'en'}));
     expect(html).toContain('526 8th St SE Ste A'); expect(html).toContain('(202) 621-8645');
     expect(html).toContain('Daily 10:30 AM–6 PM');
-    expect(html).toContain('tel:+12026218645'); expect(html).toContain('appfront.app');
+    expect(html).toContain('tel:+12026218645'); expect(html).toContain('order.complimentsonlysubs.com');
     expect(html).not.toContain('walking'); expect(html).not.toContain('Find my nearest');
   });
   it('retains Toast and inquiry destinations with translated buttons',()=>{

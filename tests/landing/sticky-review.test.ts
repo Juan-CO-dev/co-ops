@@ -7,7 +7,7 @@ const source=readFileSync('components/landing/StickyOrderBar.tsx','utf8');
 const shared=readFileSync('lib/landing/sticky-order-shared.ts','utf8');
 const css=readFileSync('app/eat/landing-v2.css','utf8');
 it('is one pill that opens the shop chooser at the sticky placement, not two shop buttons',()=>{
-  expect(source).toContain('<OrderSheet eager');
+  expect(source).toContain('<OrderSheet delivery={delivery} eager');
   expect(source).toContain('placement="sticky"');
   expect(source).not.toContain('<OrderLink');
 });
