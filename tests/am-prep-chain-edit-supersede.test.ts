@@ -220,16 +220,16 @@ describe("live-path tripwire — the am-prep chain edit HAS a caller, and it is 
     expect(fn).not.toContain("superseded_by");
   });
 
-  it("a 23505 from that RPC becomes an already_submitted conflict", () => {
+  it("a 23505 from that RPC uses the constraint-aware mapper", () => {
     const prep = read("lib", "prep.ts");
     const fn = prep.slice(prep.indexOf("async function submitAmPrepUpdate("));
     const errorMapping = fn.slice(fn.indexOf("if (rpcErr) {"), fn.indexOf("if (!rpcData) {"));
 
     expect(errorMapping).toContain('rpcErr.code === "P0001"');
     expect(errorMapping).toContain('rpcErr.code === "23514"');
-    // A unique violation must remain a typed conflict, never a generic 500.
+    // Only the request-key constraint becomes a typed conflict.
     expect(errorMapping).toContain("23505");
-    expect(errorMapping).toContain("already_submitted");
+    expect(errorMapping).toContain("throwAmPrepUniqueViolation(rpcErr, args.instanceId)");
     expect(errorMapping).toContain("update RPC failed");
   });
 });

@@ -152,9 +152,37 @@ async function behavior(db) {
     const first=await submit(db), again=await submit(db);
     check(first.closingRefSkip.reason==='closing_ref_revoked' && again.replayed && again.closingRefSkip===null && again.submissionId===first.submissionId,'keyed skipped push replays without advisory audit hint');
   });
+  await isolated(db,`insert into checklist_template_items(id,template_id,min_role_level,active)
+    values('${id(21)}','${template}',3,true);
+    insert into checklist_instances(id,template_id,location_id,date)
+    values('${id(12)}','${template}','${location}',current_date - 1);
+    insert into checklist_completions(instance_id,template_item_id,completed_by,auto_complete_meta)
+    values('${instance}','${id(21)}','${actor}',
+      '{"reportType":"am_prep","reportInstanceId":"${prep}","reportSubmittedAt":"malformed"}'),
+      ('${id(12)}','${item}','${actor}',
+      '{"reportType":"am_prep","reportInstanceId":"${prep}","reportSubmittedAt":"malformed"}')`,async()=> {
+    const first=await submit(db), replay=await submit(db);
+    check(replay.autoCompleteId===first.autoCompleteId,'unrelated item and closing instance malformed timestamps do not break original replay');
+    const opts={head:first.submissionId,request:id(31)};
+    const edit=await submit(db,opts), again=await submit(db,opts);
+    check(again.submissionId===edit.submissionId && again.autoCompleteId===null,'unrelated malformed timestamps do not break edit replay');
+  });
+  await isolated(db,'',async()=> {
+    const first=await submit(db);
+    await refuses(db,()=>submit(db,{head:first.submissionId}),'prep_request_key_reused');
+    const opts={head:first.submissionId,request:id(31)};
+    await submit(db,opts);
+    await refuses(db,()=>submit(db,{request:id(31)}),'prep_request_key_reused');
+    // A second original chain in the same instance is a deliberately unusual
+    // fixture: matching hash/key must still bind an edit to its original chain.
+    await db.query(`insert into checklist_submissions(id,instance_id,submitted_by,completion_ids)
+      values($1,$2,$3,$4)`,[id(40),prep,actor,first.completionIds]);
+    await refuses(db,()=>submit(db,{...opts,head:id(40)}),'prep_request_key_reused');
+  });
   await isolated(db,'',async()=> {
     const first=await submit(db), again=await submit(db);
     check(again.replayed===true && again.submissionId===first.submissionId,'same original submission replay');
+    check((await submit(db,{closing:null})).autoCompleteId===first.autoCompleteId,'original replay resolves historical reference without caller reference item');
     check(isDeepStrictEqual(again.completionIds,first.completionIds) && again.autoCompleteId===first.autoCompleteId,'same completion and push IDs');
     check(await count(db,'checklist_submissions')===1,'one submission');
     check(await count(db,'checklist_completions',`instance_id='${prep}'`)===1,'one completion set');

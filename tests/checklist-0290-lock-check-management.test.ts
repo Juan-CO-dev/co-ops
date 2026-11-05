@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { pairings, main, fixture, calls, fixtureSQL, retireSQL, functionalProbes, runProof,
+import { pairings, main, fixture, calls, fixtureSQL, retireSQL, functionalProbes, runProof, fixturePreflight, requiredColumns,
 } from '../scripts/sim/checklist-0290-lock-check-management.mjs';
 import { SIM_REF, PROD_REF, projectRef } from '../scripts/supabase-management-query.mjs';
 
@@ -8,6 +8,31 @@ type Case = Record<'closing'|'am'|'old'|'generic'|'extra'|'stale', string>;
 type Fixture = { cases: Case[]; tag: string; actor: string; referenceItem: string; amTemplate: string };
 
 describe('0290 Management API proof (offline only)',()=>{
+  it.each(['nine', 'eleven', 'neither', 'no-grant'])(
+    'accepts either executable submit signature and refuses missing access: %s', async variant => {
+      const nine = 'public.submit_am_prep_atomic(uuid,uuid,jsonb,uuid,boolean,uuid,jsonb,text,text)';
+      const eleven = 'public.submit_am_prep_atomic(uuid,uuid,jsonb,uuid,boolean,uuid,jsonb,text,text,uuid,text)';
+      const signatures = [
+        'public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,jsonb)', nine, eleven,
+        'public.checklist_revoke_with_reason(uuid,uuid,text,text)',
+      ];
+      const query = vi.fn()
+        .mockResolvedValueOnce(Object.entries(requiredColumns).flatMap(([table, names]) =>
+          names.map((column: string) => ({ table_name: table, column_name: column, is_nullable: 'YES' }))))
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce(signatures.map(signature => ({
+          signature,
+          present: signature !== nine && signature !== eleven ||
+            (variant === 'nine' && signature === nine) ||
+            ((variant === 'eleven' || variant === 'no-grant') && signature === eleven),
+          executable: variant !== 'no-grant' || signature !== eleven,
+        })));
+      if (variant === 'nine' || variant === 'eleven') await expect(fixturePreflight(query)).resolves.toBeUndefined();
+      else await expect(fixturePreflight(query)).rejects.toThrow('EXECUTE missing');
+      expect(query.mock.calls[2]?.[0]).toContain(nine);
+      expect(query.mock.calls[2]?.[0]).toContain(eleven);
+    },
+  );
   it('pins all eight ordered pairs, including AM submit against closing confirm',()=>{
     expect(pairings).toEqual([
       ['replace','confirm'],['confirm','replace'],

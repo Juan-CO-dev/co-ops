@@ -20,6 +20,23 @@ const posted = (mock: ReturnType<typeof vi.fn>) => mock.mock.calls.map(c => JSON
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => { controls.submit = undefined; controls.change = undefined; });
 describe("AM prep form frozen request lifecycle", () => {
+  it("submits an RFC 4122 v4 key without randomUUID on HTTP LAN hosts", async () => {
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.fill(0xff);
+      return bytes;
+    });
+    vi.stubGlobal("crypto", { getRandomValues });
+    const fetcher = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", fetcher);
+    render(createElement(AmPrepForm, props));
+    await act(async () => { await submit(); });
+    expect(getRandomValues).toHaveBeenCalledOnce();
+    expect(getRandomValues.mock.calls[0]?.[0]).toHaveLength(16);
+    expect(posted(fetcher)[0]?.clientRequestId).toBe("ffffffff-ffff-4fff-bfff-ffffffffffff");
+    await act(async () => { await submit(); });
+    expect(getRandomValues).toHaveBeenCalledOnce();
+    expect(posted(fetcher)[1]).toEqual(posted(fetcher)[0]);
+  });
   it("a same-frame double click sends one request", async () => {
     let finish!: (r: Response) => void;
     const fetcher = vi.fn(() => new Promise<Response>(r => { finish = r; })); vi.stubGlobal("fetch", fetcher);

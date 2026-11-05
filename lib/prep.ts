@@ -3006,8 +3006,8 @@ export function hashAmPrepIntent(args: {
 }): string {
   const entries = args.entries.map(e => ({
     templateItemId: e.templateItemId.toLowerCase(),
-    inputs: Object.fromEntries(Object.entries(e.inputs).sort(([a], [b]) => a.localeCompare(b))),
-  })).sort((a, b) => a.templateItemId.localeCompare(b.templateItemId));
+    inputs: Object.fromEntries(Object.entries(e.inputs).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)),
+  })).sort((a, b) => a.templateItemId < b.templateItemId ? -1 : a.templateItemId > b.templateItemId ? 1 : 0);
   return createHash("sha256").update(JSON.stringify({
     isUpdate: args.isUpdate === true,
     originalSubmissionId: args.isUpdate ? args.originalSubmissionId?.toLowerCase() : null,
@@ -3015,7 +3015,30 @@ export function hashAmPrepIntent(args: {
   })).digest("hex");
 }
 
-/** Authorized callers only. SQL rechecks identity/hash under its parent/chain locks. */
+/** One mapper for the SQL concurrency replay, JS replay, and fresh submission. */
+function mapAmPrepSubmitResult(result: SubmitRpcResult, skipped: SkippedPrepRow[] = []) {
+  return { instance: rowToInstance(result.instance), submittedCompletionIds: result.completionIds,
+    closingAutoCompleteId: result.autoCompleteId, editCount: result.editCount,
+    originalSubmissionId: result.originalSubmissionId, skipped, replayed: result.replayed ?? false };
+}
+
+function throwAmPrepUniqueViolation(error: { code: string; message: string; constraint?: string }, instanceId: string): never {
+  // PostgREST includes the constraint in message; never log details (they contain row values).
+  const constraint = error.constraint ?? /unique constraint "([^"\n]+)"/.exec(error.message)?.[1] ?? null;
+  if (constraint === "checklist_submissions_client_request_unique") {
+    throw new PrepError("Already submitted", "already_submitted");
+  }
+  console.error("submitAmPrep: unexpected unique violation", { instanceId, code: error.code, constraint });
+  throw new Error("submitAmPrep: unexpected unique violation");
+}
+
+/** Compare PostgreSQL timestamps without losing sub-millisecond identity. */
+function sameSubmissionTime(a: string, b: string): boolean {
+  const micros = (value: string) => (/\.(\d+)/.exec(value)?.[1] ?? "").padEnd(6, "0").slice(3, 6);
+  return Date.parse(a) === Date.parse(b) && micros(a) === micros(b);
+}
+
+/** Authorized callers only. This path is read-only; SQL guards concurrent lookup misses. */
 async function replayAmPrep(service: SupabaseClient, args: {
   instanceId: string; actor: PrepActor; clientRequestId?: string;
   entries: Array<{ templateItemId: string; inputs: PrepInputs }>;
@@ -3023,27 +3046,52 @@ async function replayAmPrep(service: SupabaseClient, args: {
 }) {
   if (!args.clientRequestId) return null;
   const { data, error } = await service.from("checklist_submissions")
-    .select("id").eq("instance_id", args.instanceId)
+    .select("id, client_request_hash, completion_ids, edit_count, original_submission_id, submitted_at")
+    .eq("instance_id", args.instanceId)
     .eq("submitted_by", args.actor.userId).eq("client_request_id", args.clientRequestId)
-    .maybeSingle<{ id: string }>();
+    .maybeSingle<{ id: string; client_request_hash: string; completion_ids: string[];
+      edit_count: number; original_submission_id: string | null; submitted_at: string }>();
   if (error) throw new Error(`submitAmPrep: replay lookup: ${error.message}`);
   if (!data) return null;
-  const { data: replay, error: rpcError } = await service.rpc("submit_am_prep_atomic", {
-    p_prep_instance_id: args.instanceId, p_actor_id: args.actor.userId,
-    p_entries: [], p_closing_report_ref_item_id: null,
-    p_is_update: args.isUpdate ?? false,
-    p_original_submission_id: args.originalSubmissionId ?? null,
-    p_client_request_id: args.clientRequestId,
-    p_client_request_hash: hashAmPrepIntent(args),
-  });
-  if (rpcError?.message === "prep_request_key_reused") throw new PrepError("Request key already used for different counts", "prep_request_key_reused");
-  if (rpcError?.code === "23505") throw new PrepError("Already submitted", "already_submitted");
-  if (rpcError) throw new Error(`submitAmPrep: replay RPC: ${rpcError.message}`);
-  if (!replay || !(replay as SubmitRpcResult).replayed) throw new Error("submitAmPrep: replay result missing");
-  const result = replay as SubmitRpcResult;
-  return { instance: rowToInstance(result.instance), submittedCompletionIds: result.completionIds,
-    closingAutoCompleteId: result.autoCompleteId, editCount: result.editCount,
-    originalSubmissionId: result.originalSubmissionId, skipped: [], replayed: true };
+  const originalId = args.isUpdate ? args.originalSubmissionId?.toLowerCase() : null;
+  if (data.client_request_hash !== hashAmPrepIntent(args) || data.original_submission_id !== originalId) {
+    throw new PrepError("Request key already used for different counts", "prep_request_key_reused");
+  }
+  const { data: instance, error: instanceError } = await service.from("checklist_instances")
+    .select(INSTANCE_COLUMNS).eq("id", args.instanceId).maybeSingle<InstanceRow>();
+  if (instanceError || !instance) throw new Error("submitAmPrep: replay instance lookup failed");
+  let autoCompleteId: string | null = null;
+  if (data.original_submission_id === null) {
+    // Service-role embed is bounded by location/date, and includes historical templates.
+    const { data: closings, error: closingError } = await service.from("checklist_instances")
+      .select("id, template_id, checklist_templates!inner(type)")
+      .eq("location_id", instance.location_id).eq("date", instance.date)
+      .eq("checklist_templates.type", "closing");
+    if (closingError) throw new Error("submitAmPrep: replay closing lookup failed");
+    const rows = (closings ?? []) as Array<{ id: string; template_id: string }>;
+    if (rows.length) {
+      const { data: items, error: itemError } = await service.from("checklist_template_items")
+        .select("id").in("template_id", rows.map(row => row.template_id)).eq("report_reference_type", "am_prep");
+      if (itemError) throw new Error("submitAmPrep: replay reference lookup failed");
+      const itemIds = ((items ?? []) as Array<{ id: string }>).map(row => row.id);
+      if (itemIds.length) {
+        const { data: pushes, error: pushError } = await service.from("checklist_completions")
+          .select("id, auto_complete_meta").in("instance_id", rows.map(row => row.id))
+          .in("template_item_id", itemIds)
+          .eq("auto_complete_meta->>reportInstanceId", args.instanceId)
+          .eq("auto_complete_meta->>reportType", "am_prep")
+          .order("completed_at", { ascending: true }).order("id", { ascending: true });
+        if (pushError) throw new Error("submitAmPrep: replay push lookup failed");
+        autoCompleteId = ((pushes ?? []) as Array<{ id: string; auto_complete_meta: { reportSubmittedAt?: string } }>)
+          .find(row => typeof row.auto_complete_meta.reportSubmittedAt === "string"
+            && sameSubmissionTime(row.auto_complete_meta.reportSubmittedAt, data.submitted_at))?.id ?? null;
+      }
+    }
+  }
+  const result: SubmitRpcResult = { instance, submissionId: data.id, completionIds: data.completion_ids,
+    autoCompleteId, closingRefSkip: null, editCount: data.edit_count,
+    originalSubmissionId: data.original_submission_id, replayed: true };
+  return mapAmPrepSubmitResult(result);
 }
 
 export async function submitAmPrep(
@@ -3211,7 +3259,7 @@ export async function submitAmPrep(
 
   if (rpcErr) {
     if (rpcErr.message === "prep_request_key_reused") throw new PrepError("Request key already used", "prep_request_key_reused");
-    if (rpcErr.code === "23505") throw new PrepError("Already submitted", "already_submitted");
+    if (rpcErr.code === "23505") throwAmPrepUniqueViolation(rpcErr, args.instanceId);
     // Map specific Postgres errcodes to typed PrepError subclasses.
     // foreign_key_violation = case (b) auto-complete failure (no closing
     // instance for today). check_violation = pessimistic guard tripped
@@ -3256,7 +3304,8 @@ export async function submitAmPrep(
         ipAddress: args.ipAddress ?? null,
         userAgent: args.userAgent ?? null,
       });
-      throw new PrepError("AM prep already submitted", "already_submitted");
+      if (args.clientRequestId) throw new PrepError("AM prep already submitted", "already_submitted");
+      throw new PrepInstanceNotOpenError(args.instanceId, instRow.status);
     }
     throw new Error(`submitAmPrep: RPC failed: ${rpcErr.message}`);
   }
@@ -3291,15 +3340,7 @@ export async function submitAmPrep(
 
   if (!result.replayed) await auditPrepOverride(service, args, "am_prep", "submitAmPrep");
 
-  return {
-    replayed: result.replayed ?? false,
-    instance: rowToInstance(result.instance),
-    submittedCompletionIds: result.completionIds,
-    closingAutoCompleteId: result.autoCompleteId,
-    editCount: 0,
-    originalSubmissionId: null,
-    skipped,
-  };
+  return mapAmPrepSubmitResult(result, skipped);
 }
 
 /**
@@ -3594,7 +3635,7 @@ async function submitAmPrepUpdate(
     });
 
     if (rpcErr.message === "prep_request_key_reused") throw new PrepError("Request key already used", "prep_request_key_reused");
-    if (rpcErr.code === "23505") throw new PrepError("Already submitted", "already_submitted");
+    if (rpcErr.code === "23505") throwAmPrepUniqueViolation(rpcErr, args.instanceId);
     // P0001 = application-defined exception — RPC raises this when the
     // post-lock cap check sees edit_count >= 3 (race past lib pre-check).
     if (rpcErr.code === "P0001") {
@@ -3627,13 +3668,5 @@ async function submitAmPrepUpdate(
 
   if (!result.replayed) await auditPrepOverride(service, args, "am_prep", "submitAmPrepUpdate");
 
-  return {
-    replayed: result.replayed ?? false,
-    instance: rowToInstance(result.instance),
-    submittedCompletionIds: result.completionIds,
-    closingAutoCompleteId: null,  // per A4: update path doesn't touch closing auto-complete
-    editCount: result.editCount,
-    originalSubmissionId: result.originalSubmissionId,
-    skipped,
-  };
+  return mapAmPrepSubmitResult(result, skipped);
 }

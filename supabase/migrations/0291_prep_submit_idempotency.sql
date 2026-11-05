@@ -5,6 +5,8 @@
 -- ROLLOUT: SQL before app. Named-arg calls without the trailing key/hash stay
 -- compatible during the deployment drain. DROP/CREATE avoids PGRST203 overloads.
 -- Global lock order: AM instance -> closing instance -> completion rows.
+-- Ruling 3 intended change: the edit branch refreshes v_submitted_at with
+-- clock_timestamp() AFTER all parent and chain locks, including any wait.
 -- Keys are actor/instance scoped, nullable, and never backfilled.
 -- Replays return persisted submission IDs; instance is the current instance.
 -- Historical push ID is recovered from append-only reference metadata. Skip
@@ -88,15 +90,32 @@ BEGIN
       WHERE instance_id = p_prep_instance_id AND submitted_by = p_actor_id
         AND client_request_id = p_client_request_id;
       IF FOUND THEN
-        IF v_replay.client_request_hash IS DISTINCT FROM p_client_request_hash THEN
+        IF v_replay.client_request_hash IS DISTINCT FROM p_client_request_hash
+          OR v_replay.original_submission_id IS DISTINCT FROM
+            (CASE WHEN p_is_update THEN p_original_submission_id ELSE NULL END) THEN
           RAISE EXCEPTION 'prep_request_key_reused';
         END IF;
         -- Historical reference completions remain append-only, even superseded.
-        SELECT cc.id INTO v_auto_complete_id FROM public.checklist_completions cc
-        WHERE cc.auto_complete_meta->>'reportInstanceId' = p_prep_instance_id::text
-          AND cc.auto_complete_meta->>'reportType' = 'am_prep'
-          AND (cc.auto_complete_meta->>'reportSubmittedAt')::timestamptz = v_replay.submitted_at
-          AND v_replay.original_submission_id IS NULL
+        -- Materialization prevents the planner casting unrelated metadata before
+        -- restricting to the indexed closing-instance/reference-item key.
+        WITH replay_refs AS MATERIALIZED (
+          SELECT cc.id, cc.completed_at, cc.auto_complete_meta
+          FROM public.checklist_completions cc
+          JOIN public.checklist_instances closing_ci ON closing_ci.id = cc.instance_id
+          JOIN public.checklist_templates closing_ct
+            ON closing_ct.id = closing_ci.template_id AND closing_ct.type = 'closing'
+          JOIN public.checklist_template_items cti
+            ON cti.template_id = closing_ci.template_id AND cti.id = cc.template_item_id
+          JOIN public.checklist_instances prep_ci
+            ON prep_ci.location_id = closing_ci.location_id AND prep_ci.date = closing_ci.date
+          WHERE prep_ci.id = p_prep_instance_id
+            AND cti.report_reference_type = 'am_prep'
+            AND cc.auto_complete_meta->>'reportInstanceId' = p_prep_instance_id::text
+            AND cc.auto_complete_meta->>'reportType' = 'am_prep'
+            AND v_replay.original_submission_id IS NULL
+        )
+        SELECT cc.id INTO v_auto_complete_id FROM replay_refs cc
+        WHERE (cc.auto_complete_meta->>'reportSubmittedAt')::timestamptz = v_replay.submitted_at
         ORDER BY cc.completed_at, cc.id LIMIT 1;
         SELECT to_jsonb(ci) INTO v_prep_instance_row FROM public.checklist_instances ci
           WHERE ci.id = p_prep_instance_id;
@@ -277,15 +296,32 @@ BEGIN
       WHERE instance_id = p_prep_instance_id AND submitted_by = p_actor_id
         AND client_request_id = p_client_request_id;
       IF FOUND THEN
-        IF v_replay.client_request_hash IS DISTINCT FROM p_client_request_hash THEN
+        IF v_replay.client_request_hash IS DISTINCT FROM p_client_request_hash
+          OR v_replay.original_submission_id IS DISTINCT FROM
+            (CASE WHEN p_is_update THEN p_original_submission_id ELSE NULL END) THEN
           RAISE EXCEPTION 'prep_request_key_reused';
         END IF;
         -- Historical reference completions remain append-only, even superseded.
-        SELECT cc.id INTO v_auto_complete_id FROM public.checklist_completions cc
-        WHERE cc.auto_complete_meta->>'reportInstanceId' = p_prep_instance_id::text
-          AND cc.auto_complete_meta->>'reportType' = 'am_prep'
-          AND (cc.auto_complete_meta->>'reportSubmittedAt')::timestamptz = v_replay.submitted_at
-          AND v_replay.original_submission_id IS NULL
+        -- Materialization prevents the planner casting unrelated metadata before
+        -- restricting to the indexed closing-instance/reference-item key.
+        WITH replay_refs AS MATERIALIZED (
+          SELECT cc.id, cc.completed_at, cc.auto_complete_meta
+          FROM public.checklist_completions cc
+          JOIN public.checklist_instances closing_ci ON closing_ci.id = cc.instance_id
+          JOIN public.checklist_templates closing_ct
+            ON closing_ct.id = closing_ci.template_id AND closing_ct.type = 'closing'
+          JOIN public.checklist_template_items cti
+            ON cti.template_id = closing_ci.template_id AND cti.id = cc.template_item_id
+          JOIN public.checklist_instances prep_ci
+            ON prep_ci.location_id = closing_ci.location_id AND prep_ci.date = closing_ci.date
+          WHERE prep_ci.id = p_prep_instance_id
+            AND cti.report_reference_type = 'am_prep'
+            AND cc.auto_complete_meta->>'reportInstanceId' = p_prep_instance_id::text
+            AND cc.auto_complete_meta->>'reportType' = 'am_prep'
+            AND v_replay.original_submission_id IS NULL
+        )
+        SELECT cc.id INTO v_auto_complete_id FROM replay_refs cc
+        WHERE (cc.auto_complete_meta->>'reportSubmittedAt')::timestamptz = v_replay.submitted_at
         ORDER BY cc.completed_at, cc.id LIMIT 1;
         SELECT to_jsonb(ci) INTO v_prep_instance_row FROM public.checklist_instances ci
           WHERE ci.id = p_prep_instance_id;

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { pairings, fixture, fixtureSQL, retireSQL, calls, evidenceSQL, assertEvidence,
-  runProof, main, proveClosingOverlap } from "../scripts/sim/checklist-0291-lock-check-management.mjs";
+  runProof, main, proveClosingOverlap, setupStatements } from "../scripts/sim/checklist-0291-lock-check-management.mjs";
 import { PROD_REF, SIM_REF } from "../scripts/supabase-management-query.mjs";
 
 type Case = Record<"closing" | "am" | "old" | "generic" | "extra" | "stale" | "key" | "editKey", string>;
@@ -11,19 +11,19 @@ type Evidence = { submissions: number; completions: number; live: number; edits:
 
 describe("0291 Management API proof (offline only)", () => {
   it("covers committed same-key original/edit races and replay/closing in both orders", () => {
-    expect(pairings).toEqual([["original", "original"], ["edit", "edit"], ["replay", "confirm"], ["confirm", "replay"]]);
+    expect(pairings).toEqual([["original", "original"], ["edit", "edit"], ["replay", "confirm"], ["confirm", "replay"], ["edit", "confirm"], ["confirm", "edit"]]);
     const source = readFileSync("scripts/sim/checklist-0291-lock-check-management.mjs", "utf8");
-    expect(source).toContain("const race=i>1?proveClosingOverlap:proveRace");
+    expect(source).toContain("const race=closingRace?proveClosingOverlap:proveRace");
     expect(source).toContain("await race(query,ops[a],ops[b]");
     expect(source).not.toContain("rollbackQuery");
-    expect(source).toContain("if(i>1) await query(transactionSQL");
+    expect(source).toContain("if(closingRace) assertEvidence(before[0],committedReplay)");
     expect(source).toContain("result.rows[0]?.result?.replayed,true");
     expect(source).toContain("replay[0]?.result?.submissionId,stored[0]?.id");
     expect(source).not.toMatch(/import.*dotenv|process\.env\.SIM_DATABASE_URL|import\(['"]pg['"]\)/);
   });
   it("uses isolated prep templates, real entry payloads, distinct keys and scoped retirement", () => {
     const f = allocated();
-    expect(f.cases).toHaveLength(4);
+    expect(f.cases).toHaveLength(6);
     expect(f.tag).toMatch(/^SIM-0291-/);
     const ids = f.cases.flatMap(c => Object.values(c));
     expect(new Set(ids).size).toBe(ids.length);
@@ -34,6 +34,21 @@ describe("0291 Management API proof (offline only)", () => {
     expect(retire.match(/set active=false/g)).toHaveLength(6);
     expect(retire).toContain(`id='${f.prepItem}' and template_id='${f.amTemplate}'`);
     expect(retire).not.toMatch(/delete|truncate|checklist_completions|checklist_instances|checklist_submissions/i);
+  });
+  it("commits only the original before fresh edit/confirm pairs, preserving committed replay pairs", () => {
+    const f = allocated(), ops = calls(f, f.cases[0]!);
+    for (const [a, b] of [["edit", "confirm"], ["confirm", "edit"]] as const) {
+      const setup = setupStatements(ops, a, b, "fresh");
+      expect(setup).toHaveLength(1);
+      expect(setup[0]).toContain(ops.original);
+      expect(setup[0]).not.toContain(ops.edit);
+    }
+    for (const [a, b] of [["replay", "confirm"], ["confirm", "replay"]] as const) {
+      const setup = setupStatements(ops, a, b, "replay");
+      expect(setup).toHaveLength(2);
+      expect(setup[0]).toContain(ops.original);
+      expect(setup[1]).toContain(ops.edit);
+    }
   });
   it("reuses the frozen key and intent for edits and binds originals to authenticated fixture actor", () => {
     const f = allocated(), c = f.cases[0]!;

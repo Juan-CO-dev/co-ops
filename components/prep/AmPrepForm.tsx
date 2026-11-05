@@ -62,6 +62,7 @@ import {
   type AmPrepDraftRestore,
 } from "@/lib/am-prep-draft-shared";
 import type { ChecklistChainEntry } from "@/lib/checklists";
+import { createClientRequestId } from "@/lib/client-request-id";
 import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
@@ -682,7 +683,7 @@ export function AmPrepForm({
             };
       const intent = JSON.stringify(requestBody);
       if (!frozenRequest.current || frozenRequest.current.intent !== intent) {
-        frozenRequest.current = { intent, body: JSON.stringify({ ...requestBody, clientRequestId: crypto.randomUUID() }) };
+        frozenRequest.current = { intent, body: JSON.stringify({ ...requestBody, clientRequestId: createClientRequestId() }) };
       }
       const res = await fetch("/api/prep/submit", {
         method: "POST",

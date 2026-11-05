@@ -145,15 +145,19 @@ export async function fixturePreflight(query) {
     const expected=values[`${e.table_name}.${e.column_name}`];
     assert.ok(expected && expected.every(label=>enums.some(v=>v.table_name===e.table_name && v.column_name===e.column_name && v.enumlabel===label)),'fixture enum label mismatch');
   }
-  const signatures=[
-    'public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,jsonb)',
-    'public.submit_am_prep_atomic(uuid,uuid,jsonb,uuid,boolean,uuid,jsonb,text,text)',
-    'public.checklist_revoke_with_reason(uuid,uuid,text,text)',
+  const signatureGroups=[
+    ['public.checklist_replace_closing_ref(uuid,uuid,uuid,uuid,jsonb)'],
+    // 0291 adds two defaulted arguments; the existing nine-argument calls work
+    // with either deployed signature.
+    ['public.submit_am_prep_atomic(uuid,uuid,jsonb,uuid,boolean,uuid,jsonb,text,text)',
+      'public.submit_am_prep_atomic(uuid,uuid,jsonb,uuid,boolean,uuid,jsonb,text,text,uuid,text)'],
+    ['public.checklist_revoke_with_reason(uuid,uuid,text,text)'],
   ];
+  const signatures=signatureGroups.flat();
   const grants=await query(`select signature,to_regprocedure(signature) is not null as present,
     coalesce(has_function_privilege('service_role',to_regprocedure(signature),'EXECUTE'),false) as executable
     from unnest(array[${signatures.map(q).join(',')}]::text[]) as required(signature)`);
-  for(const signature of signatures) assert.ok(grants.some(r=>r.signature===signature && r.present===true && r.executable===true),'0290 required function or service_role EXECUTE missing');
+  for(const group of signatureGroups) assert.ok(grants.some(r=>group.includes(r.signature) && r.present===true && r.executable===true),'0290 required function or service_role EXECUTE missing');
 }
 
 export async function runProof(query,log=console.log,raceOptions={}) {

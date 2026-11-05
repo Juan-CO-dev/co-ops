@@ -22,6 +22,16 @@ describe("0291 preserves the applied 0290 writer", () => {
     }
   });
 
+  it("pins the intended edit timestamp refresh after chain locks and before the cap", () => {
+    const edit = current.slice(current.indexOf("-- 1. Lock the chain head."));
+    const chainLock = edit.indexOf("WHERE original_submission_id = p_original_submission_id");
+    const timestamp = edit.indexOf("v_submitted_at := clock_timestamp();");
+    expect(chainLock).toBeGreaterThan(0);
+    expect(timestamp).toBeGreaterThan(chainLock);
+    expect(timestamp).toBeLessThan(edit.indexOf("-- 2. Cap check"));
+    expect(current).toContain("-- Ruling 3 intended change: the edit branch refreshes v_submitted_at");
+  });
+
   it("runs actual SQL, rejecting the deliberately broken hash comparison before passing", () => {
     const output = execFileSync(process.execPath, ["scripts/sql-harness-0291.mjs"], {
       encoding: "utf8", timeout: 120_000,

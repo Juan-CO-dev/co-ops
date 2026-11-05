@@ -17,6 +17,7 @@ import { fixture as previousFixture, fixtureSQL as previousFixtureSQL,
 export const pairings = [
   ['original','original'], ['edit','edit'],
   ['replay','confirm'], ['confirm','replay'],
+  ['edit','confirm'], ['confirm','edit'],
 ];
 export function fixture() {
   const f=previousFixture();
@@ -50,6 +51,13 @@ export function calls(f,c) {
       array(select id from public.checklist_completions where instance_id=${q(c.closing)}
         and superseded_at is null and revoked_at is null order by id)::uuid[]) as result`,
   };
+}
+export function setupStatements(ops,a,b,tag) {
+  if(a==='original' && b==='original') return [];
+  const statements=[transactionSQL(`${tag}-original`,ops.original)];
+  // Fresh edit/confirm races must start with only the original committed.
+  if(a==='replay' || b==='replay') statements.push(transactionSQL(`${tag}-edit`,ops.edit));
+  return statements;
 }
 export function evidenceSQL(c) {
   return `select
@@ -127,7 +135,7 @@ export async function proveClosingOverlap(query,holderSQL,racerSQL,tag,{sleep=ms
     assert.ok(ready,'first operation must finish and hold its transaction open');
     racer=settled(query(transactionSQL(`${tag}-r`,racerSQL)));
     const result=await racer;
-    assert.equal(result.ok,true,'overlapping closing/replay operation must commit');
+    assert.equal(result.ok,true,'overlapping closing/edit or replay operation must commit');
     const stillOpen=await query(`select exists(select 1 from pg_stat_activity
       where application_name=${q(holderName)} and wait_event='PgSleep') as ready`);
     assert.equal(stillOpen[0]?.ready,true,'second operation must commit while first remains open');
@@ -147,18 +155,19 @@ export async function runProof(query,log=console.log,raceOptions={}) {
     await query(fixtureSQL(f));
     for(const [i,[a,b]] of pairings.entries()) {
       const c=f.cases[i],ops=calls(f,c);
-      if(i>0) await query(transactionSQL(`${f.tag}-${i}-original`,ops.original));
-      // Both closing races retry an already committed edit, so the confirm-first
-      // order proves replay remains valid after closing becomes confirmed.
-      if(i>1) await query(transactionSQL(`${f.tag}-${i}-edit`,ops.edit));
+      const closingRace=a==='confirm' || b==='confirm';
+      const committedReplay=a==='replay' || b==='replay';
+      for(const sql of setupStatements(ops,a,b,`${f.tag}-${i}`)) await query(sql);
       const before=await query(evidenceSQL(c));
-      const race=i>1?proveClosingOverlap:proveRace;
+      if(closingRace) assertEvidence(before[0],committedReplay);
+      const race=closingRace?proveClosingOverlap:proveRace;
       const result=await race(query,ops[a],ops[b],`${f.tag}-${i}`,raceOptions);
       assert.equal(result.ok,true,'both committed race participants must succeed');
-      if(b!=='confirm') assert.equal(result.rows[0]?.result?.replayed,true,'waiting same-key submit must replay');
+      if(!closingRace || b==='replay') assert.equal(result.rows[0]?.result?.replayed,true,'waiting same-key submit must replay');
+      if(closingRace && b==='edit') assert.notEqual(result.rows[0]?.result?.replayed,true,'fresh edit must execute, not replay');
       const rows=await query(evidenceSQL(c));
-      assertEvidence(rows[0],i>0,i>1);
-      if(i>1) for(const key of ['submissions','completions','live','edits','audits'])
+      assertEvidence(rows[0],i>0,closingRace);
+      if(committedReplay) for(const key of ['submissions','completions','live','edits','audits'])
         assert.equal(rows[0]?.[key],before[0]?.[key],'closing/replay race must preserve prep evidence');
       // Replay again to verify the winner IDs match the only stored keyed row.
       const replay=await query(transactionSQL(`${f.tag}-${i}-verify`,i>0?ops.edit:ops.original));
@@ -169,7 +178,7 @@ export async function runProof(query,log=console.log,raceOptions={}) {
       assert.deepEqual(replay[0]?.result?.completionIds,stored[0]?.completion_ids);
       log(`PASS committed ordered pair ${a} -> ${b}; same IDs and one submission per key`);
     }
-    log('PASS 0291: 2 committed lock pairs with observed waits; 2 nonblocking closing/replay overlaps');
+    log('PASS 0291: 2 committed lock pairs with observed waits; 2 nonblocking closing/replay overlaps; 2 fresh edit/closing overlaps');
   } finally {
     await query(retireSQL(f));
     const retired=await query(`select
