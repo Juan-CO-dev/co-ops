@@ -5,8 +5,8 @@ test("real poster and native ordering anchors are reserved in SSR without JS",as
  const media:string[]=[];page.on("request",r=>{if(/mp4|webm|_next\/image/.test(r.url()))media.push(r.url());});
  await page.goto(baseURL!);const hero=page.locator("#hero");const poster=hero.getByRole("img",{name:"Crunchy Boi sub"});
  await expect(poster).toHaveAttribute("width","960");await expect(poster).toHaveAttribute("height","1440");
- await expect(hero.getByRole("link",{name:"Order Capitol Hill"})).toHaveAttribute("href",/appfront/);
- await expect(hero.getByRole("link",{name:"Order Dupont"})).toHaveAttribute("href",/appfront/);
+ await expect(hero.getByRole("link",{name:"Pickup at Capitol Hill"})).toHaveAttribute("href",/appfront/);
+ await expect(hero.getByRole("link",{name:"Pickup at Dupont"})).toHaveAttribute("href",/appfront/);
  expect(await poster.getAttribute("src")).not.toContain("/_next/image");expect(media).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(375);
  await page.screenshot({path:test.info().outputPath("hero-375.png"),fullPage:true});await context.close();
 });

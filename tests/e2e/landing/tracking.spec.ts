@@ -18,16 +18,16 @@ test('lineup native order click sends Pixel, CAPI request and independent counte
   await page.route('**/api/landing/order-click', route => { counters.push(route.request().postDataJSON()); return route.fulfill({status:204}); });
   await page.goto('/');
   await page.locator('[data-landing-consent]').getByRole('button').first().click();
-  const link = page.locator('#hero').getByRole('link', {name:'Order Capitol Hill'});
+  const link = page.locator('#hero').getByRole('link', {name:'Pickup at Capitol Hill'});
   // Preserve the document for queued-pixel inspection; React's real click handler runs.
   await link.evaluate(el => el.addEventListener('click', event => event.preventDefault()));
   await link.click();
   await expect.poll(() => events.length).toBe(1);
   await expect.poll(() => counters.length).toBe(1);
-  expect(events[0]).toMatchObject({event_name:'OrderClick',placement:'hero',store:'capitol-hill'});
-  expect(counters[0]).toEqual({store:'capitol-hill',ad:'unattributed'});
+  expect(events[0]).toMatchObject({event_name:'OrderClick',mode:'pickup',placement:'hero',store:'capitol-hill'});
+  expect(counters[0]).toEqual({store:'capitol-hill',ad:'unattributed',intent:'pickup'});
   const queued = await page.evaluate(() => window.fbq?.queue?.find(args => args[1] === 'OrderClick'));
-  expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement:'hero',store:'capitol-hill'},{eventID:events[0]?.event_id}]);
+  expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement:'hero',store:'capitol-hill',mode:'pickup'},{eventID:events[0]?.event_id}]);
 });
 
 test('selecting a fighter and opening the sheet are silent; the sheet link counts once as lineup', async ({page}) => {
@@ -40,7 +40,7 @@ test('selecting a fighter and opening the sheet are silent; the sheet link count
   await page.locator('#lineup').scrollIntoViewIfNeeded();
   await page.locator('[data-lineup] button',{hasText:'The Frex'}).click();
   await page.getByRole('button',{name:'Order The Frex'}).click();
-  const link = page.getByRole('dialog').getByRole('link',{name:'Order Dupont'});
+  const link = page.getByRole('dialog').getByRole('link',{name:'Pickup at Dupont'});
   await expect(link).toBeVisible();
   await page.waitForTimeout(500);
   expect(events).toEqual([]);expect(counters).toEqual([]);
@@ -48,8 +48,8 @@ test('selecting a fighter and opening the sheet are silent; the sheet link count
   await link.click();
   await expect.poll(() => events.length).toBe(1);
   await expect.poll(() => counters.length).toBe(1);
-  expect(events[0]).toMatchObject({event_name:'OrderClick',placement:'lineup',store:'dupont'});
-  expect(counters[0]).toEqual({store:'dupont',ad:'unattributed'});
+  expect(events[0]).toMatchObject({event_name:'OrderClick',mode:'pickup',placement:'lineup',store:'dupont'});
+  expect(counters[0]).toEqual({store:'dupont',ad:'unattributed',intent:'pickup'});
 });
 
 test('no Meta or attribution persistence before consent; equal keyboard consent choices',async({page})=>{
@@ -146,7 +146,7 @@ test('restored retired code is revalidated and lookup outage preserves native na
  await page.goto('/');await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
  expect(candidate).toEqual({candidate:'retired-code'});expect(JSON.parse((await page.evaluate(()=>sessionStorage.getItem('landing_attribution')))! ).ad).toBe('unattributed');
  await page.route('https://complimentsonlysubs.appfront.app/**',route=>route.fulfill({body:'Native ordering'}));
- await page.getByRole('link',{name:'Order Capitol Hill',exact:true}).first().click();await expect(page).toHaveURL(/appfront/);
+ await page.getByRole('link',{name:'Pickup at Capitol Hill',exact:true}).first().click();await expect(page).toHaveURL(/appfront/);
 });
 
 // Observe receipt at the HTTP server: browser response listeners can disappear on unload.
@@ -191,13 +191,13 @@ test('native navigation during held lookup delivers exactly one unattributed ser
    // the provider clears marketing cookies while consent is unset (WebKit hydrates later).
    await page.evaluate(()=>{document.cookie='_fbc=fb.1.1730000000000.Cookie_Click; path=/';document.cookie='_fbp=fb.1.1730000000000.456; path=/';});
    // Native same-tab link: no preventDefault, no href replacement.
-   expect(await page.locator('#hero').getByRole('link',{name:'Order Capitol Hill'}).evaluate(el=>{
+   expect(await page.locator('#hero').getByRole('link',{name:'Pickup at Capitol Hill'}).evaluate(el=>{
      const pixel=!!window.fbq;(el as HTMLAnchorElement).click();return pixel;
    })).toBe(false);
    await expect(page).toHaveURL(/appfront/);
    if(!oneBeaconEngine)await expect.poll(()=>received.length).toBe(2);
-   if(!oneBeaconEngine)expect(received.filter(item=>item.path==='/api/landing/events')).toEqual([{path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})}]);
-   if(!oneBeaconEngine)expect(received.filter(item=>item.path==='/api/landing/order-click')).toEqual([{path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}}]);
+   if(!oneBeaconEngine)expect(received.filter(item=>item.path==='/api/landing/events')).toEqual([{path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',mode:'pickup',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})}]);
+   if(!oneBeaconEngine)expect(received.filter(item=>item.path==='/api/landing/order-click')).toEqual([{path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed',intent:'pickup'}}]);
    expect(meta).toEqual([]);
    release();await page.waitForTimeout(1100);
    // Re-check after the wait: no duplicates, and every delivered post is the valid one.
@@ -205,8 +205,8 @@ test('native navigation during held lookup delivers exactly one unattributed ser
    const capi=received.filter(item=>item.path==='/api/landing/events');
    expect(counters.length).toBeLessThanOrEqual(1);expect(capi.length).toBeLessThanOrEqual(1);
    if(!oneBeaconEngine){expect(counters).toHaveLength(1);expect(capi).toHaveLength(1);}
-   for(const item of counters)if(!(oneBeaconEngine&&item.body===null))expect(item).toEqual({path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed'}});
-   for(const item of capi)if(!(oneBeaconEngine&&item.body===null))expect(item).toEqual({path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})});
+   for(const item of counters)if(!(oneBeaconEngine&&item.body===null))expect(item).toEqual({path:'/api/landing/order-click',status:204,body:{store:'capitol-hill',ad:'unattributed',intent:'pickup'}});
+   for(const item of capi)if(!(oneBeaconEngine&&item.body===null))expect(item).toEqual({path:'/api/landing/events',status:204,body:expect.objectContaining({event_name:'OrderClick',mode:'pickup',ad:'unattributed',fbc:'fb.1.1730000000000.Cookie_Click',fbp:'fb.1.1730000000000.456'})});
    expect(received).toHaveLength(counters.length+capi.length);expect(meta).toEqual([]);
  } finally {
    release();relay.closeAllConnections();await new Promise<void>((resolve,reject)=>relay.close(error=>error?reject(error):resolve()));
@@ -231,7 +231,7 @@ test('v4.2: the footer "Privacy settings" reopens the same notice and withdrawal
   await settings.click();
   await expect(notice).toBeVisible();
   // Same notice: same wording, and the second action now withdraws.
-  await expect(notice.locator('[data-landing-consent] p')).toHaveText('With your permission, we count order clicks and, when configured, share visits and clicks with Meta to understand our ads. Ordering works either way.');
+  await expect(notice.locator('[data-landing-consent] p')).toHaveText('With your permission, we count order clicks and, when configured, share visits and clicks with Meta to understand our ads. Ordering works either way. This includes directions taps and pickup or delivery choices.');
   await expect(notice.locator('[data-landing-consent] button').nth(1)).toHaveText('Withdraw permission');
   await notice.locator('[data-landing-consent] button').nth(1).click();
   await expect(notice).toBeHidden();

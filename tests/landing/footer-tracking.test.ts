@@ -18,15 +18,16 @@ it('DoorDash invokes the tracked footer link while Uber Eats is scoped to Dupont
     else walk(node.props.children);
   }
   walk(Footer({config,stores:[],language:'en'}));
-  expect(links).toHaveLength(1);
+  expect(links).toHaveLength(2);
   // A tapped link also gets the decorative P1 hop (a data attribute on the element itself).
   const tap=()=>({currentTarget:{dataset:{},offsetWidth:0}});
   for (const link of links) link.props.onClick(tap());
   expect(dispatch.mock.calls).toEqual([
+    ['OrderClick',{store:undefined,placement:'footer',vendor:undefined,mode:'delivery'}],
     ['OrderClick',{store:undefined,placement:'footer',vendor:'doordash'}],
   ]);
   const stores=projectLandingStores([{code:'MEP',name:'',address:null,phone:null},{code:'EM',name:'',address:null,phone:null}],config);
-  walk(NearbyShop({stores,language:'en',labels:{nearest:'Nearest',locating:'Locating',unavailable:'Unavailable',straightLine:'Straight line',distance:'{distance} miles',offer:'Offer',call:{},order:{},uberEats:'Uber Eats (Dupont)'}}));
+  walk(NearbyShop({delivery:{href:config.deliveryUrl,label:"Delivery"},stores,language:'en',labels:{nearest:'Nearest',locating:'Locating',unavailable:'Unavailable',straightLine:'Straight line',distance:'{distance} miles',offer:'Offer',call:{},order:{},uberEats:'Uber Eats (Dupont)'}}));
   const uber=links.filter(link=>link.props.href==='https://example.test/uber');
   expect(uber).toHaveLength(1);
   uber[0]!.props.onClick(tap());

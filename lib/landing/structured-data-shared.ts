@@ -1,6 +1,6 @@
 import type { LandingStoreConfig } from '@/config/tenant/landing';
 
-type PublicShopFacts = Pick<LandingStoreConfig, 'key' | 'name' | 'structuredAddress' | 'coordinates' | 'phone' | 'openingHours' | 'orderUrl'>;
+type PublicShopFacts = Pick<LandingStoreConfig, 'key' | 'name' | 'structuredAddress' | 'coordinates' | 'phone' | 'openingHours' | 'pickupUrl'>;
 
 export function structuredDataImage(inventory: readonly { id: string; path: string }[]): string | undefined {
   return inventory.find(asset => asset.id === 'v2-p013-1280')?.path;
@@ -25,6 +25,7 @@ export function shopStructuredData(origin: string, brand: string, image: string 
         addressCountry: store.structuredAddress.addressCountry,
       },
       ...(store.coordinates ? { geo: { '@type': 'GeoCoordinates', latitude: store.coordinates.latitude, longitude: store.coordinates.longitude } } : {}),
+      potentialAction: { '@type': 'OrderAction', target: store.pickupUrl },
       telephone: store.phone,
       openingHoursSpecification: [{ '@type': 'OpeningHoursSpecification', dayOfWeek: [...store.openingHours.days], opens: store.openingHours.opens, closes: store.openingHours.closes }],
     })),

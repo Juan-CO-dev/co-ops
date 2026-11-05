@@ -202,10 +202,10 @@ for(const mode of ['reduce','no-js','no-js-full-motion'] as const)test(`${mode} 
     // The static equivalent of "all six found": the order action is there at once (its shop links sit in the closed sheet).
     await expect(page.locator('#field-guide .landing-v4-guide-cta')).toHaveAttribute('data-ready','true');
     await expect(page.locator('#field-guide').getByRole('button',{name:en['landing.lineup.order'].replace('{name}','Crunchy Boi')})).toBeVisible();
-    await expect(page.locator('#field-guide [data-landing-placement="guide"]')).toHaveCount(2);
+    await expect(page.locator('#field-guide [data-landing-placement="guide"]')).toHaveCount(3);
   } else await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(0);
   // The crunch story ends on its own order action, never over a photo.
-  await expect(page.locator('#crave [data-landing-placement="crave"]')).toHaveCount(2);
+  await expect(page.locator('#crave [data-landing-placement="crave"]')).toHaveCount(3);
   await context.close();
 });
 
@@ -289,7 +289,7 @@ test('finding all six Field Guide ingredients turns into the Crunchy Boi order a
   await button.click();
   const sheet=page.getByRole('dialog',{name:'Pick a shop for Crunchy Boi'});
   await expect(sheet).toBeVisible();
-  await expect(sheet.locator('a[data-landing-placement="guide"]')).toHaveCount(2);
+  await expect(sheet.locator('a[data-landing-placement="guide"]')).toHaveCount(3);
 });
 
 for(const text of ['100%','200%'] as const)for(const language of ['en','es'] as const)test(`the Field Guide action slot keeps one height from first paint to six-of-six (${language}; text ${text})`,async({page})=>{
@@ -395,8 +395,16 @@ test('finding all six by taps alone stops the scroll observer',async({page})=>{
   await page.goto('/');
   const guide=page.locator('.landing-v3-guide');
   await expect(guide).toHaveAttribute('data-guide-mode','motion');
-  // Words at the bottom of the screen, the photo wholly below it: scrolling has found nothing.
-  await page.locator('.landing-v3-guide-words').evaluate(el=>scrollTo(0,el.getBoundingClientRect().bottom+scrollY-innerHeight+8));
+  // Wait for font metrics, then position the actual photo below the viewport with a margin.
+  // Inferring its edge from the words was sensitive to late layout shifts and fractional pixels.
+  await page.evaluate(()=>document.fonts.ready);
+  const positionPhoto=()=>page.locator('.landing-v3-guide-figure').evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-innerHeight-24));
+  await positionPhoto();
+  // Approaching the guide enhances the preceding native order groups into sheet buttons.
+  // Their height changes; wait for that real transition, prove nothing was found, then position again.
+  await expect(page.locator('.landing-v3-direct-orders')).toHaveCount(0);
+  await expect(guide).toHaveAttribute('data-guide-found','0');
+  await positionPhoto();
   await page.waitForTimeout(600);
   expect(await page.locator('.landing-v3-guide-figure').evaluate(el=>el.getBoundingClientRect().top>=innerHeight)).toBe(true);
   expect(Number(await guide.getAttribute('data-guide-found'))).toBe(0);

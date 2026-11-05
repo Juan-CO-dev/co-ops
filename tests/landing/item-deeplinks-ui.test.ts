@@ -24,7 +24,7 @@ afterEach(() => {cleanup();vi.unstubAllGlobals();});
 it('selects every fighter and orders its own item at either shop without changing dispatch fields', async () => {
   const sprite = {src:'/sprite.png', width:1, height:1};
   const shops = landingTenantConfig.stores.map(store => ({...store, detail:store.street}));
-  render(createElement(FighterSelect, {
+  render(createElement(FighterSelect, {delivery:{href:landingTenantConfig.deliveryUrl,label:"Delivery"},
     fighters:products.map(product => ({...product, ingredients:'Ingredients', photoAlt:product.name})),
     shops, spin:{frames:[],width:1,height:1}, sprites:{idle:sprite,jump:sprite,selected:sprite},
     labels:{order:'Order {name}',sheetTitle:'Pick a shop for {name}',close:'Close',auto:'Auto',p1:'P1',spin:'Spin',spinValue:'{degrees}',browse:'Browse'},
@@ -39,9 +39,14 @@ it('selects every fighter and orders its own item at either shop without changin
       // Cancel only jsdom's unsupported navigation; the production click stays native.
       link.addEventListener('click', event => event.preventDefault(), {once:true});
       fireEvent.click(link);
-      expect(dispatch).toHaveBeenLastCalledWith('OrderClick', {store:store.key, placement:'lineup', vendor:undefined, item:product.id});
+      expect(dispatch).toHaveBeenLastCalledWith('OrderClick', {store:store.key, placement:'lineup', mode:'pickup', vendor:undefined, item:product.id});
     }
+    const delivery = within(dialog).getByRole('link', {name:'Delivery'});
+    expect(delivery.getAttribute('href')).toBe(landingTenantConfig.deliveryUrl);
+    delivery.addEventListener('click', event => event.preventDefault(), {once:true});
+    fireEvent.click(delivery);
+    expect(dispatch).toHaveBeenLastCalledWith('OrderClick', {store:undefined, placement:'lineup', mode:'delivery', vendor:undefined, item:product.id});
     fireEvent.click(within(dialog).getByRole('button', {name:'Close'}));
   }
-  expect(dispatch).toHaveBeenCalledTimes(20);
+  expect(dispatch).toHaveBeenCalledTimes(30);
 });

@@ -71,6 +71,6 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
         </SectionView>
       </section>)}
     </main>
-    <StickyOrderBar shops={stores.map(store=>({key:store.key,orderUrl:store.orderUrl,label:serverT(language,"landing.order",{shop:store.orderLabel}),detail:details[store.key]?.line??store.street}))} labels={{order:serverT(language,"landing.sticky.order"),title:serverT(language,"landing.shops.title"),close:serverT(language,"landing.lineup.close")}}/>
+    <StickyOrderBar delivery={{href:config.deliveryUrl,label:serverT(language,"landing.delivery")}} shops={stores.map(store=>({key:store.key,pickupUrl:store.pickupUrl,label:serverT(language,"landing.order",{shop:store.orderLabel}),detail:details[store.key]?.line??store.street}))} labels={{order:serverT(language,"landing.sticky.order"),title:serverT(language,"landing.shops.title"),close:serverT(language,"landing.lineup.close")}}/>
   </div>;
 }

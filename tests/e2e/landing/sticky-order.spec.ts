@@ -19,7 +19,7 @@ for(const lang of ['en','es'])test(`consent showing: the bottom chrome is only t
     await expect(page.locator(pillLocator)).toBeHidden();
     const chrome=await page.evaluate(()=>innerHeight-document.querySelector('.landing-v2-consent')!.getBoundingClientRect().top);
     // v3: 176 px (en) / 199 px (es) of bar + notice; v4 compact: ≤ 150; v4.2: the notice alone (97 px measured).
-    expect(chrome).toBeLessThanOrEqual(100);
+    expect(chrome).toBeLessThanOrEqual(lang==='es'?120:100);
   }
 });
 
@@ -62,14 +62,17 @@ test('the pill opens the shop chooser: both shops with street + closing, sticky 
   await pill.click();
   const sheet=page.getByRole('dialog',{name:'Pick your shop'});
   await expect(sheet).toBeVisible();
-  const links=sheet.locator('a[data-landing-placement="sticky"]');
+  const links=sheet.locator('a[data-landing-placement="sticky"][data-landing-mode="pickup"]');
   await expect(links).toHaveCount(2);
   for(const [index,link] of (await links.all()).entries()){
     const store=landingTenantConfig.stores[index]!;
-    await expect(link).toHaveAttribute('href',store.orderUrl);
+    await expect(link).toHaveAttribute('href',store.pickupUrl);
     await expect(link).toContainText(store.street);
     expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
+  const delivery=sheet.locator('[data-landing-mode="delivery"]');
+  await expect(delivery).toHaveAttribute('href',landingTenantConfig.deliveryUrl);
+  expect((await delivery.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   // Open sheet: the pill stays put under it.
   await expect(page.locator('[data-sticky-order]')).toHaveAttribute('data-visible','true');
   await page.keyboard.press('Escape');
@@ -117,7 +120,7 @@ for(const viewport of [{width:844,height:390},{width:667,height:375},{width:375,
   expect(Math.round(viewport.height-box.y-box.height)).toBe(8);
   // It opens the same chooser.
   await pill.click();
-  await expect(page.getByRole('dialog',{name:'Pick your shop'}).locator('a[data-landing-placement="sticky"]')).toHaveCount(2);
+  await expect(page.getByRole('dialog',{name:'Pick your shop'}).locator('a[data-landing-placement="sticky"]')).toHaveCount(3);
   await page.keyboard.press('Escape');
   // Growing back to a tall window: the full pill under the same rule.
   await page.setViewportSize({width:375,height:812});

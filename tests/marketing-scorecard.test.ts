@@ -212,6 +212,22 @@ describe("ET order taps and derived metrics", () => {
     expect(result.coded.value).toBe(7);
     expect(result.groups[0]).toMatchObject({ active: false, clickCount: 7 });
   });
+  it("splits each ad intent without changing totals and keeps delivery outside a shop lens", () => {
+    const rows = [
+      { day, storeKey: "first", adCode: "campaign", active: true, clickCount: 2, intent: "pickup" as const },
+      { day, storeKey: "first", adCode: "campaign", active: true, clickCount: 3, intent: "visit" as const },
+      { day, storeKey: "any", adCode: "campaign", active: true, clickCount: 4, intent: "delivery" as const },
+      { day, storeKey: "first", adCode: "campaign", active: true, clickCount: 1 },
+    ];
+    const all = computeOrderTaps({ ...taps, rows, storeKeys: ["first", "any"] });
+    expect(all.total.value).toBe(10);
+    expect(all.coded.value).toBe(10);
+    expect(all.intents).toEqual([{ adCode: "campaign", active: true, pickup: 2, visit: 3, delivery: 4, legacy: 1 }]);
+    expect(all.groups.reduce((sum, row) => sum + row.clickCount, 0)).toBe(10);
+    const shop = computeOrderTaps({ ...taps, rows });
+    expect(shop.total.value).toBe(6);
+    expect(shop.intents[0]?.delivery).toBe(0);
+  });
   it("requires both cost-per-tap inputs and preserves explicit zero spend", () => {
     expect(costPerTap(manualMetric(1000), manualMetric(4)).value).toBe(250);
     expect(costPerTap(manualMetric(0), manualMetric(4))).toEqual({ state: "ok", value: 0 });

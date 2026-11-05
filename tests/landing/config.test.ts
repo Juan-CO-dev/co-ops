@@ -12,13 +12,16 @@ describe("central landing configuration", () => {
   it("has distinct official branch links without guessed promotion parameters", () => {
     const config = loadLandingConfig({});
     expect(config.landingHosts).toEqual([]);
-    const urls = config.stores.map((s) => new URL(s.orderUrl));
+    const urls = config.stores.map((s) => new URL(s.pickupUrl));
     expect(new Set(urls.map((u) => u.searchParams.get("branchId"))).size).toBe(2);
-    for (const url of urls) {
+    expect(config.deliveryUrl).toBe("https://complimentsonlysubs.appfront.app/order/?servingOptionType=delivery");
+    expect(getLandingLinks(config).delivery).toBe(config.deliveryUrl);
+    for (const [index,url] of urls.entries()) {
+      expect(url.searchParams.get("branchId")).toBe(config.stores[index]!.branchId);
       expect(url.protocol).toBe("https:");
       expect(url.hostname).toBe("complimentsonlysubs.appfront.app");
       expect([...url.searchParams.keys()].sort()).toEqual(["branchId", "servingOptionType"]);
-      expect(url.searchParams.get("servingOptionType")).toBe("a");
+      expect(url.searchParams.get("servingOptionType")).toBe("pickup");
     }
   });
   it("resolves the inquiry on the existing main site and keeps catering dormant", () => {

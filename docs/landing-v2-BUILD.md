@@ -1,3 +1,5 @@
+> 2026-11-05 correction: legacy order-mode guidance is superseded. Shop URLs use pickup; delivery uses the tenant URL without a branch. Keep the Appfront host.
+
 # LANDING v2 — BUILD plan: A, Crunch in Motion
 
 2026-10-16 | Plan only | REVISION r2 | CC re-review pending.
@@ -31,7 +33,7 @@ Sequence: hero → crave/texture → ten-sub lineup → L083 Field Guide → SUB
 
 Use tenant config for brand/shop/menu vocabulary and both `lib/i18n/en.json` and `lib/i18n/es.json` for every visible string and accessible label. Keep menu names unchanged between languages. Copy all ten complete ingredient lists from the creative plan, checked against the facts/glossary: Crunchy Boi, Farmers Market After Dark, Hot Pants, Never Been Cheddar, Our French Dip, Sicky Wicky Club, The Frex, The Teamster, Turkey Caesar Sub, Vesuvio II. Include the sub roll; glossary combines Vodka + Marinara as vodka sauce. Confirm “Balsamic Vin” wording against the supplied source before final copy approval. Ask Juan whether Turkey Caesar source wording "Compound Butter" may become "seasoned butter"; keep FLAGGED and retain the source wording until answered. After the glossary rewrite re-check The Frex against its complete facts row, including Vin, Balsamic Vin, prosciutto, oregano and Sub Roll. No invented allergy, portion or availability claims; Marisa remains excluded.
 
-All order controls are native `OrderLink` anchors with the existing Appfront branch IDs and servingOptionType=a. No ordering modal. Catering keeps the verified Toast URL and `CateringClick`; inquiry keeps `Lead`. Events never delay navigation. Preserve consent, withdrawal, DNT/GPC, bounded query handling, vendor-footer semantics and approximate consented-click counter meaning.
+All order controls are native `OrderLink` anchors with the existing Appfront branch IDs and servingOptionType=pickup. No ordering modal. Catering keeps the verified Toast URL and `CateringClick`; inquiry keeps `Lead`. Events never delay navigation. Preserve consent, withdrawal, DNT/GPC, bounded query handling, vendor-footer semantics and approximate consented-click counter meaning.
 
 ### Sticky, inviting CTAs
 

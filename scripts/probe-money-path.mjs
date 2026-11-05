@@ -9,7 +9,8 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function destinations(origin, staffOrigin, portalLive = landingTenantConfig.cateringPortalLive) {
   return [
     { name: 'landing', url: new URL('/', origin).href },
-    ...landingTenantConfig.stores.map(s => ({ name: `order-${s.key}`, url: s.orderUrl, branchId: s.branchId })),
+    ...landingTenantConfig.stores.map(s => ({ name: `order-${s.key}`, url: s.pickupUrl, branchId: s.branchId })),
+    { name: 'delivery', url: landingTenantConfig.deliveryUrl },
     { name: 'catering', url: portalLive ? new URL('/order', staffOrigin).href : landingTenantConfig.cateringUrl },
     { name: 'inquiry', url: landingTenantConfig.inquiryUrl },
   ];

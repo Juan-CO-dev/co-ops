@@ -1,14 +1,16 @@
+> 2026-11-05 correction: legacy order-mode guidance is superseded. Shop URLs use pickup; delivery uses the tenant URL without a branch. Keep the Appfront host.
+
 # Launch monitoring (E5)
 
 Preparation only; no monitor, runner, resource, variable or external service has been activated. Paid spend remains blocked until a successful external US run, intentional alert receipt, heartbeat coverage and merchant evidence are recorded. The workflow is disabled unless CC sets repository variable `LANDING_MONITOR_ENABLED=true` after authorization. It requires an existing authorized external US self-hosted Linux runner labeled `landing-probe-us`; runner location must be verified, not inferred from a GitHub-hosted label. No resources are provisioned by this change.
 
-The cron is `*/15 * * * *`, separate from PR gates. `scripts/probe-money-path.mjs` reads the tenant's current two order URLs, active catering flag and inquiry URL directly from `config/tenant/landing.ts`, plus a reviewed landing origin. All five probes run independently. It makes only GET requests, never orders, login attempts or tracking events. Each request has a 15-second deadline across up to four redirects, exact approved HTTPS hosts and a 2 MB body bound; page probes permit one transient retry, except the first landing 5xx is preserved immediately for incident rechecks. 403, 429, challenges, timeouts, wrong hosts, wrong/missing branches, missing baselines and digest drift all fail. No response body, full URL, customer data or exception text enters a report. Reports retain bounded status/host/digests and incident timestamps for 14 days.
+The cron is `*/15 * * * *`, separate from PR gates. `scripts/probe-money-path.mjs` reads the tenant's current two pickup URLs and tenant delivery URL, active catering flag and inquiry URL directly from `config/tenant/landing.ts`, plus a reviewed landing origin. All six probes run independently. It makes only GET requests, never orders, login attempts or tracking events. Each request has a 15-second deadline across up to four redirects, exact approved HTTPS hosts and a 2 MB body bound; page probes permit one transient retry, except the first landing 5xx is preserved immediately for incident rechecks. 403, 429, challenges, timeouts, wrong hosts, wrong/missing branches, missing baselines and digest drift all fail. No response body, full URL, customer data or exception text enters a report. Reports retain bounded status/host/digests and incident timestamps for 14 days.
 
 ## Merchant inspection and reviewed baseline
 
 Redirects are followed only within the approved hosts and bound, then reported with their hop count and refused even if the final body is unchanged. A merchant redirect requires review and an approved canonical destination change before activation; a response hash alone cannot approve a new routing path. Payload redirects have the same rule.
 
-The actual Appfront data endpoint/schema is still unknown. A 200 SPA shell is insufficient. CC must inspect the real merchant flow, identify the data endpoint and branch array schema, and verify both configured branch IDs and `servingOptionType=a` on launch day. Do not guess an API URL or approve a baseline automatically. Challenge or geo-block evidence needs the US runner or manual investigation; it cannot be waived as a passing probe.
+The actual Appfront data endpoint/schema is still unknown. A 200 SPA shell is insufficient. CC must inspect the real merchant flow, identify the data endpoint and branch array schema, and verify both configured branch IDs and `servingOptionType=pickup` on launch day. Do not guess an API URL or approve a baseline automatically. Challenge or geo-block evidence needs the US runner or manual investigation; it cannot be waived as a passing probe.
 
 Add the reviewed, non-secret `docs/landing-monitor-baseline.json` only after inspection. Shape:
 
@@ -33,6 +35,7 @@ Add the reviewed, non-secret `docs/landing-monitor-baseline.json` only after ins
       }
     },
     "order-dupont": { "hosts": ["<approved order host>"], "sha256": "<shell hash>", "data": "<same object shape, merchant-reviewed for Dupont>" },
+    "delivery": { "hosts": ["complimentsonlysubs.appfront.app"], "sha256": "<reviewed delivery shell hash>" },
     "catering": { "hosts": ["<active catering host>"], "sha256": "<response hash>" },
     "inquiry": { "hosts": ["<approved inquiry host>"], "sha256": "<response hash>" }
   }
@@ -62,7 +65,7 @@ After a failure, Juan verifies fresh green probes, both real store/serving-optio
 
 ## Generate the baseline file (CC, after merchant inspection)
 
-The workflow does not generate or approve its own baseline. Start from the JSON shape above in `tmp/landing-monitor-reviewed-input.json`, filling the reviewed origins, exact host allowlists, public merchant URL, schema, reviewer and review timestamp. Replace the illustrative `data` string with the actual object. On the authorized US runner, capture the five approved GET responses and the two merchant payloads as UTF-8 text files under `tmp/landing-monitor-captures/`. Use only anonymous public responses; inspect them for challenges and personal data before retaining them. Confirm a 200 with zero redirects, both configured branch IDs, and the actual `servingOptionType=a` flow. A redirect requires reviewing the destination first. Do not capture cookies, authorization headers or browser HARs.
+The workflow does not generate or approve its own baseline. Start from the JSON shape above in `tmp/landing-monitor-reviewed-input.json`, filling the reviewed origins, exact host allowlists, public merchant URL, schema, reviewer and review timestamp. Replace the illustrative `data` string with the actual object. On the authorized US runner, capture the six approved GET responses and the two merchant payloads as UTF-8 text files under `tmp/landing-monitor-captures/`. Use only anonymous public responses; inspect them for challenges and personal data before retaining them. Confirm a 200 with zero redirects, both configured branch IDs, and the actual `servingOptionType=pickup` flow. A redirect requires reviewing the destination first. Do not capture cookies, authorization headers or browser HARs.
 
 Name each shell `<probe-name>.txt` (the names from `destinations`) and each order payload `<probe-name>-data.txt`. These local-only captures must never be committed. Run this PowerShell command from the clone to calculate hashes and write the non-secret candidate file:
 
@@ -90,3 +93,5 @@ node --experimental-strip-types scripts/probe-money-path.mjs docs/landing-monito
 CC reads back the generated JSON, confirms it contains only reviewed non-secret fields, checks the diff and fresh probe report, and separately approves the baseline. Hash generation is not approval. Leave `LANDING_MONITOR_ENABLED` OFF until the external receipt/runner/merchant gates are complete. No baseline was generated by this code change.
 
 Production landingOrigin is the bare domain `https://complimentsonlyoperations.com`. `https://www.complimentsonlyoperations.com` is expected to return **308** to bare and must never serve staff. Verify www separately during deployment smoke: the money-path monitor targets bare and continues to refuse unexpected redirects. Do not put www in LANDING_HOSTS or approve its redirect as the bare-origin baseline.
+
+2026-11-05: delivery uses `https://complimentsonlysubs.appfront.app/order/?servingOptionType=delivery` (no shop selected; Appfront resolves it from the address). The probe confirms HTTP evidence only; manually verify the Delivery tab before approving its baseline. Existing per-shop baseline names remain `order-capitol-hill` and `order-dupont`, now checking pickup URLs. CC verified pickup at Dupont and the branch-qualified delivery redirect at Capitol Hill.

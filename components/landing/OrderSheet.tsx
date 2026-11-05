@@ -7,13 +7,14 @@ import {OrderLink} from './OrderLink';
 import {SpinCanvas} from './SpinCanvas';
 import {itemOrderUrl} from '@/lib/landing/item-order-url-shared';
 
-export interface SheetShop {key:string;orderUrl:string;label:string;detail:string}
+export interface DeliveryChoice {href:string;label:string}
+export interface SheetShop {key:string;pickupUrl:string;label:string;detail:string}
 export interface SheetSpin {frames:readonly string[];width:number;height:number;alt:string}
 /** One order action for one sub: a button that opens a two-shop sheet. Before hydration
  * (and without JavaScript) it is the two native shop links instead. The drawn Crunchy Boi
  * keeps turning inside the sheet (loaded only while it is open; still under reduced motion
  * or Save-Data). Every shop link is an ordinary outbound order link. */
-export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,spin,onOpen,className='landing-v3-cta',eager=false}:{shops:readonly SheetShop[];placement:LandingPlacement;item?:LandingItem;triggerLabel:string;title:string;closeLabel:string;spin?:SheetSpin;onOpen?:()=>void;className?:string;
+export function OrderSheet({shops,delivery,placement,item,triggerLabel,title,closeLabel,spin,onOpen,className='landing-v3-cta',eager=false}:{shops:readonly SheetShop[];delivery:DeliveryChoice;placement:LandingPlacement;item?:LandingItem;triggerLabel:string;title:string;closeLabel:string;spin?:SheetSpin;onOpen?:()=>void;className?:string;
   /** Mounted only after the page is interactive (never server-rendered): start as the button. */
   eager?:boolean}) {
   // The button + sheet replace the native links only once the action nears the viewport, and
@@ -91,10 +92,11 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
   const [open,setOpen]=useState(false);
   const titleId=useId();
   // One accessible name, read in order: "Order Capitol Hill · 8th St SE · til 6 PM".
-  const link=(shop:SheetShop)=><OrderLink key={shop.key} href={itemOrderUrl(shop,item)} store={shop.key} placement={placement} item={item} className="landing-v2-order landing-v4-order-two">
+  const link=(shop:SheetShop)=><OrderLink key={shop.key} href={itemOrderUrl(shop,item)} store={shop.key} mode="pickup" placement={placement} item={item} className="landing-v2-order landing-v4-order-two">
     <span>{shop.label}</span><span className="sr-only"> · </span><span className="landing-v4-order-detail" data-order-detail>{shop.detail}</span>
   </OrderLink>;
-  if(!hydrated)return <div ref={fallback} data-order-control data-enhance="waiting" className="landing-v3-direct-orders">{shops.map(link)}</div>;
+  const deliveryLink=<OrderLink href={delivery.href} mode="delivery" placement={placement} item={item} className="landing-v2-order">{delivery.label}</OrderLink>;
+  if(!hydrated)return <div ref={fallback} data-order-control data-enhance="waiting" className="landing-v3-direct-orders">{shops.map(link)}{deliveryLink}</div>;
   const show=()=>{if(trigger.current)hop(trigger.current);onOpen?.();dialog.current?.showModal();setOpen(true);};
   return <>
     <button ref={trigger} data-order-control type="button" onClick={show} aria-haspopup="dialog" className={className}>{triggerLabel}</button>
@@ -103,7 +105,7 @@ export function OrderSheet({shops,placement,item,triggerLabel,title,closeLabel,s
         {/* The sheet is a modal: its own top-level heading, not a sub-heading of the card behind it. */}
         <h2 id={titleId}>{title}</h2>
         {open&&spin&&<div className="landing-v4-sheet-spin"><SpinCanvas frames={spin.frames} width={spin.width} height={spin.height} label={spin.alt} stillLabel={spin.alt} valueText={()=>''} auto decorative/></div>}
-        <ul>{shops.map(shop=><li key={shop.key}>{link(shop)}</li>)}</ul>
+        <ul>{shops.map(shop=><li key={shop.key}>{link(shop)}</li>)}<li>{deliveryLink}</li></ul>
         <button type="button" onClick={()=>dialog.current?.close()} className="landing-v3-sheet-close">{closeLabel}</button>
       </div>
     </dialog>

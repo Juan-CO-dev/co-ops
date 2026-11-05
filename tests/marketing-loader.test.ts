@@ -59,7 +59,7 @@ it('normalizes SQL aggregates and keeps the global read concurrency at two', asy
   const rpc = vi.fn(async (name: string, args: { p_from: string; p_to: string }) => {
     active++; peak = Math.max(peak, active); await Promise.resolve(); active--;
     expect((Date.parse(args.p_to) - Date.parse(args.p_from)) / 86400000).toBeLessThanOrEqual(27);
-    if (name === 'marketing_order_taps') return { data: [], error: null };
+    if (name === 'marketing_order_tap_intents') return { data: [], error: null };
     if (name === 'sales_report_catering_values') return { data: { completed_events: 2, completed_value_cents: 300, completed_unvalued: 0 }, error: null };
     return { data: { channels: [{ business_date: args.p_from, channel: 'online', provider: null, checks: '1', orders: '1', cents: '500', amount_missing: '0' }], direct_online_orders: [{ business_date: args.p_from, orders: '1' }], large_checks: [], unknown_labels: [], ezcater: [], captured_days: [args.p_from] }, error: null };
   });
@@ -85,7 +85,7 @@ it('uses the frozen baseline, flags live drift, and excludes future days from cu
     marketing_baseline_snapshots: [{ id: 'snapshot', milestone_id: 'first', payload: { ...frozen, byLocation: { one: frozen } }, coverage: frozen.coverage, corrects_id: null }],
   };
   const from = (table: string) => { const query = { select: () => query, order: () => query, range: async () => ({ data: tables[table] ?? [], error: null }) }; return query; };
-  const rpc = async (name: string, args: { p_from: string }) => ({ error: null, data: name === 'marketing_order_taps' ? [] : name === 'sales_report_catering_values' ? null : {
+  const rpc = async (name: string, args: { p_from: string }) => ({ error: null, data: name === 'marketing_order_tap_intents' ? [] : name === 'sales_report_catering_values' ? null : {
     channels: [{ business_date: args.p_from, channel: 'online', provider: null, checks: 1, orders: 1, cents: 500, amount_missing: 0 }], direct_online_orders: [], captured_days: [args.p_from], large_checks: [], unknown_labels: [], ezcater: [],
   } });
   const data = await loadMarketingScorecard(viewer, 'one', { client: { from, rpc } as unknown as MarketingDeps['client'], env, now: new Date('2026-10-28T17:00:00Z') });
@@ -114,7 +114,7 @@ function baselineDb(first: string | null = '2026-10-19') {
     const data = table === 'locations' ? [{ id: 'one', name: 'One', code: 'one' }] : table === 'marketing_milestones' && first ? [{ id: 'first', kind: 'first_ad_spend', milestone_date: first, corrects_id: null }] : [];
     const query = { select: () => query, order: () => query, range: async () => ({ data, error: null }) }; return query;
   });
-  const rpc = vi.fn(async (name: string, args: { p_from: string; p_to: string }) => ({ error: null, data: name === 'marketing_order_taps' ? [] : name === 'sales_report_catering_values' ? { completed_events: 1, completed_value_cents: 100, completed_unvalued: 0 } : {
+  const rpc = vi.fn(async (name: string, args: { p_from: string; p_to: string }) => ({ error: null, data: name === 'marketing_order_tap_intents' ? [] : name === 'sales_report_catering_values' ? { completed_events: 1, completed_value_cents: 100, completed_unvalued: 0 } : {
     channels: [], direct_online_orders: [], captured_days: [args.p_from], large_checks: [], unknown_labels: [], ezcater: [],
   } }));
   return { from, rpc };

@@ -47,7 +47,11 @@ describe("marketing scorecard UI", () => {
     expect(screen.getByText(en["marketing.alert.test"])).toBeTruthy();
     expect(screen.queryByText(/old-ad/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Order taps by ad code/ }));
-    expect(screen.getByText(/old-ad/).textContent).toContain("Retired");
+    expect(screen.getAllByText(/old-ad/).every(row => row.textContent?.includes("Retired"))).toBe(true);
+    expect(screen.getByRole("heading", { name: en["marketing.taps.by_intent"] })).toBeTruthy();
+    for (const intent of ["pickup", "delivery", "visit", "legacy"] as const) {
+      expect(screen.getByText(`${en[`marketing.taps.intent.${intent}`]}: ${intent === "legacy" ? 2 : 0}`)).toBeTruthy();
+    }
     expect(screen.getByText(en["marketing.tap_disclosure"])).toBeTruthy();
   });
   it("shows ships-OFF honestly without rendering metrics", () => {

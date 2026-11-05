@@ -17,7 +17,7 @@ test('actual order actions share Pixel/CAPI IDs and count once per click',async(
   const first=events[0]!;expect(first.event_name).toBe('OrderClick');expect(first.ad).toBe('subsim-photo');
   const pixel=await page.evaluate(()=>window.fbq?.queue?.find(args=>args[1]==='OrderClick'));
   expect(pixel?.[0]).toBe('trackCustom');expect(pixel?.[3]).toEqual({eventID:first.event_id});
-  expect(Object.keys(counts[0]!).sort()).toEqual(['ad','store']);
+  expect(Object.keys(counts[0]!).sort()).toEqual(['ad','intent','store']);
   await order.click();await expect.poll(()=>counts.length).toBe(2);await expect.poll(()=>events.length).toBe(2);
   expect(events[1]!.event_id).not.toBe(first.event_id);
 });
@@ -31,12 +31,12 @@ for(const placement of ['sticky','shops','footer']) test(`${placement} hover and
   await page.evaluate(()=>document.addEventListener('click',event=>{if((event.target as Element).closest('a[href*="appfront"]'))event.preventDefault();},true));
   // v4.2: the sticky links live in the Order pill's shop sheet; opening it emits nothing.
   if(placement==='sticky'){await (await revealPill(page)).click();await page.waitForTimeout(300);expect(events).toEqual([]);expect(counters).toEqual([]);}
-  const link=page.locator(`[data-landing-placement="${placement}"]`).first();
+  const link=page.locator(`[data-landing-placement="${placement}"][data-landing-mode="pickup"]`).first();
   await link.hover();await link.focus();await page.waitForTimeout(1100);
   await link.dispatchEvent('pointerdown',{button:0});await link.dispatchEvent('pointerup',{button:0});
   expect(events).toEqual([]);expect(counters).toEqual([]);
   await link.click();await expect.poll(()=>events.length).toBe(1);await expect.poll(()=>counters.length).toBe(1);
-  expect(events[0]).toMatchObject({event_name:'OrderClick',placement,store:'capitol-hill'});
+  expect(events[0]).toMatchObject({event_name:'OrderClick',mode:'pickup',placement,store:'capitol-hill'});
   const pixel=await page.evaluate(()=>window.fbq?.queue?.find(args=>args[1]==='OrderClick'));
   expect(pixel?.[3]).toEqual({eventID:events[0]!.event_id});
   await link.click();await expect.poll(()=>events.length).toBe(2);expect(events[1]!.event_id).not.toBe(events[0]!.event_id);

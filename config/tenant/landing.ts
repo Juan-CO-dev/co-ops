@@ -1,6 +1,6 @@
 /** Tenant-owned destinations. Supplied in the approved 2026-10-16 plan.
- * Merchant branch/serving-option and branded-host equivalence are launch gates;
- * until verified, preserve the supplied Appfront URLs exactly.
+ * Pickup modes verified by CC 2026-11-05; delivery selects a shop from the address.
+ * Preserve the existing merchant host.
  */
 export interface LandingStoreConfig {
   active: boolean;
@@ -8,7 +8,7 @@ export interface LandingStoreConfig {
   locationCode: string;
   orderLabel: string;
   branchId: string;
-  orderUrl: string;
+  pickupUrl: string;
   name: string;
   address: string;
   /** The street only (no number or suite), exactly as it appears in `address`; shown beside order buttons. */
@@ -23,6 +23,7 @@ export interface LandingStoreConfig {
 export type LandingFooterKey = "careers" | "gift-cards" | "app" | "app-ios" | "app-android" | "instagram" | "facebook" | "uber-eats" | "doordash";
 export interface LandingTenantConfig {
   stores: readonly LandingStoreConfig[];
+  deliveryUrl: string;
   cateringPortalLive: boolean;
   cateringUrl: string;
   inquiryUrl: string;
@@ -30,8 +31,9 @@ export interface LandingTenantConfig {
   attribution: { ads: readonly string[]; utm: Record<string, readonly string[]> };
 }
 export const landingTenantConfig: LandingTenantConfig = {
+  deliveryUrl: "https://complimentsonlysubs.appfront.app/order/?servingOptionType=delivery",
   stores: [
-    { key: "capitol-hill", locationCode: "MEP", orderLabel: "Capitol Hill", branchId: "69bdd5a0daeb710cb2cbdb0d", orderUrl: "https://complimentsonlysubs.appfront.app/order/?branchId=69bdd5a0daeb710cb2cbdb0d&servingOptionType=a",
+    { key: "capitol-hill", locationCode: "MEP", orderLabel: "Capitol Hill", branchId: "69bdd5a0daeb710cb2cbdb0d", pickupUrl: "https://complimentsonlysubs.appfront.app/order/?branchId=69bdd5a0daeb710cb2cbdb0d&servingOptionType=pickup",
       active: true, name: "Capitol Hill",
       address: "526 8th St SE Ste A, Washington, DC 20003",
       street: "8th St SE",
@@ -41,7 +43,7 @@ export const landingTenantConfig: LandingTenantConfig = {
       openingHours: {"days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], "opens": "10:30", "closes": "18:00"},
       hours: {"en": "Daily 10:30am–6pm", "es": "Todos los días de 10:30 a. m. a 6:00 p. m."},
       coordinates: {"latitude": 38.8817492, "longitude": -76.9947597} },
-    { key: "dupont", locationCode: "EM", orderLabel: "Dupont", branchId: "69bdddee7150a60c8dc37f73", orderUrl: "https://complimentsonlysubs.appfront.app/order/?branchId=69bdddee7150a60c8dc37f73&servingOptionType=a",
+    { key: "dupont", locationCode: "EM", orderLabel: "Dupont", branchId: "69bdddee7150a60c8dc37f73", pickupUrl: "https://complimentsonlysubs.appfront.app/order/?branchId=69bdddee7150a60c8dc37f73&servingOptionType=pickup",
       active: true, name: "Dupont",
       address: "2029 P St NW Front 1, Washington, DC 20036",
       street: "P St NW",

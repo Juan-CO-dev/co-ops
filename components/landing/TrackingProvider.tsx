@@ -98,7 +98,7 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
   const context:TrackingContextValue={allowed,
     dispatch(name,details) {
       if(!marketingAllowed(serverApproved,readConsent(document.cookie),signals())) { tracker.current?.setConsent(false); return; }
-      const leavingDuringLookup=resolving.current && (name==='OrderClick' || name==='CateringClick');
+      const leavingDuringLookup=resolving.current && (name==='OrderClick' || name==='CateringClick' || name==='FindLocation');
       // Keep the intent in memory; resolve attribution and cookies when it is sent.
       tracker.current?.dispatch(name,cookiesOnly=>{
         const cookies=document.cookie.split(';').map(v=>v.trim());

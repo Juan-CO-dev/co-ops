@@ -137,8 +137,8 @@ for (const [path, canonical] of [['/order/','/order'],['/admin/','/admin'],['/ap
 
 test('measurement routes enforce Origin; dormant CAPI and enabled counter both succeed',async ({request})=>{
   const headers={origin:`https://localhost:${portBase}`,cookie:'landing_consent=accepted'};
-  const event={event_name:'OrderClick',event_id:crypto.randomUUID(),event_time:Math.floor(Date.now()/1000),consent:'accepted',source_url:`https://localhost:${portBase}/`,store:'capitol-hill',ad:'unattributed',placement:'hero'};
-  for(const [path,data] of [['/api/landing/events',event],['/api/landing/order-click',{store:'capitol-hill',ad:'unattributed'}]] as const) {
+  const event={event_name:'OrderClick',mode:'pickup',event_id:crypto.randomUUID(),event_time:Math.floor(Date.now()/1000),consent:'accepted',source_url:`https://localhost:${portBase}/`,store:'capitol-hill',ad:'unattributed',placement:'hero'};
+  for(const [path,data] of [['/api/landing/events',event],['/api/landing/order-click',{store:'capitol-hill',ad:'unattributed',intent:'pickup'}]] as const) {
     const accepted=await request.post(path,{headers,data});expect(accepted.status()).toBe(204);expect(accepted.headers()['set-cookie']).toBeUndefined();
     expect((await request.post(path,{headers:{cookie:headers.cookie},data})).status()).toBe(403);
     expect((await request.post(path,{headers:{...headers,origin:'https://evil.test'},data})).status()).toBe(403);
@@ -150,7 +150,7 @@ test('measurement routes enforce Origin; dormant CAPI and enabled counter both s
 test('enabled counter reaches the fixture RPC and fails closed with a dead Supabase URL', async ({request}) => {
   const fixture = `http://127.0.0.1:${portBase + 2}/__fixture/counter`;
   const before = (await (await request.get(fixture)).json()).capitolHillUnattributed;
-  const data = {store:'capitol-hill',ad:'unattributed'};
+  const data = {store:'capitol-hill',ad:'unattributed',intent:'pickup'};
   const response = await request.post('/api/landing/order-click', {headers:{origin:`https://localhost:${portBase}`,cookie:'landing_consent=accepted'},data});
   expect(response.status()).toBe(204);
   const after = await (await request.get(fixture)).json();

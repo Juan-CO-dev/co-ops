@@ -101,9 +101,9 @@ async function readTaps(sb: Client, window: DateWindow, counterOn: string | null
   const rows: TapDay[] = [];
   for (let from = window.from; from <= window.to; from = etYmdMinusDays(from, -28)) {
     const to = [etYmdMinusDays(from, -27), window.to].sort()[0]!;
-    const result = await sb.rpc("marketing_order_taps", { p_from: from, p_to: to });
+    const result = await sb.rpc("marketing_order_tap_intents", { p_from: from, p_to: to });
     check(result.error);
-    rows.push(...(result.data ?? []).map((r: { day: string; store_key: string; ad_code: string; active: boolean; click_count: number }) => ({ day: r.day, storeKey: r.store_key, adCode: r.ad_code, active: r.active, clickCount: Number(r.click_count) })));
+    rows.push(...(result.data ?? []).map((r: { day: string; store_key: string; ad_code: string; active: boolean; click_count: number; intent: TapDay["intent"] }) => ({ intent: r.intent, day: r.day, storeKey: r.store_key, adCode: r.ad_code, active: r.active, clickCount: Number(r.click_count) })));
   }
   return computeOrderTaps({ window, installed: true, counterOn, rows, storeKeys });
 }
@@ -129,7 +129,8 @@ export async function loadMarketingScorecard(viewer: Viewer, locationId: string 
     const lockedBaseline = locationId === null ? snapshot?.payload : snapshot?.payload.byLocation?.[locationId];
     const baseline = lockedBaseline ?? liveBaseline;
     const baselineSeries = baselineInput ? windows.baselineWeeks.map(window => ({ window, score: computeScorecard({ ...baselineInput, window }) })) : [];
-    const storeKeys = landingTenantConfig.stores.filter(store => selected.some(shop => shop.code === store.locationCode)).map(store => store.key);
+    const storeKeys: string[] = landingTenantConfig.stores.filter(store => selected.some(shop => shop.code === store.locationCode)).map(store => store.key);
+    if (locationId === null) storeKeys.push("any");
     const counterOn = milestones.find(r => r.kind === "counter_on")?.milestone_date ?? null;
     const series: MarketingSeries[] = [];
     for (const window of windows.weeks) {

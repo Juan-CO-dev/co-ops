@@ -23,10 +23,10 @@ export function Hero({language, config, ad, now, details}:{language:Language;con
           <div data-hero-actions>
             <div className="landing-v2-orders">{config.stores.map(store=>{
               // One accessible name, read in order: "Order Capitol Hill · 8th St SE · til 6 PM".
-              return <OrderLink key={store.key} href={store.orderUrl} store={store.key} placement="hero" className="landing-v2-order landing-v4-order-two">
+              return <OrderLink key={store.key} href={store.pickupUrl} store={store.key} mode="pickup" placement="hero" className="landing-v2-order landing-v4-order-two">
                 <span>{serverT(language,"landing.order",{shop:store.orderLabel})}</span><span className="sr-only"> · </span><span className="landing-v4-order-detail" data-order-detail>{lines[store.key]?.line??store.street}</span>
               </OrderLink>;
-            })}</div>
+            })}<OrderLink href={config.deliveryUrl} mode="delivery" placement="hero" className="landing-v2-order">{serverT(language,"landing.delivery")}</OrderLink></div>
             {config.stores.length>0&&<a href="#shops" className="landing-v4-find-shop">{serverT(language,"landing.hero.find-shop")}</a>}
           </div>
           {config.stores.map(store=><OfferCode key={store.key} ad={ad} store={store.key} label={serverT(language,"landing.offer.code")}/>)}

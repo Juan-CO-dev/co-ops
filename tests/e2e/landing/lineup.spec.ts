@@ -42,7 +42,7 @@ test('selecting a fighter swaps the stage and the one CTA opens a two-shop sheet
   await cta.click();
   const sheet = page.getByRole('dialog',{name:'Pick a shop for The Frex'});
   await expect(sheet).toBeVisible();
-  const links = sheet.locator('a[data-landing-placement="lineup"]');
+  const links = sheet.locator('a[data-landing-placement="lineup"][data-landing-mode="pickup"]');
   await expect(links).toHaveCount(2);
   for (const [index,link] of (await links.all()).entries()) {
     await expect(link).toHaveAttribute('href',itemOrderUrl(landingTenantConfig.stores[index]!, 'frex'));
@@ -120,13 +120,16 @@ test('without JavaScript every menu is visible and each shop is a native order l
   const select = page.locator('.landing-v3-select');
   await select.scrollIntoViewIfNeeded();
   for (const card of await select.locator('[data-lineup] li').all()) await expect(card.locator('[data-ingredients]')).toBeVisible();
-  const links = select.locator('.landing-v3-direct-orders a[data-landing-placement="lineup"]');
+  const links = select.locator('.landing-v3-direct-orders a[data-landing-placement="lineup"][data-landing-mode="pickup"]');
   await expect(links).toHaveCount(2);
   for (const [index,link] of (await links.all()).entries()) {
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute('href',itemOrderUrl(landingTenantConfig.stores[index]!, 'crunchy-boi'));
     expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
+  const delivery=select.locator('a[data-landing-mode="delivery"]');
+  await expect(delivery).toHaveAttribute('href',landingTenantConfig.deliveryUrl);
+  expect((await delivery.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await expect(select.locator('.landing-v3-auto')).toBeHidden();
   await context.close();
 });
@@ -292,20 +295,20 @@ async function expectOneOrderEvent(page:import('@playwright/test').Page,baseURL:
   await page.goto(baseURL);
   const pixel=await page.evaluate(()=>JSON.parse(localStorage.getItem('__pixel_orders')??'[]') as {params:Record<string,string>;id:string}[]);
   expect(pixel).toHaveLength(1);
-  expect(pixel[0]!.params).toMatchObject({placement:'lineup',store:'capitol-hill',item:'crunchy-boi'});
+  expect(pixel[0]!.params).toMatchObject({placement:'lineup',mode:'pickup',store:'capitol-hill',item:'crunchy-boi'});
   const issued=await page.evaluate(()=>JSON.parse(localStorage.getItem('__issued')??'[]') as {path:string;body:Record<string,unknown>|null}[]);
-  expect(issued.filter(post=>post.path==='/api/landing/order-click').map(post=>post.body)).toEqual([{store:'capitol-hill',ad:'unattributed'}]);
+  expect(issued.filter(post=>post.path==='/api/landing/order-click').map(post=>post.body)).toEqual([{store:'capitol-hill',ad:'unattributed',intent:'pickup'}]);
   const issuedEvents=issued.filter(post=>post.path==='/api/landing/events').map(post=>post.body);
   expect(issuedEvents).toHaveLength(1);
-  expect(issuedEvents[0]).toMatchObject({event_name:'OrderClick',placement:'lineup',store:'capitol-hill',item:'crunchy-boi',event_id:pixel[0]!.id});
+  expect(issuedEvents[0]).toMatchObject({event_name:'OrderClick',mode:'pickup',placement:'lineup',store:'capitol-hill',item:'crunchy-boi',event_id:pixel[0]!.id});
   // Delivery. The one narrow exception: Playwright's Linux WebKit (WPE) drops one of a departing
   // page's two beacons at random — an engine defect documented in tracking.spec, not ours. The
   // ISSUED pair above is still asserted exactly one of each there; only this network read is skipped.
   if(browserName==='webkit'&&process.platform==='linux')return;
-  expect(sent.counters).toEqual([{store:'capitol-hill',ad:'unattributed'}]);
+  expect(sent.counters).toEqual([{store:'capitol-hill',ad:'unattributed',intent:'pickup'}]);
   const delivered=sent.capi.filter(event=>event.event_name==='OrderClick');
   expect(delivered).toHaveLength(1);
-  expect(delivered[0]).toMatchObject({placement:'lineup',store:'capitol-hill',item:'crunchy-boi',event_id:pixel[0]!.id});
+  expect(delivered[0]).toMatchObject({placement:'lineup',mode:'pickup',store:'capitol-hill',item:'crunchy-boi',event_id:pixel[0]!.id});
 }
 
 test('a press on a native shop link survives enhancement arriving mid-gesture (mouse; navigates and counts exactly once)',async({page,context,baseURL,browserName})=>{

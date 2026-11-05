@@ -1,3 +1,5 @@
+> 2026-11-05 correction: legacy order-mode guidance is superseded. Shop URLs use pickup; delivery uses the tenant URL without a branch. Keep the Appfront host.
+
 # Landing page, phase 1: spec (CC initial plan)
 
 **Owner:** CC (initial plan) · **Builder:** Astra writes the build plan and builds · **Review:** CO CC or Aggie per chunk; Juan approves section by section on his phone
@@ -51,8 +53,8 @@
 
 ## 4. Order routing
 Order buttons go to the EXISTING first-party ordering, per store. These were read off complimentsonlysubs.com on 2026-10-16. **Juan confirmed 2026-10-16:** the page pushes to all the OFFICIAL links. Catering goes through Toast for now and switches to our own catering portal (CO-OPS `/order`) as soon as it is fully live. Use the branded host `order.complimentsonlysubs.com` once its deep links are verified per store:
-- **Capitol Hill:** `https://complimentsonlysubs.appfront.app/order/?branchId=69bdd5a0daeb710cb2cbdb0d&servingOptionType=a`
-- **Dupont:** `https://complimentsonlysubs.appfront.app/order/?branchId=69bdddee7150a60c8dc37f73&servingOptionType=a`
+- **Capitol Hill:** `https://complimentsonlysubs.appfront.app/order/?branchId=69bdd5a0daeb710cb2cbdb0d&servingOptionType=pickup`
+- **Dupont:** `https://complimentsonlysubs.appfront.app/order/?branchId=69bdddee7150a60c8dc37f73&servingOptionType=pickup`
 - **Catering:** `https://www.toasttab.com/catering/compliments-only-capitol-hill-526-8th-street-southeast`, plus the inquiry page `/washington-capitol-hill-compliments-only-catering-inquiry`.
 
 T0-compliant configuration: all URLs (per-store orders/branch ids, Toast catering, inquiry, gift cards, socials), hosts, hours and facts absent from locations live in ONE typed `config/tenant/landing.ts`, read through `lib/landing/config.ts`. Environment identity/origins and LANDING_HOSTS are resolved through the same loader; effective hosts still require the nonempty deployment allowlist. Existing locations supplies store name/address/phone/coordinates through a server-only public read loader with an explicit public projection; verify schema before implementation. Components contain no tenant literals; links/stores modules are adapters. Do NOT copy app/order debt. Deterministic CI asserts rendered links against config; live 200/redirect/branch-payload and manual merchant-flow probes are non-blocking ordinary CI but blocking at launch (not a passing SPA shell alone).
