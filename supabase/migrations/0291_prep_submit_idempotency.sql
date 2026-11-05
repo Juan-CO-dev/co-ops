@@ -1,5 +1,6 @@
 -- Migration 0291_prep_submit_idempotency
 -- AUTHORED 2026-11-04. NOT YET APPLIED - sim first, prod on Juan's word, AFTER 0290.
+-- APPLIED TO SIM 2026-11-04 (schema_migrations version 20261105004059, name '0291_prep_submit_idempotency').
 -- Provenance: Track 3 chunk 3; CC rulings 3 and 5, prep double-submit.
 -- Re-emitted from the applied 0290 body, preserving closing-reference semantics.
 -- ROLLOUT: SQL before app. Named-arg calls without the trailing key/hash stay
