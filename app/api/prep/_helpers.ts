@@ -44,6 +44,8 @@ import { jsonError } from "@/lib/api-helpers";
 import type { NextResponse } from "next/server";
 
 export function mapPrepError(err: PrepError): NextResponse {
+  if (err.code === "prep_request_key_reused" || err.code === "already_submitted") return jsonError(409, err.code);
+  if (err.code === "invalid_request_key") return jsonError(400, err.code);
   if (err instanceof PrepRoleViolationError) {
     return jsonError(403, err.code, {
       message: err.message,

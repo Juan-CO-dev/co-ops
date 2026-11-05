@@ -55,13 +55,14 @@
  */
 
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import {
   amPrepDraftItemsToFormValues,
   type AmPrepDraftRestore,
 } from "@/lib/am-prep-draft-shared";
 import type { ChecklistChainEntry } from "@/lib/checklists";
+import { createClientRequestId } from "@/lib/client-request-id";
 import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
@@ -357,6 +358,9 @@ const KNOWN_ERROR_CODES = new Set([
   "prep_instance_not_open",
   "prep_auto_complete_failed",
   "prep_closing_ref_busy",
+  "prep_request_key_reused",
+  "invalid_request_key",
+  "already_submitted",
   "prep_shape",
   "prep_invariant",
   "location_access_denied",
@@ -535,6 +539,9 @@ export function AmPrepForm({
   const [rawValues, setRawValues] = useState<Record<string, RawPrepInputs>>(seedRawValues);
   const [submitState, setSubmitState] = useState<SubmitState>({ kind: "idle" });
 
+  const submitLatch = useRef(false);
+  const frozenRequest = useRef<{ intent: string; body: string } | null>(null);
+
   // Derived: dirty + validation.
   const isDirty = useMemo(
     () => stableStringify(rawValues) !== initialRawValuesString,
@@ -617,6 +624,7 @@ export function AmPrepForm({
 
   const handleChange = useCallback(
     (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => {
+      frozenRequest.current = null;
       setRawValues((prev) => {
         const prevRow = prev[templateItemId] ?? {};
         // Boolean field (yesNo) — rawValue is "true" / "false" string from
@@ -656,7 +664,8 @@ export function AmPrepForm({
   // ─── Submit ─────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
-    if (validation.entries === null) return; // guard — button should be disabled
+    if (submitLatch.current || validation.entries === null) return; // guard — button should be disabled
+    submitLatch.current = true;
     setSubmitState({ kind: "in_flight" });
     try {
       // C.46 — when in edit mode, post is_update=true + chain head id.
@@ -672,14 +681,19 @@ export function AmPrepForm({
               instanceId: instance.id,
               entries: validation.entries,
             };
+      const intent = JSON.stringify(requestBody);
+      if (!frozenRequest.current || frozenRequest.current.intent !== intent) {
+        frozenRequest.current = { intent, body: JSON.stringify({ ...requestBody, clientRequestId: createClientRequestId() }) };
+      }
       const res = await fetch("/api/prep/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
+        body: frozenRequest.current.body,
         redirect: "manual",
       });
       if (res.ok) {
         const body = (await res.json()) as SubmitResponseBodySuccess;
+        frozenRequest.current = null;
         setInstance(body.instance);
         setSubmitState({ kind: "success", instance: body.instance });
         return;
@@ -703,12 +717,15 @@ export function AmPrepForm({
         code: "network",
         message: t("am_prep.error.network"),
       });
+    } finally {
+      submitLatch.current = false;
     }
   }, [instance.id, validation.entries, t, mode, originalSubmissionId]);
 
   // ─── Discard changes ────────────────────────────────────────────────────
 
   const handleDiscard = useCallback(() => {
+    frozenRequest.current = null;
     setRawValues(seedRawValues);
     if (submitState.kind === "error") setSubmitState({ kind: "idle" });
   }, [seedRawValues, submitState.kind]);

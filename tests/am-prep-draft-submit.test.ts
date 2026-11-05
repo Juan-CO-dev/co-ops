@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/prep/submit/route";
 import { consumeAmPrepDraft } from "@/lib/am-prep-draft";
-import { PrepClosingRefBusyError, PrepInstanceNotOpenError, submitAmPrep } from "@/lib/prep";
+import { PrepError, PrepClosingRefBusyError, PrepInstanceNotOpenError, submitAmPrep } from "@/lib/prep";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -121,5 +121,43 @@ describe("POST /api/prep/submit — the draft is consumed only by a successful s
     );
     expect(res.status).toBe(200);
     expect(consumeAmPrepDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe("0291 request identity route", () => {
+  it.each([null, 42, "invalid", {}, ""])("rejects malformed key %j", async (clientRequestId) => {
+    const res = await POST(req({ instanceId: INSTANCE, entries: [], clientRequestId }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "invalid_request_key" });
+    expect(submitAmPrep).not.toHaveBeenCalled();
+  });
+  it("returns a replay and safely consumes the draft even if consuming fails", async () => {
+    vi.mocked(submitAmPrep).mockResolvedValue({ ...okResult, replayed: true });
+    vi.mocked(consumeAmPrepDraft).mockRejectedValue(new Error("unavailable"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await POST(req({ instanceId: INSTANCE, entries: [], clientRequestId: SUBMISSION, actor: "other" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ replayed: true });
+    expect(submitAmPrep).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ clientRequestId: SUBMISSION, actor: expect.objectContaining({ userId: "u-kh" }) }));
+    expect(consumeAmPrepDraft).toHaveBeenCalledOnce();
+    spy.mockRestore();
+  });
+  it("maps a concurrent original SQL refusal to already_submitted 409", async () => {
+    vi.mocked(submitAmPrep).mockRejectedValue(new PrepError("AM prep already submitted", "already_submitted"));
+    const res = await POST(req({ instanceId: INSTANCE, entries: [], clientRequestId: SUBMISSION }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "already_submitted" });
+    expect(consumeAmPrepDraft).not.toHaveBeenCalled();
+  });
+  it("maps key reuse to 409", async () => {
+    vi.mocked(submitAmPrep).mockRejectedValue(new PrepError("reused", "prep_request_key_reused"));
+    const res = await POST(req({ instanceId: INSTANCE, entries: [], clientRequestId: SUBMISSION }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "prep_request_key_reused" });
+  });
+  it("denies the wrong shop before the replay-capable library call", async () => {
+    vi.mocked(requireSession).mockResolvedValue({ user: { id: "u-kh" }, role: "key_holder", level: 4, locations: [] } as never);
+    expect((await POST(req({ instanceId: INSTANCE, entries: [], clientRequestId: SUBMISSION }))).status).toBe(403);
+    expect(submitAmPrep).not.toHaveBeenCalled();
   });
 });
