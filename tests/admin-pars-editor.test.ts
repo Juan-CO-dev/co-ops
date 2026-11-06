@@ -9,7 +9,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ParsClient } from "@/components/admin/pars/ParsClient";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { EMPTY_PAR_SILENCE, type WalkerParSuggestion } from "@/lib/dynamic-pars-shared";
-import { parWriteGate } from "@/lib/par-permissions-shared";
 import type { ParsRow, ParsView } from "@/lib/admin/pars-shared";
 
 const h = vi.hoisted(() => ({ refresh: vi.fn(), unlock: vi.fn(), forget: vi.fn(), fetch: vi.fn() }));
@@ -213,17 +212,5 @@ it("preserves explicit on with the three-state select and no switch", () => {
   expect([...select.options].map((o) => o.value)).toEqual(["inherit", "on", "off"]);
 });
 
-for (const role of ["agm", "prep_mgr", "catering_mgr", "social_media_mgr", "gm"] as const) {
-  it.each(["shop-a", "shop-b"])(`${role} controls at %s separate edits from verdicts`, (shop) => {
-    const r = row();
-    const canEdit = parWriteGate({ role, locations: ["shop-a"] }, shop).ok;
-    if (!canEdit) delete r.edit;
-    else r.edit!.activeOverride = null;
-    r.suggestion = { ...suggestion, canAct: role === "gm" && canEdit };
-    render(tree(view(r))); open();
-    expect(screen.queryAllByRole("spinbutton").length).toBe(canEdit ? 2 : 0);
-    expect(screen.queryByRole("switch") !== null).toBe(canEdit);
-    expect(screen.queryByRole("button", { name: /Set the par/ }) !== null).toBe(role === "gm" && canEdit);
-    expect(screen.queryByRole("button", { name: /Keep the par/ }) !== null).toBe(role === "gm" && canEdit);
-  });
-}
+// Role-derived edit DTOs and suggestion.canAct are covered through the real loadPars
+// in tests/admin-pars.test.ts; UI cases above consume those DTO fields directly.

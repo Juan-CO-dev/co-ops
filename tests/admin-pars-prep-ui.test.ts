@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { LocationChecklistTab } from "@/components/admin/templates/LocationChecklistTab";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { jsx } from "react/jsx-runtime";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PrepParsClient } from "@/components/admin/pars/PrepParsClient";
@@ -11,7 +12,7 @@ import { rowToTemplateItem, type TemplateItemRow } from "@/lib/template-items";
 const h = vi.hoisted(() => ({ refresh: vi.fn(), push: vi.fn(), unlock: vi.fn(), fetch: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: h.refresh, push: h.push }) }));
 vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ requestStepUp: h.unlock }) }));
-const view: PrepParsView = { subtype: "am_prep", locationId: "shop-a", name: "A", code: "A", templateId: "template-a", enabledItemIds: ["item"],
+const view: PrepParsView = { canEditPars: true, subtype: "am_prep", locationId: "shop-a", name: "A", code: "A", templateId: "template-a", enabledItemIds: ["item"],
   items: [rowToTemplateItem({ id: "line-a", item_id: "item", label: "Fallback", prep_meta: null } as TemplateItemRow)],
   parContext: { "line-a": { itemId: "item", itemGlobal: true, itemName: "Prep item", itemNameEs: "Preparado", recommendedPar: 5, recommendedParUnit: "pan",
     overrides: [{ dayOfWeek: null, parValue: 7, parUnit: null, parMode: "manual" }, { dayOfWeek: 1, parValue: 9, parUnit: null, parMode: "manual" }] } },
@@ -91,4 +92,16 @@ it("keeps unlinked lines separate with floor fallback values and Spanish labels,
   buttons.forEach((button) => fireEvent.click(button));
   expect(screen.queryByRole("textbox")).toBeNull(); expect(screen.queryByRole("combobox")).toBeNull();
   expect(screen.getAllByText("4 pan")).toHaveLength(7); expect(screen.getAllByText("6 pan")).toHaveLength(7);
+});
+
+it.each([true, false])("checklist location passes canEditPars=%s to the real grid", canEditPars => {
+  render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(LocationChecklistTab, {
+    view: { ...view, canEditPars }, subtype: "am_prep", registry: [], sections: [], units: [], actorLevel: 6,
+  }) }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  const grid = screen.getByText("Par by day (this location)").closest("section")!;
+  expect(within(grid).queryAllByRole("button", { name: "Save" })).toHaveLength(canEditPars ? 8 : 0);
+  expect(within(grid).getAllByRole("combobox").every(el => (el as HTMLSelectElement).disabled)).toBe(!canEditPars);
+  if (!canEditPars) expect(within(grid).getAllByRole("textbox").every(el => (el as HTMLInputElement).disabled)).toBe(true);
+  expect(h.fetch).not.toHaveBeenCalled();
 });

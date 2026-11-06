@@ -1,4 +1,5 @@
 /** Human par edits only. Dynamic Pars suggestion verdicts retain PAR_WRITE_MIN. */
+import { lockLocationContext } from "@/lib/locations";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { catalogShopAllowed, catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
 
@@ -14,7 +15,10 @@ export function parWriteGate(actor: { role: RoleCode; locations: readonly string
   { ok: true } | { ok: false; status: 403 | 404; code: "forbidden" | "not_found" } {
   if (!parWriteRoleAllowed(actor.role) || !locationId) return { ok: false, status: 403, code: "forbidden" };
   const level = getRoleLevel(actor.role);
-  if (!catalogShopAllowed({ level, locations: actor.locations }, locationId)) {
+  const shopAllowed = level >= 7
+    ? lockLocationContext({ role: actor.role, locations: [...actor.locations] }, locationId)
+    : catalogShopAllowed({ level, locations: actor.locations }, locationId);
+  if (!shopAllowed) {
     return level >= 7 ? { ok: false, status: 404, code: "not_found" } : { ok: false, status: 403, code: "forbidden" };
   }
   return { ok: true };

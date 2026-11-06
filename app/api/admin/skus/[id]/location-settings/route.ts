@@ -6,8 +6,8 @@ import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { upsertLocationSkuSettings, AdminSkuError } from "@/lib/admin/skus";
 
-// PUT: operational level 6 at own shop; MoO+ any active shop. Tier E.
-// mirrors a SKU edit / pack-chain replace (a SKU write). Body:
+// PUT: operational level 6 at own active member shop; level 7+ uses lockLocationContext
+// (all locations only at 9). Typed par edits require Tier E. Body:
 //   { locationId, activeOverride: true|false|null, weekdayPar: number|null,
 //     weekendPar: number|null,
 //     expected: { activeOverride, weekdayPar, weekendPar } }   ← the row as loaded

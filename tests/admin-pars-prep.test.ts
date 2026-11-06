@@ -70,3 +70,11 @@ it("prep route refuses social media manager by role", async () => {
   h.auth.mockResolvedValue({ ...actor, level: 10, user: { ...actor.user, role: "social_media_mgr" } });
   expect((await write()).status).toBe(403); expect(h.db).not.toHaveBeenCalled();
 });
+
+it.each(["agm", "social_media_mgr"] as const)("checklist loader derives %s par permission for populated and empty tabs", async role => {
+  const ctx = { ...actor, user: { ...actor.user, role } };
+  const loc = { id: "shop-a", name: "A", code: "A" };
+  expect((await loadChecklistLocationView(ctx, loc, "am_prep")).canEditPars).toBe(role === "agm");
+  tables.checklist_templates = [];
+  expect((await loadChecklistLocationView(ctx, loc, "am_prep")).canEditPars).toBe(role === "agm");
+});

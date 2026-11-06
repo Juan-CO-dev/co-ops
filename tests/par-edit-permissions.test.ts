@@ -37,14 +37,14 @@ for (const [kind, write] of Object.entries(writers)) {
   for (const role of ["agm", "prep_mgr", "catering_mgr", "social_media_mgr", "gm", "moo", "owner", "cgs"] as const) {
     for (const shop of ["shop-a", "shop-b", null] as const) {
       it(`${kind}: ${role} / ${shop ?? "global"} is bound inside the real library`, async () => {
-        const allowed = role !== "social_media_mgr" && shop !== null && (shop === "shop-a" || getRoleLevel(role) >= 8);
+        const allowed = role !== "social_media_mgr" && shop !== null && (shop === "shop-a" || getRoleLevel(role) >= 9);
         if (allowed) {
           await write(actor(role), shop!);
           expect(db.writes.length).toBeGreaterThan(0);
           expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ actorId: "fixture-actor", actorRole: role,
             action: kind === "prep" ? "item_par.update" : "vendor_item.update" }));
         } else {
-          const status = role === "gm" && shop === "shop-b" ? 404 : 403;
+          const status = getRoleLevel(role) >= 7 && shop === "shop-b" ? 404 : 403;
           await expect(write(actor(role), shop as unknown as string)).rejects.toMatchObject({ status });
           expect(h.db).not.toHaveBeenCalled(); expect(db.writes).toEqual([]);
         }
@@ -89,3 +89,14 @@ for (const role of ["agm", "prep_mgr", "catering_mgr", "social_media_mgr", "gm"]
     }
   });
 }
+
+it("setup refuses an AGM with a stale Tier E window before I/O", async () => {
+  h.session.mockResolvedValue({ ...actor("agm"), level: 6, locations: [A], session: { catalogEditUnlockedAt: "2000-01-01T00:00:00.000Z" } });
+  const response = await setupPost(new NextRequest("https://fixture.test/api/setup", {
+    method: "POST", headers: { origin: "https://fixture.test", "content-type": "application/json" },
+    body: JSON.stringify({ shopId: A, step: { kind: "par", weekdayPar: 4, weekendPar: 6 } }),
+  }), { params: Promise.resolve({ id: SKU }) });
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({ code: "step_up_stale" });
+  expect(h.db).not.toHaveBeenCalled(); expect(db.writes).toEqual([]);
+});

@@ -52,6 +52,9 @@ import {
 } from "@/lib/sku-versions-shared";
 import { PRICE_BASES, type PriceBasis, type SkuItemView } from "@/lib/catalog/sku-item-shared";
 
+/** Human par edits follow AGENTS.md, amended 2026-11-05: operational level 6 in their own shop. */
+import { parWriteRoleAllowed } from "@/lib/par-permissions-shared";
+
 export class CatalogItemError extends Error {
   constructor(public status: number, public code: string, message?: string) {
     super(message ?? code);
@@ -59,8 +62,6 @@ export class CatalogItemError extends Error {
   }
 }
 
-/** The par floor (AGENTS.md Dynamic pars: level 7 is what "GM" means here). */
-const PAR_WRITE_MIN = 7;
 /** What the vendor's price is FOR: SKU identity, GM sets it first, MoO+ changes it. */
 const BASIS_WRITE_MIN = 7;
 const RECEIVABLE_PO = ["draft", "confirmed", "placed", "invoiced"];
@@ -454,7 +455,8 @@ export async function loadSkuItemView(
       editGlobalPack: canGlobal("pack", globalPackExists),
       editGlobalPrice: canGlobal("price", globalPriceExists),
       shopsToEdit,
-      editPar: actor.level >= PAR_WRITE_MIN,
+      editPar: parWriteRoleAllowed(actor.user.role)
+        && (scope === null ? actor.level >= 7 : catalogShopAllowed(actor, scope)),
       editBasis: actor.level >= GLOBAL_VERSION_WRITE_MIN || (actor.level >= BASIS_WRITE_MIN && row.price_basis == null && skuOwnerAllowed(actor, row.location_id)),
     },
     pack: {
@@ -604,11 +606,12 @@ export async function applyPackChange(
   const scope = scopeOf(input.target);
   // 1) THE BIND: 2a's version gate (role + shop), pure, before any I/O.
   requireLocation(actor, "pack", scope);
-  // 2) Who may convert which par: GM+ (the par floor), and each converted SHOP par only where the
-  //    actor may act (a membership, or MoO+ — D2). Pure, before any I/O.
+  // 2) Human par role gate; operational level 6 may convert only their own shop pars.
+  //    Preserve the existing catalog shop bind for conversions. Pure, before any I/O.
   if (input.conversions.length > 0) {
-    if (actor.level < PAR_WRITE_MIN) throw new CatalogItemError(403, "par_forbidden");
+    if (!parWriteRoleAllowed(actor.user.role)) throw new CatalogItemError(403, "par_forbidden");
     for (const c of input.conversions) {
+      if (c.locationId === null && actor.level < 7) throw new CatalogItemError(403, "par_forbidden");
       if (c.locationId !== null && !catalogShopAllowed(actor, c.locationId)) throw new CatalogItemError(404, "not_found");
     }
   }

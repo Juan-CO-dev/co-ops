@@ -2394,6 +2394,7 @@ export interface ChecklistRegistryItem {
 }
 
 export interface ChecklistLocationView {
+  canEditPars: boolean;
   locationId: string;
   name: string;
   code: string;
@@ -2498,13 +2499,14 @@ export async function loadChecklistLocationView(
   const sb = getServiceRoleClient();
   const templateId = await resolveActivePrepTemplateId(sb, loc.id, subtype);
   if (!templateId) {
-    return { locationId: loc.id, name: loc.name, code: loc.code, templateId: null, items: [], parContext: {}, enabledItemIds: [] };
+    return { canEditPars: parWriteGate(actorLocationShape(actor), loc.id).ok, locationId: loc.id, name: loc.name, code: loc.code, templateId: null, items: [], parContext: {}, enabledItemIds: [] };
   }
   const detail = await getPrepTemplateDetail(actor, templateId);
   const enabledItemIds = detail.items
     .map((it) => it.itemId)
     .filter((v): v is string => typeof v === "string");
   return {
+    canEditPars: parWriteGate(actorLocationShape(actor), loc.id).ok,
     locationId: loc.id,
     name: loc.name,
     code: loc.code,
