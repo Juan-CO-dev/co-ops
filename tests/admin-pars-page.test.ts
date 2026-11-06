@@ -78,3 +78,10 @@ it("loads only the resolved shop through the checklist reader for the URL prep t
   expect(result.props.children[2].props.tab).toBe("prep");
   expect(result.props.children[2].props.children.props.views.map((view: { subtype: string }) => view.subtype)).toEqual(["am_prep", "mid_day_prep"]);
 });
+
+it.each(["agm", "prep_mgr", "catering_mgr", "gm"])("Prep tab gives %s the shared own-shop edit permission", async (role) => {
+  h.auth.mockResolvedValue({ user: { role, language: "en" }, locations: [A] });
+  h.prep.mockResolvedValue({ items: [], parContext: {} });
+  const result = await Page({ searchParams: Promise.resolve({ tab: "prep", location: A }) });
+  expect(result.props.children[2].props.children.props.canEdit).toBe(true);
+});

@@ -66,7 +66,7 @@ describe("Pars typed edits reuse the overlay route and real writer", () => {
     const res = await put(); expect(res.status).toBe(403); expect(await res.json()).toMatchObject({ code: at ? "step_up_stale" : "step_up_required" });
     expect(h.db).not.toHaveBeenCalled();
   });
-  it.each(["agm", "social_media_mgr"] as const)("refuses %s by role, even with inflated level, at route and lib", async (role) => {
+  it.each(["social_media_mgr"] as const)("refuses %s by role, even with inflated level, at route and lib", async (role) => {
     h.session.mockResolvedValue(actor(role)); expect((await put()).status).toBe(403);
     await expect(upsertLocationSkuSettings(actor(role), input())).rejects.toMatchObject({ status: 403 });
     expect(db.writes).toEqual([]);
@@ -100,7 +100,7 @@ describe("Pars suggestion verbs use the walk route and real libraries without st
       ? dismissSuggestion(ctx, { ...verdict(), locationId, currentPar: 2 })
       : action === "revert" ? revertAutoMove(ctx, { ...verdict(), locationId, value: null })
         : writeParFromSuggestion({ actor: ctx, actorKind: "accept", ...verdict(), locationId, value: 6 });
-    it.each(["agm", "social_media_mgr"] as const)(`${action} refuses %s at the route and library`, async (role) => {
+    it.each(["agm", "prep_mgr", "catering_mgr", "social_media_mgr"] as const)(`${action} refuses %s at the route and library`, async (role) => {
       h.session.mockResolvedValue(actor(role)); expect((await POST(request({ ...verdict(), action }, "POST"))).status).toBe(403);
       await expect(callLib(actor(role))).rejects.toMatchObject({ status: 403 }); expect(db.writes).toEqual([]);
     });
@@ -152,7 +152,7 @@ it("off-here PUT preserves both pars and restores inheritance through the same w
   expect((await put({ ...input(), weekdayPar: 2, activeOverride: null, expected: { ...baseline, activeOverride: false } })).status).toBe(200);
   expect(tables.location_sku_settings![0]).toMatchObject({ active_override: null, weekday_par: 2, weekend_par: 3 });
 });
-it.each(["agm", "social_media_mgr"] as const)("off-here PUT refuses %s", async (role) => {
+it.each(["social_media_mgr"] as const)("off-here PUT refuses %s", async (role) => {
   h.session.mockResolvedValue(actor(role));
   expect((await put({ ...input(), activeOverride: false })).status).toBe(403);
   expect(db.writes).toEqual([]);
@@ -167,3 +167,27 @@ it("off-here PUT refuses a missing window, stale snapshot, foreign shop and fore
   expect((await put({ ...input(), activeOverride: false })).status).toBe(404);
   expect(db.writes).toEqual([]);
 });
+
+for (const role of ["agm", "prep_mgr", "catering_mgr", "gm"] as const) {
+  it.each(["values", "off", "inherit"] as const)(`${role} edits %s at own shop through Tier E and the human audit lane`, async (kind) => {
+    h.session.mockResolvedValue(actor(role));
+    const payload = kind === "off" ? { ...input(), activeOverride: false } : kind === "inherit" ? { ...input(), weekdayPar: null, weekendPar: null } : input();
+    expect((await put(payload)).status).toBe(200);
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ actorRole: role, actorId: "fixture-user", action: "vendor_item.update" }));
+    expect(tables.location_sku_settings![0]).toMatchObject({ weekday_par: payload.weekdayPar, weekend_par: payload.weekendPar, active_override: payload.activeOverride, updated_by: "fixture-user" });
+  });
+  it.each([null, "2000-01-01T00:00:00Z"])(`${role} retains Tier E refusal (%s)`, async (at) => {
+    const ctx = actor(role); ctx.session.catalogEditUnlockedAt = at; h.session.mockResolvedValue(ctx);
+    expect((await put()).status).toBe(403); expect(h.db).not.toHaveBeenCalled();
+  });
+  it(`${role} has the same exclusive 15-minute Tier E boundary`, async () => {
+    vi.useFakeTimers();
+    try {
+      const now = new Date("2026-11-05T15:00:00Z"); vi.setSystemTime(now);
+      const ctx = actor(role); ctx.session.catalogEditUnlockedAt = new Date(now.getTime() - 900_000).toISOString(); h.session.mockResolvedValue(ctx);
+      expect((await put()).status).toBe(403); expect(h.db).not.toHaveBeenCalled();
+      ctx.session.catalogEditUnlockedAt = new Date(now.getTime() - 899_999).toISOString();
+      expect((await put()).status).toBe(200);
+    } finally { vi.useRealTimers(); }
+  });
+}

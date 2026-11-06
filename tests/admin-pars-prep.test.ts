@@ -47,7 +47,7 @@ it("matches LocationChecklistTab's actual loader context and rereads saved value
 it.each([
   ["template-b", "line-b", "shop-a"], ["template-a", "line-b", "shop-a"], ["template-a", "line-a", "shop-b"],
 ])("refuses cross-shop template/line/binding %s %s %s through the existing route", async (template, line, shop) => {
-  expect((await write(template, line, shop)).status).toBe(404);
+  expect((await write(template, line, shop)).status).toBe(shop === "shop-b" ? 403 : 404);
   expect(db.writes).toEqual([]);
 });
 it("preserves the prep floor and Tier A", async () => {
@@ -56,4 +56,17 @@ it("preserves the prep floor and Tier A", async () => {
   h.auth.mockResolvedValue({ ...actor, session: { stepUpUnlocked: false } });
   expect((await write()).status).toBe(403);
   expect(db.writes).toEqual([]);
+});
+
+it.each(["agm", "prep_mgr", "catering_mgr", "gm"] as const)("prep route: %s edits own shop and refuses another", async (role) => {
+  h.auth.mockResolvedValue({ ...actor, user: { ...actor.user, role } });
+  expect((await write()).status).toBe(200);
+  expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ actorRole: role, action: "item_par.update" }));
+  h.db.mockClear();
+  expect((await write("template-b", "line-b", "shop-b")).status).toBe(role === "gm" ? 404 : 403);
+  expect(h.db).not.toHaveBeenCalled();
+});
+it("prep route refuses social media manager by role", async () => {
+  h.auth.mockResolvedValue({ ...actor, level: 10, user: { ...actor.user, role: "social_media_mgr" } });
+  expect((await write()).status).toBe(403); expect(h.db).not.toHaveBeenCalled();
 });

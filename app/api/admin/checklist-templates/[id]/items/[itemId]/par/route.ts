@@ -1,14 +1,14 @@
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
-import { ROLES } from "@/lib/roles";
+import { parWriteRoleAllowed } from "@/lib/par-permissions-shared";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { setItemPar, AdminTemplateError } from "@/lib/admin/templates";
 import { type ParMode } from "@/lib/types";
 
 // PER-LOCATION par OVERRIDE for the item linked to a prep line. Writes
-// item_par_levels (not the global items row). AGM+, Tier A.
+// item_par_levels (not the global items row). Operational level 6+, Tier A (existing prep contract).
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; itemId: string }> },
@@ -20,7 +20,7 @@ export async function PATCH(
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, `/api/admin/checklist-templates/${id}/items/${itemId}/par`);
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < 6) return jsonError(403, "forbidden");
+  if (!parWriteRoleAllowed(ctx.user.role)) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "A");
   if (!su.ok) return jsonError(403, su.code);
 

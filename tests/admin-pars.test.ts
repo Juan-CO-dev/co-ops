@@ -82,7 +82,7 @@ describe("Pars authorization", () => {
 });
 
 describe("Pars read model", () => {
-  it("gives GM raw human values and the current pack epoch while keeping AGM read-only", async () => {
+  it("gives operational managers raw edit values while keeping suggestion verdicts GM-only", async () => {
     overlays.set("a", { activeOverride: true, weekdayPar: null, weekendPar: 5 });
     h.packs.mockResolvedValue({ overlayBySku: overlays, chainsBySku: chains, epochs: new Map([["a", 3]]) });
     h.walk.mockResolvedValue({ vendors: [{ skus: [{ skuId: "a", parSuggestion: suggestion }] }], parSilence: EMPTY_PAR_SILENCE });
@@ -90,7 +90,11 @@ describe("Pars read model", () => {
     expect(writable.locationId).toBe(SHOP);
     expect(writable.rows[0]?.edit).toEqual({ globalActive: true, activeOverride: true, weekdayPar: null, weekendPar: 5, packEpoch: 3, poundsPerUnit: 30 });
     expect(writable.rows[0]?.suggestion).toEqual(suggestion);
-    expect((await loadPars(actor("agm"), SHOP)).rows[0]?.edit).toBeUndefined();
+    for (const role of ["agm", "prep_mgr", "catering_mgr"] as const) {
+      const row = (await loadPars(actor(role), SHOP)).rows[0];
+      expect(row?.edit).toEqual(writable.rows[0]?.edit);
+      expect(row?.suggestion?.canAct).toBe(false);
+    }
     h.walk.mockResolvedValue({ vendors: [{ skus: [{ skuId: "a", parSuggestion: { ...suggestion, canAct: false } }] }], parSilence: EMPTY_PAR_SILENCE });
     expect((await loadPars(actor("gm"), SHOP)).rows[0]?.suggestion?.canAct).toBe(false);
   });
@@ -199,6 +203,6 @@ it("keeps off rows for viewers and pins their exclusion to the walk predicate", 
     const row = (await loadPars(actor(), SHOP)).rows[0]!;
     expect(row.offHere).toBe(activeOverride === false);
     expect(walkDisposition({ productRetired: false, vendorKnown: true, skuActive: resolveActive(activeOverride, true), par: row.weekday.value }) === "skuInactive").toBe(row.offHere);
-    expect(row.edit).toBeUndefined();
+    expect(row.edit?.activeOverride).toBe(activeOverride);
   }
 });

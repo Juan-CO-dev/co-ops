@@ -1,7 +1,7 @@
 import { ParsTabs } from "@/components/admin/pars/ParsTabs";
 import { PrepParsClient, type PrepParsView } from "@/components/admin/pars/PrepParsClient";
 import { loadChecklistLocationView } from "@/lib/admin/templates";
-import { getRoleLevel } from "@/lib/roles";
+import { parWriteGate } from "@/lib/par-permissions-shared";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ParsClient } from "@/components/admin/pars/ParsClient";
@@ -60,7 +60,7 @@ export default async function AdminParsPage({ searchParams }: {
         </Link>)}
       </nav>
       {locationId ? <ParsTabs tab={tab} locationId={locationId}>
-        {tab === "prep" ? <PrepParsClient key={locationId} views={prepViews} canEdit={getRoleLevel(auth.user.role) >= 6} /> : view && <ParsClient key={locationId} view={view} />}
+        {tab === "prep" ? <PrepParsClient key={locationId} views={prepViews} canEdit={parWriteGate(actor, locationId).ok} /> : view && <ParsClient key={locationId} view={view} />}
       </ParsTabs> :
         <p className="text-sm text-co-text-muted">{serverT(lang, "admin.pars.no_location")}</p>}
     </div>

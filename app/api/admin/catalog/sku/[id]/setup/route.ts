@@ -1,3 +1,4 @@
+import { parWriteRoleAllowed } from "@/lib/par-permissions-shared";
 import { serverT } from "@/lib/i18n/server";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest, { params }: {
     const ctx = await requireSession(req, req.nextUrl.pathname);
     if (ctx instanceof Response)
         return ctx;
-    if (ctx.level < 7 || ctx.user.role === "social_media_mgr")
+    if (!parWriteRoleAllowed(ctx.user.role))
         return catalogRefusal(ctx, 403, "forbidden");
     const su = assertStepUp(ctx, "E");
     if (!su.ok)
@@ -36,6 +37,8 @@ export async function POST(req: NextRequest, { params }: {
         const parsed = parseSetupStep(raw);
         if (!parsed.ok)
             return catalogRefusal(ctx, 400, "invalid_payload", { field: parsed.field });
+        if (parsed.step.kind !== "par" && ctx.level < 7)
+            return catalogRefusal(ctx, 403, "forbidden");
         const result = await setUpItemAtShop(ctx, { skuId: id, shopId: parsed.shopId, step: parsed.step });
         return jsonOk({ ...result, ...(result.step === "guide_line" && result.detail.lineSaved === null ? { messageKey: "catalog.setup.guide_unconfirmed", message: serverT(ctx.user.language, "catalog.setup.guide_unconfirmed") } : {}) });
     }

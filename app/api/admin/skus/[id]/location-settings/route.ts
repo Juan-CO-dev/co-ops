@@ -1,12 +1,12 @@
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
-import { ROLES } from "@/lib/roles";
+import { parWriteRoleAllowed } from "@/lib/par-permissions-shared";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { upsertLocationSkuSettings, AdminSkuError, SKU_WRITE_MIN } from "@/lib/admin/skus";
+import { upsertLocationSkuSettings, AdminSkuError } from "@/lib/admin/skus";
 
-// PUT — upsert the per-(location, sku) overlay row (VO-7). GM+ (≥7), Tier A —
+// PUT: operational level 6 at own shop; MoO+ any active shop. Tier E.
 // mirrors a SKU edit / pack-chain replace (a SKU write). Body:
 //   { locationId, activeOverride: true|false|null, weekdayPar: number|null,
 //     weekendPar: number|null,
@@ -23,7 +23,7 @@ import { upsertLocationSkuSettings, AdminSkuError, SKU_WRITE_MIN } from "@/lib/a
 // simply ignored. What an admin edit DOES to the machine's lane (null the auto value, the
 // baseline, the stamp, and clear the pin — on the slots whose value actually changed) is
 // decided by parWriteColumns() in lib/dynamic-pars-shared.ts, the one authority every par
-// writer resolves its columns through. This route keeps its own Tier-A step-up; only the
+// writer resolves its columns through. This route keeps its own Tier-E step-up; only the
 // walker's accept/dismiss/revert drop it (plan D2).
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const origin = assertSameOrigin(req);
@@ -33,7 +33,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, `/api/admin/skus/${id}/location-settings`);
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < SKU_WRITE_MIN) return jsonError(403, "forbidden");
+  if (!parWriteRoleAllowed(ctx.user.role)) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "E");
   if (!su.ok) return jsonError(403, su.code);
 
