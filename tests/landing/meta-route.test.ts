@@ -60,15 +60,13 @@ describe("public landing CAPI boundary", () => {
     expect((await handleMetaEvent(request({ ...payload, fbc: undefined }), { env, send, now })).status).toBe(204);
     expect(send).not.toHaveBeenCalled();
   });
-  it("redacts upstream failure and rejects production test codes", async () => {
+  it("redacts upstream failure", async () => {
     for (const send of [vi.fn().mockResolvedValue(new Response("secret", { status: 429 })), vi.fn().mockResolvedValue(new Response("secret", { status: 500 })), vi.fn().mockRejectedValue(new Error("secret timeout"))]) {
       const response = await handleMetaEvent(request(), { env, send, now });
       expect(response.status).toBe(503);
       expect(await response.text()).not.toContain("secret");
     }
-    const send = vi.fn();
-    expect((await handleMetaEvent(request(), { env: { ...env, NODE_ENV: "production", META_TEST_EVENT_CODE: "TEST" }, send, now })).status).toBe(503);
-    expect(send).not.toHaveBeenCalled();
+
   });
 });
 
@@ -95,4 +93,60 @@ it.each([
   expect(event.event_name).toBe(patch.event_name);
   if(patch.mode) {expect(event.custom_data.mode).toBe("delivery");expect(event.custom_data).not.toHaveProperty("store");}
   else {expect(event.custom_data.store).toBe("dupont");expect(event.custom_data).not.toHaveProperty("mode");}
+});
+
+describe("CAPI launch readiness", () => {
+  it.each([["skipped", 204, 0], ["refused", 429, 0], ["unavailable", 503, 0], ["allowed", 204, 1]] as const)("production aggregate %s", async (result, status, sends) => {
+    const aggregate = vi.fn().mockResolvedValue(result);
+    const send = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    const config = { ...env, VERCEL_ENV: "production" };
+    const req = request();
+    const response = await handleMetaEvent(req, { env: config, now, send, aggregate });
+    expect(response.status).toBe(status);
+    expect(await response.text()).toBe("");
+    expect(aggregate).toHaveBeenCalledExactlyOnceWith(req, config);
+    expect(send).toHaveBeenCalledTimes(sends);
+    if (sends) expect(aggregate.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
+  });
+  it("keeps production dormant with the real unset aggregate switch", async () => {
+    const send = vi.fn();
+    expect((await handleMetaEvent(request(), { env: { ...env, VERCEL_ENV: "production" }, now, send })).status).toBe(204);
+    expect(send).not.toHaveBeenCalled();
+  });
+  it.each([
+    { LANDING_CAPI_ENABLED: "false" }, { META_PIXEL_ID: "invalid" }, { META_CAPI_ACCESS_TOKEN: undefined },
+    { META_GRAPH_API_VERSION: "invalid" }, { NEXT_PUBLIC_META_PIXEL_ID: "67890" },
+    { VERCEL_ENV: "production", META_TEST_EVENT_CODE: "TEST" },
+    { LANDING_WAF_STATE: "dormant" }, { LANDING_WAF_STATE: "refused" }, { LANDING_WAF_STATE: "unavailable" },
+    { LANDING_META_UA_APPROVED: "false" },
+  ])("does not consult aggregate after an earlier env gate %j", async patch => {
+    const aggregate = vi.fn(); const send = vi.fn();
+    await handleMetaEvent(request(), { env: { ...env, ...patch }, now, send, aggregate });
+    expect(aggregate).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
+  it.each([
+    () => request(payload, { origin: "null" }),
+    () => request({ ...payload, event_name: "invalid" }),
+    () => request({ ...payload, fbc: undefined }),
+    () => request(payload, { "user-agent": "" }),
+    () => request(payload, { "user-agent": "x".repeat(513) }),
+  ])("does not consult aggregate after request or matching gates", async makeRequest => {
+    const aggregate = vi.fn(); const send = vi.fn();
+    await handleMetaEvent(makeRequest(), { env, now, send, aggregate });
+    expect(aggregate).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["preview", "production", true], ["development", "production", true],
+    ["production", "production", false], ["production", "development", false],
+    [undefined, "production", false], [undefined, "development", true], [undefined, undefined, true],
+    ["unknown", "development", false], ["", "development", false],
+  ] as const)("test code for VERCEL_ENV=%s NODE_ENV=%s", async (vercel, node, allowed) => {
+    const send = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    const aggregate = vi.fn().mockResolvedValue("skipped");
+    const response = await handleMetaEvent(request(), { env: { ...env, VERCEL_ENV: vercel, NODE_ENV: node, META_TEST_EVENT_CODE: "TEST" }, now, send, aggregate });
+    expect(response.status).toBe(allowed ? 204 : 503);
+    expect(send).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    expect(aggregate).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    if (allowed) expect(JSON.parse(send.mock.calls[0]![1].body).test_event_code).toBe("TEST");
+  });
 });

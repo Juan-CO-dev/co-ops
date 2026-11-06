@@ -1,11 +1,12 @@
 import "server-only";
+import { checkLandingAggregate } from "./aggregate-limit-server";
 import { createAdCodeResolver } from "./ad-codes-server";
 import { loadLandingConfig } from "./config";
 import { boundedJson, emptyResponse, guardLandingRequest, type LandingServerEnv } from "./request-server";
 import { landingRateLimit } from "./rate-limit";
 import { parseLandingEvent } from "./tracking-schema-shared";
 
-interface Dependencies { env?: LandingServerEnv; now?: () => number; send?: typeof fetch; resolveAd?: (candidate: unknown) => Promise<string> }
+interface Dependencies { env?: LandingServerEnv; now?: () => number; send?: typeof fetch; resolveAd?: (candidate: unknown) => Promise<string>; aggregate?: typeof checkLandingAggregate }
 /** Registry read only; no audit call, event log, customer record, or automatic retry. */
 export async function handleMetaEvent(request: Request, dependencies: Dependencies = {}): Promise<Response> {
   const env = dependencies.env ?? process.env;
@@ -17,7 +18,8 @@ export async function handleMetaEvent(request: Request, dependencies: Dependenci
   if (!event) return emptyResponse(400);
   if (env.LANDING_CAPI_ENABLED !== "true" || !/^\d{1,30}$/.test(env.META_PIXEL_ID ?? "") || !env.META_CAPI_ACCESS_TOKEN || env.META_GRAPH_API_VERSION !== "v25.0") return emptyResponse(204);
   if (env.NEXT_PUBLIC_META_PIXEL_ID && env.NEXT_PUBLIC_META_PIXEL_ID !== env.META_PIXEL_ID) return emptyResponse(503);
-  if (env.NODE_ENV === "production" && env.META_TEST_EVENT_CODE) return emptyResponse(503);
+  const testEventsAllowed = env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "development" || (env.VERCEL_ENV === undefined && env.NODE_ENV !== "production");
+  if (env.META_TEST_EVENT_CODE && !testEventsAllowed) return emptyResponse(503);
   const protection = landingRateLimit(env);
   if (protection === "refused") return emptyResponse(429);
   if (protection === "unavailable") return emptyResponse(503);
@@ -33,6 +35,10 @@ export async function handleMetaEvent(request: Request, dependencies: Dependenci
     user_data: { client_user_agent: userAgent, ...(event.fbc ? { fbc: event.fbc } : {}), ...(event.fbp ? { fbp: event.fbp } : {}) },
     custom_data: { ...(event.mode ? { mode: event.mode } : {}), ad: ad === event.ad ? ad : "unattributed", placement: event.placement, ...(event.store ? { store: event.store } : {}), ...(event.vendor ? { vendor: event.vendor } : {}), ...(event.item ? { item: event.item } : {}) },
   };
+  const aggregate = await (dependencies.aggregate ?? checkLandingAggregate)(request, env);
+  if (aggregate === "refused") return emptyResponse(429);
+  if (aggregate === "unavailable") return emptyResponse(503);
+  if (aggregate === "skipped" && env.VERCEL_ENV === "production") return emptyResponse(204);
   try {
     const response = await (dependencies.send ?? fetch)(`https://graph.facebook.com/v25.0/${env.META_PIXEL_ID}/events`, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.META_CAPI_ACCESS_TOKEN}` },
