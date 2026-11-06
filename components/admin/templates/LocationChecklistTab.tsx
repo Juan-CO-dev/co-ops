@@ -103,6 +103,7 @@ export function LocationChecklistTab({
                   templateId={templateId}
                   item={it}
                   locationId={view.locationId}
+                  canEditPars={view.canEditPars}
                   actorLevel={actorLevel}
                   prevItem={idx > 0 ? sectionItems[idx - 1] ?? null : null}
                   nextItem={idx < sectionItems.length - 1 ? sectionItems[idx + 1] ?? null : null}
@@ -137,6 +138,7 @@ export function LocationChecklistTab({
 }
 
 function LocationItemRow({
+  canEditPars,
   templateId,
   item,
   locationId,
@@ -145,6 +147,7 @@ function LocationItemRow({
   nextItem,
   parCtx,
 }: {
+  canEditPars: boolean;
   templateId: string;
   item: ChecklistTemplateItem;
   locationId: string;
@@ -406,7 +409,7 @@ function LocationItemRow({
 
           {/* Par grid — only inventory (non-question) lines carry par. */}
           {isQuestion ? null : (
-            <ParGrid templateId={templateId} lineId={item.id} locationId={locationId} parCtx={parCtx} />
+            <ParGrid canEdit={canEditPars} templateId={templateId} lineId={item.id} locationId={locationId} parCtx={parCtx} />
           )}
 
           {/* Input type — deliberate per-line conversion (Tier B, ≥7). */}

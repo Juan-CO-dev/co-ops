@@ -47,6 +47,7 @@ import type { SkuClass } from "@/lib/admin/catalog-shared";
 // SKU form); re-export so server consumers keep importing from lib/admin/skus.
 export { SKU_CLASSES, isSkuClass } from "@/lib/admin/catalog-shared";
 import { isSkuClass, chainNeedsAvgOzPerEach } from "@/lib/admin/catalog-shared";
+import { parWriteGate } from "@/lib/par-permissions-shared";
 import { parWriteColumns, type DayClass } from "@/lib/dynamic-pars-shared";
 import { parAutoLaneReady } from "@/lib/dynamic-pars-probes";
 // MEMBERSHIP HAS ONE WRITER, AND IT IS NOT THIS MODULE (0179; audit fix 2026-08-29).
@@ -1179,7 +1180,7 @@ export interface UpsertLocationSkuSettingsInput {
 }
 
 /**
- * Insert-or-update the (location, sku) overlay row (GM+). Any non-inherit value
+ * Insert-or-update the (location, sku) overlay row (operational level 6 at own shop; MoO+ any active shop). Any non-inherit value
  * upserts; a revert-to-all-inherit (all three null) nulls the fields on an existing
  * row (never a delete — append-only). Idempotent on the (location_id, sku_id)
  * UNIQUE. normalizePar reused for the pars; activeOverride tri-state validated.
@@ -1188,13 +1189,8 @@ export async function upsertLocationSkuSettings(
   actor: AuthContext,
   input: UpsertLocationSkuSettingsInput,
 ): Promise<void> {
-  requireLevel(actor, SKU_WRITE_MIN);
-  // Bind BEFORE payload validation and before any I/O (tests/location-bind-skus.test.ts
-  // proves the order: an out-of-scope actor gets 404 here, an in-scope one gets the
-  // validation error below).
-  if (!lockLocationContext(actorLoc(actor), input.locationId)) {
-    throw new AdminSkuError(404, "not_found", "Location not found");
-  }
+  const gate = parWriteGate(actorLoc(actor), input.locationId);
+  if (!gate.ok) throw new AdminSkuError(gate.status, gate.code);
 
   if (input.activeOverride !== null && typeof input.activeOverride !== "boolean") {
     throw new AdminSkuError(400, "invalid_active_override", "Active override must be true, false, or null");

@@ -211,3 +211,6 @@ it("preserves explicit on with the three-state select and no switch", () => {
   expect(select.value).toBe("on");
   expect([...select.options].map((o) => o.value)).toEqual(["inherit", "on", "off"]);
 });
+
+// Role-derived edit DTOs and suggestion.canAct are covered through the real loadPars
+// in tests/admin-pars.test.ts; UI cases above consume those DTO fields directly.

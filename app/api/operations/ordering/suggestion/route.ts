@@ -21,14 +21,11 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 //
 // POST { locationId, skuId, dayClass, generationId, action: "accept"|"dismiss"|"revert" }
 //
-// AUTHORITY (plan D1/D2): level 7 — the value SKU_WRITE_MIN already carries, which is what
-// "GM" means in lib/roles.ts (gm = 7; level 6 is AGM / catering_mgr / prep_mgr /
-// social_media_mgr, and the r3 spelling of "GM >= 6" would have handed par authority to the
-// Social Media Manager). The suggestion RENDERS at PAR_PASS_MIN (4) for transparency;
-// acting on it is the same authority that may edit the par in the admin console today, no
-// more and no less. THE LIB IS THE AUTHORITY — `writeParFromSuggestion` / `dismissSuggestion`
-// enforce the floor; this handler validates the wire shape, binds the location, and maps
-// typed errors, exactly as app/api/operations/ordering/route.ts does for OrderingError.
+// AUTHORITY: suggestion verdicts remain level 7+, bound by lockLocationContext (all
+// locations only at 9), with no step-up. Human par edits separately admit operational
+// level 6 at their own active member shop. Suggestions render at PAR_PASS_MIN (4).
+// THE LIB IS THE AUTHORITY: writeParFromSuggestion / dismissSuggestion enforce the
+// floor and location bind; this handler validates the wire shape and maps typed errors.
 //
 // NO STEP-UP (plan D2, and it is a NARROWING not a loosening): /ordering is an operational
 // surface that has never had one, step-up auto-clears on /admin exit, and a password prompt

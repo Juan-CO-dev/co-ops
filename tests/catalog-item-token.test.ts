@@ -149,3 +149,20 @@ describe("sim QA: the page's global-scope affordances match the writers", () => 
   });
 });
 
+
+it.each(["agm", "prep_mgr", "catering_mgr", "gm"] as const)("%s accepts its own shop's pack conversion and sees the par controls", async role => {
+  install(w => {
+    w.sku_pack_change_requests = []; w.sku_pack_change_request_additions = []; w.users ??= [];
+    w.vendor_delivery_rhythm ??= []; w.vendor_cutoffs ??= []; w.sku_barcodes ??= []; w.product_primaries ??= []; w.products ??= [];
+    w.location_sku_settings = [{ location_id: LOC, sku_id: SKU, weekday_par: 8, weekend_par: 10 }];
+  });
+  const ctx = { ...moo, user: { ...moo.user, role }, role, level: role === "gm" ? 7 : 6, locations: [LOC] } as AuthContext;
+  expect((await loadSkuItemView(ctx, SKU, LOC, [{ id: LOC, name: "Shop" }])).can.editPar).toBe(true);
+  if (role !== "gm") expect((await loadSkuItemView(ctx, SKU, null, [])).can.editPar).toBe(false);
+  const preview = await computePackPreview(ctx, SKU, target, LEVELS);
+  expect(preview.conversions.length).toBeGreaterThan(0);
+  expect(preview.conversions.every(c => c.locationId === LOC)).toBe(true);
+  rpcCalls.length = 0;
+  await applyPackChange(ctx, { skuId: SKU, target, levels: LEVELS, conversions: preview.conversions, requestId: null, previewToken: preview.token });
+  expect(rpcCalls).toContainEqual(expect.objectContaining({ name: "apply_sku_pack_change", args: expect.objectContaining({ p_par_changes: expect.arrayContaining([expect.objectContaining({ location_id: LOC })]) }) }));
+});

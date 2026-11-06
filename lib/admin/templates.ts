@@ -1,3 +1,4 @@
+import { parWriteGate } from "@/lib/par-permissions-shared";
 import { creationScope, ownerWriteCheck, shareGate } from "@/lib/catalog/shop-owned-shared";
 import { assertScopeToken, catalogShopAllowed, type VersionScope } from "@/lib/sku-versions-shared";
 import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
@@ -130,6 +131,7 @@ function actorLocationShape(actor: AuthContext) {
 async function loadAuthorizedPrepTemplate(
   actor: AuthContext,
   templateId: string,
+  forParWrite = false,
 ): Promise<TemplateRow> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb
@@ -141,7 +143,7 @@ async function loadAuthorizedPrepTemplate(
   if (!data || data.type !== "prep" || !data.prep_subtype) {
     throw new AdminTemplateError(404, "template_not_found", "Template not found");
   }
-  if (!lockLocationContext(actorLocationShape(actor), data.location_id)) {
+  if (!(forParWrite ? parWriteGate(actorLocationShape(actor), data.location_id).ok : lockLocationContext(actorLocationShape(actor), data.location_id))) {
     throw new AdminTemplateError(404, "template_not_found", "Template not found");
   }
   return data;
@@ -1488,7 +1490,13 @@ export async function setItemPar(
     parMode: ParMode;
   },
 ): Promise<void> {
-  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  const gate = parWriteGate(actorLocationShape(actor), args.locationId);
+  if (!gate.ok) throw new AdminTemplateError(gate.status, gate.code);
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId, true);
+  const { data: location, error: locationError } = await getServiceRoleClient().from("locations")
+    .select("id").eq("id", args.locationId).eq("active", true).maybeSingle();
+  if (locationError) throw new Error(`setItemPar location check failed: ${locationError.message}`);
+  if (!location) throw new AdminTemplateError(404, "location_not_found");
 
   // Validate inputs.
   if (args.parValue !== null && (!Number.isFinite(args.parValue) || args.parValue < 0)) {
@@ -2386,6 +2394,7 @@ export interface ChecklistRegistryItem {
 }
 
 export interface ChecklistLocationView {
+  canEditPars: boolean;
   locationId: string;
   name: string;
   code: string;
@@ -2490,13 +2499,14 @@ export async function loadChecklistLocationView(
   const sb = getServiceRoleClient();
   const templateId = await resolveActivePrepTemplateId(sb, loc.id, subtype);
   if (!templateId) {
-    return { locationId: loc.id, name: loc.name, code: loc.code, templateId: null, items: [], parContext: {}, enabledItemIds: [] };
+    return { canEditPars: parWriteGate(actorLocationShape(actor), loc.id).ok, locationId: loc.id, name: loc.name, code: loc.code, templateId: null, items: [], parContext: {}, enabledItemIds: [] };
   }
   const detail = await getPrepTemplateDetail(actor, templateId);
   const enabledItemIds = detail.items
     .map((it) => it.itemId)
     .filter((v): v is string => typeof v === "string");
   return {
+    canEditPars: parWriteGate(actorLocationShape(actor), loc.id).ok,
     locationId: loc.id,
     name: loc.name,
     code: loc.code,

@@ -100,7 +100,7 @@ describe.each(endpoints)("%s boundary", (path, tier) => {
   expect(mocks.step).not.toHaveBeenCalled();
  });
  it("rejects a below-floor actor", async () => {
-  mocks.session.mockResolvedValue({...actor,level:6});
+  mocks.session.mockResolvedValue(path === "sku/[id]/setup" ? {...actor,level:5,user:{...actor.user,role:"shift_lead"}} : {...actor,level:6});
   expect((await invoke({})).status).toBe(403);
  });
  it("rejects social-media role independently of numeric level", async () => {

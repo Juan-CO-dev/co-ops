@@ -142,6 +142,8 @@ const BIND_PRIMITIVES = [
   "requireLocation",
   // 2a: level ≥ 8 or a membership (D2) — and the owning-shop rule built on it.
   "catalogShopAllowed",
+  // Phase 5: role-aware par edits bind own shop before I/O (behavior tested separately).
+  "parWriteGate",
   "skuOwnerAllowed",
   // Phase 4a: creation validates requested membership; version writes bind both scope and owner.
   "creationScope",

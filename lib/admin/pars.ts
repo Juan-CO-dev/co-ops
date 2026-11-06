@@ -11,6 +11,7 @@ import { orderUnitLabel, perOrderUnitOz } from "@/lib/order-unit-shared";
 import { resolveActive } from "@/lib/location-sku-shared";
 import { loadProductIndex } from "@/lib/products";
 import { getRoleLevel } from "@/lib/roles";
+import { parWriteGate } from "@/lib/par-permissions-shared";
 import { PAR_WRITE_MIN } from "@/lib/dynamic-pars-shared";
 import { guideKeysFor } from "@/lib/order-guides";
 import { canViewPars, filterPars, parSlots, type ParsRow, type ParsView } from "./pars-shared";
@@ -73,7 +74,8 @@ export async function loadPars(actor: AuthContext, locationId: string): Promise<
   const walkRows = new Map(walk.vendors.flatMap((v) => v.skus.map((s) => [s.skuId, s] as const)));
   const names = new Map(skus.map((s) => [s.id, s.name]));
   const rows: ParsRow[] = [];
-  const canEdit = getRoleLevel(actor.user.role) >= PAR_WRITE_MIN;
+  const canEdit = parWriteGate({ role: actor.user.role, locations: actor.locations }, locationId).ok;
+  const canVerdict = getRoleLevel(actor.user.role) >= PAR_WRITE_MIN;
   for (const s of owned) {
     const overlay = packs.overlayBySku.get(s.id) ?? null;
     if (!s.vendor_id || !vendorNames.has(s.vendor_id) || (!resolveActive(overlay?.activeOverride, s.active) && overlay?.activeOverride !== false)) continue;
@@ -89,7 +91,7 @@ export async function loadPars(actor: AuthContext, locationId: string): Promise<
       ...(canEdit ? { edit: { globalActive: s.active, activeOverride: overlay?.activeOverride ?? null,
         weekdayPar: overlay?.weekdayPar ?? null, weekendPar: overlay?.weekendPar ?? null,
         packEpoch: packs.epochs.get(s.id) ?? 0, poundsPerUnit: oz != null && oz > 0 ? oz / 16 : null } } : {}),
-      suggestion: walked?.parSuggestion && !walked.parSuggestion.slotCreation ? { ...walked.parSuggestion, canAct: canEdit && walked.parSuggestion.canAct } : null,
+      suggestion: walked?.parSuggestion && !walked.parSuggestion.slotCreation ? { ...walked.parSuggestion, canAct: canVerdict && walked.parSuggestion.canAct } : null,
       reroutedFromName: walked?.reroutedFromSkuId ? names.get(walked.reroutedFromSkuId) ?? walked.reroutedFromSkuId : null,
     });
   }

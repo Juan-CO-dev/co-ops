@@ -112,7 +112,7 @@ describe("the atomic apply refuses before any I/O", () => {
     expect(await refused(apply(actor("social_media_mgr", 6, [A])))).toEqual({ status: 403, code: "forbidden" });
     expect(await refused(apply(actor("gm", 7, [A]), { target: { kind: "shop", shopId: B } }))).toEqual({ status: 404, code: "not_found" });
     expect(await refused(apply(actor("agm", 6, [A]), { target: { kind: "global" } }))).toEqual({ status: 403, code: "forbidden" });
-    expect(await refused(apply(actor("agm", 6, [A]), { conversions: [{ locationId: A, slot: "weekday", expected: 3, to: 2 }] }))).toEqual({ status: 403, code: "par_forbidden" });
+    await reachedIo(apply(actor("agm", 6, [A]), { conversions: [{ locationId: A, slot: "weekday", expected: 3, to: 2 }] }));
     expect(await refused(apply(actor("gm", 7, [A]), { conversions: [{ locationId: B, slot: "weekday", expected: 3, to: 2 }] }))).toEqual({ status: 404, code: "not_found" });
     expect(await refused(applyPriceChange(actor("social_media_mgr", 6, [A]), { skuId: "s", target: { kind: "shop", shopId: A }, unitPrice: 10, effectiveDate: "2026-10-15", previewToken: "t" }))).toEqual({ status: 403, code: "forbidden" });
   });
@@ -191,4 +191,11 @@ describe("every named refusal maps to its OWN en + es message, never the generic
     const list = new Set<string>(CATALOG_ITEM_ERROR_CODES);
     for (const c of [...thrown, ...rpcCodes, "step_up_required", "step_up_stale"]) expect(list, c).toContain(c);
   });
+});
+
+it.each([
+  ["agm", 6, B, "not_found"], ["agm", 6, null, "par_forbidden"],
+  ["social_media_mgr", 6, A, "forbidden"], ["gm", 7, B, "not_found"],
+] as const)("%s cannot convert a par at %s / %s", async (role, level, locationId, code) => {
+  expect(await refused(apply(actor(role, level, [A]), { conversions: [{ locationId, slot: "weekday", expected: 3, to: 2 }] }))).toMatchObject({ code });
 });

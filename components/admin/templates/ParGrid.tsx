@@ -41,11 +41,13 @@ function seedDay(overrides: PrepLineParContext["overrides"], dayOfWeek: number |
 }
 
 export function ParGrid({
+  canEdit = true,
   templateId,
   lineId,
   locationId,
   parCtx,
 }: {
+  canEdit?: boolean;
   templateId: string;
   lineId: string;
   locationId: string;
@@ -71,7 +73,7 @@ export function ParGrid({
     "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50";
 
   const savePar = async (dayOfWeek: number | null, state: DayState) => {
-    if (submitting) return;
+    if (!canEdit || submitting) return;
     setErrorMsg(null);
     if ((await requestStepUp("A")) !== "ok") return;
     setSubmitting(true);
@@ -103,6 +105,7 @@ export function ParGrid({
       ) : null}
 
       <ParRow
+        canEdit={canEdit}
         label={t("admin.templates.par_grid.all_days")}
         state={base}
         field={field}
@@ -115,6 +118,7 @@ export function ParGrid({
       {DAY_KEYS.map((dk, i) => (
         <ParRow
           key={dk}
+          canEdit={canEdit}
           label={t(`admin.templates.par_grid.day.${dk}` as TranslationKey)}
           state={days[i]!}
           field={field}
@@ -134,6 +138,7 @@ export function ParGrid({
 // item-global label; ParRow takes `field` directly.)
 
 function ParRow({
+  canEdit,
   label,
   state,
   field,
@@ -143,6 +148,7 @@ function ParRow({
   onChange,
   onSave,
 }: {
+  canEdit: boolean;
   label: string;
   state: DayState;
   field: string;
@@ -161,7 +167,7 @@ function ParRow({
         <input
           className={field}
           inputMode="decimal"
-          disabled={inherit}
+          disabled={!canEdit || inherit}
           value={inherit ? "" : state.parValue}
           placeholder={inherit ? t("admin.templates.par_grid.inherit_placeholder") : ""}
           onChange={(e) => onChange({ ...state, parValue: e.target.value })}
@@ -171,6 +177,7 @@ function ParRow({
         <span className="sr-only">{`${label} — ${t("admin.templates.par_grid.mode_label")}`}</span>
         <select
           className={field}
+          disabled={!canEdit}
           value={state.parMode}
           onChange={(e) => onChange({ ...state, parMode: e.target.value as ParMode })}
         >
@@ -181,9 +188,9 @@ function ParRow({
           ))}
         </select>
       </label>
-      <button type="button" disabled={submitting} onClick={onSave} className={smallBtn}>
+      {canEdit && <button type="button" disabled={submitting} onClick={onSave} className={smallBtn}>
         {t("admin.templates.save")}
-      </button>
+      </button>}
     </div>
   );
 }

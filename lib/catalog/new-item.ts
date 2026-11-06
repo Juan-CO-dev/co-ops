@@ -1,5 +1,6 @@
 /** Atomic SKU/first pack/first price creation, followed by independent existing setup writers. */
 import "server-only";
+import { parWriteGate } from "@/lib/par-permissions-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
@@ -75,10 +76,13 @@ export interface SetupResult { step: SetupStep["kind"]; ok: boolean; detail: Rec
 
 /** ONE setup step. A multi-day rhythm step reports EACH independent writer outcome. */
 export async function setUpItemAtShop(actor: AuthContext, input: { skuId: string; shopId: string; step: SetupStep }): Promise<SetupResult> {
-  requireActor(actor);
+  if (input.step?.kind === "par") {
+    const gate = parWriteGate({ role: actor.user.role, locations: actor.locations }, input.shopId);
+    if (!gate.ok) throw new ShopOwnedError(gate.status, gate.code);
+  } else requireActor(actor);
   const parsed = parseSetupStep(input);
   if (!parsed.ok || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.skuId)) throw new ShopOwnedError(400, "invalid_payload");
-  requireLocation(actor, parsed.shopId);
+  if (parsed.step.kind !== "par") requireLocation(actor, parsed.shopId);
   const sb = getServiceRoleClient();
   const { data: sku, error } = await sb.from("vendor_items").select("id, name, vendor_id, location_id, item_number, active").eq("id", input.skuId)
     .maybeSingle<{ id: string; name: string; vendor_id: string | null; location_id: string | null; item_number: string | null; active: boolean }>();
