@@ -170,10 +170,10 @@ describe("chunk C review (Astra P3): the admin hub card is role-aware", () => {
     expect(sees(5, "shift_lead")).toBe(false);
   });
 
-  it("the role-aware rule changes no other card: level-6 roles see the same cards as before, apart from 7shifts, (Phase 2) the schedule board and (Catalog 5) Pars", async () => {
+  it("the role-aware rule changes no other card: level-6 roles see the same cards as before, apart from 7shifts, (Phase 2) the schedule board and (Catalog 5) Pars and Sandwiches", async () => {
     const { adminSectionsFor } = await import("@/lib/admin/sections");
     const ids = (level: number, role: Parameters<typeof adminSectionsFor>[1]) => adminSectionsFor(level, role).map((s) => s.id);
-    expect(ids(6, "agm").filter((id) => id !== "sevenshifts" && id !== "schedule" && id !== "pars")).toEqual(ids(6, "social_media_mgr"));
+    expect(ids(6, "agm").filter((id) => id !== "sevenshifts" && id !== "schedule" && id !== "pars" && id !== "sandwiches")).toEqual(ids(6, "social_media_mgr"));
     expect(ids(7, "gm")).toContain("recipe-notices");
   });
 

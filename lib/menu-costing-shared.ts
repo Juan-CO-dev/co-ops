@@ -545,6 +545,9 @@ export interface MenuCostInput {
   nameEs: string | null;
   /** Org-wide board disclosure for a shop-owned row; null on a shop-scoped board. */
   onlyAtShopName?: string | null;
+  /** Owning shop; null for shared items. */
+  ownerLocationId?: string | null;
+  priceSameAsId?: string | null;
   /** Server-decided write capability for this exact row and actor. */
   canEditPrice?: boolean;
   section: string | null;

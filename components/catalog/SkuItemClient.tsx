@@ -296,7 +296,7 @@ function SkuItemBody({ view, job, requestId }: SkuItemProps) {
           {view.connections.menuItems.length === 0 ? t("catalog.item.menu_none") : t("catalog.item.menu_count", { n: view.connections.menuItems.length })}
         </p>
         {view.connections.menuItems.map((m) => (
-          <Link key={m.id} href="/admin/menu-costing" className={`${linkRow} justify-between`}>
+          <Link key={m.id} href={view.scope ? `/admin/sandwiches?location=${encodeURIComponent(view.scope)}` : "/admin/sandwiches"} className={`${linkRow} justify-between`}>
             <span>{language === "es" && m.nameEs ? m.nameEs : m.name}</span>
             <span className="text-co-text-muted no-underline">{money(m.cost)}</span>
           </Link>

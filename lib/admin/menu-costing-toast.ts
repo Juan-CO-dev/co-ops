@@ -3,7 +3,11 @@ import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { inStorePricesByGuid, hasInStoreMenu } from "@/lib/toast/in-store-prices-shared";
 
-export async function loadCachedMenuPrices(): Promise<{
+// Shop scope uses only that shop's Toast mappings and prices; global scope keeps cross-shop evidence.
+export async function loadCachedMenuPrices(scope: string | null = null): Promise<{
+  linksKnown: boolean;
+  disconnected: boolean;
+  linkedItems: Set<string>;
   zeroPriceModifierItems: Set<string>;
   prices: Map<string, number[]>; fetchedAt: string | null; unavailable: boolean;
   notices: Array<{ locationName: string; reason: "unavailable" | "menu_missing" | "menu_not_set" }>;
@@ -20,12 +24,15 @@ export async function loadCachedMenuPrices(): Promise<{
         .returns<Array<{ id: string; name: string; toast_restaurant_guid: string | null; toast_in_store_menu_name: string | null }>>(),
     ]);
     if (maps.error || caches.error || locations.error) throw new Error("cache_read_failed");
+    const disconnected = scope !== null && !(locations.data ?? []).find(l => l.id === scope)?.toast_restaurant_guid;
     const prices = new Map<string, number[]>();
     const zeroPriceModifierItems = new Set<string>();
+    const linkedItems = new Set<string>();
     const parsed = new Map<string, { item: Map<string, number[]>; modifier: Map<string, number[]>; zeroPriceModifierGuids: Set<string> }>();
     const notices: Array<{ locationName: string; reason: "unavailable" | "menu_missing" | "menu_not_set" }> = [];
     let oldest = Infinity;
     for (const location of locations.data ?? []) {
+      if (scope !== null && location.id !== scope) continue;
       const guid = location.toast_restaurant_guid;
       if (!guid) continue; // a shop not on Toast has no Toast prices to miss
       const menuName = location.toast_in_store_menu_name;
@@ -44,14 +51,16 @@ export async function loadCachedMenuPrices(): Promise<{
       }
     }
     for (const row of maps.data ?? []) {
+      if (scope !== null && row.location_id !== scope) continue;
+      linkedItems.add(row.menu_item_id);
       const shop = parsed.get(row.location_id);
       if (row.is_modifier && shop?.zeroPriceModifierGuids.has(row.toast_item_guid)) zeroPriceModifierItems.add(row.menu_item_id);
       const values = shop?.[row.is_modifier ? "modifier" : "item"].get(row.toast_item_guid) ?? [];
       prices.set(row.menu_item_id, [...(prices.get(row.menu_item_id) ?? []), ...values]);
     }
-    return { prices, zeroPriceModifierItems, fetchedAt: Number.isFinite(oldest) ? new Date(oldest).toISOString() : null, unavailable: !parsed.size, notices };
+    return { disconnected, linksKnown: !disconnected, prices, linkedItems, zeroPriceModifierItems, fetchedAt: Number.isFinite(oldest) ? new Date(oldest).toISOString() : null, unavailable: !parsed.size, notices };
   } catch {
     console.warn("menu_costing_toast_cache_unavailable");
-    return { prices: new Map(), zeroPriceModifierItems: new Set(), fetchedAt: null, unavailable: true, notices: [] };
+    return { disconnected: false, linksKnown: false, linkedItems: new Set(), prices: new Map(), zeroPriceModifierItems: new Set(), fetchedAt: null, unavailable: true, notices: [] };
   }
 }

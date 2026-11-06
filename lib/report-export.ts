@@ -24,6 +24,7 @@ import { listWrittenReports } from "@/lib/written-reports";
 import { INSIGHTS_READ_MIN, loadCateringInsightsV2 } from "@/lib/catering/insights";
 import { RECEIVE_MIN, ReceivingError, loadDeliveriesForExport } from "@/lib/receiving";
 import { COUNT_READ_MIN, loadOnHand } from "@/lib/counts";
+import { canViewSandwiches } from "@/lib/admin/sandwiches-shared";
 import { MENU_COSTING_READ_MIN, loadMenuCostingBoard } from "@/lib/admin/menu-costing";
 import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { serverT } from "@/lib/i18n/server";
@@ -172,6 +173,7 @@ export function assertExportShop(auth: AuthContext, family: ExportFamily, locati
 
 /** The family's own role floor (mirrors each page's redirect), checked before any database work. */
 export function assertFamilyFloor(auth: AuthContext, family: ExportFamily): void {
+  if (family === "costing" && !canViewSandwiches(auth.user.role)) throw new ExportError(403, "role_insufficient");
   const floor: Record<ExportFamily, number> = {
     operations: 2, written: 2, cash: REPORTS_HUB_CASH_LEVEL, trends_ops: OPS_TRENDS_LEVEL, team: TEAM_VIEW_LEVEL,
     catering: INSIGHTS_READ_MIN, receiving: RECEIVE_MIN, counts: COUNT_READ_MIN, costing: MENU_COSTING_READ_MIN,

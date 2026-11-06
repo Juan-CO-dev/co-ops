@@ -53,8 +53,8 @@ describe("the costing export follows the board's shop", () => {
     expect(route).toContain('"reports.export.pricing_scope_shop"');
     expect(route).toContain('"reports.export.pricing_scope_global"');
     expect(route).toContain("toCsv(table.columns, table.rows, pricingLine ? [pricingLine] : [])");
-    const page = readFileSync("app/admin/menu-costing/page.tsx", "utf8");
-    expect(page).toContain('query={{ location: scope ?? "global" }}');
+    const page = readFileSync("app/admin/sandwiches/page.tsx", "utf8");
+    expect(page).toContain('query={{ location: scope }}');
     expect(page).toContain('"admin.menu_costing.export_scope"');
   });
 });

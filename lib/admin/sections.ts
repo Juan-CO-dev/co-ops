@@ -1,3 +1,4 @@
+import { SANDWICHES_VIEW_ROLES } from "@/lib/admin/sandwiches-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { OPERATIONAL_LEVEL6_ROLES, PM_CRITERIA_EDITOR_ROLES } from "@/lib/people/access-shared";
 import type { RoleCode } from "@/lib/roles";
@@ -78,7 +79,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // The payoff of the derivation chain above: what the menu actually COSTS.
   // Sits here (not under catering) because it reads the whole regular menu, and
   // at 6 because it is a cost READ (lib/admin/cost.ts COST_READ_MIN).
-  { id: "menu-costing",        i18nKey: "admin.section.menu-costing",                          href: "/admin/menu-costing",        minLevel: 6 },
+  { id: "sandwiches", i18nKey: "admin.sandwiches.title", href: "/admin/sandwiches", minLevel: 6, onlyRoles: SANDWICHES_VIEW_ROLES },
   // Catalog Phase 3b: every shop's own recipes and menu settings, with Promote / Leave (the Director of Operations).
   { id: "shop-changes",        i18nKey: "admin.section.shop-changes",                          href: "/admin/catalog/shop-changes", minLevel: 8 },
   // Catalog Phase 3b: a GM's read-time notices — another shop changed a recipe this shop copied; a new default.

@@ -6,10 +6,13 @@ import { describe, expect, it, vi } from "vitest";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { adminSectionsFor } from "@/lib/admin/sections";
 import { RecipesClient } from "@/components/admin/recipes/RecipesClient";
-import { MenuCostingClient } from "@/components/admin/menu-costing/MenuCostingClient";
+import { MenuCostDrawer } from "@/components/admin/menu-costing/MenuCostDrawer";
+import SandwichesPage from "@/app/admin/sandwiches/page";
+import { SandwichesClient } from "@/components/admin/sandwiches/SandwichesClient";
+import { catalogWriteRoleAllowed } from "@/lib/sku-versions-shared";
+import { getRoleLevel } from "@/lib/roles";
 import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
 import AdminItemsPage from "@/app/admin/items/page";
-import AdminMenuCostingPage from "@/app/admin/menu-costing/page";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import type { RoleCode } from "@/lib/roles";
@@ -24,6 +27,7 @@ vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => ({ user
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ from: () => ({ select: () => ({ eq: () => ({ order: () => ({ returns: async () => ({ data: [{ id: "shop-a", name: "Shop A" }] }) }) }) }) }) }) }));
 vi.mock("@/lib/shop-context", () => ({ resolveShopId: async (_shops: string[], explicit?: string) => explicit ?? "shop-a" }));
 vi.mock("@/lib/admin/menu-costing", () => ({ MENU_COSTING_READ_MIN: 6, loadMenuCostingBoard: async () => ({ rows: [], totals: {}, skuNames: {}, itemNames: {}, productNames: {}, notSoldHere: [] }) }));
+vi.mock("@/lib/admin/sandwiches", () => ({ loadSandwiches: async () => ({ rows: [] }) }));
 vi.mock("@/components/reports-export/ExportLinks", () => ({ ExportLinks: () => null }));
 vi.mock("@/lib/i18n/server", async () => {
   const { default: english } = await import("@/lib/i18n/en.json");
@@ -50,8 +54,8 @@ describe("catalog job entries", () => {
       });
     }
     it.each([true, false])(`costing repair respects item-page access %s in ${language}`, (canOpenSkuItem) => {
-      const props = { canOpenSkuItem, scope: "shop-a", rows: [{ id: "menu", name: "Sandwich", rollup: { status: "unpriced", unpricedSkuIds: ["sku-a"], pricedLineCount: 0 }, canEditPrice: false }], totals: {}, skuNames: { "sku-a": "Item" }, itemNames: {}, productNames: {} } as unknown as Parameters<typeof MenuCostingClient>[0];
-      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostingClient, props) }));
+      const props = { canOpenSkuItem, scope: "shop-a", row: { id: "menu", name: "Sandwich", rollup: { status: "unpriced", unpricedSkuIds: ["sku-a"], pricedLineCount: 0 }, canEditPrice: false }, language, money: String, t: (key: keyof typeof en) => (language === "es" ? es : en)[key], skuNames: { "sku-a": "Item" }, itemNames: {}, productNames: {} } as unknown as Parameters<typeof MenuCostDrawer>[0];
+      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostDrawer, props) }));
       expect(html).toContain(canOpenSkuItem ? '/admin/catalog/sku/sku-a?location=shop-a&amp;job=price' : '/admin/skus?sku=sku-a#sku-a');
       expect(html).not.toContain(canOpenSkuItem ? '/admin/skus?sku=' : '/admin/catalog/sku/');
     });
@@ -63,8 +67,8 @@ describe("catalog job entries", () => {
   });
   for (const language of ["en", "es"] as const) {
     it.each(["inconsistent", "unweighed"] as const)(`%s repair preserves shop and item anchor (${language})`, status => {
-      const props = { scope: "shop-a", rows: [{ id: "menu", name: "Sandwich", rollup: { status, inconsistentItemIds: ["prep-a"], unweighedItemIds: ["prep-a"], unpricedSkuIds: [] }, canEditPrice: false }], totals: {}, skuNames: {}, itemNames: { "prep-a": { en: "Prep", es: "Prep ES" } }, productNames: {} } as unknown as Parameters<typeof MenuCostingClient>[0];
-      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostingClient, props) }));
+      const props = { scope: "shop-a", row: { id: "menu", name: "Sandwich", rollup: { status, inconsistentItemIds: ["prep-a"], unweighedItemIds: ["prep-a"], unpricedSkuIds: [] }, canEditPrice: false }, language, money: String, t: (key: keyof typeof en) => (language === "es" ? es : en)[key], skuNames: {}, itemNames: { "prep-a": { en: "Prep", es: "Prep ES" } }, productNames: {} } as unknown as Parameters<typeof MenuCostDrawer>[0];
+      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: createElement(MenuCostDrawer, props) }));
       expect(html).toContain('/admin/items?view=registry&amp;location=shop-a#prep-a');
     });
     it.each([true, false])(`catalog SKU edge respects item-page access %s (${language})`, (canOpenSkuItem) => {
@@ -73,17 +77,7 @@ describe("catalog job entries", () => {
       expect(html).toContain(canOpenSkuItem ? '/admin/catalog/sku/sku-a?location=shop-a' : '/admin/skus?sku=sku-a#sku-a');
       expect(html).not.toContain(canOpenSkuItem ? '/admin/skus?sku=' : '/admin/catalog/sku/');
     });
-    it.each([["gm", "global", "/admin/catalog/new/sandwich"], ["gm", "shop-a", "/admin/catalog/new/sandwich?location=shop-a"], ["moo", "global", "/admin/catalog/new/sandwich?location=global"], ["agm", "shop-a", null], ["social_media_mgr", "shop-a", null]] as const)(`costing page entry %s at %s (${language})`, async (role, location, expected) => {
-      pageActor.role = role; pageActor.language = language;
-      const page = await AdminMenuCostingPage({ searchParams: Promise.resolve({ location }) });
-      const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: page }));
-      if (expected) {
-        expect(html).toContain(`href="${expected}"`);
-        if (role === "gm" && location === "global") expect(html).not.toContain("/admin/catalog/new/sandwich?");
-        expect(html).toContain(`+ ${(language === "es" ? es : en)["catalog.jobs.sandwich.title"]}`);
-      }
-      else expect(html).not.toContain('/admin/catalog/new/sandwich');
-    });
+
   }
 });
 
@@ -106,8 +100,10 @@ for (const role of ["social_media_mgr", "agm", "gm", "moo"] as const) {
   it(`server pages derive item-page capability for ${role}`, async () => {
     pageActor.role = role;
     const items = await AdminItemsPage({ searchParams: Promise.resolve({}) });
-    const costing = await AdminMenuCostingPage({ searchParams: Promise.resolve({}) });
     expect(clientProps(items, CatalogClient)?.canOpenSkuItem).toBe(role !== "social_media_mgr");
-    expect(clientProps(costing, MenuCostingClient)?.canOpenSkuItem).toBe(role !== "social_media_mgr");
+    if (role !== "social_media_mgr") {
+      const sandwiches = await SandwichesPage({ searchParams: Promise.resolve({}) });
+      expect(clientProps(sandwiches, SandwichesClient)?.canOpenSkuItem).toBe(catalogWriteRoleAllowed(role, getRoleLevel(role)));
+    }
   });
 }

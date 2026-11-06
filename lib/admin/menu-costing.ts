@@ -37,6 +37,7 @@ import { loadCachedMenuPrices } from "@/lib/admin/menu-costing-toast";
 import { resolveMenuPrice } from "@/lib/toast/in-store-prices-shared";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { canViewSandwiches } from "./sandwiches-shared";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { COST_READ_MIN, loadCurrentSkuPrices } from "@/lib/admin/cost";
@@ -83,8 +84,13 @@ import { costPerOzFromGraph } from "@/lib/menu-costing-shared";
 export interface MenuCostingBoard {
   /** The shop this board was costed for (its packs AND prices); null = All shops, on GLOBAL prices. */
   scope: string | null;
-  /** Shop view only: active menu items this shop has taken off its menu (never on the board's rows). */
+  /** Shop view only: active menu items this shop has taken off its menu (included only when requested). */
   notSoldHere: Array<{ id: string; name: string; nameEs: string | null }>;
+  /** Confirmed mappings, scoped with the price evidence. */
+  toastLinkedIds: string[];
+  toastLinksKnown: boolean;
+  toastDisconnected?: boolean;
+  globalPrices: Record<string, number | null>;
   toastFetchedAt: string | null;
   toastUnavailable: boolean;
   toastNotices: Array<{ locationName: string; reason: "unavailable" | "menu_missing" | "menu_not_set" }>;
@@ -115,8 +121,9 @@ export interface MenuCostingBoard {
  * the designed day-one output, not a failure, and the counts fall as the price
  * ledger fills.
  */
-export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: VersionScope } = {}): Promise<MenuCostingBoard> {
+export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: VersionScope; includeNotSoldHere?: boolean } = {}): Promise<MenuCostingBoard> {
   requireLevel(actor, MENU_COSTING_READ_MIN);
+  if (!canViewSandwiches(actor.user.role)) throw new MenuCostingError(403, "forbidden");
   const actorLevel = getRoleLevel(actor.user.role);
   // CATALOG PHASE 2a (lead decision): the board is costed FOR A SHOP — its pack versions and product
   // resolution (the graph) AND its prices (its lane, else global). null = All shops = global prices.
@@ -134,7 +141,7 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
       .eq("active", true)
       .order("name")
       .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; price_same_as_id: string | null; catering_available: boolean; location_id: string | null }>>(),
-    loadCachedMenuPrices(),
+    loadCachedMenuPrices(scope),
     sb.from("locations").select("id, name").returns<Array<{ id: string; name: string }>>(),
   ]);
   if (menuRes.error) throw new Error(`loadMenuCostingBoard menu_items: ${menuRes.error.message}`);
@@ -151,7 +158,7 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
   const menuById = new Map(menuRows.map((m) => [m.id, m]));
   const notSoldHere = menuRows.filter((m) => !here(m).soldHere)
     .map((m) => ({ id: m.id, name: here(m).name, nameEs: here(m).nameEs }));
-  const inputs: MenuCostInput[] = menuRows.filter((m) => here(m).soldHere).map((m) => {
+  const inputs: MenuCostInput[] = menuRows.filter((m) => opts.includeNotSoldHere || here(m).soldHere).map((m) => {
     const parent = m.price_same_as_id ? menuById.get(m.price_same_as_id) : undefined;
     const mine = here(m);
     const parentHere = parent ? here(parent) : null;
@@ -159,7 +166,7 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
       typedPrice: mine.typedPrice, toastPrices: toast.prices.get(m.id) ?? [], hasZeroPriceModifier: toast.zeroPriceModifierItems.has(m.id),
       sameAs: parent && parentHere ? { typedPrice: parentHere.typedPrice, toastPrices: toast.prices.get(parent.id) ?? [] } : null,
     });
-    return { id: m.id, name: mine.name, nameEs: mine.nameEs, section: m.section,
+    return { ownerLocationId: m.location_id ?? null, priceSameAsId: m.price_same_as_id ?? null, id: m.id, name: mine.name, nameEs: mine.nameEs, section: m.section,
       onlyAtShopName: scope === null && m.location_id ? (locationNameById.get(m.location_id) ?? null) : null,
       canEditPrice: actorLevel >= 8 || (actorLevel >= 7 && m.location_id != null && actor.locations.includes(m.location_id)),
       ...resolved, cateringAvailable: m.catering_available, menuPrice: resolved.effectivePrice, typedPrice: mine.typedPrice,
@@ -208,5 +215,5 @@ export async function loadMenuCostingBoard(actor: AuthContext, opts: { scope?: V
   for (const i of itemRes.data ?? []) itemNames[i.id] = { en: i.name, es: i.name_es };
   for (const p of productRes.data ?? []) productNames[p.id] = { en: p.name, es: p.name_es };
 
-  return { scope, notSoldHere, rows, totals, skuNames, itemNames, productNames, toastFetchedAt: toast.fetchedAt, toastUnavailable: toast.unavailable, toastNotices: toast.notices };
+  return { scope, toastDisconnected: toast.disconnected, globalPrices: Object.fromEntries(menuRows.map(m => [m.id, num(m.menu_price)])), toastLinkedIds: [...toast.linkedItems], toastLinksKnown: toast.linksKnown, notSoldHere, rows, totals, skuNames, itemNames, productNames, toastFetchedAt: toast.fetchedAt, toastUnavailable: toast.unavailable, toastNotices: toast.notices };
 }

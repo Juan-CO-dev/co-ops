@@ -105,7 +105,7 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/ordering": ["location"],
   "/admin/catering/prep-demand": ["location"],
   "/admin/catering/lto": ["location"],
-  "/admin/menu-costing": ["location"], // catalog Phase 2a — the costing board's shop switcher
+  "/admin/sandwiches": ["location"],
   "/admin/skus": ["location"], // hub SKU readiness scope; editor baselines remain global
   "/admin/catalog/notices": ["location"], // catalog Phase 3b — a GM's recipe updates for one shop
 };
