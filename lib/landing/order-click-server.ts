@@ -1,4 +1,5 @@
 import "server-only";
+import { checkLandingAggregate } from "./aggregate-limit-server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { parseOrderClick, type OrderClick } from "./order-click-shared";
 import { boundedJson, emptyResponse, guardLandingRequest, type LandingServerEnv } from "./request-server";
@@ -8,7 +9,7 @@ async function incrementOrderClick(click: OrderClick): Promise<void> {
   const { error } = await getServiceRoleClient().rpc("increment_landing_order_click", { p_store_key: click.store ?? "any", p_ad_code: click.ad, p_intent: click.intent }).abortSignal(AbortSignal.timeout(2000));
   if (error) throw new Error("counter_unavailable");
 }
-interface Dependencies { env?: LandingServerEnv; increment?: (click: OrderClick) => Promise<void> }
+interface Dependencies { env?: LandingServerEnv; increment?: (click: OrderClick) => Promise<void>; aggregate?: typeof checkLandingAggregate }
 export async function handleOrderClick(request: Request, dependencies: Dependencies = {}): Promise<Response> {
   const env = dependencies.env ?? process.env;
   const refused = guardLandingRequest(request, env);
@@ -22,6 +23,9 @@ export async function handleOrderClick(request: Request, dependencies: Dependenc
   if (protection === "refused") return emptyResponse(429);
   if (protection === "unavailable") return emptyResponse(503);
   // Unlike CAPI, lack of verified WAF does not gate this bounded approximate counter.
+  const aggregate = await (dependencies.aggregate ?? checkLandingAggregate)(request, env, "landing-counter");
+  if (aggregate === "refused") return emptyResponse(429);
+  if (aggregate === "unavailable") return emptyResponse(503);
   try { await (dependencies.increment ?? incrementOrderClick)(click); return emptyResponse(204); }
   catch { return emptyResponse(503); }
 }

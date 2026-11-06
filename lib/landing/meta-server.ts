@@ -1,11 +1,12 @@
 import "server-only";
+import { checkLandingAggregate, landingNonProduction } from "./aggregate-limit-server";
 import { createAdCodeResolver } from "./ad-codes-server";
 import { loadLandingConfig } from "./config";
 import { boundedJson, emptyResponse, guardLandingRequest, type LandingServerEnv } from "./request-server";
 import { landingRateLimit } from "./rate-limit";
 import { parseLandingEvent } from "./tracking-schema-shared";
 
-interface Dependencies { env?: LandingServerEnv; now?: () => number; send?: typeof fetch; resolveAd?: (candidate: unknown) => Promise<string> }
+interface Dependencies { env?: LandingServerEnv; now?: () => number; send?: typeof fetch; resolveAd?: (candidate: unknown) => Promise<string>; aggregate?: typeof checkLandingAggregate }
 /** Registry read only; no audit call, event log, customer record, or automatic retry. */
 export async function handleMetaEvent(request: Request, dependencies: Dependencies = {}): Promise<Response> {
   const env = dependencies.env ?? process.env;
@@ -17,7 +18,7 @@ export async function handleMetaEvent(request: Request, dependencies: Dependenci
   if (!event) return emptyResponse(400);
   if (env.LANDING_CAPI_ENABLED !== "true" || !/^\d{1,30}$/.test(env.META_PIXEL_ID ?? "") || !env.META_CAPI_ACCESS_TOKEN || env.META_GRAPH_API_VERSION !== "v25.0") return emptyResponse(204);
   if (env.NEXT_PUBLIC_META_PIXEL_ID && env.NEXT_PUBLIC_META_PIXEL_ID !== env.META_PIXEL_ID) return emptyResponse(503);
-  if (env.NODE_ENV === "production" && env.META_TEST_EVENT_CODE) return emptyResponse(503);
+  if (env.META_TEST_EVENT_CODE && !landingNonProduction(env)) return emptyResponse(503);
   const protection = landingRateLimit(env);
   if (protection === "refused") return emptyResponse(429);
   if (protection === "unavailable") return emptyResponse(503);
@@ -26,6 +27,10 @@ export async function handleMetaEvent(request: Request, dependencies: Dependenci
   // Current Meta website event contract requires UA. Its use needs approved disclosure.
   // No IP is collected. A real consented fbc/fbp is additionally required for matching.
   if (env.LANDING_META_UA_APPROVED !== "true" || !userAgent || userAgent.length > 512 || (!event.fbc && !event.fbp)) return emptyResponse(204);
+  const aggregate = await (dependencies.aggregate ?? checkLandingAggregate)(request, env, "landing-capi");
+  if (aggregate === "refused") return emptyResponse(429);
+  if (aggregate === "unavailable") return emptyResponse(503);
+  if (aggregate === "skipped" && !landingNonProduction(env)) return emptyResponse(204);
   const ad = await (dependencies.resolveAd ?? createAdCodeResolver())(event.ad).catch(() => "unattributed");
   const data = {
     event_name: event.event_name, event_time: event.event_time, event_id: event.event_id,

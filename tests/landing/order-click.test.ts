@@ -32,3 +32,26 @@ describe("independent order counter", () => {
     expect(increment).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("counter aggregate protection", () => {
+  const click = { store: "dupont", ad: "subsim-photo" };
+  it("increments with the real aggregate switch off even in production", async () => {
+    const increment = vi.fn().mockResolvedValue(undefined);
+    expect((await handleOrderClick(request(click), { env: { ...env, VERCEL_ENV: "production", LANDING_AGGREGATE_LIMIT: "off" }, increment })).status).toBe(204);
+    expect(increment).toHaveBeenCalledTimes(1);
+  });
+  it.each([["refused", 429, 0], ["unavailable", 503, 0], ["allowed", 204, 1], ["skipped", 204, 1]] as const)("maps aggregate %s before increment", async (result, status, writes) => {
+    const aggregate = vi.fn().mockResolvedValue(result); const increment = vi.fn().mockResolvedValue(undefined);
+    const req = request(click);
+    const response = await handleOrderClick(req, { env, aggregate, increment });
+    expect(response.status).toBe(status); expect(await response.text()).toBe("");
+    expect(aggregate).toHaveBeenCalledExactlyOnceWith(req, env, "landing-counter");
+    expect(increment).toHaveBeenCalledTimes(writes);
+    if (writes) expect(aggregate.mock.invocationCallOrder[0]).toBeLessThan(increment.mock.invocationCallOrder[0]!);
+  });
+  it.each([{ LANDING_COUNTER_ENABLED: "false" }, { LANDING_WAF_STATE: "refused" }, { LANDING_WAF_STATE: "unavailable" }])("honors earlier gates %j", async patch => {
+    const aggregate = vi.fn(); const increment = vi.fn();
+    await handleOrderClick(request(click), { env: { ...env, ...patch }, aggregate, increment });
+    expect(aggregate).not.toHaveBeenCalled(); expect(increment).not.toHaveBeenCalled();
+  });
+});
