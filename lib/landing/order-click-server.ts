@@ -23,7 +23,7 @@ export async function handleOrderClick(request: Request, dependencies: Dependenc
   if (protection === "refused") return emptyResponse(429);
   if (protection === "unavailable") return emptyResponse(503);
   // Unlike CAPI, lack of verified WAF does not gate this bounded approximate counter.
-  const aggregate = await (dependencies.aggregate ?? checkLandingAggregate)(request, env);
+  const aggregate = await (dependencies.aggregate ?? checkLandingAggregate)(request, env, "landing-counter");
   if (aggregate === "refused") return emptyResponse(429);
   if (aggregate === "unavailable") return emptyResponse(503);
   try { await (dependencies.increment ?? incrementOrderClick)(click); return emptyResponse(204); }

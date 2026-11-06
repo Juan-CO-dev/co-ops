@@ -66,7 +66,6 @@ describe("public landing CAPI boundary", () => {
       expect(response.status).toBe(503);
       expect(await response.text()).not.toContain("secret");
     }
-
   });
 });
 
@@ -101,11 +100,14 @@ describe("CAPI launch readiness", () => {
     const send = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     const config = { ...env, VERCEL_ENV: "production" };
     const req = request();
-    const response = await handleMetaEvent(req, { env: config, now, send, aggregate });
+    const resolveAd = vi.fn().mockResolvedValue("unattributed");
+    const response = await handleMetaEvent(req, { env: config, now, send, aggregate, resolveAd });
     expect(response.status).toBe(status);
     expect(await response.text()).toBe("");
-    expect(aggregate).toHaveBeenCalledExactlyOnceWith(req, config);
+    expect(aggregate).toHaveBeenCalledExactlyOnceWith(req, config, "landing-capi");
     expect(send).toHaveBeenCalledTimes(sends);
+    expect(resolveAd).toHaveBeenCalledTimes(sends);
+    if (sends) expect(aggregate.mock.invocationCallOrder[0]).toBeLessThan(resolveAd.mock.invocationCallOrder[0]!);
     if (sends) expect(aggregate.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
   });
   it("keeps production dormant with the real unset aggregate switch", async () => {
@@ -149,4 +151,15 @@ describe("CAPI launch readiness", () => {
     expect(aggregate).toHaveBeenCalledTimes(allowed ? 1 : 0);
     if (allowed) expect(JSON.parse(send.mock.calls[0]![1].body).test_event_code).toBe("TEST");
   });
+});
+
+it.each([undefined, "", "unknown", "production", "preview"])("skipped aggregate with production build and VERCEL_ENV=%j", async VERCEL_ENV => {
+  const aggregate = vi.fn().mockResolvedValue("skipped");
+  const send = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+  const resolveAd = vi.fn().mockResolvedValue("unattributed");
+  const response = await handleMetaEvent(request(), { env: { ...env, VERCEL_ENV, NODE_ENV: "production" }, now, aggregate, send, resolveAd });
+  expect(response.status).toBe(204);
+  expect(aggregate).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledTimes(VERCEL_ENV === "preview" ? 1 : 0);
+  expect(resolveAd).toHaveBeenCalledTimes(VERCEL_ENV === "preview" ? 1 : 0);
 });

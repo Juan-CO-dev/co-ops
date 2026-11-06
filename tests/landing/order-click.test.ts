@@ -45,7 +45,7 @@ describe("counter aggregate protection", () => {
     const req = request(click);
     const response = await handleOrderClick(req, { env, aggregate, increment });
     expect(response.status).toBe(status); expect(await response.text()).toBe("");
-    expect(aggregate).toHaveBeenCalledExactlyOnceWith(req, env);
+    expect(aggregate).toHaveBeenCalledExactlyOnceWith(req, env, "landing-counter");
     expect(increment).toHaveBeenCalledTimes(writes);
     if (writes) expect(aggregate.mock.invocationCallOrder[0]).toBeLessThan(increment.mock.invocationCallOrder[0]!);
   });
