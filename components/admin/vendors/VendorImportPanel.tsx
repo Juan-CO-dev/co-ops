@@ -1,6 +1,7 @@
 "use client";
 
 import { useReducer, useRef, useState } from "react";
+import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -26,18 +27,29 @@ const initial: State = { view: null, decisions: {}, file: null, busy: null, erro
 const editable = (o: Observation) => o.kind === "price" || o.kind === "item_number" || o.kind === "pack";
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
-// A keyed child resets all draft and disclosure state when the vendor changes.
-export function VendorImportPanel(props: { vendorId: string; vendorName: string; canStage: boolean; canApply: boolean }) {
-  return <ImportPanel key={props.vendorId} {...props} />;
+interface ImportPanelProps {
+  vendorId: string; vendorName: string; canStage: boolean; canApply: boolean;
+  canApplyGlobal: boolean; canChooseGlobal: boolean;
+  shops: Array<{ id: string; name: string }>; initialShopId: string | null;
+}
+// A keyed child resets drafts when navigation changes vendor or shop.
+export function VendorImportPanel(props: ImportPanelProps) {
+  return <ImportPanel key={`${props.vendorId}:${props.initialShopId ?? "global"}`} {...props} />;
 }
 
-function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: string; vendorName: string; canStage: boolean; canApply: boolean }) {
+function ImportPanel({ vendorId, vendorName, canStage, canApply: canApplyShop, canApplyGlobal, canChooseGlobal, shops, initialShopId }: ImportPanelProps) {
   const { t, language } = useTranslation();
   const [state, patch] = useReducer((s: State, change: Partial<State>) => ({ ...s, ...change }), initial);
+  const { requestStepUp, forgetStepUp } = useStepUp();
+  const [shopId, setShopId] = useState(initialShopId);
   const [expanded, setExpanded] = useState(false);
   const [showNoop, setShowNoop] = useState(false);
   const inFlight = useRef(false);
   const { view, decisions, busy, error, result } = state;
+  const scope = view ? view.batch.location_id : shopId;
+  const shopName = shops.find(shop => shop.id === scope)?.name ?? t("admin.vendor_import.unknown");
+  const canApply = scope === null ? canApplyGlobal : canApplyShop;
+  const scopeText = scope === null ? t("admin.vendor_import.global_version") : t("admin.vendor_import.shop_version", { shop: shopName });
   const url = `/api/admin/vendors/${vendorId}/import`;
   const contentId = `vendor-import-${vendorId}`;
   const dirty = !!view && !result && view.batch.status === "staged" && Object.keys(decisions).some(key => decisions[key] !== view.decisions[key]);
@@ -56,7 +68,10 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: s
     const response = await fetch(path, { ...options, credentials: "same-origin", redirect: "manual", cache: "no-store" });
     if (response.status === 401 || response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) throw new Error("auth");
     const body = await response.json();
-    if (!response.ok) throw new Error(typeof body.code === "string" ? body.code : "generic");
+    if (!response.ok) {
+      if (body.code === "step_up_required" || body.code === "step_up_stale") forgetStepUp();
+      throw new Error(typeof body.code === "string" ? body.code : "generic");
+    }
     return body as T;
   }
   const receive = (fresh: ImportBatchView) => patch({ view: fresh, decisions: fresh.decisions, refreshFailed: false });
@@ -66,6 +81,7 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: s
     patch({ busy: "staging", error: null, result: null });
     try {
       const body = new FormData(); body.append("file", state.file);
+      if (shopId) body.append("locationId", shopId);
       receive(await request<ImportBatchView>(url, { method: "POST", body }));
       patch({ file: null, search: "" });
       setExpanded(true); setShowNoop(false);
@@ -83,6 +99,8 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: s
     if (inFlight.current || !canApply || !view || !accepted || view.batch.status !== "staged" || result || changed) return;
     inFlight.current = true; patch({ busy: "applying", error: null });
     try {
+      const unlocked = view.batch.location_id === null ? await requestStepUp("A") : await requestStepUp("E");
+      if (unlocked !== "ok") return;
       // The server hashes the selected plan, so skips must change the digest too.
       let expectedDigest: string;
       try { expectedDigest = await planDigest(planFromDecisions(view.observations, decisions, view.beforeState), view.beforeState); }
@@ -108,10 +126,10 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: s
     return `${money(price)} · ${packLabel(o.kind === "pack" ? before : before.root)}`;
   }
   function table(rows: Observation[]) {
-    return <div className="max-w-full overflow-x-auto" role="region" aria-label={t("admin.vendor_import.table", { vendor: vendorName })} tabIndex={0}>
-      <table className="w-full min-w-[760px] text-left text-sm">
-        <thead><tr>{[t("admin.vendor_import.item"), t("admin.vendor_import.match"), t("admin.vendor_import.current"), t("admin.vendor_import.proposed"), t("admin.vendor_import.reason_label"), t("admin.vendor_import.decision_heading")].map(label => <th key={label} scope="col" className="p-2">{label}</th>)}</tr></thead>
-        <tbody>{rows.map(o => {
+    return <div className="min-w-0 max-w-full" role="region" aria-label={t("admin.vendor_import.table", { vendor: vendorName })} tabIndex={0}>
+      <table className="block w-full text-left text-sm md:table">
+        <thead className="hidden md:table-header-group"><tr>{[t("admin.vendor_import.item"), t("admin.vendor_import.match"), t("admin.vendor_import.current"), t("admin.vendor_import.proposed"), t("admin.vendor_import.reason_label"), t("admin.vendor_import.decision_heading")].map(label => <th key={label} scope="col" className="min-w-0 break-words p-2">{label}</th>)}</tr></thead>
+        <tbody className="block md:table-row-group">{rows.map(o => {
           const key = observationKey(o);
           const warning = o.match.rule === "ambiguous" || o.match.rule === "unmatched";
           // The plan can change a price when its paired pack is accepted.
@@ -119,17 +137,17 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: s
           const pairedPack = view?.observations.find(p => p.source_row === o.source_row && p.kind === "pack" && p.match.sku_id === o.match.sku_id);
           const proposal = o.kind === "price" && pairedPack && decisions[observationKey(pairedPack)] === "accept" && before.price_with_pack
             ? record(before.price_with_pack) : o.proposed;
-          return <tr key={key} className="border-t border-co-border align-top">
-            <th scope="row" className="p-2 font-normal">{o.row.item_no}<br />{o.row.description}</th>
-            <td className="p-2"><span className={`inline-flex rounded-full px-2 py-1 text-xs ${warning ? "bg-co-warning-surface text-co-warning-text" : "bg-co-success-surface text-co-confirm-text"}`}>{t(`admin.vendor_import.match.${o.match.rule}`)}</span></td>
-            <td className="p-2">{current(o)}</td>
-            <td className="p-2">{proposal ? [proposal.unit_price !== undefined ? money(proposal.unit_price) : null, typeof proposal.item_number === "string" ? proposal.item_number : null, proposal.root ? packLabel(proposal.root) : null].filter(Boolean).join(" · ") : unavailable}</td>
-            <td className="p-2">{t(`admin.vendor_import.reason.${o.reason}` as TranslationKey)}</td>
-            <td className="p-2">{editable(o) ? <select className={control} aria-label={t("admin.vendor_import.decision", { n: o.source_row, kind: kindLabel(o.kind, 1) })}
+          return <tr key={key} className="grid min-w-0 grid-cols-1 border-t border-co-border align-top md:table-row">
+            <th scope="row" className="min-w-0 break-words p-2 text-left font-normal">{o.row.item_no}<br />{o.row.description}</th>
+            <td className="min-w-0 break-words p-2"><span className={`inline-flex rounded-full px-2 py-1 text-xs ${warning ? "bg-co-warning-surface text-co-warning-text" : "bg-co-success-surface text-co-confirm-text"}`}>{t(`admin.vendor_import.match.${o.match.rule}`)}</span></td>
+            <td className="min-w-0 break-words p-2"><span className="block text-xs font-bold md:hidden">{t("admin.vendor_import.current")}</span>{current(o)}</td>
+            <td className="min-w-0 break-words p-2"><span className="block text-xs font-bold md:hidden">{t("admin.vendor_import.proposed")}</span>{proposal ? [proposal.unit_price !== undefined ? money(proposal.unit_price) : null, typeof proposal.item_number === "string" ? proposal.item_number : null, proposal.root ? packLabel(proposal.root) : null].filter(Boolean).join(" · ") : unavailable}</td>
+            <td className="min-w-0 break-words p-2"><span className="block text-xs font-bold md:hidden">{t("admin.vendor_import.reason_label")}</span>{t(`admin.vendor_import.reason.${o.reason}` as TranslationKey)}</td>
+            <td className="min-w-0 break-words p-2">{editable(o) ? <select className={control} aria-label={t("admin.vendor_import.decision", { n: o.source_row, kind: kindLabel(o.kind, 1) })}
               disabled={!!busy || !canApply || view?.batch.status !== "staged" || !!result || changed} value={decisions[key] ?? "skip"}
               onChange={e => { if (!inFlight.current) patch({ decisions: { ...decisions, [key]: e.target.value as Decision }, error: null }); }}>
               <option value="accept">{t("admin.vendor_import.accept")}</option><option value="skip">{t("admin.vendor_import.skip")}</option>
-            </select> : o.kind === "needs_person" ? <><p>{t("admin.vendor_import.needs_hint")}</p><a className={`${control} mt-1`} href="#order-guide">{t("admin.vendor_import.guide")}</a><a className={`${control} mt-1`} href={o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: null, job: "pack" }) : `/admin/skus?vendor=${encodeURIComponent(vendorId)}`}>{t("admin.vendor_import.skus")}</a></> : null}</td>
+            </select> : o.kind === "needs_person" ? <><p>{t("admin.vendor_import.needs_hint")}</p><a className={`${control} mt-1`} href="#order-guide">{t("admin.vendor_import.guide")}</a><a className={`${control} mt-1`} href={o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: view?.batch.location_id ?? null, job: "pack" }) : `/admin/skus?vendor=${encodeURIComponent(vendorId)}`}>{t("admin.vendor_import.skus")}</a></> : null}</td>
           </tr>;
         })}</tbody>
       </table>
@@ -141,6 +159,7 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: s
   return <section className="co-card mt-4 min-w-0 max-w-full overflow-hidden p-4 text-co-text" aria-labelledby={`${contentId}-title`}>
     <h2 id={`${contentId}-title`} className="text-base font-bold">{t("admin.vendor_import.title")}</h2>
     <p className="text-sm">{vendorName}</p>
+    <p className="mt-1 break-words text-sm">{scopeText}</p>
     {view ? <><p className="mt-2 break-words text-sm">{t("admin.vendor_import.summary", { adapter: view.batch.adapter, date: view.batch.exported_at ? formatDateLabel(view.batch.exported_at, language) : unavailable, n: view.batch.row_count })}</p>
       <div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full px-2 py-1 text-xs ${view.batch.status === "applied" ? "bg-co-success-surface text-co-confirm-text" : "bg-co-warning-surface text-co-warning-text"}`}>{t(`admin.vendor_import.status.${view.batch.status}`)}</span>
         {kinds.map(kind => <span key={kind} className={kind === "needs_person" && view.batch.report.counts[kind] ? "rounded-full bg-co-warning-surface px-2 py-1 text-xs text-co-warning-text" : "px-2 py-1 text-xs"}>{kindLabel(kind, view.batch.report.counts[kind] ?? 0)}</span>)}</div></> : <p className="mt-2 text-sm">{t("admin.vendor_import.empty")}</p>}
@@ -157,16 +176,26 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply }: { vendorId: s
     </div>
     <button type="button" className={`${control} mt-3 w-full justify-between`} aria-expanded={expanded} aria-controls={contentId} disabled={expanded && locked} onClick={() => setExpanded(!expanded)}>{t("admin.vendor_import.details", { n: view?.observations.length ?? 0 })}<span aria-hidden="true">{expanded ? "−" : "+"}</span></button>
     {expanded && <div id={contentId} className="mt-3 min-w-0 space-y-3">
-      {canStage && <div><label htmlFor={`${contentId}-file`} className="block text-xs font-bold tracking-[0.12em]">{t("admin.vendor_import.upload")}</label>
+      {canStage && <div>
+        {(canChooseGlobal || shops.length > 1) && <label className="mb-3 block text-sm">
+          {t("admin.vendor_import.scope")}
+          <select className={`${control} mt-1 w-full min-w-0`} value={shopId ?? "global"} disabled={locked}
+            onChange={e => { setShopId(e.target.value === "global" ? null : e.target.value); patch({ ...initial }); }}>
+            {canChooseGlobal && <option value="global">{t("admin.vendor_import.global_default")}</option>}
+            {shops.map(shop => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
+          </select>
+        </label>}
+        <label htmlFor={`${contentId}-file`} className="block text-xs font-bold tracking-[0.12em]">{t("admin.vendor_import.upload")}</label>
         <input key={view?.batch.id ?? "empty"} id={`${contentId}-file`} type="file" accept=".csv,.json,text/csv,application/json" className={`${control} w-full min-w-0 py-2`} disabled={!!busy} aria-label={t("admin.vendor_import.upload")} aria-describedby={`${contentId}-help`} onChange={e => patch({ file: e.target.files?.[0] ?? null })} />
         <p id={`${contentId}-help`} className="mt-1 text-sm">{t("admin.vendor_import.help")}</p>
         <button type="button" className={`${control} mt-2 bg-co-gold font-bold tracking-[0.1em]`} disabled={!!busy || !state.file} onClick={stage}>{changed ? t("admin.vendor_import.restage") : t("admin.vendor_import.stage")}</button></div>}
       {view && <>
         {view.observations.length >= 10 && <input type="search" className={`${control} w-full`} value={state.search} aria-label={t("admin.vendor_import.search")} placeholder={t("admin.vendor_import.search")} onChange={e => patch({ search: e.target.value })} />}
+        <p className="text-sm">{scopeText}</p>
         {table(filtered.filter(o => o.kind !== "noop"))}
         <button type="button" className={`${control} w-full justify-between`} aria-expanded={showNoop} aria-controls={`${contentId}-noop`} onClick={() => setShowNoop(!showNoop)}>{t("admin.vendor_import.no_change", { n: noop.length })}</button>
         {showNoop && <div id={`${contentId}-noop`}>{table(noop)}</div>}
-        {canApply && <button type="button" className={`${control} bg-co-gold font-bold tracking-[0.1em]`} disabled={!!busy || !accepted || view.batch.status !== "staged" || !!result || changed} onClick={apply}>{t("admin.vendor_import.apply", { n: accepted })}</button>}
+        {canApply && <button type="button" className={`${control} bg-co-gold font-bold tracking-[0.1em]`} disabled={!!busy || !accepted || view.batch.status !== "staged" || !!result || changed} onClick={apply}>{scope === null ? t("admin.vendor_import.apply", { n: accepted }) : t("admin.vendor_import.apply_shop", { shop: shopName, n: accepted })}</button>}
       </>}
     </div>}
   </section>;

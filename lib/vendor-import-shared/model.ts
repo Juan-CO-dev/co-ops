@@ -49,7 +49,10 @@ export interface Adapter {
 
 export type Basis = "per_case" | "per_each" | "per_lb" | "per_dozen" | "per_bundle";
 export type MatchRule = "item_number" | "name_exact" | "ambiguous" | "unmatched";
-export interface CatalogSku { id: string; vendor_id: string; name: string; item_number: string | null; active: boolean;
+export interface CatalogSku {
+  /** Ordered non-leaf counts from the effective chain; absent means unproven hierarchy. */
+  packCounts?: number[];
+  location_id?: string | null; priceScope?: { based_on: "global" | "shop"; price_lane_id: string | null }; packLocationId?: string | null; id: string; vendor_id: string; name: string; item_number: string | null; active: boolean;
   root: { levelId: string; label: string; quantity: number; unit: string; dimension: "weight" | "volume" | "count" } | null;
   latestPrice: { id: string; unit_price: number; effective_date: string } | null; price_basis: Basis | null }
 export type ObservationKind = "price" | "item_number" | "pack" | "needs_person" | "noop";

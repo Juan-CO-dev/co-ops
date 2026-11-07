@@ -1,10 +1,11 @@
 import type { NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
+import { vendorImportScopeAllowed } from "@/lib/vendor-import-shared/levels";
 import { getRoleLevel } from "@/lib/roles";
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { applyVendorImport, VendorImportError, VENDOR_IMPORT_APPLY_MIN } from "@/lib/vendor-import";
+import { applyVendorImport, loadImportBatch, VendorImportError, VENDOR_IMPORT_STAGE_MIN } from "@/lib/vendor-import";
 import type { Decision } from "@/lib/vendor-import-shared/model";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; batchId: string }> }) {
@@ -15,9 +16,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id, batchId } = await params;
   const ctx = await requireSession(req, `/api/admin/vendors/${id}/import/${batchId}/apply`);
   if (ctx instanceof Response) return ctx;
-  if (getRoleLevel(ctx.user.role) < VENDOR_IMPORT_APPLY_MIN) return jsonError(403, "forbidden");
-  const stepUp = assertStepUp(ctx, "A");
-  if (!stepUp.ok) return jsonError(403, stepUp.code);
+  if (getRoleLevel(ctx.user.role) < VENDOR_IMPORT_STAGE_MIN) return jsonError(403, "forbidden");
   if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "invalid_payload");
   const { decisions, expectedDigest } = body as Record<string, unknown>;
   if (!decisions || typeof decisions !== "object" || Array.isArray(decisions)
@@ -26,6 +25,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return jsonError(400, "invalid_payload");
   }
   try {
+    // The persisted scope selects the permission and clock; client input cannot downgrade it.
+    const view = await loadImportBatch(ctx, id, batchId);
+    if (!vendorImportScopeAllowed({ role: ctx.user.role, locations: ctx.locations }, view.batch.location_id, "apply")) return jsonError(403, "forbidden");
+    const stepUp = view.batch.location_id === null ? assertStepUp(ctx, "A") : assertStepUp(ctx, "E");
+    if (!stepUp.ok) return jsonError(403, stepUp.code);
     return jsonOk({ ...await applyVendorImport(ctx, id, batchId, decisions as Record<string, Decision>, expectedDigest) });
   } catch (e) {
     if (e instanceof VendorImportError) return jsonError(e.status, e.code);

@@ -18,6 +18,7 @@ vi.mock("@/lib/vendor-import", async () => {
 });
 
 const vendor = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+const shop = "cccccccc-1111-4111-8111-cccccccccccc";
 const batch = "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb";
 const params = Promise.resolve({ id: vendor, batchId: batch });
 const url = `https://example.com/api/admin/vendors/${vendor}/import`;
@@ -30,10 +31,11 @@ const view: Awaited<ReturnType<typeof stageVendorImport>> = {
   observations: [], decisions: {}, beforeState: {}, ops: [], expectedDigest: payload.expectedDigest,
 };
 function asActor(role: RoleCode) {
-  vi.mocked(requireSession).mockResolvedValue({ user: { id: "actor", role }, session: {} } as Awaited<ReturnType<typeof requireSession>>);
+  vi.mocked(requireSession).mockResolvedValue({ user: { id: "actor", role }, session: {}, locations: [shop] } as Awaited<ReturnType<typeof requireSession>>);
 }
-function upload(value: File | string | null = new File(["supplier export"], "export.csv")) {
+function upload(value: File | string | null = new File(["supplier export"], "export.csv"), location: string | null = null) {
   const form = new FormData();
+  if (location !== null) form.set("locationId", location);
   if (value !== null) form.set("file", value);
   return new NextRequest(url, { method: "POST", headers: { origin: "https://example.com" }, body: form });
 }
@@ -75,9 +77,45 @@ describe("vendor import route gates", () => {
   });
   it("stages for level 7 with vendor binding and file text", async () => {
     asActor("gm");
-    const res = await stagePOST(upload(), { params });
+    const res = await stagePOST(upload(undefined, shop), { params });
     expect(await res.json()).toEqual(view);
-    expect(stageVendorImport).toHaveBeenCalledWith(expect.anything(), vendor, { name: "export.csv", text: "supplier export" });
+    expect(stageVendorImport).toHaveBeenCalledWith(expect.anything(), vendor, { name: "export.csv", text: "supplier export" }, shop);
+  });
+  it.each(["agm", "social_media_mgr"] as const)("refuses %s shop stage and apply", async role => {
+    asActor(role);
+    expect((await stagePOST(upload(undefined, shop), { params })).status).toBe(403);
+    expect((await applyPOST(apply(), { params })).status).toBe(403);
+    expect(stageVendorImport).not.toHaveBeenCalled();
+    expect(applyVendorImport).not.toHaveBeenCalled();
+  });
+  it("refuses a GM global stage and another shop stage", async () => {
+    asActor("gm");
+    expect((await stagePOST(upload(), { params })).status).toBe(403);
+    expect((await stagePOST(upload(undefined, batch), { params })).status).toBe(403);
+    expect(stageVendorImport).not.toHaveBeenCalled();
+  });
+  it.each([null, shop, batch])("allows MoO to stage scope %s", async location => {
+    asActor("moo");
+    expect((await stagePOST(upload(undefined, location), { params })).status).toBe(200);
+  });
+  it.each(["gm", "moo", "owner"] as const)("%s shop apply uses Tier E", async role => {
+    asActor(role);
+    vi.mocked(loadImportBatch).mockResolvedValue({ ...view, batch: { ...view.batch, location_id: shop } });
+    expect((await applyPOST(apply(), { params })).status).toBe(200);
+    expect(assertStepUp).toHaveBeenCalledWith(expect.anything(), "E");
+  });
+  it("refuses a GM applying another shop before step-up", async () => {
+    asActor("gm");
+    vi.mocked(loadImportBatch).mockResolvedValue({ ...view, batch: { ...view.batch, location_id: batch } });
+    expect((await applyPOST(apply(), { params })).status).toBe(403);
+    expect(assertStepUp).not.toHaveBeenCalled();
+  });
+  it("shop apply refuses an expired edit window", async () => {
+    asActor("gm");
+    vi.mocked(loadImportBatch).mockResolvedValue({ ...view, batch: { ...view.batch, location_id: shop } });
+    vi.mocked(assertStepUp).mockReturnValue({ ok: false, code: "step_up_stale" });
+    expect((await applyPOST(apply(), { params })).status).toBe(403);
+    expect(applyVendorImport).not.toHaveBeenCalled();
   });
   it("loads for level 7 without an Origin header and binds vendor and batch", async () => {
     asActor("gm");

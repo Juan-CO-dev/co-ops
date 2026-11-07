@@ -252,7 +252,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/vendors/[id]/contacts/route.ts": ["A"],
   "app/api/admin/vendors/[id]/cutoffs/[cutoffId]/route.ts": ["A"],
   "app/api/admin/vendors/[id]/cutoffs/route.ts": ["A"],
-  "app/api/admin/vendors/[id]/import/[batchId]/apply/route.ts": ["A"],
+  "app/api/admin/vendors/[id]/import/[batchId]/apply/route.ts": ["A", "E"],
   "app/api/admin/vendors/[id]/order-types/route.ts": ["A"],
   "app/api/admin/vendors/[id]/ordering-details/[detailId]/route.ts": ["A"],
   "app/api/admin/vendors/[id]/ordering-details/route.ts": ["A"],
@@ -270,6 +270,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
+  "components/admin/vendors/VendorImportPanel.tsx": ["A", "E"],
   "components/admin/marketing/MarketingWriteForms.tsx": ["A", "B"],
   "app/admin/marketing/ad-codes/AdCodesClient.tsx": ["A", "B"],
   "components/catalog/jobs/SwapVendorJob.tsx": ["E"],
