@@ -1,5 +1,6 @@
 -- 0294: ledger-first inbound mail routing and per-shop vendor accounts.
--- AUTHORED 2026-11-07. NOT APPLIED. CC applies to sim, then prod on Juan's word.
+-- AUTHORED 2026-11-07. APPLIED: SIM 20261107203725 (2026-11-07); PROD 20261107225711 (2026-11-07,
+-- Juan-approved; dry run + verify SQL clean). Recorded in supabase_migrations.schema_migrations.
 -- WHAT/WHY: Resend webhooks contain metadata only. Record their stable email id
 -- before routing/fetching; retain retry state independently of receipt parsing.
 -- BACKWARD COMPATIBLE: additive only; existing receipts and vendors.account_number
