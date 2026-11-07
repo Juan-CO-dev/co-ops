@@ -49,7 +49,7 @@ it("watchSiblings swallows a thrown lookup", async () => {
   expect(sendEmail).not.toHaveBeenCalled();
 });
 
-it.each(["toast-catering-scan", "toast-sales-today", "toast-sales-pull", "prune-sessions", "parse-receipts", "digest-tick"])(
+it.each(["toast-catering-scan", "toast-sales-today", "toast-sales-pull", "prune-sessions", "digest-tick"])(
   "%s awaits its heartbeat before watching siblings", (job) => {
     const source = readFileSync(`app/api/cron/${job}/route.ts`, "utf8");
     const heartbeat = source.indexOf("await audit(");
@@ -62,6 +62,13 @@ it.each(["toast-catering-scan", "toast-sales-today", "toast-sales-pull", "prune-
     expect(watch).toBeLessThan(source.indexOf("return jsonOk", end));
   },
 );
+
+it("receipt cron is receive-only and cannot trigger sibling alert emails", () => {
+  const source = readFileSync("app/api/cron/parse-receipts/route.ts", "utf8");
+  expect(source).not.toContain("watchSiblings");
+  expect(source).not.toContain("sendEmail");
+  expect(source).toContain('"cron.success"');
+});
 
 afterEach(() => vi.unstubAllEnvs());
 

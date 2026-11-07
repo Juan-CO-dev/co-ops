@@ -338,6 +338,13 @@ function UnlinkedReceiptRow({
         </button>
       </div>
 
+      <p className="text-[11px] text-co-text-dim">
+        {t(("receiving.claim.attribution." + (r.attributedBy ?? "none")) as TranslationKey)}
+      </p>
+      {r.attributionConflict ? (
+        <p role="alert" className="text-xs text-co-cta-text">{t("receiving.claim.attribution_conflict")}</p>
+      ) : null}
+
       {/* Parse-now (V2 §4, KH+) — offered while the receipt hasn't successfully parsed
           (unparsed OR failed → retryable). Runs the LLM extraction on demand (the cron only
           sweeps inbound; this covers manual uploads + a nudge on any unparsed row). */}
@@ -711,6 +718,9 @@ export function VendorClaimPanel({
             idBase={`claim-link-existing-${deliveryId}`}
             title={t("receiving.claim.link_existing_title")}
             count={t("receiving.claim.link_existing_count", { n: unlinked?.length ?? 0 })}
+            badge={unlinked?.some((r) => r.attributionConflict) ? (
+              <AlertPill tone="warn">{t("receiving.claim.attribution_conflict_count", { n: unlinked.filter((r) => r.attributionConflict).length })}</AlertPill>
+            ) : undefined}
           >
             {!unlinked || unlinked.length === 0 ? (
               <p className="text-[11px] italic text-co-text-muted">{t("receiving.claim.link_existing_empty")}</p>

@@ -32,6 +32,8 @@ import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClien
 import { OrderGuidePanel } from "@/components/admin/vendors/OrderGuidePanel";
 import { VendorImportPanel } from "@/components/admin/vendors/VendorImportPanel";
 import { VENDOR_IMPORT_STAGE_MIN, VENDOR_IMPORT_APPLY_MIN } from "@/lib/vendor-import-shared/levels";
+import { VendorAccountsPanel } from "@/components/admin/InboundSettings";
+import { loadInboundShops, loadVendorShopAccounts } from "@/lib/admin/inbound-settings";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminVendorDetailPage({
@@ -87,6 +89,7 @@ export default async function AdminVendorDetailPage({
     sb.from("vendor_items").select("id, name, item_number, location_id, active").eq("vendor_id", id).order("name"),
   ]);
   if (!vendor) notFound();
+  const accountSettings = level >= 7 ? await Promise.all([loadInboundShops(auth), loadVendorShopAccounts(auth, id)]) : null;
 
   const guidePlaced = new Set<string>();
   for (const s of orderGuide?.sections ?? []) for (const l of s.lines) if (l.skuId) guidePlaced.add(l.skuId);
@@ -204,6 +207,7 @@ export default async function AdminVendorDetailPage({
           })}
         </p>
       ) : null}
+      {accountSettings ? <VendorAccountsPanel vendorId={id} shops={accountSettings[0]} accounts={accountSettings[1]} /> : null}
       <VendorDetailClient
         vendor={vendor}
         categories={categories}

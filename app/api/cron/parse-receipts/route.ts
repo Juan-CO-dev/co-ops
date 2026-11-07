@@ -19,7 +19,6 @@ import { timingSafeEqual } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { runParseReceipts } from "@/lib/parse-receipts-run";
-import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
 
 // Runtime ceiling: worst case is 10 sequential vision calls, each bounded by the
@@ -49,7 +48,7 @@ export async function GET(req: NextRequest) {
   if (!secretOk(req)) return jsonError(401, "unauthorized");
   // Parse leg is dormant until the Anthropic key exists (spec §6 dormancy matrix). 503 so the
   // platform doesn't treat a config gap as a failure, and no rows are touched.
-  if (!process.env.ANTHROPIC_API_KEY) return jsonError(503, "parse_dormant");
+  if (!process.env.ANTHROPIC_API_KEY && !(process.env.RESEND_INBOUND_SECRET && process.env.RESEND_API_KEY)) return jsonError(503, "parse_dormant");
 
   try {
     const result = await runParseReceipts();
@@ -65,7 +64,8 @@ export async function GET(req: NextRequest) {
       ipAddress: null,
       userAgent: null,
     });
-    await watchSiblings("parse-receipts");
+    // Inbound processing is receive-only. Sibling watching can send email, so this
+    // route records the heartbeat without invoking that outbound workflow.
     return jsonOk({ swept, parsed, failed });
   } catch (e) {
     // A LIVE failure is otherwise silent (console only). Write a fail-open audit row so the

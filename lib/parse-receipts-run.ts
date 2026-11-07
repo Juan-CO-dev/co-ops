@@ -1,6 +1,7 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { parseReceipt } from "@/lib/receipt-parse";
+import { sweepInboundMessages } from "@/lib/inbound-router";
 
 function truncateErr(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
@@ -10,8 +11,12 @@ function truncateErr(e: unknown): string {
 const SWEEP_LIMIT = 10;
 
 export async function runParseReceipts() {
-  if (!process.env.ANTHROPIC_API_KEY) return { dormant: true as const };
+  const inboundEnabled = !!process.env.RESEND_INBOUND_SECRET && !!process.env.RESEND_API_KEY;
+  if (!process.env.ANTHROPIC_API_KEY && !inboundEnabled) return { dormant: true as const };
   const sb = getServiceRoleClient();
+  const inbound = inboundEnabled ? await sweepInboundMessages(sb) : { swept: 0, failed: 0 };
+  if (!process.env.ANTHROPIC_API_KEY) return { dormant: false as const, swept: 0, parsed: 0, failed: 0,
+    metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0, inbound } };
   const { data: rows, error } = await sb
     .from("email_receipts")
     .select("id")
@@ -42,6 +47,6 @@ export async function runParseReceipts() {
 
   // Heartbeat (fail-open): cron.success row lets the admin hub show "last run OK". audit()
   // never throws. Metadata style mirrors toast-sales-pull's per-item counts.
-  const metadata = { job: "parse-receipts", swept: list.length, parsed, failed };
+  const metadata = { job: "parse-receipts", swept: list.length, parsed, failed, inbound };
   return { dormant: false as const, swept: list.length, parsed, failed, metadata };
 }
