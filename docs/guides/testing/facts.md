@@ -270,11 +270,24 @@ How to read it:
 - A confirmed purchase order can be emailed to the vendor from the app with a Send tap (two-tap), or sent by hand. The email leg can be dormant per shop — `lib/po-email.ts:1-21`
 - Production — route `/operations/production?location=…`, title `production.page.title` → "Production" → "Producción". Key Holder (4) and up; the yield statistics part needs Shift Lead (5) — `app/(authed)/operations/production/page.tsx:17`, `app/(authed)/operations/production/page.tsx:27`, `lib/yield-stats-shared.ts:44`, `lib/i18n/en.json:3880`
 
+- Pars — Admin → **Par Levels** (`admin.section.pars` → "Par Levels" → "Niveles Par"), route `/admin/pars`, page title `admin.pars.title` → "Pars" → "Niveles par". AGM, Prep Manager and Catering Manager (level 6), GM and up; never the Social Media Manager (a role check, not a level check) — `lib/admin/pars-shared.ts:8-11`, `lib/admin/sections.ts:105`, `app/admin/pars/page.tsx:22-23`, `lib/i18n/en.json:4`, `lib/i18n/en.json:999`
+- Pars shows one shop at a time; the shop chips are the shops you can reach — `app/admin/pars/page.tsx:28-36`, `app/admin/pars/page.tsx:55-61`
+- Tabs: `admin.pars.tab.vendor` → "Vendor pars" → "Niveles de proveedores"; `admin.pars.tab.prep` → "Prep pars" → "Niveles de preparación" — `components/admin/pars/ParsTabs.tsx:12-23`, `lib/i18n/en.json:8483-8484`
+- Vendor pars filters: `admin.pars.vendor` → "Vendor", `admin.pars.section` → "Guide section" — `components/admin/pars/ParsClient.tsx:29-42`, `lib/i18n/en.json:8`, `lib/i18n/en.json:10`
+- Each row shows the **Weekday** and **Weekend** par in order units, the weight in lb (or "Weight unknown"), and its lane: `admin.pars.lane.human` → "Set by a person", `admin.pars.lane.auto` → "Set by the system", `admin.pars.lane.global` → "Company default" — `components/admin/pars/ParsClient.tsx:86-96`, `lib/i18n/en.json:15-16`, `lib/i18n/en.json:26-30`. A person's number beats the system's, which beats the default — `lib/location-sku-shared.ts:59-63`
+- The silence summary sits on top: `ordering.silence.aggregate` ("… pars auto-tuned this week · … suggestions waiting") and `ordering.silence.section_title` → "Why {n} pars are quiet" — `components/admin/pars/ParsClient.tsx:27`, `lib/i18n/en.json:3986`, `lib/i18n/en.json:3988`. In shadow mode it uses `ordering.silence.aggregate_shadow` instead ("… pars would have been tuned this week"); those pars have not changed — `components/ordering/ParSilencePanel.tsx:60-62`, `lib/i18n/en.json:3987`
+- Par edits (typed weekday/weekend, and **Off here**) use the 15-minute edit window (Tier E). Who: AGM, Prep Manager and Catering Manager at their own shop; GM at their own shops; level 9 everywhere; never the Social Media Manager — `components/admin/pars/ParEditor.tsx:68`, `lib/par-permissions-shared.ts:6-24`, `lib/admin/pars.ts:77`
+- Suggestion verdicts on Pars: `ordering.suggestion.accept` → "Use {n}" → "Usar {n}", `ordering.suggestion.dismiss` → "Not now" → "Ahora no". GM (7) and up, no password — `lib/admin/pars.ts:78`, `lib/dynamic-pars-shared.ts:964`, `components/admin/pars/ParEditor.tsx:82-91`, `components/admin/pars/ParEditor.tsx:125-130`, `lib/i18n/en.json:3968`, `lib/i18n/en.json:3970`
+- Off here: `admin.pars.off_here` → "Off here" → "Desactivar aquí". Off rows move to `admin.pars.off_group` → "Off at this shop ({n})". An item that is off here can't be ordered at that shop — `components/admin/pars/ParEditor.tsx:94-98`, `components/admin/pars/ParsClient.tsx:80`, `lib/i18n/en.json:8487-8488`, `lib/ordering.ts:1535-1537`
+- Prep pars lists the AM Prep and Mid-day Prep lines. Editors use `admin.templates.par_grid.title` → "Par by day (this location)" (password step-up Tier A), under the same par edit rule — `app/admin/pars/page.tsx:41-45`, `app/admin/pars/page.tsx:63`, `components/admin/pars/PrepParsClient.tsx:53`, `components/admin/templates/ParGrid.tsx:78`, `lib/i18n/en.json:2106`
+- Sandwiches — Admin → **Sandwiches** (`admin.sandwiches.title` → "Sandwiches" → "Sándwiches"), route `/admin/sandwiches`. It replaced Menu Costing: `/admin/menu-costing` redirects there. Level 6 and up, never the Social Media Manager — `lib/admin/sections.ts:82`, `lib/admin/sandwiches-shared.ts:5-8`, `app/admin/menu-costing/page.tsx:1-10`, `lib/i18n/en.json:8497`
+- Sandwiches columns: `admin.sandwiches.price` → "Price at this shop", `admin.sandwiches.sold_here` → "Sold here", `admin.sandwiches.toast` → "Toast link", Cost, Margin, `admin.sandwiches.margin_pct` → "Margin %". **Show** filter: "Sold here" (default), "Off here", "All". GM and up get `admin.sandwiches.edit_shop` → "Change the price, name or availability at this shop" — `components/admin/sandwiches/SandwichesClient.tsx:23`, `components/admin/sandwiches/SandwichesClient.tsx:53-58`, `components/admin/sandwiches/SandwichesClient.tsx:67-68`, `app/admin/sandwiches/page.tsx:35`, `lib/i18n/en.json:8505-8522`
+
 ## Manager tools — Reports Hub, sales, trends
 
 - Reports Hub — Explore → **Reports Hub**, route `/reports`, title `reports.page.title` → "Reports" → "Reportes". Trainee (2) and up — `app/(authed)/reports/page.tsx:23`, `lib/i18n/en.json:2804`
 - Below level 4 the hub shows only your own work: `reports.hub.own_scope` → "Only your recorded work and feedback about you are included. …" — `app/(authed)/reports/page.tsx:68`, `lib/reports-hub.ts:148-158`, `lib/i18n/en.json:158`
-- Hub families: Operations (all), Operations trends (4+), Written reports (all), People → My feedback (all) and Team trends (6+), Sales (7+), Inventory (6+ or task access), Catering (5+), Menu costing (6+) — `app/(authed)/reports/page.tsx:87-94`
+- Hub families: Operations (all), Operations trends (4+), Written reports (all), People → My feedback (all) and Team trends (6+), Sales (7+), Inventory (6+ or task access), Catering (5+), Sandwiches (6+, not the Social Media Manager; `reports.hub.costing` → "Sandwiches" → "Sándwiches", opens `/admin/sandwiches` for that shop) — `app/(authed)/reports/page.tsx:107-113`, `lib/i18n/en.json:315`
 - Cash reports in the hub: level 4 and up. Notes on checklist lines: level 5 and up — `lib/reports-hub.ts:175`, `lib/reports-hub.ts:721`, `lib/reports-hub.ts:940`, `lib/reports-hub.ts:973`
 - A checklist that closed itself shows `reports.hub.auto_closed` → "Auto-closed — not confirmed" → "Cerrado automáticamente — sin confirmar" — `lib/i18n/en.json:152`
 - Sales — route `/reports/sales`, GM (7) and up. All shops at once needs level 8 — `app/(authed)/reports/sales/page.tsx:4`, `app/(authed)/reports/sales/page.tsx:38-42`, `lib/sales-reports-shared.ts:21`
@@ -296,9 +309,9 @@ How to read it:
 ## Manager tools — basic admin pages
 
 - Admin opens at level 6 — `app/admin/layout.tsx:28`, `app/admin/layout.tsx:34`
-- Admin sections and floors: Vendors, SKUs, Products, Recipes, Items, Menu costing, Weights & Trim, Catering 6; Stations, Toast employees, Customers, Checklist Templates, Report recipients 7; User Management, Categories 8 — `lib/admin/sections.ts:33-68`
+- Admin sections and floors: Vendors, SKUs, Products, Recipes, Items, Weights & Trim, Catering 6; Sandwiches and Par Levels 6 but only AGM, Prep Manager, Catering Manager, GM and up (never the Social Media Manager); Stations, Toast employees, Customers, User Management, Checklist Templates, Report recipients 7; Categories 8 — `lib/admin/sections.ts:48-108`, `lib/admin/sections.ts:82`, `lib/admin/sections.ts:105`
 - Labels: `admin.section.users` → "User Management" → "Gestión de Usuarios"; `admin.section.checklist-templates` → "Checklist Templates" → "Plantillas de Listas"; `admin.section.vendors` → "Vendors" → "Proveedores"; `admin.section.skus` → "SKUs"; `admin.section.items` → "Items" → "Artículos"; `admin.section.weights` → "Weights & Trim" → "Pesos y merma" — `lib/i18n/en.json:546-550`, `lib/i18n/en.json:4744`
-- Par Levels (7), Locations (9) and Audit (9) are "coming soon" tiles — `lib/admin/sections.ts:69-71`
+- Locations (9) and Audit (9) are "coming soon" tiles. Par Levels is live (see Pars above) — `lib/admin/sections.ts:105-107`
 
 ## Catering — hub
 
@@ -366,7 +379,7 @@ How to read it:
 - Placeholder pages ("coming soon" cards): `/recipes`, `/announcements`, `/tips`, `/ai`, `/rollups`, `/deep-cleaning`, `/feedback`, `/comms` — `app/recipes/page.tsx:1`, `app/announcements/page.tsx:1`, `app/tips/page.tsx:1`, `app/ai/page.tsx:1`, `app/rollups/page.tsx:1`, `app/deep-cleaning/page.tsx:1`, `app/feedback/page.tsx:1`, `app/comms/page.tsx:1`
 - More placeholders: `/operations/prep`, `/operations/overlay`, `/operations/synthesis` — `app/(authed)/operations/prep/page.tsx:1`, `app/(authed)/operations/overlay/page.tsx:1`, `app/(authed)/operations/synthesis/page.tsx:1`
 - None of the placeholders appear in the menu — `tests/nav-links.test.ts:19-21`
-- Admin "coming soon" tiles: Par Levels, Locations, Audit — `lib/admin/sections.ts:69-71`
+- Admin "coming soon" tiles: Locations, Audit — `lib/admin/sections.ts:106-107`
 - **Correction to the brief:** `/ordering` is NOT a placeholder. It is the live Ordering walk, only left out of the menu — `app/ordering/page.tsx:1-22`, `tests/nav-links.test.ts:19`
 - Dead text: the opening's "Hand to a key holder" button and the mid-day "key-holder task" message describe rules the code no longer has (see Opening and Mid-day sections) — `app/(authed)/operations/opening/opening-client.tsx:2098`, `lib/i18n/en.json:2123`
 

@@ -1029,7 +1029,7 @@ Si ves **Esta lista ya está confirmada.** justo después de tu PIN, alguien ya 
 
 ### English
 
-**Start with the shop.** As a GM, you can add items for your shops. MoO and above can also choose the shared default. Open **New item** or **New sandwich** from Admin. The cost board also has **+ New sandwich**. The recipe list has **New recipe** and **New sandwich**. The old SKU form still asks a GM to pick a shop. Check the shop before you save. **Only at** names the shop that owns the item. It does not give you the right to change it. A problem link opens that item in the chosen shop.
+**Start with the shop.** As a GM, you can add items for your shops. MoO and above can also choose the shared default. Open **New item** or **New sandwich** from Admin. The **Sandwiches** page also has **New sandwich**. The recipe list has **New recipe** and **New sandwich**. The old SKU form still asks a GM to pick a shop. Check the shop before you save. **Only at** names the shop that owns the item. It does not give you the right to change it. A problem link opens that item in the chosen shop.
 
 **New item.** Choose the vendor, name, vendor item number, pack, price and shop. Check the summary, then create. Adding a vendor is a save on its own. If you cancel the item, the vendor stays saved. Creating the item saves its name, pack and first price. Pars, order days, guide placement, use in a recipe and barcode each have their own Save. Finish or skip each step. Earlier saves stay saved. Each order day shows its own result. A barcode needs at least six characters.
 
@@ -1047,7 +1047,7 @@ If the create result is unclear, re-read it before you create again. The app can
 
 ### En español
 
-**Empieza por la tienda.** Como GM, puedes crear para tus tiendas autorizadas; los roles de MoO o superiores también pueden elegir el valor compartido. Abre Nuevo artículo o Nuevo sándwich desde Admin. El tablero de costos también abre Nuevo sándwich; la lista de recetas ofrece Nueva receta y Nuevo sándwich. El formulario anterior de SKU sigue pidiéndote que elijas una tienda autorizada. Revisa la tienda antes de guardar. “Solo en” nombra la tienda propietaria; no te da permiso para cambiar el registro. El enlace de un problema abre el artículo afectado en la tienda seleccionada para que lo corrijas ahí.
+**Empieza por la tienda.** Como GM, puedes crear para tus tiendas autorizadas; los roles de MoO o superiores también pueden elegir el valor compartido. Abre Nuevo artículo o Nuevo sándwich desde Admin. La página **Sándwiches** también abre **Nuevo sándwich**; la lista de recetas ofrece Nueva receta y Nuevo sándwich. El formulario anterior de SKU sigue pidiéndote que elijas una tienda autorizada. Revisa la tienda antes de guardar. “Solo en” nombra la tienda propietaria; no te da permiso para cambiar el registro. El enlace de un problema abre el artículo afectado en la tienda seleccionada para que lo corrijas ahí.
 
 **Nuevo artículo.** Elige proveedor, nombre, número del proveedor, paquete, precio y tienda. Revisa el resumen y crea el artículo. Agregar un proveedor se guarda por separado: cancelar el artículo no lo deshace. Crear el artículo guarda su identidad, paquete y precio inicial. Los pars, días de pedido, ubicación en la guía, uso en una receta y código de barras tienen su propio botón Guardar. Termina u omite cada paso; lo que ya guardaste se conserva. Cada día de pedido muestra su resultado. El código de barras debe tener al menos seis caracteres.
 
@@ -1178,6 +1178,82 @@ Walk the shelves and mark what to order, before each vendor's cutoff. Key holder
 - Some drafts show how the vendor takes orders, like a portal with a **Copy** button.
 - **Start a new walk** begins again.
 
+### Pars
+
+See and set your shop's pars in one place. AGMs, prep managers, catering managers, GMs and up.
+
+#### 1. Open Pars (not shown)
+
+**What to do** — Tap **Admin**, then **Par Levels**. The page is called **Pars**. Tap your shop at the top. You see one shop at a time.
+
+**Worth knowing**
+
+- **Vendor pars** shows what you order from vendors. **Prep pars** shows the food you make.
+- Pick a **Vendor** or a **Guide section** to see fewer items.
+- The top line counts automatic par adjustments and waiting suggestions. In shadow mode, it shows adjustments the app would have made; those pars have not changed.
+- **Why … pars are quiet** lists the pars the app can't suggest a number for yet. It says what each one is missing.
+
+#### 2. Read a par (not shown)
+
+**What to do** — Each item shows its **Weekday** and **Weekend** par. Tap **Details for** an item to see more.
+
+**Worth knowing**
+
+- The par is in order units, like cases. The weight in lb shows under it. **Weight unknown** means the app does not know the weight yet.
+- A line under each par says where the number comes from:
+  - **Set by a person** — someone typed it for your shop.
+  - **Set by the system** — the app tuned it from what you use.
+  - **Company default** — the par for every shop.
+- A number a person sets always wins over the system's.
+- **Not set** means there is no par.
+- **Weekend uses the weekday par.** means there is no weekend number.
+- A new suggestion shows under today's par. It starts with **Today's weekday par:** or **Today's weekend par:**.
+
+#### 3. Change a par (not shown)
+
+**What to do** — Open **Details for** the item. Type the **Weekday** and **Weekend** pars. Tap **Save**.
+
+**Worth knowing**
+
+- Type the par in order units. The weight in lb changes as you type.
+- Leave a box empty to drop your shop's number. Then the system's number or the company default is used.
+- The app may ask for your password. After that, editing stays open for 15 minutes. See **Recipes and the catalog**.
+- Your change is for your shop only.
+- AGMs, prep managers and catering managers change pars only at their own shop. A GM changes the shops they work in.
+- Did someone change it while you typed? The app says so and loads the new numbers. Check them, then save again.
+
+#### 4. Use or skip a suggestion (not shown)
+
+**What to do** — Open **Details for** the item. Read why the app suggests it. Tap **Use** and the new number to take it. Tap **Not now** to keep your par.
+
+**Worth knowing**
+
+- This needs a GM or up.
+- It does not ask for a password.
+- After **Use**, the app says **Par set to** the new number.
+
+#### 5. Turn an item off at your shop (not shown)
+
+**What to do** — Open **Details for** the item. Tap **Off here**. Tap it again to turn it back on.
+
+**Worth knowing**
+
+- Use it for an item your shop does not order. Other shops are not touched.
+- You can't order an item while it is off here.
+- Items that are off move to **Off at this shop** at the bottom. Tap it to open the list.
+- It asks for your password, like a par change.
+- Some items show **Active here** instead. Pick **Off here** in that list.
+
+#### 6. Prep pars (not shown)
+
+**What to do** — Tap **Prep pars**. Each line says **AM Prep**, **Mid-day Prep** or both. Tap a line to see its par for each day. To change it, use **Par by day (this location)**. Pick **Manual**, type the number for **All days** or for one day, and tap **Save**.
+
+**Worth knowing**
+
+- **Use recommendation** goes back to the item's own suggested par.
+- It may ask for your password first.
+- The same people can change prep pars, at the same shops, as vendor pars.
+
 ### Production
 
 Log food you make from raw stock outside the prep sheets. Employees and up can do it.
@@ -1238,8 +1314,8 @@ Look back at any day's reports. Everyone can open it. What you see grows with yo
 
 **Worth knowing**
 
-- Report groups: **Operations**, **Operations trends**, **Written reports**, **People**, **Inventory**, **Catering**, **Menu costing** and, for GMs, **Sales**.
-- **Team trends** under **People** needs an AGM or up. So does **Menu costing**.
+- Report groups: **Operations**, **Operations trends**, **Written reports**, **People**, **Inventory**, **Catering**, **Sandwiches** and, for GMs, **Sales**.
+- **Team trends** under **People** needs an AGM or up. So does **Sandwiches**. It opens the **Sandwiches** page for that shop. The social media manager does not see it.
 - **Inventory** shows **Receiving** and **Ordering** to key holders and up. **Counts and variance** there needs an AGM or up.
 - **Receiving** here opens the live Receiving page, not a report. Past deliveries are under **Recent deliveries**, lower on that page. Tap one to see its lines, flags and credits.
 - The shop card shows **Last close**: the newest closing that was confirmed, or closed by itself.
@@ -1351,7 +1427,8 @@ AGMs and up can open **Admin**.
 
 **Worth knowing**
 
-- AGMs see **Vendors**, **SKUs**, **Products**, **Recipes**, **Items**, **Menu Costing**, **Weights & Trim** and **Catering**.
+- AGMs, prep managers and catering managers see **Vendors**, **SKUs**, **Products**, **Recipes**, **Items**, **Sandwiches**, **Weights & Trim**, **Catering** and **Par Levels**.
+- The social media manager sees the same tiles, but not **Sandwiches** or **Par Levels**.
 - GMs also see **Stations**, **Toast employees**, **Customers**, **Checklist Templates** and **Recipe updates**.
 - A Manager of Operations also sees **User Management**, **Categories** and **Shop changes**.
 - In **Stations**, a GM sets station times for their shop. It asks for your password: **Confirm your password**. These times are only hints. They don't close a station.
@@ -1451,12 +1528,16 @@ GMs and up change recipes and SKUs. Each shop can have its own version of a reci
 
 #### 9. Price, name and "sold here" for your shop (not shown)
 
-**What to do** — On **Menu Costing**, open a sandwich. Tap **Open the sandwich page**. Pick your shop. Type the **Price here** or the **Name here**, or clear **Sold at this shop**. Tap **See what this changes**. Tap **Save for** your shop.
+**What to do** — Tap **Admin**, then **Sandwiches**. Tap your shop at the top. Tap **Details for** the sandwich. Tap **Change the price, name or availability at this shop**. Type the **Price here** or the **Name here**, or clear **Sold at this shop**. Tap **See what this changes**. Tap **Save for** your shop.
 
 **Worth knowing**
 
+- The old **Menu Costing** link now opens **Sandwiches**.
+- Each sandwich shows its **Price at this shop**, **Sold here**, **Toast link**, **Cost**, **Margin** and **Margin %**.
+- **Menu items needing attention** counts the ones with a problem. Tap **See causes** to see which.
 - Leave the price empty to use the price for every shop.
-- A sandwich not sold here leaves your shop's costing board.
+- A sandwich not sold here leaves the **Sold here** list. Under **Show**, pick **Off here** to see it.
+- A sandwich sold only at one shop has one price. Its link says **Open the sandwich page**.
 - With no Spanish name, people who use Spanish see the English name.
 - **Go back to the global menu** uses everyone's price and name again.
 
@@ -1818,6 +1899,17 @@ Recorre los estantes y marca qué pedir, antes del cierre de cada proveedor. Enc
 3. **Revisa el pedido.** Toca **Revisar pedido** y revisa la lista de cada proveedor. Toca **Registrar recorrido** para guardarlo. El botón también muestra cuántos marcaste, como **Registrar recorrido · 2 SKUs**. **Seguir recorriendo** te regresa.
 4. **El pedido borrador.** Busca tu pedido. Un cuadro verde dice **Recorrido registrado — … SKUs.** Un pedido nuevo sale en **Pedidos borrador**. Si el proveedor ya tenía un borrador hoy, tus artículos se agregan a ese. Entonces un enlace verde dice **…: se agregó al borrador de hoy — OC …**, y **Pedidos borrador** puede quedar vacío. Toca el enlace para abrir ese pedido. Úsalo para hacer el pedido al proveedor. Si sale el mínimo del proveedor, revísalo antes de pedir; la app no avisa cuando un pedido queda por debajo. Algunos borradores muestran cómo recibe pedidos el proveedor, como un portal con un botón **Copiar**. **Iniciar un nuevo recorrido** empieza otra vez.
 
+#### Niveles par
+
+Mira y ajusta los pares de tu tienda en un solo lugar. Subgerentes, encargados de prep, gerentes de catering, gerentes generales y roles más altos.
+
+1. **Abre la página.** Toca **Admin** y luego **Niveles Par**. La página se llama **Niveles par**. Toca tu tienda arriba; ves una tienda a la vez. **Niveles de proveedores** muestra lo que pides a los proveedores. **Niveles de preparación** muestra la comida que preparas. Elige un **Proveedor** o una **Sección de la guía** para ver menos artículos. La línea de arriba cuenta los ajustes automáticos de pares y las sugerencias pendientes. En modo de prueba, muestra los ajustes que la app habría hecho; esos pares no han cambiado. **Por qué … pares están callados** muestra los pares para los que la app todavía no puede sugerir un número, y qué le falta a cada uno.
+2. **Lee un par.** Cada artículo muestra su par de **Entre semana** y de **Fin de semana**. Toca **Detalles de** un artículo para ver más. El par está en unidades de pedido, como cajas, y el peso en lb sale debajo. **Peso desconocido** quiere decir que la app todavía no sabe el peso. Una línea debajo de cada par dice de dónde viene el número: **Definido por una persona** (alguien lo escribió para tu tienda), **Definido por el sistema** (la app lo ajustó con lo que usas) o **Valor predeterminado de la empresa** (el par de todas las tiendas). El número que pone una persona siempre gana sobre el del sistema. **Sin definir** quiere decir que no hay par. **El fin de semana usa el par de entre semana.** quiere decir que no hay número de fin de semana. Una sugerencia nueva sale debajo del par de hoy y empieza con **Par de hoy entre semana:** o **Par de hoy de fin de semana:**.
+3. **Cambia un par.** Abre **Detalles de** el artículo. Escribe los pares de **Entre semana** y **Fin de semana** y toca **Guardar**. Escribe el par en unidades de pedido; el peso en lb cambia mientras escribes. Deja una casilla vacía para quitar el número de tu tienda; entonces se usa el número del sistema o el de la empresa. La app puede pedirte tu contraseña; después, editar queda abierto por 15 minutos (mira **Recetas y el catálogo**). Tu cambio es solo para tu tienda. Los subgerentes, encargados de prep y gerentes de catering cambian pares solo en su propia tienda; un gerente general, en las tiendas donde trabaja. Si alguien lo cambió mientras escribías, la app te avisa y carga los números nuevos: revísalos y guarda otra vez.
+4. **Usa o deja una sugerencia.** Abre **Detalles de** el artículo y lee por qué la app lo sugiere. Toca **Usar** y el número nuevo para tomarla, o **Ahora no** para dejar tu par. Esto necesita gerente general o más. No pide contraseña. Después de **Usar**, la app dice **Par puesto en** el número nuevo.
+5. **Desactiva un artículo en tu tienda.** Abre **Detalles de** el artículo y toca **Desactivar aquí**. Tócalo otra vez para volver a activarlo. Úsalo para un artículo que tu tienda no pide; las otras tiendas no cambian. No puedes pedir un artículo mientras está desactivado aquí. Los artículos desactivados pasan a **Desactivados en esta tienda**, abajo; tócalo para abrir la lista. Pide tu contraseña, igual que un cambio de par. Algunos artículos muestran **Activo aquí** en su lugar: elige **Inactivo aquí** en esa lista.
+6. **Niveles de preparación.** Toca **Niveles de preparación**. Cada línea dice **Prep AM**, **Prep de Mediodía** o las dos. Toca una línea para ver su par de cada día. Para cambiarlo, usa **Par por día (este local)**: elige **Manual**, escribe el número para **Todos los días** o para un día, y toca **Guardar**. **Usar recomendación** vuelve al par sugerido del artículo. Puede pedirte tu contraseña primero. Las mismas personas pueden cambiar los pares de preparación, en las mismas tiendas, que los de proveedores.
+
 #### Producción
 
 Registra comida que haces con materia prima fuera de las listas de prep. Empleados y roles más altos pueden hacerlo.
@@ -1830,7 +1922,7 @@ Registra comida que haces con materia prima fuera de las listas de prep. Emplead
 
 Revisa los reportes de cualquier día. Todos lo abren; lo que ves crece con tu rol.
 
-1. **Ábrelo y elige fechas.** Toca **Centro de reportes** en el menú. Elige un **Rango de fechas** y toca **Aplicar**. Los grupos son **Operaciones**, **Tendencias de operaciones**, **Reportes escritos**, **Equipo**, **Inventario**, **Catering**, **Costos del menú** y, para gerentes generales, **Ventas**. **Tendencias del equipo** dentro de **Equipo** necesita subgerente o más, igual que **Costos del menú**. **Inventario** muestra **Recepción** y **Pedidos** a encargados de llaves o más; **Conteos y variaciones** ahí necesita subgerente o más. **Recepción** aquí abre la página de recepción en vivo, no un reporte. Las entregas pasadas están en **Entregas recientes**, más abajo en esa página; toca una para ver sus líneas, marcas y créditos. La tarjeta de la tienda muestra **Último cierre**: el cierre más reciente que se confirmó o se cerró solo. **Catering** necesita líder de turno o más, y **Ventas**, gerente general o más. **Comparar con el período anterior** pone este rango junto al anterior. Los reportes de caja se ven desde encargado de llaves; las notas en las líneas, desde líder de turno.
+1. **Ábrelo y elige fechas.** Toca **Centro de reportes** en el menú. Elige un **Rango de fechas** y toca **Aplicar**. Los grupos son **Operaciones**, **Tendencias de operaciones**, **Reportes escritos**, **Equipo**, **Inventario**, **Catering**, **Sándwiches** y, para gerentes generales, **Ventas**. **Tendencias del equipo** dentro de **Equipo** necesita subgerente o más, igual que **Sándwiches**, que abre la página **Sándwiches** de esa tienda. El encargado de redes no la ve. **Inventario** muestra **Recepción** y **Pedidos** a encargados de llaves o más; **Conteos y variaciones** ahí necesita subgerente o más. **Recepción** aquí abre la página de recepción en vivo, no un reporte. Las entregas pasadas están en **Entregas recientes**, más abajo en esa página; toca una para ver sus líneas, marcas y créditos. La tarjeta de la tienda muestra **Último cierre**: el cierre más reciente que se confirmó o se cerró solo. **Catering** necesita líder de turno o más, y **Ventas**, gerente general o más. **Comparar con el período anterior** pone este rango junto al anterior. Los reportes de caja se ven desde encargado de llaves; las notas en las líneas, desde líder de turno.
 2. **Lee un reporte.** Toca **Operaciones** y luego una fila para abrir ese reporte. Las pestañas **Mismo día** abren los otros reportes del día. **Día anterior** y **Día siguiente** cambian de día. **CSV** y **PDF** descargan un archivo. Un cierre que nadie confirmó dice **Cerrado automáticamente — sin confirmar**.
 
 #### Tendencias
@@ -1853,7 +1945,7 @@ Los gerentes generales y roles más altos ven quién le compra a la tienda.
 
 #### Las páginas de Admin
 
-Los subgerentes y roles más altos pueden abrir **Admin**. Toca **Admin** en el menú y luego una tarjeta. Los subgerentes ven **Proveedores**, **SKUs**, **Productos**, **Recetas**, **Artículos**, **Costeo del Menú**, **Pesos y merma** y **Catering**. Los gerentes generales también ven **Estaciones**, **Empleados de Toast**, **Clientes**, **Plantillas de Listas** y **Novedades de recetas**. Un Gerente de Operaciones también ve **Gestión de Usuarios**, **Categorías** y **Cambios de las tiendas**. En **Estaciones**, un gerente general pone los horarios de las estaciones de su tienda y la app le pide su contraseña (**Confirma tu contraseña**); esos horarios son solo una guía y no cierran una estación. **Usado esta semana** muestra cuánto se usó la app.
+Los subgerentes y roles más altos pueden abrir **Admin**. Toca **Admin** en el menú y luego una tarjeta. Los subgerentes, encargados de prep y gerentes de catering ven **Proveedores**, **SKUs**, **Productos**, **Recetas**, **Artículos**, **Sándwiches**, **Pesos y merma**, **Catering** y **Niveles Par**. El encargado de redes ve las mismas tarjetas, menos **Sándwiches** y **Niveles Par**. Los gerentes generales también ven **Estaciones**, **Empleados de Toast**, **Clientes**, **Plantillas de Listas** y **Novedades de recetas**. Un Gerente de Operaciones también ve **Gestión de Usuarios**, **Categorías** y **Cambios de las tiendas**. En **Estaciones**, un gerente general pone los horarios de las estaciones de su tienda y la app le pide su contraseña (**Confirma tu contraseña**); esos horarios son solo una guía y no cierran una estación. **Esta semana en CO-OPS** muestra cuánto se usó la app.
 
 #### Recetas y el catálogo
 
@@ -1867,7 +1959,7 @@ Los gerentes generales y roles más altos cambian recetas y SKUs. Cada tienda pu
 6. **Restaura una versión vieja.** Abre el **Historial**. En una versión de tu tienda, toca **Restaurar**. En una versión vieja del predeterminado, el botón dice **Restaurar como la versión de** tu tienda. Revisa qué cambia y guarda. Restaurar crea una versión nueva para tu tienda; el predeterminado de todos no cambia. Si la versión es de antes de copiar la receta de otra tienda, restaurarla termina el vínculo con esa tienda. La vista previa te lo dice primero, y dejas de recibir sus actualizaciones.
 7. **Usa la receta de otra tienda.** Abre **Versiones de otras tiendas**, toca **Usar aquí la versión de** esa tienda, revisa los costos y toca **Usarla en** tu tienda. Recibes una copia vinculada a su receta. Puedes seguir cambiando tu copia: el vínculo se queda y sigues recibiendo sus actualizaciones. **Volver al predeterminado** termina el vínculo.
 8. **Novedades de recetas.** Toca **Admin** y luego **Novedades de recetas**. Lee cada nota y toca **Abrir la receta** para verla. Sale una nota cuando la tienda que copiaste cambia su receta, vuelve al predeterminado o su receta se vuelve el predeterminado, y cuando hay un predeterminado nuevo para todas las tiendas. En la página de la receta, **Tomar la actualización** te muestra qué cambia y luego copia su versión nueva. **Quedarme con la mía** deja la tuya como está; **Entendido** esconde una nota. La nota vuelve si la cambian otra vez. Si cambiaste tu copia, la nota lo dice: tomar la actualización reemplaza tus cambios. Tu comida nunca cambia si no dices que sí.
-9. **Precio, nombre y "se vende aquí".** En **Costeo del Menú**, abre un sándwich y toca **Abrir la página del sándwich**. Elige tu tienda. Escribe el **Precio aquí** o el **Nombre aquí**, o quita **Se vende en esta tienda**. Toca **Ver qué cambia** y luego **Guardar para** tu tienda. Deja el precio vacío para usar el precio de todas las tiendas. Un sándwich que no se vende aquí sale del costeo de tu tienda. Sin nombre en español, quienes usan la app en español ven el nombre en inglés. **Volver al menú global** vuelve a usar el precio y el nombre de todos.
+9. **Precio, nombre y "se vende aquí".** Toca **Admin** y luego **Sándwiches**. Toca tu tienda arriba. Toca **Detalles de** el sándwich y luego **Cambia el precio, el nombre o la disponibilidad en esta tienda**. Escribe el **Precio aquí** o el **Nombre aquí**, o quita **Se vende en esta tienda**. Toca **Ver qué cambia** y luego **Guardar para** tu tienda. El enlace viejo de **Costeo del Menú** ahora abre **Sándwiches**. Cada sándwich muestra **Precio en esta tienda**, **Se vende aquí**, **Enlace de Toast**, **Costo**, **Margen** y **Margen %**. **Productos del menú que necesitan atención** cuenta los que tienen un problema; toca **Ver causas** para ver cuáles. Deja el precio vacío para usar el precio de todas las tiendas. Un sándwich que no se vende aquí sale de la lista **Se vende aquí**; en **Mostrar**, elige **Fuera del menú aquí** para verlo. Un sándwich que solo se vende en una tienda tiene un solo precio; su enlace dice **Abrir la página del sándwich**. Sin nombre en español, quienes usan la app en español ven el nombre en inglés. **Volver al menú global** vuelve a usar el precio y el nombre de todos.
 10. **Cambios de las tiendas (Director de Operaciones).** Toca **Admin** y luego **Cambios de las tiendas**. Lee lo que cambió cada tienda. Toca **Hacerlo el predeterminado** para dárselo a todas las tiendas, o **Dejarlo**. La vista previa muestra cada tienda que cambia; las que tienen su propia versión no cambian. La tienda de donde vino vuelve al predeterminado, y su comida sigue igual. En un sándwich puedes hacer de todos el precio o el nombre de una tienda. Si el nombre nuevo está solo en inglés, escribe un **Nombre en español (opcional)** antes de guardar; sin él, quienes usan la app en español ven el nombre en inglés. **Dejarlo** no guarda nada, y **Mostrar los que dejaste** los trae de vuelta. La página de la receta también tiene **Hacerla el predeterminado para todos**.
 
 #### Enlazar personas con 7shifts (gerente general)

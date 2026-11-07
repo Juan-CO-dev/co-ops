@@ -4,7 +4,7 @@ import { createAdCodeResolver } from "./ad-codes-server";
 import { loadLandingConfig } from "./config";
 import { boundedJson, emptyResponse, guardLandingRequest, type LandingServerEnv } from "./request-server";
 import { landingRateLimit } from "./rate-limit";
-import { parseLandingEvent } from "./tracking-schema-shared";
+import { LANDING_META_EVENTS, parseLandingEvent } from "./tracking-schema-shared";
 
 interface Dependencies { env?: LandingServerEnv; now?: () => number; send?: typeof fetch; resolveAd?: (candidate: unknown) => Promise<string>; aggregate?: typeof checkLandingAggregate }
 /** Registry read only; no audit call, event log, customer record, or automatic retry. */
@@ -32,11 +32,12 @@ export async function handleMetaEvent(request: Request, dependencies: Dependenci
   if (aggregate === "unavailable") return emptyResponse(503);
   if (aggregate === "skipped" && !landingNonProduction(env)) return emptyResponse(204);
   const ad = await (dependencies.resolveAd ?? createAdCodeResolver())(event.ad).catch(() => "unattributed");
+  const meta = LANDING_META_EVENTS[event.event_name];
   const data = {
-    event_name: event.event_name, event_time: event.event_time, event_id: event.event_id,
+    event_name: meta.name, event_time: event.event_time, event_id: event.event_id,
     event_source_url: event.source_url, action_source: "website",
     user_data: { client_user_agent: userAgent, ...(event.fbc ? { fbc: event.fbc } : {}), ...(event.fbp ? { fbp: event.fbp } : {}) },
-    custom_data: { ...(event.mode ? { mode: event.mode } : {}), ad: ad === event.ad ? ad : "unattributed", placement: event.placement, ...(event.store ? { store: event.store } : {}), ...(event.vendor ? { vendor: event.vendor } : {}), ...(event.item ? { item: event.item } : {}) },
+    custom_data: { ...(event.mode ? { mode: event.mode } : {}), ad: ad === event.ad ? ad : "unattributed", placement: event.placement, ...(event.store ? { store: event.store } : {}), ...(event.vendor ? { vendor: event.vendor } : {}), ...(event.item ? { item: event.item } : {}), ...meta.params },
   };
   try {
     const response = await (dependencies.send ?? fetch)(`https://graph.facebook.com/v25.0/${env.META_PIXEL_ID}/events`, {

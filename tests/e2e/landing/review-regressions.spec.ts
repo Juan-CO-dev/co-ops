@@ -59,8 +59,8 @@ test('configured delivery clicks retain their actual placement without a shop co
     expect(event).toMatchObject({event_name:'OrderClick',placement,vendor});
     expect(event.store).toBe(store);
     expect(event).not.toHaveProperty('mode');
-    const queued = await page.evaluate(v=>window.fbq?.queue?.find(args=>args[1]==='OrderClick' && (args[2] as Record<string,string>).vendor===v),vendor);
-    expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement,vendor,...(store?{store}:{})},{eventID:event.event_id}]);
+    const queued = await page.evaluate(v=>window.fbq?.queue?.find(args=>args[0]==='track' && args[1]==='InitiateCheckout' && (args[2] as Record<string,unknown> | undefined)?.content_name==='OrderClick' && (args[2] as Record<string,string>).vendor===v),vendor);
+    expect(queued).toEqual(['track','InitiateCheckout',{content_name:'OrderClick',ad:'unattributed',placement,vendor,...(store?{store}:{})},{eventID:event.event_id}]);
   }
   expect(events).toHaveLength(2); expect(counters).toEqual([]);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(375);

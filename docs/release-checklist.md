@@ -35,7 +35,7 @@ CI-LCP sampling follow-up at `ac4171f3`: CC approved five cold runs for merge an
 
 - [ ] LAUNCH (not CI): set process-local `LANDING_PERF_URL` to the actual HTTPS preview and run `npm run perf:launch`. Five accepted-consent cold runs with real Pixel traffic; report performance, LCP, total TBT, third-party blocking attribution and bytes to Juan before paid spend. Require completed real SDK traffic; missing/unfinished traffic is unmeasured, never zero cost. Preserve raw LHRs and record revision/URL/date. No budget thresholds are loosened.
 
-- [ ] Pete verifies Meta domain, pixel allowed host and AEM; records Test Events for PageView/ViewContent/Lead/custom OrderClick/CateringClick and OrderClick conversion for CRAVE/RETARGET.
+- [ ] Pete verifies Meta domain, pixel allowed host and AEM; records Test Events for PageView/ViewContent/Lead, standard InitiateCheckout (content_name: OrderClick) and custom CateringClick; no custom conversion is needed for order clicks or CRAVE/RETARGET optimization.
 - [ ] **CAPI ready (D6) is a launch gate.** Pixel proof and real consented performance remain mandatory. Every D6 item below must pass before spend.
 - [ ] CAPI: actual WAF entitlement/rule scope/burst/aggregate/multi-instance/spoof/429 proofs; timestamp/rule IDs; dedup event IDs/retries and match-quality evidence. Incomplete protection leaves CAPI dormant.
 - [ ] Counter: 0273 already applied; 0289 sim then prod with CC/Juan authorization, harness and independent-session increment/allocation proof before enabling LANDING_COUNTER_ENABLED. Record counter_on.
@@ -49,7 +49,7 @@ Evidence record for each manual gate: owner, date, exact revision/URL, private e
 - [ ] Follow [D4 env order](deploy.md) and [go-live steps 1-9](runbooks/landing-go-live.md); DNS/TLS pass, bare landing and www 308 proven, www never serves staff. Preserve mail/Meta TXT records.
 - [ ] Rules exist/IDs recorded; D2 a-g proven, including concurrent runners, spoof resistance and aggregate (or unsupported N/A explicitly accepted by Juan). D3 reviewed by CC and approved by Juan.
 - [ ] `landingRateLimit(env)==='allowed'`; matching Pixel IDs; token present; v25.0; no Production test code; UA approved. Record booleans only.
-- [ ] Preview Deduplicated for Lead/OrderClick/CateringClick; Production Browser + Server received. EMQ accepted as-is, no IP/contact enrichment.
+- [ ] Preview Test Events: Deduplicated for Lead, standard InitiateCheckout (content_name: OrderClick) and custom CateringClick; no custom conversion is needed for order clicks; Production Browser + Server received. EMQ accepted as-is, no IP/contact enrichment.
 - [ ] Reject, withdraw, DNT and GPC each send zero Meta requests. Staff sends zero Meta; landing APIs on staff and marketing routes on landing return 404.
 - [ ] CAPI false + redeploy rollback tested; approved restoration reverified.
 - [ ] 0289 applied sim first, harness and two-session locks pass; prod separately authorized, actual application stamped. No reapply of 0273. Scorecard ships OFF until separately enabled.
