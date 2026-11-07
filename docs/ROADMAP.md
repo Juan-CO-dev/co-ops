@@ -5,13 +5,19 @@
 > severely stale — do not plan from it). Update this file at every arc-close; keep NOW
 > capped at 3 builds. Dated entries; delete, don't strikethrough.
 >
-> **Last refreshed 2026-10-08.** Launch queue and errands updated from the
-> 2026-10-06..08 merged list and Juan's current direction. Older dated arc notes below
-> remain historical; their live counts are not a current production probe.
+> **Last refreshed 2026-11-06.** NOW / NEXT / SHIPPED rebuilt from the merged PRs
+> #444–#523 (2026-10-10..11-06) and CC's 2026-11-06 direction. Errands are still the
+> 2026-10-08 list. Older dated arc notes below remain historical; their live counts are
+> not a current production probe.
 
-**Launch read (2026-10-08):** Toast capture and cutover, the catering pipeline, shift
-assignments, and the reports foundation are shipped. The first real inventory count is
-the immediate launch gate; Sales and who's here are the two active builds.
+**Launch read (2026-11-06):** the catalog redesign is live through Phase 5 chunk 5 (Pars,
+Sandwiches, AGM par edits); checklist and prep reliability (Track 3) is done; scheduling
+phases 1–2, crew-first scheduling and Backup cover are merged (Phase 2 ships OFF); the customer landing page
+is built and waits on DNS. Three gates stand between here and launch: **Pete points DNS**
+(`complimentsonlyoperations.com`, then the landing env per `docs/deploy.md` D4), the
+**CAPI activation runbook steps 3–7** in `docs/tracking.md`, and the **first physical
+count** (the inventory gate below). Migration lineage: `0292_landing_click_intent.sql` is
+the highest file in `supabase/migrations`, stamped applied to sim and prod in #519.
 
 > ### ⭐ THE FIRST PHYSICAL COUNT IS UNBLOCKED (2026-08-20)
 >
@@ -138,20 +144,29 @@ the agreement was one failed sync away from a silent, permanent split. With a st
 the old code reported HALF the true $/oz. Pure math split to `lib/admin/cost-shared.ts` per
 the `*-shared` law so it is finally testable (10 tests incl. a board-parity oracle).
 
-## NOW (2026-10-08; at most three builds)
+## LAUNCH GATES (2026-11-06)
 
-1. **First physical count — launch gate (2026-10-08).** Production still has **0 `sku_count_events`**. Run the first real Inventory Audit count and verify the count anchor before launch.
-2. **Sales section (2026-10-08; CO CC building).** Finish the Reports Hub sales section against the Toast capture and reconciliation already shipped. Keep it out of user guidance until released.
-3. **Who's here (2026-10-08; CO CC building).** Connect Toast employee links and manager presence. Keep it out of user guidance until released.
+1. **Customer landing live** when Pete points DNS for `complimentsonlyoperations.com`; then CC runs `docs/deploy.md` D4 (`LANDING_HOSTS`, `SITE_ORIGIN`) with Juan's OK at each step (`docs/runbooks/landing-go-live.md`).
+2. **CAPI activation** — `docs/tracking.md` "CAPI activation runbook" steps 3–7: Juan's dataset token, UA disclosure approval, Preview Test Events, both WAF rules verified, then production `LANDING_CAPI_ENABLED=true` last.
+3. **First physical count — the inventory gate (carried from 2026-10-08).** On 2026-10-08 production had **0 `sku_count_events`**. Run the first real Inventory Audit count and verify the count anchor before launch. The repo cannot show whether it has happened since.
 
-## NEXT (2026-10-08)
+## NOW (2026-11-06; at most three builds)
 
-- **Customer profiles and consent.** More than 6,000 opted-in emails are live in Toast. Keep profiles internal-only unless the customer has opted in; upload to Meta only after Pete's OK.
-- **ezCater options.** GF roll, extra mozzarella, lettuce bed, and Light Lunch picks count as base today; map the actual selections.
-- **Mid-shift redesign.** Rework the shift view after launch use shows the real handoff pattern.
+1. **Catalog Phase 5 chunk 6 (2026-11-06; building).** A GM applies a vendor price file to their own shop (migration 0293).
+2. **Landing order clicks to Meta (2026-11-06; building).** Send landing order clicks to Meta as the standard InitiateCheckout event.
+3. **Guides + ROADMAP docs pass (2026-11-06; this branch).** Manager guide Pars and Sandwiches sections; this refresh.
+
+## NEXT (2026-11-06)
+
+- **Catalog Phase 5 photo-retake pass.** Re-shoot the guide screens the catalog changed (the admin home photo still shows the old Menu Costing tile).
+- **7shifts read-only integration.** The mirror and person links shipped in Scheduling Phase 1 (#488); live sync waits on Pete's 7shifts API token.
+- **catering@ inbound router, then the catering instant Lead form.**
+
+### Carried from the 2026-10-08 NEXT (not confirmed shipped)
+
+- **Meta audience upload.** Customer profiles, consent and the opted-in lists shipped (#434, #454, #455); the Meta audience file stays behind `META_AUDIENCE_EXPORT` until Pete's OK.
 - **Toast cutover week-1 cleanup.** Retire the legacy sales ledger and purge cutover check fixtures after the first week is verified.
-- **Digest and export email delivery.** Turn delivery on only after the 2026-10-13 launch, per Juan. On-screen digests and file downloads are separate shipped features.
-- **7shifts API.** Integrate when Juan receives access.
+- **Digest and export email delivery.** Turn delivery on only after launch, per Juan. On-screen digests and file downloads are separate shipped features.
 
 ### Older NEXT backlog (pre-2026-10-06, kept verbatim for triage - delete items as they are confirmed shipped)
 
@@ -361,6 +376,17 @@ the `*-shared` law so it is finally testable (10 tests incl. a board-parity orac
   — a migration plus a `rulingStatus` rewrite, not a mechanical swap. Do it as its own
   piece of work, or not at all.
 
+## SHIPPED (2026-10-09..11-06)
+
+- **Catalog redesign, Phases 1–4b:** the 15-minute edit window and one-shot destructive grants (#476, 0257); shop versions of pack and price, the item page and guided pack/price jobs (#477, #478, 0259–0261); recipe and menu-item shop versions, adopt/promote and Shop changes (#479, #483, 0262/0263); the shop-owned catalog, job engines and SKU swaps (#489, 0264/0265); guided job pages (new item, new sandwich + Toast, swap, share) with the admin same-origin sweep (#492).
+- **Catalog Phase 5, chunks 1–5:** the Pars page, one shop at a time with lanes, weights, vendor/guide-section filters and the silent-par summary (#510); par edits plus Use / Not now on suggestions (#514); the Prep pars tab and Off here (#517); Sandwiches replaces Menu costing, old URL redirects (#521); AGM, prep and catering managers edit pars and Off here at their own shop, suggestion verdicts stay GM (#522). No migrations.
+- **Track 3 — checklist and prep reliability:** serialized corrections (#508, 0287), confirm only the filtered live heads (#513, 0288), atomic closing reference (#515, 0290), idempotent prep submit (#518, 0291); plus PM report get-or-create (#506).
+- **Scheduling:** Phase 1 people layer, 7shifts mirror and PM reports v2 (#488, 0268–0271); Phase 2 hours budget, generator, validator, board and reconciliation, ships OFF (#493, 0274/0275); primary/secondary positions (#497, 0278); staff separations (#498, 0279); works-as roles and availability (#501, #502, 0280/0281); structure-floor reconcile (#500); crew-first scheduling (#503, 0282–0284); Backup cover and its weekly cap (#504, #505, 0285/0286).
+- **Security:** PostgREST write lockdown on 42 tables (#487, 0272) and PM report reads (#482, 0267); Lockdown step 2, checklist and written-report writes through the guarded server path (#494, 0276/0277); same-origin guards on every API write (#507, #509).
+- **Customer landing:** phase 1 (#490), v2 + v3 "Convert" (#491), v4 convert (#495, #496), shop-specific item deep links (#511), pickup/delivery order modes with click intent (#519, 0292), CAPI launch readiness and the activation runbook (#523). Dormant until `LANDING_HOSTS` is set.
+- **Marketing Scorecard (#512, 0289; 0273 counter).** The repo ships it OFF behind `MARKETING_SCORECARD=1`; CC reports it ON in production since 2026-11-04.
+- **Floor and reports fixes (2026-10-10..15):** Guides v2 (#470); B8–B11 re-walk fixes (#460–#467, #471–#474, #480); ET-day time fixes (#484–#486); Pulse, sales and reports accuracy (#444, #448, #450–#453); Customers v2 (#454, #455); Menu costing selling prices from Toast (#449).
+
 ## SHIPPED (2026-10-06..08)
 
 - **Shift work:** assignments and the read-only team board for every level; station positions and On/Off setup from closing sections; take/assign controls, attribution and override reasons; breaks, cover, clock-out releases, and station closure when its closing section finishes.
@@ -402,7 +428,7 @@ the `*-shared` law so it is finally testable (10 tests incl. a board-parity orac
   escalation path. Then: Shift Overlay + Prep Sheet + Today's Synthesis (read
   surfaces; want Written Reports live first) · staff Recipes viewer (cheap read) ·
   Rollups / AI Insights (need months of data) · Module #17 LTO measurement (needs
-  lto_events volume) · admin Audit/Locations/Pars pages.
+  lto_events volume) · admin Audit/Locations pages.
 - **Training — the in-app guides (surface, don't write)** — the guides EXIST as of
   2026-09-08: `docs/guides/` (staff · manager · catering; sim screenshots; walk scripts
   for re-shoots). `/training`'s remaining job is to render them (Spanish edition
