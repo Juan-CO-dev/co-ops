@@ -2,7 +2,7 @@
   "admin.pars.today.weekend": "Par de hoy de fin de semana: {pair}",
   "admin.pars.today.weekday": "Par de hoy entre semana: {pair}",
   "admin.pars.title": "Niveles par",
-  "admin.pars.subtitle": "Consulta los niveles par por tienda. Las sugerencias coinciden con el recorrido actual de pedidos.",
+  "admin.pars.subtitle": "Niveles par por tienda. Cambia un par aquí o responde a una sugerencia del recorrido de pedidos.",
   "admin.pars.shops": "Tiendas",
   "admin.pars.no_location": "No hay una tienda disponible para tu cuenta.",
   "admin.pars.vendor": "Proveedor",

@@ -2,7 +2,7 @@
   "admin.pars.today.weekend": "Today's weekend par: {pair}",
   "admin.pars.today.weekday": "Today's weekday par: {pair}",
   "admin.pars.title": "Pars",
-  "admin.pars.subtitle": "Read-only par levels by shop. Suggestions match the current ordering walk.",
+  "admin.pars.subtitle": "Par levels by shop. Change a par here, or act on a suggestion from the ordering walk.",
   "admin.pars.shops": "Shops",
   "admin.pars.no_location": "No shop is available for your account.",
   "admin.pars.vendor": "Vendor",
