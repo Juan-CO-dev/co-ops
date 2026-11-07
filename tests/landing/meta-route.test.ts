@@ -50,7 +50,8 @@ describe("public landing CAPI boundary", () => {
     expect(url).not.toContain("test-secret");
     const event = JSON.parse(init.body).data[0];
     expect(event.event_id).toBe(payload.event_id);
-    expect(event.event_name).toBe(payload.event_name);
+    expect(event.event_name).toBe('InitiateCheckout');
+    expect(event.custom_data).toEqual({mode:'pickup',ad:'unattributed',placement:'hero',store:'dupont',content_name:'OrderClick'});
     expect(event.user_data).toEqual({ client_user_agent: "test-browser", fbc: payload.fbc });
     expect(event).toHaveProperty("action_source", "website");
   });
@@ -89,7 +90,7 @@ it.each([
   expect(send).not.toHaveBeenCalled();
   expect((await handleMetaEvent(request(body),{env,send,now})).status).toBe(204);
   const event=JSON.parse(send.mock.calls[0]![1].body).data[0];
-  expect(event.event_name).toBe(patch.event_name);
+  expect(event.event_name).toBe(patch.event_name === 'OrderClick' ? 'InitiateCheckout' : patch.event_name);
   if(patch.mode) {expect(event.custom_data.mode).toBe("delivery");expect(event.custom_data).not.toHaveProperty("store");}
   else {expect(event.custom_data.store).toBe("dupont");expect(event.custom_data).not.toHaveProperty("mode");}
 });
@@ -162,4 +163,29 @@ it.each([undefined, "", "unknown", "production", "preview"])("skipped aggregate 
   expect(aggregate).toHaveBeenCalledTimes(1);
   expect(send).toHaveBeenCalledTimes(VERCEL_ENV === "preview" ? 1 : 0);
   expect(resolveAd).toHaveBeenCalledTimes(VERCEL_ENV === "preview" ? 1 : 0);
+});
+
+
+it.each([
+  ['OrderClick', 'InitiateCheckout', {mode:'pickup',placement:'lineup',item:'frex',store:'dupont'}],
+  ['OrderClick', 'InitiateCheckout', {mode:undefined,placement:'shops',vendor:'ubereats',store:'dupont'}],
+  ['CateringClick', 'CateringClick', {mode:undefined,placement:'catering',store:undefined}],
+  ['Lead', 'Lead', {mode:undefined,placement:'catering',store:undefined}],
+  ['FindLocation', 'FindLocation', {mode:undefined,placement:'shops',store:'dupont'}],
+] as const)('maps inbound %s to Meta %s without losing context (%j)', async (name, wireName, details) => {
+  const send = vi.fn().mockResolvedValue(new Response(null, {status:200}));
+  expect((await handleMetaEvent(request({...payload,...details,event_name:name}), {env,now,send,resolveAd:async candidate => String(candidate)})).status).toBe(204);
+  const event = JSON.parse(send.mock.calls[0]![1].body).data[0];
+  expect(event.event_name).toBe(wireName);
+  expect(event.event_id).toBe(payload.event_id);
+  expect(event.custom_data).toEqual({
+    ad:payload.ad, ...Object.fromEntries(Object.entries(details).filter(([,value])=>value!==undefined)),
+    ...(name === 'OrderClick' ? {content_name:'OrderClick'} : {}),
+  });
+});
+
+it('refuses the Meta wire name at the internal inbound boundary', async () => {
+  const send = vi.fn();
+  expect((await handleMetaEvent(request({...payload,event_name:'InitiateCheckout'}), {env,now,send})).status).toBe(400);
+  expect(send).not.toHaveBeenCalled();
 });

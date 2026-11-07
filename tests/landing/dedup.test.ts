@@ -1,12 +1,16 @@
-﻿import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/landing/ad-codes-server', () => ({ createAdCodeResolver: () => async () => 'unattributed' }));
 import { browserTransport, createLandingTracker, type LandingAction, type ActionDetails } from '@/lib/landing/tracking-client';
 import { handleMetaEvent } from '@/lib/landing/meta-server';
 
+import { LANDING_META_EVENTS } from '@/lib/landing/tracking-schema-shared';
+import { handleOrderClick } from '@/lib/landing/order-click-server';
+
 const origin = 'https://landing.example';
 const instant = Date.UTC(2026, 10, 1, 12, 30, 15, 789);
 const paths: [LandingAction, ActionDetails][] = [
+  ['FindLocation', { placement: 'shops', store: 'dupont' }],
   ['Lead', { placement: 'hero' }], ['CateringClick', { placement: 'catering' }],
   ['OrderClick', { mode:'pickup', placement: 'hero', store: 'dupont' }],
   ['OrderClick', { mode:'pickup', placement: 'lineup', store: 'dupont', item: 'crunchy-boi' }],
@@ -40,6 +44,11 @@ describe('pixel / CAPI dedup contract', () => {
       expect(f.pixel).toHaveBeenCalledTimes(1);
       expect(f.pixel.mock.calls[0]?.[3]).toBe(capi.event_id);
       expect(f.pixel.mock.calls[0]?.[1]).toBe(capi.event_name);
+      expect(capi.event_name).toBe(LANDING_META_EVENTS[name].name);
+      expect(f.pixel.mock.calls[0]?.[0]).toBe(LANDING_META_EVENTS[name].method);
+      expect(payload.event_name).toBe(name);
+      expect(payload).not.toHaveProperty('content_name');
+      expect(f.pixel.mock.calls[0]?.[2]).toEqual(capi.custom_data);
       expect(capi.event_time).toBe(Math.floor((event?.time ?? instant) / 1000));
       expect(f.now).toHaveBeenCalledTimes(explicit ? 0 : 1);
     }
@@ -59,7 +68,8 @@ describe('pixel / CAPI dedup contract', () => {
       const f = fixture(); f.tracker.beginResolution(); const event = explicit ? { id: randomUUID(), time: instant } : undefined;
       f.tracker.dispatch(name, () => ({ mode:name==='OrderClick'?'pickup':undefined, placement: 'hero', store: 'dupont' }), event);
       const capi = await upstream(f.post.mock.calls.find(call => call[0] === '/api/landing/events')![1]);
-      expect(f.pixel).not.toHaveBeenCalled(); expect(capi.event_name).toBe(name);
+      expect(f.pixel).not.toHaveBeenCalled(); expect(capi.event_name).toBe(LANDING_META_EVENTS[name].name);
+      if (name === 'OrderClick') expect(capi.custom_data.content_name).toBe('OrderClick');
       if (event) expect(capi.event_id).toBe(event.id);
       expect(capi.event_time).toBe(Math.floor(instant / 1000));
       f.tracker.setConsent(true); f.tracker.flushPending('unattributed'); expect(f.pixel).not.toHaveBeenCalled();
@@ -74,4 +84,18 @@ describe('pixel / CAPI dedup contract', () => {
     try { const id = randomUUID(); browserTransport().pixel('track', 'Lead', {}, id); expect(fbq).toHaveBeenCalledWith('track', 'Lead', {}, { eventID: id }); }
     finally { vi.unstubAllGlobals(); }
   });
+});
+
+
+it('still increments the independent counter from a dispatched OrderClick', async () => {
+  const f = fixture(); f.tracker.setConsent(true);
+  f.tracker.dispatch('OrderClick', {mode:'pickup',placement:'hero',store:'dupont'});
+  const body = f.post.mock.calls.find(call => call[0] === '/api/landing/order-click')![1];
+  expect(body).toEqual({store:'dupont',ad:'unattributed',intent:'pickup'});
+  const increment = vi.fn(async () => {});
+  const response = await handleOrderClick(new Request(`${origin}/api/landing/order-click`, {
+    method:'POST', headers:{host:'landing.example',origin,cookie:'landing_consent=accepted','content-type':'application/json'},body:JSON.stringify(body),
+  }), {env:{LANDING_HOSTS:'landing.example',SITE_ORIGIN:origin,STAFF_ORIGIN:'https://staff.example',LANDING_COUNTER_ENABLED:'true'},increment});
+  expect(response.status).toBe(204);
+  expect(increment).toHaveBeenCalledExactlyOnceWith(body);
 });

@@ -11,6 +11,13 @@ export type LandingAdCode = string;
 export type LandingPlacement = (typeof LANDING_PLACEMENTS)[number];
 export type LandingItem = (typeof LANDING_ITEMS)[number];
 export type LandingServerEvent = (typeof LANDING_SERVER_EVENTS)[number];
+/** Translate internal actions only at the Meta boundary; both transports share dedup names. */
+export const LANDING_META_EVENTS = {
+  OrderClick: { method: "track", name: "InitiateCheckout", params: { content_name: "OrderClick" } },
+  Lead: { method: "track", name: "Lead", params: {} },
+  FindLocation: { method: "track", name: "FindLocation", params: {} },
+  CateringClick: { method: "trackCustom", name: "CateringClick", params: {} },
+} as const satisfies Record<LandingServerEvent, { method: "track" | "trackCustom"; name: string; params: Record<string, string> }>;
 export interface LandingEvent {
   event_name: LandingServerEvent;
   event_id: string;

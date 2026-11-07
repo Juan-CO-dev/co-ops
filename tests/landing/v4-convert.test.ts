@@ -128,7 +128,7 @@ describe('tracking: crave + guide placements and the item field', () => {
     const { tracker, post, pixel } = fixture();
     tracker.setConsent(true);
     tracker.dispatch('OrderClick', { mode:'pickup', store: 'dupont', placement: 'crave', item: 'crunchy-boi' });
-    expect(pixel).toHaveBeenCalledWith('trackCustom', 'OrderClick', { mode:'pickup', ad: 'unattributed', placement: 'crave', store: 'dupont', item: 'crunchy-boi' }, expect.any(String));
+    expect(pixel).toHaveBeenCalledWith('track', 'InitiateCheckout', { content_name:'OrderClick', mode:'pickup', ad: 'unattributed', placement: 'crave', store: 'dupont', item: 'crunchy-boi' }, expect.any(String));
     const events = post.mock.calls.find(call => call[0] === '/api/landing/events')![1];
     expect(parseLandingEvent(events, 'https://eat.example', 123000)).toMatchObject({ placement: 'crave', item: 'crunchy-boi', store: 'dupont' });
     const counter = post.mock.calls.find(call => call[0] === '/api/landing/order-click')![1];
