@@ -251,7 +251,7 @@ async function countOrders(page:import('@playwright/test').Page) {
 const lineupFallback=(page:import('@playwright/test').Page)=>page.locator('.landing-v3-select .landing-v3-direct-orders');
 /** Consent accepted, Meta offline; records every counter / CAPI post the network receives (context
  * level, survives the unload), and — written through to localStorage at call time, so no engine's
- * unload behaviour can hide or add one — every Pixel OrderClick and every counter / CAPI post the
+ * unload behaviour can hide or add one — every Pixel InitiateCheckout (content_name OrderClick) and every counter / CAPI post the
  * page ISSUES (sendBeacon accepted, or fetch). */
 async function measureOrders(context:import('@playwright/test').BrowserContext) {
   const counters:Record<string,unknown>[]=[],capi:Record<string,unknown>[]=[];
@@ -276,7 +276,7 @@ async function measureOrders(context:import('@playwright/test').BrowserContext) 
     let real:unknown;
     Object.defineProperty(window,'fbq',{configurable:true,get:()=>real,set(value){
       real=typeof value==='function'?new Proxy(value,{apply(target,self,args){
-        if(args[0]==='trackCustom'&&args[1]==='OrderClick'){const list=JSON.parse(localStorage.getItem('__pixel_orders')??'[]');list.push({params:args[2],id:args[3]?.eventID});localStorage.setItem('__pixel_orders',JSON.stringify(list));}
+        if(args[0]==='track'&&args[1]==='InitiateCheckout'&&args[2]?.content_name==='OrderClick'){const list=JSON.parse(localStorage.getItem('__pixel_orders')??'[]');list.push({params:args[2],id:args[3]?.eventID});localStorage.setItem('__pixel_orders',JSON.stringify(list));}
         return Reflect.apply(target,self,args);
       }}):value;
     }});
@@ -287,7 +287,7 @@ async function acceptConsent(page:import('@playwright/test').Page) {
   await page.locator('[data-landing-consent]').getByRole('button').first().click();
   await expect.poll(()=>page.evaluate(()=>typeof window.fbq)).toBe('function');
 }
-/** Exactly one counter post, one CAPI OrderClick and one Pixel OrderClick per tap, the Meta pair
+/** Exactly one counter post, one CAPI OrderClick and one Pixel InitiateCheckout (content_name OrderClick) per tap, the Meta pair
  * sharing its event id — asserted on what the page ISSUED, on every project, and on what the
  * network RECEIVED wherever the engine delivers a departing page's posts. */
 async function expectOneOrderEvent(page:import('@playwright/test').Page,baseURL:string,sent:{counters:Record<string,unknown>[];capi:Record<string,unknown>[]},browserName:string) {
@@ -295,7 +295,7 @@ async function expectOneOrderEvent(page:import('@playwright/test').Page,baseURL:
   await page.goto(baseURL);
   const pixel=await page.evaluate(()=>JSON.parse(localStorage.getItem('__pixel_orders')??'[]') as {params:Record<string,string>;id:string}[]);
   expect(pixel).toHaveLength(1);
-  expect(pixel[0]!.params).toMatchObject({placement:'lineup',mode:'pickup',store:'capitol-hill',item:'crunchy-boi'});
+  expect(pixel[0]!.params).toMatchObject({content_name:'OrderClick',placement:'lineup',mode:'pickup',store:'capitol-hill',item:'crunchy-boi'});
   const issued=await page.evaluate(()=>JSON.parse(localStorage.getItem('__issued')??'[]') as {path:string;body:Record<string,unknown>|null}[]);
   expect(issued.filter(post=>post.path==='/api/landing/order-click').map(post=>post.body)).toEqual([{store:'capitol-hill',ad:'unattributed',intent:'pickup'}]);
   const issuedEvents=issued.filter(post=>post.path==='/api/landing/events').map(post=>post.body);

@@ -15,8 +15,8 @@ test('actual order actions share Pixel/CAPI IDs and count once per click',async(
   const order=page.locator('a[data-landing-mode]').first();await order.click();
   await expect.poll(()=>counts.length).toBe(1);await expect.poll(()=>events.length).toBe(1);
   const first=events[0]!;expect(first.event_name).toBe('OrderClick');expect(first.ad).toBe('subsim-photo');
-  const pixel=await page.evaluate(()=>window.fbq?.queue?.find(args=>args[1]==='OrderClick'));
-  expect(pixel?.[0]).toBe('trackCustom');expect(pixel?.[3]).toEqual({eventID:first.event_id});
+  const pixel=await page.evaluate(()=>window.fbq?.queue?.find(args=>args[0]==='track' && args[1]==='InitiateCheckout' && (args[2] as Record<string,unknown> | undefined)?.content_name==='OrderClick'));
+  expect(pixel?.[0]).toBe('track');expect(pixel?.[2]).toMatchObject({content_name:'OrderClick'});expect(pixel?.[3]).toEqual({eventID:first.event_id});
   expect(Object.keys(counts[0]!).sort()).toEqual(['ad','intent','store']);
   await order.click();await expect.poll(()=>counts.length).toBe(2);await expect.poll(()=>events.length).toBe(2);
   expect(events[1]!.event_id).not.toBe(first.event_id);
@@ -37,7 +37,7 @@ for(const placement of ['sticky','shops','footer']) test(`${placement} hover and
   expect(events).toEqual([]);expect(counters).toEqual([]);
   await link.click();await expect.poll(()=>events.length).toBe(1);await expect.poll(()=>counters.length).toBe(1);
   expect(events[0]).toMatchObject({event_name:'OrderClick',mode:'pickup',placement,store:'capitol-hill'});
-  const pixel=await page.evaluate(()=>window.fbq?.queue?.find(args=>args[1]==='OrderClick'));
-  expect(pixel?.[3]).toEqual({eventID:events[0]!.event_id});
+  const pixel=await page.evaluate(()=>window.fbq?.queue?.find(args=>args[0]==='track' && args[1]==='InitiateCheckout' && (args[2] as Record<string,unknown> | undefined)?.content_name==='OrderClick'));
+  expect(pixel?.[2]).toMatchObject({content_name:'OrderClick'});expect(pixel?.[3]).toEqual({eventID:events[0]!.event_id});
   await link.click();await expect.poll(()=>events.length).toBe(2);expect(events[1]!.event_id).not.toBe(events[0]!.event_id);
 });

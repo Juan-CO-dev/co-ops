@@ -26,8 +26,8 @@ test('lineup native order click sends Pixel, CAPI request and independent counte
   await expect.poll(() => counters.length).toBe(1);
   expect(events[0]).toMatchObject({event_name:'OrderClick',mode:'pickup',placement:'hero',store:'capitol-hill'});
   expect(counters[0]).toEqual({store:'capitol-hill',ad:'unattributed',intent:'pickup'});
-  const queued = await page.evaluate(() => window.fbq?.queue?.find(args => args[1] === 'OrderClick'));
-  expect(queued).toEqual(['trackCustom','OrderClick',{ad:'unattributed',placement:'hero',store:'capitol-hill',mode:'pickup'},{eventID:events[0]?.event_id}]);
+  const queued = await page.evaluate(() => window.fbq?.queue?.find(args => args[0]==='track' && args[1]==='InitiateCheckout' && (args[2] as Record<string,unknown> | undefined)?.content_name==='OrderClick'));
+  expect(queued).toEqual(['track','InitiateCheckout',{content_name:'OrderClick',ad:'unattributed',placement:'hero',store:'capitol-hill',mode:'pickup'},{eventID:events[0]?.event_id}]);
 });
 
 test('selecting a fighter and opening the sheet are silent; the sheet link counts once as lineup', async ({page}) => {

@@ -6,7 +6,7 @@ The browser Pixel, CAPI enhancement and independent direct-order counter have se
 
 PageView and ViewContent are browser-only. Lead is the catering inquiry; Lead and FindLocation remain standard events. Internal OrderClick maps only at the Meta boundary to standard InitiateCheckout (Pixel track and CAPI event_name), with content_name: OrderClick. CateringClick remains custom, using Pixel trackCustom. The browser POST to /api/landing/events retains event_name: OrderClick. A real action generates one UUID shared by browser eventID and server event_id; a retry retains the same name/ID. The counter never retries and never receives the UUID. Source URLs contain only the configured landing HTTPS origin and the public document path, with no query or hash. The only initial ad code is `subsim-photo`; unknown counter codes collapse to `unattributed`. Direct shop keys are `capitol-hill` and `dupont`. No offer is activated by an ad code.
 
-2026-11-05 Juan: OrderClick → standard InitiateCheckout
+Ruling: Juan, 2026-11-05: OrderClick maps to standard InitiateCheckout at the Meta boundary.
 
 ## Server boundary and activation
 
