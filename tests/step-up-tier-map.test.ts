@@ -84,6 +84,11 @@ function extract(fn: "assertStepUp" | "requestStepUp", keep: (rel: string) => bo
 
 // ── THE SERVER HALF: route file → the tiers it asserts ────────────────────────
 const SERVER_TIER_MAP: Record<string, string[]> = {
+  // Inbound settings: reversible admin configuration, joined to InboundSettings Tier A.
+  "app/api/admin/inbound/aliases/route.ts": ["A"],
+  "app/api/admin/inbound/redrive/route.ts": ["A"],
+  "app/api/operations/receiving/email-receipts/route.ts": ["A"],
+  "app/api/admin/inbound/vendor-accounts/route.ts": ["A"],
   "app/api/admin/marketing/milestones/route.ts": ["B"],
   "app/api/admin/marketing/milestones/[id]/correct/route.ts": ["B"],
   "app/api/admin/marketing/entries/route.ts": ["A"],
@@ -270,6 +275,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
+  "components/admin/InboundSettings.tsx": ["A"],
   "components/admin/vendors/VendorImportPanel.tsx": ["A", "E"],
   "components/admin/marketing/MarketingWriteForms.tsx": ["A", "B"],
   "app/admin/marketing/ad-codes/AdCodesClient.tsx": ["A", "B"],
@@ -366,6 +372,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
  * construction, so structurally immune to the mismatch this file guards.
  */
 const REACTIVE_STEP_UP_COMPONENTS = [
+  "components/receiving/VendorClaimPanel.tsx",
   "components/admin/catalog/CatalogClient.tsx",
   "components/admin/catering/menu/MenuClient.tsx",
   "components/admin/catering/menu/ToastTab.tsx",

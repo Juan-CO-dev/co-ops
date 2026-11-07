@@ -34,23 +34,25 @@ import { auditOperationalTaskOverride, canDoOperationalTask, canTriageUnattribut
  * gate on source.
  *
  * NO SDK: package.json carries no @anthropic-ai/sdk, so we call the Messages API via a
- * direct fetch (x-api-key + anthropic-version). Model = AI_PARSE_MODEL || claude-sonnet-4-6
+ * direct fetch (x-api-key + anthropic-version). Model = AI_PARSE_MODEL || claude-sonnet-5-5
  * (spec §4 / §6; the env-var default is the spec contract).
  */
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { audit } from "@/lib/audit";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
-import { matchReceiptToPo, applyReceiptPoEffects, EmailReceiptError, RECEIPT_MIN } from "@/lib/email-receipts";
+import { matchReceiptToPo, applyReceiptPoEffects, attemptAutoLink, EmailReceiptError, RECEIPT_MIN } from "@/lib/email-receipts";
+import { resolveReceiptAttribution, type ReceiptAccountMatch, type ReceiptAttributionSource } from "@/lib/receipt-attribution-shared";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
 const RECEIPT_BUCKET = "receipts";
 /** Spec §4/§6: env override, else this default. Kept in sync with .env.local.example. */
-const DEFAULT_PARSE_MODEL = "claude-sonnet-4-6";
+const DEFAULT_PARSE_MODEL = "claude-sonnet-5-5";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 const PARSE_MAX_TOKENS = 2048;
@@ -76,6 +78,8 @@ interface AttachmentPathEntry {
 
 interface ReceiptRow {
   id: string;
+  inbound_message_id: string | null;
+  attributed_by: ReceiptAttributionSource | null;
   parse_state: string;
   source: string;
   subject: string | null;
@@ -107,6 +111,7 @@ interface Extraction {
   invoiceNumber?: string;
   shipTo?: string;
   vendorName?: string;
+  accountNumber?: string;
   totalCents?: number;
   lines?: Array<{
     description?: string;
@@ -131,7 +136,7 @@ interface Extraction {
 export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritten?: () => Promise<void>): Promise<{ ok: boolean; docKind?: string }> {
   const { data: r, error } = await sb
     .from("email_receipts")
-    .select("id, parse_state, source, subject, from_address, location_id, vendor_guess_id, received_at, linked_po_id, raw_storage_path, attachment_paths")
+    .select("id, inbound_message_id, attributed_by, parse_state, source, subject, from_address, location_id, vendor_guess_id, received_at, linked_po_id, raw_storage_path, attachment_paths")
     .eq("id", receiptId)
     .maybeSingle<ReceiptRow>();
   if (error) throw new Error(`parseReceipt load: ${error.message}`);
@@ -166,14 +171,43 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritt
   const extraction = parseAndValidate(rawText);
   if (!extraction) return await writeFailed(sb, r.id, "unparseable_json", notes, onWritten);
 
+  // Persist the resolved account evidence as foreign keys for manual conflict triage.
+  // Only routed inbound receipts use this attribution ladder. Manual upload locations are
+  // operator decisions. Lookup failure fails closed before marking the parse successful.
+  let attribution: ReturnType<typeof resolveReceiptAttribution> | null = null;
+  if (r.inbound_message_id && r.attributed_by !== "manual") {
+    try {
+      let accounts: ReceiptAccountMatch[] = [];
+      if (extraction.accountNumber) {
+        accounts = await selectAllRows<ReceiptAccountMatch>((from, to) => sb.from("vendor_location_accounts")
+          .select("vendor_id, location_id, account_number, vendors!inner(active), locations!inner(active)")
+          .eq("account_number", extraction.accountNumber).eq("active", true).eq("vendors.active", true).eq("locations.active", true)
+          .order("vendor_id").range(from, to).returns<ReceiptAccountMatch[]>());
+      }
+      attribution = resolveReceiptAttribution({ addressLocationId: r.location_id,
+        senderVendorId: r.vendor_guess_id, accountNumber: extraction.accountNumber, accounts });
+    } catch {
+      return await writeFailed(sb, r.id, "attribution_lookup_failed", notes, onWritten);
+    }
+  }
+
   // GUARDED parsed write (silent-UPDATE + rowcount law): flip only while still 'unparsed'.
   // A raced parse (cron × Parse-now) that lost → count 0 → ok:false, no PO effects, no audit.
   const parsedJson = { extraction, notes, model, parsed_at: new Date().toISOString() };
-  const { error: uErr, count } = await sb
+  let parsedWrite = sb
     .from("email_receipts")
-    .update({ parse_state: "parsed", parsed_json: parsedJson, doc_kind: extraction.docKind }, { count: "exact" })
+    .update({ parse_state: "parsed", parsed_json: parsedJson, doc_kind: extraction.docKind,
+      ...(attribution ? { location_id: attribution.locationId, vendor_guess_id: attribution.vendorId,
+        attributed_by: attribution.attributedBy, attribution_conflict: attribution.attributionConflict,
+        account_location_id: attribution.accountLocationId, account_vendor_id: attribution.accountVendorId } : {}),
+    }, { count: "exact" })
     .eq("id", r.id)
     .eq("parse_state", "unparsed");
+  // A manual claim made while the model was running takes precedence over inference.
+  if (attribution) parsedWrite = r.attributed_by == null
+    ? parsedWrite.is("attributed_by", null)
+    : parsedWrite.eq("attributed_by", r.attributed_by);
+  const { error: uErr, count } = await parsedWrite;
   if (uErr) {
     console.error(`[receipt-parse] parsed write failed for receipt=${r.id}:`, uErr.message);
     // The write itself errored (not a race). Record the failure so the row is retryable.
@@ -192,6 +226,11 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritt
     ipAddress: null, userAgent: null,
   });
 
+  // Conflicting and wholly unattributed routed receipts need a human before any PO effect.
+  if (attribution && (attribution.attributionConflict || !attribution.locationId)) {
+    return { ok: true, docKind: extraction.docKind };
+  }
+
   // POST-PARSE PO MATCH + EFFECTS (Task 4 exports). FAIL-OPEN: the parse result is already
   // durable; a match/effects failure must not turn a good parse into a thrown error. If the
   // receipt already has a linked_po_id (matched at ingest), SKIP the match write but ALWAYS
@@ -200,14 +239,15 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritt
   // ride the body text so extractPoCodes (inside matchReceiptToPo) can find a code the raw
   // eml/subject didn't carry.
   try {
+    if (attribution) await attemptAutoLink(r.id);
     if (!r.linked_po_id) {
       const matchBody = assembleMatchBody(extraction, textFallbackForMatch);
       const match = await matchReceiptToPo(sb, {
         id: r.id,
         subject: r.subject,
         body: matchBody,
-        vendorGuessId: r.vendor_guess_id,
-        locationId: r.location_id,
+        vendorGuessId: attribution?.vendorId ?? r.vendor_guess_id,
+        locationId: attribution?.locationId ?? r.location_id,
         receivedAt: r.received_at,
       });
       await applyReceiptPoEffects(sb, r.id, match?.matchedBy ?? null);
@@ -418,11 +458,12 @@ const DOCUMENT_LEAD_IN =
 const EXTRACTION_INSTRUCTION =
   'Return ONLY a JSON object with this shape (omit any field you cannot find — never guess):\n' +
   '{"docKind": "confirmation" | "invoice" | "statement" | "other", "poCode": string, ' +
-  '"invoiceNumber": string, "shipTo": string, "vendorName": string, "totalCents": integer, ' +
+  '"invoiceNumber": string, "shipTo": string, "vendorName": string, "accountNumber": string, "totalCents": integer, ' +
   '"lines": [{"description": string, "qty": number, "unit": string, "unitPriceCents": integer, ' +
   '"extendedCents": integer}]}\n' +
   "Rules: all monetary amounts are INTEGER CENTS (e.g. $12.50 -> 1250). docKind is your best " +
-  "classification of the whole document. NEVER invent a poCode — include it ONLY if a purchase-" +
+  "classification of the whole document. accountNumber is the customer/ship-to account printed " +
+  "on the invoice, never a bank or payment account; preserve leading zeros. NEVER invent a poCode — include it ONLY if a purchase-" +
   "order code is written literally in the document; transcribe it exactly. Omit unknown fields " +
   "rather than sending null or a placeholder. Output the JSON object and nothing else.";
 
@@ -449,6 +490,8 @@ function parseAndValidate(raw: string): Extraction | null {
   if (shipTo) out.shipTo = shipTo;
   const vendorName = cleanString(src.vendorName);
   if (vendorName) out.vendorName = vendorName;
+  const accountNumber = cleanString(src.accountNumber);
+  if (accountNumber) out.accountNumber = accountNumber;
   const totalCents = cleanCents(src.totalCents);
   if (totalCents != null) out.totalCents = totalCents;
 

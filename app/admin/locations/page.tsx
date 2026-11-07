@@ -1,22 +1,17 @@
-import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { canManageInboundAliases } from "@/lib/admin/inbound-settings-shared";
+import { loadInboundAliases, loadInboundShops } from "@/lib/admin/inbound-settings";
+import { InboundAliasesPanel } from "@/components/admin/InboundSettings";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminLocationsPage() {
   const auth = await requireSessionFromHeaders("/admin/locations");
-  const lang = auth.user.language;
-  return (
-    <PlaceholderCard
-      showBackLink={false}
-      title={serverT(lang, "admin.locations.ph.title")}
-      description={serverT(lang, "admin.locations.ph.description")}
-      features={[
-        serverT(lang, "admin.locations.ph.feature.crud"),
-        serverT(lang, "admin.locations.ph.feature.type"),
-        serverT(lang, "admin.locations.ph.feature.autoassign"),
-        serverT(lang, "admin.locations.ph.feature.stepup"),
-      ]}
-      shippingIn={serverT(lang, "admin.locations.ph.shipping")}
-    />
-  );
+  if (!canManageInboundAliases(auth.user.role)) redirect("/dashboard");
+  const [shops, aliases] = await Promise.all([loadInboundShops(auth), loadInboundAliases(auth)]);
+  return <div>
+    <PageHeader title={serverT(auth.user.language, "admin.inbound.locations_title")} subtitle={serverT(auth.user.language, "admin.inbound.locations_note")} />
+    <InboundAliasesPanel shops={shops} aliases={aliases} />
+  </div>;
 }

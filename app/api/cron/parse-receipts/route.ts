@@ -1,8 +1,6 @@
-// GET periodic receipt-parse sweep (Vercel Cron; DAILY at 9:45 ET-ish — Hobby plan allows
-// daily crons only, and sub-daily parse latency isn't needed while the email leg is
-// dormant: the KH+ "Parse now" affordance covers on-demand. When the account is Pro AND
-// inbound volume is real, tighten the vercel.json schedule (e.g. */30) — the sweep is
-// already batch-capped + idempotent, so cadence is purely a config choice. Sweeps the OLDEST
+// GET receipt fetch/parse sweep every 15 minutes, all day. The existing cron
+// handles both retryable inbound fetches and the oldest unparsed inbound receipts.
+// Fetch and parse batches are bounded by the route budget. Sweeps the OLDEST
 // unparsed INBOUND receipts (parse_state='unparsed' AND source='inbound') and runs the
 // LLM parse engine (lib/receipt-parse.ts) on each — classifying doc_kind, extracting
 // fields into parsed_json, then re-running the Task-4 PO match+effects so a parsed
@@ -11,20 +9,17 @@
 //
 // Auth: x-cron-secret header (or Vercel Cron's Authorization: Bearer CRON_SECRET) must
 // match env CRON_SECRET via constant-time compare — the EXACT prune-sessions pattern.
-// DORMANT-SAFE (spec §6): 503 no-op when CRON_SECRET is unset, AND 503 {reason:"parse_dormant"}
-// when ANTHROPIC_API_KEY is unset (the parse leg wakes only once the key exists). Per-row
-// try/catch (a throw on one row never aborts the sweep); fail-open cron.success/cron.failure
-// heartbeat audit so the admin hub can show "last run OK" (mirrors toast-sales-pull).
+// DORMANT-SAFE: no work without CRON_SECRET. With that secret, work is enabled
+// by either ANTHROPIC_API_KEY (parse) or both inbound Resend keys (fetch).
+// Successful fetch-only runs still emit the existing heartbeat and sibling watch.
 import { timingSafeEqual } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { runParseReceipts } from "@/lib/parse-receipts-run";
-import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
+import { watchSiblings } from "@/lib/job-watch-run";
 
-// Runtime ceiling: worst case is 10 sequential vision calls, each bounded by the
-// 60s per-call AbortSignal in lib/receipt-parse.ts. A sweep cut off at the ceiling is
-// harmless — untouched rows stay 'unparsed' and the next half-hour run picks them up.
+// Leave untouched rows for the next 15-minute run when the work budget is spent.
 export const maxDuration = 300;
 
 /** Truncate a caught error message so a giant stack never bloats the audit row. */
@@ -47,9 +42,8 @@ function secretOk(req: NextRequest): boolean {
 export async function GET(req: NextRequest) {
   if (!process.env.CRON_SECRET) return jsonError(503, "cron_disabled");
   if (!secretOk(req)) return jsonError(401, "unauthorized");
-  // Parse leg is dormant until the Anthropic key exists (spec §6 dormancy matrix). 503 so the
-  // platform doesn't treat a config gap as a failure, and no rows are touched.
-  if (!process.env.ANTHROPIC_API_KEY) return jsonError(503, "parse_dormant");
+  // Parsing and fetching have independent configuration; only both dormant is a no-op.
+  if (!process.env.ANTHROPIC_API_KEY && !(process.env.RESEND_INBOUND_SECRET && process.env.RESEND_API_KEY)) return jsonError(503, "parse_dormant");
 
   try {
     const result = await runParseReceipts();

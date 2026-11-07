@@ -17,6 +17,10 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/ordering-sources", () => ({ loadStoreVendorIds: async () => new Set() }));
 vi.mock("@/lib/admin/vendors", () => ({ getVendor: async () => ({ id: "vendor", name: "Vendor" }), loadCategories: async () => [], loadOrderTypes: async () => [], loadVendorCutoffs: async () => [] }));
+// This test isolates optional order-guide owner labels; inbound settings have their
+// own required reads and dedicated UI/library tests.
+vi.mock("@/lib/admin/inbound-settings", () => ({ loadInboundShops: async () => [], loadVendorShopAccounts: async () => [] }));
+vi.mock("@/components/admin/InboundSettings", () => ({ VendorAccountsPanel: () => null }));
 vi.mock("@/lib/vendor-rhythm", () => ({ loadVendorRhythmPairs: async () => [], loadVendorRhythmSkips: async () => [], rhythmSchemaReady: async () => false }));
 vi.mock("@/lib/credits", () => ({ loadVendorOutstandingCredits: async () => null }));
 vi.mock("@/lib/admin/skus", () => ({ loadSkus: async () => [], loadPackFormats: async () => [], loadMeasureUnits: async () => [], loadLocationSkuSettings: async () => new Map(), parsColumnsReady: async () => false }));

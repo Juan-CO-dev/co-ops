@@ -103,7 +103,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // package). GM views (7); level 9+ manages (lib/report-recipients.ts).
   { id: "report-recipients",   i18nKey: "admin.section.report-recipients",   href: "/admin/report-recipients",   minLevel: 7 },
   { id: "pars",                i18nKey: "admin.section.pars",               href: "/admin/pars",                minLevel: 6, onlyRoles: PARS_VIEW_ROLES },
-  { id: "locations",           i18nKey: "admin.section.locations",           href: "/admin/locations",           minLevel: 9, comingSoon: true },
+  { id: "locations",           i18nKey: "admin.section.locations",           href: "/admin/locations",           minLevel: 8, onlyRoles: ["moo", "owner", "cgs"] },
   { id: "audit",               i18nKey: "admin.section.audit",               href: "/admin/audit",               minLevel: 9, comingSoon: true },
 ];
 

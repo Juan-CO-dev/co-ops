@@ -30,6 +30,7 @@ function findPanel(tree: unknown): Node | undefined {
 function setup(role = "gm", legacy = false) {
   vi.mocked(requireSessionFromHeaders).mockResolvedValue({ user: { id: "user", role, language: "en" }, level: role === "gm" ? 7 : 6, locations: ["a"] } as unknown as Awaited<ReturnType<typeof requireSessionFromHeaders>>);
   const db = createFakeDb({
+    vendor_location_accounts: [],
     locations: [{ id: "a", name: "North", active: true }, { id: "b", name: "South", active: false }],
     vendor_order_guides: [{ id: "g", vendor_id: "v", name: "Guide", updated_at: "token" }],
     order_guide_sections: [{ id: "s", guide_id: "g", name: "Section", position: 1 }],

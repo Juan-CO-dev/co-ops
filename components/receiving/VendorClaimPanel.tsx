@@ -31,6 +31,7 @@
  * Override affordance. Both are mirrored from lib/email-receipts.ts (server-only module)
  * — the API re-checks; these inlined thresholds are convenience-only. Keep in sync.
  */
+import { PasswordModal } from "@/components/auth/PasswordModal";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -212,6 +213,21 @@ function UnlinkedReceiptRow({
   t: (k: TranslationKey, p?: Record<string, string | number>) => string;
   router: ReturnType<typeof useRouter>;
 }) {
+  const [stepUpOpen, setStepUpOpen] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const move = async () => {
+    setMoving(true);
+    setAttachErr(null);
+    try {
+      const res = await fetch(API, { method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "move", receiptId: r.id }) });
+      if (res.ok) { router.refresh(); return; }
+      const result = await res.json().catch(() => ({})) as { code?: string };
+      if (result.code === "step_up_required" || result.code === "step_up_stale") { setStepUpOpen(true); return; }
+      setAttachErr(t(("receiving.claim.error." + (result.code ?? "generic")) as TranslationKey));
+    } catch { setAttachErr(t("receiving.claim.error.generic")); }
+    finally { setMoving(false); }
+  };
   const [picking, setPicking] = useState(false);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [candidates, setCandidates] = useState<PoAttachCandidate[] | null>(null);
@@ -337,6 +353,20 @@ function UnlinkedReceiptRow({
           {t("receiving.claim.link_action")}
         </button>
       </div>
+
+      <p className="text-[11px] text-co-text-dim">
+        {t(("receiving.claim.attribution." + (r.attributedBy ?? "none")) as TranslationKey)}
+      </p>
+      {r.attributionConflict ? (
+        <div role="alert" className="text-xs text-co-cta-text">
+          <p>{t("receiving.claim.attribution_conflict")}</p>
+          <p>{t("receiving.claim.conflict_shops", { address: r.addressLocationName ?? "?", account: r.accountLocationName ?? "?" })}</p>
+          {r.canMove && r.accountLocationName ? <button type="button" className="min-h-[44px] px-3 font-bold underline" disabled={moving || busy} onClick={() => void move()}>
+            {t("receiving.claim.move_to", { shop: r.accountLocationName })}
+          </button> : null}
+          <PasswordModal open={stepUpOpen} onConfirm={() => { setStepUpOpen(false); void move(); }} onCancel={() => setStepUpOpen(false)} />
+        </div>
+      ) : null}
 
       {/* Parse-now (V2 §4, KH+) — offered while the receipt hasn't successfully parsed
           (unparsed OR failed → retryable). Runs the LLM extraction on demand (the cron only
@@ -711,6 +741,9 @@ export function VendorClaimPanel({
             idBase={`claim-link-existing-${deliveryId}`}
             title={t("receiving.claim.link_existing_title")}
             count={t("receiving.claim.link_existing_count", { n: unlinked?.length ?? 0 })}
+            badge={unlinked?.some((r) => r.attributionConflict) ? (
+              <AlertPill tone="warn">{t("receiving.claim.attribution_conflict_count", { n: unlinked.filter((r) => r.attributionConflict).length })}</AlertPill>
+            ) : undefined}
           >
             {!unlinked || unlinked.length === 0 ? (
               <p className="text-[11px] italic text-co-text-muted">{t("receiving.claim.link_existing_empty")}</p>

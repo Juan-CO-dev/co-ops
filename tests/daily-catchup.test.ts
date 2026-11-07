@@ -40,6 +40,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   claims.clear();
   vi.stubEnv("ANTHROPIC_API_KEY", "test-only");
+  vi.stubEnv("RESEND_INBOUND_SECRET", "");
+  vi.stubEnv("RESEND_API_KEY", "");
   lookup.mockResolvedValue({ data: null, error: null });
   rpc.mockImplementation(async (_name: string, args: { p_bucket_key: string }) => {
     const won = !claims.has(args.p_bucket_key);
@@ -64,7 +66,7 @@ beforeEach(() => {
     elapsed_completed: 0, elapsed_failed: 0, elapsed_error: null,
   } });
   vi.mocked(runParseReceipts).mockResolvedValue({ dormant: false, swept: 0, parsed: 0, failed: 0,
-    metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0 } });
+    metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0, inbound: { swept: 0, failed: 0 } } });
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -196,4 +198,20 @@ it("prune failure preserves the independent scrub success heartbeat", async () =
   await catchUpDailyJobs({ now });
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success", metadata: expect.objectContaining({ job: "vault-scrub", scrubbed: 4 }) }));
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.failure", metadata: expect.objectContaining({ job: "prune-sessions" }) }));
+});
+
+
+it("fetch-only catch-up runs with both inbound keys and no parse key", async () => {
+  vi.stubEnv("ANTHROPIC_API_KEY", "");
+  vi.stubEnv("RESEND_INBOUND_SECRET", "test-inbound");
+  vi.stubEnv("RESEND_API_KEY", "test-provider");
+  expect((await catchUpDailyJobs({ now })).ran).toContain("parse-receipts");
+  expect(runParseReceipts).toHaveBeenCalledOnce();
+});
+
+it.each(["RESEND_INBOUND_SECRET", "RESEND_API_KEY"])("a lone %s does not wake catch-up", async (key) => {
+  vi.stubEnv("ANTHROPIC_API_KEY", "");
+  vi.stubEnv(key, "test-only");
+  expect((await catchUpDailyJobs({ now })).skipped).toContain("parse-receipts");
+  expect(runParseReceipts).not.toHaveBeenCalled();
 });

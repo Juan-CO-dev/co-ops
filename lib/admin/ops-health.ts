@@ -15,6 +15,45 @@
  * never take down the admin hub.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import type { AuthContext } from "@/lib/session";
+import { audit } from "@/lib/audit";
+import { canManageInboundAliases } from "./inbound-settings-shared";
+import { InboundSettingsError } from "./inbound-settings";
+import { isShopId } from "@/lib/shop-context-shared";
+
+export interface InboundHealth {
+  count: number;
+  rows: { id: string; subject: string | null; content_state: "failed" | "blocked_config" }[];
+}
+
+/** Exact global count and a bounded work list, available only to MoO+. */
+export async function loadInboundHealth(actor: AuthContext): Promise<InboundHealth> {
+  if (!canManageInboundAliases(actor.user.role)) throw new InboundSettingsError(403, "forbidden");
+  const { data, count, error } = await getServiceRoleClient().from("inbound_messages")
+    .select("id, subject, content_state", { count: "exact" }).in("content_state", ["failed", "blocked_config"])
+    .order("created_at").limit(25);
+  if (error) throw new InboundSettingsError(503, "unavailable");
+  return { count: count ?? 0, rows: data ?? [] };
+}
+
+/** Compare-and-set refuses a worker that advanced this message after our read. */
+export async function redriveInbound(actor: AuthContext, id: string) {
+  if (!canManageInboundAliases(actor.user.role)) throw new InboundSettingsError(403, "forbidden");
+  if (!isShopId(id)) throw new InboundSettingsError(400, "invalid_payload");
+  const sb = getServiceRoleClient();
+  const prior = await sb.from("inbound_messages").select("content_state, fetch_attempts, next_attempt_at")
+    .eq("id", id).in("content_state", ["failed", "blocked_config"]).maybeSingle();
+  if (prior.error) throw new InboundSettingsError(503, "unavailable");
+  if (!prior.data) throw new InboundSettingsError(409, "conflict");
+  const next = { content_state: "pending", fetch_attempts: 0, next_attempt_at: new Date().toISOString(), last_error: null, lease_token: null };
+  const result = await sb.from("inbound_messages").update(next, { count: "exact" }).eq("id", id)
+    .eq("content_state", prior.data.content_state).eq("fetch_attempts", prior.data.fetch_attempts)
+    .eq("next_attempt_at", prior.data.next_attempt_at).is("lease_token", null);
+  if (result.error) throw new InboundSettingsError(503, "unavailable");
+  if (result.count !== 1) throw new InboundSettingsError(409, "conflict");
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "inbound.redrive",
+    resourceTable: "inbound_messages", resourceId: id, metadata: { before: prior.data, after: next }, ipAddress: null, userAgent: null });
+}
 import {
   cronRunFailures,
   cronRunIsDegraded,

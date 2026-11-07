@@ -33,7 +33,8 @@ export async function catchUpDailyJobs(opts?: { now?: Date }): Promise<{ ran: st
       const now = opts?.now ?? new Date();
       if (!decideCatchUp(entry, now, null)) { skipped.push(entry.job); continue; }
       // Dormant means no work and no heartbeat, just like the route's 503.
-      if (entry.job === "parse-receipts" && !process.env.ANTHROPIC_API_KEY) {
+      if (entry.job === "parse-receipts" && !process.env.ANTHROPIC_API_KEY
+        && !(process.env.RESEND_INBOUND_SECRET && process.env.RESEND_API_KEY)) {
         skipped.push(entry.job); continue;
       }
       const day = now.toISOString().slice(0, 10);
