@@ -49,7 +49,7 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply: canApplyShop, c
   const scope = view ? view.batch.location_id : shopId;
   const shopName = shops.find(shop => shop.id === scope)?.name ?? t("admin.vendor_import.unknown");
   const canApply = scope === null ? canApplyGlobal : canApplyShop;
-  const scopeText = scope === null ? t("admin.vendor_import.global_version") : t("admin.vendor_import.shop_version", { shop: shopName });
+  const scopeText = !view && scope === null && !canChooseGlobal ? t("admin.vendor_import.no_shop") : scope === null ? t("admin.vendor_import.global_version") : t("admin.vendor_import.shop_version", { shop: shopName });
   const url = `/api/admin/vendors/${vendorId}/import`;
   const contentId = `vendor-import-${vendorId}`;
   const dirty = !!view && !result && view.batch.status === "staged" && Object.keys(decisions).some(key => decisions[key] !== view.decisions[key]);

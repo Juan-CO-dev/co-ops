@@ -30,8 +30,11 @@ async function refuses(fn, code) {
 
 try {
   const globalGuard = "  if exists (select 1 from public.vendor_import_batches where id = p_batch_id and location_id is not null) then\n    raise exception 'shop_batch_requires_shop_apply';\n  end if;\n";
-  check(functionSql(migration, 'apply_vendor_import').replaceAll('\r\n', '\n').replace(globalGuard, '') ===
-    functionSql(old, 'apply_vendor_import').replaceAll('\r\n', '\n'), 'global re-emit differs from 0259 ONLY by scope guard');
+  const globalEvidenceScope = '        and b.location_id is null\n';
+  const fixedGlobal = functionSql(migration, 'apply_vendor_import').replaceAll('\r\n', '\n');
+  check(fixedGlobal.includes(globalGuard) && fixedGlobal.includes(globalEvidenceScope) &&
+    fixedGlobal.replace(globalGuard, '').replace(globalEvidenceScope, '') ===
+    functionSql(old, 'apply_vendor_import').replaceAll('\r\n', '\n'), 'global re-emit differs from 0259 ONLY by scope guard and global-only evidence scope');
   await db.exec(`
     create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
     grant usage on schema public to anon, authenticated, service_role;
@@ -77,15 +80,15 @@ try {
     return { ...head, name: 'Harness item', price_basis: 'per_case', item_number: null, pack_levels: [], measures: [],
       based_on: lane ? 'shop' : 'global', price_lane_id: lane?.id ?? null, pack_location_id: null };
   }
-  async function stage(location = shop, before = null, after = null, source = null) {
+  async function stage(location = shop, before = null, after = null, source = null, evidenceDate = '2026-11-05') {
     const number = ++batchNumber;
     before ??= await snapshot(location);
     after ??= { unit_price: 12, effective_date: '2026-11-05' };
     const batch = { vendor_id: vendor, location_id: location, adapter: 'harness', adapter_version: '1',
-      source_name: 'synthetic.csv', source_sha256: source ?? `synthetic-${number}`, exported_at: '2026-11-05', row_count: 1,
+      source_name: 'synthetic.csv', source_sha256: source ?? `synthetic-${number}`, exported_at: evidenceDate, row_count: 1,
       report: { before_state: { '1:price': before } }, created_by: actor };
     const observation = { source_row: 1, kind: 'price', reason: 'price_changed', match: { rule: 'name_exact', sku_id: sku, candidates: [] },
-      row: { description: 'Harness item', exported_at: '2026-11-05' }, proposed: after };
+      row: { description: 'Harness item', exported_at: evidenceDate }, proposed: after };
     const result = (await one('select stage_vendor_import($1::jsonb,$2::jsonb) as r', [JSON.stringify(batch), JSON.stringify([observation])])).r;
     return { id: result.batch_id, created: result.created, digest: number.toString(16).padStart(64, '0'),
       ops: [{ action: 'sku.price_supersede', sku_id: sku, source_row: 1, before, after }] };
@@ -142,6 +145,31 @@ try {
   await refuses(() => apply(global), 'global_batch_requires_global_apply');
   const globalApplied = await apply(global, 'apply_vendor_import');
   check((await one('select location_id from vendor_price_history where id=$1', [globalApplied.ops[0].new_ids[0]])).location_id === null, 'global writer retains global behavior');
+  // Newer SHOP evidence must not poison an older GLOBAL import on the same SKU.
+  // The same success assertion fails with just the first (shop-batch) guard.
+  await db.exec('begin');
+  const newerShop = await stage(shop, null, { unit_price: 14, effective_date: '2026-11-07' }, null, '2026-11-07');
+  await apply(newerShop);
+  const olderGlobal = await stage(null, null, { unit_price: 15, effective_date: '2026-11-06' }, null, '2026-11-06');
+  async function assertGlobalEvidenceIsolated() {
+    let result, error;
+    try { result = await apply(olderGlobal, 'apply_vendor_import'); } catch (e) { error = e; }
+    assert.equal(error, undefined, 'global apply succeeds despite newer shop evidence');
+    const written = await one('select location_id,price_lane_id,unit_price::float8 as unit_price from vendor_price_history where id=$1', [result.ops[0].new_ids[0]]);
+    assert.deepEqual(written, { location_id: null, price_lane_id: null, unit_price: 15 });
+  }
+  await db.exec('reset role; savepoint evidence_variant');
+  await db.exec(fixedGlobal.replace(globalEvidenceScope, ''));
+  await db.exec('set local role service_role');
+  let evidenceDetected = false;
+  try { await assertGlobalEvidenceIsolated(); }
+  catch (error) { evidenceDetected = error.code === 'ERR_ASSERTION' && error.actual?.message.includes('stale_before_state'); }
+  check(evidenceDetected, 'BROKEN VARIANT: global success assertion FAILS against single-guard body (stale_before_state)');
+  await db.exec('rollback to evidence_variant; set role service_role');
+  await assertGlobalEvidenceIsolated();
+  check(true, 'FIXED VARIANT: same global success assertion PASSES and writes global price');
+  await db.exec('rollback; set role service_role');
+
   const pack = await stage();
   await refuses(() => apply(pack, 'apply_vendor_import_shop', { ops: [{ ...pack.ops[0], action: 'sku.pack_level_supersede' }] }), 'unsupported_op');
   check((await one('select count(*)::int as n from vendor_import_applies where batch_id=$1', [pack.id])).n === 0, 'pack refusal rolls claim back');
@@ -172,14 +200,24 @@ try {
   const laneAppears = await stage();
   await one("select save_sku_shop_price($1,$2,22,'2026-11-07',$3,null,null)", [sku, shop, actor]);
   await refuses(() => apply(laneAppears), 'stale_before_state');
+  const inactiveShopBatch = await stage();
+  await db.query('update locations set active=false where id=$1', [shop]);
+  await refuses(() => apply(inactiveShopBatch), 'forbidden');
+  await db.query('update locations set active=true where id=$1', [shop]);
+  await db.query('update users set active=false where id=$1', [actor]);
+  await refuses(() => apply(inactiveShopBatch), 'forbidden');
+  await db.query('update users set active=true where id=$1', [actor]);
   const scopeSource = 'same-synthetic-file';
   const ownScope = await stage(shop, null, null, scopeSource);
   const globalScope = await stage(null, null, null, scopeSource);
   const sameScope = await stage(shop, null, null, scopeSource);
-  check(ownScope.id !== globalScope.id && sameScope.id === ownScope.id && !sameScope.created, 'staging identity separates shops/global and deduplicates same scope');
+  check(ownScope.id !== globalScope.id, 'same file staged globally and for a shop has distinct batches');
+  check(sameScope.id === ownScope.id && !sameScope.created, 'same shop file deduplicates with created:false');
+  const sameGlobal = await stage(null, null, null, scopeSource);
+  check(sameGlobal.id === globalScope.id && !sameGlobal.created, 'same GLOBAL file deduplicates with created:false (NULLS NOT DISTINCT)');
   await db.query("update vendor_import_batches set status='superseded' where id=$1", [ownScope.id]);
   check((await stage(shop, null, null, scopeSource)).id !== ownScope.id, 'superseded batch permits fresh staging');
-  console.log(`PASS 0293: ${checks} checks, including broken-variant proof; in-memory only.`);
+  console.log(`PASS 0293: ${checks} checks, including both broken-variant proofs; in-memory only.`);
 } finally {
   await db.close();
 }

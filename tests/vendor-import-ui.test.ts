@@ -17,13 +17,19 @@ const view: ImportBatchView = {
     report: { counts: { needs_person: 1 }, reasons: {}, needs_person: [], before_state: {}, ignored_rows: 0 }, status: "staged", created_by: "actor", created_at: "" },
   observations: [], decisions: {}, beforeState: {}, ops: [], expectedDigest: "",
 };
-const props = { vendorId: "vendor", vendorName: "Supplier", canStage: true, canApply: true, canApplyGlobal: false, canChooseGlobal: false, shops: [{ id: shop, name: "North" }], initialShopId: shop };
+const props = { vendorId: "vendor", vendorName: "Supplier", canStage: true, canApply: true, canApplyGlobal: false, canChooseGlobal: false, shops: [{ id: shop, name: "North" }], initialShopId: shop as string | null };
 const render = (language: "en" | "es" = "en", overrides: Partial<typeof props> = {}) => {
   h.cursor = 0;
   return renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: language, children: jsx(VendorImportPanel, { ...props, ...overrides }) }));
 };
 beforeEach(() => { h.expanded = false; h.view = null; h.cursor = 0; });
 describe("vendor import scope and disclosure", () => {
+  it.each(["en", "es"] as const)("zero-shop GM does not claim a global import in %s", language => {
+    const html = render(language, { shops: [], initialShopId: null, canStage: false });
+    expect(html).toContain(language === "en" ? "No shop is available for importing prices." : "No tienes una tienda disponible para importar precios.");
+    expect(html).not.toContain("Prices land in the global default");
+    expect(html).not.toContain("Los precios se guardan en el predeterminado global");
+  });
   it.each(["en", "es"] as const)("keeps shop identity visible and upload collapsed in %s", language => {
     const html = render(language);
     expect(html).toContain("North");

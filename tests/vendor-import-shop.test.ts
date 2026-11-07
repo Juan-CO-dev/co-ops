@@ -13,13 +13,19 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({
     state.reads.push(table);
     const filters: Array<(r: Record<string, unknown>) => boolean> = [];
     const result = () => (state.tables[table] ?? []).filter(r => filters.every(f => f(r as Record<string, unknown>)));
+    let update: Record<string, unknown> | undefined;
     const q = {
+      update: (values: Record<string, unknown>) => { update = values; return q; },
       select: () => q, order: () => q, range: () => q, or: () => q,
       eq: (k: string, v: unknown) => { filters.push(r => r[k] === v); return q; },
       is: (k: string, v: unknown) => { filters.push(r => (r[k] ?? null) === v); return q; },
       in: (k: string, v: unknown[]) => { filters.push(r => v.includes(r[k])); return q; },
       maybeSingle: async () => ({ data: result()[0] ?? null, error: null }),
-      then: (resolve: (x: unknown) => unknown) => Promise.resolve({ data: result(), error: null }).then(resolve),
+      then: (resolve: (x: unknown) => unknown) => {
+        const rows = result();
+        if (update) for (const row of rows) Object.assign(row as object, update);
+        return Promise.resolve({ data: rows, error: null }).then(resolve);
+      },
     }; return q;
   },
   rpc: (...args: unknown[]) => state.rpc(...args),
@@ -83,6 +89,45 @@ describe("vendor import scope authorization", () => {
   });
 });
 describe("shop staging snapshots", () => {
+  it.each(["gm", "moo"] as const)("refuses a stage RPC that drops the shop scope for %s", async role => {
+    const normalStage = state.rpc.getMockImplementation()!;
+    state.rpc.mockImplementation(async (...args: unknown[]) => {
+      const result = await normalStage(...args);
+      (state.tables.vendor_import_batches![0] as Record<string, unknown>).location_id = null;
+      return result;
+    });
+    await expect(stageVendorImport(actor(role), vendor, { name: "prices.csv", text: JSON.stringify([row()]) }, shop))
+      .rejects.toMatchObject({ status: 503, code: "import_unavailable" });
+    expect(audit).not.toHaveBeenCalled();
+    expect(state.reads).not.toContain("vendor_import_observations");
+  });
+  it("refuses a persisted shop scope when global was requested", async () => {
+    const normalStage = state.rpc.getMockImplementation()!;
+    state.rpc.mockImplementation(async (...args: unknown[]) => {
+      const result = await normalStage(...args);
+      (state.tables.vendor_import_batches![0] as Record<string, unknown>).location_id = shop;
+      return result;
+    });
+    await expect(stageVendorImport(actor("owner"), vendor, { name: "prices.csv", text: JSON.stringify([row()]) }, null))
+      .rejects.toMatchObject({ status: 503, code: "import_unavailable" });
+    expect(audit).not.toHaveBeenCalled();
+  });
+  it.each([null, shop])("foreign_sku supersedes scope %s and allows fresh staging", async location => {
+    state.tables.vendor_items = state.tables.vendor_items!.slice(0, 1);
+    const who = actor("owner");
+    const file = { name: "prices.csv", text: JSON.stringify([row()]) };
+    const normalStage = state.rpc.getMockImplementation()!;
+    const view = await stageVendorImport(who, vendor, file, location);
+    state.rpc.mockResolvedValueOnce({ data: null, error: { message: "foreign_sku" } });
+    await expect(applyVendorImport(who, vendor, batch, view.decisions, view.expectedDigest))
+      .rejects.toMatchObject({ status: 409, code: "stale_before_state" });
+    expect(state.rpc).toHaveBeenLastCalledWith(location === null ? "apply_vendor_import" : "apply_vendor_import_shop", expect.anything());
+    expect(state.tables.vendor_import_batches![0]).toMatchObject({ status: "superseded" });
+    state.rpc.mockImplementation(normalStage);
+    await stageVendorImport(who, vendor, file, location);
+    expect(state.rpc).toHaveBeenCalledTimes(3);
+    expect(state.rpc).toHaveBeenLastCalledWith("stage_vendor_import", expect.anything());
+  });
   it("excludes another shop's same-number SKU and explicitly snapshots global fallback", async () => {
     const view = await stage();
     expect(view.ops).toHaveLength(1);

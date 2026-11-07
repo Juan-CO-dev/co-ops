@@ -4,6 +4,8 @@
 -- Scope is fixed at staging; shop batches cannot enter the global writer.
 -- BACKWARD COMPATIBLE: old app code never creates shop batches. The stage signature
 -- and NULL-scope behavior remain unchanged; scope joins the staged-source identity.
+-- ROLLOUT: apply 0293 to prod BEFORE the app merges.
+-- Global re-emit: 0259 + the shop-batch guard + global-only evidence scope.
 -- Requires 0211 and 0259. No data backfill; no existing price or pack is modified.
 -- VERIFY (CC, after application):
 -- select indexdef from pg_indexes where indexname = 'vendor_import_batches_staged_source_uidx';
@@ -11,7 +13,11 @@
 -- where specific_schema = 'public' and routine_name in
 -- ('stage_vendor_import','apply_vendor_import','apply_vendor_import_shop');
 -- Expect service_role EXECUTE only (besides owner); exercise scripts/sql-harness-0293.mjs locally.
--- ROLLBACK: roll the app back first; keep this additive schema and the global scope
+-- ROLLBACK: before restoring the old app, supersede staged shop batches:
+-- update public.vendor_import_batches set status = 'superseded'
+-- where status = 'staged' and location_id is not null;
+-- Otherwise the old app's unscoped existing-batch .maybeSingle() errors when the
+-- same file has both a global and a shop batch staged. Keep this additive schema and the global scope
 -- guard so historical shop batches remain isolated. Revoke service_role EXECUTE on
 -- apply_vendor_import_shop to disable shop apply. Do NOT restore the NULL-only CHECK
 -- or old unique index after shop batches exist, and never delete the import ledger.
@@ -50,7 +56,7 @@ begin
   return jsonb_build_object('batch_id',v_id,'created',true);
 end $$;
 
--- 0259 re-emit: ONLY the shop-scope refusal is added.
+-- 0259 re-emit: 0259 + the shop-batch guard + global-only evidence scope.
 create or replace function public.apply_vendor_import(p_batch_id uuid, p_plan_digest text, p_actor uuid, p_ops jsonb)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
@@ -115,6 +121,7 @@ begin
       select 1 from public.vendor_import_observations prior
       join public.vendor_import_batches b on b.id = prior.batch_id
       where b.vendor_id = v_batch.vendor_id and b.status = 'applied' and prior.decision = 'accept'
+        and b.location_id is null
         and prior.sku_id = v_sku_id and prior.kind in ('price','pack')
         and (case when prior.payload ? 'receipt_doc' then prior.payload->>'last_purchase_date'
           else prior.payload->>'exported_at' end)::date >

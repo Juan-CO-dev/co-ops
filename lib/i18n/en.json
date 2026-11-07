@@ -5231,6 +5231,7 @@
   "admin.skus.data.errand.no_order_unit": "Read the invoice and enter the unit you order.",
   "admin.skus.data.errand.recipe_unresolved": "Fix the recipe line that can't resolve: {recipes} (e.g. measure the Jus ladle and replace '1 ladle' with ounces)",
   "admin.vendor_import.scope": "Apply prices to",
+  "admin.vendor_import.no_shop": "No shop is available for importing prices.",
   "admin.vendor_import.global_default": "Global default",
   "admin.vendor_import.global_version": "Prices land in the global default.",
   "admin.vendor_import.shop_version": "Prices land in {shop}’s version.",

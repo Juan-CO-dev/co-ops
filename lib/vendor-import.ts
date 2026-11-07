@@ -252,7 +252,7 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   check(error);
   const batchId = (staged as { batch_id?: unknown } | null)?.batch_id;
   if (typeof batchId !== "string") throw new VendorImportError(500, "internal_error");
-  const view = await loadImportBatch(actor, vendorId, batchId);
+  const view = await loadImportBatch(actor, vendorId, batchId, shopId);
   if (!(staged as { created: boolean }).created) return view;
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "vendor.import_staged",
     resourceTable: "vendor_import_batches", resourceId: batchId, metadata: { actor_context: "vendor_import",
@@ -260,7 +260,7 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   return view;
 }
 
-export async function loadImportBatch(actor: AuthContext, vendorId: string, batchId: string): Promise<ImportBatchView> {
+export async function loadImportBatch(actor: AuthContext, vendorId: string, batchId: string, expectedScope?: string | null): Promise<ImportBatchView> {
   requireLevel(actor, VENDOR_IMPORT_STAGE_MIN); id(vendorId); id(batchId);
   await loadVendor(vendorId, true);
   const sb = getServiceRoleClient();
@@ -268,6 +268,9 @@ export async function loadImportBatch(actor: AuthContext, vendorId: string, batc
     .eq("vendor_id", vendorId).maybeSingle<BatchRow>();
   check(error);
   if (!batch) throw new VendorImportError(404, "batch_not_found");
+  // An older stage RPC can silently discard the requested shop. Fail closed
+  // before scope authorization or hydration, including for a GM requesting a shop.
+  if (expectedScope !== undefined && batch.location_id !== expectedScope) throw new VendorImportError(503, "import_unavailable");
   requireScope(actor, batch.location_id);
   await requireActiveShop(batch.location_id);
   const stored = await selectAllRows<{ source_row: number; kind: Observation["kind"]; reason: string;
@@ -303,7 +306,7 @@ export async function applyVendorImport(actor: AuthContext, vendorId: string, ba
     p_batch_id: batchId, p_plan_digest: expectedDigest, p_actor: actor.user.id, p_ops: ops,
   });
   if (error) {
-    if (error.message.includes("stale_before_state")) {
+    if (error.message.includes("stale_before_state") || error.message.includes("foreign_sku")) {
       // The catalog moved under this batch: retire it so the same file can be
       // staged again against the live catalog (0211 keys uniqueness on STAGED only).
       await getServiceRoleClient().from("vendor_import_batches").update({ status: "superseded" })
@@ -315,7 +318,6 @@ export async function applyVendorImport(actor: AuthContext, vendorId: string, ba
     if (error.message.includes("batch_not_found")) throw new VendorImportError(404, "batch_not_found");
     if (error.message.includes("vendor_not_found")) throw new VendorImportError(404, "vendor_not_found");
     if (["unsupported_op", "shop_batch_requires_shop_apply", "global_batch_requires_global_apply"].some(code => error.message.includes(code))) throw new VendorImportError(400, "invalid_payload");
-    if (error.message.includes("foreign_sku")) throw new VendorImportError(409, "stale_before_state");
     if (error.message.includes("forbidden")) throw new VendorImportError(403, "forbidden");
     if (error.message.includes("invalid_chain")) throw new VendorImportError(409, "invalid_chain");
     if (error.message.includes("invalid_price")) throw new VendorImportError(409, "invalid_price");

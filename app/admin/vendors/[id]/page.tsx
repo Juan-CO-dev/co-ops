@@ -11,6 +11,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShopId } from "@/lib/shop-context";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -180,8 +181,8 @@ export default async function AdminVendorDetailPage({
   // Catalog Phase 2b (sim QA): the shop every item-page link here lands on — THE one resolver over
   // the shops this actor may write a version for (a membership, or MoO+ any active shop — D2).
   const importShops = skuLocations.filter(shop => catalogShopAllowed(auth, shop.id));
-  const requested = (await searchParams)?.location;
-  const explicit = typeof requested === "string" ? requested : undefined;
+  const sp = await searchParams ?? {};
+  const explicit = shopParamFor(`/admin/vendors/${id}`, searchParamValues(sp));
   const itemShopId = await resolveShopId(importShops.map(shop => shop.id), explicit === "global" ? undefined : explicit);
   const importScope = level >= 8 && (!explicit || explicit === "global") ? null : itemShopId;
 
