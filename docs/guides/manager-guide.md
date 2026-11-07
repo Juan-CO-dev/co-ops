@@ -1554,6 +1554,63 @@ GMs and up change recipes and SKUs. Each shop can have its own version of a reci
 - **Leave it** saves nothing. **Show the** ones **you left** brings them back.
 - The recipe page has **Make it the default for everyone** too.
 
+### Vendor price files (GM)
+
+A vendor's price file can update your shop's prices. You load it on the vendor's page. It changes prices only, and only at your shop.
+
+#### 1. Open the vendor (not shown)
+
+**What to do** — Tap **Admin**, then **Vendors**. Tap the vendor. Find the **Vendor import** card.
+
+**Worth knowing**
+
+- A line on the card says where the prices go, like "Prices land in P Street’s version."
+- Do you work in two shops? Pick one under **Apply prices to**.
+- AGMs see the card, but they can't load or apply a file. The social media manager can't either.
+
+#### 2. Load the file (not shown)
+
+**What to do** — Tap **Review import**. Under **Export file**, pick the file from the vendor. Tap **Stage import**.
+
+**Worth knowing**
+
+- The app takes PFG CustomerFirst CSV, US Foods MOXe CSV, or receipts JSON. The file can be up to 2 MB.
+- Staging changes nothing yet. It shows what the file would change.
+- Load the same file again, and the same review opens.
+
+#### 3. Check each row (not shown)
+
+**What to do** — Read each row. Compare **Current** with **Proposed**. Under **Decision**, pick **Accept** or **Skip**.
+
+**Worth knowing**
+
+- Each new price starts on **Accept**. Pick **Skip** to leave one out.
+- Rows that match your prices sit under **No change**.
+- A shop file never changes a pack or an item number.
+- Is the pack in the file not like your shop's pack? That row has no price. It counts under **Needs review** and says **Review the pack hierarchy manually**. Tap **Open SKU editor**. It opens that item for your shop, at **How it arrives**. Fix the pack there.
+
+#### 4. Apply it (not shown)
+
+**What to do** — Tap **Apply to** your shop. Type your password if the app asks.
+
+**Worth knowing**
+
+- It is the same 15-minute password as recipes and prices. See **One password for 15 minutes** above.
+- The new price is your shop's own. The price for every shop does not change. The other shop is not touched.
+- The app says how many prices it applied.
+- Did a price change after you staged the file? The app says **The plan changed. Re-stage the file and review the updated report.** Tap **Re-stage file** and check the rows again.
+
+#### 5. For the Manager of Operations and up (not shown)
+
+**What to do** — Under **Apply prices to**, pick **Global default** or a shop. Then load the file.
+
+**Worth knowing**
+
+- A shop file works like the steps above, for any shop.
+- **Global default** changes the price every shop uses, unless a shop has its own. It can also change packs and item numbers.
+- Only the Owner and up can apply a global file. A Manager of Operations can stage one and read it, but can't apply it.
+- The button for a global file is **Apply accepted changes**. If you have not typed your password since you logged in, it asks for it.
+
 ### Linking people to 7shifts (GM)
 
 CO-OPS reads 7shifts: shifts, punches, time off and availability. It never changes anything in 7shifts. We never match people by name: you confirm each person.
@@ -1961,6 +2018,16 @@ Los gerentes generales y roles más altos cambian recetas y SKUs. Cada tienda pu
 8. **Novedades de recetas.** Toca **Admin** y luego **Novedades de recetas**. Lee cada nota y toca **Abrir la receta** para verla. Sale una nota cuando la tienda que copiaste cambia su receta, vuelve al predeterminado o su receta se vuelve el predeterminado, y cuando hay un predeterminado nuevo para todas las tiendas. En la página de la receta, **Tomar la actualización** te muestra qué cambia y luego copia su versión nueva. **Quedarme con la mía** deja la tuya como está; **Entendido** esconde una nota. La nota vuelve si la cambian otra vez. Si cambiaste tu copia, la nota lo dice: tomar la actualización reemplaza tus cambios. Tu comida nunca cambia si no dices que sí.
 9. **Precio, nombre y "se vende aquí".** Toca **Admin** y luego **Sándwiches**. Toca tu tienda arriba. Toca **Detalles de** el sándwich y luego **Cambia el precio, el nombre o la disponibilidad en esta tienda**. Escribe el **Precio aquí** o el **Nombre aquí**, o quita **Se vende en esta tienda**. Toca **Ver qué cambia** y luego **Guardar para** tu tienda. El enlace viejo de **Costeo del Menú** ahora abre **Sándwiches**. Cada sándwich muestra **Precio en esta tienda**, **Se vende aquí**, **Enlace de Toast**, **Costo**, **Margen** y **Margen %**. **Productos del menú que necesitan atención** cuenta los que tienen un problema; toca **Ver causas** para ver cuáles. Deja el precio vacío para usar el precio de todas las tiendas. Un sándwich que no se vende aquí sale de la lista **Se vende aquí**; en **Mostrar**, elige **Fuera del menú aquí** para verlo. Un sándwich que solo se vende en una tienda tiene un solo precio; su enlace dice **Abrir la página del sándwich**. Sin nombre en español, quienes usan la app en español ven el nombre en inglés. **Volver al menú global** vuelve a usar el precio y el nombre de todos.
 10. **Cambios de las tiendas (Director de Operaciones).** Toca **Admin** y luego **Cambios de las tiendas**. Lee lo que cambió cada tienda. Toca **Hacerlo el predeterminado** para dárselo a todas las tiendas, o **Dejarlo**. La vista previa muestra cada tienda que cambia; las que tienen su propia versión no cambian. La tienda de donde vino vuelve al predeterminado, y su comida sigue igual. En un sándwich puedes hacer de todos el precio o el nombre de una tienda. Si el nombre nuevo está solo en inglés, escribe un **Nombre en español (opcional)** antes de guardar; sin él, quienes usan la app en español ven el nombre en inglés. **Dejarlo** no guarda nada, y **Mostrar los que dejaste** los trae de vuelta. La página de la receta también tiene **Hacerla el predeterminado para todos**.
+
+#### Archivos de precios del proveedor (gerente general)
+
+El archivo de precios de un proveedor puede actualizar los precios de tu tienda. Lo cargas en la página del proveedor. Solo cambia precios, y solo en tu tienda.
+
+1. **Abre el proveedor.** Toca **Admin** y luego **Proveedores**. Toca el proveedor y busca la tarjeta **Importar datos del proveedor**. Una línea en la tarjeta dice a dónde van los precios, por ejemplo "Los precios se guardan en la versión de P Street." ¿Trabajas en dos tiendas? Elige una en **Aplicar precios a**. Los subgerentes ven la tarjeta, pero no pueden cargar ni aplicar un archivo. El encargado de redes tampoco.
+2. **Carga el archivo.** Toca **Revisa la importación**. En **Archivo de exportación**, elige el archivo del proveedor y toca **Preparar importación**. La app acepta CSV de PFG CustomerFirst, CSV de US Foods MOXe o JSON de recibos, de hasta 2 MB. Preparar todavía no cambia nada: solo muestra lo que el archivo cambiaría. Si cargas el mismo archivo otra vez, se abre la misma revisión.
+3. **Revisa cada fila.** Compara **Actual** con **Propuesto**. En **Decisión**, elige **Aceptar** u **Omitir**. Cada precio nuevo empieza en **Aceptar**; elige **Omitir** para dejar uno fuera. Las filas que ya coinciden con tus precios quedan en **Sin cambios**. Un archivo de tienda nunca cambia un empaque ni un número de artículo. Si el empaque del archivo no es como el de tu tienda, esa fila no trae precio: cuenta en **Requieren revisión** y dice **Revisa manualmente la jerarquía del empaque**. Toca **Abre el editor de SKU**: abre ese artículo para tu tienda, en **Cómo llega**. Arregla el empaque ahí.
+4. **Aplícalo.** Toca **Aplica a** tu tienda. Escribe tu contraseña si la app la pide. Es la misma contraseña de 15 minutos que para recetas y precios (mira **Una contraseña por 15 minutos** arriba). El precio nuevo es propio de tu tienda. El precio de todas las tiendas no cambia, y la otra tienda tampoco. La app dice cuántos precios aplicó. Si un precio cambió después de preparar el archivo, la app dice **El plan cambió. Vuelve a preparar el archivo y revisa el informe actualizado.** Toca **Vuelve a preparar el archivo** y revisa las filas otra vez.
+5. **Para el Gerente de Operaciones y roles más altos.** En **Aplicar precios a**, elige **Predeterminado global** o una tienda, y luego carga el archivo. Un archivo de tienda funciona igual que arriba, para cualquier tienda. **Predeterminado global** cambia el precio que usan todas las tiendas, menos las que tienen su propio precio; también puede cambiar empaques y números de artículo. Solo el Dueño y roles más altos pueden aplicar un archivo global. Un Gerente de Operaciones puede prepararlo y leerlo, pero no aplicarlo. El botón para un archivo global es **Aplica los cambios aceptados**. Si no has escrito tu contraseña desde que entraste, la app la pide.
 
 #### Enlazar personas con 7shifts (gerente general)
 
