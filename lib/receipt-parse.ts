@@ -171,7 +171,7 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritt
   const extraction = parseAndValidate(rawText);
   if (!extraction) return await writeFailed(sb, r.id, "unparseable_json", notes, onWritten);
 
-  // Account evidence remains in validated parsed_json; no duplicate parsed column can drift.
+  // Persist the resolved account evidence as foreign keys for manual conflict triage.
   // Only routed inbound receipts use this attribution ladder. Manual upload locations are
   // operator decisions. Lookup failure fails closed before marking the parse successful.
   let attribution: ReturnType<typeof resolveReceiptAttribution> | null = null;
@@ -181,7 +181,7 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritt
       if (extraction.accountNumber) {
         accounts = await selectAllRows<ReceiptAccountMatch>((from, to) => sb.from("vendor_location_accounts")
           .select("vendor_id, location_id, account_number, vendors!inner(active), locations!inner(active)")
-          .eq("account_number", extraction.accountNumber).eq("vendors.active", true).eq("locations.active", true)
+          .eq("account_number", extraction.accountNumber).eq("active", true).eq("vendors.active", true).eq("locations.active", true)
           .order("vendor_id").range(from, to).returns<ReceiptAccountMatch[]>());
       }
       attribution = resolveReceiptAttribution({ addressLocationId: r.location_id,
@@ -198,7 +198,8 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritt
     .from("email_receipts")
     .update({ parse_state: "parsed", parsed_json: parsedJson, doc_kind: extraction.docKind,
       ...(attribution ? { location_id: attribution.locationId, vendor_guess_id: attribution.vendorId,
-        attributed_by: attribution.attributedBy, attribution_conflict: attribution.attributionConflict } : {}),
+        attributed_by: attribution.attributedBy, attribution_conflict: attribution.attributionConflict,
+        account_location_id: attribution.accountLocationId, account_vendor_id: attribution.accountVendorId } : {}),
     }, { count: "exact" })
     .eq("id", r.id)
     .eq("parse_state", "unparsed");

@@ -7,7 +7,9 @@
 
 import { countNotReady } from "@/lib/admin/readiness-load";
 import { readinessWhereEntries, type ReadinessByScope } from "@/lib/admin/readiness-scope-shared";
-import { loadCronHealth, type CronHealth } from "@/lib/admin/ops-health";
+import { loadCronHealth, loadInboundHealth, type InboundHealth, type CronHealth } from "@/lib/admin/ops-health";
+import { InboundHealthPanel } from "@/components/admin/InboundSettings";
+import { canManageInboundAliases } from "@/lib/admin/inbound-settings-shared";
 import { cronRunFailureTotal } from "@/lib/admin/ops-health-shared";
 import { loadWeekCard } from "@/lib/admin/week-card";
 import {
@@ -66,6 +68,11 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
   // Ops-health cards (derive-on-read over audit_log). Each fails SOFT — an ops signal
   // must never take down the admin hub (mirrors the readiness-counts posture above).
   let cronHealth: CronHealth | null = null;
+  let inboundHealth: InboundHealth | null = null;
+  if (canManageInboundAliases(auth.user.role)) {
+    try { inboundHealth = await loadInboundHealth(auth); }
+    catch { console.error("hub inbound health failed (rendering without card)"); }
+  }
   try {
     cronHealth = await loadCronHealth();
   } catch (e) {
@@ -92,6 +99,7 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
       ) : null}
 
       <CronHealthCard health={cronHealth} lang={lang} />
+      {inboundHealth ? <InboundHealthPanel health={inboundHealth} /> : null}
       <WeekInCoopsCard card={week} lang={lang} />
 
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

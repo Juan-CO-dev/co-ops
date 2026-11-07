@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   const body = parsed as Record<string, unknown>;
   try {
     if (typeof body.vendorId !== "string" || typeof body.locationId !== "string") return jsonError(400, "invalid_payload");
-    await saveVendorShopAccount(ctx, body.vendorId, body.locationId, body.accountNumber);
+    await saveVendorShopAccount(ctx, body.vendorId, body.locationId, body.accountNumber, body.remove === true);
     return jsonOk({ saved: true });
   } catch (error) {
     if (error instanceof InboundSettingsError) return jsonError(error.status, error.code);

@@ -1,3 +1,4 @@
+import { assertStepUp } from "@/lib/admin/step-up";
 import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * /api/operations/receiving/email-receipts — thin adapter over lib/email-receipts.ts.
@@ -25,6 +26,7 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import {
+  moveConflictedReceipt,
   uploadManualReceipt,
   listUnlinkedReceipts,
   linkReceipt,
@@ -133,8 +135,21 @@ export async function PATCH(req: NextRequest) {
   const action = b.action;
   const deliveryId = b.deliveryId;
 
-  if (action !== "link" && action !== "attest" && action !== "override" && action !== "attach_po" && action !== "parse_now") {
-    return jsonError(400, "invalid_payload", { message: "action must be link, attest, override, attach_po, or parse_now", field: "action" });
+  if (action !== "move" && action !== "link" && action !== "attest" && action !== "override" && action !== "attach_po" && action !== "parse_now") {
+    return jsonError(400, "invalid_payload", { message: "action must be move, link, attest, override, attach_po, or parse_now", field: "action" });
+  }
+
+  if (action === "move") {
+    if (typeof b.receiptId !== "string" || !b.receiptId) return jsonError(400, "invalid_payload");
+    const stepUp = assertStepUp(ctx, "A");
+    if (!stepUp.ok) return jsonError(403, stepUp.code);
+    try {
+      await moveConflictedReceipt(ctx, b.receiptId);
+      return jsonOk({ ok: true });
+    } catch (e) {
+      if (e instanceof EmailReceiptError) return jsonError(e.status, e.code);
+      throw e;
+    }
   }
 
   // parse_now is receipt-axis only (no deliveryId). KH+ gate; location-bind IDOR-masks inside

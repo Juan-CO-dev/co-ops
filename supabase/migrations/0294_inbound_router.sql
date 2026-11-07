@@ -38,10 +38,10 @@ create table public.inbound_messages (
   location_id uuid null references public.locations(id),
   route_reason text not null default 'unresolved' check (route_reason in
     ('unresolved','shop_address','shop_alias','catering_address','ambiguous','unknown_address')),
-  content_state text not null default 'pending' check (content_state in ('pending','fetched','failed','skipped')),
+  content_state text not null default 'pending' check (content_state in ('pending','fetched','failed','blocked_config','skipped')),
   fetch_attempts integer not null default 0 check (fetch_attempts >= 0),
   next_attempt_at timestamptz not null default now(),
-  last_error text null,
+  last_error text null check (last_error in ('provider_auth','provider_error','untrusted_url','invalid_size','storage','ledger','routing')),
   lease_token uuid null,
   email_receipt_id uuid null references public.email_receipts(id),
   received_at timestamptz not null default now(),
@@ -50,7 +50,7 @@ create table public.inbound_messages (
 
 -- Unresolved rows include a process that died between ledger INSERT and routing.
 create index inbound_messages_retry_ix on public.inbound_messages(next_attempt_at,created_at)
-  where content_state in ('pending','failed');
+  where content_state in ('pending','failed','blocked_config');
 create index inbound_messages_received_ix on public.inbound_messages(received_at desc);
 
 create table public.inbound_address_aliases (
@@ -72,20 +72,25 @@ create table public.vendor_location_accounts (
   id uuid primary key default gen_random_uuid(),
   vendor_id uuid not null references public.vendors(id),
   location_id uuid not null references public.locations(id),
+  active boolean not null default true,
   account_number text not null check (length(btrim(account_number)) between 1 and 200
     and account_number = btrim(account_number)),
   created_by uuid null references public.users(id),
   updated_by uuid null references public.users(id),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (vendor_id,account_number),
-  unique (vendor_id,location_id)
+  updated_at timestamptz not null default now()
 );
+create unique index vendor_location_accounts_active_number_ix
+  on public.vendor_location_accounts(vendor_id,account_number) where active;
+create unique index vendor_location_accounts_active_shop_ix
+  on public.vendor_location_accounts(vendor_id,location_id) where active;
 
 alter table public.email_receipts
   add column inbound_message_id uuid null unique references public.inbound_messages(id),
   add column attributed_by text null check (attributed_by in ('address','account','both','manual')),
-  add column attribution_conflict boolean not null default false;
+  add column attribution_conflict boolean not null default false,
+  add column account_location_id uuid null references public.locations(id),
+  add column account_vendor_id uuid null references public.vendors(id);
 
 -- Service role may update processing/config state, but cannot delete history.
 -- Explicitly revoke its default grants too: BYPASSRLS does not bypass privileges.
@@ -94,7 +99,11 @@ alter table public.inbound_address_aliases enable row level security;
 alter table public.vendor_location_accounts enable row level security;
 revoke all on public.inbound_messages, public.inbound_address_aliases,
   public.vendor_location_accounts from public, anon, authenticated, service_role;
-grant select, insert, update on public.inbound_messages, public.inbound_address_aliases,
+grant select, insert on public.inbound_messages to service_role;
+grant update (lane, location_id, route_reason, content_state, fetch_attempts,
+  next_attempt_at, last_error, lease_token, email_receipt_id)
+  on public.inbound_messages to service_role;
+grant select, insert, update on public.inbound_address_aliases,
   public.vendor_location_accounts to service_role;
 create policy inbound_messages_no_user_delete on public.inbound_messages for delete using (false);
 create policy inbound_address_aliases_no_user_delete on public.inbound_address_aliases for delete using (false);

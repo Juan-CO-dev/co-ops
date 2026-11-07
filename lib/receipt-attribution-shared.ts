@@ -36,7 +36,9 @@ export function resolveReceiptAttribution(input: {
     : account ? "account" : null;
   return {
     locationId: address ?? account?.location_id ?? null,
-    vendorId: account?.vendor_id ?? input.senderVendorId,
+    vendorId: conflict ? input.senderVendorId : account?.vendor_id ?? input.senderVendorId,
+    accountLocationId: account?.location_id ?? null,
+    accountVendorId: account?.vendor_id ?? null,
     attributedBy,
     attributionConflict: conflict,
   };

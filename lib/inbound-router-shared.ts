@@ -41,3 +41,14 @@ export const INBOUND_MAX_ATTEMPTS = 5;
 export function inboundRetryDelayMs(attempt: number): number {
   return Math.min(60 * 60 * 1000, 60_000 * 2 ** Math.max(0, attempt - 1));
 }
+
+/** Persist only this vocabulary, never provider text or signed URLs. */
+export type InboundErrorCode = "provider_auth" | "provider_error" | "untrusted_url" | "invalid_size" | "storage" | "ledger" | "routing";
+export function inboundErrorCode(error: unknown, stage: InboundErrorCode): InboundErrorCode {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "provider_auth" || message === "resend_not_configured") return "provider_auth";
+  if (message === "resend_untrusted_download") return "untrusted_url";
+  if (message === "resend_invalid_size" || message === "asset_oversize") return "invalid_size";
+  if (message.startsWith("storeReceiptAsset:")) return "storage";
+  return stage;
+}

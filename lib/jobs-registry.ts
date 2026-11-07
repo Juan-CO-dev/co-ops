@@ -38,7 +38,8 @@ export const JOBS_REGISTRY = [
   { job: "prune-sessions", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "prune-sessions", dueUtc: "08:30" } }, // 08:30 UTC
   // Shares the prune route and its catch-up attempt, but has its own heartbeat.
   { job: "vault-scrub", cadenceMinutes: 1440, source: "vercel", dueUtc: "08:30" },
-  { job: "parse-receipts", cadenceMinutes: 1440, source: "vercel", catchUp: { job: "parse-receipts", dueUtc: "09:45" } }, // 09:45 UTC
+  // Frequent all-day fetch/parse retries; retain the existing daily catch-up backstop.
+  { job: "parse-receipts", cadenceMinutes: 15, window: { startHourET: 0, endHourET: 24 }, source: "vercel", catchUp: { job: "parse-receipts", dueUtc: "09:45" } }, // 09:45 UTC
   { job: "toast-catering-scan", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "vercel" },
   { job: "toast-sales-today", cadenceMinutes: 10, window: { startHourET: 6, endHourET: 22 }, source: "vercel" },
   { job: "job-watch", cadenceMinutes: 1440, source: "vercel" }, // 17:00 UTC

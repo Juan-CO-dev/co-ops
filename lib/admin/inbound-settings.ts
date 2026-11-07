@@ -32,30 +32,31 @@ export async function loadInboundShops(actor: AuthContext): Promise<InboundShop[
 export async function loadVendorShopAccounts(actor: AuthContext, vendorId: string): Promise<VendorShopAccount[]> {
   accountRole(actor);
   return selectAllRows<VendorShopAccount>(async (from, to) => {
-    let query = getServiceRoleClient().from("vendor_location_accounts").select("location_id, account_number").eq("vendor_id", vendorId);
+    let query = getServiceRoleClient().from("vendor_location_accounts").select("location_id, account_number").eq("vendor_id", vendorId).eq("active", true);
     if (!canManageInboundAliases(actor.user.role)) query = query.in("location_id", actor.locations);
     const { data, error } = await query.order("location_id").range(from, to);
     check(error); return { data: data as VendorShopAccount[] | null };
   });
 }
-export async function saveVendorShopAccount(actor: AuthContext, vendorId: string, locationId: string, value: unknown) {
+export async function saveVendorShopAccount(actor: AuthContext, vendorId: string, locationId: string, value: unknown, remove = false) {
   if (!canManageVendorAccount({ role: actor.user.role, locations: actor.locations }, locationId)) throw new InboundSettingsError(403, "forbidden");
-  if (!isShopId(locationId) || !isShopId(vendorId) || typeof value !== "string" || !value.trim() || value.trim().length > 200 || /[\x00-\x1f\x7f]/.test(value)) throw new InboundSettingsError(400, "invalid_payload");
+  if (!isShopId(locationId) || !isShopId(vendorId) || (!remove && (typeof value !== "string" || !value.trim() || value.trim().length > 200 || /[\x00-\x1f\x7f]/.test(value)))) throw new InboundSettingsError(400, "invalid_payload");
   await activeShop(locationId);
   const sb = getServiceRoleClient();
   const vendor = await sb.from("vendors").select("id").eq("id", vendorId).eq("active", true).maybeSingle();
   check(vendor.error);
   if (!vendor.data) throw new InboundSettingsError(404, "not_found");
   // Separate insert/update preserves creation provenance; a concurrent first insert returns a visible conflict.
-  const prior = await sb.from("vendor_location_accounts").select("vendor_id").eq("vendor_id", vendorId).eq("location_id", locationId).maybeSingle();
+  const prior = await sb.from("vendor_location_accounts").select("id, account_number").eq("vendor_id", vendorId).eq("location_id", locationId).eq("active", true).maybeSingle();
   check(prior.error);
-  const fields = { account_number: value.trim(), updated_by: actor.user.id, updated_at: new Date().toISOString() };
+  if (remove && !prior.data) throw new InboundSettingsError(404, "not_found");
+  const fields = { account_number: remove ? prior.data!.account_number : (value as string).trim(), active: !remove, updated_by: actor.user.id, updated_at: new Date().toISOString() };
   const result = prior.data
-    ? await sb.from("vendor_location_accounts").update(fields, { count: "exact" }).eq("vendor_id", vendorId).eq("location_id", locationId)
+    ? await sb.from("vendor_location_accounts").update(fields, { count: "exact" }).eq("id", prior.data.id).eq("active", true).eq("account_number", prior.data.account_number)
     : await sb.from("vendor_location_accounts").insert({ ...fields, vendor_id: vendorId, location_id: locationId, created_by: actor.user.id }).select("vendor_id").maybeSingle();
   check(result.error);
   if (prior.data ? result.count !== 1 : !result.data) throw new InboundSettingsError(404, "not_found");
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "vendor_location_account.save", resourceTable: "vendor_location_accounts", resourceId: vendorId, metadata: { location_id: locationId }, ipAddress: null, userAgent: null });
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: remove ? "vendor_location_account.deactivate" : "vendor_location_account.save", resourceTable: "vendor_location_accounts", resourceId: vendorId, metadata: { location_id: locationId, before: prior.data ? { account_number: prior.data.account_number, active: true } : null, after: { account_number: fields.account_number, active: fields.active } }, ipAddress: null, userAgent: null });
 }
 export async function loadInboundAliases(actor: AuthContext): Promise<InboundAlias[]> {
   if (!canManageInboundAliases(actor.user.role)) throw new InboundSettingsError(403, "forbidden");

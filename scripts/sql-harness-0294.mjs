@@ -62,7 +62,8 @@ try {
     check((await db.query('select relrowsecurity from pg_class where oid=$1::regclass', [table])).rows[0].relrowsecurity, `${table} has RLS`);
     for (const role of ['anon', 'authenticated', 'service_role']) {
       for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) {
-        const expected = role === 'service_role' && ['SELECT', 'INSERT', 'UPDATE'].includes(privilege);
+        const expected = role === 'service_role' && ['SELECT', 'INSERT', 'UPDATE'].includes(privilege)
+          && !(table === 'inbound_messages' && privilege === 'UPDATE');
         const result = (await db.query('select has_table_privilege($1,$2,$3) as allowed', [role, table, privilege])).rows[0];
         check(result.allowed === expected, `${role} ${table} ${privilege} = ${expected}`);
       }
@@ -76,6 +77,20 @@ try {
   await db.exec('set role service_role');
   const messageId = await idempotency(db);
   check(true, 'stable provider_email_id admits one insert and duplicate is a no-op');
+  for (const [column, value] of Object.entries({
+    provider_email_id: "'replacement'", provider: "'resend'", message_id: "'replacement'",
+    from_address: "'changed@example.test'", to_addresses: "array['changed@example.test']",
+    cc_addresses: "array['changed@example.test']", received_for: "array['changed@example.test']",
+    subject: "'changed'", received_at: 'now()', created_at: 'now()', id: 'gen_random_uuid()',
+  })) {
+    await refuses(db, `update inbound_messages set ${column}=${value} where id=$1`, [messageId], '42501');
+  }
+  for (const column of ['lane','location_id','route_reason','content_state','fetch_attempts',
+    'next_attempt_at','last_error','lease_token','email_receipt_id']) {
+    check((await db.query('select has_column_privilege($1,$2,$3,$4) as allowed',
+      ['service_role', 'inbound_messages', column, 'UPDATE'])).rows[0].allowed, `processing column ${column} is writable`);
+  }
+
   for (const table of tables) await refuses(db, `delete from ${table}`, [], '42501');
 
   const aliasSql = 'insert into inbound_address_aliases(address,lane,location_id,created_by) values($1,$2,$3,$4)';
@@ -93,14 +108,35 @@ try {
   await refuses(db, accountSql, [vendor, otherShop, 'fixture-account-a', actor], '23505');
   await refuses(db, accountSql, [vendor, shop, 'fixture-account-b', actor], '23505');
   await db.query(accountSql, [otherVendor, otherShop, 'fixture-account-a', actor]);
-  check(true, 'account uniqueness is vendor-scoped, with one account per vendor/shop');
+  check(true, 'account uniqueness is vendor-scoped, with one active account per vendor/shop');
+  await db.query('update vendor_location_accounts set active=false where vendor_id=$1 and location_id=$2', [vendor, shop]);
+  await db.query(accountSql, [vendor, otherShop, 'fixture-account-a', actor]);
+  await db.query(accountSql, [vendor, shop, 'fixture-account-b', actor]);
+  check((await db.query('select count(*)::int as n from vendor_location_accounts')).rows[0].n === 4,
+    'account retirement preserves history and releases both active uniqueness keys');
+
   await refuses(db, "insert into inbound_messages(provider_email_id,from_address,lane) values('bad-lane','sender@example.test','other')", [], '23514');
   await refuses(db, "insert into inbound_messages(provider_email_id,from_address,route_reason) values('bad-reason','sender@example.test','other')", [], '23514');
   await db.query("update inbound_messages set content_state='failed',fetch_attempts=1,next_attempt_at=now()+interval '1 minute' where id=$1", [messageId]);
+  await db.query("update inbound_messages set content_state='blocked_config',last_error='provider_auth' where id=$1", [messageId]);
+  check((await db.query('select fetch_attempts from inbound_messages where id=$1', [messageId])).rows[0].fetch_attempts === 1,
+    'blocked configuration can retain attempts unchanged');
+  for (const error of ['provider_auth','provider_error','untrusted_url','invalid_size','storage','ledger','routing']) {
+    await db.query('update inbound_messages set last_error=$1 where id=$2', [error, messageId]);
+  }
+  await refuses(db, "update inbound_messages set last_error='provider said signed-url' where id=$1", [messageId], '23514');
+  await refuses(db, "update inbound_messages set content_state='other' where id=$1", [messageId], '23514');
   const receipt = (await db.query("insert into email_receipts(source,inbound_message_id,attributed_by) values('inbound',$1,'address') returning id", [messageId])).rows[0];
   await db.query("update inbound_messages set email_receipt_id=$1,content_state='fetched' where id=$2", [receipt.id, messageId]);
   await refuses(db, "insert into email_receipts(source,inbound_message_id) values('inbound',$1)", [messageId], '23505');
   await refuses(db, "insert into email_receipts(source,attributed_by) values('upload','guess')", [], '23514');
+  await db.query('update email_receipts set location_id=$1,vendor_guess_id=$2,account_location_id=$3,account_vendor_id=$4,attribution_conflict=true where id=$5',
+    [shop, vendor, otherShop, otherVendor, receipt.id]);
+  const evidence = (await db.query('select location_id,vendor_guess_id,account_location_id,account_vendor_id from email_receipts where id=$1', [receipt.id])).rows[0];
+  check(evidence.location_id === shop && evidence.vendor_guess_id === vendor && evidence.account_location_id === otherShop && evidence.account_vendor_id === otherVendor,
+    'sender attribution and conflicting account evidence coexist without overwriting');
+  await refuses(db, 'update email_receipts set account_location_id=$1 where id=$2', [id(999), receipt.id], '23503');
+  await refuses(db, 'update email_receipts set account_vendor_id=$1 where id=$2', [id(999), receipt.id], '23503');
   check(true, 'receipt link is recoverable, unique and attribution vocabulary is closed');
   for (const role of ['anon', 'authenticated']) {
     await db.exec(`reset role; set role ${role}`);
@@ -120,4 +156,17 @@ try {
   check((await broken.query('select count(*)::int as n from inbound_messages')).rows[0].n === 2,
     'BROKEN VARIANT also permits duplicate provider ids without ON CONFLICT');
 } finally { await broken.close(); }
-console.log(`PASS: ${checks} checks; fixed migration passes and broken variant is detected.`);
+// A second broken migration restores the overly broad UPDATE grant. The same
+// immutability assertion must fail, proving this harness catches that regression.
+const brokenGrant = await setup(migration + '\ngrant update on public.inbound_messages to service_role;');
+try {
+  await brokenGrant.exec('set role service_role');
+  const messageId = await idempotency(brokenGrant);
+  await assert.rejects(async () => {
+    await assert.rejects(brokenGrant.query("update inbound_messages set provider_email_id='changed' where id=$1", [messageId]),
+      error => error.code === '42501');
+  }, error => error.code === 'ERR_ASSERTION');
+  check((await brokenGrant.query('select provider_email_id from inbound_messages where id=$1', [messageId])).rows[0].provider_email_id === 'changed',
+    'BROKEN GRANT VARIANT FAILS immutability assertion: table UPDATE permits provider-id rewrite');
+} finally { await brokenGrant.close(); }
+console.log(`PASS: ${checks} checks; fixed migration passes and both broken variants are detected.`);

@@ -37,6 +37,9 @@
 
 export const DESTRUCTIVE_ACTIONS = [
   "vendor_location_account.save",
+  "vendor_location_account.deactivate",
+  "inbound.redrive",
+  "receipt.location_moved",
   "inbound_alias.save",
   "inbound_alias.deactivate",
   "marketing.milestone_record",

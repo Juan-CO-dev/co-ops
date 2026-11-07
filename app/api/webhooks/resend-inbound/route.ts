@@ -3,8 +3,10 @@ import { after, type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { recordInboundMessage, processInboundMessage } from "@/lib/inbound-router";
 import { verifySvixSignature } from "@/lib/webhook-verify-shared";
-export const maxDuration = 60;
+import { parseFetchedInboundMessage } from "@/lib/inbound-parse";
+export const maxDuration = 180;
 export async function POST(req: NextRequest) {
+  const deadline = Date.now() + 160_000;
   const secret = process.env.RESEND_INBOUND_SECRET;
   if (!secret) return jsonError(503, "not_configured");
   const rawBody = await req.text();
@@ -21,7 +23,11 @@ export async function POST(req: NextRequest) {
     const result = await recordInboundMessage(data);
     if (result.duplicate) return jsonOk({ duplicate: true });
     after(async () => {
-      try { await processInboundMessage(result.id); }
+      try {
+        if (await processInboundMessage(result.id) === "fetched") {
+          await parseFetchedInboundMessage(result.id, deadline);
+        }
+      }
       catch { console.error("[resend-inbound] processing deferred to sweep"); }
     });
     return jsonOk({ inboundMessageId: result.id });

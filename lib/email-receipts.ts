@@ -860,6 +860,10 @@ export interface UnlinkedReceiptView {
   docKind: string | null;
   attributedBy: "address" | "account" | "both" | "manual" | null;
   attributionConflict: boolean;
+  addressLocationName: string | null;
+  accountLocationId: string | null;
+  accountLocationName: string | null;
+  canMove: boolean;
 }
 
 /**
@@ -891,14 +895,23 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb
     .from("email_receipts")
-    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id, parse_state, doc_kind, attributed_by, attribution_conflict")
+    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id, parse_state, doc_kind, attributed_by, attribution_conflict, account_location_id")
     .is("linked_delivery_id", null)
     .or(`location_id.eq.${locationId},location_id.is.null`)
     .order("received_at", { ascending: false })
-    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null; parse_state: "unparsed" | "parsed" | "failed"; doc_kind: string | null; attributed_by: UnlinkedReceiptView["attributedBy"]; attribution_conflict: boolean }>>();
+    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null; parse_state: "unparsed" | "parsed" | "failed"; doc_kind: string | null; attributed_by: UnlinkedReceiptView["attributedBy"]; attribution_conflict: boolean; account_location_id: string | null }>>();
   if (error) throw new Error(`listUnlinkedReceipts: ${error.message}`);
 
   const list = rows ?? [];
+  const conflictLocations = [...new Set(list.filter((r) => r.attribution_conflict)
+    .flatMap((r) => [r.location_id, r.account_location_id]).filter((id): id is string => !!id))];
+  const locationNames = new Map<string, string>();
+  if (conflictLocations.length) {
+    const { data, error: nameError } = await sb.from("locations").select("id, name").in("id", conflictLocations);
+    if (nameError) throw new Error("Receipt conflict location lookup failed");
+    for (const row of data ?? []) locationNames.set(row.id, row.name);
+  }
+
   // Batch-join the linked POs' display_code + status (one query over the distinct po ids;
   // never per-row). A missing PO row (deactivated/superseded) degrades to null metadata.
   const poIds = [...new Set(list.map((r) => r.linked_po_id).filter((v): v is string => v != null))];
@@ -932,6 +945,11 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
         docKind: r.doc_kind,
         attributedBy: r.attributed_by,
         attributionConflict: r.attribution_conflict,
+        addressLocationName: r.location_id ? locationNames.get(r.location_id) ?? null : null,
+        accountLocationId: r.account_location_id ?? null,
+        accountLocationName: r.account_location_id ? locationNames.get(r.account_location_id) ?? null : null,
+        canMove: r.attribution_conflict && !!r.location_id && !!r.account_location_id
+          && await canMoveReceipt(actor, r.location_id, r.account_location_id),
       };
     }),
   );
@@ -1355,4 +1373,46 @@ export async function overrideMatch(actor: AuthContext, deliveryId: string, note
     metadata: { prior_state: d.match_state, location_id: d.location_id },
     ipAddress: null, userAgent: null,
   });
+}
+
+/** Both sides are authorized in the library, including explicit SMM exclusion. */
+async function canMoveReceipt(actor: AuthContext, from: string, to: string): Promise<boolean> {
+  if (actor.user.role === "social_media_mgr" || getRoleLevel(actor.user.role) < RECEIPT_MIN) return false;
+  if (getRoleLevel(actor.user.role) >= 8) return true;
+  return lockLocationContext(actorLoc(actor), from) && lockLocationContext(actorLoc(actor), to)
+    && await canDoOperationalTask(actor, from, "receiving")
+    && await canDoOperationalTask(actor, to, "receiving");
+}
+
+/** Resolve only the recorded account conflict, without moving already-linked evidence. */
+export async function moveConflictedReceipt(actor: AuthContext, receiptId: string): Promise<void> {
+  requireLevel(actor, RECEIPT_MIN);
+  if (actor.user.role === "social_media_mgr") throw new EmailReceiptError(403, "forbidden");
+  const sb = getServiceRoleClient();
+  const { data: r, error } = await sb.from("email_receipts")
+    .select("id, location_id, account_location_id, account_vendor_id, vendor_guess_id, attribution_conflict, linked_delivery_id, linked_po_id")
+    .eq("id", receiptId).maybeSingle<{
+      id: string; location_id: string | null; account_location_id: string | null;
+      account_vendor_id: string | null; vendor_guess_id: string | null;
+      attribution_conflict: boolean; linked_delivery_id: string | null; linked_po_id: string | null;
+    }>();
+  if (error) throw new Error("Receipt move lookup failed");
+  if (!r || !r.location_id || !r.account_location_id) throw new EmailReceiptError(404, "not_found");
+  if (!await canMoveReceipt(actor, r.location_id, r.account_location_id)) throw new EmailReceiptError(403, "forbidden");
+  if (!r.attribution_conflict || r.linked_delivery_id || r.linked_po_id) throw new EmailReceiptError(409, "conflict_changed");
+  let moveWrite = sb.from("email_receipts")
+    .update({ location_id: r.account_location_id, vendor_guess_id: r.account_vendor_id,
+      attributed_by: "manual", attribution_conflict: false }, { count: "exact" })
+    .eq("id", r.id).eq("location_id", r.location_id).eq("account_location_id", r.account_location_id)
+    .eq("attribution_conflict", true).is("linked_delivery_id", null).is("linked_po_id", null);
+  moveWrite = r.account_vendor_id == null ? moveWrite.is("account_vendor_id", null) : moveWrite.eq("account_vendor_id", r.account_vendor_id);
+  moveWrite = r.vendor_guess_id == null ? moveWrite.is("vendor_guess_id", null) : moveWrite.eq("vendor_guess_id", r.vendor_guess_id);
+  const { error: updateError, count } = await moveWrite;
+  if (updateError) throw new Error("Receipt move update failed");
+  if (count !== 1) throw new EmailReceiptError(409, "conflict_changed");
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "receipt.location_moved",
+    resourceTable: "email_receipts", resourceId: r.id,
+    metadata: { before: { location_id: r.location_id, vendor_guess_id: r.vendor_guess_id, attribution_conflict: true },
+      after: { location_id: r.account_location_id, vendor_guess_id: r.account_vendor_id, attributed_by: "manual", attribution_conflict: false } },
+    ipAddress: null, userAgent: null });
 }

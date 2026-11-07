@@ -13,8 +13,10 @@ const SWEEP_LIMIT = 10;
 export async function runParseReceipts() {
   const inboundEnabled = !!process.env.RESEND_INBOUND_SECRET && !!process.env.RESEND_API_KEY;
   if (!process.env.ANTHROPIC_API_KEY && !inboundEnabled) return { dormant: true as const };
+  const started = Date.now();
+  const deadline = started + 280_000; // 20 seconds reserved for heartbeat/watch
   const sb = getServiceRoleClient();
-  const inbound = inboundEnabled ? await sweepInboundMessages(sb) : { swept: 0, failed: 0 };
+  const inbound = inboundEnabled ? await sweepInboundMessages(sb, started + 140_000) : { swept: 0, failed: 0 };
   if (!process.env.ANTHROPIC_API_KEY) return { dormant: false as const, swept: 0, parsed: 0, failed: 0,
     metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0, inbound } };
   const { data: rows, error } = await sb
@@ -28,9 +30,12 @@ export async function runParseReceipts() {
   if (error) throw new Error(`parse-receipts sweep select: ${error.message}`);
 
   const list = rows ?? [];
+  let swept = 0;
   let parsed = 0;
   let failed = 0;
   for (const row of list) {
+    if (Date.now() + 80_000 > deadline) break; // full 60s model call + storage/matching reserve
+    swept++;
     try {
       const result = await parseReceipt(sb, row.id);
       if (result.ok) parsed += 1;
@@ -47,6 +52,6 @@ export async function runParseReceipts() {
 
   // Heartbeat (fail-open): cron.success row lets the admin hub show "last run OK". audit()
   // never throws. Metadata style mirrors toast-sales-pull's per-item counts.
-  const metadata = { job: "parse-receipts", swept: list.length, parsed, failed, inbound };
-  return { dormant: false as const, swept: list.length, parsed, failed, metadata };
+  const metadata = { job: "parse-receipts", swept, parsed, failed, inbound };
+  return { dormant: false as const, swept, parsed, failed, metadata };
 }

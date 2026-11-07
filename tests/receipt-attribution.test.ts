@@ -29,3 +29,9 @@ describe("receipt attribution", () => {
     expect(resolveReceiptAttribution({ addressLocationId: null, accountNumber: "1", senderVendorId: null, accounts: [account] }).locationId).toBeNull();
   });
 });
+
+it("keeps sender vendor on a conflict and records separate account evidence", () => {
+  expect(resolveReceiptAttribution({ addressLocationId: "address-shop", senderVendorId: "sender", accountNumber: "001",
+    accounts: [{ location_id: "account-shop", vendor_id: "account-vendor", account_number: "001" }] }))
+    .toMatchObject({ vendorId: "sender", attributionConflict: true, accountLocationId: "account-shop", accountVendorId: "account-vendor" });
+});

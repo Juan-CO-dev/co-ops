@@ -170,3 +170,14 @@ it("vault scrub shares the nightly schedule and allows first-run grace", () => {
   expect(decideJobWatch(scrub, new Date("2026-10-10T10:00:00Z"), null, null).shouldAlert).toBe(false);
   expect(decideJobWatch(scrub, new Date("2026-10-10T10:00:01Z"), null, null).shouldAlert).toBe(true);
 });
+
+
+it("receipt fetch and parse run every 15 minutes and are watched overnight", () => {
+  const job = JOBS_REGISTRY.find((entry) => entry.job === "parse-receipts")!;
+  const config = JSON.parse(readFileSync("vercel.json", "utf8"));
+  expect(config.crons).toContainEqual({ path: "/api/cron/parse-receipts", schedule: "*/15 * * * *" });
+  expect(job.cadenceMinutes).toBe(15);
+  const last = "2026-11-07T07:00:00Z";
+  expect(decideJobWatch(job, new Date("2026-11-07T07:30:00Z"), last, null).shouldAlert).toBe(false);
+  expect(decideJobWatch(job, new Date("2026-11-07T07:30:01Z"), last, null).shouldAlert).toBe(true);
+});

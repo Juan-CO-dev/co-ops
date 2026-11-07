@@ -50,6 +50,7 @@ export async function fetchInboundContent(emailId: string, fetcher: typeof fetch
   const base = `https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`;
   async function api(url: string): Promise<Record<string, unknown>> {
     const response = await fetcher(url, { headers: { Authorization: `Bearer ${key}` }, redirect: "error", signal });
+    if (response.status === 401 || response.status === 403) throw new Error("provider_auth");
     const bytes = await boundedBytes(response, 22 * 1024 * 1024);
     const result: unknown = JSON.parse(bytes.toString("utf8"));
     if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("resend_invalid_response");

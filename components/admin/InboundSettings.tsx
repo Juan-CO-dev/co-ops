@@ -6,9 +6,32 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { InboundShop, InboundAlias, VendorShopAccount } from "@/lib/admin/inbound-settings-shared";
+import type { InboundHealth } from "@/lib/admin/ops-health";
 
 const button = "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep px-3 text-sm font-bold text-co-text disabled:opacity-50";
 const field = "flex min-h-[44px] w-full min-w-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text";
+
+export function InboundHealthPanel({ health }: { health: InboundHealth }) {
+  const { t } = useTranslation();
+  const { save, message } = useSettingsSave();
+  const [busy, setBusy] = useState(false);
+  const panelId = useId();
+  if (!health.count) return null;
+  return <section className="co-card mt-5 space-y-3 p-4">
+    <h2 className="font-bold text-co-danger-text">{t("admin.inbound.health")}</h2>
+    <p>{t("admin.inbound.health_count", { n: health.count })}</p>
+    {message ? <p role="status">{message}</p> : null}
+    {busy ? <p role="status">{t("admin.inbound.retrying")}</p> : null}
+    <CollapsibleSection idBase={panelId} title={t("admin.inbound.health_details")} count={t("admin.inbound.health_shown", { n: health.rows.length })}>
+    <ul>{health.rows.map(row => <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+      <span>{t(row.content_state === "blocked_config" ? "admin.inbound.blocked_config" : "admin.inbound.failed")} <span className="break-words text-sm">{row.subject?.trim() || t("admin.inbound.no_subject")}</span></span>
+      <button type="button" className={button} disabled={busy} onClick={async () => {
+        setBusy(true); try { await save("/api/admin/inbound/redrive", { id: row.id }); } finally { setBusy(false); }
+      }}>{t("admin.inbound.retry")}</button>
+    </li>)}</ul>
+    </CollapsibleSection>
+  </section>;
+}
 
 /** Forms are triggered; errors remain outside disclosure; an editing drawer cannot collapse. */
 function SettingEditor({ title, count, description, initialValue, email, onSave, children, visible = true }: {
@@ -80,7 +103,9 @@ export function VendorAccountsPanel({ vendorId, shops, accounts }: { vendorId: s
       const account = accounts.find(row => row.location_id === shop.id);
       return <SettingEditor key={shop.id} title={shop.name} count={account ? 1 : 0} description={account?.account_number ?? t("admin.inbound.none")}
         visible={shop.name.toLowerCase().includes(search.toLowerCase())}
-        initialValue={account?.account_number ?? ""} onSave={accountNumber => save("/api/admin/inbound/vendor-accounts", { vendorId, locationId: shop.id, accountNumber })} />;
+        initialValue={account?.account_number ?? ""} onSave={accountNumber => save("/api/admin/inbound/vendor-accounts", { vendorId, locationId: shop.id, accountNumber })}>
+        {account ? <button className={button} type="button" onClick={() => save("/api/admin/inbound/vendor-accounts", { vendorId, locationId: shop.id, remove: true })}>{t("admin.inbound.remove_account")}</button> : null}
+      </SettingEditor>;
     })}
   </section>;
 }

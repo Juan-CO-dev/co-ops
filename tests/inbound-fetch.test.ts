@@ -51,3 +51,8 @@ describe("inbound receiving API", () => {
     expect(content.attachments[0]).toMatchObject({ omitted: true, omissionReason: "size" });
   });
 });
+
+it.each([401, 403])("provider HTTP %s is a configuration failure", async status => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response("do not persist provider text", { status }));
+  await expect(fetchInboundContent(emailId, fetcher)).rejects.toThrow("provider_auth");
+});

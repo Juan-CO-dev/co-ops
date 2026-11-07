@@ -11,7 +11,7 @@ const h = vi.hoisted(() => ({ db: vi.fn(), audit: vi.fn(), session: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: h.db }));
 vi.mock("@/lib/session", () => ({ requireSession: h.session }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
-import { saveVendorShopAccount, saveInboundAlias } from "@/lib/admin/inbound-settings";
+import { saveVendorShopAccount, saveInboundAlias, loadVendorShopAccounts } from "@/lib/admin/inbound-settings";
 import { POST as accountPost } from "@/app/api/admin/inbound/vendor-accounts/route";
 import { POST as aliasPost } from "@/app/api/admin/inbound/aliases/route";
 
@@ -46,7 +46,7 @@ for (const role of ["gm", "moo", "owner", "cgs", "social_media_mgr", "agm"] as c
   }
 }
 it("account changes preserve creation provenance and the vendor global account", async () => {
-  tables.vendor_location_accounts = [{ vendor_id: VENDOR, location_id: SHOP, account_number: "old", created_by: "first-actor" }];
+  tables.vendor_location_accounts = [{ id: ALIAS, active: true, vendor_id: VENDOR, location_id: SHOP, account_number: "old", created_by: "first-actor" }];
   tables.vendors![0]!.account_number = "legacy";
   await saveVendorShopAccount(actor("gm"), VENDOR, SHOP, "new");
   expect(tables.vendor_location_accounts![0]).toMatchObject({ account_number: "new", created_by: "first-actor", updated_by: "fixture-actor" });
@@ -99,4 +99,19 @@ it("admin inbound keys have matching Spanish keys and placeholders", () => {
     expect(spanish).toBeTruthy();
     expect(spanish.match(/\{\w+\}/g) ?? []).toEqual(english.match(/\{\w+\}/g) ?? []);
   }
+});
+
+it("account audits retain before/after, deactivation hides mapping and later save appends", async () => {
+  tables.vendor_location_accounts = [{ id: ALIAS, active: true, vendor_id: VENDOR, location_id: SHOP, account_number: "old" }];
+  await saveVendorShopAccount(actor("gm"), VENDOR, SHOP, "new");
+  expect(h.audit).toHaveBeenLastCalledWith(expect.objectContaining({ metadata: { location_id: SHOP, before: { account_number: "old", active: true }, after: { account_number: "new", active: true } } }));
+  await saveVendorShopAccount(actor("gm"), VENDOR, SHOP, undefined, true);
+  expect(tables.vendor_location_accounts![0]!.active).toBe(false);
+  expect(h.audit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "vendor_location_account.deactivate" }));
+  expect(await loadVendorShopAccounts(actor("gm"), VENDOR)).toEqual([]);
+  await saveVendorShopAccount(actor("gm"), VENDOR, SHOP, "replacement");
+  expect(tables.vendor_location_accounts).toHaveLength(2);
+});
+it("orphan location placeholder vocabulary is removed in both languages", () => {
+  for (const dictionary of [en, es]) expect(Object.keys(dictionary).some(key => key.startsWith("admin.locations.ph."))).toBe(false);
 });

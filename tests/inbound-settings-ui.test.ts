@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { jsx } from "react/jsx-runtime";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TranslationProvider } from "@/lib/i18n/provider";
-import { InboundAliasesPanel, VendorAccountsPanel } from "@/components/admin/InboundSettings";
+import { InboundAliasesPanel, VendorAccountsPanel, InboundHealthPanel } from "@/components/admin/InboundSettings";
 import type { InboundShop } from "@/lib/admin/inbound-settings-shared";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
@@ -67,4 +67,40 @@ it("removal posts a soft-deactivation request, without sending email", async () 
   fireEvent.click(screen.getByRole("button", { name: "Remove address" }));
   await waitFor(() => expect(h.post).toHaveBeenCalledWith("/api/admin/inbound/aliases", { id: "alias", remove: true }));
   expect(h.post).toHaveBeenCalledTimes(1);
+});
+
+it("account removal posts the scoped soft-deactivation action", async () => {
+  mount(jsx(VendorAccountsPanel, { vendorId: "vendor", shops, accounts: [{ location_id: "shop-a", account_number: "account" }] }));
+  fireEvent.click(screen.getByRole("button", { name: /North shop/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove account mapping" }));
+  await waitFor(() => expect(h.post).toHaveBeenCalledWith("/api/admin/inbound/vendor-accounts", { vendorId: "vendor", locationId: "shop-a", remove: true }));
+});
+it.each(["en", "es"] as const)("health exposes count and a Tier A 44px retry (%s)", async language => {
+  const dictionary = language === "en" ? en : es;
+  mount(jsx(InboundHealthPanel, { health: { count: 30, rows: [{ id: "message", subject: "Invoice 42", content_state: "blocked_config" }] } }), language);
+  expect(screen.getByText(dictionary["admin.inbound.health_count"].replace("{n}", "30"))).toBeTruthy();
+  expect(screen.queryByRole("button", { name: dictionary["admin.inbound.retry"] })).toBeNull();
+  const toggle = screen.getByRole("button", { name: new RegExp(dictionary["admin.inbound.health_details"]) });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(toggle);
+  expect(screen.getByText("Invoice 42")).toBeTruthy();
+  expect(screen.queryByText("message")).toBeNull();
+  const button = screen.getByRole("button", { name: dictionary["admin.inbound.retry"] });
+  expect(button.className).toContain("min-h-[44px]");
+  fireEvent.click(button);
+  await waitFor(() => expect(h.post).toHaveBeenCalledWith("/api/admin/inbound/redrive", { id: "message" }));
+  expect(h.step).toHaveBeenCalledWith("A");
+});
+
+it("health has a localized subject fallback and leaves errors outside the collapsed list", async () => {
+  h.post.mockResolvedValue({ ok: false, code: "unavailable" });
+  mount(jsx(InboundHealthPanel, { health: { count: 1, rows: [{ id: "message", subject: null, content_state: "failed" }] } }));
+  const toggle = screen.getByRole("button", { name: /Review messages/ });
+  fireEvent.click(toggle);
+  expect(screen.getByText(en["admin.inbound.no_subject"])).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: en["admin.inbound.retry"] }));
+  await waitFor(() => expect(screen.getByText(en["admin.inbound.error"])).toBeTruthy());
+  fireEvent.click(toggle);
+  expect(screen.getByText(en["admin.inbound.error"])).toBeTruthy();
+  expect(screen.queryByText(en["admin.inbound.no_subject"])).toBeNull();
 });

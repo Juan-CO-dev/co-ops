@@ -8,6 +8,7 @@ import ts from "typescript";
 // List every exported HTTP method explicitly; additions require deliberate classification.
 const mutationRoutes: Record<string, string> = {
   "inbound/aliases/route.ts": "POST",
+  "inbound/redrive/route.ts": "POST",
   "inbound/vendor-accounts/route.ts": "POST",
   "marketing/milestones/route.ts": "POST",
   "marketing/milestones/[id]/correct/route.ts": "POST",
