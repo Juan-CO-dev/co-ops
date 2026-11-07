@@ -1,5 +1,6 @@
 -- 0293_vendor_import_shop.sql — Catalog Phase 5 chunk 6.
--- AUTHORED 2026-11-06; NOT APPLIED. CC applies to sim, then prod separately.
+-- AUTHORED 2026-11-06. APPLIED: SIM 20261107035232 (2026-11-07); PROD 20261107150337 (2026-11-07,
+-- Juan-approved; dry run + verify SQL clean). Recorded in supabase_migrations.schema_migrations.
 -- Shop-scoped vendor files append prices through the existing 0259 lane writer.
 -- Scope is fixed at staging; shop batches cannot enter the global writer.
 -- BACKWARD COMPATIBLE: old app code never creates shop batches. The stage signature
