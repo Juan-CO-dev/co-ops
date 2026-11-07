@@ -13,7 +13,7 @@ it('tracks Dupont Uber Eats through Pixel and CAPI without an Appfront shop coun
   expect(transport.pixel).not.toHaveBeenCalled();
   expect(transport.post).not.toHaveBeenCalled();
   tracker.dispatch('OrderClick',details);
-  expect(transport.pixel).toHaveBeenCalledExactlyOnceWith('trackCustom','OrderClick',{ad:'unattributed',...details},transport.uuid());
+  expect(transport.pixel).toHaveBeenCalledExactlyOnceWith('track','InitiateCheckout',{content_name:'OrderClick',ad:'unattributed',...details},transport.uuid());
   expect(transport.post).toHaveBeenCalledTimes(1);
   expect(transport.post).toHaveBeenCalledWith('/api/landing/events',expect.objectContaining({event_name:'OrderClick',...details}));
 });

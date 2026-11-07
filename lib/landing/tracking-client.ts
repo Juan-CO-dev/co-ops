@@ -1,6 +1,6 @@
 import { UNATTRIBUTED, validAdCandidate } from './ad-codes-shared';
 import { ATTRIBUTION_KEY } from './attribution-shared';
-import { validActionDetails } from './tracking-schema-shared';
+import { LANDING_META_EVENTS, validActionDetails } from './tracking-schema-shared';
 export type LandingAction = 'OrderClick' | 'CateringClick' | 'Lead' | 'FindLocation';
 export interface ActionDetails { mode?: "pickup" | "delivery"; store?: string; ad?: string; placement: string; vendor?: string; item?: string; fbc?: string; fbp?: string }
 export type DetailsFactory = (cookiesOnly: boolean) => ActionDetails;
@@ -69,7 +69,8 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       // Item context goes to Meta only; the aggregate counter retains no item data.
       if (details.item) params.item = details.item;
       const id = event?.id ?? transport.uuid();
-      if (!navigating && hasPixel) safe(() => transport.pixel(name === 'Lead' || name === 'FindLocation' ? 'track' : 'trackCustom',name,params,id));
+      const meta = LANDING_META_EVENTS[name];
+      if (!navigating && hasPixel) safe(() => transport.pixel(meta.method,meta.name,{...params,...meta.params},id));
       const countClick = () => {
         if ((name === 'OrderClick' && !details.vendor) || name === 'FindLocation') {
           const payload = { ...(details.store ? {store:details.store} : {}), ad, intent: name === 'FindLocation' ? 'visit' : details.mode };

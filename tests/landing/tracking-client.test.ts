@@ -57,11 +57,14 @@ describe('landing dispatch', () => {
     expect(f.loadPixel).toHaveBeenCalledOnce(); expect(f.pixel.mock.calls.map(c=>c[1])).toEqual(['PageView','ViewContent']);
     f.tracker.setConsent(false); f.tracker.dispatch('Lead',{placement:'hero'}); expect(f.revokePixel).toHaveBeenCalledOnce(); expect(f.post).not.toHaveBeenCalled();
   });
-  it('shares action IDs, uses custom semantics and one independent counter without retries', () => {
+  it('shares action IDs, maps only Meta semantics and one independent counter without retries', () => {
     const f=fixture(); f.tracker.setConsent(true);
     f.tracker.dispatch('OrderClick',{mode:'pickup',store:'dupont',placement:'hero',ad:'subsim-photo'});
     f.tracker.dispatch('OrderClick',{mode:'pickup',store:'dupont',placement:'hero'});
-    expect(f.pixel.mock.calls[0]?.slice(0,2)).toEqual(['trackCustom','OrderClick']);
+    expect(f.pixel.mock.calls[0]?.slice(0,2)).toEqual(['track','InitiateCheckout']);
+    expect(f.pixel.mock.calls[0]?.[2]).toEqual({ad:'subsim-photo',placement:'hero',store:'dupont',mode:'pickup',content_name:'OrderClick'});
+    expect(f.post.mock.calls[0]?.[1].event_name).toBe('OrderClick');
+    expect(f.post.mock.calls[0]?.[1]).not.toHaveProperty('content_name');
     expect(f.pixel.mock.calls[0]?.[3]).toBe('id-1'); expect(f.post.mock.calls[0]?.[1].event_id).toBe('id-1');
     expect(f.post.mock.calls.filter(c=>c[0].endsWith('order-click'))).toHaveLength(2);
     expect(f.post.mock.calls[1]?.[1]).toEqual({store:'dupont',ad:'subsim-photo',intent:'pickup'});

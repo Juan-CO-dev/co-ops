@@ -46,7 +46,7 @@ No challenge action on `/api/landing/*` or landing HTML confirmed:
 - Pixel IDs match (boolean only):
 - Token present (boolean only); version v25.0:
 - No test code in Production; UA disclosure approved:
-- Preview Test Events: Lead, OrderClick, CateringClick all Deduplicated:
+- Preview Test Events: Lead, standard InitiateCheckout (content_name: OrderClick), custom CateringClick all Deduplicated; no custom conversion is needed for order clicks:
 - Production Browser + Server received:
 - Reject / withdraw / DNT / GPC each send zero Meta requests:
 - Staff isolation: no Meta, landing APIs 404:
