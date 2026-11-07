@@ -367,7 +367,7 @@ const PAGE_ROUTES: Record<string, string> = {
   // catalog Phase 3b — a GM's recipe updates for one shop (an exact route; ?location=<shop>).
   "app/admin/catalog/notices/page.tsx": "/admin/catalog/notices",
   // catalog Phase 2b (sim QA) — the SKU catalog and the vendor page resolve the shop their item-page
-  // links land on; they read no shop parameter of their own.
+  // links land on, using the declared location parameter.
   "app/admin/skus/page.tsx": "/admin/skus",
   "app/admin/vendors/[id]/page.tsx": "/admin/vendors/v",
   // catalog Phase 3a — readiness at a shop (the hub's attributed counts deep-link ?location=<shop>).
@@ -377,7 +377,7 @@ const PAGE_ROUTES: Record<string, string> = {
 
 /** Where each audited page binds the awaited `searchParams` its getter reads. */
 const BINDINGS: Record<string, RegExp> = {
-  sp: /const sp = await searchParams;/,
+  sp: /const sp = await searchParams(?: \?\? \{\})?;/,
   raw: /const raw = await searchParams;/,
   params: /const params = await searchParams;/,
   rawParams: /const rawParams = await searchParams;/,
@@ -386,6 +386,7 @@ const BINDINGS: Record<string, RegExp> = {
 };
 /** Direct reads of a shop parameter that bypass the contract getter. */
 const BYPASS = [
+  /\(await searchParams\)\?*\.(?:location|loc)\b/,
   /\b(?:params|sp|query|rawParams)\.(?:location|loc)\b/,
   /\bsp\[["'](?:location|loc)["']\]/,
   /const \{[^}]*\b(?:location|loc)\b[^}]*\} = (?:await )?(?:searchParams|sp|query|params)\b/,
@@ -415,6 +416,16 @@ function shopParamsReadBySource(text: string, route: string): readonly string[] 
 }
 
 describe("route contract = what each resolver page's source actually reads (reviews 2–3)", () => {
+  it("rejects a direct optional read from awaited searchParams", () => {
+    expect(() => shopParamsReadBySource("const requested = (await searchParams)?.location;", "/admin/vendors/v")).toThrow();
+  });
+  it("declares vendor detail location and preserves URL/cookie precedence", async () => {
+    server.cookie = B;
+    expect(shopParamNames("/admin/vendors/v")).toEqual(["location"]);
+    const explicit = shopParamFor("/admin/vendors/v", searchParamValues({ location: A }));
+    expect(await resolveShopId([A, B], explicit)).toBe(A);
+    expect(await resolveShopId([A, B], shopParamFor("/admin/vendors/v", searchParamValues({})))).toBe(B);
+  });
   it("every page that imports the resolver is audited (and every audited page imports it)", () => {
     const pages: string[] = [];
     const walk = (dir: string) => {

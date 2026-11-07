@@ -17,6 +17,13 @@ const dynamic = [
 const literal = [...component.matchAll(/t\("(admin\.vendor_import\.[^"]+)"/g)].map(m => m[1]!);
 
 describe("vendor importer translations", () => {
+  it("uses the established Spanish global-default term", () => {
+    expect(es["admin.vendor_import.global_default"].toLowerCase()).toBe("predeterminado global");
+    expect(es["admin.vendor_import.global_version"]).toContain("predeterminado global");
+    for (const [key, value] of Object.entries(es)) {
+      if (key.startsWith(prefix)) expect(value.toLowerCase(), key).not.toContain("valores globales");
+    }
+  });
   it("references a nonempty set of UI keys", () => expect(literal.length).toBeGreaterThan(20));
   for (const [language, dictionary] of Object.entries({ en, es })) {
     it(`covers literal and dynamic component keys in ${language}`, () => {

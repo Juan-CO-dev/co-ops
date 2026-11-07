@@ -45,6 +45,19 @@ export function packComparison(row: ExportRow, root: Root | null): { same: boole
   return { same, dimensionMismatch: false, ...(same ? {} : { proposedQuantity: contents.quantity }) };
 }
 
+/** Shop imports must prove the physical hierarchy, not just total contents.
+ * 12 x 32 oz and 24 x 16 oz weigh the same but price a different "each".
+ * One-count wrappers carry no physical split; all other ordered counts must agree.
+ */
+export function shopPackMatches(row: ExportRow, sku: CatalogSku): boolean {
+  if (!sku.root || !sku.packCounts || !packComparison(row, sku.root).same) return false;
+  if (!positive(row.pack_qty) || !positive(row.pack_inner_qty ?? 1)
+    || row.pack_unparsed || row.pack_catch_weight || row.pack_size_min != null || row.pack_size_max != null) return false;
+  const source = [row.pack_qty, row.pack_inner_qty ?? 1].filter(n => n !== 1);
+  const target = sku.packCounts.filter(n => n !== 1);
+  return source.length === target.length && source.every((n, i) => Math.abs(n - target[i]!) < 1e-8);
+}
+
 /** What ONE unit of the catalog's price basis contains, in the root's unit: the case root, the vendor's each, a pound, a dozen. */
 function basisContents(row: ExportRow, root: Root, basis: Basis): number | null {
   if (basis === "per_case" || basis === "per_bundle") return root.quantity;

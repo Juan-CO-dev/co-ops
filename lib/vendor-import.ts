@@ -6,7 +6,8 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { audit } from "@/lib/audit";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
-import { VENDOR_IMPORT_STAGE_MIN, VENDOR_IMPORT_APPLY_MIN } from "@/lib/vendor-import-shared/levels";
+import { VENDOR_IMPORT_STAGE_MIN, vendorImportScopeAllowed } from "@/lib/vendor-import-shared/levels";
+import { resolvePackLevels, resolveCurrentPrices, type ScopedPriceRow } from "@/lib/sku-versions-shared";
 import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
 import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 import { detectAdapter } from "@/lib/vendor-import-shared/adapters";
@@ -22,7 +23,7 @@ const ADAPTER_VERSION = "v3c2-v1";
 type BeforeState = Record<string, Record<string, unknown>>;
 interface PackRow {
   sku_id: string; id: string; label: string; contains_qty: number;
-  contains_level_id: string | null; contains_measure_unit: string | null; display_ordinal: number;
+  contains_level_id: string | null; contains_measure_unit: string | null; display_ordinal: number; location_id?: string | null;
 }
 interface Vendor { id: string; name: string; active: boolean; account_number: string | null; portal_url: string | null }
 interface Measure { label: string; dimension: "weight" | "volume" | "count"; to_base_factor: number }
@@ -34,7 +35,7 @@ interface ImportReport {
   ignored_rows: number;
 }
 interface BatchRow {
-  id: string; vendor_id: string; location_id: null; account_id: string | null;
+  id: string; vendor_id: string; location_id: string | null; account_id: string | null;
   adapter: string; adapter_version: string; source_name: string; source_sha256: string;
   exported_at: string | null; row_count: number; report: ImportReport;
   status: "staged" | "applied" | "superseded"; created_by: string; created_at: string;
@@ -55,7 +56,17 @@ export interface ImportApplyResult {
 }
 
 function requireLevel(actor: AuthContext, min: number) {
-  if (getRoleLevel(actor.user.role) < min) throw new VendorImportError(403, "forbidden");
+  if (actor.user.role === "social_media_mgr" || getRoleLevel(actor.user.role) < min) throw new VendorImportError(403, "forbidden");
+}
+function requireScope(actor: AuthContext, shopId: string | null, mode: "stage" | "apply" = "stage") {
+  if (!vendorImportScopeAllowed({ role: actor.user.role, locations: actor.locations }, shopId, mode)) throw new VendorImportError(403, "forbidden");
+  if (shopId !== null) id(shopId);
+}
+async function requireActiveShop(shopId: string | null) {
+  if (shopId === null) return;
+  const { data, error } = await getServiceRoleClient().from("locations").select("id").eq("id", shopId).eq("active", true).maybeSingle();
+  check(error);
+  if (!data) throw new VendorImportError(403, "forbidden");
 }
 function id(value: string) {
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value)) throw new VendorImportError(400, "invalid_payload");
@@ -81,36 +92,51 @@ async function loadVendor(vendorId: string, includeInactive = false): Promise<Ve
   return data;
 }
 
-async function loadCatalog(vendorId: string): Promise<{ catalog: CatalogSku[]; packs: Map<string, PackRow[]>; measures: Measure[] }> {
+async function loadCatalog(vendorId: string, shopId: string | null): Promise<{ catalog: CatalogSku[]; packs: Map<string, PackRow[]>; measures: Measure[] }> {
   const sb = getServiceRoleClient();
-  const skus = await selectAllRows<Omit<CatalogSku, "root" | "latestPrice">>((from, to) => sb.from("vendor_items")
-    .select("id,vendor_id,name,item_number,active,price_basis").eq("vendor_id", vendorId).order("id").range(from, to));
+  const allSkus = await selectAllRows<Omit<CatalogSku, "root" | "latestPrice">>((from, to) => sb.from("vendor_items")
+    .select("id,vendor_id,name,item_number,active,price_basis,location_id").eq("vendor_id", vendorId).order("id").range(from, to));
+  const skus = shopId === null ? allSkus : allSkus.filter(sku => sku.location_id == null || sku.location_id === shopId);
+  const packScopes = new Map<string, string | null>();
+  const priceScopes = new Map<string, NonNullable<CatalogSku["priceScope"]>>();
   const packs = new Map<string, PackRow[]>();
   const latest = new Map<string, NonNullable<CatalogSku["latestPrice"]>>();
   // Bounded ID windows avoid an unbounded PostgREST URL; 84 SKUs use ONE pack query.
   for (let start = 0; start < skus.length; start += 100) {
     const ids = skus.slice(start, start + 100).map(s => s.id);
-    // GLOBAL LANE ONLY (catalog Phase 2a): the import supersedes the GLOBAL chain and appends a
-    // GLOBAL price, and apply_vendor_import (re-emitted in 0259) re-checks exactly this before-state.
-    const [levels, prices] = await Promise.all([
-      selectAllRows<PackRow>((from, to) => sb.from("sku_pack_levels")
-        .select("sku_id,id,label,contains_qty,contains_level_id,contains_measure_unit,display_ordinal")
-        .in("sku_id", ids).eq("active", true).is("location_id", null).order("id").range(from, to)),
-      // Mirrors loadCurrentSkuPrices, lib/admin/cost.ts:88–97, including pagination
-      // and all THREE sort keys. Add id because the apply precondition needs it.
-      selectAllRows<{ id: string; vendor_item_id: string; unit_price: number | string; effective_date: string }>((from, to) => sb
-        .from("vendor_price_history").select("id,vendor_item_id,unit_price,effective_date,recorded_at")
-        .in("vendor_item_id", ids).is("location_id", null).order("effective_date", { ascending: false })
-        .order("recorded_at", { ascending: false }).order("id", { ascending: false }).range(from, to)),
+    const [levels, prices, lanes] = await Promise.all([
+      selectAllRows<PackRow>((from, to) => {
+        const q = sb.from("sku_pack_levels")
+          .select("sku_id,id,label,contains_qty,contains_level_id,contains_measure_unit,display_ordinal,location_id")
+          .in("sku_id", ids).eq("active", true);
+        return (shopId ? q.or(`location_id.is.null,location_id.eq.${shopId}`) : q.is("location_id", null)).order("id").range(from, to);
+      }),
+      selectAllRows<ScopedPriceRow>((from, to) => {
+        const q = sb.from("vendor_price_history")
+          .select("id,vendor_item_id,unit_price,effective_date,recorded_at,location_id,price_lane_id").in("vendor_item_id", ids);
+        return (shopId ? q.or(`location_id.is.null,location_id.eq.${shopId}`) : q.is("location_id", null))
+          .order("effective_date", { ascending: false }).order("recorded_at", { ascending: false })
+          .order("id", { ascending: false }).range(from, to);
+      }),
+      shopId ? selectAllRows<{ id: string; sku_id: string }>((from, to) => sb.from("sku_price_lanes")
+        .select("id,sku_id").in("sku_id", ids).eq("location_id", shopId).eq("active", true).order("id").range(from, to)) : [],
     ]);
-    for (const level of levels) {
-      const list = packs.get(level.sku_id) ?? [];
-      list.push({ ...level, contains_qty: Number(level.contains_qty) }); packs.set(level.sku_id, list);
+    for (const [skuId, pack] of resolvePackLevels(levels, shopId)) {
+      packScopes.set(skuId, pack.locationId);
+      packs.set(skuId, levels.filter(l => l.sku_id === skuId && (l.location_id ?? null) === pack.locationId)
+        .map(l => ({ ...l, contains_qty: Number(l.contains_qty) })));
     }
-    for (const price of prices) if (!latest.has(price.vendor_item_id)) {
-      const amount = Number(price.unit_price);
-      if (!Number.isFinite(amount)) throw new VendorImportError(500, "invalid_catalog_price");
-      latest.set(price.vendor_item_id, { id: price.id, unit_price: amount, effective_date: price.effective_date });
+    const laneMap = new Map(lanes.map(l => [l.sku_id, l.id]));
+    // A live lane without a price cannot be created by the atomic writer. Refuse
+    // corrupt state rather than snapshot a fallback that SQL cannot revalidate.
+    if (lanes.some(lane => !prices.some(price => price.vendor_item_id === lane.sku_id && price.price_lane_id === lane.id))) {
+      throw new VendorImportError(500, "invalid_catalog_price");
+    }
+    if (prices.some(price => !Number.isFinite(Number(price.unit_price)))) throw new VendorImportError(500, "invalid_catalog_price");
+    for (const [skuId, price] of resolveCurrentPrices(prices, laneMap)) {
+      if (!price.priceId) throw new VendorImportError(500, "invalid_catalog_price");
+      latest.set(skuId, { id: price.priceId, unit_price: price.value, effective_date: price.effectiveDate });
+      priceScopes.set(skuId, { based_on: price.locationId === null ? "global" : "shop", price_lane_id: price.laneId });
     }
   }
   const measureRows = await selectAllRows<Measure>((from, to) => sb
@@ -126,11 +152,12 @@ async function loadCatalog(vendorId: string): Promise<{ catalog: CatalogSku[]; p
     const chain = buildPackChain(levels);
     const label = chainRootLabel(chain);
     const root = label ? chain.byLabel.get(label) : undefined;
+    const packCounts: number[] = [];
     let node = root; let quantity = 1; const seen = new Set<string>();
     let resolved: CatalogSku["root"] = null;
     while (node && root && !seen.has(node.id)) {
       seen.add(node.id); quantity *= node.containsQty;
-      if (node.containsLevelId) { node = chain.byId.get(node.containsLevelId); continue; }
+      if (node.containsLevelId) { packCounts.push(node.containsQty); node = chain.byId.get(node.containsLevelId); continue; }
       const measure = measureMap.get(node.containsMeasureUnit ?? "");
       if (measure && seen.size === levels.length) {
         quantity *= Number(measure.to_base_factor);
@@ -139,7 +166,8 @@ async function loadCatalog(vendorId: string): Promise<{ catalog: CatalogSku[]; p
       }
       break;
     }
-    return { ...sku, root: resolved, latestPrice: latest.get(sku.id) ?? null };
+    return { ...sku, packCounts: resolved ? packCounts : undefined, root: resolved, latestPrice: latest.get(sku.id) ?? null,
+      ...(shopId ? { priceScope: priceScopes.get(sku.id) ?? { based_on: "global" as const, price_lane_id: null }, packLocationId: packScopes.get(sku.id) ?? null } : {}) };
   }) };
 }
 
@@ -157,8 +185,9 @@ function makeOps(observations: Observation[], decisions: Record<string, Decision
   catch (e) { throw new VendorImportError(400, e instanceof Error ? e.message : "invalid_payload"); }
 }
 
-export async function stageVendorImport(actor: AuthContext, vendorId: string, file: { name: string; text: string }): Promise<ImportBatchView> {
-  requireLevel(actor, VENDOR_IMPORT_STAGE_MIN);
+export async function stageVendorImport(actor: AuthContext, vendorId: string, file: { name: string; text: string }, shopId: string | null = null): Promise<ImportBatchView> {
+  requireScope(actor, shopId);
+  await requireActiveShop(shopId);
   if (Buffer.byteLength(file.text, "utf8") > MAX_IMPORT_BYTES) throw new VendorImportError(413, "too_large");
   const vendor = await loadVendor(vendorId);
   const adapter = detectAdapter(file.text);
@@ -179,15 +208,16 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   if (accounts.length > 1) throw new VendorImportError(400, "multiple_accounts");
   const sha = createHash("sha256").update(file.text, "utf8").digest("hex");
   const sb = getServiceRoleClient();
-  const { data: existing, error: findError } = await sb.from("vendor_import_batches").select("id")
-    .eq("vendor_id", vendorId).eq("source_sha256", sha).eq("adapter_version", ADAPTER_VERSION).eq("status", "staged").maybeSingle<{ id: string }>();
+  const existingQuery = sb.from("vendor_import_batches").select("id")
+    .eq("vendor_id", vendorId).eq("source_sha256", sha).eq("adapter_version", ADAPTER_VERSION).eq("status", "staged");
+  const { data: existing, error: findError } = await (shopId ? existingQuery.eq("location_id", shopId) : existingQuery.is("location_id", null)).maybeSingle<{ id: string }>();
   check(findError);
   if (existing) return loadImportBatch(actor, vendorId, existing.id);
-  const { catalog, packs, measures } = await loadCatalog(vendorId);
+  const { catalog, packs, measures } = await loadCatalog(vendorId, shopId);
   // [ASSUMPTION] The v1 root-only proposal cannot distinguish a changed case
   // count from a changed descendant size. Never turn 12 x 32oz into 24 x 16oz.
   // Multi-level physical changes go to the existing pack editor for now.
-  const matched = matchObservations(rows, catalog, vendorId);
+  const matched = matchObservations(rows, catalog, vendorId, shopId ?? undefined);
   const observations = matched.flatMap((o): Observation[] => {
     if (o.kind !== "pack" || (packs.get(o.match.sku_id ?? "")?.length ?? 0) <= 1) return [o];
     if (matched.some(other => other.source_row === o.source_row && other.kind === "needs_person")) return [];
@@ -204,7 +234,7 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
       contains_level_id: level.contains_level_id, contains_measure_unit: level.contains_measure_unit, display_ordinal: level.display_ordinal }));
     snapshot.measures = measures.filter(m => levels.some(l => l.contains_measure_unit === m.label));
     snapshot.name = sku.name;
-    snapshot.evidence = { vendor_id: vendorId, account_id: accounts[0] ?? null, location_id: null,
+    snapshot.evidence = { vendor_id: vendorId, account_id: accounts[0] ?? null, location_id: shopId,
       source_sha256: sha, adapter_version: ADAPTER_VERSION, row: observation.row };
   }
   const report: ImportReport = { counts: {}, reasons: {}, needs_person: [], before_state: before, ignored_rows: parsed.length - rows.length };
@@ -212,25 +242,25 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
     report.counts[o.kind] = (report.counts[o.kind] ?? 0) + 1;
     report.reasons[o.reason] = (report.reasons[o.reason] ?? 0) + 1;
     if (o.kind === "needs_person") report.needs_person.push({ key: observationKey(o), reason: o.reason,
-      href: o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: null, job: "pack" }) : `/admin/vendors/${vendorId}#order-guide-${vendorId}` });
+      href: o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId, job: "pack" }) : `/admin/vendors/${vendorId}#order-guide-${vendorId}` });
   }
   const { data: staged, error } = await sb.rpc("stage_vendor_import", {
-    p_batch: { vendor_id: vendorId, account_id: accounts[0] ?? null, adapter: adapter.id, adapter_version: ADAPTER_VERSION,
+    p_batch: { vendor_id: vendorId, location_id: shopId, account_id: accounts[0] ?? null, adapter: adapter.id, adapter_version: ADAPTER_VERSION,
       source_name: sourceName, source_sha256: sha, exported_at: rows.map(r => r.exported_at).sort().at(-1) ?? null,
       row_count: rows.length, report, created_by: actor.user.id }, p_observations: observations,
   });
   check(error);
   const batchId = (staged as { batch_id?: unknown } | null)?.batch_id;
   if (typeof batchId !== "string") throw new VendorImportError(500, "internal_error");
-  const view = await loadImportBatch(actor, vendorId, batchId);
+  const view = await loadImportBatch(actor, vendorId, batchId, shopId);
   if (!(staged as { created: boolean }).created) return view;
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "vendor.import_staged",
     resourceTable: "vendor_import_batches", resourceId: batchId, metadata: { actor_context: "vendor_import",
-      vendor_id: vendorId, account_id: accounts[0] ?? null, counts: view.batch.report.counts, sha, adapter: adapter.id }, ipAddress: null, userAgent: null });
+      vendor_id: vendorId, location_id: shopId, account_id: accounts[0] ?? null, counts: view.batch.report.counts, sha, adapter: adapter.id }, ipAddress: null, userAgent: null });
   return view;
 }
 
-export async function loadImportBatch(actor: AuthContext, vendorId: string, batchId: string): Promise<ImportBatchView> {
+export async function loadImportBatch(actor: AuthContext, vendorId: string, batchId: string, expectedScope?: string | null): Promise<ImportBatchView> {
   requireLevel(actor, VENDOR_IMPORT_STAGE_MIN); id(vendorId); id(batchId);
   await loadVendor(vendorId, true);
   const sb = getServiceRoleClient();
@@ -238,6 +268,11 @@ export async function loadImportBatch(actor: AuthContext, vendorId: string, batc
     .eq("vendor_id", vendorId).maybeSingle<BatchRow>();
   check(error);
   if (!batch) throw new VendorImportError(404, "batch_not_found");
+  // An older stage RPC can silently discard the requested shop. Fail closed
+  // before scope authorization or hydration, including for a GM requesting a shop.
+  if (expectedScope !== undefined && batch.location_id !== expectedScope) throw new VendorImportError(503, "import_unavailable");
+  requireScope(actor, batch.location_id);
+  await requireActiveShop(batch.location_id);
   const stored = await selectAllRows<{ source_row: number; kind: Observation["kind"]; reason: string;
     match_rule: Observation["match"]["rule"]; sku_id: string | null; candidates: string[];
     payload: Observation["row"]; proposed: Observation["proposed"]; decision: Decision | null }>((from, to) => sb
@@ -254,22 +289,24 @@ export async function loadImportBatch(actor: AuthContext, vendorId: string, batc
 
 export async function applyVendorImport(actor: AuthContext, vendorId: string, batchId: string,
   decisions: Record<string, Decision>, expectedDigest: string): Promise<ImportApplyResult> {
-  requireLevel(actor, VENDOR_IMPORT_APPLY_MIN);
+  requireLevel(actor, VENDOR_IMPORT_STAGE_MIN);
   if (!decisions || typeof decisions !== "object" || Array.isArray(decisions)
     || Object.values(decisions).some(d => d !== "accept" && d !== "skip")
     || typeof expectedDigest !== "string" || !/^[a-f0-9]{64}$/.test(expectedDigest)) throw new VendorImportError(400, "invalid_payload");
   await loadVendor(vendorId);
   const view = await loadImportBatch(actor, vendorId, batchId);
+  requireScope(actor, view.batch.location_id, "apply");
   const keys = new Set(view.observations.map(observationKey));
   if (Object.keys(decisions).some(k => !keys.has(k))) throw new VendorImportError(400, "invalid_payload");
   const ops = makeOps(view.observations, decisions, view.beforeState);
   if (await planDigest(ops, view.beforeState) !== expectedDigest) throw new VendorImportError(409, "plan_changed");
+  if (view.batch.location_id !== null && ops.some(op => op.action !== "sku.price_supersede")) throw new VendorImportError(400, "invalid_payload");
   if (ops.length === 0) throw new VendorImportError(400, "no_operations");
-  const { data, error } = await getServiceRoleClient().rpc("apply_vendor_import", {
+  const { data, error } = await getServiceRoleClient().rpc(view.batch.location_id === null ? "apply_vendor_import" : "apply_vendor_import_shop", {
     p_batch_id: batchId, p_plan_digest: expectedDigest, p_actor: actor.user.id, p_ops: ops,
   });
   if (error) {
-    if (error.message.includes("stale_before_state")) {
+    if (error.message.includes("stale_before_state") || error.message.includes("foreign_sku")) {
       // The catalog moved under this batch: retire it so the same file can be
       // staged again against the live catalog (0211 keys uniqueness on STAGED only).
       await getServiceRoleClient().from("vendor_import_batches").update({ status: "superseded" })
@@ -280,6 +317,7 @@ export async function applyVendorImport(actor: AuthContext, vendorId: string, ba
     if (error.message.includes("batch_already_applied")) throw new VendorImportError(409, "batch_already_applied");
     if (error.message.includes("batch_not_found")) throw new VendorImportError(404, "batch_not_found");
     if (error.message.includes("vendor_not_found")) throw new VendorImportError(404, "vendor_not_found");
+    if (["unsupported_op", "shop_batch_requires_shop_apply", "global_batch_requires_global_apply"].some(code => error.message.includes(code))) throw new VendorImportError(400, "invalid_payload");
     if (error.message.includes("forbidden")) throw new VendorImportError(403, "forbidden");
     if (error.message.includes("invalid_chain")) throw new VendorImportError(409, "invalid_chain");
     if (error.message.includes("invalid_price")) throw new VendorImportError(409, "invalid_price");
@@ -295,11 +333,11 @@ export async function applyVendorImport(actor: AuthContext, vendorId: string, ba
   if (!shouldAudit) return result;
   for (const op of ops) await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: op.action,
     resourceTable: "vendor_items",
-    resourceId: op.sku_id, metadata: { actor_context: "vendor_import", vendor_id: vendorId, batch_id: batchId,
+    resourceId: op.sku_id, metadata: { actor_context: "vendor_import", vendor_id: vendorId, location_id: view.batch.location_id, batch_id: batchId,
       plan_digest: expectedDigest, source_row: op.source_row, before: op.before, after: op.after,
       result: result.ops.find(r => r.sku_id === op.sku_id && r.action === op.action) }, ipAddress: null, userAgent: null });
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "vendor.import_applied",
     resourceTable: "vendor_import_batches", resourceId: batchId, metadata: { actor_context: "vendor_import",
-      vendor_id: vendorId, batch_id: batchId, plan_digest: expectedDigest, op_count: ops.length, result }, ipAddress: null, userAgent: null });
+      vendor_id: vendorId, location_id: view.batch.location_id, batch_id: batchId, plan_digest: expectedDigest, op_count: ops.length, result }, ipAddress: null, userAgent: null });
   return result;
 }

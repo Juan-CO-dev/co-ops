@@ -187,10 +187,12 @@ describe("0259 re-emits its two SQL chain writers faithfully", () => {
   const emitted0259 = read(M0259);
   for (const r of REEMITS) {
     describe(r.name, () => {
-      it(`${r.source} was the latest definer before 0259, and 0259 is now`, () => {
+      it(`${r.source} was the latest definer before 0259; later re-emits are explicit`, () => {
         const defining = files.filter((f) => read(f).includes(r.start) || read(f).includes(r.startReplaced));
-        expect(defining[defining.length - 1]).toBe(M0259);
-        expect(defining[defining.length - 2]).toBe(r.source);
+        const through0259 = defining.filter((f) => f <= M0259);
+        expect(through0259.at(-1)).toBe(M0259);
+        expect(through0259.at(-2)).toBe(r.source);
+        expect(defining.at(-1)).toBe(r.name === "apply_vendor_import" ? "0293_vendor_import_shop.sql" : M0259);
       });
       it("the source body (± the enumerated mods) is a line-subsequence of the 0259 body", () => {
         const source = applyMods(extractFunction(read(r.source), r.start, r.end), r.mods);

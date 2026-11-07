@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
+import { vendorImportScopeAllowed } from "@/lib/vendor-import-shared/levels";
 import { getRoleLevel } from "@/lib/roles";
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
@@ -18,8 +19,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const ctx = await requireSession(req, `/api/admin/vendors/${id}/import`);
   if (ctx instanceof Response) return ctx;
   if (getRoleLevel(ctx.user.role) < VENDOR_IMPORT_STAGE_MIN) return jsonError(403, "forbidden");
+  const location = form.get("locationId");
+  if (location !== null && typeof location !== "string") return jsonError(400, "invalid_payload");
+  if (!vendorImportScopeAllowed({ role: ctx.user.role, locations: ctx.locations }, location || null, "stage")) return jsonError(403, "forbidden");
   try {
-    return jsonOk({ ...await stageVendorImport(ctx, id, { name: file.name, text: await file.text() }) });
+    return jsonOk({ ...await stageVendorImport(ctx, id, { name: file.name, text: await file.text() }, location || null) });
   } catch (e) {
     if (e instanceof VendorImportError) return jsonError(e.status, e.code);
     throw e;

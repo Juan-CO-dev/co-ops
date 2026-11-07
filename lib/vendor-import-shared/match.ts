@@ -1,5 +1,5 @@
 import type { CatalogSku, Decision, ExportRow, Observation, PlanOp } from "./model";
-import { packComparison, priceAtRoot, priceComparison } from "./reconcile";
+import { packComparison, priceAtRoot, priceComparison, shopPackMatches } from "./reconcile";
 
 export type BeforeState = Record<string, Record<string, unknown>>;
 export const observationKey = (observation: Pick<Observation, "source_row" | "kind">): string => `${observation.source_row}:${observation.kind}`;
@@ -8,11 +8,11 @@ const evidenceDate = (row: ExportRow) => row.receipt_doc ? row.last_purchase_dat
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 
 /** vendorId is the server-validated adapter-family binding, not inferred from names. */
-export function matchObservations(rows: readonly ExportRow[], catalog: readonly CatalogSku[], vendorId?: string): Observation[] {
-  const observations = rows.flatMap((row, index) => {
+export function matchObservations(rows: readonly ExportRow[], catalog: readonly CatalogSku[], vendorId?: string, shopId?: string | null): Observation[] {
+  const observations = rows.flatMap((row, index): Observation[] => {
     // Ordinal rather than physical line: compact receipt JSON can contain many lines on one source line.
     const source_row = index + 1;
-    const scoped = catalog.filter(sku => sku.vendor_id === (vendorId ?? row.vendor));
+    const scoped = catalog.filter(sku => sku.vendor_id === (vendorId ?? row.vendor) && (shopId === undefined || sku.location_id == null || sku.location_id === shopId));
     const numbered = row.item_no ? scoped.filter(sku => sku.item_number === row.item_no) : [];
     const matched = numbered.length ? numbered : scoped.filter(sku => norm(sku.name) !== "" && norm(sku.name) === norm(row.description));
     const match: Observation["match"] = { rule: matched.length > 1 ? "ambiguous" : matched.length === 0 ? "unmatched" : numbered.length ? "item_number" : "name_exact", sku_id: matched.length === 1 ? matched[0]!.id : null, candidates: matched.map(sku => sku.id).sort() };
@@ -26,6 +26,15 @@ export function matchObservations(rows: readonly ExportRow[], catalog: readonly 
     if (!sku.active) { add("needs_person", "inactive_sku"); return result; }
     if (row.item_no && sku.item_number != null && row.item_no !== sku.item_number) { add("needs_person", "item_number_conflict"); return result; }
     if (sku.item_number == null && row.item_no) add("item_number", "item_number_missing", { item_number: row.item_no });
+    // Shop imports never change identity or packs. Hold the whole changed-pack row:
+    // even a price conversion may depend on the unaccepted physical change.
+    if (shopId != null) {
+      if (!shopPackMatches(row, sku)) {
+        return [{ source_row, row, match, kind: "needs_person", reason: "pack_hierarchy_review", proposed: null }];
+      }
+      const identity = result.findIndex(o => o.kind === "item_number");
+      if (identity >= 0) result.splice(identity, 1);
+    }
     const date = evidenceDate(row);
     if (sku.latestPrice && date && date < sku.latestPrice.effective_date) {
       add("needs_person", "stale_price_evidence"); return result;
@@ -87,6 +96,7 @@ export function snapshotBeforeState(observations: readonly Observation[], catalo
       : observation.kind === "item_number" ? { item_number: sku.item_number } : null;
     if (value) {
       const snapshot: Record<string, unknown> = structuredClone(value);
+      if (sku.priceScope && observation.kind === "price") Object.assign(snapshot, sku.priceScope, { pack_location_id: sku.packLocationId ?? null });
       const pack = observations.find(o => o.source_row === observation.source_row && o.kind === "pack" && o.match.sku_id === sku.id);
       if (observation.kind === "price" && pack?.proposed?.root && sku.root) {
         const amount = priceAtRoot(observation.row, { ...sku.root, ...pack.proposed.root }, sku.price_basis);

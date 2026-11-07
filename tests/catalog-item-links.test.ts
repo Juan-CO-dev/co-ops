@@ -15,7 +15,7 @@ describe("ways in", () => {
     expect(read("components/catalog/PackChangeRequestsList.tsx")).toContain('skuItemHref(r.skuId, { shopId: r.locationId, job: "pack", requestId: r.id })');
   });
   it("the vendor import's 'needs a person' opens 'It arrives differently now' on the matched SKU", () => {
-    expect(read("lib/vendor-import.ts")).toContain('href: o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: null, job: "pack" }) :');
-    expect(read("components/admin/vendors/VendorImportPanel.tsx")).toContain('o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: null, job: "pack" }) :');
+    expect(read("lib/vendor-import.ts")).toContain('href: o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId, job: "pack" }) :');
+    expect(read("components/admin/vendors/VendorImportPanel.tsx")).toContain('o.match.sku_id ? skuItemHref(o.match.sku_id, { shopId: view?.batch.location_id ?? null, job: "pack" }) :');
   });
 });
