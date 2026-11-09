@@ -117,14 +117,18 @@ for (const [label, groups, malformed, fails] of [
           has_table_privilege($1, $2, 'INSERT') as i,
           has_table_privilege($1, $2, 'UPDATE') as u,
           has_table_privilege($1, $2, 'DELETE') as d,
+          has_table_privilege($1, $2, 'TRUNCATE') as t,
+          has_table_privilege($1, $2, 'REFERENCES') as r,
+          has_table_privilege($1, $2, 'TRIGGER') as g,
           has_table_privilege($1, $2, 'SELECT') as s`, [role, `public.${table}`])).rows[0];
-        check(!privileges.i && !privileges.u && !privileges.d && privileges.s === (table !== tables[2]), `${label} ${role}/${table}: writes revoked, SELECT unchanged`);
+        check(!privileges.i && !privileges.u && !privileges.d && !privileges.t && !privileges.r && !privileges.g && privileges.s === (table !== tables[2]), `${label} ${role}/${table}: writes revoked, SELECT unchanged`);
         await db.exec(`set role ${role}`);
         try {
           for (const sql of [
             `insert into public.${table} default values`,
             `update public.${table} set business_date = business_date`,
             `delete from public.${table}`,
+            `truncate public.${table}`,
           ]) {
             await assert.rejects(db.exec(sql), e => e.code === "42501", `${role} write denied`);
             checks++;

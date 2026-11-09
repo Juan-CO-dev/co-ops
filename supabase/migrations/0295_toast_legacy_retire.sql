@@ -21,10 +21,10 @@
 --   AND grantee IN ('anon','authenticated','PUBLIC')
 --   AND privilege_type IN ('INSERT','UPDATE','DELETE'); -- no rows
 -- ROLLBACK (per table, restoring only privileges present in the pre-apply ACL):
--- toast_sales_events: GRANT INSERT, UPDATE, DELETE ON public.toast_sales_events
+-- toast_sales_events: GRANT INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.toast_sales_events
 -- TO anon, authenticated; -- pre-existing Supabase default ACL, not a 0147 GRANT
 -- toast_daily_depletion: 0166 has no explicit GRANT; ONLY if the pre-apply ACL
--- confirms these privileges: GRANT INSERT, UPDATE, DELETE ON
+-- confirms these privileges: GRANT INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON
 -- public.toast_daily_depletion TO anon, authenticated;
 -- toast_daily_sales_signals: NO re-grant. 0182 revoked ALL, including SELECT.
 -- Restore any pre-existing PUBLIC grants only from the pre-apply ACL backup.
@@ -73,7 +73,7 @@ begin
 end;
 $$;
 
-revoke insert, update, delete on public.toast_sales_events,
+revoke insert, update, delete, truncate, references, trigger on public.toast_sales_events,
   public.toast_daily_depletion, public.toast_daily_sales_signals
   from anon, authenticated, public;
 
