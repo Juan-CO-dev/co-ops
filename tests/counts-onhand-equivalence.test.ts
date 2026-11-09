@@ -4,8 +4,8 @@
  *
  * OLD = tests/fixtures/counts-v0-oracle.ts, a frozen verbatim copy of the read path on
  * origin/main b2770c0d. NEW = the live lib/counts.ts. Both run over identical copies of one
- * in-memory database (tests/fixtures/counts-fake-db.ts) under all three sales sources —
- * the legacy materialized ledger, the raw Toast capture, and the ezCater-reconciled
+ * in-memory database (tests/fixtures/counts-fake-db.ts) under both capture sales sources —
+ * the raw Toast capture and the ezCater-reconciled
  * capture (production's path) — and every output must be deep-equal: the catalog, the
  * on-hand panel (census weight + count rows, par estimates, inferred baselines, products,
  * prep waste, coverage disclosure, watermark), the read-only digest read, and the walk's
@@ -48,7 +48,7 @@ vi.mock("@/lib/ezcater/depletion", () => ({
         aggregate_count: 0, attribution_count: 0, suspect_check_count: 0, suspect_qty: 0, counted_qty: 0 });
     }
     const coverage = await loadSalesCoverageDisclosure(sb, { ...window, untilDateExclusive: end },
-      manifests as unknown as Parameters<typeof loadSalesCoverageDisclosure>[2], true);
+      manifests as unknown as Parameters<typeof loadSalesCoverageDisclosure>[2]);
     for (const date of model.unresolved) {
       if (date < window.fromDate || date >= end) continue;
       const disclosure = coverage.byLocation[LOC];
@@ -67,10 +67,10 @@ const actor = {
   role: "owner", level: 10, locations: [LOC],
 } as unknown as AuthContext;
 
-type Mode = "legacy" | "capture" | "reconciled";
+type Mode = "capture" | "reconciled";
 function setMode(mode: Mode) {
   vi.unstubAllEnvs();
-  if (mode !== "legacy") vi.stubEnv("DEPLETION_SOURCE", "capture");
+  vi.stubEnv("DEPLETION_SOURCE", "capture"); // frozen pre-cutover oracle only
   if (mode === "reconciled") vi.stubEnv("EZCATER_DEPLETION_ENABLED", "1");
 }
 function install(scale: FixtureScale = {}) {
@@ -96,7 +96,7 @@ afterEach(() => {
   current = null;
 });
 
-const MODES: Mode[] = ["legacy", "capture", "reconciled"];
+const MODES: Mode[] = ["capture", "reconciled"];
 const SCALES: Array<[string, FixtureScale]> = [["base", {}], ["scaled", { parWalks: 4, countSessions: 5, baselineInstants: 3 }]];
 
 describe.each(MODES)("OLD ≡ NEW over the same database — %s sales source", (mode) => {
@@ -188,13 +188,11 @@ describe("B9 step 1 — ONE effective-sales read per render", () => {
     expect(tally(neu.log, "toast_depletion_item_attribution")).toBe(1);
   });
 
-  it("the legacy ledger is read once for amounts, once for the gap probe, once for the watermark", async () => {
-    setMode("legacy");
-    const old = await measure({ parWalks: 3, countSessions: 3 }, v0Panel);
+  it("default capture reads never query the retired ledgers", async () => {
+    setMode("capture");
     const neu = await measure({ parWalks: 3, countSessions: 3 }, () => counts.loadOnHand(actor, LOC, NOW));
-    expect(tally(old.log, "toast_daily_depletion")).toBeGreaterThan(10);
-    expect(tally(neu.log, "toast_daily_depletion")).toBe(3);
-    expect(tally(neu.log, "toast_sales_events")).toBe(1);
+    expect(tally(neu.log, "toast_daily_depletion")).toBe(0);
+    expect(tally(neu.log, "toast_sales_events")).toBe(0);
   });
 });
 

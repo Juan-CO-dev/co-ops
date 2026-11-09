@@ -32,13 +32,14 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-08T12:00:00Z"));
   vi.stubEnv("EZCATER_FIXTURES", "0");
-  vi.stubEnv("DEPLETION_SOURCE", "legacy");
   vi.mocked(ezcaterConfigured).mockReturnValue(true);
   vi.mocked(audit).mockResolvedValue(undefined);
   rows = [row("known-uuid")];
   sequence = [];
   const query = {
     select: () => query,
+    eq: () => query,
+    not: async () => ({ data: [], error: null }),
     or: (value: string) => { filter(value); return query; },
     order: (key: string, options?: unknown) => { ordering(key, options); return query; },
     limit: () => query,

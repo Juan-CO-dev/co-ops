@@ -77,7 +77,7 @@ describe("the one sales read, sliced", () => {
       { location_id: "X", business_date: "2026-10-05", sku_id: "a", direct_oz: 99, flattened_oz: 0 },
     ],
     coverage: { source: "capture", hasGaps: true, degraded: true, byLocation: { L: { hasGaps: true, degraded: true, missingDates: ["2026-10-03"], degradedDates: ["2026-10-08", "2026-10-02"] } } },
-    legacyGaps: null, ...over,
+    ...over,
   });
   it("a window clear of the gap sums its own days only", () => {
     const s = snap();
@@ -94,8 +94,8 @@ describe("the one sales read, sliced", () => {
       byLocation: { L: { hasGaps: false, degraded: true, missingDates: [], degradedDates: ["2026-10-08"] } },
     });
   });
-  it("legacy gap sets are the probe's dates from the consumer's own start", () => {
-    const s = snap({ mode: "legacy", legacyGaps: new Set(["2026-09-28", "2026-10-03"]) });
+  it("capture gap sets are narrowed to the consumer's own start", () => {
+    const s = snap();
     expect([...salesGapDates(s, "2026-10-01")]).toEqual(["2026-10-03"]);
   });
 });

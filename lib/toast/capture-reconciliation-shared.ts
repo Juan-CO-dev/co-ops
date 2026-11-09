@@ -31,7 +31,7 @@ export interface CaptureReconciliation {
 }
 const key = (row: { check_guid: string; selection_guid: string }) => JSON.stringify([row.check_guid, row.selection_guid]);
 
-export function reconcileCaptureQuantities(oldRows: LegacyCaptureSelection[], captures: QuantityCapture[]): CaptureReconciliation {
+export function reconcileCaptureQuantities(oldRows: LegacyCaptureSelection[], captures: QuantityCapture[], covered = oldRows.length > 0): CaptureReconciliation {
   // Versions advance independently PER SELECTION inside each check.
   const latest = new Map<string, LegacyCaptureSelection>();
   for (const row of oldRows) {
@@ -63,10 +63,10 @@ export function reconcileCaptureQuantities(oldRows: LegacyCaptureSelection[], ca
   const values = [...totals.values()].sort((a, b) => a.item_guid.localeCompare(b.item_guid));
   const mismatches = values.filter(row => Math.abs(row.old_qty - row.new_qty) > 1e-9);
   return {
-    // Absence of legacy observations is not evidence of an empty sales day.
-    status: oldRows.length === 0 ? "skipped" : mismatches.length ? "mismatch" : "match",
-    old_units: oldRows.length === 0 ? null : values.reduce((sum, row) => sum + row.old_qty, 0),
+    // Only successful capture coverage proves an empty sales day.
+    status: !covered ? "skipped" : mismatches.length ? "mismatch" : "match",
+    old_units: !covered ? null : values.reduce((sum, row) => sum + row.old_qty, 0),
     new_units: values.reduce((sum, row) => sum + row.new_qty, 0),
-    mismatched_items: oldRows.length === 0 ? [] : mismatches.slice(0, 50),
+    mismatched_items: !covered ? [] : mismatches.slice(0, 50),
   };
 }

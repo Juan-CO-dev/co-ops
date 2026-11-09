@@ -26,7 +26,7 @@ import { loadEffectiveSalesRows, loadEffectiveSalesCoverage } from "@/lib/toast/
  * would wake it. A silent par is a WRITE, never a skip.
  *
  * ── THE DOUBLE-COUNT LAW IS NOT IN PLAY ────────────────────────────────────────
- * Consumed oz = production_inputs.input_oz + toast_daily_depletion.direct_oz, and nothing
+ * Consumed oz = production_inputs.input_oz + effective capture direct_oz, and nothing
  * here sums flattened_oz — it is read only to DETECT prep-mediation (a dark production
  * lane means a half-seen base). No ledger is re-keyed and no ledger row is rewritten.
  */
@@ -67,20 +67,18 @@ import {
   type LedgerPrior, type ParRunCounts,
 } from "@/lib/dynamic-pars-run-shared";
 import {
-  parAutoLaneReady, parAutoMovesReady, parSuggestionActionsReady, salesSignalsReady,
+  parAutoLaneReady, parAutoMovesReady, parSuggestionActionsReady,
 } from "@/lib/dynamic-pars-probes";
 
 /**
  * THE PROBES LIVE IN A LEAF (lib/dynamic-pars-probes.ts) AND ARE RE-EXPORTED HERE.
  *
  * The plan names `lib/dynamic-pars.ts` as their home and every consumer it names reaches
- * them at this path. They are DEFINED one module down because two of their consumers —
- * lib/ordering.ts and lib/catering/toast-sales.ts — sit upstream of this module in the
- * import graph (this module imports both), so hosting them here would make three pairs of
- * modules mutually recursive for the sake of one boolean. Same shape as the `*-shared.ts`
- * re-export idiom: define in the leaf, re-export from the server module.
+ * them at this path. They are defined in a leaf because lib/ordering.ts consumes
+ * a probe upstream of this module. Re-exporting from the server module preserves
+ * the public import paths without creating a runtime import cycle.
  */
-export { parAutoMovesReady, parAutoLaneReady, parSuggestionActionsReady, salesSignalsReady };
+export { parAutoMovesReady, parAutoLaneReady, parSuggestionActionsReady };
 
 /**
  * THE WALKER'S READ PATH LIVES IN A LEAF TOO (lib/dynamic-pars-walker.ts), AND FOR THE
@@ -299,7 +297,7 @@ interface DbSkuRow {
  * observation, including a zero one. Null = no lane has ever produced here → `no_lane_start`.
  *
  * ── THREE LANES, BECAUSE A DEPLETION ROW HAS THREE WAYS TO BE LIT ────────────────
- * `materializeDailyDepletion` writes a `toast_daily_depletion` row when EITHER `direct_oz`
+ * Capture writes an effective sales row when EITHER `direct_oz`
  * or `flattened_oz` is positive (lib/catering/toast-sales.ts), so a prep-mediated SKU — one
  * the shop never sells directly, only through a prep recipe — has a lit lane every trading
  * day while `direct_oz` stays 0.00 on every one of them. Testing only direct + production
@@ -394,36 +392,13 @@ export async function loadDemandInputs(
     loadParOverlay(sb, locationId, autoLane),
     // ③ the direct + flattened lanes, paged under `id`.
     loadEffectiveSalesRows(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1), allowGaps: true }),
-    // ④ THE FULL-GAP ORACLE (plan D10): the register RAN that day. A day with events but
-    //    no depletion row for a SKU is a TRUE ZERO; a day with no events at all is a GAP
-    //    and leaves the denominator entirely.
-    process.env.DEPLETION_SOURCE === "capture"
-      ? loadEffectiveSalesCoverage(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1) })
-      : selectAllRows<{ business_date: string }>(
-      async (from, to) => {
-        const { data, error } = await sb.from("toast_sales_events")
-          .select("business_date")
-          .eq("location_id", locationId)
-          .gte("business_date", windowStart)
-          .lte("business_date", runDateEt)
-          .order("id", { ascending: true })
-          .range(from, to)
-          .returns<Array<{ business_date: string }>>();
-        if (error) throw new Error(`loadDemandInputs sales events: ${error.message}`);
-        return { data };
-      },
-    ),
-    // ⑤ the day-grain catering marker + its start clamp.
-    process.env.DEPLETION_SOURCE === "capture"
-      ? loadEffectiveSalesCoverage(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1) })
-          .then((data) => ({ data, error: null }))
-      : sb.from("toast_daily_sales_signals")
-      .select("business_date, suspect_check_count")
-      .eq("location_id", locationId)
-      .gte("business_date", windowStart)
-      .lte("business_date", runDateEt)
-      .returns<Array<{ business_date: string; suspect_check_count: number }>>(),
-    // ⑥ live productions in the window — mirrors loadSkuUsageRank exactly.
+    // Successful capture proves the register was observed. No SKU movement on
+    // a covered day is TRUE ZERO; an uncovered day leaves the denominator.
+    loadEffectiveSalesCoverage(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1) }),
+    // The catering marker shares the successful capture coverage contract.
+    loadEffectiveSalesCoverage(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1) })
+      .then((data) => ({ data, error: null })),
+    // Live productions in the window.
     selectAllRows<{ id: string; produced_at: string }>(
       async (from, to) => {
         const { data, error } = await sb.from("productions")
@@ -477,7 +452,6 @@ export async function loadDemandInputs(
     loadLatestRecipeEditAt(sb),
   ]);
 
-  if (signalRows.error) throw new Error(`loadDemandInputs signals: ${signalRows.error.message}`);
   if (actionRows.error) throw new Error(`loadDemandInputs suggestion actions: ${actionRows.error.message}`);
   // CATALOG PHASE 2a (D3): the epoch stamp that retires an auto par computed in any other pack epoch
   // (one chunked read for the whole shop — the batch law holds).
@@ -839,7 +813,7 @@ export async function runParShadowForLocation(
       productionOzByDate: perSkuSeries(inputs.productionOzByDate, sku.skuId),
       flattenedOzByDate: perSkuSeries(inputs.flattenedOzByDate, sku.skuId),
       laneStartAt: inputs.laneStartByGrain.get(sku.grainKey) ?? null,
-      salesFallbackComplete: process.env.DEPLETION_SOURCE === "capture",
+      salesFallbackComplete: true,
     });
 
     const velocitySeries: VelocityDay[] = base.series.map((d) => ({

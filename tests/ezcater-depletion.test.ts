@@ -46,7 +46,6 @@ const ring = { snapshotId: "snap", orderGuid: "toast", diningOption: "Ezcater", 
 const link = { location_id: "shop", business_date: "2026-10-06", toast_snapshot_id: "snap", toast_order_guid: "toast", check_guid: "check" };
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubEnv("DEPLETION_SOURCE", "capture");
   vi.stubEnv("EZCATER_DEPLETION_ENABLED", "");
   queries = [];
   tables = {
@@ -143,11 +142,9 @@ describe("ezCater authoritative depletion", () => {
     expect(result.coverage.degraded).toBe(true);
     expect(result.coverage.byLocation.shop!.degradedDates).toEqual(["2026-10-06"]);
   });
-  it("routes the enabled flag to live reconciliation and refuses legacy capture absence", async () => {
+  it("routes the enabled flag to live reconciliation with capture always active", async () => {
     vi.stubEnv("EZCATER_DEPLETION_ENABLED", "1");
     expect((await loadEffectiveSalesWindow(db(), window)).rows[0]!.direct_oz).toBe(12);
-    vi.stubEnv("DEPLETION_SOURCE", "legacy");
-    await expect(loadEffectiveSalesWindow(db(), window)).rejects.toThrow("ezcater_depletion_requires_capture");
   });
   it("permits shadow comparisons with the operational flag OFF", async () => {
     expect((await loadReconciledSalesWindow(db(), window, { includeEzcater: false })).rows[0]!.direct_oz).toBe(0);

@@ -315,7 +315,7 @@ const PRODUCTION_ID_CHUNK = 150;
  * consumed term EXACTLY (the double-count law's two lanes):
  *   production lane = SUM(production_inputs.input_oz) over LIVE productions
  *                     (superseded_at/revoked_at NULL) at this location in the last 30d.
- *   sales lane      = SUM(toast_daily_depletion.direct_oz) at this location over the
+ *   sales lane      = SUM(effective capture sales direct_oz) at this location over the
  *                     last 30d (ONLY the direct lane depletes raw stock; flattened_oz
  *                     is production-covered — never summed).
  * Two grouped batch queries, summed in memory (loadRecipeGraph law — never per-SKU). A

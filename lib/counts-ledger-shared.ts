@@ -17,7 +17,7 @@
  * INSTANTS at microsecond precision, exactly as Postgres compares timestamptz — a "Z"
  * anchor against a "+00:00" ledger row must not compare as text. The equivalence
  * proof is tests/counts-onhand-equivalence.test.ts (old read path vs this one over the
- * same database, all three sales sources).
+ * same database, both capture sales sources).
  */
 import { salesWindowUntrustworthy } from "@/lib/counts-shared";
 import { buildPackChain, chainLeafUnitsFrom, type PackChainLevel } from "@/lib/pack-chain-shared";
@@ -66,11 +66,11 @@ export function earliestDate(dates: Iterable<string | null | undefined>): string
 }
 
 // ── The effective sales window, loaded once ──────────────────────────────────────
-export type SalesSourceMode = "legacy" | "capture" | "reconciled";
+export type SalesSourceMode = "capture" | "reconciled";
 
 /**
  * ONE effective-sales read for the whole render: [fromDate, end) of the active source
- * (legacy ledger, raw capture, or ezCater-reconciled capture), un-filtered by SKU.
+ * (raw capture or ezCater-reconciled capture), un-filtered by SKU.
  * Every consumer — the watermark check, the coverage disclosure, the three gap reads, the
  * inferred 28-day lane and every since/between sum — slices it. That is exact because
  * every source derives each business day independently of the window it was asked for
@@ -81,7 +81,7 @@ export interface SalesSnapshot {
   locationId: string;
   /** Earliest business date any consumer needs. */
   fromDate: string;
-  /** Exclusive end; null = open-ended (the legacy ledger is read with no end). */
+  /** Exclusive end; null represents an unbounded snapshot. */
   end: string | null;
   /** ET calendar date when the read ran — the capture sums' default end, as before. */
   today: string;
@@ -89,8 +89,6 @@ export interface SalesSnapshot {
   openEtDate: string;
   rows: EffectiveSalesRow[];
   coverage: SalesCoverage;
-  /** LEGACY ONLY: loadSalesGapDates' answer from the earliest gap consumer's date. */
-  legacyGaps: ReadonlySet<string> | null;
   /** RAW CAPTURE ONLY: the day manifests the read was fenced against (the disclosure's input). */
   manifests?: CaptureDayManifest[];
 }
@@ -108,11 +106,9 @@ function missingDates(snap: SalesSnapshot): string[] {
 
 /**
  * The gap dates a consumer whose earliest window starts at `since` used to read for
- * itself (loadSalesGapDates): legacy = the event/ledger probe's dates on/after `since`;
- * capture = the source's missing days in [since, openEtDate).
+ * itself (loadSalesGapDates): missing capture days in [since, openEtDate).
  */
 export function salesGapDates(snap: SalesSnapshot, since: string): SalesGapSet {
-  if (snap.mode === "legacy") return new SalesGapSet(since, [...(snap.legacyGaps ?? [])].filter((d) => d >= since));
   return new SalesGapSet(since, missingDates(snap).filter((d) => d >= since && d < snap.openEtDate));
 }
 
@@ -134,15 +130,12 @@ export function salesDirectOz(
     return new Map<string, number | null>(skuIds.map((id) => [id, null]));
   }
   const out = new Map<string, number | null>(skuIds.map((id) => [id, 0]));
-  const capture = snap.mode !== "legacy";
-  const end = untilExclusive ?? (capture ? snap.today : null);
-  if (capture) {
-    const fromGapRead = fromDate >= gaps.since && end !== null && end <= snap.openEtDate;
-    const limit = untilExclusive == null && fromGapRead ? snap.openEtDate : end;
-    const current = missingDates(snap).filter((d) => d >= fromDate && (limit === null || d < limit));
-    if (salesWindowUntrustworthy(new Set(current), fromDate, untilExclusive)) {
-      return new Map<string, number | null>(skuIds.map((id) => [id, null]));
-    }
+  const end = untilExclusive ?? snap.today;
+  const fromGapRead = fromDate >= gaps.since && end !== null && end <= snap.openEtDate;
+  const limit = untilExclusive == null && fromGapRead ? snap.openEtDate : end;
+  const current = missingDates(snap).filter((d) => d >= fromDate && (limit === null || d < limit));
+  if (salesWindowUntrustworthy(new Set(current), fromDate, untilExclusive)) {
+    return new Map<string, number | null>(skuIds.map((id) => [id, null]));
   }
   const selected = new Set(skuIds);
   for (const r of snap.rows) {
@@ -155,7 +148,7 @@ export function salesDirectOz(
 
 /** The rows loadEffectiveSalesRows({ fromDate }) returned (no SKU filter, the source's default end). */
 export function salesRowsFrom(snap: SalesSnapshot, fromDate: string): EffectiveSalesRow[] {
-  const end = snap.mode === "legacy" ? null : snap.today;
+  const end = snap.today;
   return snap.rows.filter((r) => r.location_id === snap.locationId && r.business_date >= fromDate && (end === null || r.business_date < end));
 }
 

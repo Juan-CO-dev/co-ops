@@ -92,6 +92,16 @@ it("distinguishes missing coverage and successful zero without a config-age cuto
   expect(await loadCapturedToastDay("shop", "2026-10-06")).toMatchObject({ orders: [], coverage: { orderCount: 0 } });
 });
 
+it("a failed partial attempt is uncovered until a completed retry exists", async () => {
+  const successful = { ...tables.toast_capture_runs![0]! };
+  tables.toast_capture_runs = [{ ...successful, id: "failed", status: "failed" }];
+  expect(await loadCapturedToastDay("shop", "2026-10-06")).toBeNull();
+  tables.toast_capture_runs.push(successful);
+  expect(await loadCapturedToastDay("shop", "2026-10-06")).toMatchObject({
+    coverage: { runId: "run", orderCount: 1 }, orders: [{ snapshotId: "o" }],
+  });
+});
+
 it.each(["missing-cache", "unreviewed", "unknown-channel"])("degrades only present unresolved dining options: %s", async (kind) => {
   if (kind === "missing-cache") tables.toast_dining_options = [];
   if (kind === "unreviewed") tables.sales_channel_map![0]!.reviewed_at = null;

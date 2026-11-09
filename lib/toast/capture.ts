@@ -215,7 +215,7 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
   }
   let reconciliation: CaptureDayResult["reconciliation"];
   if (options.reconcile) {
-    try { reconciliation = await recordCaptureReconciliation(locationId, date, runId, quantities, budget.signal); }
+    try { reconciliation = await budget.wait(() => recordCaptureReconciliation(locationId, date, runId, quantities, budget.signal)); }
     catch (error) { reconciliation = { status: "skipped", error: captureErrorCode(error) }; }
   }
   return { runId, ...result, skipped: false, catering, customers, ...(reconciliation ? { reconciliation } : {}) };

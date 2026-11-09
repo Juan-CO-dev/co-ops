@@ -1,6 +1,6 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { selectAllRows } from "@/lib/supabase-paginate";
+import { loadCapturedToastDay } from "./captured-day";
 import { reconcileCaptureQuantities, type LegacyCaptureSelection, type QuantityCapture, type CaptureReconciliation } from "./capture-reconciliation-shared";
 
 /** Runs only after publication. Failures alert independently; never undo a captured day. */
@@ -9,15 +9,20 @@ export async function recordCaptureReconciliation(locationId: string, businessDa
   let result: CaptureReconciliation;
   let errorCode: string | null = null;
   try {
-    const rows = await selectAllRows<LegacyCaptureSelection>(async (from, to) => {
-      const response = await sb.from("toast_sales_events")
-        .select("check_guid,selection_guid,parent_selection_guid,toast_item_guid,item_name,quantity,snapshot_version,voided")
-        .eq("location_id", locationId).eq("business_date", businessDate)
-        .order("id", { ascending: true }).range(from, to).abortSignal(signal);
-      if (response.error) throw new Error("capture_reconciliation_read_failed");
-      return { data: response.data as LegacyCaptureSelection[] | null };
+    signal.throwIfAborted();
+    const day = await loadCapturedToastDay(locationId, businessDate);
+    signal.throwIfAborted();
+    const rows: LegacyCaptureSelection[] = (day?.orders ?? []).flatMap(order => {
+      const deletedChecks = new Set(order.checks.filter(check => check.deleted).map(check => check.checkGuid));
+      return order.selections.map(row => ({
+        check_guid: row.check_guid, selection_guid: row.selection_guid,
+        parent_selection_guid: row.parent_selection_guid, toast_item_guid: row.item_guid,
+        item_name: row.name, quantity: row.quantity, snapshot_version: 1,
+        voided: row.voided || row.deleted || order.deleted || deletedChecks.has(row.check_guid),
+      }));
     });
-    result = reconcileCaptureQuantities(rows, captures);
+    // A successful empty capture is a known zero; missing coverage is unknown.
+    result = reconcileCaptureQuantities(rows, captures, day !== null);
   } catch {
     errorCode = "capture_reconciliation_read_failed";
     result = { status: "skipped", old_units: null, new_units: null, mismatched_items: [] };

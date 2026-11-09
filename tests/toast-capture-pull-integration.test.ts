@@ -38,7 +38,6 @@ let captureResult: CaptureResult;
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("EZCATER_DEPLETION_ENABLED", "");
-  vi.stubEnv("DEPLETION_SOURCE", "capture");
   sequence = [];
   vi.mocked(pullSalesForAllLocations).mockImplementation(async () => {
     sequence.push("legacy-pull");
@@ -187,29 +186,22 @@ it("passes remaining route time and cancellation into capture", async () => {
   expect(call[5]).toBe(parent.signal);
 });
 
-it.each([undefined, "legacy"])("flag %s preserves legacy pull, materializer, pars, then additive capture", async (flag) => {
+it.each([undefined, "legacy", "capture"])("retired setting %s cannot restore the legacy pull or materializer", async (flag) => {
   vi.stubEnv("DEPLETION_SOURCE", flag);
   const result = await runToastSalesPull({ businessDate: DAYS[0]! });
-  expect(pullSalesForAllLocations).toHaveBeenCalledExactlyOnceWith(DAYS[0]);
-  expect(materializeCapturedDepletion).not.toHaveBeenCalled();
-  expect(sequence.slice(0, 5)).toEqual(["legacy-pull", ...SHOPS.map((id) => `legacy-depletion:${id}:${DAYS[0]}`), ...SHOPS.map((id) => `pars:${id}:${DAYS[0]}`)]);
-  expect(runOrderCapture).toHaveBeenCalledExactlyOnceWith(SHOPS, DAYS[0], "cron", [DAYS[0]], expect.any(Number), undefined);
-  expect(result).toMatchObject({ healthy: true, metadata: { source: "legacy", pars_pending_activation: false } });
+  expect(pullSalesForAllLocations).not.toHaveBeenCalled();
+  expect(materializeDailyDepletion).not.toHaveBeenCalled();
+  expect(materializeCapturedDepletion).toHaveBeenCalledTimes(6);
+  expect(runOrderCapture).toHaveBeenCalledExactlyOnceWith(SHOPS, DAYS[0], "cron", DAYS, expect.any(Number), undefined);
+  expect(result).toMatchObject({ healthy: true, metadata: { source: "capture", pars_pending_activation: false } });
 });
-it("disabled additive capture leaves the flag-OFF operational pipeline healthy", async () => {
+it("disabled capture cannot fall back to legacy health with the retired setting unset", async () => {
   vi.stubEnv("DEPLETION_SOURCE", undefined);
   captureResult = { failures: 0, skipped: true, results: [] };
   const result = await runToastSalesPull({ businessDate: DAYS[0]! });
-  expect(result.healthy).toBe(true);
-  expect(runParShadowForLocation).toHaveBeenCalledTimes(2);
-});
-it("flag-OFF legacy materialization failure records a skipped par when no watermark covers T-1", async () => {
-  vi.stubEnv("DEPLETION_SOURCE", undefined);
-  vi.mocked(materializeDailyDepletion).mockRejectedValueOnce(new Error("write failed"));
-  const result = await runToastSalesPull({ businessDate: DAYS[0]! });
-  expect(recordParRunSkipped).toHaveBeenCalledExactlyOnceWith("shop1", DAYS[0], null);
-  expect(runParShadowForLocation).toHaveBeenCalledExactlyOnceWith("shop2", DAYS[0]);
-  expect(result.metadata.depletion_failures).toBe(1);
+  expect(result.healthy).toBe(false);
+  expect(runParShadowForLocation).not.toHaveBeenCalled();
+  expect(pullSalesForAllLocations).not.toHaveBeenCalled();
 });
 
 it("the kill switch cannot report a healthy nightly run", async () => {

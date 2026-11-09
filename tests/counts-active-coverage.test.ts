@@ -8,7 +8,6 @@ vi.mock("@/lib/ezcater/depletion", () => ({ loadReconciledSalesWindow: vi.fn() }
 const client = {} as ReturnType<typeof getServiceRoleClient>;
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubEnv("DEPLETION_SOURCE", "capture");
   vi.stubEnv("EZCATER_DEPLETION_ENABLED", "1");
   vi.mocked(loadReconciledSalesWindow).mockResolvedValue({ rows: [], coverage: {
     source: "capture", hasGaps: false, degraded: false,
@@ -66,4 +65,26 @@ it("watermark validates only the newest closed captured day against the active s
     locationId: "shop", fromDate: "2026-10-06", untilDateExclusive: "2026-10-07",
   });
   expect(lt).toHaveBeenCalledWith("business_date", expect.any(String));
+});
+
+
+it("raw capture covers a failed attempt that later succeeded, but never a failed-only day", async () => {
+  vi.stubEnv("EZCATER_DEPLETION_ENABLED", "0");
+  const { createFakeDb } = await import("./fixtures/counts-fake-db");
+  const { buildCountsFixture, LOC } = await import("./fixtures/counts-onhand-fixture");
+  const tables = buildCountsFixture();
+  const date = "2026-10-06";
+  tables.toast_capture_runs!.push({ id: "failed-attempt", location_id: LOC, business_date: date,
+    status: "failed", finished_at: `${date}T22:00:00Z` });
+  let db = createFakeDb(tables);
+  const gaps = await loadSalesGapDates(db.client, LOC, date, "2026-10-07");
+  expect([...gaps]).toEqual([]);
+  const amounts = await sumSalesDirectOzWindow(db.client, ["s-turkey"], LOC, date, "2026-10-07", gaps);
+  expect(amounts.get("s-turkey")).toBeGreaterThan(0);
+  tables.toast_capture_runs = tables.toast_capture_runs!.filter((r) => r.business_date !== date || r.status === "failed");
+  db = createFakeDb(tables);
+  const missing = await loadSalesGapDates(db.client, LOC, date, "2026-10-07");
+  expect([...missing]).toEqual([date]);
+  expect(await sumSalesDirectOzWindow(db.client, ["s-turkey"], LOC, date, "2026-10-07", missing))
+    .toEqual(new Map([["s-turkey", null]]));
 });

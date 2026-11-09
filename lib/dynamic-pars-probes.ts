@@ -3,14 +3,10 @@
  *
  * ── WHY THIS IS ITS OWN LEAF MODULE ────────────────────────────────────────────
  * The plan puts these probes in `lib/dynamic-pars.ts` and every consumer named there
- * still reaches them at that path — the server module re-exports all four, exactly the
+ * still reaches them at that path — the server module re-exports all three, exactly the
  * `*-shared.ts` re-export idiom (AGENTS.md § Module boundaries). They are DEFINED here
- * because two of their consumers sit UPSTREAM of `lib/dynamic-pars.ts` in the import
- * graph: `lib/ordering.ts` (loadOverlayBySku's auto-lane select, Task 3.3) and
- * `lib/catering/toast-sales.ts` (the sales-signal write, Task 3.4). `lib/dynamic-pars.ts`
- * imports BOTH of those modules, so hosting the probes there would make three pairs of
- * modules mutually recursive for the sake of one boolean. A leaf with no imports of its
- * own cannot participate in a cycle.
+ * because `lib/ordering.ts` sits UPSTREAM of `lib/dynamic-pars.ts` and consumes
+ * the overlay probe. A leaf with no runtime imports cannot create an import cycle.
  *
  * ── THE PATTERN (0180 precedent: lib/counts.ts countProductAllocationReady) ────
  * One `select(<the exact object the writer touches>).limit(1)`. Cache ONLY the TRUE
@@ -60,11 +56,6 @@ export const parAutoMovesReady = makeProbe("par_auto_moves", "id", "0182", "GATE
 /** 0182: the one-verdict-per-generation table (the accept/dismiss/revert arbiter). */
 export const parSuggestionActionsReady = makeProbe(
   "par_suggestion_actions", "id", "0182", "GATE M1",
-);
-
-/** 0182: the day-grain catering marker materializeDailyDepletion stamps (plan D4). */
-export const salesSignalsReady = makeProbe(
-  "toast_daily_sales_signals", "id", "0182", "GATE M1",
 );
 
 /**

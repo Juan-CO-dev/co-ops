@@ -19,7 +19,6 @@ const reconcile = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(captureModified).mockResolvedValue({ failures: 0, results: [], skipped: false });
-  vi.stubEnv("DEPLETION_SOURCE", "capture");
   vi.mocked(pullTodaySalesForAllLocations).mockResolvedValue([{ locationId: "shop", result: "pulled" }]);
   vi.useFakeTimers();
   vi.stubEnv("CATERING_SCAN_SECRET", "synthetic-test-secret");
@@ -74,13 +73,13 @@ it("modified discovery runs after capture and its failure leaves labor and respo
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ modified_failures: 1, modified_errors: ["capture_schema_missing"] }) }));
 });
 
-it.each([undefined, "capture"])("today uses %s writer mode and runs additive capture", async (flag) => {
+it.each([undefined, "legacy", "capture"])("today always captures with retired setting %s", async (flag) => {
   vi.stubEnv("DEPLETION_SOURCE", flag);
   vi.mocked(captureToastDaySystem).mockResolvedValue({ skipped: false, runId: "run" } as Awaited<ReturnType<typeof captureToastDaySystem>>);
   const request = new NextRequest("http://localhost/api/cron/toast-sales-today", { headers: { "x-cron-secret": "synthetic-test-secret" } });
   const response = await GET(request);
   expect(await response.json()).toMatchObject({ healthy: true });
-  expect(pullTodaySalesForAllLocations).toHaveBeenCalledTimes(flag === "capture" ? 0 : 1);
+  expect(pullTodaySalesForAllLocations).not.toHaveBeenCalled();
   expect(captureToastDaySystem).toHaveBeenCalledTimes(2);
   expect(reconcile).toHaveBeenCalledWith("reconcile_ezcater_toast", expect.objectContaining({ p_from: expect.any(String), p_to: expect.any(String) }));
   expect(runToastLaborPull).toHaveBeenCalledWith([expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/)], expect.objectContaining({

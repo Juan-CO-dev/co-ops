@@ -229,10 +229,6 @@ export async function processToastCateringOrders(
 
 /** Report persisted capture/sink health; capture itself owns the only Toast API pull. */
 export async function scanToastCateringForAllLocations(dates: string[]): Promise<ScanLocationResult[]> {
-  if (process.env.DEPLETION_SOURCE !== "capture") {
-    const { scanToastCateringForAllLocations: legacyScan } = await import("./toast-catering-scan-legacy");
-    return legacyScan(dates);
-  }
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("locations").select("id").eq("active", true)
     .not("toast_restaurant_guid", "is", null).returns<Array<{ id: string }>>();

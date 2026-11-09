@@ -194,7 +194,7 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
     else merged.set(key, { ...row });
   }
   for (const manifest of manifests) if (unresolvedDays.has(`${manifest.location_id}:${manifest.business_date}`)) manifest.status = "degraded";
-  const coverage = await loadSalesCoverageDisclosure(sb, { ...window, untilDateExclusive: end }, manifests, true);
+  const coverage = await loadSalesCoverageDisclosure(sb, { ...window, untilDateExclusive: end }, manifests);
   for (const key of unresolvedDays) {
     const [locationId, date] = key.split(":");
     const disclosure = coverage.byLocation[locationId!];

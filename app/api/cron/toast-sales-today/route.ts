@@ -7,7 +7,6 @@ import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
 import { etCalendarDate } from "@/lib/operational-day";
-import { pullTodaySalesForAllLocations } from "@/lib/catering/toast-sales";
 import { captureIntraday } from "@/lib/toast/capture-intraday";
 import { captureModified } from "@/lib/toast/capture-modified";
 import { modifiedRouteBudget } from "@/lib/toast/capture-modified-shared";
@@ -27,8 +26,6 @@ export async function GET(req: NextRequest) {
   const today = etCalendarDate(new Date().toISOString());
   try {
     if (!await claimCronRoute("toast-sales-today")) return jsonOk({ skipped: true, reason: "cron_route_busy" });
-    const captureMode = process.env.DEPLETION_SOURCE === "capture";
-    const legacy = captureMode ? [] : await pullTodaySalesForAllLocations(today);
     const availableMs = Math.max(0, maxDuration * 1000 - (Date.now() - startedAt) - 10_000);
     const laborReserveMs = laborPullEnabled() ? Math.min(30_000, availableMs) : 0;
     const capture = await captureIntraday(today, req.signal, Math.max(0, availableMs - laborReserveMs));
@@ -45,14 +42,13 @@ export async function GET(req: NextRequest) {
     const whosHere = whosHereBudgetMs >= 2_000
       ? await runWhosHereTick({ deadlineMs: whosHereBudgetMs, autolink: laborPullEnabled() })
       : { ran: false, results: [] };
-    const results = captureMode ? capture.results : legacy;
-    const n = (k: string) => legacy.filter((r) => r.result === k).length;
-    const healthy = captureMode ? !capture.skipped && capture.failures === 0 : n("unknown") === 0 && n("error") === 0;
+    const results = capture.results;
+    const healthy = !capture.skipped && capture.failures === 0;
     await audit({
       actorId: null, actorRole: null, action: healthy ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: {
-        job: "toast-sales-today", date: today, source: captureMode ? "capture" : "legacy",
-        pulled: n("pulled"), fresh: n("fresh"), no_toast: n("no_toast"), stale_check_failed: n("unknown"),
+        job: "toast-sales-today", date: today, source: "capture",
+        pulled: 0, fresh: 0, no_toast: 0, stale_check_failed: 0,
         capture_failures: capture.failures,
         modified_failures: modified.failures,
         modified_errors: [...modified.results.flatMap((r) => r.error ? [r.error] : []),
@@ -60,7 +56,7 @@ export async function GET(req: NextRequest) {
         modified_changed: modified.results.reduce((sum, r) => sum + r.changed, 0),
         captured: capture.results.filter((r) => !r.skipped && !r.error).length,
         skipped: capture.results.filter((r) => r.skipped).length,
-        errors: captureMode ? capture.failures : n("error"), capture_disabled: capture.skipped,
+        errors: capture.failures, capture_disabled: capture.skipped,
       },
       ipAddress: null, userAgent: null,
     });

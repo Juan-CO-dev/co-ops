@@ -90,7 +90,6 @@ import {
   computeInferredBaselineOz,
   chainLabelsInWalkOrder,
   etBusinessDate,
-  isGapEligibleDate,
   salesWindowUntrustworthy,
   isProductCountLine,
   type CountLineInput,
@@ -939,7 +938,7 @@ export type { ProductOnHandRow } from "@/lib/products-shared";
  *   production lane = SUM(production_inputs.input_oz) over LIVE productions
  *                     (superseded_at/revoked_at NULL) at this location, produced_at
  *                     in the last 28d (raw SKU depletes at production, BC-026 oz).
- *   sales lane      = SUM(toast_daily_depletion.direct_oz) at this location for
+ *   sales lane      = SUM(effective capture direct_oz) at this location for
  *                     business_dates in the last 28d (ONLY the direct lane depletes
  *                     raw stock; flattened_oz is production-covered — NEVER summed).
  * Per-SKU lane totals (never per-SKU reads — loadRecipeGraph law) so the writer can
@@ -1461,39 +1460,30 @@ interface OnHandLedgerContext {
 
 function salesSourceMode(): SalesSourceMode {
   if (process.env.EZCATER_DEPLETION_ENABLED === "1") {
-    if (process.env.DEPLETION_SOURCE !== "capture") throw new Error("ezcater_depletion_requires_capture");
     return "reconciled";
   }
-  return process.env.DEPLETION_SOURCE === "capture" ? "capture" : "legacy";
+  return "capture";
 }
 
 /**
  * THE RENDER'S ONE EFFECTIVE-SALES READ (B9 step 1). [fromDate, end) of the active source,
- * every SKU, read once; on the legacy ledger the event/ledger gap probe runs once too, from
- * the earliest gap consumer's date. Null when no consumer needs sales at all.
+ * every SKU, read once. Null when no consumer needs sales at all.
  */
 async function loadSalesSnapshot(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   now: number,
-  need: { fromDate: string | null; legacyGapSince: string | null },
+  need: { fromDate: string | null },
 ): Promise<SalesSnapshot | null> {
   if (need.fromDate == null) return null;
   const mode = salesSourceMode();
   const today = etCalendarDate(new Date().toISOString());
   const openEtDate = etBusinessDate(new Date(now).toISOString());
-  // Capture sources: the sums end at today and the gap reads at the open day — read through
-  // whichever is later. The legacy ledger was always read open-ended.
-  const end = mode === "legacy" ? null : (today > openEtDate ? today : openEtDate);
-  const [window, legacyGaps] = await Promise.all([
-    loadEffectiveSalesWindow(sb, { locationId, fromDate: need.fromDate, untilDateExclusive: end }),
-    mode === "legacy" && need.legacyGapSince != null
-      ? loadSalesGapDates(sb, locationId, need.legacyGapSince, openEtDate)
-      : Promise.resolve(null),
-  ]);
+  const end = today > openEtDate ? today : openEtDate;
+  const window = await loadEffectiveSalesWindow(sb, { locationId, fromDate: need.fromDate, untilDateExclusive: end });
   return {
     mode, locationId, fromDate: need.fromDate, end, today, openEtDate,
-    rows: window.rows, coverage: window.coverage, legacyGaps, manifests: window.manifests,
+    rows: window.rows, coverage: window.coverage, manifests: window.manifests,
   };
 }
 
@@ -1804,8 +1794,7 @@ async function onHandCore(
   const laneFrom = inferredPlan.needsBaseline.length > 0 ? inferredWindowStart(now).cutoffDate : null;
   const disclosureFrom = [new Date(now - 28 * 86_400_000).toISOString().slice(0, 10),
     ...evList.map((event) => etBusinessDate(event.counted_at))].sort()[0]!;
-  const legacyGapSince = earliestDate([censusGapSince, parGapSince, inferredGapSince]);
-  const captureSource = salesSourceMode() !== "legacy";
+  const gapSince = earliestDate([censusGapSince, parGapSince, inferredGapSince]);
   // ── 3. The earliest instant any received / consumed / staleness window reaches, then
   //       each ledger ONCE from there (B9 step 2). Fresh inferred baselines anchor at `now`.
   const nowIso = new Date(now).toISOString();
@@ -1826,8 +1815,7 @@ async function onHandCore(
   // ── 4. The second (and last) parallel wave: the sales read, the ledgers, the labels.
   const [sales, ledgers, nameRes, chainsBySku, measures] = await Promise.all([
     loadSalesSnapshot(sb, locationId, now, {
-      fromDate: earliestDate([legacyGapSince, laneFrom, captureSource ? disclosureFrom : null]),
-      legacyGapSince,
+      fromDate: earliestDate([gapSince, laneFrom, disclosureFrom]),
     }),
     loadOnHandLedgers(sb, locationId, {
       deliveriesAfter: earliestInstant([...weightAnchorInstants, ...countAnchorInstants]),
@@ -2112,7 +2100,7 @@ export interface CountsTileState {
  *
  * WHY NOT loadOnHand: that loader exists for the counts PAGE and is the wrong
  * tool here — it walks every active SKU, computes 28-day consumption lanes over
- * paged productions/production_inputs/toast_daily_depletion, and WRITES
+ * paged productions/production_inputs and effective capture sales, and WRITES
  * (sku_inferred_baselines upsert). Putting it on the dashboard render path would
  * add a write and ~15 queries to every GM+ page view. Variance is deliberately
  * NOT returned: it is not persisted anywhere (sku_count_lines has no variance
@@ -2198,7 +2186,7 @@ async function sumConsumedOzSince(
 }
 // ── Sales direct-lane depletion (drift spec 2026-07-31) ───────────────────────
 /**
- * SUM(direct_oz) per SKU from the materialized toast_daily_depletion ledger —
+ * SUM(direct_oz) per SKU from effective capture sales —
  * ONLY the direct lane (the double-count law: flattened_oz depletes at
  * production, never here). Day-grain window per etBusinessDate's tiling:
  * business_date >= fromDate, and < untilDateExclusive when given. Absence of
@@ -2232,8 +2220,7 @@ export async function sumSalesDirectOzWindow(
   // window over the ~163-SKU roster is ~4.5k rows — a truncated page would silently
   // UNDERSTATE the sales lane, inflating computed on-hand. `id` (the PK) gives the
   // stable total order paging requires; the per-SKU sum is order-insensitive.
-  const capture = process.env.DEPLETION_SOURCE === "capture";
-  const end = untilDateExclusive ?? (capture ? etCalendarDate(new Date().toISOString()) : null);
+  const end = untilDateExclusive ?? etCalendarDate(new Date().toISOString());
   const cached = gapDates instanceof CapturedSalesGapDates && gapDates.locationId === locationId &&
     fromDate >= gapDates.fromDate && end !== null && end <= gapDates.end ? gapDates.snapshot : null;
   const snapshot = cached ?? await loadEffectiveSalesWindow(sb, { locationId, fromDate, untilDateExclusive, skuIds });
@@ -2263,19 +2250,9 @@ async function sumSalesDirectOzSince(
 }
 
 /**
- * Sales-coverage GAP dates for a location on/after `sinceDate` (hardening
- * 2026-07-31): business_dates that HAVE toast_sales_events but ZERO
- * toast_daily_depletion rows — the cron pulled that day but never materialized
- * its depletion (or the materialize failed). Two distinct-date queries, unioned
- * in memory; run ONCE per loadOnHand (not per SKU). Known conservative edge: a
- * day whose sales were ALL excluded/unmapped also materializes to zero rows and
- * reads as a gap → that window's SKUs go advisory-null. Acceptable (honest
- * pessimism; a fully-excluded day at a sub shop is effectively never) and safe.
- *
- * The OPEN (current) business day is NEVER gap-eligible (`openEtDate` guard,
- * council 2026-07-31 Fable C3): same-day event pulls land events hours before
- * the close/nightly materialize — counting today as a gap would advisory-null
- * every SKU all afternoon. See isGapEligibleDate (counts-shared).
+ * Missing successful capture dates over [sinceDate, openEtDate). The open business
+ * day is excluded; absent coverage stays unknown even when there are no sales rows.
+ * Amounts and coverage share the same captured generation for all anchor groups.
  */
 export async function loadSalesGapDates(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -2283,59 +2260,16 @@ export async function loadSalesGapDates(
   sinceDate: string,
   openEtDate: string,
 ): Promise<Set<string>> {
-  if (process.env.DEPLETION_SOURCE === "capture") {
-    const snapshot = await loadEffectiveSalesWindow(sb, { locationId, fromDate: sinceDate, untilDateExclusive: openEtDate });
-    return new CapturedSalesGapDates(locationId, sinceDate, openEtDate, snapshot);
-  }
-  // PAGED to completion (B9 r1, Astra P2-1; the PR #63 lesson): these reads used to stop
-  // at PostgREST's 1000-row cap. toast_sales_events is one row PER SELECTION, so a probe
-  // spanning a few busy days silently lost its newest dates — a real gap then read as "no
-  // gap" and a since-window's sales term turned numeric. Since B9 one probe serves every
-  // tier from the EARLIEST anchor, which would have made that worse; complete reads make
-  // the answer independent of where the probe starts. `id` (the PK) is the stable order.
-  const [events, depletion] = await Promise.all([
-    selectAllRows<{ business_date: string }>(async (from, to) => {
-      const { data, error } = await sb.from("toast_sales_events").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
-        .order("id", { ascending: true }).range(from, to).returns<Array<{ business_date: string }>>();
-      if (error) throw new Error(`loadSalesGapDates events: ${error.message}`);
-      return { data };
-    }),
-    selectAllRows<{ business_date: string }>(async (from, to) => {
-      const { data, error } = await sb.from("toast_daily_depletion").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
-        .order("id", { ascending: true }).range(from, to).returns<Array<{ business_date: string }>>();
-      if (error) throw new Error(`loadSalesGapDates depletion: ${error.message}`);
-      return { data };
-    }),
-  ]);
-  const materialized = new Set(depletion.map((r) => r.business_date));
-  const gaps = new Set<string>();
-  for (const r of events) {
-    if (!materialized.has(r.business_date) && isGapEligibleDate(r.business_date, openEtDate)) {
-      gaps.add(r.business_date);
-    }
-  }
-  // Defense-in-depth (adversarial review 2026-07-31 C1): a ledger row for the
-  // OPEN (or future) business date is anomalous — no legitimate writer
-  // materializes an unclosed day (the nightly T-1 cron is the sole
-  // materializer; system triggers are events-only). If one ever appears, its
-  // coverage is partial by construction: treat the date as a GAP so it
-  // null-taints (advisory) instead of feeding drift as trusted.
-  for (const d of materialized) if (d >= openEtDate) gaps.add(d);
-  return gaps;
+  const snapshot = await loadEffectiveSalesWindow(sb, { locationId, fromDate: sinceDate, untilDateExclusive: openEtDate });
+  return new CapturedSalesGapDates(locationId, sinceDate, openEtDate, snapshot);
 }
 
 /**
- * The latest materialized sales business_date at a location (the coverage hint
- * the counts UI renders: "sales counted through <date>"). Null = no ledger yet.
- *
- * ── ALSO THE DEPLETION WATERMARK (Dynamic Pars, plan D9) ─────────────────────
- * r3 asks the nightly pars step for "a `depletion_current_through` watermark per
- * location". This query already IS that fact — one indexed ORDER BY … LIMIT 1 — so it
- * is EXPORTED under the name the pars engine uses rather than stored a second time. A
- * stored watermark would be a second opinion about something the ledger already states,
- * and it would go stale the moment anyone ran a manual backfill.
- *
- * Actor-less by design: the caller (the cron) is already the system.
+ * Latest successfully covered closed sales date, or null when none exists.
+ * Shared by Counts' coverage hint and Dynamic Pars' depletion watermark. Capture
+ * manifests must point to completed runs; reconciled candidates validate their
+ * effective coverage before becoming a watermark. No separately stored opinion.
+ * Actor-less: the caller is already system-authorized and location-bound.
  */
 export async function loadDepletionWatermark(
   locationId: string,
@@ -2355,7 +2289,6 @@ async function loadDepletionWatermarkStart(
   sb: ReturnType<typeof getServiceRoleClient>,
 ): Promise<WatermarkStart> {
   if (process.env.EZCATER_DEPLETION_ENABLED === "1") {
-    if (process.env.DEPLETION_SOURCE !== "capture") throw new Error("ezcater_depletion_requires_capture");
     const end = etCalendarDate(new Date().toISOString());
     const { data, error } = await sb.from("toast_capture_runs").select("business_date")
       .eq("location_id", locationId).eq("status", "completed").lt("business_date", end)
@@ -2364,18 +2297,8 @@ async function loadDepletionWatermarkStart(
     if (!data) return { done: true, value: null };
     return { done: false, candidate: data.business_date };
   }
-  if (process.env.DEPLETION_SOURCE === "capture") {
-    const covered = await loadEffectiveSalesCoverage(sb, { locationId, fromDate: "1900-01-01" });
-    return { done: true, value: covered.map((r) => r.business_date).sort().at(-1) ?? null };
-  }
-  const { data, error } = await sb.from("toast_daily_depletion")
-    .select("business_date")
-    .eq("location_id", locationId)
-    .order("business_date", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ business_date: string }>();
-  if (error) throw new Error(`loadDepletionWatermark: ${error.message}`);
-  return { done: true, value: data?.business_date ?? null };
+  const covered = await loadEffectiveSalesCoverage(sb, { locationId, fromDate: "1900-01-01" });
+  return { done: true, value: covered.map((r) => r.business_date).sort().at(-1) ?? null };
 }
 
 async function finishDepletionWatermark(

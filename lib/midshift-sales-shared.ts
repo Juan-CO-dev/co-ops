@@ -1,18 +1,8 @@
 /**
  * Mid-shift sales pulse — PURE aggregation math (client-safe, zero I/O).
- * Council 2026-07-31: the pulse's sales lanes read `toast_sales_events`
- * directly (never the depletion ledger, never deriveSalesConsumption — the
- * double-count law keeps drift ledger-side and display event-side).
- *
- * Ledger semantics this module encodes (from lib/catering/toast-sales.ts):
- *   - rows are APPEND-ONLY snapshot-versioned per (check_guid, selection_guid);
- *     only the LATEST snapshot_version of each selection is current truth.
- *   - price_cents is Toast's selection price — the EXTENDED line price
- *     (quantity already included). Net $ = SUM(price_cents), never × quantity.
- *   - modifiers are child selections (parent_selection_guid != null) carrying
- *     their own upcharge price_cents → included in net $, excluded from
- *     top-items (an item count, not an upcharge count).
- *   - voided latest-versions are excluded everywhere.
+ * Capture check amounts provide money; normalized capture selections provide
+ * top-item quantities. Selection prices never supply the live pulse's money.
+ * The pure version reducer remains available for historical event fixtures.
  */
 
 export interface SalesEventRow {
@@ -29,11 +19,11 @@ export interface SalesEventRow {
 
 export interface DaySalesAgg {
   businessDate: string;
-  /** Capture: net check amount pre-tax. Legacy fallback: summed selection prices. */
+  /** Net check amount pre-tax in the capture pulse. */
   netCents: number;
   /** Capture-only top-level item units; modifiers never inflate this count. */
   units?: number;
-  /** Live check count (legacy fallback requires a live selection). */
+  /** Live check count. */
   checks: number;
   /** netCents / checks; null when no checks. */
   avgTicketCents: number | null;

@@ -14,26 +14,30 @@ vi.mock("react", () => ({ cache: (fn: (...args: unknown[]) => unknown) => {
 } }));
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.unstubAllEnvs());
-it("loads all seven legacy dates in a single paged query and reuses the render result", async () => {
-  vi.stubEnv("DEPLETION_SOURCE", "");
-  const dates: string[][] = [];
-  const from = vi.fn(() => query);
-  const query = { select: () => query, eq: () => query,
-    in: (_column: string, values: string[]) => { dates.push(values); return query; },
-    order: () => query, range: () => query,
-    returns: async () => ({ data: [{ business_date: "2026-10-07", check_guid: "c", selection_guid: "s", parent_selection_guid: null,
-      item_name: "Sub", quantity: "2", price_cents: 1000, voided: false, snapshot_version: 1, pulled_at: "2026-10-07T18:00:00Z" }], error: null }) };
-  const service = { from } as unknown as SupabaseClient;
-  const first = await loadSalesPulse(service, { locationId: "shop", todayYmd: "2026-10-07" });
-  const second = await loadSalesPulse(service, { locationId: "shop", todayYmd: "2026-10-07" });
-  expect(first).toBe(second);
-  expect(from).toHaveBeenCalledTimes(1);
-  expect(dates[0]).toHaveLength(7);
-  expect(first.today).not.toBeNull();
-  expect(first.yesterday).toBeNull();
+const coveredDay = (amountCents: number | null = 1700) => ({
+  coverage: { runId: "successful-retry", finishedAt: "2026-10-07T18:00:00Z", orderCount: 1,
+    missingPointerCount: 0, absenceRemovalApplied: false, configDegraded: false },
+  orders: [{ snapshotId: "snapshot", orderGuid: "order", modifiedAt: null,
+    diningOptionGuid: null, diningOption: null, salesChannel: null, deleted: false, voided: false, excessFood: false,
+    selections: [], checks: [{ checkGuid: "check", amountCents, deleted: false, voided: false }] }],
+});
+it("uses successful capture numbers and keeps uncovered days unknown", async () => {
+  vi.mocked(loadCapturedToastDay).mockImplementation(async (_shop, date) => date === "2026-10-07" ? coveredDay() : null);
+  const service = { from: vi.fn() } as unknown as SupabaseClient;
+  const result = await loadSalesPulse(service, { locationId: "shop", todayYmd: "2026-10-07" });
+  expect(result).toMatchObject({ source: "capture", today: { netCents: 1700, checks: 1 }, yesterday: null,
+    baselineAvgCents: null, baselineWeeks: 0, coverageDegraded: true, lastPulledAt: "2026-10-07T18:00:00Z" });
+  expect(service.from).not.toHaveBeenCalled();
+});
+it("distinguishes a covered empty day from missing money", async () => {
+  vi.mocked(loadCapturedToastDay).mockResolvedValue({ ...coveredDay(), orders: [] });
+  const zero = await loadSalesPulse({} as SupabaseClient, { locationId: "shop", todayYmd: "2026-10-07" });
+  expect(zero).toMatchObject({ today: { netCents: 0, checks: 0 }, coverageDegraded: false, baselineWeeks: 4 });
+  vi.mocked(loadCapturedToastDay).mockResolvedValue(coveredDay(null));
+  const unknown = await loadSalesPulse({} as SupabaseClient, { locationId: "shop", todayYmd: "2026-10-07" });
+  expect(unknown).toMatchObject({ today: null, coverageDegraded: true, baselineWeeks: 0 });
 });
 it("reuses capture day reads across panels within a render", async () => {
-  vi.stubEnv("DEPLETION_SOURCE", "capture");
   vi.mocked(loadCapturedToastDay).mockResolvedValue(null);
   const service = {} as SupabaseClient;
   await Promise.all([

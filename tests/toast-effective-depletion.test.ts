@@ -28,7 +28,6 @@ const db = () => ({ from(table: string) {
 const window = { locationId: "shop", fromDate: "2026-10-06", untilDateExclusive: "2026-10-07" };
 const day = { location_id: "shop", business_date: "2026-10-06" };
 beforeEach(() => {
-  vi.stubEnv("DEPLETION_SOURCE", "capture");
   vi.stubEnv("EZCATER_DEPLETION_ENABLED", "0");
   queried = [];
   selected = [];
@@ -164,13 +163,15 @@ describe("effective capture depletion", () => {
     expect(await loadEffectiveSalesCoverage(db(), { ...window, untilDateExclusive: "2026-10-06" })).toEqual([]);
   });
 
-  it("keeps the legacy reader as the default with no capture or production reads", async () => {
-    vi.stubEnv("DEPLETION_SOURCE", undefined);
-    tables.toast_daily_depletion = [{ ...day, sku_id: "sku", direct_oz: "3", flattened_oz: "10" }];
-    expect(await loadEffectiveSalesRows(db(), window)).toEqual([{ ...day, sku_id: "sku", direct_oz: 3, flattened_oz: 10 }]);
-    expect(queried).toEqual(["toast_daily_depletion"]);
+  it("uses capture unconditionally and reports an uncovered day as a gap", async () => {
+    expect(await loadEffectiveSalesRows(db(), window)).toEqual([{ ...day, sku_id: "sku", direct_oz: 12, flattened_oz: 10 }]);
+    tables.toast_capture_runs = [];
+    expect(await loadEffectiveSalesWindow(db(), window)).toMatchObject({ rows: [], coverage: { source: "capture", hasGaps: true } });
   });
-});
+  it("covers a successful retry after an earlier partial failure", async () => {
+    tables.toast_capture_runs!.unshift({ ...day, id: "failed", status: "failed", finished_at: "2026-10-07T04:00:00Z" });
+    expect(await loadEffectiveSalesWindow(db(), window)).toMatchObject({ rows: [{ direct_oz: 12 }], coverage: { hasGaps: false } });
+  });});
 
 it("keeps a covered shop on the weights board when another shop has a gap", async () => {
   tables.locations = [{ id: "shop", active: true, toast_restaurant_guid: "guid" }, { id: "missing", active: true, toast_restaurant_guid: "other-guid" }];
