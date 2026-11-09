@@ -1,5 +1,5 @@
 -- 0295_toast_legacy_retire
--- AUTHORED 2026-11-09; NOT APPLIED. CC applies to sim, then prod.
+-- AUTHORED 2026-11-09. APPLIED: SIM 20261109205021 (2026-11-09; dry run + verify clean). PROD: NOT YET (Juan-gated).
 -- WHAT / WHY: remove synthetic Toast selections after the capture cutover;
 -- remove dormant PostgREST write privileges from the historical ledgers.
 -- Fixture identity: 0147 defines check_guid TEXT; check-1 through check-4
