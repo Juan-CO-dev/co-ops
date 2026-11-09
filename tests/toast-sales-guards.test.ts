@@ -112,9 +112,9 @@ describe("toast-sales binds the location, not just the level", () => {
   });
 
   it("leaves the ACTOR-LESS cores unbound — the cron iterates every location by design", () => {
-    // doPull / deriveSalesConsumption take no AuthContext at all. If a bind ever appears
+    // doPull / deriveCapturedSalesConsumption take no AuthContext at all. If a bind ever appears
     // in one of them it can only be binding a null actor, which would break the nightly.
-    for (const fn of ["async function doPull", "export async function deriveSalesConsumption"]) {
+    for (const fn of ["async function doPull", "export async function deriveCapturedSalesConsumption"]) {
       const at = src.indexOf(fn);
       expect(at).toBeGreaterThan(-1);
       expect(src.slice(at, src.indexOf("\n}", at))).not.toContain("assertLocationAccess");
@@ -215,13 +215,12 @@ describe("listExclusions is scoped to the shop being viewed", () => {
 
 // ── THE PAGED LEDGER ────────────────────────────────────────────────────────────
 
-describe("retired ledger entry points delegate to capture", () => {
-  it("retains compatibility exports without a legacy read", () => {
+describe("retired ledger entry points", () => {
+  it("has no compatibility writers or legacy reads", () => {
     expect(src).not.toContain("async function loadLatestVersions");
     expect(src).not.toMatch(/\.from\(["'](?:toast_sales_events|toast_daily_depletion|toast_daily_sales_signals)["']\)/);
-    const deriveAt = src.indexOf("export async function deriveSalesConsumption(");
-    expect(src.slice(deriveAt, src.indexOf("\n}", deriveAt))).toContain("deriveCapturedSalesConsumption(locationId, businessDate)");
-    const materializeAt = src.indexOf("export async function materializeDailyDepletion(");
-    expect(src.slice(materializeAt, src.indexOf("\n}", materializeAt))).toContain("materializeCapturedDepletion(locationId, businessDate)");
+    for (const name of ["deriveSalesConsumption", "materializeDailyDepletion", "pullSalesForAllLocations", "pullTodaySalesForAllLocations"]) {
+      expect(src).not.toContain(`export async function ${name}(`);
+    }
   });
 });

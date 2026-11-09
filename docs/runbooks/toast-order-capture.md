@@ -5,22 +5,30 @@
 Capture is the sole runtime source; `DEPLETION_SOURCE` is retired and ignored.
 Missing successful coverage is unknown, never zero sales. Successful empty coverage
 is zero; a later success covers an earlier failed attempt. Counts and pars use the
-shared capture coverage/window readers. Reconciliation and pulse use
-`loadCapturedToastDay`. The sales-pull route, heartbeat identity and JOBS_REGISTRY
+shared capture coverage/window readers. Pulse uses `loadCapturedToastDay`. The unused quantity-reconciliation writer is
+retired; its historical table remains. The sales-pull route, heartbeat identity and JOBS_REGISTRY
 remain. No outbound email or SMS was added.
 
 Migration `0295_toast_legacy_retire.sql` is authored, NOT applied. CC applies sim,
-then prod, before or after app merge. It deletes exactly 14 fixture selections
-using `check_guid` and two explicit location/date pairs; a count mismatch aborts
-the transaction. It revokes INSERT/UPDATE/DELETE on the three legacy tables from
-anon/authenticated/PUBLIC, preserving SELECT and service_role grants. The 134
+then prod, before or after app merge. It groups fixture `check-1` through `check-4` rows by shop/day, requiring the
+exact 3/1/2/1 pattern and at most two groups before deleting exactly 7 rows per
+group. This accepts both prod and sim dates. Zero groups emits a NOTICE and is
+a clean no-op; malformed patterns or a third group abort the transaction. It revokes INSERT/UPDATE/DELETE on the three legacy tables from
+anon/authenticated/PUBLIC, preserving existing SELECT and service_role grants (signals grants no access to
+anon/authenticated before or after). The 134
 depletion aggregates remain: no migration or seed proves fixture-only derivation.
 
 Local proof: `node scripts/sql-harness-0295.mjs` uses real column types and proves
-nonfixture preservation, count mismatch rollback, and role write refusals. It is
+nonfixture preservation, pattern/group-count rollback, zero-group no-op, prod/sim layouts and role write refusals. It is
 not remote database verification. CC uses the migration header's VERIFY SQL after
 application. Grant rollback is documented there; deleted rows require backup.
 App rollback requires a reviewed code revert; no environment switch restores legacy.
+
+Isolated sim fixture mode reports `capture_fixture_mode` as a neutral nightly skip
+after `assertSimTarget`; missing coverage remains null and pulse unknown.
+Production disabled/failed capture remains unhealthy. The existing fixture needs
+date, accounting and configuration adapters before it can produce faithful capture
+evidence; this round uses the bounded health fallback.
 
 ## Historical rollout notes (superseded by the current contract)
 

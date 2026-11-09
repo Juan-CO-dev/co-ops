@@ -19,6 +19,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.stubEnv("TOAST_ORDER_CAPTURE", "1");
   vi.stubEnv("TOAST_FIXTURES", "0");
+  vi.stubEnv("SIM_MODE", "0");
   vi.mocked(captureToastDaySystem).mockResolvedValue({ runId: "run", pages: 1, orders: 0, skipped: false });
   vi.mocked(audit).mockResolvedValue(undefined);
 });
@@ -52,7 +53,26 @@ describe("shared full-day capture job", () => {
 
   it("fixture mode cannot masquerade as a completed production capture", async () => {
     vi.stubEnv("TOAST_FIXTURES", "1");
-    expect(await runOrderCapture(SHOPS, DAYS[0]!, "cron", DAYS)).toMatchObject({ skipped: true });
+    expect(await runOrderCapture(SHOPS, DAYS[0]!, "cron", DAYS)).toEqual({ failures: 0, skipped: true, results: [] });
+    expect(captureToastDaySystem).not.toHaveBeenCalled();
+  });
+
+  it("gives only the isolated sim an explicit neutral fixture skip", async () => {
+    vi.stubEnv("SIM_MODE", "1");
+    vi.stubEnv("TOAST_FIXTURES", "1");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://jepgzucrvklhqpthowsc.supabase.co");
+    expect(await runOrderCapture(SHOPS, DAYS[0]!, "cron", DAYS)).toEqual({
+      failures: 0, skipped: true, results: [], reason: "capture_fixture_mode",
+    });
+    expect(captureToastDaySystem).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "https://bgcvurheqzylyfehqgzh.supabase.co"])("refuses neutral fixture health on a non-sim target %s", async (url) => {
+    vi.stubEnv("SIM_MODE", "1");
+    vi.stubEnv("TOAST_FIXTURES", "1");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", url);
+    await expect(runOrderCapture(SHOPS, DAYS[0]!, "cron", DAYS)).rejects.toThrow("invalid sim target");
     expect(captureToastDaySystem).not.toHaveBeenCalled();
   });
 

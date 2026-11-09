@@ -14,7 +14,6 @@ vi.mock("@/lib/cron-route-lease", () => ({ claimCronRoute: vi.fn(async () => tru
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/job-watch-run", () => ({ watchSiblings: vi.fn(async () => {}) }));
 vi.mock("@/lib/daily-catchup", () => ({ catchUpDailyJobs: vi.fn(async () => {}) }));
-vi.mock("@/lib/catering/toast-sales", () => ({ pullTodaySalesForAllLocations: vi.fn(async () => []) }));
 vi.mock("@/lib/toast/capture-intraday", () => ({ captureIntraday: vi.fn(async () => ({ failures: 0, results: [], skipped: false })) }));
 vi.mock("@/lib/toast/capture-modified", () => ({ captureModified: vi.fn(async () => ({ failures: 0, results: [], skipped: false })) }));
 vi.mock("@/lib/toast/labor", () => ({ laborPullEnabled: () => false, runToastLaborPull: vi.fn(async () => ({ ran: false })) }));

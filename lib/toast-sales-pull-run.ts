@@ -24,7 +24,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     } catch { ezcaterShadow.failed++; }
   };
   const dates = [businessDate, etYmdMinusDays(businessDate, 1), etYmdMinusDays(businessDate, 2)];
-  const results: { locationId: string; ok: boolean; error?: string }[] = [];
+  const results: { locationId: string; ok: boolean; error?: string; skipped?: boolean; reason?: "capture_fixture_mode" }[] = [];
   const depletionRows: Record<string, number> = {};
   const parRows: Record<string, number> = {};
   let depletionFailures = 0;
@@ -73,6 +73,10 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
       } catch { parRunFailures++; }
     }
     for (const locationId of ids) {
+      if (capture.skipped && capture.reason === "capture_fixture_mode") {
+        results.push({ locationId, ok: true, skipped: true, reason: "capture_fixture_mode" });
+        continue;
+      }
       const ok = dates.every((date) => completed.has(`${locationId}:${date}`));
       results.push({ locationId, ok, ...(!ok ? { error: "capture_day_incomplete" } : {}) });
     }
@@ -89,12 +93,14 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   } catch { /* Heartbeat persistence is fail-open, independent of sales health. */ }
   finally { heartbeatBudget.close(); }
   const perLocationFailures = results.filter((r) => !r.ok).length;
-  const healthy = (!capture.skipped && capture.failures === 0) && perLocationFailures === 0
+  const fixtureSkip = capture.skipped && capture.reason === "capture_fixture_mode";
+  const healthy = ((!capture.skipped || fixtureSkip) && capture.failures === 0) && perLocationFailures === 0
     && (!ezcaterEnabled || (!ezcaterShadow.failed && !ezcaterShadow.deferred))
     && depletionFailures === 0 && parRunFailures === 0 && elapsedFailed === 0 && elapsedError === null;
   const metadata = {
     job: "toast-sales-pull", source: "capture", business_date: businessDate, dates,
     capture_failures: capture.failures, capture_skipped: capture.skipped,
+    capture_skip_reason: capture.skipped ? capture.reason ?? null : null,
     ezcater_shadow: ezcaterShadow,
     per_location_failures: perLocationFailures, depletion_rows: depletionRows,
     depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures,

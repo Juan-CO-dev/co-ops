@@ -1,15 +1,8 @@
-/**
- * Mid-shift sales pulse — pins the pure aggregation math (council 2026-07-31).
- * The load-bearing semantics: latest-snapshot-version wins; voided latest
- * versions excluded everywhere; price_cents is EXTENDED (never × quantity);
- * modifiers count in net $ but not in top items.
- */
+/** Pure capture top-item aggregation and pace/date helpers. */
 import { describe, it, expect } from "vitest";
 import {
   addDaysYmd,
-  aggregateDaySales,
   pctDelta,
-  reduceLatestSelections,
   sameWeekdayBaselineDates,
   topItemsForDay,
   type SalesEventRow,
@@ -26,57 +19,6 @@ const row = (over: Partial<SalesEventRow>): SalesEventRow => ({
   voided: false,
   snapshot_version: 1,
   ...over,
-});
-
-describe("reduceLatestSelections", () => {
-  it("keeps only the highest snapshot_version per (check, selection)", () => {
-    const out = reduceLatestSelections([
-      row({ snapshot_version: 1, price_cents: 1200 }),
-      row({ snapshot_version: 2, price_cents: 1300 }),
-    ]);
-    expect(out).toHaveLength(1);
-    expect(out[0]!.price_cents).toBe(1300);
-  });
-
-  it("distinct selections both survive", () => {
-    const out = reduceLatestSelections([row({}), row({ selection_guid: "sel2" })]);
-    expect(out).toHaveLength(2);
-  });
-});
-
-describe("aggregateDaySales", () => {
-  it("sums EXTENDED price_cents (never multiplies by quantity)", () => {
-    // quantity 2 with extended price 2400 — the correct net is 2400, not 4800.
-    const agg = aggregateDaySales("2026-07-30", [row({ quantity: 2, price_cents: 2400 })]);
-    expect(agg.netCents).toBe(2400);
-  });
-
-  it("a void-revision (latest version voided) removes the line AND its check", () => {
-    const agg = aggregateDaySales("2026-07-30", [
-      row({ snapshot_version: 1, voided: false }),
-      row({ snapshot_version: 2, voided: true }),
-    ]);
-    expect(agg.netCents).toBe(0);
-    expect(agg.checks).toBe(0);
-    expect(agg.avgTicketCents).toBeNull();
-  });
-
-  it("checks = distinct check_guids with a live selection; avg ticket derives", () => {
-    const agg = aggregateDaySales("2026-07-30", [
-      row({}),
-      row({ check_guid: "chk2", selection_guid: "s2", price_cents: 800 }),
-      row({ check_guid: "chk2", selection_guid: "s3", price_cents: 200, parent_selection_guid: "s2" }),
-    ]);
-    expect(agg.netCents).toBe(2200); // 1200 + 800 + 200 (modifier upcharge counts)
-    expect(agg.checks).toBe(2);
-    expect(agg.avgTicketCents).toBe(1100);
-  });
-
-  it("null price_cents contributes 0 but the check still counts", () => {
-    const agg = aggregateDaySales("2026-07-30", [row({ price_cents: null })]);
-    expect(agg.netCents).toBe(0);
-    expect(agg.checks).toBe(1);
-  });
 });
 
 describe("topItemsForDay", () => {

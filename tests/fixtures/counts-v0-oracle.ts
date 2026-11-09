@@ -33,7 +33,6 @@ import {
   computeInferredBaselineOz,
   chainLabelsInWalkOrder,
   etBusinessDate,
-  isGapEligibleDate,
   salesWindowUntrustworthy,
   isProductCountLine,
   type CountLineInput,
@@ -54,6 +53,11 @@ import {
   type ProductOnHandRow,
   type ReceiptLot,
 } from "@/lib/products-shared";
+
+// Historical dependency preserved locally after its runtime export was retired.
+function isGapEligibleDate(businessDate: string, openEtDate: string): boolean {
+  return businessDate < openEtDate;
+}
 
 /** Trailing calendar window (days) for the inference bootstrap (spec D6, locked). */
 const INFERRED_WINDOW_DAYS = 28;

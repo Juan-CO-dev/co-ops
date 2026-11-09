@@ -436,7 +436,7 @@ function reasonFor(res: ReturnType<typeof computeBaseRate>, thin = false) {
 
 describe("deriveLaneStart — three lanes, because a depletion row has three ways to be lit", () => {
   it("a PREP-MEDIATED SKU has a lane start, and its errand is production capture — NOT `no_lane_start`", () => {
-    // materializeDailyDepletion writes the row when direct_oz OR flattened_oz is positive,
+    // materializeCapturedDepletion writes the row when direct_oz OR flattened_oz is positive,
     // so this SKU — never sold directly, only consumed through a prep recipe — is lit every
     // trading day with direct_oz 0.00. Testing only direct + production called that "no lane
     // has EVER produced data for this SKU here", which is false about the kitchen and aims

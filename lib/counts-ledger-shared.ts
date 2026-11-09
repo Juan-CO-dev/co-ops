@@ -131,16 +131,16 @@ export function salesDirectOz(
   }
   const out = new Map<string, number | null>(skuIds.map((id) => [id, 0]));
   const end = untilExclusive ?? snap.today;
-  const fromGapRead = fromDate >= gaps.since && end !== null && end <= snap.openEtDate;
+  const fromGapRead = fromDate >= gaps.since && end <= snap.openEtDate;
   const limit = untilExclusive == null && fromGapRead ? snap.openEtDate : end;
-  const current = missingDates(snap).filter((d) => d >= fromDate && (limit === null || d < limit));
+  const current = missingDates(snap).filter((d) => d >= fromDate && d < limit);
   if (salesWindowUntrustworthy(new Set(current), fromDate, untilExclusive)) {
     return new Map<string, number | null>(skuIds.map((id) => [id, null]));
   }
   const selected = new Set(skuIds);
   for (const r of snap.rows) {
     if (r.location_id !== snap.locationId || !selected.has(r.sku_id) || r.business_date < fromDate ||
-      (end !== null && r.business_date >= end)) continue;
+      r.business_date >= end) continue;
     out.set(r.sku_id, (out.get(r.sku_id) ?? 0) + (num(r.direct_oz) ?? 0));
   }
   return out;
@@ -149,7 +149,7 @@ export function salesDirectOz(
 /** The rows loadEffectiveSalesRows({ fromDate }) returned (no SKU filter, the source's default end). */
 export function salesRowsFrom(snap: SalesSnapshot, fromDate: string): EffectiveSalesRow[] {
   const end = snap.today;
-  return snap.rows.filter((r) => r.location_id === snap.locationId && r.business_date >= fromDate && (end === null || r.business_date < end));
+  return snap.rows.filter((r) => r.location_id === snap.locationId && r.business_date >= fromDate && r.business_date < end);
 }
 
 /** A coverage disclosure narrowed to [fromDate, end) — each date's status is its own fact. */

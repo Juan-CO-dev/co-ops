@@ -1,10 +1,10 @@
 -- 0295_toast_legacy_retire
 -- AUTHORED 2026-11-09; NOT APPLIED. CC applies to sim, then prod.
--- WHAT / WHY: remove the 14 known synthetic Toast selections after the capture
--- cutover; remove dormant PostgREST write privileges from the historical ledgers.
--- Fixture identity: 0147 defines check_guid TEXT; the check-1 through check-4
--- values come from tests/fixtures/toast/orders-v2-sample.json. The two shop-days
--- and total of 14 are CC's read-only production manifest (2026-11-07).
+-- WHAT / WHY: remove synthetic Toast selections after the capture cutover;
+-- remove dormant PostgREST write privileges from the historical ledgers.
+-- Fixture identity: 0147 defines check_guid TEXT; check-1 through check-4
+-- come from orders-v2-sample.json. Real Toast check GUIDs are UUIDs. Prod and
+-- sim have different dates, but both have two shop-days with counts 3/1/2/1.
 -- STOPPED: retain the 134 depletion rows on those days. 0166 stores only a
 -- shop/day/SKU aggregate, without source-event lineage; no migration or seed
 -- proves those rows derive exclusively from fixtures. A date match is not proof.
@@ -12,37 +12,63 @@
 -- older deployed writers use service_role; capture readers are unaffected.
 -- ROLLOUT: apply before or after the app merge; ordering does not matter.
 -- VERIFY SQL (run by CC, not by this author):
--- SELECT count(*) FROM public.toast_sales_events
+-- SELECT check_guid, count(*) FROM public.toast_sales_events
 -- WHERE check_guid IN ('check-1','check-2','check-3','check-4')
---   AND (location_id, business_date) IN (
---     ('54ce1029-400e-4a92-9c2b-0ccb3b031f0a'::uuid, DATE '2026-08-01'),
---     ('d2cced11-b167-49fa-bab6-86ec9bf4ff09'::uuid, DATE '2026-08-06')); -- 0
+-- GROUP BY check_guid; -- no rows
 -- SELECT grantee, table_name, privilege_type FROM information_schema.table_privileges
 -- WHERE table_schema = 'public'
 --   AND table_name IN ('toast_sales_events','toast_daily_depletion','toast_daily_sales_signals')
 --   AND grantee IN ('anon','authenticated','PUBLIC')
 --   AND privilege_type IN ('INSERT','UPDATE','DELETE'); -- no rows
--- ROLLBACK: GRANT INSERT, UPDATE, DELETE ON public.toast_sales_events,
--- public.toast_daily_depletion, public.toast_daily_sales_signals TO anon, authenticated;
--- restore any pre-existing PUBLIC grants only from the pre-apply ACL backup.
--- Deleted rows are restorable from backup only. A re-apply intentionally fails
--- the manifest guard rather than silently accepting a changed database.
+-- ROLLBACK (per table, restoring only privileges present in the pre-apply ACL):
+-- toast_sales_events: GRANT INSERT, UPDATE, DELETE ON public.toast_sales_events
+-- TO anon, authenticated; -- pre-existing Supabase default ACL, not a 0147 GRANT
+-- toast_daily_depletion: 0166 has no explicit GRANT; ONLY if the pre-apply ACL
+-- confirms these privileges: GRANT INSERT, UPDATE, DELETE ON
+-- public.toast_daily_depletion TO anon, authenticated;
+-- toast_daily_sales_signals: NO re-grant. 0182 revoked ALL, including SELECT.
+-- Restore any pre-existing PUBLIC grants only from the pre-apply ACL backup.
+-- Deleted rows are restorable from backup only. Zero fixture groups (including
+-- a re-apply or fresh database) are a clean no-op for deletion.
 
 begin;
 
+-- Keep the validated fixture population stable until its deletion commits.
+lock table public.toast_sales_events in share row exclusive mode;
+
 do $$
 declare
+  fixture_groups integer;
+  malformed_groups integer;
   deleted_fixtures integer;
 begin
+  select count(*), count(*) filter (where c1 <> 3 or c2 <> 1 or c3 <> 2 or c4 <> 1)
+    into fixture_groups, malformed_groups
+  from (
+    select location_id, business_date,
+      count(*) filter (where check_guid = 'check-1') as c1,
+      count(*) filter (where check_guid = 'check-2') as c2,
+      count(*) filter (where check_guid = 'check-3') as c3,
+      count(*) filter (where check_guid = 'check-4') as c4
+    from public.toast_sales_events
+    where check_guid in ('check-1', 'check-2', 'check-3', 'check-4')
+    group by location_id, business_date
+  ) fixture_pattern;
+
+  if fixture_groups > 2 or malformed_groups <> 0 then
+    raise exception '0295 fixture pattern mismatch: % groups, % malformed',
+      fixture_groups, malformed_groups;
+  end if;
+  if fixture_groups = 0 then
+    raise notice '0295 no fixture groups; deletion is a no-op';
+  end if;
+
   delete from public.toast_sales_events
-  where check_guid in ('check-1', 'check-2', 'check-3', 'check-4')
-    and (location_id, business_date) in (
-      ('54ce1029-400e-4a92-9c2b-0ccb3b031f0a'::uuid, date '2026-08-01'),
-      ('d2cced11-b167-49fa-bab6-86ec9bf4ff09'::uuid, date '2026-08-06')
-    );
+  where check_guid in ('check-1', 'check-2', 'check-3', 'check-4');
   get diagnostics deleted_fixtures = row_count;
-  if deleted_fixtures <> 14 then
-    raise exception '0295 fixture manifest mismatch: expected 14, deleted %', deleted_fixtures;
+  if deleted_fixtures <> 7 * fixture_groups then
+    raise exception '0295 fixture deletion mismatch: expected %, deleted %',
+      7 * fixture_groups, deleted_fixtures;
   end if;
 end;
 $$;

@@ -39,6 +39,9 @@ const days = (from: string, to: string) => {
 describe("the shared capture coverage reads to completion", () => {
   it("finds a covered day after 1000 manifests and an uncovered day after it", async () => {
     const t = buildCountsFixture();
+    // Remove unrelated receipt uncertainty so only capture coverage changes the result.
+    t.vendor_deliveries = [];
+    t.vendor_delivery_items = [];
     const dates = days("2023-01-01", "2026-10-13");
     t.toast_depletion_day_coverage = dates.map((d) => ({ location_id: LOC, business_date: d,
       run_id: `run-${d}`, status: "success", computed_at: `${d}T23:00:00Z`,
@@ -50,6 +53,18 @@ describe("the shared capture coverage reads to completion", () => {
     current = createFakeDb(t);
     const gaps = await counts.loadSalesGapDates(current.client, LOC, "2023-01-01", "2026-10-14");
     expect([...gaps]).toEqual(["2026-10-12"]);
+    // Exercise the render's shared snapshot, not just the standalone gap reader.
+    const uncovered = await counts.deriveOnHand(LOC, NOW);
+    expect(row(uncovered, "s-cheese")).toMatchObject({ anchorSource: "census", onHandOz: null });
+    expect(row(uncovered, "s-lettuce")).toMatchObject({ anchorSource: "par_estimate", onHandOz: null });
+
+    // The same successful empty days are known zero once the missing run exists.
+    t.toast_capture_runs.push({ id: "run-2026-10-12", location_id: LOC,
+      business_date: "2026-10-12", status: "completed", finished_at: "2026-10-12T23:00:00Z" });
+    current = createFakeDb(t);
+    const covered = await counts.deriveOnHand(LOC, NOW);
+    expect(row(covered, "s-cheese").onHandOz).toEqual(expect.any(Number));
+    expect(row(covered, "s-lettuce").onHandOz).toEqual(expect.any(Number));
   });
 });
 

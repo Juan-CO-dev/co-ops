@@ -1,4 +1,4 @@
-import type { CaptureSelection } from "./capture-reconciliation-shared";
+import type { CaptureSelection } from "./capture-shared";
 import type { DaySalesAgg, SalesEventRow } from "../midshift-sales-shared";
 
 export interface PulseCapturedOrder {

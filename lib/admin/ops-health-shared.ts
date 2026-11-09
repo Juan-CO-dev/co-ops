@@ -24,9 +24,9 @@
 
 /** The per-location step counters the cron route records on its `cron.success` row. */
 export interface CronRunFailures {
-  /** locations whose Toast pull threw (`pullSalesForAllLocations` recorded ok:false). */
+  /** Locations whose capture run failed. */
   perLocation: number;
-  /** locations whose `materializeDailyDepletion` threw — no depletion ledger for the day. */
+  /** Locations whose capture depletion publication failed. */
   depletion: number;
   /** locations whose Dynamic Pars shadow run threw. */
   parRun: number;

@@ -3,12 +3,10 @@ import { NextRequest } from "next/server";
 import { GET } from "@/app/api/cron/toast-sales-today/route";
 import { captureToastDaySystem } from "@/lib/toast/capture";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { pullTodaySalesForAllLocations } from "@/lib/catering/toast-sales";
 import { audit } from "@/lib/audit";
 import { runToastLaborPull } from "@/lib/toast/labor";
 import { captureModified } from "@/lib/toast/capture-modified";
 vi.mock("@/lib/toast/capture-modified", () => ({ captureModified: vi.fn() }));
-vi.mock("@/lib/catering/toast-sales", () => ({ pullTodaySalesForAllLocations: vi.fn() }));
 vi.mock("@/lib/toast/capture", () => ({ captureEnabled: () => true, captureToastDaySystem: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
@@ -19,7 +17,6 @@ const reconcile = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(captureModified).mockResolvedValue({ failures: 0, results: [], skipped: false });
-  vi.mocked(pullTodaySalesForAllLocations).mockResolvedValue([{ locationId: "shop", result: "pulled" }]);
   vi.useFakeTimers();
   vi.stubEnv("CATERING_SCAN_SECRET", "synthetic-test-secret");
   const query = { select: () => query, eq: () => query, not: () => query,
@@ -79,7 +76,6 @@ it.each([undefined, "legacy", "capture"])("today always captures with retired se
   const request = new NextRequest("http://localhost/api/cron/toast-sales-today", { headers: { "x-cron-secret": "synthetic-test-secret" } });
   const response = await GET(request);
   expect(await response.json()).toMatchObject({ healthy: true });
-  expect(pullTodaySalesForAllLocations).not.toHaveBeenCalled();
   expect(captureToastDaySystem).toHaveBeenCalledTimes(2);
   expect(reconcile).toHaveBeenCalledWith("reconcile_ezcater_toast", expect.objectContaining({ p_from: expect.any(String), p_to: expect.any(String) }));
   expect(runToastLaborPull).toHaveBeenCalledWith([expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/)], expect.objectContaining({

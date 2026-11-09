@@ -48,7 +48,6 @@ export async function GET(req: NextRequest) {
       actorId: null, actorRole: null, action: healthy ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: {
         job: "toast-sales-today", date: today, source: "capture",
-        pulled: 0, fresh: 0, no_toast: 0, stale_check_failed: 0,
         capture_failures: capture.failures,
         modified_failures: modified.failures,
         modified_errors: [...modified.results.flatMap((r) => r.error ? [r.error] : []),

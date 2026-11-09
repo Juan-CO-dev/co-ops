@@ -67,7 +67,7 @@ function requireLevel(actor: AuthContext, min: number): void {
  * Same helper shape, same 403, deliberately — one spelling of "you do not manage that
  * location" across the Toast surfaces.
  *
- * The ACTOR-LESS cores (`doPull`, `deriveSalesConsumption`, `loadActiveExclusions`) take
+ * The ACTOR-LESS cores (`doPull`, `deriveCapturedSalesConsumption`, `loadActiveExclusions`) take
  * no bind and must not: the cron and the mid-shift system triggers iterate every location
  * by design, and there is no actor there to bind.
  */
@@ -142,22 +142,6 @@ export async function pullSales(actor: AuthContext, locationId: string, business
   return result;
 }
 
-/** Compatibility entry for administrative callers; each location fails independently. */
-export async function pullSalesForAllLocations(businessDate: string): Promise<Array<{ locationId: string; ok: boolean; error?: string; result?: PullResult }>> {
-  requireYmd(businessDate);
-  const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("locations").select("id, toast_restaurant_guid").eq("active", true)
-    .not("toast_restaurant_guid", "is", null)
-    .returns<Array<{ id: string; toast_restaurant_guid: string }>>();
-  if (error) throw new Error("capture_location_unavailable");
-  const out: Array<{ locationId: string; ok: boolean; error?: string; result?: PullResult }> = [];
-  for (const loc of data ?? []) {
-    try { out.push({ locationId: loc.id, ok: true, result: await doPull(loc.id, businessDate, null) }); }
-    catch (error) { out.push({ locationId: loc.id, ok: false, error: captureErrorCode(error) }); }
-  }
-  return out;
-}
-
 export type SystemPullContext = "closing_confirm" | "midshift_on_visit" | "pinger";
 export const PINGER_DEBOUNCE_MS = 8 * 60 * 1000;
 export type RefreshOutcome = "pulled" | "fresh" | "no_toast" | "unknown" | "error";
@@ -197,23 +181,6 @@ export async function refreshTodaySalesIfStale(
 
 export async function maybeRefreshTodaySales(locationId: string, businessDate: string): Promise<void> {
   await refreshTodaySalesIfStale(locationId, businessDate, 45 * 60 * 1000, "midshift_on_visit");
-}
-
-export async function pullTodaySalesForAllLocations(
-  todayEt: string,
-): Promise<Array<{ locationId: string; result: RefreshOutcome | "error"; error?: string }>> {
-  requireYmd(todayEt);
-  const { data, error } = await getServiceRoleClient().from("locations").select("id")
-    .eq("active", true).not("toast_restaurant_guid", "is", null)
-    .returns<Array<{ id: string }>>();
-  if (error) throw new Error("capture_location_unavailable");
-  return Promise.all((data ?? []).map(async (loc) => ({ locationId: loc.id,
-    result: await refreshTodaySalesIfStale(loc.id, todayEt, PINGER_DEBOUNCE_MS, "pinger") })));
-}
-
-/** Compatibility export for historical callers; publication is always capture-backed. */
-export async function materializeDailyDepletion(locationId: string, businessDate: string): Promise<{ rows: number }> {
-  return materializeCapturedDepletion(locationId, businessDate);
 }
 
 /** Preserve the non-ledger effects of the legacy materializer after capture publication. */
@@ -449,12 +416,6 @@ export interface SalesConsumption {
 export async function salesConsumption(actor: AuthContext, locationId: string, businessDate: string): Promise<SalesConsumption> {
   requireLevel(actor, TOAST_SALES_READ_MIN);
   assertLocationAccess(actor, locationId);
-  return deriveCapturedSalesConsumption(locationId, businessDate);
-}
-
-/** Actor-less derivation core — the admin surface gates via salesConsumption;
- *  the daily-depletion materializer (cron/backfill) calls this directly. */
-export async function deriveSalesConsumption(locationId: string, businessDate: string): Promise<SalesConsumption> {
   return deriveCapturedSalesConsumption(locationId, businessDate);
 }
 
