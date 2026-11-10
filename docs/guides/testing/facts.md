@@ -263,8 +263,8 @@ How to read it:
 ## Manager tools — counts, ordering, production
 
 - Counts — route `/operations/counts?location=…`, title `counts.page.title` → "Inventory Audit" → "Auditoría de inventario" — `lib/i18n/en.json:3417`
-- Counts: Key Holder (4) with task access can record a count. Levels 4–5 re-enter their PIN; AGM and up use a password check — `lib/counts.ts:97`, `app/(authed)/operations/counts/page.tsx:16-24`
-- Counts: on-hand reading (and the Reports Hub "Counts" link) needs AGM (6) — `lib/counts.ts:96`, `app/(authed)/reports/page.tsx:92`
+- Counts: Key Holder (4) with task access can record a count. Levels 4–5 re-enter their PIN; AGM and up use a password check — `lib/counts.ts:123`, `app/(authed)/operations/counts/page.tsx:16-24`
+- Counts: on-hand reading (and the Reports Hub "Counts" link) needs AGM (6) — `lib/counts.ts:122`, `app/(authed)/reports/page.tsx:92`
 - Ordering walk — route `/ordering?location=…`, title `ordering.page.title_bare` → "Ordering walk" → "Recorrido de pedido". Key Holder (4) and up, with task access — `app/ordering/page.tsx:49`, `app/ordering/page.tsx:95`, `lib/ordering.ts:110`, `lib/i18n/en.json:3545`
 - Ordering is not in the Explore menu. Open it from the dashboard Ordering tile, the board task, or Reports Hub → Inventory → **Ordering** — `tests/nav-links.test.ts:19-21`, `app/(authed)/reports/page.tsx:92`
 - A confirmed purchase order can be emailed to the vendor from the app with a Send tap (two-tap), or sent by hand. The email leg can be dormant per shop — `lib/po-email.ts:1-21`
@@ -375,7 +375,7 @@ How to read it:
 - Who's here / End my shift / presence lines: behind `WHOS_HERE=1` (off unless set). The launch guides already describe End my shift. Confirm it is on before documenting — `lib/whos-here.ts:8`, `lib/whos-here.ts:15-17`
 - Mid-Shift Pulse v2: behind `PULSE_V2=1`. The caller reports it is on; code cannot prove it — `lib/pulse/flag.ts:1-7`
 - Toast labor pull / station-lifecycle reconcile from Toast clock-outs: `TOAST_LABOR_PULL=1`, `STATION_LIFECYCLE=1` (off unless set) — `lib/toast/labor.ts:28-35`
-- Toast order capture: `TOAST_ORDER_CAPTURE=1` (off unless set). ezCater stock depletion: `EZCATER_DEPLETION_ENABLED=1` (off unless set) — `lib/toast/capture.ts:16`, `lib/toast-sales-pull-run.ts:21`
+- Toast order capture: `TOAST_ORDER_CAPTURE=1` (off unless set). ezCater stock depletion: `EZCATER_DEPLETION_ENABLED=1` (off unless set) — `lib/toast/capture.ts:16`, `lib/toast-sales-pull-run.ts:18`
 - Placeholder pages ("coming soon" cards): `/recipes`, `/announcements`, `/tips`, `/ai`, `/rollups`, `/deep-cleaning`, `/feedback`, `/comms` — `app/recipes/page.tsx:1`, `app/announcements/page.tsx:1`, `app/tips/page.tsx:1`, `app/ai/page.tsx:1`, `app/rollups/page.tsx:1`, `app/deep-cleaning/page.tsx:1`, `app/feedback/page.tsx:1`, `app/comms/page.tsx:1`
 - More placeholders: `/operations/prep`, `/operations/overlay`, `/operations/synthesis` — `app/(authed)/operations/prep/page.tsx:1`, `app/(authed)/operations/overlay/page.tsx:1`, `app/(authed)/operations/synthesis/page.tsx:1`
 - None of the placeholders appear in the menu — `tests/nav-links.test.ts:19-21`
@@ -394,8 +394,8 @@ How to read it:
 - Staff guide says Phase 2 "is not your beat". In code, once Phase 1 is submitted, the prep tab is open to anyone with opening access — `docs/guides/staff-guide.md:153` vs `app/(authed)/operations/opening/opening-client.tsx:1146-1152`
 - Guides say mid-day prep "stays a key-holder job". In code, an employee assigned mid-day prep can open and finish it — `docs/guides/staff-guide.md:17`, `docs/guides/manager-guide.md:342`, `docs/guides/manager-guide.md:354` vs `lib/assignments-shared.ts:37`, `app/api/prep/mid-day/route.ts:84-86`, `lib/prep.ts:1176`
 - Staff guide says the dashboard "Reports" section holds the Opening Report card. In code, task tiles show only to the person assigned that task — `docs/guides/staff-guide.md:112` vs `app/(authed)/dashboard/page.tsx:386`, `app/(authed)/dashboard/page.tsx:684`, `lib/assignment-sections.ts:19-22`
-- Manager guide lists Cash Deposit, PM Report and Mid-day Prep tiles as "key holder and up" and Inventory Audit as "AGM and up". In code, every task tile is assignment-based, and counts are recorded from KH (4) with task access — `docs/guides/manager-guide.md:111` vs `lib/assignment-sections.ts:19-22`, `lib/counts.ts:96-97`
-- Manager guide says "Inventory audits … start at AGM" and the pulse audit tile is AGM+. In code, recording a count starts at KH (4); only on-hand reading is AGM (6) — `docs/guides/manager-guide.md:28`, `docs/guides/manager-guide.md:762` vs `lib/counts.ts:96-97`, `app/(authed)/operations/counts/page.tsx:16-24`
+- Manager guide lists Cash Deposit, PM Report and Mid-day Prep tiles as "key holder and up" and Inventory Audit as "AGM and up". In code, every task tile is assignment-based, and counts are recorded from KH (4) with task access — `docs/guides/manager-guide.md:111` vs `lib/assignment-sections.ts:19-22`, `lib/counts.ts:122-123`
+- Manager guide says "Inventory audits … start at AGM" and the pulse audit tile is AGM+. In code, recording a count starts at KH (4); only on-hand reading is AGM (6) — `docs/guides/manager-guide.md:28`, `docs/guides/manager-guide.md:762` vs `lib/counts.ts:122-123`, `app/(authed)/operations/counts/page.tsx:16-24`
 - Staff guide describes **Trends** charts on the dashboard and lists Trends for employees. In code, the Trends chip and page start at level 4, and the dashboard has no trends block — `docs/guides/staff-guide.md:113-117`, `docs/guides/staff-guide.md:128` vs `lib/nav-links.ts:22`, `app/(authed)/reports/trends/page.tsx:37`, `app/(authed)/dashboard/page.tsx:545-777`
 - Staff guide says the Explore list shows Catering (which bounces employees) and lists placeholder pages "They open". In code, Catering shows only at level 5 and no placeholder is in the menu — `docs/guides/staff-guide.md:132-134`, `docs/guides/staff-guide.md:494` vs `lib/nav-links.ts:25`, `tests/nav-links.test.ts:19-21`
 - Staff guide says **Feedback** in the Explore list is customer feedback. It is not in the menu at all — `docs/guides/staff-guide.md:411` vs `tests/nav-links.test.ts:21`
@@ -407,7 +407,8 @@ How to read it:
 
 ## Production switches (read from the Vercel production env list, values not decrypted, 2026-10-13)
 
-- ON in production: `PULSE_V2=1`, `WHOS_HERE=1` (Toast employee links, manager presence, **End my shift**, shop-closed release), `CUSTOMER_PROFILES=1` (Customers), `TOAST_LABOR_PULL=1`, `TOAST_ORDER_CAPTURE=1`, `EZCATER_DEPLETION_ENABLED=1`, `DEPLETION_SOURCE=capture` — Vercel project env list (CC, 2026-10-13)
+- ON in production: `PULSE_V2=1`, `WHOS_HERE=1` (Toast employee links, manager presence, **End my shift**, shop-closed release), `CUSTOMER_PROFILES=1` (Customers), `TOAST_LABOR_PULL=1`, `TOAST_ORDER_CAPTURE=1`, `EZCATER_DEPLETION_ENABLED=1` — Vercel project env list (CC, 2026-10-13)
+- Toast source selection is capture-only after the 2026-11-09 cleanup; the former `DEPLETION_SOURCE` environment value is ignored. Missing coverage is unavailable, not zero: `lib/toast/effective-depletion.ts:70`, `lib/midshift-sales.ts:50`.
 - NOT set in production (so OFF): `STATION_LIFECYCLE` — do not document the Toast clock-out station reconcile — `lib/toast/labor.ts:34`; Vercel env list has no such key
 - The sim for guides v2 runs with the three on-screen switches that production has on: `PULSE_V2=1 WHOS_HERE=1 CUSTOMER_PROFILES=1 node scripts/sim/dev-sim.mjs` (the sim passes parent env through — `lib/sim-isolation-shared.ts:134-140`)
 

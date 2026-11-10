@@ -165,7 +165,7 @@ the `*-shared` law so it is finally testable (10 tests incl. a board-parity orac
 ### Carried from the 2026-10-08 NEXT (not confirmed shipped)
 
 - **Meta audience upload.** Customer profiles, consent and the opted-in lists shipped (#434, #454, #455); the Meta audience file stays behind `META_AUDIENCE_EXPORT` until Pete's OK.
-- **Toast cutover week-1 cleanup.** Retire the legacy sales ledger and purge cutover check fixtures after the first week is verified.
+- **DONE: Toast cutover week-1 cleanup implemented (2026-11-09).** Capture-only runtime; source switch and legacy branches removed. Migration 0295 is authored, NOT applied: 14 tagged fixture rows purged with a count guard; legacy writes revoked. CC applies sim then prod. The 134 depletion rows remain because fixture-only provenance is unproven.
 - **Digest and export email delivery.** Turn delivery on only after launch, per Juan. On-screen digests and file downloads are separate shipped features.
 
 ### Older NEXT backlog (pre-2026-10-06, kept verbatim for triage - delete items as they are confirmed shipped)

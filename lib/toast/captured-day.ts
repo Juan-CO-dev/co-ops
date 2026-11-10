@@ -1,7 +1,7 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import type { CaptureSelection } from "./capture-reconciliation-shared";
+import type { CaptureSelection } from "./capture-shared";
 
 export interface CapturedToastCheck {
   checkGuid: string; amountCents: number | null; voided: boolean; deleted: boolean;

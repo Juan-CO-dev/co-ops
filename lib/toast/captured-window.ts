@@ -1,7 +1,7 @@
 import "server-only";
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import type { CaptureSelection } from "./capture-reconciliation-shared";
+import type { CaptureSelection } from "./capture-shared";
 import type { CapturedToastDay, CapturedToastCheck } from "./captured-day";
 
 type Client = ReturnType<typeof getServiceRoleClient>;

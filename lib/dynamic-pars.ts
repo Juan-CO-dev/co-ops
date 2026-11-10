@@ -8,7 +8,7 @@ import { loadEffectiveSalesRows, loadEffectiveSalesCoverage } from "@/lib/toast/
  *
  * ── WHAT RUNS WHEN, AND WHY IT IS NOT ON A READ PATH ───────────────────────────
  * `runParShadowForLocation` is chained inside the NIGHTLY cron, immediately after
- * `materializeDailyDepletion` (app/api/cron/toast-sales-pull). It never runs on the
+ * `materializeCapturedDepletion` (app/api/cron/toast-sales-pull). It never runs on the
  * walker's read path — the WRITE-ON-READ law (AGENTS.md). The walker re-selects a horizon
  * over the terms this engine PERSISTED, which is a pure selection, not a computation
  * (head ruling R3-A), and that is why a 9:58 and a 10:02 walk legitimately differ.
@@ -26,7 +26,7 @@ import { loadEffectiveSalesRows, loadEffectiveSalesCoverage } from "@/lib/toast/
  * would wake it. A silent par is a WRITE, never a skip.
  *
  * ── THE DOUBLE-COUNT LAW IS NOT IN PLAY ────────────────────────────────────────
- * Consumed oz = production_inputs.input_oz + toast_daily_depletion.direct_oz, and nothing
+ * Consumed oz = production_inputs.input_oz + effective capture direct_oz, and nothing
  * here sums flattened_oz — it is read only to DETECT prep-mediation (a dark production
  * lane means a half-seen base). No ledger is re-keyed and no ledger row is rewritten.
  */
@@ -67,20 +67,18 @@ import {
   type LedgerPrior, type ParRunCounts,
 } from "@/lib/dynamic-pars-run-shared";
 import {
-  parAutoLaneReady, parAutoMovesReady, parSuggestionActionsReady, salesSignalsReady,
+  parAutoLaneReady, parAutoMovesReady, parSuggestionActionsReady,
 } from "@/lib/dynamic-pars-probes";
 
 /**
  * THE PROBES LIVE IN A LEAF (lib/dynamic-pars-probes.ts) AND ARE RE-EXPORTED HERE.
  *
  * The plan names `lib/dynamic-pars.ts` as their home and every consumer it names reaches
- * them at this path. They are DEFINED one module down because two of their consumers —
- * lib/ordering.ts and lib/catering/toast-sales.ts — sit upstream of this module in the
- * import graph (this module imports both), so hosting them here would make three pairs of
- * modules mutually recursive for the sake of one boolean. Same shape as the `*-shared.ts`
- * re-export idiom: define in the leaf, re-export from the server module.
+ * them at this path. They are defined in a leaf because lib/ordering.ts consumes
+ * a probe upstream of this module. Re-exporting from the server module preserves
+ * the public import paths without creating a runtime import cycle.
  */
-export { parAutoMovesReady, parAutoLaneReady, parSuggestionActionsReady, salesSignalsReady };
+export { parAutoMovesReady, parAutoLaneReady, parSuggestionActionsReady };
 
 /**
  * THE WALKER'S READ PATH LIVES IN A LEAF TOO (lib/dynamic-pars-walker.ts), AND FOR THE
@@ -299,8 +297,9 @@ interface DbSkuRow {
  * observation, including a zero one. Null = no lane has ever produced here → `no_lane_start`.
  *
  * ── THREE LANES, BECAUSE A DEPLETION ROW HAS THREE WAYS TO BE LIT ────────────────
- * `materializeDailyDepletion` writes a `toast_daily_depletion` row when EITHER `direct_oz`
- * or `flattened_oz` is positive (lib/catering/toast-sales.ts), so a prep-mediated SKU — one
+ * The capture materializer publishes direct and flattened amounts; the effective
+ * reader adds sales prep fallback only for items without live production. Lane
+ * presence checks both effective `direct_oz` and diagnostic `flattened_oz`, so a SKU
  * the shop never sells directly, only through a prep recipe — has a lit lane every trading
  * day while `direct_oz` stays 0.00 on every one of them. Testing only direct + production
  * therefore called those SKUs `no_lane_start` ("no lane has EVER produced data for this SKU
@@ -350,7 +349,7 @@ export function deriveLaneStart(input: {
  * (the 414 cliff, lib/products.ts DELIVERY_AT_LOCATION_EMBED).
  *
  * ONLY CALLED WHEN 0182 IS APPLIED — `runParShadowForLocation` probes first, so nothing
- * in here has to defend against a missing rhythm/ledger/signals table.
+ * in here has to defend against a missing rhythm/ledger table.
  */
 export async function loadDemandInputs(
   sb: ServiceClient,
@@ -384,6 +383,9 @@ export async function loadDemandInputs(
   const productIds = [...new Set(routable.map((s) => s.product_id).filter((v): v is string => v != null))];
 
   const autoLane = await parAutoLaneReady(sb);
+  const salesCoverage = loadEffectiveSalesCoverage(sb, {
+    locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1),
+  });
 
   const [
     overlayBySku, depletionRows, salesEventDates, signalRows,
@@ -394,36 +396,13 @@ export async function loadDemandInputs(
     loadParOverlay(sb, locationId, autoLane),
     // ③ the direct + flattened lanes, paged under `id`.
     loadEffectiveSalesRows(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1), allowGaps: true }),
-    // ④ THE FULL-GAP ORACLE (plan D10): the register RAN that day. A day with events but
-    //    no depletion row for a SKU is a TRUE ZERO; a day with no events at all is a GAP
-    //    and leaves the denominator entirely.
-    process.env.DEPLETION_SOURCE === "capture"
-      ? loadEffectiveSalesCoverage(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1) })
-      : selectAllRows<{ business_date: string }>(
-      async (from, to) => {
-        const { data, error } = await sb.from("toast_sales_events")
-          .select("business_date")
-          .eq("location_id", locationId)
-          .gte("business_date", windowStart)
-          .lte("business_date", runDateEt)
-          .order("id", { ascending: true })
-          .range(from, to)
-          .returns<Array<{ business_date: string }>>();
-        if (error) throw new Error(`loadDemandInputs sales events: ${error.message}`);
-        return { data };
-      },
-    ),
-    // ⑤ the day-grain catering marker + its start clamp.
-    process.env.DEPLETION_SOURCE === "capture"
-      ? loadEffectiveSalesCoverage(sb, { locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1) })
-          .then((data) => ({ data, error: null }))
-      : sb.from("toast_daily_sales_signals")
-      .select("business_date, suspect_check_count")
-      .eq("location_id", locationId)
-      .gte("business_date", windowStart)
-      .lte("business_date", runDateEt)
-      .returns<Array<{ business_date: string; suspect_check_count: number }>>(),
-    // ⑥ live productions in the window — mirrors loadSkuUsageRank exactly.
+    // Successful capture proves the register was observed. No SKU movement on
+    // a covered day is TRUE ZERO; an uncovered day leaves the denominator.
+    salesCoverage,
+    // The catering marker shares the successful capture coverage contract.
+    salesCoverage
+      .then((data) => ({ data, error: null })),
+    // Live productions in the window.
     selectAllRows<{ id: string; produced_at: string }>(
       async (from, to) => {
         const { data, error } = await sb.from("productions")
@@ -477,7 +456,6 @@ export async function loadDemandInputs(
     loadLatestRecipeEditAt(sb),
   ]);
 
-  if (signalRows.error) throw new Error(`loadDemandInputs signals: ${signalRows.error.message}`);
   if (actionRows.error) throw new Error(`loadDemandInputs suggestion actions: ${actionRows.error.message}`);
   // CATALOG PHASE 2a (D3): the epoch stamp that retires an auto par computed in any other pack epoch
   // (one chunked read for the whole shop — the batch law holds).
@@ -812,7 +790,7 @@ interface LedgerRow {
  *
  * ── IDEMPOTENT (plan D13) ──────────────────────────────────────────────────────
  * The nightly recompute DELETEs its own prior opinions for (run_date, location) WHERE
- * `outcome <> 'applied'` and re-inserts — the `materializeDailyDepletion` pattern, and the
+ * `outcome <> 'applied'` and re-inserts — the reviewed re-derivable-opinion pattern, and the
  * ONE documented exception to the append-only law. An `applied` row records a real par
  * write and is never deleted and never updated.
  */
@@ -839,7 +817,7 @@ export async function runParShadowForLocation(
       productionOzByDate: perSkuSeries(inputs.productionOzByDate, sku.skuId),
       flattenedOzByDate: perSkuSeries(inputs.flattenedOzByDate, sku.skuId),
       laneStartAt: inputs.laneStartByGrain.get(sku.grainKey) ?? null,
-      salesFallbackComplete: process.env.DEPLETION_SOURCE === "capture",
+      salesFallbackComplete: true,
     });
 
     const velocitySeries: VelocityDay[] = base.series.map((d) => ({
@@ -1114,67 +1092,6 @@ async function auditRun(
     },
     ipAddress: null, userAgent: null,
   });
-}
-
-/**
- * A location whose depletion is not current through this business date is SKIPPED — and
- * SAYING SO IS A WRITE, not a silence.
- *
- * r3: "materialize-failed locations get advisory-null, never stale-computed." Writing
- * nothing would leave last night's numbers standing as the walker's latest ledger row,
- * which is exactly the stale-computed read the rule forbids. So the run writes a full
- * advisory-null row per (SKU, day-class) with reason `stale_depletion`, using ONE cheap
- * read of the par'd SKU list — no demand loading, no rhythm, no product index.
- */
-export async function recordParRunSkipped(
-  locationId: string,
-  runDateEt: string,
-  watermark: string | null,
-): Promise<ParRunResult> {
-  const sb = getServiceRoleClient();
-  if (!(await parAutoMovesReady(sb))) return { rows: 0, skipped: "schema_pending" };
-
-  // THE SAME UNIVERSE THE FULL RUN WOULD HAVE COVERED — routable AND active at this shop.
-  // Two paths emitting different row counts for one catalog on one night would make the
-  // ledger's own row count meaningless as evidence, so the skip path pays for the overlay
-  // read too. Still only two reads: no demand, no rhythm, no product index.
-  const [{ data, error }, overlayBySku] = await Promise.all([
-    sb.from("vendor_items")
-      .select("id, vendor_id, active, weekday_par, weekend_par, par_step, location_id")
-      .or("weekday_par.not.is.null,weekend_par.not.is.null")
-      .returns<Array<{ id: string; vendor_id: string | null; active: boolean; weekday_par: number | string | null; weekend_par: number | string | null; par_step: number | string | null; location_id: string | null }>>(),
-    loadParOverlay(sb, locationId, await parAutoLaneReady(sb)),
-  ]);
-  if (error) throw new Error(`recordParRunSkipped skus: ${error.message}`);
-
-  const mode: "shadow" | "live" = PAR_AUTO_APPLY_ENABLED ? "live" : "shadow";
-  const ledger: LedgerRow[] = [];
-  const storeVendorIds = await loadStoreVendorIds();
-  const universe = (data ?? []).filter(
-    (s) => (s.location_id == null || s.location_id === locationId) && s.vendor_id != null &&
-      !storeVendorIds.has(s.vendor_id) && resolveActive(overlayBySku.get(s.id)?.activeOverride, s.active),
-  );
-  for (const s of universe) {
-    const parStep = parStepFor({
-      parStep: num(s.par_step), weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par),
-    });
-    for (const dayClass of ["weekday", "weekend"] as const) {
-      ledger.push({
-        run_date: runDateEt, location_id: locationId, sku_id: s.id, day_class: dayClass,
-        mode, tier: "none", outcome: "advisory_null", suppressed_by: null,
-        reason_code: "stale_depletion", generation_id: null,
-        current_par: null, target_par: null, suggested_par: null, par_step: parStep,
-        slot_creation: false,
-        base_rate_oz_per_day: null, observed_days: null, gap_days: null,
-        velocity_ratio: null, cushion_pct: null, per_order_unit_oz: null, peak_floor_oz: null,
-        coverage_days: null, next_delivery_date: null, cover_through_date: null,
-        detail: { depletion_through: watermark, skipped: "stale_depletion" },
-      });
-    }
-  }
-  await writeLedger(sb, locationId, runDateEt, ledger);
-  await auditRun(locationId, runDateEt, mode, tallyRun(toTallyRows(ledger)), watermark);
-  return { rows: ledger.length, skipped: "stale_depletion" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

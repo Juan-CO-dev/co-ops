@@ -25,7 +25,8 @@ const row = (v: { rows: unknown[] }, skuId: string) => (v.rows as AnyRow[]).find
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
-  vi.unstubAllEnvs(); // legacy ledger source
+  vi.unstubAllEnvs();
+  vi.stubEnv("DEPLETION_SOURCE", "capture"); // frozen pre-cutover oracle only
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); current = null; });
 
@@ -35,43 +36,35 @@ const days = (from: string, to: string) => {
   return out;
 };
 
-describe("P2-1: the shared legacy gap probe reads to completion", () => {
-  /** Census anchor Sep 1, par anchor Oct 10; 1,000+ September selections sit AHEAD of the
-   *  Oct 12 events whose depletion never materialized (a real gap). */
-  const tables = () => {
+describe("the shared capture coverage reads to completion", () => {
+  it("finds a covered day after 1000 manifests and an uncovered day after it", async () => {
     const t = buildCountsFixture();
-    t.sku_count_events = [{ id: "e-sep", location_id: LOC, counted_at: "2026-09-01T12:00:00+00:00", active: true }];
-    t.sku_count_lines = [{ id: "cl-1", count_event_id: "e-sep", sku_id: "s-turkey", anchor_dimension: "weight", resolved_oz: 100, resolved_units: null,
-      is_loose: false, partial_fraction: null, level_label: "x", qty: 1, allocated_from_product_id: null }];
-    t.par_pass_events = [{ id: "pe-oct", location_id: LOC, status: "submitted" }];
-    t.par_pass_lines = [{ id: "ppl-1", event_id: "pe-oct", sku_id: "s-lettuce", implied_on_hand_oz: 50, created_at: "2026-10-10T12:00:00+00:00" }];
-    t.toast_sales_events = [];
-    let n = 0;
-    for (const d of days("2026-09-01", "2026-09-30")) for (let i = 0; i < 35; i++) t.toast_sales_events.push({ id: `tse-${String(++n).padStart(5, "0")}`, location_id: LOC, business_date: d });
-    for (const d of days("2026-10-01", "2026-10-13")) t.toast_sales_events.push({ id: `tse-${String(++n).padStart(5, "0")}`, location_id: LOC, business_date: d });
-    t.toast_daily_depletion = [];
-    let m = 0;
-    for (const d of days("2026-09-01", "2026-10-13")) {
-      if (d === "2026-10-12") continue; // the gap
-      for (const sku of ["s-turkey", "s-lettuce"]) t.toast_daily_depletion.push({ id: `tdd-${String(++m).padStart(4, "0")}`, location_id: LOC, business_date: d, sku_id: sku, direct_oz: 1, flattened_oz: 0 });
-    }
-    expect(t.toast_sales_events.length).toBeGreaterThan(1000);
-    return t;
-  };
+    // Remove unrelated receipt uncertainty so only capture coverage changes the result.
+    t.vendor_deliveries = [];
+    t.vendor_delivery_items = [];
+    const dates = days("2023-01-01", "2026-10-13");
+    t.toast_depletion_day_coverage = dates.map((d) => ({ location_id: LOC, business_date: d,
+      run_id: `run-${d}`, status: "success", computed_at: `${d}T23:00:00Z`,
+      aggregate_count: 0, attribution_count: 0, suspect_check_count: 0, suspect_qty: 0, counted_qty: 0 }));
+    t.toast_capture_runs = dates.filter((d) => d !== "2026-10-12").map((d) => ({ id: `run-${d}`,
+      location_id: LOC, business_date: d, status: "completed", finished_at: `${d}T23:00:00Z` }));
+    t.toast_capture_daily_depletion = [];
+    t.toast_depletion_item_attribution = [];
+    current = createFakeDb(t);
+    const gaps = await counts.loadSalesGapDates(current.client, LOC, "2023-01-01", "2026-10-14");
+    expect([...gaps]).toEqual(["2026-10-12"]);
+    // Exercise the render's shared snapshot, not just the standalone gap reader.
+    const uncovered = await counts.deriveOnHand(LOC, NOW);
+    expect(row(uncovered, "s-cheese")).toMatchObject({ anchorSource: "census", onHandOz: null });
+    expect(row(uncovered, "s-lettuce")).toMatchObject({ anchorSource: "par_estimate", onHandOz: null });
 
-  it("a gap the par tier's own (October) probe found is still found — its on-hand stays advisory-null", async () => {
-    current = createFakeDb(tables());
-    const old = plain(await v0.v0OnHandCore(LOC, NOW, { seedBaselines: false }));
-    current = createFakeDb(tables());
-    const neu = plain(await counts.deriveOnHand(LOC, NOW));
-    expect(row(old, "s-lettuce").onHandOz).toBeNull(); // the pre-B9 per-tier probe saw the gap
-    expect(row(neu, "s-lettuce")).toEqual(row(old, "s-lettuce"));
-  });
-
-  it("the census tier, whose window also spans the gap, is advisory-null too (the old capped census probe missed it)", async () => {
-    current = createFakeDb(tables());
-    const neu = plain(await counts.deriveOnHand(LOC, NOW));
-    expect(row(neu, "s-turkey").onHandOz).toBeNull();
+    // The same successful empty days are known zero once the missing run exists.
+    t.toast_capture_runs.push({ id: "run-2026-10-12", location_id: LOC,
+      business_date: "2026-10-12", status: "completed", finished_at: "2026-10-12T23:00:00Z" });
+    current = createFakeDb(t);
+    const covered = await counts.deriveOnHand(LOC, NOW);
+    expect(row(covered, "s-cheese").onHandOz).toEqual(expect.any(Number));
+    expect(row(covered, "s-lettuce").onHandOz).toEqual(expect.any(Number));
   });
 });
 

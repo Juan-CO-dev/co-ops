@@ -15,7 +15,7 @@
  * row, and it is why the walker's read path costs one batched query and no re-derivation.
  *
  * ── THE DOUBLE-COUNT LAW IS NOT IN PLAY, AND THAT IS DELIBERATE ────────────────
- * Consumed oz = production_inputs.input_oz + toast_daily_depletion.direct_oz. NEVER
+ * Consumed oz = production_inputs.input_oz + effective capture sales direct_oz. NEVER
  * flattened_oz. This module reads flattened oz for exactly ONE purpose — detecting that a
  * SKU's demand is PREP-MEDIATED, i.e. that its true consumption lives in a lane that is
  * currently dark — and never sums it into anything. Same two lanes as loadSkuUsageRank

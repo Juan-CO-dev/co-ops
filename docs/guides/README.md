@@ -63,6 +63,8 @@ Guides v2 (2026-10-13): each guide runs in the order of a real shift, explains t
 
 ## Sim notes
 
+- Capture-only cutover: the isolated sim's `SIM_MODE=1` and `TOAST_FIXTURES=1` report `capture_fixture_mode` as a neutral nightly skip, after the fixed sim database target is checked. No capture coverage, depletion, or par estimate is invented: uncovered count sales stay null and the pulse stays unknown. Production capture failures still fail nightly health. The old orders fixture lacks capture timestamps and configuration fixtures; producing faithful capture evidence needs a separate fixture adapter.
+
 - Personas, PINs, and locations live in `scripts/sim/personas.md`. Location code EM is "P Street"; code MEP is "Capitol Hill".
 - The sim database is caught up to prod's lineage except migration 0193, which is a production-only data purge and is never applied to sim.
 

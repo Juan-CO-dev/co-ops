@@ -64,7 +64,7 @@ export async function loadCateringSkuDemand(
 
 /**
  * THE ACTOR-LESS CORE (Dynamic Pars plan D11) — the exact `salesConsumption` →
- * `deriveSalesConsumption` split this codebase already runs at lib/catering/toast-sales.ts.
+ * `deriveCapturedSalesConsumption` split this codebase already runs at lib/catering/toast-sales.ts.
  *
  * WHY IT EXISTS. The par-pass walker's floor is `PAR_PASS_MIN` (4, key-holder) and this
  * module's is `PREP_DEMAND_READ_MIN` (6). The walker needs the catering EVENT ADVISORY —

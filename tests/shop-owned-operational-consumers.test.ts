@@ -5,7 +5,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/dynamic-pars-probes", () => ({
   parAutoMovesReady: vi.fn(async () => true), parAutoLaneReady: vi.fn(async () => false),
-  parSuggestionActionsReady: vi.fn(async () => false), salesSignalsReady: vi.fn(async () => true),
+  parSuggestionActionsReady: vi.fn(async () => false),
 }));
 vi.mock("@/lib/ordering-sources", () => ({ loadStoreVendorIds: walkerMocks.stores }));
 vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: vi.fn(async () => true), auditOperationalTaskOverride: vi.fn(async () => {}) }));
@@ -25,7 +25,7 @@ import { createCountsReadRefs } from "@/lib/counts-read-refs";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { createFakeDb } from "@/tests/fixtures/counts-fake-db";
 import { recordDelivery } from "@/lib/receiving";
-import { recordParRunSkipped, runParShadowForLocation } from "@/lib/dynamic-pars";
+import { runParShadowForLocation } from "@/lib/dynamic-pars";
 import { createCountEvent } from "@/lib/counts";
 import { loadProductIndex } from "@/lib/products";
 import { forgetBarcode, lookupScan, teachBarcode } from "@/lib/barcodes";
@@ -150,31 +150,6 @@ describe("shop-owned operational consumers", () => {
       lines: [{ skuId: foreign, qtyReceived: 1 }],
     })).rejects.toMatchObject({ status: 404, code: "not_found" });
     expect(writes).toEqual([]);
-  });
-
-  it("writes no skipped-run ledger rows for a foreign owned SKU", async () => {
-    const inserted: Array<Record<string, unknown>> = [];
-    const client = { from(table: string) {
-      let operation = "select";
-      const q: Record<string, unknown> = {};
-      for (const op of ["select", "eq", "neq", "or", "order"]) q[op] = () => q;
-      q.delete = () => { operation = "delete"; return q; };
-      q.insert = (rows: Array<Record<string, unknown>>) => { operation = "insert"; inserted.push(...rows); return q; };
-      q.returns = () => q;
-      q.then = (resolve: (value: unknown) => unknown) => {
-        const data = table === "vendor_items" ? [
-          { id: "shared", vendor_id: VENDOR, active: true, weekday_par: 1, weekend_par: 1, par_step: 1, location_id: null },
-          { id: "own", vendor_id: VENDOR, active: true, weekday_par: 1, weekend_par: 1, par_step: 1, location_id: SHOP },
-          { id: "foreign", vendor_id: VENDOR, active: true, weekday_par: 1, weekend_par: 1, par_step: 1, location_id: FOREIGN },
-        ] : [];
-        return Promise.resolve({ data: operation === "select" ? data : null, error: null }).then(resolve);
-      };
-      return q;
-    } };
-    vi.mocked(getServiceRoleClient).mockReturnValue(client as never);
-    await expect(recordParRunSkipped(SHOP, "2026-10-15", null)).resolves.toMatchObject({ rows: 4 });
-    expect(new Set(inserted.map((row) => row.sku_id))).toEqual(new Set(["shared", "own"]));
-    expect(inserted.some((row) => row.sku_id === "foreign")).toBe(false);
   });
 
   it("derives no IDs or ledger rows for a foreign-only normal nightly universe", async () => {

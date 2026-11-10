@@ -23,14 +23,14 @@ import { loadEffectiveSalesWindow, type SalesCoverage } from "@/lib/toast/effect
  *   1 vendor_items (weights + the 0179 provenance quartet + pack fields)
  *   2 vendors (labels)                      3 products
  *   4 items (oz_per_par_unit)               5 loadRecipeGraph() — the cost seam
- *   6 loadCurrentSkuPrices                  7 toast_daily_depletion (the sales lane)
+ *   6 loadCurrentSkuPrices                  7 loadEffectiveSalesWindow (the sales lane)
  *   8 productions + 9 production_inputs (the production lane + observed trim)
  *  10 vendor_delivery_items (invoice drift) 11 audit_log (seed attribution)
  *   + users (naming the humans) + sku_count_lines (the count-variance advisory)
  *
  * ── THE DOUBLE-COUNT LAW IS NOT TOUCHED ───────────────────────────────────────
  * Usage is the SAME two lanes the counts drift model sums and no others: live
- * production_inputs.input_oz, plus toast_daily_depletion.DIRECT_oz. `flattened_oz`
+ * production_inputs.input_oz, plus effective capture sales direct_oz. `flattened_oz`
  * is never read here, let alone summed — it is production-covered, and adding it
  * would double-count exactly the way the law exists to prevent. This board only
  * RANKS with the number; it never writes a ledger.

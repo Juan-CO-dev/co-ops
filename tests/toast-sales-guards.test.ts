@@ -1,25 +1,4 @@
-/**
- * Unit spine — the two front-door guarantees of lib/catering/toast-sales.ts
- * (wiring audit 2026-08-29). Both were MISSING, and one of them was already
- * costing production data.
- *
- *   THE LOCATION BIND   — the module's floors are level 7 (write) and 6 (read), and
- *                         neither is all-locations (lockLocationContext grants that at
- *                         9). Prod carries two GMs, each assigned to exactly ONE shop,
- *                         so "level 7" never said WHICH sales ledger may be written.
- *   THE PAGED LEDGER    — loadLatestVersions read toast_sales_events with no
- *                         .order()/.range(), so it silently stopped at 1000 rows. CO
- *                         crosses that on a busy day (1158 / 1062 / 1001 rows on three
- *                         real P-Street dates), and the truncation ABORTED those pulls.
- *
- * TWO POSTURES, EACH FOR ITS OWN REASON. The bind is a DECISION at the front door, so
- * it is exercised for real against the module (the vitest config's narrow `server-only`
- * alias exists precisely so a test can prove "refused before any I/O" — see
- * tests/dynamic-pars-write.test.ts, which this mirrors). The paging is an I/O
- * GUARANTEE whose whole content is an ABSENCE — no unpaged read — which no unit test
- * over the exports can see, so it is pinned at the source in the house style of
- * tests/loader-scale-ceilings.test.ts and tests/dynamic-pars-walker.test.ts.
- */
+/** Capture-only sales entry points retain location/role guards and per-shop exclusions. */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,7 +43,7 @@ const ownerAnywhere = {
 // refused call comes back as an AdminToastSalesError 403; the permitted call gets past
 // the bind and dies on the absent test-env Supabase config. A 403 arriving where the
 // env error would otherwise be can only mean the call was refused before any I/O — so
-// no toast_sales_events row and no toast_ingest_exclusions row can exist.
+// no capture or toast_ingest_exclusions row can exist.
 
 describe("toast-sales binds the location, not just the level", () => {
   it("the floors are BELOW the all-locations grant — which is why a bind is needed", () => {
@@ -133,9 +112,9 @@ describe("toast-sales binds the location, not just the level", () => {
   });
 
   it("leaves the ACTOR-LESS cores unbound — the cron iterates every location by design", () => {
-    // doPull / deriveSalesConsumption take no AuthContext at all. If a bind ever appears
+    // doPull / deriveCapturedSalesConsumption take no AuthContext at all. If a bind ever appears
     // in one of them it can only be binding a null actor, which would break the nightly.
-    for (const fn of ["async function doPull", "export async function deriveSalesConsumption"]) {
+    for (const fn of ["async function doPull", "export async function deriveCapturedSalesConsumption"]) {
       const at = src.indexOf(fn);
       expect(at).toBeGreaterThan(-1);
       expect(src.slice(at, src.indexOf("\n}", at))).not.toContain("assertLocationAccess");
@@ -236,28 +215,12 @@ describe("listExclusions is scoped to the shop being viewed", () => {
 
 // ── THE PAGED LEDGER ────────────────────────────────────────────────────────────
 
-describe("loadLatestVersions pages the sales ledger under a stable total order", () => {
-  const at = src.indexOf("async function loadLatestVersions");
-  const body = src.slice(at, src.indexOf("\n}", at));
-
-  it("is paged at all — a location-day already crosses 1000 rows in production", () => {
-    expect(at).toBeGreaterThan(-1);
-    expect(body).toContain("selectAllRows");
-    expect(body).toContain(".range(from, to)");
-  });
-
-  it("orders by the PK — without a total order a row can land on two pages or none", () => {
-    expect(body).toContain('.order("id", { ascending: true })');
-  });
-
-  it("THROWS on a page error instead of taking selectAllRows' silent `data ?? []`", () => {
-    // An empty map does not degrade here: doPull reads "not in the map" as "never seen"
-    // and re-inserts the whole day at snapshot_version 1, which the unique index refuses
-    // — turning a read error into a 409 that skips the night's depletion and pars.
-    expect(body).toContain("if (error) throw new Error(`toast-sales ledger read:");
-  });
-
-  it("keeps the latest-version reduction the pull's version arithmetic depends on", () => {
-    expect(body).toContain("r.snapshot_version > cur.snapshot_version");
+describe("retired ledger entry points", () => {
+  it("has no compatibility writers or legacy reads", () => {
+    expect(src).not.toContain("async function loadLatestVersions");
+    expect(src).not.toMatch(/\.from\(["'](?:toast_sales_events|toast_daily_depletion|toast_daily_sales_signals)["']\)/);
+    for (const name of ["deriveSalesConsumption", "materializeDailyDepletion", "pullSalesForAllLocations", "pullTodaySalesForAllLocations"]) {
+      expect(src).not.toContain(`export async function ${name}(`);
+    }
   });
 });

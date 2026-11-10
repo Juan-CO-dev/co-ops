@@ -10,7 +10,7 @@ vi.mock("@/lib/session", () => ({ requireSession: h.session }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: h.task }));
 vi.mock("@/lib/dynamic-pars-probes", () => ({ parAutoLaneReady: async () => true, parAutoMovesReady: async () => true,
-  parSuggestionActionsReady: async () => true, salesSignalsReady: async () => true }));
+  parSuggestionActionsReady: async () => true }));
 vi.mock("@/lib/dynamic-pars-walker", () => ({ loadParSuggestions: h.suggestions, loadAppliedAutoMove: h.applied }));
 import { PUT } from "@/app/api/admin/skus/[id]/location-settings/route";
 import { POST } from "@/app/api/operations/ordering/suggestion/route";

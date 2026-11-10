@@ -708,7 +708,7 @@ export function buildProductOnHandRow(input: {
  * Give every member of a product the PRODUCT's total trailing usage (deviation D9).
  *
  * Today all consumption is pinned to one twin (production_inputs.input_sku_id and
- * toast_daily_depletion.sku_id are both pin-derived), so the un-pinned twin reads
+ * capture depletion sku_id are both pin-derived), so the un-pinned twin reads
  * null and `?? -Infinity` sorts it dead last on the order walk — the audit's "the
  * twin with the real spend reads null and sorts LAST". Sharing the product's number
  * makes both members sort where the PRODUCT belongs.

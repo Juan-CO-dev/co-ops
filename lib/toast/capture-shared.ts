@@ -1,4 +1,14 @@
-import type { CaptureSelection } from "./capture-reconciliation-shared";
+export interface CaptureSelection {
+  check_guid: string;
+  selection_guid: string;
+  parent_selection_guid: string | null;
+  item_guid: string;
+  name: string;
+  quantity: number;
+  voided: boolean;
+  deleted: boolean;
+}
+
 import { projectCheckSales, projectSalesRefunds, type CheckSalesAccounting } from "./sales-accounting-shared";
 
 /** Pure, explicit allowlist for the accounting capture. Never retain a raw object. */

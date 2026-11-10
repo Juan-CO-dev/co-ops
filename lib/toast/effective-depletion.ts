@@ -10,7 +10,7 @@ export interface EffectiveSalesRow {
   location_id: string; business_date: string; sku_id: string; direct_oz: number; flattened_oz: number;
 }
 export interface SalesCoverage {
-  source: "legacy" | "capture";
+  source: "capture";
   hasGaps: boolean;
   degraded: boolean;
   byLocation: Record<string, { hasGaps: boolean; degraded: boolean; missingDates: string[]; degradedDates: string[] }>;
@@ -67,13 +67,12 @@ export async function loadEffectiveSalesRows(sb: Client, window: Window): Promis
 }
 
 /** Gap disclosure is independent of returned amounts; one shop never hides another. */
-export async function loadSalesCoverageDisclosure(sb: Client, window: Window, manifests?: Coverage[], forceCapture = false): Promise<SalesCoverage> {
+export async function loadSalesCoverageDisclosure(sb: Client, window: Window, manifests?: Coverage[]): Promise<SalesCoverage> {
   // Reconciled depletion derives from current provider snapshots, independently
   // of the raw Toast materialization. Its own manifests enter below explicitly.
   if (manifests === undefined && process.env.EZCATER_DEPLETION_ENABLED === "1") {
     return (await loadEffectiveSalesWindow(sb, window)).coverage;
   }
-  if (!forceCapture && process.env.DEPLETION_SOURCE !== "capture") return { source: "legacy", hasGaps: false, degraded: false, byLocation: {} };
   const end = window.untilDateExclusive ?? etCalendarDate(new Date().toISOString());
   const coverage = manifests ?? await loadEffectiveSalesCoverage(sb, window);
   let locationIds = window.locationId ? [window.locationId] : [];
@@ -104,7 +103,6 @@ export async function loadSalesCoverageDisclosure(sb: Client, window: Window, ma
 
 export async function loadEffectiveSalesWindow(sb: Client, window: Window): Promise<EffectiveSalesWindow> {
   if (process.env.EZCATER_DEPLETION_ENABLED === "1") {
-    if (process.env.DEPLETION_SOURCE !== "capture") throw new Error("ezcater_depletion_requires_capture");
     const { loadReconciledSalesWindow } = await import("@/lib/ezcater/depletion");
     return loadReconciledSalesWindow(sb, window);
   }
@@ -117,12 +115,11 @@ export async function loadRawToastSalesRows(sb: Client, window: Window): Promise
 }
 
 async function loadRawToastSalesWindow(sb: Client, window: Window): Promise<EffectiveSalesWindow> {
-  const capture = process.env.DEPLETION_SOURCE === "capture";
-  const end = window.untilDateExclusive ?? (capture ? etCalendarDate(new Date().toISOString()) : null);
-  const before = capture ? await loadEffectiveSalesCoverage(sb, { ...window, untilDateExclusive: end }) : [];
+  const end = window.untilDateExclusive ?? etCalendarDate(new Date().toISOString());
+  const before = await loadEffectiveSalesCoverage(sb, { ...window, untilDateExclusive: end });
   type Aggregate = Omit<EffectiveSalesRow, "direct_oz" | "flattened_oz"> & { direct_oz: number | string; flattened_oz: number | string };
   const aggregates = await selectAllRows<Aggregate>(async (from, to) => {
-    let q = sb.from(capture ? "toast_capture_daily_depletion" : "toast_daily_depletion")
+    let q = sb.from("toast_capture_daily_depletion")
       .select("location_id,business_date,sku_id,direct_oz,flattened_oz").gte("business_date", window.fromDate);
     if (window.locationId) q = q.eq("location_id", window.locationId);
     if (end) q = q.lt("business_date", end);
@@ -131,15 +128,12 @@ async function loadRawToastSalesWindow(sb: Client, window: Window): Promise<Effe
     return { data };
   });
   const skuFilter = window.skuIds ? new Set(window.skuIds) : null;
-  if (!capture) return { rows: aggregates.filter((r) => !skuFilter || skuFilter.has(r.sku_id))
-    .map((r) => ({ ...r, direct_oz: numeric(r.direct_oz), flattened_oz: numeric(r.flattened_oz) })),
-    coverage: { source: "legacy", hasGaps: false, degraded: false, byLocation: {} } };
   interface Attribution { location_id: string; business_date: string; item_id: string; item_path: string[]; sku_id: string; sales_oz: number | string }
   interface Production { location_id: string; output_item_id: string | null; produced_at: string }
   const [attributions, productions] = await Promise.all([
     selectAllRows<Attribution>(async (from, to) => {
       let q = sb.from("toast_depletion_item_attribution").select("location_id,business_date,item_id,item_path,sku_id,sales_oz")
-        .gte("business_date", window.fromDate).lt("business_date", end!);
+        .gte("business_date", window.fromDate).lt("business_date", end);
       if (window.locationId) q = q.eq("location_id", window.locationId);
       const { data, error } = await q.order("location_id").order("business_date").order("item_id").order("sku_id").order("item_path")
         .range(from, to).returns<Attribution[]>();
@@ -150,7 +144,7 @@ async function loadRawToastSalesWindow(sb: Client, window: Window): Promise<Effe
       let q = sb.from("productions").select("location_id,output_item_id,produced_at")
         .is("superseded_at", null).is("revoked_at", null)
         .gte("produced_at", operationalDayUtcRange(window.fromDate).startIso)
-        .lt("produced_at", operationalDayUtcRange(end!).startIso);
+        .lt("produced_at", operationalDayUtcRange(end).startIso);
       if (window.locationId) q = q.eq("location_id", window.locationId);
       const { data, error } = await q.order("id").range(from, to).returns<Production[]>();
       if (error) throw new Error("capture_depletion_production_unavailable");

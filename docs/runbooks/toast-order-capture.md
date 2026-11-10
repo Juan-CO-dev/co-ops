@@ -1,6 +1,38 @@
 # Toast capture and launch cutover — CC operator runbook
 
-Stage A historical behavior: migration 0221 is APPLIED TO PROD (2026-10-07, version 20261007234649; sim first). Activation order: **apply 0221 -> deploy -> set `TOAST_ORDER_CAPTURE=1`** (CC enables it after production schema verification). Capture defaults off. Disable it by removing/clearing the flag; selection ingestion, depletion, pars and the pinger continue unchanged. Fixture mode (`TOAST_FIXTURES=1`) and absent credentials return a neutral skipped result without capture DB writes. Missing schema returns skipped with `capture_schema_missing` in the independent capture failure heartbeat; it never fails the selection pull.
+## Current contract: legacy retirement (2026-11-09)
+
+Capture is the sole runtime source; `DEPLETION_SOURCE` is retired and ignored.
+Missing successful coverage is unknown, never zero sales. Successful empty coverage
+is zero; a later success covers an earlier failed attempt. Counts and pars use the
+shared capture coverage/window readers. Pulse uses `loadCapturedToastDay`. The unused quantity-reconciliation writer is
+retired; its historical table remains. The sales-pull route, heartbeat identity and JOBS_REGISTRY
+remain. No outbound email or SMS was added.
+
+Migration `0295_toast_legacy_retire.sql` is authored, NOT applied. CC applies sim,
+then prod, before or after app merge. It groups fixture `check-1` through `check-4` rows by shop/day, requiring the
+exact 3/1/2/1 pattern and at most two groups before deleting exactly 7 rows per
+group. This accepts both prod and sim dates. Zero groups emits a NOTICE and is
+a clean no-op; malformed patterns or a third group abort the transaction. It revokes INSERT/UPDATE/DELETE on the three legacy tables from
+anon/authenticated/PUBLIC, preserving existing SELECT and service_role grants (signals grants no access to
+anon/authenticated before or after). The 134
+depletion aggregates remain: no migration or seed proves fixture-only derivation.
+
+Local proof: `node scripts/sql-harness-0295.mjs` uses real column types and proves
+nonfixture preservation, pattern/group-count rollback, zero-group no-op, prod/sim layouts and role write refusals. It is
+not remote database verification. CC uses the migration header's VERIFY SQL after
+application. Grant rollback is documented there; deleted rows require backup.
+App rollback requires a reviewed code revert; no environment switch restores legacy.
+
+Isolated sim fixture mode reports `capture_fixture_mode` as a neutral nightly skip
+after `assertSimTarget`; missing coverage remains null and pulse unknown.
+Production disabled/failed capture remains unhealthy. The existing fixture needs
+date, accounting and configuration adapters before it can produce faithful capture
+evidence; this round uses the bounded health fallback.
+
+## Historical rollout notes (superseded by the current contract)
+
+Stage A historical behavior: migration 0221 is APPLIED TO PROD (2026-10-07, version 20261007234649; sim first). Activation order: **apply 0221 -> deploy -> set `TOAST_ORDER_CAPTURE=1`** (CC enables it after production schema verification). Capture defaults off. Historically, disabling it left selection ingestion active; that fallback has been removed. Fixture mode (`TOAST_FIXTURES=1`) and absent credentials return a neutral skipped result without capture DB writes. Missing schema returns skipped with `capture_schema_missing` in the independent capture failure heartbeat; it never fails the selection pull.
 
 After applying 0221 and the revised 0222 to sim, submit the **entire** `scripts/test-toast-capture.sql` as one Management-API SQL request (BEGIN, DO, ROLLBACK). Every failed assertion raises an exception, even with PL/pgSQL assertions disabled. Success rolls back fixtures; failure aborts the transaction. Alternatively run `psql` against the approved simulation connection with `-v ON_ERROR_STOP=1 -f scripts/test-toast-capture.sql`. The harness needs two existing sim locations, uses synthetic orders, and rolls back its writes. It verifies retry deduplication, publication visibility, source-version ordering, later refunds, location binding and grants. Both reviewed SQL harnesses are preserved; Astra did not execute them in this merge session.
 Launch scope approved for 2026-10-13. Astra has not applied schema, accessed production data, changed flags or deployed. CC owns sim execution, parity review and rollout. Migration 0220 belongs to digests; capture uses 0221 and launch uses 0222.
@@ -49,7 +81,7 @@ The missing-pointer metric counts pointers absent from that date's latest comple
 ## Stages B/C: activate readers and retire the writer
 
 With the flag OFF, nightly (`cron`) capture runs for businessDate once per location **after all legacy selection, depletion and par loops**, with one shared 150-second wall-clock deadline inside the 300-second route. Capture-mode nightly repairs span T-1, T-2 and T-3. Each individual location/date still has a 60-second maximum. Manual admin pulls retain a shared 60-second budget. Stage A added pinger capture after its legacy selection pull. With DEPLETION_SOURCE=capture, Stage C replaces those legacy provider calls with capture triggers. Each run owns its queue; abort propagates into Toast authentication, fetch and response-body reads. Inline requests allow one short 429 retry and refuse Retry-After over 5 seconds. Only the backfill script opts into five retries with up to 60-second waits (30-minute per-date budget).
-Deploy B/C after CC's cross-family review, sim RPC gate, read-only production parity, the approved historical rebuild and preview checks. Set `DEPLETION_SOURCE=capture` after the gate passes. While the flag is unset or has any other value, legacy nightly pull/materialization/pars, today's legacy pull and the existing catering scan remain active, with capture alongside them. The flag alone switches to capture writers/readers and restores legacy behavior when unset.
+Deploy B/C after CC's cross-family review, sim RPC gate, read-only production parity, the approved historical rebuild and preview checks. Set `DEPLETION_SOURCE=capture` after the gate passes. While the flag is unset or has any other value, legacy nightly pull/materialization/pars, today's legacy pull and the existing catering scan remain active, with capture alongside them. This historical flag behavior was removed by the 2026-11-09 cleanup.
 
 Capture depletion atomically replaces raw direct SKU rows, recipe-path attribution and a success/degraded manifest per location/date, tied to the completed run. Empty days still get success coverage. Readers disclose stale/missing/mixed publication as gaps and retain available partial data, resolving fallback against live production: sales count unless the item or a nested prep on its path has logged production on that ET day. Sales use Toast business dates. Production inputs continue counting. Ancestor/descendant production overlap is diagnostic. Pars retain lane start, trailing windows and shadow-only behavior. Materialization publishes the same sales signals atomically in capture coverage and preserves resolution-flip observations; it leaves legacy signals untouched.
 
@@ -63,7 +95,7 @@ Caches refresh hourly and consume every config page. Unknown/unreviewed labels r
 
 ## Rollback and deferred work
 
-Unset `DEPLETION_SOURCE` to restore the legacy writers and readers. If needed, invoke the authenticated nightly `?date=YYYY-MM-DD` for gap days. Capture may continue alongside legacy under `TOAST_ORDER_CAPTURE=1`; its kill switch is independent. Preserve `toast_sales_events` write grants through rollback; launch 0222 does not revoke them.
+The old environment rollback is retired. Use capture to repair approved gap days; disabling `TOAST_ORDER_CAPTURE` produces unavailable capture, never a legacy fallback. See the current contract and 0295 header for code/grant rollback.
 
 The reduced launch plan supersedes the earlier two-week shadow/incremental-pinger prerequisite: CC gates activation on sim, parity, historical rebuild and preview evidence above. Incremental capture remains week-one work, not part of this B/C merge.
 
@@ -79,9 +111,9 @@ A status-less page RPC transport failure gets exactly one identical replay withi
 
 ## Coverage contract for Stages B/C
 
-The replacement RPC requires `p_suspect_check_count`, `p_suspect_qty`, and `p_counted_qty` on every publication, including zero days; no default silently erases these signals. Stage C reads these fields from `toast_depletion_day_coverage` when it stops using legacy `toast_daily_sales_signals`. The reader switches only with `DEPLETION_SOURCE=capture` and accepts current success and degraded coverage, with disclosure. Degraded means a dining-option GUID present that day lacks a cache row or a reviewed channel; config age alone is not degradation. Unmapped/excluded units, poisoned recipes and unresolved prep attribution remain diagnostics. Operational counts, receiving, ordering and the weights board use available partial data and coverage flags; one shop's gap does not fail the weights board.
+The replacement RPC requires `p_suspect_check_count`, `p_suspect_qty`, and `p_counted_qty` on every publication, including zero days; no default silently erases these signals. Stage C reads these fields from `toast_depletion_day_coverage` when it stops using legacy `toast_daily_sales_signals`. The capture-only reader accepts current success and degraded coverage, with disclosure. Degraded means a dining-option GUID present that day lacks a cache row or a reviewed channel; config age alone is not degradation. Unmapped/excluded units, poisoned recipes and unresolved prep attribution remain diagnostics. Operational counts, receiving, ordering and the weights board use available partial data and coverage flags; one shop's gap does not fail the weights board.
 
-Capture replaces the legacy global `dining_option` exclusions with the reviewed `sales_channel_map`. In particular, historical global catering labels are classified through the channel map; the flag-off legacy path keeps its existing exclusions. Gift cards are non-food and excluded from sales and depletion. Catering classification is per order: an unreviewed label creates a flagged not-catering row and diagnostic, rather than failing the shop/day or emitting `cron.failure`.
+Capture replaces the legacy global `dining_option` exclusions with the reviewed `sales_channel_map`. In particular, historical global catering labels are classified through the channel map; the historical flag-off adapter has been removed. Gift cards are non-food and excluded from sales and depletion. Catering classification is per order: an unreviewed label creates a flagged not-catering row and diagnostic, rather than failing the shop/day or emitting `cron.failure`.
 
 The optional `p_diagnostics` object (default `{}`) carries `unmapped_units`, `excluded_units`, `poisoned_recipes` (IDs only), `mapping_fingerprint`, and `deletion_by_absence_count` from the materializer. Absence counts describe source orders, not SQL cache rows replaced; the materializer must always supply that metric, even when removal is disabled. No contacts or raw provider payloads belong here. `p_status` accepts `success` or `degraded`; degraded requires a nonblank `p_reason`. Each replacement overwrites signals, diagnostics, status and reason together. The RPC adds `attribution_mismatch_sku_count`, comparing summed attribution `sales_oz` with `flattened_oz` per SKU at tolerance 0.000001 oz; a mismatch warns and does not reject the publication. It returns `{aggregate_count, attribution_count, coverage_count}` (coverage_count is one even on an empty day). The migration fails if effective table/RPC grants differ from the intended service-only boundary.
 
@@ -92,15 +124,15 @@ Input: EM 238 + MEP 107 = **345 orders/day**. Unchanged order snapshots are dedu
 Assume a 12-hour pinger window, roughly uniform arrivals within it, and one nightly re-pull of each of T-1..T-3. Average today's capture contains half the daily orders. At the route's documented **10-minute tick** (five-minute debounce), memberships/day are `345 * (72/2 + 12 + 3) = 17,595`: about **7.2 MB/day** (EM 4.9, MEP 2.3). If ticks are increased to **every five minutes**, `345 * (144/2 + 12 + 3) = 30,015`: about **11.1 MB/day** (EM 7.6, MEP 3.5). Yesterday's hourly policy saves about **6.6 MB/day** at ten-minute ticks, or **14.6 MB/day** at five-minute ticks, versus recapturing yesterday each tick.
 
 For a 24-hour/five-minute schedule with arrivals spread over that window, `345 * (288/2 + 24 + 3) = 58,995` memberships gives about **20.4 MB/day**. Capturing full days after closing increases the half-day assumption further. Do not read five-minute debounce as a promise of low storage: 77 MB free at the supplied 423/500 MB usage is only roughly **7-11 days** at the 12-hour estimates before other growth. CC should measure per-table `pg_total_relation_size` deltas over a normal day before relying on this forecast. No retention/deletion policy is introduced by this change.
-Week 1 / 0223: modifiedDate cursor, durable backlog, lease/fencing, immutable generations, selection schema v2 and snapshot-linked catering projection. Week 2 / 0224, day 7+: revoke legacy grants after CC closes rollback. Full-day API volume, retention and deployment timing remain operational checks. Local unit tests do not claim live/provider or SQL execution.
+Week 1 / 0223: modifiedDate cursor, durable backlog, lease/fencing, immutable generations, selection schema v2 and snapshot-linked catering projection. Legacy grant retirement is now authored as 0295 (NOT applied); 0224 belongs to labor. Full-day API volume, retention and deployment timing remain operational checks. Local unit tests do not claim live/provider or SQL execution.
 
 ## Cutover record (2026-10-07)
 
 - 0222 applied to prod (20261008013030); Stage A (#401) + Stages B/C (#403) merged; seed 45 (7 channel labels) on prod; all 25 dining labels reviewed.
 - Depletion rebuilt from capture for 2026-07-23..2026-10-06: 152/152 shop-days success, 0 degraded (~13 MB).
-- Gate: 150/152 passed. The 2 failures (MEP 2026-08-01, EM 2026-08-06) are test-fixture rows in the legacy ledger (check_guid `check-1`..`check-4`, generic items, written in one instant): the capture is correct and the legacy ledger over-counted those days. Purge them when legacy write grants are retired (0224).
+- Gate: 150/152 passed. The 2 failures (MEP 2026-08-01, EM 2026-08-06) are test-fixture rows in the legacy ledger (check_guid `check-1`..`check-4`, generic items, written in one instant): the capture is correct and the legacy ledger over-counted those days. 0295 contains their guarded purge (NOT applied).
 - Intraday capture verified live before the flip (today + yesterday captured at 21:40 ET).
-- **Flipped:** Vercel production `DEPLETION_SOURCE=capture` (Juan's word: "switch now"). Rollback = delete the var + redeploy; backfill gap days with the legacy nightly `?date=`.
+- **Flipped:** Vercel production `DEPLETION_SOURCE=capture` (Juan's word: "switch now"). That environment rollback was retired on 2026-11-09; capture is now the only path.
 
 ## Dormant people: labor history (0244)
 

@@ -187,7 +187,7 @@ export interface ReceivingSkuOption {
   chainLabels: string[];
   packFormat: string | null;
   /** Trailing-30-day consumed oz for this SKU at this location = production_inputs.input_oz
-   *  (live productions) + toast_daily_depletion.direct_oz. Higher = more used → ranked first
+   *  (live productions) + effective capture sales direct_oz. Higher = more used → ranked first
    *  when a vendor has no last-delivery template. null = no usage in the window (a SKU never
    *  consumed here → not offered as a pre-filled line; only reachable via the Add-item picker). */
   usageRank: number | null;
@@ -338,7 +338,7 @@ const PRODUCTION_ID_CHUNK = 150;
  *   production lane = SUM(production_inputs.input_oz) over LIVE productions
  *                     (superseded_at/revoked_at NULL) at this location, produced in
  *                     the last 30 days (raw SKU depletes at production, BC-026 oz-native).
- *   sales lane      = SUM(toast_daily_depletion.direct_oz) at this location for
+ *   sales lane      = SUM(effective capture sales direct_oz) at this location for
  *                     business_dates in the last 30 days (the ONLY sales lane that
  *                     depletes raw stock; flattened_oz is production-covered, never summed).
  * Two grouped queries (batch, date-filtered server-side), summed in memory. A SKU with

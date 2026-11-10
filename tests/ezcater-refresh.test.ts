@@ -7,7 +7,6 @@ import { audit } from "@/lib/audit";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { runOrderCapture } from "@/lib/toast/capture-job";
-import { pullSalesForAllLocations } from "@/lib/catering/toast-sales";
 
 vi.mock("@/lib/ezcater/sync", () => ({ syncEzcaterOrder: vi.fn() }));
 vi.mock("@/lib/ezcater/reconcile", () => ({ materializeEzcaterReconciliation: vi.fn(async () => ({ processed: 0, failed: 0, deferred: false })) }));
@@ -17,9 +16,8 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/catering/system-intake", () => ({ completeElapsedCateringEvents: vi.fn() }));
 vi.mock("@/lib/toast/capture-job", () => ({ runOrderCapture: vi.fn() }));
 vi.mock("@/lib/toast/depletion", () => ({ materializeCapturedDepletion: vi.fn() }));
-vi.mock("@/lib/catering/toast-sales", () => ({ pullSalesForAllLocations: vi.fn(), materializeDailyDepletion: vi.fn() }));
 vi.mock("@/lib/counts", () => ({ loadDepletionWatermark: vi.fn() }));
-vi.mock("@/lib/dynamic-pars", () => ({ runParShadowForLocation: vi.fn(), recordParRunSkipped: vi.fn() }));
+vi.mock("@/lib/dynamic-pars", () => ({ runParShadowForLocation: vi.fn() }));
 
 const row = (id: string) => ({ provider_uuid: id, caterer_uuid: "shop-provider", pending_event_key: null });
 let rows: ReturnType<typeof row>[];
@@ -32,13 +30,14 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-08T12:00:00Z"));
   vi.stubEnv("EZCATER_FIXTURES", "0");
-  vi.stubEnv("DEPLETION_SOURCE", "legacy");
   vi.mocked(ezcaterConfigured).mockReturnValue(true);
   vi.mocked(audit).mockResolvedValue(undefined);
   rows = [row("known-uuid")];
   sequence = [];
   const query = {
     select: () => query,
+    eq: () => query,
+    not: async () => ({ data: [], error: null }),
     or: (value: string) => { filter(value); return query; },
     order: (key: string, options?: unknown) => { ordering(key, options); return query; },
     limit: () => query,
@@ -51,7 +50,6 @@ beforeEach(() => {
   vi.mocked(completeElapsedCateringEvents).mockImplementation(async () => {
     sequence.push("complete"); return { completed: ["lead"], failed: [], stageChanged: 0 };
   });
-  vi.mocked(pullSalesForAllLocations).mockResolvedValue([]);
   vi.mocked(runOrderCapture).mockResolvedValue({ failures: 0, skipped: true, results: [] });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllEnvs(); });

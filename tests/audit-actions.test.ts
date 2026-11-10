@@ -145,7 +145,7 @@ describe("the 2026-08-21 sweep — the filed gap is closed and stays closed", ()
 
   it("product.resolution_flip is deliberately NOT destructive", () => {
     // The one member of the product.* family that is a SYSTEM OBSERVATION, not a
-    // human act: materializeDailyDepletion writes it with actor_id null when a
+    // human act: materializeCapturedDepletion writes it with actor_id null when a
     // vendor-down failover moves which member a product resolves to. Nobody
     // changed the configuration — the configuration's consequence was recorded.
     // Marking it destructive would put a nightly automated row in the answer to

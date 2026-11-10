@@ -925,7 +925,7 @@ export async function loadProductLots(
  * an audit row — 'why did ham cost move Tuesday' always has an answer").
  *
  * DELIBERATE PLACEMENT: this is called from the ONE writer that already runs once a
- * day per location (materializeDailyDepletion), NOT from loadRecipeGraph. The graph
+ * day per location (materializeCapturedDepletion), NOT from loadRecipeGraph. The graph
  * loader is a hot read path on nine callers; audit() is fail-open but not free, and
  * a read that writes is the hazard loadCountsTileState was written to avoid. One row
  * per real flip, zero rows on a normal day.
@@ -947,7 +947,7 @@ export async function recordResolutionFlips(
     // `occurred_at` IS THE TIMESTAMP COLUMN ON audit_log — there is no `created_at`
     // (SIM-PI-3, 2026-08-21). The original spelling made this SELECT 400 on every
     // invocation, and because the function is fail-open and dispatched with `void`
-    // from materializeDailyDepletion, the failure was completely silent: the
+    // from materializeCapturedDepletion, the failure was completely silent: the
     // resolution-flip trail the spec promises ("why did ham cost move Tuesday always
     // has an answer") was never written even once. A schema-name mismatch inside a
     // fail-open path is invisible to a diff review and to a smoke; it took a sim run
@@ -1035,7 +1035,7 @@ export async function recordResolutionFlips(
  * The entry point the daily depletion writer calls: resolve every PINNED product for
  * this location and append a flip row for anything that moved.
  *
- * Self-contained on purpose — deriveSalesConsumption is shared with the ADMIN READ
+ * Self-contained on purpose — deriveCapturedSalesConsumption is shared with the ADMIN READ
  * surface (lib/catering/toast-sales.ts salesConsumption), so the flip audit cannot
  * ride the graph load without turning a read into a write. Two cheap queries on the
  * nightly cron, and ZERO when no recipe line pins a product.

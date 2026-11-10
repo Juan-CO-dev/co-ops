@@ -7,19 +7,15 @@ import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { refreshKnownEzcaterOrders } from "@/lib/ezcater/refresh";
 import { materializeEzcaterReconciliation } from "@/lib/ezcater/reconcile";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
-import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
-import { loadDepletionWatermark } from "@/lib/counts";
-import { runParShadowForLocation, recordParRunSkipped } from "@/lib/dynamic-pars";
+import { runParShadowForLocation } from "@/lib/dynamic-pars";
 import { captureBudget, captureErrorCode } from "@/lib/toast/capture-runner";
 import { runToastLaborPull } from "@/lib/toast/labor";
 
-/** The flag switches readers AND writers; unset restores Stage A's legacy pipeline. */
+/** Nightly capture, materialization and pars; heartbeat contract is unchanged. */
 export async function runToastSalesPull(opts: { businessDate: string; deadlineAt?: number; signal?: AbortSignal }) {
   const { businessDate } = opts;
   const deadlineAt = opts.deadlineAt ?? Date.now() + 300_000;
-  const captureMode = process.env.DEPLETION_SOURCE === "capture";
   const ezcaterEnabled = process.env.EZCATER_DEPLETION_ENABLED === "1";
-  if (ezcaterEnabled && !captureMode) throw new Error("ezcater_depletion_requires_capture");
   let ezcaterShadow = { processed: 0, failed: 0, deferred: false };
   const reconcile = async () => {
     try {
@@ -28,7 +24,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     } catch { ezcaterShadow.failed++; }
   };
   const dates = [businessDate, etYmdMinusDays(businessDate, 1), etYmdMinusDays(businessDate, 2)];
-  const results: { locationId: string; ok: boolean; error?: string }[] = [];
+  const results: { locationId: string; ok: boolean; error?: string; skipped?: boolean; reason?: "capture_fixture_mode" }[] = [];
   const depletionRows: Record<string, number> = {};
   const parRows: Record<string, number> = {};
   let depletionFailures = 0;
@@ -46,29 +42,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     elapsedCompleted = elapsed.completed.length;
     elapsedFailed = elapsed.failed.length;
   } catch (error) { elapsedError = captureErrorCode(error); }
-  if (!captureMode) {
-    // Preserve main's pipeline, including zero-row and backfill watermark handling.
-    results.push(...await pullSalesForAllLocations(businessDate));
-    for (const result of results) {
-      if (!result.ok) continue;
-      try {
-        depletionRows[result.locationId] = (await materializeDailyDepletion(result.locationId, businessDate)).rows;
-      } catch { depletionFailures++; }
-    }
-    for (const result of results) {
-      if (!result.ok) continue;
-      try {
-        const watermark = await loadDepletionWatermark(result.locationId);
-        const current = Object.hasOwn(depletionRows, result.locationId) || (watermark != null && watermark >= businessDate);
-        const par = current
-          ? await runParShadowForLocation(result.locationId, businessDate)
-          : await recordParRunSkipped(result.locationId, businessDate, watermark);
-        parRows[result.locationId] = par.rows;
-      } catch { parRunFailures++; }
-    }
-    // Additive Stage A capture runs only after the operational legacy work finishes.
-    capture = await runOrderCapture(results.map((r) => r.locationId), businessDate, "cron", [businessDate], Math.max(0, deadlineAt - Date.now()), opts.signal);
-  } else {
+  {
     const sb = getServiceRoleClient();
     const locations = await sb.from("locations").select("id").eq("active", true)
       .not("toast_restaurant_guid", "is", null);
@@ -99,6 +73,10 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
       } catch { parRunFailures++; }
     }
     for (const locationId of ids) {
+      if (capture.skipped && capture.reason === "capture_fixture_mode") {
+        results.push({ locationId, ok: true, skipped: true, reason: "capture_fixture_mode" });
+        continue;
+      }
       const ok = dates.every((date) => completed.has(`${locationId}:${date}`));
       results.push({ locationId, ok, ...(!ok ? { error: "capture_day_incomplete" } : {}) });
     }
@@ -115,12 +93,14 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   } catch { /* Heartbeat persistence is fail-open, independent of sales health. */ }
   finally { heartbeatBudget.close(); }
   const perLocationFailures = results.filter((r) => !r.ok).length;
-  const healthy = (!captureMode || (!capture.skipped && capture.failures === 0)) && perLocationFailures === 0
+  const fixtureSkip = capture.skipped && capture.reason === "capture_fixture_mode";
+  const healthy = ((!capture.skipped || fixtureSkip) && capture.failures === 0) && perLocationFailures === 0
     && (!ezcaterEnabled || (!ezcaterShadow.failed && !ezcaterShadow.deferred))
     && depletionFailures === 0 && parRunFailures === 0 && elapsedFailed === 0 && elapsedError === null;
   const metadata = {
-    job: "toast-sales-pull", source: captureMode ? "capture" : "legacy", business_date: businessDate, dates: captureMode ? dates : [businessDate],
+    job: "toast-sales-pull", source: "capture", business_date: businessDate, dates,
     capture_failures: capture.failures, capture_skipped: capture.skipped,
+    capture_skip_reason: capture.skipped ? capture.reason ?? null : null,
     ezcater_shadow: ezcaterShadow,
     per_location_failures: perLocationFailures, depletion_rows: depletionRows,
     depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures,

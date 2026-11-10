@@ -2,6 +2,7 @@ import "server-only";
 import { audit } from "@/lib/audit";
 import { captureToastDaySystem, captureEnabled } from "./capture";
 import { captureBudget, captureErrorCode } from "./capture-runner";
+import { assertSimTarget } from "@/lib/sim-isolation-shared";
 
 export interface CaptureJobResult {
   locationId: string; businessDate: string; complete: boolean; error: string | null;
@@ -10,8 +11,12 @@ export interface CaptureJobResult {
 /** One bounded capture phase for all shops/dates. Legacy parity is an operator gate,
  * not a nightly health dependency after the old ledger stops receiving writes. */
 export async function runOrderCapture(locationIds: string[], businessDate: string, context: "cron" | "manual", dates = [businessDate], remainingMs = 300_000, signal?: AbortSignal) {
+  if (process.env.SIM_MODE === "1" && process.env.TOAST_FIXTURES === "1") {
+    assertSimTarget(process.env.NEXT_PUBLIC_SUPABASE_URL);
+    return { failures: 0, skipped: true, results: [] as CaptureJobResult[], reason: "capture_fixture_mode" as const };
+  }
   if (!captureEnabled()) return { failures: 0, skipped: true, results: [] as CaptureJobResult[] };
-  if (remainingMs <= 10_000) return { failures: 0, skipped: true, results: [] as CaptureJobResult[], reason: "capture_route_time_exhausted" };
+  if (remainingMs <= 10_000) return { failures: 0, skipped: true, results: [] as CaptureJobResult[], reason: "capture_route_time_exhausted" as const };
   const budget = captureBudget(Math.min(context === "cron" ? 150_000 : 60_000, remainingMs - 10_000), signal);
   const results: CaptureJobResult[] = [];
   try {
