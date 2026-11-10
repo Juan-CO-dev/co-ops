@@ -1,5 +1,5 @@
 -- 0295_toast_legacy_retire
--- AUTHORED 2026-11-09. APPLIED: SIM 20261109205021 (2026-11-09; dry run + verify clean). PROD: NOT YET (Juan-gated).
+-- AUTHORED 2026-11-09. APPLIED: SIM 20261109205021 (2026-11-09); PROD 20261110150934 (2026-11-10, Juan-approved; dry run + verify SQL clean). Recorded in supabase_migrations.schema_migrations.
 -- WHAT / WHY: remove synthetic Toast selections after the capture cutover;
 -- remove dormant PostgREST write privileges from the historical ledgers.
 -- Fixture identity: 0147 defines check_guid TEXT; check-1 through check-4
