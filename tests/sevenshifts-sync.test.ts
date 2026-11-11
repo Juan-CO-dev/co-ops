@@ -258,6 +258,30 @@ describe("list resources: rejections and pagination never move the watermark", (
     expect(state(w, "shifts")).toMatchObject({ modified_watermark: "2026-10-14T18:00:00.000Z", last_error_code: "rejected_rows" });
   });
 
+  it("the ledger says WHICH rule fired: `reasons` is a histogram over the closed vocabulary, never a value (2026-11-11)", async () => {
+    const w = world({
+      routes: healthyRoutes({
+        "/v2/time_off": () => list([
+          PAYLOAD.time_off,
+          { ...PAYLOAD.time_off, id: 4002, from_date: "2026-10-20T04:00:00Z" }, // a zoned non-midnight date
+          { ...PAYLOAD.time_off, id: 4003, partial_from: "PLANTED-NOON" },
+          { ...PAYLOAD.time_off, id: 4004, to_date: "PLANTED-DATE" },
+        ]),
+        "/v2/company/1234/availabilities": (u) => (u.searchParams.get("repeating") === "true" ? list([]) : list([{ ...PAYLOAD.availabilities, modified: "PLANTED-WHEN" }])),
+      }),
+    });
+    expect(await run(w)).toMatchObject({ status: "partial" });
+    const results = ledger(w)[0]!.results as Record<string, Row>;
+    expect(results.time_off).toEqual({ rows: 1, skipped: 3, pages: 1, error_code: "rejected_rows", reasons: { bad_date: 2, bad_time: 1 } });
+    expect(results.availabilities).toEqual({ rows: 0, skipped: 1, pages: 2, error_code: "rejected_rows", reasons: { bad_instant: 1 } });
+    // A resource with no rejection carries no histogram at all.
+    expect(results.shifts).toMatchObject({ rows: 1, skipped: 0, error_code: null });
+    expect(results.shifts).not.toHaveProperty("reasons");
+    expect(JSON.stringify(results)).not.toMatch(/PLANTED|4002|4003|4004|index|from_date|partial_from|2026-10-20/);
+    expect(state(w, "time_off")).toMatchObject({ last_error_code: "rejected_rows" });
+    expect(state(w, "time_off")!.modified_watermark).toBeUndefined();
+  });
+
   it("(r1 P2-5) shifts page 1 fine, page 2 malformed meta → bad_pagination, page 1 upserted, watermark kept, partial", async () => {
     const w = world({
       routes: healthyRoutes({
