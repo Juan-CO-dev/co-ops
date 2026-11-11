@@ -251,13 +251,14 @@ describe("Catering inbox runtime: off and shadow never send, live sends once per
     const { sb } = fakeInboxService({ tables: tables("live"), rpc });
     runtime.client.mockReturnValue(sb);
     expect(await sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).toMatchObject({ state: "replayed" });
+    rpc.mockReturnValueOnce({ data: { refused: "needs_review", replayed: false } as never, error: null });
     const guarded = fakeInboxService({ tables: tables("live", { catering_inbound_messages: [{ id: ids.message, location_id: null, sender_address: "guest@example.test", headers: { "auto-submitted": "auto-replied" }, disposition: "drafted" }] }), rpc });
     runtime.client.mockReturnValue(guarded.sb);
-    await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "invalid_recipient" });
+    await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "needs_review" });
     const own = fakeInboxService({ tables: tables("live", { catering_inbound_messages: [{ id: ids.message, location_id: null, sender_address: "catering@example.test", headers: {}, disposition: "drafted" }] }), rpc });
     runtime.client.mockReturnValue(own.sb);
     await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "invalid_recipient" });
-    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledTimes(2);
     expect(runtime.sendEmail).not.toHaveBeenCalled();
   });
 });

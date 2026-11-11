@@ -93,7 +93,7 @@ export async function listCateringInbox(ctx: AuthContext, assignedTo?: string): 
   const settings = await readCateringInboxSettings(db);
   const drafts = await selectAllRows<DraftRow>(async (from,to) => inboxResult(await db.from("catering_inbox_drafts").select("*").order("id").range(from,to)));
   const deliveryByMessage = new Map<string, InboxDeliveryState>();
-  for (const d of drafts) if ((d.kind ?? "reply") === "reply") deliveryByMessage.set(d.message_id, d.delivery_state ?? "draft");
+  for (const d of drafts) if ((d.kind ?? "reply") === "reply" || d.delivery_state === "needs_review") deliveryByMessage.set(d.message_id, d.delivery_state ?? "draft");
   const messages = children.filter(r => canReadCateringInbox(actor, r.location_id)).map(r => summary(r, deliveryByMessage.get(r.id) ?? null));
   for (const r of transports) {
     if (!canReadCateringInbox(actor, r.location_id)) continue;
@@ -130,7 +130,7 @@ export async function getCateringInboxMessage(ctx: AuthContext, id: string): Pro
   if (drafts.error) throw new CateringInboxError(500, "read_failed");
   const settings = await readCateringInboxSettings(db);
   const draft = replyDraft(drafts.data);
-  const delivery = deliveryOf(draft);
+  const delivery = deliveryOf(draft ?? (drafts.data ?? []).find(d => d.kind === "escalation" && d.delivery_state === "needs_review") ?? null);
   return { ...result.data, ...summary(result.data, delivery?.state ?? null), preview_text: draft?.preview_text ?? null, events, assignees: await candidates(actor, result.data.location_id),
     delivery, sendable: inboxSendable({ mode: settings.mode, disposition: result.data.disposition, hasDraft: draft !== null, deliveryState: delivery?.state ?? null }) } as InboxDetail;
 }

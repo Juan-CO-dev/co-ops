@@ -62,6 +62,26 @@ const setMode = (actor, mode, revision) => asService(() => rpc('set_catering_inb
 const draftRow = id => one('select * from catering_inbox_drafts where id=$1', [id]);
 const revisionOf = async id => (await one('select revision from catering_inbound_messages where id=$1', [id])).revision;
 const escalation = (reason, extra = {}) => ({ language: 'en', params: { tenantName: 'Synthetic', reason, inboxUrl: 'https://staff.example.test/catering/inbox' }, preview_text: 'A catering message needs a person.', ...extra });
+// A refusal commits once, keeps attempt/cap evidence unchanged, and cannot revive even with a new request.
+async function permanent(message, reason, label, options = {}) {
+  const before = await one('select * from catering_inbox_drafts where message_id=$1 and kind=$2', [message, options.kind ?? 'reply']);
+  const revision = await revisionOf(message), request = randomUUID();
+  const events = (await one('select count(*)::int n from catering_inbox_events where message_id=$1',[message])).n;
+  const slots = await query('select * from catering_inbox_thread_limits order by thread_key,day_utc');
+  const refusal = await claim(message, { ...options, request });
+  const row = await draftRow(refusal.draft_id);
+  check(refusal.refused === 'needs_review' && refusal.reason === reason && row.delivery_state === 'needs_review' && row.delivery_error_code === reason, label);
+  assert.equal(row.delivery_attempt, before?.delivery_attempt ?? 0);
+  assert.equal(row.delivery_token, null);
+  assert.deepEqual(await query('select * from catering_inbox_thread_limits order by thread_key,day_utc'), slots);
+  assert.equal(await revisionOf(message), revision + 1);
+  assert.equal((await one('select count(*)::int n from catering_inbox_events where message_id=$1',[message])).n, events + 1);
+  assert.equal((await claim(message, { ...options, request })).refused, 'needs_review');
+  await assert.rejects(() => claim(message, options), /needs_review/);
+  assert.equal(await revisionOf(message), revision + 1);
+  assert.deepEqual(await draftRow(row.id), row);
+  assert.equal((await one('select count(*)::int n from catering_inbox_events where message_id=$1',[message])).n, events + 1);
+}
 const stubs = `
     create role anon; create role authenticated; create role service_role bypassrls;
     grant usage on schema public to anon,authenticated,service_role;
@@ -239,17 +259,20 @@ try {
   await db.query("insert into catering_customers(id,name,email) values ($1,'Quoted','quoted@example.test')", [qCustomer]);
   await db.query("insert into catering_pipeline(id,customer_id,contact_name,stage,location_id) values ($1,$2,'Quoted','quote_sent',$3)", [qLead, qCustomer, shop]);
   await db.query('insert into catering_quotes(id,customer_id,pipeline_id,location_id) values ($1,$2,$3,$4)', [qQuote, qCustomer, qLead, shop]);
-  const quoted = await arrival({ sender_address: 'quoted@example.test' },
+  const quotedArrival = () => arrival({ sender_address: 'quoted@example.test' },
     result({ classification: 'troubleshoot_ours', identity_status: 'resolved', catering_customer_id: qCustomer, lead_id: qLead, quote_id: qQuote, location_id: shop }),
     { ...draft, template_key: 'ours' });
+  const quoted = await quotedArrival();
+  const movedQuote = await quotedArrival();
+  const intactQuote = await quotedArrival();
   await db.query('update catering_quotes set superseded_at = now() where id=$1', [qQuote]);
-  await reject(() => claim(quoted), /quote_revalidation_failed/, 'quote superseded after drafting refuses the claim by name');
+  await permanent(quoted, 'quote_revalidation_failed', 'quote superseded after drafting refuses the claim by name');
   await db.query('update catering_quotes set superseded_at = null, location_id = $2 where id=$1', [qQuote, randomUUID()]).catch(() => null);
   await db.query('update catering_quotes set superseded_at = null where id=$1', [qQuote]);
   await db.query('update catering_pipeline set location_id = null where id=$1', [qLead]);
-  await reject(() => claim(quoted), /revalidation_failed/, 'lead moved off the shop refuses the claim');
+  await permanent(movedQuote, 'revalidation_failed', 'lead moved off the shop refuses the claim');
   await db.query('update catering_pipeline set location_id = $2 where id=$1', [qLead, shop]);
-  check((await claim(quoted)).recipient === 'quoted@example.test', 'intact quote and lead still send');
+  check((await claim(intactQuote)).recipient === 'quoted@example.test', 'intact quote and lead still send');
   // ── review round: the expiry sweep ──
   const swept = await arrival();
   const sLease = await claim(swept);
@@ -335,20 +358,21 @@ try {
   await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2', [noMail, escalated]);
   const unmailed = await arrival({ subject: 'Urgent allergy complaint' }, result({ classification: 'unclassified', disposition: 'needs_human', reason: 'urgent' }), null);
   await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2', [noMail, unmailed]);
-  await reject(() => claim(unmailed, { kind: 'escalation', escalation: escalation('urgent') }), /invalid_recipient/, 'assignee without an email address refused');
+  await permanent(unmailed, 'assignee_unavailable', 'assignee without an email address refused', { kind: 'escalation', escalation: escalation('urgent') });
   await db.query('update catering_inbound_messages set assigned_to=null where id=$1', [unmailed]);
-  await reject(() => claim(unmailed, { kind: 'escalation', escalation: escalation('urgent') }), /invalid_recipient/, 'unassigned escalation refused');
+  await reject(() => claim(unmailed, { kind: 'escalation', escalation: escalation('urgent') }), /needs_review/, 'unassigned escalation refused');
   const auto = await arrival({ headers: { 'auto-submitted': 'auto-replied' } });
   await db.query("update catering_inbound_messages set disposition='drafted' where id=$1", [auto]);
-  await reject(() => claim(auto), /invalid_recipient|no_draft/, 'auto-submitted mail is never replied to');
-  const known = await arrival({ sender_address: 'known@example.test' }, result({ identity_status: 'resolved', catering_customer_id: customer, lead_id: lead, location_id: shop }));
+  await permanent(auto, 'invalid_recipient', 'auto-submitted mail is never replied to');
+  const knownArrival = () => arrival({ sender_address: 'known@example.test' }, result({ identity_status: 'resolved', catering_customer_id: customer, lead_id: lead, location_id: shop }));
+  const known = await knownArrival(), closed = await knownArrival(), intact = await knownArrival();
   await db.query('update catering_customers set active=false where id=$1', [customer]);
-  await reject(() => claim(known), /revalidation_failed/, 'deactivated customer blocks the old draft');
+  await permanent(known, 'revalidation_failed', 'deactivated customer blocks the old draft');
   await db.query('update catering_customers set active=true where id=$1', [customer]);
   await db.query("update catering_pipeline set stage='lost' where id=$1", [lead]);
-  await reject(() => claim(known), /revalidation_failed/, 'closed lead blocks the old draft');
+  await permanent(closed, 'revalidation_failed', 'closed lead blocks the old draft');
   await db.query("update catering_pipeline set stage='inquiry' where id=$1", [lead]);
-  check((await claim(known)).recipient === 'known@example.test', 'revalidated draft sends to the stored sender');
+  check((await claim(intact)).recipient === 'known@example.test', 'revalidated draft sends to the stored sender');
   // ── a lost lease becomes ambiguous, never resent ──
   const stale = await arrival();
   const lease = await claim(stale);
@@ -369,6 +393,62 @@ try {
   await reject(() => claim(guarded, { trigger: 'human', actor: manager, session: null, revision: 1 }), /invalid_input/, 'human claim needs a session');
   await reject(() => claim(guarded, { trigger: 'cron', actor: manager }), /invalid_input/, 'cron claim carries no actor');
   await reject(() => claim(randomUUID()), /not_found/, 'unknown message refused');
+  {
+  // Queue regression: 30 permanently invalid older drafts, one valid newer arrival, first tick.
+  await db.query('update catering_inbox_settings set live_since=clock_timestamp() where singleton');
+  const badRows = [];
+  for (let i = 0; i < 30; i++) {
+    const customerId = randomUUID(), leadId = randomUUID(), quoteId = randomUUID();
+    await db.query("insert into catering_customers(id,name,email) values ($1,'Queue',$2)", [customerId, `queue${i}@example.test`]);
+    await db.query("insert into catering_pipeline(id,customer_id,contact_name,stage,location_id) values ($1,$2,'Queue','quote_sent',$3)", [leadId,customerId,shop]);
+    await db.query('insert into catering_quotes(id,customer_id,pipeline_id,location_id) values ($1,$2,$3,$4)', [quoteId,customerId,leadId,shop]);
+    const message = await arrival({ sender_address: `queue${i}@example.test` }, result({ classification: 'troubleshoot_ours', identity_status: 'resolved', catering_customer_id: customerId, lead_id: leadId, quote_id: quoteId, location_id: shop }), { ...draft, template_key: 'ours' });
+    const variant = i % 6;
+    if (variant === 0) await db.query('update catering_customers set active=false where id=$1',[customerId]);
+    if (variant === 1) await db.query("update catering_pipeline set stage='lost' where id=$1",[leadId]);
+    if (variant === 2) await db.query('update catering_pipeline set location_id=null where id=$1',[leadId]);
+    if (variant === 3) await db.query('update catering_quotes set superseded_at=now() where id=$1',[quoteId]);
+    if (variant === 4) await db.query('update catering_quotes set pipeline_id=null where id=$1',[quoteId]);
+    if (variant === 5) await db.query("update catering_inbound_messages set sender_address=$2 where id=$1",[message, i % 2 ? '<bad@example.test>' : 'bad']);
+    badRows.push([message, variant >= 3 && variant <= 4 ? 'quote_revalidation_failed' : variant === 5 ? 'invalid_recipient' : 'revalidation_failed']);
+  }
+  const fresh = await arrival();
+  const firstTick = await asService(() => rpc('catering_inbox_delivery_due',[25]));
+  check(firstTick.replies.length === 1 && firstTick.replies[0].message_id === fresh && !!(await claim(firstTick.replies[0].message_id)).token,
+    '30 permanent predecessors: valid newer reply claimed on the first tick');
+  for (const [message, reason] of badRows) await permanent(message, reason, 'permanent refusal commits exactly once: ' + reason);
+  check((await asService(() => rpc('catering_inbox_delivery_due',[25]))).replies.length === 0, 'terminal refusals never re-enter the delivery queue');
+  const noEmail = await arrival({}, result({ classification: 'unclassified', disposition: 'needs_human', reason: 'urgent' }), null);
+  await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2',[noMail,noEmail]);
+  const goodEsc = await arrival({}, result({ classification: 'unclassified', disposition: 'needs_human', reason: 'urgent' }), null);
+  const escDue = await asService(() => rpc('catering_inbox_delivery_due',[25]));
+  check(escDue.escalations.length === 1 && escDue.escalations[0].message_id === goodEsc, 'email-less assignee never occupies the escalation queue');
+  await permanent(noEmail, 'assignee_unavailable', 'email-less escalation commits terminal state exactly once', { kind: 'escalation' });
+  const inaccessible = await arrival({}, result({ classification: 'unclassified', disposition: 'needs_human', reason: 'urgent' }), null);
+  await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2',[gm,inaccessible]);
+  await permanent(inaccessible, 'assignee_unavailable', 'inaccessible escalation commits terminal state exactly once', { kind: 'escalation' });
+  const failedReview = await arrival();
+  const failedClaim = await claim(failedReview);
+  await finish(failedClaim.draft_id, failedClaim.token, 'failed', null, 'send_failed');
+  await db.query("update catering_inbound_messages set sender_address='invalid' where id=$1",[failedReview]);
+  await permanent(failedReview, 'invalid_recipient', 'failed draft terminalizes without rewriting attempt evidence');
+  // Snapshot every row and event around transient failures; no terminalization, revision bump or reservation.
+  const transient = await arrival({ thread_key: 'full-thread' });
+  await db.query("insert into catering_inbox_thread_limits values ('full-thread',(clock_timestamp() at time zone 'utc')::date,3)");
+  const snapshot = async () => JSON.stringify(await query('select to_jsonb(d) d,to_jsonb(m) m,(select jsonb_agg(e order by e.id) from catering_inbox_events e where e.message_id=m.id) events from catering_inbox_drafts d join catering_inbound_messages m on m.id=d.message_id where m.id=$1',[transient]));
+  for (const code of ['thread_cap','stale_revision','delivery_off','delivery_busy']) {
+    if (code === 'delivery_off') await db.query("update catering_inbox_settings set mode='off' where singleton");
+    if (code === 'delivery_busy') {
+      await db.query("update catering_inbox_settings set mode='live' where singleton");
+      await db.query("update catering_inbox_thread_limits set reserved=1 where thread_key='full-thread'");
+      await claim(transient);
+    }
+    const before = await snapshot();
+    await assert.rejects(() => code === 'stale_revision' ? human(transient,manager,0) : claim(transient), new RegExp(code));
+    assert.equal(await snapshot(), before);
+    check(true, code + ' leaves delivery state and events untouched');
+  }
+  }
   // ── the pane's reader contract: one reply draft per message ──
   await reject(() => db.query("insert into catering_inbox_drafts(message_id,language,template_key,template_version,params,preview_text) values ($1,'en','intake','1','{}','x')", [guarded]), /duplicate key/, 'one reply draft per message');
   await reject(() => db.query("insert into catering_inbox_drafts(message_id,kind,language,template_key,template_version,params,preview_text) values ($1,'escalation','en','intake','1','{}','x')", [guarded]), /check constraint/, 'escalation rows take the escalation template only');

@@ -4,7 +4,7 @@
 -- 0297 is a parallel vendor-mail build: the lease preflight below refuses if its job set drifted.
 --
 -- WHAT THIS ADDS
---   1. Delivery state ON THE DRAFT ROW (claimed | sent | failed | ambiguous | cancelled, fencing token, attempt
+--   1. Delivery state ON THE DRAFT ROW (claimed | sent | failed | ambiguous | cancelled | needs_review, fencing token, attempt
 --      times, provider id, closed error code, recipient snapshot). `kind` admits 'escalation' (staff mail to the
 --      assignee); one row per (message, kind).
 --   2. catering_inbox_thread_limits: at most THREE customer replies per thread per UTC day, reserved transactionally
@@ -59,7 +59,7 @@ alter table public.catering_inbox_drafts
     (kind = 'reply' and template_key in ('intake','ours','third_party')) or (kind = 'escalation' and template_key = 'escalation')),
   add constraint catering_inbox_drafts_message_kind_key unique (message_id, kind),
   add column delivery_state text not null default 'draft'
-    check (delivery_state in ('draft','claimed','sent','failed','ambiguous','cancelled')),
+    check (delivery_state in ('draft','claimed','sent','failed','ambiguous','cancelled','needs_review')),
   add column delivery_attempt integer not null default 0 check (delivery_attempt >= 0),
   add column delivery_token uuid,
   add column delivery_trigger text check (delivery_trigger in ('human','cron')),
@@ -71,14 +71,14 @@ alter table public.catering_inbox_drafts
   add column delivery_recipient text check (length(delivery_recipient) <= 254),
   add column delivery_provider_id text check (length(delivery_provider_id) between 1 and 200),
   add column delivery_error_code text check (delivery_error_code in
-    ('provider_rejected','provider_uncertain','idempotency_conflict','lease_expired','not_configured','invalid_recipient','send_failed')),
+    ('provider_rejected','provider_uncertain','idempotency_conflict','lease_expired','not_configured','invalid_recipient','send_failed','revalidation_failed','quote_revalidation_failed','assignee_unavailable')),
   add column delivery_thread_day date,
   add constraint catering_inbox_drafts_claim_token check ((delivery_state = 'claimed') = (delivery_token is not null)),
   add constraint catering_inbox_drafts_attempted check ((delivery_attempt = 0) = (delivery_first_attempt_at is null)),
   add constraint catering_inbox_drafts_attempted_pair check ((delivery_attempt = 0) = (delivery_attempted_at is null)),
   add constraint catering_inbox_drafts_sent_proof check (delivery_state <> 'sent' or (delivery_provider_id is not null and delivery_sent_at is not null)),
-  add constraint catering_inbox_drafts_failed_code check (delivery_state not in ('failed','ambiguous') or delivery_error_code is not null),
-  add constraint catering_inbox_drafts_state_attempt check (delivery_state = 'draft' or delivery_attempt > 0),
+  add constraint catering_inbox_drafts_failed_code check (delivery_state not in ('failed','ambiguous','needs_review') or delivery_error_code is not null),
+  add constraint catering_inbox_drafts_state_attempt check (delivery_state in ('draft','needs_review') or delivery_attempt > 0),
   add constraint catering_inbox_drafts_trigger_pair check ((delivery_attempt = 0) = (delivery_trigger is null)),
   add constraint catering_inbox_drafts_actor_human check (delivery_actor_id is null or delivery_trigger = 'human'),
   add constraint catering_inbox_drafts_reply_slot check (kind <> 'reply' or (delivery_attempt = 0) = (delivery_thread_day is null)),
@@ -113,7 +113,7 @@ create function public.claim_catering_inbox_delivery(
 as $$
 declare s public.catering_inbox_settings%rowtype; m public.catering_inbound_messages%rowtype;
   d public.catering_inbox_drafts%rowtype; e public.catering_inbox_events%rowtype; v_pair record;
-  v_recipient text; v_email text; v_day date := (clock_timestamp() at time zone 'utc')::date; v_reserved integer;
+  v_refusal text; v_recipient text; v_email text; v_day date := (clock_timestamp() at time zone 'utc')::date; v_reserved integer;
   v_thread text; v_token uuid := gen_random_uuid(); v_language text; v_assignee public.users%rowtype;
   v_fingerprint text := md5(jsonb_build_array(p_message_id,p_kind,p_trigger,p_actor_id,p_session_id,p_expected_revision)::text);
 begin
@@ -130,7 +130,10 @@ begin
       and x.revoked_at is null and x.expires_at > clock_timestamp())) then raise exception 'forbidden'; end if;
   select * into e from public.catering_inbox_events where request_id = p_request_id;
   if found then
-    if e.message_id <> m.id or e.event_type <> 'claim' or e.request_fingerprint <> v_fingerprint then raise exception 'request_conflict'; end if;
+    if e.message_id <> m.id or e.event_type not in ('claim','deliver') or e.request_fingerprint <> v_fingerprint then raise exception 'request_conflict'; end if;
+    if e.event_type = 'deliver' then
+      return jsonb_build_object('message_id',m.id,'revision',e.after_revision,'replayed',true,'refused','needs_review');
+    end if;
     return jsonb_build_object('message_id', m.id, 'revision', e.after_revision, 'replayed', true);
   end if;
   if p_trigger = 'human' and m.revision <> p_expected_revision then raise exception 'stale_revision'; end if;
@@ -140,7 +143,7 @@ begin
   if p_kind = 'reply' and not found then raise exception 'no_draft'; end if;
   if found then
     if d.delivery_state = 'sent' then raise exception 'already_sent'; end if;
-    if d.delivery_state in ('ambiguous','cancelled') then raise exception 'needs_review'; end if;
+    if d.delivery_state in ('ambiguous','cancelled','needs_review') then raise exception 'needs_review'; end if;
     if d.delivery_state = 'claimed' then
       if d.delivery_claimed_at > clock_timestamp() - interval '10 minutes' then raise exception 'delivery_busy'; end if;
       -- The holder never reported: its provider outcome is unknown. Never resend on top of it. This transition
@@ -154,65 +157,85 @@ begin
     if p_trigger = 'cron' and d.delivery_attempt >= 3 then raise exception 'attempts_exhausted'; end if;
   end if;
   if p_trigger = 'cron' and (s.live_since is null or coalesce(d.created_at, m.recorded_at) < s.live_since) then raise exception 'not_new'; end if;
-  -- Loop guards, again, on immutable evidence (the app checks its own addresses too).
-  if (m.headers->>'auto-submitted') is not null and lower(m.headers->>'auto-submitted') <> 'no'
-    or coalesce(m.headers->>'precedence','') ~* '\m(bulk|list|junk)\M' or m.headers ? 'list-id' or m.headers ? 'list-unsubscribe'
-    or m.headers->>'return-path' = '<>' or coalesce(m.headers->>'content-type','') ~* 'delivery-status'
-    or coalesce(m.sender_address,'') ~* '^(mailer-daemon|postmaster)@' then raise exception 'invalid_recipient'; end if;
-  if p_kind = 'reply' then
-    v_email := lower(btrim(m.sender_address));
-    if v_email is null or v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then raise exception 'invalid_recipient'; end if;
-    -- Revalidate what the draft was written against: the customer and the open artifact.
-    if m.catering_customer_id is not null and not exists (select 1 from public.catering_customers c where c.id = m.catering_customer_id and c.active
-        and c.email ilike replace(replace(replace(v_email, E'\\', E'\\\\'), '%', E'\\%'), '_', E'\\_')) then raise exception 'revalidation_failed'; end if;
-    if m.lead_id is not null and not exists (select 1 from public.catering_pipeline p where p.id = m.lead_id
-        and p.customer_id is not distinct from m.catering_customer_id and p.location_id is not distinct from m.location_id
-        and p.stage in ('inquiry','quote_sent','confirmed','out')) then raise exception 'revalidation_failed'; end if;
-    if d.lead_id is distinct from m.lead_id or d.quote_id is distinct from m.quote_id then raise exception 'revalidation_failed'; end if;
-    -- The linked quote itself, as finalize_catering_inbound proved it: same owner, same lead, same shop, not superseded.
-    if m.quote_id is not null and not exists (select 1 from public.catering_quotes q where q.id = m.quote_id
-        and q.customer_id is not distinct from m.catering_customer_id and q.pipeline_id is not distinct from m.lead_id
-        and q.location_id is not distinct from m.location_id and q.superseded_at is null) then raise exception 'quote_revalidation_failed'; end if;
-    v_recipient := v_email;
-    v_thread := coalesce(nullif(m.thread_key, '[invalid]'), m.id::text);
-    -- A reservation is good for ITS UTC day only: a retry on a later day takes today's capacity, atomically.
-    if d.delivery_thread_day is distinct from v_day then
-      insert into public.catering_inbox_thread_limits(thread_key, day_utc, reserved) values (v_thread, v_day, 1)
-      on conflict (thread_key, day_utc) do update set reserved = catering_inbox_thread_limits.reserved + 1
-        where catering_inbox_thread_limits.reserved < 3
-      returning reserved into v_reserved;
-      if v_reserved is null then raise exception 'thread_cap'; end if;
+  begin -- Only the closed permanent refusal set is converted to durable review below.
+    -- Loop guards, again, on immutable evidence (the app checks its own addresses too).
+    if (m.headers->>'auto-submitted') is not null and lower(m.headers->>'auto-submitted') <> 'no'
+      or coalesce(m.headers->>'precedence','') ~* '\m(bulk|list|junk)\M' or m.headers ? 'list-id' or m.headers ? 'list-unsubscribe'
+      or m.headers->>'return-path' = '<>' or coalesce(m.headers->>'content-type','') ~* 'delivery-status'
+      or coalesce(m.sender_address,'') ~* '^(mailer-daemon|postmaster)@' then raise exception 'invalid_recipient'; end if;
+    if p_kind = 'reply' then
+      v_email := lower(btrim(m.sender_address));
+      if v_email is null or length(v_email) > 254 or v_email !~ '^[^<>@[:space:]]+@[^<>@[:space:]]+\.[^<>@[:space:]]+$' then raise exception 'invalid_recipient'; end if;
+      -- Revalidate what the draft was written against: the customer and the open artifact.
+      if m.catering_customer_id is not null and not exists (select 1 from public.catering_customers c where c.id = m.catering_customer_id and c.active
+          and c.email ilike replace(replace(replace(v_email, E'\\', E'\\\\'), '%', E'\\%'), '_', E'\\_')) then raise exception 'revalidation_failed'; end if;
+      if m.lead_id is not null and not exists (select 1 from public.catering_pipeline p where p.id = m.lead_id
+          and p.customer_id is not distinct from m.catering_customer_id and p.location_id is not distinct from m.location_id
+          and p.stage in ('inquiry','quote_sent','confirmed','out')) then raise exception 'revalidation_failed'; end if;
+      if d.lead_id is distinct from m.lead_id or d.quote_id is distinct from m.quote_id then raise exception 'revalidation_failed'; end if;
+      -- The linked quote itself, as finalize_catering_inbound proved it: same owner, same lead, same shop, not superseded.
+      if m.quote_id is not null and not exists (select 1 from public.catering_quotes q where q.id = m.quote_id
+          and q.customer_id is not distinct from m.catering_customer_id and q.pipeline_id is not distinct from m.lead_id
+          and q.location_id is not distinct from m.location_id and q.superseded_at is null) then raise exception 'quote_revalidation_failed'; end if;
+      v_recipient := v_email;
+      v_thread := coalesce(nullif(m.thread_key, '[invalid]'), m.id::text);
+      -- A reservation is good for ITS UTC day only: a retry on a later day takes today's capacity, atomically.
+      if d.delivery_thread_day is distinct from v_day then
+        insert into public.catering_inbox_thread_limits(thread_key, day_utc, reserved) values (v_thread, v_day, 1)
+        on conflict (thread_key, day_utc) do update set reserved = catering_inbox_thread_limits.reserved + 1
+          where catering_inbox_thread_limits.reserved < 3
+        returning reserved into v_reserved;
+        if v_reserved is null then raise exception 'thread_cap'; end if;
+      end if;
+      update public.catering_inbox_drafts set delivery_state = 'claimed', delivery_attempt = delivery_attempt + 1, delivery_token = v_token,
+        delivery_trigger = p_trigger, delivery_actor_id = p_actor_id, delivery_claimed_at = clock_timestamp(), delivery_attempted_at = clock_timestamp(),
+        delivery_first_attempt_at = coalesce(delivery_first_attempt_at, clock_timestamp()), delivery_recipient = v_recipient,
+        delivery_error_code = null, delivery_thread_day = v_day where id = d.id returning * into d;
+    else
+      if m.assigned_to is null or not public.catering_inbox_can_access(m.assigned_to, m.location_id) then raise exception 'assignee_unavailable'; end if;
+      select * into v_assignee from public.users u where u.id = m.assigned_to;
+      v_recipient := lower(btrim(v_assignee.email));
+      if v_recipient is null or length(v_recipient) > 254 or v_recipient !~ '^[^<>@[:space:]]+@[^<>@[:space:]]+\.[^<>@[:space:]]+$' then raise exception 'assignee_unavailable'; end if;
+      v_language := case when v_assignee.language = 'es' then 'es' else 'en' end;
+      if d.id is null then
+        -- Freeze the escalation body on the first attempt; the finalize p_draft envelope rules, narrowed.
+        if p_escalation is null or jsonb_typeof(p_escalation) <> 'object'
+          or exists (select 1 from jsonb_object_keys(p_escalation) k where k not in ('language','params','preview_text'))
+          or p_escalation->>'language' is distinct from v_language or jsonb_typeof(p_escalation->'params') is distinct from 'object'
+          or exists (select 1 from jsonb_each(p_escalation->'params') kv where kv.key not in ('tenantName','inboxUrl','reason') or jsonb_typeof(kv.value) <> 'string')
+          or not (p_escalation->'params' ?& array['tenantName','reason'])
+          or length(p_escalation->'params'->>'tenantName') not between 1 and 120
+          or p_escalation->'params'->>'reason' is distinct from m.reason
+          or (p_escalation->'params' ? 'inboxUrl' and p_escalation->'params'->>'inboxUrl' !~ '^https://[A-Za-z0-9.-]+(:[0-9]+)?/catering/inbox$')
+          or octet_length(coalesce(p_escalation->>'preview_text','')) not between 1 and 32768
+          or (p_escalation->>'preview_text') ~ '(https?://[^\s]*[?#]|token=)'
+          then raise exception 'invalid_escalation'; end if;
+        insert into public.catering_inbox_drafts(message_id, kind, language, template_key, template_version, params, preview_text, lead_id, quote_id)
+        values (m.id, 'escalation', v_language, 'escalation', '1', p_escalation->'params', p_escalation->>'preview_text', m.lead_id, m.quote_id) returning * into d;
+      end if;
+      update public.catering_inbox_drafts set delivery_state = 'claimed', delivery_attempt = delivery_attempt + 1, delivery_token = v_token,
+        delivery_trigger = p_trigger, delivery_actor_id = null, delivery_claimed_at = clock_timestamp(), delivery_attempted_at = clock_timestamp(),
+        delivery_first_attempt_at = coalesce(delivery_first_attempt_at, clock_timestamp()), delivery_recipient = v_recipient,
+        delivery_error_code = null where id = d.id returning * into d;
     end if;
-    update public.catering_inbox_drafts set delivery_state = 'claimed', delivery_attempt = delivery_attempt + 1, delivery_token = v_token,
-      delivery_trigger = p_trigger, delivery_actor_id = p_actor_id, delivery_claimed_at = clock_timestamp(), delivery_attempted_at = clock_timestamp(),
-      delivery_first_attempt_at = coalesce(delivery_first_attempt_at, clock_timestamp()), delivery_recipient = v_recipient,
-      delivery_error_code = null, delivery_thread_day = v_day where id = d.id returning * into d;
-  else
-    if m.assigned_to is null or not public.catering_inbox_can_access(m.assigned_to, m.location_id) then raise exception 'invalid_recipient'; end if;
-    select * into v_assignee from public.users u where u.id = m.assigned_to;
-    v_recipient := lower(btrim(v_assignee.email));
-    if v_recipient is null or v_recipient !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then raise exception 'invalid_recipient'; end if;
-    v_language := case when v_assignee.language = 'es' then 'es' else 'en' end;
+  exception when raise_exception then
+    if sqlerrm not in ('invalid_recipient','revalidation_failed','quote_revalidation_failed','assignee_unavailable') then raise; end if;
+    v_refusal := sqlerrm;
+  end;
+  if v_refusal is not null then
+    -- No provider attempt or cap reservation happened. A first escalation still needs a durable queue tombstone.
+    -- Its internal placeholder is never a sendable body or a customer preview.
     if d.id is null then
-      -- Freeze the escalation body on the first attempt; the finalize p_draft envelope rules, narrowed.
-      if p_escalation is null or jsonb_typeof(p_escalation) <> 'object'
-        or exists (select 1 from jsonb_object_keys(p_escalation) k where k not in ('language','params','preview_text'))
-        or p_escalation->>'language' is distinct from v_language or jsonb_typeof(p_escalation->'params') is distinct from 'object'
-        or exists (select 1 from jsonb_each(p_escalation->'params') kv where kv.key not in ('tenantName','inboxUrl','reason') or jsonb_typeof(kv.value) <> 'string')
-        or not (p_escalation->'params' ?& array['tenantName','reason'])
-        or length(p_escalation->'params'->>'tenantName') not between 1 and 120
-        or p_escalation->'params'->>'reason' is distinct from m.reason
-        or (p_escalation->'params' ? 'inboxUrl' and p_escalation->'params'->>'inboxUrl' !~ '^https://[A-Za-z0-9.-]+(:[0-9]+)?/catering/inbox$')
-        or octet_length(coalesce(p_escalation->>'preview_text','')) not between 1 and 32768
-        or (p_escalation->>'preview_text') ~ '(https?://[^\s]*[?#]|token=)'
-        then raise exception 'invalid_escalation'; end if;
-      insert into public.catering_inbox_drafts(message_id, kind, language, template_key, template_version, params, preview_text, lead_id, quote_id)
-      values (m.id, 'escalation', v_language, 'escalation', '1', p_escalation->'params', p_escalation->>'preview_text', m.lead_id, m.quote_id) returning * into d;
+      insert into public.catering_inbox_drafts(message_id,kind,language,template_key,template_version,params,preview_text,lead_id,quote_id)
+      values (m.id,'escalation','en','escalation','1','{}',v_refusal,m.lead_id,m.quote_id) returning * into d;
     end if;
-    update public.catering_inbox_drafts set delivery_state = 'claimed', delivery_attempt = delivery_attempt + 1, delivery_token = v_token,
-      delivery_trigger = p_trigger, delivery_actor_id = null, delivery_claimed_at = clock_timestamp(), delivery_attempted_at = clock_timestamp(),
-      delivery_first_attempt_at = coalesce(delivery_first_attempt_at, clock_timestamp()), delivery_recipient = v_recipient,
-      delivery_error_code = null where id = d.id returning * into d;
+    update public.catering_inbox_drafts set delivery_state = 'needs_review', delivery_token = null,
+      delivery_error_code = v_refusal where id = d.id;
+    insert into public.catering_inbox_events(message_id,event_type,actor_id,request_id,request_fingerprint,before_revision,after_revision,before_disposition,after_disposition,before_assigned_to,after_assigned_to)
+    values (m.id,'deliver',p_actor_id,p_request_id,v_fingerprint,m.revision,m.revision+1,m.disposition,m.disposition,m.assigned_to,m.assigned_to);
+    update public.catering_inbound_messages set revision = revision + 1 where id = m.id;
+    return jsonb_build_object('message_id',m.id,'revision',m.revision+1,'replayed',false,
+      'refused','needs_review','reason',v_refusal,'draft_id',d.id);
   end if;
   update public.catering_inbound_messages set revision = revision + 1 where id = m.id;
   insert into public.catering_inbox_events(message_id,event_type,actor_id,request_id,request_fingerprint,before_revision,after_revision,before_disposition,after_disposition,before_assigned_to,after_assigned_to)
@@ -290,11 +313,25 @@ as $$
     where s.mode = 'live' and s.live_since is not null and d.kind = 'reply' and m.disposition = 'drafted' and d.created_at >= s.live_since
       and (d.delivery_state = 'draft' or (d.delivery_state = 'failed' and d.delivery_attempt < 3
         and d.delivery_attempted_at <= clock_timestamp() - interval '10 minutes'))
+      and lower(btrim(m.sender_address)) ~ '^[^<>@[:space:]]+@[^<>@[:space:]]+\.[^<>@[:space:]]+$'
+      and length(btrim(m.sender_address)) <= 254
+      and (m.catering_customer_id is null or exists (select 1 from public.catering_customers c
+        where c.id = m.catering_customer_id and c.active and lower(c.email) = lower(btrim(m.sender_address))))
+      and (m.lead_id is null or exists (select 1 from public.catering_pipeline p where p.id = m.lead_id
+        and p.customer_id is not distinct from m.catering_customer_id and p.location_id is not distinct from m.location_id
+        and p.stage in ('inquiry','quote_sent','confirmed','out')))
+      and d.lead_id is not distinct from m.lead_id and d.quote_id is not distinct from m.quote_id
+      and (m.quote_id is null or exists (select 1 from public.catering_quotes q where q.id = m.quote_id
+        and q.customer_id is not distinct from m.catering_customer_id and q.pipeline_id is not distinct from m.lead_id
+        and q.location_id is not distinct from m.location_id and q.superseded_at is null))
     order by d.created_at, d.id limit greatest(1, least(coalesce(p_limit, 25), 200))),
   escalations as (
     select m.id as message_id from public.catering_inbound_messages m, s
     where s.mode = 'live' and s.live_since is not null and m.disposition = 'needs_human' and m.recorded_at >= s.live_since
       and m.assigned_to is not null and m.reason is not null
+      and public.catering_inbox_can_access(m.assigned_to,m.location_id)
+      and exists (select 1 from public.users u where u.id = m.assigned_to and u.active
+        and length(btrim(u.email)) <= 254 and btrim(u.email) ~ '^[^<>@[:space:]]+@[^<>@[:space:]]+\.[^<>@[:space:]]+$')
       and not exists (select 1 from public.catering_inbox_drafts d where d.message_id = m.id and d.kind = 'escalation'
         and not (d.delivery_state = 'failed' and d.delivery_attempt < 3 and d.delivery_attempted_at <= clock_timestamp() - interval '10 minutes'))
     order by m.recorded_at, m.id limit greatest(1, least(coalesce(p_limit, 25), 200)))

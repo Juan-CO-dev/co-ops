@@ -4,6 +4,7 @@ import type { AuthContext } from "@/lib/session";
 import {
   buildInboxEscalation, inboxCronEligible, inboxDeliveryConfig, inboxDeliveryOutcome, inboxReplyThreading, inboxSendable, inboxStaffUrl, renderInboxReply, senderAddress, textToHtml,
 } from "@/lib/catering/inbox-delivery-shared";
+import { getCateringInboxMessage, listCateringInbox } from "@/lib/catering/inbox";
 import { inboxOwnAddresses } from "@/lib/catering/inbox-content-shared";
 import { claimEscalation, claimReply, fakeInboxService, ids, liveEnv, type Row } from "./fixtures/catering-inbox/fake-service";
 import en from "@/lib/i18n/en.json";
@@ -66,14 +67,14 @@ describe("delivery switches and pure rules", () => {
     expect(inboxCronEligible({ delivery_state: "failed", delivery_attempt: 1, delivery_attempted_at: "2026-11-11T11:55:00Z" }, now)).toBe(false);
     expect(inboxCronEligible({ delivery_state: "failed", delivery_attempt: 1, delivery_attempted_at: "2026-11-11T11:45:00Z" }, now)).toBe(true);
     expect(inboxCronEligible({ delivery_state: "failed", delivery_attempt: 3, delivery_attempted_at: "2026-11-11T10:00:00Z" }, now)).toBe(false);
-    for (const state of ["claimed", "sent", "ambiguous", "cancelled"] as const) expect(inboxCronEligible({ delivery_state: state, delivery_attempt: 1, delivery_attempted_at: null }, now)).toBe(false);
+    for (const state of ["claimed", "sent", "ambiguous", "cancelled", "needs_review"] as const) expect(inboxCronEligible({ delivery_state: state, delivery_attempt: 1, delivery_attempted_at: null }, now)).toBe(false);
   });
   it("sendable only in live mode on a drafted message with an unsent or failed reply draft", () => {
     expect(inboxSendable({ mode: "live", disposition: "drafted", hasDraft: true, deliveryState: "draft" })).toBe(true);
     expect(inboxSendable({ mode: "live", disposition: "drafted", hasDraft: true, deliveryState: "failed" })).toBe(true);
     expect(inboxSendable({ mode: "shadow", disposition: "drafted", hasDraft: true, deliveryState: "draft" })).toBe(false);
     expect(inboxSendable({ mode: "live", disposition: "needs_human", hasDraft: false, deliveryState: null })).toBe(false);
-    for (const state of ["claimed", "sent", "ambiguous", "cancelled"] as const) expect(inboxSendable({ mode: "live", disposition: "drafted", hasDraft: true, deliveryState: state })).toBe(false);
+    for (const state of ["claimed", "sent", "ambiguous", "cancelled", "needs_review"] as const) expect(inboxSendable({ mode: "live", disposition: "drafted", hasDraft: true, deliveryState: state })).toBe(false);
   });
   it("the inbox sender joins own-address suppression, display name stripped", () => {
     const own = inboxOwnAddresses({ aliases: [], receiptAddresses: [], inboxFrom: "Catering <Catering@Example.test>" });
@@ -121,6 +122,29 @@ beforeEach(() => { for (const [key, value] of Object.entries(liveEnv)) vi.stubEn
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 describe("the delivery worker (cron path)", () => {
+  it("reads a terminal escalation in the list and detail without exposing its internal placeholder", async () => {
+    const { sb } = fakeInboxService({ tables: liveTables({ catering_inbound_messages: [{ id: ids.escalation, location_id: null, received_at: "2026-11-11T12:00:00Z", disposition: "needs_human", assigned_to: ids.assignee, reason: "urgent" }], catering_inbox_drafts: [
+      { id: ids.draft, message_id: ids.escalation, kind: "escalation", preview_text: "assignee_unavailable", delivery_state: "needs_review", delivery_attempt: 0, delivery_error_code: "assignee_unavailable" },
+    ] }) });
+    runtime.client.mockReturnValue(sb);
+    const list = await listCateringInbox(actor);
+    expect(list.messages.find(m => m.id === ids.escalation)?.delivery_state).toBe("needs_review");
+    const detail = await getCateringInboxMessage(actor, ids.escalation);
+    expect(detail).toMatchObject({ preview_text: null, sendable: false, delivery: { state: "needs_review", attempt: 0, error_code: "assignee_unavailable" } });
+  });
+
+  it.each([false, true])("a structured permanent refusal (replayed=%s) never reaches the provider or finish", async replayed => {
+    const rpc = vi.fn((name: string) => {
+      if (name === "claim_catering_inbox_delivery") return { data: { refused: "needs_review", reason: "revalidation_failed", replayed, revision: 2 }, error: null };
+      throw new Error(`Unexpected writer: ${name}`);
+    });
+    const { sb } = fakeInboxService({ tables: liveTables(), rpc });
+    runtime.client.mockReturnValue(sb);
+    await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "needs_review" });
+    expect(runtime.sendEmail).not.toHaveBeenCalled();
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["claim_catering_inbox_delivery"]);
+  });
+
   it("sends NEW arrivals only: a reply from the inbox sender and an escalation from team@ in the assignee's language; old drafts are left alone", async () => {
     const claims: Record<string, unknown>[] = [];
     const rpc = vi.fn((name: string, args: Record<string, unknown>) => {

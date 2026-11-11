@@ -20,6 +20,10 @@ it('0298 real-DDL delivery proof: ceilings, switches, claim/finish fencing, caps
     'auto-submitted mail is never replied to', 'deactivated customer blocks the old draft', 'closed lead blocks the old draft',
     'expired lease is marked ambiguous and refused, not reclaimed', 'the late holder cannot finish', 'ambiguous is never auto-resent',
     'revoked session cannot send', 'one reply draft per message', 'concurrency requires separate sim proof',
+    '30 permanent predecessors: valid newer reply claimed on the first tick',
+    'terminal refusals never re-enter the delivery queue', 'email-less escalation commits terminal state exactly once',
+    'inaccessible escalation commits terminal state exactly once',
+    ...['thread_cap','stale_revision','delivery_off','delivery_busy'].map(code => code + ' leaves delivery state and events untouched'),
     // review round
     "yesterday's failed retry needs today's capacity: fourth send refused", 'a cross-day retry reserves today atomically',
     'quote superseded after drafting refuses the claim by name', 'lead moved off the shop refuses the claim',

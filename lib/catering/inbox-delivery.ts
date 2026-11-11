@@ -27,7 +27,6 @@ import { isInboxSchemaMissing } from "./inbox-schema-shared";
 import { CateringInboxError, inboxReader, readCateringInboxSettings } from "./inbox";
 import { canReadCateringInbox, type InboxReason } from "./inbox-shared";
 import { inboxOwnAddresses, type InboxHeaders } from "./inbox-content-shared";
-import { inboxAutomatedMessage } from "./inbox-classify-shared";
 import { normalizeInboundAddress } from "@/lib/inbound-router-shared";
 import {
   buildInboxEscalation, inboxDeliveryConfig, inboxDeliveryOutcome, inboxReplyThreading, inboxStaffUrl,
@@ -86,16 +85,16 @@ async function deliverOne(args: DeliverArgs): Promise<DeliveryResult> {
   if (message.error) throw new CateringInboxError(500, "read_failed");
   if (!message.data) throw new CateringInboxError(404, "not_found");
   const sender = normalizeInboundAddress(message.data.sender_address ?? "");
-  // Loop guards from phase 1, re-checked before anything is claimed: own addresses, auto-replies, bounces, list mail.
-  if (args.kind === "reply" && (!sender || args.own.has(sender) || inboxAutomatedMessage(message.data.headers ?? {}, sender))) throw new CateringInboxError(409, "invalid_recipient");
+  // Configured own-address suppression stays app-side; SQL durably refuses malformed/automated recipients.
+  if (args.kind === "reply" && sender && args.own.has(sender)) throw new CateringInboxError(409, "invalid_recipient");
   const claim = await sb.rpc("claim_catering_inbox_delivery", {
     p_message_id: args.messageId, p_kind: args.kind, p_trigger: args.trigger, p_actor_id: args.actor?.user.id ?? null, p_session_id: args.actor?.session.id ?? null,
     p_expected_revision: args.expectedRevision ?? null, p_request_id: args.requestId, p_escalation: args.escalation ?? null,
   });
   if (claim.error) throw claimError(claim.error);
   const claimed = claim.data as ClaimResult;
-  if (claimed.replayed) return { message_id: claimed.message_id, revision: claimed.revision, draft_id: null, attempt: 0, state: "replayed" };
   if (claimed.refused) throw new CateringInboxError(409, claimed.refused);
+  if (claimed.replayed) return { message_id: claimed.message_id, revision: claimed.revision, draft_id: null, attempt: 0, state: "replayed" };
   if (args.trigger === "human" && args.actor) {
     await audit({ actorId: args.actor.user.id, actorRole: args.actorRole ?? args.actor.user.role, action: "catering.inbox.send", resourceTable: "catering_inbox_drafts", resourceId: claimed.draft_id,
       metadata: { request_id: args.requestId, message_id: claimed.message_id, attempt: claimed.attempt, revision: claimed.revision }, ipAddress: null, userAgent: null });

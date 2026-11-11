@@ -188,11 +188,11 @@ export function InboxPane({ initial }: { initial: InboxList }) {
           {detail.lead_id && <Link className={control} href={`/catering/pipeline#lead-${detail.lead_id}`}>{t("catering.inbox.lead")}</Link>}
           {detail.quote_id && <Link className={control} href={`/catering/quotes/${detail.quote_id}`}>{t("catering.inbox.quote")}</Link>}
         </div>
+        {detail.delivery && <p className="my-2 flex flex-wrap items-center gap-2 text-sm">{deliveryChip(detail.delivery.state)}
+          {detail.delivery.attempt > 0 && <span>{t("catering.inbox.delivery.attempts", { n: detail.delivery.attempt })}</span>}
+          {detail.delivery.error_code && <span>{t(`catering.inbox.delivery.error.${detail.delivery.error_code}`)}</span>}
+          {detail.delivery.sent_at && <span>{formatDateLabel(etCalendarDate(detail.delivery.sent_at), language)} {formatTime(detail.delivery.sent_at, language)}</span>}</p>}
         {detail.preview_text && <section className="my-4 rounded border p-3"><h3 className="font-semibold">{t("catering.inbox.draft_preview")}</h3>
-          {detail.delivery && <p className="my-2 flex flex-wrap items-center gap-2 text-sm">{deliveryChip(detail.delivery.state)}
-            {detail.delivery.attempt > 0 && <span>{t("catering.inbox.delivery.attempts", { n: detail.delivery.attempt })}</span>}
-            {detail.delivery.error_code && <span>{t(`catering.inbox.delivery.error.${detail.delivery.error_code}`)}</span>}
-            {detail.delivery.sent_at && <span>{formatDateLabel(etCalendarDate(detail.delivery.sent_at), language)} {formatTime(detail.delivery.sent_at, language)}</span>}</p>}
           <p className="whitespace-pre-wrap break-words">{detail.preview_text}</p></section>}
         {!detail.transport_only && detail.disposition !== "handled" && <div className="my-4 flex flex-wrap items-center gap-2">
           {detail.disposition !== "recorded" && <><label className="flex max-w-full flex-wrap items-center gap-2">{t("catering.inbox.assign_label")}<select className={`${control} max-w-full`} value={assignedTo} onChange={e => setAssignedTo(e.target.value)}><option value="">{t("catering.inbox.unassigned")}</option>{detail.assignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
