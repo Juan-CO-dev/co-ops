@@ -23,14 +23,15 @@ import { isShopId } from "@/lib/shop-context-shared";
 
 export interface InboundHealth {
   count: number;
-  rows: { id: string; subject: string | null; content_state: "failed" | "blocked_config" }[];
+  rows: { id: string; subject: string | null; content_state: "failed" | "blocked_config" | "skipped" }[];
 }
 
 /** Exact global count and a bounded work list, available only to MoO+. */
 export async function loadInboundHealth(actor: AuthContext): Promise<InboundHealth> {
   if (!canManageInboundAliases(actor.user.role)) throw new InboundSettingsError(403, "forbidden");
   const { data, count, error } = await getServiceRoleClient().from("inbound_messages")
-    .select("id, subject, content_state", { count: "exact" }).in("content_state", ["failed", "blocked_config"])
+    .select("id, subject, content_state", { count: "exact" })
+    .or("content_state.eq.failed,content_state.eq.blocked_config,and(content_state.eq.skipped,lane.eq.catering,route_reason.eq.catering_address)")
     .order("created_at").limit(25);
   if (error) throw new InboundSettingsError(503, "unavailable");
   return { count: count ?? 0, rows: data ?? [] };

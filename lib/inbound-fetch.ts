@@ -71,8 +71,7 @@ export async function fetchInboundContent(emailId: string, fetcher: typeof fetch
   async function api(url: string): Promise<Record<string, unknown>> {
     const response = await fetcher(url, { headers: { Authorization: `Bearer ${key}` }, redirect: "error", signal });
     if (response.status === 401 || response.status === 403) throw new Error("provider_auth");
-    // JSON can escape each input byte as six characters; retain the full permitted body.
-    const bytes = await boundedBytes(response, options?.metadataOnly ? 22 * 1024 * 1024 : INBOUND_ASSET_LIMIT * 6 + 1024 * 1024);
+    const bytes = await boundedBytes(response, options?.metadataOnly ? 22 * 1024 * 1024 : INBOUND_ASSET_LIMIT * 2 + 1024 * 1024);
     const result: unknown = JSON.parse(bytes.toString("utf8"));
     if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("resend_invalid_response");
     return result as Record<string, unknown>;
@@ -92,6 +91,9 @@ export async function fetchInboundContent(emailId: string, fetcher: typeof fetch
     bytes: bodyBytes, contentType: typeof email.text === "string" && email.text ? "text/plain" : "text/html",
   } : null;
   const attachments: FetchedAttachment[] = [];
+  // Reserve listed sizes as well as actual bytes so underreported files and
+  // a series of individually valid files cannot bypass the message budget.
+  let usedBytes = rawEml?.bytes.length ?? 0;
   if (bodyOmitted) attachments.push({ kind: "body", filename: "message.eml", contentType: "text/plain", bytes: Buffer.alloc(0), omitted: true, omissionReason: "size" });
   let cursor: string | null = null;
   const seen = new Set<string>();
@@ -108,19 +110,25 @@ export async function fetchInboundContent(emailId: string, fetcher: typeof fetch
       const contentType = typeof att.content_type === "string" ? att.content_type.split(";")[0]!.trim().toLowerCase() : "application/octet-stream";
       const omitted = (reason: "size" | "content_type") => attachments.push({ filename, contentType, bytes: Buffer.alloc(0), omitted: true, omissionReason: reason });
       if (typeof att.size !== "number" || !Number.isSafeInteger(att.size) || att.size < 0) throw new Error("resend_invalid_size");
-      if (att.size > INBOUND_ASSET_LIMIT) { omitted("size"); continue; }
+      if (usedBytes >= INBOUND_ASSET_LIMIT || att.size > INBOUND_ASSET_LIMIT - usedBytes) { omitted("size"); continue; }
       if (typeof att.download_url !== "string" || !trustedAttachmentUrl(att.download_url, emailId, att.id)) throw new Error("resend_untrusted_download");
       if (typeof att.expires_at !== "string" || !(Date.parse(att.expires_at) > Date.now())) throw new Error("resend_download_expired");
       try {
         const response = await fetcher(att.download_url, { redirect: "error", signal });
-        const bytes = await boundedBytes(response, INBOUND_ASSET_LIMIT);
+        const bytes = await boundedBytes(response, INBOUND_ASSET_LIMIT - usedBytes);
+        usedBytes += Math.max(att.size, bytes.length);
         attachments.push({ filename, contentType, bytes });
       } catch (error) {
-        if (error instanceof Error && error.message === "asset_oversize") { omitted("size"); continue; }
+        if (error instanceof Error && error.message === "asset_oversize") {
+          // The provider understated the size; bytes may already have consumed
+          // the remaining allowance before the stream was cancelled.
+          usedBytes = INBOUND_ASSET_LIMIT;
+          omitted("size"); continue;
+        }
         throw error;
       }
     }
-    if (list.has_more === false) return { rawEml, attachments, html: typeof email.text === "string" && email.text && typeof email.html === "string" ? email.html : null, headers: email.headers };
+    if (list.has_more === false) return { rawEml, attachments, html: typeof email.text === "string" && email.text && typeof email.html === "string" && email.html ? email.html : null, headers: email.headers };
     if (list.has_more !== true || list.data.length === 0) throw new Error("resend_invalid_pagination");
   }
   throw new Error("resend_attachment_page_limit");

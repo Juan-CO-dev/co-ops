@@ -16,10 +16,11 @@ const shop=uuid(), other=uuid(), vendor=uuid(), po=uuid(), delivery=uuid();
 const actors=Object.fromEntries(['gm','wrongGM','owner','moo','cgs','agm','prep_mgr','social_media_mgr','shift_lead','inactive'].map(k=>[k,uuid()]));
 const sessions=new Map();
 async function service(fn) { await db.exec('set role service_role'); try { return await fn(); } finally { await db.exec('reset role'); } }
+const machine=(sql,args=[])=>service(()=>db.query(sql,args));
 async function rpc(name,args) { return service(async()=> (await one(`select public.${name}(${args.map((_,i)=>`$${i+1}`).join(',')}) result`,args)).result); }
 const act=(id,actor,action,payload={},rev=0,request=uuid(),session=sessions.get(actor))=>rpc('vendor_mail_act',[id,rev,request,actor,session,action,payload]);
-async function message(location=shop,lane='vendor_receipt') { const id=uuid(); await db.query('insert into inbound_messages(id,provider_email_id,location_id,lane) values($1::uuid,$1::text,$2,$3)',[id,location,lane]); return id; }
-async function receipt(id,location=shop) { const rid=uuid(); await db.query("insert into email_receipts(id,source,inbound_message_id,location_id) values($1,'inbound',$2,$3)",[rid,id,location]); await db.query('update inbound_messages set email_receipt_id=$1 where id=$2',[rid,id]); return rid; }
+async function message(location=shop,lane='vendor_receipt') { const id=uuid(); await machine('insert into inbound_messages(id,provider_email_id,location_id,lane) values($1::uuid,$1::text,$2,$3)',[id,location,lane]); return id; }
+async function receipt(id,location=shop) { const rid=uuid(); await machine("insert into email_receipts(id,source,inbound_message_id,location_id) values($1,'inbound',$2,$3)",[rid,id,location]); await machine('update inbound_messages set email_receipt_id=$1 where id=$2',[rid,id]); return rid; }
 const count=async(id,type)=>(await one('select count(*)::int n from vendor_mail_events where inbound_message_id=$1 and event_type=$2',[id,type])).n;
 try {
   await db.exec(`
@@ -42,10 +43,14 @@ try {
   `);
   await db.exec(read('0294_inbound_router.sql'));
   const older=uuid(),newer=uuid(),catering=uuid();
-  await db.query("insert into inbound_messages(id,provider_email_id,lane,received_at) values($1::uuid,$1::text,'vendor_receipt','2026-11-01'),($2::uuid,$2::text,'vendor_receipt','2026-11-02'),($3::uuid,$3::text,'catering','2026-10-01')",[older,newer,catering]);
+  await machine("insert into inbound_messages(id,provider_email_id,lane,received_at) values($1::uuid,$1::text,'vendor_receipt','2026-11-01'),($2::uuid,$2::text,'vendor_receipt','2026-11-02'),($3::uuid,$3::text,'catering','2026-10-01')",[older,newer,catering]);
   await reject(()=>db.exec(migration.replace('revoke all on public.%I from public,anon,authenticated,service_role','revoke all on public.%I from anon,authenticated')),/vendor mail table privilege escape/,'broken permissive ACL variant detected');
   await db.exec('rollback');
   check((await one("select to_regclass('public.vendor_mail_events') value")).value===null,'failed migration rolls back schema');
+  await db.exec("update storage.buckets set public=true where id='receipts'");
+  await reject(()=>db.exec(migration),/exactly one private receipts bucket/,'public receipts bucket refuses migration');
+  await db.exec('rollback');
+  await db.exec("update storage.buckets set public=false where id='receipts'");
   await db.exec(migration);
   const bucket=await one("select * from storage.buckets where id='receipts'");
   check(bucket.public===false && bucket.allowed_mime_types===null && Number(bucket.file_size_limit)===41943040,'private existing bucket widened to 40 MiB with no MIME gate');
@@ -76,17 +81,23 @@ try {
   await service(()=>db.query("insert into inbound_messages(id,provider_email_id,lane,reference_code,revision,handled_by,handled_at,handled_reason,manual_location_id,manual_vendor_id) values($1::uuid,$1::text,'vendor_receipt','VM-FORGED',99,$2,now(),'forged',$3,$4)",[forged,actors.owner,shop,vendor]));
   const sanitized=await one('select reference_code,revision,handled_by,handled_at,handled_reason,manual_location_id,manual_vendor_id from inbound_messages where id=$1',[forged]);
   check(sanitized.reference_code!=='VM-FORGED' && sanitized.revision===0 && Object.entries(sanitized).filter(([key])=>!['reference_code','revision'].includes(key)).every(([,value])=>value===null),'service INSERT cannot forge human projection');
+  const routed=await message(shop,'noise');
+  check((await one('select reference_code from inbound_messages where id=$1',[routed])).reference_code===null && await count(routed,'received')===0,'noise insert has no vendor reference or received event');
+  await machine("update inbound_messages set lane='vendor_receipt',route_reason='shop_address' where id=$1",[routed]);
+  check(/^VM-/.test((await one('select reference_code from inbound_messages where id=$1',[routed])).reference_code) && await count(routed,'transport')===1,'service noise to vendor save allocates reference and transport event');
   const m=await message(); check(await count(m,'received')===1,'vendor insert creates system received event');
+  await reject(()=>machine("update inbound_messages set archive_error='storage' where id=$1",[m]),/inbound_messages_archive_error_check/,'archive error vocabulary excludes unused storage value');
   const rid=await receipt(m); check(await count(m,'receipt')===1,'receipt INSERT trigger');
-  for(const [field,value] of [['content_state','failed'],['last_error','provider_error'],['location_id',other],['email_receipt_id',null],['lane','noise'],['lane','vendor_receipt']]) { const before=await count(m,'transport'); await db.query(`update inbound_messages set ${field}=$1 where id=$2`,[value,m]); check(await count(m,'transport')===before+1,`transport trigger ${field}=${value}`); }
-  await db.query('update inbound_messages set email_receipt_id=$1,location_id=$2 where id=$3',[rid,shop,m]);
-  for(const [field,value] of [['parse_state','failed'],['location_id',other],['linked_po_id',po],['linked_delivery_id',delivery],['attribution_conflict',true]]) { const before=await count(m,'receipt'); await db.query(`update email_receipts set ${field}=$1 where id=$2`,[value,rid]); check(await count(m,'receipt')===before+1,`receipt trigger ${field}`); }
-  const cm=await message(null,'catering'); const cr=await receipt(cm,null); await db.query("update inbound_messages set content_state='failed',last_error='provider_error',location_id=$1 where id=$2",[shop,cm]); await db.query("update email_receipts set parse_state='failed',location_id=$1,linked_po_id=$2,linked_delivery_id=$3,attribution_conflict=true where id=$4",[shop,po,delivery,cr]);
+  for(const [field,value] of [['content_state','failed'],['last_error','provider_error'],['location_id',other],['email_receipt_id',null],['lane','noise'],['lane','vendor_receipt']]) { const before=await count(m,'transport'); await machine(`update inbound_messages set ${field}=$1 where id=$2`,[value,m]); check(await count(m,'transport')===before+1,`transport trigger ${field}=${value}`); }
+  await machine('update inbound_messages set email_receipt_id=$1,location_id=$2 where id=$3',[rid,shop,m]);
+  for(const [field,value] of [['parse_state','failed'],['location_id',other],['linked_po_id',po],['linked_delivery_id',delivery],['attribution_conflict',true]]) { const before=await count(m,'receipt'); await machine(`update email_receipts set ${field}=$1 where id=$2`,[value,rid]); check(await count(m,'receipt')===before+1,`receipt trigger ${field}`); }
+  const cm=await message(null,'catering'); const cr=await receipt(cm,null); await machine("update inbound_messages set content_state='failed',last_error='provider_error',location_id=$1 where id=$2",[shop,cm]); await machine("update email_receipts set parse_state='failed',location_id=$1,linked_po_id=$2,linked_delivery_id=$3,attribution_conflict=true where id=$4",[shop,po,delivery,cr]);
   check((await one('select count(*)::int n from vendor_mail_events where inbound_message_id=$1',[cm])).n===0,'all catering insert/update transitions excluded');
   check((await one('select count(*)::int n from vendor_mail_events where actor_id is not null')).n===0,'machine observations have system actor');
   const target=await message();
   const canonical=await message(shop); await receipt(canonical,null);
-  const canonicalLocation=(await one('select effective_location_id from vendor_mail_read where id=$1',[canonical])).effective_location_id;
+  const canonicalLocation=(await service(()=>one('select effective_location_id from vendor_mail_read where id=$1',[canonical]))).effective_location_id;
+  check(canonicalLocation===null,'service role selects vendor_mail_read');
   check(canonicalLocation===null && !(await one('select vendor_mail_can_access($1,$2) ok',[actors.gm,canonicalLocation])).ok,'receipt null shop overrides transport shop for GM access');
   await reject(()=>act(canonical,actors.gm,'handle',{reason:'Done'}),/forbidden/,'receipt null shop denies GM RPC');
   for(const role of ['wrongGM','inactive','agm','prep_mgr','social_media_mgr','shift_lead']) await reject(()=>act(target,actors[role],'handle',{reason:'Done'}),/forbidden/,`${role} refused`);
@@ -120,14 +131,25 @@ try {
   check(preserved.location_id===shop && preserved.vendor_guess_id===vendor && preserved.attributed_by==='manual','manual assignment survives later receipt INSERT');
   const invalidAssignment=await message(null);
   for(const payload of [{location_id:{}},{vendor_id:42},{location_id:'not-a-uuid'}]) await reject(()=>act(invalidAssignment,actors.owner,'assign',payload),/invalid_input/,'invalid assignment JSON/UUID refused');
-  const lease=await message(); await db.query('update inbound_messages set lease_token=$1 where id=$2',[uuid(),lease]);
+  const lease=await message(); await machine("update inbound_messages set lease_token=$1,next_attempt_at=clock_timestamp()+interval '1 minute' where id=$2",[uuid(),lease]);
   await reject(()=>act(lease,actors.owner,'assign',{vendor_id:vendor}),/worker_busy/,'assignment refuses worker lease');
+  await machine("update inbound_messages set next_attempt_at=clock_timestamp()-interval '1 second' where id=$1",[lease]);
+  await act(lease,actors.owner,'assign',{vendor_id:vendor}); check(true,'assignment allows expired worker lease');
+  const leasedRedrive=await message();
+  await machine("update inbound_messages set content_state='failed',lease_token=$1,next_attempt_at=clock_timestamp()+interval '1 minute' where id=$2",[uuid(),leasedRedrive]);
+  await reject(()=>act(leasedRedrive,actors.owner,'redrive'),/worker_busy/,'redrive refuses live worker lease');
+  await machine("update inbound_messages set next_attempt_at=clock_timestamp()-interval '1 second' where id=$1",[leasedRedrive]);
+  await act(leasedRedrive,actors.owner,'redrive'); check(true,'redrive allows expired worker lease');
   await reject(()=>act(m,actors.owner,'assign',{vendor_id:vendor}),/linked_evidence/,'assignment refuses linked PO/delivery');
-  const redrive=await message(); await db.query("update inbound_messages set content_state='failed',last_error='provider_error',fetch_attempts=3 where id=$1",[redrive]); const rr=uuid();
+  const redrive=await message(); await machine("update inbound_messages set content_state='failed',last_error='provider_error',fetch_attempts=3 where id=$1",[redrive]); const rr=uuid();
   await act(redrive,actors.gm,'redrive',{},0,rr); check((await act(redrive,actors.gm,'redrive',{},0,rr)).replayed,'redrive replay');
   const reset=await one('select content_state,last_error,fetch_attempts from inbound_messages where id=$1',[redrive]); check(reset.content_state==='pending' && reset.last_error===null && reset.fetch_attempts===0,'redrive resets worker state');
   const forward=await message(), claim='a'+uuid().slice(1), fbody={recipient:'recipient@example.test',sender:'sender@example.test',note:'FYI',body:'Invoice',attachments:[]};
   const callForward=(name,payload,rev,req=uuid(),actor=actors.gm)=>rpc(name,[forward,rev,req,actor,sessions.get(actor),payload]);
+  const attachment={path:'archive/file.pdf',filename:'invoice.pdf',sha256:'a'.repeat(64)};
+  await reject(()=>callForward('vendor_mail_forward_claim',{...fbody,attachments:Array(26).fill(attachment)},0),/invalid_input/,'forward claim rejects more than 25 attachments');
+  const largeAttachment={...attachment,path:'\\'.repeat(1000),filename:'\\'.repeat(255)};
+  await reject(()=>callForward('vendor_mail_forward_claim',{...fbody,note:'n'.repeat(4000),body:'b'.repeat(131072),attachments:Array(25).fill(largeAttachment)},0),/invalid_input/,'forward claim rejects payload over 200000 bytes');
   await callForward('vendor_mail_forward_claim',fbody,0,claim);
   check((await callForward('vendor_mail_forward_claim',fbody,0,claim)).replayed,'forward claim replay');
   await reject(()=>callForward('vendor_mail_forward_claim',{...fbody,body:'Changed'},0,claim),/request_conflict/,'forward claim payload conflict');
@@ -145,7 +167,7 @@ try {
   await db.exec("create function deny_vendor_event() returns trigger language plpgsql as $$ begin raise exception 'event_failure'; end $$; create trigger deny_vendor_event before insert on vendor_mail_events for each row execute function deny_vendor_event();");
   await reject(()=>act(rollback,actors.owner,'handle',{reason:'Done'}),/event_failure/,'event failure refuses human action');
   check((await one('select handled_at,revision from inbound_messages where id=$1',[rollback])).handled_at===null && (await one('select revision from inbound_messages where id=$1',[rollback])).revision===0,'event failure rolls back projection');
-  await reject(()=>db.query("update inbound_messages set content_state='failed' where id=$1",[rollback]),/event_failure/,'event failure refuses machine transition');
+  await reject(()=>machine("update inbound_messages set content_state='failed' where id=$1",[rollback]),/event_failure/,'event failure refuses machine transition');
   check((await one('select content_state from inbound_messages where id=$1',[rollback])).content_state==='pending','event failure rolls back machine state');
   console.log(`PASS 0297: ${checks} checks (single-session PGlite; concurrency requires separate sim proof)`);
 } finally { await db.close(); }

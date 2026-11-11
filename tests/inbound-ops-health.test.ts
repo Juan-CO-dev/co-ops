@@ -65,6 +65,18 @@ it("health returns failures and config blocks, excluding completed rows", async 
   expect(health.rows.map(row => row.id)).toEqual([ID, "blocked"]);
   expect(health.count).toBe(2);
 });
+it("health includes only skipped catering-address backlog and it can be redriven", async () => {
+  Object.assign(tables.inbound_messages![0]!, { lane: "catering", route_reason: "catering_address", content_state: "skipped" });
+  tables.inbound_messages!.push(
+    { id: "wrong-lane", content_state: "skipped", lane: "vendor_receipt", route_reason: "catering_address" },
+    { id: "wrong-reason", content_state: "skipped", lane: "catering", route_reason: "ambiguous" },
+    { id: "pending", content_state: "pending", lane: "catering", route_reason: "catering_address" },
+    { id: "noise", content_state: "skipped", lane: "noise", route_reason: "unknown_address" },
+  );
+  expect(await loadInboundHealth(actor("moo"))).toEqual({ count: 1, rows: [{ id: ID, subject: undefined, content_state: "skipped" }] });
+  await redriveInbound(actor("moo"), ID);
+  expect(await loadInboundHealth(actor("moo"))).toEqual({ count: 0, rows: [] });
+});
 it("route rejects cross-origin and locked step-up", async () => {
   const req = (origin: string) => new NextRequest("https://fixture.test/api/admin/inbound/redrive", { method: "POST", headers: { origin }, body: JSON.stringify({ id: ID }) });
   expect((await POST(req("https://other.test"))).status).toBe(403);

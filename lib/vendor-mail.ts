@@ -105,6 +105,17 @@ export function vendorMailAssetEntries(row: Awaited<ReturnType<typeof readVendor
   for (const [index, asset] of (row.receipt?.attachment_paths ?? []).entries()) entries.push({ ...asset, id: `attachment-${index}` });
   return entries;
 }
+/** Storage coordinates stay behind the bound asset-signing endpoint, including nested event snapshots. */
+function withoutStoragePaths(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutStoragePaths);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !/paths?$/i.test(key))
+    .map(([key, entry]) => [key, withoutStoragePaths(entry)]));
+}
+function publicParsedJson(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "reason"));
+}
 export async function getVendorMailMessage(ctx: AuthContext, id: string) {
   const row = await readVendorMailRow(ctx, id);
   const events = await selectAllRows<{ id: string; event_type: string; actor_id: string | null; revision: number; created_at: string; data: unknown }>(async (from, to) => checked(await getServiceRoleClient().from("vendor_mail_events").select("id,event_type,actor_id,revision,created_at,data").eq("inbound_message_id", id).order("created_at").order("id").range(from, to)));
@@ -122,6 +133,7 @@ export async function getVendorMailMessage(ctx: AuthContext, id: string) {
       }
     }
   }
-  return { ...summarize(row, Date.now()), ...body, parsed_json: row.receipt?.parsed_json ?? null,
-    assets: vendorMailAssetEntries(row).map(({ path, ...asset }) => ({ ...asset, available: !!path && !asset.omitted })), events };
+  return { ...summarize(row, Date.now()), ...body, parsed_json: publicParsedJson(row.receipt?.parsed_json),
+    assets: vendorMailAssetEntries(row).map(({ path, ...asset }) => ({ ...asset, available: !!path && !asset.omitted })),
+    events: events.map(event => ({ ...event, data: withoutStoragePaths(event.data) })) };
 }

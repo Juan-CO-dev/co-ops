@@ -1,4 +1,5 @@
 -- 0297: vendor mail ledger, archive and human action contracts.
+-- MERGE GATE: apply + verify 0297 in prod first; this code stores application/json assets and writes 0297 columns
 -- AUTHORED 2026-11-11. NOT APPLIED. CC review + sim proof, then Juan's approval.
 -- Sources: 0170 receipts, 0294 transport, 0296 session/replay/ACL pattern.
 -- No new bucket, storage policies, sends, recovery jobs or production data operation.
@@ -7,7 +8,12 @@
 -- triggers append observations without taking an inbound parent lock.
 -- Rollback: revert app; retain all evidence and schema. Never delete history.
 begin;
-update storage.buckets set allowed_mime_types=null, file_size_limit=41943040 where id='receipts';
+update storage.buckets set allowed_mime_types=null, file_size_limit=41943040 where id='receipts' and public=false;
+do $$ begin
+  assert (select count(*) from storage.buckets where id='receipts' and public=false
+    and allowed_mime_types is null and file_size_limit=41943040)=1,
+    'vendor mail requires exactly one private receipts bucket with the archive limits';
+end $$;
 
 create sequence public.vendor_mail_reference_seq;
 revoke all on sequence public.vendor_mail_reference_seq from public,anon,authenticated,service_role;
@@ -21,7 +27,7 @@ alter table public.inbound_messages
   add column manual_vendor_id uuid references public.vendors(id),
   add column attachment_manifest jsonb not null default '[]' check(jsonb_typeof(attachment_manifest)='array'),
   add column archive_state text not null default 'pending' check(archive_state in ('pending','complete','incomplete')),
-  add column archive_error text check(archive_error in ('size','storage','unavailable')),
+  add column archive_error text check(archive_error in ('size','unavailable')),
   add constraint vendor_mail_handled_pair check((handled_by is null)=(handled_at is null) and (handled_at is null)=(handled_reason is null));
 -- Only vendor rows require references. Catering/noise remain outside this ledger.
 do $$ declare m record; begin
@@ -187,7 +193,7 @@ begin
    if not public.vendor_mail_can_access(p_actor_id,dest) then raise exception 'forbidden'; end if;
    if dest is not null and not exists(select 1 from public.locations where id=dest and active) then raise exception 'invalid_location'; end if;
    if vendor is not null and not exists(select 1 from public.vendors where id=vendor and active) then raise exception 'invalid_vendor'; end if;
-   if m.lease_token is not null then raise exception 'worker_busy'; end if;
+   if m.lease_token is not null and m.next_attempt_at > clock_timestamp() then raise exception 'worker_busy'; end if;
    if r.linked_po_id is not null or r.linked_delivery_id is not null then raise exception 'linked_evidence'; end if;
    -- This is unattributed assignment, not a cross-shop conflict-move bypass.
    if loc is not null and dest is distinct from loc then raise exception 'already_attributed'; end if;
@@ -197,7 +203,7 @@ begin
    update public.inbound_messages set manual_location_id=dest,manual_vendor_id=vendor where id=m.id;
  elsif p_action='redrive' then
    if p_payload<>'{}'::jsonb then raise exception 'invalid_input'; end if;
-   if m.lease_token is not null then raise exception 'worker_busy'; end if;
+   if m.lease_token is not null and m.next_attempt_at > clock_timestamp() then raise exception 'worker_busy'; end if;
    if m.content_state not in ('failed','blocked_config') then raise exception 'invalid_state'; end if;
    update public.inbound_messages set content_state='pending',fetch_attempts=0,next_attempt_at=clock_timestamp(),last_error=null,lease_token=null where id=m.id;
  elsif p_action='forward_claim' then
@@ -209,6 +215,7 @@ begin
      or jsonb_typeof(p_payload->'note') is distinct from 'string' or length(p_payload->>'note')>4000
      or jsonb_typeof(p_payload->'body') is distinct from 'string' or octet_length(p_payload->>'body')>131072
      or jsonb_typeof(p_payload->'attachments') is distinct from 'array' then raise exception 'invalid_input'; end if;
+   if jsonb_array_length(p_payload->'attachments')>25 or octet_length(p_payload::text)>200000 then raise exception 'invalid_input'; end if;
    if exists(select 1 from jsonb_array_elements(p_payload->'attachments') a where jsonb_typeof(a)<>'object'
      or jsonb_typeof(a->'sha256') is distinct from 'string' or a->>'sha256' !~ '^[a-f0-9]{64}$'
      or jsonb_typeof(a->'path') is distinct from 'string' or length(a->>'path') not between 1 and 1000

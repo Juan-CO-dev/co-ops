@@ -18,5 +18,13 @@ it('0297 real-DDL vendor ledger, trigger, privilege and RPC contract proof', () 
     'invalid assignment JSON/UUID refused', 'old forward claim result replays without duplicate',
     'forward result replay fingerprints original UUID spelling', 'forward claim UUID casing cannot bypass one result',
     'concurrency requires separate sim proof',
+    'public receipts bucket refuses migration',
+    'noise insert has no vendor reference or received event',
+    'service noise to vendor save allocates reference and transport event',
+    'service role selects vendor_mail_read',
+    'assignment allows expired worker lease', 'redrive refuses live worker lease',
+    'redrive allows expired worker lease',
+    'forward claim rejects more than 25 attachments', 'forward claim rejects payload over 200000 bytes',
+    'archive error vocabulary excludes unused storage value',
   ]) expect(output).toContain(pin);
 }, 250_000);

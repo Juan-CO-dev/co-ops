@@ -111,6 +111,12 @@ describe("actual inbound receipt storage writer", () => {
     expect(JSON.parse(read("headers.json"))).toEqual({ "message-id": "<id>", subject: "Invoice" });
     expect(assets.find(a => a.filename === "unknown.bin")?.path).toEqual(expect.any(String));
   });
+  it("does not archive an empty HTML body", async () => {
+    const state = storageService();
+    await ingestInboundReceipt({ ...input(), html: "" });
+    expect(state.upload).toHaveBeenCalledTimes(3);
+    expect(state.rows[0]!.attachment_paths).not.toContainEqual(expect.objectContaining({ filename: "message.html" }));
+  });
   it("replays a stored email without another upload or receipt insert", async () => {
     const state = storageService();
     await ingestInboundReceipt(input());

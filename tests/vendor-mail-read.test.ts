@@ -35,7 +35,7 @@ function setup(rows: Row[] = [], role: RoleCode = "gm", freshRole: RoleCode = ro
   } });
   sign.mockResolvedValue({ data: { signedUrl: "https://private.example/asset" }, error: null });
   download.mockResolvedValue({ data: new Blob(["<p>Invoice</p><blockquote>Quoted order</blockquote><script>bad()</script>"], { type: "text/html" }), error: null });
-  return { ctx: { user: { id, role, active: true }, session: { id } } as unknown as AuthContext, calls };
+  return { ctx: { user: { id, role, active: true }, session: { id } } as unknown as AuthContext, calls, tables };
 }
 beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-11T12:00:00Z")); });
 afterEach(() => vi.useRealTimers());
@@ -108,6 +108,15 @@ describe("vendor mail projections", () => {
   });
 });
 describe("private asset signing", () => {
+  it("removes nested event storage paths and raw parse failures from detail", async () => {
+    const { ctx, tables } = setup([message({ receipt: { parsed_json: { reason: "api_error: private provider detail", extraction: { docKind: "invoice" } }, attachment_paths: [] } })]);
+    tables.vendor_mail_events![0]!.data = { attachments: [{ path: "private/key", filename: "invoice.pdf" }], before: { raw_storage_path: "secret", storagePath: "secret", attachment_paths: ["secret"], content_state: "pending" } };
+    const detail = await getVendorMailMessage(ctx, id);
+    expect(detail.failure_code).toBe("api_error");
+    expect(detail.parsed_json).toEqual({ extraction: { docKind: "invoice" } });
+    expect(detail.events[0]!.data).toEqual({ attachments: [{ filename: "invoice.pdf" }], before: { content_state: "pending" } });
+    expect(JSON.stringify(detail)).not.toContain("private provider detail");
+  });
   it("uses only bound stored asset IDs, signs for 60s and downloads HTML", async () => {
     const { ctx } = setup([message({ receipt: { raw_storage_path: "shop/raw/message.txt", attachment_paths: [{ filename: "message.html", contentType: "text/html", path: "shop/html/message.html" }, { filename: "large.zip", contentType: "application/zip", path: null, omitted: true }] } })]);
     expect((await signVendorMailAsset(ctx, id, "attachment-0")).expires_in).toBe(60);

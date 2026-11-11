@@ -67,6 +67,53 @@ describe("inbound receiving API", () => {
     expect(content.attachments.map(a => [a.omitted, a.omissionReason, a.bytes.length])).toEqual([[true, "size", 0]]);
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+  it("reserves listed attachment sizes against one message budget before downloading", async () => {
+    const fetcher = mockFetch([attachment({ size: 30 * 1024 * 1024 }),
+      attachment({ id: "second", filename: "second.pdf", size: 11 * 1024 * 1024 })]);
+    const content = await fetchInboundContent(emailId, fetcher);
+    expect(content.attachments[0]?.omitted).toBeUndefined();
+    expect(content.attachments[1]).toMatchObject({ filename: "second.pdf", omitted: true, omissionReason: "size", bytes: Buffer.alloc(0) });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+  it("counts actual bytes when they exceed the listed size before the next download", async () => {
+    const fetcher = mockFetch([attachment({ size: 1 }),
+      attachment({ id: "second", size: INBOUND_ASSET_LIMIT - Buffer.byteLength("Invoice body") - 2 })]);
+    const content = await fetchInboundContent(emailId, fetcher);
+    expect(content.attachments[0]?.bytes.length).toBe(3);
+    expect(content.attachments[1]).toMatchObject({ omitted: true, omissionReason: "size" });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+  it("bounds actual streamed bytes by the remaining message budget", async () => {
+    const fetcher = mockFetch([attachment({ size: INBOUND_ASSET_LIMIT - Buffer.byteLength("Invoice body") - 2 }),
+      attachment({ id: "second", size: 1, download_url: "https://inbound-cdn.resend.com/fixture-message/attachments/second" }),
+      attachment({ id: "third", size: 0 })])
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3])));
+    const content = await fetchInboundContent(emailId, fetcher);
+    expect(content.attachments[0]?.omitted).toBeUndefined();
+    expect(content.attachments[1]).toMatchObject({ omitted: true, omissionReason: "size", bytes: Buffer.alloc(0) });
+    expect(content.attachments[2]).toMatchObject({ omitted: true, omissionReason: "size", bytes: Buffer.alloc(0) });
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+  it("includes the message body in the aggregate budget", async () => {
+    const fetcher = mockFetch([attachment({ size: INBOUND_ASSET_LIMIT })]);
+    const content = await fetchInboundContent(emailId, fetcher);
+    expect(content.attachments[0]).toMatchObject({ omitted: true, omissionReason: "size" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it.each([false, true])("caps vendor JSON at twice the asset limit plus 1 MiB (listing=%s)", async listing => {
+    const oversized = new Response(null, { headers: { "content-length": String(2 * INBOUND_ASSET_LIMIT + 1024 * 1024 + 1) } });
+    const fetcher = vi.fn<typeof fetch>();
+    if (listing) fetcher.mockResolvedValueOnce(Response.json({ id: emailId, text: "Body" }));
+    fetcher.mockResolvedValueOnce(oversized);
+    await expect(fetchInboundContent(emailId, fetcher)).rejects.toThrow("asset_oversize");
+    expect(fetcher).toHaveBeenCalledTimes(listing ? 2 : 1);
+  });
+  it("keeps catering metadataOnly's 22 MiB cap", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(null,
+      { headers: { "content-length": String(22 * 1024 * 1024 + 1) } }));
+    await expect(fetchInboundContent(emailId, fetcher, { metadataOnly: true })).rejects.toThrow("asset_oversize");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it.each(["application/octet-stream", "application/x-executable", "text/csv", "application/vnd.ms-excel"])("fetches every type: %s", async content_type => {
     const content = await fetchInboundContent(emailId, mockFetch([attachment({ content_type })]));
     expect(content.attachments[0]).toMatchObject({ contentType: content_type, bytes: Buffer.from([1, 2, 3]) });
@@ -79,6 +126,11 @@ describe("inbound receiving API", () => {
     expect(content.rawEml?.bytes.toString()).toBe("Text");
     expect(content.html).toBe("<p>HTML</p>");
     expect(content.headers).toEqual({ "Message-ID": "<id>" });
+  });
+  it("does not return an empty HTML archive extra", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ id: emailId, text: "Text", html: "" }))
+      .mockResolvedValueOnce(Response.json({ data: [], has_more: false }));
+    expect((await fetchInboundContent(emailId, fetcher)).html).toBeNull();
   });
   it("does not omit an allowed asset above the former 20 MiB aggregate ceiling", async () => {
     const content = await fetchInboundContent(emailId, mockFetch([attachment({ size: 21 * 1024 * 1024 })]));

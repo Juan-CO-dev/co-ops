@@ -243,7 +243,7 @@ export async function ingestInboundReceipt(input: InboundReceiptInput): Promise<
     }
   }
   const archiveAssets: InboundReceiptInput["attachments"] = (input.attachments ?? []).map(att => ({ ...att, kind: att.kind ?? "attachment" }));
-  if (input.html != null) archiveAssets.push({ kind: "body", filename: "message.html", contentType: "text/html", bytes: Buffer.from(input.html, "utf8") });
+  if (input.html) archiveAssets.push({ kind: "body", filename: "message.html", contentType: "text/html", bytes: Buffer.from(input.html, "utf8") });
   archiveAssets.push({ kind: "headers", filename: "headers.json", contentType: "application/json", bytes: Buffer.from(JSON.stringify(archiveHeaders(input.headers)), "utf8") });
   for (const att of archiveAssets) {
     if (att.omitted || att.bytes.byteLength > INBOUND_ASSET_LIMIT) {
