@@ -15,8 +15,10 @@ import {
   normalizeUsers,
   REJECT_REASONS,
   rejectionHistogram,
+  normalizeWages,
   type Rejected,
 } from "@/lib/sevenshifts/normalize-shared";
+import { wagesSnapshot } from "@/lib/sevenshifts/paginate-shared";
 
 const timeOffRows = Object.values(TIME_OFF_SHAPES);
 const availabilityRows = Object.values(AVAILABILITY_SHAPES);
@@ -122,6 +124,36 @@ describe("availability — every real-world shape lands", () => {
     expect(normalizeAvailabilities([{ ...AVAILABILITY_SHAPES.oneOffWeek, week: "2026-11-16T05:00:00Z" }]).rejected[0]!.reason).toBe("bad_date");
     expect(normalizeAvailabilities([{ ...AVAILABILITY_SHAPES.oneOffWeek, mon_to: "24:30" }]).rejected[0]!.reason).toBe("bad_time");
     expect(normalizeAvailabilities([{ ...AVAILABILITY_SHAPES.oneOffWeek, modified: "yesterday" }]).rejected[0]!.reason).toBe("bad_instant");
+  });
+
+  it("review P3: the clock and the offset are validated BEFORE they are set aside — never through UTC", () => {
+    const d = (v: string) => normalizeTimeOff([{ ...TIME_OFF_SHAPES.partialDay, from_date: v }]);
+    const w = (v: string) => normalizeAvailabilities([{ ...AVAILABILITY_SHAPES.oneOffWeek, week: v }]);
+    for (const bad of ["2026-11-20 99:99:99", "2026-11-20 24:00:00", "2026-11-20 23:60:00", "2026-11-20 23:59:60", "2026-11-20T00:00:00+99:99",
+      "2026-11-20T00:00:00+15:00", "2026-11-20T00:00:00+14:30", "2026-11-20T00:00:00-14:01", "2026-11-20T00:00:00+0a:00", "2026-11-20T00:00:00+5:00"]) {
+      expect(d(bad).rejected, bad).toEqual([{ index: 0, reason: "bad_date" }]);
+      expect(w(bad).rejected, bad).toEqual([{ index: 0, reason: "bad_date" }]);
+    }
+    // A zoneless clock (midnight or not) is the wall clock of that date; a zoned midnight needs a real offset.
+    for (const ok of ["2026-11-20 23:59:59", "2026-11-20 00:00", "2026-11-20T00:00", "2026-11-20T00:00:00+14:00", "2026-11-20T00:00:00-12:00", "2026-11-20T00:00:00.000-00:30", "2026-11-20T00:00:00+0530"]) {
+      expect(d(ok).rows[0]?.from_date, ok).toBe("2026-11-20");
+      expect(w(ok).rows[0]?.week, ok).toBe("2026-11-20");
+    }
+    expect(normalizeTimeOff([{ ...TIME_OFF_SHAPES.partialDay, partial_from: "2026-02-30 09:00:00" }]).rejected[0]!.reason).toBe("bad_time");
+  });
+
+  it("review P2: users' hire_date and wages' effective_date stay STRICT YYYY-MM-DD — a wall clock or a zoned midnight is refused as at baseline", () => {
+    const u = (hire_date: string) => normalizeUsers([{ id: 1, company_id: 2, active: true, hire_date }]);
+    expect(u("2026-11-20").rows[0]!.hire_date).toBe("2026-11-20");
+    for (const bad of ["2026-11-20 19:30:00", "2026-11-20 00:00:00", "2026-11-20T00:00:00Z", "2026-11-20T00:00:00-05:00", "20/11/2026"]) {
+      expect(u(bad).rejected, bad).toEqual([{ index: 0, reason: "bad_date" }]);
+    }
+    const snap = (effective_date: string) => wagesSnapshot({ data: { current_wages: [{ id: 61, effective_date, role_id: null, wage_type: "hourly", wage_cents: 1650 }], upcoming_wages: [] } });
+    const wage = (effective_date: string) => { const r = snap(effective_date); if (!r.ok) throw new Error("fixture"); return normalizeWages("501", r.value); };
+    expect(wage("2026-09-01").rows[0]!.effective_date).toBe("2026-09-01");
+    for (const bad of ["2026-09-01 00:00:00", "2026-09-01T00:00:00Z", "2026-09-01 19:30:00"]) {
+      expect(wage(bad).rejected, bad).toEqual([{ index: 0, reason: "bad_date", part: "current_wages" }]);
+    }
   });
 
   it("the strict instant rule still holds where it must: shifts and users never read a zoneless clock", () => {

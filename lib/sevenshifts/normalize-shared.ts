@@ -18,9 +18,11 @@
  * `from_date` / `to_date` / `created` and availability `week` / `week_to` / `modified` as bare
  * strings (reference/gettimeofflist, reference/listavailabilities). Those are CALENDAR DATES and WALL
  * TIMES in the shop's day, never instants, so they are read as such and NEVER coerced into UTC:
- *   · a date accepts `YYYY-MM-DD`, a zoneless `YYYY-MM-DD[ T]HH:MM:SS` (the wall date is kept) and a
- *     zoned value ONLY at midnight (a date serialized as a timestamp); a zoned non-midnight value is
- *     `bad_date` — its wall date would depend on a zone we do not know;
+ *   · a time-off / availability date accepts `YYYY-MM-DD`, a zoneless `YYYY-MM-DD[ T]HH:MM:SS` (the wall
+ *     date is kept; the clock must be a real one) and a zoned value ONLY at midnight with a real offset
+ *     (a date serialized as a timestamp); a zoned non-midnight value is `bad_date` — its wall date would
+ *     depend on a zone we do not know. Users' `hire_date` and wages' `effective_date` stay STRICT
+ *     `YYYY-MM-DD` (unchanged from the baseline);
  *   · a time accepts `H:MM`, `HH:MM`, `HH:MM:SS(.f)` (re-emitted `HH:MM:SS`) and the time part of a
  *     zoneless datetime; a zoned datetime is `bad_time`;
  *   · a code (status, a day's availability code) accepts an integer or a digit string;
@@ -189,25 +191,61 @@ function calendarDay(d: string): boolean {
   return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === d;
 }
 /**
- * A calendar date, kept as a date. A zoneless clock is the wall clock of that date and is dropped; a
- * zoned clock is accepted only at midnight (a date serialized as a timestamp, any offset) — otherwise
- * the wall date would depend on a zone this normalizer does not know, so it is `bad_date`.
+ * THE STRICT DATE (users `hire_date`, wages `effective_date`): exactly `YYYY-MM-DD`, as it always was.
+ * These fields are `format: date` in 7shifts' OAS and synced fine; the tolerant parser below is for the
+ * two resources whose dates arrive as bare strings and MUST NOT loosen these (review round, P2).
  */
-function dateOf(v: unknown): string {
+const STRICT_DATE = /^\d{4}-\d{2}-\d{2}$/;
+function strictDateOf(v: unknown): string {
+  if (typeof v !== "string" || !STRICT_DATE.test(v) || Number.isNaN(Date.parse(`${v}T00:00:00Z`))) throw new Reject("bad_date");
+  return v;
+}
+function reqDate(o: Obj, k: string): string {
+  if (absent(o[k])) throw new Reject("missing_field");
+  return strictDateOf(o[k]);
+}
+function optDate(o: Obj, k: string): string | null {
+  return absent(o[k]) || o[k] === "" ? null : strictDateOf(o[k]);
+}
+/** A clock of a date field is a real wall clock: 00–23 h, 00–59 min, 00–59 s (fraction free). */
+function clockOk(clock: string): boolean {
+  const m = /^(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?$/.exec(clock);
+  if (!m) return false;
+  return Number(m[1]) <= 23 && Number(m[2]) <= 59 && (m[3] === undefined || Number(m[3]) <= 59);
+}
+/** `Z`, or an offset within ±14:00 with 00–59 minutes (the real-world UTC offset range). */
+function offsetOk(zone: string): boolean {
+  if (zone === "Z") return true;
+  const m = /^[+-](\d{2}):?(\d{2})$/.exec(zone);
+  if (!m) return false;
+  const h = Number(m[1]);
+  const mi = Number(m[2]);
+  return h <= 14 && mi <= 59 && !(h === 14 && mi > 0);
+}
+/**
+ * THE TOLERANT DATE (time-off `from_date` / `to_date`, availability `week` / `week_to` ONLY), kept as a
+ * date. The clock and the offset are VALIDATED before they are set aside (review round, P3): a zoneless
+ * clock is the wall clock of that date and is dropped; a zoned clock is accepted only at midnight (a date
+ * serialized as a timestamp, any real offset) — otherwise the wall date would depend on a zone this
+ * normalizer does not know, so it is `bad_date`. Nothing is converted through UTC.
+ */
+function wallDateOf(v: unknown): string {
   if (typeof v !== "string") throw new Reject("bad_date");
   const m = DATE_SHAPE.exec(v.trim());
   if (!m) throw new Reject("bad_date");
   const [, d, clock, zone] = m;
   if (!calendarDay(d!)) throw new Reject("bad_date");
+  if (clock !== undefined && !clockOk(clock)) throw new Reject("bad_date");
+  if (zone !== undefined && !offsetOk(zone)) throw new Reject("bad_date");
   if (zone !== undefined && clock !== undefined && !/^00:00(:00(\.0+)?)?$/.test(clock)) throw new Reject("bad_date");
   return d!;
 }
-function reqDate(o: Obj, k: string): string {
+function reqWallDate(o: Obj, k: string): string {
   if (absent(o[k])) throw new Reject("missing_field");
-  return dateOf(o[k]);
+  return wallDateOf(o[k]);
 }
-function optDate(o: Obj, k: string): string | null {
-  return absent(o[k]) || o[k] === "" ? null : dateOf(o[k]);
+function optWallDate(o: Obj, k: string): string | null {
+  return absent(o[k]) || o[k] === "" ? null : wallDateOf(o[k]);
 }
 /** A wall time re-emitted `HH:MM:SS`; the time part of a zoneless datetime counts; a zoned one is `bad_time`. */
 function timeOf(v: unknown): string {
@@ -215,7 +253,8 @@ function timeOf(v: unknown): string {
   let s = v.trim();
   const dt = DATE_SHAPE.exec(s);
   if (dt) {
-    if (dt[2] === undefined || dt[3] !== undefined) throw new Reject("bad_time");
+    // The time part of a zoneless datetime; a zoned one (or a bare date) is not a wall time.
+    if (dt[2] === undefined || dt[3] !== undefined || !calendarDay(dt[1]!)) throw new Reject("bad_time");
     s = dt[2];
   }
   const m = TIME_SHAPE.exec(s);
@@ -437,8 +476,8 @@ export function normalizeAvailabilities(input: readonly unknown[]): Normalized<A
     return {
       id: reqId(o, "id"),
       user_id: reqId(o, "user_id"),
-      week: optDate(o, "week"),
-      week_to: optDate(o, "week_to"),
+      week: optWallDate(o, "week"),
+      week_to: optWallDate(o, "week_to"),
       repeating: optFlag(o, "repeat"),
       status: optCode(o, "status"),
       days,
@@ -458,8 +497,8 @@ export function normalizeTimeOff(input: readonly unknown[]): Normalized<TimeOffR
   return each(input, (o) => ({
     id: reqId(o, "id"),
     user_id: reqId(o, "user_id"),
-    from_date: reqDate(o, "from_date"),
-    to_date: reqDate(o, "to_date"),
+    from_date: reqWallDate(o, "from_date"),
+    to_date: reqWallDate(o, "to_date"),
     partial: optFlag(o, "partial"),
     from_time: optTime(o, "partial_from"),
     to_time: optTime(o, "partial_to"),
