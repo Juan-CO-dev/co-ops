@@ -1,5 +1,6 @@
 -- Migration 0301_sevenshifts_per_shop_links
--- AUTHORED 2026-11-11. APPLIED: SIM 20261111215443 (2026-11-11; dry run + verify clean). PROD: NOT YET (Juan-gated; AFTER 0269; prod read-only preflight 11-11: 0269 index set present, 0 collisions).
+-- AUTHORED 2026-11-11. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0269).
+-- APPLIED TO SIM 2026-11-11 (schema_migrations version 20261111215443, name '0301_sevenshifts_per_shop_links'; dry run + verify clean; prod read-only preflight 11-11: 0269 index set present, 0 collisions).
 -- Provenance: Juan's ruling 2026-11-11 — each shop is its own LLC, so one employee can hold a SEPARATE
 --   7shifts account per shop, while a few accounts (the owner, the catering manager, the ops director)
 --   are ONE 7shifts account assigned to BOTH 7shifts locations. CO-OPS must therefore allow ONE CO-OPS
