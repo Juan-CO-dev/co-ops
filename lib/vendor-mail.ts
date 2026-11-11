@@ -118,7 +118,7 @@ function publicParsedJson(value: unknown): unknown {
 }
 export async function getVendorMailMessage(ctx: AuthContext, id: string) {
   const row = await readVendorMailRow(ctx, id);
-  const events = await selectAllRows<{ id: string; event_type: string; actor_id: string | null; revision: number; created_at: string; data: unknown }>(async (from, to) => checked(await getServiceRoleClient().from("vendor_mail_events").select("id,event_type,actor_id,revision,created_at,data").eq("inbound_message_id", id).order("created_at").order("id").range(from, to)));
+  const events = await selectAllRows<{ id: string; event_type: string; actor_id: string | null; request_id: string | null; revision: number; created_at: string; data: unknown }>(async (from, to) => checked(await getServiceRoleClient().from("vendor_mail_events").select("id,event_type,actor_id,request_id,revision,created_at,data").eq("inbound_message_id", id).order("created_at").order("id").range(from, to)));
   let body: { body_text: string; body_from_html: boolean; body_truncated: boolean; body_state: "available" | "missing" | "unavailable" | "unsupported" } = { body_text: "", body_from_html: false, body_truncated: false, body_state: "missing" };
   if (row.receipt?.raw_storage_path) {
     const { data, error } = await getServiceRoleClient().storage.from("receipts").download(row.receipt.raw_storage_path);

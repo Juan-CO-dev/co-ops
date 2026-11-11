@@ -40,6 +40,7 @@ import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operat
  * weighed the SKU. `disposeAvgFold` (lib/receiving-shared.ts) is the one place
  * that policy lives; the long why is in its comment block.
  */
+import { attemptReceivingAutoLink } from "@/lib/email-receipts";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
@@ -680,6 +681,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     }
   }
 
+  await attemptReceivingAutoLink(header.id);
   return { deliveryId: header.id, resolvedCredits, skippedCredits, creditClosureError };
 }
 
@@ -1319,6 +1321,7 @@ export async function addDeliveryLines(
     ipAddress: null, userAgent: null,
   });
 
+  await attemptReceivingAutoLink(h.id);
   return { added: lines.length };
 }
 
@@ -1365,6 +1368,7 @@ export async function completeDelivery(actor: AuthContext, deliveryId: string): 
   if (h.purchase_order_id) {
     await advanceToReceived(sb, h.purchase_order_id);
   }
+  await attemptReceivingAutoLink(deliveryId);
 }
 
 /**
@@ -1446,5 +1450,6 @@ export async function attachDeliveryReceipt(
     ipAddress: null, userAgent: null,
   });
 
+  await attemptReceivingAutoLink(deliveryId);
   return { receiptUrl };
 }

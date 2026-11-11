@@ -7,6 +7,7 @@ import { loadCreditsForDelivery, CreditError } from "@/lib/credits";
 import {
   loadReceiptForDelivery,
   listUnlinkedReceipts,
+  loadReceivingReceiptCandidates,
   EmailReceiptError,
 } from "@/lib/email-receipts";
 import { BackLink } from "@/components/nav/BackLink";
@@ -16,7 +17,7 @@ import { VendorClaimPanel } from "@/components/receiving/VendorClaimPanel";
 import { ReceiptAttachPanel } from "@/components/receiving/ReceiptAttachPanel";
 import type { DeliveryDetail } from "@/lib/receiving";
 import type { CreditRow } from "@/lib/credits";
-import type { DeliveryReceiptView, UnlinkedReceiptView } from "@/lib/email-receipts";
+import type { DeliveryReceiptView, UnlinkedReceiptView, ReceivingInvoiceCandidate } from "@/lib/email-receipts";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 /** Per-line discrepancy flag → its i18n label key (shared with the door form flags). */
@@ -61,9 +62,13 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
   // (the panel keeps that list default-collapsed per the disclosure doctrine). When a
   // receipt IS linked, the queue is irrelevant → don't spend the query.
   let unlinked: UnlinkedReceiptView[] = [];
+  let invoiceCandidates: ReceivingInvoiceCandidate[] = [];
   if (receipt === null) {
     try {
-      unlinked = await listUnlinkedReceipts(auth, detail.locationId);
+      [unlinked, invoiceCandidates] = await Promise.all([
+        listUnlinkedReceipts(auth, detail.locationId),
+        loadReceivingReceiptCandidates(auth, id),
+      ]);
     } catch (e) {
       if (e instanceof EmailReceiptError) redirect("/dashboard");
       throw e;
@@ -172,6 +177,7 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
         countedSummary={countedSummary}
         matchState={detail.matchState}
         unlinked={unlinked}
+        invoiceCandidates={invoiceCandidates}
         lang={lang}
       />
 

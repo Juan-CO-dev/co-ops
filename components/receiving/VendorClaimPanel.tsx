@@ -39,8 +39,9 @@ import { ActionButton } from "@/components/ActionButton";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { DeliveryReceiptView, UnlinkedReceiptView, ReceiptAsset, PoAttachCandidate } from "@/lib/email-receipts";
+import type { DeliveryReceiptView, UnlinkedReceiptView, ReceiptAsset, PoAttachCandidate, ReceivingInvoiceCandidate } from "@/lib/email-receipts";
 import type { DeliveryMatchState } from "@/lib/receiving";
+import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { etDisplayDate } from "@/lib/operational-day";
 
 /** Mirror of lib/email-receipts.ts RECEIPT_OVERRIDE_MIN (server-only module). */
@@ -445,6 +446,7 @@ export function VendorClaimPanel({
   countedSummary,
   matchState,
   unlinked,
+  invoiceCandidates = [],
 }: {
   deliveryId: string;
   locationId: string;
@@ -455,11 +457,12 @@ export function VendorClaimPanel({
   /** The location's unlinked receipts — only populated (server-side) when this delivery
    *  has NO linked receipt. Empty/undefined otherwise. */
   unlinked?: UnlinkedReceiptView[];
+  invoiceCandidates?: ReceivingInvoiceCandidate[];
   /** Optional server-passed language; the island reads live via useTranslation (matching
    *  the CreditResolveControls idiom), so this is accepted but unused. */
   lang?: string;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const router = useRouter();
   const canOverride = actorLevel >= RECEIPT_OVERRIDE_MIN;
 
@@ -717,6 +720,27 @@ export function VendorClaimPanel({
         // ── UNLINKED: attach + link-existing ────────────────────────────────────────
         <div className="mt-2 flex flex-col gap-3">
           <p className="text-[11px] text-co-text-dim">{t("receiving.claim.no_receipt_hint")}</p>
+
+          {invoiceCandidates.length > 1 ? (
+            <div className="rounded-lg border-2 border-co-warning bg-co-warning-surface p-3">
+              <p className="text-sm font-bold">{t("receiving.claim.pick_invoice")}</p>
+              <ul className="mt-2 flex flex-col gap-2">
+                {invoiceCandidates.map(r => (
+                  <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-co-surface p-3">
+                    <div className="min-w-0 flex-1 break-words text-sm">
+                      <p className="font-semibold">{r.subject || t("receiving.claim.link_no_subject")}</p>
+                      <p>{r.fromAddress}</p>
+                      <p className="text-xs">{formatDateLabel(etDisplayDate(r.receivedAt), language)} {formatTime(r.receivedAt, language)}</p>
+                    </div>
+                    <ActionButton disabled={busy} onClick={() => void linkReceipt(r.id)}>
+                      {t("receiving.claim.link_action")}
+                    </ActionButton>
+                  </li>
+                ))}
+              </ul>
+              {err ? <p role="alert" className="mt-2 text-xs text-co-cta-text">{err}</p> : null}
+            </div>
+          ) : null}
 
           {/* Attach an emailed/paper receipt (POST multipart). */}
           <div className="rounded-lg border-2 border-co-border-2 bg-co-surface p-3">
