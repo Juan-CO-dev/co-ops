@@ -1,6 +1,6 @@
 -- 0297: vendor mail ledger, archive and human action contracts.
 -- MERGE GATE: apply + verify 0297 in prod first; this code stores application/json assets and writes 0297 columns
--- AUTHORED 2026-11-11. NOT APPLIED. CC review + sim proof, then Juan's approval.
+-- AUTHORED 2026-11-11. APPLIED: SIM 20261111190626 (2026-11-11; dry run + verify clean). PROD: NOT YET (Juan-gated; MUST precede merge).
 -- Sources: 0170 receipts, 0294 transport, 0296 session/replay/ACL pattern.
 -- No new bucket, storage policies, sends, recovery jobs or production data operation.
 -- 40 MiB fallback: receiving ceiling could not be verified in provider docs.

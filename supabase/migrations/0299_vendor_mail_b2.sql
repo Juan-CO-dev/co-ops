@@ -1,5 +1,5 @@
 -- Vendor mail build 2: immutable body SHA-256 claim snapshot.
--- AUTHORED, NOT APPLIED. Apply after 0297; no table/grant changes.
+-- AUTHORED 2026-11-11. APPLIED: SIM 20261111201328 (2026-11-11; dry run + verify clean). PROD: NOT YET (Juan-gated; after 0297, before merge).
 create or replace function public.vendor_mail_mutate(p_message_id uuid,p_expected_revision integer,p_request_id uuid,
  p_actor_id uuid,p_session_id uuid,p_action text,p_payload jsonb) returns jsonb
 language plpgsql security definer set search_path=pg_catalog,public as $$
