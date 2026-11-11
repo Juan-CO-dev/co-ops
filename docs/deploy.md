@@ -65,3 +65,33 @@ Each Production step requires Juan's OK and a redeploy; nothing is activated by 
 7. Production `LANDING_CAPI_ENABLED=true` last, then record `capi_on`. Verify Browser + Server received, all D6 checks, and test rollback once: `LANDING_CAPI_ENABLED=false` plus redeploy. Restore only with Juan's approval and repeat proof before spend.
 
 D6 includes recorded rules, phases a-g, CC review/Juan approval, `landingRateLimit(env)==='allowed'`, matching Pixel IDs, token present, v25.0, no Production test code, approved UA, three-event Preview dedup, Production Browser + Server, zero Meta requests for reject/withdraw/DNT/GPC, staff isolation and tested rollback. Values remain private; the scorecard shows booleans. EMQ is accepted as-is: never add IP, email or phone. Follow the [nine-step sitting runbook](runbooks/landing-go-live.md).
+
+
+## Three-host identity (2026-11-11; supersedes D4 host values above)
+
+Staff: `https://complimentsonlyoperations.com`. Landing: `https://eat.complimentsonlyoperations.com`.
+Customer catering portal: `https://catering.complimentsonlyoperations.com`.
+Configure the existing `STAFF_ORIGIN`, `LANDING_HOSTS`, and `SITE_ORIGIN` to those staff/landing identities.
+The portal ships OFF. Enable with:
+
+```text
+PORTAL_HOSTS=catering.complimentsonlyoperations.com
+PORTAL_ORIGIN=https://catering.complimentsonlyoperations.com
+```
+
+Hosts are exact lowercase names (comma separated, no ports/wildcards); the origin is HTTPS with no path,
+trailing slash, query, credentials, or fragment, matching SITE_ORIGIN validation. Keep lists disjoint:
+a both-listed host classifies as staff. Set both portal variables together; invalid portal configuration
+on a listed portal authority returns an empty 404. Keep NEXT_PUBLIC_APP_URL for legacy staff links.
+
+Smoke after redeploy: portal `/` redirects to `/order/start`; intake, magic-link email/consume, account,
+build, draft save/preview/submit, quote and checkout return all work on portal. Confirm POST Origin
+matches the portal host, customer cookie has no Domain attribute, and a staff cookie alone cannot
+sign in a customer. Check noindex headers on portal pages, APIs, redirects and 404s; staff login,
+`/admin`, `/api/admin`, `/api/locations`, `/api/landing`, cron and webhooks return empty 404 there.
+Check static assets/maps, unchanged landing navigation and staff login, and old `/order/verify` links
+on staff. Sessions are host-only: switching hosts requires a fresh customer sign-in.
+
+Rollback: unset PORTAL_HOSTS and PORTAL_ORIGIN, redeploy, and verify legacy staff `/order` flows.
+Unset-env routing is exactly the old staff/landing routing; remove the catering domain from the
+app's deployment aliases too if it must not expose the default staff app after rollback.

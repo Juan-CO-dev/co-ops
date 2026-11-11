@@ -12,6 +12,7 @@
  * email layer).
  */
 
+import { portalOrigin } from "@/lib/portal/origin-shared";
 import { renderEmailLayout, appUrl, escapeHtml } from "./_layout";
 
 function centsToUsd(cents: number): string {
@@ -36,7 +37,7 @@ export function renderOrderConfirmationEmail(input: OrderConfirmationInput): str
       <p style="margin:0 0 16px;">Estimated total: <strong>${total}</strong>. A <strong>${deposit}</strong> deposit reserves the date.</p>
       <p style="margin:0;">We'll confirm within about 24 hours. If we're not able to do your date, your deposit is refunded in full.</p>
     `,
-    cta: { label: "VIEW YOUR ORDER", url: appUrl() },
+    cta: { label: "VIEW YOUR ORDER", url: portalOrigin({ PORTAL_ORIGIN: process.env.PORTAL_ORIGIN }) ?? appUrl() },
     footerNote:
       "This is a request, not a confirmed booking — we'll be in touch shortly to confirm the details.",
   });

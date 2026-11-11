@@ -3,7 +3,7 @@ import { verifyJwt } from './lib/auth';
 import { loadLandingConfig } from './lib/landing/config';
 import { landingIndexable } from './lib/landing/indexing-shared';
 import { resolveLandingLanguage } from './lib/landing/language-shared';
-import { classifyLandingHost, configuredOrigin, parseAuthority, landingPathDecision, isLandingAsset } from './lib/landing/host-shared';
+import { classifyLandingHost, configuredOrigin, parseAuthority, landingPathDecision, isLandingAsset, hostEntries, portalPathDecision } from './lib/landing/host-shared';
 import { LANDING_SECURITY_HEADERS, SECURITY_HEADERS } from './lib/security-headers';
 
 const PUBLIC_PATHS = new Set(['/', '/verify', '/reset-password', '/api/auth/pin', '/api/auth/password', '/api/auth/logout', '/api/auth/verify', '/api/auth/password-reset-request', '/api/auth/password-reset', '/api/locations', '/api/users/login-options', '/order']);
@@ -40,6 +40,28 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   const rawHostname = (rawAuthority && /^\[[^\]]+\](?::\d+)?$/.test(rawAuthority)
     ? rawAuthority.replace(/\]:\d+$/, ']')
     : rawAuthority?.replace(/:[^:]*$/, ''))?.replace(/\.$/, '');
+  // Listed portal authorities never fall through to staff authentication on malformed
+  // origin/authority or forwarded-host disagreement. An explicit overlap is staff.
+  const portalHosts = hostEntries(landingConfig.PORTAL_HOSTS);
+  const portalHostname = requestedHost?.hostname ?? rawHostname;
+  const portalCandidate = portalHostname && portalHosts.includes(portalHostname) &&
+    !hostEntries(landingConfig.LANDING_HOSTS).includes(portalHostname) &&
+    portalHostname !== configuredOrigin(landingConfig.STAFF_ORIGIN)?.hostname;
+  if (kind === 'portal' || portalCandidate) {
+    const portalFinish = (response: NextResponse) => {
+      response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+      response.headers.set('Cache-Control', 'private, no-store');
+      return finish(response, false);
+    };
+    if (kind !== 'portal') return portalFinish(new NextResponse(null, { status: 404 }));
+    const decision = portalPathDecision(path);
+    if (decision === 'deny') return portalFinish(new NextResponse(null, { status: 404 }));
+    if (decision === 'redirect') {
+      const target = req.nextUrl.clone(); target.pathname = '/order/start';
+      return portalFinish(NextResponse.redirect(target));
+    }
+    return portalFinish(NextResponse.next({ request: { headers } }));
+  }
   if (!requestedHost && rawHostname && landingConfig.landingHosts.includes(rawHostname) && rawHostname !== configuredOrigin(landingConfig.STAFF_ORIGIN)?.hostname) {
     return finish(new NextResponse(null, { status: 404 }), true);
   }

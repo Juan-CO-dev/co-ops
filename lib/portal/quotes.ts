@@ -26,6 +26,7 @@
  * pure `paymentPlan` allows — the same authority the staff path answers to.
  */
 
+import { portalOrigin } from "@/lib/portal/origin-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { createPaymentDue } from "@/lib/catering/payments";
@@ -500,7 +501,7 @@ export async function createQuoteCheckout(input: {
     throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
   }
 
-  const origin = input.appOrigin.replace(/\/$/, "");
+  const origin = portalOrigin({ PORTAL_ORIGIN: process.env.PORTAL_ORIGIN, NEXT_PUBLIC_APP_URL: input.appOrigin })!.replace(/\/$/, "");
   const label = input.kind === "deposit" ? "Catering deposit" : "Catering order";
   const dateLabel = quote.eventDate ?? "date to be confirmed";
 
