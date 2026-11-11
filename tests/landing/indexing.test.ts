@@ -1,11 +1,14 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { classifyLandingHost } from '@/lib/landing/host-shared';
-import { landingIndexable as indexablePolicy } from '@/lib/landing/indexing-shared';
+import { landingCanonical, landingIndexable as indexablePolicy } from '@/lib/landing/indexing-shared';
+import { generateMetadata } from '@/app/eat/layout';
+const metadataHeaders = vi.hoisted(() => ({ current: new Headers() }));
+vi.mock('next/headers', () => ({ headers: async () => metadataHeaders.current }));
 import { proxy } from '@/proxy';
 vi.mock('@/lib/auth', () => ({ verifyJwt: vi.fn() }));
 const landingIndexable = (headers: Headers, env: Parameters<typeof indexablePolicy>[2]) => indexablePolicy(classifyLandingHost(headers, env), headers, env);
-const env = { VERCEL_ENV: 'production', LANDING_HOSTS: 'eat.example.test,preview.example.test', SITE_ORIGIN: 'https://eat.example.test', STAFF_ORIGIN: 'https://staff.example.test' };
+const env = { LANDING_INDEXING: 'on', VERCEL_ENV: 'production', LANDING_HOSTS: 'eat.example.test,preview.example.test', SITE_ORIGIN: 'https://eat.example.test', STAFF_ORIGIN: 'https://staff.example.test' };
 it('rejects ambiguous language queries consistently with the page language resolver',async()=>{
  for(const [key,value] of Object.entries(env)) vi.stubEnv(key,value);
  for(const query of ['lang=es&lang=en','lang=invalid']) {
@@ -59,11 +62,50 @@ it('overwrites forged decisions and alternates uncached robots/sitemap by author
   }
 });
 
-it('redirects production aliases preserving path/query but leaves apex and preview documents', async () => {
+it.each([undefined, 'on'])('redirects production aliases with indexing %s preserving path/query but leaves apex and preview documents', async LANDING_INDEXING => {
  for (const [key,value] of Object.entries(env)) vi.stubEnv(key,value);
+ vi.stubEnv('LANDING_INDEXING', LANDING_INDEXING);
  const alias=await proxy(new NextRequest('https://preview.example.test/privacy?lang=es&ad=test',{headers:{host:'preview.example.test'}}));
  expect(alias.status).toBe(301); expect(alias.headers.get('location')).toBe('https://eat.example.test/privacy?lang=es&ad=test');
  const apex=await proxy(new NextRequest('https://eat.example.test/',{headers:{host:'eat.example.test'}})); expect(apex.status).toBe(200);
  vi.stubEnv('VERCEL_ENV','preview');
  const preview=await proxy(new NextRequest('https://preview.example.test/',{headers:{host:'preview.example.test'}})); expect(preview.status).toBe(200); expect(preview.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+});
+
+it.each([undefined, '', 'off', '1', 'ON', ' on', 'on ', 'on'])('canonical identity is independent of indexing %s', async LANDING_INDEXING => {
+  const config = { ...env, LANDING_INDEXING };
+  for (const [key, value] of Object.entries(config)) vi.stubEnv(key, value);
+  const enabled = LANDING_INDEXING === 'on';
+  const host = 'eat.example.test';
+  expect(landingCanonical('landing', new Headers({ host }), config)).toBe(true);
+  expect(landingIndexable(new Headers({ host }), config)).toBe(enabled);
+  for (const path of ['/', '/privacy', '/robots.txt', '/sitemap.xml']) {
+    const response = await proxy(new NextRequest(`https://${host}${path}`, { headers: { host, 'x-landing-indexable': enabled ? '0' : '1' } }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('x-robots-tag')).toBe(enabled ? null : 'noindex, nofollow');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    if (path === '/robots.txt') {
+      expect(await response.text()).toBe(`User-agent: *\nAllow: /\n${enabled ? 'Sitemap: https://eat.example.test/sitemap.xml\n' : ''}`);
+    } else if (path === '/sitemap.xml') {
+      const body = await response.text();
+      expect((body.match(/<loc>/g) ?? []).length).toBe(enabled ? 4 : 0);
+    } else {
+      const forwarded = new Headers();
+      response.headers.forEach((value, key) => {
+        if (key.startsWith('x-middleware-request-')) forwarded.set(key.slice('x-middleware-request-'.length), value);
+      });
+      metadataHeaders.current = forwarded;
+      expect(forwarded.get('x-landing-indexable')).toBe(enabled ? '1' : '0');
+      expect((await generateMetadata()).robots).toEqual({ index: enabled, follow: enabled });
+    }
+  }
+  for (const [path, destination] of [['/', '/'], ['/privacy', '/privacy'], ['/eat', '/'], ['/eat/privacy', '/privacy']]) {
+    const alias = await proxy(new NextRequest(`https://preview.example.test${path}?lang=es`, { headers: { host: 'preview.example.test' } }));
+    expect(alias.status).toBe(301);
+    expect(alias.headers.get('location')).toBe(`https://${host}${destination}?lang=es`);
+    const next = await proxy(new NextRequest(alias.headers.get('location')!, { headers: { host } }));
+    expect(next.status).toBe(200);
+    expect(next.headers.get('location')).toBeNull();
+  }
 });

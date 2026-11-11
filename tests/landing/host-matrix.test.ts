@@ -1,4 +1,4 @@
-import { landingIndexable } from '@/lib/landing/indexing-shared';
+import { landingCanonical, landingIndexable } from '@/lib/landing/indexing-shared';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NotFound from '@/app/not-found';
@@ -63,10 +63,11 @@ it.each(['/_next/static/../server.js','/_next/static/chunks/./a.js','/_next/stat
   expect(landingPathDecision(path,new URLSearchParams())).toBe('deny');
 });
 
-it('landing host permission does not by itself grant indexing', () => {
+it.each([undefined, 'on'])('landing host permission does not by itself grant indexing: %s', LANDING_INDEXING => {
   for(const host of ['eat.example.test','preview.example.test','staff.example.test','unlisted.vercel.app']) {
-    expect(landingIndexable(classifyLandingHost(headers(host),env),headers(host),{...env,VERCEL_ENV:'production'})).toBe(host==='eat.example.test');
-    expect(landingIndexable(classifyLandingHost(headers(host),env),headers(host),{...env,VERCEL_ENV:'preview'})).toBe(false);
+    expect(landingCanonical(classifyLandingHost(headers(host),env),headers(host),{...env,VERCEL_ENV:'production',LANDING_INDEXING})).toBe(host==='eat.example.test');
+    expect(landingIndexable(classifyLandingHost(headers(host),env),headers(host),{...env,VERCEL_ENV:'production',LANDING_INDEXING})).toBe(host==='eat.example.test' && LANDING_INDEXING==='on');
+    expect(landingIndexable(classifyLandingHost(headers(host),env),headers(host),{...env,VERCEL_ENV:'preview',LANDING_INDEXING})).toBe(false);
   }
 });
 

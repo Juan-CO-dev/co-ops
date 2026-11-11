@@ -25,6 +25,7 @@ export function loadLandingConfig(env: LandingEnvironment = process.env, tenant:
     STAFF_ORIGIN: env.STAFF_ORIGIN,
     SITE_ORIGIN: env.SITE_ORIGIN,
     VERCEL_ENV: env.VERCEL_ENV,
+    LANDING_INDEXING: env.LANDING_INDEXING,
     landingHosts,
     siteOrigin: httpsOrigin(env.SITE_ORIGIN),
     staffOrigin: httpsOrigin(env.STAFF_ORIGIN),
