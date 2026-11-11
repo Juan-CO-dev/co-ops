@@ -1,8 +1,10 @@
 import "server-only";
 
-export const INBOUND_ASSET_LIMIT = 15 * 1024 * 1024; // receipts bucket, migration 0170
-const TYPES = new Set(["application/pdf", "message/rfc822", "text/plain", "text/html", "image/jpeg", "image/png", "image/webp", "image/heic"]);
+// Authorized 40 MiB fallback: receiving ceiling could not be independently verified.
+// Keep in sync with migration 0297 receipts.file_size_limit.
+export const INBOUND_ASSET_LIMIT = 40 * 1024 * 1024;
 export interface FetchedAttachment {
+  kind?: "attachment" | "body" | "headers";
   filename: string;
   contentType: string;
   bytes: Buffer;
@@ -57,7 +59,7 @@ export interface InboundMetadataContent {
   html: string | null;
   attachments: unknown[];
 }
-interface InboundReceiptContent { rawEml: { bytes: Buffer; contentType: string } | null; attachments: FetchedAttachment[] }
+interface InboundReceiptContent { rawEml: { bytes: Buffer; contentType: string } | null; attachments: FetchedAttachment[]; html: string | null; headers: unknown }
 export function fetchInboundContent(emailId: string, fetcher?: typeof fetch): Promise<InboundReceiptContent>;
 export function fetchInboundContent(emailId: string, fetcher: typeof fetch | undefined, options: { metadataOnly: true }): Promise<InboundMetadataContent>;
 /** Vendor default re-lists signed CDN URLs. Catering opts into one receiving GET only. */
@@ -69,7 +71,8 @@ export async function fetchInboundContent(emailId: string, fetcher: typeof fetch
   async function api(url: string): Promise<Record<string, unknown>> {
     const response = await fetcher(url, { headers: { Authorization: `Bearer ${key}` }, redirect: "error", signal });
     if (response.status === 401 || response.status === 403) throw new Error("provider_auth");
-    const bytes = await boundedBytes(response, 22 * 1024 * 1024);
+    // JSON can escape each input byte as six characters; retain the full permitted body.
+    const bytes = await boundedBytes(response, options?.metadataOnly ? 22 * 1024 * 1024 : INBOUND_ASSET_LIMIT * 6 + 1024 * 1024);
     const result: unknown = JSON.parse(bytes.toString("utf8"));
     if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("resend_invalid_response");
     return result as Record<string, unknown>;
@@ -89,9 +92,8 @@ export async function fetchInboundContent(emailId: string, fetcher: typeof fetch
     bytes: bodyBytes, contentType: typeof email.text === "string" && email.text ? "text/plain" : "text/html",
   } : null;
   const attachments: FetchedAttachment[] = [];
-  if (bodyOmitted) attachments.push({ filename: "message.eml", contentType: "text/plain", bytes: Buffer.alloc(0), omitted: true, omissionReason: "size" });
+  if (bodyOmitted) attachments.push({ kind: "body", filename: "message.eml", contentType: "text/plain", bytes: Buffer.alloc(0), omitted: true, omissionReason: "size" });
   let cursor: string | null = null;
-  let total = rawEml?.bytes.length ?? 0;
   const seen = new Set<string>();
   for (let page = 0; page < 10; page++) {
     const list = await api(`${base}/attachments?limit=100${cursor ? `&after=${encodeURIComponent(cursor)}` : ""}`);
@@ -105,22 +107,20 @@ export async function fetchInboundContent(emailId: string, fetcher: typeof fetch
       const filename = typeof att.filename === "string" ? att.filename.slice(0, 500) : "attachment";
       const contentType = typeof att.content_type === "string" ? att.content_type.split(";")[0]!.trim().toLowerCase() : "application/octet-stream";
       const omitted = (reason: "size" | "content_type") => attachments.push({ filename, contentType, bytes: Buffer.alloc(0), omitted: true, omissionReason: reason });
-      if (!TYPES.has(contentType)) { omitted("content_type"); continue; }
       if (typeof att.size !== "number" || !Number.isSafeInteger(att.size) || att.size < 0) throw new Error("resend_invalid_size");
-      if (att.size > INBOUND_ASSET_LIMIT || total + att.size > 20 * 1024 * 1024) { omitted("size"); continue; }
+      if (att.size > INBOUND_ASSET_LIMIT) { omitted("size"); continue; }
       if (typeof att.download_url !== "string" || !trustedAttachmentUrl(att.download_url, emailId, att.id)) throw new Error("resend_untrusted_download");
       if (typeof att.expires_at !== "string" || !(Date.parse(att.expires_at) > Date.now())) throw new Error("resend_download_expired");
       try {
         const response = await fetcher(att.download_url, { redirect: "error", signal });
-        const bytes = await boundedBytes(response, Math.min(INBOUND_ASSET_LIMIT, 20 * 1024 * 1024 - total));
-        total += bytes.length;
+        const bytes = await boundedBytes(response, INBOUND_ASSET_LIMIT);
         attachments.push({ filename, contentType, bytes });
       } catch (error) {
         if (error instanceof Error && error.message === "asset_oversize") { omitted("size"); continue; }
         throw error;
       }
     }
-    if (list.has_more === false) return { rawEml, attachments };
+    if (list.has_more === false) return { rawEml, attachments, html: typeof email.text === "string" && email.text && typeof email.html === "string" ? email.html : null, headers: email.headers };
     if (list.has_more !== true || list.data.length === 0) throw new Error("resend_invalid_pagination");
   }
   throw new Error("resend_attachment_page_limit");

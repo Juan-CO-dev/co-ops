@@ -64,7 +64,7 @@ describe("actual inbound receipt storage writer", () => {
   beforeEach(() => vi.clearAllMocks());
   it("stores fetched body and attachment bytes unchanged and links the routed receipt without early effects", async () => {
     const state = storageService();
-    await expect(ingestInboundReceipt(input())).resolves.toEqual({ receiptId: "stored-receipt" });
+    await expect(ingestInboundReceipt(input())).resolves.toMatchObject({ receiptId: "stored-receipt" });
     expect(state.rows).toHaveLength(1);
     const row = state.rows[0]!;
     expect(row).toMatchObject({ inbound_message_id: "inbound-message", attributed_by: "address", location_id: "shop", source: "inbound", vendor_guess_id: "vendor" });
@@ -73,33 +73,50 @@ describe("actual inbound receipt storage writer", () => {
     expect(path).toMatch(/^shop\/.+\/message\.eml$/);
     expect(state.objects.get(path)).toEqual(body);
     expect(state.objects.get(paths[0]!.path)).toEqual(attachment);
-    expect(state.upload).toHaveBeenCalledTimes(2);
-    expect(state.upload.mock.calls.map((call) => call[2].contentType)).toEqual(["text/plain", "application/pdf"]);
+    expect(state.upload).toHaveBeenCalledTimes(3);
+    expect(state.upload.mock.calls.map((call) => call[2].contentType)).toEqual(["text/plain", "application/pdf", "application/json"]);
     expect(state.tables).toEqual(["email_receipts", "vendor_contacts", "vendor_ordering_details", "email_receipts"]);
   });
-  it("records supplied omissions, disallowed content and oversized attachments without storing them", async () => {
+  it("stores arbitrary types and records supplied and oversized omissions", async () => {
     const state = storageService();
     const receipt = input();
     receipt.attachments.push(
       { filename: "large.pdf", contentType: "application/pdf", bytes: new Uint8Array(), omitted: true, omissionReason: "size" },
       { filename: "payload.js", contentType: "application/javascript", bytes: new Uint8Array([1]) },
-      { filename: "oversize.pdf", contentType: "application/pdf", bytes: new Uint8Array(15 * 1024 * 1024 + 1) },
+      { filename: "oversize.pdf", contentType: "application/pdf", bytes: new Uint8Array(40 * 1024 * 1024 + 1) },
     );
     await ingestInboundReceipt(receipt);
-    expect(state.upload).toHaveBeenCalledTimes(2);
+    expect(state.upload).toHaveBeenCalledTimes(4);
     expect(state.rows[0]!.attachment_paths).toEqual([
       expect.objectContaining({ filename: "invoice.pdf", path: expect.any(String) }),
-      { filename: "large.pdf", contentType: "application/pdf", path: null, omitted: true, omissionReason: "size" },
-      { filename: "payload.js", contentType: "application/javascript", path: null, omitted: true, omissionReason: "content_type" },
-      { filename: "oversize.pdf", contentType: "application/pdf", path: null, omitted: true, omissionReason: "size" },
+      { kind: "attachment", filename: "large.pdf", contentType: "application/pdf", path: null, omitted: true, omissionReason: "size" },
+      { kind: "attachment", filename: "payload.js", contentType: "application/javascript", path: expect.any(String) },
+      { kind: "attachment", filename: "oversize.pdf", contentType: "application/pdf", path: null, omitted: true, omissionReason: "size" },
+      { kind: "headers", filename: "headers.json", contentType: "application/json", path: expect.any(String) },
     ]);
+  });
+  it("archives HTML, octet-stream and allowlisted headers with no signed URLs", async () => {
+    const state = storageService();
+    const receipt = input();
+    receipt.html = "<p>Original HTML</p>";
+    receipt.headers = { "Message-ID": "<id>", Subject: "Invoice", "X-Download-Url": "https://cdn.test/?signature=secret", References: "https://cdn.test/?signature=secret", "X-Secret": "excluded" };
+    receipt.attachments.push({ filename: "unknown.bin", contentType: "application/octet-stream", bytes: new Uint8Array([4]) });
+    await ingestInboundReceipt(receipt);
+    const assets = state.rows[0]!.attachment_paths as Array<{ kind?: string; filename: string; path: string }>;
+    const read = (filename: string) => Buffer.from(state.objects.get(assets.find(a => a.filename === filename)!.path)!).toString();
+    expect(read("message.html")).toBe(receipt.html);
+    expect(assets.find(a => a.filename === "message.html")?.kind).toBe("body");
+    expect(assets.find(a => a.filename === "headers.json")?.kind).toBe("headers");
+    expect(assets.find(a => a.filename === "unknown.bin")?.kind).toBe("attachment");
+    expect(JSON.parse(read("headers.json"))).toEqual({ "message-id": "<id>", subject: "Invoice" });
+    expect(assets.find(a => a.filename === "unknown.bin")?.path).toEqual(expect.any(String));
   });
   it("replays a stored email without another upload or receipt insert", async () => {
     const state = storageService();
     await ingestInboundReceipt(input());
     state.upload.mockClear();
     state.tables.length = 0;
-    await expect(ingestInboundReceipt(input())).resolves.toEqual({ receiptId: "stored-receipt" });
+    await expect(ingestInboundReceipt(input())).resolves.toMatchObject({ receiptId: "stored-receipt" });
     expect(state.upload).not.toHaveBeenCalled();
     expect(state.rows).toHaveLength(1);
     expect(state.tables).toEqual(["email_receipts"]);

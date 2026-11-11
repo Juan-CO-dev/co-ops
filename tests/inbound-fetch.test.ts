@@ -61,11 +61,29 @@ describe("inbound receiving API", () => {
   it("refuses failed downloads", async () => {
     await expect(fetchInboundContent(emailId, mockFetch([attachment()], new Response(null, { status: 403 })))).rejects.toThrow("resend_download_failed");
   });
-  it("records oversize and disallowed content as omissions without downloading", async () => {
-    const fetcher = mockFetch([attachment({ size: INBOUND_ASSET_LIMIT + 1 }), attachment({ id: "executable", content_type: "application/x-executable" })]);
+  it("records oversize content as omissions without downloading", async () => {
+    const fetcher = mockFetch([attachment({ size: INBOUND_ASSET_LIMIT + 1 })]);
     const content = await fetchInboundContent(emailId, fetcher);
-    expect(content.attachments.map(a => [a.omitted, a.omissionReason, a.bytes.length])).toEqual([[true, "size", 0], [true, "content_type", 0]]);
+    expect(content.attachments.map(a => [a.omitted, a.omissionReason, a.bytes.length])).toEqual([[true, "size", 0]]);
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it.each(["application/octet-stream", "application/x-executable", "text/csv", "application/vnd.ms-excel"])("fetches every type: %s", async content_type => {
+    const content = await fetchInboundContent(emailId, mockFetch([attachment({ content_type })]));
+    expect(content.attachments[0]).toMatchObject({ contentType: content_type, bytes: Buffer.from([1, 2, 3]) });
+    expect(content.attachments[0]?.omitted).toBeUndefined();
+  });
+  it("carries both bodies and headers for archival without persisting download URLs", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ id: emailId, text: "Text", html: "<p>HTML</p>", headers: { "Message-ID": "<id>" } }))
+      .mockResolvedValueOnce(Response.json({ data: [], has_more: false }));
+    const content = await fetchInboundContent(emailId, fetcher);
+    expect(content.rawEml?.bytes.toString()).toBe("Text");
+    expect(content.html).toBe("<p>HTML</p>");
+    expect(content.headers).toEqual({ "Message-ID": "<id>" });
+  });
+  it("does not omit an allowed asset above the former 20 MiB aggregate ceiling", async () => {
+    const content = await fetchInboundContent(emailId, mockFetch([attachment({ size: 21 * 1024 * 1024 })]));
+    expect(content.attachments[0]?.omitted).toBeUndefined();
+    expect(content.attachments[0]?.bytes.length).toBe(3);
   });
   it("enforces actual download size even when listed size is small", async () => {
     const content = await fetchInboundContent(emailId, mockFetch([attachment()], new Response(null, { headers: { "content-length": String(INBOUND_ASSET_LIMIT + 1) } })));
