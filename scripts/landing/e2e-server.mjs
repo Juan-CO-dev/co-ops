@@ -77,7 +77,7 @@ const locations = createServer(async (req, res) => {
 await new Promise((resolve, reject) => { locations.once('error', reject); locations.listen(portBase + 2, '127.0.0.1', resolve); });
 runtime.NEXT_PUBLIC_SUPABASE_URL = `http://127.0.0.1:${portBase + 2}`;
 runtime.SUPABASE_SERVICE_ROLE_KEY = 'landing-e2e-fictional-local-only';
-const active = run(['start', '-p', `${portBase}`, '-H', '0.0.0.0'], { ...runtime, VERCEL_ENV: 'production', LANDING_HOSTS: 'localhost,eat.example.test,preview.example.test', SITE_ORIGIN: `https://localhost:${portBase}`, STAFF_ORIGIN: `https://127.0.0.1:${portBase}`, NEXT_PUBLIC_META_PIXEL_ID: '123456789', LANDING_CAPI_ENABLED: 'true', LANDING_COUNTER_ENABLED: 'true' });
+const active = run(['start', '-p', `${portBase}`, '-H', '0.0.0.0'], { ...runtime, VERCEL_ENV: 'production', LANDING_INDEXING: 'on', LANDING_HOSTS: 'localhost,eat.example.test,preview.example.test', SITE_ORIGIN: `https://localhost:${portBase}`, STAFF_ORIGIN: `https://127.0.0.1:${portBase}`, NEXT_PUBLIC_META_PIXEL_ID: '123456789', LANDING_CAPI_ENABLED: 'true', LANDING_COUNTER_ENABLED: 'true' });
 const dormant = run(['start', '-p', `${portBase + 1}`, '-H', '0.0.0.0'], { ...runtime, VERCEL_ENV: 'preview', SITE_ORIGIN: `https://localhost:${portBase + 1}`, STAFF_ORIGIN: `https://127.0.0.1:${portBase + 1}` });
 // Nothing listens on +4: prove a genuine connection refusal, not an HTTP error stub.
 const unavailable = run(['start', '-p', `${portBase + 3}`, '-H', '0.0.0.0'], { ...runtime, VERCEL_ENV: 'preview', NEXT_PUBLIC_SUPABASE_URL:`http://127.0.0.1:${portBase + 4}`, LANDING_COUNTER_ENABLED:'true', LANDING_HOSTS:'localhost', SITE_ORIGIN:`https://localhost:${portBase + 3}`, STAFF_ORIGIN:`https://127.0.0.1:${portBase + 3}` });

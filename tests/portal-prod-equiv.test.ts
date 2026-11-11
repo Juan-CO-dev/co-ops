@@ -11,6 +11,8 @@ const paths = ['/','/privacy','/eat','/eat/privacy','/order','/order/start','/or
 const extras: Record<string,string>[] = [{}, {cookie:'co_ops_session=good'}, {cookie:'co_ops_session=bad'}, {rsc:'1','next-router-prefetch':'1'}, {'next-action':'abc', cookie:'co_ops_session=good'}, {'x-forwarded-host':'evil.test'}, {'x-co-user-id':'spoof'}];
 const url = (host: string, p: string) => `https://${host.includes(' ')?'x.test':host.replace(/\.$/,'')}${p}`;
 async function cmp(env: Record<string,string>, hs: string[], methods: string[]) {
+  // Preserve the frozen fixture's canonical=indexable production behavior.
+  vi.stubEnv('LANDING_INDEXING', 'on');
   vi.stubEnv('PORTAL_HOSTS', undefined); vi.stubEnv('PORTAL_ORIGIN', undefined);
   for (const [k,v] of Object.entries(env)) vi.stubEnv(k, v);
   let n = 0;
