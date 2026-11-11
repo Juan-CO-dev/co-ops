@@ -9,7 +9,7 @@ import { LEAD_SOURCES, isLeadSource, leadSourceKey, leadSourceLabelKey } from "@
 describe("lead source registry", () => {
   it("pins the spec #2b source codes", () => {
     expect([...LEAD_SOURCES]).toEqual([
-      "portal", "staff", "phone", "walk_in", "toast_catering", "ezcater", "direct_invoice", "other",
+      "portal", "staff", "phone", "walk_in", "toast_catering", "ezcater", "meta_lead_form", "direct_invoice", "other",
     ]);
   });
 

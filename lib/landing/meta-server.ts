@@ -1,4 +1,5 @@
 import "server-only";
+import { META_GRAPH_API_VERSION } from "./meta-version-shared";
 import { checkLandingAggregate, landingNonProduction } from "./aggregate-limit-server";
 import { createAdCodeResolver } from "./ad-codes-server";
 import { loadLandingConfig } from "./config";
@@ -16,7 +17,7 @@ export async function handleMetaEvent(request: Request, dependencies: Dependenci
   if ("error" in body) return body.error;
   const event = parseLandingEvent(body.value, loadLandingConfig(env).siteOrigin!, (dependencies.now ?? Date.now)());
   if (!event) return emptyResponse(400);
-  if (env.LANDING_CAPI_ENABLED !== "true" || !/^\d{1,30}$/.test(env.META_PIXEL_ID ?? "") || !env.META_CAPI_ACCESS_TOKEN || env.META_GRAPH_API_VERSION !== "v25.0") return emptyResponse(204);
+  if (env.LANDING_CAPI_ENABLED !== "true" || !/^\d{1,30}$/.test(env.META_PIXEL_ID ?? "") || !env.META_CAPI_ACCESS_TOKEN || env.META_GRAPH_API_VERSION !== META_GRAPH_API_VERSION) return emptyResponse(204);
   if (env.NEXT_PUBLIC_META_PIXEL_ID && env.NEXT_PUBLIC_META_PIXEL_ID !== env.META_PIXEL_ID) return emptyResponse(503);
   if (env.META_TEST_EVENT_CODE && !landingNonProduction(env)) return emptyResponse(503);
   const protection = landingRateLimit(env);
@@ -40,7 +41,7 @@ export async function handleMetaEvent(request: Request, dependencies: Dependenci
     custom_data: { ...(event.mode ? { mode: event.mode } : {}), ad: ad === event.ad ? ad : "unattributed", placement: event.placement, ...(event.store ? { store: event.store } : {}), ...(event.vendor ? { vendor: event.vendor } : {}), ...(event.item ? { item: event.item } : {}), ...meta.params },
   };
   try {
-    const response = await (dependencies.send ?? fetch)(`https://graph.facebook.com/v25.0/${env.META_PIXEL_ID}/events`, {
+    const response = await (dependencies.send ?? fetch)(`https://graph.facebook.com/${META_GRAPH_API_VERSION}/${env.META_PIXEL_ID}/events`, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.META_CAPI_ACCESS_TOKEN}` },
       body: JSON.stringify({ data: [data], ...(env.META_TEST_EVENT_CODE ? { test_event_code: env.META_TEST_EVENT_CODE } : {}) }),
       signal: AbortSignal.timeout(2000), redirect: "error", cache: "no-store",

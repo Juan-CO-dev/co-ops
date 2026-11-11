@@ -30,6 +30,8 @@ export function allowlistMatches(raw: string | undefined, email: string): boolea
     .includes(email.toLowerCase());
 }
 
+export type MagicLinkLanguage = "en" | "es";
+
 /**
  * Subject line for the magic-link email — DISTINCT per request on purpose.
  *
@@ -39,12 +41,40 @@ export function allowlistMatches(raw: string | undefined, email: string): boolea
  * PREVIOUS form's store). Stamping the Eastern request time makes every subject unique, and
  * the wording tells the reader whether this link finishes an order or just signs them in.
  * Whitespace is normalized to ASCII spaces (ICU emits U+202F before AM/PM).
+ *
+ * `language` (build 2, A2): a Meta continuation link for a Spanish form reads in Spanish;
+ * omitted = English = every existing caller unchanged.
  */
-export function magicLinkSubject(args: { tenantName: string; hasIntake: boolean; requestedAt: Date }): string {
+export function magicLinkSubject(args: { tenantName: string; hasIntake: boolean; requestedAt: Date; language?: MagicLinkLanguage }): string {
   const time = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })
     .format(args.requestedAt)
     .replace(/\s+/g, " ");
+  if (args.language === "es") {
+    return args.hasIntake
+      ? `Termina tu pedido de ${args.tenantName} — inicia sesión (${time} ET)`
+      : `Tu enlace para entrar a ${args.tenantName} (${time} ET)`;
+  }
   return args.hasIntake
     ? `Finish your ${args.tenantName} order — sign in (${time} ET)`
     : `Your ${args.tenantName} sign-in link (${time} ET)`;
+}
+
+/** "30 minutes" / "72 hours" (en) · "30 minutos" / "72 horas" (es) — the link's lifetime in words. */
+export function magicLinkTtlLabel(ttlMinutes: number, language: MagicLinkLanguage = "en"): string {
+  const hours = ttlMinutes >= 60 && ttlMinutes % 60 === 0 ? ttlMinutes / 60 : null;
+  if (language === "es") return hours !== null ? `${hours} ${hours === 1 ? "hora" : "horas"}` : `${ttlMinutes} minutos`;
+  return hours !== null ? `${hours} ${hours === 1 ? "hour" : "hours"}` : `${ttlMinutes} minutes`;
+}
+
+/** The plain-text body of the magic-link email (the HTML twin is lib/email-templates/magic-link.ts). */
+export function magicLinkText(args: { tenantName: string; hasIntake: boolean; link: string; ttlMinutes: number; language?: MagicLinkLanguage }): string {
+  const ttl = magicLinkTtlLabel(args.ttlMinutes, args.language);
+  if (args.language === "es") {
+    return `${args.hasIntake ? `Termina tu pedido de ${args.tenantName}` : `Entra a ${args.tenantName}`}: ${args.link}
+
+Este enlace funciona una sola vez y caduca en ${ttl}. Reemplaza cualquier enlace anterior que te hayamos enviado. Si no lo pediste, puedes ignorar este correo.`;
+  }
+  return `${args.hasIntake ? `Finish your ${args.tenantName} order` : `Sign in to ${args.tenantName}`}: ${args.link}
+
+This link works once and expires in ${ttl}. It replaces any earlier sign-in link we sent you. If you didn't request this, you can safely ignore this email.`;
 }
