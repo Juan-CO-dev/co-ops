@@ -52,8 +52,8 @@ async function openDrawer() { fireEvent.click(screen.getByRole("button",{name:/O
 describe("inbox interactive drawer",()=>{
  it.each(["en", "es"] as const)("shows permanent review reasons and manual handling without Send in %s", async language => {
   const dict = language === "en" ? en : es;
-  for (const reason of ["invalid_recipient", "revalidation_failed", "quote_revalidation_failed", "assignee_unavailable"] as const) {
-    const detail: InboxDetail = { ...full, preview_text: reason === "assignee_unavailable" ? null : full.preview_text,
+  for (const reason of ["invalid_recipient", "revalidation_failed", "quote_revalidation_failed", "own_address"] as const) {
+    const detail: InboxDetail = { ...full, preview_text: reason === "invalid_recipient" ? null : full.preview_text,
       delivery_state: "needs_review", delivery: { state: "needs_review", attempt: 0, attempted_at: null, sent_at: null, error_code: reason }, sendable: false };
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ message: detail }) })));
     render(createElement(TranslationProvider, { initialLanguage: language } as Parameters<typeof TranslationProvider>[0], createElement(InboxPane, { initial: { ...initial, mode: "live" } })));

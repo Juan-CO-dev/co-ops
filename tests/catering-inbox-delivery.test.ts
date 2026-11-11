@@ -122,25 +122,64 @@ beforeEach(() => { for (const [key, value] of Object.entries(liveEnv)) vi.stubEn
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 describe("the delivery worker (cron path)", () => {
+  it.each(["human", "cron"] as const)("own-address %s refusal reaches the claim, audits once and never sends", async trigger => {
+    let terminal = false;
+    const tables = liveTables();
+    tables.catering_inbound_messages!.find(row => row.id === ids.message)!.sender_address = "catering@example.test";
+    const rpc = vi.fn((name: string, args: Record<string, unknown>) => {
+      if (name === "sweep_catering_inbox_delivery") return { data: [], error: null };
+      if (name === "catering_inbox_delivery_due") return { data: { replies: terminal ? [] : [{ message_id: ids.message, draft_id: ids.draft }], escalations: [] }, error: null };
+      if (name === "claim_catering_inbox_delivery") {
+        expect(args.p_permanent_refusal).toBe("own_address");
+        const replayed = terminal; terminal = true;
+        return { data: { refused: "needs_review", reason: "own_address", replayed, revision: 2, draft_id: ids.draft, message_id: ids.message }, error: null };
+      }
+      throw new Error(`Unexpected writer: ${name}`);
+    });
+    const { sb } = fakeInboxService({ tables, rpc });
+    runtime.client.mockReturnValue(sb);
+    for (let tick = 0; tick < 2; tick++) {
+      if (trigger === "human") await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "own_address", status: 409 });
+      else expect((await runCateringInboxDelivery({ service: sb })).replies.attempted).toBe(tick === 0 ? 1 : 0);
+    }
+    expect(runtime.sendEmail).not.toHaveBeenCalled();
+    expect(runtime.audit).toHaveBeenCalledTimes(1);
+    expect(runtime.audit).toHaveBeenCalledWith(expect.objectContaining({ action: trigger === "human" ? "catering.inbox.send" : "catering.inbox.delivery_needs_review",
+      actorId: trigger === "human" ? ids.actor : null, resourceId: ids.draft,
+      metadata: expect.objectContaining({ outcome: "needs_review", reason: "own_address", trigger }) }));
+  });
+
+  it.each(["assignee_unavailable", "quote_revalidation_failed", "needs_review"])("preserves the named refusal %s", async code => {
+    runtime.client.mockReturnValue(fakeInboxService({ tables: liveTables(), rpc: () => code === "assignee_unavailable"
+      ? { data: null, error: { message: code } }
+      : { data: { refused: "needs_review", ...(code === "needs_review" ? {} : { reason: code }), replayed: true }, error: null } }).sb);
+    await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code, status: 409 });
+    expect(runtime.sendEmail).not.toHaveBeenCalled();
+    expect(runtime.audit).not.toHaveBeenCalled();
+  });
+
   it("reads a terminal escalation in the list and detail without exposing its internal placeholder", async () => {
     const { sb } = fakeInboxService({ tables: liveTables({ catering_inbound_messages: [{ id: ids.escalation, location_id: null, received_at: "2026-11-11T12:00:00Z", disposition: "needs_human", assigned_to: ids.assignee, reason: "urgent" }], catering_inbox_drafts: [
-      { id: ids.draft, message_id: ids.escalation, kind: "escalation", preview_text: "assignee_unavailable", delivery_state: "needs_review", delivery_attempt: 0, delivery_error_code: "assignee_unavailable" },
+      { id: ids.draft, message_id: ids.escalation, kind: "escalation", preview_text: "invalid_recipient", delivery_state: "needs_review", delivery_attempt: 0, delivery_error_code: "invalid_recipient" },
     ] }) });
     runtime.client.mockReturnValue(sb);
     const list = await listCateringInbox(actor);
     expect(list.messages.find(m => m.id === ids.escalation)?.delivery_state).toBe("needs_review");
     const detail = await getCateringInboxMessage(actor, ids.escalation);
-    expect(detail).toMatchObject({ preview_text: null, sendable: false, delivery: { state: "needs_review", attempt: 0, error_code: "assignee_unavailable" } });
+    expect(detail).toMatchObject({ preview_text: null, sendable: false, delivery: { state: "needs_review", attempt: 0, error_code: "invalid_recipient" } });
   });
 
   it.each([false, true])("a structured permanent refusal (replayed=%s) never reaches the provider or finish", async replayed => {
     const rpc = vi.fn((name: string) => {
-      if (name === "claim_catering_inbox_delivery") return { data: { refused: "needs_review", reason: "revalidation_failed", replayed, revision: 2 }, error: null };
+      if (name === "claim_catering_inbox_delivery") return { data: { refused: "needs_review", reason: "revalidation_failed", replayed, revision: 2, draft_id: ids.draft, message_id: ids.message }, error: null };
       throw new Error(`Unexpected writer: ${name}`);
     });
     const { sb } = fakeInboxService({ tables: liveTables(), rpc });
     runtime.client.mockReturnValue(sb);
-    await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "needs_review" });
+    await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "revalidation_failed" });
+    expect(runtime.audit).toHaveBeenCalledTimes(replayed ? 0 : 1);
+    if (!replayed) expect(runtime.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "catering.inbox.send", resourceId: ids.draft,
+      metadata: expect.objectContaining({ outcome: "needs_review", reason: "revalidation_failed" }) }));
     expect(runtime.sendEmail).not.toHaveBeenCalled();
     expect(rpc.mock.calls.map(([name]) => name)).toEqual(["claim_catering_inbox_delivery"]);
   });

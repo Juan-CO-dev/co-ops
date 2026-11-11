@@ -71,7 +71,7 @@ alter table public.catering_inbox_drafts
   add column delivery_recipient text check (length(delivery_recipient) <= 254),
   add column delivery_provider_id text check (length(delivery_provider_id) between 1 and 200),
   add column delivery_error_code text check (delivery_error_code in
-    ('provider_rejected','provider_uncertain','idempotency_conflict','lease_expired','not_configured','invalid_recipient','send_failed','revalidation_failed','quote_revalidation_failed','assignee_unavailable')),
+    ('provider_rejected','provider_uncertain','idempotency_conflict','lease_expired','not_configured','invalid_recipient','send_failed','revalidation_failed','quote_revalidation_failed','own_address')),
   add column delivery_thread_day date,
   add constraint catering_inbox_drafts_claim_token check ((delivery_state = 'claimed') = (delivery_token is not null)),
   add constraint catering_inbox_drafts_attempted check ((delivery_attempt = 0) = (delivery_first_attempt_at is null)),
@@ -108,7 +108,7 @@ create table public.catering_inbox_thread_limits (
 -- idempotency key `catering-inbox:<draft id>:<attempt>` and reports through finish_catering_inbox_delivery.
 create function public.claim_catering_inbox_delivery(
   p_message_id uuid, p_kind text, p_trigger text, p_actor_id uuid, p_session_id uuid,
-  p_expected_revision integer, p_request_id uuid, p_escalation jsonb default null
+  p_expected_revision integer, p_request_id uuid, p_escalation jsonb default null, p_permanent_refusal text default null
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, public
 as $$
 declare s public.catering_inbox_settings%rowtype; m public.catering_inbound_messages%rowtype;
@@ -120,6 +120,7 @@ begin
   if p_request_id is null or p_kind is null or p_kind not in ('reply','escalation') or p_trigger is null or p_trigger not in ('human','cron')
     or (p_trigger = 'human') <> (p_actor_id is not null) or (p_trigger = 'human') <> (p_session_id is not null)
     or (p_trigger = 'human') <> (p_expected_revision is not null) or (p_kind = 'escalation' and p_trigger <> 'cron')
+    or (p_permanent_refusal is not null and (p_permanent_refusal <> 'own_address' or p_kind <> 'reply'))
     then raise exception 'invalid_input'; end if;
   select * into s from public.catering_inbox_settings where singleton for share;
   if s.mode <> 'live' then raise exception 'delivery_off'; end if;
@@ -158,6 +159,8 @@ begin
   end if;
   if p_trigger = 'cron' and (s.live_since is null or coalesce(d.created_at, m.recorded_at) < s.live_since) then raise exception 'not_new'; end if;
   begin -- Only the closed permanent refusal set is converted to durable review below.
+    -- Service-only app evidence; resolve after auth, replay and state checks, before any reservation.
+    if p_permanent_refusal = 'own_address' then raise exception 'own_address'; end if;
     -- Loop guards, again, on immutable evidence (the app checks its own addresses too).
     if (m.headers->>'auto-submitted') is not null and lower(m.headers->>'auto-submitted') <> 'no'
       or coalesce(m.headers->>'precedence','') ~* '\m(bulk|list|junk)\M' or m.headers ? 'list-id' or m.headers ? 'list-unsubscribe'
@@ -219,7 +222,7 @@ begin
         delivery_error_code = null where id = d.id returning * into d;
     end if;
   exception when raise_exception then
-    if sqlerrm not in ('invalid_recipient','revalidation_failed','quote_revalidation_failed','assignee_unavailable') then raise; end if;
+    if sqlerrm not in ('invalid_recipient','revalidation_failed','quote_revalidation_failed','own_address') then raise; end if;
     v_refusal := sqlerrm;
   end;
   if v_refusal is not null then
@@ -313,17 +316,7 @@ as $$
     where s.mode = 'live' and s.live_since is not null and d.kind = 'reply' and m.disposition = 'drafted' and d.created_at >= s.live_since
       and (d.delivery_state = 'draft' or (d.delivery_state = 'failed' and d.delivery_attempt < 3
         and d.delivery_attempted_at <= clock_timestamp() - interval '10 minutes'))
-      and lower(btrim(m.sender_address)) ~ '^[^<>@[:space:]]+@[^<>@[:space:]]+\.[^<>@[:space:]]+$'
-      and length(btrim(m.sender_address)) <= 254
-      and (m.catering_customer_id is null or exists (select 1 from public.catering_customers c
-        where c.id = m.catering_customer_id and c.active and lower(c.email) = lower(btrim(m.sender_address))))
-      and (m.lead_id is null or exists (select 1 from public.catering_pipeline p where p.id = m.lead_id
-        and p.customer_id is not distinct from m.catering_customer_id and p.location_id is not distinct from m.location_id
-        and p.stage in ('inquiry','quote_sent','confirmed','out')))
-      and d.lead_id is not distinct from m.lead_id and d.quote_id is not distinct from m.quote_id
-      and (m.quote_id is null or exists (select 1 from public.catering_quotes q where q.id = m.quote_id
-        and q.customer_id is not distinct from m.catering_customer_id and q.pipeline_id is not distinct from m.lead_id
-        and q.location_id is not distinct from m.location_id and q.superseded_at is null))
+      -- Permanent recipient/customer/lead/quote refusals must reach the claim and leave the queue.
     order by d.created_at, d.id limit greatest(1, least(coalesce(p_limit, 25), 200))),
   escalations as (
     select m.id as message_id from public.catering_inbound_messages m, s
@@ -406,7 +399,7 @@ begin
     assert (select relrowsecurity from pg_class where oid=('public.'||t)::regclass), 'inbox RLS off';
   end loop;
   foreach f in array array[
-    'public.claim_catering_inbox_delivery(uuid,text,text,uuid,uuid,integer,uuid,jsonb)'::regprocedure,
+    'public.claim_catering_inbox_delivery(uuid,text,text,uuid,uuid,integer,uuid,jsonb,text)'::regprocedure,
     'public.finish_catering_inbox_delivery(uuid,uuid,text,text,text)'::regprocedure,
     'public.sweep_catering_inbox_delivery(integer)'::regprocedure,
     'public.catering_inbox_delivery_due(integer)'::regprocedure,

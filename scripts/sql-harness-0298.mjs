@@ -54,8 +54,8 @@ async function arrival(extra = {}, payload = result(), supplied = draft) {
   await finalize(message_id, payload, supplied);
   return message_id;
 }
-const claim = (message, { kind = 'reply', trigger = 'cron', actor = null, session = null, revision = null, request = randomUUID(), escalation = null } = {}) =>
-  asService(() => rpc('claim_catering_inbox_delivery', [message, kind, trigger, actor, session, revision, request, escalation]));
+const claim = (message, { kind = 'reply', trigger = 'cron', actor = null, session = null, revision = null, request = randomUUID(), escalation = null, permanentRefusal = null } = {}) =>
+  asService(() => rpc('claim_catering_inbox_delivery', [message, kind, trigger, actor, session, revision, request, escalation, permanentRefusal]));
 const human = (message, actor, revision, request = randomUUID()) => claim(message, { trigger: 'human', actor, session: sessions.get(actor), revision, request });
 const finish = (draftId, token, outcome, provider = null, code = null) => asService(() => rpc('finish_catering_inbox_delivery', [draftId, token, outcome, provider, code]));
 const setMode = (actor, mode, revision) => asService(() => rpc('set_catering_inbox_mode', [actor, sessions.get(actor), mode, revision]));
@@ -358,9 +358,9 @@ try {
   await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2', [noMail, escalated]);
   const unmailed = await arrival({ subject: 'Urgent allergy complaint' }, result({ classification: 'unclassified', disposition: 'needs_human', reason: 'urgent' }), null);
   await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2', [noMail, unmailed]);
-  await permanent(unmailed, 'assignee_unavailable', 'assignee without an email address refused', { kind: 'escalation', escalation: escalation('urgent') });
+  await reject(() => claim(unmailed, { kind: 'escalation', escalation: escalation('urgent') }), /assignee_unavailable/, 'assignee without an email address refused transiently');
   await db.query('update catering_inbound_messages set assigned_to=null where id=$1', [unmailed]);
-  await reject(() => claim(unmailed, { kind: 'escalation', escalation: escalation('urgent') }), /needs_review/, 'unassigned escalation refused');
+  await reject(() => claim(unmailed, { kind: 'escalation', escalation: escalation('urgent') }), /assignee_unavailable/, 'unassigned escalation refused transiently');
   const auto = await arrival({ headers: { 'auto-submitted': 'auto-replied' } });
   await db.query("update catering_inbound_messages set disposition='drafted' where id=$1", [auto]);
   await permanent(auto, 'invalid_recipient', 'auto-submitted mail is never replied to');
@@ -413,20 +413,58 @@ try {
     badRows.push([message, variant >= 3 && variant <= 4 ? 'quote_revalidation_failed' : variant === 5 ? 'invalid_recipient' : 'revalidation_failed']);
   }
   const fresh = await arrival();
-  const firstTick = await asService(() => rpc('catering_inbox_delivery_due',[25]));
-  check(firstTick.replies.length === 1 && firstTick.replies[0].message_id === fresh && !!(await claim(firstTick.replies[0].message_id)).token,
-    '30 permanent predecessors: valid newer reply claimed on the first tick');
-  for (const [message, reason] of badRows) await permanent(message, reason, 'permanent refusal commits exactly once: ' + reason);
+  const outcomes = new Map();
+  for (let tick = 0; tick < 2; tick++) {
+    const due = await asService(() => rpc('catering_inbox_delivery_due',[25]));
+    assert.equal(due.replies.length, tick === 0 ? 25 : 6);
+    for (const row of due.replies) outcomes.set(row.message_id, await claim(row.message_id));
+  }
+  check(outcomes.get(fresh)?.token && outcomes.size === 31,
+    '30 permanent predecessors: valid newer reply claimed within two ticks');
+  for (const [message, reason] of badRows) {
+    assert.equal(outcomes.get(message)?.reason, reason);
+    const row = await one('select * from catering_inbox_drafts where message_id=$1',[message]);
+    assert.equal(row.delivery_state, 'needs_review');
+    assert.equal(row.delivery_attempt, 0);
+    assert.equal(await revisionOf(message), 2);
+    assert.equal((await one("select count(*)::int n from catering_inbox_events where message_id=$1 and event_type='deliver'",[message])).n, 1);
+    await assert.rejects(() => claim(message), /needs_review/);
+  }
+  check(true, 'all 30 invalid replies terminalize exactly once within two ticks; none stays draft');
   check((await asService(() => rpc('catering_inbox_delivery_due',[25]))).replies.length === 0, 'terminal refusals never re-enter the delivery queue');
   const noEmail = await arrival({}, result({ classification: 'unclassified', disposition: 'needs_human', reason: 'urgent' }), null);
   await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2',[noMail,noEmail]);
   const goodEsc = await arrival({}, result({ classification: 'unclassified', disposition: 'needs_human', reason: 'urgent' }), null);
   const escDue = await asService(() => rpc('catering_inbox_delivery_due',[25]));
   check(escDue.escalations.length === 1 && escDue.escalations[0].message_id === goodEsc, 'email-less assignee never occupies the escalation queue');
-  await permanent(noEmail, 'assignee_unavailable', 'email-less escalation commits terminal state exactly once', { kind: 'escalation' });
+  const beforeAssignee = await revisionOf(noEmail);
+  await reject(() => claim(noEmail, { kind: 'escalation' }), /assignee_unavailable/, 'email-less escalation remains recoverable');
+  assert.equal(await revisionOf(noEmail), beforeAssignee);
+  assert.equal((await one('select count(*)::int n from catering_inbox_drafts where message_id=$1',[noEmail])).n, 0);
+  await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2',[manager,noEmail]);
+  check((await asService(() => rpc('catering_inbox_delivery_due',[25]))).escalations.some(r => r.message_id === noEmail), 'fixed assignee returns to the queue');
+  const recovered = await claim(noEmail, { kind: 'escalation', escalation: escalation('urgent', { language: 'es' }) });
+  await finish(recovered.draft_id, recovered.token, 'sent', 'recovered-assignee');
+  check((await draftRow(recovered.draft_id)).delivery_state === 'sent', 'fixed assignee escalation goes out');
+  // A failed existing attempt also survives a temporary assignee problem unchanged.
+  const retryEsc = await claim(goodEsc, { kind: 'escalation', escalation: escalation('urgent', { language: 'es' }) });
+  await finish(retryEsc.draft_id, retryEsc.token, 'failed', null, 'send_failed');
+  await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2',[noMail,goodEsc]);
+  const beforeRetry = await draftRow(retryEsc.draft_id), beforeRetryRevision = await revisionOf(goodEsc);
+  await assert.rejects(() => claim(goodEsc, { kind: 'escalation' }), /assignee_unavailable/);
+  assert.deepEqual(await draftRow(retryEsc.draft_id), beforeRetry);
+  assert.equal(await revisionOf(goodEsc), beforeRetryRevision);
+  await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2',[manager,goodEsc]);
+  const recoveredRetry = await claim(goodEsc, { kind: 'escalation' });
+  await finish(recoveredRetry.draft_id, recoveredRetry.token, 'sent', 'recovered-retry');
+  check(recoveredRetry.attempt === 2, 'recoverable assignee preserves failed attempt evidence and retries');
   const inaccessible = await arrival({}, result({ classification: 'unclassified', disposition: 'needs_human', reason: 'urgent' }), null);
   await db.query('update catering_inbound_messages set assigned_to=$1 where id=$2',[gm,inaccessible]);
-  await permanent(inaccessible, 'assignee_unavailable', 'inaccessible escalation commits terminal state exactly once', { kind: 'escalation' });
+  await reject(() => claim(inaccessible, { kind: 'escalation' }), /assignee_unavailable/, 'inaccessible escalation remains recoverable');
+  const own = await arrival();
+  await reject(() => claim(own, { permanentRefusal: 'arbitrary' }), /invalid_input/, 'app permanent refusal vocabulary is closed');
+  await permanent(own, 'own_address', 'own address terminalizes once without a send attempt', { permanentRefusal: 'own_address' });
+  check(!(await asService(() => rpc('catering_inbox_delivery_due',[25]))).replies.some(r => r.message_id === own), 'own address never repeats in the queue');
   const failedReview = await arrival();
   const failedClaim = await claim(failedReview);
   await finish(failedClaim.draft_id, failedClaim.token, 'failed', null, 'send_failed');

@@ -257,8 +257,10 @@ describe("Catering inbox runtime: off and shadow never send, live sends once per
     await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "needs_review" });
     const own = fakeInboxService({ tables: tables("live", { catering_inbound_messages: [{ id: ids.message, location_id: null, sender_address: "catering@example.test", headers: {}, disposition: "drafted" }] }), rpc });
     runtime.client.mockReturnValue(own.sb);
-    await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "invalid_recipient" });
-    expect(rpc).toHaveBeenCalledTimes(2);
+    rpc.mockReturnValueOnce({ data: { refused: "needs_review", reason: "own_address", replayed: false, draft_id: ids.draft, message_id: ids.message, revision: 2 } as never, error: null });
+    await expect(sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ code: "own_address" });
+    expect(rpc).toHaveBeenCalledTimes(3);
+    expect(rpc).toHaveBeenLastCalledWith("claim_catering_inbox_delivery", expect.objectContaining({ p_permanent_refusal: "own_address" }));
     expect(runtime.sendEmail).not.toHaveBeenCalled();
   });
 });

@@ -38,7 +38,7 @@
 export const DESTRUCTIVE_ACTIONS = [
   "catering.inbox.handle",
   "catering.inbox.reassign",
-  "catering.inbox.send", // Phase 1b: a human sent a reply draft to a customer (the claim is the act).
+  "catering.inbox.send", // Phase 1b: a human Send claims delivery or changes the accountability record to needs_review.
   "catering.inbox.delivery_mode_change", // Phase 1b: owner / CGS flipped off | shadow | live.
   "vendor_location_account.save",
   "vendor_location_account.deactivate",

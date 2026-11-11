@@ -36,13 +36,13 @@ import {
 type Service = ReturnType<typeof getServiceRoleClient>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLAIM_CODES = ["delivery_off", "not_found", "forbidden", "request_conflict", "stale_revision", "invalid_state", "no_draft", "already_sent",
-  "needs_review", "delivery_busy", "attempts_exhausted", "not_new", "invalid_recipient", "revalidation_failed", "quote_revalidation_failed", "thread_cap", "invalid_escalation", "invalid_input"] as const;
+  "needs_review", "assignee_unavailable", "delivery_busy", "attempts_exhausted", "not_new", "invalid_recipient", "revalidation_failed", "quote_revalidation_failed", "thread_cap", "invalid_escalation", "invalid_input"] as const;
 const dictionaries: Record<"en" | "es", Record<string, string>> = { en, es };
 const translator = (language: "en" | "es"): Translate => (key, params) =>
   (dictionaries[language][key] ?? key).replace(/\{(\w+)\}/g, (match, name: string) => params?.[name] ?? match);
 
 interface ClaimResult {
-  message_id: string; revision: number; replayed: boolean; refused?: string; draft_id: string; kind: "reply" | "escalation"; attempt: number;
+  message_id: string; revision: number; replayed: boolean; refused?: string; reason?: string; draft_id: string; kind: "reply" | "escalation"; attempt: number;
   token: string; recipient: string; idempotency_key: string; language: "en" | "es"; template_key: string; params: Record<string, string>;
   preview_text: string; subject: string; message_id_header: string | null; references_header: string | null;
 }
@@ -85,15 +85,24 @@ async function deliverOne(args: DeliverArgs): Promise<DeliveryResult> {
   if (message.error) throw new CateringInboxError(500, "read_failed");
   if (!message.data) throw new CateringInboxError(404, "not_found");
   const sender = normalizeInboundAddress(message.data.sender_address ?? "");
-  // Configured own-address suppression stays app-side; SQL durably refuses malformed/automated recipients.
-  if (args.kind === "reply" && sender && args.own.has(sender)) throw new CateringInboxError(409, "invalid_recipient");
+  // Pass configured own-address evidence through the locked claim so the refusal persists.
+  const permanentRefusal = args.kind === "reply" && sender && args.own.has(sender) ? "own_address" : null;
   const claim = await sb.rpc("claim_catering_inbox_delivery", {
     p_message_id: args.messageId, p_kind: args.kind, p_trigger: args.trigger, p_actor_id: args.actor?.user.id ?? null, p_session_id: args.actor?.session.id ?? null,
-    p_expected_revision: args.expectedRevision ?? null, p_request_id: args.requestId, p_escalation: args.escalation ?? null,
+    p_expected_revision: args.expectedRevision ?? null, p_request_id: args.requestId, p_escalation: args.escalation ?? null, p_permanent_refusal: permanentRefusal,
   });
   if (claim.error) throw claimError(claim.error);
   const claimed = claim.data as ClaimResult;
-  if (claimed.refused) throw new CateringInboxError(409, claimed.refused);
+  if (claimed.refused) {
+    if (!claimed.replayed) {
+      const human = args.trigger === "human";
+      await audit({ actorId: human ? args.actor!.user.id : null, actorRole: human ? args.actorRole ?? args.actor!.user.role : null,
+        action: human ? "catering.inbox.send" : "catering.inbox.delivery_needs_review", resourceTable: "catering_inbox_drafts", resourceId: claimed.draft_id,
+        metadata: { request_id: args.requestId, message_id: claimed.message_id, revision: claimed.revision, kind: args.kind, trigger: args.trigger,
+          outcome: "needs_review", reason: claimed.reason ?? claimed.refused }, ipAddress: null, userAgent: null });
+    }
+    throw new CateringInboxError(409, claimed.reason ?? claimed.refused);
+  }
   if (claimed.replayed) return { message_id: claimed.message_id, revision: claimed.revision, draft_id: null, attempt: 0, state: "replayed" };
   if (args.trigger === "human" && args.actor) {
     await audit({ actorId: args.actor.user.id, actorRole: args.actorRole ?? args.actor.user.role, action: "catering.inbox.send", resourceTable: "catering_inbox_drafts", resourceId: claimed.draft_id,
@@ -198,7 +207,7 @@ export async function runCateringInboxDelivery(input: { now?: Date; deadlineMs?:
     }
   };
   const queue = await dueQueue(sb);
-  // Replies: every row the SQL queue returned is eligible now (the claim re-checks all of it under its locks).
+  // Replies: the claim revalidates each candidate under locks; permanent refusals leave the queue.
   for (const row of queue.replies) {
     if (Date.now() > deadline) { run.replies.skipped += 1; continue; }
     await attempt(run.replies, { messageId: row.message_id, kind: "reply" });

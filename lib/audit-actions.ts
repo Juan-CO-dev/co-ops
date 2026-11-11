@@ -50,6 +50,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // Phase 1b delivery outcomes: the provider's answer to one attempt, observed by the worker, never a human act.
   "catering.inbox.delivery_sent",
   "catering.inbox.delivery_failed",
+  "catering.inbox.delivery_needs_review", // Worker-observed permanent refusal; no human act.
   "catering.inbox.delivery_ambiguous",
   "inbound.retries_exhausted",
   "marketing.manual_entry_record",

@@ -10,10 +10,10 @@ export type InboxMode = "off" | "shadow" | "live";
 export const INBOX_MODES: readonly InboxMode[] = ["off", "shadow", "live"];
 /** Every refusal a send can answer with; each has an en + es `catering.inbox.send_error.<code>` message. */
 export const INBOX_SEND_ERRORS = ["delivery_off", "not_configured", "delivery_busy", "already_sent", "needs_review", "thread_cap",
-  "revalidation_failed", "quote_revalidation_failed", "invalid_recipient", "invalid_state", "no_draft", "stale_revision", "request_conflict", "attempts_exhausted",
+  "revalidation_failed", "quote_revalidation_failed", "own_address", "assignee_unavailable", "invalid_recipient", "invalid_state", "no_draft", "stale_revision", "request_conflict", "attempts_exhausted",
   "not_new", "send_failed", "send_ambiguous", "inbox_unavailable"] as const;
 export type InboxSendError = typeof INBOX_SEND_ERRORS[number];
-export const INBOX_DELIVERY_ERROR_CODES = ["provider_rejected", "provider_uncertain", "idempotency_conflict", "lease_expired", "not_configured", "invalid_recipient", "send_failed", "revalidation_failed", "quote_revalidation_failed", "assignee_unavailable"] as const;
+export const INBOX_DELIVERY_ERROR_CODES = ["provider_rejected", "provider_uncertain", "idempotency_conflict", "lease_expired", "not_configured", "invalid_recipient", "send_failed", "revalidation_failed", "quote_revalidation_failed", "own_address"] as const;
 export type InboxDeliveryErrorCode = typeof INBOX_DELIVERY_ERROR_CODES[number];
 /** The cron gives a failed attempt up after this many; a human may still retry. Mirrors 0298. */
 export const INBOX_MAX_CRON_ATTEMPTS = 3;
