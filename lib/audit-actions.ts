@@ -44,6 +44,7 @@ import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
  * to filter for.
  */
 export const NON_DESTRUCTIVE_ACTIONS = [
+  "vendor_mail.forward",
   "catering.inbox.ingest",
   "catering.inbox.draft",
   "catering.inbox.escalate",

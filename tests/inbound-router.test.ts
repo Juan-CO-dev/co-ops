@@ -102,7 +102,7 @@ it.each(["noise"])("%s records skipped without fetching", async lane => {
   expect(mocks.fetch).not.toHaveBeenCalled(); expect(mocks.ingest).not.toHaveBeenCalled();
 });
 
-it("preserves the complete vendor branch text from round 1", () => {
+it("pins the amended vendor archive branch independently of catering", () => {
   const fixture = readFileSync("tests/fixtures/inbound-router-vendor-section.txt", "utf8").replace(/\r\n/g, "\n");
   const current = readFileSync("lib/inbound-router.ts", "utf8");
   const section = (s: string) => s.replace(/\r\n/g, "\n").split('    if (route.lane !== "vendor_receipt") {')[1]?.split("  } catch (error) {")[0];
@@ -233,4 +233,22 @@ it.each([
   ["anything private", "ledger", "ledger"],
 ] as const)("classifies %s into a closed safe code", (message, stage, expected) => {
   expect(inboundErrorCode(new Error(message), stage)).toBe(expected);
+});
+
+it("persists archive completeness and omissions on the vendor transport", async () => {
+  const paths = [{ filename: "large.bin", contentType: "application/octet-stream", path: null, omitted: true, omissionReason: "size" }];
+  mocks.ingest.mockResolvedValue({ receiptId: "fixture-receipt", archive: { raw_storage_path: "shop/raw/message.eml", attachment_paths: paths } });
+  const db = database(routeReplies());
+  expect(await processInboundMessage(row.id, db.sb)).toBe("fetched");
+  expect(db.calls.filter(c => c.method === "update").at(-1)?.args[0]).toMatchObject({ archive_state: "incomplete", archive_error: "size", attachment_manifest: [expect.objectContaining({ path: "shop/raw/message.eml" }), ...paths] });
+});
+
+it("repairs archive projection from stored receipt paths without re-fetching bytes", async () => {
+  const replies = routeReplies();
+  replies[5] = { data: { id: "stored", raw_storage_path: "shop/body/message.eml", attachment_paths: [{ filename: "old.bin", contentType: "application/octet-stream", path: null, omitted: true, omissionReason: "content_type" }] } };
+  const db = database(replies);
+  expect(await processInboundMessage(row.id, db.sb)).toBe("fetched");
+  expect(mocks.fetch).not.toHaveBeenCalled();
+  expect(mocks.ingest).not.toHaveBeenCalled();
+  expect(db.calls.filter(c => c.method === "update").at(-1)?.args[0]).toMatchObject({ archive_state: "incomplete", archive_error: "unavailable" });
 });

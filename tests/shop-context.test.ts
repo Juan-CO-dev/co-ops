@@ -327,6 +327,7 @@ describe("review 2: a route that ignores the URL shop never moves the remembered
 
 const ROOT_FOR_AUDIT = path.resolve(__dirname, "..");
 const PAGE_ROUTES: Record<string, string> = {
+  "app/(authed)/operations/vendor-mail/page.tsx": "/operations/vendor-mail",
   "app/admin/catalog/new/item/page.tsx": "/admin/catalog/new/item",
   "app/admin/catalog/sku/[id]/swap/page.tsx": "/admin/catalog/sku/7d0c1f2e-0000-4000-8000-000000000001/swap",
   "app/admin/catalog/new/sandwich/page.tsx": "/admin/catalog/new/sandwich",

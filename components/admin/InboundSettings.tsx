@@ -24,7 +24,7 @@ export function InboundHealthPanel({ health }: { health: InboundHealth }) {
     {busy ? <p role="status">{t("admin.inbound.retrying")}</p> : null}
     <CollapsibleSection idBase={panelId} title={t("admin.inbound.health_details")} count={t("admin.inbound.health_shown", { n: health.rows.length })}>
     <ul>{health.rows.map(row => <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-      <span>{t(row.content_state === "blocked_config" ? "admin.inbound.blocked_config" : "admin.inbound.failed")} <span className="break-words text-sm">{row.subject?.trim() || t("admin.inbound.no_subject")}</span></span>
+      <span>{t(row.content_state === "skipped" ? "admin.inbound.catering_backlog" : row.content_state === "blocked_config" ? "admin.inbound.blocked_config" : "admin.inbound.failed")} <span className="break-words text-sm">{row.subject?.trim() || t("admin.inbound.no_subject")}</span></span>
       <button type="button" className={button} disabled={busy} onClick={async () => {
         setBusy(true); try { await save("/api/admin/inbound/redrive", { id: row.id }); } finally { setBusy(false); }
       }}>{t("admin.inbound.retry")}</button>

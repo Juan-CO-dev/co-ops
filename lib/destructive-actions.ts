@@ -36,6 +36,8 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  "vendor_mail.handle",
+  "vendor_mail.assign",
   "catering.inbox.handle",
   "catering.inbox.reassign",
   "catering.inbox.send", // Phase 1b: a human Send claims delivery or changes the accountability record to needs_review.

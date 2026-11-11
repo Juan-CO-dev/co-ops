@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { verifyJwt } from './lib/auth';
 import { loadLandingConfig } from './lib/landing/config';
-import { landingIndexable } from './lib/landing/indexing-shared';
+import { landingCanonical, landingIndexable } from './lib/landing/indexing-shared';
 import { resolveLandingLanguage } from './lib/landing/language-shared';
 import { classifyLandingHost, configuredOrigin, parseAuthority, landingPathDecision, isLandingAsset, hostEntries, portalPathDecision } from './lib/landing/host-shared';
 import { LANDING_SECURITY_HEADERS, SECURITY_HEADERS } from './lib/security-headers';
@@ -27,6 +27,7 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   const landingConfig = loadLandingConfig();
   const kind = classifyLandingHost(req.headers, landingConfig);
   const indexable = landingIndexable(kind, req.headers, landingConfig);
+  const canonical = landingCanonical(kind, req.headers, landingConfig);
   const finish = (response: NextResponse, landing: boolean, assetPath?: string) => {
     if (landing && !indexable) response.headers.set('X-Robots-Tag', 'noindex, nofollow');
     return finishResponse(response, landing, assetPath, landingConfig.nearbyEnabled);
@@ -78,7 +79,7 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     headers.set('x-landing-language', resolveLandingLanguage(languages.length === 1 ? languages[0] : undefined, req.headers.get('accept-language')));
     const decision = landingPathDecision(path, req.nextUrl.searchParams);
     if (decision === 'deny') return finish(new NextResponse(null, { status: 404 }), true);
-    if (landingConfig.VERCEL_ENV === 'production' && !indexable && (decision === 'rewrite' || decision === 'redirect')) {
+    if (landingConfig.VERCEL_ENV === 'production' && !canonical && (decision === 'rewrite' || decision === 'redirect')) {
       targetOrigin.pathname = path === '/eat' ? '/' : path === '/eat/privacy' ? '/privacy' : path;
       targetOrigin.search = req.nextUrl.search;
       return finish(NextResponse.redirect(targetOrigin, 301), true);
@@ -90,7 +91,7 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
       return finish(NextResponse.redirect(target, 301), true);
     }
     const origin = targetOrigin.origin;
-    if (path === '/robots.txt') return finish(new NextResponse(indexable ? `User-agent: *\nAllow: /\nSitemap: ${origin}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } }), true, path);
+    if (path === '/robots.txt') return finish(new NextResponse(indexable ? `User-agent: *\nAllow: /\nSitemap: ${origin}/sitemap.xml\n` : canonical ? 'User-agent: *\nAllow: /\n' : 'User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } }), true, path);
     if (path === '/sitemap.xml') {
       const urls = ['/', '/privacy'].flatMap(page => {
         const en = `${origin}${page}`, es = `${en}?lang=es`;
