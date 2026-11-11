@@ -4,6 +4,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { CateringInboxError, listCateringInbox } from "@/lib/catering/inbox";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { serverT } from "@/lib/i18n/server";
+import { StepUpProvider } from "@/components/admin/StepUpProvider";
 import { InboxPane } from "./InboxPane";
 
 export default async function CateringInboxPage() {
@@ -20,10 +21,13 @@ export default async function CateringInboxPage() {
     </main>;
     throw error;
   }
+  // Send draft (phase 1b) and the mode switch take Tier B: the provider hosts the password modal; the server re-asserts.
   return <TranslationProvider initialLanguage={ctx.user.language}>
-      <main className="mx-auto max-w-5xl px-4 pb-32 pt-4">
-        <Link href="/catering" className="inline-flex min-h-11 items-center">{serverT(ctx.user.language, "catering.inbox.back")}</Link>
-        <InboxPane initial={initial} />
-      </main>
+      <StepUpProvider unlocked={ctx.session.stepUpUnlocked} unlockedAt={ctx.session.stepUpUnlockedAt}>
+        <main className="mx-auto max-w-5xl px-4 pb-32 pt-4">
+          <Link href="/catering" className="inline-flex min-h-11 items-center">{serverT(ctx.user.language, "catering.inbox.back")}</Link>
+          <InboxPane initial={initial} />
+        </main>
+      </StepUpProvider>
     </TranslationProvider>;
 }

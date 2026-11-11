@@ -1,0 +1,38 @@
+import { execFileSync } from 'node:child_process';
+import { expect, it } from 'vitest';
+
+it('0298 real-DDL delivery proof: ceilings, switches, claim/finish fencing, caps, revalidation, mode', () => {
+  const output = execFileSync(process.execPath, ['scripts/sql-harness-0298.mjs'], { encoding: 'utf8', timeout: 240_000 });
+  expect(output).toContain('PASS 0298:');
+  for (const line of [
+    'lease job set drift refused by preflight', 'refused migration leaves no partial schema', 'second application refused',
+    'catering_inbox_thread_limits: complete table/column ACL and RLS', 'claim_catering_inbox_delivery: definer/search_path/execution ceiling',
+    'delivery cron lease claims once per window', 'settings still shadow at revision 0 after 0298',
+    'catering manager cannot change the mode', 'GM cannot change the mode', 'mode change is revision-checked',
+    'shadow: cron claim refused', 'shadow: human claim refused', 'off: cron claim refused', 'off: human claim refused', 'refused claims append no event',
+    'CGS switches to live; live_since and actor stamped', 'activation never bulk-sends an old shadow draft (cron refuses not_new)',
+    'human claim of an old draft: token, server-selected recipient, idempotency key, frozen content', 'a live lease refuses a second claim',
+    'a wrong fencing token cannot finish', 'sent never returns to draft (claim refused)', 'sent never returns to draft (service_role holds no UPDATE)',
+    'identical claim request replays without a second attempt', 'retry takes a new attempt but reuses its daily reservation', 'cron stops after three attempts',
+    'fourth reply to one thread in a UTC day refused', 'the cap binds humans too', 'retry under a full cap reuses its reservation',
+    'handled message cannot be sent (cron)', 'handled message cannot be sent (human)', 'escalations are cron-only',
+    'escalation body may not carry a token-bearing link', 'escalation goes to the assignee in the assignee language', 'escalation freezes one row and takes no customer-thread slot',
+    'auto-submitted mail is never replied to', 'deactivated customer blocks the old draft', 'closed lead blocks the old draft',
+    'expired lease is marked ambiguous and refused, not reclaimed', 'the late holder cannot finish', 'ambiguous is never auto-resent',
+    'revoked session cannot send', 'one reply draft per message', 'concurrency requires separate sim proof',
+    '30 permanent predecessors: valid newer reply claimed within two ticks',
+    'terminal refusals never re-enter the delivery queue', 'email-less escalation remains recoverable',
+    'inaccessible escalation remains recoverable',
+    ...['thread_cap','stale_revision','delivery_off','delivery_busy'].map(code => code + ' leaves delivery state and events untouched'),
+    'all 30 invalid replies terminalize exactly once within two ticks; none stays draft',
+    'fixed assignee escalation goes out', 'recoverable assignee preserves failed attempt evidence and retries',
+    'own address terminalizes once without a send attempt', 'own address never repeats in the queue',
+    // review round
+    "yesterday's failed retry needs today's capacity: fourth send refused", 'a cross-day retry reserves today atomically',
+    'quote superseded after drafting refuses the claim by name', 'lead moved off the shop refuses the claim',
+    'sweep marks the expired claim ambiguous/lease_expired', 'the swept holder cannot finish', 'a swept draft is never auto-resent', 'the live lease is untouched by the sweep',
+    'a new eligible reply and escalation are due on the first tick behind 300 ineligible predecessors each', 'handled, sent, exhausted and notified rows are never in the queue',
+    'a failed attempt inside the backoff is not due yet', 'a failed attempt past the backoff is due', 'an exhausted draft is not due', 'nothing is due unless live',
+    '0298 after 0275 leaves the UNION of both parallel jobs', '0298 after 0300 keeps the UNION (neither job dropped)', 'both jobs claim after the reverse order',
+  ]) expect(output).toContain(line);
+}, 250_000);

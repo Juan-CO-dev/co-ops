@@ -76,18 +76,51 @@ export interface SendEmailInput {
   /** Resend `Idempotency-Key` (24 h): a retry with the same key never produces a second email.
    *  Omitted = no header = exactly today's behavior for every existing caller. */
   idempotencyKey?: string;
+  /** Threading (catering inbox phase 1b): the inbound message's Message-ID, as `<id@host>`. Validated by
+   *  `threadingHeaders`; an invalid value refuses the send with `invalid_threading` and no provider call.
+   *  Omitted = no header = exactly today's behavior for every existing caller. */
+  inReplyTo?: string;
+  /** Threading: the References chain, oldest first; bounded (last MAX_REFERENCES ids, MAX_REFERENCES_CHARS). */
+  references?: string[];
 }
 
 /** `code` carries Resend's error name when it gave one (e.g. invalid_idempotent_request). */
 export type SendEmailResult = { id: string } | { error: string; code?: string };
 
+/** RFC 5322 msg-id, strictly: angle brackets, no whitespace / control characters, one `@`, bounded. */
+const MSG_ID = /^<[!-=?-~]{1,200}@[!-=?-~]{1,250}>$/;
+export const MAX_REFERENCES = 20;
+export const MAX_REFERENCES_CHARS = 2000;
+
+/** The provider `headers` for a threaded reply, or null when the inputs are not well-formed msg-ids.
+ *  Pure: callers that pass neither field get `{}` (no `headers` key reaches the provider). */
+export function threadingHeaders(input: Pick<SendEmailInput, "inReplyTo" | "references">): Record<string, string> | null {
+  const headers: Record<string, string> = {};
+  if (input.inReplyTo !== undefined) {
+    if (!MSG_ID.test(input.inReplyTo)) return null;
+    headers["In-Reply-To"] = input.inReplyTo;
+  }
+  if (input.references !== undefined) {
+    if (!Array.isArray(input.references) || input.references.some((id) => !MSG_ID.test(id))) return null;
+    let kept = [...new Set(input.references)].slice(-MAX_REFERENCES);
+    while (kept.length > 0 && kept.join(" ").length > MAX_REFERENCES_CHARS) kept = kept.slice(1);
+    if (kept.length > 0) headers.References = kept.join(" ");
+  }
+  return headers;
+}
+
 
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
-  if (process.env.SIM_MODE && process.env.SIM_EMAIL_CAPTURE_DIR) return import("./sim-email").then(({ captureEmail }) => captureEmail(input)).catch(() => ({ error: "sim_capture_failed" }));
   // Recipient-safe for EVERY caller (B5 review 3): logs carry a count, never an address, and
   // provider error text is scrubbed of anything email-shaped before it is logged or returned
   // (callers store `error` in audit rows).
   const label = recipientTag(input.to);
+  const threading = threadingHeaders(input);
+  if (threading === null) {
+    console.error(`[email] refused malformed threading headers for ${label}`);
+    return { error: "invalid_threading", code: "invalid_threading" };
+  }
+  if (process.env.SIM_MODE && process.env.SIM_EMAIL_CAPTURE_DIR) return import("./sim-email").then(({ captureEmail }) => captureEmail(input)).catch(() => ({ error: "sim_capture_failed" }));
   try {
     // `from` defaults to EMAIL_FROM (getFrom) — existing callers pass no `from`,
     // so their sender is unchanged. `replyTo` (Resend v6 public field, mapped to the
@@ -102,6 +135,8 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       text: input.text,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      // Threading headers only when a caller asked for them (and they validated above).
+      ...(Object.keys(threading).length ? { headers: threading } : {}),
     }, input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined);
     if (error) {
       const safe = redactEmailAddresses(error.message ?? "send failed");

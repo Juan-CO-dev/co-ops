@@ -270,6 +270,9 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/weights/route.ts": ["E"],
   // Not under /admin, but step-up-gated all the same.
   "app/api/catering/quotes/[id]/send/route.ts": ["B"],
+  // Catering inbox phase 1b: Send draft (outside /admin, isCateringInboxSendPath) and the owner / CGS mode switch.
+  "app/api/catering/inbox/[id]/send/route.ts": ["B"],
+  "app/api/admin/catering-inbox/settings/route.ts": ["B"],
   "app/api/operations/counts/route.ts": ["A"],
 };
 
@@ -312,6 +315,8 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],
   "components/catering/pipeline/TransferLead.tsx": ["B"],
+  // Catering inbox phase 1b: Send draft and the mode switch both ask Tier B (the page hosts the provider).
+  "app/(authed)/catering/inbox/InboxPane.tsx": ["B"],
   "components/assignments/StationsAdmin.tsx": ["B"],
   "components/admin/toast-employees/ToastEmployeeLinks.tsx": ["B"],
   "components/admin/sevenshifts/SevenShiftsScreen.tsx": ["B"],

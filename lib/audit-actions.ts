@@ -48,6 +48,11 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "catering.inbox.ingest",
   "catering.inbox.draft",
   "catering.inbox.escalate",
+  // Phase 1b delivery outcomes: the provider's answer to one attempt, observed by the worker, never a human act.
+  "catering.inbox.delivery_sent",
+  "catering.inbox.delivery_failed",
+  "catering.inbox.delivery_needs_review", // Worker-observed permanent refusal; no human act.
+  "catering.inbox.delivery_ambiguous",
   "inbound.retries_exhausted",
   "marketing.manual_entry_record",
   "vault.decrypt_failure", // 0235: the vault failed closed (missing/rotated master key, tampered row); entry id + reason code only.

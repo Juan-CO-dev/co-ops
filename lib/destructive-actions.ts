@@ -40,6 +40,8 @@ export const DESTRUCTIVE_ACTIONS = [
   "vendor_mail.assign",
   "catering.inbox.handle",
   "catering.inbox.reassign",
+  "catering.inbox.send", // Phase 1b: a human Send claims delivery or changes the accountability record to needs_review.
+  "catering.inbox.delivery_mode_change", // Phase 1b: owner / CGS flipped off | shadow | live.
   "vendor_location_account.save",
   "vendor_location_account.deactivate",
   "inbound.redrive",
