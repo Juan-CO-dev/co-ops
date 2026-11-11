@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
-import { cateringInboxPlaybook, inboxCustomerStatus, type InboxPlaybookInput } from "@/lib/catering/inbox-playbooks-shared";
+import { inboxReplyLanguage, cateringInboxPlaybook, inboxCustomerStatus, type InboxPlaybookInput } from "@/lib/catering/inbox-playbooks-shared";
 import { INBOX_CHANNELS, INBOX_CLASSIFICATIONS, INBOX_REASONS } from "@/lib/catering/inbox-shared";
 const translate = (lang: "en" | "es") => (key: string, params: Record<string, string> = {}) => {
   const value = (lang === "en" ? en : es) as Record<string, string>;
@@ -42,4 +42,18 @@ describe("reply-only playbook matrix", () => {
       expect(draft?.preview_text).not.toMatch(/lost|completed/);
     }
   });
+});
+
+it.each(["?", "#", "?x", "#x"])("rejects URL delimiter %s like SQL", suffix => {
+  expect(cateringInboxPlaybook({ ...base, portalUrl: base.portalUrl + suffix })).toBeNull();
+});
+it("rebuilds the plain URL from origin and path", () => {
+  expect(cateringInboxPlaybook({ ...base, portalUrl: "https://TENANT.example:443/order" })?.params.portalUrl).toBe("https://tenant.example/order");
+});
+it("reply language uses preference then clear Spanish evidence then English", () => {
+  expect(inboxReplyLanguage({ preference: "en", subject: "Hola", latestText: "Necesito catering" })).toBe("en");
+  expect(inboxReplyLanguage({ preference: "es", subject: "Hello", latestText: "Need catering" })).toBe("es");
+  expect(inboxReplyLanguage({ preference: null, subject: "Cotizaci\u00f3n", latestText: "" })).toBe("es");
+  expect(inboxReplyLanguage({ subject: "Catering", latestText: "Necesito para el viernes" })).toBe("es");
+  expect(inboxReplyLanguage({ subject: "Catering", latestText: "" })).toBe("en");
 });

@@ -20,7 +20,11 @@ export function inboxHeaders(input: Readonly<Record<string, unknown>>): InboxHea
   const result: InboxHeaders = {};
   for (const [key, value] of Object.entries(input)) {
     const name = key.toLowerCase();
-    if (!(INBOX_HEADER_NAMES as readonly string[]).includes(name) || typeof value !== "string") continue;
+    if (!(INBOX_HEADER_NAMES as readonly string[]).includes(name)) continue;
+    if (typeof value !== "string") {
+      if (value != null && (name === "in-reply-to" || name === "references")) result[name] = "[invalid]";
+      continue;
+    }
     // Unfold legal continuation lines, refuse injected headers and NULs.
     const unfolded = value.replace(/\r?\n[ \t]+/g, " ");
     if (/[\r\n\0]/.test(unfolded)) {
@@ -36,15 +40,15 @@ export function inboxHeaders(input: Readonly<Record<string, unknown>>): InboxHea
   return result;
 }
 export function inboxThreadInitial(subject: string, headers: InboxHeaders): boolean {
-  return !headers["in-reply-to"]?.trim() && !headers.references?.trim() && !/^\s*(?:re|fw|fwd|rv)\s*:/i.test(subject);
+  return !headers["in-reply-to"]?.trim() && !headers.references?.trim() && !/^\s*(\[[^\]]{1,40}\]\s*)*(re|fw|fwd|rv|aw|sv|tr|res)(\[\d+\]|\(\d+\))?\s*[:：]/i.test(subject);
 }
 /** Text only, never an HTML sanitizer or a source suitable for innerHTML. */
 export function inboxHtmlToText(html: string): string {
   const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
   return html.replace(/<!--[^]*?(?:-->|$)/g, " ")
-    .replace(/<(script|style)\b[^>]*>[^]*?<\/\1\s*>/gi, " ")
+    .replace(/<(script|style|blockquote)\b[^>]*>[^]*?<\/\1\s*>/gi, " ")
     .replace(/<\s*(?:br|\/p|\/div|\/li|\/tr)\b[^>]*>/gi, "\n")
-    .replace(/<[^>]*(?:>|$)/g, " ")
+    .replace(/<[a-zA-Z/!][^>]*(?:>|$)/g, " ")
     .replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (whole, code: string) => {
       if (!code.startsWith("#")) return entities[code.toLowerCase()] ?? whole;
       const point = code[1]?.toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
@@ -72,15 +76,15 @@ export function inboxAttachmentManifest(input: readonly InboxAttachment[]): Inbo
     content_type: a.content_type?.slice(0, 100) ?? null, size: Number.isSafeInteger(a.size) && a.size! >= 0 ? a.size : null,
     omission_reason: a.omission_reason }));
 }
-export function inboxLatestText(body: string, ownTemplateLines: readonly string[] = []): { text: string; uncertainQuote: boolean } {
-  const templates = new Set(ownTemplateLines.map(s => s.trim().toLowerCase()).filter(Boolean));
+export function inboxLatestText(body: string): { text: string; uncertainQuote: boolean } {
   const lines: string[] = [];
   let uncertainQuote = false;
-  for (const line of body.split(/\r?\n/)) {
+  for (const rawLine of body.split(/\r?\n/)) {
+    const line = rawLine.normalize("NFC");
     if (/^\s*(?:on .+wrote:|el .+escribi[oó]:|-{2,}\s*(?:original message|mensaje original|forwarded message))/i.test(line)) break;
     if (/^\s*>/.test(line)) continue;
     if (/^\s*(?:from|de|sent|enviado):/i.test(line)) { uncertainQuote = true; break; }
-    if (!templates.has(line.trim().toLowerCase()) && !OWN_TEMPLATE_LINES.some(pattern => pattern.test(line.trim()))) lines.push(line);
+    if (!OWN_TEMPLATE_LINES.some(pattern => pattern.test(line.trim()))) lines.push(line);
   }
   return { text: lines.join("\n").trim(), uncertainQuote };
 }
@@ -89,4 +93,4 @@ export function inboxLatestText(body: string, ownTemplateLines: readonly string[
 // arbitrary lines merely because they mention catering or share a template keyword.
 const OWN_TEMPLATE_LINES = [en, es].flatMap(dict => Object.entries(dict)
   .filter(([key]) => key.startsWith("catering.inbox.mail."))
-  .map(([, value]) => new RegExp("^" + value.split(/\{\w+\}/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "i")));
+  .map(([, value]) => new RegExp("^" + value.split(/\{\w+\}/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^\\n]{1,120}?") + "$", "i")));

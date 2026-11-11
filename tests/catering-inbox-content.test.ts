@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capInboxBody, inboxContent, inboxHeaders, inboxHtmlToText, inboxThreadInitial, inboxOwnAddresses, inboxAttachmentManifest, INBOX_BODY_MAX_BYTES } from "@/lib/catering/inbox-content-shared";
+import { inboxLatestText, capInboxBody, inboxContent, inboxHeaders, inboxHtmlToText, inboxThreadInitial, inboxOwnAddresses, inboxAttachmentManifest, INBOX_BODY_MAX_BYTES } from "@/lib/catering/inbox-content-shared";
 describe("inbox content evidence", () => {
   it("caps bytes without splitting Unicode and retains original count", () => {
     expect(capInboxBody("a😀b", 4)).toEqual({ body_text: "a", body_original_bytes: 6, body_truncated: true });
@@ -33,4 +33,24 @@ describe("inbox content evidence", () => {
     const manifest = inboxAttachmentManifest(Array.from({ length: 101 }, () => ({ filename: "x".repeat(300), content_type: "text/plain", size: 2, omission_reason: "not_fetched" as const, url: "secret" })));
     expect(manifest).toHaveLength(100); expect(manifest[0]?.filename).toHaveLength(255); expect(manifest[0]).not.toHaveProperty("url");
   });
+});
+
+it.each(["[EXTERNAL] RE: hello", "Re[2]: hi", "AW: hi", "RES: hi", "SV(3)\uff1a hi"])("extended prefix %s", subject => expect(inboxThreadInitial(subject, {})).toBe(false));
+it("malformed non-string threading evidence stays noninitial", () => {
+  for (const value of [false, 0, [], {}]) for (const key of ["In-Reply-To", "References"]) {
+    const headers = inboxHeaders({ [key]: value });
+    expect(headers[key.toLowerCase() as "references"]).toBe("[invalid]");
+    expect(inboxThreadInitial("Hello", headers)).toBe(false);
+  }
+  expect(inboxThreadInitial("Hello", inboxHeaders({ References: null }))).toBe(true);
+});
+it("normalizes quote markers, drops blockquotes and preserves hearts", () => {
+  expect(inboxLatestText("Hello\nEl lunes escribio\u0301:\nNeed catering").text).toBe("Hello");
+  expect(inboxHtmlToText("<p>I <3 your subs</p><blockquote>Need catering</blockquote>")).toBe("I <3 your subs");
+});
+it("only bounded full template lines are stripped", () => {
+  expect(inboxLatestText("The Tenant catering team").text).toBe("");
+  const long = `The ${"x".repeat(121)} catering team`;
+  expect(inboxLatestText(long).text).toBe(long);
+  expect(inboxLatestText("Hi customer, I need catering").text).toBe("Hi customer, I need catering");
 });

@@ -40,9 +40,9 @@ async function finalize(message, payload = result(), supplied = draft, request =
   try { return await rpc('finalize_catering_inbound', [message, revision, request, payload, supplied]); }
   finally { await db.exec('reset role'); }
 }
-async function act(message, actor, action, assigned = null, revision = 1, request = randomUUID()) {
+async function act(message, actor, action, assigned = null, revision = 1, request = randomUUID(), session = sessions.get(actor)) {
   await db.exec('set role service_role');
-  try { return await rpc('act_on_catering_inbox', [message, revision, request, actor, sessions.get(actor), action, assigned]); }
+  try { return await rpc('act_on_catering_inbox', [message, revision, request, actor, session, action, assigned]); }
   finally { await db.exec('reset role'); }
 }
 try {
@@ -101,15 +101,38 @@ try {
   await db.query("insert into catering_customers(id,name,email) values ($1,'Synthetic','sender@example.test'),($2,'Other','other@example.test')",[customer,otherCustomer]);
   await db.query("insert into catering_pipeline(id,customer_id,contact_name,stage,location_id,assigned_to) values ($1,$2,'Synthetic','inquiry',$3,$4)",[lead,customer,shop,gm]);
   await db.query('insert into catering_quotes(id,customer_id,pipeline_id,location_id) values ($1,$2,$3,$4)',[quote,customer,lead,shop]);
+  const external='synthetic-order';
+  await db.query("update catering_pipeline set external_ref=$1,lead_source='ezcater' where id=$2",[external,lead]);
+  const nullLead=randomUUID(), badLead=randomUUID(), duplicate=randomUUID(), retired=randomUUID(), retiredLead=randomUUID();
+  await db.query("insert into catering_customers(id,name,email,active) values ($1,'Duplicate active','duplicate@example.test',true),($2,'Duplicate retired','duplicate@example.test',false),($3,'Retired','retired@example.test',false)",[duplicate,randomUUID(),retired]);
+  await db.query("insert into catering_pipeline(id,customer_id,contact_name,stage,location_id,assigned_to) values ($1,$2,'Null','inquiry',$3,null),($4,$2,'Bad','inquiry',$3,$5),($6,$7,'Retired','inquiry',$3,null)",[nullLead,customer,shop,badLead,agm,retiredLead,retired]);
+  await db.query("insert into users(id,role,active,created_at) values ($1,'catering_mgr',true,'2000-01-01')",[randomUUID()]);
+  await db.query('insert into user_locations values ($1,$2,true)',[manager,shop]);
+  // Install guards BEFORE any inbox writer; fixtures above are the only artifact writes.
+  await db.exec("create function forbid_artifact_write() returns trigger language plpgsql as $$ begin raise exception 'artifact_write_forbidden'; end $$;");
+  for (const table of ['catering_customers','catering_pipeline','catering_quotes']) {
+    await db.exec(`create trigger inbox_attach_only before insert or update or delete on ${table} for each row execute function forbid_artifact_write()`);
+    check(true, `${table}: all writes forbidden before inbox writers`);
+  }
+  for (const {proname,prosrc} of await query("select proname,prosrc from pg_proc where proname in ('record_catering_inbound','finalize_catering_inbound','act_on_catering_inbox')")) {
+    assert.doesNotMatch(prosrc, /(insert into|update|delete from)\s+public\.(catering_customers|catering_pipeline|catering_quotes)\b/i);
+    check(true, `${proname}: source contains no artifact writes`);
+  }
+  const pipelineBefore = await query('select * from catering_pipeline order by id');
+  const quotesBefore = await query('select * from catering_quotes order by id');
   const customersBefore = await query('select * from catering_customers order by id');
   const transport=randomUUID(), ingestRequest=randomUUID();
   await db.query('insert into inbound_messages(id,provider_email_id) values ($1,$2)',[transport,transport]);
-  const first=await rpc('record_catering_inbound',[transport,0,ingestRequest,content()]);
-  check((await rpc('record_catering_inbound',[transport,0,ingestRequest,content()])).replayed,'ingest identical request replay');
-  await reject(() => rpc('record_catering_inbound',[transport,0,ingestRequest,content({subject:'Changed'})]),/request_conflict/,'ingest request payload mismatch refused');
-  const retry=await rpc('record_catering_inbound',[transport,0,randomUUID(),content({subject:'Changed'})]);
-  check(retry.message_id===first.message_id && (await one('select subject from catering_inbound_messages where id=$1',[first.message_id])).subject==='Catering request','transport dedupe preserves first evidence');
-  await reject(() => rpc('record_catering_inbound',[transport,1,randomUUID(),content()]),/invalid_input/,'ingest expected revision validated');
+  let first;
+  await db.exec('set role service_role');
+  try {
+    first=await rpc('record_catering_inbound',[transport,0,ingestRequest,content()]);
+    check((await rpc('record_catering_inbound',[transport,0,ingestRequest,content()])).replayed,'ingest identical request replay');
+    await reject(() => rpc('record_catering_inbound',[transport,0,ingestRequest,content({subject:'Changed'})]),/request_conflict/,'ingest request payload mismatch refused');
+    const retry=await rpc('record_catering_inbound',[transport,0,randomUUID(),content({subject:'Changed'})]);
+    check(retry.message_id===first.message_id && (await one('select subject from catering_inbound_messages where id=$1',[first.message_id])).subject==='Catering request','transport dedupe preserves first evidence');
+    await reject(() => rpc('record_catering_inbound',[transport,1,randomUUID(),content()]),/invalid_input/,'ingest expected revision validated');
+  } finally { await db.exec('reset role'); }
   await reject(() => record({headers:{authorization:'secret'}}),/invalid_headers/,'header allowlist rejects credential header');
   await reject(() => record({body_text:'x'.repeat(262145),body_original_bytes:262145}),/check constraint/,'body cap enforced in SQL');
   const m = await record();
@@ -133,16 +156,15 @@ try {
   await act(m.message_id,owner,'handle',null,2);
   check((await one('select revision,disposition from catering_inbound_messages where id=$1',[m.message_id])).revision===3,'handle advances revision');
   await reject(() => act(m.message_id,owner,'handle',null,3), /invalid_state/, 'terminal handled state refused');
-  for (const extra of [{subject:'Re: catering'},{headers:{'in-reply-to':'original'}},{headers:{references:'original'}},{subject:'RV: catering'}]) {
+  for (const extra of [{subject:'Re: catering'},{headers:{'in-reply-to':'original'}},{headers:{references:'original'}},{subject:'RV: catering'},...['[EXTERNAL] RE:','Re[2]:','AW:','RES:','SV(3)\uff1a'].map(subject=>({subject}))]) {
     const follow = await record(extra); await finalize(follow.message_id);
     const row = await one('select disposition,reason,(select count(*)::int from catering_inbox_drafts d where d.message_id=m.id) drafts from catering_inbound_messages m where id=$1',[follow.message_id]);
     check(row.disposition==='needs_human' && row.reason==='thread_followup' && row.drafts===0,'followup strips draft in SQL');
   }
   const fresh=await record();
   for (const patch of [{catering_customer_id:otherCustomer},{location_id:elsewhere},{lead_id:null},{quote_id:randomUUID()}]) await reject(() => finalize(fresh.message_id,{...attached,...patch}), /identity_mismatch|artifact_mismatch/, 'mismatched identity/artifact refused');
-  await db.query('update catering_customers set active=false where id=$1',[customer]);
-  await reject(() => finalize(fresh.message_id,attached), /identity_mismatch/, 'deactivated identity not revived');
-  await db.query('update catering_customers set active=true where id=$1',[customer]);
+  const retiredMessage=await record({sender_address:'retired@example.test'});
+  await reject(() => finalize(retiredMessage.message_id,result({identity_status:'resolved',catering_customer_id:retired,lead_id:retiredLead,location_id:shop})), /identity_mismatch/, 'deactivated identity not revived');
   await finalize(fresh.message_id,result({disposition:'needs_human',reason:'identity_unresolved'}),null);
   await reject(() => act(fresh.message_id,gm,'handle'), /forbidden/, 'GM cannot access unattached row');
   await act(fresh.message_id,manager,'handle');
@@ -155,11 +177,9 @@ try {
   await db.query('update users set active=true where id=$1',[manager]);
   assert.deepEqual(await query('select * from catering_customers order by id'),customersBefore);
   check(true,'all writers leave customer rows byte-for-byte unchanged');
-  // A trigger trips any future insert/update path even if a fixture would otherwise
-  // be identical. This protects attach-only behavior independently of row snapshots.
-  await db.exec("create function forbid_customer_write() returns trigger language plpgsql as $$ begin raise exception 'customer_write_forbidden'; end $$; create trigger inbox_attach_only before insert or update or delete on catering_customers for each row execute function forbid_customer_write();");
-  const protectedMessage=await record(); await finalize(protectedMessage.message_id,attached);
-  check(true,'attach-only succeeds with customer writes forbidden by trigger');
+  assert.deepEqual(await query('select * from catering_pipeline order by id'),pipelineBefore);
+  assert.deepEqual(await query('select * from catering_quotes order by id'),quotesBefore);
+  check(true,'all writers leave pipeline and quote rows byte-for-byte unchanged');
   const invalid=await record();
   await reject(() => finalize(invalid.message_id,result({classification:'platform_notification'})), /draft_ineligible/, 'platform notifications cannot draft');
   await reject(() => finalize(invalid.message_id,result(),{...draft,language:'fr'}), /check constraint/, 'draft constraint failure rolls back finalization');
@@ -175,8 +195,6 @@ try {
     const masked=await record({sender_address});
     await reject(() => finalize(masked.message_id), /draft_ineligible/, 'relay/platform cannot forge new_sender draft');
   }
-  const external='synthetic-order';
-  await db.query("update catering_pipeline set external_ref=$1,lead_source='ezcater' where id=$2",[external,lead]);
   const notification=result({classification:'platform_notification',identity_status:'masked',disposition:'notification',lead_id:lead,quote_id:quote,location_id:shop});
   const platform=await record({sender_address:'notify@mail.ezcater.com',external_ref:external});
   await finalize(platform.message_id,notification,null);
@@ -190,5 +208,33 @@ try {
   await finalize(followAttached.message_id,attached);
   const followRow=await one('select catering_customer_id,lead_id,quote_id,reason,(select count(*)::int from catering_inbox_drafts where message_id=m.id) drafts from catering_inbound_messages m where id=$1',[followAttached.message_id]);
   check(followRow.catering_customer_id===customer && followRow.lead_id===lead && followRow.quote_id===quote && followRow.reason==='thread_followup' && followRow.drafts===0,'followup preserves customer/lead/quote attachment without draft');
+
+  for (const disposition of ['needs_human','noise','notification']) {
+    const payload=result({disposition,classification:disposition==='noise'?'noise':disposition==='notification'?'platform_notification':'unclassified',reason:disposition==='needs_human'?'urgent':null});
+    const initial=await record();
+    await reject(()=>finalize(initial.message_id,payload,draft),/draft_ineligible/,`${disposition}: supplied draft refused`);
+    const follow=await record({subject:'RE: order'});
+    await finalize(follow.message_id,payload,draft);
+    const row=await one('select disposition,reason,(select count(*)::int from catering_inbox_drafts where message_id=m.id) drafts from catering_inbound_messages m where id=$1',[follow.message_id]);
+    check(row.disposition===disposition && row.reason===payload.reason && row.drafts===0,`${disposition}: followup preserves verdict and strips draft`);
+  }
+  const dupe=await record({sender_address:'duplicate@example.test'});
+  await reject(()=>finalize(dupe.message_id,result({identity_status:'resolved',catering_customer_id:duplicate})),/identity_mismatch/,'inactive duplicate email refuses identity');
+  const finalized=await record(); await finalize(finalized.message_id);
+  await reject(()=>finalize(finalized.message_id,result(),draft,randomUUID(),1),/already_finalized/,'re-finalize at current revision refused');
+  for (const [lead_id,label] of [[nullLead,'null'],[badLead,'ineligible']]) {
+    const fallback=await record();
+    await finalize(fallback.message_id,result({identity_status:'resolved',catering_customer_id:customer,lead_id,location_id:shop}));
+    check((await one('select assigned_to from catering_inbound_messages where id=$1',[fallback.message_id])).assigned_to===manager,`${label} lead assignee falls back to scoped catering manager`);
+  }
+  await reject(()=>act(finalized.message_id,manager,'handle',null,1,randomUUID(),sessions.get(owner)),/forbidden/,'different user session refused');
+  const noArtifact=await record();
+  await reject(()=>finalize(noArtifact.message_id,result({classification:'troubleshoot_ours',identity_status:'resolved',catering_customer_id:customer})),/draft_ineligible/,'ours without lead or quote refused');
+  for (const sender_address of ['Sender@example.test',' sender@example.test','not-an-address','a@@example.test',42])
+    await reject(()=>record({sender_address}),/invalid_sender/,'noncanonical or invalid sender refused');
+  assert.deepEqual(await query('select * from catering_customers order by id'),customersBefore);
+  assert.deepEqual(await query('select * from catering_pipeline order by id'),pipelineBefore);
+  assert.deepEqual(await query('select * from catering_quotes order by id'),quotesBefore);
+  check(true,'final artifact snapshots unchanged with all guards active');
   console.log(`PASS 0296: ${checks} checks (single-session PGlite; concurrency requires separate sim proof)`);
 } finally { await db.close(); }

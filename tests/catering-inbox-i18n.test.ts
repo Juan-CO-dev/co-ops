@@ -9,7 +9,7 @@ it("all inbox text and placeholders ship together in en/es", () => {
   expect(keys(e).length).toBeGreaterThan(70); expect(keys(e)).toEqual(keys(s));
   for (const key of keys(e)) {
     expect((s[key]!.match(/\{\w+\}/g) ?? []).sort(), key).toEqual((e[key]!.match(/\{\w+\}/g) ?? []).sort());
-    expect(s[key], key).not.toMatch(/\?|\ufffd/);
+    expect(s[key], key).not.toMatch(/\ufffd|\u00c3[\u0080-\u00bf]|\u00c2[\u0080-\u00bf]|\u00e2\u20ac/);
     expect(key).not.toMatch(/link_notice|preview_link|\.escalation\./);
   }
   for (const [prefix, values] of [["reason", INBOX_REASONS], ["group", INBOX_GROUPS], ["class", INBOX_CLASSIFICATIONS], ["identity", INBOX_IDENTITIES], ["disposition", INBOX_DISPOSITIONS], ["customer_status", INBOX_CUSTOMER_STATUSES]] as const)

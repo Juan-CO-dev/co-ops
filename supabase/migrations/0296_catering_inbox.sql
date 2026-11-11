@@ -114,6 +114,11 @@ declare v_id uuid; v_event public.catering_inbox_events%rowtype; v_pair record;
 begin
   if p_request_id is null or p_expected_revision is distinct from 0 or p_content is null
     or jsonb_typeof(p_content) <> 'object' then raise exception 'invalid_input'; end if;
+  if p_content->>'sender_address' is not null and (
+    jsonb_typeof(p_content->'sender_address') <> 'string'
+    or p_content->>'sender_address' <> lower(btrim(p_content->>'sender_address'))
+    or p_content->>'sender_address' !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$')
+    then raise exception 'invalid_sender'; end if;
   select * into v_event from public.catering_inbox_events where request_id=p_request_id;
   if found then
     if v_event.event_type <> 'ingest' or v_event.request_fingerprint <> v_fingerprint then raise exception 'request_conflict'; end if;
@@ -230,8 +235,11 @@ begin
   end if;
   -- Derive followup from immutable evidence, never trust the classifier's boolean.
   if nullif(btrim(m.headers->>'in-reply-to'),'') is not null or nullif(btrim(m.headers->>'references'),'') is not null
-    or m.subject ~* '^\s*(re|fw|fwd|rv)\s*:' then
-    v_disposition := 'needs_human'; v_reason := 'thread_followup'; p_draft := null;
+    or m.subject ~* '^\s*(\[[^\]]{1,40}\]\s*)*(re|fw|fwd|rv|aw|sv|tr|res)(\[\d+\]|\(\d+\))?\s*[:：]' then
+    p_draft := null;
+    if v_disposition = 'drafted' then
+      v_disposition := 'needs_human'; v_reason := 'thread_followup';
+    end if;
   end if;
   if v_disposition='drafted' then
     if p_draft is null or jsonb_typeof(p_draft) <> 'object' or v_reason is not null

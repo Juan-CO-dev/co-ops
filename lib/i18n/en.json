@@ -8567,7 +8567,6 @@
   "admin.inbound.health_shown": "{n} shown",
   "admin.inbound.no_subject": "No subject",
   "admin.inbound.retrying": "Queuing retry…",
-  "catering.inbox.mail.greeting": "Hi {name},",
   "catering.inbox.mail.greeting_unknown": "Hi there,",
   "catering.inbox.mail.intake.subject": "Your catering inquiry",
   "catering.inbox.mail.intake.body": "Thanks for reaching out. Tell us about your event through our catering portal.",
