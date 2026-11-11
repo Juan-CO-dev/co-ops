@@ -1,3 +1,4 @@
+import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 /** Authenticate the exact received bytes, before parsing or persistence. */

@@ -6,6 +6,8 @@ import { PGlite } from '@electric-sql/pglite';
 const read=n=>readFileSync(new URL(`../supabase/migrations/${n}`,import.meta.url),'utf8');
 const migration=read('0300_meta_leads.sql');
 function table(file,name) { const m=read(file).match(new RegExp(`create table public\\.${name} \\([\\s\\S]*?\\n\\);`,'i')); assert.ok(m,name); return m[0]; }
+const lease0275=read('0275_schedule_weeks.sql').match(/alter table public\.cron_route_leases drop constraint cron_route_leases_job_check,[\s\S]*?grant execute on function public\.claim_cron_route\(text\) to service_role;/i)?.[0];
+assert.ok(lease0275);
 const profiles=read('0234_customer_profiles.sql');
 function fn(name) {const m=profiles.match(new RegExp(`create function public\\.${name}\\([\\s\\S]*?\\$\\$;`,'i')); assert.ok(m,name); return m[0];}
 const consentView=profiles.match(/create view public\.customer_consent_current[\s\S]*?e\.id desc;/i)?.[0];
@@ -41,11 +43,38 @@ try {
     ${consentView}
     ${fn('customer_marketing_export')}
     ${read('0243_cron_route_leases.sql')}
+    ${lease0275}
   `);
+  // Each sabotage lives in a transaction; failed preflight rolls it back too.
+  const refusePreflight=async(sql,re,label)=>{
+    await db.exec('begin;'+sql);
+    await reject(()=>db.exec(migration),re,label);
+    await db.exec('rollback');
+    check((await one("select to_regclass('public.meta_lead_events') x")).x===null,`${label}: no partial DDL`);
+  };
+  for(const helper of ['customer_identity_lock()', 'customer_resolve(text,text,text,text,text,uuid,timestamptz,text,text)', 'customer_email_is_relay(text)', 'customer_sha256(text)']) {
+    await refusePreflight(`alter function public.${helper} rename to missing_helper`,/missing 0234 helper/,`missing ${helper} refused`);
+  }
+  for(const [table,column] of [['users','role'],['catering_pipeline','contact_phone']]) {
+    await refusePreflight(`alter table public.${table} rename column ${column} to missing_column`,new RegExp(`missing ${table}.${column}`),`missing ${table}.${column} refused`);
+  }
+  for(const [table,name] of [['customers','customers_sources_check'],['customer_consent_events','customer_consent_events_source_check']]) {
+    await refusePreflight(`alter table public.${table} drop constraint ${name}; alter table public.${table} add constraint ${name} check(true)`,new RegExp(`${name} drift`),`${name} drift refused`);
+    await refusePreflight(`alter table public.${table} drop constraint ${name}`,new RegExp(`${name} drift`),`${name} absent refused`);
+  }
+  await refusePreflight('create table meta_lead_events(id text)',/already applied/,'already applied refused');
+  await refusePreflight("alter table cron_route_leases drop constraint cron_route_leases_job_check; alter table cron_route_leases add constraint cron_route_leases_job_check check(job in ('unknown-job'))",/cron_route_leases_job_check is neither/,'unknown cron set refused');
+  const union=lease0275.replaceAll("'schedule-draft'", "'schedule-draft', 'catering-inbox-delivery', 'meta-leads'");
+  await db.exec('begin;'+union+"insert into cron_route_leases(job,lease_until) values('catering-inbox-delivery',clock_timestamp()+interval '330 seconds');");
+  await db.exec(migration.replace(/commit;\s*$/, ''));
+  check((await one("select count(*)::int n from cron_route_leases where job='catering-inbox-delivery'")).n===1,'post-0298 union applies with existing inbox lease');
+  check(!(await rpc('claim_cron_route',['catering-inbox-delivery'])),'existing inbox lease remains held');
+  await db.exec('rollback');
   await reject(()=>db.exec(migration.replace('revoke all on public.%I from public, anon, authenticated, service_role','revoke all on public.%I from anon, authenticated')),/meta table privilege escape/,'permissive ACL sabotage caught');
   await db.exec('rollback');
   check((await one("select to_regclass('public.meta_lead_events') x")).x===null,'failed migration rolls back');
   await db.exec(migration);
+  check(true,'pre-0298 four-set applies');
   for(const role of ['anon','authenticated','service_role']) for(const privilege of ['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) {
     check((await one('select has_table_privilege($1,$2,$3) x',[role,'meta_lead_events',privilege])).x===(role==='service_role'&&privilege==='SELECT'),`${role} ${privilege} ceiling`);
   }
@@ -67,6 +96,10 @@ try {
   const created=await apply('2',c.lease);check(created.state==='created','first submission creates lead only');
   check((await apply('2',c.lease)).pipeline_id===created.pipeline_id,'apply replay keeps same lead');
   await receive('3');const c3=await claim('3');const attached=await apply('3',c3.lease);
+  const attachEvent=await one("select * from catering_pipeline_events where pipeline_id=$1 and note like 'Meta lead form 3%'",[created.pipeline_id]);
+  check(attachEvent.from_stage===attachEvent.to_stage&&attachEvent.note.includes('no stage change'),'attach records no stage change');
+  check(['Name: Synthetic','Phone:','Event date: 2027-01-02','Headcount: 20','Fulfillment: pickup','Notes: Synthetic note'].every(v=>attachEvent.note.includes(v)),'attach has fixed readable fields');
+  check(!attachEvent.note.includes('Unverified text')&&!attachEvent.note.includes('language')&&!attachEvent.note.includes('{'),'attach never serializes raw intake');
   check(attached.state==='attached'&&attached.pipeline_id===created.pipeline_id,'same customer second submission attaches');
   check((await one('select count(*)::int n from catering_pipeline')).n===1,'one pipeline for two submissions');
   check((await one("select intake_snapshot from meta_lead_events where leadgen_id='3'")).intake_snapshot===null,'attach snapshot erased');
@@ -97,7 +130,7 @@ try {
   await reject(()=>db.query("update meta_lead_events set portal_token_id=$1 where leadgen_id='2'",[randomUUID()]),/check constraint/,'token requires snapshot nulling');
   await db.query("update meta_lead_events set portal_token_id=$1,intake_snapshot=null where leadgen_id='2'",[randomUUID()]);
   check(true,'A9 paired token and erasure permitted');
-  const consentArgs=['optin@example.test','email','meta_lead_form','2026-11-11T12:00:00Z','9:email_marketing_opt_in','meta-email-marketing-v1'];
+  const consentArgs=['optin@example.test','email','meta_lead_form','2026-11-11T12:00:00Z','9:email_marketing_opt_in','meta-email-marketing-v2'];
   await db.exec('set role service_role');
   check((await rpc('customer_consent_record_explicit',consentArgs)).recorded,'explicit tick creates consent event');
   check(!(await rpc('customer_consent_record_explicit',consentArgs)).recorded,'evidence replay is idempotent');

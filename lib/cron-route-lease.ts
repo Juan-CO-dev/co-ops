@@ -8,7 +8,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
  * `sevenshifts-sync` (0268) is the hourly 7shifts read; Sync now shares its lease.
  * `schedule-draft` (0275) is the Wednesday schedule draft (Scheduling Phase 2, Task 19).
  */
-export type CronRouteJob = "toast-sales-today" | "toast-catering-scan" | "sevenshifts-sync" | "schedule-draft" | "meta-leads";
+export type CronRouteJob = "toast-sales-today" | "toast-catering-scan" | "sevenshifts-sync" | "schedule-draft" | "catering-inbox-delivery" | "meta-leads";
 export async function claimCronRoute(job: CronRouteJob): Promise<boolean> {
   const { data, error } = await getServiceRoleClient().rpc("claim_cron_route", { p_job: job })
     .abortSignal(AbortSignal.timeout(5_000));

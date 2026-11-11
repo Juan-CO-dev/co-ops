@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { after, type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
-import { verifyMetaSignature } from "@/lib/meta-leads/signature-shared";
+import { verifyMetaSignature } from "@/lib/meta-leads/signature";
 import { readBoundedBytes } from "@/lib/meta-leads/request";
 import { parseMetaNotifications } from "@/lib/meta-leads/notification-shared";
 import { recordMetaLead, processMetaLead } from "@/lib/meta-leads/worker";

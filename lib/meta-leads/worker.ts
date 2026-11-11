@@ -8,7 +8,7 @@ import { mapMetaLeadFields } from "./intake-shared";
 import { metaFormConfig, type MetaNotification } from "./notification-shared";
 
 type Client = ReturnType<typeof getServiceRoleClient>;
-type Failure = "configuration" | "graph_auth" | "graph_rate_limit" | "graph_timeout" | "graph_unavailable" | "graph_not_found" | "invalid_payload" | "database" | "invalid_location" | "consent_refused";
+type Failure = "configuration" | "graph_auth" | "graph_rate_limit" | "graph_timeout" | "graph_unavailable" | "graph_not_found" | "invalid_payload" | "database" | "invalid_location" | "consent_refused" | "identity_unresolved" | "invalid_assignee";
 const transient = new Set<Failure>(["graph_rate_limit", "graph_timeout", "graph_unavailable", "database"]);
 class WorkerFailure extends Error { constructor(readonly code: Failure) { super(code); } }
 interface Claim { claimed: boolean; attempts: number; page_id: string; form_id: string; provider_created_at: string }
@@ -52,7 +52,7 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
     if (mapped.consent.optedIn && process.env.CUSTOMER_PROFILES === "1") {
       const consent = await sb.rpc("customer_consent_record_explicit", {
         p_email: intake.contactEmail, p_channel: "email", p_source: "meta_lead_form",
-        p_effective_at: fetched.lead.created_time ?? row.provider_created_at,
+        p_effective_at: row.provider_created_at,
         p_evidence_ref: `${leadgenId}:${mapped.consent.questionKey}`, p_text_version: mapped.consent.textVersion,
       });
       if (consent.error) {
@@ -71,7 +71,13 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
         fulfillment: intake.isDelivery ? "delivery" : "pickup", language: form.language,
         location_id: shop.data.id, mapping_version: "meta-leads-v1", consent: mapped.consent },
     });
-    if (applied.error || !["created", "attached", "needs_human"].includes(applied.data?.state)) throw new WorkerFailure("database");
+    // A stale worker no longer owns the receipt; leave completion to its new holder.
+    if (applied.error?.message === "stale_lease") return "busy";
+    if (applied.error) {
+      const refusals = new Map<string, Failure>([["invalid_customer", "identity_unresolved"], ["invalid_location", "invalid_location"], ["invalid_assignee", "invalid_assignee"], ["invalid_intake", "invalid_payload"]]);
+      throw new WorkerFailure(refusals.get(applied.error.message) ?? "database");
+    }
+    if (!["created", "attached", "needs_human"].includes(applied.data?.state)) throw new WorkerFailure("database");
     return applied.data.state;
   } catch (error) {
     // Never persist provider/database exception text: these may contain PII or credentials.

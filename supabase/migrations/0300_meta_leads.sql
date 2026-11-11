@@ -3,6 +3,42 @@
 -- Only leads are created: no quote, portal token or email writer in this build.
 -- lead_source is unconstrained text in 0108; its application vocabulary is extended separately.
 begin;
+
+-- Refuse prerequisite drift before any persistent DDL. 0298 and 0300 may apply in either order.
+do $$
+declare v_jobs text[]; v_helper text; v_constraint text; v_table text; v_expected text; v_actual text;
+begin
+  if to_regclass('public.meta_lead_events') is not null then raise exception '0300: already applied'; end if;
+  foreach v_helper in array array['customer_identity_lock()', 'customer_resolve(text,text,text,text,text,uuid,timestamptz,text,text)', 'customer_email_is_relay(text)', 'customer_sha256(text)'] loop
+    if to_regprocedure('public.' || v_helper) is null then raise exception '0300: missing 0234 helper %', v_helper; end if;
+  end loop;
+  if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='users' and column_name='role') then
+    raise exception '0300: missing users.role'; end if;
+  if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='catering_pipeline' and column_name='contact_phone') then
+    raise exception '0300: missing catering_pipeline.contact_phone'; end if;
+  -- Let PostgreSQL canonicalize the exact 0234 expressions, then compare full definitions
+  -- (extracting literals alone would miss an OR true or an altered operator).
+  create temporary table meta_0300_expected_checks (
+    source text constraint customer_consent_events_source_check check(source in ('toast_marketing_api','toast_csv_import','toast_order','catering_portal','delete_request','retention')),
+    sources text[] constraint customers_sources_check check(sources <@ array['toast_pos','toast_online','toast_app','toast_third_party','catering','ezcater','toast_csv_import','toast_marketing_api']::text[])
+  ) on commit drop;
+  foreach v_constraint in array array['customer_consent_events_source_check','customers_sources_check'] loop
+    v_table := case when v_constraint='customers_sources_check' then 'customers' else 'customer_consent_events' end;
+    select pg_get_constraintdef(oid) into v_expected from pg_constraint where conrelid='pg_temp.meta_0300_expected_checks'::regclass and conname=v_constraint;
+    select pg_get_constraintdef(oid) into v_actual from pg_constraint where conrelid=to_regclass('public.'||v_table) and conname=v_constraint and contype='c' and convalidated;
+    if v_actual is distinct from v_expected then raise exception '0300: % drift from 0234', v_constraint; end if;
+  end loop;
+  drop table pg_temp.meta_0300_expected_checks;
+  if to_regclass('public.cron_route_leases') is null or to_regprocedure('public.claim_cron_route(text)') is null then
+    raise exception '0300: missing cron_route_leases / claim_cron_route'; end if;
+  select array_agg(distinct m[1] order by m[1]) into v_jobs
+    from pg_constraint c, lateral regexp_matches(pg_get_constraintdef(c.oid), '''([a-z-]+)''', 'g') m
+    where c.conrelid='public.cron_route_leases'::regclass and c.conname='cron_route_leases_job_check' and c.contype='c' and c.convalidated;
+  if v_jobs is distinct from array['schedule-draft','sevenshifts-sync','toast-catering-scan','toast-sales-today']::text[]
+    and v_jobs is distinct from array['catering-inbox-delivery','meta-leads','schedule-draft','sevenshifts-sync','toast-catering-scan','toast-sales-today']::text[] then
+    raise exception '0300: cron_route_leases_job_check is neither 0275 four-set nor 0298 six-set union (%)', v_jobs;
+  end if;
+end $$;
 create table public.meta_lead_events (
   leadgen_id text primary key check (leadgen_id ~ '^[0-9]{1,100}$'),
   page_id text not null check (page_id ~ '^[0-9]{1,100}$'),
@@ -13,7 +49,7 @@ create table public.meta_lead_events (
   attempts integer not null default 0 check (attempts between 0 and 5),
   lease_id uuid, lease_until timestamptz,
   next_attempt_at timestamptz not null default clock_timestamp(),
-  error_code text check (error_code in ('configuration','graph_auth','graph_rate_limit','graph_timeout','graph_unavailable','graph_not_found','invalid_payload','database','invalid_location','consent_refused','identity_unresolved','ambiguous_leads','closed_lead','attempts_exhausted')),
+  error_code text check (error_code in ('configuration','graph_auth','graph_rate_limit','graph_timeout','graph_unavailable','graph_not_found','invalid_payload','database','invalid_location','consent_refused','identity_unresolved','invalid_assignee','ambiguous_leads','closed_lead','attempts_exhausted')),
   raw_keys text[] not null default '{}' check (cardinality(raw_keys)<=100 and octet_length(raw_keys::text)<=70000),
   customer_id uuid references public.catering_customers(id),
   pipeline_id uuid references public.catering_pipeline(id),
@@ -77,8 +113,8 @@ create function public.meta_lead_intake_apply(p_leadgen_id text,p_lease_id uuid,
 returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
 declare e public.meta_lead_events%rowtype; v_count integer; v_closed integer; v_pipeline uuid; v_stage text; v_state text; v_error text;
 begin
-  -- Same customer lock namespace as the portal-intake contract. Customer resolution
-  -- is done first in JS; no nested customer identity lock is taken in this RPC.
+  -- Build 2 portal intake must take this same customer lock before checking/creating leads.
+  -- It does not yet do so. Customer resolution is done first in JS; no nested identity lock here.
   if p_customer_id is null then raise exception 'invalid_customer'; end if;
   perform pg_advisory_xact_lock(hashtextextended('catering_customer_intake:'||p_customer_id,0));
   select * into e from public.meta_lead_events where leadgen_id=p_leadgen_id for update;
@@ -103,7 +139,14 @@ begin
     select id,stage into v_pipeline,v_stage from public.catering_pipeline where customer_id=p_customer_id and stage in ('inquiry','quote_sent');
     v_state:='attached';
     insert into public.catering_pipeline_events(pipeline_id,from_stage,to_stage,note)
-    values(v_pipeline,v_stage,v_stage,'Meta lead form '||p_leadgen_id||': '||coalesce(p_intake->>'notes','')||E'\nSubmitted intake: '||(p_intake-'email')::text);
+    values(v_pipeline,v_stage,v_stage,concat_ws(E'\n',
+      'Meta lead form '||p_leadgen_id||' - additional submission (no stage change)',
+      'Name: '||coalesce(p_intake->>'contact_name','Not provided'),
+      'Phone: '||coalesce(p_intake->>'contact_phone','Not provided'),
+      'Event date: '||coalesce(p_intake->>'event_date','Not provided'),
+      'Headcount: '||coalesce(p_intake->>'headcount','Not provided'),
+      'Fulfillment: '||coalesce(p_intake->>'fulfillment','Not provided'),
+      'Notes: '||coalesce(p_intake->>'notes','Not provided')));
   else
     v_state:='created';
     insert into public.catering_pipeline(customer_id,contact_name,company,event_date,headcount,contact_phone,stage,lead_source,location_id,assigned_to,notes)
@@ -138,7 +181,7 @@ begin
   if p_channel is distinct from 'email' or p_source is distinct from 'meta_lead_form'
     or p_effective_at is null or p_effective_at>clock_timestamp()+interval '5 minutes'
     or p_evidence_ref is null or p_evidence_ref !~ '^[0-9]{1,100}:[A-Za-z0-9_ -]{1,200}$'
-    or p_text_version is distinct from 'meta-email-marketing-v1'
+    or p_text_version is distinct from 'meta-email-marketing-v2'
     or v_email is null or length(v_email)>254 or v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then raise exception 'consent_invalid'; end if;
   if public.customer_email_is_relay(v_email) then raise exception 'consent_relay'; end if;
   if exists(select 1 from public.customer_suppressions where kind='email' and value_sha256=public.customer_sha256(v_email)) then raise exception 'consent_suppressed'; end if;
@@ -154,14 +197,14 @@ begin
   return jsonb_build_object('event_id',v_id,'recorded',true);
 end $$;
 
--- The 0275 house lease body, adding only the retry backstop identity.
+-- The 0275 house lease body with the 0298/0300 union; neither migration drops the other job.
 alter table public.cron_route_leases drop constraint cron_route_leases_job_check,
-  add constraint cron_route_leases_job_check check(job in ('toast-sales-today','toast-catering-scan','sevenshifts-sync','schedule-draft','meta-leads'));
+  add constraint cron_route_leases_job_check check(job in ('toast-sales-today','toast-catering-scan','sevenshifts-sync','schedule-draft','catering-inbox-delivery','meta-leads'));
 create or replace function public.claim_cron_route(p_job text)
 returns boolean language plpgsql security definer set search_path=pg_catalog,public as $$
 declare claimed text;
 begin
-  if p_job is null or p_job not in ('toast-sales-today','toast-catering-scan','sevenshifts-sync','schedule-draft','meta-leads') then raise exception 'invalid_cron_route'; end if;
+  if p_job is null or p_job not in ('toast-sales-today','toast-catering-scan','sevenshifts-sync','schedule-draft','catering-inbox-delivery','meta-leads') then raise exception 'invalid_cron_route'; end if;
   insert into public.cron_route_leases(job,lease_until) values(p_job,clock_timestamp()+interval '330 seconds')
   on conflict(job) do update set lease_until=clock_timestamp()+interval '330 seconds'
     where cron_route_leases.lease_until<=clock_timestamp() returning job into claimed;

@@ -102,3 +102,28 @@ it("stale completion is not reported as a persisted failure", async () => {
   mocks.graph.mockResolvedValue({ ok: false, error: "graph_timeout" }); const db = database([claim, { data: false }]);
   await expect(processMetaLead("11", db.sb)).rejects.toThrow("meta_state_write_failed");
 });
+
+it.each([["invalid_customer", "identity_unresolved"], ["invalid_location", "invalid_location"], ["invalid_assignee", "invalid_assignee"], ["invalid_intake", "invalid_payload"]])("RPC refusal %s is terminal", async (message, code) => {
+  const db = database([claim, { error: { message } }, { data: true }]);
+  expect(await processMetaLead("11", db.sb)).toBe("needs_human");
+  expect(db.rpc).toHaveBeenLastCalledWith("meta_lead_fail", expect.objectContaining({ p_error_code: code, p_retryable: false }));
+});
+it("stale apply lease returns busy without attempting a failure write", async () => {
+  const db = database([claim, { error: { message: "stale_lease" } }]);
+  expect(await processMetaLead("11", db.sb)).toBe("busy");
+  expect(db.rpc).toHaveBeenCalledTimes(2);
+});
+it("consent uses receipt time across retries despite changed Graph time", async () => {
+  for (const created_time of ["2026-11-10T00:00:00Z", "2026-11-11T00:00:00Z"]) {
+    mocks.graph.mockResolvedValue({ ok: true, lead: { id: "11", created_time, field_data: fields(true) } });
+    const db = database([claim, { data: { event_id: "same-event" } }, { data: { state: "created" } }]);
+    expect(await processMetaLead("11", db.sb)).toBe("created");
+    expect(db.rpc).toHaveBeenNthCalledWith(2, "customer_consent_record_explicit", expect.objectContaining({ p_effective_at: claim.data.provider_created_at }));
+  }
+});
+
+it("unknown refusal names cannot escape the closed error vocabulary", async () => {
+  const db = database([claim, { error: { message: "constructor" } }, { data: true }]);
+  expect(await processMetaLead("11", db.sb)).toBe("retry");
+  expect(db.rpc).toHaveBeenLastCalledWith("meta_lead_fail", expect.objectContaining({ p_error_code: "database", p_retryable: true }));
+});
