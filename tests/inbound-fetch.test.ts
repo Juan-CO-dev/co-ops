@@ -35,8 +35,17 @@ describe("inbound receiving API", () => {
     expect(fetcher.mock.calls[2]![1]).toMatchObject({ redirect: "error" });
     expect(fetcher.mock.calls[2]![1]?.headers).toBeUndefined();
   });
+  it.each([
+    "https://inbound-cdn.resend.com/fixture-message/attachments/fixture-attachment?signature=x",
+    "https://cdn.resend.app/receiving/fixture-message/attachments/fixture-attachment?signature=x",
+  ])("trusts Resend's receiving CDN shape %s", ok => {
+    expect(trustedAttachmentUrl(ok, emailId, "fixture-attachment")).toBe(true);
+  });
   it.each(["https://evil.example.test/file", "https://inbound-cdn.resend.com/other/attachments/fixture-attachment",
-    "https://inbound-cdn.resend.com.evil.example.test/fixture-message/attachments/fixture-attachment", "http://inbound-cdn.resend.com/fixture-message/attachments/fixture-attachment"])("refuses untrusted URL %s", async bad => {
+    "https://inbound-cdn.resend.com.evil.example.test/fixture-message/attachments/fixture-attachment", "http://inbound-cdn.resend.com/fixture-message/attachments/fixture-attachment",
+    "https://cdn.resend.app/fixture-message/attachments/fixture-attachment", "https://inbound-cdn.resend.com/receiving/fixture-message/attachments/fixture-attachment",
+    "https://cdn.resend.app/receiving/other/attachments/fixture-attachment", "https://cdn.resend.app.evil.example.test/receiving/fixture-message/attachments/fixture-attachment",
+    "https://cdn.resend.app:8443/receiving/fixture-message/attachments/fixture-attachment", "https://user@cdn.resend.app/receiving/fixture-message/attachments/fixture-attachment"])("refuses untrusted URL %s", async bad => {
     expect(trustedAttachmentUrl(bad, emailId, "fixture-attachment")).toBe(false);
     const fetcher = mockFetch([attachment({ download_url: bad })]);
     await expect(fetchInboundContent(emailId, fetcher)).rejects.toThrow("resend_untrusted_download");
