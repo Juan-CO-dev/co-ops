@@ -17,6 +17,16 @@ function service(rows: Record<string, unknown[][]>) {
 const input = { sender: "guest_name@example.com", threadKey: null, externalRef: null, messageId: "message" };
 const lead = { id: "lead", customer_id: "customer", location_id: "shop", stage: "inquiry", assigned_to: null };
 describe("attach-only inbox identity", () => {
+  it("trims and lowercases the sender before literal ILIKE, including wildcard escapes", async () => {
+    const { sb, calls } = service({});
+    await resolveCateringInboxIdentity({ ...input, sender: "  Guest_Name%tag@example.COM  " }, sb);
+    expect(calls).toContainEqual(["catering_customers", "ilike", ["email", "guest\\_name\\%tag@example.com"]]);
+  });
+  it("never uses the invalid threading marker for an identity lookup", async () => {
+    const { sb, from } = service({ catering_customers: [[{ id: "customer", active: true }]] });
+    await resolveCateringInboxIdentity({ ...input, threadKey: "[invalid]" }, sb);
+    expect(from).not.toHaveBeenCalledWith("catering_inbound_messages");
+  });
   it.each([
     [[], "new_sender"], [[{ id: "customer", active: false }], "ambiguous"],
     [[{ id: "customer", active: true }, { id: "old", active: false }], "ambiguous"],
@@ -56,6 +66,7 @@ describe("attach-only inbox identity", () => {
     expect(await resolveCateringInboxIdentity({ ...input, sender: "order@ezcater.com", externalRef: "provider-id" }, sb)).toMatchObject({ identity: "masked", customerId: null, leadId: "lead" });
     expect(calls).toContainEqual(["catering_pipeline", "eq", ["lead_source", "ezcater"]]);
     expect(calls).toContainEqual(["catering_pipeline", "eq", ["external_ref", "provider-id"]]);
+    expect(calls).toContainEqual(["catering_pipeline", "in", ["stage", ["inquiry", "quote_sent", "confirmed", "out"]]]);
   });
   it("uses IS NULL for a proven platform family without a customer", async () => {
     const { sb, calls } = service({ catering_pipeline: [[{ ...lead, customer_id: null }]], catering_quotes: [[{ id: "quote" }]] });

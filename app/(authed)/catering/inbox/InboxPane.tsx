@@ -15,7 +15,7 @@ export function InboxPane({ initial }: { initial: InboxList }) {
   const [assignee, setAssignee] = useState("");
   const [detail, setDetail] = useState<InboxDetail | null>(null);
   const [assignedTo, setAssignedTo] = useState("");
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<"action_error" | "stale_revision" | "invalid_assignee" | null>(null);
   const [busy, setBusy] = useState(false);
   const pendingAction = useRef<{ key: string; requestId: string } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -30,17 +30,18 @@ export function InboxPane({ initial }: { initial: InboxList }) {
     setInbox((await response.json()).inbox as InboxList);
   }
   async function open(id: string) {
-    setBusy(true); setError(false);
+    setBusy(true); setError(null);
     try {
       const response = await fetch(`/api/catering/inbox/${encodeURIComponent(id)}`, { cache: "no-store" });
       if (!response.ok) throw new Error("load_failed");
       const message = (await response.json()).message as InboxDetail;
       setDetail(message); setAssignedTo(message.assigned_to ?? "");
-    } catch { setError(true); } finally { setBusy(false); }
+      return true;
+    } catch { setError("action_error"); return false; } finally { setBusy(false); }
   }
   async function act(action: "handle" | "reassign") {
     if (!detail) return;
-    setBusy(true); setError(false);
+    setBusy(true); setError(null);
     const key = `${detail.id}:${detail.revision}:${action}:${assignedTo}`;
     if (pendingAction.current?.key !== key) pendingAction.current = { key, requestId: crypto.randomUUID() };
     try {
@@ -48,15 +49,25 @@ export function InboxPane({ initial }: { initial: InboxList }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedRevision: detail.revision, requestId: pendingAction.current.requestId, ...(action === "reassign" ? { assignedTo: assignedTo || null } : {}) }),
       });
-      if (!response.ok) throw new Error("action_failed");
+      if (!response.ok) {
+        const failure = await response.json();
+        if (failure.code === "stale_revision") {
+          pendingAction.current = null;
+          await refresh();
+          if (await open(detail.id)) setError("stale_revision");
+          return;
+        }
+        if (failure.code === "invalid_assignee") { setError("invalid_assignee"); return; }
+        throw new Error("action_failed");
+      }
       await refresh(); await open(detail.id); pendingAction.current = null;
-    } catch { setError(true); } finally { setBusy(false); }
+    } catch { setError("action_error"); } finally { setBusy(false); }
   }
   const rows = inbox.messages.filter(m => !assignee || (assignee === "unassigned" ? !m.assigned_to : m.assigned_to === assignee));
   return <>
     <h1 className="text-xl font-bold">{t("catering.inbox.title")}</h1>
     {inbox.mode !== "live" && <p role="status" className="my-3 rounded border p-3">{t("catering.inbox.drafts_not_sent")}</p>}
-    {error && <p role="alert">{t("catering.inbox.action_error")}</p>}
+    {error && <p role="alert">{t(`catering.inbox.${error}`)}</p>}
     <div className="my-4 flex flex-wrap items-center gap-2">
       <label className="flex max-w-full flex-wrap items-center gap-2">{t("catering.inbox.assignee")}
         <select aria-label={t("catering.inbox.aria.assignee")} className={`${control} max-w-full`} value={assignee} onChange={e => setAssignee(e.target.value)}>
@@ -64,14 +75,17 @@ export function InboxPane({ initial }: { initial: InboxList }) {
           {inbox.assignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       </label>
-      <button className={control} aria-label={t("catering.inbox.aria.refresh")} disabled={busy} onClick={() => { setError(false); void refresh().catch(() => setError(true)); }}>{t("catering.inbox.action.retry")}</button>
+      <button className={control} aria-label={t("catering.inbox.aria.refresh")} disabled={busy} onClick={() => { setError(null); void refresh().catch(() => setError("action_error")); }}>{t("catering.inbox.action.retry")}</button>
     </div>
     <div role="group" aria-label={t("catering.inbox.aria.groups")}>
       {INBOX_GROUPS.map(group => {
         const messages = rows.filter(m => m.group === group);
         const expanded = openGroups.includes(group);
+        if (group === "noise") return <section key={group} className="mb-3 rounded border p-3">
+          <h2 className="flex min-h-11 items-center justify-between gap-2"><span>{t("catering.inbox.group.noise")}</span><span>{messages.length === 1 ? t("catering.inbox.count_one") : t("catering.inbox.count", { n: messages.length })}</span></h2>
+        </section>;
         return <section key={group} className="mb-3 rounded border p-3">
-          <h2><button className={`${control} w-full flex-wrap justify-between gap-2 text-left`} aria-expanded={expanded} aria-controls={`inbox-${group}`} onClick={() => setOpenGroups(groups => expanded ? groups.filter(g => g !== group) : [...groups, group])}>
+          <h2><button className={`${control} w-full flex-wrap justify-between gap-2 text-left`} aria-expanded={expanded} aria-controls={expanded ? `inbox-${group}` : undefined} onClick={() => setOpenGroups(groups => expanded ? groups.filter(g => g !== group) : [...groups, group])}>
             <span>{t(`catering.inbox.group.${group}`)}</span><span>{messages.length === 1 ? t("catering.inbox.count_one") : t("catering.inbox.count", { n: messages.length })}</span>
           </button></h2>
           {expanded && <div id={`inbox-${group}`}>
@@ -87,7 +101,7 @@ export function InboxPane({ initial }: { initial: InboxList }) {
     <dialog ref={dialog} aria-label={t("catering.inbox.aria.drawer")} onCancel={() => setDetail(null)} onClose={() => setDetail(null)} className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-2xl overflow-y-auto rounded p-4 backdrop:bg-black/40">
       {detail && <>
         <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="min-w-0 break-words font-bold">{detail.subject || t("catering.inbox.no_subject")}</h2><button autoFocus className={control} onClick={() => setDetail(null)}>{t("catering.inbox.action.close")}</button></div>
-        {error && <p role="alert">{t("catering.inbox.action_error")}</p>}
+        {error && <p role="alert">{t(`catering.inbox.${error}`)}</p>}
         <p className="break-all">{detail.sender_address}</p>
         <p>{t("catering.inbox.assignee")}: {detail.assignees.find(a => a.id === detail.assigned_to)?.name ?? t("catering.inbox.unassigned")}</p>
         <p>{detail.classification && t(`catering.inbox.class.${detail.classification}`)} {detail.reason && t(`catering.inbox.reason.${detail.reason}`)}</p>
@@ -101,9 +115,9 @@ export function InboxPane({ initial }: { initial: InboxList }) {
           {detail.quote_id && <Link className={control} href={`/catering/quotes/${detail.quote_id}`}>{t("catering.inbox.quote")}</Link>}
         </div>
         {detail.preview_text && <section className="my-4 rounded border p-3"><h3 className="font-semibold">{t("catering.inbox.draft_preview")}</h3><p className="whitespace-pre-wrap break-words">{detail.preview_text}</p></section>}
-        {!detail.transport_only && detail.disposition !== "recorded" && detail.disposition !== "handled" && <div className="my-4 flex flex-wrap items-center gap-2">
-          <label className="flex max-w-full flex-wrap items-center gap-2">{t("catering.inbox.assign_label")}<select className={`${control} max-w-full`} value={assignedTo} onChange={e => setAssignedTo(e.target.value)}><option value="">{t("catering.inbox.unassigned")}</option>{detail.assignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
-          <button className={control} disabled={busy} onClick={() => void act("reassign")}>{t("catering.inbox.action.reassign")}</button>
+        {!detail.transport_only && detail.disposition !== "handled" && <div className="my-4 flex flex-wrap items-center gap-2">
+          {detail.disposition !== "recorded" && <><label className="flex max-w-full flex-wrap items-center gap-2">{t("catering.inbox.assign_label")}<select className={`${control} max-w-full`} value={assignedTo} onChange={e => setAssignedTo(e.target.value)}><option value="">{t("catering.inbox.unassigned")}</option>{detail.assignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
+          <button className={control} disabled={busy} onClick={() => void act("reassign")}>{t("catering.inbox.action.reassign")}</button></>}
           <button className={control} disabled={busy} onClick={() => void act("handle")}>{t("catering.inbox.action.handle")}</button>
         </div>}
         <h3 className="font-semibold">{t("catering.inbox.history")}</h3>

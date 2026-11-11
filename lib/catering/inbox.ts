@@ -1,3 +1,4 @@
+import { isInboxSchemaMissing } from "./inbox-schema-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -7,6 +8,10 @@ import { canReadCateringInbox, inboxGroup, type InboxClassification, type InboxD
 
 export class CateringInboxError extends Error {
   constructor(public status: number, public code: string) { super(code); }
+}
+function inboxResult<T extends { error?: unknown }>(result: T): T {
+  if (isInboxSchemaMissing(result.error)) throw new CateringInboxError(503, "inbox_unavailable");
+  return result;
 }
 export interface InboxSummary {
   id: string; inbound_message_id: string; location_id: string | null;
@@ -51,13 +56,18 @@ export async function listCateringInbox(ctx: AuthContext, assignedTo?: string): 
   const actor = await reader(ctx);
   if (assignedTo && assignedTo !== "unassigned" && !UUID.test(assignedTo)) throw new CateringInboxError(400, "invalid_payload");
   const db = getServiceRoleClient();
-  let query = db.from("catering_inbound_messages").select(SUMMARY);
-  if (actor.role === "gm") query = query.in("location_id", actor.locations);
-  const children = await selectAllRows<Omit<InboxSummary, "group" | "transport_only" | "stale">>((from,to) => query.order("id").range(from,to));
-  let transportQuery = db.from("inbound_messages").select("id,location_id,from_address,subject,received_at,catering_inbound_messages!left(id)").eq("lane", "catering").in("content_state", ["pending", "failed", "blocked_config"]).is("catering_inbound_messages", null);
-  if (actor.role === "gm") transportQuery = transportQuery.in("location_id", actor.locations);
-  const transports = await selectAllRows<{id:string;location_id:string|null;from_address:string|null;subject:string|null;received_at:string}>((from,to) => transportQuery.order("id").range(from,to));
+  const children = await selectAllRows<Omit<InboxSummary, "group" | "transport_only" | "stale">>(async (from,to) => {
+    let query = db.from("catering_inbound_messages").select(SUMMARY);
+    if (actor.role === "gm") query = query.in("location_id", actor.locations);
+    return inboxResult(await query.order("id").range(from,to));
+  });
+  const transports = await selectAllRows<{id:string;location_id:string|null;from_address:string|null;subject:string|null;received_at:string}>(async (from,to) => {
+    let query = db.from("inbound_messages").select("id,location_id,from_address,subject,received_at,catering_inbound_messages!left(id)").eq("lane", "catering").in("content_state", ["pending", "failed", "blocked_config"]).is("catering_inbound_messages", null);
+    if (actor.role === "gm") query = query.in("location_id", actor.locations);
+    return inboxResult(await query.order("id").range(from,to));
+  });
   const settings = await db.from("catering_inbox_settings").select("mode").eq("singleton", true).single();
+  inboxResult(settings);
   if (settings.error) throw new CateringInboxError(500, "read_failed");
   const messages = children.filter(r => canReadCateringInbox(actor, r.location_id)).map(r => summary(r as Omit<InboxSummary, "group" | "transport_only" | "stale">));
   for (const r of transports) {
@@ -75,6 +85,7 @@ export async function getCateringInboxMessage(ctx: AuthContext, id: string): Pro
   let scope = db.from(transport ? "inbound_messages" : "catering_inbound_messages").select("location_id").eq("id", rowId);
   if (transport) scope = scope.eq("lane", "catering");
   const bound = await scope.maybeSingle();
+  inboxResult(bound);
   if (bound.error) throw new CateringInboxError(500, "read_failed");
   if (!bound.data || !canReadCateringInbox(actor, bound.data.location_id)) throw new CateringInboxError(404, "not_found");
   if (transport) {
@@ -84,10 +95,12 @@ export async function getCateringInboxMessage(ctx: AuthContext, id: string): Pro
     return { ...row, body_text: "", body_from_html: false, body_truncated: false, catering_customer_id: null, lead_id: null, quote_id: null, preview_text: null, events: [], assignees: [] };
   }
   const result = await db.from("catering_inbound_messages").select(`${SUMMARY},body_text,body_from_html,body_truncated,catering_customer_id,lead_id,quote_id`).eq("id", id).maybeSingle();
+  inboxResult(result);
   if (result.error) throw new CateringInboxError(500, "read_failed");
   if (!result.data || !canReadCateringInbox(actor, result.data.location_id)) throw new CateringInboxError(404, "not_found");
   const draft = await db.from("catering_inbox_drafts").select("preview_text").eq("message_id", id).maybeSingle();
-  const events = await selectAllRows<InboxDetail["events"][number]>((from,to) => db.from("catering_inbox_events").select("id,event_type,created_at").eq("message_id", id).order("created_at").order("id").range(from,to));
+  const events = await selectAllRows<InboxDetail["events"][number]>(async (from,to) => inboxResult(await db.from("catering_inbox_events").select("id,event_type,created_at").eq("message_id", id).order("created_at").order("id").range(from,to)));
+  inboxResult(draft);
   if (draft.error) throw new CateringInboxError(500, "read_failed");
   return { ...result.data, ...summary(result.data), preview_text: draft.data?.preview_text ?? null, events, assignees: await candidates(actor, result.data.location_id) } as InboxDetail;
 }
@@ -97,9 +110,11 @@ async function act(ctx: AuthContext, id: string, input: InboxActionInput, action
   if (!UUID.test(id) || !UUID.test(input.requestId) || !Number.isInteger(input.expectedRevision) || input.expectedRevision < 0 || (input.assignedTo != null && !UUID.test(input.assignedTo))) throw new CateringInboxError(400, "invalid_payload");
   const db = getServiceRoleClient();
   const row = await db.from("catering_inbound_messages").select("location_id").eq("id", id).maybeSingle();
+  inboxResult(row);
   if (row.error) throw new CateringInboxError(500, "read_failed");
   if (!row.data || !canReadCateringInbox(actor, row.data.location_id)) throw new CateringInboxError(404, "not_found");
   const { data, error } = await db.rpc("act_on_catering_inbox", { p_message_id: id, p_expected_revision: input.expectedRevision, p_request_id: input.requestId, p_actor_id: ctx.user.id, p_session_id: ctx.session.id, p_action: action, p_assigned_to: input.assignedTo ?? null });
+  inboxResult({ error });
   if (error) {
     const code = ["stale_revision", "request_conflict", "invalid_state", "invalid_assignee", "forbidden", "not_found"].find(c => error.message === c);
     throw new CateringInboxError(code === "forbidden" ? 403 : code === "not_found" ? 404 : code ? 409 : 500, code ?? "write_failed");

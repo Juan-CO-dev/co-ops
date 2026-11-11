@@ -8591,7 +8591,7 @@
   "catering.inbox.customer_status.closed": "closed; contact our team for help",
   "catering.inbox.group.needs_reply": "Needs your reply",
   "catering.inbox.group.drafted": "Drafts awaiting review",
-  "catering.inbox.group.handled": "Auto-handled",
+  "catering.inbox.group.handled": "Handled",
   "catering.inbox.group.notifications": "Notifications",
   "catering.inbox.group.noise": "Noise",
   "catering.inbox.reason.thread_followup": "Thread follow-up needs a person",
@@ -8657,6 +8657,9 @@
   "catering.inbox.event.handle": "Marked handled",
   "catering.inbox.event.reassign": "Assignment changed",
   "catering.inbox.action_error": "The action failed or the message changed. Refresh and try again.",
+  "catering.inbox.unavailable": "The catering inbox is not installed yet. Try again after setup is complete.",
+  "catering.inbox.stale_revision": "This message changed. The latest version has been loaded; review it before trying again.",
+  "catering.inbox.invalid_assignee": "That assignee is no longer eligible. Choose another person or leave the message unassigned.",
   "catering.inbox.assign_label": "Choose assignee",
   "catering.inbox.back": "Catering",
   "catering.inbox.count_one": "1 message"

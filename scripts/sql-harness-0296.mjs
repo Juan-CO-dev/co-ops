@@ -108,6 +108,10 @@ try {
   await db.query("insert into catering_pipeline(id,customer_id,contact_name,stage,location_id,assigned_to) values ($1,$2,'Null','inquiry',$3,null),($4,$2,'Bad','inquiry',$3,$5),($6,$7,'Retired','inquiry',$3,null)",[nullLead,customer,shop,badLead,agm,retiredLead,retired]);
   await db.query("insert into users(id,role,active,created_at) values ($1,'catering_mgr',true,'2000-01-01')",[randomUUID()]);
   await db.query('insert into user_locations values ($1,$2,true)',[manager,shop]);
+  await db.query("insert into catering_customers(id,name,email) values ($1,'Wildcard decoy','guestXnameYtag@example.test')",[randomUUID()]);
+  const paddedCustomer=randomUUID(), literalCustomer=randomUUID(), closedLead=randomUUID();
+  await db.query("insert into catering_customers(id,name,email) values ($1,'Padded',' sender@example.test '),($2,'Literal','guest_name%tag@example.test')",[paddedCustomer,literalCustomer]);
+  await db.query("insert into catering_pipeline(id,customer_id,contact_name,stage,location_id,lead_source,external_ref) values ($1,$2,'Closed','completed',$3,'ezcater','closed-order')",[closedLead,customer,shop]);
   // Install guards BEFORE any inbox writer; fixtures above are the only artifact writes.
   await db.exec("create function forbid_artifact_write() returns trigger language plpgsql as $$ begin raise exception 'artifact_write_forbidden'; end $$;");
   for (const table of ['catering_customers','catering_pipeline','catering_quotes']) {
@@ -135,6 +139,22 @@ try {
   } finally { await db.exec('reset role'); }
   await reject(() => record({headers:{authorization:'secret'}}),/invalid_headers/,'header allowlist rejects credential header');
   await reject(() => record({body_text:'x'.repeat(262145),body_original_bytes:262145}),/check constraint/,'body cap enforced in SQL');
+  const unfinalized = await record();
+  await reject(() => act(unfinalized.message_id,manager,'reassign',null,0), /invalid_state/, 'recorded reassignment remains refused');
+  const handleRequest=randomUUID();
+  await act(unfinalized.message_id,manager,'handle',null,0,handleRequest);
+  const handledRecord=await one('select disposition,revision,handled_by,handled_at from catering_inbound_messages where id=$1',[unfinalized.message_id]);
+  check(handledRecord.disposition==='handled' && handledRecord.revision===1 && handledRecord.handled_by===manager && handledRecord.handled_at!==null,'recorded row can be handled without finalization');
+  check((await one("select count(*)::int n from catering_inbox_events where message_id=$1 and event_type='handle' and actor_id=$2 and before_disposition='recorded' and after_disposition='handled'",[unfinalized.message_id,manager])).n===1,'recorded handle appends normal actor event');
+  check((await act(unfinalized.message_id,manager,'handle',null,0,handleRequest)).replayed,'recorded handle replays without duplicate event');
+  await reject(() => finalize(unfinalized.message_id,result(),draft,randomUUID(),1), /already_finalized/, 'handled recorded row cannot finalize later');
+  const literal=await record({sender_address:'guest_name%tag@example.test'});
+  await finalize(literal.message_id,result({identity_status:'resolved',catering_customer_id:literalCustomer}));
+  check(true,'literal ILIKE escapes percent and underscore');
+  const padded=await record();
+  await reject(() => finalize(padded.message_id,result({identity_status:'resolved',catering_customer_id:paddedCustomer})), /identity_mismatch/, 'padded stored email does not match TS literal ILIKE');
+  const closed=await record({sender_address:'orders@ezcater.com',external_ref:'closed-order'});
+  await reject(() => finalize(closed.message_id,result({classification:'platform_notification',identity_status:'masked',lead_id:closedLead,location_id:shop,disposition:'notification'}),null), /artifact_mismatch/, 'closed platform lead refused');
   const m = await record();
   const finRequest = randomUUID();
   const attached = result({identity_status:'resolved',catering_customer_id:customer,lead_id:lead,quote_id:quote,location_id:shop});
@@ -142,6 +162,7 @@ try {
   check((await finalize(m.message_id, attached,draft,finRequest)).replayed,'finalize identical request replay');
   await reject(() => finalize(m.message_id, result(),draft,finRequest), /request_conflict/, 'finalize changed replay refused');
   await reject(() => finalize(m.message_id), /stale_revision/, 'finalize stale CAS refused');
+  check(true,'padded duplicate does not cause identity mismatch');
   check((await one('select assigned_to from catering_inbound_messages where id=$1',[m.message_id])).assigned_to===gm,'lead assignee snapshotted');
   for (const actor of [wrongGM,inactive,agm]) await reject(() => act(m.message_id,actor,'handle'), /forbidden/, 'ineligible actor refused');
   for (const assignee of [wrongGM,inactive,agm]) await reject(() => act(m.message_id,manager,'reassign',assignee), /invalid_assignee/, 'assignee scope/state/role rechecked');

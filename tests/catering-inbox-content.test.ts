@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { inboxLatestText, capInboxBody, inboxContent, inboxHeaders, inboxHtmlToText, inboxThreadInitial, inboxOwnAddresses, inboxAttachmentManifest, INBOX_BODY_MAX_BYTES } from "@/lib/catering/inbox-content-shared";
 describe("inbox content evidence", () => {
+  it("accepts receiving arrays and object maps with identical validation", () => {
+    const map = { References: "<a>\r\n <b>", "Message-ID": "<id>", Authorization: "discard", "In-Reply-To": "bad\0" };
+    expect(inboxHeaders([...Object.entries(map).map(([name, value]) => ({ name, value })), null, 4, { value: "missing name" }])).toEqual(inboxHeaders(map));
+    for (const malformed of [null, undefined, false, "headers", 42]) expect(inboxHeaders(malformed)).toEqual({});
+  });
   it("caps bytes without splitting Unicode and retains original count", () => {
     expect(capInboxBody("a😀b", 4)).toEqual({ body_text: "a", body_original_bytes: 6, body_truncated: true });
     const result = capInboxBody("é".repeat(INBOX_BODY_MAX_BYTES));

@@ -1,4 +1,5 @@
 import { join, normalize } from "node:path";
+import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 import { chain, diskReader, importClosure, listFiles, sinkViolations, stripComments, type Reader } from "./fixtures/schedule/no-notify-closure";
@@ -15,12 +16,49 @@ const writers = [
 ].map(normalize);
 const writerCalls = /\b(?:createDraftFromIntake|sendQuote|moveStage|systemMoveStage|reservePrepDemand|consumePrepDemand|releasePrepDemand|recordPayment)\s*\(/;
 const directWrites = /\.from\(\s*["']catering_(?:pipeline|quotes|payments|prep_demand)["']\s*\)\s*\.(?:insert|update|upsert|delete)\s*\(/;
+// The router also imports the vendor ingest closure. Check only its catering
+// branch with a positive call allowlist; the whole router cannot be a no-send entry.
+function cateringCalls(source: string): string[] {
+  const start = source.indexOf('if (route.lane === "catering")');
+  const end = source.indexOf('if (route.lane !== "vendor_receipt")', start);
+  if (start < 0 || end <= start) return ["missing catering boundary"];
+  const file = ts.createSourceFile("branch.ts", source.slice(start, end), ts.ScriptTarget.Latest, true);
+  const violations: string[] = [];
+  const pure = new Set(["readChild", "inboxHeaders", "inboxAttachmentManifest", "inboxContent", "inboxExternalReference", "randomUUID", "save", "finalizeCateringInbound"]);
+  function walk(node: ts.Node) {
+    if (ts.isCallExpression(node)) {
+      const target = node.expression.getText(file);
+      if (target === "fetchInboundContent") {
+        if (node.arguments.length !== 3 || node.arguments[0]?.getText(file) !== "row.provider_email_id" || node.arguments[1]?.getText(file) !== "undefined" || node.arguments[2]?.getText(file).replace(/\s/g, "") !== "{metadataOnly:true}") violations.push(target);
+      } else if (target === "sb.rpc") {
+        if (node.arguments[0]?.getText(file) !== '"record_catering_inbound"') violations.push(target);
+      } else if (target === "sb.from") {
+        if (node.arguments[0]?.getText(file) !== '"catering_inbound_messages"') violations.push(target);
+      } else if (!pure.has(target)) {
+        const method = ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : "";
+        // Pure transformations plus the single child lookup's read-only builder.
+        if (!["map", "slice", "split", "find", "select", "eq", "maybeSingle"].includes(method)) violations.push(target);
+      }
+    }
+    if (ts.isNewExpression(node) && !["Set", "Error"].includes(node.expression.getText(file))) violations.push(node.expression.getText(file));
+    ts.forEachChild(node, walk);
+  }
+  walk(file);
+  return violations;
+}
 function confirmViolations(read: Reader = diskReader) {
   const closure = importClosure(entries, read);
   return [...closure.files].flatMap((file) => writers.includes(file) || writerCalls.test(stripComments(read(file) ?? "")) || directWrites.test(stripComments(read(file) ?? "")) ? [chain(closure, file)] : []);
 }
 
 describe("Catering inbox phase 1: transitive no-send and no-confirm boundaries", () => {
+  it("allowlists the live router catering branch and detects injected writes and full-content fetches", () => {
+    const source = diskReader(normalize("lib/inbound-router.ts"))!;
+    expect(cateringCalls(source)).toEqual([]);
+    for (const injected of ['await sendEmail();', 'await fetch("https://example.test", { method: "POST" });', 'await sb.rpc("send_catering", {});', 'await sb.from("catering_inbound_messages").update({});', 'await fetchInboundContent(row.provider_email_id);']) {
+      expect(cateringCalls(source.replace('if (route.lane === "catering") {', `if (route.lane === "catering") { ${injected}`)).length).toBeGreaterThan(0);
+    }
+  });
   it("walks all three library entries and all four API routes, not a vacuous subset", () => {
     expect(entries.filter((p) => p.endsWith("route.ts"))).toHaveLength(4);
     for (const entry of entries) expect(diskReader(entry), entry).not.toBeNull();

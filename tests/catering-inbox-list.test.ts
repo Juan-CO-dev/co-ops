@@ -19,7 +19,7 @@ function transport(id: string, extra: Row = {}): Row {
   return { id, location_id: "shop", from_address: "guest@example.com", subject: id, received_at: received,
     lane: "catering", content_state: "pending", ...extra };
 }
-function setup(children: Row[], transports: Row[] = [], role = "catering_mgr") {
+function setup(children: Row[], transports: Row[] = [], role = "catering_mgr", missing?: { table: string; code: string }) {
   const tables: Record<string, Row[]> = {
     users: [{ id: actorId, name: "Reader", role, active: true }],
     user_locations: [{ user_id: actorId, location_id: "shop", active: true }],
@@ -28,6 +28,7 @@ function setup(children: Row[], transports: Row[] = [], role = "catering_mgr") {
   };
   const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
   client.mockReturnValue({ from: (table: string) => {
+    calls.push({ table, method: "from", args: [] });
     const filters: Array<(row: Row) => boolean> = [];
     let first = 0; let last = Infinity; let single = false;
     const query: Record<string, unknown> = {};
@@ -43,6 +44,7 @@ function setup(children: Row[], transports: Row[] = [], role = "catering_mgr") {
     query.range = (from: number, to: number) => { first = from; last = to; record("range", [from, to]); return query; };
     query.single = query.maybeSingle = () => { single = true; return query; };
     query.then = (resolve: (value: unknown) => unknown) => {
+      if (table === missing?.table) return Promise.resolve(resolve({ data: null, error: { code: missing.code, message: "missing" } }));
       const rows = (tables[table] ?? []).filter(row => filters.every(filter => filter(row))).slice(first, last + 1);
       return Promise.resolve({ data: single ? rows[0] ?? null : rows, error: null }).then(resolve);
     };
@@ -54,6 +56,12 @@ function setup(children: Row[], transports: Row[] = [], role = "catering_mgr") {
 beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-11T12:00:00.000Z")); });
 afterEach(() => vi.useRealTimers());
 describe("real catering inbox list", () => {
+  it.each(["PGRST205", "42P01", "42883", "PGRST202"])("maps missing schema %s on each list surface to named 503", async code => {
+    for (const table of ["catering_inbound_messages", "inbound_messages", "catering_inbox_settings"]) {
+      const { ctx } = setup([], [], "catering_mgr", { table, code });
+      await expect(listCateringInbox(ctx)).rejects.toMatchObject({ status: 503, code: "inbox_unavailable" });
+    }
+  });
   it("groups dispositions, sorts urgent first then oldest and marks only older than 24h stale", async () => {
     const { ctx } = setup([
       child("new", { received_at: "2026-11-11T10:00:00.000Z", disposition: "drafted" }),
@@ -98,5 +106,6 @@ describe("real catering inbox list", () => {
     expect(list.messages.some(row => row.id === "child-1000")).toBe(true);
     expect(list.messages.some(row => row.id === "transport:pending-1000")).toBe(true);
     for (const table of ["catering_inbound_messages", "inbound_messages"]) expect(calls).toContainEqual({ table, method: "range", args: [1000, 1999] });
+    for (const table of ["catering_inbound_messages", "inbound_messages"]) expect(calls.filter(c => c.table === table && c.method === "from")).toHaveLength(2);
   });
 });

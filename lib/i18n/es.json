@@ -8591,7 +8591,7 @@
   "catering.inbox.customer_status.closed": "cerrada; contacta a nuestro equipo si necesitas ayuda",
   "catering.inbox.group.needs_reply": "Necesita tu respuesta",
   "catering.inbox.group.drafted": "Borradores pendientes de revisión",
-  "catering.inbox.group.handled": "Atendidos automáticamente",
+  "catering.inbox.group.handled": "Atendidos",
   "catering.inbox.group.notifications": "Notificaciones",
   "catering.inbox.group.noise": "Mensajes no relevantes",
   "catering.inbox.reason.thread_followup": "El seguimiento de la conversación necesita una persona",
@@ -8657,6 +8657,9 @@
   "catering.inbox.event.handle": "Marcado como atendido",
   "catering.inbox.event.reassign": "Asignación cambiada",
   "catering.inbox.action_error": "La acción falló o el mensaje cambió. Actualiza e inténtalo de nuevo.",
+  "catering.inbox.unavailable": "La bandeja de catering todavía no está instalada. Inténtalo de nuevo cuando termine la configuración.",
+  "catering.inbox.stale_revision": "Este mensaje cambió. Se cargó la versión más reciente; revísala antes de intentarlo de nuevo.",
+  "catering.inbox.invalid_assignee": "Esa persona ya no puede recibir la asignación. Elige a otra persona o deja el mensaje sin asignar.",
   "catering.inbox.assign_label": "Elige responsable",
   "catering.inbox.back": "Catering",
   "catering.inbox.count_one": "1 mensaje"

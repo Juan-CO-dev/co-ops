@@ -45,6 +45,54 @@ function mockFetch() {
 }
 async function openDrawer() { fireEvent.click(screen.getByRole("button",{name:/Open message:/})); return screen.findByRole("dialog"); }
 describe("inbox interactive drawer",()=>{
+ it.each(["en", "es"] as const)("names stale revision, reloads the item and retries its current revision in %s", async language => {
+  let revision = 1;
+  const fetcher = vi.fn(async (_url: string, options?: RequestInit) => {
+    if (options?.method === "POST" && revision === 1) { revision = 2; return { ok: false, json: async () => ({ code: "stale_revision" }) }; }
+    return { ok: true, json: async () => _url === "/api/catering/inbox" ? { inbox: initial } : { message: { ...full, revision } } };
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const dict = language === "en" ? en : es;
+  render(createElement(TranslationProvider, { initialLanguage: language } as Parameters<typeof TranslationProvider>[0], createElement(InboxPane, { initial })));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(dict["catering.inbox.action.open"]) }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: dict["catering.inbox.action.handle"] }));
+  await waitFor(() => expect(within(dialog).getByRole("alert").textContent).toBe(dict["catering.inbox.stale_revision"]));
+  expect(fetcher.mock.calls.filter(([url, options]) => url.endsWith("/m") && !options?.method)).toHaveLength(2);
+  fireEvent.click(within(dialog).getByRole("button", { name: dict["catering.inbox.action.handle"] }));
+  await waitFor(() => expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(2));
+  const posts = fetcher.mock.calls.filter(([, options]) => options?.method === "POST");
+  expect(JSON.parse(String(posts[1]?.[1]?.body)).expectedRevision).toBe(2);
+ });
+ it.each(["en", "es"] as const)("names invalid assignees in %s", async language => {
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, options?: RequestInit) => options?.method === "POST"
+    ? { ok: false, json: async () => ({ code: "invalid_assignee" }) }
+    : { ok: true, json: async () => ({ message: full }) }));
+  const dict = language === "en" ? en : es;
+  render(createElement(TranslationProvider, { initialLanguage: language } as Parameters<typeof TranslationProvider>[0], createElement(InboxPane, { initial })));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(dict["catering.inbox.action.open"]) }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: dict["catering.inbox.action.reassign"] }));
+  await waitFor(() => expect(within(dialog).getByRole("alert").textContent).toBe(dict["catering.inbox.invalid_assignee"]));
+ });
+ it("offers handle on a recorded child, but not reassignment", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ message: { ...full, disposition: "recorded", revision: 0 } }) })));
+  mount(); const dialog = await openDrawer();
+  expect(within(dialog).getByRole("button", { name: "Mark handled" })).toBeTruthy();
+  expect(within(dialog).queryByRole("button", { name: "Reassign" })).toBeNull();
+ });
+ it("renders noise as a count only and never points controls at missing content", () => {
+  render(createElement(TranslationProvider, { initialLanguage: "en" } as Parameters<typeof TranslationProvider>[0], createElement(InboxPane, { initial: { ...initial, messages: [...initial.messages, { ...initial.messages[0]!, id: "noise", subject: "Noise secret", group: "noise" }] } })));
+  expect(screen.getByText("Noise").closest("section")?.textContent).toContain("1 message");
+  expect(screen.queryByText("Noise secret")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Noise/ })).toBeNull();
+  for (const button of screen.getAllByRole("button")) {
+    const target = button.getAttribute("aria-controls");
+    if (target) expect(document.getElementById(target)).not.toBeNull();
+  }
+  const group = screen.getByRole("button", { name: /Needs your reply/ });
+  fireEvent.click(group); expect(group.hasAttribute("aria-controls")).toBe(false);
+ });
  it("opens plain-text message, proposed preview, links, history and closes accessibly",async()=>{
   mockFetch();mount();const dialog=await openDrawer();
   expect(within(dialog).getByText("Plain message body")).toBeTruthy();expect(within(dialog).getByText("Proposed reply only")).toBeTruthy();

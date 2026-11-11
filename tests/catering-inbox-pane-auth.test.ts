@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -53,5 +53,9 @@ describe("inbox library authority", () => {
   it("returns a conflict for a stale SQL revision without claiming success", async () => {
     const db=database("gm","shop"); db.rpc.mockResolvedValue({data:null,error:{message:"stale_revision"}} as never);
     await expect(handleCateringInbox(context("gm"),id,input)).rejects.toMatchObject({status:409,code:"stale_revision"});
+  });
+  it.each(["PGRST205", "42P01", "42883", "PGRST202"])("maps missing action RPC %s to inbox_unavailable", async code => {
+    const db = database("gm", "shop"); db.rpc.mockResolvedValue({ data: null, error: { code, message: "missing" } } as never);
+    await expect(handleCateringInbox(context("gm"), id, input)).rejects.toMatchObject({ status: 503, code: "inbox_unavailable" });
   });
 });

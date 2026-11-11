@@ -25,6 +25,12 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("stored catering ingest", () => {
+  it.each(["PGRST205", "42P01", "42883", "PGRST202"])("preserves missing-schema code %s for the router's zero-attempt skip", async code => {
+    const { sb, rpc } = service();
+    rpc.mockResolvedValueOnce({ data: null, error: { code, message: "missing schema" } } as never);
+    await expect(finalizeCateringInbound(message, sb)).rejects.toMatchObject({ code });
+    expect(audit).not.toHaveBeenCalled();
+  });
   it("finalizes with plain portal URL, alias location, Spanish draft and closed audit metadata", async () => {
     const { sb, rpc } = service({ location: "shop" });
     await finalizeCateringInbound({ ...message, subject: "Necesito catering para el viernes", body_text: "Hola, necesito catering para 30 personas" }, sb);

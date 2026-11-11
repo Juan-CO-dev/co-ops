@@ -10,6 +10,7 @@ export interface InboxIdentityResult {
   locationId: string | null; artifact: "none" | "resolved" | "ambiguous"; artifactStage?: string;
 }
 export interface InboxIdentityInput { sender: string | null; threadKey: string | null; externalRef: string | null; messageId: string }
+const OPEN = ["inquiry", "quote_sent", "confirmed", "out"];
 const LEAD_COLUMNS = "id,customer_id,location_id,stage,assigned_to";
 
 /** Attach-only service reads. Neither customer store nor an operational artifact is mutated. */
@@ -30,16 +31,16 @@ export async function resolveCateringInboxIdentity(input: InboxIdentityInput, sb
     if (result.identity === "resolved") result.customerId = data![0]!.id;
   }
   let lead: Lead | undefined;
-  if (result.customerId && input.threadKey) {
+  if (result.customerId && input.threadKey && input.threadKey !== "[invalid]") {
     const { data, error } = await sb.from("catering_inbound_messages").select("lead_id")
       .eq("thread_key", input.threadKey).eq("catering_customer_id", result.customerId)
       .neq("id", input.messageId).not("lead_id", "is", null).limit(100).returns<Array<{ lead_id: string }>>();
-    if (error) throw new Error("inbox_thread_read_failed");
+    if (error) throw error;
     const ids = [...new Set((data ?? []).map(row => row.lead_id))];
     if (ids.length > 1 || data?.length === 100) return { ...result, artifact: "ambiguous" };
     if (ids[0]) {
       const found = await sb.from("catering_pipeline").select(LEAD_COLUMNS).eq("id", ids[0])
-        .eq("customer_id", result.customerId).in("stage", ["inquiry", "quote_sent", "confirmed", "out"])
+        .eq("customer_id", result.customerId).in("stage", OPEN)
         .limit(1).returns<Lead[]>();
       if (found.error) throw new Error("inbox_artifact_read_failed");
       lead = found.data?.[0];
@@ -48,14 +49,14 @@ export async function resolveCateringInboxIdentity(input: InboxIdentityInput, sb
   }
   if (!lead && platform && input.externalRef) {
     const found = await sb.from("catering_pipeline").select(LEAD_COLUMNS)
-      .eq("lead_source", platform).eq("external_ref", input.externalRef).limit(2).returns<Lead[]>();
+      .eq("lead_source", platform).eq("external_ref", input.externalRef).in("stage", OPEN).limit(2).returns<Lead[]>();
     if (found.error) throw new Error("inbox_artifact_read_failed");
     if ((found.data?.length ?? 0) > 1) return { ...result, artifact: "ambiguous" };
     lead = found.data?.[0];
   }
   if (!lead && result.customerId) {
     const found = await sb.from("catering_pipeline").select(LEAD_COLUMNS).eq("customer_id", result.customerId)
-      .in("stage", ["inquiry", "quote_sent", "confirmed", "out"]).limit(2).returns<Lead[]>();
+      .in("stage", OPEN).limit(2).returns<Lead[]>();
     if (found.error) throw new Error("inbox_artifact_read_failed");
     if ((found.data?.length ?? 0) > 1) return { ...result, artifact: "ambiguous" };
     lead = found.data?.[0];

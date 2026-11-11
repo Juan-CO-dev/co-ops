@@ -30,5 +30,14 @@ it('0296 real-DDL ACL, attach-only, artifact, revision and authorization proof',
   expect(output).toContain('noise: followup preserves verdict and strips draft');
   expect(output).toContain('notification: supplied draft refused');
   expect(output).toContain('notification: followup preserves verdict and strips draft');
+  expect(output).toContain('recorded row can be handled without finalization');
+  expect(output).toContain('recorded handle appends normal actor event');
+  expect(output).toContain('recorded handle replays without duplicate event');
+  expect(output).toContain('recorded reassignment remains refused');
+  expect(output).toContain('handled recorded row cannot finalize later');
+  expect(output).toContain('literal ILIKE escapes percent and underscore');
+  expect(output).toContain('padded stored email does not match TS literal ILIKE');
+  expect(output).toContain('padded duplicate does not cause identity mismatch');
+  expect(output).toContain('closed platform lead refused');
   expect(output).toContain('concurrency requires separate sim proof');
 }, 250_000);

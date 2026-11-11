@@ -16,9 +16,12 @@ export function capInboxBody(text: string, maxBytes = INBOX_BODY_MAX_BYTES) {
   if (end < bytes.length) while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
   return { body_text: new TextDecoder().decode(bytes.subarray(0, end)), body_original_bytes: bytes.length, body_truncated: end < bytes.length };
 }
-export function inboxHeaders(input: Readonly<Record<string, unknown>>): InboxHeaders {
+export function inboxHeaders(input: unknown): InboxHeaders {
   const result: InboxHeaders = {};
-  for (const [key, value] of Object.entries(input)) {
+  const entries: [string, unknown][] = Array.isArray(input)
+    ? input.flatMap(entry => entry && typeof entry === "object" && typeof entry.name === "string" ? [[entry.name, entry.value] as [string, unknown]] : [])
+    : input && typeof input === "object" ? Object.entries(input) : [];
+  for (const [key, value] of entries) {
     const name = key.toLowerCase();
     if (!(INBOX_HEADER_NAMES as readonly string[]).includes(name)) continue;
     if (typeof value !== "string") {

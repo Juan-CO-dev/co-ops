@@ -202,12 +202,15 @@ begin
     or p_result->>'classification' is null or p_result->>'identity_status' is null
     or p_result->>'rule_version' is null or v_disposition is null
     or v_disposition not in ('drafted','needs_human','notification','noise') then raise exception 'invalid_input'; end if;
-  -- Attach-only identity: an active, unique literal email match. No pattern matching,
+  -- Same as TS: normalize the sender, escape ILIKE metacharacters, then match
+  -- the stored email literally (do not trim only the SQL side's stored column).
+  v_email := replace(replace(replace(v_email, E'\\', E'\\\\'), '%', E'\\%'), '_', E'\\_');
+  -- Attach-only identity: an active, unique literal email match. No wildcard matching,
   -- create, revive, profile-store read or profile-store write exists in this function.
   if v_customer is not null and (v_masked or v_platform is not null or p_result->>'identity_status' <> 'resolved' or not exists
     (select 1 from public.catering_customers c where c.id=v_customer and c.active
-      and lower(btrim(c.email))=lower(btrim(m.sender_address))) or
-    (select count(*) from public.catering_customers c where lower(btrim(c.email))=lower(btrim(m.sender_address))) <> 1)
+      and c.email ilike v_email) or
+    (select count(*) from public.catering_customers c where c.email ilike v_email) <> 1)
     then raise exception 'identity_mismatch'; end if;
   if v_lead is not null then
     -- Platform mail may attach a proven external order without fabricating a
@@ -215,9 +218,10 @@ begin
     v_external_link := v_customer is null and v_platform is not null and p_result->>'classification'='platform_notification'
       and exists(select 1 from public.catering_pipeline p where p.id=v_lead
         and p.external_ref=m.external_ref and p.lead_source=v_platform
-        and p.location_id is not distinct from v_location);
+        and p.location_id is not distinct from v_location and p.stage in ('inquiry','quote_sent','confirmed','out'));
     select p.assigned_to into v_assignee from public.catering_pipeline p where p.id=v_lead
-      and (p.customer_id is not distinct from v_customer or v_external_link) and p.location_id is not distinct from v_location;
+      and (p.customer_id is not distinct from v_customer or v_external_link) and p.location_id is not distinct from v_location
+      and p.stage in ('inquiry','quote_sent','confirmed','out');
     if not found or (v_customer is null and not v_external_link) then raise exception 'artifact_mismatch'; end if;
   end if;
   if v_quote is not null and ((v_customer is null and not v_external_link) or not exists
@@ -301,7 +305,7 @@ begin
     return jsonb_build_object('message_id',m.id,'revision',e.after_revision,'replayed',true);
   end if;
   if m.revision<>p_expected_revision then raise exception 'stale_revision'; end if;
-  if m.disposition in ('recorded','handled') then raise exception 'invalid_state'; end if;
+  if m.disposition='handled' or (m.disposition='recorded' and p_action <> 'handle') then raise exception 'invalid_state'; end if;
   if p_action='reassign' and p_assigned_to is not null and not public.catering_inbox_can_access(p_assigned_to,m.location_id)
     then raise exception 'invalid_assignee'; end if;
   v_disposition := case when p_action='handle' then 'handled' else m.disposition end;

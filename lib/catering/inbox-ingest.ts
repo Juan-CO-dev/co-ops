@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isInboxSchemaMissing } from "./inbox-schema-shared";
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -59,6 +60,7 @@ export async function finalizeCateringInbound(message: StoredCateringInbound, sb
       location_id: identity.locationId ?? transport.data.location_id, disposition: decision.disposition, reason: decision.reason, rule_version: INBOX_RULE_VERSION },
     p_draft: draft,
   });
+  if (isInboxSchemaMissing(error)) throw error;
   if (error) throw new Error("inbox_finalize_failed");
   if (data?.replayed) return;
   const base = { actorId: null, actorRole: null, resourceTable: "catering_inbound_messages", resourceId: message.id,

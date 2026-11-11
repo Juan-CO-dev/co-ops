@@ -1,4 +1,5 @@
 import "server-only";
+import { isInboxSchemaMissing } from "@/lib/catering/inbox-schema-shared";
 import { audit } from "@/lib/audit";
 import { randomUUID } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -11,7 +12,7 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { inboundAddresses, normalizeInboundAddress, resolveInboundRoute, INBOUND_MAX_ATTEMPTS, inboundRetryDelayMs, inboundErrorCode, type InboundErrorCode, type InboundAddressRule } from "@/lib/inbound-router-shared";
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 interface InboundRow {
-  id: string; provider_email_id: string; from_address: string | null; subject: string | null;
+  id: string; message_id: string | null; provider_email_id: string; from_address: string | null; subject: string | null;
   to_addresses: string[]; cc_addresses: string[]; received_for: string[];
   lane: "vendor_receipt" | "catering" | "noise"; location_id: string | null;
   route_reason: string; fetch_attempts: number; received_at: string;
@@ -66,6 +67,7 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
     if (e || count !== 1) throw new Error("inbound_state_write_failed");
   }
   let stage: InboundErrorCode = "routing";
+  let catering = false;
   try {
     // Freeze resolved address provenance across retries and later config edits.
     const route = row.route_reason === "unresolved"
@@ -74,16 +76,16 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
     stage = "ledger";
     await save(route);
     if (route.lane === "catering") {
+      catering = true;
       const readChild = () => sb.from("catering_inbound_messages").select("*")
         .eq("inbound_message_id", row.id).maybeSingle<StoredCateringInbound>();
       let child = await readChild();
-      if (child.error) throw new Error("catering_lookup_failed");
+      if (child.error) throw child.error;
       if (!child.data) {
         stage = "provider_error";
         const content = await fetchInboundContent(row.provider_email_id, undefined, { metadataOnly: true });
         stage = "ledger";
-        const headers = inboxHeaders(content.headers && typeof content.headers === "object" && !Array.isArray(content.headers)
-          ? content.headers as Record<string, unknown> : {});
+        const headers = inboxHeaders(content.headers);
         const attachments = inboxAttachmentManifest(content.attachments.map(value => {
           const a = value && typeof value === "object" ? value as Record<string, unknown> : {};
           return { filename: typeof a.filename === "string" ? a.filename : "attachment",
@@ -96,12 +98,14 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
           p_content: { ...body,
             sender_address: row.from_address, recipient_addresses: [...new Set([...row.to_addresses, ...row.cc_addresses, ...row.received_for])].slice(0, 100),
             headers, attachments, external_ref: inboxExternalReference(row.from_address, body.subject, body.body_text),
-            thread_key: (headers.references?.split(/\s+/)[0] || headers["in-reply-to"] || headers["message-id"] || row.id).slice(0, 1000),
+            thread_key: ([headers.references?.split(/\s+/)[0], headers["in-reply-to"], headers["message-id"], row.message_id, row.id]
+              .find(value => value && value !== "[invalid]") ?? row.id).slice(0, 1000),
             received_at: row.received_at },
         });
-        if (recorded.error) throw new Error("catering_record_failed");
+        if (recorded.error) throw recorded.error;
         child = await readChild();
-        if (child.error || !child.data) throw new Error("catering_lookup_failed");
+        if (child.error) throw child.error;
+        if (!child.data) throw new Error("catering_lookup_failed");
       }
       if (child.data.disposition === "recorded") await finalizeCateringInbound(child.data, sb);
       await save({ content_state: "fetched", fetch_attempts: attempt, last_error: null, lease_token: null });
@@ -128,6 +132,10 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
     await save({ content_state: "fetched", fetch_attempts: attempt, email_receipt_id: receipt.receiptId, last_error: null, lease_token: null });
     return "fetched";
   } catch (error) {
+    if (catering && isInboxSchemaMissing(error)) {
+      await save({ content_state: "skipped", last_error: null, lease_token: null });
+      return "skipped";
+    }
     // Provider errors may contain signed URLs or PII. Persist only a closed failure code.
     const code = inboundErrorCode(error, stage);
     const blocked = code === "provider_auth";

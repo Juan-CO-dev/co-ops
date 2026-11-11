@@ -1,0 +1,19 @@
+
+      await save({ content_state: "skipped", last_error: null, lease_token: null });
+      return "skipped";
+    }
+    // Storage/receipt INSERT may have committed before the final ledger update failed.
+    // Repair that link without depending on provider content retention or downloading twice.
+    const existing = await sb.from("email_receipts").select("id").eq("inbound_message_id", row.id).maybeSingle<{ id: string }>();
+    if (existing.error) throw new Error("inbound_receipt_lookup_failed");
+    if (existing.data) {
+      await save({ content_state: "fetched", fetch_attempts: attempt, email_receipt_id: existing.data.id, last_error: null, lease_token: null });
+      return "fetched";
+    }
+    stage = "provider_error";
+    const content = await fetchInboundContent(row.provider_email_id);
+    stage = "ledger";
+    const receipt = await ingestInboundReceipt({ ...content, toAddress: null, fromAddress: row.from_address, subject: row.subject,
+      externalId: `resend:${row.provider_email_id}`, inboundMessageId: row.id, addressLocationId: route.location_id, receivedAt: row.received_at });
+    await save({ content_state: "fetched", fetch_attempts: attempt, email_receipt_id: receipt.receiptId, last_error: null, lease_token: null });
+    return "fetched";

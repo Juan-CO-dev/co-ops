@@ -6,7 +6,7 @@ Phase 1 receives and classifies catering email, attaches existing identities and
 
 Before rollout, verify the active aliases in the existing inbound settings surface against the actual Workspace copy rule. Catering aliases **must include the legacy address preserved in the original To header**, not just the copy destination. Verify the lane is `catering` and location is null (0294 requires catering aliases to be global). No tenant address is seeded by the migrations.
 
-Check `CATERING_LEGACY_ADDRESSES` (comma-separated addresses), `EMAIL_FROM`, `EMAIL_FROM_TEAM`, active inbound aliases and `locations.receipt_email_address`: together these form own-address suppression. Check `NEXT_PUBLIC_APP_URL` is the intended app origin; proposed replies use its plain `/order/start` route, never a magic-link token. Check the existing receiving-provider configuration without copying credentials into logs, screenshots or this runbook.
+Check `CATERING_LEGACY_ADDRESSES` (comma-separated addresses), `EMAIL_FROM`, `EMAIL_FROM_TEAM`, active inbound aliases and `locations.receipt_email_address`: together these form own-address suppression. Check `NEXT_PUBLIC_APP_URL` is the intended app origin and uses `https:` (no username or password); proposed replies use its plain `/order/start` route, never a magic-link token. Check the existing receiving-provider configuration without copying credentials into logs, screenshots or this runbook.
 
 Mixed catering/vendor recipients retain the router's existing ambiguous behavior. A missing alias is a routing configuration issue, not an invitation to parse catering mail as a vendor receipt. Catering fetches only the receiving-email endpoint, including text/HTML, selected headers and attachment metadata; it never downloads attachments or lists their endpoint.
 
@@ -14,9 +14,19 @@ Mixed catering/vendor recipients retain the router's existing ambiguous behavior
 
 `supabase/migrations/0296_catering_inbox.sql` remains an unapplied file in this change. Apply its dependencies, including 0294 transport routing, before 0296. Run the offline `node scripts/sql-harness-0296.mjs` first. CC then applies 0296 to **sim first**, verifies writer privileges, idempotent ingest/resume and authenticated English/Spanish panes at 375px. Production application is only on Juan's word. Stamp the migration header with the actual application provenance afterward; never infer application from this document.
 
+**Merge ONLY after 0296 is applied in production.** The missing-schema fallback is deployment-window protection, not permission to reverse this order.
+
 The inbox permits active catering managers, GMs for their current shops and level 8+. Null-location messages are for catering managers and level 8+ only. Check inactive/stale memberships and cross-shop detail/action IDs. The sender, subject and body are plain text under the inbox and catering-contact gates. Artifact links retain their own authorization.
 
 ## Redrive
+
+After 0296 is installed, count the skipped-catering backlog using this read-only query:
+
+```sql
+select count(*) from inbound_messages where lane='catering' and content_state='skipped' and route_reason='catering_address';
+```
+
+Review the matching transport IDs, then redrive each through step 2 below (no bulk SQL reset). Repeat the count after the worker runs and reconcile any remaining rows before declaring the backlog recovered.
 
 1. Diagnose and correct the missing provider configuration or alias first. Open the existing Ops Health inbound queue as MoO+.
 2. Use its existing redrive action for failed or blocked-configuration transport rows. Skipped rows are not listed in that health queue: for a reviewed skipped row ID, use the same existing `POST /api/admin/inbound/redrive` with JSON `{ "id": "<transport UUID>" }`, the authenticated MoO+ session, same-origin request and existing admin step-up requirement. A skipped row is eligible only with `lane = catering` and `route_reason = catering_address`; no bulk reset is supported.

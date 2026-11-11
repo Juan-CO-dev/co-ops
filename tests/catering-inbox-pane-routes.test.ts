@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { handleCateringInbox, reassignCateringInbox, CateringInboxError } from "@/lib/catering/inbox";
