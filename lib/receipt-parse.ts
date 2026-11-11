@@ -70,6 +70,7 @@ const LINES_CAP = 100;
 /** The attachment-path entry shape written by lib/email-receipts.ts. `omitted` entries
  *  carry a null path (a disallowed content-type that never stored). Mirror it for download. */
 interface AttachmentPathEntry {
+  kind?: string;
   filename: string;
   contentType: string;
   path: string | null;
@@ -318,11 +319,17 @@ async function loadReceiptAssets(
     targets.push({ path: r.raw_storage_path, filename: "message.eml", contentType: guessRawContentType(r), isRaw: true });
   }
   for (const a of r.attachment_paths ?? []) {
+    if (a.kind != null && a.kind !== "attachment") continue;
     if (a.omitted || !a.path) continue; // never stored → nothing to download.
     targets.push({ path: a.path, filename: a.filename, contentType: a.contentType, isRaw: false });
   }
 
   for (const t of targets) {
+    const contentType = t.contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (!["text/plain", "text/html", "message/rfc822", "application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif"].includes(contentType)) {
+      notes.push(`unsupported_type_skipped:${t.filename}:${contentType || "unknown"}`);
+      continue;
+    }
     let bytes: Uint8Array;
     try {
       const { data, error } = await sb.storage.from(RECEIPT_BUCKET).download(t.path);

@@ -191,7 +191,11 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
       lt(col: string, v: unknown) { preds.push((r) => { const x = valueAt(table, r, col); return x != null && cmp(x, v) < 0; }); return q; },
       lte(col: string, v: unknown) { preds.push((r) => { const x = valueAt(table, r, col); return x != null && cmp(x, v) <= 0; }); return q; },
       or(expr: string) {
-        const alts = expr.split(",").map((a) => {
+        const predicate = (a: string): ((r: Row) => boolean) => {
+          if (a.startsWith("and(") && a.endsWith(")")) {
+            const all = splitTop(a.slice(4, -1)).map(predicate);
+            return (r: Row) => all.every((f) => f(r));
+          }
           const [col, op, ...rest] = a.split(".");
           const val = rest.join(".");
           if (op === "not" && val === "is.null") return (r: Row) => r[col!] != null;
@@ -199,7 +203,8 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
           if (op === "eq") return (r: Row) => String(r[col!]) === val;
           if (op === "lte") return (r: Row) => r[col!] != null && cmp(r[col!], val) <= 0;
           throw new Error(`fake db: or ${a}`);
-        });
+        };
+        const alts = splitTop(expr).map(predicate);
         preds.push((r) => alts.some((f) => f(r))); return q;
       },
       order(col: string, opts?: { ascending?: boolean }) { orders.push({ col, asc: opts?.ascending !== false }); return q; },

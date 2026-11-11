@@ -5,6 +5,8 @@
  * ~5ms duplicate cost is accepted vs prop-drilling from the layout).
  */
 
+import { listVendorMail } from "@/lib/vendor-mail";
+import { vendorMailRoleAllowed } from "@/lib/vendor-mail-shared";
 import { countNotReady } from "@/lib/admin/readiness-load";
 import { readinessWhereEntries, type ReadinessByScope } from "@/lib/admin/readiness-scope-shared";
 import { loadCronHealth, loadInboundHealth, type InboundHealth, type CronHealth } from "@/lib/admin/ops-health";
@@ -69,6 +71,11 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
   // must never take down the admin hub (mirrors the readiness-counts posture above).
   let cronHealth: CronHealth | null = null;
   let inboundHealth: InboundHealth | null = null;
+  let vendorMailStale: number | null = null;
+  if (vendorMailRoleAllowed(auth.user.role)) {
+    try { vendorMailStale = (await listVendorMail(auth, { stale: true })).reconciliation.stale_count; }
+    catch { /* Unknown is shown explicitly, never as a green zero. */ }
+  }
   if (canManageInboundAliases(auth.user.role)) {
     try { inboundHealth = await loadInboundHealth(auth); }
     catch { console.error("hub inbound health failed (rendering without card)"); }
@@ -99,6 +106,7 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
       ) : null}
 
       <CronHealthCard health={cronHealth} lang={lang} />
+      {vendorMailRoleAllowed(auth.user.role) && <a href="/operations/vendor-mail?stale=1" className="co-card mt-4 flex min-h-[44px] flex-wrap items-center gap-2 p-4">{serverT(lang, "vendorMail.health")} <strong className={vendorMailStale ? "text-red-700" : ""}>{vendorMailStale === null ? serverT(lang, "vendorMail.unknown") : vendorMailStale}</strong></a>}
       {inboundHealth ? <InboundHealthPanel health={inboundHealth} /> : null}
       <WeekInCoopsCard card={week} lang={lang} />
 

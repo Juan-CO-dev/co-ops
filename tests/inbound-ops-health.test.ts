@@ -3,9 +3,10 @@ import { NextRequest } from "next/server";
 import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 import { createFakeDb, type Tables } from "./fixtures/counts-fake-db";
-const h = vi.hoisted(() => ({ db: vi.fn(), audit: vi.fn(), session: vi.fn() }));
+const h = vi.hoisted(() => ({ db: vi.fn(), audit: vi.fn(), session: vi.fn(), vendorRedrive: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: h.db }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
+vi.mock("@/lib/vendor-mail-actions", () => ({ redriveVendorMail: h.vendorRedrive }));
 vi.mock("@/lib/session", () => ({ requireSession: h.session }));
 import { loadInboundHealth, redriveInbound } from "@/lib/admin/ops-health";
 import { POST } from "@/app/api/admin/inbound/redrive/route";
@@ -14,7 +15,8 @@ const actor = (role: RoleCode) => ({ user: { id: "actor", role }, locations: [],
 let tables: Tables;
 beforeEach(() => {
   vi.clearAllMocks();
-  tables = { inbound_messages: [{ id: ID, lane: "vendor_receipt", route_reason: "shop_address", content_state: "failed", fetch_attempts: 5, next_attempt_at: "2026-01-01T00:00:00Z", lease_token: null }] };
+  tables = { inbound_messages: [{ id: ID, lane: "catering", route_reason: "shop_address", content_state: "failed", fetch_attempts: 5, next_attempt_at: "2026-01-01T00:00:00Z", lease_token: null }] };
+  h.vendorRedrive.mockResolvedValue({ revision: 4, replayed: false });
   h.db.mockReturnValue(createFakeDb(tables).client); h.session.mockResolvedValue(actor("moo"));
 });
 it("redrives skipped catering_address rows through the existing audited path", async () => {
@@ -65,6 +67,18 @@ it("health returns failures and config blocks, excluding completed rows", async 
   expect(health.rows.map(row => row.id)).toEqual([ID, "blocked"]);
   expect(health.count).toBe(2);
 });
+it("health includes only skipped catering-address backlog and it can be redriven", async () => {
+  Object.assign(tables.inbound_messages![0]!, { lane: "catering", route_reason: "catering_address", content_state: "skipped" });
+  tables.inbound_messages!.push(
+    { id: "wrong-lane", content_state: "skipped", lane: "vendor_receipt", route_reason: "catering_address" },
+    { id: "wrong-reason", content_state: "skipped", lane: "catering", route_reason: "ambiguous" },
+    { id: "pending", content_state: "pending", lane: "catering", route_reason: "catering_address" },
+    { id: "noise", content_state: "skipped", lane: "noise", route_reason: "unknown_address" },
+  );
+  expect(await loadInboundHealth(actor("moo"))).toEqual({ count: 1, rows: [{ id: ID, subject: undefined, content_state: "skipped" }] });
+  await redriveInbound(actor("moo"), ID);
+  expect(await loadInboundHealth(actor("moo"))).toEqual({ count: 0, rows: [] });
+});
 it("route rejects cross-origin and locked step-up", async () => {
   const req = (origin: string) => new NextRequest("https://fixture.test/api/admin/inbound/redrive", { method: "POST", headers: { origin }, body: JSON.stringify({ id: ID }) });
   expect((await POST(req("https://other.test"))).status).toBe(403);
@@ -72,4 +86,19 @@ it("route rejects cross-origin and locked step-up", async () => {
   h.session.mockResolvedValue({ ...actor("moo"), session: { stepUpUnlocked: false } });
   expect((await POST(req("https://fixture.test"))).status).toBe(403);
   expect(h.db).not.toHaveBeenCalled();
+});
+
+it.each(["failed", "blocked_config"])("vendor %s delegates to the shared revision/session CAS", async content_state => {
+  Object.assign(tables.inbound_messages![0]!, { lane: "vendor_receipt", content_state, revision: 3 });
+  const ctx = actor("moo");
+  await redriveInbound(ctx, ID);
+  expect(h.vendorRedrive).toHaveBeenCalledWith(ctx, ID, { expected_revision: 3, request_id: expect.stringMatching(/^[a-f0-9-]{36}$/) });
+  // No legacy unversioned UPDATE or duplicate audit in the admin adapter.
+  expect(tables.inbound_messages![0]!.content_state).toBe(content_state);
+  expect(h.audit).not.toHaveBeenCalled();
+});
+it("vendor fetched refuses before shared CAS", async () => {
+  Object.assign(tables.inbound_messages![0]!, { lane:"vendor_receipt", content_state:"fetched", revision:3 });
+  await expect(redriveInbound(actor("moo"), ID)).rejects.toMatchObject({status:409});
+  expect(h.vendorRedrive).not.toHaveBeenCalled();
 });
