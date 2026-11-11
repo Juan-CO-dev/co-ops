@@ -3,7 +3,7 @@ import { isInboxSchemaMissing } from "@/lib/catering/inbox-schema-shared";
 import { audit } from "@/lib/audit";
 import { randomUUID } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { ingestInboundReceipt } from "@/lib/email-receipts";
+import { ingestInboundReceipt, type AttachmentPathEntry } from "@/lib/email-receipts";
 import { fetchInboundContent } from "@/lib/inbound-fetch";
 import { finalizeCateringInbound, type StoredCateringInbound } from "@/lib/catering/inbox-ingest";
 import { inboxAttachmentManifest, inboxContent, inboxHeaders } from "@/lib/catering/inbox-content-shared";
@@ -116,12 +116,22 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
       await save({ content_state: "skipped", last_error: null, lease_token: null });
       return "skipped";
     }
+    function archiveProjection(archive?: { raw_storage_path?: string | null; attachment_paths?: AttachmentPathEntry[] | null }) {
+      if (!archive?.attachment_paths) return {};
+      const manifest = [
+        ...(archive.raw_storage_path ? [{ kind: "body" as const, filename: "message.eml", contentType: null, path: archive.raw_storage_path }] : []),
+        ...archive.attachment_paths,
+      ];
+      const omitted = manifest.find(asset => "omitted" in asset && asset.omitted);
+      return { attachment_manifest: manifest, archive_state: omitted ? "incomplete" : "complete",
+        archive_error: omitted && "omissionReason" in omitted ? omitted.omissionReason === "content_type" ? "unavailable" : "size" : null };
+    }
     // Storage/receipt INSERT may have committed before the final ledger update failed.
     // Repair that link without depending on provider content retention or downloading twice.
-    const existing = await sb.from("email_receipts").select("id").eq("inbound_message_id", row.id).maybeSingle<{ id: string }>();
+    const existing = await sb.from("email_receipts").select("id, raw_storage_path, attachment_paths").eq("inbound_message_id", row.id).maybeSingle<{ id: string; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null }>();
     if (existing.error) throw new Error("inbound_receipt_lookup_failed");
     if (existing.data) {
-      await save({ content_state: "fetched", fetch_attempts: attempt, email_receipt_id: existing.data.id, last_error: null, lease_token: null });
+      await save({ content_state: "fetched", fetch_attempts: attempt, email_receipt_id: existing.data.id, ...archiveProjection(existing.data), last_error: null, lease_token: null });
       return "fetched";
     }
     stage = "provider_error";
@@ -129,7 +139,7 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
     stage = "ledger";
     const receipt = await ingestInboundReceipt({ ...content, toAddress: null, fromAddress: row.from_address, subject: row.subject,
       externalId: `resend:${row.provider_email_id}`, inboundMessageId: row.id, addressLocationId: route.location_id, receivedAt: row.received_at });
-    await save({ content_state: "fetched", fetch_attempts: attempt, email_receipt_id: receipt.receiptId, last_error: null, lease_token: null });
+    await save({ content_state: "fetched", fetch_attempts: attempt, email_receipt_id: receipt.receiptId, ...archiveProjection(receipt.archive), last_error: null, lease_token: null });
     return "fetched";
   } catch (error) {
     if (catering && isInboxSchemaMissing(error)) {

@@ -104,3 +104,14 @@ it("health has a localized subject fallback and leaves errors outside the collap
   expect(screen.getByText(en["admin.inbound.error"])).toBeTruthy();
   expect(screen.queryByText(en["admin.inbound.no_subject"])).toBeNull();
 });
+
+it.each(["en", "es"] as const)("labels catering backlog distinctly and redrives it with one click (%s)", async language => {
+  const dictionary = language === "en" ? en : es;
+  mount(jsx(InboundHealthPanel, { health: { count: 1, rows: [{ id: "backlog", subject: "Earlier inquiry", content_state: "skipped" }] } }), language);
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(dictionary["admin.inbound.health_details"]) }));
+  expect(screen.getByText(dictionary["admin.inbound.catering_backlog"], { exact: false })).toBeTruthy();
+  expect(screen.queryByText(dictionary["admin.inbound.failed"], { exact: false })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: dictionary["admin.inbound.retry"] }));
+  await waitFor(() => expect(h.post).toHaveBeenCalledWith("/api/admin/inbound/redrive", { id: "backlog" }));
+  expect(h.step).toHaveBeenCalledWith("A");
+});

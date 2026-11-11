@@ -31,15 +31,18 @@ import { receiptAutomationAllowed, type ReceiptAutomationState } from "@/lib/rec
  * law); Supabase `.update()` swallows constraint violations, so we never infer success
  * from `data`.
  *
- * STORAGE HELPER: the receipts bucket's MIME allow-list (PDF/EML/text/html + phone
- * image types) genuinely differs from the photos image-only set, so the storage seam
- * (allow-list + path builder + signed-URL minting) lives inline in this module rather
+ * STORAGE HELPER: inbound archives accept every MIME type under 0297; manual uploads
+ * retain their PDF/EML/text/html + phone image gate. The storage seam
+ * (upload gate + path builder + signed-URL minting) lives inline in this module rather
  * than reusing lib/photos-shared.ts. Object-path convention (task-specified, distinct
  * from photos' month-partition): `<locationId ?? "unattributed">/<uuid>/<filename>`.
  */
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { etCalendarDate, etYmdMinusDays, etWallMinutesInstant } from "@/lib/operational-day";
+import { selectAllRows } from "@/lib/supabase-paginate";
+import { INBOUND_ASSET_LIMIT } from "@/lib/inbound-fetch";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
@@ -79,9 +82,8 @@ function actorLoc(actor: AuthContext): LocationActor {
 }
 
 // ── STORAGE SEAM (receipts bucket) ─────────────────────────────────────────────────
-// The bucket's allow-list (0170) — PDF + EML + text/html + the phone image types. Kept
-// in sync with the migration's `allowed_mime_types` so the app-layer rejection and the
-// Storage-layer rejection agree.
+// The manual-upload allow-list (0170) — PDF + EML + text/html + the phone image types. Kept
+// for operator uploads only. Inbound archival accepts all types under 0297.
 const RECEIPT_ALLOWED_CONTENT_TYPES = [
   "application/pdf",
   "message/rfc822",
@@ -119,9 +121,11 @@ function buildReceiptPath(locationId: string | null, assetId: string, filename: 
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
-/** An entry in email_receipts.attachment_paths. `omitted` records a skip (content-type
- *  not in the bucket allow-list) so the ledger row is honest about what did NOT store. */
-interface AttachmentPathEntry {
+/** An entry in email_receipts.attachment_paths. Omissions preserve size failures
+ *  and legacy content-type skips without claiming that missing bytes were stored. */
+export interface AttachmentPathEntry {
+  /** Missing on legacy entries means an original attachment. */
+  kind?: "attachment" | "body" | "headers";
   filename: string;
   contentType: string;
   path: string | null;
@@ -170,11 +174,32 @@ export interface InboundReceiptInput {
   fromAddress: string | null;
   subject: string | null;
   rawEml: { bytes: Uint8Array | Buffer; contentType: string } | null;
-  attachments: Array<{ filename: string; contentType: string; bytes: Uint8Array | Buffer; omitted?: true; omissionReason?: "size" | "content_type" }>;
+  /** Secondary HTML body when the primary asset is text, and provider headers. */
+  html?: string | null;
+  headers?: unknown;
+  attachments: Array<{ kind?: "attachment" | "body" | "headers"; filename: string; contentType: string; bytes: Uint8Array | Buffer; omitted?: true; omissionReason?: "size" | "content_type" }>;
   /** IDEMPOTENCY KEY (the svix-id). When present, a receipt already stored under this
    *  external_id short-circuits before any storage/DB write (Resend retries on our 500s;
    *  a replay must NOT duplicate the row). Backed by 0171 email_receipts_external_uq. */
   externalId?: string | null;
+}
+
+/** Envelope/threading evidence only. No provider metadata or URL-bearing headers. */
+function archiveHeaders(input: unknown): Record<string, string> {
+  const allowed = new Set(["from", "to", "cc", "date", "subject", "message-id", "in-reply-to", "references", "reply-to", "content-type", "mime-version"]);
+  const entries: [string, unknown][] = Array.isArray(input)
+    ? input.flatMap(entry => entry && typeof entry === "object" && typeof entry.name === "string" ? [[entry.name, entry.value] as [string, unknown]] : [])
+    : input && typeof input === "object" ? Object.entries(input) : [];
+  const result: Record<string, string> = {};
+  for (const [name, value] of entries) {
+    const key = name.toLowerCase();
+    if (!allowed.has(key) || typeof value !== "string") continue;
+    const unfolded = value.replace(/\r?\n[ \t]+/g, " ");
+    // Never archive signed download URLs, even if supplied inside an allowed header.
+    if (/[\r\n\0]/.test(unfolded) || /https?:\/\//i.test(unfolded)) continue;
+    result[key] = unfolded.slice(0, 8000);
+  }
+  return result;
 }
 
 /**
@@ -186,7 +211,7 @@ export interface InboundReceiptInput {
  * attempts an auto-link. Every storage/DB call is error-checked; a storage failure
  * poisons the ingest with a thrown error (ledger-first law — the route converts to 500).
  */
-export async function ingestInboundReceipt(input: InboundReceiptInput): Promise<{ receiptId: string }> {
+export async function ingestInboundReceipt(input: InboundReceiptInput): Promise<{ receiptId: string; archive?: { raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] } }> {
   const sb = getServiceRoleClient();
 
   // IDEMPOTENT REPLAY: when an externalId (svix-id) is present, a prior receipt under
@@ -196,11 +221,11 @@ export async function ingestInboundReceipt(input: InboundReceiptInput): Promise<
   if (externalId) {
     const { data: existing, error: exErr } = await sb
       .from("email_receipts")
-      .select("id")
+      .select("id, raw_storage_path, attachment_paths")
       .eq("external_id", externalId)
-      .maybeSingle<{ id: string }>();
+      .maybeSingle<{ id: string; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] }>();
     if (exErr) throw new Error(`ingestInboundReceipt idempotency lookup: ${exErr.message}`);
-    if (existing) return { receiptId: existing.id };
+    if (existing) return { receiptId: existing.id, archive: { raw_storage_path: existing.raw_storage_path, attachment_paths: existing.attachment_paths } };
   }
 
   // Location attribution by the to-address (case-insensitive, active locations).
@@ -208,24 +233,28 @@ export async function ingestInboundReceipt(input: InboundReceiptInput): Promise<
   // Vendor guess by the from-address (null when ambiguous or unmatched).
   const vendorGuessId = await guessVendorByFromAddress(sb, input.fromAddress);
 
-  // Store raw + attachments. LEDGER-FIRST: any storage error throws before we insert
-  // the row, so we never promise bytes we didn't land. Disallowed attachment types are
-  // recorded as `omitted` (they don't fail the whole ingest).
+  // Archive every MIME type; parser/manual-upload eligibility stays independent.
+  // LEDGER-FIRST: a storage failure prevents the receipt INSERT.
   let rawStoragePath: string | null = null;
-  if (input.rawEml && isReceiptContentType(input.rawEml.contentType)) {
-    rawStoragePath = await storeReceiptAsset(sb, locationId, "message.eml", input.rawEml.contentType, input.rawEml.bytes);
-  }
-
   const attachmentPaths: AttachmentPathEntry[] = [];
-  for (const att of input.attachments ?? []) {
-    if (att.omitted || att.bytes.byteLength > 15 * 1024 * 1024 || !isReceiptContentType(att.contentType)) {
-      // Skip disallowed types — record the skip, don't fail the ingest.
-      attachmentPaths.push({ filename: att.filename, contentType: att.contentType, path: null, omitted: true,
-        omissionReason: att.omissionReason ?? (att.bytes.byteLength > 15 * 1024 * 1024 ? "size" : "content_type") });
+  if (input.rawEml) {
+    if (input.rawEml.bytes.byteLength > INBOUND_ASSET_LIMIT) {
+      attachmentPaths.push({ kind: "body", filename: "message.eml", contentType: input.rawEml.contentType, path: null, omitted: true, omissionReason: "size" });
+    } else {
+      rawStoragePath = await storeReceiptAsset(sb, locationId, "message.eml", input.rawEml.contentType, input.rawEml.bytes);
+    }
+  }
+  const archiveAssets: InboundReceiptInput["attachments"] = (input.attachments ?? []).map(att => ({ ...att, kind: att.kind ?? "attachment" }));
+  if (input.html) archiveAssets.push({ kind: "body", filename: "message.html", contentType: "text/html", bytes: Buffer.from(input.html, "utf8") });
+  archiveAssets.push({ kind: "headers", filename: "headers.json", contentType: "application/json", bytes: Buffer.from(JSON.stringify(archiveHeaders(input.headers)), "utf8") });
+  for (const att of archiveAssets) {
+    if (att.omitted || att.bytes.byteLength > INBOUND_ASSET_LIMIT) {
+      attachmentPaths.push({ kind: att.kind, filename: att.filename, contentType: att.contentType, path: null, omitted: true,
+        omissionReason: att.omissionReason ?? "size" });
       continue;
     }
     const path = await storeReceiptAsset(sb, locationId, att.filename, att.contentType, att.bytes);
-    attachmentPaths.push({ filename: att.filename, contentType: att.contentType, path });
+    attachmentPaths.push({ kind: att.kind, filename: att.filename, contentType: att.contentType, path });
   }
 
   const { data: inserted, error: insErr } = await sb
@@ -251,18 +280,18 @@ export async function ingestInboundReceipt(input: InboundReceiptInput): Promise<
     if (externalId && insErr.code === PG_UNIQUE_VIOLATION) {
       const { data: raced, error: raceErr } = await sb
         .from("email_receipts")
-        .select("id")
+        .select("id, raw_storage_path, attachment_paths")
         .eq("external_id", externalId)
-        .maybeSingle<{ id: string }>();
+        .maybeSingle<{ id: string; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] }>();
       if (raceErr) throw new Error(`ingestInboundReceipt idempotency re-select: ${raceErr.message}`);
-      if (raced) return { receiptId: raced.id };
+      if (raced) return { receiptId: raced.id, archive: { raw_storage_path: raced.raw_storage_path, attachment_paths: raced.attachment_paths } };
     }
     throw new Error(`ingestInboundReceipt insert: ${insErr.message}`);
   }
   if (!inserted) throw new Error("ingestInboundReceipt insert returned no row");
 
   // Routed inbound receipts wait for account attribution after parse before ANY effects.
-  if (input.inboundMessageId) return { receiptId: inserted.id };
+  if (input.inboundMessageId) return { receiptId: inserted.id, archive: { raw_storage_path: rawStoragePath, attachment_paths: attachmentPaths } };
 
   // Best-effort auto-link (never throws to the caller on zero/many candidates).
   await attemptAutoLink(inserted.id);
@@ -508,23 +537,37 @@ export async function attemptAutoLink(receiptId: string): Promise<void> {
   // ±2-day window around the receipt's received-at date (bare-date comparison).
   const receivedMs = Date.parse(r.received_at);
   if (!Number.isFinite(receivedMs)) return;
-  const lo = new Date(receivedMs - AUTO_LINK_DAY_WINDOW * 86_400_000).toISOString().slice(0, 10);
-  const hi = new Date(receivedMs + AUTO_LINK_DAY_WINDOW * 86_400_000).toISOString().slice(0, 10);
+  const receivedDay = etCalendarDate(r.received_at);
+  const lo = etYmdMinusDays(receivedDay, AUTO_LINK_DAY_WINDOW);
+  const hi = etYmdMinusDays(receivedDay, -AUTO_LINK_DAY_WINDOW);
 
   const { data: candidates, error: cErr } = await sb
     .from("vendor_deliveries")
-    .select("id")
+    .select("id, delivery_date")
     .eq("vendor_id", r.vendor_guess_id)
     .eq("location_id", r.location_id)
     .is("email_receipt_id", null)
     .gte("delivery_date", lo)
     .lte("delivery_date", hi)
-    .returns<Array<{ id: string }>>();
+    .returns<Array<{ id: string; delivery_date: string }>>();
   if (cErr) return;
   const list = candidates ?? [];
   if (list.length !== 1) return; // zero or many → leave unlinked for manual triage
   const deliveryId = list[0]!.id;
 
+  await claimAutomaticDeliveryLink(sb, r, deliveryId, list[0]!.delivery_date, "receipt");
+}
+
+type AutoLinkReceipt = ReceiptAutomationState & {
+  id: string; vendor_guess_id: string | null; linked_delivery_id: string | null; received_at: string;
+};
+
+/** Both automatic directions use the same receipt-first CAS and compensating writer.
+ * Snapshot predicates prevent a concurrent manual assignment from changing the shop/vendor
+ * between candidate selection and the claim. Neither side can replace an existing link. */
+async function claimAutomaticDeliveryLink(
+  sb: ServiceClient, r: AutoLinkReceipt, deliveryId: string, deliveryDate: string, direction: "receipt" | "receiving",
+): Promise<void> {
   // LINK ORDER: claim the RECEIPT side FIRST (count-checked — a loser aborts having
   // touched nothing), THEN the delivery side (count-checked + 23505-guarded by the
   // 0171 vendor_deliveries_email_receipt_uq index). If the delivery side loses the
@@ -535,15 +578,22 @@ export async function attemptAutoLink(receiptId: string): Promise<void> {
     .update({ linked_delivery_id: deliveryId }, { count: "exact" })
     .eq("id", r.id)
     .eq("attribution_conflict", false)
+    .eq("location_id", r.location_id!)
+    .eq("vendor_guess_id", r.vendor_guess_id!)
+    .eq("parse_state", r.parse_state)
+    .eq("received_at", r.received_at)
     .is("linked_delivery_id", null);
-  if (ruErr || rCount === 0) return; // lost the receipt side (or read error) — abort untouched.
+  if (ruErr || rCount !== 1) return; // lost the receipt side (or read error) — abort untouched.
 
   const { error: duErr, count } = await sb
     .from("vendor_deliveries")
     .update({ email_receipt_id: r.id }, { count: "exact" })
     .eq("id", deliveryId)
+    .eq("location_id", r.location_id!)
+    .eq("vendor_id", r.vendor_guess_id!)
+    .eq("delivery_date", deliveryDate)
     .is("email_receipt_id", null);
-  if (duErr || count === 0) {
+  if (duErr || count !== 1) {
     // Delivery side lost (count 0) or tripped the unique index (23505): compensate by
     // releasing the receipt claim we made, then bail silently for manual triage.
     await compensateReceiptClaim(sb, r.id, deliveryId);
@@ -555,9 +605,73 @@ export async function attemptAutoLink(receiptId: string): Promise<void> {
   await audit({
     actorId: null, actorRole: null,
     action: "delivery.receipt_linked", resourceTable: "vendor_deliveries", resourceId: deliveryId,
-    metadata: { receipt_id: r.id, location_id: r.location_id, source: "auto", vendor_guess_id: r.vendor_guess_id },
+    metadata: { receipt_id: r.id, location_id: r.location_id, source: "auto", direction, vendor_guess_id: r.vendor_guess_id },
     ipAddress: null, userAgent: null,
   });
+}
+
+type AutoLinkDelivery = { id: string; location_id: string; vendor_id: string; delivery_date: string; email_receipt_id: string | null };
+
+export type ReceivingInvoiceCandidate = { id: string; subject: string | null; fromAddress: string | null; receivedAt: string; invoiceNumber: string | null; totalCents: number | null };
+type ReceivingCandidateRow = AutoLinkReceipt & { subject: string | null; from_address: string | null; parsed_json: { extraction?: { invoiceNumber?: unknown; totalCents?: unknown } } | null };
+
+async function receivingReceiptCandidates(sb: ServiceClient, d: AutoLinkDelivery): Promise<ReceivingCandidateRow[]> {
+  if (d.email_receipt_id) return [];
+  // Exact ET midnight boundaries, including the whole final day and DST changes.
+  const lo = etWallMinutesInstant(etYmdMinusDays(d.delivery_date, AUTO_LINK_DAY_WINDOW), 0).toISOString();
+  const hi = etWallMinutesInstant(etYmdMinusDays(d.delivery_date, -AUTO_LINK_DAY_WINDOW - 1), 0).toISOString();
+  const rows = await selectAllRows<ReceivingCandidateRow>((from, to) => sb.from("email_receipts")
+    .select("id, location_id, vendor_guess_id, linked_delivery_id, received_at, inbound_message_id, parse_state, attribution_conflict, subject, from_address, parsed_json")
+    .eq("location_id", d.location_id).eq("vendor_guess_id", d.vendor_id)
+    .is("linked_delivery_id", null).eq("attribution_conflict", false)
+    .gte("received_at", lo).lt("received_at", hi)
+    .order("id").range(from, to).returns<ReceivingCandidateRow[]>());
+  // Manual assignment writes vendor_guess_id too (0297); it is the effective vendor.
+  return rows.filter(r => receiptAutomationAllowed(r));
+}
+
+/** Read-only prompt data, under the existing receiving authorization (not vendor-mail's GM gate). */
+export async function loadReceivingReceiptCandidates(actor: AuthContext, deliveryId: string): Promise<ReceivingInvoiceCandidate[]> {
+  requireLevel(actor, RECEIPT_MIN);
+  const sb = getServiceRoleClient();
+  const { data: d, error } = await sb.from("vendor_deliveries")
+    .select("id, location_id, vendor_id, delivery_date, email_receipt_id")
+    .eq("id", deliveryId).maybeSingle<AutoLinkDelivery>();
+  if (error) throw new Error("Receiving invoice candidates unavailable");
+  if (!d || !lockLocationContext(actorLoc(actor), d.location_id)) throw new EmailReceiptError(404, "not_found");
+  if (!(await canDoOperationalTask(actor, d.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
+  return (await receivingReceiptCandidates(sb, d)).map(r => ({
+    id: r.id, subject: r.subject, fromAddress: r.from_address, receivedAt: r.received_at,
+    invoiceNumber: typeof r.parsed_json?.extraction?.invoiceNumber === "string" ? r.parsed_json.extraction.invoiceNumber : null,
+    totalCents: typeof r.parsed_json?.extraction?.totalCents === "number" && Number.isFinite(r.parsed_json.extraction.totalCents) ? r.parsed_json.extraction.totalCents : null,
+  }));
+}
+
+/** Receiving's reverse match is best-effort after a durable save. Ambiguity never guesses;
+ * the detail page reads the same candidates and offers the existing authorized link action. */
+export async function attemptReceivingAutoLink(deliveryId: string): Promise<void> {
+  try {
+    const sb = getServiceRoleClient();
+    const { data: d, error } = await sb.from("vendor_deliveries")
+      .select("id, location_id, vendor_id, delivery_date, email_receipt_id")
+      .eq("id", deliveryId).maybeSingle<AutoLinkDelivery>();
+    if (error || !d || d.email_receipt_id) return;
+    const candidates = await receivingReceiptCandidates(sb, d);
+    if (candidates.length !== 1) return;
+    const receipt = candidates[0]!;
+    const day = etCalendarDate(receipt.received_at);
+    const { data: forward, error: forwardError } = await sb.from("vendor_deliveries")
+      .select("id").eq("vendor_id", receipt.vendor_guess_id!).eq("location_id", receipt.location_id!)
+      .is("email_receipt_id", null)
+      .gte("delivery_date", etYmdMinusDays(day, AUTO_LINK_DAY_WINDOW))
+      .lte("delivery_date", etYmdMinusDays(day, -AUTO_LINK_DAY_WINDOW))
+      .returns<Array<{ id: string }>>();
+    if (forwardError || forward?.length !== 1 || forward[0]?.id !== deliveryId) return;
+    await claimAutomaticDeliveryLink(sb, receipt, deliveryId, d.delivery_date, "receiving");
+  } catch {
+    // The delivery is already saved. Leave it unlinked for the existing manual triage UI.
+    console.error("[email-receipts] receiving auto-link unavailable");
+  }
 }
 
 // ── (3b) PO MATCHING — receipt → purchase_order link + effects ───────────────────────
