@@ -18,7 +18,14 @@ const one=async(s,a=[])=>(await db.query(s,a)).rows[0];
 const rpc=async(n,a)=>(await one(`select public.${n}(${a.map((_,i)=>`$${i+1}`).join(',')}) result`,a)).result;
 const reject=async(f,re,s)=>{await assert.rejects(f,re);check(true,s);};
 const shop=randomUUID(),manager=randomUUID(),customer=randomUUID();
-const intake={contact_name:'Synthetic',email:'synthetic@example.test',company:'Unverified text',headcount:20,event_date:'2027-01-02',fulfillment:'pickup',notes:'Synthetic note',language:'en'};
+const intake={contact_name:'Synthetic',email:'synthetic@example.test',company:'Unverified text',headcount:20,event_date:'2027-01-02',fulfillment:'pickup',notes:'Synthetic note',language:'en',secondary_email:'profile@example.test'};
+const quotes0120=table('0120_catering_quotes.sql','catering_quotes');
+const quotes0127=read('0127_catering_portal_orders.sql').match(/ALTER TABLE catering_quotes DROP CONSTRAINT catering_quotes_status_check;[\s\S]*?CHECK \(origin IN \('self_serve','staff'\)\);/i)?.[0];
+assert.ok(quotes0127);
+const pipeline0129=read('0129_order_artifact_intake.sql').match(/ALTER TABLE public\.catering_pipeline\s+ADD COLUMN contact_phone[\s\S]*?dropoff_door\s+text;/i)?.[0];
+assert.ok(pipeline0129);
+const pipeline0139=read('0139_catering_pipeline_geo_routing.sql').match(/ALTER TABLE public\.catering_pipeline\s+ADD COLUMN geo_lat[\s\S]*?fulfillment_routed boolean NOT NULL DEFAULT false;/i)?.[0];
+assert.ok(pipeline0139);
 async function receive(id,enabled=true){return rpc('meta_lead_record',[id,'10','20','2026-11-11T12:00:00Z',enabled]);}
 async function claim(id){const lease=randomUUID(); const result=await rpc('meta_lead_claim',[id,lease]);return {lease,...result};}
 const apply=(id,lease,c=customer)=>rpc('meta_lead_intake_apply',[id,lease,c,shop,manager,intake,['full_name','email','unknown']]);
@@ -31,13 +38,17 @@ try {
     create table users(id uuid primary key,role text,active boolean);
     ${table('0108_catering_scaffold_capture.sql','catering_customers')}
     ${table('0108_catering_scaffold_capture.sql','catering_pipeline')}
-    alter table catering_pipeline add column contact_phone text;
+    ${pipeline0129}
+    ${pipeline0139}
     alter table catering_pipeline drop constraint catering_pipeline_stage_check;
     alter table catering_pipeline add constraint catering_pipeline_stage_check check(stage in ('inquiry','quote_sent','confirmed','out','completed','lost'));
     ${read('0148_catering_lead_assignee.sql')}
     ${table('0110_catering_pipeline_events.sql','catering_pipeline_events')}
     alter table catering_pipeline_events drop column location_id;
     ${read('0191_pipeline_events_out_stage.sql')}
+    create table public.catering_delivery_zones(id uuid primary key);
+    ${quotes0120}
+    ${quotes0127}
     ${['customers','customer_identifiers','customer_consent_imports','customer_consent_events','customer_merge_suggestions','customer_suppressions'].map(n=>table('0234_customer_profiles.sql',n)).join('\n')}
     ${['customer_sha256','customer_root','customer_email_is_relay','customer_identity_lock','customer_resolve'].map(fn).join('\n')}
     ${consentView}
@@ -78,7 +89,7 @@ try {
   for(const role of ['anon','authenticated','service_role']) for(const privilege of ['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) {
     check((await one('select has_table_privilege($1,$2,$3) x',[role,'meta_lead_events',privilege])).x===(role==='service_role'&&privilege==='SELECT'),`${role} ${privilege} ceiling`);
   }
-  for(const {oid,proname,prosecdef,proconfig} of (await db.query("select oid,proname,prosecdef,proconfig from pg_proc where proname like 'meta_lead_%' or proname='customer_consent_record_explicit'")).rows){
+  for(const {oid,proname,prosecdef,proconfig} of (await db.query("select oid,proname,prosecdef,proconfig from pg_proc where proname like 'meta_lead_%' or proname in ('customer_consent_record_explicit','portal_intake_apply')")).rows){
     check(prosecdef&&proconfig.includes('search_path=pg_catalog, public'),`${proname} definer/path`);
     for(const role of ['anon','authenticated','service_role']) check((await one("select has_function_privilege($1,$2::oid,'EXECUTE') x",[role,oid])).x===(role==='service_role'),`${proname} ${role} execute`);
   }
@@ -100,6 +111,9 @@ try {
   check(attachEvent.from_stage===attachEvent.to_stage&&attachEvent.note.includes('no stage change'),'attach records no stage change');
   check(['Name: Synthetic','Phone:','Event date: 2027-01-02','Headcount: 20','Fulfillment: pickup','Notes: Synthetic note'].every(v=>attachEvent.note.includes(v)),'attach has fixed readable fields');
   check(!attachEvent.note.includes('Unverified text')&&!attachEvent.note.includes('language')&&!attachEvent.note.includes('{'),'attach never serializes raw intake');
+  check(attachEvent.note.includes('Secondary email (Meta profile): profile@example.test'),'attach note carries the Meta profile email as a secondary contact');
+  const createdLead=await one('select * from catering_pipeline where id=$1',[created.pipeline_id]);
+  check(createdLead.notes.includes('Secondary email (Meta profile): profile@example.test')&&createdLead.customer_id===customer,'created lead stores the Meta email as a note, never as the identity');
   check(attached.state==='attached'&&attached.pipeline_id===created.pipeline_id,'same customer second submission attaches');
   check((await one('select count(*)::int n from catering_pipeline')).n===1,'one pipeline for two submissions');
   check((await one("select intake_snapshot from meta_lead_events where leadgen_id='3'")).intake_snapshot===null,'attach snapshot erased');
@@ -130,8 +144,9 @@ try {
   await reject(()=>db.query("update meta_lead_events set portal_token_id=$1 where leadgen_id='2'",[randomUUID()]),/check constraint/,'token requires snapshot nulling');
   await db.query("update meta_lead_events set portal_token_id=$1,intake_snapshot=null where leadgen_id='2'",[randomUUID()]);
   check(true,'A9 paired token and erasure permitted');
-  const consentArgs=['optin@example.test','email','meta_lead_form','2026-11-11T12:00:00Z','9:email_marketing_opt_in','meta-email-marketing-v2'];
+  const consentArgs=['optin@example.test','email','meta_lead_form','2026-11-11T12:00:00Z','9:email_marketing_opt_in','meta-email-marketing-v3'];
   await db.exec('set role service_role');
+  await reject(()=>rpc('customer_consent_record_explicit',[...consentArgs.slice(0,5),'meta-email-marketing-v2']),/consent_invalid/,'superseded v2 checkbox text version refused');
   check((await rpc('customer_consent_record_explicit',consentArgs)).recorded,'explicit tick creates consent event');
   check(!(await rpc('customer_consent_record_explicit',consentArgs)).recorded,'evidence replay is idempotent');
   const exported=(await db.query("select * from customer_marketing_export('email')")).rows;
@@ -165,5 +180,89 @@ try {
   await db.exec('reset role');
   check(await rpc('claim_cron_route',['meta-leads']),'backstop house lease works');
   check(!(await rpc('claim_cron_route',['meta-leads'])),'backstop house lease excludes overlap');
+
+  // ── Build 2: the continuation email ledger (A3 / A6 / A9) ──────────────────────────────────
+  const person=async(name)=>{const id=randomUUID(); await db.query("insert into catering_customers(id,name,email) values($1,$2,$3)",[id,name,`${name.toLowerCase()}@example.test`]); return id;};
+  const createLead=async(id,c)=>{await receive(id); const cl=await claim(id); const r=await rpc('meta_lead_intake_apply',[id,cl.lease,c,shop,manager,{...intake,email:(await one('select email from catering_customers where id=$1',[c])).email},['email']]); return r;};
+  const ledger=(id)=>one('select * from meta_lead_events where leadgen_id=$1',[id]);
+  const emailClaim=(id)=>rpc('meta_lead_email_claim',[id]);
+  const emailResult=(id,state,token,provider)=>rpc('meta_lead_email_result',[id,state,token,provider]);
+  await db.exec('set role service_role');
+  const alice=await person('Alice'); const aliceLead=await createLead('20',alice);
+  check(aliceLead.state==='created'&&(await ledger('20')).email_state==='pending','created lead starts email pending');
+  check(!(await emailResult('20','sent',randomUUID(),'re_1')),'result before claim is refused');
+  const claimed=await emailClaim('20');
+  const parked=await ledger('20');
+  check(claimed.claimed===true&&parked.state==='needs_human'&&parked.error_code==='email_unknown'&&parked.email_state==='unknown'&&parked.email_attempted_at!==null&&parked.intake_snapshot!==null,'claim parks the row as unknown before any send');
+  check((await emailClaim('20')).reason==='not_claimable','second claim refused');
+  await reject(()=>emailResult('20','sent',null,'re_1'),/invalid_email_result/,'sent needs the token');
+  await reject(()=>emailResult('20','sent',randomUUID(),' '),/invalid_email_result/,'sent needs the provider id');
+  await reject(()=>emailResult('20','mailed',randomUUID(),'re_1'),/invalid_email_result/,'unknown result state refused');
+  const token20=randomUUID();
+  check(await emailResult('20','sent',token20,'re_1'),'confirmed provider id records sent');
+  const sent=await ledger('20');
+  check(sent.state==='created'&&sent.error_code===null&&sent.email_state==='sent'&&sent.portal_token_id===token20&&sent.email_provider_id==='re_1'&&sent.intake_snapshot===null,'sent restores created, pairs the token with the snapshot erasure');
+  check(!(await emailResult('20','failed',token20,null)),'a second result never rewrites a sent row');
+  const aliceAgain=await createLead('21',alice);
+  check(aliceAgain.state==='attached'&&(await ledger('21')).email_state==='not_applicable'&&(await emailClaim('21')).reason==='not_claimable','an attached submission never claims an email');
+  const bob=await person('Bob'); await createLead('22',bob); await emailClaim('22');
+  const token22=randomUUID();
+  check(await emailResult('22','unknown',token22,null),'unknown result accepted with its token');
+  const unknown=await ledger('22');
+  check(unknown.state==='needs_human'&&unknown.email_state==='unknown'&&unknown.portal_token_id===token22&&unknown.intake_snapshot===null&&unknown.completed_at!==null,'unknown keeps the token, erases the snapshot, parks the lead');
+  await db.exec('reset role');
+  await db.query("update catering_pipeline set stage='completed' where customer_id=$1",[bob]);
+  await db.exec('set role service_role');
+  const bobLater=await createLead('23',bob);
+  check(bobLater.state==='created','a completed lead lets the next submission create a new one');
+  check((await emailClaim('23')).reason==='capped','second email to one address inside 24 h is capped in SQL');
+  const capped=await ledger('23');
+  check(capped.state==='needs_human'&&capped.error_code==='email_capped'&&capped.email_state==='capped'&&capped.intake_snapshot===null&&capped.email_attempted_at===null&&capped.portal_token_id===null,'capped parks the lead with no token and no snapshot');
+  const carol=await person('Carol'); await createLead('24',carol); await emailClaim('24'); const token24=randomUUID();
+  check(await emailResult('24','failed',token24,null),'failed result accepted');
+  const failed=await ledger('24');
+  check(failed.state==='needs_human'&&failed.error_code==='email_failed'&&failed.email_state==='failed'&&failed.portal_token_id===token24&&failed.intake_snapshot===null,'failed records the undelivered token and erases the snapshot');
+  const dave=await person('Dave'); await createLead('25',dave); await emailClaim('25');
+  check(await emailResult('25','suppressed',null,null),'suppressed result accepted');
+  const suppressed=await ledger('25');
+  check(suppressed.email_state==='suppressed'&&suppressed.error_code==='configuration'&&suppressed.email_attempted_at===null&&suppressed.intake_snapshot===null,'suppressed names configuration and counts no attempt');
+  const erin=await person('Erin'); await createLead('26',erin); await emailClaim('26');
+  check(await emailResult('26','capped',null,null),'JS rate-limit cap result accepted');
+  check((await ledger('26')).email_state==='capped'&&(await ledger('26')).email_attempted_at===null,'rate-limited send counts no attempt');
+  await db.exec('reset role');
+  await reject(()=>db.query("update meta_lead_events set email_state='sent' where leadgen_id='25'"),/check constraint/,'sent without token and provider id is refused by CHECK');
+  await db.exec('set role service_role');
+
+  // ── Build 2: portal_intake_apply (A1) ───────────────────────────────────────────────────────
+  const portalIntake={contact_name:'Alice Portal',location_id:shop,event_date:'2027-03-04',headcount:12,is_delivery:true,contact_phone:'+12025550100',
+    delivery_address:'1 Example St',time_window:'11-12',event_type:'Lunch',dietary_notes:'None',event_name:'Offsite',dropoff_door:'Side',geo_lat:38.9,geo_lng:-77.0,fulfillment_routed:true,company:'Alice Co'};
+  const portalApply=(c,p,i=portalIntake)=>rpc('portal_intake_apply',[c,p,i]);
+  const attach=await portalApply(alice,aliceLead.pipeline_id);
+  const attachedQuote=await one('select * from catering_quotes where id=$1',[attach.quote_id]);
+  check(attach.attached===true&&attach.pipeline_id===aliceLead.pipeline_id&&attachedQuote.pipeline_id===aliceLead.pipeline_id&&attachedQuote.customer_id===alice&&attachedQuote.status==='draft'&&attachedQuote.origin==='self_serve'&&attachedQuote.location_id===shop&&attachedQuote.is_delivery===true,'portal continuation attaches ONLY a draft quote to the owned open lead');
+  check((await one('select count(*)::int n from catering_pipeline where customer_id=$1',[alice])).n===1&&(await one('select count(*)::int n from catering_pipeline_events where pipeline_id=$1 and to_stage=$2 and from_stage is null',[aliceLead.pipeline_id,'inquiry'])).n===1,'attach creates no lead and no stage event');
+  const again=await portalApply(alice,aliceLead.pipeline_id);
+  check(again.attached===false&&again.pipeline_id!==aliceLead.pipeline_id,'a lead with a live quote falls back to a new portal lead');
+  const portalLead=await one('select * from catering_pipeline where id=$1',[again.pipeline_id]);
+  check(portalLead.lead_source==='portal'&&portalLead.stage==='inquiry'&&portalLead.customer_id===alice&&portalLead.delivery_address==='1 Example St'&&portalLead.time_window==='11-12'&&portalLead.event_type==='Lunch'&&portalLead.dietary_notes==='None'&&portalLead.event_name==='Offsite'&&portalLead.dropoff_door==='Side'&&portalLead.geo_lat===38.9&&portalLead.geo_lng===-77&&portalLead.fulfillment_routed===true&&portalLead.company==='Alice Co'&&portalLead.contact_phone==='+12025550100','create branch stores every intake column like today');
+  check((await one('select count(*)::int n from catering_pipeline_events where pipeline_id=$1 and from_stage is null and to_stage=$2',[again.pipeline_id,'inquiry'])).n===1,'create branch writes the inquiry stage event');
+  const frank=await person('Frank');
+  const foreign=await portalApply(frank,aliceLead.pipeline_id);
+  check(foreign.attached===false&&foreign.pipeline_id!==aliceLead.pipeline_id&&(await one('select customer_id from catering_pipeline where id=$1',[aliceLead.pipeline_id])).customer_id===alice,'another customer never attaches to a lead they do not own');
+  const grace=await person('Grace'); const graceLead=await createLead('27',grace);
+  await db.exec('reset role');
+  await db.query("update catering_pipeline set stage='confirmed' where id=$1",[graceLead.pipeline_id]);
+  await db.exec('set role service_role');
+  check((await portalApply(grace,graceLead.pipeline_id)).attached===false,'a confirmed lead is never reopened by the portal');
+  const heidi=await person('Heidi');
+  await db.exec('reset role');
+  const bare=await one("insert into catering_pipeline(customer_id,contact_name,stage,lead_source) values($1,'Heidi','inquiry','meta_lead_form') returning id",[heidi]);
+  await db.exec('set role service_role');
+  const filled=await portalApply(heidi,bare.id);
+  check(filled.attached===true&&(await one('select location_id from catering_pipeline where id=$1',[bare.id])).location_id===shop,'attach fills a null lead location from the intake');
+  await reject(()=>portalApply(heidi,null,{...portalIntake,location_id:randomUUID()}),/invalid_location/,'unknown location refused');
+  await reject(()=>portalApply(heidi,null,{...portalIntake,contact_name:' '}),/invalid_intake/,'blank contact name refused');
+  await reject(()=>portalApply(randomUUID(),null),/invalid_customer/,'unknown customer refused');
+  await db.exec('reset role');
   console.log(`PASS ${checks} checks. Offline single-session proof; simultaneous two-session sim proof remains required before apply.`);
 } finally {await db.close();}

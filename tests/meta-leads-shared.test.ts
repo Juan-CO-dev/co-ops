@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { mapMetaLeadFields, META_CONSENT_QUESTION_KEY, META_CONSENT_COPY, META_CONSENT_TEXT_VERSION } from "@/lib/meta-leads/intake-shared";
+import { mapMetaLeadFields, META_CONSENT_QUESTION_KEY, META_CONSENT_COPY, META_CONSENT_TEXT_VERSION, META_WORK_EMAIL_KEY } from "@/lib/meta-leads/intake-shared";
 import { verifyMetaSignature } from "@/lib/meta-leads/signature";
 import { readBoundedBytes } from "@/lib/meta-leads/request";
 
@@ -24,6 +24,33 @@ describe("Meta form mapping", () => {
     expect(mapMetaLeadFields(fields(extra))).toMatchObject({ ok: false, error: "invalid_payload" });
   });
   it("refuses duplicate scalar identities", () => expect(mapMetaLeadFields([...fields(), { name: "email", values: ["other@example.org"] }])).toMatchObject({ ok: false }));
+});
+
+describe("Double capture — the optional work email (Juan 2026-11-11)", () => {
+  it("no work email: the Meta email is both the order and the marketing email, nothing secondary", () => {
+    expect(mapMetaLeadFields(fields())).toMatchObject({ ok: true, intake: { contactEmail: "guest@example.org", marketingEmail: "guest@example.org", secondaryEmail: null } });
+  });
+  it("a valid work email becomes the ORDER email; the Meta email stays the marketing email and a secondary note", () => {
+    expect(mapMetaLeadFields(fields({ [META_WORK_EMAIL_KEY]: " Buyer@Work.example " }))).toMatchObject({
+      ok: true, intake: { contactEmail: "buyer@work.example", marketingEmail: "guest@example.org", secondaryEmail: "guest@example.org", notes: null },
+    });
+  });
+  it("the same address in both boxes (any case) is ONE address", () => {
+    expect(mapMetaLeadFields(fields({ [META_WORK_EMAIL_KEY]: "GUEST@EXAMPLE.ORG" }))).toMatchObject({
+      ok: true, intake: { contactEmail: "guest@example.org", marketingEmail: "guest@example.org", secondaryEmail: null },
+    });
+  });
+  it.each(["not-an-email", "someone@ezcater.com", "noreply@work.example"])("an invalid or relay work email %s is kept as typed and never becomes the identity", work => {
+    expect(mapMetaLeadFields(fields({ [META_WORK_EMAIL_KEY]: work }))).toMatchObject({
+      ok: true, intake: { contactEmail: "guest@example.org", secondaryEmail: null, notes: `Work email (as typed): ${work}` },
+    });
+  });
+  it("an empty work email answer is simply absent", () => {
+    expect(mapMetaLeadFields(fields({ [META_WORK_EMAIL_KEY]: "  " }))).toMatchObject({ ok: true, intake: { contactEmail: "guest@example.org", secondaryEmail: null, notes: null } });
+  });
+  it("a malformed work email value is tolerated like every optional field", () => {
+    expect(mapMetaLeadFields([...fields(), { name: META_WORK_EMAIL_KEY, values: [1, 2] }])).toMatchObject({ ok: true, intake: { contactEmail: "guest@example.org" } });
+  });
 });
 
 describe("Meta raw body authentication", () => {
@@ -55,10 +82,11 @@ it("bounds invalid optional answers without losing intake", () => {
 it.each([true, "1", "true", false, "0", "false", 1, 0, null, undefined, "yes", {}, []])("checkbox accepts only the three explicit values: %j", value => {
   expect(mapMetaLeadFields(fields(), [{ checkbox_key: META_CONSENT_QUESTION_KEY, is_checked: value }])).toMatchObject({ consent: { optedIn: value === true || value === "1" || value === "true" } });
 });
-it("pins the CO tenant consent copy and version", () => {
-  expect(META_CONSENT_COPY.en).toBe("Email me news and offers from Compliments Only. I can unsubscribe anytime.");
-  expect(META_CONSENT_COPY.es).toBe("Quiero recibir novedades y ofertas de Compliments Only por correo. Puedo cancelar la suscripci\u00f3n cuando quiera.");
-  expect(META_CONSENT_TEXT_VERSION).toBe("meta-email-marketing-v2");
+it("pins the CO tenant consent copy and version (v3 names the email above)", () => {
+  expect(META_CONSENT_COPY.en).toBe("Email me news and offers from Compliments Only at my email above. I can unsubscribe anytime.");
+  expect(META_CONSENT_COPY.es).toBe("Quiero recibir novedades y ofertas de Compliments Only en mi correo de arriba. Puedo cancelar la suscripción cuando quiera.");
+  expect(META_CONSENT_TEXT_VERSION).toBe("meta-email-marketing-v3");
+  expect(mapMetaLeadFields(fields())).toMatchObject({ consent: { textVersion: "meta-email-marketing-v3" } });
 });
 
 it("renders both consent languages for another tenant", async () => {

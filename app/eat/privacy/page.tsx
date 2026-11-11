@@ -15,6 +15,14 @@ export default async function PrivacyPage({searchParams}:{searchParams:Promise<R
     <LanguageToggle language={language} query={queryString} path="/privacy" policy={{...loadLandingConfig().attribution, ads:[acceptedAd,"unattributed"]}} label={serverT(language,"landing.language")}/>
     <h1 className="text-3xl font-black">{serverT(language,"landing.privacy.title")}</h1>
     <p>{serverT(language,"landing.privacy.body")}</p><p>{serverT(language,"landing.privacy.meta")}</p>
+    <section className="space-y-3">
+      <h2 className="text-xl font-black">{serverT(language,"landing.privacy.leadform.title")}</h2>
+      <p>{serverT(language,"landing.privacy.leadform.collect")}</p>
+      <p>{serverT(language,"landing.privacy.leadform.use")}</p>
+      <p>{serverT(language,"landing.privacy.leadform.optin")}</p>
+      <p>{serverT(language,"landing.privacy.leadform.retention")}</p>
+      <p>{serverT(language,"landing.privacy.leadform.delete")}</p>
+    </section>
     <div className="flex flex-wrap items-center gap-x-6"><a href={`/?lang=${language}`} className="inline-flex min-h-11 items-center underline">{serverT(language,"landing.privacy.back")}</a><PrivacySettingsButton label={serverT(language,"landing.consent.settings")}/></div>
   </main>;
 }

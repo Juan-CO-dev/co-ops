@@ -66,6 +66,11 @@ export interface DraftIntake {
   fulfillmentRouted?: boolean;
   /** ⑤ storefront carry-through: cart lines to pre-seed the draft (v1: item+qty, whole portion). */
   preselect?: DraftLineInput[] | null;
+  /** Build 2 (Meta leads, A1): the pipeline lead this intake CONTINUES. Set ONLY by the Meta worker on
+   *  a token it mints itself; the public /order/start parser never emits it (lib/portal/intake-parser.ts).
+   *  createDraftFromIntake attaches the draft to that lead when the verified customer owns it, it is
+   *  still in inquiry/quote_sent and carries no live quote — otherwise today's create path runs. */
+  pipelineId?: string | null;
 }
 
 export type Portion = "quarter" | "half" | "whole";
@@ -209,20 +214,75 @@ async function loadOwnedDraftHeader(
 
 // ── Create (from intake, post-verify) ─────────────────────────────────────────────
 
+/** PostgREST / Postgres "no such function": 0300 not applied yet on this database. */
+function rpcMissing(error: { code?: string | null; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+
 /**
  * Create the order artifact from a verified customer's intake: a pipeline lead (stage 'inquiry',
  * lead_source 'portal', + intake detail fields) + a draft quote (status 'draft', origin
  * 'self_serve', 0 lines, all charges 0). Called from consumeMagicLink AFTER email verification —
  * never before (no unverified/competitor rows). Returns the draft handle the flow carries.
+ *
+ * Build 2 (A1): the writes run inside the definer RPC `portal_intake_apply` (0300), under the SAME
+ * customer intake advisory lock as the Meta worker, so a portal submission and a Meta lead for one
+ * customer serialize. With `intake.pipelineId` the RPC attaches ONLY a draft quote to that lead
+ * (owned, inquiry/quote_sent, no live quote — a null lead location is filled); otherwise its create
+ * branch is today's path column for column. Until 0300 is applied the RPC does not exist: a plain
+ * portal intake then falls back to the legacy JS inserts; a Meta continuation (pipelineId) does not
+ * (0300 is applied before Meta leads are enabled).
  */
-export async function createDraftFromIntake(customerId: string, intake: DraftIntake): Promise<{ quoteId: string; pipelineId: string }> {
+export async function createDraftFromIntake(customerId: string, intake: DraftIntake): Promise<{ quoteId: string; pipelineId: string; attached: boolean }> {
   if (!UUID_RE.test(intake.locationId)) throw new PortalDraftError(400, "invalid_location", "A valid location is required");
   if (!intake.contactName || intake.contactName.trim().length === 0) throw new PortalDraftError(400, "invalid_payload", "contactName is required");
   if (intake.headcount != null && (!Number.isFinite(Number(intake.headcount)) || Number(intake.headcount) < 0)) {
     throw new PortalDraftError(400, "invalid_headcount", "headcount must be zero or greater");
   }
   const sb = getServiceRoleClient();
+  const continuesLead = typeof intake.pipelineId === "string" && UUID_RE.test(intake.pipelineId) ? intake.pipelineId : null;
 
+  const applied = await sb.rpc("portal_intake_apply", {
+    p_customer_id: customerId, p_pipeline_id: continuesLead,
+    p_intake: {
+      contact_name: intake.contactName.trim(), company: intake.company ?? null, event_date: intake.eventDate ?? null,
+      headcount: intake.headcount ?? null, contact_phone: intake.contactPhone ?? null, delivery_address: intake.deliveryAddress ?? null,
+      time_window: intake.timeWindow ?? null, event_type: intake.eventType ?? null, dietary_notes: intake.dietaryNotes ?? null,
+      event_name: intake.eventName ?? null, dropoff_door: intake.dropoffDoor ?? null, geo_lat: intake.geoLat ?? null, geo_lng: intake.geoLng ?? null,
+      fulfillment_routed: intake.fulfillmentRouted ?? false, location_id: intake.locationId, is_delivery: intake.isDelivery,
+    },
+  });
+  let quoteId: string; let pipelineId: string; let attached = false;
+  if (applied.error) {
+    if (continuesLead || !rpcMissing(applied.error)) throw new Error(`createDraftFromIntake rpc: ${applied.error.message}`);
+    ({ quoteId, pipelineId } = await legacyCreateDraft(sb, customerId, intake));
+  } else {
+    const row = applied.data as { quote_id?: unknown; pipeline_id?: unknown; attached?: unknown } | null;
+    if (!row || typeof row.quote_id !== "string" || typeof row.pipeline_id !== "string") throw new Error("createDraftFromIntake rpc: malformed result");
+    quoteId = row.quote_id; pipelineId = row.pipeline_id; attached = row.attached === true;
+    void audit({
+      actorId: null, actorRole: null, action: "catering.draft.create",
+      resourceTable: "catering_quotes", resourceId: quoteId,
+      metadata: { pipeline_id: pipelineId, customer_id: customerId, location_id: intake.locationId, attached }, ipAddress: null, userAgent: null,
+    });
+  }
+
+  // ⑤ carry-through: pre-seed the cart from the storefront selection. Best-effort — a stale/invalid
+  // ref must NEVER fail order creation (customer just starts empty). setDraftLines re-resolves +
+  // re-prices every ref against the server-owned menu (D20 price authority) and snapshots the stack.
+  if (intake.preselect && intake.preselect.length > 0) {
+    try {
+      await setDraftLines(customerId, quoteId, intake.preselect, { isDelivery: intake.isDelivery });
+    } catch (e) {
+      console.error("createDraftFromIntake preselect failed (draft left empty):", e);
+    }
+  }
+
+  return { quoteId, pipelineId, attached };
+}
+
+/** Today's path, verbatim (pre-0300 databases only): lead + stage event + draft quote as separate writes. */
+async function legacyCreateDraft(sb: ReturnType<typeof getServiceRoleClient>, customerId: string, intake: DraftIntake): Promise<{ quoteId: string; pipelineId: string }> {
   const { data: lead, error: leadErr } = await sb
     .from("catering_pipeline")
     .insert({
@@ -270,19 +330,8 @@ export async function createDraftFromIntake(customerId: string, intake: DraftInt
   void audit({
     actorId: null, actorRole: null, action: "catering.draft.create",
     resourceTable: "catering_quotes", resourceId: quote.id,
-    metadata: { pipeline_id: lead.id, customer_id: customerId, location_id: intake.locationId }, ipAddress: null, userAgent: null,
+    metadata: { pipeline_id: lead.id, customer_id: customerId, location_id: intake.locationId, attached: false, legacy_path: true }, ipAddress: null, userAgent: null,
   });
-
-  // ⑤ carry-through: pre-seed the cart from the storefront selection. Best-effort — a stale/invalid
-  // ref must NEVER fail order creation (customer just starts empty). setDraftLines re-resolves +
-  // re-prices every ref against the server-owned menu (D20 price authority) and snapshots the stack.
-  if (intake.preselect && intake.preselect.length > 0) {
-    try {
-      await setDraftLines(customerId, quote.id, intake.preselect, { isDelivery: intake.isDelivery });
-    } catch (e) {
-      console.error("createDraftFromIntake preselect failed (draft left empty):", e);
-    }
-  }
 
   return { quoteId: quote.id, pipelineId: lead.id };
 }

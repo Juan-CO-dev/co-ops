@@ -1,6 +1,10 @@
--- 0300 Meta lead intake, build 1. AUTHORED 2026-11-11; NOT APPLIED -- GATE CC/Juan.
+-- 0300 Meta lead intake, builds 1 + 2. AUTHORED 2026-11-11; NOT APPLIED -- GATE CC/Juan.
 -- No database access during authoring. Sim proof and schema check precede any apply.
--- Only leads are created: no quote, portal token or email writer in this build.
+-- Build 1: the ledger, the lead-only intake RPC and the explicit consent writer.
+-- Build 2 (edited in place while still an unapplied file): the continuation-email ledger states
+-- (meta_lead_email_claim / meta_lead_email_result, A3 + A6 + A9) and portal_intake_apply, the
+-- portal's own create-or-attach draft writer, which takes the SAME customer intake lock as
+-- meta_lead_intake_apply so a portal submission and a Meta lead serialize (A1).
 -- lead_source is unconstrained text in 0108; its application vocabulary is extended separately.
 begin;
 
@@ -49,22 +53,28 @@ create table public.meta_lead_events (
   attempts integer not null default 0 check (attempts between 0 and 5),
   lease_id uuid, lease_until timestamptz,
   next_attempt_at timestamptz not null default clock_timestamp(),
-  error_code text check (error_code in ('configuration','graph_auth','graph_rate_limit','graph_timeout','graph_unavailable','graph_not_found','invalid_payload','database','invalid_location','consent_refused','identity_unresolved','invalid_assignee','ambiguous_leads','closed_lead','attempts_exhausted')),
+  error_code text check (error_code in ('configuration','graph_auth','graph_rate_limit','graph_timeout','graph_unavailable','graph_not_found','invalid_payload','database','invalid_location','consent_refused','identity_unresolved','invalid_assignee','ambiguous_leads','closed_lead','attempts_exhausted','email_failed','email_unknown','email_capped')),
   raw_keys text[] not null default '{}' check (cardinality(raw_keys)<=100 and octet_length(raw_keys::text)<=70000),
   customer_id uuid references public.catering_customers(id),
   pipeline_id uuid references public.catering_pipeline(id),
   intake_snapshot jsonb check (jsonb_typeof(intake_snapshot)='object' and octet_length(intake_snapshot::text)<=32768),
   email_sha256 text check (email_sha256 ~ '^[0-9a-f]{64}$'),
-  email_state text not null default 'pending' check (email_state in ('pending','not_applicable','sent','failed','unknown')),
+  -- sent = a confirmed provider id; failed = the provider refused; unknown = timeout / network /
+  -- 5xx / concurrent idempotent request (it MAY have landed); capped = a per-address cap refused the
+  -- send before any token was minted; suppressed = allowlist / portal identity / sender config
+  -- deliberately off. Every state but sent and not_applicable parks the lead as needs_human (A3).
+  email_state text not null default 'pending' check (email_state in ('pending','not_applicable','sent','failed','unknown','capped','suppressed')),
   email_attempted_at timestamptz,
+  email_provider_id text check (length(email_provider_id) between 1 and 200),
   portal_token_id uuid,
   completed_at timestamptz,
   check ((lease_id is null)=(lease_until is null)),
   check ((state='processing')=(lease_id is not null)),
-  check (portal_token_id is null or intake_snapshot is null)
+  check (portal_token_id is null or intake_snapshot is null),
+  check (email_state<>'sent' or (portal_token_id is not null and email_provider_id is not null))
 );
--- Build 2 must atomically set portal_token_id and clear intake_snapshot; this CHECK
--- makes A9 mandatory. Build 1 retains a newly-created lead's continuation until then.
+-- A9: meta_lead_email_result sets portal_token_id and clears intake_snapshot in ONE update; the
+-- CHECK makes the pairing mandatory. A created lead keeps its snapshot only until that result.
 create index meta_lead_events_retry on public.meta_lead_events(next_attempt_at) where state in ('received','retry','processing');
 create index meta_lead_events_email_cap on public.meta_lead_events(email_sha256,email_attempted_at);
 
@@ -113,8 +123,9 @@ create function public.meta_lead_intake_apply(p_leadgen_id text,p_lease_id uuid,
 returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
 declare e public.meta_lead_events%rowtype; v_count integer; v_closed integer; v_pipeline uuid; v_stage text; v_state text; v_error text;
 begin
-  -- Build 2 portal intake must take this same customer lock before checking/creating leads.
-  -- It does not yet do so. Customer resolution is done first in JS; no nested identity lock here.
+  -- The portal's own intake writer (portal_intake_apply, below) takes this SAME customer lock, so a
+  -- portal submission and a Meta lead for one customer serialize. Customer resolution is done first
+  -- in JS (the existing resolver handles the insert race); no nested identity lock here.
   if p_customer_id is null then raise exception 'invalid_customer'; end if;
   perform pg_advisory_xact_lock(hashtextextended('catering_customer_intake:'||p_customer_id,0));
   select * into e from public.meta_lead_events where leadgen_id=p_leadgen_id for update;
@@ -146,13 +157,17 @@ begin
       'Event date: '||coalesce(p_intake->>'event_date','Not provided'),
       'Headcount: '||coalesce(p_intake->>'headcount','Not provided'),
       'Fulfillment: '||coalesce(p_intake->>'fulfillment','Not provided'),
-      'Notes: '||coalesce(p_intake->>'notes','Not provided')));
+      'Notes: '||coalesce(p_intake->>'notes','Not provided'),
+      -- Double capture (Juan 2026-11-11): the Meta profile address is a secondary contact NOTE,
+      -- never an identity. Present only when it differs from the order email.
+      'Secondary email (Meta profile): '||nullif(btrim(p_intake->>'secondary_email'),'')));
   else
     v_state:='created';
     insert into public.catering_pipeline(customer_id,contact_name,company,event_date,headcount,contact_phone,stage,lead_source,location_id,assigned_to,notes)
     values(p_customer_id,p_intake->>'contact_name',p_intake->>'company',nullif(p_intake->>'event_date','')::date,
       nullif(p_intake->>'headcount','')::integer,p_intake->>'contact_phone','inquiry','meta_lead_form',p_location_id,p_assigned_to,
-      concat_ws(E'\n',p_intake->>'notes','Fulfillment: '||(p_intake->>'fulfillment')))
+      concat_ws(E'\n',p_intake->>'notes','Fulfillment: '||(p_intake->>'fulfillment'),
+        'Secondary email (Meta profile): '||nullif(btrim(p_intake->>'secondary_email'),'')))
     returning id into v_pipeline;
     insert into public.catering_pipeline_events(pipeline_id,from_stage,to_stage,note)
     values(v_pipeline,null,'inquiry','Meta lead form '||p_leadgen_id);
@@ -181,7 +196,7 @@ begin
   if p_channel is distinct from 'email' or p_source is distinct from 'meta_lead_form'
     or p_effective_at is null or p_effective_at>clock_timestamp()+interval '5 minutes'
     or p_evidence_ref is null or p_evidence_ref !~ '^[0-9]{1,100}:[A-Za-z0-9_ -]{1,200}$'
-    or p_text_version is distinct from 'meta-email-marketing-v2'
+    or p_text_version is distinct from 'meta-email-marketing-v3'
     or v_email is null or length(v_email)>254 or v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then raise exception 'consent_invalid'; end if;
   if public.customer_email_is_relay(v_email) then raise exception 'consent_relay'; end if;
   if exists(select 1 from public.customer_suppressions where kind='email' and value_sha256=public.customer_sha256(v_email)) then raise exception 'consent_suppressed'; end if;
@@ -195,6 +210,107 @@ begin
   insert into public.customer_consent_events(customer_id,channel,status,source,subject_sha256,effective_at,evidence_ref,text_version)
   values(v_resolved.customer_id,p_channel,'opted_in',p_source,public.customer_sha256(v_email),p_effective_at,p_evidence_ref,p_text_version) returning id into v_id;
   return jsonb_build_object('event_id',v_id,'recorded',true);
+end $$;
+
+-- Build 2, A3 + A6: the ONE continuation email per created lead. The claim runs BEFORE any token is
+-- minted or any provider call: it parks the row as needs_human/email_unknown (a crash between claim
+-- and result is then an honest unknown, never a silent pending) and refuses a second email to the
+-- same address inside 24 h (the per-address cap; the magic_link_email rate limit is applied by the
+-- JS sender on top). Nothing here re-mints or resends; the runbook owns the manual requeue.
+create function public.meta_lead_email_claim(p_leadgen_id text)
+returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
+declare e public.meta_lead_events%rowtype;
+begin
+  select * into e from public.meta_lead_events where leadgen_id=p_leadgen_id for update;
+  if not found or e.state<>'created' or e.email_state<>'pending' or e.pipeline_id is null then
+    return jsonb_build_object('claimed',false,'reason','not_claimable');
+  end if;
+  if e.email_sha256 is not null and exists(select 1 from public.meta_lead_events o
+      where o.email_sha256=e.email_sha256 and o.leadgen_id<>e.leadgen_id
+        and o.email_attempted_at>clock_timestamp()-interval '24 hours') then
+    update public.meta_lead_events set state='needs_human',error_code='email_capped',email_state='capped',
+      intake_snapshot=null,completed_at=clock_timestamp() where leadgen_id=p_leadgen_id;
+    return jsonb_build_object('claimed',false,'reason','capped');
+  end if;
+  update public.meta_lead_events set state='needs_human',error_code='email_unknown',email_state='unknown',
+    email_attempted_at=clock_timestamp() where leadgen_id=p_leadgen_id;
+  return jsonb_build_object('claimed',true,'reason',null);
+end $$;
+
+-- The single result write for a claimed send. sent needs the confirmed provider id and the token;
+-- unknown keeps the token (the link may have landed); failed/capped/suppressed record why. Every
+-- branch clears the intake snapshot in the SAME update that records the token (A9).
+create function public.meta_lead_email_result(p_leadgen_id text,p_email_state text,p_portal_token_id uuid,p_provider_id text)
+returns boolean language plpgsql security definer set search_path=pg_catalog,public as $$
+declare e public.meta_lead_events%rowtype;
+begin
+  select * into e from public.meta_lead_events where leadgen_id=p_leadgen_id for update;
+  if not found or e.state<>'needs_human' or e.email_state<>'unknown' or e.error_code<>'email_unknown' or e.portal_token_id is not null then return false; end if;
+  if p_email_state='sent' then
+    if p_portal_token_id is null or nullif(btrim(p_provider_id),'') is null then raise exception 'invalid_email_result'; end if;
+    update public.meta_lead_events set state='created',error_code=null,email_state='sent',portal_token_id=p_portal_token_id,
+      email_provider_id=btrim(p_provider_id),intake_snapshot=null where leadgen_id=p_leadgen_id;
+  elsif p_email_state='unknown' then
+    update public.meta_lead_events set portal_token_id=p_portal_token_id,intake_snapshot=null,completed_at=clock_timestamp() where leadgen_id=p_leadgen_id;
+  elsif p_email_state='failed' then
+    update public.meta_lead_events set email_state='failed',error_code='email_failed',portal_token_id=p_portal_token_id,
+      intake_snapshot=null,completed_at=clock_timestamp() where leadgen_id=p_leadgen_id;
+  elsif p_email_state='capped' then
+    update public.meta_lead_events set email_state='capped',error_code='email_capped',email_attempted_at=null,
+      intake_snapshot=null,completed_at=clock_timestamp() where leadgen_id=p_leadgen_id;
+  elsif p_email_state='suppressed' then
+    update public.meta_lead_events set email_state='suppressed',error_code='configuration',email_attempted_at=null,
+      intake_snapshot=null,completed_at=clock_timestamp() where leadgen_id=p_leadgen_id;
+  else raise exception 'invalid_email_result'; end if;
+  return true;
+end $$;
+
+-- Build 2, A1: the portal's create-or-attach draft writer, called by createDraftFromIntake AFTER
+-- email verification. Same customer intake lock as meta_lead_intake_apply. With p_pipeline_id: that
+-- lead must be owned by the customer, in inquiry/quote_sent and carry no live quote — then ONLY the
+-- draft quote is inserted on it (a null lead location_id is filled). Otherwise the create branch is
+-- exactly today's JS path: lead (source portal, inquiry) + stage event + draft quote.
+create function public.portal_intake_apply(p_customer_id uuid,p_pipeline_id uuid,p_intake jsonb)
+returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
+declare v_lead public.catering_pipeline%rowtype; v_location uuid; v_pipeline uuid; v_quote uuid; v_attached boolean:=false;
+begin
+  if p_customer_id is null then raise exception 'invalid_customer'; end if;
+  if p_intake is null or jsonb_typeof(p_intake)<>'object' or octet_length(p_intake::text)>32768
+    or nullif(btrim(p_intake->>'contact_name'),'') is null then raise exception 'invalid_intake'; end if;
+  v_location:=nullif(p_intake->>'location_id','')::uuid;
+  if v_location is null or not exists(select 1 from public.locations where id=v_location and active) then raise exception 'invalid_location'; end if;
+  if not exists(select 1 from public.catering_customers where id=p_customer_id and active) then raise exception 'invalid_customer'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('catering_customer_intake:'||p_customer_id,0));
+  if p_pipeline_id is not null then
+    select * into v_lead from public.catering_pipeline where id=p_pipeline_id for update;
+    if found and v_lead.customer_id=p_customer_id and v_lead.stage in ('inquiry','quote_sent')
+      and not exists(select 1 from public.catering_quotes q where q.pipeline_id=v_lead.id and q.superseded_at is null) then
+      if v_lead.location_id is null then
+        update public.catering_pipeline set location_id=v_location where id=v_lead.id;
+        v_lead.location_id:=v_location;
+      end if;
+      v_pipeline:=v_lead.id; v_attached:=true;
+      insert into public.catering_quotes(root_id,version,pipeline_id,customer_id,location_id,status,origin,event_date,headcount,is_delivery,created_by)
+      values(null,1,v_pipeline,p_customer_id,v_lead.location_id,'draft','self_serve',
+        coalesce(nullif(p_intake->>'event_date','')::date,v_lead.event_date),coalesce(nullif(p_intake->>'headcount','')::integer,v_lead.headcount),
+        coalesce((p_intake->>'is_delivery')::boolean,false),null)
+      returning id into v_quote;
+      return jsonb_build_object('quote_id',v_quote,'pipeline_id',v_pipeline,'attached',true);
+    end if;
+  end if;
+  insert into public.catering_pipeline(contact_name,company,event_date,headcount,contact_phone,delivery_address,time_window,event_type,
+    dietary_notes,event_name,dropoff_door,geo_lat,geo_lng,fulfillment_routed,stage,lead_source,location_id,customer_id,created_by)
+  values(btrim(p_intake->>'contact_name'),p_intake->>'company',nullif(p_intake->>'event_date','')::date,nullif(p_intake->>'headcount','')::integer,
+    p_intake->>'contact_phone',p_intake->>'delivery_address',p_intake->>'time_window',p_intake->>'event_type',p_intake->>'dietary_notes',
+    p_intake->>'event_name',p_intake->>'dropoff_door',(p_intake->>'geo_lat')::double precision,(p_intake->>'geo_lng')::double precision,
+    coalesce((p_intake->>'fulfillment_routed')::boolean,false),'inquiry','portal',v_location,p_customer_id,null)
+  returning id into v_pipeline;
+  insert into public.catering_pipeline_events(pipeline_id,from_stage,to_stage,note,actor_id) values(v_pipeline,null,'inquiry',null,null);
+  insert into public.catering_quotes(root_id,version,pipeline_id,customer_id,location_id,status,origin,event_date,headcount,is_delivery,created_by)
+  values(null,1,v_pipeline,p_customer_id,v_location,'draft','self_serve',nullif(p_intake->>'event_date','')::date,
+    nullif(p_intake->>'headcount','')::integer,coalesce((p_intake->>'is_delivery')::boolean,false),null)
+  returning id into v_quote;
+  return jsonb_build_object('quote_id',v_quote,'pipeline_id',v_pipeline,'attached',v_attached);
 end $$;
 
 -- The 0275 house lease body with the 0298/0300 union; neither migration drops the other job.
@@ -231,6 +347,9 @@ do $$ declare t text; r text; privilege text; f regprocedure; begin
     'public.meta_lead_fail(text,uuid,text,boolean,text[])'::regprocedure,
     'public.meta_lead_intake_apply(text,uuid,uuid,uuid,uuid,jsonb,text[])'::regprocedure,
     'public.customer_consent_record_explicit(text,text,text,timestamptz,text,text)'::regprocedure,
+    'public.meta_lead_email_claim(text)'::regprocedure,
+    'public.meta_lead_email_result(text,text,uuid,text)'::regprocedure,
+    'public.portal_intake_apply(uuid,uuid,jsonb)'::regprocedure,
     'public.claim_cron_route(text)'::regprocedure
   ] loop
     execute format('revoke all on function %s from public, anon, authenticated, service_role',f);

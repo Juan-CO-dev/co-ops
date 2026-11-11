@@ -4,8 +4,9 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { resolveOrCreatePortalCustomer } from "@/lib/portal/magic-link";
 import { resolveCateringManager } from "@/lib/catering/system-intake-assignee";
 import { fetchMetaLead } from "./graph";
-import { mapMetaLeadFields } from "./intake-shared";
+import { mapMetaLeadFields, META_MAPPING_VERSION } from "./intake-shared";
 import { metaFormConfig, type MetaNotification } from "./notification-shared";
+import { sendMetaContinuation } from "./continuation";
 
 type Client = ReturnType<typeof getServiceRoleClient>;
 type Failure = "configuration" | "graph_auth" | "graph_rate_limit" | "graph_timeout" | "graph_unavailable" | "graph_not_found" | "invalid_payload" | "database" | "invalid_location" | "consent_refused" | "identity_unresolved" | "invalid_assignee";
@@ -23,7 +24,12 @@ export async function recordMetaLead(item: MetaNotification, enabled: boolean, c
   return data.inserted;
 }
 
-/** No tokens, drafts or email in Build 1. Every completion is fenced by the SQL lease. */
+/**
+ * Every completion is fenced by the SQL lease. Build 2: a CREATED lead gets exactly one portal
+ * continuation email (lib/meta-leads/continuation.ts) after the lease-fenced apply; attached and
+ * needs_human leads get none. The email step runs outside the lease (the ledger's email_state is its
+ * own compare-and-set), so its failure can never re-run or fail the intake.
+ */
 export async function processMetaLead(leadgenId: string, client?: Client): Promise<string> {
   if (process.env.META_LEADS_ENABLED !== "1") return "disabled";
   const sb = client ?? getServiceRoleClient();
@@ -49,9 +55,11 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
     if (!shop.data) throw new WorkerFailure("invalid_location");
     // Recheck the kill switch after provider I/O and before any identity/business creation.
     if (process.env.META_LEADS_ENABLED !== "1") return "disabled";
+    // Double capture (Juan 2026-11-11): the opt-in applies ONLY to the Meta pre-filled (marketing)
+    // email. The order email (a work email when given) is never passed to the consent writer.
     if (mapped.consent.optedIn && process.env.CUSTOMER_PROFILES === "1") {
       const consent = await sb.rpc("customer_consent_record_explicit", {
-        p_email: intake.contactEmail, p_channel: "email", p_source: "meta_lead_form",
+        p_email: intake.marketingEmail, p_channel: "email", p_source: "meta_lead_form",
         p_effective_at: row.provider_created_at,
         p_evidence_ref: `${leadgenId}:${mapped.consent.questionKey}`, p_text_version: mapped.consent.textVersion,
       });
@@ -61,15 +69,17 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
       }
       if (!consent.data?.event_id) throw new WorkerFailure("database");
     }
+    // The ORDER email is the identity: the catering_customers contact, the portal account, the
+    // continuation recipient and the company-domain match.
     const customerId = await resolveOrCreatePortalCustomer(intake.contactEmail, intake.contactName, "meta_lead_form");
     const assignedTo = await resolveCateringManager(sb, shop.data.id);
     const applied = await sb.rpc("meta_lead_intake_apply", {
       p_leadgen_id: leadgenId, p_lease_id: leaseId, p_customer_id: customerId,
       p_location_id: shop.data.id, p_assigned_to: assignedTo, p_raw_keys: rawKeys,
-      p_intake: { contact_name: intake.contactName, email: intake.contactEmail, contact_phone: intake.contactPhone,
-        company: intake.company, event_date: intake.eventDate, headcount: intake.headcount, notes: intake.notes,
-        fulfillment: intake.isDelivery ? "delivery" : "pickup", language: form.language,
-        location_id: shop.data.id, mapping_version: "meta-leads-v1", consent: mapped.consent },
+      p_intake: { contact_name: intake.contactName, email: intake.contactEmail, secondary_email: intake.secondaryEmail,
+        contact_phone: intake.contactPhone, company: intake.company, event_date: intake.eventDate, headcount: intake.headcount,
+        notes: intake.notes, fulfillment: intake.isDelivery ? "delivery" : "pickup", language: form.language,
+        location_id: shop.data.id, mapping_version: META_MAPPING_VERSION, consent: mapped.consent },
     });
     // A stale worker no longer owns the receipt; leave completion to its new holder.
     if (applied.error?.message === "stale_lease") return "busy";
@@ -77,8 +87,18 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
       const refusals = new Map<string, Failure>([["invalid_customer", "identity_unresolved"], ["invalid_location", "invalid_location"], ["invalid_assignee", "invalid_assignee"], ["invalid_intake", "invalid_payload"]]);
       throw new WorkerFailure(refusals.get(applied.error.message) ?? "database");
     }
-    if (!["created", "attached", "needs_human"].includes(applied.data?.state)) throw new WorkerFailure("database");
-    return applied.data.state;
+    const state: unknown = applied.data?.state;
+    if (state !== "created" && state !== "attached" && state !== "needs_human") throw new WorkerFailure("database");
+    if (state === "created" && typeof applied.data?.pipeline_id === "string") {
+      // Outside the lease and outside this try's failure path by design: the lead exists; the email
+      // ledger carries its own state. A thrown claim/result write is logged by code only (no PII).
+      try {
+        await sendMetaContinuation(sb, { leadgenId, pipelineId: applied.data.pipeline_id, locationId: shop.data.id, language: form.language, intake });
+      } catch {
+        console.error("[meta-leads] continuation ledger write failed; see runbook (email_state)");
+      }
+    }
+    return state;
   } catch (error) {
     // Never persist provider/database exception text: these may contain PII or credentials.
     const code: Failure = error instanceof WorkerFailure ? error.code : "database";
