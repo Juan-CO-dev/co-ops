@@ -33,7 +33,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
+const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8").replace(/\r\n/g, "\n");
 
 const src = read("lib/catering/quotes.ts");
 const body = (() => {

@@ -20,6 +20,7 @@
  * mint + store the token (constant shape/timing) but skip the send.
  */
 
+import { portalOrigin } from "@/lib/portal/origin-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { generateToken, hashToken } from "./auth";
 import { createCustomerSession } from "./session";
@@ -70,7 +71,7 @@ export async function requestMagicLink(input: { email: string; name?: string | n
   if (supersedeError) { void audit({ actorId: null, actorRole: null, action: "portal.magic_link_supersede_failed", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, error: supersedeError.message }, ipAddress: input.ip ?? null, userAgent: null }); }
   const { error } = await sb.from("catering_portal_tokens").insert({ email, token_hash: tokenHash, name: input.name?.trim() || null, expires_at: expiresAt, ip_address: input.ip ?? null, intake: input.intake ?? null });
   if (error) { void audit({ actorId: null, actorRole: null, action: "portal.magic_link_insert_failed", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, error: error.message }, ipAddress: input.ip ?? null, userAgent: null }); return; }
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  const appUrl = portalOrigin();
   if (allowlisted(email) && appUrl) {
     const link = `${appUrl}/order/verify?token=${rawToken}`;
     const hasIntake = Boolean(input.intake);
