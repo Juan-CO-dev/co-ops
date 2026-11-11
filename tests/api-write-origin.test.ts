@@ -148,8 +148,8 @@ it('classifies every route and runtime HTTP export, including aliases and re-exp
     expect(mutations.some(e => `${e.path} ${e.method}` === key), key).toBe(true);
     expect(entry.reason.length).toBeGreaterThanOrEqual(15);
   }
-  expect(mutations.length).toBe(105);
-  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(83);
+  expect(mutations.length).toBe(107);
+  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(85);
 }, 120_000);
 
 // Full parsed stub source includes alias targets and module initializers: an implemented

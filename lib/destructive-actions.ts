@@ -36,6 +36,8 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  "catering.inbox.handle",
+  "catering.inbox.reassign",
   "vendor_location_account.save",
   "vendor_location_account.deactivate",
   "inbound.redrive",

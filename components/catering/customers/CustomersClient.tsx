@@ -63,8 +63,13 @@ export function CustomersClient({ customers, locations, actorLevel }: Props) {
 function CustomerRow({ customer, canWrite }: { customer: CateringCustomer; canWrite: boolean }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const reveal = () => { if (window.location.hash === `#customer-${customer.id}`) setOpen(true); };
+    reveal(); window.addEventListener("hashchange", reveal);
+    return () => window.removeEventListener("hashchange", reveal);
+  }, [customer.id]);
   return (
-    <div className="co-card p-3">
+    <div id={`customer-${customer.id}`} className="co-card p-3">
       <button type="button" onClick={() => setOpen((v) => !v)} className="w-full text-left" aria-expanded={open}>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-co-text">{customer.name}</span>

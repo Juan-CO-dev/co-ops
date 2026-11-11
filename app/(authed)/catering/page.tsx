@@ -40,7 +40,11 @@ export default async function CateringHubPage() {
     : level >= 7 ? "catering.hub.admin_link_desc_gm" : "catering.hub.admin_link_desc_agm";
   const cards = level >= ADMIN_CATERING_MIN
     ? [...CARDS, { href: "/admin/catering", titleKey: "catering.hub.admin_link_title" as TranslationKey, descKey: adminDescKey }]
-    : CARDS;
+    : [...CARDS];
+
+  if (auth.user.active && (auth.user.role === "gm" || auth.user.role === "catering_mgr" || level >= 8)) {
+    cards.push({ href: "/catering/inbox", titleKey: "catering.inbox.title", descKey: "catering.inbox.hub_desc" });
+  }
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">

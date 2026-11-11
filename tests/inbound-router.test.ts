@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { inboundAddresses, inboundRetryDelayMs, inboundErrorCode, normalizeInboundAddress, resolveInboundRoute, type InboundAddressRule } from "@/lib/inbound-router-shared";
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), ingest: vi.fn(), audit: vi.fn() }));
+const mocks = vi.hoisted(() => ({ fetch: vi.fn(), ingest: vi.fn(), audit: vi.fn(), finalize: vi.fn() }));
+vi.mock("@/lib/catering/inbox-ingest", () => ({ finalizeCateringInbound: mocks.finalize }));
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/lib/inbound-fetch", () => ({ fetchInboundContent: mocks.fetch }));
 vi.mock("@/lib/email-receipts", () => ({ ingestInboundReceipt: mocks.ingest }));
@@ -50,14 +52,15 @@ function database(replies: Reply[]) {
     chain.then = (resolve: (r: Reply) => unknown, reject: (e: unknown) => unknown) => Promise.resolve(reply).then(resolve, reject);
     return chain;
   });
-  return { sb: { from } as unknown as Parameters<typeof processInboundMessage>[1], calls, from };
+  const rpc = vi.fn(async (...args: unknown[]) => { calls.push({ table: "rpc", method: String(args[0]), args }); return { data: {}, error: null }; });
+  return { sb: { from, rpc } as unknown as Parameters<typeof processInboundMessage>[1], calls, from, rpc };
 }
 const row = { id: "fixture-row", provider_email_id: "fixture-message", from_address: "sender@example.test", subject: "invoice",
   to_addresses: ["delivery@example.test"], cc_addresses: [], received_for: ["one@example.test"], lane: "noise", location_id: null,
   route_reason: "unresolved", fetch_attempts: 0, received_at: "2026-11-01T12:00:00Z" };
 const routeReplies = (): Reply[] => [{ data: row }, { data: { id: row.id } },
   { data: [{ id: "one", receipt_email_address: "one@example.test" }] }, { data: [] }, { count: 1 }, { data: null }, { count: 1 }];
-beforeEach(() => { vi.clearAllMocks(); mocks.fetch.mockResolvedValue({ rawEml: { bytes: Buffer.from("invoice"), contentType: "text/plain" }, attachments: [] }); mocks.ingest.mockResolvedValue({ receiptId: "fixture-receipt" }); });
+beforeEach(() => { vi.resetAllMocks(); mocks.fetch.mockResolvedValue({ rawEml: { bytes: Buffer.from("invoice"), contentType: "text/plain" }, attachments: [] }); mocks.ingest.mockResolvedValue({ receiptId: "fixture-receipt" }); });
 afterEach(() => vi.unstubAllEnvs());
 it("inserts normalized metadata first with provider id conflict suppression", async () => {
   const db = database([{ data: { id: row.id } }]);
@@ -93,11 +96,89 @@ it("failed fetch persists failed, and bounded sweep retries successfully", async
   expect(retry.calls).toContainEqual({ table: "inbound_messages", method: "limit", args: [25] });
   expect(retry.calls).toContainEqual({ table: "inbound_messages", method: "lt", args: ["fetch_attempts", 5] });
 });
-it.each(["noise", "catering"])("%s records skipped without fetching", async lane => {
+it.each(["noise"])("%s records skipped without fetching", async lane => {
   const db = database([{ data: { ...row, lane, route_reason: lane === "noise" ? "unknown_address" : "catering_address" } }, { data: { id: row.id } }, { count: 1 }, { count: 1 }]);
   expect(await processInboundMessage(row.id, db.sb)).toBe("skipped");
   expect(mocks.fetch).not.toHaveBeenCalled(); expect(mocks.ingest).not.toHaveBeenCalled();
 });
+
+it("preserves the complete vendor branch text from round 1", () => {
+  const fixture = readFileSync("tests/fixtures/inbound-router-vendor-section.txt", "utf8").replace(/\r\n/g, "\n");
+  const current = readFileSync("lib/inbound-router.ts", "utf8");
+  const section = (s: string) => s.replace(/\r\n/g, "\n").split('    if (route.lane !== "vendor_receipt") {')[1]?.split("  } catch (error) {")[0];
+  expect(section(current)).toBeTruthy();
+  expect(section(current)).toBe(fixture);
+});
+
+const cateringRow = { ...row, lane: "catering", route_reason: "catering_address" };
+const child = { id: "child", inbound_message_id: row.id, revision: 0, disposition: "recorded", body_text: "stored request", headers: {} };
+const cateringReplies = (existing: unknown): Reply[] => [{ data: cateringRow }, { data: { id: row.id } }, { count: 1 }, { data: existing }];
+it.each(["PGRST205", "42P01", "42883", "PGRST202"])("missing schema %s skips every catering DB boundary without an attempt", async code => {
+  for (const boundary of ["lookup", "record", "reread", "finalize"] as const) {
+    mocks.fetch.mockResolvedValue({ text: "Catering", attachments: [] });
+    const replies = cateringReplies(boundary === "finalize" ? child : null);
+    if (boundary === "lookup") replies[3] = { error: { code } };
+    if (boundary === "reread") replies.push({ error: { code } });
+    replies.push({ count: 1 });
+    const db = database(replies);
+    if (boundary === "record") db.rpc.mockResolvedValueOnce({ data: null, error: { code } } as never);
+    if (boundary === "finalize") mocks.finalize.mockRejectedValueOnce({ code });
+    expect(await processInboundMessage(row.id, db.sb), boundary).toBe("skipped");
+    expect(db.calls.filter(c => c.method === "update").at(-1)?.args[0]).toEqual({ content_state: "skipped", last_error: null, lease_token: null });
+    expect(mocks.audit).not.toHaveBeenCalled();
+  }
+});
+it("other catering DB errors consume an attempt and remain retryable", async () => {
+  const replies = cateringReplies(null); replies[3] = { error: { code: "42501" } }; replies.push({ count: 1 });
+  const db = database(replies);
+  expect(await processInboundMessage(row.id, db.sb)).toBe("failed");
+  expect(db.calls.filter(c => c.method === "update").at(-1)?.args[0]).toMatchObject({ fetch_attempts: 1, last_error: "ledger" });
+});
+it.each([
+  [{ references: "[invalid]", "in-reply-to": "[invalid]" }, "<transport-message>", "<transport-message>"],
+  [[], null, row.id],
+  [[{ name: "Message-ID", value: "<array-message>" }], "<transport-message>", "<array-message>"],
+  [{ references: "<root> <next>" }, null, "<root>"],
+] as const)("uses valid threading evidence and transport fallbacks (%j)", async (headers, messageId, expected) => {
+  mocks.fetch.mockResolvedValue({ text: "Catering", headers, attachments: [] });
+  const replies = cateringReplies(null); replies[0] = { data: { ...cateringRow, message_id: messageId } };
+  const db = database([...replies, { data: child }, { count: 1 }]);
+  expect(await processInboundMessage(row.id, db.sb)).toBe("catering_fetched");
+  expect(db.rpc).toHaveBeenCalledWith("record_catering_inbound", expect.objectContaining({ p_content: expect.objectContaining({ thread_key: expected }) }));
+});
+it("fetches catering once, records only bounded metadata and finalizes without invoking receipt ingest", async () => {
+  mocks.fetch.mockResolvedValue({ text: "Need catering for Friday", html: null, headers: { "message-id": "<mail>", authorization: "discard" },
+    attachments: [{ filename: "menu.pdf", content_type: "application/pdf", size: 123, download_url: "discard" }] });
+  const db = database([...cateringReplies(null), { data: child }, { count: 1 }]);
+  expect(await processInboundMessage(row.id, db.sb)).toBe("catering_fetched");
+  expect(mocks.fetch).toHaveBeenCalledWith(row.provider_email_id, undefined, { metadataOnly: true });
+  expect(db.rpc).toHaveBeenCalledWith("record_catering_inbound", expect.objectContaining({ p_expected_revision: 0,
+    p_content: expect.objectContaining({ body_text: "Need catering for Friday", headers: { "message-id": "<mail>" },
+      attachments: [{ filename: "menu.pdf", content_type: "application/pdf", size: 123, omission_reason: "not_fetched" }] }) }));
+  expect(mocks.finalize).toHaveBeenCalledWith(child, db.sb);
+  expect(mocks.ingest).not.toHaveBeenCalled();
+  expect(db.from).not.toHaveBeenCalledWith("email_receipts");
+  expect(db.calls.filter(c => c.method === "update").at(-1)?.args[0]).toMatchObject({ content_state: "fetched" });
+});
+it("resumes a recorded catering child from stored content without refetch or rerecord", async () => {
+  const db = database([...cateringReplies(child), { count: 1 }]);
+  expect(await processInboundMessage(row.id, db.sb)).toBe("catering_fetched");
+  expect(mocks.finalize).toHaveBeenCalledWith(child, db.sb);
+  expect(mocks.fetch).not.toHaveBeenCalled(); expect(db.rpc).not.toHaveBeenCalled(); expect(mocks.ingest).not.toHaveBeenCalled();
+});
+it("repairs finalized catering transport state without fetching or finalizing twice", async () => {
+  const db = database([...cateringReplies({ ...child, disposition: "drafted", revision: 1 }), { count: 1 }]);
+  expect(await processInboundMessage(row.id, db.sb)).toBe("catering_fetched");
+  expect(mocks.finalize).not.toHaveBeenCalled(); expect(mocks.fetch).not.toHaveBeenCalled(); expect(db.rpc).not.toHaveBeenCalled();
+});
+it.each([["private provider error", "failed", "provider_error"], ["provider_auth", "blocked_config", "provider_auth"]])(
+  "catering fetch %s stays in the transport CHECK vocabulary", async (error, state, code) => {
+    mocks.fetch.mockRejectedValue(new Error(error));
+    const db = database([...cateringReplies(null), { count: 1 }]);
+    expect(await processInboundMessage(row.id, db.sb)).toBe(state);
+    expect(db.calls.filter(c => c.method === "update").at(-1)?.args[0]).toMatchObject({ content_state: state, last_error: code });
+    expect(mocks.finalize).not.toHaveBeenCalled(); expect(db.rpc).not.toHaveBeenCalled(); expect(mocks.ingest).not.toHaveBeenCalled();
+  });
 it("a lost lease never fetches or ingests", async () => {
   const db = database([{ data: row }, { data: null }]);
   expect(await processInboundMessage(row.id, db.sb)).toBe("busy"); expect(mocks.fetch).not.toHaveBeenCalled();

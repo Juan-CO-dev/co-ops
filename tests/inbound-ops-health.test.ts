@@ -14,8 +14,30 @@ const actor = (role: RoleCode) => ({ user: { id: "actor", role }, locations: [],
 let tables: Tables;
 beforeEach(() => {
   vi.clearAllMocks();
-  tables = { inbound_messages: [{ id: ID, content_state: "failed", fetch_attempts: 5, next_attempt_at: "2026-01-01T00:00:00Z", lease_token: null }] };
+  tables = { inbound_messages: [{ id: ID, lane: "vendor_receipt", route_reason: "shop_address", content_state: "failed", fetch_attempts: 5, next_attempt_at: "2026-01-01T00:00:00Z", lease_token: null }] };
   h.db.mockReturnValue(createFakeDb(tables).client); h.session.mockResolvedValue(actor("moo"));
+});
+it("redrives skipped catering_address rows through the existing audited path", async () => {
+  Object.assign(tables.inbound_messages![0]!, { lane: "catering", route_reason: "catering_address", content_state: "skipped" });
+  await redriveInbound(actor("moo"), ID);
+  expect(tables.inbound_messages![0]).toMatchObject({ content_state: "pending", fetch_attempts: 0, lane: "catering" });
+  expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "inbound.redrive" }));
+});
+it.each([["vendor_receipt", "catering_address"], ["noise", "unknown_address"], ["catering", "ambiguous"]])(
+  "refuses skipped %s / %s", async (lane, route_reason) => {
+    Object.assign(tables.inbound_messages![0]!, { lane, route_reason, content_state: "skipped" });
+    await expect(redriveInbound(actor("moo"), ID)).rejects.toMatchObject({ status: 409 });
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+it("includes the lane in compare-and-set so a changed route cannot be redriven", async () => {
+  const chain = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: { lane: "catering", route_reason: "catering_address", content_state: "skipped", fetch_attempts: 0, next_attempt_at: "old" } }),
+    update: vi.fn().mockReturnThis(), is: vi.fn().mockResolvedValue({ count: 0 }) };
+  h.db.mockReturnValue({ from: () => chain });
+  await expect(redriveInbound(actor("moo"), ID)).rejects.toMatchObject({ status: 409 });
+  expect(chain.eq).toHaveBeenCalledWith("lane", "catering");
+  expect(chain.eq).toHaveBeenCalledWith("route_reason", "catering_address");
+  expect(h.audit).not.toHaveBeenCalled();
 });
 it.each(["failed", "blocked_config"])("MoO re-drives %s with reset and audit", async state => {
   tables.inbound_messages![0]!.content_state = state;

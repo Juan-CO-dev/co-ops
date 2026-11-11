@@ -396,9 +396,14 @@ function LeadCard({
 }) {
   const { t, language } = useTranslation();
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const reveal = () => { if (window.location.hash === `#lead-${lead.id}`) setOpen(true); };
+    reveal(); window.addEventListener("hashchange", reveal);
+    return () => window.removeEventListener("hashchange", reveal);
+  }, [lead.id]);
   const rev = money(lead.estimatedRevenueCents);
   return (
-    <div className="co-card p-3">
+    <div id={`lead-${lead.id}`} className="co-card p-3">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
