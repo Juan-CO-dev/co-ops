@@ -125,6 +125,7 @@ describe("the delivery worker (cron path)", () => {
     const claims: Record<string, unknown>[] = [];
     const rpc = vi.fn((name: string, args: Record<string, unknown>) => {
       if (name === "sweep_catering_inbox_delivery") return { data: [], error: null };
+      if (name === "catering_inbox_delivery_due") return { data: { replies: [{ message_id: ids.message, draft_id: ids.draft }], escalations: [{ message_id: ids.escalation }] }, error: null };
       if (name === "claim_catering_inbox_delivery") { claims.push(args); return { data: args.p_kind === "reply" ? claimReply() : claimEscalation(), error: null }; }
       if (name === "finish_catering_inbox_delivery") return { data: { revision: 3 }, error: null };
       throw new Error(`Unexpected writer: ${name}`);
@@ -145,6 +146,7 @@ describe("the delivery worker (cron path)", () => {
   it("a named SQL refusal is a skip, not a crash; a retry of a failed escalation sends no new envelope", async () => {
     const rpc = vi.fn((name: string, args: Record<string, unknown>) => {
       if (name === "sweep_catering_inbox_delivery") return { data: [], error: null };
+      if (name === "catering_inbox_delivery_due") return { data: { replies: [{ message_id: ids.message, draft_id: ids.draft }], escalations: [{ message_id: ids.escalation }] }, error: null };
       if (name === "claim_catering_inbox_delivery") return args.p_kind === "reply" ? { data: null, error: { message: "thread_cap" } } : { data: claimEscalation(2), error: null };
       return { data: { revision: 3 }, error: null };
     });
@@ -160,7 +162,9 @@ describe("the delivery worker (cron path)", () => {
     expect(rpc).toHaveBeenCalledWith("finish_catering_inbox_delivery", expect.objectContaining({ p_outcome: "failed", p_error_code: "provider_rejected" }));
   });
   it("the cron route: secret → switches → lease → run; busy lease skips; a thrown run is a fixed-code failure", async () => {
-    const { sb } = fakeInboxService({ tables: liveTables(), rpc: (name) => name === "sweep_catering_inbox_delivery" ? { data: [], error: null } : { data: null, error: { message: "invalid_state" } } });
+    const { sb } = fakeInboxService({ tables: liveTables(), rpc: (name) => name === "sweep_catering_inbox_delivery" ? { data: [], error: null }
+      : name === "catering_inbox_delivery_due" ? { data: { replies: [{ message_id: ids.message, draft_id: ids.draft }], escalations: [{ message_id: ids.escalation }] }, error: null }
+      : { data: null, error: { message: "invalid_state" } } });
     runtime.client.mockReturnValue(sb);
     expect((await cron(request("https://tenant.example/api/cron/catering-inbox-delivery"))).status).toBe(401);
     runtime.lease.mockResolvedValueOnce(false);
@@ -190,26 +194,28 @@ describe("review round: uncertainty, starvation, the expiry sweep", () => {
     expect(runtime.sendEmail).toHaveBeenCalledTimes(2);
     expect(runtime.sendEmail.mock.calls.map(([input]) => input.idempotencyKey)).toEqual([`catering-inbox:${ids.draft}:1`, `catering-inbox:${ids.draft}:1`]);
     expect(finishes).toEqual([{ p_draft_id: ids.draft, p_token: "token-1", p_outcome: "ambiguous", p_provider_id: null, p_error_code: "provider_uncertain" }]);
+    // Timeout, then the retry is REJECTED (rate limit): the first request may still have been delivered → stays ambiguous.
+    runtime.sendEmail.mockReset().mockResolvedValueOnce({ error: "timeout" }).mockResolvedValueOnce({ error: "slow down", code: "rate_limit_exceeded" });
+    expect(await sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).toMatchObject({ state: "ambiguous" });
+    expect(finishes.at(-1)).toMatchObject({ p_outcome: "ambiguous", p_error_code: "provider_uncertain" });
+    // Timeout, then the retry CONFIRMS under the same key → sent with that id.
+    runtime.sendEmail.mockReset().mockResolvedValueOnce({ error: "timeout" }).mockResolvedValueOnce({ id: "provider-late" });
+    expect(await sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).toMatchObject({ state: "sent" });
+    expect(finishes.at(-1)).toMatchObject({ p_outcome: "sent", p_provider_id: "provider-late" });
+    expect(runtime.sendEmail.mock.calls.map(([input]) => input.idempotencyKey)).toEqual([`catering-inbox:${ids.draft}:1`, `catering-inbox:${ids.draft}:1`]);
     // A same-key conflict (different payload) is not retried at all and is a conflict for a person.
     runtime.sendEmail.mockReset().mockResolvedValue({ error: "mismatch", code: "invalid_idempotent_request" });
     expect(await sendCateringInboxDraft(actor, ids.message, { expectedRevision: 1, requestId: ids.request })).toMatchObject({ state: "ambiguous" });
     expect(runtime.sendEmail).toHaveBeenCalledTimes(1);
     expect(finishes.at(-1)).toMatchObject({ p_outcome: "ambiguous", p_error_code: "idempotency_conflict" });
-    expect(runtime.audit.mock.calls.map(([input]) => input.action).filter(a => a.startsWith("catering.inbox.delivery_"))).toEqual(["catering.inbox.delivery_ambiguous", "catering.inbox.delivery_ambiguous"]);
+    expect(runtime.audit.mock.calls.map(([input]) => input.action).filter(a => a.startsWith("catering.inbox.delivery_"))).toEqual(["catering.inbox.delivery_ambiguous", "catering.inbox.delivery_ambiguous", "catering.inbox.delivery_sent", "catering.inbox.delivery_ambiguous"]);
   });
-  it("more than a page of sent, handled and exhausted predecessors never starve a new eligible reply or escalation", async () => {
+  it("the worker attempts exactly the SQL-filtered queue — never a page walk — so predecessors cannot hide newer rows (the >250 case is proven in the 0298 harness)", async () => {
     const uuid = (n: number, tag: string) => `${tag}${String(n).padStart(7, "0")}-0000-4000-8000-000000000000`;
-    const olds = Array.from({ length: 30 }, (_, n) => n);
-    const messages: Row[] = [];
-    const drafts: Row[] = [];
-    for (const n of olds) {
-      // 10 handled (draft untouched → the claim refuses invalid_state), 10 sent, 10 exhausted — all older ids than the new one.
-      const kind = n % 3;
-      messages.push({ id: uuid(n, "a"), location_id: null, sender_address: `old${n}@example.test`, headers: {}, disposition: kind === 0 ? "handled" : "drafted", recorded_at: "2026-11-11T01:00:00Z", assigned_to: null, reason: null, subject: "old" });
-      drafts.push({ id: uuid(n, "b"), message_id: uuid(n, "a"), kind: "reply", delivery_state: kind === 1 ? "sent" : kind === 2 ? "failed" : "draft", delivery_attempt: kind === 2 ? 3 : kind === 1 ? 1 : 0, delivery_attempted_at: kind === 0 ? null : "2026-11-11T02:00:00Z", created_at: "2026-11-11T01:00:00Z", preview_text: "x" });
-      // escalations: 30 needs_human predecessors already notified (sent) with older ids than the new one
-      messages.push({ id: uuid(n, "c"), location_id: null, sender_address: `esc${n}@example.test`, headers: {}, disposition: "needs_human", recorded_at: "2026-11-11T01:00:00Z", assigned_to: ids.assignee, reason: "urgent", subject: "old esc" });
-      drafts.push({ id: uuid(n, "d"), message_id: uuid(n, "c"), kind: "escalation", delivery_state: "sent", delivery_attempt: 1, delivery_attempted_at: "2026-11-11T02:00:00Z", created_at: "2026-11-11T01:00:00Z", preview_text: "y" });
+    const messages: Row[] = [], drafts: Row[] = [];
+    for (let n = 0; n < 300; n++) {
+      messages.push({ id: uuid(n, "a"), location_id: null, sender_address: `old${n}@example.test`, headers: {}, disposition: "handled", recorded_at: "2026-11-11T01:00:00Z", assigned_to: null, reason: null, subject: "old" });
+      drafts.push({ id: uuid(n, "b"), message_id: uuid(n, "a"), kind: "reply", delivery_state: "draft", delivery_attempt: 0, delivery_attempted_at: null, created_at: "2026-11-11T01:00:00Z", preview_text: "x" });
     }
     const fresh = uuid(1, "f"), freshEsc = uuid(2, "f");
     messages.push({ id: fresh, location_id: null, sender_address: "new@example.test", headers: {}, disposition: "drafted", recorded_at: "2026-11-11T03:00:00Z", assigned_to: null, reason: null, subject: "new" });
@@ -218,24 +224,23 @@ describe("review round: uncertainty, starvation, the expiry sweep", () => {
     const claims: Record<string, unknown>[] = [];
     const rpc = vi.fn((name: string, args: Record<string, unknown>) => {
       if (name === "sweep_catering_inbox_delivery") return { data: [], error: null };
+      if (name === "catering_inbox_delivery_due") { expect(args).toEqual({ p_limit: 25 }); return { data: { replies: [{ message_id: fresh, draft_id: uuid(3, "f") }], escalations: [{ message_id: freshEsc }] }, error: null }; }
       if (name === "claim_catering_inbox_delivery") {
         claims.push(args);
-        if (args.p_message_id === fresh) return { data: claimReply(1, { message_id: fresh }), error: null };
-        if (args.p_message_id === freshEsc) return { data: claimEscalation(1, { message_id: freshEsc }), error: null };
-        return { data: null, error: { message: "invalid_state" } };
+        return { data: args.p_message_id === fresh ? claimReply(1, { message_id: fresh }) : claimEscalation(1, { message_id: freshEsc }), error: null };
       }
       return { data: { revision: 3 }, error: null };
     });
-    const { sb } = fakeInboxService({ tables: liveTables({ catering_inbound_messages: messages, catering_inbox_drafts: drafts }), rpc });
+    const { sb, from } = fakeInboxService({ tables: liveTables({ catering_inbound_messages: messages, catering_inbox_drafts: drafts }), rpc });
     runtime.sendEmail.mockResolvedValue({ id: "p" });
     const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
-    expect(claims.map(c => c.p_message_id)).toContain(fresh);
-    expect(claims.map(c => c.p_message_id)).toContain(freshEsc);
-    expect(run.replies.sent).toBe(1); expect(run.escalations.sent).toBe(1);
-    // Sent and exhausted predecessors were filtered in SQL (never claimed); only the handled ones cost a refused claim.
-    expect(claims.filter(c => c.p_kind === "reply").length).toBe(11);
-    expect(claims.filter(c => c.p_kind === "escalation").length).toBe(1);
+    expect(claims.map(c => [c.p_message_id, c.p_kind])).toEqual([[fresh, "reply"], [freshEsc, "escalation"]]);
+    expect(claims[1]!.p_escalation).toMatchObject({ language: "es", params: { reason: "urgent" } });
+    expect(run.replies).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 });
+    expect(run.escalations).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 });
     expect(runtime.sendEmail).toHaveBeenCalledTimes(2);
+    // No lane list read, no page walk: the only draft/message reads are the per-attempt lookups.
+    expect(from.mock.calls.filter(([table]) => table === "catering_inbox_drafts").length).toBeLessThanOrEqual(1);
   });
   it("the cron sweeps expired claims first: each becomes an audited ambiguous row and nothing is resent", async () => {
     const rpc = vi.fn((name: string) => {

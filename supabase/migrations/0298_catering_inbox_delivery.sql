@@ -278,6 +278,31 @@ begin
 end;
 $$;
 
+-- The worker's queue, ELIGIBILITY-FILTERED BEFORE the limit (never a page walk over ineligible predecessors): the oldest
+-- reply drafts and needs_human messages the cron may attempt now. Empty unless live. Read-only; the claim re-checks all.
+create function public.catering_inbox_delivery_due(p_limit integer default 25)
+returns jsonb language sql stable security definer set search_path = pg_catalog, public
+as $$
+  with s as (select mode, live_since from public.catering_inbox_settings where singleton),
+  replies as (
+    select d.message_id, d.id as draft_id from public.catering_inbox_drafts d
+    join public.catering_inbound_messages m on m.id = d.message_id, s
+    where s.mode = 'live' and s.live_since is not null and d.kind = 'reply' and m.disposition = 'drafted' and d.created_at >= s.live_since
+      and (d.delivery_state = 'draft' or (d.delivery_state = 'failed' and d.delivery_attempt < 3
+        and d.delivery_attempted_at <= clock_timestamp() - interval '10 minutes'))
+    order by d.created_at, d.id limit greatest(1, least(coalesce(p_limit, 25), 200))),
+  escalations as (
+    select m.id as message_id from public.catering_inbound_messages m, s
+    where s.mode = 'live' and s.live_since is not null and m.disposition = 'needs_human' and m.recorded_at >= s.live_since
+      and m.assigned_to is not null and m.reason is not null
+      and not exists (select 1 from public.catering_inbox_drafts d where d.message_id = m.id and d.kind = 'escalation'
+        and not (d.delivery_state = 'failed' and d.delivery_attempt < 3 and d.delivery_attempted_at <= clock_timestamp() - interval '10 minutes'))
+    order by m.recorded_at, m.id limit greatest(1, least(coalesce(p_limit, 25), 200)))
+  select jsonb_build_object(
+    'replies', coalesce((select jsonb_agg(jsonb_build_object('message_id', message_id, 'draft_id', draft_id)) from replies), '[]'::jsonb),
+    'escalations', coalesce((select jsonb_agg(jsonb_build_object('message_id', message_id)) from escalations), '[]'::jsonb));
+$$;
+
 -- ── 4. THE MODE SWITCH ──────────────────────────────────────────────────────────────────────────
 create function public.set_catering_inbox_mode(p_actor_id uuid, p_session_id uuid, p_mode text, p_expected_revision integer)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public
@@ -347,6 +372,7 @@ begin
     'public.claim_catering_inbox_delivery(uuid,text,text,uuid,uuid,integer,uuid,jsonb)'::regprocedure,
     'public.finish_catering_inbox_delivery(uuid,uuid,text,text,text)'::regprocedure,
     'public.sweep_catering_inbox_delivery(integer)'::regprocedure,
+    'public.catering_inbox_delivery_due(integer)'::regprocedure,
     'public.set_catering_inbox_mode(uuid,uuid,text,integer)'::regprocedure
   ] loop
     execute format('revoke all on function %s from public, anon, authenticated, service_role',f);

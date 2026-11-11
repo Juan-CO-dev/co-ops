@@ -24,6 +24,8 @@ it('0298 real-DDL delivery proof: ceilings, switches, claim/finish fencing, caps
     "yesterday's failed retry needs today's capacity: fourth send refused", 'a cross-day retry reserves today atomically',
     'quote superseded after drafting refuses the claim by name', 'lead moved off the shop refuses the claim',
     'sweep marks the expired claim ambiguous/lease_expired', 'the swept holder cannot finish', 'a swept draft is never auto-resent', 'the live lease is untouched by the sweep',
+    'a new eligible reply and escalation are due on the first tick behind 300 ineligible predecessors each', 'handled, sent, exhausted and notified rows are never in the queue',
+    'a failed attempt inside the backoff is not due yet', 'a failed attempt past the backoff is due', 'an exhausted draft is not due', 'nothing is due unless live',
     '0298 after 0275 leaves the UNION of both parallel jobs', '0298 after 0300 keeps the UNION (neither job dropped)', 'both jobs claim after the reverse order',
   ]) expect(output).toContain(line);
 }, 250_000);

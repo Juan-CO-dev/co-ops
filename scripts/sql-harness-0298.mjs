@@ -104,12 +104,12 @@ try {
     }
     check((await one('select relrowsecurity enabled from pg_class where oid=$1::regclass',[name])).enabled, `${name}: complete table/column ACL and RLS`);
   }
-  for (const { oid, proname, prosecdef, proconfig } of await query("select oid,proname,prosecdef,proconfig from pg_proc where proname in ('claim_catering_inbox_delivery','finish_catering_inbox_delivery','sweep_catering_inbox_delivery','set_catering_inbox_mode','claim_cron_route')")) {
+  for (const { oid, proname, prosecdef, proconfig } of await query("select oid,proname,prosecdef,proconfig from pg_proc where proname in ('claim_catering_inbox_delivery','finish_catering_inbox_delivery','sweep_catering_inbox_delivery','catering_inbox_delivery_due','set_catering_inbox_mode','claim_cron_route')")) {
     assert.equal(prosecdef, true); assert.ok(proconfig.includes('search_path=pg_catalog, public'));
     for (const role of ['anon','authenticated','service_role']) assert.equal((await one('select has_function_privilege($1,$2::oid,\'EXECUTE\') allowed',[role,oid])).allowed, role === 'service_role');
     check(true, `${proname}: definer/search_path/execution ceiling`);
   }
-  for (const { proname, prosrc } of await query("select proname,prosrc from pg_proc where proname in ('claim_catering_inbox_delivery','finish_catering_inbox_delivery','sweep_catering_inbox_delivery','set_catering_inbox_mode')")) {
+  for (const { proname, prosrc } of await query("select proname,prosrc from pg_proc where proname in ('claim_catering_inbox_delivery','finish_catering_inbox_delivery','sweep_catering_inbox_delivery','catering_inbox_delivery_due','set_catering_inbox_mode')")) {
     assert.doesNotMatch(prosrc, /(insert into|update|delete from)\s+public\.(catering_customers|catering_pipeline|catering_quotes)\b/i);
     check(true, `${proname}: source contains no artifact writes`);
   }
@@ -267,6 +267,52 @@ try {
   await finish(liveLease.draft_id, liveLease.token, 'sent', 'p-live');
   await reject(() => asService(() => rpc('sweep_catering_inbox_delivery', [0])), /invalid_input/, 'sweep limit is bounded');
   await reject(() => finish(liveLease.draft_id, liveLease.token, 'failed', null, 'idempotency_conflict'), /lease_lost/, 'idempotency_conflict is a legal finish code (refused here only because the attempt already finished)');
+  // ── re-review: the queue is eligibility-filtered in SQL before any limit ──
+  {
+    const due = () => asService(() => rpc('catering_inbox_delivery_due', [25]));
+    const dueBefore = await due();
+    // Direct fixture inserts (superuser; no writer): 300 ineligible predecessors per lane, every one OLDER than the eligible row.
+    const past = '2026-01-01T00:00:00Z';
+    const inboundOf = async () => { const id = randomUUID(); await db.query('insert into inbound_messages(id,provider_email_id) values ($1,$2)', [id, id]); return id; };
+    const starveIds = [];
+    for (let n = 0; n < 300; n++) {
+      const kind = n % 4, id = randomUUID(), inbound = await inboundOf();
+      starveIds.push(id);
+      // 0: handled with an untouched draft · 1: sent · 2: exhausted (failed x3) · 3: notified escalation (sent)
+      const disposition = kind === 3 ? 'needs_human' : kind === 0 ? 'handled' : 'drafted';
+      await db.query(`insert into catering_inbound_messages(id,inbound_message_id,sender_address,subject,body_text,body_original_bytes,body_truncated,body_from_html,received_at,recorded_at,classification,identity_status,disposition,reason,rule_version,assigned_to,handled_by,handled_at,revision)
+        values ($1,$2,'old@example.test','old','old',3,false,false,$3,$3,$4,'new_sender',$5,$6,'1',$7,$8,$9,1)`,
+        [id, inbound, past, kind === 3 ? 'unclassified' : 'intake', disposition, kind === 3 ? 'urgent' : null, kind === 3 ? manager : null, kind === 0 ? manager : null, kind === 0 ? past : null]);
+      if (kind === 3) await db.query(`insert into catering_inbox_drafts(message_id,kind,language,template_key,template_version,params,preview_text,created_at,delivery_state,delivery_attempt,delivery_trigger,delivery_attempted_at,delivery_first_attempt_at,delivery_sent_at,delivery_provider_id,delivery_recipient)
+        values ($1,'escalation','en','escalation','1','{"tenantName":"x","reason":"urgent"}','x',$2,'sent',1,'cron',$2,$2,$2,'p','keith@example.test')`, [id, past]);
+      else await db.query(`insert into catering_inbox_drafts(message_id,kind,language,template_key,template_version,params,preview_text,created_at,delivery_state,delivery_attempt,delivery_trigger,delivery_attempted_at,delivery_first_attempt_at,delivery_sent_at,delivery_provider_id,delivery_error_code,delivery_recipient,delivery_thread_day)
+        values ($1,'reply','en','intake','1',$2,'x',$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,$12)`,
+        [id, JSON.stringify(draft.params), kind === 0 ? '2026-12-01T00:00:00Z' : past, kind === 0 ? 'draft' : kind === 1 ? 'sent' : 'failed', kind === 0 ? 0 : kind === 1 ? 1 : 3,
+          kind === 0 ? null : 'cron', kind === 0 ? null : past, kind === 1 ? past : null, kind === 1 ? 'p' : null, kind === 2 ? 'send_failed' : null, kind === 0 ? null : 'old@example.test', kind === 0 ? null : '2026-01-01']);
+    }
+    // the handled predecessors' drafts were made after live_since on purpose (kind 0 created_at 2026-12-01): only `handled` excludes them
+    const freshReply = await arrival(), freshEscalation = await arrival({ subject: 'Urgent allergy complaint' }, result({ classification: 'unclassified', disposition: 'needs_human', reason: 'urgent' }), null);
+    const dueAfter = await due();
+    const newReplies = dueAfter.replies.filter(r => !dueBefore.replies.some(b => b.message_id === r.message_id)).map(r => r.message_id);
+    const newEscalations = dueAfter.escalations.filter(r => !dueBefore.escalations.some(b => b.message_id === r.message_id)).map(r => r.message_id);
+    check(newReplies.includes(freshReply) && newEscalations.includes(freshEscalation), 'a new eligible reply and escalation are due on the first tick behind 300 ineligible predecessors each');
+    check(!dueAfter.replies.some(r => starveIds.includes(r.message_id)) && !dueAfter.escalations.some(r => starveIds.includes(r.message_id)), 'handled, sent, exhausted and notified rows are never in the queue');
+    check(dueAfter.replies.length <= 25 && dueAfter.escalations.length <= 25, 'queue is bounded by the limit');
+    const retryable = await arrival();
+    const rc = await claim(retryable);
+    await finish(rc.draft_id, rc.token, 'failed', null, 'send_failed');
+    check(!(await due()).replies.some(r => r.message_id === retryable), 'a failed attempt inside the backoff is not due yet');
+    await db.query("update catering_inbox_drafts set delivery_attempted_at = clock_timestamp() - interval '11 minutes' where id=$1", [rc.draft_id]);
+    check((await due()).replies.some(r => r.message_id === retryable), 'a failed attempt past the backoff is due');
+    await db.query("update catering_inbox_drafts set delivery_attempt = 3 where id=$1", [rc.draft_id]);
+    check(!(await due()).replies.some(r => r.message_id === retryable), 'an exhausted draft is not due');
+    await db.query("update catering_inbox_drafts set delivery_attempt = 1 where id=$1", [rc.draft_id]);
+    await setMode(cgs, 'shadow', 2);
+    const dueShadow = await due();
+    check(dueShadow.replies.length === 0 && dueShadow.escalations.length === 0, 'nothing is due unless live');
+    await setMode(cgs, 'live', 3);
+    check(!(await due()).replies.some(r => r.message_id === retryable), 'a new live window makes the old draft not due (live_since moved)');
+  }
   // ── handled, needs_human, loop guards, revalidation ──
   const handled = await arrival();
   await asService(() => rpc('act_on_catering_inbox', [handled, 1, randomUUID(), manager, sessions.get(manager), 'handle', null]));

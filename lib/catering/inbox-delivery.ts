@@ -30,7 +30,7 @@ import { inboxOwnAddresses, type InboxHeaders } from "./inbox-content-shared";
 import { inboxAutomatedMessage } from "./inbox-classify-shared";
 import { normalizeInboundAddress } from "@/lib/inbound-router-shared";
 import {
-  buildInboxEscalation, INBOX_MAX_CRON_ATTEMPTS, INBOX_RETRY_BACKOFF_MS, inboxCronEligible, inboxDeliveryConfig, inboxDeliveryOutcome, inboxReplyThreading, inboxStaffUrl,
+  buildInboxEscalation, inboxDeliveryConfig, inboxDeliveryOutcome, inboxReplyThreading, inboxStaffUrl,
   renderInboxEscalation, renderInboxReply, type InboxDeliveryConfig, type InboxDeliveryErrorCode, type InboxDeliveryOutcome, type InboxDeliveryState, type Translate,
 } from "./inbox-delivery-shared";
 
@@ -111,9 +111,13 @@ async function deliverOne(args: DeliverArgs): Promise<DeliveryResult> {
     const send = () => sendEmail({ to: recipient!, from: claimed.kind === "reply" ? config.replyFrom : config.teamFrom, subject: mail.subject, html: mail.html, text: mail.text,
       idempotencyKey: claimed.idempotency_key, ...threading });
     let mapped = inboxDeliveryOutcome(await send());
-    // Uncertain once → the SAME key again (the provider de-duplicates); still uncertain, or a conflict on that key → a
-    // person. Uncertainty is never downgraded to `failed` here, so no later attempt can mint a new key over it.
-    if (mapped.outcome === "ambiguous" && mapped.code === "provider_uncertain") mapped = inboxDeliveryOutcome(await send());
+    // Uncertain once → the SAME key again (the provider de-duplicates). Only a CONFIRMED success of that retry resolves
+    // the uncertainty; any other answer (a rejection of the retry says nothing about the first request, a conflict, more
+    // uncertainty) keeps the FIRST outcome, so the draft becomes ambiguous and no later attempt can mint a new key over it.
+    if (mapped.outcome === "ambiguous" && mapped.code === "provider_uncertain") {
+      const retry = inboxDeliveryOutcome(await send());
+      if (retry.outcome === "sent") mapped = retry;
+    }
     outcome = mapped;
   }
   const finish = await sb.rpc("finish_catering_inbox_delivery", { p_draft_id: claimed.draft_id, p_token: claimed.token, p_outcome: outcome.outcome,
@@ -147,22 +151,17 @@ export async function sendCateringInboxDraft(ctx: AuthContext, id: string, input
 export interface DeliveryRun { ran: boolean; reason?: string; replies: RunCounts; escalations: RunCounts; swept: number }
 export interface RunCounts { attempted: number; sent: number; failed: number; ambiguous: number; skipped: number }
 const counts = (): RunCounts => ({ attempted: 0, sent: 0, failed: 0, ambiguous: 0, skipped: 0 });
-/** Page size and the keyset page budget per lane per tick: ineligible predecessors (handled, exhausted, already
- *  notified) never pin the queue, because the walk advances past them by id instead of re-reading the same head. */
+/** The per-tick queue size per lane (the SQL `catering_inbox_delivery_due` limit and the sweep limit). */
 export const RUN_PAGE = 25;
-export const RUN_PAGES = 10;
-/** Walk a lane by keyset on `id`, up to RUN_PAGES pages of RUN_PAGE rows; `visit` returns false to stop (deadline). */
-async function walk<T extends { id: string }>(page: (after: string | null) => PromiseLike<{ data: T[] | null; error: { message: string; code?: string } | null }>,
-  visit: (rows: T[]) => Promise<boolean>): Promise<void> {
-  let after: string | null = null;
-  for (let n = 0; n < RUN_PAGES; n++) {
-    const result = await page(after);
-    if (isInboxSchemaMissing(result.error)) throw new CateringInboxError(503, "inbox_unavailable");
-    if (result.error) throw new CateringInboxError(500, "read_failed");
-    const rows = result.data ?? [];
-    if (rows.length === 0 || !(await visit(rows)) || rows.length < RUN_PAGE) return;
-    after = rows[rows.length - 1]!.id;
-  }
+/** The queue, ELIGIBILITY-FILTERED IN SQL before its limit (0298 `catering_inbox_delivery_due`): draft or retryable reply
+ *  drafts of `drafted` messages, and `needs_human` messages with no (or a retryable) escalation — all since the live switch.
+ *  Ineligible predecessors (handled, sent, exhausted, notified) never occupy the queue, however many there are. */
+async function dueQueue(sb: Service): Promise<{ replies: Array<{ message_id: string; draft_id: string }>; escalations: Array<{ message_id: string }> }> {
+  const due = await sb.rpc("catering_inbox_delivery_due", { p_limit: RUN_PAGE });
+  if (due.error) throw claimError(due.error);
+  const data = (due.data ?? {}) as { replies?: unknown; escalations?: unknown };
+  return { replies: Array.isArray(data.replies) ? data.replies as Array<{ message_id: string; draft_id: string }> : [],
+    escalations: Array.isArray(data.escalations) ? data.escalations as Array<{ message_id: string }> : [] };
 }
 /** Expired claims (holder never reported) → ambiguous/lease_expired in SQL, one audit row each. Never resends. */
 async function sweepExpiredClaims(sb: Service): Promise<number> {
@@ -179,8 +178,8 @@ async function sweepExpiredClaims(sb: Service): Promise<number> {
 /** The cron worker: NEW eligible arrivals only (0298's `not_new` guards the SQL side too), bounded, deadline-aware. */
 export async function runCateringInboxDelivery(input: { now?: Date; deadlineMs?: number; service?: Service } = {}): Promise<DeliveryRun> {
   const sb = input.service ?? getServiceRoleClient();
-  const now = input.now ?? new Date();
-  // The deadline is wall-clock (the route's budget); `now` only drives eligibility math.
+  // Eligibility is decided in SQL on the database clock; `now` is accepted for callers' symmetry only.
+  void input.now;
   const deadline = Date.now() + (input.deadlineMs ?? 90_000);
   const run: DeliveryRun = { ran: false, replies: counts(), escalations: counts(), swept: 0 };
   const { config, liveSince } = await deliveryConfig(sb);
@@ -199,57 +198,31 @@ export async function runCateringInboxDelivery(input: { now?: Date; deadlineMs?:
       bucket.skipped += 1;
     }
   };
-  // Replies: unsent or failed reply drafts finalized since the live switch. Exhaustion and backoff are filtered in SQL
-  // where the shape allows (two lanes: fresh drafts; failed under the attempt cap and past the backoff); a handled
-  // message's untouched draft (the claim refuses `invalid_state`) is passed by the keyset walk, never re-read first.
-  type ReplyRow = { id: string; message_id: string; delivery_state: InboxDeliveryState; delivery_attempt: number; delivery_attempted_at: string | null };
-  const backoffBefore = new Date(now.getTime() - INBOX_RETRY_BACKOFF_MS).toISOString();
-  const replyLane = (lane: "draft" | "failed") => (after: string | null) => {
-    let q = sb.from("catering_inbox_drafts").select("id,message_id,delivery_state,delivery_attempt,delivery_attempted_at").eq("kind", "reply")
-      .eq("delivery_state", lane).gte("created_at", liveSince);
-    if (lane === "failed") q = q.lt("delivery_attempt", INBOX_MAX_CRON_ATTEMPTS).lt("delivery_attempted_at", backoffBefore);
-    if (after) q = q.gt("id", after);
-    return q.order("id").limit(RUN_PAGE).returns<ReplyRow[]>();
-  };
-  for (const lane of ["draft", "failed"] as const) {
-    await walk(replyLane(lane), async rows => {
-      for (const draft of rows) {
-        if (!inboxCronEligible(draft, now.getTime())) { run.replies.skipped += 1; continue; }
-        if (Date.now() > deadline) return false;
-        await attempt(run.replies, { messageId: draft.message_id, kind: "reply" });
-      }
-      return true;
-    });
+  const queue = await dueQueue(sb);
+  // Replies: every row the SQL queue returned is eligible now (the claim re-checks all of it under its locks).
+  for (const row of queue.replies) {
+    if (Date.now() > deadline) { run.replies.skipped += 1; continue; }
+    await attempt(run.replies, { messageId: row.message_id, kind: "reply" });
   }
-  // Escalations: messages a person must answer, arrived since the live switch, with an assignee. Already-notified,
-  // exhausted or ambiguous ones are passed by the walk; the per-page draft lookup decides.
-  type PendingRow = { id: string; assigned_to: string; reason: InboxReason | null; subject: string; sender_address: string | null; location_id: string | null };
+  // Escalations: a first attempt freezes the body (the envelope); a retry of a failed one reuses the stored row.
+  type PendingRow = { id: string; assigned_to: string | null; reason: InboxReason | null; subject: string; sender_address: string | null };
   const assignees = new Map<string, "en" | "es">();
-  await walk((after: string | null) => {
-    let q = sb.from("catering_inbound_messages").select("id,assigned_to,reason,subject,sender_address,location_id")
-      .eq("disposition", "needs_human").gte("recorded_at", liveSince).not("assigned_to", "is", null);
-    if (after) q = q.gt("id", after);
-    return q.order("id").limit(RUN_PAGE).returns<PendingRow[]>();
-  }, async rows => {
-    const existing = await sb.from("catering_inbox_drafts").select("message_id,delivery_state,delivery_attempt,delivery_attempted_at").eq("kind", "escalation").in("message_id", rows.map(m => m.id))
-      .returns<Array<{ message_id: string; delivery_state: InboxDeliveryState; delivery_attempt: number; delivery_attempted_at: string | null }>>();
+  for (const row of queue.escalations) {
+    if (Date.now() > deadline) { run.escalations.skipped += 1; continue; }
+    const m = await sb.from("catering_inbound_messages").select("id,assigned_to,reason,subject,sender_address").eq("id", row.message_id).maybeSingle<PendingRow>();
+    if (m.error) throw new CateringInboxError(500, "read_failed");
+    if (!m.data?.assigned_to || !m.data.reason) { run.escalations.skipped += 1; continue; }
+    const existing = await sb.from("catering_inbox_drafts").select("id").eq("message_id", row.message_id).eq("kind", "escalation").maybeSingle<{ id: string }>();
     if (existing.error) throw new CateringInboxError(500, "read_failed");
-    const byMessage = new Map((existing.data ?? []).map(d => [d.message_id, d]));
-    for (const m of rows) {
-      const state = byMessage.get(m.id);
-      if (!m.reason || (state && !inboxCronEligible(state, now.getTime()))) { run.escalations.skipped += 1; continue; }
-      if (Date.now() > deadline) return false;
-      if (!assignees.has(m.assigned_to)) {
-        const user = await sb.from("users").select("language").eq("id", m.assigned_to).maybeSingle<{ language: string | null }>();
-        if (user.error) throw new CateringInboxError(500, "read_failed");
-        assignees.set(m.assigned_to, user.data?.language === "es" ? "es" : "en");
-      }
-      const language = assignees.get(m.assigned_to)!;
-      const envelope = state ? null : buildInboxEscalation({ language, tenantName: TENANT_NAME, inboxUrl: inboxStaffUrl(configuredOrigin(process.env.STAFF_ORIGIN)?.origin ?? process.env.NEXT_PUBLIC_APP_URL),
-        reason: m.reason, sender: m.sender_address, subject: m.subject, translate: translator(language) });
-      await attempt(run.escalations, { messageId: m.id, kind: "escalation", escalation: envelope });
+    if (!assignees.has(m.data.assigned_to)) {
+      const user = await sb.from("users").select("language").eq("id", m.data.assigned_to).maybeSingle<{ language: string | null }>();
+      if (user.error) throw new CateringInboxError(500, "read_failed");
+      assignees.set(m.data.assigned_to, user.data?.language === "es" ? "es" : "en");
     }
-    return true;
-  });
+    const language = assignees.get(m.data.assigned_to)!;
+    const envelope = existing.data ? null : buildInboxEscalation({ language, tenantName: TENANT_NAME, inboxUrl: inboxStaffUrl(configuredOrigin(process.env.STAFF_ORIGIN)?.origin ?? process.env.NEXT_PUBLIC_APP_URL),
+      reason: m.data.reason, sender: m.data.sender_address, subject: m.data.subject, translate: translator(language) });
+    await attempt(run.escalations, { messageId: row.message_id, kind: "escalation", escalation: envelope });
+  }
   return run;
 }
