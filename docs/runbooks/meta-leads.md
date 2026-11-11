@@ -20,9 +20,13 @@ the two-session lock proof), prod only on Juan's word, and only then the switch.
      note; no field, stage, assignee or quote change; no email);
    - a confirmed/out lead or several candidates → `needs_human` (`closed_lead` / `ambiguous_leads`).
 3. **Build 2 — the ONE continuation email**, only for `created`:
-   - `meta_lead_email_claim` (SQL) parks the row as `needs_human / email_unknown` BEFORE any token
-     is minted or any provider call is made, and refuses a second email to the same address inside
-     24 h (`email_capped`). The portal's `magic_link_email` rate limit (5 / 15 min) is applied too.
+   - `meta_lead_email_claim` (SQL) takes the per-address advisory lock
+     (`meta_lead_email:<email_sha256>`) FIRST, then the receipt row, parks the row as
+     `needs_human / email_unknown` BEFORE any token is minted or any provider call is made, and
+     refuses a second email to the same address inside 24 h (`email_capped`). Two receipts for one
+     address therefore serialize their cap check (the offline harness proves it sequentially; **the
+     two-session proof is CC's sim step**, with the 0300 lock check). The portal's
+     `magic_link_email` rate limit (5 / 15 min) is applied too.
    - The portal's own mint + send (`mintAndSendPortalLink`): a single-use token, **72 h** lifetime,
      "latest link wins" (the customer's older live portal links are retired), the form's language,
      Resend idempotency key `meta-lead-email:<leadgen_id>`, at most **two identical** in-process
@@ -33,10 +37,12 @@ the two-session lock proof), prod only on Juan's word, and only then the switch.
      (allowlist / portal identity / sender config off → error `configuration`).
    - **Nothing re-mints or resends automatically.** See "Email states" below.
 4. The customer taps the link → `/order/verify` (Spanish copy for a Spanish form) → the token is
-   consumed once → `createDraftFromIntake` with the token's `pipelineId` → `portal_intake_apply`
+   consumed once → `createDraftFromIntake` with the token's `pipelineId` → `portal_intake_attach`
    (same customer lock) attaches ONLY a draft quote to that lead when the verified customer owns
-   it, it is still inquiry/quote_sent and has no live quote; otherwise today's portal path runs
-   (a new portal lead). The build page opens on that draft.
+   it, it is still inquiry/quote_sent and has no live quote; otherwise it writes nothing and
+   today's portal path runs unchanged (a new portal lead). The build page opens on that draft.
+   **The plain portal path (no pipelineId) is byte-identical to before build 2** — the same three
+   JS inserts, same audit row, no lock, no new refusal (pinned by a comparative test).
 
 ### Double capture (Juan's ruling, 2026-11-11)
 
@@ -86,8 +92,11 @@ Do these in order; the UI labels vary by account, so confirm each screen.
    initially unchecked). One form per language; `META_LEADS_FORMS` lists each
    `{"pageId","formId","language"}`.
 7. **Privacy link:** the form's privacy policy URL = the landing privacy page
-   (`https://eat.complimentsonlyoperations.com/privacy`) — **only after Juan/Pete approve the new
-   lead-form section** (`landing.privacy.leadform.*`, en + es). Do not publish the form before.
+   (`https://eat.complimentsonlyoperations.com/privacy`). **A11 gate: the lead-form section
+   (`landing.privacy.leadform.*`, en + es) and the checkbox copy were APPROVED by Juan on
+   2026-11-11**, with one change applied: the deletion line names the catering address, read from
+   the tenant config (`cateringContactEmail`, config/tenant/landing.ts — `catering@complimentsonlysubs.com`
+   for CO; unset → the sentence without an address). Any further wording change = re-approval.
 8. **Lead Ads Testing Tool** (Meta for Developers → Tools → Lead Ads Testing): submit one ticked
    and one unticked example per language. Confirm the webhook receipt, the Graph fetch and the
    ledger row.
@@ -112,8 +121,19 @@ Do these in order; the UI labels vary by account, so confirm each screen.
 | needs_human / suppressed / configuration | Allowlist, portal identity or sender config off. | Expected before launch. |
 | attached / not_applicable | Attached to an open lead; no email by design. | The assignee follows up. |
 
-**Never resend from code.** The customer can always start again at `/order/start` (their lead is
-found by email and the draft attaches through the same lock when it qualifies).
+**Never resend from code.** Recovery is by hand, and it is honest about what the portal does:
+
+- A customer who lost the email can start again at `/order/start`. That creates a **NEW** portal
+  request (a new `portal` lead + draft) — the public parser strips every id on purpose, so a public
+  request can never attach itself to the Meta lead. The Meta lead stays in the pipeline as its own row.
+- Keith then **merges by hand** in the pipeline: keep the lead that carries the live quote (the
+  portal one), copy anything only the Meta lead knows (company text, notes, the Meta profile email
+  note, headcount/date as typed) into it, and move the Meta lead to **`lost`** with a note
+  "duplicate — continued as portal request <id>" (append-only; nothing is deleted). If the Meta lead
+  already has a quote in progress, keep THAT one and mark the new portal lead `lost` the same way.
+- Only a token minted by the worker (the continuation email) attaches to the Meta lead, and only
+  while that lead is still inquiry/quote_sent with no live quote; after that the attach answers
+  `attached=false` and the portal's ordinary create path runs.
 
 ## Carried operational items (from the build-1 review)
 

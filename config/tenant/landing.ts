@@ -27,6 +27,9 @@ export interface LandingTenantConfig {
   cateringPortalLive: boolean;
   cateringUrl: string;
   inquiryUrl: string;
+  /** Public catering contact named on the privacy page's lead-form deletion line (Juan 2026-11-11).
+   *  Unset → the page falls back to the sentence that names no address. Tenant DATA, never logic. */
+  cateringContactEmail?: string;
   footerLinks: readonly { key: LandingFooterKey; url: string }[];
   attribution: { ads: readonly string[]; utm: Record<string, readonly string[]> };
 }
@@ -57,6 +60,7 @@ export const landingTenantConfig: LandingTenantConfig = {
   cateringPortalLive: false,
   cateringUrl: "https://www.toasttab.com/catering/compliments-only-capitol-hill-526-8th-street-southeast",
   inquiryUrl: "https://complimentsonlysubs.com/washington-capitol-hill-compliments-only-catering-inquiry",
+  cateringContactEmail: "catering@complimentsonlysubs.com",
   // Official public destinations verified in docs/landing-v2-facts.md (2026-10-16).
   footerLinks: [
     {key:"app",url:"https://order.complimentsonlysubs.com/"},

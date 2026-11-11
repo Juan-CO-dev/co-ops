@@ -167,6 +167,7 @@
   "landing.privacy.leadform.optin": "Marketing email is optional. You only receive news and offers if you tick the opt-in box on the form, and only at the email you ticked it for. A work email you give for the order is never used for marketing unless it is the same address. You can unsubscribe at any time.",
   "landing.privacy.leadform.retention": "We keep the request with our catering records and the form's technical receipt for as long as we keep the request. We do not store your form answers in our logs. Meta keeps its own copy of your answers under its policies.",
   "landing.privacy.leadform.delete": "To ask us to delete your details or withdraw marketing consent, write to our catering team from the email address you used — reply to any email we sent you, or use the contact on our ordering page. We confirm within a few business days.",
+  "landing.privacy.leadform.delete_email": "To ask us to delete your details or withdraw marketing consent, email us at {email} from the email address you used. We confirm within a few business days.",
   "landing.privacy.back": "Back to lunch",
   "landing.consent.notice": "With your permission, we count order clicks and, when configured, share visits and clicks with Meta to understand our ads. Ordering works either way. Directions and pickup/delivery.",
   "landing.consent.accept": "Accept measurement",

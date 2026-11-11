@@ -145,8 +145,14 @@ export async function mintAndSendPortalLink(input: MintAndSendInput): Promise<Po
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     };
     let result = await sendEmail(payload);
-    if ((input.tries ?? 1) === 2 && classifySendResult(result) === "unknown") result = await sendEmail(payload);
-    const state = classifySendResult(result);
+    let state = classifySendResult(result);
+    if ((input.tries ?? 1) === 2 && state === "unknown") {
+      // UNKNOWN IS STICKY (review P2-2): the first attempt may have been accepted after its timeout, so
+      // only a confirmed provider id on the identical second try resolves it to sent. A named refusal
+      // on the second try proves nothing about the first — it stays unknown, never failed.
+      const second = await sendEmail(payload);
+      if (classifySendResult(second) === "sent") { result = second; state = "sent"; }
+    }
     outcome = state === "sent" ? { kind: "sent", tokenId, providerId: (result as { id: string }).id }
       : state === "unknown" ? { kind: "unknown", tokenId }
       : { kind: "failed", tokenId, code: (result as { code?: string }).code ?? null };

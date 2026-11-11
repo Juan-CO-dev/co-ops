@@ -167,6 +167,7 @@
   "landing.privacy.leadform.optin": "El correo de marketing es opcional. Solo recibes novedades y ofertas si marcas la casilla del formulario, y solo en el correo para el que la marcaste. Un correo de trabajo que diste para el pedido nunca se usa para marketing, salvo que sea la misma dirección. Puedes cancelar la suscripción cuando quieras.",
   "landing.privacy.leadform.retention": "Guardamos la solicitud con nuestros registros de catering y el recibo técnico del formulario mientras conservemos la solicitud. No guardamos tus respuestas en nuestros registros de sistema. Meta conserva su propia copia de tus respuestas según sus políticas.",
   "landing.privacy.leadform.delete": "Para pedirnos que borremos tus datos o retirar tu permiso de marketing, escríbenos al equipo de catering desde el correo que usaste: responde a cualquier correo que te hayamos mandado o usa el contacto de nuestra página de pedidos. Te confirmamos en unos días hábiles.",
+  "landing.privacy.leadform.delete_email": "Para pedirnos que borremos tus datos o retirar tu permiso de marketing, escríbenos a {email} desde el correo que usaste. Te confirmamos en unos días hábiles.",
   "landing.privacy.back": "Vuelve al almuerzo",
   "landing.consent.notice": "Con tu permiso, contamos clics de pedidos y, si está configurado, compartimos visitas y clics con Meta para entender nuestros anuncios. Puedes pedir con cualquier opción. Indicaciones y recogida/entrega.",
   "landing.consent.accept": "Aceptar medición",

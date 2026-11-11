@@ -2,9 +2,10 @@
 -- No database access during authoring. Sim proof and schema check precede any apply.
 -- Build 1: the ledger, the lead-only intake RPC and the explicit consent writer.
 -- Build 2 (edited in place while still an unapplied file): the continuation-email ledger states
--- (meta_lead_email_claim / meta_lead_email_result, A3 + A6 + A9) and portal_intake_apply, the
--- portal's own create-or-attach draft writer, which takes the SAME customer intake lock as
--- meta_lead_intake_apply so a portal submission and a Meta lead serialize (A1).
+-- (meta_lead_email_claim / meta_lead_email_result, A3 + A6 + A9) and portal_intake_attach, the
+-- Meta continuation's attach-only draft writer, which takes the SAME customer intake lock as
+-- meta_lead_intake_apply (A1). The plain portal path (no pipelineId) is deliberately untouched —
+-- today's three JS inserts, byte for byte (review ruling, 2026-11-11) — so it takes no lock.
 -- lead_source is unconstrained text in 0108; its application vocabulary is extended separately.
 begin;
 
@@ -123,9 +124,10 @@ create function public.meta_lead_intake_apply(p_leadgen_id text,p_lease_id uuid,
 returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
 declare e public.meta_lead_events%rowtype; v_count integer; v_closed integer; v_pipeline uuid; v_stage text; v_state text; v_error text;
 begin
-  -- The portal's own intake writer (portal_intake_apply, below) takes this SAME customer lock, so a
-  -- portal submission and a Meta lead for one customer serialize. Customer resolution is done first
-  -- in JS (the existing resolver handles the insert race); no nested identity lock here.
+  -- The Meta continuation's draft attach (portal_intake_attach, below) takes this SAME customer lock,
+  -- so a continuation and a second Meta lead for one customer serialize. The plain portal intake
+  -- (no pipelineId) stays on today's lock-free JS inserts by ruling. Customer resolution is done
+  -- first in JS (the existing resolver handles the insert race); no nested identity lock here.
   if p_customer_id is null then raise exception 'invalid_customer'; end if;
   perform pg_advisory_xact_lock(hashtextextended('catering_customer_intake:'||p_customer_id,0));
   select * into e from public.meta_lead_events where leadgen_id=p_leadgen_id for update;
@@ -217,15 +219,24 @@ end $$;
 -- and result is then an honest unknown, never a silent pending) and refuses a second email to the
 -- same address inside 24 h (the per-address cap; the magic_link_email rate limit is applied by the
 -- JS sender on top). Nothing here re-mints or resends; the runbook owns the manual requeue.
+-- LOCK ORDER (review P2-3): (1) the per-address advisory lock 'meta_lead_email:'||email_sha256,
+-- taken from an unlocked read of the hash, THEN (2) the receipt row FOR UPDATE (the hash is
+-- re-read under the row lock and must match). Two receipts sharing an address therefore serialize
+-- their cap check + attempt stamp; no function holds a receipt row while waiting for an advisory
+-- lock (meta_lead_intake_apply takes its customer lock before its row lock too), so no cycle.
+-- Offline harness = sequential proof; the two-session proof is CC's sim step.
 create function public.meta_lead_email_claim(p_leadgen_id text)
 returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
-declare e public.meta_lead_events%rowtype;
+declare e public.meta_lead_events%rowtype; v_hash text;
 begin
+  select email_sha256 into v_hash from public.meta_lead_events where leadgen_id=p_leadgen_id;
+  if not found or v_hash is null then return jsonb_build_object('claimed',false,'reason','not_claimable'); end if;
+  perform pg_advisory_xact_lock(hashtextextended('meta_lead_email:'||v_hash,0));
   select * into e from public.meta_lead_events where leadgen_id=p_leadgen_id for update;
-  if not found or e.state<>'created' or e.email_state<>'pending' or e.pipeline_id is null then
+  if not found or e.state<>'created' or e.email_state<>'pending' or e.pipeline_id is null or e.email_sha256 is distinct from v_hash then
     return jsonb_build_object('claimed',false,'reason','not_claimable');
   end if;
-  if e.email_sha256 is not null and exists(select 1 from public.meta_lead_events o
+  if exists(select 1 from public.meta_lead_events o
       where o.email_sha256=e.email_sha256 and o.leadgen_id<>e.leadgen_id
         and o.email_attempted_at>clock_timestamp()-interval '24 hours') then
     update public.meta_lead_events set state='needs_human',error_code='email_capped',email_state='capped',
@@ -265,52 +276,38 @@ begin
   return true;
 end $$;
 
--- Build 2, A1: the portal's create-or-attach draft writer, called by createDraftFromIntake AFTER
--- email verification. Same customer intake lock as meta_lead_intake_apply. With p_pipeline_id: that
--- lead must be owned by the customer, in inquiry/quote_sent and carry no live quote — then ONLY the
--- draft quote is inserted on it (a null lead location_id is filled). Otherwise the create branch is
--- exactly today's JS path: lead (source portal, inquiry) + stage event + draft quote.
-create function public.portal_intake_apply(p_customer_id uuid,p_pipeline_id uuid,p_intake jsonb)
+-- Build 2, A1: the Meta continuation's ATTACH-ONLY draft writer, called by createDraftFromIntake
+-- AFTER email verification when the token carries a pipelineId. Same customer intake lock as
+-- meta_lead_intake_apply. The lead must be owned by the customer, in inquiry/quote_sent and carry
+-- no live quote — then ONLY the draft quote is inserted on it (a null lead location_id is filled).
+-- Anything else answers attached=false and writes NOTHING: the JS caller then runs today's portal
+-- create path unchanged (review ruling 2026-11-11: the plain portal path is byte-identical).
+create function public.portal_intake_attach(p_customer_id uuid,p_pipeline_id uuid,p_intake jsonb)
 returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
-declare v_lead public.catering_pipeline%rowtype; v_location uuid; v_pipeline uuid; v_quote uuid; v_attached boolean:=false;
+declare v_lead public.catering_pipeline%rowtype; v_location uuid; v_quote uuid;
 begin
-  if p_customer_id is null then raise exception 'invalid_customer'; end if;
+  if p_customer_id is null or p_pipeline_id is null then raise exception 'invalid_customer'; end if;
   if p_intake is null or jsonb_typeof(p_intake)<>'object' or octet_length(p_intake::text)>32768
     or nullif(btrim(p_intake->>'contact_name'),'') is null then raise exception 'invalid_intake'; end if;
   v_location:=nullif(p_intake->>'location_id','')::uuid;
   if v_location is null or not exists(select 1 from public.locations where id=v_location and active) then raise exception 'invalid_location'; end if;
   if not exists(select 1 from public.catering_customers where id=p_customer_id and active) then raise exception 'invalid_customer'; end if;
   perform pg_advisory_xact_lock(hashtextextended('catering_customer_intake:'||p_customer_id,0));
-  if p_pipeline_id is not null then
-    select * into v_lead from public.catering_pipeline where id=p_pipeline_id for update;
-    if found and v_lead.customer_id=p_customer_id and v_lead.stage in ('inquiry','quote_sent')
-      and not exists(select 1 from public.catering_quotes q where q.pipeline_id=v_lead.id and q.superseded_at is null) then
-      if v_lead.location_id is null then
-        update public.catering_pipeline set location_id=v_location where id=v_lead.id;
-        v_lead.location_id:=v_location;
-      end if;
-      v_pipeline:=v_lead.id; v_attached:=true;
-      insert into public.catering_quotes(root_id,version,pipeline_id,customer_id,location_id,status,origin,event_date,headcount,is_delivery,created_by)
-      values(null,1,v_pipeline,p_customer_id,v_lead.location_id,'draft','self_serve',
-        coalesce(nullif(p_intake->>'event_date','')::date,v_lead.event_date),coalesce(nullif(p_intake->>'headcount','')::integer,v_lead.headcount),
-        coalesce((p_intake->>'is_delivery')::boolean,false),null)
-      returning id into v_quote;
-      return jsonb_build_object('quote_id',v_quote,'pipeline_id',v_pipeline,'attached',true);
-    end if;
+  select * into v_lead from public.catering_pipeline where id=p_pipeline_id for update;
+  if not found or v_lead.customer_id is distinct from p_customer_id or v_lead.stage not in ('inquiry','quote_sent')
+    or exists(select 1 from public.catering_quotes q where q.pipeline_id=v_lead.id and q.superseded_at is null) then
+    return jsonb_build_object('attached',false,'quote_id',null,'pipeline_id',null);
   end if;
-  insert into public.catering_pipeline(contact_name,company,event_date,headcount,contact_phone,delivery_address,time_window,event_type,
-    dietary_notes,event_name,dropoff_door,geo_lat,geo_lng,fulfillment_routed,stage,lead_source,location_id,customer_id,created_by)
-  values(btrim(p_intake->>'contact_name'),p_intake->>'company',nullif(p_intake->>'event_date','')::date,nullif(p_intake->>'headcount','')::integer,
-    p_intake->>'contact_phone',p_intake->>'delivery_address',p_intake->>'time_window',p_intake->>'event_type',p_intake->>'dietary_notes',
-    p_intake->>'event_name',p_intake->>'dropoff_door',(p_intake->>'geo_lat')::double precision,(p_intake->>'geo_lng')::double precision,
-    coalesce((p_intake->>'fulfillment_routed')::boolean,false),'inquiry','portal',v_location,p_customer_id,null)
-  returning id into v_pipeline;
-  insert into public.catering_pipeline_events(pipeline_id,from_stage,to_stage,note,actor_id) values(v_pipeline,null,'inquiry',null,null);
+  if v_lead.location_id is null then
+    update public.catering_pipeline set location_id=v_location where id=v_lead.id;
+    v_lead.location_id:=v_location;
+  end if;
   insert into public.catering_quotes(root_id,version,pipeline_id,customer_id,location_id,status,origin,event_date,headcount,is_delivery,created_by)
-  values(null,1,v_pipeline,p_customer_id,v_location,'draft','self_serve',nullif(p_intake->>'event_date','')::date,
-    nullif(p_intake->>'headcount','')::integer,coalesce((p_intake->>'is_delivery')::boolean,false),null)
+  values(null,1,v_lead.id,p_customer_id,v_lead.location_id,'draft','self_serve',
+    coalesce(nullif(p_intake->>'event_date','')::date,v_lead.event_date),coalesce(nullif(p_intake->>'headcount','')::integer,v_lead.headcount),
+    coalesce((p_intake->>'is_delivery')::boolean,false),null)
   returning id into v_quote;
-  return jsonb_build_object('quote_id',v_quote,'pipeline_id',v_pipeline,'attached',v_attached);
+  return jsonb_build_object('attached',true,'quote_id',v_quote,'pipeline_id',v_lead.id);
 end $$;
 
 -- The 0275 house lease body with the 0298/0300 union; neither migration drops the other job.
@@ -349,7 +346,7 @@ do $$ declare t text; r text; privilege text; f regprocedure; begin
     'public.customer_consent_record_explicit(text,text,text,timestamptz,text,text)'::regprocedure,
     'public.meta_lead_email_claim(text)'::regprocedure,
     'public.meta_lead_email_result(text,text,uuid,text)'::regprocedure,
-    'public.portal_intake_apply(uuid,uuid,jsonb)'::regprocedure,
+    'public.portal_intake_attach(uuid,uuid,jsonb)'::regprocedure,
     'public.claim_cron_route(text)'::regprocedure
   ] loop
     execute format('revoke all on function %s from public, anon, authenticated, service_role',f);

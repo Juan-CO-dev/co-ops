@@ -7,6 +7,13 @@ it("a Meta continuation link carries lang=es and ttl=72h", () => {
   expect(parseVerifyParams("?token=abc&ttl=72h")).toEqual({ token: "abc", language: "en", ttlLabel: "72 hours" });
   expect(parseVerifyParams("?token=abc&ttl=1h&lang=es")).toEqual({ token: "abc", language: "es", ttlLabel: "1 hora" });
 });
+it("the token: absent and EMPTY are both missing (review P3-4); a value is kept verbatim", () => {
+  expect(parseVerifyParams("").token).toBeNull();
+  expect(parseVerifyParams("?lang=es").token).toBeNull();
+  expect(parseVerifyParams("?token=").token).toBeNull();
+  expect(parseVerifyParams("?token=&lang=es").token).toBeNull();
+  expect(parseVerifyParams("?token=abc.def-123").token).toBe("abc.def-123");
+});
 it("a plain portal link keeps today's 30 minutes in English; garbage is ignored", () => {
   expect(parseVerifyParams("?token=abc")).toEqual({ token: "abc", language: "en", ttlLabel: "30 minutes" });
   expect(parseVerifyParams("?token=abc&lang=fr&ttl=<script>")).toEqual({ token: "abc", language: "en", ttlLabel: "30 minutes" });

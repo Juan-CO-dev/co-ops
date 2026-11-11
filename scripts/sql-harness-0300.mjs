@@ -89,7 +89,7 @@ try {
   for(const role of ['anon','authenticated','service_role']) for(const privilege of ['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) {
     check((await one('select has_table_privilege($1,$2,$3) x',[role,'meta_lead_events',privilege])).x===(role==='service_role'&&privilege==='SELECT'),`${role} ${privilege} ceiling`);
   }
-  for(const {oid,proname,prosecdef,proconfig} of (await db.query("select oid,proname,prosecdef,proconfig from pg_proc where proname like 'meta_lead_%' or proname in ('customer_consent_record_explicit','portal_intake_apply')")).rows){
+  for(const {oid,proname,prosecdef,proconfig} of (await db.query("select oid,proname,prosecdef,proconfig from pg_proc where proname like 'meta_lead_%' or proname in ('customer_consent_record_explicit','portal_intake_attach')")).rows){
     check(prosecdef&&proconfig.includes('search_path=pg_catalog, public'),`${proname} definer/path`);
     for(const role of ['anon','authenticated','service_role']) check((await one("select has_function_privilege($1,$2::oid,'EXECUTE') x",[role,oid])).x===(role==='service_role'),`${proname} ${role} execute`);
   }
@@ -229,40 +229,50 @@ try {
   const erin=await person('Erin'); await createLead('26',erin); await emailClaim('26');
   check(await emailResult('26','capped',null,null),'JS rate-limit cap result accepted');
   check((await ledger('26')).email_state==='capped'&&(await ledger('26')).email_attempted_at===null,'rate-limited send counts no attempt');
+  // Per-address lock (review P2-3): the claim serializes on the hash, so a receipt with no hash
+  // (never applied) is simply not claimable, and the cap is judged after the lock. Sequential proof only.
+  await receive('28');
+  check((await emailClaim('28')).reason==='not_claimable','a receipt without an email hash is never claimable');
+  const lockHolder=await one("select count(*)::int n from pg_locks where locktype='advisory'");
+  check(lockHolder.n===0,'per-address advisory lock is transaction-scoped and released after the claim');
   await db.exec('reset role');
   await reject(()=>db.query("update meta_lead_events set email_state='sent' where leadgen_id='25'"),/check constraint/,'sent without token and provider id is refused by CHECK');
   await db.exec('set role service_role');
 
-  // ── Build 2: portal_intake_apply (A1) ───────────────────────────────────────────────────────
-  const portalIntake={contact_name:'Alice Portal',location_id:shop,event_date:'2027-03-04',headcount:12,is_delivery:true,contact_phone:'+12025550100',
-    delivery_address:'1 Example St',time_window:'11-12',event_type:'Lunch',dietary_notes:'None',event_name:'Offsite',dropoff_door:'Side',geo_lat:38.9,geo_lng:-77.0,fulfillment_routed:true,company:'Alice Co'};
-  const portalApply=(c,p,i=portalIntake)=>rpc('portal_intake_apply',[c,p,i]);
-  const attach=await portalApply(alice,aliceLead.pipeline_id);
+  // ── Build 2: portal_intake_attach (A1) — attach-only; everything else writes nothing ─────────
+  const portalIntake={contact_name:'Alice Portal',location_id:shop,event_date:'2027-03-04',headcount:12,is_delivery:true};
+  const portalAttach=(c,p,i=portalIntake)=>rpc('portal_intake_attach',[c,p,i]);
+  const rows=async()=>({leads:(await one('select count(*)::int n from catering_pipeline')).n,quotes:(await one('select count(*)::int n from catering_quotes')).n,events:(await one('select count(*)::int n from catering_pipeline_events')).n});
+  const attach=await portalAttach(alice,aliceLead.pipeline_id);
   const attachedQuote=await one('select * from catering_quotes where id=$1',[attach.quote_id]);
-  check(attach.attached===true&&attach.pipeline_id===aliceLead.pipeline_id&&attachedQuote.pipeline_id===aliceLead.pipeline_id&&attachedQuote.customer_id===alice&&attachedQuote.status==='draft'&&attachedQuote.origin==='self_serve'&&attachedQuote.location_id===shop&&attachedQuote.is_delivery===true,'portal continuation attaches ONLY a draft quote to the owned open lead');
+  check(attach.attached===true&&attach.pipeline_id===aliceLead.pipeline_id&&attachedQuote.pipeline_id===aliceLead.pipeline_id&&attachedQuote.customer_id===alice&&attachedQuote.status==='draft'&&attachedQuote.origin==='self_serve'&&attachedQuote.location_id===shop&&attachedQuote.is_delivery===true&&attachedQuote.version===1&&attachedQuote.root_id===null,'portal continuation attaches ONLY a draft quote to the owned open lead');
   check((await one('select count(*)::int n from catering_pipeline where customer_id=$1',[alice])).n===1&&(await one('select count(*)::int n from catering_pipeline_events where pipeline_id=$1 and to_stage=$2 and from_stage is null',[aliceLead.pipeline_id,'inquiry'])).n===1,'attach creates no lead and no stage event');
-  const again=await portalApply(alice,aliceLead.pipeline_id);
-  check(again.attached===false&&again.pipeline_id!==aliceLead.pipeline_id,'a lead with a live quote falls back to a new portal lead');
-  const portalLead=await one('select * from catering_pipeline where id=$1',[again.pipeline_id]);
-  check(portalLead.lead_source==='portal'&&portalLead.stage==='inquiry'&&portalLead.customer_id===alice&&portalLead.delivery_address==='1 Example St'&&portalLead.time_window==='11-12'&&portalLead.event_type==='Lunch'&&portalLead.dietary_notes==='None'&&portalLead.event_name==='Offsite'&&portalLead.dropoff_door==='Side'&&portalLead.geo_lat===38.9&&portalLead.geo_lng===-77&&portalLead.fulfillment_routed===true&&portalLead.company==='Alice Co'&&portalLead.contact_phone==='+12025550100','create branch stores every intake column like today');
-  check((await one('select count(*)::int n from catering_pipeline_events where pipeline_id=$1 and from_stage is null and to_stage=$2',[again.pipeline_id,'inquiry'])).n===1,'create branch writes the inquiry stage event');
+  const rowsBefore=await rows();
+  const again=await portalAttach(alice,aliceLead.pipeline_id);
+  assert.deepEqual(await rows(),rowsBefore);
+  check(again.attached===false&&again.quote_id===null&&again.pipeline_id===null,'a lead with a live quote answers attached=false and writes nothing');
   const frank=await person('Frank');
-  const foreign=await portalApply(frank,aliceLead.pipeline_id);
-  check(foreign.attached===false&&foreign.pipeline_id!==aliceLead.pipeline_id&&(await one('select customer_id from catering_pipeline where id=$1',[aliceLead.pipeline_id])).customer_id===alice,'another customer never attaches to a lead they do not own');
+  const foreign=await portalAttach(frank,aliceLead.pipeline_id);
+  assert.deepEqual(await rows(),rowsBefore);
+  check(foreign.attached===false&&(await one('select customer_id from catering_pipeline where id=$1',[aliceLead.pipeline_id])).customer_id===alice,'another customer never attaches to a lead they do not own');
   const grace=await person('Grace'); const graceLead=await createLead('27',grace);
   await db.exec('reset role');
   await db.query("update catering_pipeline set stage='confirmed' where id=$1",[graceLead.pipeline_id]);
   await db.exec('set role service_role');
-  check((await portalApply(grace,graceLead.pipeline_id)).attached===false,'a confirmed lead is never reopened by the portal');
+  const closedBefore=await rows();
+  check((await portalAttach(grace,graceLead.pipeline_id)).attached===false,'a confirmed lead is never reopened by the portal');
+  assert.deepEqual(await rows(),closedBefore);
+  check((await portalAttach(grace,randomUUID())).attached===false,'an unknown lead id answers attached=false');
   const heidi=await person('Heidi');
   await db.exec('reset role');
   const bare=await one("insert into catering_pipeline(customer_id,contact_name,stage,lead_source) values($1,'Heidi','inquiry','meta_lead_form') returning id",[heidi]);
   await db.exec('set role service_role');
-  const filled=await portalApply(heidi,bare.id);
+  const filled=await portalAttach(heidi,bare.id);
   check(filled.attached===true&&(await one('select location_id from catering_pipeline where id=$1',[bare.id])).location_id===shop,'attach fills a null lead location from the intake');
-  await reject(()=>portalApply(heidi,null,{...portalIntake,location_id:randomUUID()}),/invalid_location/,'unknown location refused');
-  await reject(()=>portalApply(heidi,null,{...portalIntake,contact_name:' '}),/invalid_intake/,'blank contact name refused');
-  await reject(()=>portalApply(randomUUID(),null),/invalid_customer/,'unknown customer refused');
+  await reject(()=>portalAttach(heidi,bare.id,{...portalIntake,location_id:randomUUID()}),/invalid_location/,'unknown location refused');
+  await reject(()=>portalAttach(heidi,bare.id,{...portalIntake,contact_name:' '}),/invalid_intake/,'blank contact name refused');
+  await reject(()=>portalAttach(randomUUID(),bare.id),/invalid_customer/,'unknown customer refused');
+  await reject(()=>portalAttach(heidi,null),/invalid_customer/,'attach without a lead id is refused (the plain portal path never calls this)');
   await db.exec('reset role');
   console.log(`PASS ${checks} checks. Offline single-session proof; simultaneous two-session sim proof remains required before apply.`);
 } finally {await db.close();}

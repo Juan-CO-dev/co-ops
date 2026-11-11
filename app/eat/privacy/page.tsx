@@ -6,6 +6,7 @@ import { serverT } from "@/lib/i18n/server";
 import { loadLandingConfig } from "@/lib/landing/config";
 import { LanguageToggle } from "@/components/landing/LanguageToggle";
 import { PrivacySettingsButton } from "@/components/landing/PrivacySettingsButton";
+import { leadformDeleteLine } from "@/lib/landing/privacy-copy";
 export default async function PrivacyPage({searchParams}:{searchParams:Promise<Record<string,string|string[]|undefined>>}) {
   const query = await searchParams;
   const queryString = new URLSearchParams(Object.entries(query).flatMap(([key,value]) => typeof value === "string" ? [[key,value]] : Array.isArray(value) ? value.map((v) => [key,v]) : [])).toString();
@@ -21,7 +22,7 @@ export default async function PrivacyPage({searchParams}:{searchParams:Promise<R
       <p>{serverT(language,"landing.privacy.leadform.use")}</p>
       <p>{serverT(language,"landing.privacy.leadform.optin")}</p>
       <p>{serverT(language,"landing.privacy.leadform.retention")}</p>
-      <p>{serverT(language,"landing.privacy.leadform.delete")}</p>
+      <p>{leadformDeleteLine(language, loadLandingConfig().cateringContactEmail)}</p>
     </section>
     <div className="flex flex-wrap items-center gap-x-6"><a href={`/?lang=${language}`} className="inline-flex min-h-11 items-center underline">{serverT(language,"landing.privacy.back")}</a><PrivacySettingsButton label={serverT(language,"landing.consent.settings")}/></div>
   </main>;

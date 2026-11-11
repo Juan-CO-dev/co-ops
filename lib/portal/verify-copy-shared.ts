@@ -9,7 +9,8 @@ export type VerifyLanguage = "en" | "es";
 
 export interface VerifyParams { token: string | null; language: VerifyLanguage; ttlLabel: string }
 
-/** `?token=…&lang=es&ttl=72h` → token + language + "72 hours" (en) / "72 horas" (es); unknown → 30 minutes. */
+/** `?token=…&lang=es&ttl=72h` → token + language + "72 hours" (en) / "72 horas" (es); unknown → 30 minutes.
+ *  An absent OR empty `token=` is `null` (review P3-4): both render the expired/recovery UI, never a spinner. */
 export function parseVerifyParams(search: string): VerifyParams {
   const params = new URLSearchParams(search);
   const language: VerifyLanguage = params.get("lang") === "es" ? "es" : "en";
@@ -18,7 +19,7 @@ export function parseVerifyParams(search: string): VerifyParams {
   const ttlLabel = hours !== null && hours > 0
     ? (language === "es" ? `${hours} ${hours === 1 ? "hora" : "horas"}` : `${hours} ${hours === 1 ? "hour" : "hours"}`)
     : (language === "es" ? "30 minutos" : "30 minutes");
-  return { token: params.get("token"), language, ttlLabel };
+  return { token: params.get("token") || null, language, ttlLabel };
 }
 
 export interface VerifyCopy {

@@ -67,6 +67,16 @@ it("A3: at most two IDENTICAL tries, the second only after an unknown-class outc
   expect(state.send.mock.calls[0]![0]).toBe(state.send.mock.calls[1]![0]);
   expect(state.rows).toHaveLength(1); // one token, never re-minted
 });
+it("UNKNOWN IS STICKY (review P2-2): a named refusal on the second try never downgrades a possibly-delivered first try", async () => {
+  state.send.mockResolvedValueOnce({ error: "timeout" }).mockResolvedValueOnce({ error: "refused", code: "validation_error" });
+  expect(await mintAndSendPortalLink(meta)).toEqual({ kind: "unknown", tokenId: expect.stringMatching(UUID) });
+  expect(state.send).toHaveBeenCalledTimes(2);
+  expect(state.send.mock.calls[0]![0]).toBe(state.send.mock.calls[1]![0]);
+});
+it("unknown then a confirmed id on the identical retry → sent with THAT id", async () => {
+  state.send.mockResolvedValueOnce({ error: "x", code: "concurrent_idempotent_requests" }).mockResolvedValueOnce({ id: "re_second" });
+  expect(await mintAndSendPortalLink(meta)).toEqual({ kind: "sent", tokenId: expect.stringMatching(UUID), providerId: "re_second" });
+});
 it.each([
   [{ error: "timeout" }, "unknown"], [{ error: "send returned no id" }, "unknown"],
   [{ error: "x", code: "internal_server_error" }, "unknown"], [{ error: "x", code: "application_error" }, "unknown"],
