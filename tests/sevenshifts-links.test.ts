@@ -56,22 +56,26 @@ describe("linkCandidates (R4) — two lists, sorted, and NOTHING pairs them", ()
   const links: UserLink[] = [{ id: "L1", sevenShiftsUserId: "505", userId: U(2), linkedAtLocationId: SHOP_A }];
 
   it("waiting = active, unlinked 7shifts people at the linked 7shifts location, with employee id and live role names", () => {
-    const out = linkCandidates({ remoteLocationId: "4569", users, edges, roles, members, links });
+    const out = linkCandidates({ locationId: SHOP_A, remoteLocationId: "4569", users, edges, roles, members, links });
     expect(out.waiting).toEqual([
       { remoteUserId: "501", displayName: "Ana R.", employeeId: "10482", roles: ["Line", "Prep"] },
       { remoteUserId: "502", displayName: "Bo D.", employeeId: "10490", roles: [] },
     ]);
   });
 
-  it("members = the CO-OPS members of the shop with no live link, sorted by name", () => {
-    const out = linkCandidates({ remoteLocationId: "4569", users, edges, roles, members, links });
+  it("members = the CO-OPS members of the shop with no live link AT THIS SHOP, sorted by name (0301: a link at the other shop excludes nobody)", () => {
+    const out = linkCandidates({ locationId: SHOP_A, remoteLocationId: "4569", users, edges, roles, members, links });
     expect(out.members).toEqual([{ id: U(1), name: "Ana Rivera" }, { id: U(3), name: "Zed Young" }]);
+    const elsewhere = linkCandidates({ locationId: SHOP_B, remoteLocationId: "4569", users, edges, roles, members, links });
+    expect(elsewhere.members.map((m) => m.id)).toEqual([U(1), U(2), U(3)]);
+    // 0301: a both-shops 7shifts account (505) linked at shop A is still WAITING at shop B.
+    expect(elsewhere.waiting.map((w) => w.remoteUserId)).toEqual(["501", "502", "505"]);
   });
 
   it("identical names AND an employee id equal to a CO-OPS field produce NO pairing: no suggestion, no score, no pre-selection", () => {
     const twinUsers = [remote("601", "Ana", "Rivera", { employeeId: U(1) })];
     const out = linkCandidates({
-      remoteLocationId: "4569", users: twinUsers, edges: [{ userId: "601", locationId: "4569", roleId: null }],
+      locationId: SHOP_A, remoteLocationId: "4569", users: twinUsers, edges: [{ userId: "601", locationId: "4569", roleId: null }],
       roles: [], members: [{ id: U(1), name: "Ana R." }], links: [],
     });
     expect(Object.keys(out).sort()).toEqual(["members", "waiting"]);
@@ -81,7 +85,7 @@ describe("linkCandidates (R4) — two lists, sorted, and NOTHING pairs them", ()
   });
 
   it("no linked 7shifts location → nobody is waiting (members still listed)", () => {
-    const out = linkCandidates({ remoteLocationId: null, users, edges, roles, members, links });
+    const out = linkCandidates({ locationId: SHOP_A, remoteLocationId: null, users, edges, roles, members, links });
     expect(out.waiting).toEqual([]);
     expect(out.members).toHaveLength(2);
   });
@@ -105,8 +109,25 @@ describe("linkedPeople — the shop's live links, never a full last name", () =>
       links, names: new Map([[U(1), "Ana Rivera"], [U(3), "Cy Lee"]]),
     });
     expect(out).toEqual([
-      { linkId: "L1", remoteUserId: "501", displayName: "Ana R.", employeeId: "10482", userId: U(1), userName: "Ana Rivera", linkedHere: true },
-      { linkId: "L2", remoteUserId: "503", displayName: "Cy L.", employeeId: null, userId: U(3), userName: "Cy Lee", linkedHere: false },
+      { linkId: "L1", remoteUserId: "501", displayName: "Ana R.", employeeId: "10482", userId: U(1), userName: "Ana Rivera", linkedHere: true, linkedAtLocationId: SHOP_A, linkedAtShopName: "" },
+      { linkId: "L2", remoteUserId: "503", displayName: "Cy L.", employeeId: null, userId: U(3), userName: "Cy Lee", linkedHere: false, linkedAtLocationId: SHOP_B, linkedAtShopName: "" },
+    ]);
+  });
+
+  it("0301: a member's link made at the OTHER shop is listed too, with its shop name; this shop's link sorts first", () => {
+    const users = [remote("501", "Ana", "Rivera", { employeeId: "10482" }), remote("503", "Ana", "Rivera", { employeeId: "20001" })];
+    const links: UserLink[] = [
+      { id: "L2", sevenShiftsUserId: "503", userId: U(1), linkedAtLocationId: SHOP_B },
+      { id: "L1", sevenShiftsUserId: "501", userId: U(1), linkedAtLocationId: SHOP_A },
+      { id: "L9", sevenShiftsUserId: "999", userId: U(9), linkedAtLocationId: SHOP_B },
+    ];
+    const out = linkedPeople({
+      locationId: SHOP_A, remoteLocationId: "4569", users, edges: [], links, names: new Map([[U(1), "Ana Rivera"]]),
+      memberIds: new Set([U(1)]), shopNames: new Map([[SHOP_A, "Shop A"], [SHOP_B, "Shop B"]]),
+    });
+    expect(out).toEqual([
+      { linkId: "L1", remoteUserId: "501", displayName: "Ana R.", employeeId: "10482", userId: U(1), userName: "Ana Rivera", linkedHere: true, linkedAtLocationId: SHOP_A, linkedAtShopName: "Shop A" },
+      { linkId: "L2", remoteUserId: "503", displayName: "Ana R.", employeeId: "20001", userId: U(1), userName: "Ana Rivera", linkedHere: false, linkedAtLocationId: SHOP_B, linkedAtShopName: "Shop B" },
     ]);
   });
 });
@@ -399,6 +420,41 @@ describe("loadLinkScreen", () => {
     const src = readFileSync("lib/sevenshifts/links.ts", "utf8");
     const wageReads = [...src.matchAll(/from\("sevenshifts_wages"\)\.select\("([^"]*)"\)/g)].map((m) => m[1]);
     expect(wageReads).toEqual(["user_id"]);
+  });
+
+  it("0301: a person with one 7shifts account per shop — both links listed with their shop; pickable at a shop where they hold no link; a both-shops account waits at each shop", async () => {
+    const w = world();
+    w.tables.user_locations!.push({ user_id: U(1), location_id: SHOP_B, active: true });
+    w.tables.sevenshifts_location_links!.push({ id: "SL2", location_id: SHOP_B, sevenshifts_location_id: "4570", active: true });
+    w.tables.sevenshifts_users!.push({ id: "503", first_name: "Ana", last_name: "Rivq", preferred_first_name: null, employee_id: "20001", active: true });
+    w.tables.sevenshifts_user_assignments!.push({ user_id: "503", location_id: "4570", role_id: null, active: true });
+    // 502 (Bo) is ONE account at BOTH locations, linked so far at shop A only.
+    w.tables.sevenshifts_user_assignments!.push({ user_id: "502", location_id: "4570", role_id: null, active: true });
+    w.tables.user_locations!.push({ user_id: U(2), location_id: SHOP_B, active: true });
+    w.tables.sevenshifts_user_links = [
+      { id: "UL1", sevenshifts_user_id: "501", user_id: U(1), linked_at_location_id: SHOP_A, active: true },
+      { id: "UL2", sevenshifts_user_id: "503", user_id: U(1), linked_at_location_id: SHOP_B, active: true },
+      { id: "UL3", sevenshifts_user_id: "502", user_id: U(2), linked_at_location_id: SHOP_A, active: true },
+    ];
+    const a = await loadLinkScreen(w.db, { actor: moo, locationId: SHOP_A }, READY);
+    expect(a.linked).toEqual([
+      { linkId: "UL1", remoteUserId: "501", displayName: "Ana R.", employeeId: "10482", userId: U(1), userName: "Ana Rivera", linkedHere: true, linkedAtLocationId: SHOP_A, linkedAtShopName: "Shop A" },
+      { linkId: "UL2", remoteUserId: "503", displayName: "Ana R.", employeeId: "20001", userId: U(1), userName: "Ana Rivera", linkedHere: false, linkedAtLocationId: SHOP_B, linkedAtShopName: "Shop B" },
+      { linkId: "UL3", remoteUserId: "502", displayName: "Bo D.", employeeId: null, userId: U(2), userName: "Bo Diaz", linkedHere: true, linkedAtLocationId: SHOP_A, linkedAtShopName: "Shop A" },
+    ]);
+    expect(a.members.map((m) => m.name)).toEqual(["Gee Em", "Mo O"]); // linked HERE → not pickable here
+    expect(a.waiting).toEqual([]);
+    // Shop B: Ana's shop-B account unlinked → she is pickable there although linked at shop A, her shop-A link still shows
+    // with its shop, and Bo's both-shops account (502) is WAITING at shop B while Bo is pickable there.
+    w.tables.sevenshifts_user_links = w.tables.sevenshifts_user_links.filter((l) => l.id !== "UL2");
+    const b = await loadLinkScreen(w.db, { actor: moo, locationId: SHOP_B }, READY);
+    expect(b.members.map((m) => m.name)).toEqual(["Ana Rivera", "Bee Shop", "Bo Diaz"]);
+    expect(b.waiting.map((p) => p.remoteUserId)).toEqual(["503", "502"]);
+    expect(b.linked).toEqual([
+      { linkId: "UL1", remoteUserId: "501", displayName: "Ana R.", employeeId: "10482", userId: U(1), userName: "Ana Rivera", linkedHere: false, linkedAtLocationId: SHOP_A, linkedAtShopName: "Shop A" },
+      { linkId: "UL3", remoteUserId: "502", displayName: "Bo D.", employeeId: null, userId: U(2), userName: "Bo Diaz", linkedHere: false, linkedAtLocationId: SHOP_A, linkedAtShopName: "Shop A" },
+    ]);
+    expect(JSON.stringify([a, b])).not.toMatch(/Rivq|Dizq/);
   });
 
   it("not_supported (multi-company): the state and the runs only, no people loaded", async () => {

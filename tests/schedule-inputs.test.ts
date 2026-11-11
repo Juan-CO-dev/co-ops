@@ -170,6 +170,37 @@ describe("loadSchedulingInputs — the one batch loader", () => {
     expect(inputs.weeks[WEEK]).toMatchObject({ headRevisionId: null, head: null, edited: false });
     expect(inputs.wages).toEqual({ byUserCents: {}, source: "none" }); // 7shifts not ready: no wage read at all
   });
+  it("0301: wages come through the link made for THIS shop — a person with one 7shifts account per shop gets this shop's rate, never the other's", async () => {
+    const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const t = baseTables();
+    t.sevenshifts_user_links = [
+      { id: "ul1", sevenshifts_user_id: "701", user_id: EMP, linked_at_location_id: A, active: true },
+      { id: "ul2", sevenshifts_user_id: "702", user_id: EMP, linked_at_location_id: B, active: true },
+      { id: "ul3", sevenshifts_user_id: "703", user_id: EMP2, linked_at_location_id: B, active: true }, // Zoe's only account is shop B's
+      { id: "ul4", sevenshifts_user_id: "704", user_id: KH, linked_at_location_id: A, active: false }, // an unlinked row never counts
+    ];
+    t.sevenshifts_wages = [
+      { user_id: "701", wage_type: "hourly", wage_cents: 2000, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "702", wage_type: "hourly", wage_cents: 2600, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "703", wage_type: "hourly", wage_cents: 2200, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "704", wage_type: "hourly", wage_cents: 9900, upcoming: false, effective_date: "2026-01-01", active: true },
+    ];
+    t.sevenshifts_labor_settings = [{ company_id: 1, weekly_ot_threshold: 40 }];
+    const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
+    process.env.SEVENSHIFTS_ACCESS_TOKEN = "test-token-not-real";
+    process.env.SEVENSHIFTS_SYNC = "1";
+    try {
+      const inputs = await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+      expect(inputs.wages).toEqual({ byUserCents: { [EMP]: 2000 }, source: "sevenshifts" });
+      const other = await loadSchedulingInputs(client({ ...t, user_locations: [...t.user_locations!, { user_id: EMP, location_id: B, active: true, assigned_at: "2026-05-01T12:00:00Z" }, { user_id: EMP2, location_id: B, active: true, assigned_at: "2026-05-01T12:00:00Z" }],
+        schedule_shop_settings: [{ location_id: B, enabled: true, estimated_hourly_cents: 1800, estimated_salaried_weekly_cents: 120000, agm_access: "read" }] }, emptyHistory),
+        { locationId: B, weekStarts: [WEEK], now: NOW });
+      expect(other.wages).toEqual({ byUserCents: { [EMP]: 2600, [EMP2]: 2200 }, source: "sevenshifts" });
+    } finally {
+      if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
+      if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;
+    }
+  });
   it("demand that does not load is `unavailable` with its cause (never a flat curve)", async () => {
     const inputs = await loadSchedulingInputs(client(baseTables(), async () => ({ data: null, error: { code: "PGRST202", message: "missing" } })), { locationId: A, weekStarts: [WEEK], now: NOW });
     expect(inputs.demand).toEqual({ kind: "unavailable", cause: "rpc_missing" });

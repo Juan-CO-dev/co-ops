@@ -73,6 +73,12 @@ export interface ResourceResult {
   error_code: ResourceErrorCode | null;
   /** Snapshot kinds only: users whose snapshot was incomplete or failed. */
   failed_users?: number;
+  /**
+   * Present only when rows were skipped: `{ reason: count }` over the closed `REJECT_REASONS`
+   * vocabulary (lib/sevenshifts/normalize-shared.ts), built by `rejectionHistogram` ONLY — never an
+   * index, a field name, a value or a payload. It tells the next reader WHICH rule fired.
+   */
+  reasons?: normalizers.RejectionHistogram;
 }
 export type SyncStatus = "ok" | "partial" | "failed";
 export type PersistenceErrorCode = "state_write_failed" | "ledger_write_failed";
@@ -217,7 +223,9 @@ export async function runSevenShiftsSync(
           await upsert(resource, rows);
           if (resource === "users") for (const r of rows) fetchedUsers.add(String(r.id));
           const error_code = pageError ?? (out.rejected.length > 0 ? "rejected_rows" : null);
-          return { rows: rows.length, skipped: out.rejected.length, pages, error_code };
+          const result: ResourceResult = { rows: rows.length, skipped: out.rejected.length, pages, error_code };
+          if (out.rejected.length > 0) result.reasons = normalizers.rejectionHistogram(out.rejected);
+          return result;
         } catch (e) {
           return { rows: 0, skipped: 0, pages: 0, error_code: codeOf(e) };
         }
@@ -243,6 +251,7 @@ export async function runSevenShiftsSync(
             rows = out.rows as unknown as Row[];
             complete = got.kind === "snapshot" && out.rejected.length === 0;
             result.skipped += out.rejected.length;
+            if (out.rejected.length > 0) result.reasons = normalizers.addHistograms(result.reasons ?? {}, normalizers.rejectionHistogram(out.rejected));
           } catch (e) {
             // The request or its shape failed: this user is NOT reconciled at all, so nothing of theirs retires.
             result.failed_users! += 1;

@@ -50,6 +50,12 @@ export interface LinkedPerson {
   userName: string;
   /** Made for THIS shop (a GM may unlink it); otherwise made at another shop (MoO+ only). */
   linkedHere: boolean;
+  /**
+   * The shop this account is linked at (0301: one 7shifts account per shop — a person who works at both
+   * shops holds one link at each). The name is "" when the caller has no name for it.
+   */
+  linkedAtLocationId: string;
+  linkedAtShopName: string;
 }
 
 function clean(s: string | null | undefined): string {
@@ -69,11 +75,14 @@ const byText = (a: string, b: string) => a.localeCompare(b, "en", { sensitivity:
 /**
  * The two lists the manager pairs BY HAND:
  *   waiting — active 7shifts people with a live assignment at the shop's linked 7shifts location and no
- *             live link, each with its employee id and live role names (sorted);
- *   members — the shop's CO-OPS members (as the caller narrowed them) with no live link.
+ *             live link AT THIS SHOP, each with its employee id and live role names (sorted);
+ *   members — the shop's CO-OPS members (as the caller narrowed them) with no live link AT THIS SHOP.
+ * 0301: a link counts only at its shop — a person linked at the other shop may still be given this shop's
+ * account, and a both-shops 7shifts account linked at the other shop is still waiting here.
  * Each list sorted by its display name (ties by id). Nothing pairs, suggests, scores or pre-selects.
  */
 export function linkCandidates(args: {
+  locationId: string;
   remoteLocationId: string | null;
   users: readonly RemoteUser[];
   edges: readonly LiveEdge[];
@@ -81,8 +90,9 @@ export function linkCandidates(args: {
   members: readonly CoopsMember[];
   links: readonly UserLink[];
 }): LinkCandidates {
-  const linkedRemote = new Set(args.links.map((l) => l.sevenShiftsUserId));
-  const linkedUsers = new Set(args.links.map((l) => l.userId));
+  const here = args.links.filter((l) => l.linkedAtLocationId === args.locationId);
+  const linkedRemote = new Set(here.map((l) => l.sevenShiftsUserId));
+  const linkedUsers = new Set(here.map((l) => l.userId));
   const roleName = new Map(args.roles.map((r) => [r.id, clean(r.name)]));
   const rolesByUser = new Map<string, Set<string>>();
   for (const e of args.edges) {
@@ -104,8 +114,10 @@ export function linkCandidates(args: {
 }
 
 /**
- * The shop's live person links: those made for this shop, plus those of 7shifts people assigned at the
- * shop's linked 7shifts location. Sorted by the CO-OPS name.
+ * The shop's live person links: those made for this shop, those of 7shifts people assigned at the shop's
+ * linked 7shifts location, and (0301) EVERY link of this shop's members wherever it was made — so a person
+ * with one account per shop is listed with both, each naming its shop. Sorted by the CO-OPS name, then the
+ * shop name (this shop first), then the link id.
  */
 export function linkedPeople(args: {
   locationId: string;
@@ -114,19 +126,26 @@ export function linkedPeople(args: {
   edges: readonly LiveEdge[];
   links: readonly UserLink[];
   names: ReadonlyMap<string, string>;
+  /** CO-OPS members of this shop: their links at other shops are listed too. Absent = none. */
+  memberIds?: ReadonlySet<string>;
+  /** Shop names by location id, for the "linked at" line. Absent = "". */
+  shopNames?: ReadonlyMap<string, string>;
 }): LinkedPerson[] {
   const here = new Set(args.edges.filter((e) => args.remoteLocationId !== null && e.locationId === args.remoteLocationId).map((e) => e.userId));
   const byId = new Map(args.users.map((u) => [u.id, u]));
+  const members = args.memberIds ?? new Set<string>();
   return args.links
-    .filter((l) => l.linkedAtLocationId === args.locationId || here.has(l.sevenShiftsUserId))
+    .filter((l) => l.linkedAtLocationId === args.locationId || here.has(l.sevenShiftsUserId) || members.has(l.userId))
     .map((l) => {
       const u = byId.get(l.sevenShiftsUserId);
       return {
         linkId: l.id, remoteUserId: l.sevenShiftsUserId, displayName: u ? displayName(u) : "", employeeId: u?.employeeId ?? null,
         userId: l.userId, userName: args.names.get(l.userId) ?? "", linkedHere: l.linkedAtLocationId === args.locationId,
+        linkedAtLocationId: l.linkedAtLocationId, linkedAtShopName: args.shopNames?.get(l.linkedAtLocationId) ?? "",
       };
     })
-    .sort((a, b) => byText(a.userName, b.userName) || (a.linkId < b.linkId ? -1 : 1));
+    .sort((a, b) => byText(a.userName, b.userName) || Number(b.linkedHere) - Number(a.linkedHere)
+      || byText(a.linkedAtShopName, b.linkedAtShopName) || (a.linkId < b.linkId ? -1 : 1));
 }
 
 // ─── the status line ─────────────────────────────────────────────────────────

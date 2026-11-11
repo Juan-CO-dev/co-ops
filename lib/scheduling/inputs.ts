@@ -266,13 +266,17 @@ async function loadEzcater(service: SupabaseClient, locationId: string, dates: r
     .eq("location_id", locationId).in("event_date", [...dates]).is("lead_id", null).order("id", { ascending: true }).range(f, t));
 }
 
-/** 7shifts hourly wages per linked user + the weekly overtime line — only when 7shifts is `ready`. */
-async function loadWages(service: SupabaseClient, memberIds: readonly string[]): Promise<{ wages: SchedulingInputs["wages"]; overtimeH: number | null }> {
+/**
+ * 7shifts hourly wages per linked user + the weekly overtime line — only when 7shifts is `ready`.
+ * 0301: a person holds one 7shifts account PER SHOP, so the wage is read through the link made for THIS
+ * shop (`linked_at_location_id`), never "any link of the user" — the other shop's rate is that shop's.
+ */
+async function loadWages(service: SupabaseClient, locationId: string, memberIds: readonly string[]): Promise<{ wages: SchedulingInputs["wages"]; overtimeH: number | null }> {
   if (sevenShiftsStatus().state !== "ready" || memberIds.length === 0) return { wages: { byUserCents: {}, source: "none" }, overtimeH: null };
   const links: Array<{ sevenshifts_user_id: string; user_id: string }> = [];
   for (const ids of chunks(memberIds)) {
     links.push(...await selectAllRows<{ sevenshifts_user_id: string; user_id: string }>((f, t) => service.from("sevenshifts_user_links")
-      .select("sevenshifts_user_id, user_id").in("user_id", ids).eq("active", true).order("user_id", { ascending: true }).range(f, t)));
+      .select("sevenshifts_user_id, user_id").in("user_id", ids).eq("linked_at_location_id", locationId).eq("active", true).order("user_id", { ascending: true }).range(f, t)));
   }
   const byRemote = new Map(links.map((l) => [String(l.sevenshifts_user_id), l.user_id]));
   const byUserCents: Record<string, number> = {};
@@ -335,7 +339,7 @@ export async function loadSchedulingInputs(service: SupabaseClient, args: LoadSc
       families: ["closingLines", "closingFinalization"],
     });
     const closing = closingDuration(closingFacts(facts.skills), structure.structure.shopDay.serviceCloseQ);
-    const { wages, overtimeH } = await loadWages(service, members.map((m) => m.userId));
+    const { wages, overtimeH } = await loadWages(service, locationId, members.map((m) => m.userId));
     const keptBudgetDigests = await loadKeptDigests(service, locationId);
     // Staff separations (0279): on leave / separated members never reach the roster (a missing 0279 = nobody).
     const employment = await loadEmploymentStates(service, members.map((m) => m.userId));
