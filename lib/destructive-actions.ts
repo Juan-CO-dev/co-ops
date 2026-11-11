@@ -36,6 +36,8 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  "vendor_mail.handle",
+  "vendor_mail.assign",
   "catering.inbox.handle",
   "catering.inbox.reassign",
   "vendor_location_account.save",

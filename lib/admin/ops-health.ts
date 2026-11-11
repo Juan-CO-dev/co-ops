@@ -19,18 +19,22 @@ import type { AuthContext } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { canManageInboundAliases } from "./inbound-settings-shared";
 import { InboundSettingsError } from "./inbound-settings";
+import { randomUUID } from "node:crypto";
+import { VendorMailError } from "@/lib/vendor-mail";
+import { redriveVendorMail } from "@/lib/vendor-mail-actions";
 import { isShopId } from "@/lib/shop-context-shared";
 
 export interface InboundHealth {
   count: number;
-  rows: { id: string; subject: string | null; content_state: "failed" | "blocked_config" }[];
+  rows: { id: string; subject: string | null; content_state: "failed" | "blocked_config" | "skipped" }[];
 }
 
 /** Exact global count and a bounded work list, available only to MoO+. */
 export async function loadInboundHealth(actor: AuthContext): Promise<InboundHealth> {
   if (!canManageInboundAliases(actor.user.role)) throw new InboundSettingsError(403, "forbidden");
   const { data, count, error } = await getServiceRoleClient().from("inbound_messages")
-    .select("id, subject, content_state", { count: "exact" }).in("content_state", ["failed", "blocked_config"])
+    .select("id, subject, content_state", { count: "exact" })
+    .or("content_state.eq.failed,content_state.eq.blocked_config,and(content_state.eq.skipped,lane.eq.catering,route_reason.eq.catering_address)")
     .order("created_at").limit(25);
   if (error) throw new InboundSettingsError(503, "unavailable");
   return { count: count ?? 0, rows: data ?? [] };
@@ -41,6 +45,16 @@ export async function redriveInbound(actor: AuthContext, id: string) {
   if (!canManageInboundAliases(actor.user.role)) throw new InboundSettingsError(403, "forbidden");
   if (!isShopId(id)) throw new InboundSettingsError(400, "invalid_payload");
   const sb = getServiceRoleClient();
+  const vendor = await sb.from("inbound_messages").select("lane,revision,content_state").eq("id", id).maybeSingle();
+  if (vendor.error) throw new InboundSettingsError(503, "unavailable");
+  if (vendor.data?.lane === "vendor_receipt") {
+    if (!["failed", "blocked_config"].includes(vendor.data.content_state)) throw new InboundSettingsError(409, "conflict");
+    await redriveVendorMail(actor, id, { expected_revision: vendor.data.revision, request_id: randomUUID() }).catch(error => {
+      if (error instanceof VendorMailError) throw new InboundSettingsError(error.status, error.code);
+      throw error;
+    });
+    return;
+  }
   const prior = await sb.from("inbound_messages").select("content_state, fetch_attempts, next_attempt_at, lane, route_reason")
     .eq("id", id).in("content_state", ["failed", "blocked_config", "skipped"]).maybeSingle();
   if (prior.error) throw new InboundSettingsError(503, "unavailable");
