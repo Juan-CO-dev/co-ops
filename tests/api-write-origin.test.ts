@@ -22,6 +22,7 @@ const exceptions: Record<string, { kind: string; reason: string }> = {
   'app/api/webhooks/stripe/route.ts POST': { kind: 'webhook', reason: 'Stripe signature over raw body; external provider has no browser Origin.' },
   'app/api/webhooks/stripe/[locationCode]/route.ts POST': { kind: 'webhook', reason: 'Same signature verifier with shop-specific credentials.' },
   'app/api/webhooks/ezcater/route.ts POST': { kind: 'webhook', reason: 'Configured HMAC verifier and delivery ledger authenticate provider.' },
+  'app/api/webhooks/meta-leads/route.ts POST': { kind: 'webhook', reason: 'X-Hub-Signature-256 HMAC over the raw bytes (app secret) authenticates Meta before any parse or ledger write.' },
   'app/api/webhooks/resend-inbound/route.ts POST': { kind: 'webhook', reason: 'Svix signature verifies inbound mail before payload processing.' },
   'app/api/webhooks/twilio-inbound/route.ts POST': { kind: 'webhook', reason: 'Twilio URL/form signature verifies external SMS.' },
   'app/api/auth/logout/route.ts POST': { kind: 'logout', reason: 'Unconditional cookie clearing/session termination; auth-pin-source-throttle.test.ts pins the ruling.' },
@@ -148,7 +149,7 @@ it('classifies every route and runtime HTTP export, including aliases and re-exp
     expect(mutations.some(e => `${e.path} ${e.method}` === key), key).toBe(true);
     expect(entry.reason.length).toBeGreaterThanOrEqual(15);
   }
-  expect(mutations.length).toBe(111);
+  expect(mutations.length).toBe(112);
   expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(89);
 }, 120_000);
 
@@ -245,7 +246,7 @@ it.each(['app/api/landing/ad-code/route.ts', 'app/api/landing/events/route.ts', 
 // GET-only cron endpoints are not mutation-method exemptions. Their external callers
 // authenticate with secrets, and adding a POST still changes the exact export inventory.
 const cronGet = [
-  'app/api/cron/digest-tick/route.ts', 'app/api/cron/job-watch/route.ts', 'app/api/cron/parse-receipts/route.ts',
+  'app/api/cron/digest-tick/route.ts', 'app/api/cron/job-watch/route.ts', 'app/api/cron/meta-leads/route.ts', 'app/api/cron/parse-receipts/route.ts',
   'app/api/cron/prune-sessions/route.ts', 'app/api/cron/schedule-draft/route.ts', 'app/api/cron/sevenshifts-sync/route.ts',
   'app/api/cron/toast-catering-scan/route.ts', 'app/api/cron/toast-sales-pull/route.ts', 'app/api/cron/toast-sales-today/route.ts',
 ];
@@ -268,6 +269,7 @@ it.each(mutations.filter(e => exceptions[`${e.path} ${e.method}`]?.kind === 'web
   vi.stubEnv('EZCATER_API_TOKEN', 'test-only-ez-token');
   vi.stubEnv('RESEND_INBOUND_SECRET', ['whsec', Buffer.from('test-only-svix-key').toString('base64')].join('_'));
   vi.stubEnv('TWILIO_AUTH_TOKEN', 'test-only-twilio-token');
+  vi.stubEnv('META_LEADS_APP_SECRET', 'test-only-meta-app-secret');
   mocks.rate.mockResolvedValue(true);
   mocks.db.mockReturnValue({}); // Stripe shop resolution is an explicit mocked read, never a live DB.
   mocks.ezDelivery.mockResolvedValue({ result: 'invalid_signature' });

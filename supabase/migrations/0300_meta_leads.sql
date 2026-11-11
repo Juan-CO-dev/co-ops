@@ -1,4 +1,4 @@
--- 0300 Meta lead intake, builds 1 + 2. AUTHORED 2026-11-11; NOT APPLIED -- GATE CC/Juan.
+-- 0300 Meta lead intake, builds 1 + 2. AUTHORED 2026-11-11; APPLIED: SIM 20261111210158 (2026-11-11, from 8a71ae73; dry run + verify clean; CC two-session cap proof on sim: same email hash → one claimed, one capped). PROD: NOT YET (Juan-gated).
 -- No database access during authoring. Sim proof and schema check precede any apply.
 -- Build 1: the ledger, the lead-only intake RPC and the explicit consent writer.
 -- Build 2 (edited in place while still an unapplied file): the continuation-email ledger states
