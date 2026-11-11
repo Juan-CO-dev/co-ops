@@ -4918,6 +4918,7 @@
   "catering.intake.source.walk_in": "Walk-in",
   "catering.intake.source.toast_catering": "Toast catering",
   "catering.intake.source.ezcater": "EZCater",
+  "catering.intake.source.meta_lead_form": "Meta lead form",
   "catering.intake.source.direct_invoice": "Direct invoice",
   "catering.intake.source.other": "Other",
   "catering.intake.field.assigned_to": "Order lead (assigned to)",

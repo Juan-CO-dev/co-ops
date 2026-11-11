@@ -4918,6 +4918,7 @@
   "catering.intake.source.walk_in": "En persona",
   "catering.intake.source.toast_catering": "Catering de Toast",
   "catering.intake.source.ezcater": "EZCater",
+  "catering.intake.source.meta_lead_form": "Formulario de Meta",
   "catering.intake.source.direct_invoice": "Factura directa",
   "catering.intake.source.other": "Otro",
   "catering.intake.field.assigned_to": "Líder del pedido (asignado a)",

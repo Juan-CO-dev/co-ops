@@ -130,14 +130,14 @@ export async function consumeMagicLink(input: { token: string; ip?: string | nul
  * PARTIAL index that lets a second active row exist beside a deactivated one. The full
  * account is on reviveInactiveContact.
  */
-export async function resolveOrCreatePortalCustomer(emailRaw: string, name?: string | null): Promise<string> {
+export async function resolveOrCreatePortalCustomer(emailRaw: string, name?: string | null, via = "portal_magic_link"): Promise<string> {
   const email = normalizeEmail(emailRaw);
   const sb = getServiceRoleClient();
   const { data: existing } = await sb.from("catering_customers").select("id").eq("active", true).ilike("email", escapeLike(email)).maybeSingle<{ id: string }>();
   if (existing) return existing.id;
   // No actor: the customer's own magic link drives this, so the audit row carries the
   // system's null actor and names the path, the same way the nightly writers do.
-  const revived = await reviveInactiveContact(email, { actorId: null, actorRole: null, via: "portal_magic_link" });
+  const revived = await reviveInactiveContact(email, { actorId: null, actorRole: null, via });
   if (revived) return revived.id;
   const companyId = await resolveCompanyForEmail(email);
   const { data: inserted, error } = await sb.from("catering_customers").insert({ name: name?.trim() || email, email, company_id: companyId, active: true, created_by: null }).select("id").single<{ id: string }>();
@@ -145,6 +145,6 @@ export async function resolveOrCreatePortalCustomer(emailRaw: string, name?: str
     if (error.code === "23505") { const { data: raced } = await sb.from("catering_customers").select("id").eq("active", true).ilike("email", escapeLike(email)).maybeSingle<{ id: string }>(); if (raced) return raced.id; }
     throw new Error(`resolveOrCreatePortalCustomer: ${error.message}`);
   }
-  void audit({ actorId: null, actorRole: null, action: "catering.customer.create", resourceTable: "catering_customers", resourceId: inserted.id, metadata: { via: "portal_magic_link", email, auto_company_id: companyId }, ipAddress: null, userAgent: null });
+  void audit({ actorId: null, actorRole: null, action: "catering.customer.create", resourceTable: "catering_customers", resourceId: inserted.id, metadata: { via, email, auto_company_id: companyId }, ipAddress: null, userAgent: null });
   return inserted.id;
 }

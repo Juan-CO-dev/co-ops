@@ -20,6 +20,7 @@ export const LEAD_SOURCES = [
   "walk_in",
   "toast_catering",
   "ezcater",
+  "meta_lead_form",
   "direct_invoice",
   "other",
 ] as const;
