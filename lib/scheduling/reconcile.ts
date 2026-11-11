@@ -171,7 +171,8 @@ export async function loadReconciliation(deps: ReconcileDeps, args: { actor: Peo
         }
       }
       const atShopSet = new Set(atShop);
-      sevenLinks = allLinks.filter((l) => l.here || atShopSet.has(l.sevenUserId)).map(({ sevenUserId, userId }) => ({ sevenUserId, userId }));
+      // 0301: `here` travels with the link — only this shop's account attributes hours and shifts.
+      sevenLinks = allLinks.filter((l) => l.here || atShopSet.has(l.sevenUserId)).map(({ sevenUserId, userId, here }) => ({ sevenUserId, userId, here }));
       const startIso = operationalDayUtcRange(from).startIso;
       const endIso = operationalDayUtcRange(to).endExclusiveIso;
       sevenShifts = (await selectAllRows<{ user_id: number | string | null; start_at: string; end_at: string; draft: boolean | null; deleted: boolean }>((f, t) => service.from("sevenshifts_shifts")
@@ -183,7 +184,7 @@ export async function loadReconciliation(deps: ReconcileDeps, args: { actor: Peo
         .order("clocked_in", { ascending: true }).order("id", { ascending: true }).range(f, t)))
         .map((p) => ({ sevenUserId: str(p.user_id), clockedIn: p.clocked_in, clockedOut: p.clocked_out, breakMinutes: p.break_minutes }));
     } else {
-      sevenLinks = allLinks.filter((l) => l.here).map(({ sevenUserId, userId }) => ({ sevenUserId, userId }));
+      sevenLinks = allLinks.filter((l) => l.here).map(({ sevenUserId, userId, here }) => ({ sevenUserId, userId, here }));
     }
   }
 

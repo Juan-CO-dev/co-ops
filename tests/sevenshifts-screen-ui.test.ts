@@ -29,7 +29,7 @@ const base: LinkScreen = {
   ],
   remoteLocations: [{ id: "4570", name: "Seven C" }],
   shopLink: { id: "SL1", remoteId: "4569", remoteName: "Seven P" },
-  linked: [{ linkId: "UL1", remoteUserId: "503", displayName: "Cy L.", employeeId: "10491", userId: "u3", userName: "Cy Lee", linkedHere: true }],
+  linked: [{ linkId: "UL1", remoteUserId: "503", displayName: "Cy L.", employeeId: "10491", userId: "u3", userName: "Cy Lee", linkedHere: true, linkedAtLocationId: SHOP_A, linkedAtShopName: "Shop A" }],
   waiting: [
     { remoteUserId: "501", displayName: "Ana R.", employeeId: "10482", roles: ["Line", "Prep"] },
     { remoteUserId: "502", displayName: "Ana R.", employeeId: null, roles: [] },

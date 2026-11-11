@@ -160,6 +160,7 @@ export function SevenShiftsScreen({ screen }: { screen: LinkScreen }) {
     <section className="co-card min-w-0 space-y-3 p-4">
       <h2 className="text-lg font-bold text-co-text">{t("sevenshifts.people.title")}</h2>
       <p className="font-bold text-co-text">{t("sevenshifts.people.summary", { linked: screen.linked.length, waiting: screen.waiting.length })}</p>
+      <p className="text-sm text-co-text-muted">{t("sevenshifts.people.perShopHint")}</p>
       {!screen.shopLink && <p className="text-sm text-co-text-muted">{t("sevenshifts.people.needShopLink")}</p>}
     </section>
     {screen.shopLink && <CollapsibleSection idBase="sevenshifts-waiting" title={t("sevenshifts.people.waitingTitle")} count={String(screen.waiting.length)}>
@@ -190,7 +191,8 @@ export function SevenShiftsScreen({ screen }: { screen: LinkScreen }) {
         <ul className="space-y-2">{screen.linked.map((l) => <li key={l.linkId} className="flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-co-border p-3">
           <div className="min-w-0 flex-1">
             <p className="font-bold text-co-text">{t("sevenshifts.people.linkedRow", { remote: `${l.displayName} · ${remoteLabel(l)}`, person: l.userName })}</p>
-            {!l.linkedHere && <p className="text-sm text-co-text-muted">{t("sevenshifts.people.linkedElsewhere")}</p>}
+            {!l.linkedHere && <p className="text-sm text-co-text-muted">{l.linkedAtShopName
+              ? t("sevenshifts.people.linkedAtShop", { shop: l.linkedAtShopName }) : t("sevenshifts.people.linkedElsewhere")}</p>}
           </div>
           {screen.can.linkPeople && (l.linkedHere || screen.can.manageShops) && <button type="button" className={dangerButton} disabled={disabled}
             onClick={() => setPending({ kind: "unlink_user", linkId: l.linkId, remote: l.displayName, person: l.userName })}>{t("sevenshifts.unlink")}</button>}

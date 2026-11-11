@@ -112,6 +112,24 @@ describe("loadReconciliation — 7shifts ready", () => {
 });
 
 describe("loadReconciliation — the CO-OPS proposal and missing migrations", () => {
+  it("0301: a link made at the OTHER shop reaches the view with here:false — its account attributes no shift or punch here and, assigned here, still waits for its link here", async () => {
+    const s = shop((t) => {
+      sevenTables(t);
+      // 702 is the GM's account at shop B; it also appears at this 7shifts location with a published shift and a punch.
+      t.sevenshifts_user_links!.push({ id: "ul2", sevenshifts_user_id: 702, user_id: GM, linked_at_location_id: B, active: true });
+      t.sevenshifts_shifts!.push({ id: 5, user_id: 702, location_id: 9001, start_at: at("2026-10-27", "07:00"), end_at: at("2026-10-27", "11:00"), draft: false, deleted: false });
+      t.sevenshifts_time_punches = [{ id: 1, user_id: 702, location_id: 9001, clocked_in: at("2026-10-27", "07:00"), clocked_out: at("2026-10-27", "11:00"), break_minutes: 0, deleted: false }];
+    });
+    const page = await loadReconciliation(s.deps, { actor: gm, locationId: A }, READY);
+    expect(page.view.sevenUnlinked.map((u) => u.sevenUserId)).toEqual(["702"]);
+    const gmRow = page.view.rows.find((r) => r.userId === GM)!;
+    expect(gmRow.ticks.seven).toBe("missing");
+    expect(gmRow.flags.map((f) => f.code)).toEqual(["member_no_toast", "member_no_seven"]);
+    expect(gmRow.days).toEqual([]);
+    const kai = page.view.rows.find((r) => r.userId === KH)!;
+    expect(kai.ticks.seven).toBe("linked");
+  });
+
   it("a generated week is the proposal for its dates; without 0275 there is no proposal and no 500; without 0233 no Toast links", async () => {
     const s = shop();
     await lib.generateWeek({ ...s.deps, now: new Date("2026-10-21T16:00:00Z") }, { actor: gm, locationId: A, weekStart: "2026-10-26", expectedHead: null });

@@ -287,7 +287,11 @@ export async function loadLinkScreen(
     service.from("sevenshifts_user_links").select("id,sevenshifts_user_id,user_id,linked_at_location_id").eq("active", true).order("id").range(from, to)))
     .map((l) => ({ id: l.id, sevenShiftsUserId: str(l.sevenshifts_user_id), userId: l.user_id, linkedAtLocationId: l.linked_at_location_id }));
   const atShop = new Set(edges.map((e) => e.userId));
-  const shopLinks2 = links.filter((l) => l.linkedAtLocationId === locationId || atShop.has(l.sevenShiftsUserId));
+  // 0301: a person may hold one 7shifts account per shop, so EVERY link of this shop's members is listed
+  // (with its shop), not only the ones made here or assigned at this shop's 7shifts location.
+  const linkable = await linkableUsers(service, locationId);
+  const memberIds = new Set(linkable.map((u) => u.id));
+  const shopLinks2 = links.filter((l) => l.linkedAtLocationId === locationId || atShop.has(l.sevenShiftsUserId) || memberIds.has(l.userId));
   const remoteIds = [...new Set([...atShop, ...shopLinks2.map((l) => l.sevenShiftsUserId)])].sort();
   const users: RemoteUser[] = (await inChunks<{ id: number | string; first_name: string | null; last_name: string | null; preferred_first_name: string | null; employee_id: string | null; active: boolean }>(remoteIds,
     (chunk) => service.from("sevenshifts_users").select("id,first_name,last_name,preferred_first_name,employee_id,active").in("id", chunk)))
@@ -297,12 +301,15 @@ export async function loadLinkScreen(
     if (r.error) throw new Error("sevenshifts link screen: read failed");
     return ((r.data ?? []) as Array<{ id: number | string; name: string | null }>).map((x) => ({ id: str(x.id), name: x.name }));
   })();
-  const pickable = (await linkableUsers(service, locationId)).filter((u) => u.level <= actor.level).map((u) => ({ id: u.id, name: u.name }));
-  const { waiting, members } = linkCandidates({ remoteLocationId, users, edges, roles, members: pickable, links });
+  const pickable = linkable.filter((u) => u.level <= actor.level).map((u) => ({ id: u.id, name: u.name }));
+  const { waiting, members } = linkCandidates({ locationId, remoteLocationId, users, edges, roles, members: pickable, links });
   const names = new Map(pickable.map((m) => [m.id, m.name]));
   const missing = [...new Set(shopLinks2.map((l) => l.userId).filter((id) => !names.has(id)))];
   for (const u of await inChunks<{ id: string; name: string }>(missing, (chunk) => service.from("users").select("id,name").in("id", chunk))) names.set(u.id, u.name);
-  const linked = linkedPeople({ locationId, remoteLocationId, users, edges, links: shopLinks2, names });
+  const linkShopIds = [...new Set(shopLinks2.map((l) => l.linkedAtLocationId))].sort();
+  const shopNames = new Map((await inChunks<{ id: string; name: string }>(linkShopIds, (chunk) => service.from("locations").select("id,name").in("id", chunk)))
+    .map((l) => [l.id, l.name]));
+  const linked = linkedPeople({ locationId, remoteLocationId, users, edges, links: shopLinks2, names, memberIds, shopNames });
 
   // ── wages: a COUNT of people with a wage on file; `user_id` is the only column read ──
   const wageRows = await inChunks<{ user_id: number | string }>(remoteIds,

@@ -61,7 +61,12 @@ export type SevenStatus = "ready" | "not_connected" | "sync_off" | "not_supporte
  */
 export interface ReconcileMember { userId: string; name: string; employment?: EmploymentChip | null }
 export interface ToastLinkRow { employeeGuid: string; userId: string }
-export interface SevenLinkRow { sevenUserId: string; userId: string }
+/**
+ * A live `sevenshifts_user_links` row. `here`: the link was made for THIS shop (0301: a person holds one
+ * 7shifts account per shop, so only the account linked here carries this shop's shifts, punches and ticks;
+ * an account linked at the other shop is still "linked", never listed as unlinked). Absent = here.
+ */
+export interface SevenLinkRow { sevenUserId: string; userId: string; here?: boolean }
 export interface SevenUserAtShop { sevenUserId: string; displayName: string; employeeId: string | null }
 /** A `toast_time_entries` row (0224): the first name only, never a wage. */
 export interface ToastPunch { employeeGuid: string; firstName: string | null; businessDate: string; inAt: string; outAt: string | null; hours: number | null }
@@ -156,9 +161,15 @@ export function reconcile(input: ReconcileInput): ReconcileView {
   const inWindow = new Set(dates);
   const toastUser = new Map(input.toastLinks.map((l) => [l.employeeGuid, l.userId]));
   const toastLinkedUsers = new Set(input.toastLinks.map((l) => l.userId));
-  const sevenOf = new Map<string, string>(); // CO-OPS user → 7shifts user
-  const sevenUserOf = new Map<string, string>(); // 7shifts user → CO-OPS user
-  if (ready) for (const l of input.sevenLinks) { sevenOf.set(l.userId, l.sevenUserId); sevenUserOf.set(l.sevenUserId, l.userId); }
+  // 0301: per shop. Hours, shifts and the tick come ONLY through the account linked HERE; an account linked
+  // at the other shop maps to nobody here (its punches at this location would be a different shop's story).
+  const sevenOf = new Map<string, string>(); // CO-OPS user → this shop's 7shifts account
+  const sevenUserOf = new Map<string, string>(); // this shop's 7shifts account → CO-OPS user
+  if (ready) for (const l of input.sevenLinks) {
+    if (l.here === false) continue;
+    sevenOf.set(l.userId, l.sevenUserId);
+    sevenUserOf.set(l.sevenUserId, l.userId);
+  }
   const proposalDates = new Set(input.coopsProposalDates);
 
   // Published shifts (draft === false, not deleted) by their ET start date; the shop's published DATES.
@@ -271,7 +282,9 @@ export function reconcile(input: ReconcileInput): ReconcileView {
   const toastUnlinked: ToastUnlinkedRow[] = [...unlinkedToast]
     .map(([employeeGuid, u]) => ({ employeeGuid, firstName: u.firstName, punchDays: u.days.size, flags: [{ code: "toast_clockin_no_user" as const }] }))
     .sort((a, b) => byName(a.firstName ?? "", b.firstName ?? "") || cmp(a.employeeGuid, b.employeeGuid));
-  const linkedSeven = new Set(input.sevenLinks.map((l) => l.sevenUserId));
+  // 0301: a link counts only at its shop — an account assigned here but linked only at the other shop
+  // still needs its link HERE, so it is listed as unlinked here.
+  const linkedSeven = new Set(input.sevenLinks.filter((l) => l.here !== false).map((l) => l.sevenUserId));
   const sevenUnlinked: SevenUnlinkedRow[] = !ready || !input.shopLinkedToSeven ? [] : [...new Map(input.sevenUsersAtShop.map((u) => [u.sevenUserId, u])).values()]
     .filter((u) => !linkedSeven.has(u.sevenUserId))
     .map((u) => ({ sevenUserId: u.sevenUserId, displayName: u.displayName, employeeId: u.employeeId, flags: [{ code: "seven_user_unlinked" as const }] }))

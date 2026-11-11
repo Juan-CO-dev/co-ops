@@ -47,6 +47,50 @@ const published = (seven: string, date: string, from: string, to: string, draft:
   ({ sevenUserId: seven, startAt: at(date, from), endAt: at(date, to), draft, deleted });
 
 describe("ticks and identity flags — the CO-OPS user is the anchor; nothing links by name", () => {
+  it("0301: only the account linked HERE carries the tick, hours and shifts; the other shop's account attributes nothing here", () => {
+    // ANA holds 701 at this shop and 711 at the other shop (711 is that shop's account, not assigned here).
+    const out = reconcile(base({
+      sevenLinks: [{ sevenUserId: "701", userId: ANA, here: true }, { sevenUserId: "711", userId: ANA, here: false }, { sevenUserId: "702", userId: ANA2 }, { sevenUserId: "703", userId: BEN, here: true }],
+      publishedSevenShifts14d: [published("701", D1, "11:00", "15:00"), published("711", D2, "11:00", "15:00")],
+      sevenPunches14d: [
+        { sevenUserId: "701", clockedIn: at(D1, "11:00"), clockedOut: at(D1, "15:00"), breakMinutes: 0 },
+        { sevenUserId: "711", clockedIn: at(D2, "11:00"), clockedOut: at(D2, "15:00"), breakMinutes: 0 },
+      ],
+    }));
+    const ana = row(out, ANA);
+    expect(ana.ticks.seven).toBe("linked");
+    expect(codes(ana)).toEqual([]);
+    expect(ana.days.map((d) => d.date)).toEqual([D1]); // D2's shift and punch belong to the other shop's account
+    expect(ana.days[0]).toMatchObject({ sevenHours: 4, flags: [] });
+    expect(out.sevenUnlinked).toEqual([]);
+    expect(out.counts.sevenUnlinked).toBe(0);
+  });
+
+  it("0301: a both-shops account assigned HERE but linked only at the other shop still needs its link here — listed as unlinked, attributing nothing", () => {
+    const out = reconcile(base({
+      sevenLinks: [{ sevenUserId: "701", userId: ANA }, { sevenUserId: "702", userId: ANA2 }, { sevenUserId: "703", userId: BEN, here: false }],
+      publishedSevenShifts14d: [published("703", D1, "11:00", "15:00")],
+      sevenPunches14d: [{ sevenUserId: "703", clockedIn: at(D1, "11:00"), clockedOut: at(D1, "15:00"), breakMinutes: 0 }],
+    }));
+    expect(out.sevenUnlinked).toEqual([{ sevenUserId: "703", displayName: "Ben L.", employeeId: "E3", flags: [{ code: "seven_user_unlinked" }] }]);
+    expect(row(out, BEN).ticks.seven).toBe("missing");
+    expect(row(out, BEN).days).toEqual([]);
+  });
+
+  it("0301: a person whose only account is linked at the OTHER shop is 'missing' here (needs this shop's account); a link without `here` behaves as before (parity)", () => {
+    const out = reconcile(base({
+      sevenLinks: [{ sevenUserId: "701", userId: ANA, here: false }, { sevenUserId: "702", userId: ANA2 }, { sevenUserId: "703", userId: BEN }],
+      publishedSevenShifts14d: [published("701", D1, "11:00", "15:00"), published("702", D1, "11:00", "15:00")],
+      sevenPunches14d: [{ sevenUserId: "702", clockedIn: at(D1, "11:00"), clockedOut: at(D1, "15:00"), breakMinutes: 0 }],
+    }));
+    expect(row(out, ANA).ticks.seven).toBe("missing");
+    expect(codes(row(out, ANA))).toEqual(["member_no_seven"]);
+    expect(row(out, ANA).days).toEqual([]);
+    expect(out.sevenUnlinked.map((u) => u.sevenUserId)).toEqual(["701"]); // assigned here, linked only at the other shop
+    expect(row(out, ANA2).ticks.seven).toBe("linked");
+    expect(row(out, ANA2).days[0]).toMatchObject({ date: D1, sevenHours: 4, flags: [] });
+  });
+
   it("every member is a row with three ticks; all linked → no identity flag", () => {
     const out = reconcile(base());
     expect(out.rows.map((r) => r.userId).sort()).toEqual([ANA, ANA2, BEN].sort());

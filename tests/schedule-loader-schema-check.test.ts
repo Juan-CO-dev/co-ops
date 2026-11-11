@@ -114,7 +114,7 @@ beforeAll(async () => {
       catering_pipeline: [{ id: "cp1", contact_name: "Pat", company: null, event_date: WEEK, time_window: null, headcount: 10, stage: "confirmed", delivery_address: null, estimated_revenue_cents: 1 }],
       checklist_templates: [{ id: "t1" }],
       checklist_instances: [{ id: "i1", date: "2026-10-20", template_id: "t1", shift_start_at: null, triggered_at: null }],
-      sevenshifts_user_links: [{ sevenshifts_user_id: "77", user_id: "u1" }],
+      sevenshifts_user_links: [{ sevenshifts_user_id: "77", user_id: "u1", linked_at_location_id: LOC }],
     });
     await loadSchedulingInputs(svc, { locationId: LOC, weekStarts: [WEEK], now: new Date("2026-10-21T16:00:00Z") });
     // Chunk F: the board's own two reads (position labels; an edited head's origin contexts).
@@ -186,5 +186,8 @@ describe("loadSchedulingInputs against the real schema", () => {
     expect(punch.select).not.toContain("employee_first_name");
     const wage = captured.find((c) => c.table === "sevenshifts_wages")!;
     expect(new Set(wage.filters)).toEqual(new Set(["user_id", "active", "upcoming"]));
+    // 0301: the wage comes through the link made for THIS shop, never any link of the user.
+    const link = captured.find((c) => c.table === "sevenshifts_user_links")!;
+    expect(new Set(link.filters)).toEqual(new Set(["user_id", "linked_at_location_id", "active"]));
   });
 });
