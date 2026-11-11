@@ -13,6 +13,7 @@ it("parses the ledger-linked receipt immediately", async () => {
   const sb = database(); mocks.service.mockReturnValue(sb);
   await parseFetchedInboundMessage("inbound", Date.now() + 100_000);
   expect(mocks.parse).toHaveBeenCalledWith(sb, "receipt");
+  expect(sb.from.mock.results[0]!.value.eq).toHaveBeenCalledWith("lane", "vendor_receipt");
 });
 it.each(["key", "budget"])("defers to sweep without %s", async missing => {
   const sb = database(); mocks.service.mockReturnValue(sb);

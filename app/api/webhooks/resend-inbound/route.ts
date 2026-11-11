@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
     if (result.duplicate) return jsonOk({ duplicate: true });
     after(async () => {
       try {
+        // Catering returns catering_fetched: only vendor receipts enter the parser.
         if (await processInboundMessage(result.id) === "fetched") {
           await parseFetchedInboundMessage(result.id, deadline);
         }
