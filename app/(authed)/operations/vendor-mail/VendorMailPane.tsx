@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { getVendorMailMessage, listVendorMail } from "@/lib/vendor-mail";
 import type { vendorMailOptions } from "@/lib/vendor-mail-options";
-import { VENDOR_MAIL_STATUSES } from "@/lib/vendor-mail-shared";
+import { VENDOR_MAIL_STATUSES, vendorMailForwardAcknowledged, vendorMailHasUnknownForward } from "@/lib/vendor-mail-shared";
 import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { formatDateLabel, formatTime, formatCents, formatQuantity } from "@/lib/i18n/format";
@@ -15,8 +15,8 @@ type Detail = Awaited<ReturnType<typeof getVendorMailMessage>>;
 type Options = Awaited<ReturnType<typeof vendorMailOptions>>;
 type Filters = { location: string; vendor: string; status: string; from: string; to: string; search: string; stale: boolean };
 /** A confirmed refusal has no committed mutation. Uncertain failures retain the original key. */
-export function releaseRefusedVendorMailRequest<T>(requests: Map<string, T>, identity: string, action: string, code: unknown): void {
-  if (action !== "forward" && code === "stale_revision") requests.delete(identity);
+export function releaseRefusedVendorMailRequest<T>(requests: Map<string, T>, identity: string, _action: string, code: unknown): void {
+  if (code === "stale_revision") requests.delete(identity);
 }
 const control = "flex min-h-[44px] items-center rounded border border-co-border bg-co-surface px-3 py-2 max-w-full";
 const field = "flex min-w-0 flex-col gap-1 text-sm";
@@ -72,6 +72,9 @@ export function VendorMailPane({ initial, options, filters, forwardEnabled, leve
     // A failed/ambiguous network request retains its identity for an identical retry.
     const identity = JSON.stringify([detail.id, action, payload]);
     let request = requests.current.get(identity);
+    if (action === "forward" && request && vendorMailForwardAcknowledged(detail.events, request.requestId)) {
+      requests.current.delete(identity); request = undefined;
+    }
     if (!request) { request = { requestId: crypto.randomUUID(), revision: detail.revision }; requests.current.set(identity, request); }
     setBusy(true); setError(""); setNotice("");
     try {
@@ -102,7 +105,7 @@ export function VendorMailPane({ initial, options, filters, forwardEnabled, leve
   const parsedLines = Array.isArray(parsed.lines) ? parsed.lines.filter((line): line is Record<string, unknown> => !!line && typeof line === "object") : [];
   const staffRecipient = options.staff.find(person => person.id === draft.staff);
   const eventData = (value: unknown): Record<string, unknown> => value && typeof value === "object" ? value as Record<string, unknown> : {};
-  const unresolvedForward = detail?.events.some(event => event.event_type === "forward_result" && eventData(event.data).outcome === "unknown") ?? false;
+  const unresolvedForward = detail ? vendorMailHasUnknownForward(detail.events) : false;
   function historyExtra(event: Detail["events"][number]) {
     const data = eventData(event.data);
     if (event.event_type === "forward_claim") return typeof data.recipient === "string" ? data.recipient : "";

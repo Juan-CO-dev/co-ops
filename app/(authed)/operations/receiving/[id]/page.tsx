@@ -67,7 +67,7 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
     try {
       [unlinked, invoiceCandidates] = await Promise.all([
         listUnlinkedReceipts(auth, detail.locationId),
-        loadReceivingReceiptCandidates(auth, id),
+        loadReceivingReceiptCandidates(auth, id).catch(() => []),
       ]);
     } catch (e) {
       if (e instanceof EmailReceiptError) redirect("/dashboard");

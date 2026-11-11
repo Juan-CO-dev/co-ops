@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import { VendorMailPane, releaseRefusedVendorMailRequest } from "@/app/(authed)/operations/vendor-mail/VendorMailPane";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { adminSectionsFor } from "@/lib/admin/sections";
-import { vendorMailRoleAllowed, VENDOR_MAIL_STATUSES, VENDOR_MAIL_CONTENT_STATES } from "@/lib/vendor-mail-shared";
+import { vendorMailForwardAcknowledged, vendorMailHasUnknownForward, vendorMailRoleAllowed, VENDOR_MAIL_STATUSES, VENDOR_MAIL_CONTENT_STATES } from "@/lib/vendor-mail-shared";
 import { ROLES } from "@/lib/roles";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
@@ -50,17 +50,39 @@ it("drawer uses counted disclosures, safe downloads, retained drafts and origina
   expect(source).toContain("staffRecipient?.email"); expect(source).toContain("historyExtra(event)");
 });
 
-it("a confirmed stale routine refusal releases only that intent; uncertain and Forward retries keep their original key", () => {
+it("a confirmed stale refusal releases routine and Forward intents; uncertain retries retain identity", () => {
   const request = { requestId: "original-id", revision: 2 };
   const requests = new Map([["assign", request], ["forward", request], ["other", request]]);
   releaseRefusedVendorMailRequest(requests, "assign", "assign", "internal_error");
   expect(requests.get("assign")).toBe(request);
   releaseRefusedVendorMailRequest(requests, "forward", "forward", "stale_revision");
-  expect(requests.get("forward")).toBe(request);
+  expect(requests.has("forward")).toBe(false);
   releaseRefusedVendorMailRequest(requests, "assign", "assign", "stale_revision");
   expect(requests.has("assign")).toBe(false);
   expect(requests.get("other")).toBe(request);
   const source = readFileSync("app/(authed)/operations/vendor-mail/VendorMailPane.tsx", "utf8");
   expect(source).toContain("if (!response.ok) { releaseRefusedVendorMailRequest(requests.current, identity, action, data.code)");
   expect(source).toContain("expected_revision: request.revision, request_id: request.requestId");
+});
+
+it("a single ambiguous receiving candidate displays invoice identity and the pick prompt", async () => {
+  const { VendorClaimPanel } = await import("@/components/receiving/VendorClaimPanel");
+  const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(VendorClaimPanel, {
+    deliveryId: "B", locationId: "shop", actorLevel: 4, receipt: null, countedSummary: [], matchState: "unmatched",
+    invoiceCandidates: [{ id: "r1", subject: "Invoice subject", fromAddress: "vendor@company.test", receivedAt: "2026-11-11T12:00:00Z", invoiceNumber: "INV-42", totalCents: 12345 }],
+  }) }));
+  for (const value of [en["receiving.claim.pick_invoice"], "INV-42", "123.45", "Invoice subject", "vendor@company.test"]) expect(html).toContain(value);
+});
+
+it("unknown Forward stays blocked until its exact claim is acknowledged; history stays intact", () => {
+  const unknown = { event_type: "forward_result", data: { outcome: "unknown", claim_request_id: "claim-1" } };
+  const ack = { event_type: "baseline", data: { forward_acknowledged_claim_request_id: "claim-1", allow_new_forward: true } };
+  expect(vendorMailHasUnknownForward([unknown])).toBe(true);
+  expect(vendorMailHasUnknownForward([unknown, { ...ack, data: { ...ack.data, allow_new_forward: false } }])).toBe(true);
+  expect(vendorMailHasUnknownForward([unknown, ack])).toBe(false);
+  expect(vendorMailForwardAcknowledged([ack], "claim-1")).toBe(true);
+  expect(vendorMailForwardAcknowledged([ack], "other")).toBe(false);
+  expect(vendorMailHasUnknownForward([unknown, ack, { ...unknown, data: { ...unknown.data, claim_request_id: "other" } }])).toBe(true);
+  const source = readFileSync("app/(authed)/operations/vendor-mail/VendorMailPane.tsx", "utf8");
+  expect(source).toContain('{unresolvedForward && <p role="alert" className="text-red-700">{t("vendorMail.forward.unknown")}</p>}');
 });

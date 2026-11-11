@@ -681,7 +681,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     }
   }
 
-  await attemptReceivingAutoLink(header.id);
+  await attemptReceivingAutoLink(header.id).catch(() => { /* Advisory matching cannot fail a durable save. */ });
   return { deliveryId: header.id, resolvedCredits, skippedCredits, creditClosureError };
 }
 
@@ -1321,7 +1321,7 @@ export async function addDeliveryLines(
     ipAddress: null, userAgent: null,
   });
 
-  await attemptReceivingAutoLink(h.id);
+  await attemptReceivingAutoLink(h.id).catch(() => { /* Advisory matching cannot fail a durable save. */ });
   return { added: lines.length };
 }
 
@@ -1368,7 +1368,7 @@ export async function completeDelivery(actor: AuthContext, deliveryId: string): 
   if (h.purchase_order_id) {
     await advanceToReceived(sb, h.purchase_order_id);
   }
-  await attemptReceivingAutoLink(deliveryId);
+  await attemptReceivingAutoLink(deliveryId).catch(() => { /* Advisory matching cannot fail a durable save. */ });
 }
 
 /**
@@ -1450,6 +1450,6 @@ export async function attachDeliveryReceipt(
     ipAddress: null, userAgent: null,
   });
 
-  await attemptReceivingAutoLink(deliveryId);
+  await attemptReceivingAutoLink(deliveryId).catch(() => { /* Advisory matching cannot fail a durable save. */ });
   return { receiptUrl };
 }

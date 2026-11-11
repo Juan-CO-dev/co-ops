@@ -18,7 +18,7 @@ let replay = false;
 let eventQueue: unknown[] = [];
 beforeEach(() => {
   vi.clearAllMocks(); event = null; existingClaim = null; replay = false; eventQueue = [];
-  vi.stubEnv("VENDOR_MAIL_FORWARD_ENABLED", "1"); vi.stubEnv("EMAIL_FROM_TEAM", "Compliments Only <team@outbound.test>");
+  vi.stubEnv("INBOUND_RECEIVING_DOMAIN", "receiving.test"); vi.stubEnv("VENDOR_MAIL_FORWARD_ENABLED", "1"); vi.stubEnv("EMAIL_FROM_TEAM", "Compliments Only <team@outbound.test>");
   mocks.read.mockResolvedValue(row); mocks.detail.mockResolvedValue({ body_state: "available", body_text: "Original", body_truncated: false });
   mocks.download.mockResolvedValue({ data: new Blob(["original bytes"]), error: null });
   mocks.send.mockResolvedValue({ id: "provider-1" });
@@ -29,7 +29,7 @@ beforeEach(() => {
     for (const method of ["select","eq","order","range"]) q[method] = () => q;
     q.eq = (key:string,value:string) => { if(key === "event_type") eventType=value; return q; };
     q.maybeSingle = () => Promise.resolve({ data: eventType === "forward_claim" ? existingClaim : eventQueue.length ? eventQueue.shift() : event, error: null });
-    q.then = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: table === "locations" ? [{ receipt_email_address: "shop@receiving.test" }] : [], error: null }).then(resolve);
+    q.then = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: table === "locations" ? [{ receipt_email_address: "shop@receiving.test" }] : [{ address: "catering@company.test" }], error: null }).then(resolve);
     return q;
   });
 });
@@ -107,4 +107,34 @@ it("completed replay survives unavailable originals",async()=>{
  mocks.detail.mockRejectedValue(new Error("original unavailable"));
  expect(await forwardVendorMail(ctx,id,{...request,recipient:"person@external.test"})).toMatchObject({replayed:true,outcome:"accepted"});
  expect(mocks.send).not.toHaveBeenCalled();expect(mocks.detail).not.toHaveBeenCalled();
+});
+
+it.each(["application_error", "internal_server_error", "concurrent_idempotent_requests", "invalid_idempotent_request", undefined, "future_code"])("ambiguous provider code %s persists unknown", async code => {
+  mocks.send.mockResolvedValue({ error: "provider", code });
+  const result = forwardVendorMail(ctx, id, { ...request, recipient: "gm@company.test" });
+  if (code === "invalid_idempotent_request") await expect(result).rejects.toMatchObject({ code: "forward_payload_mismatch" });
+  else expect(await result).toMatchObject({ outcome: "unknown" });
+  expect(mocks.rpc.mock.calls[1]![1].p_payload.outcome).toBe("unknown");
+});
+it.each(["validation_error", "missing_required_field", "invalid_from_address", "invalid_attachment", "missing_api_key", "invalid_api_key", "restricted_api_key", "monthly_quota_exceeded", "daily_quota_exceeded", "rate_limit_exceeded"])("definite rejection %s persists failed", async code => {
+  mocks.send.mockResolvedValue({ error: "provider", code });
+  expect(await forwardVendorMail(ctx, id, { ...request, recipient: "gm@company.test" })).toMatchObject({ outcome: "failed" });
+});
+it.each(["catering@company.test", "shop@receiving.test", "x@sub.receiving.test"])("blocks exact receiving alias or receiving subdomain %s", async recipient => {
+  await expect(forwardVendorMail(ctx,id,{...request,recipient})).rejects.toMatchObject({code:"forward_loop"});
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+it("allows other company addresses and preserves the team display name", async () => {
+  await forwardVendorMail(ctx,id,{...request,recipient:"gm@company.test"});
+  expect(mocks.send.mock.calls[0]![0].from).toBe("Compliments Only <team@outbound.test>");
+});
+it.each(["", "@bad", "receiving.test/path"])("fails closed on missing/invalid receiving domain %s", async domain => {
+  vi.stubEnv("INBOUND_RECEIVING_DOMAIN",domain);
+  await expect(forwardVendorMail(ctx,id,{...request,recipient:"gm@company.test"})).rejects.toMatchObject({code:"forward_domain_missing"});
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+it("body over 128 KB has its own refusal before claim/send", async () => {
+  mocks.detail.mockResolvedValue({body_state:"available",body_text:"a".repeat(131073),body_truncated:false});
+  await expect(forwardVendorMail(ctx,id,{...request,recipient:"gm@company.test"})).rejects.toMatchObject({code:"forward_body_too_large"});
+  expect(mocks.send).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
 });

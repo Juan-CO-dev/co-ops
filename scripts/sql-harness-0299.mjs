@@ -164,6 +164,22 @@ try {
   await reject(()=>callForward('vendor_mail_forward_result',{...outcome,claim_request_id:claim.toLowerCase()},2),/already_resulted/,'forward claim UUID casing cannot bypass one result');
   await reject(()=>callForward('vendor_mail_forward_result',{...outcome,provider_id:'other'},1,resultRequest),/request_conflict/,'forward result payload conflict');
   await reject(()=>callForward('vendor_mail_forward_result',outcome,2),/already_resulted/,'forward claim has one result');
+  const unknownClaim=uuid();
+  await callForward('vendor_mail_forward_claim',fbody,2,unknownClaim);
+  await callForward('vendor_mail_forward_result',{claim_request_id:unknownClaim,outcome:'unknown',provider_id:null,error:'unknown'},3);
+  const runbook=readFileSync(new URL('../docs/runbooks/vendor-mail.md',import.meta.url),'utf8');
+  const recovery=runbook.match(/```sql\s*([^]*?)```/)[1]
+    .replace('<message UUID>',forward).replace('<original Forward request UUID>',unknownClaim)
+    .replace('<active level-8+ user UUID>',actors.owner)
+    .replace('<provider evidence; verdict; explicit approval for another send>','Provider logs reconciled; operator acknowledges risk and approves another send.');
+  // Execute the exact documented SQL, not a test-only imitation of the recovery.
+  await db.exec(recovery);
+  check((await one('select revision,handled_at from inbound_messages where id=$1',[forward])).revision===5,'recovery advances revision');
+  check((await one('select handled_at from inbound_messages where id=$1',[forward])).handled_at===null,'recovery does not mark handled');
+  check((await one("select data from vendor_mail_events where event_type='forward_result' and data->>'claim_request_id'=$1",[unknownClaim])).data.outcome==='unknown','recovery preserves unknown evidence');
+  check((await one("select data from vendor_mail_events where event_type='baseline' and data->>'forward_acknowledged_claim_request_id'=$1",[unknownClaim])).data.acknowledged_by===actors.owner,'recovery attributes operator');
+  await callForward('vendor_mail_forward_claim',fbody,5,uuid());
+  check(true,'fresh forward permitted after recovery');
   const rollback=await message();
   await db.exec("create function deny_vendor_event() returns trigger language plpgsql as $$ begin raise exception 'event_failure'; end $$; create trigger deny_vendor_event before insert on vendor_mail_events for each row execute function deny_vendor_event();");
   await reject(()=>act(rollback,actors.owner,'handle',{reason:'Done'}),/event_failure/,'event failure refuses human action');

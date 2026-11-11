@@ -612,8 +612,8 @@ async function claimAutomaticDeliveryLink(
 
 type AutoLinkDelivery = { id: string; location_id: string; vendor_id: string; delivery_date: string; email_receipt_id: string | null };
 
-export type ReceivingInvoiceCandidate = { id: string; subject: string | null; fromAddress: string | null; receivedAt: string };
-type ReceivingCandidateRow = AutoLinkReceipt & { subject: string | null; from_address: string | null };
+export type ReceivingInvoiceCandidate = { id: string; subject: string | null; fromAddress: string | null; receivedAt: string; invoiceNumber: string | null; totalCents: number | null };
+type ReceivingCandidateRow = AutoLinkReceipt & { subject: string | null; from_address: string | null; parsed_json: { extraction?: { invoiceNumber?: unknown; totalCents?: unknown } } | null };
 
 async function receivingReceiptCandidates(sb: ServiceClient, d: AutoLinkDelivery): Promise<ReceivingCandidateRow[]> {
   if (d.email_receipt_id) return [];
@@ -621,7 +621,7 @@ async function receivingReceiptCandidates(sb: ServiceClient, d: AutoLinkDelivery
   const lo = etWallMinutesInstant(etYmdMinusDays(d.delivery_date, AUTO_LINK_DAY_WINDOW), 0).toISOString();
   const hi = etWallMinutesInstant(etYmdMinusDays(d.delivery_date, -AUTO_LINK_DAY_WINDOW - 1), 0).toISOString();
   const rows = await selectAllRows<ReceivingCandidateRow>((from, to) => sb.from("email_receipts")
-    .select("id, location_id, vendor_guess_id, linked_delivery_id, received_at, inbound_message_id, parse_state, attribution_conflict, subject, from_address")
+    .select("id, location_id, vendor_guess_id, linked_delivery_id, received_at, inbound_message_id, parse_state, attribution_conflict, subject, from_address, parsed_json")
     .eq("location_id", d.location_id).eq("vendor_guess_id", d.vendor_id)
     .is("linked_delivery_id", null).eq("attribution_conflict", false)
     .gte("received_at", lo).lt("received_at", hi)
@@ -642,6 +642,8 @@ export async function loadReceivingReceiptCandidates(actor: AuthContext, deliver
   if (!(await canDoOperationalTask(actor, d.location_id, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   return (await receivingReceiptCandidates(sb, d)).map(r => ({
     id: r.id, subject: r.subject, fromAddress: r.from_address, receivedAt: r.received_at,
+    invoiceNumber: typeof r.parsed_json?.extraction?.invoiceNumber === "string" ? r.parsed_json.extraction.invoiceNumber : null,
+    totalCents: typeof r.parsed_json?.extraction?.totalCents === "number" && Number.isFinite(r.parsed_json.extraction.totalCents) ? r.parsed_json.extraction.totalCents : null,
   }));
 }
 
@@ -656,7 +658,16 @@ export async function attemptReceivingAutoLink(deliveryId: string): Promise<void
     if (error || !d || d.email_receipt_id) return;
     const candidates = await receivingReceiptCandidates(sb, d);
     if (candidates.length !== 1) return;
-    await claimAutomaticDeliveryLink(sb, candidates[0]!, deliveryId, d.delivery_date, "receiving");
+    const receipt = candidates[0]!;
+    const day = etCalendarDate(receipt.received_at);
+    const { data: forward, error: forwardError } = await sb.from("vendor_deliveries")
+      .select("id").eq("vendor_id", receipt.vendor_guess_id!).eq("location_id", receipt.location_id!)
+      .is("email_receipt_id", null)
+      .gte("delivery_date", etYmdMinusDays(day, AUTO_LINK_DAY_WINDOW))
+      .lte("delivery_date", etYmdMinusDays(day, -AUTO_LINK_DAY_WINDOW))
+      .returns<Array<{ id: string }>>();
+    if (forwardError || forward?.length !== 1 || forward[0]?.id !== deliveryId) return;
+    await claimAutomaticDeliveryLink(sb, receipt, deliveryId, d.delivery_date, "receiving");
   } catch {
     // The delivery is already saved. Leave it unlinked for the existing manual triage UI.
     console.error("[email-receipts] receiving auto-link unavailable");

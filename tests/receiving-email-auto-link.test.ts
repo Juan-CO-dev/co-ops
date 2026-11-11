@@ -125,3 +125,13 @@ describe("receiving reverse invoice match", () => {
     await expect(loadReceivingReceiptCandidates(actor, "d1")).rejects.toMatchObject({ status: 404 });
   });
 });
+
+it("two deliveries plus one receipt leave B unlinked with a single candidate to confirm", async () => {
+  deliveries.push({ ...deliveries[0], id: "d2" });
+  receipts = [receipt({ parsed_json: { extraction: { invoiceNumber: "INV-42", totalCents: 12345 } } })];
+  await attemptReceivingAutoLink("d2");
+  expect(deliveries.every(d => d.email_receipt_id === null)).toBe(true);
+  expect(receipts[0]?.linked_delivery_id).toBeNull();
+  expect(await loadReceivingReceiptCandidates(actor, "d2")).toEqual([expect.objectContaining({ id: "r1", invoiceNumber: "INV-42", totalCents: 12345 })]);
+  expect(mocks.audit).not.toHaveBeenCalled();
+});

@@ -41,7 +41,7 @@ import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { DeliveryReceiptView, UnlinkedReceiptView, ReceiptAsset, PoAttachCandidate, ReceivingInvoiceCandidate } from "@/lib/email-receipts";
 import type { DeliveryMatchState } from "@/lib/receiving";
-import { formatDateLabel, formatTime } from "@/lib/i18n/format";
+import { formatDateLabel, formatTime, formatCents } from "@/lib/i18n/format";
 import { etDisplayDate } from "@/lib/operational-day";
 
 /** Mirror of lib/email-receipts.ts RECEIPT_OVERRIDE_MIN (server-only module). */
@@ -721,7 +721,7 @@ export function VendorClaimPanel({
         <div className="mt-2 flex flex-col gap-3">
           <p className="text-[11px] text-co-text-dim">{t("receiving.claim.no_receipt_hint")}</p>
 
-          {invoiceCandidates.length > 1 ? (
+          {invoiceCandidates.length >= 1 ? (
             <div className="rounded-lg border-2 border-co-warning bg-co-warning-surface p-3">
               <p className="text-sm font-bold">{t("receiving.claim.pick_invoice")}</p>
               <ul className="mt-2 flex flex-col gap-2">
@@ -729,6 +729,8 @@ export function VendorClaimPanel({
                   <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-co-surface p-3">
                     <div className="min-w-0 flex-1 break-words text-sm">
                       <p className="font-semibold">{r.subject || t("receiving.claim.link_no_subject")}</p>
+                      {r.invoiceNumber !== null && <p>{t("receiving.form.invoice_number")} {r.invoiceNumber}</p>}
+                      {r.totalCents !== null && <p>{formatCents(r.totalCents, language)}</p>}
                       <p>{r.fromAddress}</p>
                       <p className="text-xs">{formatDateLabel(etDisplayDate(r.receivedAt), language)} {formatTime(r.receivedAt, language)}</p>
                     </div>

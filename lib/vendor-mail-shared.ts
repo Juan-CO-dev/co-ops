@@ -42,3 +42,18 @@ export function vendorMailHtmlToText(html: string): string {
       return point > 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff) ? String.fromCodePoint(point) : " ";
     }).replace(/[ \t]+/g, " ").trim();
 }
+
+/** Recovery baselines are appended only by the level-8+ runbook SQL procedure. */
+export function vendorMailForwardAcknowledged(events: { event_type: string; data: unknown }[], requestId: string): boolean {
+  return events.some(event => {
+    const data = event.data as Record<string, unknown> | null;
+    return event.event_type === "baseline" && data?.allow_new_forward === true && data.forward_acknowledged_claim_request_id === requestId;
+  });
+}
+export function vendorMailHasUnknownForward(events: { event_type: string; data: unknown }[]): boolean {
+  return events.some(event => {
+    const data = event.data as Record<string, unknown> | null;
+    return event.event_type === "forward_result" && data?.outcome === "unknown" &&
+      (typeof data.claim_request_id !== "string" || !vendorMailForwardAcknowledged(events, data.claim_request_id));
+  });
+}
