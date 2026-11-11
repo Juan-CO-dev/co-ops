@@ -20,6 +20,7 @@
  * (never client-reduced — the GLOBAL server-side-SUM rule).
  */
 
+import { portalOrigin } from "@/lib/portal/origin-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
@@ -1242,8 +1243,8 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
       const safeName = escapeHtml(cust.name ?? "there");
       const total = (row.total_cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
       // Link to the shared customer review+pay surface (sign-in required). Only include it when
-      // NEXT_PUBLIC_APP_URL is set — never emit a broken `undefined/...` URL into a sent email.
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+      // a portal origin or legacy NEXT_PUBLIC_APP_URL is set — never emit a broken `undefined/...` URL into a sent email.
+      const appUrl = portalOrigin();
       const quoteUrl = appUrl ? `${appUrl}/order/quote/${id}` : null;
       const htmlLink = quoteUrl
         ? `<p>View &amp; pay your quote: <a href="${quoteUrl}">${quoteUrl}</a> (sign-in required).</p>`

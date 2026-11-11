@@ -309,6 +309,20 @@ describe("R2 + option b — Send on a quote whose client is another shop's custo
       { id: "q-a", location_id: A, status: "draft", superseded_at: null, customer_id: "c-a", total_cents: 12000, expires_at: null },
     );
   });
+  it("malformed portal origin still finishes quote send, email and audit", async () => {
+    vi.stubEnv('PORTAL_ORIGIN', 'https://invalid.test/path');
+    vi.stubEnv('PORTAL_HOSTS', 'invalid.test');
+    vi.stubEnv('STAFF_ORIGIN', 'https://staff.test');
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://legacy.test');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(sendQuote(gmA, 'q-a')).resolves.toMatchObject({ emailed:true, emailOutcome:'sent' });
+      expect(db.catering_quotes!.find(q => q.id === 'q-a')).toMatchObject({status:'sent'});
+      expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({text:expect.stringContaining('https://legacy.test/order/quote/q-a')}));
+      expect(audit).toHaveBeenCalledWith(expect.objectContaining({action:'catering.quote.send', metadata:expect.objectContaining({email_outcome:'sent'})}));
+      expect(log).toHaveBeenCalledWith('[portal] invalid identity; customer links remain dormant');
+    } finally { vi.unstubAllEnvs(); log.mockRestore(); }
+  });
   it("delivers to the customer but never returns or logs the address", async () => {
     const res = await sendQuoteRoute(json("/api/catering/quotes/q-b/send", {}), params("q-b"));
     const body = await res.json();

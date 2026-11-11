@@ -17,6 +17,7 @@
  * DORMANT (no cart resolves) — proven via scripts/3a-smoke.ts.
  */
 
+import { portalOrigin } from "@/lib/portal/origin-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { computeChargeStack, lineTotalCents } from "@/lib/catering/quotes";
@@ -618,7 +619,7 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   // Best-effort confirmation email (allowlist-gated; never throws).
   try {
     const { data: cust } = await sb.from("catering_customers").select("name, email").eq("id", customerId).maybeSingle<{ name: string | null; email: string | null }>();
-    if (cust?.email && allowlisted(cust.email) && process.env.NEXT_PUBLIC_APP_URL) {
+    if (cust?.email && allowlisted(cust.email) && portalOrigin()) {
       const { data: qRow } = await sb.from("catering_quotes").select("event_date").eq("id", quoteId).maybeSingle<{ event_date: string | null }>();
       const name = cust.name ?? cust.email;
       const dateLabel = eventDateLabel(qRow?.event_date ?? null);

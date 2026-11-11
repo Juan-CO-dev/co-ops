@@ -20,6 +20,8 @@ export function loadLandingConfig(env: LandingEnvironment = process.env, tenant:
     stores: tenant.stores.filter(store=>store.active),
     nearbyEnabled: nearbyEnabled(tenant.stores.filter(store=>store.active)),
     LANDING_HOSTS: env.LANDING_HOSTS,
+    PORTAL_HOSTS: env.PORTAL_HOSTS,
+    PORTAL_ORIGIN: env.PORTAL_ORIGIN,
     STAFF_ORIGIN: env.STAFF_ORIGIN,
     SITE_ORIGIN: env.SITE_ORIGIN,
     VERCEL_ENV: env.VERCEL_ENV,
