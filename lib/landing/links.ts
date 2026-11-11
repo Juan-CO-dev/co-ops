@@ -6,7 +6,7 @@ export function getLandingLinks(config: LandingConfig = loadLandingConfig()) {
   return {
     orders: config.stores.map(({key, pickupUrl}) => ({store: key, href: pickupUrl})),
     delivery: config.deliveryUrl,
-    catering: config.cateringPortalLive ? new URL("/order", portalOrigin({ PORTAL_ORIGIN: config.PORTAL_ORIGIN, NEXT_PUBLIC_APP_URL: config.staffOrigin! })).href : config.cateringUrl,
+    catering: config.cateringPortalLive ? new URL("/order", portalOrigin({ ...config, NEXT_PUBLIC_APP_URL: config.staffOrigin! })).href : config.cateringUrl,
     inquiry: config.inquiryUrl,
     footer: config.footerLinks,
   };

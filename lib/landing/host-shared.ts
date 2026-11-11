@@ -31,8 +31,8 @@ export function classifyLandingHost(headers: Pick<Headers, 'get'>, env: LandingH
   const allowed = validHostEntries(entries);
   const site = configuredOrigin(env.SITE_ORIGIN);
   const staff = configuredOrigin(env.STAFF_ORIGIN);
-  const portal = configuredOrigin(env.PORTAL_ORIGIN);
-  if (staff && host.hostname !== staff.hostname && validHostEntries(portalEntries) && portal && portal.hostname !== staff.hostname && portalEntries.includes(portal.hostname) && portalEntries.includes(host.hostname)) return 'portal';
+  const portal = portalIdentity(env);
+  if (portal && host.hostname !== staff?.hostname && portalEntries.includes(host.hostname)) return 'portal';
   // Misconfigured identity is dormant rather than guessing a redirect origin.
   if (!allowed || !site || !staff || !entries.includes(site.hostname) || site.hostname === staff.hostname || host.hostname === staff.hostname) return 'staff';
   return entries.includes(host.hostname) ? 'landing' : 'staff';
@@ -60,6 +60,17 @@ function validHostEntries(entries: string[]): boolean {
   return entries.length > 0 && entries.every(s => parseAuthority(s)?.hostname === s && !s.includes(':'));
 }
 
+/** Full activation identity, shared by request routing and every customer link. */
+export function portalIdentity(env: LandingHostEnv): URL | null {
+  const entries = hostEntries(env.PORTAL_HOSTS);
+  const portal = configuredOrigin(env.PORTAL_ORIGIN);
+  const staff = configuredOrigin(env.STAFF_ORIGIN);
+  if (!validHostEntries(entries) || !portal || !staff ||
+      portal.hostname === staff.hostname || !entries.includes(portal.hostname) ||
+      hostEntries(env.LANDING_HOSTS).includes(portal.hostname)) return null;
+  return portal;
+}
+
 /** Finite customer API inventory, traced from app/order. No blanket API bypass. */
 export const PORTAL_API_PATHS = [
   '/api/portal/magic-link/request', '/api/portal/magic-link/verify',
@@ -73,6 +84,6 @@ export function portalPathDecision(path: string): 'redirect' | 'allow' | 'deny' 
   if ((PORTAL_API_PATHS as readonly string[]).includes(path) ||
       new RegExp(`^/api/portal/order/draft/${uuid}$`).test(path) ||
       new RegExp(`^/api/portal/quote/${uuid}/pay$`).test(path)) return 'allow';
-  if (path.startsWith('/_next/static/') || ['/favicon.ico', '/icon.png', '/apple-icon.png', '/brand/co-icon.png', '/brand/co-wordmark.png', '/brand/landing-icon.png'].includes(path)) return 'allow';
+  if (path.startsWith('/_next/static/') || ['/favicon.ico', '/icon.png', '/apple-icon.png', '/brand/co-icon.png', '/brand/co-wordmark.png', '/brand/co-wordmark.svg', '/brand/landing-icon.png'].includes(path)) return 'allow';
   return 'deny';
 }

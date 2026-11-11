@@ -41,16 +41,15 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     ? rawAuthority.replace(/\]:\d+$/, ']')
     : rawAuthority?.replace(/:[^:]*$/, ''))?.replace(/\.$/, '');
   // Listed portal authorities never fall through to staff authentication on malformed
-  // origin/authority or forwarded-host disagreement. An explicit overlap is staff.
+  // origin/authority, overlap, or forwarded-host disagreement.
   const portalHosts = hostEntries(landingConfig.PORTAL_HOSTS);
   const portalHostname = requestedHost?.hostname ?? rawHostname;
-  const portalCandidate = portalHostname && portalHosts.includes(portalHostname) &&
-    !hostEntries(landingConfig.LANDING_HOSTS).includes(portalHostname) &&
-    portalHostname !== configuredOrigin(landingConfig.STAFF_ORIGIN)?.hostname;
+  const portalCandidate = portalHostname && portalHosts.includes(portalHostname);
   if (kind === 'portal' || portalCandidate) {
-    const portalFinish = (response: NextResponse) => {
+    const portalFinish = (response: NextResponse, assetPath?: string) => {
       response.headers.set('X-Robots-Tag', 'noindex, nofollow');
-      response.headers.set('Cache-Control', 'private, no-store');
+      if (!assetPath) response.headers.set('Cache-Control', 'private, no-store');
+      if (assetPath?.startsWith('/brand/')) response.headers.set('Cache-Control', 'public, max-age=300');
       return finish(response, false);
     };
     if (kind !== 'portal') return portalFinish(new NextResponse(null, { status: 404 }));
@@ -60,7 +59,8 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
       const target = req.nextUrl.clone(); target.pathname = '/order/start';
       return portalFinish(NextResponse.redirect(target));
     }
-    return portalFinish(NextResponse.next({ request: { headers } }));
+    const asset = path.startsWith('/_next/static/') || path.startsWith('/brand/') || ['/favicon.ico', '/icon.png', '/apple-icon.png'].includes(path);
+    return portalFinish(NextResponse.next({ request: { headers } }), asset ? path : undefined);
   }
   if (!requestedHost && rawHostname && landingConfig.landingHosts.includes(rawHostname) && rawHostname !== configuredOrigin(landingConfig.STAFF_ORIGIN)?.hostname) {
     return finish(new NextResponse(null, { status: 404 }), true);

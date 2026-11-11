@@ -501,7 +501,7 @@ export async function createQuoteCheckout(input: {
     throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
   }
 
-  const origin = portalOrigin({ PORTAL_ORIGIN: process.env.PORTAL_ORIGIN, NEXT_PUBLIC_APP_URL: input.appOrigin })!.replace(/\/$/, "");
+  const origin = portalOrigin({ ...process.env, NEXT_PUBLIC_APP_URL: input.appOrigin })!.replace(/\/$/, "");
   const label = input.kind === "deposit" ? "Catering deposit" : "Catering order";
   const dateLabel = quote.eventDate ?? "date to be confirmed";
 

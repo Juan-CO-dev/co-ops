@@ -69,10 +69,17 @@ D6 includes recorded rules, phases a-g, CC review/Juan approval, `landingRateLim
 
 ## Three-host identity (2026-11-11; supersedes D4 host values above)
 
-Staff: `https://complimentsonlyoperations.com`. Landing: `https://eat.complimentsonlyoperations.com`.
-Customer catering portal: `https://catering.complimentsonlyoperations.com`.
-Configure the existing `STAFF_ORIGIN`, `LANDING_HOSTS`, and `SITE_ORIGIN` to those staff/landing identities.
-The portal ships OFF. Enable with:
+Current production values (the bare `complimentsonlyoperations.com` domain also serves staff):
+
+```text
+STAFF_ORIGIN=https://co-ops-ashy.vercel.app
+LANDING_HOSTS=eat.complimentsonlyoperations.com
+SITE_ORIGIN=https://eat.complimentsonlyoperations.com
+```
+
+Changing STAFF_ORIGIN is optional and separate from portal activation. Keep these existing values.
+The portal ships OFF. Add `catering.complimentsonlyoperations.com` to the existing Vercel project,
+complete DNS/TLS, then enable with:
 
 ```text
 PORTAL_HOSTS=catering.complimentsonlyoperations.com
@@ -81,7 +88,7 @@ PORTAL_ORIGIN=https://catering.complimentsonlyoperations.com
 
 Hosts are exact lowercase names (comma separated, no ports/wildcards); the origin is HTTPS with no path,
 trailing slash, query, credentials, or fragment, matching SITE_ORIGIN validation. Keep lists disjoint:
-a both-listed host classifies as staff. Set both portal variables together; invalid portal configuration
+a both-listed host receives the portal-style empty noindex 404, never staff or landing. Set both portal variables together; invalid portal configuration
 on a listed portal authority returns an empty 404. Keep NEXT_PUBLIC_APP_URL for legacy staff links.
 
 Smoke after redeploy: portal `/` redirects to `/order/start`; intake, magic-link email/consume, account,
