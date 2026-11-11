@@ -66,6 +66,11 @@ export interface DraftIntake {
   fulfillmentRouted?: boolean;
   /** ⑤ storefront carry-through: cart lines to pre-seed the draft (v1: item+qty, whole portion). */
   preselect?: DraftLineInput[] | null;
+  /** Build 2 (Meta leads, A1): the pipeline lead this intake CONTINUES. Set ONLY by the Meta worker on
+   *  a token it mints itself; the public /order/start parser never emits it (lib/portal/intake-parser.ts).
+   *  createDraftFromIntake attaches the draft to that lead when the verified customer owns it, it is
+   *  still in inquiry/quote_sent and carries no live quote — otherwise today's create path runs. */
+  pipelineId?: string | null;
 }
 
 export type Portion = "quarter" | "half" | "whole";
@@ -214,14 +219,28 @@ async function loadOwnedDraftHeader(
  * lead_source 'portal', + intake detail fields) + a draft quote (status 'draft', origin
  * 'self_serve', 0 lines, all charges 0). Called from consumeMagicLink AFTER email verification —
  * never before (no unverified/competitor rows). Returns the draft handle the flow carries.
+ *
+ * Build 2 (A1), as ruled on review 2026-11-11: the plain portal path (no `pipelineId`) is
+ * BYTE-IDENTICAL to before — the same three writes, the same audit row, no lock, no new refusal
+ * (tests/portal-draft-parity.test.ts runs the base function beside this one). ONLY a Meta
+ * continuation token (pipelineId) first tries `portal_intake_attach` (0300): under the Meta
+ * worker's customer intake lock it attaches a draft quote to that lead when the verified customer
+ * owns it, it is still inquiry/quote_sent and it has no live quote (a null lead location is
+ * filled); any other answer writes nothing and today's create path runs.
  */
-export async function createDraftFromIntake(customerId: string, intake: DraftIntake): Promise<{ quoteId: string; pipelineId: string }> {
+export async function createDraftFromIntake(customerId: string, intake: DraftIntake): Promise<{ quoteId: string; pipelineId: string; attached: boolean }> {
   if (!UUID_RE.test(intake.locationId)) throw new PortalDraftError(400, "invalid_location", "A valid location is required");
   if (!intake.contactName || intake.contactName.trim().length === 0) throw new PortalDraftError(400, "invalid_payload", "contactName is required");
   if (intake.headcount != null && (!Number.isFinite(Number(intake.headcount)) || Number(intake.headcount) < 0)) {
     throw new PortalDraftError(400, "invalid_headcount", "headcount must be zero or greater");
   }
   const sb = getServiceRoleClient();
+
+  const continuesLead = typeof intake.pipelineId === "string" && UUID_RE.test(intake.pipelineId) ? intake.pipelineId : null;
+  if (continuesLead) {
+    const attached = await attachDraftToLead(sb, customerId, continuesLead, intake);
+    if (attached) return { ...attached, attached: true };
+  }
 
   const { data: lead, error: leadErr } = await sb
     .from("catering_pipeline")
@@ -284,7 +303,25 @@ export async function createDraftFromIntake(customerId: string, intake: DraftInt
     }
   }
 
-  return { quoteId: quote.id, pipelineId: lead.id };
+  return { quoteId: quote.id, pipelineId: lead.id, attached: false };
+}
+
+/** The Meta continuation's attach (0300 `portal_intake_attach`): null = not attached, nothing written. */
+async function attachDraftToLead(sb: ReturnType<typeof getServiceRoleClient>, customerId: string, pipelineId: string, intake: DraftIntake): Promise<{ quoteId: string; pipelineId: string } | null> {
+  const { data, error } = await sb.rpc("portal_intake_attach", {
+    p_customer_id: customerId, p_pipeline_id: pipelineId,
+    p_intake: { contact_name: intake.contactName.trim(), location_id: intake.locationId, event_date: intake.eventDate ?? null, headcount: intake.headcount ?? null, is_delivery: intake.isDelivery },
+  });
+  if (error) throw new Error(`createDraftFromIntake attach: ${error.message}`);
+  const row = data as { attached?: unknown; quote_id?: unknown; pipeline_id?: unknown } | null;
+  if (!row || row.attached !== true) return null;
+  if (typeof row.quote_id !== "string" || typeof row.pipeline_id !== "string") throw new Error("createDraftFromIntake attach: malformed result");
+  void audit({
+    actorId: null, actorRole: null, action: "catering.draft.create",
+    resourceTable: "catering_quotes", resourceId: row.quote_id,
+    metadata: { pipeline_id: row.pipeline_id, customer_id: customerId, location_id: intake.locationId, attached: true }, ipAddress: null, userAgent: null,
+  });
+  return { quoteId: row.quote_id, pipelineId: row.pipeline_id };
 }
 
 // ── Load (build page data) ─────────────────────────────────────────────────────────

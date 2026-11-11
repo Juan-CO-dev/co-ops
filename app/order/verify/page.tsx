@@ -2,7 +2,7 @@
 /**
  * /order/verify — Magic-link landing page (Portal-2).
  *
- * The emailed link points here: /order/verify?token=<raw>.
+ * The emailed link points here: /order/verify?token=<raw>[&lang=es&ttl=72h].
  *
  * HARD RULES (enforced for Next 16 static prerender compatibility):
  *  1. Read the token from window.location.search inside useEffect — do NOT
@@ -10,24 +10,36 @@
  *  2. POST the token from the effect on mount (client JS). Email scanners
  *     prefetch links but don't run JS, so a client-side POST-on-mount avoids
  *     burning the single-use token on prefetch.
+ *
+ * Build 2 (A2): a Meta continuation link carries its language and lifetime, so the page
+ * speaks Spanish for a Spanish form and names the 72 h lifetime on the expired state. Copy is
+ * lib/portal/verify-copy-shared.ts (pure, pinned).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { TENANT_NAME } from "@/lib/tenant";
+import { parseVerifyParams, verifyCopy } from "@/lib/portal/verify-copy-shared";
+
+const neverChanges = () => () => {};
 
 export default function OrderVerify() {
   const router = useRouter();
   const [state, setState] = useState<"verifying" | "error">("verifying");
+  // The URL is an external value: read it ONCE per mount (the token is scrubbed from it right after);
+  // null on the server so the static prerender shows the spinner in English until hydration — a
+  // valid link must never flash "expired" — and a missing token is derived, not set in the effect.
+  const searchRef = useRef<string | null>(null);
+  const search = useSyncExternalStore(neverChanges, () => (searchRef.current ??= window.location.search), () => null);
+  const { token, language, ttlLabel } = parseVerifyParams(search ?? "");
+  const missingToken = search !== null && token === null;
 
   useEffect(() => {
-    const token = new URLSearchParams(window.location.search).get("token");
-    if (!token) {
-      setState("error");
-      return;
-    }
+    const { token } = parseVerifyParams(window.location.search);
+    if (!token) return;
     // A-WA-L3: scrub the single-use token from the URL immediately so it can't leak via browser
-    // history or the Referer header of any subsequent request / asset load within the 30-min TTL.
+    // history or the Referer header of any subsequent request / asset load within the token's TTL.
     window.history.replaceState(null, "", window.location.pathname);
     (async () => {
       try {
@@ -51,12 +63,14 @@ export default function OrderVerify() {
     })();
   }, [router]);
 
+  const copy = verifyCopy(language, ttlLabel);
+
   return (
-    <div className="flex min-h-screen flex-col bg-co-bg text-co-text">
+    <div lang={language} className="flex min-h-screen flex-col bg-co-bg text-co-text">
       <header className="border-b border-co-border/50 bg-co-text text-co-bg">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-3.5">
-          <Link href="/order" className="text-sm font-semibold text-co-bg/70 transition hover:text-co-bg">‹ Back</Link>
-          <span className="text-sm font-extrabold uppercase tracking-[0.22em]">Compliments Only</span>
+          <Link href="/order" className="text-sm font-semibold text-co-bg/70 transition hover:text-co-bg">{copy.back}</Link>
+          <span className="text-sm font-extrabold uppercase tracking-[0.22em]">{TENANT_NAME}</span>
           <span className="w-10" />
         </div>
       </header>
@@ -64,13 +78,11 @@ export default function OrderVerify() {
       <main className="flex flex-1 items-center justify-center px-5 py-10">
         <div className="w-full max-w-lg">
           <div className="rounded-3xl border border-co-border/70 bg-co-surface p-8 text-center shadow-sm sm:p-10">
-            {state === "verifying" ? (
+            {state === "verifying" && !missingToken ? (
               <>
                 <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-co-gold/40 text-3xl">✉️</div>
-                <h1 className="mt-5 text-2xl font-extrabold text-co-text">Signing you in…</h1>
-                <p className="mx-auto mt-2 max-w-sm text-co-text-muted">
-                  Verifying your link — this only takes a moment.
-                </p>
+                <h1 className="mt-5 text-2xl font-extrabold text-co-text">{copy.verifyingTitle}</h1>
+                <p className="mx-auto mt-2 max-w-sm text-co-text-muted">{copy.verifyingBody}</p>
                 <div className="mt-7 flex justify-center">
                   <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-co-gold border-t-transparent" />
                 </div>
@@ -78,20 +90,18 @@ export default function OrderVerify() {
             ) : (
               <>
                 <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-co-border/40 text-3xl">🔗</div>
-                <h1 className="mt-5 text-2xl font-extrabold text-co-text">Link expired</h1>
-                <p className="mx-auto mt-2 max-w-sm text-co-text-muted">
-                  This link has expired, was already used, or was replaced by a newer one. Only your most recent link works, and links expire after 30 minutes.
-                </p>
+                <h1 className="mt-5 text-2xl font-extrabold text-co-text">{copy.expiredTitle}</h1>
+                <p className="mx-auto mt-2 max-w-sm text-co-text-muted">{copy.expiredBody}</p>
                 <Link
                   href="/order/start"
                   className="mt-7 inline-flex min-h-[52px] w-full items-center justify-center rounded-full bg-co-text px-8 text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90"
                 >
-                  Request a new link →
+                  {copy.requestNew}
                 </Link>
               </>
             )}
           </div>
-          <p className="mt-4 text-center text-xs text-co-text-dim">No passwords to remember — your email is your account.</p>
+          <p className="mt-4 text-center text-xs text-co-text-dim">{copy.footer}</p>
         </div>
       </main>
     </div>
