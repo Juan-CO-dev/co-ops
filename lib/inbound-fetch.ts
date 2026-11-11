@@ -10,13 +10,22 @@ export interface FetchedAttachment {
   omissionReason?: "size" | "content_type";
 }
 
-/** Only the documented receiving CDN, exact email/attachment path, no redirects. */
+/**
+ * Only Resend's receiving CDN, exact email/attachment path, no redirects. Two shapes:
+ * the documented `inbound-cdn.resend.com/{email}/attachments/{id}` and the one live
+ * receiving actually serves, `cdn.resend.app/receiving/{email}/attachments/{id}`
+ * (observed 2026-11-11 on the first prod invoice; the docs lag it).
+ */
+const TRUSTED_ATTACHMENT_ORIGINS: ReadonlyArray<{ host: string; prefix: string }> = [
+  { host: "inbound-cdn.resend.com", prefix: "" },
+  { host: "cdn.resend.app", prefix: "/receiving" },
+];
 export function trustedAttachmentUrl(raw: string, emailId: string, attachmentId: string): boolean {
   try {
     const url = new URL(raw);
-    return url.protocol === "https:" && url.hostname === "inbound-cdn.resend.com"
-      && !url.port && !url.username && !url.password
-      && url.pathname === `/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`;
+    if (url.protocol !== "https:" || url.port || url.username || url.password) return false;
+    const path = `/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`;
+    return TRUSTED_ATTACHMENT_ORIGINS.some(o => url.hostname === o.host && url.pathname === `${o.prefix}${path}`);
   } catch { return false; }
 }
 
