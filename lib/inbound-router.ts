@@ -4,6 +4,9 @@ import { randomUUID } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { ingestInboundReceipt } from "@/lib/email-receipts";
 import { fetchInboundContent } from "@/lib/inbound-fetch";
+import { finalizeCateringInbound, type StoredCateringInbound } from "@/lib/catering/inbox-ingest";
+import { inboxAttachmentManifest, inboxContent, inboxHeaders } from "@/lib/catering/inbox-content-shared";
+import { inboxExternalReference } from "@/lib/catering/inbox-identity-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { inboundAddresses, normalizeInboundAddress, resolveInboundRoute, INBOUND_MAX_ATTEMPTS, inboundRetryDelayMs, inboundErrorCode, type InboundErrorCode, type InboundAddressRule } from "@/lib/inbound-router-shared";
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
@@ -43,7 +46,7 @@ async function addressRules(sb: ServiceClient): Promise<InboundAddressRule[]> {
   ];
 }
 /** Conditional five-minute lease; failed or interrupted work remains sweepable. */
-export async function processInboundMessage(id: string, sb = getServiceRoleClient()): Promise<"fetched" | "skipped" | "failed" | "blocked_config" | "busy"> {
+export async function processInboundMessage(id: string, sb = getServiceRoleClient()): Promise<"fetched" | "catering_fetched" | "skipped" | "failed" | "blocked_config" | "busy"> {
   const now = new Date().toISOString();
   const { data: row, error } = await sb.from("inbound_messages").select("*").eq("id", id)
     .in("content_state", ["pending", "failed", "blocked_config"]).lt("fetch_attempts", INBOUND_MAX_ATTEMPTS)
@@ -70,6 +73,41 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
       : { lane: row.lane, location_id: row.location_id, route_reason: row.route_reason };
     stage = "ledger";
     await save(route);
+    if (route.lane === "catering") {
+      const readChild = () => sb.from("catering_inbound_messages").select("*")
+        .eq("inbound_message_id", row.id).maybeSingle<StoredCateringInbound>();
+      let child = await readChild();
+      if (child.error) throw new Error("catering_lookup_failed");
+      if (!child.data) {
+        stage = "provider_error";
+        const content = await fetchInboundContent(row.provider_email_id, undefined, { metadataOnly: true });
+        stage = "ledger";
+        const headers = inboxHeaders(content.headers && typeof content.headers === "object" && !Array.isArray(content.headers)
+          ? content.headers as Record<string, unknown> : {});
+        const attachments = inboxAttachmentManifest(content.attachments.map(value => {
+          const a = value && typeof value === "object" ? value as Record<string, unknown> : {};
+          return { filename: typeof a.filename === "string" ? a.filename : "attachment",
+            content_type: typeof a.content_type === "string" ? a.content_type : null,
+            size: typeof a.size === "number" ? a.size : null, omission_reason: "not_fetched" as const };
+        }));
+        const body = inboxContent({ subject: row.subject, text: content.text, html: content.html });
+        const recorded = await sb.rpc("record_catering_inbound", {
+          p_inbound_message_id: row.id, p_expected_revision: 0, p_request_id: randomUUID(),
+          p_content: { ...body,
+            sender_address: row.from_address, recipient_addresses: [...new Set([...row.to_addresses, ...row.cc_addresses, ...row.received_for])].slice(0, 100),
+            headers, attachments, external_ref: inboxExternalReference(row.from_address, body.subject, body.body_text),
+            thread_key: (headers.references?.split(/\s+/)[0] || headers["in-reply-to"] || headers["message-id"] || row.id).slice(0, 1000),
+            received_at: row.received_at },
+        });
+        if (recorded.error) throw new Error("catering_record_failed");
+        child = await readChild();
+        if (child.error || !child.data) throw new Error("catering_lookup_failed");
+      }
+      if (child.data.disposition === "recorded") await finalizeCateringInbound(child.data, sb);
+      await save({ content_state: "fetched", fetch_attempts: attempt, last_error: null, lease_token: null });
+      // The webhook parses only the vendor success result. Catering never enters receipt parsing.
+      return "catering_fetched";
+    }
     if (route.lane !== "vendor_receipt") {
       await save({ content_state: "skipped", last_error: null, lease_token: null });
       return "skipped";

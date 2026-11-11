@@ -45,3 +45,11 @@ it("parses the fetched receipt in after within the route budget", async () => {
   expect(mocks.parse).toHaveBeenCalledWith("fixture-row", expect.any(Number));
   expect(mocks.parse.mock.calls[0]![1]).toBeGreaterThanOrEqual(started + 160_000);
 });
+
+it("never calls the receipt parser for successfully fetched catering mail", async () => {
+  mocks.record.mockResolvedValue({ duplicate: false, id: "catering-row" });
+  mocks.process.mockResolvedValue("catering_fetched");
+  await POST(request());
+  await mocks.after.mock.calls[0]![0]();
+  expect(mocks.parse).not.toHaveBeenCalled();
+});

@@ -41,13 +41,16 @@ export async function redriveInbound(actor: AuthContext, id: string) {
   if (!canManageInboundAliases(actor.user.role)) throw new InboundSettingsError(403, "forbidden");
   if (!isShopId(id)) throw new InboundSettingsError(400, "invalid_payload");
   const sb = getServiceRoleClient();
-  const prior = await sb.from("inbound_messages").select("content_state, fetch_attempts, next_attempt_at")
-    .eq("id", id).in("content_state", ["failed", "blocked_config"]).maybeSingle();
+  const prior = await sb.from("inbound_messages").select("content_state, fetch_attempts, next_attempt_at, lane, route_reason")
+    .eq("id", id).in("content_state", ["failed", "blocked_config", "skipped"]).maybeSingle();
   if (prior.error) throw new InboundSettingsError(503, "unavailable");
   if (!prior.data) throw new InboundSettingsError(409, "conflict");
+  if (prior.data.content_state === "skipped" &&
+    (prior.data.lane !== "catering" || prior.data.route_reason !== "catering_address")) throw new InboundSettingsError(409, "conflict");
   const next = { content_state: "pending", fetch_attempts: 0, next_attempt_at: new Date().toISOString(), last_error: null, lease_token: null };
   const result = await sb.from("inbound_messages").update(next, { count: "exact" }).eq("id", id)
     .eq("content_state", prior.data.content_state).eq("fetch_attempts", prior.data.fetch_attempts)
+    .eq("lane", prior.data.lane).eq("route_reason", prior.data.route_reason)
     .eq("next_attempt_at", prior.data.next_attempt_at).is("lease_token", null);
   if (result.error) throw new InboundSettingsError(503, "unavailable");
   if (result.count !== 1) throw new InboundSettingsError(409, "conflict");

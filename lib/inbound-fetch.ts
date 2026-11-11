@@ -42,8 +42,17 @@ async function boundedBytes(response: Response, limit: number): Promise<Buffer> 
   return Buffer.concat(chunks);
 }
 
-/** Re-list on EVERY attempt: signed CDN URLs are ephemeral and never persisted. */
-export async function fetchInboundContent(emailId: string, fetcher: typeof fetch = fetch) {
+export interface InboundMetadataContent {
+  headers: unknown;
+  text: string | null;
+  html: string | null;
+  attachments: unknown[];
+}
+interface InboundReceiptContent { rawEml: { bytes: Buffer; contentType: string } | null; attachments: FetchedAttachment[] }
+export function fetchInboundContent(emailId: string, fetcher?: typeof fetch): Promise<InboundReceiptContent>;
+export function fetchInboundContent(emailId: string, fetcher: typeof fetch | undefined, options: { metadataOnly: true }): Promise<InboundMetadataContent>;
+/** Vendor default re-lists signed CDN URLs. Catering opts into one receiving GET only. */
+export async function fetchInboundContent(emailId: string, fetcher: typeof fetch = fetch, options?: { metadataOnly: true }): Promise<InboundReceiptContent | InboundMetadataContent> {
   const key = process.env.RESEND_API_KEY;
   if (!key) throw new Error("resend_not_configured");
   const signal = AbortSignal.timeout(40_000); // whole fetch, not one timeout per file
@@ -58,6 +67,12 @@ export async function fetchInboundContent(emailId: string, fetcher: typeof fetch
   }
   const email = await api(`${base}?html_format=cid`);
   if (email.id !== emailId) throw new Error("resend_email_mismatch");
+  if (options?.metadataOnly) return {
+    headers: email.headers,
+    text: typeof email.text === "string" ? email.text : null,
+    html: typeof email.html === "string" ? email.html : null,
+    attachments: Array.isArray(email.attachments) ? email.attachments : [],
+  };
   const body = typeof email.text === "string" && email.text ? email.text : typeof email.html === "string" ? email.html : null;
   const bodyBytes = body === null ? null : Buffer.from(body, "utf8");
   const bodyOmitted = !!bodyBytes && bodyBytes.length > INBOUND_ASSET_LIMIT;

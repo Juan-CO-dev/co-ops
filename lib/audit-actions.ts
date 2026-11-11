@@ -359,8 +359,6 @@ export const NON_DESTRUCTIVE_ACTIONS = [
  * which would otherwise look identical.
  */
 export const RESERVED_ACTIONS = [
-  "catering.inbox.handle", // Round 2 route/library emitter; round 1 defines the SQL event contract.
-  "catering.inbox.reassign", // Round 2 route/library emitter.
   "ezcater.review.dismiss", // SQL-only, append-only Toast review decision.
   "ezcater.item_map.approve", // SQL-only, atomic mapping decision.
   "ezcater.item_map.ignore",

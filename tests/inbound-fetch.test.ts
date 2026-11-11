@@ -13,6 +13,18 @@ function mockFetch(items: unknown[], download = new Response(new Uint8Array([1, 
 beforeEach(() => vi.stubEnv("RESEND_API_KEY", randomBytes(20).toString("hex")));
 afterEach(() => vi.unstubAllEnvs());
 describe("inbound receiving API", () => {
+  it("catering opts into exactly one GET, preserving body/header and attachment metadata without bytes", async () => {
+    const metadata = { id: emailId, text: "Catering request", html: "<p>Catering request</p>",
+      headers: { "Message-ID": "<fixture>" }, attachments: [attachment()] };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(metadata));
+    const result = await fetchInboundContent(emailId, fetcher, { metadataOnly: true });
+    expect(result).toEqual({ text: metadata.text, html: metadata.html, headers: metadata.headers, attachments: metadata.attachments });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]![0]).toBe(`https://api.resend.com/emails/receiving/${emailId}?html_format=cid`);
+    expect(fetcher.mock.calls[0]![1]?.method ?? "GET").toBe("GET");
+    expect(result).not.toHaveProperty("rawEml");
+    expect(result.attachments[0]).not.toHaveProperty("bytes");
+  });
   it("fetches metadata-only mail body and attachment bytes, with no bearer on CDN", async () => {
     const fetcher = mockFetch([attachment()]);
     const content = await fetchInboundContent(emailId, fetcher);
