@@ -1,5 +1,5 @@
 -- 0298: catering inbox phase 1b — delivery (the sending side), shipping OFF.
--- AUTHORED 2026-11-11. NOT YET APPLIED (sim first with scripts/sql-harness-0298.mjs offline proof, then prod on Juan's word).
+-- AUTHORED 2026-11-11. APPLIED: SIM 20261111203021 (2026-11-11; dry run + verify clean). PROD: NOT YET (Juan-gated; delivery stays OFF until Juan flips it post-launch).
 -- Sources: 0296 (the inbox tables and writers; lock order message → draft), 0243/0268/0275 (the cron lease).
 -- 0297 is a parallel vendor-mail build: the lease preflight below refuses if its job set drifted.
 --
