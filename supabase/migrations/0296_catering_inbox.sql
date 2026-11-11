@@ -1,5 +1,5 @@
 -- 0296: catering inbox phase 1, round 1 (schema and pure-core contract).
--- AUTHORED 2026-11-11. APPLIED: SIM 20261111174346 (2026-11-11; dry run + verify clean). PROD: NOT YET (Juan-gated).
+-- AUTHORED 2026-11-11. APPLIED: SIM 20261111174346; PROD 20261111175058 (2026-11-11, Juan-approved; dry run + verify SQL clean). Recorded in supabase_migrations.schema_migrations.
 -- Sources: 0108 customers/pipeline, 0120 quotes, 0148 assignee, 0149 external ref, 0294 transport.
 -- CC-cleared plan amended by J1/J2 and A1-A11: attach-only, no delivery or tokens.
 -- Apply only after CC's schema verification and sim concurrency proof, then Juan's approval.
