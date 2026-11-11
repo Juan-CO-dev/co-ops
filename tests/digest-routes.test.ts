@@ -69,7 +69,8 @@ describe("hourly Vercel schedule", () => {
 
   it("covers 03:00 ET in winter, summer and on both DST change days", () => {
     const config = JSON.parse(readFileSync("vercel.json", "utf8")) as { crons: Array<{ path: string; schedule: string }> };
-    expect(config.crons).toHaveLength(10); // + /api/cron/meta-leads (Meta lead retry backstop, */10) + /api/cron/schedule-draft (Scheduling Phase 2, Task 19; R3 approved by CC) + /api/cron/sevenshifts-sync (Scheduling Phase 1, hourly at :20)
+    expect(config.crons).toHaveLength(11); // + /api/cron/meta-leads (Meta lead retry backstop, */10) + /api/cron/schedule-draft (Scheduling Phase 2, Task 19; R3 approved by CC) + /api/cron/sevenshifts-sync (Scheduling Phase 1, hourly at :20) + /api/cron/catering-inbox-delivery (catering inbox phase 1b, every 10 min at :05; inert unless live)
+    expect(config.crons.filter((c) => c.path === "/api/cron/catering-inbox-delivery")).toEqual([{ path: "/api/cron/catering-inbox-delivery", schedule: "5-55/10 * * * *" }]);
     expect(config.crons.filter((c) => c.path === "/api/cron/digest-tick")).toEqual([{ path: "/api/cron/digest-tick", schedule: "0 * * * *" }]);
     for (const [day, expectedUtcHour] of [["2026-01-15", 8], ["2026-07-15", 7], ["2026-03-08", 7], ["2026-11-01", 8]] as const) {
       const hits = Array.from({ length: 24 }, (_, i) => i).filter((hour) => {

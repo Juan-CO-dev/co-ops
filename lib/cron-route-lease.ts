@@ -7,6 +7,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
  * A crashed invocation recovers automatically before the next ten-minute tick.
  * `sevenshifts-sync` (0268) is the hourly 7shifts read; Sync now shares its lease.
  * `schedule-draft` (0275) is the Wednesday schedule draft (Scheduling Phase 2, Task 19).
+ * `catering-inbox-delivery` (0298) is the catering inbox delivery worker (phase 1b), inert unless live.
  */
 export type CronRouteJob = "toast-sales-today" | "toast-catering-scan" | "sevenshifts-sync" | "schedule-draft" | "catering-inbox-delivery" | "meta-leads";
 export async function claimCronRoute(job: CronRouteJob): Promise<boolean> {

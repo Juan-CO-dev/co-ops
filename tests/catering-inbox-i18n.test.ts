@@ -10,8 +10,12 @@ it("all inbox text and placeholders ship together in en/es", () => {
   for (const key of keys(e)) {
     expect((s[key]!.match(/\{\w+\}/g) ?? []).sort(), key).toEqual((e[key]!.match(/\{\w+\}/g) ?? []).sort());
     expect(s[key], key).not.toMatch(/\ufffd|\u00c3[\u0080-\u00bf]|\u00c2[\u0080-\u00bf]|\u00e2\u20ac/);
-    expect(key).not.toMatch(/link_notice|preview_link|\.escalation\./);
+    // Phase 1b: the staff escalation mail has keys; a customer-facing link notice or preview link still has none.
+    expect(key).not.toMatch(/link_notice|preview_link/);
   }
+  for (const value of ["draft", "claimed", "sent", "failed", "ambiguous", "cancelled"]) expect(e[`catering.inbox.delivery.${value}`]).toBeTruthy();
+  for (const value of ["off", "shadow", "live"]) expect(e[`catering.inbox.mode.${value}`]).toBeTruthy();
+  expect(keys(e).filter(k => k.startsWith("catering.inbox.escalation.")).length).toBeGreaterThan(5);
   for (const [prefix, values] of [["reason", INBOX_REASONS], ["group", INBOX_GROUPS], ["class", INBOX_CLASSIFICATIONS], ["identity", INBOX_IDENTITIES], ["disposition", INBOX_DISPOSITIONS], ["customer_status", INBOX_CUSTOMER_STATUSES]] as const)
     for (const value of values) expect(e[`catering.inbox.${prefix}.${value}`]).toBeTruthy();
   expect(e["catering.inbox.drafts_not_sent"]).toBe("Drafts are not being sent yet");

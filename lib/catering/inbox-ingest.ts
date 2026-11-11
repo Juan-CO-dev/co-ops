@@ -4,6 +4,7 @@ import type { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { TENANT_NAME } from "@/lib/tenant";
+import { portalOrigin } from "@/lib/portal/origin-shared";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { inboxLatestText, inboxOwnAddresses, type InboxHeaders } from "./inbox-content-shared";
@@ -17,11 +18,12 @@ export interface StoredCateringInbound {
   subject: string; body_text: string; headers: InboxHeaders; external_ref: string | null; thread_key: string | null;
 }
 
-/** TODO: switch to portalOrigin() from lib/portal/origin-shared.ts when that PR merges. */
+/** The plain portal start page from the one customer-origin resolver (no token, no path, no credentials). */
 export function cateringInboxPortalUrl(): string {
-  const origin = process.env.NEXT_PUBLIC_APP_URL;
+  const origin = portalOrigin();
   if (!origin) throw new Error("inbox_portal_not_configured");
-  const url = new URL(origin);
+  let url: URL;
+  try { url = new URL(origin); } catch { throw new Error("inbox_portal_not_configured"); }
   if (url.protocol !== "https:" || url.username || url.password) throw new Error("inbox_portal_not_configured");
   return `${url.origin}/order/start`;
 }
@@ -41,7 +43,8 @@ export async function finalizeCateringInbound(message: StoredCateringInbound, sb
   ]);
   if (transport.error || !transport.data) throw new Error("inbox_transport_read_failed");
   const ownAddresses = inboxOwnAddresses({ aliases, receiptAddresses: locations.map(row => row.receipt_email_address),
-    emailFrom: process.env.EMAIL_FROM, emailFromTeam: process.env.EMAIL_FROM_TEAM, legacyAddresses: process.env.CATERING_LEGACY_ADDRESSES });
+    emailFrom: process.env.EMAIL_FROM, emailFromTeam: process.env.EMAIL_FROM_TEAM, legacyAddresses: process.env.CATERING_LEGACY_ADDRESSES,
+    inboxFrom: process.env.CATERING_INBOX_FROM });
   const decision = classifyCateringInbox({ sender: message.sender_address ?? "", subject: message.subject,
     body: message.body_text, headers: message.headers, ownAddresses, identity: identity.identity, artifact: identity.artifact });
   const language = inboxReplyLanguage({ subject: message.subject, latestText: inboxLatestText(message.body_text).text });

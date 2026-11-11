@@ -282,9 +282,17 @@ export function isScheduleStepUpPath(currentPath: string): boolean {
   return currentPath === "/api/schedule";
 }
 
+/** The catering inbox "Send draft" route (phase 1b, Tier B) lives OUTSIDE /admin: exactly
+ *  `/api/catering/inbox/<uuid>/send` keeps the unlock the preceding POST /api/auth/step-up set.
+ *  The inbox page, list, detail, handle and reassign still clear it. */
+export function isCateringInboxSendPath(currentPath: string): boolean {
+  return /^\/api\/catering\/inbox\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/send$/i.test(currentPath);
+}
+
 /** Paths where an unlocked step-up flag survives requireSession (does not auto-clear). */
 export function isStepUpSurface(currentPath: string): boolean {
-  return isAdminPath(currentPath) || isCateringStepUpPath(currentPath) || isCountsStepUpPath(currentPath) || isScheduleStepUpPath(currentPath);
+  return isAdminPath(currentPath) || isCateringStepUpPath(currentPath) || isCountsStepUpPath(currentPath) || isScheduleStepUpPath(currentPath)
+    || isCateringInboxSendPath(currentPath);
 }
 
 /**

@@ -149,8 +149,8 @@ it('classifies every route and runtime HTTP export, including aliases and re-exp
     expect(mutations.some(e => `${e.path} ${e.method}` === key), key).toBe(true);
     expect(entry.reason.length).toBeGreaterThanOrEqual(15);
   }
-  expect(mutations.length).toBe(112);
-  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(89);
+  expect(mutations.length).toBe(113);
+  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(90);
 }, 120_000);
 
 // Full parsed stub source includes alias targets and module initializers: an implemented
@@ -246,7 +246,7 @@ it.each(['app/api/landing/ad-code/route.ts', 'app/api/landing/events/route.ts', 
 // GET-only cron endpoints are not mutation-method exemptions. Their external callers
 // authenticate with secrets, and adding a POST still changes the exact export inventory.
 const cronGet = [
-  'app/api/cron/digest-tick/route.ts', 'app/api/cron/job-watch/route.ts', 'app/api/cron/meta-leads/route.ts', 'app/api/cron/parse-receipts/route.ts',
+  'app/api/cron/catering-inbox-delivery/route.ts', 'app/api/cron/digest-tick/route.ts', 'app/api/cron/job-watch/route.ts', 'app/api/cron/meta-leads/route.ts', 'app/api/cron/parse-receipts/route.ts',
   'app/api/cron/prune-sessions/route.ts', 'app/api/cron/schedule-draft/route.ts', 'app/api/cron/sevenshifts-sync/route.ts',
   'app/api/cron/toast-catering-scan/route.ts', 'app/api/cron/toast-sales-pull/route.ts', 'app/api/cron/toast-sales-today/route.ts',
 ];
