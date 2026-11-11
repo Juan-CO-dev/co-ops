@@ -3,6 +3,13 @@ import { inboxLatestText, inboxThreadInitial, type InboxHeaders } from "./inbox-
 import type { InboxChannel, InboxDecision, InboxIdentity, InboxReason } from "./inbox-shared";
 
 export const INBOX_RULE_VERSION = "1";
+/** Auto-replies, bounces, list and bulk mail, daemons: never answered. One rule for the classifier and the sender. */
+export function inboxAutomatedMessage(headers: InboxHeaders, sender: string | null): boolean {
+  return (!!headers["auto-submitted"] && headers["auto-submitted"].toLowerCase() !== "no") ||
+    /\b(bulk|list|junk)\b/i.test(headers.precedence ?? "") || !!headers["list-id"] || !!headers["list-unsubscribe"] ||
+    headers["return-path"] === "<>" || /delivery-status/i.test(headers["content-type"] ?? "") ||
+    /^(mailer-daemon|postmaster)@/i.test(sender ?? "");
+}
 export interface InboxClassifyInput {
   sender: string; subject: string; body: string; headers: InboxHeaders;
   ownAddresses: ReadonlySet<string>; identity: InboxIdentity;
@@ -25,12 +32,7 @@ export function classifyCateringInbox(input: InboxClassifyInput): InboxDecision 
     const urgent = /\b(urgent\w*|asap|today|angry|unacceptable|complaint|allerg\w*|alerg\w*|reclamo|charged twice|cuanto antes|hoy|enojad\w*|inaceptable|queja|cobro doble)\b/.test(text);
     const platformUrgent = urgent || /\b(payment|charged|refund\w*|disput\w*|reembolso|cobro|pag(o|ar))\b/.test(text);
     if (platform) return result("platform_notification", platformUrgent ? "needs_human" : "notification", platformUrgent ? "urgent" : null);
-    const headers = input.headers;
-    const automated = (!!headers["auto-submitted"] && headers["auto-submitted"].toLowerCase() !== "no") ||
-      /\b(bulk|list|junk)\b/i.test(headers.precedence ?? "") || !!headers["list-id"] || !!headers["list-unsubscribe"] ||
-      headers["return-path"] === "<>" || /delivery-status/i.test(headers["content-type"] ?? "") ||
-      /^(mailer-daemon|postmaster)@/i.test(sender ?? "");
-    if (automated) return result("noise", "noise", "automated_message");
+    if (inboxAutomatedMessage(input.headers, sender)) return result("noise", "noise", "automated_message");
     if (urgent) return result("unclassified", "needs_human", "urgent");
     if (latest.uncertainQuote) return result("unclassified", "needs_human", "quoted_history");
     const intake = /\bcatering\b/.test(text) && /\b(need\w*|request\w*|looking for|headcount|event\w*|necesit\w*|busc\w*|solicit\w*|cotiz\w*|personas|fecha|evento\w*|\d{1,4}[/-]\d{1,2}|monday|tuesday|wednesday|thursday|friday|saturday|sunday|lunes|martes|miercoles|jueves|viernes|sabado|domingo|(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{1,2}|\d{1,2} (?:de )?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre))\b/.test(text);

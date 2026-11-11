@@ -9,7 +9,10 @@ import { TranslationProvider } from "@/lib/i18n/provider";
 import type { InboxDetail, InboxList } from "@/lib/catering/inbox";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
-const initial: InboxList = { mode:"shadow",assignees:[],messages:[{id:"m",inbound_message_id:"i",location_id:null,sender_address:"sender@example.test",subject:"<script>alert(1)</script>",received_at:"2026-11-10T12:00:00Z",disposition:"needs_human",classification:"unclassified",identity_status:"ambiguous",reason:"urgent",assigned_to:null,revision:1,group:"needs_reply",transport_only:false,stale:true}] };
+// The page hosts the real StepUpProvider; here the hook is a spy so each test can see what tier Send asked for.
+const stepUp = vi.hoisted(() => ({ requestStepUp: vi.fn(async () => "ok" as const), forgetStepUp: vi.fn() }));
+vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => stepUp }));
+const initial: InboxList = { mode:"shadow",assignees:[],settings:{mode:"shadow",revision:0,live_since:null},canChangeMode:false,messages:[{id:"m",inbound_message_id:"i",location_id:null,sender_address:"sender@example.test",subject:"<script>alert(1)</script>",received_at:"2026-11-10T12:00:00Z",disposition:"needs_human",classification:"unclassified",identity_status:"ambiguous",reason:"urgent",assigned_to:null,revision:1,group:"needs_reply",transport_only:false,stale:true,delivery_state:null}] };
 describe("inbox pane", () => {
   it.each(["en","es"] as const)("renders translated disclosure groups, warnings and escaped contacts in %s", language => {
     const dict=language==="en"?en:es;
@@ -28,12 +31,12 @@ describe("inbox pane", () => {
   });
 });
 
-const full: InboxDetail = { ...initial.messages[0]!, body_text: "Plain message body", body_from_html: false, body_truncated: false, catering_customer_id: "customer", lead_id: "lead", quote_id: "quote", preview_text: "Proposed reply only", events: [{id:"event",event_type:"finalize",created_at:"2026-11-10T12:00:00Z"}], assignees:[{id:"manager",name:"Manager"}] };
+const full: InboxDetail = { ...initial.messages[0]!, body_text: "Plain message body", body_from_html: false, body_truncated: false, catering_customer_id: "customer", lead_id: "lead", quote_id: "quote", preview_text: "Proposed reply only", events: [{id:"event",event_type:"finalize",created_at:"2026-11-10T12:00:00Z"}], assignees:[{id:"manager",name:"Manager"}], delivery: null, sendable: false };
 beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 function mount() { return render(createElement(TranslationProvider,{initialLanguage:"en"} as Parameters<typeof TranslationProvider>[0],createElement(InboxPane,{initial:{...initial,assignees:full.assignees}}))); }
 function mockFetch() {
  const calls: {url:string;body:Record<string,unknown>}[]=[];
@@ -128,4 +131,80 @@ describe("inbox interactive drawer",()=>{
   expect(screen.getByRole("button",{name:/Open message:/})).toBeTruthy();
   const group=screen.getByRole("button",{name:/Needs your reply/});fireEvent.click(group);expect(group.getAttribute("aria-expanded")).toBe("false");
  });
+});
+
+const sendable: InboxDetail = { ...full, disposition: "drafted", classification: "intake", reason: null, group: "drafted", delivery_state: "draft", delivery: { state: "draft", attempt: 0, attempted_at: null, sent_at: null, error_code: null }, sendable: true };
+const live: InboxList = { ...initial, mode: "live", settings: { mode: "live", revision: 3, live_since: "2026-11-11T12:00:00Z" } };
+function mountWith(list: InboxList, detail: InboxDetail, language: "en" | "es" = "en", post: (url: string) => { ok: boolean; json: () => Promise<unknown> } = () => ({ ok: true, json: async () => ({ result: { state: "sent" } }) })) {
+  const calls: { url: string; body: Record<string, unknown> }[] = [];
+  const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === "POST") { calls.push({ url, body: JSON.parse(String(options.body)) }); return post(url); }
+    return { ok: true, json: async () => url === "/api/catering/inbox" ? { inbox: list } : { message: detail } };
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(createElement(TranslationProvider, { initialLanguage: language } as Parameters<typeof TranslationProvider>[0], createElement(InboxPane, { initial: list })));
+  return { calls, fetcher };
+}
+const openDrawerIn = async (language: "en" | "es") => { fireEvent.click(screen.getByRole("button", { name: new RegExp((language === "en" ? en : es)["catering.inbox.action.open"]) })); return screen.findByRole("dialog"); };
+describe("inbox pane: phase 1b delivery", () => {
+  it("offers Send draft only in live mode on a server-sendable draft", async () => {
+    mountWith(initial, sendable); let dialog = await openDrawer();
+    expect(within(dialog).queryByRole("button", { name: en["catering.inbox.action.send"] })).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe(en["catering.inbox.drafts_not_sent"]);
+    cleanup(); vi.unstubAllGlobals();
+    mountWith(live, { ...sendable, sendable: false }); dialog = await openDrawer();
+    expect(within(dialog).queryByRole("button", { name: en["catering.inbox.action.send"] })).toBeNull();
+    cleanup(); vi.unstubAllGlobals();
+    mountWith(live, sendable); dialog = await openDrawer();
+    expect(within(dialog).getByRole("button", { name: en["catering.inbox.action.send"] })).toBeTruthy();
+    expect(screen.queryByText(en["catering.inbox.drafts_not_sent"])).toBeNull();
+  });
+  it.each(["en", "es"] as const)("Send asks Tier B, posts only revision and request id, then confirms in %s", async language => {
+    const dict = language === "en" ? en : es;
+    const { calls } = mountWith(live, sendable, language);
+    const dialog = await openDrawerIn(language);
+    fireEvent.click(within(dialog).getByRole("button", { name: dict["catering.inbox.action.send"] }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(stepUp.requestStepUp).toHaveBeenCalledWith("B");
+    expect(calls[0]?.url).toBe("/api/catering/inbox/m/send");
+    expect(calls[0]?.body).toEqual({ expectedRevision: 1, requestId: expect.any(String) });
+    await waitFor(() => expect(within(dialog).getByRole("status").textContent).toBe(dict["catering.inbox.send_sent"]));
+  });
+  it("does not post when the password prompt is cancelled", async () => {
+    stepUp.requestStepUp.mockResolvedValueOnce("cancelled" as never);
+    const { calls } = mountWith(live, sendable); const dialog = await openDrawer();
+    fireEvent.click(within(dialog).getByRole("button", { name: en["catering.inbox.action.send"] }));
+    await waitFor(() => expect((within(dialog).getByRole("button", { name: en["catering.inbox.action.send"] }) as HTMLButtonElement).disabled).toBe(false));
+    expect(calls).toHaveLength(0);
+  });
+  it.each([["thread_cap", "en"], ["needs_review", "es"], ["step_up_stale", "en"], ["delivery_off", "es"]] as const)("names the %s refusal in %s", async (code, language) => {
+    const dict = language === "en" ? en : es;
+    mountWith(live, sendable, language, () => ({ ok: false, json: async () => ({ code }) }));
+    const dialog = await openDrawerIn(language);
+    fireEvent.click(within(dialog).getByRole("button", { name: dict["catering.inbox.action.send"] }));
+    await waitFor(() => expect(within(dialog).getByRole("alert").textContent).toBe(dict[`catering.inbox.send_error.${code}`]));
+    if (code === "step_up_stale") expect(stepUp.forgetStepUp).toHaveBeenCalled();
+  });
+  it.each(["en", "es"] as const)("shows the delivery chip in the list and the drawer in %s", async language => {
+    const dict = language === "en" ? en : es;
+    const failed: InboxDetail = { ...sendable, delivery_state: "failed", delivery: { state: "failed", attempt: 2, attempted_at: "2026-11-11T12:00:00Z", sent_at: null, error_code: "provider_rejected" } };
+    mountWith({ ...live, messages: [{ ...live.messages[0]!, delivery_state: "failed" }] }, failed, language);
+    expect(screen.getAllByText(dict["catering.inbox.delivery.failed"]).length).toBeGreaterThan(0);
+    const dialog = await openDrawerIn(language);
+    expect(within(dialog).getByText(dict["catering.inbox.delivery.error.provider_rejected"])).toBeTruthy();
+    expect(within(dialog).getByText(dict["catering.inbox.delivery.attempts"].replace("{n}", "2"))).toBeTruthy();
+  });
+  it("shows the mode control to owner / CGS only, asks Tier B and posts the expected revision", async () => {
+    mountWith(initial, full);
+    expect(screen.queryByRole("combobox", { name: en["catering.inbox.mode.aria"] })).toBeNull();
+    cleanup(); vi.unstubAllGlobals();
+    const { calls } = mountWith({ ...initial, canChangeMode: true, settings: { mode: "shadow", revision: 4, live_since: null } }, full);
+    const select = screen.getByRole("combobox", { name: en["catering.inbox.mode.aria"] });
+    expect((screen.getByRole("button", { name: en["catering.inbox.mode.apply"] }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(select, { target: { value: "live" } });
+    fireEvent.click(screen.getByRole("button", { name: en["catering.inbox.mode.apply"] }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(stepUp.requestStepUp).toHaveBeenCalledWith("B");
+    expect(calls[0]).toEqual({ url: "/api/admin/catering-inbox/settings", body: { mode: "live", expectedRevision: 4 } });
+  });
 });

@@ -67,9 +67,12 @@ export function inboxOwnAddresses(input: {
   aliases: readonly { address: string; active: boolean }[];
   receiptAddresses: readonly (string | null)[];
   emailFrom?: string | null; emailFromTeam?: string | null; legacyAddresses?: string | null;
+  /** Phase 1b: the catering inbox reply sender (CATERING_INBOX_FROM), `addr` or `Name <addr>`. */
+  inboxFrom?: string | null;
 }): ReadonlySet<string> {
   const candidates = [...input.aliases.filter(a => a.active).map(a => a.address), ...input.receiptAddresses,
-    input.emailFrom, input.emailFromTeam, ...(input.legacyAddresses ?? "").split(",")];
+    input.emailFrom, input.emailFromTeam, input.inboxFrom?.match(/<([^<>]+)>\s*$/)?.[1] ?? input.inboxFrom,
+    ...(input.legacyAddresses ?? "").split(",")];
   return new Set(candidates.map(normalizeInboundAddress).filter((v): v is string => v !== null));
 }
 export interface InboxAttachment { filename: string; content_type: string | null; size: number | null; omission_reason: "not_fetched" | "too_large" | "unsupported" | null }

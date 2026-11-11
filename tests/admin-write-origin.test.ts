@@ -18,6 +18,7 @@ const mutationRoutes: Record<string, string> = {
   "marketing/ad-codes/route.ts": "POST",
   "marketing/ad-codes/[code]/retire/route.ts": "POST",
   "catering/ezcater-review/route.ts": "POST",
+  "catering-inbox/settings/route.ts": "POST",
   "vendors/[id]/import/route.ts": "POST",
   "vendors/[id]/order-guide/route.ts": "GET POST",
   "catalog/recipe/[id]/notices/dismiss/route.ts": "POST",

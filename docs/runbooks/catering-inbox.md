@@ -1,6 +1,6 @@
-# Catering inbox: phase 1 (shadow)
+# Catering inbox: phase 1 (shadow) and phase 1b (delivery, shipping OFF)
 
-Phase 1 receives and classifies catering email, attaches existing identities and artifacts, and stores proposed replies for review. **Drafts are not being sent yet.** The singleton `catering_inbox_settings.mode` is seeded `shadow`; this release has no settings mutation, send route, delivery worker, token generation or email/SMS notification. Do not change the mode to activate delivery: phase 1b is a separate reviewed release.
+Phase 1 receives and classifies catering email, attaches existing identities and artifacts, and stores proposed replies for review. **Drafts are not being sent.** The singleton `catering_inbox_settings.mode` is seeded `shadow`. Phase 1b (migration 0298) adds the sending side behind TWO switches that both ship OFF — the settings mode and the env flag — plus explicit sender configuration; see "Phase 1b: delivery" below. Nothing sends until Juan activates it in that order. There is still no token generation and no SMS.
 
 ## Alias and transport checks
 
@@ -45,4 +45,26 @@ The reviewed extension must collect inbox message IDs referencing test quote IDs
 
 Rollback by reverting the application code; keep 0296 tables, event history and drafts. Do not drop data or apply a compensating destructive migration. The prior router skips catering, so retained records remain available for a later reviewed resume.
 
-Deferred: delivery phase 1b, digest email, body retention/erase and the shared vendor inbox alias. The separate portal-origin PR will replace the local plain-start URL helper with `portalOrigin()` from `lib/portal/origin-shared.ts`; this change does not depend on that file. Urgency cues `today`/`hoy` intentionally err toward human review and can produce false positives.
+Deferred: digest email, body retention/erase and the shared vendor inbox alias. Draft links now come from `portalOrigin()` (`lib/portal/origin-shared.ts`): the plain `/order/start` page of the configured portal origin, never a token. Urgency cues `today`/`hoy` intentionally err toward human review and can produce false positives.
+
+## Phase 1b: delivery (0298) — ships OFF
+
+### What it is
+
+- `supabase/migrations/0298_catering_inbox_delivery.sql`: delivery state ON the draft row (`draft | claimed | sent | failed | ambiguous | cancelled`, fencing token, attempt times, provider id, closed error code, recipient snapshot), the per-thread daily cap table `catering_inbox_thread_limits` (max **three** customer replies per thread per UTC day; a retry reuses its reservation), the writers `claim_catering_inbox_delivery` / `finish_catering_inbox_delivery` (lock order settings → message → draft → thread row; every eligibility fact is re-checked at claim time; a lost lease cannot finish; sent never returns to draft; an expired lease becomes `ambiguous` for a person and is never auto-resent), `set_catering_inbox_mode` (owner / CGS only, revision-checked, audited `catering.inbox.delivery_mode_change`), and the cron lease job `catering-inbox-delivery`. Deny-all RLS and the service-role SELECT-only ceiling hold for every inbox table. Offline proof: `node scripts/sql-harness-0298.mjs` (CI-pinned).
+- **The ONLY sender is `lib/catering/inbox-delivery.ts`** (pinned by `tests/catering-inbox-no-send.test.ts`). A send needs ALL of: mode `live`, `CATERING_INBOX_DELIVERY_ENABLED=1`, `CATERING_INBOX_FROM` (customer replies; `addr` or `Name <addr>` — no fallback to `EMAIL_FROM`), `EMAIL_FROM_TEAM` (staff escalations), `RESEND_API_KEY`, and a successful SQL claim. Anything missing or malformed fails closed (`delivery_off` / `not_configured`).
+- Customer replies go from the inbox sender with `In-Reply-To` / `References` (validated in `lib/email.ts`); escalations of `needs_human` arrivals go to the message's assignee from team@ in the assignee's language. One claim = one attempt = one idempotency key `catering-inbox:<draft id>:<attempt>`; an uncertain provider answer is retried once under the same key, then recorded `ambiguous`.
+- Surfaces: `POST /api/catering/inbox/[id]/send` (human "Send draft": same-origin, Tier B password, live mode only, server-selected recipient, no editable body or address), `POST /api/admin/catering-inbox/settings` (owner / CGS, Tier B), `GET /api/cron/catering-inbox-delivery` (every ten minutes at :05; inert before its lease unless BOTH switches are on; not in `JOBS_REGISTRY`). The pane shows a Send button only in live mode on a sendable draft, a delivery chip, named errors, and the mode control to owner / CGS.
+- **Activation never bulk-sends old shadow drafts.** The cron only takes drafts finalized after `live_since` (0298 `not_new`); older drafts stay visible and become manually sendable after the claim's revalidation (customer still active and matching, lead still open, message not handled, no automated-mail headers).
+
+### Activation (Juan's call, in this order)
+
+1. Apply 0298 to **sim** (`node scripts/sql-harness-0298.mjs` first; preflight refuses if a parallel migration changed the cron lease job set — re-sync 0298 then). Verify writer privileges and run the sim concurrency check (two sessions claiming one draft; two cron ticks). Then **prod** on Juan's word; stamp the header.
+2. Set `CATERING_INBOX_FROM` (the real catering@ sender on the verified domain — never `onboarding@resend.dev`), confirm `EMAIL_FROM_TEAM` and `RESEND_API_KEY`, then `CATERING_INBOX_DELIVERY_ENABLED=1` in Vercel and redeploy. The mode is still `shadow`: nothing sends yet.
+3. Pete or Juan (owner / CGS) opens `/catering/inbox`, chooses **Live** in the delivery mode control and confirms the password. `live_since` is stamped; from the next cron tick new eligible arrivals send automatically and Keith's Send button appears on drafted messages.
+4. Watch the first day: `catering.inbox.delivery_*` audit rows, the delivery chips, and any `ambiguous` draft (a person must read the thread and decide; nothing re-sends it).
+
+### Rollback
+
+- One tap: owner / CGS sets the mode to **Off** (or **Shadow**). Every claim refuses `delivery_off` at once; the cron skips before its lease.
+- Unset `CATERING_INBOX_DELIVERY_ENABLED` (or revert the code). Keep 0298: tables, drafts, reservations and events are evidence. Never reset a `sent` row.
