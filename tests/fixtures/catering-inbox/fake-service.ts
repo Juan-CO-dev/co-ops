@@ -12,16 +12,18 @@ export function fakeInboxService(options: FakeServiceOptions = {}) {
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => options.rpc ? options.rpc(name, args) : { data: null, error: { message: `unexpected rpc ${name}` } });
   const from = vi.fn((table: string) => {
     const filters: Array<(row: Row) => boolean> = [];
-    let first = 0, last = Infinity, single = false, limit = Infinity;
+    let first = 0, last = Infinity, single = false, limit = Infinity, orderKey: string | null = null;
     const query: Record<string, unknown> = {};
     const chain = (fn?: () => void) => (...args: unknown[]) => { fn?.(); void args; return query; };
     query.select = chain();
-    query.order = chain();
+    query.order = (key: string) => { orderKey = key; return query; };
     query.returns = chain();
     query.eq = (key: string, value: unknown) => { filters.push(row => row[key] === value); return query; };
     query.neq = (key: string, value: unknown) => { filters.push(row => row[key] !== value); return query; };
     query.in = (key: string, values: unknown[]) => { filters.push(row => values.includes(row[key])); return query; };
     query.gte = (key: string, value: string) => { filters.push(row => String(row[key]) >= value); return query; };
+    query.gt = (key: string, value: string | number) => { filters.push(row => typeof value === "number" ? Number(row[key]) > value : String(row[key]) > value); return query; };
+    query.lt = (key: string, value: string | number) => { filters.push(row => row[key] != null && (typeof value === "number" ? Number(row[key]) < value : String(row[key]) < value)); return query; };
     query.is = (key: string, value: unknown) => { filters.push(row => (row[key] ?? null) === value); return query; };
     query.not = (key: string, _op: string, value: unknown) => { filters.push(row => (row[key] ?? null) !== value); return query; };
     query.ilike = (key: string, value: string) => { filters.push(row => String(row[key]).toLowerCase() === value.toLowerCase()); return query; };
@@ -29,7 +31,9 @@ export function fakeInboxService(options: FakeServiceOptions = {}) {
     query.range = (a: number, b: number) => { first = a; last = b; return query; };
     query.single = query.maybeSingle = () => { single = true; return query; };
     query.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) => {
-      const rows = (tables[table] ?? []).filter(row => filters.every(f => f(row))).slice(first, Math.min(last + 1, first + limit));
+      const matched = (tables[table] ?? []).filter(row => filters.every(f => f(row)));
+      if (orderKey) matched.sort((a, b) => String(a[orderKey!]).localeCompare(String(b[orderKey!])));
+      const rows = matched.slice(first, Math.min(last + 1, first + limit));
       return Promise.resolve({ data: single ? rows[0] ?? null : rows, error: null }).then(resolve, reject);
     };
     return query;

@@ -28,6 +28,8 @@ describe("inbox pane", () => {
     expect(source).toContain("showModal()"); expect(source).toContain("previousFocus.current?.focus()"); expect(source).toContain("onCancel=");
     expect(source).toContain("expectedRevision: detail.revision");expect(source).toContain("pendingAction.current.requestId");expect(source).toContain('act("handle")');expect(source).toContain('act("reassign")');
     expect(source).not.toContain("dangerouslySetInnerHTML"); expect(source).not.toContain("localStorage");
+    // Send must step the native dialog aside for the password prompt (tests/catering-inbox-pane-step-up.test.ts exercises the real modal).
+    expect(source).toContain('await stepUpOutsideDialog() !== "ok"'); expect(source).toContain("if (!suspended.current) setDetail(null)");
   });
 });
 

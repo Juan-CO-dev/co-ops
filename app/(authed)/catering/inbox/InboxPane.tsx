@@ -31,10 +31,27 @@ export function InboxPane({ initial }: { initial: InboxList }) {
   const pendingAction = useRef<{ key: string; requestId: string } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  /** True while the detail dialog is closed ONLY to let the password prompt show; its onClose must not drop `detail`. */
+  const suspended = useRef(false);
   useEffect(() => {
-    if (detail && !dialog.current?.open) { previousFocus.current = document.activeElement as HTMLElement; dialog.current?.showModal(); }
+    if (detail && !dialog.current?.open && !suspended.current) { previousFocus.current = document.activeElement as HTMLElement; dialog.current?.showModal(); }
     else if (!detail) { dialog.current?.close(); previousFocus.current?.focus(); }
   }, [detail]);
+  // The native <dialog> top layer sits above the provider's PasswordModal (an ordinary fixed div), so a prompt behind an
+  // open detail is unreachable. Close the detail for the prompt, keep its state, restore it and the focus afterwards.
+  async function stepUpOutsideDialog(): Promise<"ok" | "cancelled"> {
+    const element = dialog.current;
+    const focused = document.activeElement as HTMLElement | null;
+    const wasOpen = !!element?.open;
+    suspended.current = true;
+    if (wasOpen) element!.close();
+    try { return await requestStepUp("B"); }
+    finally {
+      suspended.current = false;
+      if (wasOpen && element && !element.open && element.isConnected) element.showModal();
+      focused?.focus();
+    }
+  }
   async function refresh() {
     const response = await fetch("/api/catering/inbox", { cache: "no-store" });
     if (!response.ok) throw new Error("load_failed");
@@ -53,12 +70,13 @@ export function InboxPane({ initial }: { initial: InboxList }) {
   }
   async function act(action: "handle" | "reassign" | "send") {
     if (!detail) return;
+    const trigger = document.activeElement as HTMLElement | null;
     setBusy(true); setError(null); setNotice(null);
     const key = `${detail.id}:${detail.revision}:${action}:${assignedTo}`;
     if (pendingAction.current?.key !== key) pendingAction.current = { key, requestId: crypto.randomUUID() };
     try {
       // Sending a customer reply takes a fresh password (Tier B); the route asserts it again.
-      if (action === "send" && await requestStepUp("B") !== "ok") return;
+      if (action === "send" && await stepUpOutsideDialog() !== "ok") return;
       const response = await fetch(`/api/catering/inbox/${detail.id}/${action}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedRevision: detail.revision, requestId: pendingAction.current.requestId, ...(action === "reassign" ? { assignedTo: assignedTo || null } : {}) }),
@@ -83,7 +101,14 @@ export function InboxPane({ initial }: { initial: InboxList }) {
       if (result?.state === "sent") setNotice("send_sent");
       else if (result?.state === "failed") setError("send_error.send_failed");
       else if (result?.state === "ambiguous") setError("send_error.send_ambiguous");
-    } catch { setError("action_error"); } finally { setBusy(false); }
+    } catch { setError("action_error"); } finally {
+      setBusy(false);
+      // Disabling the pressed control while busy drops focus to the body; put it back on the control, else the drawer.
+      if (action === "send") setTimeout(() => {
+        const target = trigger?.isConnected && !(trigger as HTMLButtonElement).disabled ? trigger : dialog.current?.querySelector<HTMLElement>("button");
+        target?.focus();
+      }, 0);
+    }
   }
   async function applyMode() {
     setBusy(true); setError(null); setNotice(null);
@@ -146,7 +171,7 @@ export function InboxPane({ initial }: { initial: InboxList }) {
         </section>;
       })}
     </div>
-    <dialog ref={dialog} aria-label={t("catering.inbox.aria.drawer")} onCancel={() => setDetail(null)} onClose={() => setDetail(null)} className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-2xl overflow-y-auto rounded p-4 backdrop:bg-black/40">
+    <dialog ref={dialog} aria-label={t("catering.inbox.aria.drawer")} onCancel={() => setDetail(null)} onClose={() => { if (!suspended.current) setDetail(null); }} className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-2xl overflow-y-auto rounded p-4 backdrop:bg-black/40">
       {detail && <>
         <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="min-w-0 break-words font-bold">{detail.subject || t("catering.inbox.no_subject")}</h2><button autoFocus className={control} onClick={() => setDetail(null)}>{t("catering.inbox.action.close")}</button></div>
         {error && <p role="alert">{t(`catering.inbox.${error}`)}</p>}

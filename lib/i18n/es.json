@@ -8647,6 +8647,8 @@
   "catering.inbox.aria.assignee": "Filtra por responsable",
   "catering.inbox.aria.refresh": "Actualiza la bandeja",
   "catering.inbox.hub_desc": "Revisa mensajes de catering y respuestas propuestas.",
+  "catering.inbox.send_error.quote_revalidation_failed": "La cotización cambió desde que se escribió el borrador. Revísala antes de responder.",
+  "catering.inbox.delivery.error.idempotency_conflict": "El proveedor de correo vio un mensaje distinto con la misma clave de envío. Una persona debe revisarlo.",
   "catering.inbox.delivery.draft": "Sin enviar",
   "catering.inbox.delivery.claimed": "Enviando…",
   "catering.inbox.delivery.sent": "Enviado",

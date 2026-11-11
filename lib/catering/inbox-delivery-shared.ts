@@ -10,10 +10,10 @@ export type InboxMode = "off" | "shadow" | "live";
 export const INBOX_MODES: readonly InboxMode[] = ["off", "shadow", "live"];
 /** Every refusal a send can answer with; each has an en + es `catering.inbox.send_error.<code>` message. */
 export const INBOX_SEND_ERRORS = ["delivery_off", "not_configured", "delivery_busy", "already_sent", "needs_review", "thread_cap",
-  "revalidation_failed", "invalid_recipient", "invalid_state", "no_draft", "stale_revision", "request_conflict", "attempts_exhausted",
+  "revalidation_failed", "quote_revalidation_failed", "invalid_recipient", "invalid_state", "no_draft", "stale_revision", "request_conflict", "attempts_exhausted",
   "not_new", "send_failed", "send_ambiguous", "inbox_unavailable"] as const;
 export type InboxSendError = typeof INBOX_SEND_ERRORS[number];
-export const INBOX_DELIVERY_ERROR_CODES = ["provider_rejected", "provider_uncertain", "lease_expired", "not_configured", "invalid_recipient", "send_failed"] as const;
+export const INBOX_DELIVERY_ERROR_CODES = ["provider_rejected", "provider_uncertain", "idempotency_conflict", "lease_expired", "not_configured", "invalid_recipient", "send_failed"] as const;
 export type InboxDeliveryErrorCode = typeof INBOX_DELIVERY_ERROR_CODES[number];
 /** The cron gives a failed attempt up after this many; a human may still retry. Mirrors 0298. */
 export const INBOX_MAX_CRON_ATTEMPTS = 3;
@@ -48,13 +48,23 @@ export function inboxDeliveryConfig(mode: InboxMode | null | undefined, env: Inb
 export type InboxDeliveryOutcome =
   | { outcome: "sent"; providerId: string }
   | { outcome: "failed"; code: "provider_rejected" | "send_failed" }
-  | { outcome: "ambiguous"; code: "provider_uncertain" };
-/** A provider ANSWER is definite (sent, or refused by name); anything else — a thrown error, a timeout, a 200 with no
- *  id — is uncertain and becomes ambiguous for a human, never a second send under a new key. */
+  | { outcome: "ambiguous"; code: "provider_uncertain" | "idempotency_conflict" };
+/** Resend error names that mean the request was REFUSED before processing (a definite 4xx). Only these may ever lead to
+ *  a new idempotency key on a later attempt. Everything else named is unknown-until-proven. */
+export const PROVIDER_DEFINITE_REJECTIONS: ReadonlySet<string> = new Set(["validation_error", "missing_required_field", "invalid_parameter",
+  "invalid_from_address", "invalid_attachment", "invalid_access", "invalid_api_Key", "invalid_api_key", "missing_api_key", "restricted_api_key",
+  "invalid_scope", "invalid_region", "not_found", "method_not_allowed", "rate_limit_exceeded", "daily_quota_exceeded", "security_error",
+  "invalid_idempotency_key"]);
+/** "Still processing / unknown": a timeout, a network error, a 5xx, a 200 with no id, or Resend's
+ *  `concurrent_idempotent_requests` (the same key is still being processed). */
+export const PROVIDER_UNCERTAIN: ReadonlySet<string> = new Set(["concurrent_idempotent_requests", "internal_server_error", "application_error"]);
+/** Classify one provider answer. Uncertainty is preserved: it becomes `ambiguous` for a human and is never resent under a
+ *  new key. `invalid_idempotent_request` (same key, different payload) is a conflict a person must look at, not a resend. */
 export function inboxDeliveryOutcome(result: SendEmailResult): InboxDeliveryOutcome {
   if ("id" in result) return { outcome: "sent", providerId: result.id.slice(0, 200) };
   if (result.code === "invalid_threading") return { outcome: "failed", code: "send_failed" };
-  if (result.code) return { outcome: "failed", code: "provider_rejected" };
+  if (result.code === "invalid_idempotent_request") return { outcome: "ambiguous", code: "idempotency_conflict" };
+  if (result.code && PROVIDER_DEFINITE_REJECTIONS.has(result.code)) return { outcome: "failed", code: "provider_rejected" };
   return { outcome: "ambiguous", code: "provider_uncertain" };
 }
 

@@ -41,8 +41,11 @@ begin
   select array_agg(distinct m[1] order by m[1]) into v_jobs
     from pg_constraint c, lateral regexp_matches(pg_get_constraintdef(c.oid), '''([a-z-]+)''', 'g') m
    where c.conrelid = 'public.cron_route_leases'::regclass and c.conname = 'cron_route_leases_job_check';
-  if v_jobs is distinct from array['schedule-draft','sevenshifts-sync','toast-catering-scan','toast-sales-today']::text[] then
-    raise exception '0298: cron_route_leases_job_check is not 0275''s set (%); re-sync 0298 before applying', v_jobs;
+  -- Two parallel migrations (0298 here, 0300 meta-leads) each re-emit the lease with the UNION of both jobs, so either
+  -- may apply first: accept 0275's set or 0300's set (the union), refuse anything else.
+  if v_jobs is distinct from array['schedule-draft','sevenshifts-sync','toast-catering-scan','toast-sales-today']::text[]
+     and v_jobs is distinct from array['catering-inbox-delivery','meta-leads','schedule-draft','sevenshifts-sync','toast-catering-scan','toast-sales-today']::text[] then
+    raise exception '0298: cron_route_leases_job_check is neither 0275''s nor 0300''s set (%); re-sync 0298 before applying', v_jobs;
   end if;
 end $$;
 
@@ -68,7 +71,7 @@ alter table public.catering_inbox_drafts
   add column delivery_recipient text check (length(delivery_recipient) <= 254),
   add column delivery_provider_id text check (length(delivery_provider_id) between 1 and 200),
   add column delivery_error_code text check (delivery_error_code in
-    ('provider_rejected','provider_uncertain','lease_expired','not_configured','invalid_recipient','send_failed')),
+    ('provider_rejected','provider_uncertain','idempotency_conflict','lease_expired','not_configured','invalid_recipient','send_failed')),
   add column delivery_thread_day date,
   add constraint catering_inbox_drafts_claim_token check ((delivery_state = 'claimed') = (delivery_token is not null)),
   add constraint catering_inbox_drafts_attempted check ((delivery_attempt = 0) = (delivery_first_attempt_at is null)),
@@ -163,18 +166,22 @@ begin
     if m.catering_customer_id is not null and not exists (select 1 from public.catering_customers c where c.id = m.catering_customer_id and c.active
         and c.email ilike replace(replace(replace(v_email, E'\\', E'\\\\'), '%', E'\\%'), '_', E'\\_')) then raise exception 'revalidation_failed'; end if;
     if m.lead_id is not null and not exists (select 1 from public.catering_pipeline p where p.id = m.lead_id
-        and p.customer_id is not distinct from m.catering_customer_id and p.stage in ('inquiry','quote_sent','confirmed','out')) then raise exception 'revalidation_failed'; end if;
+        and p.customer_id is not distinct from m.catering_customer_id and p.location_id is not distinct from m.location_id
+        and p.stage in ('inquiry','quote_sent','confirmed','out')) then raise exception 'revalidation_failed'; end if;
     if d.lead_id is distinct from m.lead_id or d.quote_id is distinct from m.quote_id then raise exception 'revalidation_failed'; end if;
+    -- The linked quote itself, as finalize_catering_inbound proved it: same owner, same lead, same shop, not superseded.
+    if m.quote_id is not null and not exists (select 1 from public.catering_quotes q where q.id = m.quote_id
+        and q.customer_id is not distinct from m.catering_customer_id and q.pipeline_id is not distinct from m.lead_id
+        and q.location_id is not distinct from m.location_id and q.superseded_at is null) then raise exception 'quote_revalidation_failed'; end if;
     v_recipient := v_email;
     v_thread := coalesce(nullif(m.thread_key, '[invalid]'), m.id::text);
-    if d.delivery_thread_day is null then
+    -- A reservation is good for ITS UTC day only: a retry on a later day takes today's capacity, atomically.
+    if d.delivery_thread_day is distinct from v_day then
       insert into public.catering_inbox_thread_limits(thread_key, day_utc, reserved) values (v_thread, v_day, 1)
       on conflict (thread_key, day_utc) do update set reserved = catering_inbox_thread_limits.reserved + 1
         where catering_inbox_thread_limits.reserved < 3
       returning reserved into v_reserved;
       if v_reserved is null then raise exception 'thread_cap'; end if;
-    else
-      v_day := d.delivery_thread_day;
     end if;
     update public.catering_inbox_drafts set delivery_state = 'claimed', delivery_attempt = delivery_attempt + 1, delivery_token = v_token,
       delivery_trigger = p_trigger, delivery_actor_id = p_actor_id, delivery_claimed_at = clock_timestamp(), delivery_attempted_at = clock_timestamp(),
@@ -227,7 +234,7 @@ declare m public.catering_inbound_messages%rowtype; d public.catering_inbox_draf
 begin
   if p_draft_id is null or p_token is null or p_outcome is null or p_outcome not in ('sent','failed','ambiguous')
     or (p_outcome = 'sent') <> (p_provider_id is not null and length(p_provider_id) between 1 and 200)
-    or (p_outcome <> 'sent' and (p_error_code is null or p_error_code not in ('provider_rejected','provider_uncertain','not_configured','invalid_recipient','send_failed')))
+    or (p_outcome <> 'sent' and (p_error_code is null or p_error_code not in ('provider_rejected','provider_uncertain','idempotency_conflict','not_configured','invalid_recipient','send_failed')))
     or (p_outcome = 'sent' and p_error_code is not null) then raise exception 'invalid_input'; end if;
   select * into m from public.catering_inbound_messages where id = (select message_id from public.catering_inbox_drafts where id = p_draft_id) for update;
   if not found then raise exception 'not_found'; end if;
@@ -241,6 +248,33 @@ begin
   insert into public.catering_inbox_events(message_id,event_type,actor_id,request_id,request_fingerprint,before_revision,after_revision,before_disposition,after_disposition,before_assigned_to,after_assigned_to)
   values (m.id,'deliver',d.delivery_actor_id,gen_random_uuid(),md5(d.id::text || ':' || d.delivery_attempt::text || ':' || p_outcome),m.revision,m.revision+1,m.disposition,m.disposition,m.assigned_to,m.assigned_to);
   return jsonb_build_object('message_id', m.id, 'revision', m.revision + 1, 'draft_id', d.id, 'attempt', d.delivery_attempt, 'state', p_outcome);
+end;
+$$;
+
+-- Bounded expiry sweep (the cron runs it before claiming): a claim whose holder never reported within 10 minutes is
+-- an UNKNOWN provider outcome. Lock message → draft, fence the token seen at selection, mark ambiguous/lease_expired
+-- with its event. Never resends; returns what it marked so the app can audit each row.
+create function public.sweep_catering_inbox_delivery(p_limit integer default 25)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public
+as $$
+declare r record; m public.catering_inbound_messages%rowtype; d public.catering_inbox_drafts%rowtype; v_out jsonb := '[]'::jsonb;
+begin
+  if p_limit is null or p_limit < 1 or p_limit > 200 then raise exception 'invalid_input'; end if;
+  for r in select x.id, x.message_id, x.delivery_token from public.catering_inbox_drafts x
+    where x.delivery_state = 'claimed' and x.delivery_claimed_at <= clock_timestamp() - interval '10 minutes'
+    order by x.delivery_claimed_at, x.id limit p_limit loop
+    select * into m from public.catering_inbound_messages where id = r.message_id for update;
+    select * into d from public.catering_inbox_drafts where id = r.id for update;
+    -- Re-check under the locks: a finish or another sweep may have landed; a fresher claim holds a new token.
+    if d.delivery_state <> 'claimed' or d.delivery_token is distinct from r.delivery_token
+      or d.delivery_claimed_at > clock_timestamp() - interval '10 minutes' then continue; end if;
+    update public.catering_inbox_drafts set delivery_state = 'ambiguous', delivery_token = null, delivery_error_code = 'lease_expired' where id = d.id;
+    insert into public.catering_inbox_events(message_id,event_type,request_id,request_fingerprint,before_revision,after_revision,before_disposition,after_disposition,before_assigned_to,after_assigned_to)
+    values (m.id,'deliver',gen_random_uuid(),md5(d.id::text || ':' || d.delivery_attempt::text || ':lease_expired'),m.revision,m.revision+1,m.disposition,m.disposition,m.assigned_to,m.assigned_to);
+    update public.catering_inbound_messages set revision = revision + 1 where id = m.id;
+    v_out := v_out || jsonb_build_object('draft_id', d.id, 'message_id', m.id, 'kind', d.kind, 'attempt', d.delivery_attempt, 'trigger', d.delivery_trigger);
+  end loop;
+  return v_out;
 end;
 $$;
 
@@ -267,13 +301,14 @@ $$;
 
 -- ── 5. THE CRON LEASE ───────────────────────────────────────────────────────────────────────────
 alter table public.cron_route_leases drop constraint cron_route_leases_job_check,
-  add constraint cron_route_leases_job_check check (job in ('toast-sales-today', 'toast-catering-scan', 'sevenshifts-sync', 'schedule-draft', 'catering-inbox-delivery'));
+  add constraint cron_route_leases_job_check check (job in ('toast-sales-today', 'toast-catering-scan', 'sevenshifts-sync', 'schedule-draft', 'catering-inbox-delivery', 'meta-leads'));
 
 create or replace function public.claim_cron_route(p_job text)
 returns boolean language plpgsql security definer set search_path = pg_catalog, public as $$
 declare claimed text;
 begin
-  if p_job is null or p_job not in ('toast-sales-today', 'toast-catering-scan', 'sevenshifts-sync', 'schedule-draft', 'catering-inbox-delivery') then
+  -- 'meta-leads' is 0300's job (parallel branch): the union is emitted by both migrations so neither drops the other's.
+  if p_job is null or p_job not in ('toast-sales-today', 'toast-catering-scan', 'sevenshifts-sync', 'schedule-draft', 'catering-inbox-delivery', 'meta-leads') then
     raise exception 'invalid_cron_route';
   end if;
   -- ON CONFLICT locks the single route row and rechecks the expiry under that lock.
@@ -311,6 +346,7 @@ begin
   foreach f in array array[
     'public.claim_catering_inbox_delivery(uuid,text,text,uuid,uuid,integer,uuid,jsonb)'::regprocedure,
     'public.finish_catering_inbox_delivery(uuid,uuid,text,text,text)'::regprocedure,
+    'public.sweep_catering_inbox_delivery(integer)'::regprocedure,
     'public.set_catering_inbox_mode(uuid,uuid,text,integer)'::regprocedure
   ] loop
     execute format('revoke all on function %s from public, anon, authenticated, service_role',f);

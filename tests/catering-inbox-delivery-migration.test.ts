@@ -20,5 +20,10 @@ it('0298 real-DDL delivery proof: ceilings, switches, claim/finish fencing, caps
     'auto-submitted mail is never replied to', 'deactivated customer blocks the old draft', 'closed lead blocks the old draft',
     'expired lease is marked ambiguous and refused, not reclaimed', 'the late holder cannot finish', 'ambiguous is never auto-resent',
     'revoked session cannot send', 'one reply draft per message', 'concurrency requires separate sim proof',
+    // review round
+    "yesterday's failed retry needs today's capacity: fourth send refused", 'a cross-day retry reserves today atomically',
+    'quote superseded after drafting refuses the claim by name', 'lead moved off the shop refuses the claim',
+    'sweep marks the expired claim ambiguous/lease_expired', 'the swept holder cannot finish', 'a swept draft is never auto-resent', 'the live lease is untouched by the sweep',
+    '0298 after 0275 leaves the UNION of both parallel jobs', '0298 after 0300 keeps the UNION (neither job dropped)', 'both jobs claim after the reverse order',
   ]) expect(output).toContain(line);
 }, 250_000);

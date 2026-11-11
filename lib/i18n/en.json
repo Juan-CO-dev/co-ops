@@ -8647,6 +8647,8 @@
   "catering.inbox.aria.assignee": "Filter by assignee",
   "catering.inbox.aria.refresh": "Refresh inbox",
   "catering.inbox.hub_desc": "Review incoming catering messages and proposed replies.",
+  "catering.inbox.send_error.quote_revalidation_failed": "The quote changed since the draft was written. Review it before replying.",
+  "catering.inbox.delivery.error.idempotency_conflict": "The email provider saw a different message under the same send key. A person must review it.",
   "catering.inbox.delivery.draft": "Not sent",
   "catering.inbox.delivery.claimed": "Sending…",
   "catering.inbox.delivery.sent": "Sent",

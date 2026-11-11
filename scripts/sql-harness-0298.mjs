@@ -15,6 +15,19 @@ function table(file, name) {
 const externalRefDDL = read('0149_ezcater_intake.sql').match(/alter table public\.catering_pipeline add column external_ref text;\s*create unique index catering_pipeline_external_ref_uq[\s\S]*?;/i)?.[0];
 assert.ok(externalRefDDL, '0149 external reference DDL found');
 const db = new PGlite();
+const BASE_JOBS = "'toast-sales-today', 'toast-catering-scan', 'sevenshifts-sync', 'schedule-draft'";
+const UNION_JOBS = BASE_JOBS + ", 'catering-inbox-delivery', 'meta-leads'";
+/** The lease as 0243/0268/0275 left it (or as 0300 leaves it when `jobs` is the union). */
+const leaseDDL = jobs => `
+    create table public.cron_route_leases (job text primary key, lease_until timestamptz not null,
+      constraint cron_route_leases_job_check check (job in (${jobs})));
+    create function public.claim_cron_route(p_job text) returns boolean language plpgsql security definer set search_path = pg_catalog, public as $$
+    declare claimed text; begin
+      if p_job is null or p_job not in (${jobs}) then raise exception 'invalid_cron_route'; end if;
+      insert into public.cron_route_leases (job, lease_until) values (p_job, clock_timestamp() + interval '330 seconds')
+      on conflict (job) do update set lease_until = clock_timestamp() + interval '330 seconds' where cron_route_leases.lease_until <= clock_timestamp()
+      returning job into claimed; return claimed is not null; end $$;`;
+const leaseJobs = async database => (await database.query("select array_agg(distinct m[1] order by m[1]) jobs from pg_constraint c, lateral regexp_matches(pg_get_constraintdef(c.oid), '''([a-z-]+)''', 'g') m where c.conrelid = 'public.cron_route_leases'::regclass and c.conname = 'cron_route_leases_job_check'")).rows[0].jobs;
 let checks = 0;
 const check = (ok, label) => { assert.ok(ok, label); checks++; console.log(`ok ${label}`); };
 const query = async (sql, args = []) => (await db.query(sql, args)).rows;
@@ -49,8 +62,7 @@ const setMode = (actor, mode, revision) => asService(() => rpc('set_catering_inb
 const draftRow = id => one('select * from catering_inbox_drafts where id=$1', [id]);
 const revisionOf = async id => (await one('select revision from catering_inbound_messages where id=$1', [id])).revision;
 const escalation = (reason, extra = {}) => ({ language: 'en', params: { tenantName: 'Synthetic', reason, inboxUrl: 'https://staff.example.test/catering/inbox' }, preview_text: 'A catering message needs a person.', ...extra });
-try {
-  await db.exec(`
+const stubs = `
     create role anon; create role authenticated; create role service_role bypassrls;
     grant usage on schema public to anon,authenticated,service_role;
     alter default privileges in schema public grant all on tables to public,anon,authenticated,service_role;
@@ -67,19 +79,13 @@ try {
     ${externalRefDDL}
     ${table('0120_catering_quotes.sql', 'catering_quotes')}
     ${table('0294_inbound_router.sql', 'inbound_messages')}
-    create table public.cron_route_leases (job text primary key, lease_until timestamptz not null,
-      constraint cron_route_leases_job_check check (job in ('toast-sales-today', 'toast-catering-scan', 'sevenshifts-sync', 'schedule-draft')));
-    create function public.claim_cron_route(p_job text) returns boolean language plpgsql security definer set search_path = pg_catalog, public as $$
-    declare claimed text; begin
-      if p_job is null or p_job not in ('toast-sales-today', 'toast-catering-scan', 'sevenshifts-sync', 'schedule-draft') then raise exception 'invalid_cron_route'; end if;
-      insert into public.cron_route_leases (job, lease_until) values (p_job, clock_timestamp() + interval '330 seconds')
-      on conflict (job) do update set lease_until = clock_timestamp() + interval '330 seconds' where cron_route_leases.lease_until <= clock_timestamp()
-      returning job into claimed; return claimed is not null; end $$;
-  `);
+  `;
+try {
+  await db.exec(stubs + leaseDDL(BASE_JOBS));
   await db.exec(base);
   // A drifted lease set (a parallel migration added a job) must refuse before any DDL.
   await db.exec("alter table cron_route_leases drop constraint cron_route_leases_job_check, add constraint cron_route_leases_job_check check (job in ('toast-sales-today', 'toast-catering-scan', 'sevenshifts-sync', 'schedule-draft', 'vendor-mail'))");
-  await reject(() => db.exec(migration), /not 0275's set/, 'lease job set drift refused by preflight');
+  await reject(() => db.exec(migration), /neither 0275's nor 0300's set/, 'lease job set drift refused by preflight');
   await db.exec('rollback');
   check((await one("select count(*)::int n from information_schema.columns where table_name='catering_inbox_drafts' and column_name='delivery_state'")).n === 0, 'refused migration leaves no partial schema');
   await db.exec("alter table cron_route_leases drop constraint cron_route_leases_job_check, add constraint cron_route_leases_job_check check (job in ('toast-sales-today', 'toast-catering-scan', 'sevenshifts-sync', 'schedule-draft'))");
@@ -98,17 +104,32 @@ try {
     }
     check((await one('select relrowsecurity enabled from pg_class where oid=$1::regclass',[name])).enabled, `${name}: complete table/column ACL and RLS`);
   }
-  for (const { oid, proname, prosecdef, proconfig } of await query("select oid,proname,prosecdef,proconfig from pg_proc where proname in ('claim_catering_inbox_delivery','finish_catering_inbox_delivery','set_catering_inbox_mode','claim_cron_route')")) {
+  for (const { oid, proname, prosecdef, proconfig } of await query("select oid,proname,prosecdef,proconfig from pg_proc where proname in ('claim_catering_inbox_delivery','finish_catering_inbox_delivery','sweep_catering_inbox_delivery','set_catering_inbox_mode','claim_cron_route')")) {
     assert.equal(prosecdef, true); assert.ok(proconfig.includes('search_path=pg_catalog, public'));
     for (const role of ['anon','authenticated','service_role']) assert.equal((await one('select has_function_privilege($1,$2::oid,\'EXECUTE\') allowed',[role,oid])).allowed, role === 'service_role');
     check(true, `${proname}: definer/search_path/execution ceiling`);
   }
-  for (const { proname, prosrc } of await query("select proname,prosrc from pg_proc where proname in ('claim_catering_inbox_delivery','finish_catering_inbox_delivery','set_catering_inbox_mode')")) {
+  for (const { proname, prosrc } of await query("select proname,prosrc from pg_proc where proname in ('claim_catering_inbox_delivery','finish_catering_inbox_delivery','sweep_catering_inbox_delivery','set_catering_inbox_mode')")) {
     assert.doesNotMatch(prosrc, /(insert into|update|delete from)\s+public\.(catering_customers|catering_pipeline|catering_quotes)\b/i);
     check(true, `${proname}: source contains no artifact writes`);
   }
   check((await asService(() => rpc('claim_cron_route', ['catering-inbox-delivery']))) === true && (await asService(() => rpc('claim_cron_route', ['catering-inbox-delivery']))) === false, 'delivery cron lease claims once per window');
   check((await asService(() => rpc('claim_cron_route', ['schedule-draft']))) === true, 'existing lease jobs still claim');
+  check((await asService(() => rpc('claim_cron_route', ['meta-leads']))) === true, "0300's meta-leads job is admitted by the union (0298 first)");
+  check((await leaseJobs(db)).join(',') === 'catering-inbox-delivery,meta-leads,schedule-draft,sevenshifts-sync,toast-catering-scan,toast-sales-today', '0298 after 0275 leaves the UNION of both parallel jobs');
+  {
+    // The other order: 0300 (meta-leads) applied first leaves the union; 0298's preflight accepts it and re-emits the same union.
+    const other = new PGlite();
+    try {
+      await other.exec(stubs + leaseDDL(UNION_JOBS));
+      await other.exec(base);
+      await other.exec(migration);
+      check((await leaseJobs(other)).join(',') === 'catering-inbox-delivery,meta-leads,schedule-draft,sevenshifts-sync,toast-catering-scan,toast-sales-today', '0298 after 0300 keeps the UNION (neither job dropped)');
+      await other.exec('set role service_role');
+      check((await other.query("select public.claim_cron_route('meta-leads') ok")).rows[0].ok === true && (await other.query("select public.claim_cron_route('catering-inbox-delivery') ok")).rows[0].ok === true, 'both jobs claim after the reverse order');
+      await other.exec('reset role');
+    } finally { await other.close(); }
+  }
 
   await db.query('insert into locations values ($1)', [shop]);
   for (const [id, role, email] of [[manager,'catering_mgr','keith@example.test'],[owner,'owner','pete@example.test'],[cgs,'cgs','juan@example.test'],[gm,'gm','gm@example.test'],[noMail,'catering_mgr',null]]) {
@@ -195,6 +216,57 @@ try {
   await finish(retryA.draft_id, retryA.token, 'sent', 'p-a'); await finish(cb.draft_id, cb.token, 'sent', 'p-b'); await finish(cc.draft_id, cc.token, 'sent', 'p-c');
   await reject(() => claim(d), /thread_cap/, 'cap holds for the day after the three sends');
   await reject(() => db.query('update catering_inbox_thread_limits set reserved=4'), /check constraint/, 'reservation count bounded in SQL');
+  // ── review round: a reservation is good for its UTC day only ──
+  const dayKey = `<day-${randomUUID()}@example.test>`;
+  const yesterday = await arrival({ thread_key: dayKey });
+  const yClaim = await claim(yesterday);
+  await finish(yClaim.draft_id, yClaim.token, 'failed', null, 'send_failed');
+  await db.query("update catering_inbox_drafts set delivery_thread_day = delivery_thread_day - 1 where id=$1", [yClaim.draft_id]);
+  await db.query("update catering_inbox_thread_limits set day_utc = day_utc - 1 where thread_key=$1", [dayKey]);
+  const t1 = await claim(await arrival({ thread_key: dayKey })), t2 = await claim(await arrival({ thread_key: dayKey })), t3 = await claim(await arrival({ thread_key: dayKey }));
+  for (const c of [t1, t2, t3]) await finish(c.draft_id, c.token, 'sent', 'p-' + c.attempt);
+  await reject(() => claim(yesterday), /thread_cap/, "yesterday's failed retry needs today's capacity: fourth send refused");
+  check((await one("select reserved from catering_inbox_thread_limits where thread_key=$1 and day_utc=(clock_timestamp() at time zone 'utc')::date", [dayKey])).reserved === 3, 'today stays at three reservations');
+  const crossDay = await arrival({ thread_key: `<cross-${randomUUID()}@example.test>` });
+  const cClaim = await claim(crossDay);
+  await finish(cClaim.draft_id, cClaim.token, 'failed', null, 'send_failed');
+  await db.query("update catering_inbox_drafts set delivery_thread_day = delivery_thread_day - 1 where id=$1", [cClaim.draft_id]);
+  const cRetry = await claim(crossDay);
+  check(cRetry.attempt === 2 && (await draftRow(cClaim.draft_id)).delivery_thread_day !== null && (await one("select count(*)::int n from catering_inbox_thread_limits where thread_key=(select thread_key from catering_inbound_messages where id=$1) and day_utc=(clock_timestamp() at time zone 'utc')::date", [crossDay])).n === 1, 'a cross-day retry reserves today atomically');
+  await finish(cRetry.draft_id, cRetry.token, 'sent', 'p-cross');
+  // ── review round: the linked quote is revalidated ──
+  const qCustomer = randomUUID(), qLead = randomUUID(), qQuote = randomUUID();
+  await db.query("insert into catering_customers(id,name,email) values ($1,'Quoted','quoted@example.test')", [qCustomer]);
+  await db.query("insert into catering_pipeline(id,customer_id,contact_name,stage,location_id) values ($1,$2,'Quoted','quote_sent',$3)", [qLead, qCustomer, shop]);
+  await db.query('insert into catering_quotes(id,customer_id,pipeline_id,location_id) values ($1,$2,$3,$4)', [qQuote, qCustomer, qLead, shop]);
+  const quoted = await arrival({ sender_address: 'quoted@example.test' },
+    result({ classification: 'troubleshoot_ours', identity_status: 'resolved', catering_customer_id: qCustomer, lead_id: qLead, quote_id: qQuote, location_id: shop }),
+    { ...draft, template_key: 'ours' });
+  await db.query('update catering_quotes set superseded_at = now() where id=$1', [qQuote]);
+  await reject(() => claim(quoted), /quote_revalidation_failed/, 'quote superseded after drafting refuses the claim by name');
+  await db.query('update catering_quotes set superseded_at = null, location_id = $2 where id=$1', [qQuote, randomUUID()]).catch(() => null);
+  await db.query('update catering_quotes set superseded_at = null where id=$1', [qQuote]);
+  await db.query('update catering_pipeline set location_id = null where id=$1', [qLead]);
+  await reject(() => claim(quoted), /revalidation_failed/, 'lead moved off the shop refuses the claim');
+  await db.query('update catering_pipeline set location_id = $2 where id=$1', [qLead, shop]);
+  check((await claim(quoted)).recipient === 'quoted@example.test', 'intact quote and lead still send');
+  // ── review round: the expiry sweep ──
+  const swept = await arrival();
+  const sLease = await claim(swept);
+  const liveLease = await claim(await arrival());
+  check((await asService(() => rpc('sweep_catering_inbox_delivery', [25]))).length === 0, 'sweep leaves live leases alone');
+  await db.query("update catering_inbox_drafts set delivery_claimed_at = clock_timestamp() - interval '20 minutes' where id=$1", [sLease.draft_id]);
+  const sweptRows = await asService(() => rpc('sweep_catering_inbox_delivery', [25]));
+  const sweptRow = await draftRow(sLease.draft_id);
+  check(sweptRows.length === 1 && sweptRows[0].draft_id === sLease.draft_id && sweptRows[0].kind === 'reply' && sweptRow.delivery_state === 'ambiguous' && sweptRow.delivery_error_code === 'lease_expired' && sweptRow.delivery_token === null, 'sweep marks the expired claim ambiguous/lease_expired');
+  check((await one("select count(*)::int n from catering_inbox_events where message_id=$1 and event_type='deliver'", [swept])).n === 1 && (await revisionOf(swept)) === 3, 'sweep appends one deliver event and advances the revision');
+  await reject(() => finish(sLease.draft_id, sLease.token, 'sent', 'late'), /lease_lost/, 'the swept holder cannot finish');
+  await reject(() => claim(swept), /needs_review/, 'a swept draft is never auto-resent');
+  check((await asService(() => rpc('sweep_catering_inbox_delivery', [25]))).length === 0, 'a second sweep finds nothing');
+  check((await draftRow(liveLease.draft_id)).delivery_state === 'claimed', 'the live lease is untouched by the sweep');
+  await finish(liveLease.draft_id, liveLease.token, 'sent', 'p-live');
+  await reject(() => asService(() => rpc('sweep_catering_inbox_delivery', [0])), /invalid_input/, 'sweep limit is bounded');
+  await reject(() => finish(liveLease.draft_id, liveLease.token, 'failed', null, 'idempotency_conflict'), /lease_lost/, 'idempotency_conflict is a legal finish code (refused here only because the attempt already finished)');
   // ── handled, needs_human, loop guards, revalidation ──
   const handled = await arrival();
   await asService(() => rpc('act_on_catering_inbox', [handled, 1, randomUUID(), manager, sessions.get(manager), 'handle', null]));
