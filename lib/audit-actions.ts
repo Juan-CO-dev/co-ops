@@ -44,6 +44,9 @@ import { DESTRUCTIVE_ACTIONS } from "@/lib/destructive-actions";
  * to filter for.
  */
 export const NON_DESTRUCTIVE_ACTIONS = [
+  "catering.inbox.ingest",
+  "catering.inbox.draft",
+  "catering.inbox.escalate",
   "inbound.retries_exhausted",
   "marketing.manual_entry_record",
   "vault.decrypt_failure", // 0235: the vault failed closed (missing/rotated master key, tampered row); entry id + reason code only.
@@ -356,6 +359,8 @@ export const NON_DESTRUCTIVE_ACTIONS = [
  * which would otherwise look identical.
  */
 export const RESERVED_ACTIONS = [
+  "catering.inbox.handle", // Round 2 route/library emitter; round 1 defines the SQL event contract.
+  "catering.inbox.reassign", // Round 2 route/library emitter.
   "ezcater.review.dismiss", // SQL-only, append-only Toast review decision.
   "ezcater.item_map.approve", // SQL-only, atomic mapping decision.
   "ezcater.item_map.ignore",
