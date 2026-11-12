@@ -4,13 +4,14 @@ import { META_GRAPH_API_VERSION } from "@/lib/landing/meta-version-shared";
 import { readBoundedBytes } from "./request";
 
 export type MetaGraphError = "configuration" | "graph_auth" | "graph_rate_limit" | "graph_timeout" | "graph_unavailable" | "graph_not_found" | "invalid_payload";
-export interface MetaGraphLead { id: string; form_id?: string; ad_id?: string; created_time?: string; field_data: unknown[]; custom_disclaimer_responses?: unknown }
+/** `adset_id` is a documented Lead-node field (Marketing API Lead reference); the worker's delivery routing rule (b) maps it through the tenant ad-set table. */
+export interface MetaGraphLead { id: string; form_id?: string; ad_id?: string; adset_id?: string; created_time?: string; field_data: unknown[]; custom_disclaimer_responses?: unknown }
 export async function fetchMetaLead(expected: { leadgenId: string; formId?: string | null; adId?: string | null },
   dependencies: { pageToken: string; appSecret: string; send?: typeof fetch }): Promise<{ ok: true; lead: MetaGraphLead } | { ok: false; error: MetaGraphError }> {
   const fail = (error: MetaGraphError): { ok: false; error: MetaGraphError } => ({ ok: false, error });
   if (!/^\d{1,30}$/.test(expected.leadgenId) || !dependencies.pageToken || !dependencies.appSecret) return fail("configuration");
   const url = new URL(`https://graph.facebook.com/${META_GRAPH_API_VERSION}/${expected.leadgenId}`);
-  url.searchParams.set("fields", "id,created_time,form_id,ad_id,field_data,custom_disclaimer_responses");
+  url.searchParams.set("fields", "id,created_time,form_id,ad_id,adset_id,field_data,custom_disclaimer_responses");
   url.searchParams.set("appsecret_proof", createHmac("sha256", dependencies.appSecret).update(dependencies.pageToken).digest("hex"));
   try {
     const response = await (dependencies.send ?? fetch)(url, {
@@ -40,9 +41,10 @@ export async function fetchMetaLead(expected: { leadgenId: string; formId?: stri
     if (value.id !== expected.leadgenId || !Array.isArray(value.field_data)
       || (expected.formId && value.form_id !== expected.formId) || (expected.adId && value.ad_id !== expected.adId)
       || (value.form_id !== undefined && typeof value.form_id !== "string") || (value.ad_id !== undefined && typeof value.ad_id !== "string")
+      || (value.adset_id !== undefined && (typeof value.adset_id !== "string" || !/^\d{1,30}$/.test(value.adset_id)))
       || (value.created_time !== undefined && (typeof value.created_time !== "string" || value.created_time.length > 40 || !Number.isFinite(Date.parse(value.created_time))))) return fail("invalid_payload");
     return { ok: true, lead: { id: expected.leadgenId, field_data: value.field_data,
-      ...(typeof value.form_id === "string" ? { form_id: value.form_id } : {}), ...(typeof value.ad_id === "string" ? { ad_id: value.ad_id } : {}),
+      ...(typeof value.form_id === "string" ? { form_id: value.form_id } : {}), ...(typeof value.ad_id === "string" ? { ad_id: value.ad_id } : {}), ...(typeof value.adset_id === "string" ? { adset_id: value.adset_id } : {}),
       ...(typeof value.created_time === "string" ? { created_time: value.created_time } : {}), custom_disclaimer_responses: value.custom_disclaimer_responses } };
   } catch (error) { return fail(error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "graph_timeout" : "graph_unavailable"); }
 }

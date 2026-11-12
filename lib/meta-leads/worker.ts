@@ -3,8 +3,10 @@ import { randomUUID } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { resolveOrCreatePortalCustomer } from "@/lib/portal/magic-link";
 import { resolveCateringManager } from "@/lib/catering/system-intake-assignee";
+import { escapeLike, normalizeEmail, resolveCompanyForEmail } from "@/lib/catering/companies";
+import { metaLeadsTenantConfig } from "@/config/tenant/meta-leads";
 import { fetchMetaLead } from "./graph";
-import { mapMetaLeadFields, META_MAPPING_VERSION } from "./intake-shared";
+import { composeMetaNotes, mapMetaLeadFields, META_MAPPING_VERSION } from "./intake-shared";
 import { metaFormConfig, type MetaNotification } from "./notification-shared";
 import { sendMetaContinuation } from "./continuation";
 
@@ -13,6 +15,9 @@ type Failure = "configuration" | "graph_auth" | "graph_rate_limit" | "graph_time
 const transient = new Set<Failure>(["graph_rate_limit", "graph_timeout", "graph_unavailable", "database"]);
 class WorkerFailure extends Error { constructor(readonly code: Failure) { super(code); } }
 interface Claim { claimed: boolean; attempts: number; page_id: string; form_id: string; provider_created_at: string }
+interface Shop { id: string; name: string }
+/** How a delivery lead without a shop choice got its shop (the WHY lands on the lead as a notes line). */
+interface Routing { shop: Shop; note: string }
 
 /** SQL INSERT ON CONFLICT DO NOTHING never overwrites receipt evidence. */
 export async function recordMetaLead(item: MetaNotification, enabled: boolean, client?: Client): Promise<boolean> {
@@ -22,6 +27,83 @@ export async function recordMetaLead(item: MetaNotification, enabled: boolean, c
   });
   if (error || typeof data?.inserted !== "boolean") throw new Error("meta_ledger_failed");
   return data.inserted;
+}
+
+async function shopByCode(sb: Client, code: string): Promise<Shop | null> {
+  const shop = await sb.from("locations").select("id, name").eq("code", code).eq("active", true).maybeSingle<Shop>();
+  if (shop.error) throw new WorkerFailure("database");
+  return shop.data ?? null;
+}
+async function shopById(sb: Client, id: string): Promise<Shop | null> {
+  const shop = await sb.from("locations").select("id, name").eq("id", id).eq("active", true).maybeSingle<Shop>();
+  if (shop.error) throw new WorkerFailure("database");
+  return shop.data ?? null;
+}
+interface PipelineShop { location_id: string }
+/** The pipeline lead filter → the shop of the MOST RECENT lead with a shop (read-only, one row, DB-side). */
+async function latestLeadLocation(sb: Client, select: string, filter: (q: ReturnType<ReturnType<Client["from"]>["select"]>) => typeof q): Promise<string | null> {
+  const lead = await filter(sb.from("catering_pipeline").select(select)).not("location_id", "is", null)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle<PipelineShop>();
+  if (lead.error) throw new WorkerFailure("database");
+  return lead.data?.location_id ?? null;
+}
+/** A customer's own most recent lead. */
+const customerLatestLead = (sb: Client, customerId: string) => latestLeadLocation(sb, "location_id", q => q.eq("customer_id", customerId));
+/**
+ * A company's most recent lead across ALL its contacts, filtered in the database through the embedded
+ * customer (service-role embed, FK-named: `catering_pipeline.customer_id` → `catering_customers`, the one
+ * FK between the two tables) — never a client-side contact list, which would cap or overflow the request.
+ */
+const companyLatestLead = (sb: Client, companyId: string) => latestLeadLocation(sb,
+  "location_id, created_at, catering_customers!catering_pipeline_customer_id_fkey!inner(company_id)", q => q.eq("catering_customers.company_id", companyId));
+
+interface Identity { id: string; company_id: string | null }
+/**
+ * The returning identity, READ-ONLY, in the portal resolver's own precedence (resolveOrCreatePortalCustomer →
+ * reviveInactiveContact): the active contact for the order email first, else the NEWEST inactive / null-active
+ * one. Nothing is revived here — the identity step after routing still does that — so a deactivated customer
+ * still routes to the shop of their own history.
+ */
+async function returningIdentity(sb: Client, email: string): Promise<Identity | null> {
+  const active = await sb.from("catering_customers").select("id, company_id").eq("active", true).ilike("email", escapeLike(email)).maybeSingle<Identity>();
+  if (active.error) throw new WorkerFailure("database");
+  if (active.data) return active.data;
+  const inactive = await sb.from("catering_customers").select("id, company_id").or("active.is.null,active.is.false").ilike("email", escapeLike(email))
+    .order("created_at", { ascending: false }).limit(1).returns<Identity[]>();
+  if (inactive.error) throw new WorkerFailure("database");
+  return inactive.data?.[0] ?? null;
+}
+
+/**
+ * Delivery routing (Juan's rulings, 2026-11-11) for a lead whose customer made NO shop choice, in order:
+ *   (a) a returning customer (the ORDER email, active or not) or a known company (the customer's company,
+ *       else the domain auto-attach) → the shop of their MOST RECENT catering pipeline lead — read-only
+ *       lookups, nothing is created or revived here;
+ *   (b) the Meta ad set → shop table in the tenant config;
+ *   (c) the tenant's default shop.
+ * Every outcome names its reason in a notes line. Keith can still move the lead (existing feature).
+ */
+async function routeDeliveryLead(sb: Client, orderEmail: string, adsetId: string | undefined): Promise<Routing> {
+  const config = metaLeadsTenantConfig;
+  const email = normalizeEmail(orderEmail);
+  const customer = await returningIdentity(sb, email);
+  let locationId = customer ? await customerLatestLead(sb, customer.id) : null;
+  if (!locationId) {
+    const companyId = customer?.company_id ?? await resolveCompanyForEmail(email);
+    if (companyId) locationId = await companyLatestLead(sb, companyId);
+  }
+  if (locationId) {
+    const shop = await shopById(sb, locationId);
+    if (shop) return { shop, note: `Routed: last order at ${shop.name}` };
+  }
+  const adsetCode = adsetId ? config.adSetShop[adsetId] : undefined;
+  if (adsetCode) {
+    const shop = await shopByCode(sb, adsetCode);
+    if (shop) return { shop, note: `Routed: ad set ${adsetId}` };
+  }
+  const shop = await shopByCode(sb, config.defaultShopCode);
+  if (!shop) throw new WorkerFailure("invalid_location");
+  return { shop, note: "Routed: default shop — please confirm (delivery, no shop chosen)" };
 }
 
 /**
@@ -49,10 +131,15 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
     const mapped = mapMetaLeadFields(fetched.lead.field_data, fetched.lead.custom_disclaimer_responses);
     rawKeys = mapped.rawKeys;
     if (!mapped.ok) throw new WorkerFailure(mapped.error);
-    const intake = mapped.intake;
-    const shop = await sb.from("locations").select("id").eq("code", intake.shopCode).eq("active", true).maybeSingle<{ id: string }>();
-    if (shop.error) throw new WorkerFailure("database");
-    if (!shop.data) throw new WorkerFailure("invalid_location");
+    // The shop: the customer's choice (a label resolved to a code by the mapper), or — delivery with no
+    // choice — routed by history → ad set → tenant default. Pickup without a choice never reaches here.
+    let shop: Shop | null;
+    let routed: string | null = null;
+    if (mapped.intake.shopCode) shop = await shopByCode(sb, mapped.intake.shopCode);
+    else if (!mapped.intake.isDelivery) throw new WorkerFailure("invalid_payload");
+    else { const routing = await routeDeliveryLead(sb, mapped.intake.contactEmail, fetched.lead.adset_id); shop = routing.shop; routed = routing.note; }
+    if (!shop) throw new WorkerFailure("invalid_location");
+    const intake = { ...mapped.intake, notes: composeMetaNotes(mapped.noteParts, routed) };
     // Recheck the kill switch after provider I/O and before any identity/business creation.
     if (process.env.META_LEADS_ENABLED !== "1") return "disabled";
     // Double capture (Juan 2026-11-11): the opt-in applies ONLY to the Meta pre-filled (marketing)
@@ -72,14 +159,14 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
     // The ORDER email is the identity: the catering_customers contact, the portal account, the
     // continuation recipient and the company-domain match.
     const customerId = await resolveOrCreatePortalCustomer(intake.contactEmail, intake.contactName, "meta_lead_form");
-    const assignedTo = await resolveCateringManager(sb, shop.data.id);
+    const assignedTo = await resolveCateringManager(sb, shop.id);
     const applied = await sb.rpc("meta_lead_intake_apply", {
       p_leadgen_id: leadgenId, p_lease_id: leaseId, p_customer_id: customerId,
-      p_location_id: shop.data.id, p_assigned_to: assignedTo, p_raw_keys: rawKeys,
+      p_location_id: shop.id, p_assigned_to: assignedTo, p_raw_keys: rawKeys,
       p_intake: { contact_name: intake.contactName, email: intake.contactEmail, secondary_email: intake.secondaryEmail,
         contact_phone: intake.contactPhone, company: intake.company, event_date: intake.eventDate, headcount: intake.headcount,
         notes: intake.notes, fulfillment: intake.isDelivery ? "delivery" : "pickup", language: form.language,
-        location_id: shop.data.id, mapping_version: META_MAPPING_VERSION, consent: mapped.consent },
+        location_id: shop.id, mapping_version: META_MAPPING_VERSION, consent: mapped.consent },
     });
     // A stale worker no longer owns the receipt; leave completion to its new holder.
     if (applied.error?.message === "stale_lease") return "busy";
@@ -93,7 +180,7 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
       // Outside the lease and outside this try's failure path by design: the lead exists; the email
       // ledger carries its own state. A thrown claim/result write is logged by code only (no PII).
       try {
-        await sendMetaContinuation(sb, { leadgenId, pipelineId: applied.data.pipeline_id, locationId: shop.data.id, language: form.language, intake });
+        await sendMetaContinuation(sb, { leadgenId, pipelineId: applied.data.pipeline_id, locationId: shop.id, language: form.language, intake });
       } catch {
         console.error("[meta-leads] continuation ledger write failed; see runbook (email_state)");
       }

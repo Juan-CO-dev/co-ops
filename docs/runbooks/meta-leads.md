@@ -57,6 +57,49 @@ the two-session lock proof), prod only on Juan's word, and only then the switch.
 - An invalid work email is kept as typed in the notes ("Work email (as typed): …") and the Meta
   email is the order email — tolerant like every optional field.
 
+### The live form and its mapping (meta-leads-v3, 2026-11-11)
+
+**Form "Catering Inquiry - EN", id `2514347029057258`** (the first Testing Tool lead was refused
+`invalid_payload` under v2 — the answers are Meta option LABELS, not codes). Raw `field_data` keys,
+exactly: `fulfillment_method, preferred_shop, headcount, seconds, extras, event_date, notes, email,
+phone_number, full_name, work_email, work_phone_number, company_name, job_title`. Consent arrives in
+`custom_disclaimer_responses` (unchanged). `mapping_version` = `meta-leads-v3`.
+
+| Key | Answers (labels) | Mapping |
+|---|---|---|
+| `fulfillment_method` | Pickup · Delivery | case-insensitive, "pick up" / "pick-up" accepted; anything else = `invalid_payload` |
+| `preferred_shop` | Pickup: "Dupont Circle (P Street)" · "Capitol Hill"; Delivery: "Our catering team picks the closest shop" | the TENANT label table (`config/tenant/meta-leads.ts` `shopLabels`: label or raw code → `locations.code`, case-insensitive, whitespace-normalized). The delivery placeholder = NO choice → routing. Pickup + unknown label = `invalid_payload`; delivery + any non-shop value = routing (an unknown label is kept as typed) |
+| `headcount` | 10-20 · 21-40 · 41-75 · 76-150 · 150+ | a plain integer is the number; a range label stays NULL + a notes line "Headcount: 21-40" (never an invented number); anything else "Headcount (as typed): …" |
+| `seconds` / `extras` | Yes · No / Just the subs · Add sides · Add sides and drinks · The works: sides + drinks + desserts | one notes line "Sizing: seconds yes · add sides and drinks" (yes/y/yeah/sure → yes, no/n/nope → no, else as typed) |
+| `event_date` | free text, hint "e.g. Nov 20" | tolerant ET date-only parse: `YYYY-MM-DD`, `M/D`, `M/D/YY(YY)`, "Nov 20", "November 20th", "20 Nov" (en + es month names), optional year; no year → the NEXT occurrence on or after today in America/New_York (today counts); impossible / anything else → null + "Event date (as typed): …" |
+| `work_phone_number`, `job_title` | optional prefill | notes lines "Work phone: …" / "Job title: …" — never identity |
+| any future key | — | never refuses the lead: appended to the notes as `<key>: <value>` (≤ 20 keys, ≤ 200 chars each); the key still lands in `raw_keys` (keys only, never values) |
+
+**Notes order** (bounded to 4000): the customer's notes → Sizing → Headcount → Routed → extras /
+unknown keys → the "(as typed)" fallbacks. The generated lines (Sizing, Headcount, Routed) are
+reserved first; the free text is cut into what is left, each cut line ending in "…".
+
+**Delivery routing (Juan's rulings, 2026-11-11)** — a delivery lead with no shop choice gets its
+shop in the worker, in this order, and the WHY lands on the lead as a notes line:
+
+1. **History** — a returning customer (the ORDER email in `catering_customers`, in the portal
+   resolver's own precedence: the active contact first, else the NEWEST inactive / null-active one —
+   read-only, nothing is revived here) or a known company (the customer's `company_id`, else the
+   domain auto-attach `catering_company_domains`) → the `location_id` of the MOST RECENT
+   `catering_pipeline` lead (`created_at` desc, `location_id not null`; an inactive shop falls
+   through). The company's latest lead is ONE database-side row through the FK-named inner embed
+   `catering_customers!catering_pipeline_customer_id_fkey!inner(company_id)` — never a client-side
+   contact list. Nothing is created before the shop is known. Note: "Routed: last order at <shop name>".
+2. **Ad set** — the lead's Graph `adset_id` (a documented Lead-node field, now requested beside
+   `ad_id`) through the tenant table `adSetShop` (`config/tenant/meta-leads.ts`; EMPTY until the geo
+   ad sets exist — add `"<adset id>": "<locations.code>"` entries there). Note: "Routed: ad set <id>".
+3. **Default** — the tenant's `defaultShopCode` (CO: `MEP`, Capitol Hill). Note: "Routed: default
+   shop — please confirm (delivery, no shop chosen)". A missing/inactive default = `invalid_location`.
+
+Pickup leads carry no routing line. Keith can move a lead between shops as before (existing feature).
+**Both tables — the labels and the ad sets — plus the default shop are tenant DATA in
+`config/tenant/meta-leads.ts`, never logic**; a second tenant edits that file only.
+
 ### Checkbox copy to paste into the form (TENANT_NAME-based; CO rendering)
 
 - en: `Email me news and offers from Compliments Only at my email above. I can unsubscribe anytime.`
@@ -86,8 +129,8 @@ Do these in order; the UI labels vary by account, so confirm each screen.
    `subscribed_fields=leadgen` (app-level subscription alone is not enough).
 6. **Form type: "Higher intent"** (review step before submit) — fewer accidental submissions.
    Questions: name / email / phone (pre-filled), **Work email for this order (if different)**
-   (optional, key `work_email`), headcount, event date, shop (required; option VALUES = the
-   `locations.code` values), pickup vs delivery (required; values `pickup` / `delivery`), company,
+   (optional, key `work_email`), headcount, event date, shop (required; option LABELS listed in
+   `config/tenant/meta-leads.ts` — the placeholder label for delivery), pickup vs delivery (required; "Pickup" / "Delivery"), company,
    notes (optional), and the optional marketing checkbox (key `email_marketing_opt_in`, copy above,
    initially unchecked). One form per language; `META_LEADS_FORMS` lists each
    `{"pageId","formId","language"}`.
@@ -101,8 +144,9 @@ Do these in order; the UI labels vary by account, so confirm each screen.
    and one unticked example per language. Confirm the webhook receipt, the Graph fetch and the
    ledger row.
 9. **Capture the real `field_data` keys** from the test lead: `select raw_keys from meta_lead_events`
-   — the mapper only reads the keys above; a form built with different keys makes identity / shop /
-   fulfillment `invalid_payload`. Fix the form (or the mapping) before enabling.
+   — identity, shop and fulfillment keys must match the live-form list above (a different key for
+   those makes the lead `invalid_payload`); any OTHER key rides along as a notes line. Fix the form
+   (or the label table) before enabling.
 10. **Verify `is_checked`:** the disclaimer response must arrive as `true`, `"1"` or `"true"` only
     when ticked; anything else is unticked. An unticked box creates NO consent event, never an
     opt-out.
