@@ -56,7 +56,7 @@ describe("The live form (labels → shops)", () => {
     expect(metaLeadsTenantConfig.shopLabels.map(s => s.code).sort()).toEqual(["EM", "MEP"]);
     expect(metaLeadsTenantConfig.defaultShopCode).toBe("MEP");
     expect(metaLeadsTenantConfig.adSetShop).toEqual({});
-    const other = { shopLabels: [{ label: "Downtown", code: "DT" }], deliveryPlaceholderLabels: ["Any"], adSetShop: {}, defaultShopCode: "DT" };
+    const other = { shopLabels: [{ label: "Downtown", code: "DT" }], deliveryPlaceholderLabels: ["Any"], adSetShop: {}, defaultShopCode: "DT", consentCheckboxKeys: [] };
     expect(mapMetaLeadFields(live({ preferred_shop: "downtown" }), undefined, { now: NOW, config: other })).toMatchObject({ ok: true, intake: { shopCode: "DT" } });
     expect(mapMetaLeadFields(live({ preferred_shop: "Capitol Hill" }), undefined, { now: NOW, config: other })).toMatchObject({ ok: false });
   });
@@ -257,6 +257,34 @@ it("pins the CO tenant consent copy and version (v3 names the email above)", () 
   expect(META_CONSENT_COPY.es).toBe("Quiero recibir novedades y ofertas de Compliments Only en mi correo de arriba. Puedo cancelar la suscripción cuando quiera.");
   expect(META_CONSENT_TEXT_VERSION).toBe("meta-email-marketing-v3");
   expect(map(fields())).toMatchObject({ consent: { textVersion: "meta-email-marketing-v3" } });
+});
+
+describe("Consent via the form-editor checkbox (Meta keys it by its label)", () => {
+  const LIVE_KEY = "email_me_news_and_offers_from_compliments_only_at_my_email_above._i_can_unsubscribe_anytime.";
+  it("the tenant's accepted key is exactly the approved v3 English copy, label-derived", () => {
+    expect(metaLeadsTenantConfig.consentCheckboxKeys).toEqual([META_CONSENT_COPY.en.toLowerCase().replace(/ /g, "_")]);
+    expect(metaLeadsTenantConfig.consentCheckboxKeys).toEqual([LIVE_KEY]);
+  });
+  it("test 2 (leadgen 1522231633059257): the live checkbox ticked → opted in, canonical evidence key", () => {
+    expect(map(live(), [{ checkbox_key: LIVE_KEY, is_checked: "1" }])).toMatchObject({ ok: true, consent: { optedIn: true, questionKey: META_CONSENT_QUESTION_KEY, textVersion: "meta-email-marketing-v3" } });
+  });
+  it.each(["0", "", false])("unticked (%j) → not opted in", value => {
+    expect(map(live(), [{ checkbox_key: LIVE_KEY, is_checked: value }])).toMatchObject({ consent: { optedIn: false } });
+  });
+  it("a different label, a near-miss key or two consent boxes never count", () => {
+    expect(map(live(), [{ checkbox_key: "i_agree_to_the_terms", is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
+    expect(map(live(), [{ checkbox_key: LIVE_KEY.slice(0, -1), is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
+    expect(map(live(), [{ checkbox_key: LIVE_KEY, is_checked: "1" }, { checkbox_key: META_CONSENT_QUESTION_KEY, is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
+  });
+  it("canonical field_data still vetoes or is required alongside the live box; duplicate live boxes refuse", () => {
+    expect(map([...live(), { name: META_CONSENT_QUESTION_KEY, values: ["false"] }], [{ checkbox_key: LIVE_KEY, is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
+    expect(map([...live(), { name: META_CONSENT_QUESTION_KEY, values: ["true"] }], [{ checkbox_key: LIVE_KEY, is_checked: "0" }])).toMatchObject({ consent: { optedIn: false } });
+    expect(map(live(), [{ checkbox_key: LIVE_KEY, is_checked: "1" }, { checkbox_key: LIVE_KEY, is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
+  });
+  it("another tenant without the key does not inherit CO's checkbox", () => {
+    const other = { ...metaLeadsTenantConfig, consentCheckboxKeys: [] };
+    expect(mapMetaLeadFields(live(), [{ checkbox_key: LIVE_KEY, is_checked: "1" }], { now: NOW, config: other })).toMatchObject({ consent: { optedIn: false } });
+  });
 });
 
 it("renders both consent languages for another tenant", async () => {

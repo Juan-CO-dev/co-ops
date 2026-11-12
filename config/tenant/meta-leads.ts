@@ -15,6 +15,12 @@ export interface MetaLeadsTenantConfig {
   adSetShop: Readonly<Record<string, string>>;
   /** Delivery routing rule c: the shop that takes a delivery lead with no history and no ad-set match. */
   defaultShopCode: string;
+  /**
+   * EXACT Meta `checkbox_key`s of the approved marketing-consent checkbox on the live forms. Meta derives
+   * the key from the checkbox LABEL (lowercased, spaces → "_"), so each entry is a fingerprint of
+   * consent copy we approved; a copy change means a new key here (a pinned test enforces it).
+   */
+  consentCheckboxKeys: readonly string[];
 }
 export const metaLeadsTenantConfig: MetaLeadsTenantConfig = {
   shopLabels: [
@@ -24,4 +30,6 @@ export const metaLeadsTenantConfig: MetaLeadsTenantConfig = {
   deliveryPlaceholderLabels: ["Our catering team picks the closest shop"],
   adSetShop: {},
   defaultShopCode: "MEP",
+  // "Email me news and offers from Compliments Only at my email above. I can unsubscribe anytime." (v3)
+  consentCheckboxKeys: ["email_me_news_and_offers_from_compliments_only_at_my_email_above._i_can_unsubscribe_anytime."],
 };
