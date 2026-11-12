@@ -73,11 +73,32 @@ function object(value: unknown): value is Record<string, unknown> { return value
 /** Case-folded, whitespace-normalized label comparison key. */
 function labelKey(value: string): string { return value.replace(/\s+/g, " ").trim().toLowerCase(); }
 
-/** Customer notes → Sizing → Headcount → Routed → extras/unknowns → the "(as typed)" fallbacks; bounded. */
+const ELLIPSIS = "…";
+/**
+ * Customer notes → Sizing → Headcount → Routed → extras/unknowns → the "(as typed)" fallbacks, bounded to
+ * META_NOTES_MAX. The GENERATED lines (Sizing, Headcount, Routed) are reserved FIRST — they carry the
+ * quantity and the shop decision — and the free text (customer notes, extras, fallbacks) is cut into what
+ * is left, each cut line ending in "…"; a line with no room left is dropped.
+ */
 export function composeMetaNotes(parts: MetaNoteParts, routed: string | null = null): string | null {
-  const lines = [parts.customer, parts.sizing, parts.headcount, routed, ...parts.extras, ...parts.fallbacks].filter((v): v is string => Boolean(v));
-  const text = lines.join("\n");
-  return text ? text.slice(0, META_NOTES_MAX) : null;
+  const ordered: Array<{ text: string; required: boolean }> = [
+    { text: parts.customer ?? "", required: false }, { text: parts.sizing ?? "", required: true }, { text: parts.headcount ?? "", required: true },
+    { text: routed ?? "", required: true }, ...parts.extras.map(text => ({ text, required: false })), ...parts.fallbacks.map(text => ({ text, required: false })),
+  ].filter(line => line.text);
+  // Every required line still to come reserves its own length plus the newline that joins it.
+  let reserved = ordered.filter(line => line.required).reduce((sum, line) => sum + line.text.length + 1, 0);
+  const out: string[] = [];
+  let used = 0;
+  for (const line of ordered) {
+    const joiner = out.length ? 1 : 0;
+    if (line.required) reserved -= line.text.length + 1;
+    const room = META_NOTES_MAX - used - joiner - (line.required ? 0 : reserved);
+    if (room <= 0) continue;
+    const text = line.text.length > room ? (room >= 2 ? line.text.slice(0, room - 1) + ELLIPSIS : "") : line.text;
+    if (!text) continue;
+    out.push(text); used += joiner + text.length;
+  }
+  return out.length ? out.join("\n") : null;
 }
 
 /** pickup | delivery, tolerant of case, spaces and hyphens ("Pick up", "pick-up"); null = anything else. */

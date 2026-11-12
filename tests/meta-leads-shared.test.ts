@@ -143,6 +143,47 @@ describe("Optional and unknown keys → notes, never identity", () => {
     expect(result.intake.notes).not.toContain("Routed");
   });
   it("composeMetaNotes with nothing is null", () => expect(composeMetaNotes({ customer: null, sizing: null, headcount: null, extras: [], fallbacks: [] })).toBeNull());
+  describe("notes budget: the generated lines (Sizing, Headcount, Routed) are reserved FIRST", () => {
+    const ROUTED = "Routed: last order at Dupont";
+    const GENERATED = "Sizing: seconds yes · add sides and drinks\nHeadcount: 21-40\n" + ROUTED;
+    it.each([3999, 4000])("a %i-char customer note is cut with an ellipsis and every generated line survives", length => {
+      const result = map(live({ notes: "y".repeat(length) }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const notes = composeMetaNotes(result.noteParts, ROUTED)!;
+      expect(notes.length).toBeLessThanOrEqual(4000);
+      expect(notes.endsWith("\n" + GENERATED)).toBe(true);
+      const customer = notes.slice(0, notes.length - GENERATED.length - 1);
+      expect(customer.endsWith("…")).toBe(true);
+      expect(customer.length).toBe(4000 - GENERATED.length - 1);
+      expect(customer.slice(0, -1)).toBe("y".repeat(customer.length - 1));
+    });
+    it("a 5000-char customer note takes the as-typed fallback path and the generated lines still lead", () => {
+      const result = map(live({ notes: "y".repeat(5000) }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const notes = composeMetaNotes(result.noteParts, ROUTED)!;
+      expect(notes.startsWith(GENERATED + "\nNotes (as typed): yyyy")).toBe(true);
+      expect(notes.length).toBeLessThanOrEqual(4000);
+    });
+    it("a flood of unknown keys cannot push the generated lines out either", () => {
+      const flood = Array.from({ length: 20 }, (_, i) => ({ name: `k${i}`, values: ["z".repeat(200)] }));
+      const result = map([...live({ notes: "x".repeat(600) }), ...flood]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const notes = composeMetaNotes(result.noteParts, ROUTED)!;
+      expect(notes.length).toBeLessThanOrEqual(4000);
+      expect(notes).toContain("x".repeat(600) + "\n" + GENERATED + "\nk0: ");
+      expect(notes.split("\n").filter(l => /^k\d+: /.test(l)).length).toBeLessThan(20);
+      expect(notes.endsWith("…")).toBe(true);
+    });
+    it("exactly full with no cut when the text fits to the byte", () => {
+      const parts = { customer: "c".repeat(4000 - GENERATED.length - 1), sizing: "Sizing: seconds yes · add sides and drinks", headcount: "Headcount: 21-40", extras: [], fallbacks: [] };
+      const notes = composeMetaNotes(parts, ROUTED)!;
+      expect(notes.length).toBe(4000);
+      expect(notes).not.toContain("…");
+    });
+  });
 });
 
 describe("Meta form mapping (carried from v2)", () => {

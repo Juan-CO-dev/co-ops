@@ -39,19 +39,46 @@ async function shopById(sb: Client, id: string): Promise<Shop | null> {
   if (shop.error) throw new WorkerFailure("database");
   return shop.data ?? null;
 }
-/** The location of the most recent catering pipeline lead among these customers (read-only). */
-async function lastLeadLocation(sb: Client, customerIds: string[]): Promise<string | null> {
-  if (customerIds.length === 0) return null;
-  const lead = await sb.from("catering_pipeline").select("location_id").in("customer_id", customerIds).not("location_id", "is", null)
-    .order("created_at", { ascending: false }).limit(1).maybeSingle<{ location_id: string }>();
+interface PipelineShop { location_id: string }
+/** The pipeline lead filter → the shop of the MOST RECENT lead with a shop (read-only, one row, DB-side). */
+async function latestLeadLocation(sb: Client, select: string, filter: (q: ReturnType<ReturnType<Client["from"]>["select"]>) => typeof q): Promise<string | null> {
+  const lead = await filter(sb.from("catering_pipeline").select(select)).not("location_id", "is", null)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle<PipelineShop>();
   if (lead.error) throw new WorkerFailure("database");
   return lead.data?.location_id ?? null;
+}
+/** A customer's own most recent lead. */
+const customerLatestLead = (sb: Client, customerId: string) => latestLeadLocation(sb, "location_id", q => q.eq("customer_id", customerId));
+/**
+ * A company's most recent lead across ALL its contacts, filtered in the database through the embedded
+ * customer (service-role embed, FK-named: `catering_pipeline.customer_id` → `catering_customers`, the one
+ * FK between the two tables) — never a client-side contact list, which would cap or overflow the request.
+ */
+const companyLatestLead = (sb: Client, companyId: string) => latestLeadLocation(sb,
+  "location_id, created_at, catering_customers!catering_pipeline_customer_id_fkey!inner(company_id)", q => q.eq("catering_customers.company_id", companyId));
+
+interface Identity { id: string; company_id: string | null }
+/**
+ * The returning identity, READ-ONLY, in the portal resolver's own precedence (resolveOrCreatePortalCustomer →
+ * reviveInactiveContact): the active contact for the order email first, else the NEWEST inactive / null-active
+ * one. Nothing is revived here — the identity step after routing still does that — so a deactivated customer
+ * still routes to the shop of their own history.
+ */
+async function returningIdentity(sb: Client, email: string): Promise<Identity | null> {
+  const active = await sb.from("catering_customers").select("id, company_id").eq("active", true).ilike("email", escapeLike(email)).maybeSingle<Identity>();
+  if (active.error) throw new WorkerFailure("database");
+  if (active.data) return active.data;
+  const inactive = await sb.from("catering_customers").select("id, company_id").or("active.is.null,active.is.false").ilike("email", escapeLike(email))
+    .order("created_at", { ascending: false }).limit(1).returns<Identity[]>();
+  if (inactive.error) throw new WorkerFailure("database");
+  return inactive.data?.[0] ?? null;
 }
 
 /**
  * Delivery routing (Juan's rulings, 2026-11-11) for a lead whose customer made NO shop choice, in order:
- *   (a) a returning customer (the ORDER email) or a known company (the domain auto-attach) → the shop of
- *       their MOST RECENT catering pipeline lead — read-only lookups, nothing is created here;
+ *   (a) a returning customer (the ORDER email, active or not) or a known company (the customer's company,
+ *       else the domain auto-attach) → the shop of their MOST RECENT catering pipeline lead — read-only
+ *       lookups, nothing is created or revived here;
  *   (b) the Meta ad set → shop table in the tenant config;
  *   (c) the tenant's default shop.
  * Every outcome names its reason in a notes line. Keith can still move the lead (existing feature).
@@ -59,17 +86,11 @@ async function lastLeadLocation(sb: Client, customerIds: string[]): Promise<stri
 async function routeDeliveryLead(sb: Client, orderEmail: string, adsetId: string | undefined): Promise<Routing> {
   const config = metaLeadsTenantConfig;
   const email = normalizeEmail(orderEmail);
-  const customer = await sb.from("catering_customers").select("id, company_id").eq("active", true).ilike("email", escapeLike(email))
-    .maybeSingle<{ id: string; company_id: string | null }>();
-  if (customer.error) throw new WorkerFailure("database");
-  let locationId = customer.data ? await lastLeadLocation(sb, [customer.data.id]) : null;
+  const customer = await returningIdentity(sb, email);
+  let locationId = customer ? await customerLatestLead(sb, customer.id) : null;
   if (!locationId) {
-    const companyId = customer.data?.company_id ?? await resolveCompanyForEmail(email);
-    if (companyId) {
-      const members = await sb.from("catering_customers").select("id").eq("company_id", companyId).limit(500).returns<Array<{ id: string }>>();
-      if (members.error) throw new WorkerFailure("database");
-      locationId = await lastLeadLocation(sb, (members.data ?? []).map(row => row.id));
-    }
+    const companyId = customer?.company_id ?? await resolveCompanyForEmail(email);
+    if (companyId) locationId = await companyLatestLead(sb, companyId);
   }
   if (locationId) {
     const shop = await shopById(sb, locationId);

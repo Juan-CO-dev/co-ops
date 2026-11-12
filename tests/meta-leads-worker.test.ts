@@ -17,6 +17,8 @@ type Op = [string, unknown[]];
 const claim = { data: { claimed: true, attempts: 1, page_id: "22", form_id: "33", provider_created_at: "2026-11-11T12:00:00Z" } };
 const created = { data: { state: "created", pipeline_id: "lead-id" } };
 const DEFAULT_NOTE = "Routed: default shop — please confirm (delivery, no shop chosen)";
+/** The company latest-lead query: one DB-side row through the FK-named inner embed (AGENTS: service-role embed, disambiguated by constraint name). */
+const COMPANY_JOIN = (companyId: string): Op[] => [["select", ["location_id, created_at, catering_customers!catering_pipeline_customer_id_fkey!inner(company_id)"]], ["eq", ["catering_customers.company_id", companyId]], ["not", ["location_id", "is", null]], ["order", ["created_at", { ascending: false }]], ["limit", [1]]];
 /** The live form's EXACT raw key list (form 2514347029057258), label values. */
 const LIVE_KEYS = ["fulfillment_method", "preferred_shop", "headcount", "seconds", "extras", "event_date", "notes", "email", "phone_number", "full_name", "work_email", "work_phone_number", "company_name", "job_title"] as const;
 type LiveKey = (typeof LIVE_KEYS)[number];
@@ -124,26 +126,50 @@ describe("Delivery routing (history → ad set → default MEP)", () => {
     const db = database([claim, created], { catering_customers: { data: { id: "cust-1", company_id: null } }, catering_pipeline: { data: { location_id: "em-id" } }, locations: { data: { id: "em-id", name: "Dupont" } } });
     expect(await processMetaLead("11", db.sb)).toBe("created");
     expect(db.ops("catering_customers")[0]).toEqual(expect.arrayContaining([["select", ["id, company_id"]], ["eq", ["active", true]], ["ilike", ["email", "guest@example.test"]]]));
-    expect(db.ops("catering_pipeline")[0]).toEqual([["select", ["location_id"]], ["in", ["customer_id", ["cust-1"]]], ["not", ["location_id", "is", null]], ["order", ["created_at", { ascending: false }]], ["limit", [1]]]);
+    expect(db.ops("catering_pipeline")[0]).toEqual([["select", ["location_id"]], ["eq", ["customer_id", "cust-1"]], ["not", ["location_id", "is", null]], ["order", ["created_at", { ascending: false }]], ["limit", [1]]]);
+    expect(db.ops("catering_customers")).toHaveLength(1);
     expect(db.ops("locations")[0]).toEqual(expect.arrayContaining([["eq", ["id", "em-id"]], ["eq", ["active", true]]]));
     expect(db.applied()).toMatchObject({ p_location_id: "em-id", p_intake: { notes: "Meeting\nSizing: seconds yes · add sides and drinks\nHeadcount: 21-40\nRouted: last order at Dupont\nunknown_key: PRIVATE VALUE" } });
     expect(mocks.company).not.toHaveBeenCalled();
   });
   it("(a) a known company (domain auto-attach, no customer yet) goes to the company's most recent lead", async () => {
     mocks.company.mockResolvedValue("company-1");
-    const db = database([claim, created], { catering_customers: [{ data: null }, { data: [{ id: "c1" }, { id: "c2" }] }], catering_pipeline: { data: { location_id: "em-id" } }, locations: { data: { id: "em-id", name: "Dupont" } } });
+    const db = database([claim, created], { catering_customers: [{ data: null }, { data: [] }], catering_pipeline: { data: { location_id: "em-id", created_at: "2026-11-01T00:00:00Z", catering_customers: { company_id: "company-1" } } }, locations: { data: { id: "em-id", name: "Dupont" } } });
     expect(await processMetaLead("11", db.sb)).toBe("created");
     expect(mocks.company).toHaveBeenCalledWith("guest@example.test");
-    expect(db.ops("catering_customers")[1]).toEqual(expect.arrayContaining([["eq", ["company_id", "company-1"]]]));
-    expect(db.ops("catering_pipeline")[0]).toEqual(expect.arrayContaining([["in", ["customer_id", ["c1", "c2"]]]]));
+    expect(db.ops("catering_customers")).toHaveLength(2);
+    expect(db.ops("catering_pipeline")[0]).toEqual(COMPANY_JOIN("company-1"));
     expect(db.applied()!.p_intake.notes).toContain("Routed: last order at Dupont");
   });
   it("(a) the customer's own company is used without the domain lookup when the customer has no lead of their own", async () => {
-    const db = database([claim, created], { catering_customers: [{ data: { id: "cust-1", company_id: "company-9" } }, { data: [{ id: "cust-1" }, { id: "cust-2" }] }], catering_pipeline: [{ data: null }, { data: { location_id: "em-id" } }], locations: { data: { id: "em-id", name: "Dupont" } } });
+    const db = database([claim, created], { catering_customers: { data: { id: "cust-1", company_id: "company-9" } }, catering_pipeline: [{ data: null }, { data: { location_id: "em-id" } }], locations: { data: { id: "em-id", name: "Dupont" } } });
     expect(await processMetaLead("11", db.sb)).toBe("created");
     expect(mocks.company).not.toHaveBeenCalled();
-    expect(db.ops("catering_customers")[1]).toEqual(expect.arrayContaining([["eq", ["company_id", "company-9"]]]));
+    expect(db.ops("catering_customers")).toHaveLength(1);
+    expect(db.ops("catering_pipeline")[1]).toEqual(COMPANY_JOIN("company-9"));
     expect(db.applied()!.p_intake.notes).toContain("Routed: last order at Dupont");
+  });
+  it("(a) an INACTIVE returning customer (the resolver's revival precedence, read-only) routes to the shop of their own history", async () => {
+    const db = database([claim, created], { catering_customers: [{ data: null }, { data: [{ id: "cust-old", company_id: null }] }], catering_pipeline: { data: { location_id: "em-id" } }, locations: { data: { id: "em-id", name: "Dupont" } } });
+    expect(await processMetaLead("11", db.sb)).toBe("created");
+    expect(db.ops("catering_customers")[0]).toEqual(expect.arrayContaining([["eq", ["active", true]]]));
+    expect(db.ops("catering_customers")[1]).toEqual([["select", ["id, company_id"]], ["or", ["active.is.null,active.is.false"]], ["ilike", ["email", "guest@example.test"]], ["order", ["created_at", { ascending: false }]], ["limit", [1]], ["returns", []]]);
+    expect(db.ops("catering_pipeline")[0]).toEqual(expect.arrayContaining([["eq", ["customer_id", "cust-old"]]]));
+    expect(db.applied()).toMatchObject({ p_location_id: "em-id", p_intake: { notes: expect.stringContaining("Routed: last order at Dupont") } });
+    // Routing revives nothing: the identity step (mocked here) is still the only writer, and it runs after.
+    expect(mocks.customer).toHaveBeenCalledTimes(1);
+    expect(db.queries.every(q => !q.ops.some(([op]) => op === "update" || op === "insert" || op === "upsert"))).toBe(true);
+  });
+  it("(a) a company's latest lead is found DB-side through the customer join — contact 501's lead wins, no contact list, no .in()", async () => {
+    mocks.company.mockResolvedValue("company-1");
+    // The database answers the join with the newest lead, which belongs to the 501st contact.
+    const db = database([claim, created], { catering_customers: [{ data: null }, { data: [] }], catering_pipeline: { data: { location_id: "em-id", created_at: "2026-11-11T00:00:00Z", catering_customers: { company_id: "company-1" } } }, locations: { data: { id: "em-id", name: "Dupont" } } });
+    expect(await processMetaLead("11", db.sb)).toBe("created");
+    expect(db.ops("catering_pipeline")).toHaveLength(1);
+    expect(db.ops("catering_pipeline")[0]).toEqual(COMPANY_JOIN("company-1"));
+    expect(db.queries.every(q => !q.ops.some(([op]) => op === "in"))).toBe(true);
+    expect(db.ops("catering_customers").every(ops => !ops.some(([op, args]) => op === "eq" && args[0] === "company_id"))).toBe(true);
+    expect(db.applied()).toMatchObject({ p_location_id: "em-id", p_intake: { notes: expect.stringContaining("Routed: last order at Dupont") } });
   });
   it("(b) no history + a mapped ad set → that shop", async () => {
     const db = database([claim, created], { locations: { data: { id: "em-id", name: "Dupont" } } });

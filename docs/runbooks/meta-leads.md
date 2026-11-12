@@ -76,16 +76,20 @@ phone_number, full_name, work_email, work_phone_number, company_name, job_title`
 | any future key | — | never refuses the lead: appended to the notes as `<key>: <value>` (≤ 20 keys, ≤ 200 chars each); the key still lands in `raw_keys` (keys only, never values) |
 
 **Notes order** (bounded to 4000): the customer's notes → Sizing → Headcount → Routed → extras /
-unknown keys → the "(as typed)" fallbacks.
+unknown keys → the "(as typed)" fallbacks. The generated lines (Sizing, Headcount, Routed) are
+reserved first; the free text is cut into what is left, each cut line ending in "…".
 
 **Delivery routing (Juan's rulings, 2026-11-11)** — a delivery lead with no shop choice gets its
 shop in the worker, in this order, and the WHY lands on the lead as a notes line:
 
-1. **History** — a returning customer (looked up by the ORDER email in `catering_customers`) or a
-   known company (the customer's `company_id`, else the domain auto-attach `catering_company_domains`
-   → every customer of that company) → the `location_id` of their MOST RECENT `catering_pipeline`
-   lead (`created_at` desc, `location_id not null`; an inactive shop falls through). Read-only; nothing
-   is created before the shop is known. Note: "Routed: last order at <shop name>".
+1. **History** — a returning customer (the ORDER email in `catering_customers`, in the portal
+   resolver's own precedence: the active contact first, else the NEWEST inactive / null-active one —
+   read-only, nothing is revived here) or a known company (the customer's `company_id`, else the
+   domain auto-attach `catering_company_domains`) → the `location_id` of the MOST RECENT
+   `catering_pipeline` lead (`created_at` desc, `location_id not null`; an inactive shop falls
+   through). The company's latest lead is ONE database-side row through the FK-named inner embed
+   `catering_customers!catering_pipeline_customer_id_fkey!inner(company_id)` — never a client-side
+   contact list. Nothing is created before the shop is known. Note: "Routed: last order at <shop name>".
 2. **Ad set** — the lead's Graph `adset_id` (a documented Lead-node field, now requested beside
    `ad_id`) through the tenant table `adSetShop` (`config/tenant/meta-leads.ts`; EMPTY until the geo
    ad sets exist — add `"<adset id>": "<locations.code>"` entries there). Note: "Routed: ad set <id>".
