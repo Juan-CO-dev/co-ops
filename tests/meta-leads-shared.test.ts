@@ -53,14 +53,14 @@ describe("The live form (labels → shops)", () => {
     expect(map(live({ fulfillment_method }))).toMatchObject({ ok: false, error: "invalid_payload" });
   });
   it("the label tables are tenant DATA (config), not logic", () => {
-    expect(metaLeadsTenantConfig.shopLabels.map(s => s.code).sort()).toEqual(["EM", "MEP"]);
+    expect([...new Set(metaLeadsTenantConfig.shopLabels.map(s => s.code))].sort()).toEqual(["EM", "MEP"]);
     expect(metaLeadsTenantConfig.defaultShopCode).toBe("MEP");
     expect(metaLeadsTenantConfig.adSetShop).toEqual({});
-    const other = { shopLabels: [{ label: "Downtown", code: "DT" }], deliveryPlaceholderLabels: ["Any"], adSetShop: {}, defaultShopCode: "DT", consentCheckboxKeys: [] };
+    const other = { shopLabels: [{ label: "Downtown", code: "DT" }], deliveryPlaceholderLabels: ["Any"], adSetShop: {}, defaultShopCode: "DT", consentCheckboxKeys: [], fieldKeyAliases: {} };
     expect(mapMetaLeadFields(live({ preferred_shop: "downtown" }), undefined, { now: NOW, config: other })).toMatchObject({ ok: true, intake: { shopCode: "DT" } });
     expect(mapMetaLeadFields(live({ preferred_shop: "Capitol Hill" }), undefined, { now: NOW, config: other })).toMatchObject({ ok: false });
   });
-  it("bumps the mapping version", () => expect(META_MAPPING_VERSION).toBe("meta-leads-v3"));
+  it("bumps the mapping version", () => expect(META_MAPPING_VERSION).toBe("meta-leads-v4"));
 });
 
 describe("Headcount", () => {
@@ -257,6 +257,50 @@ it("pins the CO tenant consent copy and version (v3 names the email above)", () 
   expect(META_CONSENT_COPY.es).toBe("Quiero recibir novedades y ofertas de Compliments Only en mi correo de arriba. Puedo cancelar la suscripción cuando quiera.");
   expect(META_CONSENT_TEXT_VERSION).toBe("meta-email-marketing-v3");
   expect(map(fields())).toMatchObject({ consent: { textVersion: "meta-email-marketing-v3" } });
+});
+
+describe("Logic-mode form (Catering Inquiry - EN v2/v3: label-derived keys)", () => {
+  const K = {
+    occasion: "is_this_for_a_work_or_personal_gathering?", fulfillment: "pickup_or_delivery?", shop: "which_shop?",
+    headcount: "how_many_people_are_you_feeding?", seconds: "should_people_be_able_to_get_seconds?", extras: "more_than_just_subs?",
+    company: "company_name?", workEmail: "work_email_for_this_order(if_different)?",
+    date: "what_is_the_date_of_your_event?(e.g._nov_20)", notes: "anything_else_we_should_know?(dietary_needs,_timing,_budget)",
+  } as const;
+  const f = (pairs: Record<string, string>) => Object.entries(pairs).map(([name, value]) => ({ name, values: [value] }));
+  const contact = { email: "guest@example.org", full_name: "Sample Guest", phone_number: "2025550100" };
+  it("every alias targets a key the mapper knows (a typo would silently become a note)", () => {
+    const canonical = ["occasion", "fulfillment_method", "preferred_shop", "headcount", "seconds", "extras", "company_name", META_WORK_EMAIL_KEY, "event_date", "notes"];
+    expect(Object.values(metaLeadsTenantConfig.fieldKeyAliases).sort()).toEqual([...canonical].sort());
+    expect(Object.keys(metaLeadsTenantConfig.fieldKeyAliases).sort()).toEqual(Object.values(K).sort());
+  });
+  it("Work + Pickup + Dupont Circle(P Street): EM, company, work email is the order identity, occasion noted, raw keys kept", () => {
+    const fd = f({ [K.occasion]: "Work", [K.fulfillment]: "Pickup", [K.shop]: "Dupont Circle(P Street)", [K.headcount]: "21-35", [K.seconds]: "Yes",
+      [K.extras]: "Subs + Cold drinks!", [K.company]: "Example Co", [K.workEmail]: "Buyer@Work.example", [K.date]: "Nov 20", [K.notes]: "Nut allergy", ...contact });
+    const result = map(fd);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rawKeys).toEqual(fd.map(x => x.name));
+    expect(result.intake).toMatchObject({ shopCode: "EM", isDelivery: false, company: "Example Co", contactEmail: "buyer@work.example", eventDate: "2026-11-20", headcount: null });
+    expect(result.intake.notes).toBe("Nut allergy\nSizing: seconds yes · subs + cold drinks!\nHeadcount: 21-35\nOccasion: Work");
+  });
+  it("Personal + Delivery skips shop and company questions → no shop (the worker routes), occasion noted", () => {
+    const result = map(f({ [K.occasion]: "Personal", [K.fulfillment]: "Delivery", [K.headcount]: "151-250", [K.seconds]: "No",
+      [K.extras]: "The Works! Subs + Drinks + Sides + Sweet treats", [K.date]: "Dec 4", ...contact }));
+    expect(result).toMatchObject({ ok: true, intake: { shopCode: null, isDelivery: true, company: null, contactEmail: "guest@example.org", eventDate: "2026-12-04" } });
+    if (result.ok) expect(result.intake.notes).toContain("Occasion: Personal");
+  });
+  it("Capitol Hill(8th Street) → MEP; a pickup with an unknown shop label still refuses", () => {
+    expect(map(f({ [K.occasion]: "Work", [K.fulfillment]: "Pickup", [K.shop]: "Capitol Hill(8th Street)", ...contact }))).toMatchObject({ ok: true, intake: { shopCode: "MEP" } });
+    expect(map(f({ [K.occasion]: "Work", [K.fulfillment]: "Pickup", [K.shop]: "Somewhere Else", ...contact }))).toMatchObject({ ok: false });
+  });
+  it("an alias and its canonical key in one lead is a duplicate, not two answers", () => {
+    expect(map([...f({ [K.fulfillment]: "Pickup", fulfillment_method: "Delivery", [K.shop]: "Capitol Hill(8th Street)" }), ...f(contact)])).toMatchObject({ ok: false });
+  });
+  it("v2's drifted checkbox ('unsubscribe at anytime') is NOT approved consent; v3's exact copy is", () => {
+    const fd = f({ [K.fulfillment]: "Delivery", ...contact });
+    expect(map(fd, [{ checkbox_key: "email_me_news_and_offers_from_compliments_only_at_my_email_above._i_can_unsubscribe_at_anytime.", is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
+    expect(map(fd, [{ checkbox_key: "email_me_news_and_offers_from_compliments_only_at_my_email_above._i_can_unsubscribe_anytime.", is_checked: "1" }])).toMatchObject({ consent: { optedIn: true } });
+  });
 });
 
 describe("Consent via the form-editor checkbox (Meta keys it by its label)", () => {
