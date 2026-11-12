@@ -321,6 +321,34 @@ describe("Logic-mode form (Catering Inquiry - EN v2/v3: label-derived keys)", ()
   });
 });
 
+describe("Logic-mode answers arrive as option KEYS (v4 test A, leadgen 4778355579065371)", () => {
+  const contact = { email: "guest@example.org", full_name: "Sample Guest", phone_number: "2025550100" };
+  const f = (pairs: Record<string, string>) => Object.entries(pairs).map(([name, value]) => ({ name, values: [value] }));
+  it("the exact test A payload: dupont_circle(p_street) → EM, readable sizing, occasion, headcount range", () => {
+    const result = map(f({ occasion: "work", fulfillment_method: "pickup", preferred_shop: "dupont_circle(p_street)", headcount: "36-55", seconds: "yes",
+      extras: "subs_+_cold_drinks!", company_name: "CO Test Co", event_date: "Dec 3", notes: "Office lunch", ...contact }));
+    expect(result).toMatchObject({ ok: true, intake: { shopCode: "EM", isDelivery: false, company: "CO Test Co", eventDate: "2026-12-03", headcount: null } });
+    if (result.ok) expect(result.intake.notes).toBe("Office lunch\nSizing: seconds yes · subs + cold drinks!\nHeadcount: 36-55\nOccasion: Work");
+  });
+  it("capitol_hill(8th_street) → MEP; a placeholder or label still resolves; an unknown key still refuses a pickup", () => {
+    expect(map(f({ fulfillment_method: "pickup", preferred_shop: "capitol_hill(8th_street)", ...contact }))).toMatchObject({ ok: true, intake: { shopCode: "MEP" } });
+    expect(map(f({ fulfillment_method: "pickup", preferred_shop: "capitol_hill", ...contact }))).toMatchObject({ ok: true, intake: { shopCode: "MEP" } });
+    expect(map(f({ fulfillment_method: "delivery", preferred_shop: "our_catering_team_picks_the_closest_shop", ...contact }))).toMatchObject({ ok: true, intake: { shopCode: null, isDelivery: true } });
+    expect(map(f({ fulfillment_method: "pickup", preferred_shop: "some_other_place", ...contact }))).toMatchObject({ ok: false });
+  });
+  it.each([["151-200+", "Headcount: 151-200+"], ["500+", "Headcount: 500+"], ["10-20", "Headcount: 10-20"]])("headcount option %s is a range note", (value, note) => {
+    const result = map(f({ fulfillment_method: "delivery", headcount: value, ...contact }));
+    expect(result).toMatchObject({ ok: true, intake: { headcount: null } });
+    if (result.ok) expect(result.intake.notes).toContain(note);
+  });
+  it("the work/personal key reads as a capitalized word, and free-text notes keep their underscores", () => {
+    const result = map(f({ occasion: "personal", fulfillment_method: "delivery", notes: "snake_case_stays", ...contact }));
+    if (!result.ok) throw new Error("refused");
+    expect(result.intake.notes).toContain("Occasion: Personal");
+    expect(result.intake.notes).toContain("snake_case_stays");
+  });
+});
+
 describe("Consent via the form-editor checkbox (Meta keys it by its label)", () => {
   const LIVE_KEY = "email_me_news_and_offers_from_compliments_only_at_my_email_above._i_can_unsubscribe_anytime.";
   it("the tenant's accepted key is exactly the approved v3 English copy, label-derived", () => {

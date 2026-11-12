@@ -73,7 +73,11 @@ const UNKNOWN_VALUE_MAX = 200;
 
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }
 /** Case-folded, whitespace-normalized label comparison key. */
-function labelKey(value: string): string { return value.replace(/\s+/g, " ").trim().toLowerCase(); }
+// "_" counts as a space: a logic-mode form sends each multiple-choice answer as its option KEY — the label
+// lowercased with spaces → "_" ("dupont_circle(p_street)") — never the label itself.
+function labelKey(value: string): string { return value.replace(/[\s_]+/g, " ").trim().toLowerCase(); }
+/** A multiple-choice answer for a notes line: an option key's "_" back to spaces ("subs_+_cold_drinks!" → "subs + cold drinks!"). */
+function optionText(value: string): string { return value.replace(/[\s_]+/g, " ").trim(); }
 
 const ELLIPSIS = "…";
 /**
@@ -240,7 +244,7 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
   let headcount: number | null = null;
   let headcountNote: string | null = null;
   if (headcountText) {
-    const range = /^(\d{1,6})\s*(?:-|–|—|to)\s*(\d{1,6})$|^(\d{1,6})\s*\+$/.exec(headcountText);
+    const range = /^(\d{1,6})\s*(?:-|–|—|to)\s*(\d{1,6})\s*\+?$|^(\d{1,6})\s*\+$/.exec(headcountText);
     if (range) headcountNote = `Headcount: ${headcountText.replace(/\s+/g, "")}`;
     else {
       headcount = Number(headcountText);
@@ -250,7 +254,7 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
   // Sizing: "Sizing: seconds yes · add sides and drinks" (each part only when answered).
   const secondsText = fields.get("seconds");
   const extrasText = fields.get("extras");
-  const sizingParts = [secondsText ? `seconds ${normalizeYesNo(secondsText)}` : null, extrasText ? extrasText.toLowerCase() : null].filter(Boolean);
+  const sizingParts = [secondsText ? `seconds ${normalizeYesNo(optionText(secondsText))}` : null, extrasText ? optionText(extrasText).toLowerCase() : null].filter(Boolean);
   const sizing = sizingParts.length ? `Sizing: ${sizingParts.join(" · ")}` : null;
   // Event date: tolerant parse in ET; unparseable → kept as typed.
   const eventText = fields.get("event_date") || null;
@@ -261,7 +265,9 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
   }
   // Labelled optional answers → notes, never identity.
   const extras: string[] = [];
-  for (const key of ["occasion", "work_phone_number", "job_title"] as const) { const text = fields.get(key); if (text) extras.push(`${optionalLabels[key]}: ${text.slice(0, 500)}`); }
+  const occasionText = fields.get("occasion");
+  if (occasionText) { const o = optionText(occasionText); extras.push(`${optionalLabels.occasion}: ${(o.charAt(0).toUpperCase() + o.slice(1)).slice(0, 500)}`); }
+  for (const key of ["work_phone_number", "job_title"] as const) { const text = fields.get(key); if (text) extras.push(`${optionalLabels[key]}: ${text.slice(0, 500)}`); }
   extras.push(...unknowns);
   // Only the pinned checkbox can authorize marketing; absence/false never means opt-out. Meta names a
   // form-editor checkbox after its label, so the tenant's approved label-derived keys count too (exact match).
