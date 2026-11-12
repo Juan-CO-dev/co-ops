@@ -296,6 +296,24 @@ describe("Logic-mode form (Catering Inquiry - EN v2/v3: label-derived keys)", ()
   it("an alias and its canonical key in one lead is a duplicate, not two answers", () => {
     expect(map([...f({ [K.fulfillment]: "Pickup", fulfillment_method: "Delivery", [K.shop]: "Capitol Hill(8th Street)" }), ...f(contact)])).toMatchObject({ ok: false });
   });
+  it.each([
+    [["company_name?", "Alias Co"], ["company_name", "Canonical Co"]],
+    [["company_name", "Canonical Co"], ["company_name?", "Alias Co"]],
+  ])("an optional alias + canonical duplicate keeps NEITHER answer silently, in either order (%j)", (first, second) => {
+    const result = map([...f({ [K.fulfillment]: "Delivery", ...contact }), { name: first[0], values: [first[1]] }, { name: second[0], values: [second[1]] }]);
+    expect(result).toMatchObject({ ok: true, intake: { company: null } });
+    if (result.ok) expect(result.intake.notes).toContain("Company (as typed): " + first[1] + "; " + second[1]);
+  });
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty"])("an inherited object key (%s) is never an alias", key => {
+    const result = map([...f({ [K.fulfillment]: "Delivery", ...contact }), { name: key, values: ["x"] }]);
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) expect(result.intake.notes).toContain(key + ": x");
+  });
+  it("the occasion line never pushes notes past the 4000 bound", () => {
+    const result = map(f({ [K.occasion]: "Work", [K.fulfillment]: "Delivery", [K.notes]: "n".repeat(3990), ...contact }));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect((result.intake.notes ?? "").length).toBeLessThanOrEqual(4000);
+  });
   it("v2's drifted checkbox ('unsubscribe at anytime') is NOT approved consent; v3's exact copy is", () => {
     const fd = f({ [K.fulfillment]: "Delivery", ...contact });
     expect(map(fd, [{ checkbox_key: "email_me_news_and_offers_from_compliments_only_at_my_email_above._i_can_unsubscribe_at_anytime.", is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
