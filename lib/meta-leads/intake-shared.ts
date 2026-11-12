@@ -16,11 +16,13 @@ export const META_CONSENT_COPY = {
 /** The optional "Work email for this order (if different)" question key. */
 export const META_WORK_EMAIL_KEY = "work_email";
 /**
+ * v4 (2026-11-12): logic-mode forms — label-derived question keys resolve through the tenant
+ * `fieldKeyAliases`, and the work/personal answer is an "Occasion:" notes line.
  * v3 (2026-11-11, the live form): answers are Meta option LABELS resolved through the tenant label
  * table; a delivery lead without a shop choice is ROUTED by the worker; headcount ranges, sizing
  * (seconds / extras), work phone, job title and unknown keys become notes; dates parse tolerantly.
  */
-export const META_MAPPING_VERSION = "meta-leads-v3";
+export const META_MAPPING_VERSION = "meta-leads-v4";
 /** The pipeline notes column bound (catering_pipeline.notes is free text; the intake JSON pins 4000). */
 export const META_NOTES_MAX = 4000;
 
@@ -179,8 +181,8 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
   const bad = (): MetaMapResult => ({ ok: false, error: "invalid_payload", rawKeys });
   if (!Array.isArray(fieldData) || fieldData.length > 100) return bad();
   const fields = new Map<string, string>();
-  const known = new Set(["full_name", "email", "phone_number", "company_name", "headcount", "event_date", "preferred_shop", "fulfillment_method", "notes", "seconds", "extras", "work_phone_number", "job_title", META_WORK_EMAIL_KEY, META_CONSENT_QUESTION_KEY]);
-  const optionalLabels: Record<string, string> = { headcount: "Headcount", event_date: "Event date", company_name: "Company", notes: "Notes", preferred_shop: "Preferred shop", seconds: "Seconds", extras: "Extras", work_phone_number: "Work phone", job_title: "Job title", [META_WORK_EMAIL_KEY]: "Work email" };
+  const known = new Set(["full_name", "email", "phone_number", "company_name", "headcount", "event_date", "preferred_shop", "fulfillment_method", "notes", "seconds", "extras", "work_phone_number", "job_title", "occasion", META_WORK_EMAIL_KEY, META_CONSENT_QUESTION_KEY]);
+  const optionalLabels: Record<string, string> = { headcount: "Headcount", event_date: "Event date", company_name: "Company", notes: "Notes", preferred_shop: "Preferred shop", seconds: "Seconds", extras: "Extras", work_phone_number: "Work phone", job_title: "Job title", occasion: "Occasion", [META_WORK_EMAIL_KEY]: "Work email" };
   const invalidOptional = new Set<string>();
   const fallbacks = new Map<string, string>();
   const unknowns: string[] = [];
@@ -193,18 +195,20 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
   for (const field of fieldData) {
     if (!object(field) || typeof field.name !== "string" || field.name.length > 80) { invalid = true; continue; }
     rawKeys.push(field.name);
-    if (!known.has(field.name)) {
+    // A label-derived editor key ("pickup_or_delivery?") → our canonical key; rawKeys keep Meta's names.
+    const name = (Object.hasOwn(config.fieldKeyAliases, field.name) ? config.fieldKeyAliases[field.name] : undefined) ?? field.name;
+    if (!known.has(name)) {
       // A future question never refuses the lead: its answer rides along as a bounded note line.
-      if (unknowns.length < UNKNOWN_KEY_LIMIT) { const text = rawText(field.values).trim(); if (text) unknowns.push(`${field.name}: ${text.slice(0, UNKNOWN_VALUE_MAX)}`); }
+      if (unknowns.length < UNKNOWN_KEY_LIMIT) { const text = rawText(field.values).trim(); if (text) unknowns.push(`${name}: ${text.slice(0, UNKNOWN_VALUE_MAX)}`); }
       continue;
     }
-    if (optionalLabels[field.name] && (fields.has(field.name) || invalidOptional.has(field.name) || !Array.isArray(field.values) || field.values.length !== 1 || typeof field.values[0] !== "string" || field.values[0].length > (field.name === "company_name" ? 200 : field.name === META_WORK_EMAIL_KEY ? 254 : 4000))) {
-      preserve(field.name, [fields.get(field.name), rawText(field.values)].filter(Boolean).join("; "));
-      fields.delete(field.name);
+    if (optionalLabels[name] && (fields.has(name) || invalidOptional.has(name) || !Array.isArray(field.values) || field.values.length !== 1 || typeof field.values[0] !== "string" || field.values[0].length > (name === "company_name" ? 200 : name === META_WORK_EMAIL_KEY ? 254 : 4000))) {
+      preserve(name, [fields.get(name), rawText(field.values)].filter(Boolean).join("; "));
+      fields.delete(name);
       continue;
     }
-    if (fields.has(field.name) || !Array.isArray(field.values) || field.values.length !== 1 || typeof field.values[0] !== "string" || field.values[0].length > 4000) { invalid = true; continue; }
-    fields.set(field.name, field.values[0].trim());
+    if (fields.has(name) || !Array.isArray(field.values) || field.values.length !== 1 || typeof field.values[0] !== "string" || field.values[0].length > 4000) { invalid = true; continue; }
+    fields.set(name, field.values[0].trim());
   }
   if (invalid) return bad();
   const email = classifyEmail(fields.get("email"));
@@ -257,7 +261,7 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
   }
   // Labelled optional answers → notes, never identity.
   const extras: string[] = [];
-  for (const key of ["work_phone_number", "job_title"] as const) { const text = fields.get(key); if (text) extras.push(`${optionalLabels[key]}: ${text.slice(0, 500)}`); }
+  for (const key of ["occasion", "work_phone_number", "job_title"] as const) { const text = fields.get(key); if (text) extras.push(`${optionalLabels[key]}: ${text.slice(0, 500)}`); }
   extras.push(...unknowns);
   // Only the pinned checkbox can authorize marketing; absence/false never means opt-out. Meta names a
   // form-editor checkbox after its label, so the tenant's approved label-derived keys count too (exact match).

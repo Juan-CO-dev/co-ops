@@ -81,7 +81,7 @@ it("creates only through the RPC with resolved manager, label-resolved shop, sou
   const db = database(); expect(await processMetaLead("11", db.sb)).toBe("created");
   expect(db.ops("locations")[0]).toEqual(expect.arrayContaining([["eq", ["code", "MEP"]], ["eq", ["active", true]]]));
   expect(mocks.customer).toHaveBeenCalledWith("guest@example.test", "Example Guest", "meta_lead_form");
-  expect(db.rpc).toHaveBeenLastCalledWith("meta_lead_intake_apply", expect.objectContaining({ p_customer_id: "customer-id", p_assigned_to: "manager-id", p_location_id: "shop-id", p_raw_keys: [...LIVE_KEYS, "email_marketing_opt_in", "unknown_key"], p_intake: expect.objectContaining({ language: "es", fulfillment: "pickup", email: "guest@example.test", secondary_email: null, mapping_version: "meta-leads-v3", headcount: null, event_date: "2026-11-20" }) }));
+  expect(db.rpc).toHaveBeenLastCalledWith("meta_lead_intake_apply", expect.objectContaining({ p_customer_id: "customer-id", p_assigned_to: "manager-id", p_location_id: "shop-id", p_raw_keys: [...LIVE_KEYS, "email_marketing_opt_in", "unknown_key"], p_intake: expect.objectContaining({ language: "es", fulfillment: "pickup", email: "guest@example.test", secondary_email: null, mapping_version: "meta-leads-v4", headcount: null, event_date: "2026-11-20" }) }));
   // The ledger carries key names only; the unknown answer rides on the lead's notes (never a ledger field).
   const apply = db.rpc.mock.calls.at(-1)![1] as { p_raw_keys: string[]; p_intake: { notes: string } };
   expect(JSON.stringify(apply.p_raw_keys)).not.toContain("PRIVATE VALUE");
