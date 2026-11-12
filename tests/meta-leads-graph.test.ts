@@ -40,3 +40,21 @@ describe("Meta Graph retrieval", () => {
     expect(await fetchMetaLead(expected, { ...dependencies, send })).toEqual({ ok: false, error: "graph_timeout" });
   });
 });
+
+describe("adset_id (delivery routing rule b)", () => {
+  it("asks Graph for adset_id and passes a numeric one through", async () => {
+    const send = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "123", form_id: "456", ad_id: "1", adset_id: "777", field_data: [] }));
+    expect(await fetchMetaLead(expected, { ...dependencies, send })).toMatchObject({ ok: true, lead: { adset_id: "777", ad_id: "1" } });
+    expect(new URL(String(send.mock.calls[0]![0])).searchParams.get("fields")!.split(",")).toContain("adset_id");
+  });
+  it("tolerates a missing adset_id (organic leads carry none)", async () => {
+    const send = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "123", form_id: "456", field_data: [] }));
+    const result = await fetchMetaLead(expected, { ...dependencies, send });
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) expect("adset_id" in result.lead).toBe(false);
+  });
+  it.each([123, "abc", "", { id: "1" }])("refuses a malformed adset_id %j", async adset_id => {
+    const send = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "123", form_id: "456", adset_id, field_data: [] }));
+    expect(await fetchMetaLead(expected, { ...dependencies, send })).toEqual({ ok: false, error: "invalid_payload" });
+  });
+});
