@@ -244,6 +244,13 @@ it("records only checked consent before lead creation with stable evidence ref",
   expect(await processMetaLead("11", db.sb)).toBe("created");
   expect(db.rpc).toHaveBeenNthCalledWith(2, "customer_consent_record_explicit", expect.objectContaining({ p_evidence_ref: "11:email_marketing_opt_in", p_source: "meta_lead_form", p_channel: "email", p_text_version: "meta-email-marketing-v3" }));
 });
+it("the LIVE form's label-keyed consent checkbox (custom_disclaimer_responses) records consent through the worker", async () => {
+  const LIVE_KEY = "email_me_news_and_offers_from_compliments_only_at_my_email_above._i_can_unsubscribe_anytime.";
+  mocks.graph.mockResolvedValue({ ok: true, lead: { id: "11", field_data: fields(false).filter(f => f.name !== "email_marketing_opt_in"), custom_disclaimer_responses: [{ checkbox_key: LIVE_KEY, is_checked: "1" }] } });
+  const db = database([claim, { data: { event_id: "consent-id", recorded: true } }, created]);
+  expect(await processMetaLead("11", db.sb)).toBe("created");
+  expect(db.rpc).toHaveBeenNthCalledWith(2, "customer_consent_record_explicit", expect.objectContaining({ p_evidence_ref: "11:email_marketing_opt_in", p_text_version: "meta-email-marketing-v3" }));
+});
 it("double capture: the work email is the order identity everywhere, the Meta email is the ONLY consent subject and a secondary note", async () => {
   mocks.graph.mockResolvedValue({ ok: true, lead: { id: "11", field_data: fields(true, { work_email: "Buyer@Work.example" }) } });
   const db = database([claim, { data: { event_id: "consent-id", recorded: true } }, created]);

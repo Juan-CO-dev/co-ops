@@ -276,6 +276,11 @@ describe("Consent via the form-editor checkbox (Meta keys it by its label)", () 
     expect(map(live(), [{ checkbox_key: LIVE_KEY.slice(0, -1), is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
     expect(map(live(), [{ checkbox_key: LIVE_KEY, is_checked: "1" }, { checkbox_key: META_CONSENT_QUESTION_KEY, is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
   });
+  it("canonical field_data still vetoes or is required alongside the live box; duplicate live boxes refuse", () => {
+    expect(map([...live(), { name: META_CONSENT_QUESTION_KEY, values: ["false"] }], [{ checkbox_key: LIVE_KEY, is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
+    expect(map([...live(), { name: META_CONSENT_QUESTION_KEY, values: ["true"] }], [{ checkbox_key: LIVE_KEY, is_checked: "0" }])).toMatchObject({ consent: { optedIn: false } });
+    expect(map(live(), [{ checkbox_key: LIVE_KEY, is_checked: "1" }, { checkbox_key: LIVE_KEY, is_checked: "1" }])).toMatchObject({ consent: { optedIn: false } });
+  });
   it("another tenant without the key does not inherit CO's checkbox", () => {
     const other = { ...metaLeadsTenantConfig, consentCheckboxKeys: [] };
     expect(mapMetaLeadFields(live(), [{ checkbox_key: LIVE_KEY, is_checked: "1" }], { now: NOW, config: other })).toMatchObject({ consent: { optedIn: false } });
