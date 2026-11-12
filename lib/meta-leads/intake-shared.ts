@@ -259,10 +259,12 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
   const extras: string[] = [];
   for (const key of ["work_phone_number", "job_title"] as const) { const text = fields.get(key); if (text) extras.push(`${optionalLabels[key]}: ${text.slice(0, 500)}`); }
   extras.push(...unknowns);
-  // Only the pinned checkbox can authorize marketing; absence/false never means opt-out.
+  // Only the pinned checkbox can authorize marketing; absence/false never means opt-out. Meta names a
+  // form-editor checkbox after its label, so the tenant's approved label-derived keys count too (exact match).
   let optedIn = fields.get(META_CONSENT_QUESTION_KEY) === "true";
   if (Array.isArray(disclaimerResponses)) {
-    const matches = disclaimerResponses.filter(v => object(v) && v.checkbox_key === META_CONSENT_QUESTION_KEY);
+    const consentKeys = new Set<unknown>([META_CONSENT_QUESTION_KEY, ...config.consentCheckboxKeys]);
+    const matches = disclaimerResponses.filter(v => object(v) && consentKeys.has(v.checkbox_key));
     if (matches.length > 1) optedIn = false;
     else if (matches.length === 1) {
       const checked = object(matches[0]) && [true, "1", "true"].includes(matches[0].is_checked as boolean | string);
