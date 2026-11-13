@@ -19,6 +19,11 @@ async function assertGuideGeometry(page:Page) {
   expect(geometry.readable.filter(label=>!label.visible||!label.withinWidth||!label.unclipped)).toEqual([]);
 }
 
+/** Scroll the pinned Field Guide's runway to a fraction of its travel (1 = the guide's end at the viewport's bottom). */
+async function scrollGuide(page:Page,fraction:number) {
+  await page.locator('.landing-v3-guide').evaluate((el,f)=>{const box=el.getBoundingClientRect();scrollTo(0,box.top+scrollY+Math.max(0,box.height-innerHeight)*f);},fraction);
+}
+
 for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,height:900}])for(const language of ['en','es'] as const)test(`texture waits for scroll and Field Guide keeps food clear (${size.width}x${size.height}; ${language})`,async({page},testInfo)=>{
   await page.setViewportSize(size);
   const textures:string[]=[];
@@ -61,7 +66,9 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
     await page.evaluate(({top,travel,progress})=>scrollTo(0,top+travel*progress),{top,travel,progress});
     await page.waitForTimeout(80);
     const overlaps=await page.locator('#crave').evaluate(section=>{
-      const photos=[...section.querySelectorAll('[data-texture-photo]')].map(el=>el.getBoundingClientRect());
+      // The food a reader can see: each photo as clipped by the story window (overflow: hidden).
+      const clip=section.querySelector('.landing-v2-crave-window')!.getBoundingClientRect();
+      const photos=[...section.querySelectorAll('[data-texture-photo]')].map(el=>{const r=el.getBoundingClientRect(),left=Math.max(r.left,clip.left),top=Math.max(r.top,clip.top);return new DOMRect(left,top,Math.max(0,Math.min(r.right,clip.right)-left),Math.max(0,Math.min(r.bottom,clip.bottom)-top));});
       return photos.flatMap(photo=>[...section.querySelectorAll('h2,p,button,[data-landing-placement]')].map(el=>{const b=el.getBoundingClientRect();return Math.max(0,Math.min(b.right,photo.right)-Math.max(b.left,photo.left))*Math.max(0,Math.min(b.bottom,photo.bottom)-Math.max(b.top,photo.top));}));
     });
     expect(overlaps.every(area=>area===0)).toBe(true);
@@ -149,7 +156,9 @@ for(const size of [{width:375,height:667},{width:375,height:812},{width:1440,hei
     await page.evaluate(({top,travel,progress})=>scrollTo(0,top+travel*progress),{top:enlargedTop,travel:enlargedTravel,progress});
     await page.waitForTimeout(80);
     const overlaps=await page.locator('#crave').evaluate(section=>{
-      const photos=[...section.querySelectorAll('[data-texture-photo]')].map(el=>el.getBoundingClientRect());
+      // The food a reader can see: each photo as clipped by the story window (overflow: hidden).
+      const clip=section.querySelector('.landing-v2-crave-window')!.getBoundingClientRect();
+      const photos=[...section.querySelectorAll('[data-texture-photo]')].map(el=>{const r=el.getBoundingClientRect(),left=Math.max(r.left,clip.left),top=Math.max(r.top,clip.top);return new DOMRect(left,top,Math.max(0,Math.min(r.right,clip.right)-left),Math.max(0,Math.min(r.bottom,clip.bottom)-top));});
       return photos.flatMap(photo=>[...section.querySelectorAll('h2,p,button,[data-landing-placement]')].map(el=>{const b=el.getBoundingClientRect();return Math.max(0,Math.min(b.right,photo.right)-Math.max(b.left,photo.left))*Math.max(0,Math.min(b.bottom,photo.bottom)-Math.max(b.top,photo.top));}));
     });
     expect(overlaps.every(area=>area===0)).toBe(true);
@@ -282,7 +291,7 @@ test('finding all six Field Guide ingredients turns into the Crunchy Boi order a
   const cta=page.locator('#field-guide .landing-v4-guide-cta');
   await expect(cta).toHaveAttribute('data-ready','false');
   await expect(page.locator('#field-guide [data-landing-placement]')).toHaveCount(0);
-  await page.locator('.landing-v3-guide-figure').scrollIntoViewIfNeeded();
+  await scrollGuide(page,1);
   await expect.poll(async()=>{await page.clock.runFor(1200);return cta.getAttribute('data-ready');},{timeout:20000}).toBe('true');
   const button=cta.getByRole('button',{name:'Order Crunchy Boi'});
   await expect(button).toBeVisible();
@@ -318,7 +327,7 @@ for(const text of ['100%','200%'] as const)for(const language of ['en','es'] as 
     await expect(guide).toHaveAttribute('data-guide-mode','motion');
     await expect(slot).toHaveAttribute('data-ready','false');
     expect(await height()).toBeCloseTo(before,1);
-    await page.locator('.landing-v3-guide-figure').scrollIntoViewIfNeeded();
+    await scrollGuide(page,1);
     await expect.poll(async()=>{await page.clock.runFor(1200);return slot.getAttribute('data-ready');},{timeout:20000}).toBe('true');
     const action=slot.getByRole('button',{name:(language==='en'?en:es)['landing.lineup.order'].replace('{name}','Crunchy Boi')});
     await expect(action).toBeVisible();
@@ -342,10 +351,9 @@ test('scrolling through the Field Guide finds the six one by one, never backward
   const found=async()=>Number(await guide.getAttribute('data-guide-found'));
   const start=await found();
   expect(start).toBeLessThan(6);
-  const top=await page.locator('.landing-v3-guide-figure').evaluate(el=>el.getBoundingClientRect().top+scrollY);
   const seen:number[]=[start];
-  for(let y=top-844;y<=top-200;y+=60){
-    await page.evaluate(v=>scrollTo(0,v),y);await page.waitForTimeout(150);
+  for(let fraction=0;fraction<=1.0001;fraction+=.05){
+    await scrollGuide(page,fraction);await page.waitForTimeout(150);
     seen.push(await found());
   }
   await expect.poll(found,{timeout:5000}).toBe(6);
@@ -375,19 +383,19 @@ test('tapping an ingredient finds it at once; the scroll then finds the rest',as
   await expect(pickles).toHaveAttribute('data-found','true');
   await expect(pickles).toHaveAttribute('data-active','true');
   await expect(pickles).toHaveAttribute('data-collected','true',{timeout:3000});
-  await page.locator('.landing-v3-guide-figure').scrollIntoViewIfNeeded();
+  await scrollGuide(page,1);
   await expect(guide).toHaveAttribute('data-guide-found','6',{timeout:5000});
   await expect(page.locator('#field-guide [data-guide-cta]')).toHaveAttribute('data-ready','true',{timeout:4000});
 });
 
 test('finding all six by taps alone stops the scroll observer',async({page})=>{
-  // Record whether the guide photo's scroll observer is disconnected (Astra v4.1 nit).
+  // Record whether the guide's scroll observer (on its step markers) is disconnected (Astra v4.1 nit).
   await page.addInitScript(()=>{
     const Native=window.IntersectionObserver;
     const w=window as unknown as {__guideObserverDisconnected:boolean};w.__guideObserverDisconnected=false;
     window.IntersectionObserver=class extends Native{
       private guide=false;
-      observe(target:Element){if(target.parentElement?.classList.contains('landing-v3-guide-figure'))this.guide=true;super.observe(target);}
+      observe(target:Element){if(target.hasAttribute('data-guide-step'))this.guide=true;super.observe(target);}
       disconnect(){if(this.guide)w.__guideObserverDisconnected=true;super.disconnect();}
     } as typeof IntersectionObserver;
   });
@@ -427,4 +435,86 @@ for(const policy of ['reduce','save-data'] as const)test(`${policy}: no find ani
   await expect(slot).toHaveAttribute('data-ready','true');
   await slot.scrollIntoViewIfNeeded();
   await expect(slot.getByRole('button',{name:'Order Crunchy Boi'})).toBeVisible();
+});
+
+// Laptop polish (Juan 2026-11-13): "not resizing properly on the laptop screen".
+const laptops=[{width:1280,height:720},{width:1366,height:768},{width:1536,height:730},{width:1536,height:864},{width:1440,height:900},{width:1920,height:1080}];
+for(const size of laptops)test(`laptop hero keeps two columns that fit the first screen (${size.width}x${size.height})`,async({page})=>{
+  await page.setViewportSize(size);
+  await page.goto('/');
+  await page.evaluate(()=>document.fonts.ready);
+  await expect(page.locator('.landing-v2')).toHaveAttribute('data-consent-stack','false');
+  const g=await page.evaluate(()=>{
+    const box=(s:string)=>document.querySelector(s)!.getBoundingClientRect().toJSON() as DOMRect;
+    return {grid:box('.landing-v2-hero-grid'),photo:box('#hero img'),consent:box('.landing-v2-consent'),blocks:[...document.querySelectorAll('.landing-v2-hero-copy > :not(#landing-consent-slot)')].map(el=>el.getBoundingClientRect().toJSON() as DOMRect),overflow:document.documentElement.scrollWidth>innerWidth};
+  });
+  const hit=(a:DOMRect,b:DOMRect)=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
+  expect(g.overflow).toBe(false);
+  // Two columns: the photo is the right half and exactly the stage's height.
+  expect(Math.abs(g.photo.width-size.width/2)).toBeLessThan(1);
+  expect(Math.abs(g.photo.height-g.grid.height)).toBeLessThan(1);
+  // The stage fills the first screen below the header (never past the 740px prototype stage).
+  expect(g.grid.height).toBeGreaterThanOrEqual(Math.min(740,size.height-52)-1);
+  expect(g.grid.height).toBeLessThanOrEqual(Math.max(740,size.height-52)+1);
+  // The unanswered notice never covers the food or the copy.
+  expect(hit(g.consent,g.photo)).toBe(false);
+  for(const block of g.blocks)expect(hit(g.consent,block)).toBe(false);
+});
+
+for(const size of [...laptops,{width:390,height:844}])test(`the pinned crunch story fills its window with real photos (${size.width}x${size.height})`,async({page})=>{
+  await page.setViewportSize(size);
+  await page.goto('/');
+  const stage=page.locator('[data-crave-stage]');
+  await expect(stage).toHaveAttribute('data-motion','true');
+  const top=await stage.evaluate(el=>el.getBoundingClientRect().top+scrollY);
+  await page.evaluate(y=>scrollTo(0,y),top);
+  const first=stage.locator('[data-texture-photo]').first().locator('img');
+  await expect.poll(()=>first.evaluate(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0)).toBe(true);
+  const g=await stage.evaluate(el=>{
+    const win=el.querySelector('.landing-v2-crave-window')!.getBoundingClientRect();
+    const img=el.querySelector<HTMLImageElement>('[data-texture-photo] img')!;const box=img.getBoundingClientRect();
+    return {stage:el.getBoundingClientRect().width,win:{w:win.width,h:win.height,bottom:win.bottom},img:{w:box.width,h:box.height,fit:getComputedStyle(img).objectFit,natural:img.naturalWidth/img.naturalHeight}};
+  });
+  // The window spans the column and the screen height the control and captions leave.
+  expect(Math.abs(g.win.w-g.stage)).toBeLessThan(1);
+  expect(g.win.bottom).toBeLessThanOrEqual(size.height);
+  expect(g.win.h).toBeGreaterThanOrEqual(size.height*.6);
+  // Each photo covers the window: a uniform crop of the untouched 2:3 photo, never stretched or letterboxed.
+  expect(Math.abs(g.img.w-g.win.w)).toBeLessThan(1);expect(Math.abs(g.img.h-g.win.h)).toBeLessThan(1);
+  expect(g.img.fit).toBe('cover');
+  expect(g.img.natural).toBeCloseTo(2/3,2);
+});
+
+for(const size of [{width:1366,height:768},{width:1536,height:730},{width:1920,height:1080},{width:390,height:844}])test(`the Field Guide pins and paces its six finds along the scroll (${size.width}x${size.height})`,async({page})=>{
+  await page.setViewportSize(size);
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  // Approach from above: the guide's top just below the fold, nothing found yet.
+  await guide.evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-innerHeight+40));
+  await page.waitForTimeout(400);
+  const found=async()=>Number(await guide.getAttribute('data-guide-found'));
+  expect(await found()).toBe(0);
+  const firstAt:number[]=[];
+  for(let step=0;step<=20;step++){
+    const fraction=step/20;
+    await scrollGuide(page,fraction);await page.waitForTimeout(450);
+    const count=await found();
+    while(firstAt.length<count)firstAt.push(fraction);
+    if(step===2){
+      // Pinned: the words, the whole cross-section and the action slot are on screen together.
+      const g=await page.evaluate(()=>{const r=(s:string)=>document.querySelector(s)!.getBoundingClientRect();return {pin:r('.landing-v5-guide-pin').top,words:r('.landing-v3-guide-words').top,photo:r('.landing-v5-guide-photo').toJSON() as DOMRect,slot:r('[data-guide-cta]').bottom};});
+      expect(Math.abs(g.pin-16)).toBeLessThan(2);
+      expect(g.words).toBeGreaterThanOrEqual(0);
+      expect(g.photo.bottom).toBeLessThanOrEqual(size.height);
+      expect(g.photo.height).toBeGreaterThan(size.height*.3);
+      expect(g.slot).toBeLessThanOrEqual(size.height);
+    }
+  }
+  expect(await found()).toBe(6);
+  // Paced: the finds are spread over the runway, not bunched at its start.
+  expect(firstAt[0]!).toBeLessThanOrEqual(.15);
+  expect(firstAt[5]!).toBeGreaterThanOrEqual(.6);
+  for(let i=1;i<6;i++)expect(firstAt[i]!-firstAt[i-1]!).toBeGreaterThanOrEqual(.1);
+  await expect(page.locator('#field-guide [data-guide-cta]')).toHaveAttribute('data-ready','true');
 });

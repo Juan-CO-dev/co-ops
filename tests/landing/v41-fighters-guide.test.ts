@@ -6,7 +6,7 @@ import roster from '@/config/tenant/landing-products.json';
 import { products, validateProducts } from '@/lib/landing/products';
 import { LineupPhoto } from '@/components/landing/LineupPhoto';
 import { CARD_VISIBLE, focalPosition, STAGE_VISIBLE } from '@/lib/landing/fighter-select-shared';
-import { foundCount, GUIDE_SCROLL_THRESHOLDS, nextUnfound, scrollFoundTarget } from '@/lib/landing/field-guide-shared';
+import { foundCount, GUIDE_STEP_AT, GUIDE_STEP_ROOT_MARGIN, nextUnfound, stepReached, stepTarget } from '@/lib/landing/field-guide-shared';
 
 const css = readFileSync('app/eat/landing-v2.css', 'utf8');
 // Mirrors the CSS: a cover crop showing `visible` of the 2:3 photo's height at object-position p.
@@ -60,20 +60,30 @@ describe('v4.1: every fighter photo is framed on its own sub', () => {
 });
 
 describe('v4.1: scroll-driven Field Guide progress', () => {
-  it('maps photo visibility to a target, all six once fully in view or scrolled past', () => {
-    expect(scrollFoundTarget(0, 600, 6)).toBe(0);
-    expect(scrollFoundTarget(1 / 12, 500, 6)).toBe(0);
-    expect(scrollFoundTarget(2 / 12, 480, 6)).toBe(1);
-    expect(scrollFoundTarget(0.5, 300, 6)).toBe(3);
-    expect(scrollFoundTarget(11 / 12, 40, 6)).toBe(6);
-    expect(scrollFoundTarget(1, 120, 6)).toBe(6);
-    expect(scrollFoundTarget(0.4, -10, 6)).toBe(6);
-    expect(scrollFoundTarget(0, -900, 6)).toBe(6);
-    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) expect(scrollFoundTarget(bad, 0, 6)).toBe(0);
-    // Monotonic in visibility while entering from below.
-    let previous = 0;
-    for (const ratio of GUIDE_SCROLL_THRESHOLDS) { const next = scrollFoundTarget(ratio, 100, 6); expect(next).toBeGreaterThanOrEqual(previous); previous = next; }
-    expect(previous).toBe(6);
+  // Laptop polish (Juan 2026-11-13): four ingredients sit in the photo's top quarter, so finds tied
+  // to the photo's visibility bunched at the top and a laptop scroll skipped them. Finds are now
+  // paced EVENLY along a pinned runway, one step marker per word.
+  it('paces the six finds evenly along the runway, leaving room for the order action', () => {
+    expect(GUIDE_STEP_AT).toHaveLength(6);
+    const gaps = GUIDE_STEP_AT.slice(1).map((at, index) => at - GUIDE_STEP_AT[index]!);
+    for (const gap of gaps) expect(gap).toBeCloseTo(gaps[0]!, 10);
+    expect(GUIDE_STEP_AT[0]).toBeGreaterThan(0);
+    expect(GUIDE_STEP_AT[5]).toBeLessThanOrEqual(0.8);
+    expect(GUIDE_STEP_ROOT_MARGIN).toBe('0px 0px -90% 0px');
+  });
+  it('a reached marker makes its words due, forward only', () => {
+    expect(stepReached(true, 400)).toBe(true);
+    expect(stepReached(false, 400)).toBe(false);
+    // First report after a reload or a jump: the whole marker is already above the viewport.
+    expect(stepReached(false, -1)).toBe(true);
+    expect(stepReached(false, 0)).toBe(false);
+    for (const bad of [Number.NaN, Number.NEGATIVE_INFINITY]) expect(stepReached(false, bad)).toBe(false);
+    expect(stepTarget(0, 0, true, 6)).toBe(1);
+    expect(stepTarget(1, 3, true, 6)).toBe(4);
+    expect(stepTarget(4, 1, true, 6)).toBe(4);
+    expect(stepTarget(4, 5, false, 6)).toBe(4);
+    expect(stepTarget(2, 9, true, 6)).toBe(6);
+    expect(stepTarget(2, -1, true, 6)).toBe(2);
   });
   it('finds the first unfound word next, so a tapped word is never found twice', () => {
     expect(nextUnfound(0, 6)).toBe(0);
@@ -82,9 +92,12 @@ describe('v4.1: scroll-driven Field Guide progress', () => {
     expect(nextUnfound(0b111111, 6)).toBe(-1);
     expect(foundCount(0b101101, 6)).toBe(4);
   });
-  it('uses one observer with stepped thresholds: no scroll listener, no timers on first paint', () => {
+  it('uses one observer on the step markers: no scroll listener, no per-frame layout reads', () => {
     const source = readFileSync('components/landing/FieldGuideFigure.tsx', 'utf8');
-    expect(source).toContain('threshold:GUIDE_SCROLL_THRESHOLDS');
+    expect(source).toContain('rootMargin:GUIDE_STEP_ROOT_MARGIN');
+    expect(source.match(/new IntersectionObserver/g)).toHaveLength(1);
+    // The CSS places the markers with the same top-tenth band the observer uses.
+    expect(css).toContain('top: calc(10svh - 16px + var(--guide-step, 0) * var(--guide-runway));');
     expect(source).not.toMatch(/addEventListener\(\s*['"]scroll/);
     expect(source).not.toMatch(/requestAnimationFrame|getBoundingClientRect\(\)\.top/);
   });

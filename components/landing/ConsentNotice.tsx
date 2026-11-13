@@ -22,18 +22,23 @@ export function ConsentNotice({choice,labels,onChoose,open,setOpen,focusRequest=
     const measure=()=>{
       const rem=parseFloat(getComputedStyle(document.documentElement).fontSize);
       const viewport=window.visualViewport;
-      const expanded=rem>=24 || innerWidth<330 || (viewport?.scale??1)>1.5 || (viewport?.height??innerHeight)<500 || (innerWidth>=768 && (viewport?.height??innerHeight)<800);
+      const height=viewport?.height??innerHeight;
+      // Stack the hero (copy, notice, then the whole photo) only where two columns cannot work.
+      // A short laptop (1024px+) keeps both columns and puts the notice in the copy column.
+      const stack=rem>=24 || innerWidth<330 || (viewport?.scale??1)>1.5 || height<500 || (innerWidth>=768 && innerWidth<1024 && height<800);
+      const expanded=stack || (innerWidth>=1024 && height<800);
       setFlow(expanded);
       // A notice that has left the screen reserves nothing.
       root?.style.setProperty('--landing-dock-height',expanded||ref.current?.hidden?'0px':`${ref.current?.getBoundingClientRect().height??0}px`);
       root?.setAttribute('data-consent-flow',String(expanded));
+      root?.setAttribute('data-consent-stack',String(stack));
     };
     const observer=typeof ResizeObserver==='undefined'?undefined:new ResizeObserver(measure);
     if(ref.current)observer?.observe(ref.current);
     if(probe.current)observer?.observe(probe.current);
     remeasure.current=measure;
     measure();window.addEventListener('resize',measure);window.visualViewport?.addEventListener('resize',measure);
-    return ()=>{remeasure.current=()=>{};observer?.disconnect();window.removeEventListener('resize',measure);window.visualViewport?.removeEventListener('resize',measure);root?.style.removeProperty('--landing-dock-height');root?.removeAttribute('data-consent-flow');};
+    return ()=>{remeasure.current=()=>{};observer?.disconnect();window.removeEventListener('resize',measure);window.visualViewport?.removeEventListener('resize',measure);root?.style.removeProperty('--landing-dock-height');root?.removeAttribute('data-consent-flow');root?.removeAttribute('data-consent-stack');};
   },[]);
   const content=<aside ref={ref} id="landing-consent-notice" className="landing-v2-consent" data-flow={flow} data-expanded={expanded} hidden={gone} aria-label={labels.settings}>
     <span ref={probe} className="landing-v2-rem-probe" aria-hidden="true"/>
