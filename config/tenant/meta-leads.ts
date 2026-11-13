@@ -27,6 +27,13 @@ export interface MetaLeadsTenantConfig {
    * key. Published forms never change, so an entry stays correct for the life of its form.
    */
   fieldKeyAliases: Readonly<Record<string, string>>;
+  /**
+   * The optional "when is your event" answer (question key `event_timing`, form v9) → a short line for
+   * staff. Each entry lists every spelling Meta may send for one option — its option KEY and its visible
+   * LABEL (matched case-insensitively, "_" = space) — and `rush` marks short notice so the line stands out.
+   * An answer matching no entry is kept as typed.
+   */
+  timingOptions: readonly { answers: readonly string[]; display: string; rush: boolean }[];
 }
 export const metaLeadsTenantConfig: MetaLeadsTenantConfig = {
   shopLabels: [
@@ -54,4 +61,12 @@ export const metaLeadsTenantConfig: MetaLeadsTenantConfig = {
     "what_is_the_date_of_your_event?(e.g._nov_20)": "event_date",
     "anything_else_we_should_know?(dietary_needs,_timing,_budget)": "notes",
   },
+  // "Catering Inquiry - EN v9" (id 1132947982662777, 2026-11-13): the first question. Only the first two
+  // can reach us (today / browsing close the form), but each option is listed so none is ever misread.
+  timingOptions: [
+    { answers: ["timing_48plus", "2+ days out: let's properly plan it"], display: "2+ days out", rush: false },
+    { answers: ["timing_24to48", "Tomorrow: short notice, limited menu"], display: "Tomorrow (short notice)", rush: true },
+    { answers: ["timing_today", "Today: pickup or delivery, please"], display: "Today", rush: true },
+    { answers: ["timing_browsing", "Browsing for more than delicious subs"], display: "Just browsing", rush: false },
+  ],
 };

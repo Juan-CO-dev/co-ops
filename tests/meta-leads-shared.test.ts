@@ -56,11 +56,11 @@ describe("The live form (labels → shops)", () => {
     expect([...new Set(metaLeadsTenantConfig.shopLabels.map(s => s.code))].sort()).toEqual(["EM", "MEP"]);
     expect(metaLeadsTenantConfig.defaultShopCode).toBe("MEP");
     expect(metaLeadsTenantConfig.adSetShop).toEqual({});
-    const other = { shopLabels: [{ label: "Downtown", code: "DT" }], deliveryPlaceholderLabels: ["Any"], adSetShop: {}, defaultShopCode: "DT", consentCheckboxKeys: [], fieldKeyAliases: {} };
+    const other = { shopLabels: [{ label: "Downtown", code: "DT" }], deliveryPlaceholderLabels: ["Any"], adSetShop: {}, defaultShopCode: "DT", consentCheckboxKeys: [], fieldKeyAliases: {}, timingOptions: [] };
     expect(mapMetaLeadFields(live({ preferred_shop: "downtown" }), undefined, { now: NOW, config: other })).toMatchObject({ ok: true, intake: { shopCode: "DT" } });
     expect(mapMetaLeadFields(live({ preferred_shop: "Capitol Hill" }), undefined, { now: NOW, config: other })).toMatchObject({ ok: false });
   });
-  it("bumps the mapping version", () => expect(META_MAPPING_VERSION).toBe("meta-leads-v4"));
+  it("bumps the mapping version", () => expect(META_MAPPING_VERSION).toBe("meta-leads-v5"));
 });
 
 describe("Headcount", () => {
@@ -346,6 +346,74 @@ describe("Logic-mode answers arrive as option KEYS (v4 test A, leadgen 477835557
     if (!result.ok) throw new Error("refused");
     expect(result.intake.notes).toContain("Occasion: Personal");
     expect(result.intake.notes).toContain("snake_case_stays");
+  });
+});
+
+describe("Form v9: the optional event_timing answer (id 1132947982662777)", () => {
+  const contact = { email: "guest@example.org", full_name: "Sample Guest", phone_number: "2025550100" };
+  const f = (pairs: Record<string, string>) => Object.entries(pairs).map(([name, value]) => ({ name, values: [value] }));
+  const v9 = (timing: string) => map(f({ event_timing: timing, occasion: "work", fulfillment_method: "pickup", preferred_shop: "dupont_circle(p_street)", headcount: "36-55", notes: "Office lunch", ...contact }));
+  it.each([
+    ["timing_48plus", "Timing: 2+ days out", { text: "2+ days out", rush: false }],
+    ["timing_24to48", "Timing: RUSH · Tomorrow (short notice)", { text: "Tomorrow (short notice)", rush: true }],
+    ["TIMING_24TO48", "Timing: RUSH · Tomorrow (short notice)", { text: "Tomorrow (short notice)", rush: true }],
+  ])("option key %j → a readable first notes line", (value, line, timing) => {
+    const result = v9(value);
+    if (!result.ok) throw new Error("refused");
+    expect(result.intake.timing).toEqual(timing);
+    expect(result.intake.notes).toBe(`${line}\nOffice lunch\nHeadcount: 36-55\nOccasion: Work`);
+    expect(result.rawKeys).toContain("event_timing");
+  });
+  it.each([
+    ["2+ days out: let's properly plan it", "Timing: 2+ days out"],
+    ["Tomorrow: short notice, limited menu", "Timing: RUSH · Tomorrow (short notice)"],
+    ["  tomorrow:  SHORT notice, limited menu ", "Timing: RUSH · Tomorrow (short notice)"],
+    ["2+_days_out:_let's_properly_plan_it", "Timing: 2+ days out"],
+    ["tomorrow:_short_notice,_limited_menu", "Timing: RUSH · Tomorrow (short notice)"],
+  ])("visible label (or its label-derived key) %j → the same line", (value, line) => {
+    const result = v9(value);
+    if (!result.ok) throw new Error("refused");
+    expect(result.intake.notes!.split("\n")[0]).toBe(line);
+  });
+  it("an unknown answer is kept as typed, never refused, never a rush", () => {
+    const result = v9("Next month sometime");
+    if (!result.ok) throw new Error("refused");
+    expect(result.intake.timing).toBeNull();
+    expect(result.intake.notes).toBe("Office lunch\nHeadcount: 36-55\nOccasion: Work\nTiming (as typed): Next month sometime");
+    expect(result.intake.notes).not.toContain("RUSH");
+  });
+  it("an empty answer adds nothing", () => {
+    const result = v9("");
+    if (!result.ok) throw new Error("refused");
+    expect(result.intake.timing).toBeNull();
+    expect(result.intake.notes).toBe("Office lunch\nHeadcount: 36-55\nOccasion: Work");
+  });
+  it("the Timing line is reserved: a huge customer note never pushes it out", () => {
+    const result = map(f({ event_timing: "timing_24to48", fulfillment_method: "delivery", notes: "n".repeat(3999), ...contact }));
+    if (!result.ok) throw new Error("refused");
+    const notes = composeMetaNotes(result.noteParts, "Routed: default shop — please confirm (delivery, no shop chosen)")!;
+    expect(notes.length).toBeLessThanOrEqual(4000);
+    expect(notes.startsWith("Timing: RUSH · Tomorrow (short notice)\nnnn")).toBe(true);
+    expect(notes.endsWith("\nRouted: default shop — please confirm (delivery, no shop chosen)")).toBe(true);
+  });
+  it("absent field (forms v7 and earlier): notes, noteParts and intake are exactly as before", () => {
+    const result = map(live());
+    if (!result.ok) throw new Error("refused");
+    expect(result.intake.timing).toBeNull();
+    expect(result.noteParts).toEqual({ customer: "Office lunch", sizing: "Sizing: seconds yes · add sides and drinks", headcount: "Headcount: 21-40", extras: [], fallbacks: [] });
+    expect("timing" in result.noteParts).toBe(false);
+    expect(result.intake.notes).toBe("Office lunch\nSizing: seconds yes · add sides and drinks\nHeadcount: 21-40");
+  });
+  it("the timing vocabulary is tenant DATA: another tenant's options, or none, change only the line", () => {
+    const other = { ...metaLeadsTenantConfig, timingOptions: [{ answers: ["asap"], display: "As soon as possible", rush: true }] };
+    const asap = mapMetaLeadFields(f({ event_timing: "ASAP", fulfillment_method: "delivery", ...contact }), undefined, { now: NOW, config: other });
+    expect(asap).toMatchObject({ ok: true, intake: { timing: { text: "As soon as possible", rush: true }, notes: "Timing: RUSH · As soon as possible" } });
+    const none = mapMetaLeadFields(f({ event_timing: "timing_48plus", fulfillment_method: "delivery", ...contact }), undefined, { now: NOW, config: { ...metaLeadsTenantConfig, timingOptions: [] } });
+    expect(none).toMatchObject({ ok: true, intake: { timing: null, notes: "Timing (as typed): timing_48plus" } });
+  });
+  it("CO's options cover the form's four keys and their labels; only short notice is a rush", () => {
+    const rows = metaLeadsTenantConfig.timingOptions.map(o => [o.answers[0], o.display, o.rush]);
+    expect(rows).toEqual([["timing_48plus", "2+ days out", false], ["timing_24to48", "Tomorrow (short notice)", true], ["timing_today", "Today", true], ["timing_browsing", "Just browsing", false]]);
   });
 });
 

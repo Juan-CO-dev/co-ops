@@ -15,14 +15,21 @@ export const META_CONSENT_COPY = {
 } as const;
 /** The optional "Work email for this order (if different)" question key. */
 export const META_WORK_EMAIL_KEY = "work_email";
+/** The optional "when is your event" question key (form v9's first question). */
+export const META_TIMING_KEY = "event_timing";
+/** The marker on a short-notice Timing line, so staff see it at a glance. */
+export const META_RUSH_MARKER = "RUSH";
 /**
+ * v5 (2026-11-13): form v9's optional `event_timing` answer (option key or label, through the tenant
+ * `timingOptions`) is a first-class field and the FIRST notes line ("Timing: …", "RUSH" when short notice);
+ * an answer matching no option is kept as typed. Forms without the question map exactly as v4.
  * v4 (2026-11-12): logic-mode forms — label-derived question keys resolve through the tenant
  * `fieldKeyAliases`, and the work/personal answer is an "Occasion:" notes line.
  * v3 (2026-11-11, the live form): answers are Meta option LABELS resolved through the tenant label
  * table; a delivery lead without a shop choice is ROUTED by the worker; headcount ranges, sizing
  * (seconds / extras), work phone, job title and unknown keys become notes; dates parse tolerantly.
  */
-export const META_MAPPING_VERSION = "meta-leads-v4";
+export const META_MAPPING_VERSION = "meta-leads-v5";
 /** The pipeline notes column bound (catering_pipeline.notes is free text; the intake JSON pins 4000). */
 export const META_NOTES_MAX = 4000;
 
@@ -43,9 +50,15 @@ export interface MetaMappedIntake {
    *  label) and the worker routes the lead (history → ad set → tenant default). Never null for pickup. */
   shopCode: string | null;
   isDelivery: boolean; notes: string | null;
+  /** The v9 timing answer as staff read it ("2+ days out"); `rush` = short notice. Null when the form has
+   *  no timing question, it was left empty, or the answer matched no option (then it is kept as typed). */
+  timing: { text: string; rush: boolean } | null;
 }
 /** The notes, in their fixed order, so the worker can slot the routing line in after the mapping. */
 export interface MetaNoteParts {
+  /** "Timing: RUSH · Tomorrow (short notice)" — the FIRST line, so a short-notice lead is seen at once.
+   *  Absent on forms without the timing question. */
+  timing?: string | null;
   /** The customer's own free-text notes. */
   customer: string | null;
   /** "Sizing: seconds yes · add sides" */
@@ -81,14 +94,14 @@ function optionText(value: string): string { return value.replace(/[\s_]+/g, " "
 
 const ELLIPSIS = "…";
 /**
- * Customer notes → Sizing → Headcount → Routed → extras/unknowns → the "(as typed)" fallbacks, bounded to
- * META_NOTES_MAX. The GENERATED lines (Sizing, Headcount, Routed) are reserved FIRST — they carry the
- * quantity and the shop decision — and the free text (customer notes, extras, fallbacks) is cut into what
+ * Timing → customer notes → Sizing → Headcount → Routed → extras/unknowns → the "(as typed)" fallbacks, bounded
+ * to META_NOTES_MAX. The GENERATED lines (Timing, Sizing, Headcount, Routed) are reserved FIRST — they carry
+ * the urgency, the quantity and the shop decision — and the free text (customer notes, extras, fallbacks) is cut into what
  * is left, each cut line ending in "…"; a line with no room left is dropped.
  */
 export function composeMetaNotes(parts: MetaNoteParts, routed: string | null = null): string | null {
   const ordered: Array<{ text: string; required: boolean }> = [
-    { text: parts.customer ?? "", required: false }, { text: parts.sizing ?? "", required: true }, { text: parts.headcount ?? "", required: true },
+    { text: parts.timing ?? "", required: true }, { text: parts.customer ?? "", required: false }, { text: parts.sizing ?? "", required: true }, { text: parts.headcount ?? "", required: true },
     { text: routed ?? "", required: true }, ...parts.extras.map(text => ({ text, required: false })), ...parts.fallbacks.map(text => ({ text, required: false })),
   ].filter(line => line.text);
   // Every required line still to come reserves its own length plus the newline that joins it.
@@ -120,6 +133,14 @@ export function resolveShopLabel(value: string, config: MetaLeadsTenantConfig): 
   for (const entry of config.shopLabels) if (labelKey(entry.label) === key || labelKey(entry.code) === key) return { kind: "code", code: entry.code };
   if (config.deliveryPlaceholderLabels.some(label => labelKey(label) === key)) return { kind: "placeholder" };
   return { kind: "unknown" };
+}
+
+/** A timing answer (option key or visible label) → the tenant's short display and its rush flag; null = no match. */
+export function resolveTiming(value: string, config: MetaLeadsTenantConfig): { text: string; rush: boolean } | null {
+  const key = labelKey(value);
+  if (!key) return null;
+  for (const option of config.timingOptions) if (option.answers.some(answer => labelKey(answer) === key)) return { text: option.display, rush: option.rush };
+  return null;
 }
 
 const YES = new Set(["yes", "y", "yeah", "yep", "sure", "si", "sí", "true"]);
@@ -185,8 +206,8 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
   const bad = (): MetaMapResult => ({ ok: false, error: "invalid_payload", rawKeys });
   if (!Array.isArray(fieldData) || fieldData.length > 100) return bad();
   const fields = new Map<string, string>();
-  const known = new Set(["full_name", "email", "phone_number", "company_name", "headcount", "event_date", "preferred_shop", "fulfillment_method", "notes", "seconds", "extras", "work_phone_number", "job_title", "occasion", META_WORK_EMAIL_KEY, META_CONSENT_QUESTION_KEY]);
-  const optionalLabels: Record<string, string> = { headcount: "Headcount", event_date: "Event date", company_name: "Company", notes: "Notes", preferred_shop: "Preferred shop", seconds: "Seconds", extras: "Extras", work_phone_number: "Work phone", job_title: "Job title", occasion: "Occasion", [META_WORK_EMAIL_KEY]: "Work email" };
+  const known = new Set(["full_name", "email", "phone_number", "company_name", "headcount", "event_date", "preferred_shop", "fulfillment_method", "notes", "seconds", "extras", "work_phone_number", "job_title", "occasion", META_TIMING_KEY, META_WORK_EMAIL_KEY, META_CONSENT_QUESTION_KEY]);
+  const optionalLabels: Record<string, string> = { headcount: "Headcount", event_date: "Event date", company_name: "Company", notes: "Notes", preferred_shop: "Preferred shop", seconds: "Seconds", extras: "Extras", work_phone_number: "Work phone", job_title: "Job title", occasion: "Occasion", [META_TIMING_KEY]: "Timing", [META_WORK_EMAIL_KEY]: "Work email" };
   const invalidOptional = new Set<string>();
   const fallbacks = new Map<string, string>();
   const unknowns: string[] = [];
@@ -263,6 +284,14 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
     eventDate = parseEventDate(eventText, etCalendarDate(options.now ?? new Date()));
     if (!eventDate) preserve("event_date", eventText);
   }
+  // Timing (v9): a known option → its short display, flagged RUSH when short notice; anything else as typed.
+  const timingText = fields.get(META_TIMING_KEY) || null;
+  let timing: { text: string; rush: boolean } | null = null;
+  if (timingText) {
+    timing = resolveTiming(timingText, config);
+    if (!timing) preserve(META_TIMING_KEY, timingText);
+  }
+  const timingNote = timing ? `${optionalLabels[META_TIMING_KEY]}: ${timing.rush ? `${META_RUSH_MARKER} · ` : ""}${timing.text}` : null;
   // Labelled optional answers → notes, never identity.
   const extras: string[] = [];
   const occasionText = fields.get("occasion");
@@ -281,9 +310,9 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
       optedIn = checked && (!fields.has(META_CONSENT_QUESTION_KEY) || optedIn);
     }
   }
-  const noteParts: MetaNoteParts = { customer: fields.get("notes") || null, sizing, headcount: headcountNote, extras, fallbacks: [...fallbacks.values()] };
+  const noteParts: MetaNoteParts = { ...(timingNote ? { timing: timingNote } : {}), customer: fields.get("notes") || null, sizing, headcount: headcountNote, extras, fallbacks: [...fallbacks.values()] };
   return { ok: true, rawKeys, noteParts, intake: { contactName, contactEmail, marketingEmail, secondaryEmail,
     contactPhone: normalizePhoneE164(fields.get("phone_number")), company: fields.get("company_name") || null,
-    headcount, eventDate, shopCode, isDelivery: fulfillment === "delivery", notes: composeMetaNotes(noteParts) },
+    headcount, eventDate, shopCode, isDelivery: fulfillment === "delivery", notes: composeMetaNotes(noteParts), timing },
     consent: { optedIn, questionKey: META_CONSENT_QUESTION_KEY, textVersion: META_CONSENT_TEXT_VERSION } };
 }
