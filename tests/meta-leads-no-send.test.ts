@@ -34,7 +34,7 @@ describe("runtime: the switch off sends nothing", () => {
   });
   it("the continuation itself never reaches the sender when the ledger refuses the claim", async () => {
     const sb = { rpc: vi.fn(async () => ({ data: { claimed: false, reason: "not_claimable" } })) } as unknown as Parameters<typeof sendMetaContinuation>[0];
-    expect(await sendMetaContinuation(sb, { leadgenId: "11", pipelineId: "p", locationId: "l", language: "en", intake: { contactName: "A", contactEmail: "a@example.test", marketingEmail: "a@example.test", secondaryEmail: null, contactPhone: null, company: null, headcount: null, eventDate: null, shopCode: "x", isDelivery: false, notes: null } })).toBe("not_claimable");
+    expect(await sendMetaContinuation(sb, { leadgenId: "11", pipelineId: "p", locationId: "l", language: "en", intake: { contactName: "A", contactEmail: "a@example.test", marketingEmail: "a@example.test", secondaryEmail: null, contactPhone: null, company: null, headcount: null, eventDate: null, shopCode: "x", isDelivery: false, notes: null, timing: null } })).toBe("not_claimable");
     expect(mocks.send).not.toHaveBeenCalled(); expect(mocks.mint).not.toHaveBeenCalled();
   });
 });
