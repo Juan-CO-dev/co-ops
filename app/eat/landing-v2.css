@@ -212,10 +212,12 @@
 .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v3-crave-captions { display: grid; min-height: 2.6em; margin-bottom: 8px; }
 .landing-v2 .landing-v2-crave-stage:is([data-motion="true"],[data-motion="pending"]) .landing-v3-crave-captions p { grid-area: 1 / 1; margin: 0; }
 .landing-v2 .landing-v2-crave-stage[data-motion="pending"] .landing-v3-crave-captions p[data-beat="1"] { visibility: hidden; }
-.landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="raf"] .landing-v3-crave-captions p[data-beat="0"] { opacity: clamp(0, calc((.55 - var(--crave-progress, 0)) * 8), 1); }
-.landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="raf"] .landing-v3-crave-captions p[data-beat="1"] { opacity: clamp(0, calc((var(--crave-progress, 0) - .45) * 8), 1); }
-@keyframes landing-v3-caption-out { 0%, 42% { opacity: 1; } 56%, 100% { opacity: 0; } }
-@keyframes landing-v3-caption-in { 0%, 44% { opacity: 0; } 58%, 100% { opacity: 1; } }
+/* The two captions share one box, so they hand over in sequence and never overlap: the first is
+   gone by the midpoint (44% → 50%) before the second appears (50% → 56%). */
+.landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="raf"] .landing-v3-crave-captions p[data-beat="0"] { opacity: clamp(0, calc((.5 - var(--crave-progress, 0)) * 16.67), 1); }
+.landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="raf"] .landing-v3-crave-captions p[data-beat="1"] { opacity: clamp(0, calc((var(--crave-progress, 0) - .5) * 16.67), 1); }
+@keyframes landing-v3-caption-out { 0%, 44% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes landing-v3-caption-in { 0%, 50% { opacity: 0; } 56%, 100% { opacity: 1; } }
 @supports (animation-timeline: view()) {
   .landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="css"] .landing-v3-crave-captions p[data-beat="0"] { animation: landing-v3-caption-out linear both; animation-timeline: --crave; animation-range: contain; }
   .landing-v2 .landing-v2-crave-stage[data-motion="true"][data-timeline="css"] .landing-v3-crave-captions p[data-beat="1"] { animation: landing-v3-caption-in linear both; animation-timeline: --crave; animation-range: contain; }

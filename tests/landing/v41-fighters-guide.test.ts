@@ -6,7 +6,7 @@ import roster from '@/config/tenant/landing-products.json';
 import { products, validateProducts } from '@/lib/landing/products';
 import { LineupPhoto } from '@/components/landing/LineupPhoto';
 import { CARD_VISIBLE, focalPosition, STAGE_VISIBLE } from '@/lib/landing/fighter-select-shared';
-import { foundCount, GUIDE_STEP_AT, GUIDE_STEP_ROOT_MARGIN, nextUnfound, stepReached, stepTarget } from '@/lib/landing/field-guide-shared';
+import { foundCount, GUIDE_STEP_AT, GUIDE_STEP_BAND, guideStepRootMargin, nextUnfound, stepReached, stepTarget } from '@/lib/landing/field-guide-shared';
 
 const css = readFileSync('app/eat/landing-v2.css', 'utf8');
 // Mirrors the CSS: a cover crop showing `visible` of the 2:3 photo's height at object-position p.
@@ -69,7 +69,14 @@ describe('v4.1: scroll-driven Field Guide progress', () => {
     for (const gap of gaps) expect(gap).toBeCloseTo(gaps[0]!, 10);
     expect(GUIDE_STEP_AT[0]).toBeGreaterThan(0);
     expect(GUIDE_STEP_AT[5]).toBeLessThanOrEqual(0.8);
-    expect(GUIDE_STEP_ROOT_MARGIN).toBe('0px 0px -90% 0px');
+  });
+  it('builds the top-tenth trigger band in pixels of the viewport height (never a percentage)', () => {
+    expect(GUIDE_STEP_BAND).toBe(0.1);
+    expect(guideStepRootMargin(768)).toBe('0px 0px -691px 0px');
+    expect(guideStepRootMargin(844)).toBe('0px 0px -760px 0px');
+    expect(guideStepRootMargin(730)).toBe('0px 0px -657px 0px');
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) expect(guideStepRootMargin(bad)).toBe('0px 0px -0px 0px');
+    expect(guideStepRootMargin(900)).not.toMatch(/%/);
   });
   it('a reached marker makes its words due, forward only', () => {
     expect(stepReached(true, 400)).toBe(true);
@@ -94,8 +101,11 @@ describe('v4.1: scroll-driven Field Guide progress', () => {
   });
   it('uses one observer on the step markers: no scroll listener, no per-frame layout reads', () => {
     const source = readFileSync('components/landing/FieldGuideFigure.tsx', 'utf8');
-    expect(source).toContain('rootMargin:GUIDE_STEP_ROOT_MARGIN');
+    expect(source).toContain('rootMargin:guideStepRootMargin(bandHeight)');
     expect(source.match(/new IntersectionObserver/g)).toHaveLength(1);
+    // Rebuilt only when the viewport height changes (debounced), never per scroll.
+    expect(source).toContain("window.addEventListener('resize',viewportChanged)");
+    expect(source).toContain("window.removeEventListener('resize',viewportChanged)");
     // The CSS places the markers with the same top-tenth band the observer uses.
     expect(css).toContain('top: calc(10svh - 16px + var(--guide-step, 0) * var(--guide-runway));');
     expect(source).not.toMatch(/addEventListener\(\s*['"]scroll/);

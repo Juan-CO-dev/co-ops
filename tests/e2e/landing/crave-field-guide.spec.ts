@@ -437,6 +437,67 @@ for(const policy of ['reduce','save-data'] as const)test(`${policy}: no find ani
   await expect(slot.getByRole('button',{name:'Order Crunchy Boi'})).toBeVisible();
 });
 
+/** Put step marker `index`'s start `offset` px below (positive) or above (negative) the trigger line (top tenth). */
+async function placeMarker(page:Page,index:number,offset:number) {
+  await page.locator(`[data-guide-step="${index}"]`).evaluate((el,o)=>scrollTo(0,el.getBoundingClientRect().top+scrollY-innerHeight*.1-o),offset);
+}
+// Astra PR #543: the trigger band is pixels of the viewport height; prove where each find actually fires.
+for(const size of [{width:1366,height:768},{width:390,height:844}])test(`each Field Guide find fires as its marker crosses the top-tenth line (${size.width}x${size.height})`,async({page})=>{
+  test.setTimeout(60000);
+  await page.setViewportSize(size);
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  const found=async()=>Number(await guide.getAttribute('data-guide-found'));
+  await guide.evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-innerHeight+40));
+  await page.waitForTimeout(300);
+  expect(await found()).toBe(0);
+  for(let index=0;index<6;index++){
+    await placeMarker(page,index,24);await page.waitForTimeout(700);
+    expect(await found(),`marker ${index} just below the line`).toBe(index);
+    await placeMarker(page,index,-24);
+    await expect.poll(found,{timeout:3000,message:`marker ${index} just above the line`}).toBe(index+1);
+  }
+  // A viewport-height change rebuilds the band; finds stay found and the next one keeps its line.
+  await page.setViewportSize({width:size.width,height:size.height-120});await page.waitForTimeout(400);
+  expect(await found()).toBe(6);
+});
+
+test('a resized window rebuilds the trigger band at the new height',async({page})=>{
+  await page.setViewportSize({width:1366,height:768});
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  await guide.evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-innerHeight+40));
+  await page.setViewportSize({width:1366,height:600});await page.waitForTimeout(500);
+  const found=async()=>Number(await guide.getAttribute('data-guide-found'));
+  for(const index of [0,1]){
+    // 10px under the new line (60px) is still inside the OLD band (77px): only a rebuilt band waits.
+    await placeMarker(page,index,10);await page.waitForTimeout(700);
+    expect(await found()).toBe(index);
+    await placeMarker(page,index,-24);
+    await expect.poll(found,{timeout:3000}).toBe(index+1);
+  }
+});
+
+for(const size of [{width:1536,height:730},{width:1366,height:768},{width:390,height:844}])test(`the crunch story shows one caption at a time (${size.width}x${size.height})`,async({page})=>{
+  await page.setViewportSize(size);
+  await page.goto('/');
+  const stage=page.locator('[data-crave-stage]');
+  await expect(stage).toHaveAttribute('data-motion','true');
+  const bounds=await stage.evaluate(el=>({top:el.getBoundingClientRect().top+scrollY,travel:el.getBoundingClientRect().height-innerHeight}));
+  const settled=()=>page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+  for(let step=0;step<=20;step++){
+    await page.evaluate(({top,travel,f})=>scrollTo(0,top+travel*f),{...bounds,f:step/20});
+    await settled();await page.waitForTimeout(60);
+    const opacities=await stage.locator('.landing-v3-crave-captions p').evaluateAll(els=>els.map(el=>Number(getComputedStyle(el).opacity)));
+    // The two captions share one box: at most one is ever (even partly) visible.
+    expect(opacities.filter(o=>o>0.01).length,`progress ${step/20}: ${opacities.join(',')}`).toBeLessThanOrEqual(1);
+    if(step<=4)expect(opacities[0]).toBeGreaterThan(.99);
+    if(step>=16)expect(opacities[1]).toBeGreaterThan(.99);
+  }
+});
+
 // Laptop polish (Juan 2026-11-13): "not resizing properly on the laptop screen".
 const laptops=[{width:1280,height:720},{width:1366,height:768},{width:1536,height:730},{width:1536,height:864},{width:1440,height:900},{width:1920,height:1080}];
 for(const size of laptops)test(`laptop hero keeps two columns that fit the first screen (${size.width}x${size.height})`,async({page})=>{
@@ -486,6 +547,8 @@ for(const size of [...laptops,{width:390,height:844}])test(`the pinned crunch st
 });
 
 for(const size of [{width:1366,height:768},{width:1536,height:730},{width:1920,height:1080},{width:390,height:844}])test(`the Field Guide pins and paces its six finds along the scroll (${size.width}x${size.height})`,async({page})=>{
+  // 21 paced scroll steps with a settle each: slower engines need more than the default 30 s.
+  test.setTimeout(60000);
   await page.setViewportSize(size);
   await page.goto('/');
   const guide=page.locator('.landing-v3-guide');

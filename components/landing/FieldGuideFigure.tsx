@@ -2,7 +2,7 @@
 import {useEffect,useRef,useState,type CSSProperties,type ReactNode} from 'react';
 import {TexturePhoto} from './CraveScene';
 import {fieldGuideAnchors} from '@/lib/landing/crave-motion-shared';
-import {foundCount,GUIDE_STEP_AT,GUIDE_STEP_ROOT_MARGIN,leaderPath,nextUnfound,stepReached,stepTarget} from '@/lib/landing/field-guide-shared';
+import {foundCount,GUIDE_STEP_AT,guideStepRootMargin,leaderPath,nextUnfound,stepReached,stepTarget} from '@/lib/landing/field-guide-shared';
 import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
 
 type AnchorId=(typeof fieldGuideAnchors)[number]['id'];
@@ -64,7 +64,7 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       if(calm||index<0||index>=total||mask&(1<<index))return;
       mask|=1<<index;setFound(mask);setLatest(index);setDrawing(value=>value|(1<<index));
       // Found by taps alone: nothing is left for scrolling to find.
-      if(mask===all)observer.disconnect();
+      if(mask===all)stop();
       const timer=setTimeout(()=>{draws.delete(timer);setDrawing(value=>value&~(1<<index));},STEP_MS);
       draws.add(timer);
     };
@@ -77,18 +77,32 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       if(foundCount(mask,total)<target)advance=setTimeout(step,ADVANCE_MS);
     };
     // Each step marker reports once it reaches the top band; reaching marker k makes k+1 words due.
-    const observer=new IntersectionObserver(entries=>{
+    // The band is in pixels of the current viewport height, so the observer is rebuilt (debounced)
+    // when that height changes; a fresh observer re-reports every marker, and the target only rises.
+    let done=false,bandHeight=0,rebuild:ReturnType<typeof setTimeout>|undefined;
+    const report=(entries:IntersectionObserverEntry[])=>{
       let next=target;
       for(const entry of entries)next=stepTarget(next,steps.current.indexOf(entry.target as HTMLSpanElement),stepReached(entry.isIntersecting,entry.boundingClientRect.bottom),total);
       if(next<=target)return;
       target=next;
-      if(target>=total)observer.disconnect();
+      if(target>=total)stop();
       if(!advance)step();
-    },{rootMargin:GUIDE_STEP_ROOT_MARGIN});
-    for(const marker of steps.current)if(marker)observer.observe(marker);
+    };
+    let observer:IntersectionObserver|undefined;
+    const watch=()=>{
+      rebuild=undefined;
+      if(done||calm||innerHeight===bandHeight)return;
+      bandHeight=innerHeight;observer?.disconnect();
+      observer=new IntersectionObserver(report,{rootMargin:guideStepRootMargin(bandHeight)});
+      for(const marker of steps.current)if(marker)observer.observe(marker);
+    };
+    const viewportChanged=()=>{clearTimeout(rebuild);rebuild=setTimeout(watch,150);};
+    function stop(){done=true;observer?.disconnect();clearTimeout(rebuild);window.removeEventListener('resize',viewportChanged);}
+    watch();
+    window.addEventListener('resize',viewportChanged);
     // Turning on reduced motion or Save-Data mid-visit switches to the complete static view.
-    const unsubscribe=subscribeCalm(next=>{if(!next)return;calm=true;observer.disconnect();clearTimeout(advance);for(const timer of draws)clearTimeout(timer);draws.clear();mask=all;setFound(all);setDrawing(0);setLatest(-1);setMode('static');});
-    return ()=>{resize.disconnect();observer.disconnect();clearTimeout(advance);for(const timer of draws)clearTimeout(timer);unsubscribe();findRef.current=()=>{};};
+    const unsubscribe=subscribeCalm(next=>{if(!next)return;calm=true;stop();clearTimeout(advance);for(const timer of draws)clearTimeout(timer);draws.clear();mask=all;setFound(all);setDrawing(0);setLatest(-1);setMode('static');});
+    return ()=>{resize.disconnect();stop();clearTimeout(advance);for(const timer of draws)clearTimeout(timer);unsubscribe();findRef.current=()=>{};};
   },[]);
   const total=fieldGuideAnchors.length;
   const collectedMask=found&~drawing;
