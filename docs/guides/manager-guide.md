@@ -1219,7 +1219,7 @@ See and set your shop's pars in one place. AGMs, prep managers, catering manager
 - Leave a box empty to drop your shop's number. Then the system's number or the company default is used.
 - The app may ask for your password. After that, editing stays open for 15 minutes. See **Recipes and the catalog**.
 - Your change is for your shop only.
-- AGMs, prep managers and catering managers change pars only at their own shop. A GM changes the shops they work in.
+- AGMs, prep managers and catering managers change pars only at their own shop. A GM changes the shops they work in. So does a Manager of Operations. Only the Owner and up change pars at every shop.
 - Did someone change it while you typed? The app says so and loads the new numbers. Check them, then save again.
 
 #### 4. Use or skip a suggestion (not shown)
@@ -1428,9 +1428,12 @@ AGMs and up can open **Admin**.
 **Worth knowing**
 
 - AGMs, prep managers and catering managers see **Vendors**, **SKUs**, **Products**, **Recipes**, **Items**, **Sandwiches**, **Weights & Trim**, **Catering** and **Par Levels**.
-- The social media manager sees the same tiles, but not **Sandwiches** or **Par Levels**.
-- GMs also see **Stations**, **Toast employees**, **Customers**, **Checklist Templates** and **Recipe updates**.
-- A Manager of Operations also sees **User Management**, **Categories** and **Shop changes**.
+- AGMs, prep managers and catering managers also see **7shifts**. They can read how it is doing there. AGMs also see **Schedule**.
+- The social media manager sees the same tiles, but not **Sandwiches**, **Par Levels**, **7shifts** or **Schedule**.
+- GMs also see **Vendor mail**, **Stations**, **Toast employees**, **User Management**, **7shifts**, **Schedule**, **Customers**, **Checklist Templates** and **Recipe updates**.
+- In **User Management**, a GM sees the people at their own shops.
+- **7shifts** reads nothing until it is switched on. **Schedule** is off for each shop until it is turned on. The page tells you.
+- A Manager of Operations also sees **Categories**, **Shop changes** and **Locations**.
 - In **Stations**, a GM sets station times for their shop. It asks for your password: **Confirm your password**. These times are only hints. They don't close a station.
 - **This week in CO-OPS** puts each shop side by side for the last 7 days: how many people used the app, the checklists they finished, reports, orders, deliveries, counts and catering. Jobs that run on their own (Toast, ezCater) are shown apart. Tap **Details** to see people by role and checklists by type.
 
@@ -1528,7 +1531,7 @@ GMs and up change recipes and SKUs. Each shop can have its own version of a reci
 
 #### 9. Price, name and "sold here" for your shop (not shown)
 
-**What to do** — Tap **Admin**, then **Sandwiches**. Tap your shop at the top. Tap **Details for** the sandwich. Tap **Change the price, name or availability at this shop**. Type the **Price here** or the **Name here**, or clear **Sold at this shop**. Tap **See what this changes**. Tap **Save for** your shop.
+**What to do** — Tap **Admin**, then **Sandwiches**. Tap your shop at the top. Tap **Details for** the sandwich. Tap **Change the price, name or availability at this shop**. Type the **Price here** or the **Name here (English)**, or clear **Sold at this shop**. Tap **See what this changes**. Tap **Save for** your shop.
 
 **Worth knowing**
 
@@ -1538,7 +1541,7 @@ GMs and up change recipes and SKUs. Each shop can have its own version of a reci
 - Leave the price empty to use the price for every shop.
 - A sandwich not sold here leaves the **Sold here** list. Under **Show**, pick **Off here** to see it.
 - A sandwich sold only at one shop has one price. Its link says **Open the sandwich page**.
-- With no Spanish name, people who use Spanish see the English name.
+- Leave **Name here (Spanish)** empty, and people who use Spanish see the English name.
 - **Go back to the global menu** uses everyone's price and name again.
 
 #### 10. Shop changes, for the Director of Operations (not shown)
@@ -1553,6 +1556,63 @@ GMs and up change recipes and SKUs. Each shop can have its own version of a reci
 - Is the new name in English only? Type a **Spanish name (optional)** before you save. Without one, people who use Spanish see the English name.
 - **Leave it** saves nothing. **Show the** ones **you left** brings them back.
 - The recipe page has **Make it the default for everyone** too.
+
+### Vendor price files (GM)
+
+A vendor's price file can update your shop's prices. You load it on the vendor's page. It changes prices only, and only at your shop.
+
+#### 1. Open the vendor (not shown)
+
+**What to do** — Tap **Admin**, then **Vendors**. Tap the vendor. Find the **Vendor import** card.
+
+**Worth knowing**
+
+- A line on the card says where the prices go, like "Prices land in P Street’s version."
+- AGMs see the card, but they can't load or apply a file. The social media manager can't either.
+
+#### 2. Load the file (not shown)
+
+**What to do** — Tap **Review import**. Do you work in two shops? Pick one under **Apply prices to**. Under **Export file**, pick the file from the vendor. Tap **Stage import**.
+
+**Worth knowing**
+
+- **Apply prices to** shows only after you tap **Review import**.
+- The app takes PFG CustomerFirst CSV, US Foods MOXe CSV, or receipts JSON. The file can be up to 2 MB.
+- Staging changes nothing yet. It shows what the file would change.
+- Load the same file again for the same shop, while it's still staged, and the same review opens.
+
+#### 3. Check each row (not shown)
+
+**What to do** — Read each row. Compare **Current** with **Proposed**. Under **Decision**, pick **Accept** or **Skip**.
+
+**Worth knowing**
+
+- The first row for each item starts on **Accept**. Does the file list the same item and change again? That row starts on **Skip**. Pick **Skip** to leave any row out.
+- Rows that match your prices sit under **No change**.
+- A shop file never changes a pack or an item number.
+- Is the pack in the file not like your shop's pack? That row has no price. It counts under **Needs review** and says **Review the pack hierarchy manually**. Tap **Open SKU editor**. It opens that item for your shop, at **How it arrives**. Fix the pack there.
+
+#### 4. Apply it (not shown)
+
+**What to do** — Tap **Apply to** your shop. Type your password if the app asks.
+
+**Worth knowing**
+
+- It is the same 15-minute password as recipes and prices. See **One password for 15 minutes** above.
+- The new price is your shop's own. The price for every shop does not change. The other shop is not touched.
+- The app says how many prices it applied.
+- Did a price change after you staged the file? The app says **The plan changed. Re-stage the file and review the updated report.** Under **Export file**, pick the file again. Then tap **Re-stage file** and check the rows again.
+
+#### 5. For the Manager of Operations and up (not shown)
+
+**What to do** — Tap **Review import**. Under **Apply prices to**, pick **Global default** or a shop. Then load the file.
+
+**Worth knowing**
+
+- A shop file works like the steps above, for any shop.
+- **Global default** changes the price every shop uses, unless a shop has its own. It can also change packs and item numbers.
+- Only the Owner and up can apply a global file. A Manager of Operations can stage one and read it, but can't apply it.
+- The button for a global file is **Apply accepted changes**. If you have not typed your password since you logged in, it asks for it.
 
 ### Linking people to 7shifts (GM)
 
@@ -1905,7 +1965,7 @@ Mira y ajusta los pares de tu tienda en un solo lugar. Subgerentes, encargados d
 
 1. **Abre la página.** Toca **Admin** y luego **Niveles Par**. La página se llama **Niveles par**. Toca tu tienda arriba; ves una tienda a la vez. **Niveles de proveedores** muestra lo que pides a los proveedores. **Niveles de preparación** muestra la comida que preparas. Elige un **Proveedor** o una **Sección de la guía** para ver menos artículos. La línea de arriba cuenta los ajustes automáticos de pares y las sugerencias pendientes. En modo de prueba, muestra los ajustes que la app habría hecho; esos pares no han cambiado. **Por qué … pares están callados** muestra los pares para los que la app todavía no puede sugerir un número, y qué le falta a cada uno.
 2. **Lee un par.** Cada artículo muestra su par de **Entre semana** y de **Fin de semana**. Toca **Detalles de** un artículo para ver más. El par está en unidades de pedido, como cajas, y el peso en lb sale debajo. **Peso desconocido** quiere decir que la app todavía no sabe el peso. Una línea debajo de cada par dice de dónde viene el número: **Definido por una persona** (alguien lo escribió para tu tienda), **Definido por el sistema** (la app lo ajustó con lo que usas) o **Valor predeterminado de la empresa** (el par de todas las tiendas). El número que pone una persona siempre gana sobre el del sistema. **Sin definir** quiere decir que no hay par. **El fin de semana usa el par de entre semana.** quiere decir que no hay número de fin de semana. Una sugerencia nueva sale debajo del par de hoy y empieza con **Par de hoy entre semana:** o **Par de hoy de fin de semana:**.
-3. **Cambia un par.** Abre **Detalles de** el artículo. Escribe los pares de **Entre semana** y **Fin de semana** y toca **Guardar**. Escribe el par en unidades de pedido; el peso en lb cambia mientras escribes. Deja una casilla vacía para quitar el número de tu tienda; entonces se usa el número del sistema o el de la empresa. La app puede pedirte tu contraseña; después, editar queda abierto por 15 minutos (mira **Recetas y el catálogo**). Tu cambio es solo para tu tienda. Los subgerentes, encargados de prep y gerentes de catering cambian pares solo en su propia tienda; un gerente general, en las tiendas donde trabaja. Si alguien lo cambió mientras escribías, la app te avisa y carga los números nuevos: revísalos y guarda otra vez.
+3. **Cambia un par.** Abre **Detalles de** el artículo. Escribe los pares de **Entre semana** y **Fin de semana** y toca **Guardar**. Escribe el par en unidades de pedido; el peso en lb cambia mientras escribes. Deja una casilla vacía para quitar el número de tu tienda; entonces se usa el número del sistema o el de la empresa. La app puede pedirte tu contraseña; después, editar queda abierto por 15 minutos (mira **Recetas y el catálogo**). Tu cambio es solo para tu tienda. Los subgerentes, encargados de prep y gerentes de catering cambian pares solo en su propia tienda; un gerente general y un Gerente de Operaciones, en las tiendas donde trabajan. Solo el Dueño y roles más altos cambian pares en todas las tiendas. Si alguien lo cambió mientras escribías, la app te avisa y carga los números nuevos: revísalos y guarda otra vez.
 4. **Usa o deja una sugerencia.** Abre **Detalles de** el artículo y lee por qué la app lo sugiere. Toca **Usar** y el número nuevo para tomarla, o **Ahora no** para dejar tu par. Esto necesita gerente general o más. No pide contraseña. Después de **Usar**, la app dice **Par puesto en** el número nuevo.
 5. **Desactiva un artículo en tu tienda.** Abre **Detalles de** el artículo y toca **Desactivar aquí**. Tócalo otra vez para volver a activarlo. Úsalo para un artículo que tu tienda no pide; las otras tiendas no cambian. No puedes pedir un artículo mientras está desactivado aquí. Los artículos desactivados pasan a **Desactivados en esta tienda**, abajo; tócalo para abrir la lista. Pide tu contraseña, igual que un cambio de par. Algunos artículos muestran **Activo aquí** en su lugar: elige **Inactivo aquí** en esa lista.
 6. **Niveles de preparación.** Toca **Niveles de preparación**. Cada línea dice **Prep AM**, **Prep de Mediodía** o las dos. Toca una línea para ver su par de cada día. Para cambiarlo, usa **Par por día (este local)**: elige **Manual**, escribe el número para **Todos los días** o para un día, y toca **Guardar**. **Usar recomendación** vuelve al par sugerido del artículo. Puede pedirte tu contraseña primero. Las mismas personas pueden cambiar los pares de preparación, en las mismas tiendas, que los de proveedores.
@@ -1945,7 +2005,7 @@ Los gerentes generales y roles más altos ven quién le compra a la tienda.
 
 #### Las páginas de Admin
 
-Los subgerentes y roles más altos pueden abrir **Admin**. Toca **Admin** en el menú y luego una tarjeta. Los subgerentes, encargados de prep y gerentes de catering ven **Proveedores**, **SKUs**, **Productos**, **Recetas**, **Artículos**, **Sándwiches**, **Pesos y merma**, **Catering** y **Niveles Par**. El encargado de redes ve las mismas tarjetas, menos **Sándwiches** y **Niveles Par**. Los gerentes generales también ven **Estaciones**, **Empleados de Toast**, **Clientes**, **Plantillas de Listas** y **Novedades de recetas**. Un Gerente de Operaciones también ve **Gestión de Usuarios**, **Categorías** y **Cambios de las tiendas**. En **Estaciones**, un gerente general pone los horarios de las estaciones de su tienda y la app le pide su contraseña (**Confirma tu contraseña**); esos horarios son solo una guía y no cierran una estación. **Esta semana en CO-OPS** muestra cuánto se usó la app.
+Los subgerentes y roles más altos pueden abrir **Admin**. Toca **Admin** en el menú y luego una tarjeta. Los subgerentes, encargados de prep y gerentes de catering ven **Proveedores**, **SKUs**, **Productos**, **Recetas**, **Artículos**, **Sándwiches**, **Pesos y merma**, **Catering** y **Niveles Par**. Los subgerentes, encargados de prep y gerentes de catering también ven **7shifts**, donde pueden leer cómo va. Los subgerentes también ven **Horario**. El encargado de redes ve las mismas tarjetas, menos **Sándwiches**, **Niveles Par**, **7shifts** y **Horario**. Los gerentes generales también ven **Correo de proveedores**, **Estaciones**, **Empleados de Toast**, **Gestión de Usuarios**, **7shifts**, **Horario**, **Clientes**, **Plantillas de Listas** y **Novedades de recetas**. En **Gestión de Usuarios**, un gerente general ve a la gente de sus propias tiendas. **7shifts** no lee nada hasta que lo encienden, y **Horario** está apagado en cada tienda hasta que lo encienden; la página te lo dice. Un Gerente de Operaciones también ve **Categorías**, **Cambios de las tiendas** y **Ubicaciones**. En **Estaciones**, un gerente general pone los horarios de las estaciones de su tienda y la app le pide su contraseña (**Confirma tu contraseña**); esos horarios son solo una guía y no cierran una estación. **Esta semana en CO-OPS** muestra cuánto se usó la app.
 
 #### Recetas y el catálogo
 
@@ -1959,8 +2019,18 @@ Los gerentes generales y roles más altos cambian recetas y SKUs. Cada tienda pu
 6. **Restaura una versión vieja.** Abre el **Historial**. En una versión de tu tienda, toca **Restaurar**. En una versión vieja del predeterminado, el botón dice **Restaurar como la versión de** tu tienda. Revisa qué cambia y guarda. Restaurar crea una versión nueva para tu tienda; el predeterminado de todos no cambia. Si la versión es de antes de copiar la receta de otra tienda, restaurarla termina el vínculo con esa tienda. La vista previa te lo dice primero, y dejas de recibir sus actualizaciones.
 7. **Usa la receta de otra tienda.** Abre **Versiones de otras tiendas**, toca **Usar aquí la versión de** esa tienda, revisa los costos y toca **Usarla en** tu tienda. Recibes una copia vinculada a su receta. Puedes seguir cambiando tu copia: el vínculo se queda y sigues recibiendo sus actualizaciones. **Volver al predeterminado** termina el vínculo.
 8. **Novedades de recetas.** Toca **Admin** y luego **Novedades de recetas**. Lee cada nota y toca **Abrir la receta** para verla. Sale una nota cuando la tienda que copiaste cambia su receta, vuelve al predeterminado o su receta se vuelve el predeterminado, y cuando hay un predeterminado nuevo para todas las tiendas. En la página de la receta, **Tomar la actualización** te muestra qué cambia y luego copia su versión nueva. **Quedarme con la mía** deja la tuya como está; **Entendido** esconde una nota. La nota vuelve si la cambian otra vez. Si cambiaste tu copia, la nota lo dice: tomar la actualización reemplaza tus cambios. Tu comida nunca cambia si no dices que sí.
-9. **Precio, nombre y "se vende aquí".** Toca **Admin** y luego **Sándwiches**. Toca tu tienda arriba. Toca **Detalles de** el sándwich y luego **Cambia el precio, el nombre o la disponibilidad en esta tienda**. Escribe el **Precio aquí** o el **Nombre aquí**, o quita **Se vende en esta tienda**. Toca **Ver qué cambia** y luego **Guardar para** tu tienda. El enlace viejo de **Costeo del Menú** ahora abre **Sándwiches**. Cada sándwich muestra **Precio en esta tienda**, **Se vende aquí**, **Enlace de Toast**, **Costo**, **Margen** y **Margen %**. **Productos del menú que necesitan atención** cuenta los que tienen un problema; toca **Ver causas** para ver cuáles. Deja el precio vacío para usar el precio de todas las tiendas. Un sándwich que no se vende aquí sale de la lista **Se vende aquí**; en **Mostrar**, elige **Fuera del menú aquí** para verlo. Un sándwich que solo se vende en una tienda tiene un solo precio; su enlace dice **Abrir la página del sándwich**. Sin nombre en español, quienes usan la app en español ven el nombre en inglés. **Volver al menú global** vuelve a usar el precio y el nombre de todos.
+9. **Precio, nombre y "se vende aquí".** Toca **Admin** y luego **Sándwiches**. Toca tu tienda arriba. Toca **Detalles de** el sándwich y luego **Cambia el precio, el nombre o la disponibilidad en esta tienda**. Escribe el **Precio aquí** o el **Nombre aquí (inglés)**, o quita **Se vende en esta tienda**. Toca **Ver qué cambia** y luego **Guardar para** tu tienda. El enlace viejo de **Costeo del Menú** ahora abre **Sándwiches**. Cada sándwich muestra **Precio en esta tienda**, **Se vende aquí**, **Enlace de Toast**, **Costo**, **Margen** y **Margen %**. **Productos del menú que necesitan atención** cuenta los que tienen un problema; toca **Ver causas** para ver cuáles. Deja el precio vacío para usar el precio de todas las tiendas. Un sándwich que no se vende aquí sale de la lista **Se vende aquí**; en **Mostrar**, elige **Fuera del menú aquí** para verlo. Un sándwich que solo se vende en una tienda tiene un solo precio; su enlace dice **Abrir la página del sándwich**. Si dejas vacío **Nombre aquí (español)**, quienes usan la app en español ven el nombre en inglés. **Volver al menú global** vuelve a usar el precio y el nombre de todos.
 10. **Cambios de las tiendas (Director de Operaciones).** Toca **Admin** y luego **Cambios de las tiendas**. Lee lo que cambió cada tienda. Toca **Hacerlo el predeterminado** para dárselo a todas las tiendas, o **Dejarlo**. La vista previa muestra cada tienda que cambia; las que tienen su propia versión no cambian. La tienda de donde vino vuelve al predeterminado, y su comida sigue igual. En un sándwich puedes hacer de todos el precio o el nombre de una tienda. Si el nombre nuevo está solo en inglés, escribe un **Nombre en español (opcional)** antes de guardar; sin él, quienes usan la app en español ven el nombre en inglés. **Dejarlo** no guarda nada, y **Mostrar los que dejaste** los trae de vuelta. La página de la receta también tiene **Hacerla el predeterminado para todos**.
+
+#### Archivos de precios del proveedor (gerente general)
+
+El archivo de precios de un proveedor puede actualizar los precios de tu tienda. Lo cargas en la página del proveedor. Solo cambia precios, y solo en tu tienda.
+
+1. **Abre el proveedor.** Toca **Admin** y luego **Proveedores**. Toca el proveedor y busca la tarjeta **Importar datos del proveedor**. Una línea en la tarjeta dice a dónde van los precios, por ejemplo "Los precios se guardan en la versión de P Street." Los subgerentes ven la tarjeta, pero no pueden cargar ni aplicar un archivo. El encargado de redes tampoco.
+2. **Carga el archivo.** Toca **Revisa la importación**. ¿Trabajas en dos tiendas? Elige una en **Aplicar precios a**; aparece solo después de tocar **Revisa la importación**. En **Archivo de exportación**, elige el archivo del proveedor y toca **Preparar importación**. La app acepta CSV de PFG CustomerFirst, CSV de US Foods MOXe o JSON de recibos, de hasta 2 MB. Preparar todavía no cambia nada: solo muestra lo que el archivo cambiaría. Si cargas el mismo archivo otra vez para la misma tienda, mientras sigue preparado, se abre la misma revisión.
+3. **Revisa cada fila.** Compara **Actual** con **Propuesto**. En **Decisión**, elige **Aceptar** u **Omitir**. La primera fila de cada artículo empieza en **Aceptar**. Si el archivo repite el mismo artículo y el mismo cambio, esa fila empieza en **Omitir**. Elige **Omitir** para dejar fuera cualquier fila. Las filas que ya coinciden con tus precios quedan en **Sin cambios**. Un archivo de tienda nunca cambia un empaque ni un número de artículo. Si el empaque del archivo no es como el de tu tienda, esa fila no trae precio: cuenta en **Requieren revisión** y dice **Revisa manualmente la jerarquía del empaque**. Toca **Abre el editor de SKU**: abre ese artículo para tu tienda, en **Cómo llega**. Arregla el empaque ahí.
+4. **Aplícalo.** Toca **Aplica a** tu tienda. Escribe tu contraseña si la app la pide. Es la misma contraseña de 15 minutos que para recetas y precios (mira **Una contraseña por 15 minutos** arriba). El precio nuevo es propio de tu tienda. El precio de todas las tiendas no cambia, y la otra tienda tampoco. La app dice cuántos precios aplicó. Si un precio cambió después de preparar el archivo, la app dice **El plan cambió. Vuelve a preparar el archivo y revisa el informe actualizado.** En **Archivo de exportación**, elige el archivo otra vez. Luego toca **Vuelve a preparar el archivo** y revisa las filas otra vez.
+5. **Para el Gerente de Operaciones y roles más altos.** Toca **Revisa la importación**. En **Aplicar precios a**, elige **Predeterminado global** o una tienda, y luego carga el archivo. Un archivo de tienda funciona igual que arriba, para cualquier tienda. **Predeterminado global** cambia el precio que usan todas las tiendas, menos las que tienen su propio precio; también puede cambiar empaques y números de artículo. Solo el Dueño y roles más altos pueden aplicar un archivo global. Un Gerente de Operaciones puede prepararlo y leerlo, pero no aplicarlo. El botón para un archivo global es **Aplica los cambios aceptados**. Si no has escrito tu contraseña desde que entraste, la app la pide.
 
 #### Enlazar personas con 7shifts (gerente general)
 
