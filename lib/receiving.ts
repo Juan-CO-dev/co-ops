@@ -54,6 +54,7 @@ import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
   AVG_FOLD_WEIGHT_CLASS,
   avgFoldSourceNote,
+  creditUnitPrice,
   deriveCreditDrafts,
   deriveMissingCreditDrafts,
   disposeAvgFold,
@@ -186,6 +187,9 @@ export interface ReceivingSkuOption {
   name: string;
   vendorId: string | null;
   chainLabels: string[];
+  /** W04/B046: `chainLabels[i]` holds `chainCounts[i]` of `chainLabels[i + 1]` (walk order);
+   *  empty when the chain is malformed. Lets the door rescale an expectation on a level change. */
+  chainCounts?: number[];
   packFormat: string | null;
   /** Trailing-30-day consumed oz for this SKU at this location = production_inputs.input_oz
    *  (live productions) + effective capture sales direct_oz. Higher = more used → ranked first
@@ -306,6 +310,7 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
       vendorId: s.vendor_id,
       packFormat: s.pack_format,
       chainLabels: chainLabelsInWalkOrder(chainsBySku.get(s.id) ?? []),
+      chainCounts: chainCountsInWalkOrder(chainsBySku.get(s.id) ?? []),
       usageRank: usageBySku.usage.get(s.id) ?? null,
       searchTerms: s.product_id ? productNames.get(s.product_id) ?? [] : [],
       locationId: s.location_id,
@@ -440,6 +445,22 @@ function chainLabelsInWalkOrder(levels: PackChainLevel[]): string[] {
     cur = cur.containsLevelId != null ? byId.get(cur.containsLevelId) : undefined;
   }
   return out;
+}
+
+/** The counts between consecutive levels of `chainLabelsInWalkOrder` (W04/B046). Empty unless
+ *  the chain is one well-formed root → leaf path that covers every level. */
+function chainCountsInWalkOrder(levels: PackChainLevel[]): number[] {
+  const labels = chainLabelsInWalkOrder(levels);
+  if (labels.length !== levels.length) return [];
+  const byLabel = new Map(levels.map((l) => [l.label, l]));
+  const counts: number[] = [];
+  for (let i = 0; i < labels.length - 1; i++) {
+    const level = byLabel.get(labels[i]!);
+    const next = byLabel.get(labels[i + 1]!);
+    if (!level || !next || level.containsLevelId !== next.id) return [];
+    counts.push(level.containsQty);
+  }
+  return counts;
 }
 
 export interface RecordDeliveryResult {
@@ -866,19 +887,38 @@ async function deriveAndUpsertCredits(
   sb: ServiceClient, deliveryId: string, vendorId: string, locationId: string, createdBy: string,
 ): Promise<void> {
   const { data: itemRows, error: iErr } = await sb.from("vendor_delivery_items")
-    .select("id, vendor_item_id, received_qty_at_level, qty_received, expected_qty, unit_price, discrepancy_type")
+    .select("id, vendor_item_id, received_qty_at_level, qty_received, expected_qty, unit_price, discrepancy_type, received_level_label")
     .eq("delivery_id", deliveryId)
-    .returns<Array<{ id: string; vendor_item_id: string; received_qty_at_level: number | string | null; qty_received: number | string | null; expected_qty: number | string | null; unit_price: number | string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null }>>();
+    .returns<Array<{ id: string; vendor_item_id: string; received_qty_at_level: number | string | null; qty_received: number | string | null; expected_qty: number | string | null; unit_price: number | string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null; received_level_label: string | null }>>();
   if (iErr) throw new Error(`deriveAndUpsertCredits select: ${iErr.message}`);
-  const forCredits: IntakeLineForCredits[] = (itemRows ?? [])
-    .filter((r) => r.discrepancy_type != null)
+  const flagged = (itemRows ?? []).filter((r) => r.discrepancy_type != null);
+  // W04/B046: a credit counts LEVEL units, but a vendor line's price is per ROOT pack. For a
+  // line received at a named level, price the credit per that level (creditUnitPrice); a store
+  // run's price is already per level. A level the chain cannot place leaves the amount null.
+  const levelled = flagged.filter((r) => r.received_level_label?.trim());
+  let creditPrice = (r: (typeof flagged)[number]) => num(r.unit_price);
+  if (levelled.length > 0) {
+    const skuIds = [...new Set(levelled.map((r) => r.vendor_item_id))];
+    const [chains, { data: vendorRow, error: vErr }, { data: skuRows, error: sErr }] = await Promise.all([
+      loadSkuPackChains(skuIds, locationId),
+      sb.from("vendors").select("source_kind").eq("id", vendorId).maybeSingle<{ source_kind: string | null }>(),
+      sb.from("vendor_items").select("id, pack_format").in("id", skuIds).returns<Array<{ id: string; pack_format: string | null }>>(),
+    ]);
+    if (vErr) throw new Error(`deriveAndUpsertCredits vendor: ${vErr.message}`);
+    if (sErr) throw new Error(`deriveAndUpsertCredits skus: ${sErr.message}`);
+    const store = vendorRow?.source_kind === "store";
+    const packFormat = new Map((skuRows ?? []).map((s) => [s.id, s.pack_format]));
+    creditPrice = (r) => creditUnitPrice(num(r.unit_price), r.received_level_label,
+      chains.get(r.vendor_item_id) ?? null, packFormat.get(r.vendor_item_id) ?? null, store);
+  }
+  const forCredits: IntakeLineForCredits[] = flagged
     .map((r) => ({
       deliveryItemId: r.id,
       skuId: r.vendor_item_id,
       // received_qty_at_level is the level-unit qty when a level was named; fall back to qty_received.
       qtyReceived: num(r.received_qty_at_level) ?? num(r.qty_received) ?? 0,
       expectedQty: num(r.expected_qty),
-      unitPrice: num(r.unit_price),
+      unitPrice: creditPrice(r),
       discrepancyType: r.discrepancy_type,
     }));
   const drafts = deriveCreditDrafts(forCredits);

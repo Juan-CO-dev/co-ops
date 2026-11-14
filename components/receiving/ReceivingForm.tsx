@@ -113,6 +113,7 @@ import {
 import type { OpenCreditRow } from "@/lib/credits";
 import {
   INTAKE_DRAFT_CAP,
+  levelChangePatch,
   pricedLineCount,
   removeIntakeDraft,
   upsertIntakeDraft,
@@ -597,8 +598,16 @@ export function ReceivingForm({
     : [];
   const levelsFor = (skuId: string): string[] => (skuId ? (skuById.get(skuId)?.chainLabels ?? []) : []);
 
+  // W04/B046: a level change rescales a seeded expectation into the new level (or clears it
+  // and its flag when the two levels cannot be converted), so Short/Over and the credit
+  // never compare a PO's case count with an each count.
   const setLine = (i: number, patch: Partial<IntakeLine>) =>
-    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+    setLines((ls) => ls.map((l, j) => {
+      if (j !== i) return l;
+      if (patch.level === undefined || patch.level === l.level) return { ...l, ...patch };
+      const sku = skuById.get(l.skuId);
+      return { ...l, ...patch, ...levelChangePatch(l, patch.level, sku?.chainLabels ?? [], sku?.chainCounts ?? []) };
+    }));
 
   const num = (s: string): number | null => {
     const v = s.trim();
