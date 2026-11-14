@@ -18,14 +18,30 @@
  *
  * ── LEDGER-FIRST, AND THE PRIMARY KEY IS THE IDEMPOTENCY GUARD ───────────────────────
  * Every delivery is appended to `stripe_events` (PK = Stripe's own event id) BEFORE a
- * single payment row is touched. A 23505 means "we have already seen this exact event" and
- * the processor stops: no reads, no writes, result `duplicate`. Stripe retries until it
- * gets a 2xx and explicitly warns a delivery may repeat even after one, so this is the
- * difference between a refund recorded once and a refund recorded five times.
+ * single payment row is touched. A 23505 means "we have already seen this exact event".
+ * Stripe retries until it gets a 2xx and explicitly warns a delivery may repeat even after
+ * one, so this is the difference between a refund recorded once and a refund recorded
+ * five times.
  *
- * Only a FAILED LEDGER APPEND throws. Everything else returns a named result the route
- * answers 200 with, because to a webhook provider a non-2xx means "retry", and there is
- * nothing to retry about an event we understood and deliberately ignored.
+ * ── "SEEN" IS NOT "FINISHED" (audit W02/B005) ────────────────────────────────────────
+ * The ledger row is written BEFORE the work, so a row can exist for an event whose work
+ * never completed: the function died after the append (outcome still NULL), or the payment
+ * write hit a transient fault (outcome `processing_failed`). Treating those as `duplicate`
+ * meant a card payment that was TAKEN stayed `due` forever — every redelivery and every
+ * dashboard replay answered "already seen". So on a 23505 the processor reads the row's
+ * own outcome: a TERMINAL verdict stops (no payment reads, no writes, result
+ * `duplicate`); NULL or `processing_failed` runs the dispatch again. That is safe to
+ * repeat because every money write below is a guarded compare-and-set (`due → paid`,
+ * `paid → refunded`): a second run of work that did land matches zero rows and reports
+ * itself, and the audit row and the staff email ride only on the run that actually moved
+ * the row. The final stamp is guarded the same way, so a retry can never overwrite a
+ * terminal verdict a concurrent delivery already wrote.
+ *
+ * A FAILED LEDGER APPEND (or a failed read of a seen event's verdict) throws, and a
+ * PROCESSING FAILURE returns `processing_failed`; the route answers 500 to all three,
+ * because those are exactly the cases a Stripe retry can fix. Everything else returns a
+ * named result the route answers 200 with: to a webhook provider a non-2xx means "retry",
+ * and there is nothing to retry about an event we understood and deliberately ignored.
  *
  * ── TWO DEPLOYMENT SHAPES, ONE PROCESSOR ─────────────────────────────────────────────
  * DEFAULT — one Stripe account for the whole business, endpoint `/api/webhooks/stripe`.
@@ -67,8 +83,8 @@ export type StripeProcessingResult =
   | "refunded"            // a paid row became refunded
   | "no_paid_row"         // charge.refunded arrived for a payment that was not 'paid'
   | "ignored"             // an event type (or a completed-but-unpaid session) we do not act on
-  | "duplicate"           // this exact event id is already on the ledger
-  | "processing_failed"   // recorded, then something below it threw (a DB/transport fault)
+  | "duplicate"           // this exact event id is already on the ledger WITH a terminal verdict
+  | "processing_failed"   // recorded, then something below it threw — RETRYABLE (route answers 500)
   | "invalid_payload";    // no usable event id/type — nothing to key a ledger row on
 
 export interface StripeWebhookContext {
@@ -163,8 +179,34 @@ async function appendEvent(
   throw new Error(`stripe_events append: ${error.message}`);
 }
 
+/**
+ * The verdict already on the ledger for an event id we have seen before. NULL means the
+ * delivery was recorded and never finished. THROWS on a read failure: we cannot tell
+ * "finished" from "died mid-flight" without it, and answering 200 to an event whose work
+ * may not have landed is the bug this read exists to close — a 500 makes Stripe ask again.
+ */
+async function readLedgerOutcome(sb: ServiceClient, id: string): Promise<string | null> {
+  const { data, error } = await sb
+    .from("stripe_events")
+    .select("id, outcome")
+    .eq("id", id)
+    .maybeSingle<{ id: string; outcome: string | null }>();
+  if (error) throw new Error(`stripe_events read: ${error.message}`);
+  return data?.outcome ?? null;
+}
+
+/** A ledger row whose work is NOT known to have landed: never stamped, or stamped failed. */
+export function isRetryableLedgerOutcome(outcome: string | null): boolean {
+  return outcome === null || outcome === "processing_failed";
+}
+
 /** Stamp the verdict. Best-effort by design: the work is already committed, and throwing
- *  here would turn a completed payment into a 500 and an infinite Stripe retry. */
+ *  here would turn a completed payment into a 500 and an infinite Stripe retry.
+ *
+ *  GUARDED on the row still being unfinished (`outcome` NULL or `processing_failed`): two
+ *  deliveries of one event can run the dispatch concurrently, and the loser of the guarded
+ *  money write must not replace the winner's `paid` with its own `already_advanced`. The
+ *  first terminal verdict wins. */
 async function finalizeEvent(
   sb: ServiceClient,
   id: string,
@@ -178,7 +220,11 @@ async function finalizeEvent(
   // Single-account mode learns the shop during processing; never overwrite a known one
   // with null (`location_id` is only set here when we actually resolved it).
   if (locationId) patch.location_id = locationId;
-  const { error } = await sb.from("stripe_events").update(patch).eq("id", id);
+  const { error } = await sb
+    .from("stripe_events")
+    .update(patch)
+    .eq("id", id)
+    .or("outcome.is.null,outcome.eq.processing_failed");
   if (error) console.error(`[stripe webhook] outcome stamp failed for ${id}:`, error.message);
 }
 
@@ -253,7 +299,12 @@ export async function processStripeEvent(
     payload: event,
     locationId: ctx.locationId,
   });
-  if (appended === "duplicate") return { result: "duplicate", locationId: ctx.locationId };
+  if (appended === "duplicate") {
+    // Seen before — but was it FINISHED? (See the header.) A terminal verdict stops here;
+    // a row that never got one, or got `processing_failed`, is worked again.
+    const prior = await readLedgerOutcome(sb, outcome.eventId);
+    if (!isRetryableLedgerOutcome(prior)) return { result: "duplicate", locationId: ctx.locationId };
+  }
 
   let result: StripeProcessingResult = "ignored";
   let resolvedLocation: string | null = ctx.locationId;
@@ -262,12 +313,12 @@ export async function processStripeEvent(
     result = dispatched.result;
     resolvedLocation = dispatched.locationId ?? ctx.locationId;
   } catch (e) {
-    // A processing failure is recorded on the ledger and answered 200: the delivery is
-    // already ledgered, so a Stripe retry would hit the duplicate guard and change nothing.
-    // The retry is noise; the row — with `processing_failed` stamped on it and the payload
-    // kept verbatim — is the thing a human needs. It is deliberately NOT `invalid_payload`:
-    // the payload was fine, our side was not, and conflating the two would send someone to
-    // read a healthy event looking for a defect in it.
+    // A processing failure is recorded on the ledger AND reported, so the route answers
+    // 500 and Stripe redelivers: `processing_failed` is a retryable ledger state (see the
+    // header), so the redelivery runs the dispatch again instead of dying on the duplicate
+    // guard. It is deliberately NOT `invalid_payload`: the payload was fine, our side was
+    // not, and conflating the two would send someone to read a healthy event looking for a
+    // defect in it.
     const message = e instanceof Error ? e.message : String(e);
     console.error(`[stripe webhook] processing failed for ${outcome.eventId}:`, message);
     await finalizeEvent(sb, outcome.eventId, "processing_failed", resolvedLocation);

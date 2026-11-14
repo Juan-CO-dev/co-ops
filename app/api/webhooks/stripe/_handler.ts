@@ -16,10 +16,13 @@
  *   - raw body via req.text() → the HMAC is over BYTES; a JSON round-trip breaks it.
  *   - bad signature           → 401, and the body is NOT stored (an unsigned body is an
  *                              attacker's choice of what goes in our ledger).
- *   - ALWAYS 200 on a recorded outcome — a provider reads non-2xx as "retry", and there is
- *     nothing to retry about an event we understood.
- *   - 500 ONLY when the ledger append itself fails, which is exactly when we DO want the
- *     retry.
+ *   - 200 on a recorded, FINISHED outcome — a provider reads non-2xx as "retry", and there
+ *     is nothing to retry about an event we understood.
+ *   - 500 when the ledger append (or the read of a previously-seen event's verdict) fails,
+ *     AND when processing failed below the ledger (`processing_failed`). Those are exactly
+ *     the cases where we DO want the retry: the ledger treats an unfinished event as
+ *     retryable, so the redelivery completes the work instead of answering "duplicate"
+ *     (audit W02/B005 — a card payment taken must not stay `due` because one write hiccuped).
  *
  * ONE DELIBERATE DIFFERENCE from ezCater: an unknown/inactive `locationCode` is a 404, not
  * a 503. 503 means "this leg is asleep"; a URL naming a shop that does not exist is a
@@ -81,9 +84,11 @@ export async function handleStripeWebhook(req: NextRequest, locationCode: string
       locationCode: resolvedCode,
     });
     if (result === "invalid_payload") return jsonError(400, "invalid_payload");
+    // Recorded on the ledger as failed, and retryable there: non-2xx so Stripe redelivers.
+    if (result === "processing_failed") return jsonError(500, "processing_failed");
     return jsonOk({ result });
   } catch (e) {
-    console.error("[/api/webhooks/stripe] ledger append failed:", e instanceof Error ? e.message : e);
+    console.error("[/api/webhooks/stripe] ledger failed:", e instanceof Error ? e.message : e);
     return jsonError(500, "ledger_failed");
   }
 }

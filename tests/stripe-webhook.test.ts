@@ -16,6 +16,10 @@
  *   NOTHING MOVES ON A FAILURE. `expired` / `async_failed` leave the row `due` and write
  *   no payment row at all.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { audit } from "@/lib/audit";
@@ -23,6 +27,8 @@ import { processStripeEvent, resolveWebhookLocation, type StripeWebhookContext }
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 const auditMock = vi.mocked(audit);
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const QUOTE_ID = "11111111-2222-4333-8444-555555555555";
 const PAYMENT_ID = "66666666-7777-4888-8999-000000000000";
@@ -73,6 +79,18 @@ function stubClient(handler: (op: Op) => Settled) {
         op.filters[k] = v;
         return builder;
       },
+      neq: (k: string, v: unknown) => {
+        op.filters[`${k}:neq`] = v;
+        return builder;
+      },
+      in: (k: string, v: unknown) => {
+        op.filters[`${k}:in`] = v;
+        return builder;
+      },
+      or: (expr: string) => {
+        op.filters.or = expr;
+        return builder;
+      },
       limit: () => builder,
       order: () => builder,
       returns: () => builder,
@@ -93,6 +111,8 @@ function stubClient(handler: (op: Op) => Settled) {
 /** The common happy-path handler; `over` swaps individual answers per test. */
 function handlerFor(over: {
   ledgerInsert?: Settled;
+  /** The SELECT of an already-seen event's ledger row (the 23505 path). */
+  ledgerRow?: Settled;
   paymentById?: Settled;
   paymentBySession?: Settled;
   paymentByRef?: Settled;
@@ -101,7 +121,9 @@ function handlerFor(over: {
 } = {}) {
   return (op: Op): Settled => {
     if (op.table === "stripe_events") {
-      return op.kind === "insert" ? (over.ledgerInsert ?? {}) : {};
+      if (op.kind === "insert") return over.ledgerInsert ?? {};
+      if (op.kind === "select") return over.ledgerRow ?? { data: null };
+      return {};
     }
     if (op.table === "catering_quotes") {
       return over.quote ?? { data: { id: QUOTE_ID, location_id: LOCATION_ID } };
@@ -145,8 +167,13 @@ beforeEach(() => {
 });
 
 describe("ledger-first idempotency", () => {
-  it("a DUPLICATE event id does nothing at all — no reads, no writes, no audit", async () => {
-    const { client, ops } = stubClient(handlerFor({ ledgerInsert: { error: { code: "23505" } } }));
+  it("a DUPLICATE of a FINISHED event reads its verdict and does nothing else — no payment reads, no writes, no audit", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({
+        ledgerInsert: { error: { code: "23505" } },
+        ledgerRow: { data: { id: "evt_1", outcome: "paid" } },
+      }),
+    );
     const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
 
     expect(out.result).toBe("duplicate");
@@ -376,8 +403,95 @@ describe("the two deployment shapes", () => {
   });
 });
 
-describe("a processing failure is recorded, not retried forever", () => {
-  it("stamps the ledger and returns rather than throwing past the route", async () => {
+describe("W02/B005 — an event that was SEEN but never FINISHED is worked again", () => {
+  const SEEN = { error: { code: "23505" } };
+
+  it("a redelivery of an event stamped `processing_failed` runs the paid flip", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({ ledgerInsert: SEEN, ledgerRow: { data: { id: "evt_1", outcome: "processing_failed" } } }),
+    );
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("paid");
+    const update = ops.find((o) => o.table === "catering_payments" && o.kind === "update");
+    expect(update?.payload).toMatchObject({ status: "paid", provider: "stripe", provider_ref: "pi_1" });
+    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "catering.payment.provider_paid" }));
+    expect(noNotify.notifyPaid).toHaveBeenCalledTimes(1);
+    expect(ops.find((o) => o.table === "stripe_events" && o.kind === "update")?.payload).toMatchObject({ outcome: "paid" });
+  });
+
+  it("a redelivery of an event that died mid-flight (outcome NULL) runs the paid flip", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({ ledgerInsert: SEEN, ledgerRow: { data: { id: "evt_1", outcome: null } } }),
+    );
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("paid");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.filters).toMatchObject({
+      id: PAYMENT_ID,
+    });
+  });
+
+  it("the retry of work that DID land is a reported no-op: no second audit, no second email", async () => {
+    const { client } = stubClient(
+      handlerFor({
+        ledgerInsert: SEEN,
+        ledgerRow: { data: { id: "evt_1", outcome: null } },
+        paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1" } },
+        paymentUpdate: { count: 0 },
+      }),
+    );
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("already_advanced");
+    expect(auditMock).not.toHaveBeenCalled();
+    expect(noNotify.notifyPaid).not.toHaveBeenCalled();
+  });
+
+  it("a redelivered REFUND that failed the first time is retried too", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({
+        ledgerInsert: SEEN,
+        ledgerRow: { data: { id: "evt_r", outcome: "processing_failed" } },
+        paymentByRef: { data: PAID_ROW },
+      }),
+    );
+    const out = await processStripeEvent(
+      client,
+      { id: "evt_r", type: "charge.refunded", livemode: false, data: { object: { id: "ch_1", payment_intent: "pi_1", amount: 2500, amount_refunded: 2500, refunded: true, metadata: {} } } },
+      SINGLE,
+      noNotify,
+    );
+    expect(out.result).toBe("refunded");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload).toMatchObject({ status: "refunded" });
+  });
+
+  it("a FAILED read of the seen event's verdict throws — 500, never a 200 for work that may not have landed", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({ ledgerInsert: SEEN, ledgerRow: { error: { message: "connection reset" } } }),
+    );
+    await expect(processStripeEvent(client, sessionEvent(), SINGLE, noNotify)).rejects.toThrow(/stripe_events read/);
+    expect(ops.filter((o) => o.table === "catering_payments")).toEqual([]);
+  });
+
+  it("the verdict stamp is guarded, so a concurrent retry cannot overwrite a terminal verdict", async () => {
+    const { client, ops } = stubClient(handlerFor());
+    await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    const stamp = ops.find((o) => o.table === "stripe_events" && o.kind === "update");
+    expect(stamp?.filters).toMatchObject({ id: "evt_1", or: "outcome.is.null,outcome.eq.processing_failed" });
+  });
+
+  it("the ROUTE answers 500 to `processing_failed`, so Stripe redelivers", () => {
+    const src = readFileSync(join(ROOT, "app/api/webhooks/stripe/_handler.ts"), "utf8");
+    expect(src).toMatch(/if \(result === "processing_failed"\) return jsonError\(500, "processing_failed"\)/);
+    // …and the 500 sits BEFORE the catch-all 200.
+    expect(src.indexOf('jsonError(500, "processing_failed")')).toBeLessThan(src.indexOf("return jsonOk({ result })"));
+  });
+});
+
+describe("a processing failure is recorded AND reported as retryable", () => {
+  it("stamps the ledger and returns `processing_failed` rather than throwing past the route", async () => {
     const { client, ops } = stubClient(
       handlerFor({ paymentById: { error: { message: "transport exploded" } } }),
     );
