@@ -7,7 +7,7 @@ import { sendMetaContinuation } from "@/lib/meta-leads/continuation";
 
 type Reply = { data?: unknown; error?: unknown };
 const intake = { contactName: "Example Guest", contactEmail: "buyer@work.example", marketingEmail: "guest@example.test", secondaryEmail: "guest@example.test",
-  contactPhone: "+12025550100", company: "Work", headcount: 20, eventDate: "2027-01-02", shopCode: "p-street", isDelivery: true, notes: "Meeting" };
+  contactPhone: "+12025550100", company: "Work", headcount: 20, eventDate: "2027-01-02", shopCode: "p-street", isDelivery: true, notes: "Meeting", timing: null };
 const args = { leadgenId: "11", pipelineId: "lead-id", locationId: "shop-id", language: "es" as const, intake };
 function database(replies: Reply[]) {
   const rpc = vi.fn(async () => { const r = replies.shift(); if (!r) throw new Error("unexpected rpc"); return r; });
