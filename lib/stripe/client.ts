@@ -1,5 +1,6 @@
 /**
- * Stripe REST client — SERVER-ONLY, no SDK. One call: create a Checkout Session.
+ * Stripe REST client — SERVER-ONLY, no SDK. Two calls: create a Checkout Session, and
+ * retire one (`retireCheckoutSession`, audit W02/B035).
  *
  * package.json carries no `stripe` package and this file is why that is fine: the request
  * is a form POST with a bearer token, exactly the shape lib/receipt-parse.ts uses for the
@@ -204,4 +205,95 @@ export async function createCheckoutSession(
   // customer (a non-hosted UI mode). Refuse rather than redirect to `undefined`.
   if (!id || !url) throw new StripeError(502, "bad_payload", "Stripe returned no session url");
   return { id, url };
+}
+
+// ── Retiring a Checkout Session (audit W02/B035) ────────────────────────────────────
+
+/** A session nobody can pay any more, or one whose payment is already under way. */
+export type RetiredCheckoutSession = "expired" | "complete";
+
+/** `cs_test_…` / `cs_live_…`. The id is interpolated into a URL path, so its shape is
+ *  checked first — it is our own stored value, and it is still not trusted with a path. */
+const CHECKOUT_SESSION_ID_RE = /^cs_[A-Za-z0-9_]+$/;
+
+async function stripeSessionCall(
+  secretKey: string,
+  method: "GET" | "POST",
+  url: string,
+): Promise<{ status: number; ok: boolean; json: Record<string, unknown> | null }> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        "Stripe-Version": apiVersion(),
+        ...(method === "POST" ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (e) {
+    throw new StripeError(502, "network_error", e instanceof Error ? e.message : String(e));
+  }
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  return { status: res.status, ok: res.ok, json };
+}
+
+function stripeErrorFrom(status: number, json: Record<string, unknown> | null): StripeError {
+  const err = (json?.error ?? null) as { message?: unknown; code?: unknown; type?: unknown } | null;
+  const code = typeof err?.code === "string" ? err.code : typeof err?.type === "string" ? err.type : `http_${status}`;
+  const message = typeof err?.message === "string" ? err.message : `Stripe returned ${status}`;
+  return new StripeError(status, code, message);
+}
+
+/**
+ * Make a Checkout Session UNPAYABLE, or learn that it is too late.
+ *
+ * WHY THIS EXISTS. A quote can offer two ways to pay (a deposit, or the full amount) and
+ * each `catering_payments` row gets its own hosted session. Nothing closed the first
+ * session when the customer opened the second, so both stayed payable for 24 hours and
+ * both charges were accepted — a deposit AND the full total for one order. The same hole
+ * opens when an intent is re-priced: the session at the old amount is still out there.
+ * The portal therefore retires every other open session of a quote before it hands the
+ * customer a new one (lib/portal/quotes.ts `createQuoteCheckout`).
+ *
+ * THE ANSWER IS ONE OF TWO FACTS, AND ANYTHING ELSE THROWS:
+ *   "expired"  — nobody can pay it: we expired it just now, or it had already lapsed, or
+ *                this account has never heard of it (404 — it cannot be paid through
+ *                credentials that do not own it).
+ *   "complete" — the customer already finished it; the money is landing or has landed.
+ *                The caller must NOT offer another checkout.
+ *
+ * Stripe's contract (docs.stripe.com/api/checkout/sessions/expire): "A Checkout Session
+ * can be expired when it is in one of these statuses: open", and it "returns an error if
+ * the Checkout Session has already expired or isn't in an expireable state". The error does
+ * not say which, so a 4xx refusal is followed by a read of the session's own `status`
+ * (`open` | `complete` | `expired`). A 5xx, a transport failure, or a session that still
+ * reads `open` after a refused expire THROWS: this function fails closed, because the
+ * caller's next step is to mint a second way to pay.
+ */
+export async function retireCheckoutSession(secretKey: string, sessionId: string): Promise<RetiredCheckoutSession> {
+  if (!secretKey) throw new StripeError(500, "not_configured", "Stripe secret key is not set");
+  if (!CHECKOUT_SESSION_ID_RE.test(sessionId)) {
+    throw new StripeError(400, "bad_session_id", "Not a Checkout Session id");
+  }
+  const sessionUrl = `${CHECKOUT_SESSIONS_URL}/${sessionId}`;
+
+  const expire = await stripeSessionCall(secretKey, "POST", `${sessionUrl}/expire`);
+  if (expire.ok) return "expired";
+  if (expire.status === 404) return "expired";
+  // Only a request-level 4xx can mean "not in an expirable state" (Stripe documents the
+  // refusal, not its status code). A 5xx, an auth failure or a rate limit is OUR problem
+  // and says nothing about the session.
+  const refusal = expire.status >= 400 && expire.status < 500 && ![401, 403, 429].includes(expire.status);
+  if (!refusal) throw stripeErrorFrom(expire.status, expire.json);
+
+  const read = await stripeSessionCall(secretKey, "GET", sessionUrl);
+  if (read.status === 404) return "expired";
+  if (!read.ok) throw stripeErrorFrom(read.status, read.json);
+  const status = typeof read.json?.status === "string" ? read.json.status : null;
+  if (status === "expired") return "expired";
+  if (status === "complete") return "complete";
+  throw new StripeError(409, "session_still_open", "The Checkout Session could not be expired and is not complete");
 }

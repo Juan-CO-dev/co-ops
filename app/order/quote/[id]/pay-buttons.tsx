@@ -45,6 +45,8 @@ const ERROR_KEY: Record<string, TranslationKey> = {
   payment_unavailable: "order.quote.error_unavailable",
   quote_expired: "order.quote.error_expired",
   not_payable: "order.quote.error_not_payable",
+  payment_in_progress: "order.quote.error_in_progress",
+  already_paid: "order.quote.error_already_paid",
 };
 
 export function PayButtons({ quoteId, options }: { quoteId: string; options: PayOption[] }) {

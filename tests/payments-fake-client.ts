@@ -6,7 +6,7 @@
  *
  *   - `count` on a write (`{ count: "exact" }`): the silent-UPDATE law is checked by
  *     rowcount, so a guarded flip that matches nothing must REPORT zero.
- *   - `.single()` after an insert, and `.neq()` / `.or()`-free filter chains.
+ *   - `.single()` after an insert, `.neq()`, and the two-verb `.or()` the ledger stamp uses.
  *   - UNIQUE INDEXES as predicates: `catering_payments_one_due` (0130) and
  *     `catering_payments_one_open_checkout` (0303) are emulated, so a write that would
  *     violate one returns a real `23505` and applies nothing.
@@ -98,6 +98,13 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
           created_at: new Date(Date.UTC(2030, 0, 1, 0, 0, seq)).toISOString(),
           ...p,
         }));
+        // PRIMARY KEY: an explicit id that already exists is a 23505 (the Stripe ledger's
+        // whole idempotency guard is exactly this).
+        const taken = new Set(rows().map((r) => r.id));
+        if (((Array.isArray(payload) ? payload : [payload]) as Row[]).some((p) => p.id !== undefined && taken.has(p.id))) {
+          db.ops.push({ table, kind, payload, matched: 0 });
+          return { data: null, error: { code: "23505", message: `duplicate key value violates unique constraint "${table}_pkey"` }, count: null };
+        }
         if (table === "catering_payments") {
           const bad = paymentIndexViolation([...rows(), ...inserted], db.enforceOneOpenCheckout);
           if (bad) {
@@ -161,6 +168,19 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
       not: (c: string, operator: string, v: unknown) => {
         if (operator !== "is" || v !== null) throw new Error(`payments-fake: unsupported not(${c}, ${operator})`);
         filters.push((r) => !isNull(r[c]));
+        return q;
+      },
+      /** PostgREST `or=(a.is.null,a.eq.x)` — the two verbs the payment paths use, no more. */
+      or: (expr: string) => {
+        const tests = expr.split(",").map((term) => {
+          const [c, verb, ...rest] = term.split(".");
+          const v = rest.join(".");
+          if (!c || (verb !== "is" && verb !== "eq") || (verb === "is" && v !== "null")) {
+            throw new Error(`payments-fake: unsupported or() term ${term}`);
+          }
+          return verb === "is" ? (r: Row) => isNull(r[c]) : (r: Row) => String(r[c]) === v;
+        });
+        filters.push((r) => tests.some((t) => t(r)));
         return q;
       },
       order: (c: string, o?: { ascending?: boolean }) => { orderBy = { col: c, asc: o?.ascending !== false }; return q; },

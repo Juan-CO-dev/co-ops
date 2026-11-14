@@ -31,7 +31,12 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { createPaymentDue, syncDuePaymentAmount } from "@/lib/catering/payments";
 import { paymentPlan } from "@/lib/catering/payment-plan";
-import { createCheckoutSession, stripeCredentialsFor, StripeError } from "@/lib/stripe/client";
+import {
+  createCheckoutSession,
+  retireCheckoutSession,
+  stripeCredentialsFor,
+  StripeError,
+} from "@/lib/stripe/client";
 import { TENANT_NAME } from "@/lib/tenant";
 import type { Quote, QuoteItem, QuoteDetail } from "@/lib/catering/quotes";
 import { isQuoteLineKind } from "@/lib/catering/prep-demand-shared";
@@ -497,6 +502,39 @@ export async function initiatePayment(
   return { ok: true, paymentId, amountCents, stub };
 }
 
+/**
+ * Retire another Checkout Session of this quote, or refuse the request. Fails CLOSED:
+ *   - it cannot be retired (Stripe down, a refusal we cannot explain) → 502, mint nothing;
+ *   - it is already `complete` → 409 `payment_in_progress`: that money is landing, and a
+ *     second checkout would be a second charge.
+ */
+async function retireOrRefuse(secretKey: string, sessionId: string): Promise<void> {
+  let outcome: Awaited<ReturnType<typeof retireCheckoutSession>>;
+  try {
+    outcome = await retireCheckoutSession(secretKey, sessionId);
+  } catch (e) {
+    if (e instanceof StripeError) {
+      console.error(`[stripe] could not retire an open checkout session (${e.status}/${e.code}):`, e.message);
+      throw new PortalQuoteError(502, "provider_error", "Payment provider is unavailable");
+    }
+    throw e;
+  }
+  if (outcome === "complete") {
+    throw new PortalQuoteError(409, "payment_in_progress", "A payment for this order is already in progress");
+  }
+}
+
+/** Close a session we minted and then decided not to hand out. BEST-EFFORT: the request is
+ *  already being refused, and an unused session lapses on its own; this only shortens the
+ *  time an orphan stays payable. Never throws. */
+async function abandonSession(secretKey: string, sessionId: string): Promise<void> {
+  try {
+    await retireCheckoutSession(secretKey, sessionId);
+  } catch (e) {
+    console.error("[stripe] could not close an abandoned checkout session:", e instanceof Error ? e.message : e);
+  }
+}
+
 /** What the customer's browser needs to leave for Stripe. */
 export interface QuoteCheckout {
   /** The hosted Checkout URL. The ONLY thing the client is told. */
@@ -512,6 +550,23 @@ export interface QuoteCheckout {
  *      never have got here, and guessing a different account's keys is not a fallback),
  *   3. create the session at Stripe,
  *   4. GUARDED UPDATE of the still-`due` row with `provider='stripe'` + the session id.
+ *
+ * ── ONE OPEN CHECKOUT PER QUOTE (audit W02/B035) ─────────────────────────────────────
+ * A staff quote far enough out offers two ways to pay — a deposit, or the full amount —
+ * and each `catering_payments` row gets its own hosted session. Nothing closed the first
+ * when the customer opened the second, so BOTH stayed payable for a day and both charges
+ * were accepted: a deposit and the full total for one order. So between steps 2 and 3
+ * every OTHER open session on this quote's `due` rows is retired at Stripe
+ * (`retireCheckoutSession`) and its id cleared from its row; and after step 3, if this row
+ * already pointed at a DIFFERENT session (the intent was re-priced, so the idempotency key
+ * moved and Stripe minted a new one), the earlier one is retired too. Both fail CLOSED:
+ * a session we cannot retire is a 502 and nothing new is offered; a session that turns out
+ * to be already `complete` is a 409 `payment_in_progress`, because that customer's money is
+ * landing and the only honest next screen is "your payment is being processed".
+ * Migration 0303's partial unique index (`catering_payments_one_open_checkout`) makes the
+ * same rule a database fact for the one case code cannot close — two requests racing — and
+ * step 4 reads its 23505 as exactly that. Everything here works before 0303 is applied;
+ * the index only narrows the race.
  *
  * Step 4 runs AFTER step 3 on purpose: a session is not a charge, so a session we then
  * fail to record costs nothing but an unused Stripe object, whereas recording a session id
@@ -543,15 +598,47 @@ export async function createQuoteCheckout(input: {
   // The payment row is the authority for currency and for the fact that it is still due.
   const { data: payRow, error: payErr } = await sb
     .from("catering_payments")
-    .select("id, quote_id, status, currency")
+    .select("id, quote_id, status, currency, provider_session_id")
     .eq("id", input.paymentId)
-    .maybeSingle<{ id: string; quote_id: string; status: string; currency: string | null }>();
+    .maybeSingle<{
+      id: string;
+      quote_id: string;
+      status: string;
+      currency: string | null;
+      provider_session_id: string | null;
+    }>();
   if (payErr) throw new Error(`createQuoteCheckout payment: ${payErr.message}`);
   if (!payRow || payRow.quote_id !== input.quoteId) {
     throw new PortalQuoteError(404, "not_found", "Payment not found");
   }
   if (payRow.status !== "due") {
     throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
+  }
+
+  // ONE OPEN CHECKOUT PER QUOTE (see the header): retire every other open session on this
+  // quote's due rows BEFORE a second way to pay exists. Only `due` rows matter — a paid,
+  // refunded or void row's old session id is history, not a live payment surface.
+  const { data: openRows, error: openErr } = await sb
+    .from("catering_payments")
+    .select("id, provider_session_id")
+    .eq("quote_id", input.quoteId)
+    .eq("status", "due")
+    .not("provider_session_id", "is", null)
+    .returns<Array<{ id: string; provider_session_id: string | null }>>();
+  if (openErr) throw new Error(`createQuoteCheckout open sessions: ${openErr.message}`);
+  let retiredSessions = 0;
+  for (const other of openRows ?? []) {
+    if (other.id === input.paymentId || !other.provider_session_id) continue;
+    await retireOrRefuse(creds.secretKey, other.provider_session_id);
+    // Guarded on the exact session we retired: a row that moved in the meantime is left alone.
+    const { error: clearErr } = await sb
+      .from("catering_payments")
+      .update({ provider_session_id: null }, { count: "exact" })
+      .eq("id", other.id)
+      .eq("status", "due")
+      .eq("provider_session_id", other.provider_session_id);
+    if (clearErr) throw new Error(`createQuoteCheckout clear retired session: ${clearErr.message}`);
+    retiredSessions += 1;
   }
 
   const origin = portalOrigin({ ...process.env, NEXT_PUBLIC_APP_URL: input.appOrigin })!.replace(/\/$/, "");
@@ -589,13 +676,37 @@ export async function createQuoteCheckout(input: {
     throw e;
   }
 
+  // This row already pointed at a DIFFERENT session: the intent was re-priced (or its
+  // idempotency window lapsed), so the earlier session — at the earlier amount — may still
+  // be open. Retire it before the new URL leaves the building. If that cannot be done, the
+  // session minted a moment ago is closed again (best-effort) so it is not left payable
+  // with no row pointing at it.
+  if (payRow.provider_session_id && payRow.provider_session_id !== session.id) {
+    try {
+      await retireOrRefuse(creds.secretKey, payRow.provider_session_id);
+    } catch (e) {
+      await abandonSession(creds.secretKey, session.id);
+      throw e;
+    }
+    retiredSessions += 1;
+  }
+
   const { error: updErr, count } = await sb
     .from("catering_payments")
     .update({ provider: "stripe", provider_session_id: session.id }, { count: "exact" })
     .eq("id", input.paymentId)
     .eq("status", "due");
-  if (updErr) throw new Error(`createQuoteCheckout persist session: ${updErr.message}`);
+  if (updErr) {
+    await abandonSession(creds.secretKey, session.id);
+    // 0303's `catering_payments_one_open_checkout`: another request attached a session to
+    // this quote between our read and this write. That request won; ours is closed.
+    if (updErr.code === "23505") {
+      throw new PortalQuoteError(409, "payment_in_progress", "A payment for this order is already in progress");
+    }
+    throw new Error(`createQuoteCheckout persist session: ${updErr.message}`);
+  }
   if (count === 0) {
+    await abandonSession(creds.secretKey, session.id);
     // Advanced between the read and the write — the money already landed. Refuse the
     // redirect rather than invite a second payment.
     throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
@@ -615,6 +726,7 @@ export async function createQuoteCheckout(input: {
       session_id: session.id,
       location_id: quote.locationId,
       credential_source: creds.source,
+      retired_sessions: retiredSessions,
     },
     ipAddress: null,
     userAgent: null,

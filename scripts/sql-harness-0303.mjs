@@ -1,0 +1,235 @@
+/**
+ * Local Postgres proof of migration 0303 (one open Stripe Checkout Session per quote — bug audit
+ * 2026-11-14, wave W02, finding B035). SYNTHETIC ROWS ONLY — PGlite, in memory. CC owns the Supabase
+ * sim/prod gate; this never touches a real database.
+ *
+ *   node scripts/sql-harness-0303.mjs
+ *
+ * Builds `catering_payments` from the REAL DDL — 0127's CREATE TABLE, the whole of 0130
+ * (`catering_payments_one_due`) and the whole of 0204 (`provider_session_id` + its index + `stripe_events`)
+ * — over the real 0108 / 0120 / 0127 parents, then applies 0303 and proves:
+ *   P0  the pre-flight refuses: without 0204 (no provider_session_id), without 0130 (no one_due index),
+ *       on a second apply, and on rows that already break the rule (it names the count and picks no
+ *       winner); a refused apply changes nothing
+ *   P1  the apply itself: one new UNIQUE index on (quote_id) WHERE status = 'due' AND provider_session_id
+ *       IS NOT NULL; the 0130 and 0204 indexes still there; no row written, moved or deleted; no grant,
+ *       policy or column changed
+ *   P2  the rule: a second due intent of one quote cannot ATTACH a session while another due intent holds
+ *       one (23505 naming the index), by UPDATE and by INSERT
+ *   P3  what stays allowed: a due deposit + a due full with only one at Stripe; clearing one session then
+ *       attaching the other (the app's retire-then-mint order); a paid / refunded / void row keeping its
+ *       session id beside a new due one; different quotes each with their own open checkout
+ *   P4  0130 is untouched: still one due intent per (quote, kind)
+ *   P5  the rollback in the header (`drop index`) restores the pre-0303 behaviour
+ */
+import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { PGlite } from "@electric-sql/pglite";
+
+const read = (n) => readFileSync(new URL(`../supabase/migrations/${n}`, import.meta.url), "utf8");
+const M0303 = read("0303_catering_payments_one_open_checkout.sql");
+const M0130 = read("0130_catering_payments_one_due.sql");
+const M0204 = read("0204_stripe_events_and_checkout.sql");
+
+function must(match, what) {
+  if (!match) throw new Error(`harness: could not extract ${what}`);
+  return match[0];
+}
+function table(file, name) {
+  return must(read(file).match(new RegExp(`create table public\\.${name} \\([\\s\\S]*?\\n\\);`, "i")), `${name} from ${file}`);
+}
+const M0127 = read("0127_catering_portal_orders.sql");
+const QUOTES_0120 = table("0120_catering_quotes.sql", "catering_quotes");
+const QUOTES_0127 = must(
+  M0127.match(/ALTER TABLE catering_quotes DROP CONSTRAINT catering_quotes_status_check;[\s\S]*?CHECK \(origin IN \('self_serve','staff'\)\);/i),
+  "0127 catering_quotes alters",
+);
+// The REAL payments table, its 0127 index and its RLS switch.
+const PAYMENTS_0127 = must(
+  M0127.match(/CREATE TABLE catering_payments \([\s\S]*?ALTER TABLE catering_payments ENABLE ROW LEVEL SECURITY;/i),
+  "0127 catering_payments",
+);
+
+let failures = 0;
+let checks = 0;
+const check = (ok, what) => { checks++; if (!ok) { failures++; console.error(`FAIL ${what}`); } else console.log(`ok   ${what}`); };
+async function refuses(fn, needle, what) {
+  try { await fn(); check(false, `${what} (no error; expected ${needle})`); }
+  catch (e) { const s = `${e.code ?? ""} ${e.message}`; check(s.includes(needle), `${what} → ${needle}${s.includes(needle) ? "" : ` (got: ${s})`}`); }
+}
+
+/** A database at the state 0303 expects (0127 + optionally 0130 + optionally 0204). */
+async function base({ m0130 = true, m0204 = true } = {}) {
+  const db = new PGlite();
+  await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
+    grant usage on schema public to anon, authenticated, service_role;
+    create table public.locations (id uuid primary key default gen_random_uuid(), code text, active boolean not null default true);
+    create table public.users (id uuid primary key default gen_random_uuid(), role text, active boolean not null default true);
+    ${table("0108_catering_scaffold_capture.sql", "catering_customers")}
+    ${table("0108_catering_scaffold_capture.sql", "catering_pipeline")}
+    create table public.catering_delivery_zones (id uuid primary key default gen_random_uuid());
+    ${QUOTES_0120}
+    ${QUOTES_0127}
+    ${PAYMENTS_0127}`);
+  if (m0130) await db.exec(M0130);
+  if (m0204) await db.exec(M0204);
+  return db;
+}
+
+const indexNames = async (db) =>
+  (await db.query("select indexname from pg_indexes where schemaname = 'public' and tablename = 'catering_payments' order by 1")).rows.map((r) => r.indexname);
+const snapshot = async (db) =>
+  JSON.stringify((await db.query("select id, quote_id, kind, amount_cents, status, provider, provider_ref, provider_session_id from public.catering_payments order by id")).rows);
+
+async function fixtures(db) {
+  const shop = (await db.query("insert into public.locations (code) values ('S1') returning id")).rows[0].id;
+  const quote = async () => (await db.query(
+    "insert into public.catering_quotes (location_id, version, status) values ($1, 1, 'sent') returning id", [shop])).rows[0].id;
+  const pay = async (quoteId, kind, status = "due", session = null) => (await db.query(
+    "insert into public.catering_payments (quote_id, kind, amount_cents, status, provider_session_id) values ($1, $2, 1000, $3, $4) returning id",
+    [quoteId, kind, status, session])).rows[0].id;
+  return { shop, quote, pay };
+}
+
+const db = await base();
+try {
+  // ── P0 — the pre-flight ─────────────────────────────────────────────────────────────────────
+  {
+    const no0204 = await base({ m0204: false });
+    await refuses(() => no0204.exec(M0303), "0303: 0204 (catering_payments.provider_session_id) must be applied first", "P0 the pre-flight refuses without 0204");
+    await no0204.close();
+
+    const no0130 = await base({ m0130: false });
+    await refuses(() => no0130.exec(M0303), "0303: 0130 (catering_payments_one_due) must be applied first", "P0 the pre-flight refuses without 0130");
+    await no0130.close();
+
+    const none = new PGlite();
+    await refuses(() => none.exec(M0303), "0303: 0127 (catering_payments) must be applied first", "P0 the pre-flight refuses without the table");
+    await none.close();
+
+    const again = await base();
+    await again.exec(M0303);
+    await refuses(() => again.exec(M0303), "0303: catering_payments_one_open_checkout already exists: refusing a second apply", "P0 a second apply is refused");
+    await again.close();
+
+    // Rows that already break the rule: two due intents of ONE quote, both at Stripe.
+    const dirty = await base();
+    const f = await fixtures(dirty);
+    const q = await f.quote();
+    await f.pay(q, "deposit", "due", "cs_test_a");
+    await f.pay(q, "full", "due", "cs_test_b");
+    const before = await snapshot(dirty);
+    await refuses(() => dirty.exec(M0303), "0303: 1 quote(s) already hold more than one due payment with an open checkout session: refusing", "P0 the DATA CHECK refuses colliding rows and names the count");
+    // The migration's own `begin` is left aborted by the refusal; end it as the apply tool would.
+    await dirty.exec("rollback");
+    check((await snapshot(dirty)) === before, "P0 a refused apply changes no row (the migration picks no winner)");
+    check(!(await indexNames(dirty)).includes("catering_payments_one_open_checkout"), "P0 a refused apply leaves no index behind");
+    // The documented fix: clear the stale session, then the apply goes through.
+    await dirty.query("update public.catering_payments set provider_session_id = null where provider_session_id = 'cs_test_a'");
+    await dirty.exec(M0303);
+    check((await indexNames(dirty)).includes("catering_payments_one_open_checkout"), "P0 after the stale session is cleared by hand, the apply succeeds");
+    await dirty.close();
+  }
+
+  // ── fixtures BEFORE the apply: existing rows of every shape the table can hold ───────────────
+  const f = await fixtures(db);
+  const Q1 = await f.quote(), Q2 = await f.quote(), Q3 = await f.quote(), Q4 = await f.quote();
+  const q1Deposit = await f.pay(Q1, "deposit", "due", "cs_test_q1_dep"); // at Stripe
+  const q1Full = await f.pay(Q1, "full", "due", null);                    // due, not at Stripe
+  await f.pay(Q2, "deposit", "paid", "cs_test_q2_old");                   // history
+  await f.pay(Q2, "balance", "due", null);
+  await f.pay(Q3, "deposit", "void", "cs_test_q3_void");                  // history
+  await f.pay(Q3, "full", "refunded", "cs_test_q3_ref");                  // history
+  const grantsBefore = JSON.stringify((await db.query(
+    "select grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' and table_name = 'catering_payments' order by 1, 2")).rows);
+  const policiesBefore = (await db.query("select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = 'catering_payments'")).rows[0].n;
+  const columnsBefore = JSON.stringify((await db.query(
+    "select column_name, data_type, is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'catering_payments' order by ordinal_position")).rows);
+  const rowsBefore = await snapshot(db);
+  const namesBefore = await indexNames(db);
+
+  await db.exec(M0303);
+  check(true, "0303 applied with every SQL guard, over existing rows");
+
+  // ── P1 — exactly one new index, nothing else moved ───────────────────────────────────────────
+  const namesAfter = await indexNames(db);
+  check(JSON.stringify(namesAfter.filter((n) => !namesBefore.includes(n))) === JSON.stringify(["catering_payments_one_open_checkout"]),
+    "P1 the apply adds exactly one index: catering_payments_one_open_checkout");
+  check(namesBefore.every((n) => namesAfter.includes(n)), "P1 every pre-existing index is still there (one_due, provider_session_ix, quote, pkey)");
+  const def = (await db.query("select indexdef from pg_indexes where indexname = 'catering_payments_one_open_checkout'")).rows[0].indexdef;
+  check(/^CREATE UNIQUE INDEX catering_payments_one_open_checkout ON public\.catering_payments USING btree \(quote_id\) WHERE /i.test(def)
+    && /status = 'due'/i.test(def) && /provider_session_id IS NOT NULL/i.test(def),
+    "P1 it is UNIQUE (quote_id) WHERE status = 'due' AND provider_session_id IS NOT NULL");
+  check((await snapshot(db)) === rowsBefore, "P1 no row was written, moved or deleted");
+  check(JSON.stringify((await db.query(
+    "select grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' and table_name = 'catering_payments' order by 1, 2")).rows) === grantsBefore,
+    "P1 no grant on catering_payments changed");
+  check((await db.query("select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = 'catering_payments'")).rows[0].n === policiesBefore,
+    "P1 no policy was added");
+  check(JSON.stringify((await db.query(
+    "select column_name, data_type, is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'catering_payments' order by ordinal_position")).rows) === columnsBefore,
+    "P1 no column was added or changed");
+  check((await db.query("select relrowsecurity from pg_class where oid = 'public.catering_payments'::regclass")).rows[0].relrowsecurity === true,
+    "P1 RLS is still enabled on catering_payments");
+
+  // ── P2 — the rule ────────────────────────────────────────────────────────────────────────────
+  await refuses(
+    () => db.query("update public.catering_payments set provider = 'stripe', provider_session_id = 'cs_test_q1_full' where id = $1 and status = 'due'", [q1Full]),
+    "catering_payments_one_open_checkout",
+    "P2 a second due intent of the quote cannot ATTACH a session while the first holds one (UPDATE → 23505)");
+  await refuses(
+    () => db.query("update public.catering_payments set provider_session_id = 'x' where id = $1", [q1Full]),
+    "23505",
+    "P2 …and the error is a unique violation (the code the app reads as payment_in_progress)");
+  check((await db.query("select provider_session_id from public.catering_payments where id = $1", [q1Full])).rows[0].provider_session_id === null,
+    "P2 the refused attach wrote nothing");
+  {
+    const Q5 = await f.quote();
+    await f.pay(Q5, "deposit", "due", "cs_test_q5_dep");
+    await refuses(() => f.pay(Q5, "full", "due", "cs_test_q5_full"), "catering_payments_one_open_checkout",
+      "P2 an INSERT of a second due intent already carrying a session is refused too");
+  }
+
+  // ── P3 — what stays allowed ──────────────────────────────────────────────────────────────────
+  check((await db.query("select count(*)::int as n from public.catering_payments where quote_id = $1 and status = 'due'", [Q1])).rows[0].n === 2,
+    "P3 a quote may hold a due deposit AND a due full — only one of them at Stripe");
+  // The app's order: retire the other session (clear its id), THEN attach the new one.
+  await db.query("update public.catering_payments set provider_session_id = null where id = $1 and status = 'due' and provider_session_id = 'cs_test_q1_dep'", [q1Deposit]);
+  await db.query("update public.catering_payments set provider = 'stripe', provider_session_id = 'cs_test_q1_full' where id = $1 and status = 'due'", [q1Full]);
+  check((await db.query("select provider_session_id from public.catering_payments where id = $1", [q1Full])).rows[0].provider_session_id === "cs_test_q1_full",
+    "P3 retire-then-mint: after the first session is cleared, the second intent attaches its own");
+  // Re-attaching a NEW session to the SAME row (a re-priced intent) is the row replacing itself.
+  await db.query("update public.catering_payments set provider_session_id = 'cs_test_q1_full_2' where id = $1 and status = 'due'", [q1Full]);
+  check(true, "P3 the same intent may replace its own session id (a re-priced intent)");
+  // History beside a live checkout.
+  const q2New = await f.pay(Q2, "full", "due", "cs_test_q2_new");
+  check(!!q2New, "P3 a PAID row keeping its old session id does not block a new due checkout on the quote");
+  const q3New = await f.pay(Q3, "balance", "due", "cs_test_q3_new");
+  check(!!q3New, "P3 VOID and REFUNDED rows keeping their session ids do not block one either");
+  // The moment a due row is paid it leaves the index, and the quote's next intent may go to Stripe.
+  await db.query("update public.catering_payments set status = 'paid' where id = $1", [q2New]);
+  await db.query("update public.catering_payments set provider_session_id = 'cs_test_q2_bal' where quote_id = $1 and kind = 'balance' and status = 'due'", [Q2]);
+  check(true, "P3 once a checkout is PAID it leaves the index: the balance intent may then open its own");
+  // Other quotes are independent.
+  await f.pay(Q4, "deposit", "due", "cs_test_q4_dep");
+  check((await db.query("select count(distinct quote_id)::int as n from public.catering_payments where status = 'due' and provider_session_id is not null")).rows[0].n >= 3,
+    "P3 different quotes each hold their own open checkout");
+  check((await db.query("select count(*)::int as n from (select quote_id from public.catering_payments where status = 'due' and provider_session_id is not null group by 1 having count(*) > 1) d")).rows[0].n === 0,
+    "P3 …and no quote holds two");
+
+  // ── P4 — 0130 is untouched ───────────────────────────────────────────────────────────────────
+  await refuses(() => f.pay(Q4, "deposit", "due", null), "catering_payments_one_due", "P4 0130 still allows only one due intent per (quote, kind)");
+
+  // ── P5 — the documented rollback ─────────────────────────────────────────────────────────────
+  await db.exec("drop index public.catering_payments_one_open_checkout;");
+  await db.query("update public.catering_payments set provider_session_id = 'cs_test_q1_dep_again' where id = $1 and status = 'due'", [q1Deposit]);
+  check((await db.query("select count(*)::int as n from public.catering_payments where quote_id = $1 and status = 'due' and provider_session_id is not null", [Q1])).rows[0].n === 2,
+    "P5 `drop index` restores the pre-0303 behaviour (the rule is gone, nothing else changed)");
+} catch (e) {
+  failures++;
+  console.error(`FAIL 0303 harness: ${e.stack ?? e}`);
+} finally {
+  await db.close();
+}
+if (failures) { console.error(`${failures} failure(s)`); process.exitCode = 1; }
+else console.log(`PASS 0303: ${checks} checks (single-session PGlite; the two-request race itself needs two sessions — sim)`);

@@ -5212,6 +5212,8 @@
   "order.quote.error_unavailable": "Payment is temporarily unavailable — please try again in a moment.",
   "order.quote.error_expired": "This quote has expired, so it can no longer be paid online.",
   "order.quote.error_not_payable": "This order can't be paid online right now.",
+  "order.quote.error_in_progress": "A payment for this order is already being processed. Refresh this page in a moment to see it.",
+  "order.quote.error_already_paid": "A payment has already been received for this order. Refresh this page to see it.",
   "order.quote.notice_draft": "This order isn't ready to pay yet. If you're still building it, finish and submit it first. If our team is preparing your quote, it will appear in your account once it's sent.",
   "order.quote.notice_expired": "This quote has expired, so it can no longer be paid online. Reply to the email we sent and our team will send you an updated one.",
   "order.quote.notice_superseded": "This quote has been replaced by a newer version. The updated one appears in your account once our team sends it.",

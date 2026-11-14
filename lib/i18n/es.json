@@ -5212,6 +5212,8 @@
   "order.quote.error_unavailable": "El pago no está disponible por el momento — inténtalo de nuevo en un momento.",
   "order.quote.error_expired": "Esta cotización venció, así que ya no se puede pagar en línea.",
   "order.quote.error_not_payable": "Este pedido no se puede pagar en línea por ahora.",
+  "order.quote.error_in_progress": "Ya se está procesando un pago de este pedido. Actualiza esta página en un momento para verlo.",
+  "order.quote.error_already_paid": "Ya recibimos un pago de este pedido. Actualiza esta página para verlo.",
   "order.quote.notice_draft": "Este pedido todavía no está listo para pagar. Si lo sigues armando, termínalo y envíalo primero. Si nuestro equipo está preparando tu cotización, aparecerá en tu cuenta en cuanto la envíe.",
   "order.quote.notice_expired": "Esta cotización venció, así que ya no se puede pagar en línea. Responde al correo que te enviamos y nuestro equipo te mandará una actualizada.",
   "order.quote.notice_superseded": "Esta cotización fue reemplazada por una versión más nueva. La actualizada aparece en tu cuenta en cuanto nuestro equipo la envíe.",

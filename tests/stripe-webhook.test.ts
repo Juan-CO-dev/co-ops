@@ -214,8 +214,10 @@ describe("completed / async_succeeded — the paid flip", () => {
     expect(out.result).toBe("paid");
     const update = ops.find((o) => o.table === "catering_payments" && o.kind === "update");
     expect(update?.payload).toMatchObject({ status: "paid", provider: "stripe", provider_ref: "pi_1" });
-    // The guard is the whole safety property: only a row still `due` may be advanced.
-    expect(update?.filters).toMatchObject({ id: PAYMENT_ID, status: "due" });
+    // The guard is the whole safety property: only a row still `due` may be advanced — or
+    // one we had VOIDED, because a charge on a closed intent is still a charge (W02/B035;
+    // tests/stripe-webhook-review.test.ts pins what happens then). Never `paid`/`refunded`.
+    expect(update?.filters).toMatchObject({ id: PAYMENT_ID, "status:in": ["due", "void"] });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "catering.payment.provider_paid", actorId: null }));
     expect(noNotify.notifyPaid).toHaveBeenCalledOnce();
   });
@@ -227,8 +229,9 @@ describe("completed / async_succeeded — the paid flip", () => {
   });
 
   it("a SECOND completed for the same payment reports `already_advanced` and writes nothing", async () => {
+    // "The same payment" = the same CHARGE: the row already carries this PaymentIntent.
     const { client, ops } = stubClient(
-      handlerFor({ paymentById: { data: PAID_ROW }, paymentUpdate: { count: 0 } }),
+      handlerFor({ paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1" } }, paymentUpdate: { count: 0 } }),
     );
     const out = await processStripeEvent(client, sessionEvent({}, "checkout.session.completed", "evt_2"), SINGLE, noNotify);
 

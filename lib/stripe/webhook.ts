@@ -43,6 +43,27 @@
  * named result the route answers 200 with: to a webhook provider a non-2xx means "retry",
  * and there is nothing to retry about an event we understood and deliberately ignored.
  *
+ * ── A PAYMENT IS JUDGED AGAINST ITS ORDER, NOT ONLY ITS ROW (audit W02/B035) ─────────
+ * "Is this row still due?" is necessary and it is not sufficient. A quote can have two
+ * intents (deposit, full), a customer can complete both checkouts, and the second flip used
+ * to be as quiet as the first — a double charge recorded as two ordinary payments. So:
+ *   - THE MONEY IS ALWAYS RECORDED. A charge that really happened flips its row to `paid`
+ *     (from `due`, or from `void` if we had closed the intent), because the row must say
+ *     what is true and the refund leg finds it by the PaymentIntent that flip writes.
+ *   - …AND A PAYMENT THAT LOOKS WRONG SAYS SO. Another payment on the quote already paid
+ *     (other than the designed deposit → balance pair), a charged amount that is not the
+ *     intent's amount, an intent we had voided, a quote that is no longer open, or a row
+ *     that was already settled another way: each is a named reason, the ledger outcome is
+ *     `paid_needs_review`, the audit row carries the reasons, and the staff email asks for
+ *     a look. Nothing is refunded automatically — moving money back is a human decision.
+ *   - THE OTHER INTENT IS CLOSED. When a deposit or a full payment lands, the quote's other
+ *     due deposit/full intent is voided: both are priced for an UNPAID quote, so neither is
+ *     collectable any more.
+ * EVERYTHING AFTER THE FLIP IS NON-THROWING. An event whose processing fails is retried
+ * (B005), and a retry of a flip that did land reports `already_advanced` with no audit row
+ * and no email. A failure in the review step therefore degrades to a reason
+ * (`sibling_check_failed`), never to an exception.
+ *
  * ── TWO DEPLOYMENT SHAPES, ONE PROCESSOR ─────────────────────────────────────────────
  * DEFAULT — one Stripe account for the whole business, endpoint `/api/webhooks/stripe`.
  *   The URL carries no shop, so `locationId` arrives null and the shop is LEARNED from the
@@ -75,7 +96,8 @@ type ServiceClient = ReturnType<typeof getServiceRoleClient>;
  */
 export type StripeProcessingResult =
   | "paid"                // a due row became paid (the happy path)
-  | "already_advanced"    // the guarded update matched 0 rows — someone/something got there first
+  | "paid_needs_review"   // money was taken and recorded, but something about it needs a human
+  | "already_advanced"    // the guarded update matched 0 rows — this same charge got there first
   | "payment_not_found"   // metadata + session-id lookup both came up empty
   | "location_mismatch"   // per-location mode: the payment belongs to another shop
   | "async_failed"        // delayed-notification payment failed; the row stays 'due'
@@ -141,12 +163,26 @@ export interface StripeWebhookDeps {
   notifyPaid?: (args: NotifyPaidArgs) => Promise<void>;
 }
 
+/**
+ * Why a payment that WAS taken needs a human to look at it. Closed vocabulary (the write
+ * side is here; nothing parses it back), carried in the audit metadata and the staff email.
+ */
+export type PaymentReviewReason =
+  | "another_payment_already_paid" // a second payment on the quote that is not deposit → balance
+  | "amount_mismatch"              // Stripe charged an amount the intent does not carry
+  | "intent_was_void"              // the intent had been closed before the customer paid it
+  | "quote_not_payable"            // the quote is superseded, declined or expired
+  | "already_settled"              // the row was already paid/refunded another way; NOT moved
+  | "sibling_check_failed";        // we could not read the quote's other payments
+
 export interface NotifyPaidArgs {
   paymentId: string;
   quoteId: string;
   locationId: string | null;
   kind: string;
   amountCents: number;
+  /** Empty for an ordinary payment. Non-empty ⇒ the email asks for a review. */
+  reviewReasons?: PaymentReviewReason[];
 }
 
 interface PaymentRow {
@@ -155,9 +191,10 @@ interface PaymentRow {
   kind: string;
   amount_cents: number;
   status: string;
+  provider_ref: string | null;
 }
 
-const PAYMENT_COLS = "id, quote_id, kind, amount_cents, status";
+const PAYMENT_COLS = "id, quote_id, kind, amount_cents, status, provider_ref";
 
 /**
  * Append the delivery to the ledger. Returns "duplicate" when Stripe has sent this event
@@ -261,15 +298,87 @@ async function findPaymentForSession(
   return null;
 }
 
-/** The shop that owns a payment, via its quote. Null when the quote cannot be read. */
-async function locationOfQuote(sb: ServiceClient, quoteId: string): Promise<string | null> {
+interface QuoteContext {
+  location_id: string;
+  status: string | null;
+  superseded_at: string | null;
+}
+
+/** The quote a payment belongs to: its shop, and whether it is still an open order. Null
+ *  when the quote row does not exist. THROWS on a read error (this runs BEFORE any write). */
+async function quoteOfPayment(sb: ServiceClient, quoteId: string): Promise<QuoteContext | null> {
   const { data, error } = await sb
     .from("catering_quotes")
-    .select("id, location_id")
+    .select("id, location_id, status, superseded_at")
     .eq("id", quoteId)
-    .maybeSingle<{ id: string; location_id: string }>();
-  if (error) throw new Error(`locationOfQuote: ${error.message}`);
-  return data?.location_id ?? null;
+    .maybeSingle<{ id: string; location_id: string; status: string | null; superseded_at: string | null }>();
+  if (error) throw new Error(`quoteOfPayment: ${error.message}`);
+  if (!data) return null;
+  return { location_id: data.location_id, status: data.status ?? null, superseded_at: data.superseded_at ?? null };
+}
+
+/** The shop that owns a payment, via its quote. Null when the quote cannot be found. */
+async function locationOfQuote(sb: ServiceClient, quoteId: string): Promise<string | null> {
+  return (await quoteOfPayment(sb, quoteId))?.location_id ?? null;
+}
+
+/** deposit → balance (either order of arrival) is the designed two-payment sequence.
+ *  Every other pair of paid rows on one quote is money taken twice. */
+function isDesignedPair(a: string, b: string): boolean {
+  return (a === "deposit" && b === "balance") || (a === "balance" && b === "deposit");
+}
+
+/**
+ * AFTER a payment has been recorded: look at the rest of the quote. Returns the reasons the
+ * siblings give for a review and the ids of the due intents this payment closed.
+ *
+ * NEVER THROWS (see the header). A read failure is the reason `sibling_check_failed`; a
+ * failed void is logged and simply not reported as voided.
+ */
+async function reviewSiblings(
+  sb: ServiceClient,
+  payment: PaymentRow,
+): Promise<{ reasons: PaymentReviewReason[]; voided: string[] }> {
+  const reasons: PaymentReviewReason[] = [];
+  const voided: string[] = [];
+  try {
+    const { data, error } = await sb
+      .from("catering_payments")
+      .select("id, kind, status")
+      .eq("quote_id", payment.quote_id)
+      .neq("id", payment.id)
+      .returns<Array<{ id: string; kind: string; status: string }>>();
+    if (error) throw new Error(error.message);
+    const siblings = data ?? [];
+
+    if (siblings.some((s) => s.status === "paid" && !isDesignedPair(payment.kind, s.kind))) {
+      reasons.push("another_payment_already_paid");
+    }
+
+    // Both `deposit` and `full` are priced for an UNPAID quote. Once either has landed, the
+    // other is not collectable: close it, so the board stops offering "Mark paid" on it and
+    // the digests stop counting it as money due. A `balance` intent is the NEXT step of the
+    // designed sequence and is never touched here.
+    if (payment.kind === "deposit" || payment.kind === "full") {
+      for (const s of siblings) {
+        if (s.status !== "due" || (s.kind !== "deposit" && s.kind !== "full")) continue;
+        const { error: vErr, count } = await sb
+          .from("catering_payments")
+          .update({ status: "void" }, { count: "exact" })
+          .eq("id", s.id)
+          .eq("status", "due");
+        if (vErr) {
+          console.error(`[stripe webhook] could not void sibling intent ${s.id}:`, vErr.message);
+          continue;
+        }
+        if ((count ?? 0) > 0) voided.push(s.id);
+      }
+    }
+  } catch (e) {
+    console.error(`[stripe webhook] sibling review failed for ${payment.id}:`, e instanceof Error ? e.message : e);
+    reasons.push("sibling_check_failed");
+  }
+  return { reasons, voided };
 }
 
 /**
@@ -343,7 +452,8 @@ async function dispatch(
   const payment = await findPaymentForSession(sb, outcome);
   if (!payment) return { result: "payment_not_found", locationId: null };
 
-  const locationId = await locationOfQuote(sb, payment.quote_id);
+  const quote = await quoteOfPayment(sb, payment.quote_id);
+  const locationId = quote?.location_id ?? null;
 
   // PER-LOCATION MODE ONLY: an event signed by one shop's account may not touch another
   // shop's money. Single-account mode has no such assertion to make — one account serves
@@ -355,9 +465,11 @@ async function dispatch(
   if (outcome.kind === "async_failed") return { result: "async_failed", locationId };
   if (outcome.kind === "expired") return { result: "expired", locationId };
 
-  // completed / async_succeeded — the money is real. Guarded flip, exactly the shape
-  // markPaymentPaid uses: `.eq("status","due")` makes a concurrent/replayed advance a
-  // no-op that REPORTS itself rather than a silent second write.
+  // completed / async_succeeded — the money is real. Guarded flip: only a row that is
+  // still `due` — or one we had VOIDED, because a charge on a closed intent is still a
+  // charge and must not vanish — may be advanced. A concurrent/replayed advance matches
+  // zero rows and REPORTS itself rather than writing a second time.
+  const notify = deps.notifyPaid ?? ((args: NotifyPaidArgs) => notifyPaymentPaid(sb, args));
   const { error, count } = await sb
     .from("catering_payments")
     .update(
@@ -370,9 +482,77 @@ async function dispatch(
       { count: "exact" },
     )
     .eq("id", payment.id)
-    .eq("status", "due");
+    .in("status", ["due", "void"]);
   if (error) throw new Error(`stripe mark paid: ${error.message}`);
-  if (count === 0) return { result: "already_advanced", locationId };
+
+  if (count === 0) {
+    // The row was already paid or refunded. WHO got there first decides what this is, so the
+    // row is re-read (the pre-read may predate a concurrent delivery of this very charge).
+    const { data: fresh, error: freshErr } = await sb
+      .from("catering_payments")
+      .select(PAYMENT_COLS)
+      .eq("id", payment.id)
+      .maybeSingle<PaymentRow>();
+    if (freshErr) throw new Error(`stripe mark paid re-read: ${freshErr.message}`);
+    const sameCharge =
+      outcome.paymentIntentId != null && fresh?.provider_ref != null && fresh.provider_ref === outcome.paymentIntentId;
+    if (sameCharge) return { result: "already_advanced", locationId };
+
+    // A DIFFERENT settlement got there first — staff marked it paid by hand, or it was paid
+    // and refunded — and now Stripe has taken money for it as well. There is no row to flip,
+    // and saying `already_advanced` would bury a charge nobody has recorded. Say it loudly.
+    const reasons: PaymentReviewReason[] = ["already_settled"];
+    void audit({
+      actorId: null,
+      actorRole: null,
+      action: "catering.payment.provider_paid",
+      resourceTable: "catering_payments",
+      resourceId: payment.id,
+      metadata: {
+        actor_context: "stripe_webhook",
+        quote_id: payment.quote_id,
+        kind: payment.kind,
+        amount_cents: payment.amount_cents,
+        event_amount_cents: outcome.amountCents ?? null,
+        session_id: outcome.sessionId ?? null,
+        payment_intent_id: outcome.paymentIntentId ?? null,
+        stripe_event_id: outcome.eventId,
+        livemode: outcome.livemode,
+        location_id: locationId,
+        location_code: ctx.locationCode,
+        // `row_moved: false` ⇒ this row was NOT written; it keeps its earlier settlement.
+        row_moved: false,
+        row_status: fresh?.status ?? null,
+        needs_review: reasons,
+        voided_sibling_ids: [],
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
+    try {
+      await notify({
+        paymentId: payment.id,
+        quoteId: payment.quote_id,
+        locationId,
+        kind: payment.kind,
+        amountCents: outcome.amountCents ?? payment.amount_cents,
+        reviewReasons: reasons,
+      });
+    } catch (e) {
+      console.error(`[stripe webhook] review-notify failed for ${payment.id}:`, e instanceof Error ? e.message : e);
+    }
+    return { result: "paid_needs_review", locationId };
+  }
+
+  // THE ROW IS PAID. From here to the return NOTHING MAY THROW (see the header).
+  const reasons: PaymentReviewReason[] = [];
+  if (payment.status === "void") reasons.push("intent_was_void");
+  if (outcome.amountCents != null && outcome.amountCents !== payment.amount_cents) reasons.push("amount_mismatch");
+  if (quote && (quote.superseded_at != null || quote.status === "declined" || quote.status === "expired")) {
+    reasons.push("quote_not_payable");
+  }
+  const siblings = await reviewSiblings(sb, payment);
+  reasons.push(...siblings.reasons);
 
   void audit({
     actorId: null,
@@ -394,6 +574,10 @@ async function dispatch(
       livemode: outcome.livemode,
       location_id: locationId,
       location_code: ctx.locationCode,
+      row_moved: true,
+      // Empty for an ordinary payment. See PaymentReviewReason.
+      needs_review: reasons,
+      voided_sibling_ids: siblings.voided,
     },
     ipAddress: null,
     userAgent: null,
@@ -401,7 +585,6 @@ async function dispatch(
 
   // BEST-EFFORT, ALWAYS. A mail failure must never fail a webhook: the money has landed
   // and the row says so; the email is how a human hears about it sooner.
-  const notify = deps.notifyPaid ?? ((args: NotifyPaidArgs) => notifyPaymentPaid(sb, args));
   try {
     await notify({
       paymentId: payment.id,
@@ -409,12 +592,13 @@ async function dispatch(
       locationId,
       kind: payment.kind,
       amountCents: payment.amount_cents,
+      reviewReasons: reasons,
     });
   } catch (e) {
     console.error(`[stripe webhook] paid-notify failed for ${payment.id}:`, e instanceof Error ? e.message : e);
   }
 
-  return { result: "paid", locationId };
+  return { result: reasons.length > 0 ? "paid_needs_review" : "paid", locationId };
 }
 
 /**
@@ -522,7 +706,23 @@ async function refund(
  * `sendEmail` never throws (lib/email.ts contract) and this whole call is wrapped in the
  * caller's try/catch anyway. The subject carries the amount so it is readable on a lock
  * screen; the body carries no card data, because we never receive any.
+ *
+ * A payment with `reviewReasons` (audit W02/B035) goes to the SAME person through the SAME
+ * channel — it is not a new email, it is this one telling the truth: the subject ends
+ * "NEEDS REVIEW" and the body names each reason in a plain sentence, because "payment
+ * received" over a double charge is how a refund gets missed.
  */
+const REVIEW_SENTENCE: Record<PaymentReviewReason, string> = {
+  another_payment_already_paid:
+    "Another payment on this order was already marked paid. This may be a duplicate charge that needs a refund.",
+  amount_mismatch: "The amount the customer was charged does not match the amount on the payment record.",
+  intent_was_void: "This payment request had been closed before the customer paid it.",
+  quote_not_payable: "The quote is no longer open (it was replaced, declined or expired).",
+  already_settled:
+    "This payment was already recorded another way (for example marked paid by hand), so this card charge may be a duplicate that needs a refund.",
+  sibling_check_failed: "We could not check this order's other payments. Please check for a duplicate charge.",
+};
+
 export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs): Promise<void> {
   const { data: quote, error: qErr } = await sb
     .from("catering_quotes")
@@ -552,7 +752,9 @@ export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs)
 
   const money = (args.amountCents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
   const dateLabel = quote.event_date ?? "date to be confirmed";
-  const subject = `${TENANT_NAME}: ${money} ${args.kind} payment received`;
+  const reasons = args.reviewReasons ?? [];
+  const flagged = reasons.length > 0;
+  const subject = `${TENANT_NAME}: ${money} ${args.kind} payment received${flagged ? " — NEEDS REVIEW" : ""}`;
   // appUrl() throws when NEXT_PUBLIC_APP_URL is unset (CI/local); a missing link must not
   // cost the notification, so the CTA degrades to the plain fact.
   let link: string | null = null;
@@ -562,11 +764,20 @@ export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs)
     link = null;
   }
 
+  const reviewHtml = flagged
+    ? `
+      <p style="margin:16px 0 8px;"><strong>This payment needs a review:</strong></p>
+      <ul style="margin:0 0 0 18px;padding:0;">${reasons.map((r) => `<li>${escapeHtml(REVIEW_SENTENCE[r])}</li>`).join("")}</ul>
+      <p style="margin:12px 0 0;">Nothing was refunded automatically.</p>`
+    : "";
+  const reviewText = flagged
+    ? `\n\nThis payment needs a review:\n${reasons.map((r) => `- ${REVIEW_SENTENCE[r]}`).join("\n")}\nNothing was refunded automatically.`
+    : "";
   const bodyHtml = `
       <p style="margin:0 0 16px;">A customer just paid a <strong>${escapeHtml(args.kind)}</strong> of <strong>${escapeHtml(money)}</strong> for the event on <strong>${escapeHtml(dateLabel)}</strong>.</p>
-      <p style="margin:0;">Quote <code>${escapeHtml(args.quoteId)}</code> — the payment is recorded as paid in CO-OPS.</p>
+      <p style="margin:0;">Quote <code>${escapeHtml(args.quoteId)}</code> — the payment is recorded in CO-OPS.</p>${reviewHtml}
     `;
-  const text = `${money} ${args.kind} payment received for the event on ${dateLabel}. Quote ${args.quoteId} is recorded as paid.${link ? `\n\n${link}` : ""}`;
+  const text = `${money} ${args.kind} payment received for the event on ${dateLabel}. Quote ${args.quoteId} is recorded in CO-OPS.${reviewText}${link ? `\n\n${link}` : ""}`;
 
   await sendEmail({
     to: user.email,
@@ -575,7 +786,7 @@ export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs)
     html: link
       ? renderEmailLayout({
           preheader: subject,
-          heading: "Payment received",
+          heading: flagged ? "Payment received — needs review" : "Payment received",
           bodyHtml,
           cta: { label: "OPEN THE PIPELINE", url: link },
           footerNote: "Sent automatically when the payment provider confirmed the charge.",

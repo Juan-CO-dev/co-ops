@@ -22,10 +22,11 @@ vi.mock("@/lib/stripe/client", async (importOriginal) => {
     ...actual,
     stripeCredentialsFor: vi.fn(),
     createCheckoutSession: vi.fn(),
+    retireCheckoutSession: vi.fn(),
   };
 });
 
-import { createCheckoutSession, stripeCredentialsFor } from "@/lib/stripe/client";
+import { createCheckoutSession, retireCheckoutSession, stripeCredentialsFor, StripeError } from "@/lib/stripe/client";
 import {
   createQuoteCheckout,
   initiatePayment,
@@ -35,6 +36,7 @@ import {
 
 const credsMock = vi.mocked(stripeCredentialsFor);
 const createSessionMock = vi.mocked(createCheckoutSession);
+const retireMock = vi.mocked(retireCheckoutSession);
 
 const CUSTOMER = "c0000000-0000-4000-8000-000000000001";
 const QUOTE = "a0000000-0000-4000-8000-000000000001";
@@ -112,6 +114,8 @@ beforeEach(() => {
   credsMock.mockReset();
   createSessionMock.mockReset();
   createSessionMock.mockResolvedValue({ id: "cs_new", url: "https://checkout.stripe.test/cs_new" });
+  retireMock.mockReset();
+  retireMock.mockResolvedValue("expired");
   twoAccounts();
   db = paymentsFake({
     catering_quotes: [quoteRow()],
@@ -299,5 +303,139 @@ describe("W02/B038 — a draft cannot be paid, and a reused intent carries the C
 
     expect(err.code).toBe("not_due");
     expect(row.amount_cents).toBe(15000);
+  });
+});
+
+describe("W02/B035 — one open checkout per quote", () => {
+  const FULL = "d0000000-0000-4000-8000-000000000002";
+  const fullRow = (over: Row = {}) => dueRow({ id: FULL, kind: "full", amount_cents: 100000, ...over });
+  const fullInput = (over: Record<string, unknown> = {}) =>
+    checkoutInput({ kind: "full" as const, paymentId: FULL, amountCents: 100000, ...over });
+  const byId = (id: string) => db.tables.catering_payments!.find((r) => r.id === id)!;
+
+  it("opening the FULL checkout retires the DEPOSIT session first — it can no longer be paid", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_dep" }), fullRow());
+    const order: string[] = [];
+    retireMock.mockImplementation(async (_key, id) => {
+      order.push(`retire:${id}`);
+      return "expired";
+    });
+    createSessionMock.mockImplementation(async () => {
+      order.push("mint");
+      return { id: "cs_new", url: "https://checkout.stripe.test/cs_new" };
+    });
+
+    const out = await createQuoteCheckout(fullInput());
+
+    expect(out.url).toBe("https://checkout.stripe.test/cs_new");
+    // Retired with the SHOP's key, and BEFORE a second way to pay exists.
+    expect(retireMock).toHaveBeenCalledWith("sk_shop", "cs_dep");
+    expect(order).toEqual(["retire:cs_dep", "mint"]);
+    // The deposit intent stays `due` (the customer may still choose it later) but points at nothing.
+    expect(byId(PAYMENT)).toMatchObject({ status: "due", provider_session_id: null });
+    expect(byId(FULL)).toMatchObject({ status: "due", provider: "stripe", provider_session_id: "cs_new" });
+  });
+
+  it("if the other checkout is already COMPLETE, no second checkout is offered: 409 payment_in_progress", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_dep" }), fullRow());
+    retireMock.mockResolvedValue("complete");
+
+    const err = await refusal(createQuoteCheckout(fullInput()));
+
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("payment_in_progress");
+    expect(createSessionMock).not.toHaveBeenCalled();
+    // The completing session keeps its id, so the webhook's fallback lookup still finds its row.
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_dep");
+    expect(byId(FULL).provider_session_id).toBeNull();
+  });
+
+  it("if the other checkout cannot be retired, it FAILS CLOSED: 502, and nothing is minted", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_dep" }), fullRow());
+    retireMock.mockRejectedValue(new StripeError(502, "network_error", "socket hang up"));
+
+    const err = await refusal(createQuoteCheckout(fullInput()));
+
+    expect(err.status).toBe(502);
+    expect(err.code).toBe("provider_error");
+    expect(createSessionMock).not.toHaveBeenCalled();
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_dep");
+  });
+
+  it("a RE-PRICED intent retires its own earlier session (the one at the old amount)", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_old" }));
+
+    await createQuoteCheckout(checkoutInput());
+
+    expect(retireMock).toHaveBeenCalledWith("sk_shop", "cs_old");
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_new");
+  });
+
+  it("the SAME session coming back (an idempotent replay) is not retired from under the customer", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_new" }));
+
+    const out = await createQuoteCheckout(checkoutInput());
+
+    expect(out.url).toBe("https://checkout.stripe.test/cs_new");
+    expect(retireMock).not.toHaveBeenCalled();
+  });
+
+  it("if the intent's own earlier session is COMPLETE, the new one is abandoned and nothing is offered", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_old" }));
+    retireMock.mockImplementation(async (_key, id) => (id === "cs_old" ? "complete" : "expired"));
+
+    const err = await refusal(createQuoteCheckout(checkoutInput()));
+
+    expect(err.code).toBe("payment_in_progress");
+    // The session we just minted is closed again, and the row still names the one being paid.
+    expect(retireMock).toHaveBeenCalledWith("sk_shop", "cs_new");
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_old");
+  });
+
+  it("a quote with no other open checkout is untouched by any of this", async () => {
+    db.tables.catering_payments!.push(dueRow(), fullRow());
+
+    await createQuoteCheckout(fullInput());
+
+    expect(retireMock).not.toHaveBeenCalled();
+    expect(byId(FULL).provider_session_id).toBe("cs_new");
+  });
+
+  it("a PAID or VOID sibling's old session id is not chased — only `due` rows can still be paid into", async () => {
+    db.tables.catering_payments!.push(
+      dueRow({ status: "void", provider: "stripe", provider_session_id: "cs_void" }),
+      fullRow(),
+    );
+
+    await createQuoteCheckout(fullInput());
+
+    expect(retireMock).not.toHaveBeenCalled();
+  });
+
+  it("with migration 0303's index, a RACING second checkout loses at the database and is abandoned", async () => {
+    db.enforceOneOpenCheckout = true;
+    db.tables.catering_payments!.push(dueRow(), fullRow());
+    // Another request attaches a session to the deposit intent while ours is at Stripe.
+    createSessionMock.mockImplementation(async () => {
+      byId(PAYMENT).provider_session_id = "cs_racer";
+      return { id: "cs_new", url: "https://checkout.stripe.test/cs_new" };
+    });
+
+    const err = await refusal(createQuoteCheckout(fullInput()));
+
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("payment_in_progress");
+    expect(retireMock).toHaveBeenCalledWith("sk_shop", "cs_new");
+    expect(byId(FULL).provider_session_id).toBeNull();
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_racer");
+  });
+
+  it("the pay buttons have a sentence for the new refusal, in both languages", async () => {
+    const { readFileSync } = await import("node:fs");
+    const en = JSON.parse(readFileSync("lib/i18n/en.json", "utf8")) as Record<string, string>;
+    const es = JSON.parse(readFileSync("lib/i18n/es.json", "utf8")) as Record<string, string>;
+    expect(en["order.quote.error_in_progress"]).toBeTruthy();
+    expect(es["order.quote.error_in_progress"]).toBeTruthy();
+    expect(readFileSync("app/order/quote/[id]/pay-buttons.tsx", "utf8")).toContain('payment_in_progress: "order.quote.error_in_progress"');
   });
 });
