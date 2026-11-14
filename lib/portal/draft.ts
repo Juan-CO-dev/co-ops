@@ -139,6 +139,9 @@ export interface DraftView {
 
 /** loadDraft's full payload: the build page's data (draft + real menu + lead intake + napkins add-on). */
 export interface DraftLoad extends DraftView {
+  /** Still a live draft (status 'draft', not superseded) — the only state a cart may be edited in.
+   *  A submitted or superseded order is shown read-only (audit W01/B145). */
+  editable: boolean;
   lead: DraftLead | null;
   menu: CateringMenuItem[];
   packages: CateringPackage[]; // orderable catering packages (sub-project B)
@@ -366,10 +369,10 @@ export async function loadDraft(customerId: string, quoteId: string): Promise<Dr
   const sb = getServiceRoleClient();
   const { data: row, error } = await sb
     .from("catering_quotes")
-    .select("id, customer_id, pipeline_id, location_id, status, is_delivery, delivery_zone_id, subtotal_cents, delivery_fee_cents, service_charge_cents, gratuity_cents, tax_cents, total_cents, deposit_cents")
+    .select("id, customer_id, pipeline_id, location_id, status, superseded_at, is_delivery, delivery_zone_id, subtotal_cents, delivery_fee_cents, service_charge_cents, gratuity_cents, tax_cents, total_cents, deposit_cents")
     .eq("id", quoteId)
     .maybeSingle<{
-      id: string; customer_id: string | null; pipeline_id: string | null; location_id: string; status: string;
+      id: string; customer_id: string | null; pipeline_id: string | null; location_id: string; status: string; superseded_at: string | null;
       is_delivery: boolean; delivery_zone_id: string | null; subtotal_cents: number; delivery_fee_cents: number;
       service_charge_cents: number; gratuity_cents: number; tax_cents: number; total_cents: number; deposit_cents: number;
     }>();
@@ -414,6 +417,7 @@ export async function loadDraft(customerId: string, quoteId: string): Promise<Dr
 
   return {
     quoteId: row.id, pipelineId: row.pipeline_id, locationId: row.location_id, status: row.status,
+    editable: row.status === "draft" && row.superseded_at == null,
     isDelivery: row.is_delivery, deliveryZoneId: row.delivery_zone_id,
     stack: {
       subtotalCents: row.subtotal_cents, deliveryFeeCents: row.delivery_fee_cents,

@@ -122,8 +122,8 @@ function OrderReview() {
         if (res.status === 401) { setBlocked("session_expired"); return; }
         if (!res.ok) { setLoadError(t("order.review.error_load")); return; }
         const json = (await res.json()) as { ok: boolean; draft: DraftLoad; paymentsOnline?: boolean };
-        // Already submitted (e.g. Back after placing it): the order lives on its quote page now.
-        if (json.draft.status !== "draft") { router.replace(`/order/quote/${encodeURIComponent(json.draft.quoteId)}`); return; }
+        // Already submitted or superseded (e.g. Back after placing it): the order lives on its quote page now.
+        if (json.draft.status !== "draft" || json.draft.editable === false) { router.replace(`/order/quote/${encodeURIComponent(json.draft.quoteId)}`); return; }
         setDraft(json.draft);
         setDietaryNotes(json.draft.lead?.dietaryNotes ?? "");
         setPaymentsOnline(json.paymentsOnline === true);

@@ -274,5 +274,31 @@ describe("B002 — the customer's allergy / special-instructions note reaches st
   });
 });
 
+describe("B145 — a submitted or superseded order is never served as an editable cart", () => {
+  it("loadDraft says whether the order can still be edited", async () => {
+    useDb();
+    expect((await loadDraft(CUST, QUOTE))!.editable).toBe(true);
+    useDb(seed({ status: "submitted" }));
+    expect((await loadDraft(CUST, QUOTE))!).toMatchObject({ status: "submitted", editable: false });
+    useDb(seed({ superseded_at: "2027-01-01T00:00:00Z" }));
+    expect((await loadDraft(CUST, QUOTE))!).toMatchObject({ status: "draft", editable: false });
+  });
+  it("another customer still gets nothing", async () => {
+    useDb();
+    expect(await loadDraft("someone-else", QUOTE)).toBeNull();
+  });
+});
+
+describe("the build page honours it", () => {
+  it("renders a read-only 'already placed' state with a link to the quote, and a 409 save locks the cart", async () => {
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync("app/order/build/page.tsx", "utf8");
+    expect(page).toMatch(/if \(res\.status === 409\) \{ setLocked\(true\); return "not_draft"; \}/);
+    expect(page).toMatch(/if \(locked \|\| draft\.editable === false\)/);
+    expect(page).toContain('href={`/order/quote/${encodeURIComponent(draft.quoteId)}`}');
+    expect(page).toContain('t("order.build.locked")');
+  });
+});
+
 // Keep the imports referenced while later describe blocks are added bug by bug.
-void loadDraft; void PortalDraftError;
+void PortalDraftError;

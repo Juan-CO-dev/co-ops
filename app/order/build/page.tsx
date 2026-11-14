@@ -88,6 +88,8 @@ interface DraftItem {
 }
 interface DraftLoad {
   quoteId: string; pipelineId: string | null; locationId: string; status: string;
+  /** False once submitted or superseded — the cart is then read-only (audit W01/B145). */
+  editable: boolean;
   isDelivery: boolean; deliveryZoneId: string | null;
   stack: DraftStack;
   items: DraftItem[];
@@ -253,6 +255,10 @@ function OrderBuild() {
   // hydration (the server refuses to submit a stale cart), and the customer is told why.
   const [cartRepriced, setCartRepriced] = useState(false);
   const resaveAfterHydrate = useRef(false);
+  // The order can no longer be edited (submitted / superseded — audit W01/B145): from the load, or a
+  // 409 on a save. The page then shows a read-only "already placed" state, never a cart that looks
+  // saved while every write is refused.
+  const [locked, setLocked] = useState(false);
 
   // ── Load the draft (Next 16: read ?draft from window.location.search in an effect, not useSearchParams). ──
   useEffect(() => {
@@ -305,8 +311,8 @@ function OrderBuild() {
           };
           if (unitCents(card.item, initial[key]) !== it.unitPriceCents) stale = true;
         }
-        resaveAfterHydrate.current = stale;
-        setCartRepriced(stale);
+        resaveAfterHydrate.current = stale && d.editable !== false;
+        setCartRepriced(stale && d.editable !== false);
         setCart(initial);
         setPkgCart(initialPkg);
         setLoadState("ready");
@@ -466,7 +472,7 @@ function OrderBuild() {
         // believe their cart is persisting. The draft row survives, so
         // /order/start resumes it.
         if (res.status === 401) { setSessionExpired(true); return "unauthorized"; }
-        if (res.status === 409) return "not_draft";
+        if (res.status === 409) { setLocked(true); return "not_draft"; }
         if (!res.ok) return "failed";
         const json = (await res.json()) as { ok?: boolean; stack?: DraftStack };
         if (json?.ok && json.stack) setSubtotalCents(json.stack.subtotalCents);
@@ -558,6 +564,18 @@ function OrderBuild() {
           <h1 className="text-2xl font-extrabold tracking-tight">Start your order</h1>
           <p className="mt-2 text-co-text-muted">We couldn&apos;t find an order to build. Start a new one and we&apos;ll email you a link to pick up right where you left off.</p>
           <Link href="/order/start" className="mt-6 inline-flex min-h-[52px] items-center justify-center rounded-full bg-co-text px-8 text-sm font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90">Start your order →</Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (locked || draft.editable === false) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-co-bg px-6 text-center text-co-text">
+        <div className="max-w-md">
+          <h1 className="text-2xl font-extrabold tracking-tight">{t("order.build.locked_title")}</h1>
+          <p className="mt-2 text-co-text-muted">{t("order.build.locked")}</p>
+          <Link href={`/order/quote/${encodeURIComponent(draft.quoteId)}`} className="mt-6 inline-flex min-h-[52px] items-center justify-center rounded-full bg-co-text px-8 text-sm font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90">{t("order.build.view_order")}</Link>
         </div>
       </div>
     );
