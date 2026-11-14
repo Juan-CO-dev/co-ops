@@ -6,6 +6,7 @@ import { lockLocationContext } from "@/lib/locations";
 import { verifyActorPin } from "@/lib/auth-flows";
 import { loadToastCashProjected } from "@/lib/cash-toast";
 import { CASH_REPORT_BASE_LEVEL, DENOMINATION_UNITS_CENTS, sumDenominations, submitCashReport, type Denominations, type OnShiftEntry } from "@/lib/cash";
+import { uncountedDrawer } from "@/lib/cash-shared";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -43,6 +44,11 @@ export async function POST(req: NextRequest) {
   } else {
     if (!isCents(b.drawerTotalCents)) return jsonError(400, "invalid_payload", { field: "drawerTotalCents" });
     drawerTotalCents = b.drawerTotalCents as number;
+  }
+  // W03/B007: an untouched form sent drawerTotalCents 0 and filed a negative deposit. A $0
+  // drawer files only when the client says the closer COUNTED it empty.
+  if (uncountedDrawer(drawerTotalCents, b.drawerCountedEmpty)) {
+    return jsonError(400, "drawer_not_counted", { message: "Count the drawer before submitting." });
   }
   const floatCents = isCents(b.floatCents) ? (b.floatCents as number) : 20000;
   const onShift = Array.isArray(b.onShift)
