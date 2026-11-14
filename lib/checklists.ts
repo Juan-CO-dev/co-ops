@@ -1996,6 +1996,7 @@ export async function markNotDoneByAuthority(
  *     ChecklistTagWithinQuickWindowError; within the silent window the
  *     actor self-corrects via revokeCompletion's Undo, NOT via tagging).
  *   - actor.level >= 4 OR actor.userId === completion.completed_by.
+ *   - actor is an ACTIVE member of the instance's shop (W05 / B151; no level override).
  *   - actualCompleterId must be in picker scope for this instance + location
  *     (loadPickerCandidates above), filtered by template_item.min_role_level.
  *     Failures discriminated by reason code on ChecklistInvalidPickerCandidateError.
@@ -2013,7 +2014,7 @@ export async function tagActualCompleter(
   authed: SupabaseClient,
   args: {
     completionId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     actualCompleterId: string;
     ipAddress?: string | null;
     userAgent?: string | null;
@@ -2022,6 +2023,15 @@ export async function tagActualCompleter(
   const { completionId, actor, actualCompleterId } = args;
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
+  // Audit W05 / B151: the completion writers' membership rule (completeItem, submitBatch,
+  // confirmInstance): an ACTIVE member of the instance's shop, no level override. The reads above
+  // only prove RLS READ scope, which admits level 8+ everywhere; the UPDATE below is service-role,
+  // so without this a senior manager could re-credit a task at a shop they do not belong to. The
+  // closing page already renders read-only for a non-member, so the tag affordance is never shown.
+  const instance = await loadInstanceOrThrow(authed, completion.instance_id);
+  if (!actor.active || !actor.locations.includes(instance.location_id)) {
+    throw new ChecklistRoleViolationError(4, actor.level, "You do not manage that location");
+  }
   await requireChecklistTaskAccess(authed, completion.instance_id, actor);
 
   const item = await loadTemplateItemOrThrow(authed, completion.template_item_id);
@@ -2047,11 +2057,8 @@ export async function tagActualCompleter(
     );
   }
 
-  // Load template_item to enforce min_role_level on the candidate, and the
-  // instance to derive location_id for picker scope.
-  const instance = await loadInstanceOrThrow(authed, completion.instance_id);
-
-  // Picker-scope check on the proposed actualCompleterId.
+  // Picker-scope check on the proposed actualCompleterId (the instance loaded above gives the
+  // location; the template item its min_role_level).
   const candidates = await loadPickerCandidates({
     instanceId: completion.instance_id,
     locationId: instance.location_id,

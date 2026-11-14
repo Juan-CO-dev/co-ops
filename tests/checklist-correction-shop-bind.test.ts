@@ -24,7 +24,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => mocks.writ
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: mocks.access, auditTaskOverride: vi.fn() }));
 
-import { markNotDoneByAuthority, revokeCompletion, revokeWithReason } from "@/lib/checklists";
+import { markNotDoneByAuthority, revokeCompletion, revokeWithReason, tagActualCompleter } from "@/lib/checklists";
 
 function client(service: boolean): SupabaseClient {
   return {
@@ -133,5 +133,37 @@ describe("B150 — the three correction writers bind the actor to the instance's
   it("the shop check comes before the task-assignment read", async () => {
     await expect(authority(removed)).rejects.toMatchObject({ code: "role_level_insufficient" });
     expect(mocks.access).not.toHaveBeenCalled();
+  });
+});
+
+describe("B151 — tagActualCompleter requires an active membership at the instance's shop", () => {
+  const tag = (actor: ReturnType<typeof checklistActor>) => tagActualCompleter(reader, { completionId: "completion", actor, actualCompleterId: "other" });
+
+  it("a MoO who belongs only to another shop cannot re-credit a completion here: no UPDATE, no audit", async () => {
+    await expect(tag(mooElsewhere)).rejects.toMatchObject({ code: "role_level_insufficient", required: 4, message: "You do not manage that location" });
+    expect(mocks.updates).toEqual([]);
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it.each([["an owner with no membership", ownerNoShops], ["a GM of another shop", gmElsewhere], ["a key holder removed from the shop", removed]] as const)(
+    "%s is refused the same way", async (_name, actor) => {
+      await expect(tag(actor)).rejects.toMatchObject({ code: "role_level_insufficient" });
+      expect(mocks.updates).toEqual([]);
+    });
+
+  it("the completer themself, once removed from the shop, cannot re-credit their own row either", async () => {
+    selfRow("kh");
+    await expect(tag(removed)).rejects.toMatchObject({ code: "role_level_insufficient" });
+    expect(mocks.updates).toEqual([]);
+  });
+
+  it("an active member still tags (KH+), and a MoO who IS a member still tags", async () => {
+    await expect(tag(member)).resolves.toMatchObject({ replacedPriorTag: false, completion: { actualCompleterId: "other" } });
+    expect(mocks.updates).toHaveLength(1);
+    expect(mocks.updates[0]).toMatchObject({ table: "checklist_completions", patch: { actual_completer_id: "other", actual_completer_tagged_by: "kh" } });
+    mocks.db.checklist_completions![0]!.actual_completer_id = null;
+    mocks.db.checklist_completions![0]!.actual_completer_tagged_by = null;
+    const mooHere = checklistActor({ userId: "moo", role: "moo", level: 8, locations: ["shop-a", "shop-b"] });
+    await expect(tag(mooHere)).resolves.toMatchObject({ completion: { actualCompleterId: "other" } });
   });
 });
