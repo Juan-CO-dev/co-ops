@@ -320,23 +320,42 @@ async function loadPayableQuote(
 }
 
 /**
- * The shop's `locations.code`, or null. This is the ONLY way a shop code enters the Stripe
+ * Read the shop's `locations.code`. This is the ONLY way a shop code enters the Stripe
  * credential lookup — read from the row at runtime, never a literal in code (AGENTS.md
- * tenant-vocabulary law). A read failure returns null, which resolves to the shared
- * account: an unknown shop must not silently acquire a different account's keys, and it
- * must not lose the ability to take a payment either.
+ * tenant-vocabulary law).
+ *
+ * ── "WE COULD NOT READ THE SHOP" IS NOT "THE SHOP HAS NO CODE" (audit W02/B146) ───────
+ * A null code is a real answer: that shop rides the shared Stripe account. A FAILED read
+ * (or a missing row) is no answer at all, and it used to be collapsed into that same null
+ * — so a transient database error sent a customer of a shop with its OWN account to pay
+ * into the shared one, with an audit row saying `credential_source: default` as if that
+ * were the plan. The two are kept apart here: only a successful read of a row whose code
+ * is null may resolve the default pair.
  */
-async function locationCodeFor(
+async function readLocationCode(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
-): Promise<string | null> {
+): Promise<{ ok: true; code: string | null } | { ok: false }> {
   const { data, error } = await sb
     .from("locations")
     .select("code")
     .eq("id", locationId)
     .maybeSingle<{ code: string | null }>();
-  if (error) return null;
-  return data?.code ?? null;
+  if (error || !data) return { ok: false };
+  return { ok: true, code: data.code ?? null };
+}
+
+/** The shop's code for a PAYMENT action. A shop we could not read is a 503 — "try again",
+ *  never a guess at which account takes the money. */
+async function locationCodeFor(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<string | null> {
+  const read = await readLocationCode(sb, locationId);
+  if (!read.ok) {
+    throw new PortalQuoteError(503, "payment_unavailable", "Payment is temporarily unavailable — please try again");
+  }
+  return read.code;
 }
 
 /**
@@ -344,12 +363,18 @@ async function locationCodeFor(
  * answer before it can be honest about what happens next. Presence of credentials only;
  * no key material crosses this boundary, and the answer is a boolean the client renders,
  * never a capability it is granted.
+ *
+ * A shop we could not read answers FALSE: this boolean only chooses copy, and the copy must
+ * never promise a provider it has not proved (LRA-210). No credential pair is resolved
+ * from a failed read here either — the payment routes re-resolve on their own request and
+ * refuse with a 503 if they cannot.
  */
 export async function paymentsOnlineForLocation(locationId: string): Promise<boolean> {
   if (!UUID_RE.test(locationId)) return false;
   const sb = getServiceRoleClient();
-  const code = await locationCodeFor(sb, locationId);
-  return stripeCredentialsFor(code) !== null;
+  const read = await readLocationCode(sb, locationId);
+  if (!read.ok) return false;
+  return stripeCredentialsFor(read.code) !== null;
 }
 
 /**

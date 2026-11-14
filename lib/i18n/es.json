@@ -5209,6 +5209,7 @@
   "order.quote.recorded": "Tu pedido quedó registrado.",
   "order.quote.error_not_found": "No encontramos ese pedido.",
   "order.quote.error_generic": "Algo salió mal — inténtalo de nuevo.",
+  "order.quote.error_unavailable": "El pago no está disponible por el momento — inténtalo de nuevo en un momento.",
   "jobWatch.subject": "CO-OPS: {job} no envía señales desde {time}",
   "jobWatch.never": "ninguna señal registrada",
   "jobWatch.body": "Tarea: {job}. Última señal: {time}.",

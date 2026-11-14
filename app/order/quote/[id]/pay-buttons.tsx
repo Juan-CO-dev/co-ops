@@ -36,6 +36,15 @@ interface PayOption {
 const money = (cents: number) =>
   (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 
+/**
+ * Refusal codes the pay route can answer with that have their own sentence. Anything not
+ * listed keeps the historical behaviour (the code itself, else the generic line), so a new
+ * server code is never silently swallowed.
+ */
+const ERROR_KEY: Record<string, TranslationKey> = {
+  payment_unavailable: "order.quote.error_unavailable",
+};
+
 export function PayButtons({ quoteId, options }: { quoteId: string; options: PayOption[] }) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<"deposit" | "full" | null>(null);
@@ -73,10 +82,13 @@ export function PayButtons({ quoteId, options }: { quoteId: string; options: Pay
       if (res.ok) {
         setMessage(data.message ?? t("order.quote.recorded"));
       } else {
+        const known = typeof data.error === "string" ? ERROR_KEY[data.error] : undefined;
         setError(
           res.status === 404
             ? t("order.quote.error_not_found")
-            : data.error ?? t("order.quote.error_generic"),
+            : known
+              ? t(known)
+              : data.error ?? t("order.quote.error_generic"),
         );
       }
     } catch {

@@ -5209,6 +5209,7 @@
   "order.quote.recorded": "Your order is recorded.",
   "order.quote.error_not_found": "We couldn't find that order.",
   "order.quote.error_generic": "Something went wrong — please try again.",
+  "order.quote.error_unavailable": "Payment is temporarily unavailable — please try again in a moment.",
   "jobWatch.subject": "CO-OPS: {job} has been silent since {time}",
   "jobWatch.never": "no heartbeat recorded",
   "jobWatch.body": "Job: {job}. Last heartbeat: {time}.",
