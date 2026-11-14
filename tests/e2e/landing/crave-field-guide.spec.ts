@@ -546,38 +546,101 @@ for(const size of [...laptops,{width:390,height:844}])test(`the pinned crunch st
   expect(g.img.natural).toBeCloseTo(2/3,2);
 });
 
-for(const size of [{width:1366,height:768},{width:1536,height:730},{width:1920,height:1080},{width:390,height:844}])test(`the Field Guide pins and paces its six finds along the scroll (${size.width}x${size.height})`,async({page})=>{
-  // 21 paced scroll steps with a settle each: slower engines need more than the default 30 s.
-  test.setTimeout(60000);
+// Laptop polish (Juan 2026-11-13): "the pointers don't all deploy before someone even gets to the full
+// field guide photo" and "the last pointers are pointing once the full picture is in the screen".
+// Measured, not modelled: walk the page down in wheel-sized steps with the live observer and, at every
+// step where the found count rises, read where the photo and the pin actually are.
+const guideSizes=[{width:1536,height:730},{width:1440,height:900},{width:1280,height:720},{width:1366,height:768},{width:1920,height:1080},{width:390,height:844},{width:375,height:667}];
+for(const size of guideSizes)test(`no Field Guide pointer deploys before the whole photo is on screen, and the last points while it still is (${size.width}x${size.height})`,async({page})=>{
+  // ~60 paced scroll steps with a settle each: slower engines need more than the default 30 s.
+  test.setTimeout(120000);
   await page.setViewportSize(size);
   await page.goto('/');
   const guide=page.locator('.landing-v3-guide');
   await expect(guide).toHaveAttribute('data-guide-mode','motion');
-  // Approach from above: the guide's top just below the fold, nothing found yet.
-  await guide.evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-innerHeight+40));
-  await page.waitForTimeout(400);
-  const found=async()=>Number(await guide.getAttribute('data-guide-found'));
-  expect(await found()).toBe(0);
-  const firstAt:number[]=[];
-  for(let step=0;step<=20;step++){
-    const fraction=step/20;
-    await scrollGuide(page,fraction);await page.waitForTimeout(450);
-    const count=await found();
-    while(firstAt.length<count)firstAt.push(fraction);
-    if(step===2){
-      // Pinned: the words, the whole cross-section and the action slot are on screen together.
-      const g=await page.evaluate(()=>{const r=(s:string)=>document.querySelector(s)!.getBoundingClientRect();return {pin:r('.landing-v5-guide-pin').top,words:r('.landing-v3-guide-words').top,photo:r('.landing-v5-guide-photo').toJSON() as DOMRect,slot:r('[data-guide-cta]').bottom};});
-      expect(Math.abs(g.pin-16)).toBeLessThan(2);
-      expect(g.words).toBeGreaterThanOrEqual(0);
-      expect(g.photo.bottom).toBeLessThanOrEqual(size.height);
-      expect(g.photo.height).toBeGreaterThan(size.height*.3);
-      expect(g.slot).toBeLessThanOrEqual(size.height);
-    }
+  await page.evaluate(()=>document.fonts.ready);
+  const read=()=>page.evaluate(()=>{
+    const r=(s:string)=>document.querySelector(s)!.getBoundingClientRect();
+    const photo=r('.landing-v5-guide-photo');
+    const guide=document.querySelector<HTMLElement>('.landing-v3-guide')!;
+    // Runway progress from the live layout (content above the guide may still change height).
+    const progress=(16-guide.getBoundingClientRect().top)/guide.querySelector('.landing-v5-guide-runway')!.getBoundingClientRect().height;
+    return {y:scrollY,progress,found:Number(guide.dataset.guideFound),pinTop:r('.landing-v5-guide-pin').top,photoTop:photo.top,photoBottom:photo.bottom,photoHeight:photo.height,
+      wordsTop:r('[data-guide-words="above"]').top,wordsBottom:r('[data-guide-words="below"]').bottom,slot:r('[data-guide-cta]').bottom,vh:innerHeight};
+  });
+  const geo=await guide.evaluate(el=>{const g=el.getBoundingClientRect(),photo=el.querySelector('.landing-v5-guide-photo')!.getBoundingClientRect();return {guideTop:g.top+scrollY,photoTop:photo.top+scrollY,photoHeight:photo.height,runway:el.querySelector('.landing-v5-guide-runway')!.getBoundingClientRect().height};});
+  // (i) Half the photo in view, the rest below the fold: no pointer yet.
+  await page.evaluate(y=>scrollTo(0,y),Math.round(geo.photoTop+geo.photoHeight/2-size.height));
+  await page.waitForTimeout(700);
+  // Approaching the guide enhances the order groups above it (their height changes): re-aim once.
+  await page.locator('.landing-v5-guide-photo').evaluate(el=>{const r=el.getBoundingClientRect();scrollTo(0,Math.round(scrollY+r.top+r.height/2-innerHeight));});
+  await page.waitForTimeout(500);
+  const partly=await read();
+  expect(partly.photoBottom).toBeGreaterThan(size.height);
+  expect(partly.found).toBe(0);
+  // (ii) Walk on: the pin sticks at 16px, then the runway; every rise in the count is measured.
+  const rises:Awaited<ReturnType<typeof read>>[]=[];
+  let last=0,fullFrom:number|null=null;
+  for(let y=partly.y;;y+=30){
+    await page.evaluate(v=>scrollTo(0,v),y);await page.waitForTimeout(220);
+    const s=await read();
+    if(s.progress>1.06)break;
+    if(fullFrom===null&&s.photoTop>=0&&s.photoBottom<=s.vh+.5)fullFrom=s.y;
+    if(s.found>last){rises.push(s);last=s.found;}
   }
-  expect(await found()).toBe(6);
-  // Paced: the finds are spread over the runway, not bunched at its start.
-  expect(firstAt[0]!).toBeLessThanOrEqual(.15);
-  expect(firstAt[5]!).toBeGreaterThanOrEqual(.6);
-  for(let i=1;i<6;i++)expect(firstAt[i]!-firstAt[i-1]!).toBeGreaterThanOrEqual(.1);
+  await expect.poll(async()=>(await read()).found,{timeout:5000}).toBe(6);
+  expect(rises.length).toBeGreaterThanOrEqual(3);
+  // The whole photo fits the pinned screen at this viewport (none of the six sizes needs the
+  // "as fully visible as it gets" fallback), and it was whole on screen before the first find.
+  expect(fullFrom).not.toBeNull();
+  expect(rises[0]!.y).toBeGreaterThan(fullFrom!);
+  for(const s of rises){
+    // Pinned, with the whole photo, both rows of words and the action slot on screen.
+    expect(Math.abs(s.pinTop-16),`pin at ${s.found}`).toBeLessThan(2);
+    expect(s.photoTop,`photo top at ${s.found}`).toBeGreaterThanOrEqual(0);
+    expect(s.photoBottom,`photo bottom at ${s.found}`).toBeLessThanOrEqual(s.vh+.5);
+    expect(s.photoHeight).toBeGreaterThan(s.vh*.3);
+    expect(s.wordsTop).toBeGreaterThanOrEqual(0);
+    expect(s.wordsBottom).toBeLessThanOrEqual(s.vh+.5);
+    expect(s.slot).toBeLessThanOrEqual(s.vh+.5);
+    // Inside the runway, with room left: never at its very start or end.
+    const progress=s.progress;
+    expect(progress,`progress at ${s.found}`).toBeGreaterThanOrEqual(.09);
+    expect(progress,`progress at ${s.found}`).toBeLessThanOrEqual(.86);
+  }
+  // Paced, not bunched: the first and last finds are most of the runway apart.
+  expect(rises[rises.length-1]!.progress-rises[0]!.progress).toBeGreaterThanOrEqual(.5);
   await expect(page.locator('#field-guide [data-guide-cta]')).toHaveAttribute('data-ready','true');
+  // (iii) Six of six: every line drawn; no two lines cross, none runs over another word, every
+  // point sits on the photo clear of its edges.
+  await guide.evaluate(el=>scrollTo(0,Math.round(el.getBoundingClientRect().top+scrollY-16+el.querySelector('.landing-v5-guide-runway')!.getBoundingClientRect().height*.9)));await page.waitForTimeout(900);
+  const lines=await page.evaluate(()=>{
+    const words=Object.fromEntries([...document.querySelectorAll<HTMLElement>('[data-anatomy-label]')].map(el=>[el.dataset.anatomyLabel!,el.getBoundingClientRect().toJSON() as DOMRect]));
+    const photo=document.querySelector('.landing-v5-guide-photo')!.getBoundingClientRect();
+    return [...document.querySelectorAll<SVGGElement>('.landing-v3-guide-lines [data-line]')].map(g=>{
+      const path=g.querySelector('path')!,length=path.getTotalLength(),matrix=path.getScreenCTM()!;
+      const points=Array.from({length:61},(_,i)=>{const p=path.getPointAtLength(length*i/60).matrixTransform(matrix);return {x:p.x,y:p.y};});
+      const dot=g.querySelector('circle')!.getBoundingClientRect();
+      return {id:g.dataset.line!,state:g.dataset.state,points,dot:{x:dot.left+dot.width/2,y:dot.top+dot.height/2},words,photo:photo.toJSON() as DOMRect};
+    });
+  });
+  expect(lines).toHaveLength(6);
+  const cross=(a:{x:number;y:number},b:{x:number;y:number},c:{x:number;y:number},d:{x:number;y:number})=>{
+    const o=(p:typeof a,q:typeof a,r:typeof a)=>Math.sign((q.x-p.x)*(r.y-p.y)-(q.y-p.y)*(r.x-p.x));
+    return o(a,b,c)*o(a,b,d)<0&&o(c,d,a)*o(c,d,b)<0;
+  };
+  for(const line of lines){
+    expect(line.state).toBe('shown');
+    const {photo}=line;
+    expect(line.dot.x-photo.left,`${line.id} left`).toBeGreaterThan(20);expect(photo.right-line.dot.x,`${line.id} right`).toBeGreaterThan(20);
+    expect(line.dot.y-photo.top,`${line.id} top`).toBeGreaterThan(20);expect(photo.bottom-line.dot.y,`${line.id} bottom`).toBeGreaterThan(20);
+    for(const [id,word] of Object.entries(line.words))if(id!==line.id)
+      expect(line.points.some(p=>p.x>word.left+1&&p.x<word.right-1&&p.y>word.top+1&&p.y<word.bottom-1),`${line.id} over ${id}`).toBe(false);
+  }
+  for(let i=0;i<lines.length;i++)for(let j=i+1;j<lines.length;j++){
+    const a=lines[i]!.points,b=lines[j]!.points;let crossed=false;
+    for(let p=1;p<a.length&&!crossed;p++)for(let q=1;q<b.length&&!crossed;q++)crossed=cross(a[p-1]!,a[p]!,b[q-1]!,b[q]!);
+    expect(crossed,`${lines[i]!.id} crosses ${lines[j]!.id}`).toBe(false);
+    expect(Math.hypot(lines[i]!.dot.x-lines[j]!.dot.x,lines[i]!.dot.y-lines[j]!.dot.y),`${lines[i]!.id}/${lines[j]!.id} apart`).toBeGreaterThan(24);
+  }
 });

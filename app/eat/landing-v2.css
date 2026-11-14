@@ -224,7 +224,10 @@
 }
 /* ── v3: Field Guide (words above, leader lines to the ingredient) ───────── */
 .landing-v2 .landing-v3-guide { position: relative; margin-top: 24px; max-width: 480px; }
-.landing-v2 .landing-v3-guide-words { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.landing-v2 .landing-v3-guide-words { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.25rem), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+/* Laptop polish (Juan 2026-11-13): three words above the photo and three below it, one row each,
+   so every leader runs from its own word into its own half of the photo and crosses no other word. */
+.landing-v2 .landing-v3-guide-words[data-guide-words="below"] { margin-top: 8px; }
 .landing-v2 .landing-v3-guide-words li { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 4px 6px; border: 2px solid #171712; background: #fff9e4; font-size: .8125rem; font-weight: 900; line-height: 1.1; transition: background-color .2s steps(2); }
 .landing-v2 .landing-v3-guide-words img { width: 24px; height: 24px; object-fit: contain; flex: none; }
 .landing-v2 .landing-v3-guide[data-guide-mode="motion"] .landing-v3-guide-words li[data-active="true"] { background: #ffe560; }
@@ -258,7 +261,7 @@
   /* Reserved before hydration too (list mode), so the page never grows under the reader. */
   .landing-v2 .landing-v3-guide:is([data-guide-mode="list"],[data-guide-mode="motion"]) { --guide-runway: 180svh; }
   .landing-v2 .landing-v3-guide:is([data-guide-mode="list"],[data-guide-mode="motion"]) .landing-v5-guide-pin { position: sticky; top: 16px; min-height: calc(100svh - 32px); display: flex; flex-direction: column; }
-  .landing-v2 .landing-v3-guide:is([data-guide-mode="list"],[data-guide-mode="motion"]) .landing-v3-guide-figure { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .landing-v2 .landing-v3-guide:is([data-guide-mode="list"],[data-guide-mode="motion"]) :is(.landing-v6-guide-board,.landing-v3-guide-figure) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   /* The photo is the largest 2:3 box in the height left over: the whole cross-section stays on screen. */
   .landing-v2 .landing-v3-guide:is([data-guide-mode="list"],[data-guide-mode="motion"]) .landing-v5-guide-slot { flex: 1 1 0; min-height: 34svh; container-type: size; }
   .landing-v2 .landing-v3-guide:is([data-guide-mode="list"],[data-guide-mode="motion"]) .landing-v5-guide-photo { width: min(100cqw, 100cqh * 2 / 3); }
@@ -359,6 +362,10 @@
 .landing-v2 .landing-v3-guide[data-guide-mode="motion"] .landing-v3-guide-words li { padding: 0; }
 .landing-v2 .landing-v4-guide-word { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; margin: 0; padding: 4px 6px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .landing-v2 .landing-v4-guide-word:focus-visible { outline: 3px solid #ed3308; outline-offset: 2px; }
+/* Phones: a third of the column is narrow, so a word stands its pickup above its name. */
+@media (max-width: 559px) {
+  .landing-v2 .landing-v3-guide-words li, .landing-v2 .landing-v4-guide-word { flex-direction: column; justify-content: center; gap: 4px; text-align: center; }
+}
 /* v4.1: every fighter photo is framed on its own sub. The photo wrapper carries, per crop, the
    object-position (plain %) that centres the sub (lib/landing/fighter-select-shared focalPosition). */
 .landing-v2 .landing-v3-stage-media [data-landing-photo] img { object-position: 50% var(--focal-stage, 50%); }

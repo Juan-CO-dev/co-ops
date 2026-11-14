@@ -2,7 +2,7 @@
 import {useEffect,useRef,useState,type CSSProperties,type ReactNode} from 'react';
 import {TexturePhoto} from './CraveScene';
 import {fieldGuideAnchors} from '@/lib/landing/crave-motion-shared';
-import {foundCount,GUIDE_STEP_AT,guideStepRootMargin,leaderPath,nextUnfound,stepReached,stepTarget} from '@/lib/landing/field-guide-shared';
+import {foundCount,GUIDE_STEP_AT,GUIDE_WORDS_ABOVE,guideStepRootMargin,leaderPath,leaderStart,nextUnfound,stepReached,stepTarget} from '@/lib/landing/field-guide-shared';
 import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
 
 type AnchorId=(typeof fieldGuideAnchors)[number]['id'];
@@ -18,7 +18,8 @@ const STEP_MS=1100;
 /** The scroll finds at most one more word per beat, so each draw stays readable. */
 const ADVANCE_MS=350;
 
-/** Words (each with its pixel pickup) sit above the cross-section. Scrolling through the guide
+/** Words (each with its pixel pickup) frame the cross-section: the first three above it, the last
+ * three below it, each pointing into its own half of the photo (no leader crosses a word). Scrolling through the guide
  * finds them one by one (forward only: scrolling back never un-finds); tapping a word finds it at
  * once. A found word's leader line draws to its ingredient and stays until the next word is
  * found, and the word is "collected"; six of six shows every line and reveals the order action.
@@ -48,7 +49,8 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       for(const anchor of fieldGuideAnchors){
         const word=words.current[anchor.id]?.getBoundingClientRect();if(!word)continue;
         const to={x:pic.left-box.left+anchor.x*pic.width,y:pic.top-box.top+anchor.y*pic.height};
-        next[anchor.id]={d:leaderPath({x:word.left+word.width/2-box.left,y:word.bottom-box.top},to),...to};
+        const from=leaderStart(word,pic);
+        next[anchor.id]={d:leaderPath({x:from.x-box.left,y:from.y-box.top},to),...to};
       }
       setPaths(next);
     };
@@ -108,31 +110,32 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
   const collectedMask=found&~drawing;
   const collected=foundCount(collectedMask,total);
   const complete=mode==='static'||collected>=total;
+  const wordItem=(anchor:(typeof fieldGuideAnchors)[number],index:number)=>{
+    const word=<>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={pickups[anchor.id].src} width={pickups[anchor.id].width} height={pickups[anchor.id].height} alt="" aria-hidden="true" loading="lazy" decoding="async" className="landing-v3-pixel"/>
+      <span>{labels[anchor.id]}</span>
+    </>;
+    return <li key={anchor.id} ref={node=>{words.current[anchor.id]=node;}} data-anatomy-label={anchor.id} data-found={Boolean(found&(1<<index))} data-collected={Boolean(collectedMask&(1<<index))} data-active={Boolean(drawing&(1<<index))}>
+      {/* While the game runs a word is a button: tapping it finds it at once. */}
+      {mode==='motion'?<button type="button" className="landing-v4-guide-word" onClick={()=>findRef.current(index)}>{word}</button>:word}
+    </li>;
+  };
   return <div className="landing-v3-guide" data-guide-mode={mode} data-guide-found={foundCount(found,total)}>
     <div ref={pin} className="landing-v5-guide-pin">
-    <div role="group" aria-labelledby="field-guide-labels-title">
+    <div role="group" aria-labelledby="field-guide-labels-title" className="landing-v6-guide-board">
     <span id="field-guide-labels-title" className="sr-only">{groupLabel}</span>
-    <ul className="landing-v3-guide-words">
-      {fieldGuideAnchors.map((anchor,index)=>{
-        const word=<>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={pickups[anchor.id].src} width={pickups[anchor.id].width} height={pickups[anchor.id].height} alt="" aria-hidden="true" loading="lazy" decoding="async" className="landing-v3-pixel"/>
-          <span>{labels[anchor.id]}</span>
-        </>;
-        return <li key={anchor.id} ref={node=>{words.current[anchor.id]=node;}} data-anatomy-label={anchor.id} data-found={Boolean(found&(1<<index))} data-collected={Boolean(collectedMask&(1<<index))} data-active={Boolean(drawing&(1<<index))}>
-          {/* While the game runs a word is a button: tapping it finds it at once. */}
-          {mode==='motion'?<button type="button" className="landing-v4-guide-word" onClick={()=>findRef.current(index)}>{word}</button>:word}
-        </li>;
-      })}
-    </ul>
-    </div>
-    <p className="landing-v3-guide-count" aria-hidden="true" hidden={mode!=='motion'}>{counter.replace('{count}',String(collected)).replace('{total}',String(total))}</p>
+    {/* The first three words sit above the photo, the last three below it. */}
+    <ul className="landing-v3-guide-words" data-guide-words="above">{fieldGuideAnchors.slice(0,GUIDE_WORDS_ABOVE).map((anchor,index)=>wordItem(anchor,index))}</ul>
     <figure className="landing-v3-guide-figure">
       {/* While pinned the slot takes the height left over and the photo is the largest 2:3 box
           inside it, so the whole cross-section (every ingredient anchor) stays on screen. */}
       <div className="landing-v5-guide-slot"><div ref={photo} className="landing-v5-guide-photo"><TexturePhoto kind="crossSection" alt={crossAlt}/></div></div>
+      <ul className="landing-v3-guide-words" data-guide-words="below">{fieldGuideAnchors.slice(GUIDE_WORDS_ABOVE).map((anchor,offset)=>wordItem(anchor,GUIDE_WORDS_ABOVE+offset))}</ul>
+      <p className="landing-v3-guide-count" aria-hidden="true" hidden={mode!=='motion'}>{counter.replace('{count}',String(collected)).replace('{total}',String(total))}</p>
       <figcaption>{caption}</figcaption>
     </figure>
+    </div>
     {/* One constant box from the server render on. An invisible, inert, disabled twin of the action
         (same element, class and words) sits in the slot's only grid cell from the start, so the box is
         the button's own height at any text size; at six-of-six the real action takes the same cell.

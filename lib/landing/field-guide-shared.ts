@@ -6,11 +6,24 @@ export function leaderPath(from:Point,to:Point):string {
   return `M${r(from.x)} ${r(from.y)} C${r(from.x)} ${r(from.y+dy*.45)} ${r(to.x)} ${r(to.y-dy*.35)} ${r(to.x)} ${r(to.y)}`;
 }
 /** Where each word is found, as a fraction of the pinned runway (laptop polish, Juan 2026-11-13).
- * Four of the six ingredients sit in the photo's top quarter, so tying a find to the photo's own
- * visibility bunched four finds into the first few wheel ticks. The guide now pins while the
- * reader scrolls a fixed runway, and the six finds are paced EVENLY along it: the first right as
- * it pins, the last with a fifth of the runway left so the order action is seen before it unpins. */
-export const GUIDE_STEP_AT=[.05,.2,.35,.5,.65,.8] as const;
+ * The guide pins (sticky, top 16px) while the reader scrolls a fixed runway of GUIDE_RUNWAY_SCREENS,
+ * and the six finds are paced EVENLY along it. Juan: no pointer may deploy before the whole photo is
+ * on screen, and the last one must point while the whole photo is still there. Pinned, the photo is
+ * the largest 2:3 box the pin leaves (CSS), so it is wholly on screen for the entire runway; the
+ * first find waits a tenth of the runway (about 0.18 of a screen) past the pin so the photo has
+ * visibly settled, and the last lands with a fifth of the runway still pinned (the order action is
+ * seen before the photo scrolls away). Measured per viewport by tests/e2e/landing/crave-field-guide. */
+export const GUIDE_STEP_AT=[.1,.24,.38,.52,.66,.8] as const;
+/** The runway's length in screens (svh): the CSS --guide-runway. */
+export const GUIDE_RUNWAY_SCREENS=1.8;
+/** Words above the photo; the rest sit below it, so every leader runs from its own word straight
+ * into its half of the photo without crossing another word or another leader. */
+export const GUIDE_WORDS_ABOVE=3;
+/** Where a word's leader starts: the middle of its bottom edge when the word is above the photo,
+ * of its top edge when it is below. */
+export function leaderStart(word:{left:number;width:number;top:number;bottom:number},photo:{top:number;bottom:number}):Point {
+  return {x:word.left+word.width/2,y:word.top>=photo.bottom-1?word.top:word.bottom};
+}
 /** The trigger band is the top tenth of the viewport. Each step marker runs from its own position
  * to the end of the runway, so it intersects the band exactly once its start has risen above the
  * band's lower edge. The CSS places markers with the same 10svh (see .landing-v5-guide-step). */
@@ -24,7 +37,7 @@ export function guideStepRootMargin(viewportHeight:number):string {
 }
 /** Without JS the guide is a plain list: no pin, no runway, the photo at its natural size
  * (rendered once, in the page's own noscript style). */
-export const GUIDE_NO_JS_CSS='.landing-v2 .landing-v3-guide[data-guide-mode="list"] .landing-v5-guide-pin { position:static; display:block; min-height:0; } .landing-v2 .landing-v3-guide[data-guide-mode="list"] .landing-v5-guide-runway { display:none; } .landing-v2 .landing-v3-guide[data-guide-mode="list"] .landing-v3-guide-figure { display:block; } .landing-v2 .landing-v3-guide[data-guide-mode="list"] .landing-v5-guide-slot { container-type:normal; flex:none; min-height:0; } .landing-v2 .landing-v3-guide[data-guide-mode="list"] .landing-v5-guide-photo { width:100%; }';
+export const GUIDE_NO_JS_CSS='.landing-v2 .landing-v3-guide[data-guide-mode="list"] .landing-v5-guide-pin { position:static; display:block; min-height:0; } .landing-v2 .landing-v3-guide[data-guide-mode="list"] .landing-v5-guide-runway { display:none; } .landing-v2 .landing-v3-guide[data-guide-mode="list"] :is(.landing-v6-guide-board,.landing-v3-guide-figure) { display:block; } .landing-v2 .landing-v3-guide[data-guide-mode="list"] .landing-v5-guide-slot { container-type:normal; flex:none; min-height:0; } .landing-v2 .landing-v3-guide[data-guide-mode="list"] .landing-v5-guide-photo { width:100%; }';
 /** A step marker has been reached: it is in the band, or (the first report after a reload or a
  * jump) the whole marker already lies above the viewport. Taken from the observer's entry only:
  * no layout reads of our own. */
