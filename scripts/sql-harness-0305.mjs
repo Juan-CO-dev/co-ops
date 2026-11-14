@@ -6,12 +6,16 @@
  *
  * The base is hand-built tables plus the REAL definitions the migration stands on, extracted from their
  * sources, never forked: current_user_id (0200), current_user_role_level (0189), the live
- * current_user_locations body (Foundation Spec v1.3 §5, never re-emitted by a migration until 0305) and the
- * cash_reports policies (0067). Every request runs as PostgREST runs it: `set local role authenticated` plus
+ * current_user_locations body (Foundation Spec v1.3 §5, never re-emitted by a migration until 0305), the
+ * cash_reports policy (0067), the catering oracles and read policies (0113, 0120) and the parents' floored
+ * quals (0189). Every request runs as PostgREST runs it: `set local role authenticated` plus
  * the JWT claims in `request.jwt.claims`.
  *
  *   A  B009  current_user_locations() counts ACTIVE memberships only: a removed shop closes on the curl path
  *            while the kept shop stays open; helper shape, grants and the refusal guards.
+ *   B  B010  the catering child tables (quote lines, order lines, lead history) take the parents' level-5
+ *            floor on the location arm: the whole role x membership matrix, child never wider than parent,
+ *            the unassigned-lead arm (6+) and the level-9 arm unchanged; a second read policy is refused.
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
@@ -41,6 +45,8 @@ function grab(sql, re, what) {
 
 // ── fixtures ────────────────────────────────────────────────────────────────────────────────────
 const SHOP_A = id(101), SHOP_B = id(102);
+const LEAD_A = id(301), LEAD_B = id(302), LEAD_NONE = id(303);
+const ORDER_A = id(311), ORDER_B = id(312), QUOTE_A = id(321), QUOTE_B = id(322);
 /** [user id, session id, role]. Everyone starts as an ACTIVE member of both shops unless a test says otherwise. */
 const PEOPLE = {
   employee: [id(1), id(201), "employee"],
@@ -97,6 +103,38 @@ async function base() {
   await db.exec(`revoke all on function current_user_id(), current_user_role_level(), current_user_locations() from public, anon;
     grant execute on function current_user_id(), current_user_role_level(), current_user_locations() to authenticated, service_role;`);
   await db.exec(grab(mig("0067_cash_reports.sql"), /CREATE POLICY cash_reports_read[\s\S]*?;/, "0067 cash_reports_read"));
+
+  // Catering: parents and children, with the REAL oracles and read policies (0113, 0120) and the parents'
+  // REAL floored quals (0189's ALTER POLICY statements over a placeholder).
+  await db.exec(`create table catering_pipeline(id uuid primary key, location_id uuid);
+    create table catering_orders(id uuid primary key, location_id uuid not null);
+    create table catering_quotes(id uuid primary key, location_id uuid not null);
+    create table catering_pipeline_events(id uuid primary key default gen_random_uuid(), pipeline_id uuid not null references catering_pipeline, to_stage text);
+    create table catering_order_items(id uuid primary key default gen_random_uuid(), order_id uuid not null references catering_orders, description text);
+    create table catering_quote_items(id uuid primary key default gen_random_uuid(), quote_id uuid not null references catering_quotes, unit_price_cents integer);
+    alter table catering_pipeline enable row level security; alter table catering_orders enable row level security;
+    alter table catering_quotes enable row level security; alter table catering_pipeline_events enable row level security;
+    alter table catering_order_items enable row level security; alter table catering_quote_items enable row level security;
+    create policy catering_pipeline_read on catering_pipeline for select using (false);
+    create policy catering_orders_read on catering_orders for select using (false);
+    insert into catering_pipeline values('${LEAD_A}','${SHOP_A}'),('${LEAD_B}','${SHOP_B}'),('${LEAD_NONE}',null);
+    insert into catering_orders values('${ORDER_A}','${SHOP_A}'),('${ORDER_B}','${SHOP_B}');
+    insert into catering_quotes values('${QUOTE_A}','${SHOP_A}'),('${QUOTE_B}','${SHOP_B}');
+    insert into catering_pipeline_events(pipeline_id, to_stage) values('${LEAD_A}','inquiry'),('${LEAD_B}','inquiry'),('${LEAD_NONE}','inquiry');
+    insert into catering_order_items(order_id, description) values('${ORDER_A}','a'),('${ORDER_B}','b');
+    insert into catering_quote_items(quote_id, unit_price_cents) values('${QUOTE_A}',1200),('${QUOTE_B}',1300);`);
+  const m0113 = mig("0113_catering_child_rls_parent_anchored.sql"), m0120 = mig("0120_catering_quotes.sql"), m0189 = mig("0189_rls_perimeter_revokes_and_read_floors.sql");
+  for (const [sql, re, what] of [
+    [m0113, /CREATE FUNCTION public\.catering_pipeline_loc\(p_id uuid\)[\s\S]*?\$\$;\nREVOKE EXECUTE[^\n]*;/, "0113 catering_pipeline_loc"],
+    [m0113, /CREATE FUNCTION public\.catering_order_loc\(o_id uuid\)[\s\S]*?\$\$;\nREVOKE EXECUTE[^\n]*;/, "0113 catering_order_loc"],
+    [m0120, /CREATE FUNCTION public\.catering_quote_loc\(q_id uuid\)[\s\S]*?\$\$;\nREVOKE EXECUTE[^\n]*;\nREVOKE EXECUTE[^\n]*;/, "0120 catering_quote_loc"],
+    [m0113, /CREATE POLICY catering_pipeline_events_read[\s\S]*?\);/, "0113 catering_pipeline_events_read"],
+    [m0113, /CREATE POLICY catering_order_items_read[\s\S]*?\);/, "0113 catering_order_items_read"],
+    [m0120, /CREATE POLICY catering_quotes_read[\s\S]*?\);/, "0120 catering_quotes_read"],
+    [m0120, /CREATE POLICY catering_quote_items_read[\s\S]*?\);/, "0120 catering_quote_items_read"],
+    [m0189, /alter policy catering_pipeline_read[\s\S]*?\);/, "0189 catering_pipeline_read"],
+    [m0189, /alter policy catering_orders_read[\s\S]*?\);/, "0189 catering_orders_read"],
+  ]) await db.exec(grab(sql, re, what));
   return db;
 }
 
@@ -160,8 +198,84 @@ async function membership() {
   console.log("A  B009 current_user_locations(): active memberships only; shape, grants and refusals verified");
 }
 
+// ── B. B010 ─────────────────────────────────────────────────────────────────────────────────────
+const CHILDREN = [
+  ["catering_quote_items", "quote_id", "catering_quotes", QUOTE_A, QUOTE_B],
+  ["catering_order_items", "order_id", "catering_orders", ORDER_A, ORDER_B],
+  ["catering_pipeline_events", "pipeline_id", "catering_pipeline", LEAD_A, LEAD_B],
+];
+const LEVEL = { employee: 3, keyHolder: 4, shiftLead: 5, cateringMgr: 6, gm: 7, moo: 8, owner: 9 };
+const parentIds = async (db, who, table, key) => (await rows(db, who, `select ${key} as k from ${table} order by 1`)).map((r) => r.k);
+
+async function cateringChildren() {
+  let db = await base();
+  // The bug, on the pre-0305 schema: a level-3 member reads the children while the parent returns nothing.
+  for (const [child, key, parent, atA, atB] of CHILDREN) {
+    const seen = await parentIds(db, "employee", child, key);
+    check(seen.includes(atA) && seen.includes(atB) && (await rows(db, "employee", `select 1 from ${parent}`)).length === 0,
+      `B0 before 0305: an employee (level 3) reads ${child} at their shops while ${parent} returns nothing (the bug)`);
+  }
+  await db.exec(M0305);
+
+  // The matrix: every role, as a member of both shops, of shop B only, and of no shop.
+  for (const membership of ["both", "b_only", "none"]) {
+    for (const who of Object.keys(LEVEL)) {
+      const level = LEVEL[who];
+      await db.exec(`update user_locations set active = ${membership === "both"} where user_id = '${PEOPLE[who][0]}' and location_id = '${SHOP_A}';
+        update user_locations set active = ${membership !== "none"} where user_id = '${PEOPLE[who][0]}' and location_id = '${SHOP_B}';`);
+      for (const [child, key, parent, atA, atB] of CHILDREN) {
+        const want = level >= 9 ? [atA, atB] : level < 5 ? [] : membership === "both" ? [atA, atB] : membership === "b_only" ? [atB] : [];
+        const seen = await parentIds(db, who, child, key);
+        const located = seen.filter((k) => k !== LEAD_NONE).sort().join(",");
+        check(located === [...want].sort().join(","), `B1 ${who} (level ${level}, ${membership}) reads ${want.length} located parent(s) of ${child}`);
+        // Never wider than the parent: every child row's parent is itself readable.
+        const parents = await parentIds(db, who, parent, "id");
+        check(seen.every((k) => parents.includes(k)), `B1 ${who} (${membership}): ${child} is never wider than ${parent}`);
+      }
+      // 0113's third arm, unchanged: an unassigned lead's history needs level 6 (9+ reads everything).
+      const unassigned = (await parentIds(db, who, "catering_pipeline_events", "pipeline_id")).includes(LEAD_NONE);
+      check(unassigned === (level >= 6), `B2 ${who} (level ${level}, ${membership}): unassigned-lead history ${level >= 6 ? "readable" : "hidden"}`);
+    }
+  }
+  await db.exec("update user_locations set active = true;");
+  // A deactivated manager resolves no level (0189): nothing.
+  await db.exec(`update users set active = false where id = '${PEOPLE.gm[0]}';`);
+  for (const [child] of CHILDREN) check((await rows(db, "gm", `select 1 from ${child}`)).length === 0, `B2 a deactivated GM reads nothing from ${child}`);
+  await db.exec(`update users set active = true where id = '${PEOPLE.gm[0]}';`);
+  // anon: the policy calls helpers anon cannot execute; never rows.
+  for (const [child] of CHILDREN) {
+    let got = "error";
+    try { got = String((await rows(db, "anon", `select 1 from ${child}`)).length); } catch { /* 42501 is the loud refusal */ }
+    check(got === "error" || got === "0", `B2 anon reads nothing from ${child}`);
+  }
+  // Structure: one permissive read policy per child, floored; nothing else moved.
+  const policies = (await db.query(`select tablename, policyname, cmd, qual from pg_policies where schemaname = 'public'
+    and tablename in ('catering_quote_items','catering_order_items','catering_pipeline_events') and cmd in ('SELECT','ALL') order by 1`)).rows;
+  check(policies.length === 3 && policies.every((p) => p.policyname === `${p.tablename}_read` && p.cmd === "SELECT" && />= \(?5\)?/.test(p.qual) && />= \(?9\)?/.test(p.qual)),
+    "B3 exactly one SELECT policy per child table, carrying the level-5 floor and the level-9 arm");
+  check(/IS NULL\) AND \(current_user_role_level\(\) >= \(?6\)?/.test(policies.find((p) => p.tablename === "catering_pipeline_events").qual),
+    "B3 catering_pipeline_events keeps 0113's unassigned-lead arm at level 6");
+  const audits = (await db.query(`select resource_table from audit_log where metadata->>'bug' = 'B010' order by 1`)).rows.map((r) => r.resource_table).join(",");
+  check(audits === "catering_order_items,catering_pipeline_events,catering_quote_items", "B3 one audit row per child policy");
+  await db.close();
+
+  // Refusals.
+  db = await base();
+  await db.exec("drop policy catering_order_items_read on catering_order_items;");
+  await applyRefuses(db, "0305: policy catering_order_items_read", "B4 refuses when a child read policy is missing");
+  await db.close();
+  db = await base();
+  await db.exec("create policy catering_quote_items_everyone on catering_quote_items for select using (true);");
+  await applyRefuses(db, "another permissive read policy (catering_quote_items_everyone)", "B4 refuses when a second read policy would OR the floor away");
+  check(!(await db.query(`select prosrc from pg_proc where oid = 'public.current_user_locations()'::regprocedure`)).rows[0].prosrc.includes("active"),
+    "B4 that refusal rolled section A back too (one transaction)");
+  await db.close();
+  console.log("B  B010 catering child reads: floored at level 5 on the location arm; matrix, structure and refusals verified");
+}
+
 try {
   await membership();
+  await cateringChildren();
   if (failures) { console.error(`FAIL 0305: ${failures} of ${checks} checks failed`); process.exitCode = 1; }
   else console.log(`PASS 0305: ${checks} checks`);
 } catch (e) { console.error(`FAIL 0305: ${e.stack ?? e}`); process.exitCode = 1; }
