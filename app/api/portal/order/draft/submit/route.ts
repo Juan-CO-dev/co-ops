@@ -32,8 +32,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const result = await submitDraft(ctx.customerId, body.quoteId, {
-      isDelivery: typeof body.isDelivery === "boolean" ? body.isDelivery : undefined,
-      deliveryZoneId: typeof body.deliveryZoneId === "string" ? body.deliveryZoneId : (body.deliveryZoneId === null ? null : undefined),
+      // Delivery vs pickup and the delivery zone are decided server-side (audit W01/B001); a body's
+      // isDelivery / deliveryZoneId is ignored.
       tipBps: Number.isFinite(body.tipBps) ? (body.tipBps as number) : undefined,
       napkins: body.napkins === true,
     });

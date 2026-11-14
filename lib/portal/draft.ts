@@ -28,6 +28,10 @@ import { createPaymentDue } from "@/lib/catering/payments";
 import { sendEmail } from "@/lib/email";
 import { renderOrderConfirmationEmail } from "@/lib/email-templates/order-confirmation";
 import { allowlistMatches } from "./magic-link-shared";
+import { resolvePortalDeliveryZone } from "./draft-shared";
+
+export { resolvePortalDeliveryZone } from "./draft-shared";
+export type { PortalZoneResolution } from "./draft-shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The dedicated menu section the napkins/utensils add-on lives in (excluded from the shopping list). */
@@ -491,13 +495,10 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
   });
 }
 
-/** Resolve the delivery fee for a chosen zone (0 unless delivery + a valid zone for this location). */
-async function resolveDeliveryFee(locationId: string, isDelivery: boolean, deliveryZoneId: string | null): Promise<number> {
-  if (!isDelivery || deliveryZoneId == null) return 0;
-  const pricing = await loadPublicPricingContext(locationId);
-  const zone = pricing.zones.find((z) => z.id === deliveryZoneId);
-  if (!zone) throw new PortalDraftError(400, "invalid_payload", "Delivery zone not found for this location");
-  return zone.feeCents;
+/** The draft's delivery zone + fee, decided by the SERVER from the location's active zones and the
+ * draft's own is_delivery (set at intake). Nothing the browser sends reaches it (audit W01/B001). */
+function serverDeliveryZone(pricing: { zones: Array<{ id: string; feeCents: number }> }, isDelivery: boolean) {
+  return resolvePortalDeliveryZone(pricing.zones, isDelivery);
 }
 
 /** The draft's current persisted per-line totals (server-owned; never client-supplied). */
@@ -515,26 +516,31 @@ async function loadNapkinsAddon(locationId: string): Promise<CateringMenuItem | 
 
 // ── Set lines (build cart persistence, in place) ───────────────────────────────────
 
-export interface SetLinesOpts { isDelivery?: boolean; deliveryZoneId?: string | null; tipBps?: number | null }
+export interface SetLinesOpts {
+  /** IGNORED (audit W01/B001): delivery vs pickup is the draft row's is_delivery, set at intake, and the
+   *  zone is decided by the server. Kept so existing callers type-check; never read. */
+  isDelivery?: boolean;
+  tipBps?: number | null;
+}
 
 /** Replace the draft's lines + recompute + snapshot the charge stack IN PLACE (owned + 'draft'
  * only — no version churn). Returns the updated DraftView. */
 export async function setDraftLines(customerId: string, quoteId: string, lines: DraftLineInput[], opts: SetLinesOpts = {}): Promise<DraftView> {
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
-  const isDelivery = opts.isDelivery ?? header.is_delivery;
-  const deliveryZoneId = opts.deliveryZoneId !== undefined ? opts.deliveryZoneId : header.delivery_zone_id;
+  const isDelivery = header.is_delivery;
 
   // A-M3: ALL validation + the full charge stack are computed BEFORE any write — resolveLines
-  // (bounds/refs), ratesWithTip (tip validation), and resolveDeliveryFee all throw here, before the
+  // (bounds/refs) and ratesWithTip (tip validation) throw here, before the
   // delete, so a bad payload can never leave the line items replaced with a stale snapshot. (Full
   // delete+insert+update transactional atomicity would need an RPC; the residual is only a sub-ms
   // concurrent-self-read window — tracked as an optional deeper fix.)
   const resolved = await resolveLines(header.location_id, lines);
   const pricing = await loadPublicPricingContext(header.location_id);
-  const deliveryFee = await resolveDeliveryFee(header.location_id, isDelivery, deliveryZoneId);
+  const zone = serverDeliveryZone(pricing, isDelivery);
+  const deliveryZoneId = zone.zoneId;
   const rates = ratesWithTip(pricing.rates, opts.tipBps);
-  const stack = computeChargeStack(resolved.map((l) => l.lineTotalCents), deliveryFee, rates);
+  const stack = computeChargeStack(resolved.map((l) => l.lineTotalCents), zone.feeCents, rates);
 
   // Replace the line set (delete-then-insert; the quote stays the same row → no new version).
   const { error: delErr } = await sb.from("catering_quote_items").delete().eq("quote_id", quoteId);
@@ -571,7 +577,7 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
 
 // ── Preview (compute-only, review page) ────────────────────────────────────────────
 
-export interface PreviewOpts { isDelivery?: boolean; deliveryZoneId?: string | null; tipBps?: number | null; napkins?: boolean }
+export interface PreviewOpts { tipBps?: number | null; napkins?: boolean }
 
 /** Compute-only charge stack for the review page (owned + 'draft'). Reads the draft's CURRENT
  * persisted lines, optionally + the napkins add-on, applies the chosen tip/delivery — persists
@@ -585,15 +591,13 @@ export async function previewDraft(customerId: string, quoteId: string, opts: Pr
     if (napkins) lineTotals.push(lineTotalCents(1, napkins.unitPriceCents));
   }
   const pricing = await loadPublicPricingContext(header.location_id);
-  const isDelivery = opts.isDelivery ?? header.is_delivery;
-  const deliveryZoneId = opts.deliveryZoneId !== undefined ? opts.deliveryZoneId : header.delivery_zone_id;
-  const deliveryFee = await resolveDeliveryFee(header.location_id, isDelivery, deliveryZoneId);
-  return computeChargeStack(lineTotals, deliveryFee, ratesWithTip(pricing.rates, opts.tipBps));
+  const zone = serverDeliveryZone(pricing, header.is_delivery);
+  return computeChargeStack(lineTotals, zone.feeCents, ratesWithTip(pricing.rates, opts.tipBps));
 }
 
 // ── Submit (draft → submitted, the one completing click) ───────────────────────────
 
-export interface SubmitOpts { isDelivery?: boolean; deliveryZoneId?: string | null; tipBps?: number | null; napkins?: boolean }
+export interface SubmitOpts { tipBps?: number | null; napkins?: boolean }
 export interface SubmitResult { quoteId: string; depositCents: number; totalCents: number }
 
 function defaultExpiry(): string { return new Date(Date.now() + DEFAULT_EXPIRY_DAYS * 86400 * 1000).toISOString(); }
@@ -628,11 +632,11 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   const lineTotals = napkinsTotal != null ? [...baseLineTotals, napkinsTotal] : baseLineTotals;
 
   const pricing = await loadPublicPricingContext(header.location_id);
-  const isDelivery = opts.isDelivery ?? header.is_delivery;
-  const deliveryZoneId = opts.deliveryZoneId !== undefined ? opts.deliveryZoneId : header.delivery_zone_id;
-  const deliveryFee = await resolveDeliveryFee(header.location_id, isDelivery, deliveryZoneId);
+  const isDelivery = header.is_delivery;
+  const zone = serverDeliveryZone(pricing, isDelivery);
+  const deliveryZoneId = zone.zoneId;
   const rates = ratesWithTip(pricing.rates, opts.tipBps);
-  const stack = computeChargeStack(lineTotals, deliveryFee, rates);
+  const stack = computeChargeStack(lineTotals, zone.feeCents, rates);
 
   // ATOMIC CLAIM: flip draft → submitted with the final (napkins-inclusive) snapshot. Guard on
   // status='draft' — the LOSER of a double-submit gets count=0 → 409 having mutated NOTHING.

@@ -139,8 +139,6 @@ function OrderReview() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             quoteId: draft.quoteId,
-            isDelivery: draft.isDelivery,
-            deliveryZoneId: draft.deliveryZoneId ?? null,
             tipBps,
             napkins,
           }),
@@ -170,8 +168,6 @@ function OrderReview() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           quoteId: draft.quoteId,
-          isDelivery: draft.isDelivery,
-          deliveryZoneId: draft.deliveryZoneId ?? null,
           tipBps,
           napkins,
         }),

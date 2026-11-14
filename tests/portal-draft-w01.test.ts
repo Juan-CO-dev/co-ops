@@ -94,5 +94,44 @@ describe("B003 — the order confirmation email under the go-live allowlist '*'"
   });
 });
 
+const zone = (id: string, feeCents: number) => ({ id, slug: id.slice(0, 4), labelEn: "Zone", labelEs: null, feeCents, minOrderCents: null });
+
+describe("B001 — the delivery fee of a self-serve delivery order is decided by the server", () => {
+  it("one active zone at the shop: preview, save and submit all charge its fee and record the zone", async () => {
+    h.zones = [zone(ZONE, 2500)];
+    const db = useDb(seed({ is_delivery: true }));
+    expect((await previewDraft(CUST, QUOTE, {})).deliveryFeeCents).toBe(2500);
+    const view = await setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 10 }]);
+    expect(view.stack.deliveryFeeCents).toBe(2500);
+    expect(view.deliveryZoneId).toBe(ZONE);
+    const res = await submitDraft(CUST, QUOTE, {});
+    expect(res.totalCents).toBe(12500);
+    expect(quoteRow(db)).toMatchObject({ status: "submitted", is_delivery: true, delivery_zone_id: ZONE, delivery_fee_cents: 2500, total_cents: 12500, deposit_cents: 3125 });
+  });
+  it("what the browser sends cannot change it: a null zone, another zone id, or isDelivery:false are ignored", async () => {
+    h.zones = [zone(ZONE, 2500)];
+    const db = useDb(seed({ is_delivery: true }));
+    const forged = { isDelivery: false, deliveryZoneId: null } as unknown as Parameters<typeof submitDraft>[2];
+    expect((await previewDraft(CUST, QUOTE, forged)).deliveryFeeCents).toBe(2500);
+    await submitDraft(CUST, QUOTE, forged);
+    expect(quoteRow(db)).toMatchObject({ is_delivery: true, delivery_zone_id: ZONE, delivery_fee_cents: 2500 });
+  });
+  it("pickup is never charged a delivery fee", async () => {
+    h.zones = [zone(ZONE, 2500)];
+    const db = useDb(seed({ is_delivery: false }));
+    const forged = { isDelivery: true, deliveryZoneId: ZONE } as unknown as Parameters<typeof submitDraft>[2];
+    await submitDraft(CUST, QUOTE, forged);
+    expect(quoteRow(db)).toMatchObject({ is_delivery: false, delivery_zone_id: null, delivery_fee_cents: 0 });
+  });
+  it("no zones configured, or several fee tiers the server cannot place an address in: no fee, no zone (staff set it on confirm)", async () => {
+    useDb(seed({ is_delivery: true }));
+    expect((await previewDraft(CUST, QUOTE, {})).deliveryFeeCents).toBe(0);
+    h.zones = [zone(ZONE, 2500), zone("66666666-6666-4666-8666-666666666666", 4000)];
+    const db = useDb(seed({ is_delivery: true }));
+    await submitDraft(CUST, QUOTE, {});
+    expect(quoteRow(db)).toMatchObject({ delivery_zone_id: null, delivery_fee_cents: 0 });
+  });
+});
+
 // Keep the imports referenced while later describe blocks are added bug by bug.
-void previewDraft; void setDraftLines; void loadDraft; void PortalDraftError; void ZONE;
+void loadDraft; void PortalDraftError;

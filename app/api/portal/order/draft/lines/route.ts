@@ -61,8 +61,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const view = await setDraftLines(ctx.customerId, body.quoteId, lines, {
-      isDelivery: typeof body.isDelivery === "boolean" ? body.isDelivery : undefined,
-      deliveryZoneId: typeof body.deliveryZoneId === "string" ? body.deliveryZoneId : (body.deliveryZoneId === null ? null : undefined),
+      // Delivery vs pickup and the delivery zone are decided server-side (audit W01/B001); a body's
+      // isDelivery / deliveryZoneId is ignored.
       tipBps: Number.isFinite(body.tipBps) ? (body.tipBps as number) : undefined,
     });
     return NextResponse.json({ ok: true, stack: view.stack, isDelivery: view.isDelivery, deliveryZoneId: view.deliveryZoneId });
