@@ -40,6 +40,7 @@ export type ThreeWayFlag =
   | "billed_over_received" // billedQty > receivedQty (both known): the invoice charges for more than arrived.
   | "short_received" // receivedQty < orderedQty (both known): the door count came in under the order.
   | "unmatched_invoice_line" // an invoice line joined no ordered/received SKU — its own row.
+  | "invoice_credit" // a credit/return line (negative qty or amount) — its own row, never joined (W04/B044).
   | "not_billed"; // ordered+received but NO invoice line matched, AND an invoice exists on the PO.
 
 /** One reconciled line across the three legs. Any leg absent from a line is null
@@ -102,7 +103,8 @@ export interface DeliveryLineInput {
 
 /** One BILLED line (from email_receipts.parsed_json.extraction.lines). The vendor's
  *  document carries NO skuId; the fuzzy-join matches on itemNumber/description.
- *  Numbers are already validated finite/≥0 by the parse engine (untrusted-LLM law). */
+ *  Numbers are already validated finite by the parse engine (untrusted-LLM law); qty and
+ *  extendedCents are SIGNED, negative on a credit/return line (W04/B044). */
 export interface InvoiceLineInput {
   description: string | null;
   qty: number | null;
@@ -198,7 +200,12 @@ export function buildThreeWayLines(
   // row — a second match would clobber the first; leave the extra as unmatched).
   const billedRowKeys = new Set<string>();
   for (const inv of invoiceLines) {
-    const matchKey = joinInvoiceLine(inv, rows, billedRowKeys);
+    // W04/B044: a credit (negative qty or amount) is never a SKU's billed leg, and a line with
+    // no billed number at all (a legacy row whose credit amount was dropped) cannot take one
+    // either: either would leave the real charge line with no free row to join.
+    const credit = (fin(inv.qty) ?? 0) < 0 || (fin(inv.extendedCents) ?? 0) < 0;
+    const joinable = !credit && (fin(inv.qty) != null || fin(inv.extendedCents) != null);
+    const matchKey = joinable ? joinInvoiceLine(inv, rows, billedRowKeys) : null;
     if (matchKey != null) {
       const row = rows.find((r) => r.key === matchKey)!;
       row.billedQty = fin(inv.qty);
@@ -216,14 +223,14 @@ export function buildThreeWayLines(
         receivedLevel: null,
         billedQty: fin(inv.qty),
         billedCents: fin(inv.extendedCents),
-        flags: ["unmatched_invoice_line"],
+        flags: [credit ? "invoice_credit" : "unmatched_invoice_line"],
       });
     }
   }
 
   // ── (3) Fire the comparison flags (both-sides-known law). ─────────────────────
   for (const row of rows) {
-    if (row.flags.includes("unmatched_invoice_line")) continue; // its own row; no cross-leg compare.
+    if (row.flags.includes("unmatched_invoice_line") || row.flags.includes("invoice_credit")) continue; // its own row; no cross-leg compare.
 
     // billed_over_received: the invoice charges for more than the door counted.
     if (row.billedQty != null && row.receivedQty != null && row.billedQty > row.receivedQty) {
@@ -279,7 +286,7 @@ function joinInvoiceLine(
   taken: Set<string>,
 ): string | null {
   const candidates = rows.filter(
-    (r) => !taken.has(r.key) && !r.flags.includes("unmatched_invoice_line"),
+    (r) => !taken.has(r.key) && !r.flags.includes("unmatched_invoice_line") && !r.flags.includes("invoice_credit"),
   );
 
   // (1) exact itemNumber (case-insensitive, trimmed). The invoice carries no itemNumber

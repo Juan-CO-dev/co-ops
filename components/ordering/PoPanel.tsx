@@ -1127,6 +1127,7 @@ const FLAG_TONE: Record<ThreeWayFlag, AlertPillTone> = {
   short_received: "warn",
   not_billed: "info",
   unmatched_invoice_line: "info",
+  invoice_credit: "info",
 };
 
 /** Qty display: advisory-null → em dash (never a fabricated 0 — the null-leg law). */

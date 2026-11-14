@@ -4175,6 +4175,7 @@
   "ordering.po.three_way.flag.short_received": "Faltante recibido",
   "ordering.po.three_way.flag.unmatched_invoice_line": "Línea de factura sin coincidencia",
   "ordering.po.three_way.flag.not_billed": "No está en la factura",
+  "ordering.po.three_way.flag.invoice_credit": "Crédito en la factura",
   "ordering.po.three_way.credit_tracked": "Crédito ya registrado",
   "production.page.title": "Producción",
   "production.page.recent": "Producción reciente",

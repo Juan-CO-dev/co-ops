@@ -20,7 +20,8 @@
  *
  * ── UNTRUSTED VENDOR CONTENT ────────────────────────────────────────────────────
  * The invoice lines are an LLM parse of an untrusted vendor document
- * (lib/receipt-parse.ts, which already validated numbers finite/≥0 before storage).
+ * (lib/receipt-parse.ts, which already validated numbers finite before storage; qty and
+ * extendedCents are signed, negative on a credit line — W04/B044).
  * We read them as DATA only and pass opaque strings/numbers to the pure brain; the
  * panel renders every string as text (no markup, no href/src) — house untrusted law.
  *
@@ -186,8 +187,8 @@ interface RawInvoiceLine {
 }
 
 /** Coerce a receipt's parsed_json into typed BILLED lines (advisory-null per field).
- *  Untrusted-LLM content: numbers accepted only when finite (the parse engine already
- *  bounded them ≥0); strings copied opaquely. Never throws on a malformed jsonb. */
+ *  Untrusted-LLM content: numbers accepted only when finite (qty and extendedCents are
+ *  signed: negative on a credit line, W04/B044); strings copied opaquely. Never throws on a malformed jsonb. */
 function readInvoiceLines(parsedJson: unknown): InvoiceLineInput[] {
   if (!parsedJson || typeof parsedJson !== "object") return [];
   const pj = parsedJson as { extraction?: { lines?: unknown }; lines?: unknown };

@@ -4175,6 +4175,7 @@
   "ordering.po.three_way.flag.short_received": "Short received",
   "ordering.po.three_way.flag.unmatched_invoice_line": "Invoice line, no match",
   "ordering.po.three_way.flag.not_billed": "Not on invoice",
+  "ordering.po.three_way.flag.invoice_credit": "Invoice credit",
   "ordering.po.three_way.credit_tracked": "Credit already tracked",
   "production.page.title": "Production",
   "production.page.recent": "Recent production",
