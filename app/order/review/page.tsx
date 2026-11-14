@@ -301,6 +301,7 @@ function OrderReview() {
             <p className="mt-0.5 text-xs text-co-text-dim">{t("order.review.notes_help")}</p>
             <textarea
               id="order-dietary-notes"
+              aria-label={t("order.review.notes_heading")}
               value={dietaryNotes}
               onChange={(e) => setDietaryNotes(e.target.value)}
               maxLength={2000}
