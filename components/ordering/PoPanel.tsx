@@ -1248,6 +1248,7 @@ function ThreeWayRow({ line, hasOpenCredit }: { line: ThreeWayLine; hasOpenCredi
           </dt>
           <dd className="text-[14px] font-semibold text-co-text">
             {qtyOrDash(line.billedQty)}
+            {line.billedUnit ? <span className="text-[11px] font-normal text-co-text-dim"> {line.billedUnit}</span> : null}
             {line.billedCents != null ? (
               <span className="text-[11px] font-normal text-co-text-dim"> {money(line.billedCents)}</span>
             ) : null}

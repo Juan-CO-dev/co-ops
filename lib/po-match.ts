@@ -34,9 +34,12 @@ import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadPoDetail } from "@/lib/purchase-orders";
+import { loadSkuPackChains } from "@/lib/prep-consumption";
 import type { AuthContext } from "@/lib/session";
 import {
   buildThreeWayLines,
+  unitScaleFromChain,
+  type SkuUnitScale,
   type ThreeWayView,
   type SnapshotLineInput,
   type DeliveryLineInput,
@@ -115,7 +118,17 @@ export async function buildThreeWayView(actor: AuthContext, poId: string): Promi
     loadInvoiceLeg(sb, poId),
   ]);
 
-  const view = buildThreeWayLines(snapshotLines, deliveryLines, invoiceLeg.lines, invoiceLeg.hasInvoice);
+  // W04/B045: the three legs compare in ONE unit through each SKU's pack chain as this
+  // PO's shop receives it. Single-level SKUs get no scale and keep the raw comparison.
+  const skuIds = [...new Set([...snapshotLines.map((l) => l.skuId), ...deliveryLines.map((l) => l.skuId)])];
+  const chains = await loadSkuPackChains(skuIds, detail.locationId);
+  const unitScales = new Map<string, SkuUnitScale>();
+  for (const [skuId, levels] of chains) {
+    const scale = unitScaleFromChain(levels);
+    if (scale) unitScales.set(skuId, scale);
+  }
+
+  const view = buildThreeWayLines(snapshotLines, deliveryLines, invoiceLeg.lines, invoiceLeg.hasInvoice, unitScales);
 
   // The pure brain fills a received-but-not-ordered row's `name` with the skuId as a
   // placeholder (it has no snapshot name for a SKU that wasn't ordered). Resolve the

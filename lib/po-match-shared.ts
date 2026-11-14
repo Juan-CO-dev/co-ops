@@ -35,6 +35,8 @@
  * invoice line matched (so a `not_billed` gap is visible when an invoice exists).
  */
 
+import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
+
 /** The variance flags a three-way line may carry (spec §5). */
 export type ThreeWayFlag =
   | "billed_over_received" // billedQty > receivedQty (both known): the invoice charges for more than arrived.
@@ -58,6 +60,8 @@ export interface ThreeWayLine {
   receivedLevel: string | null;
   /** BILLED leg (invoice parse). Null when no invoice line matched this row. */
   billedQty: number | null;
+  /** The invoice line's own unit, as printed (W04/B045: shown beside the billed qty). */
+  billedUnit: string | null;
   billedCents: number | null;
   flags: ThreeWayFlag[];
 }
@@ -113,6 +117,76 @@ export interface InvoiceLineInput {
   extendedCents: number | null;
 }
 
+/**
+ * A multi-level SKU's units (W04/B045): how many LEAF containers one of each level holds
+ * (case = 12 x each, each = 32 oz → case 12, each 1), keyed by normalized label. Built only
+ * for chains with 2+ levels: a single-level SKU has no inner unit to confuse, so it keeps
+ * the raw comparison it always had.
+ */
+export interface SkuUnitScale {
+  rootLabel: string;
+  leafPerLevel: ReadonlyMap<string, number>;
+}
+
+/** The scale of an active pack chain, or null (single-level, malformed or cyclic chain). */
+export function unitScaleFromChain(levels: readonly PackChainLevel[] | null | undefined): SkuUnitScale | null {
+  if (!levels || levels.length < 2) return null;
+  const chain = buildPackChain([...levels]);
+  const root = chainRootLabel(chain);
+  if (root == null) return null;
+  const path: PackChainLevel[] = [];
+  const seen = new Set<string>();
+  let node = chain.byLabel.get(root);
+  while (node) {
+    if (seen.has(node.id)) return null;
+    seen.add(node.id);
+    path.push(node);
+    node = node.containsLevelId ? chain.byId.get(node.containsLevelId) : undefined;
+  }
+  if (path.length < 2) return null;
+  const leafPerLevel = new Map<string, number>();
+  let factor = 1;
+  for (let i = path.length - 1; i >= 0; i--) {
+    if (i < path.length - 1) {
+      const qty = path[i]!.containsQty;
+      if (!Number.isFinite(qty) || qty <= 0) return null;
+      factor *= qty;
+    }
+    const key = norm(path[i]!.label);
+    if (key != null && !leafPerLevel.has(key)) leafPerLevel.set(key, factor);
+  }
+  const rootKey = norm(root);
+  return rootKey == null ? null : { rootLabel: rootKey, leafPerLevel: new Map([...leafPerLevel].reverse()) };
+}
+
+/** Vendor case codes: the root is the vendor's shipping pack (seed 38). */
+const CASE_CODES = new Set(["cs", "ca"]);
+
+/** Leaf containers in ONE `unit` of this SKU, or null when the unit cannot be resolved.
+ *  `nullIsRoot`: a door count / order line with no level is in root packs (legacy rule);
+ *  an invoice line with no unit is unknown. */
+function leafFactor(unit: string | null, scale: SkuUnitScale, nullIsRoot: boolean): number | null {
+  const key = norm(unit);
+  if (key == null) return nullIsRoot ? scale.leafPerLevel.get(scale.rootLabel) ?? null : null;
+  const direct = scale.leafPerLevel.get(key) ?? (key.endsWith("s") ? scale.leafPerLevel.get(key.slice(0, -1)) : undefined);
+  if (direct != null) return direct;
+  return CASE_CODES.has(key) ? scale.leafPerLevel.get(scale.rootLabel) ?? null : null;
+}
+
+/** Two quantities in one unit, or null (the flag stays off: advisory-null). Without a scale the
+ *  raw numbers compare, exactly as before W04/B045. */
+function inOneUnit(
+  a: { qty: number | null; unit: string | null; nullIsRoot: boolean },
+  b: { qty: number | null; unit: string | null; nullIsRoot: boolean },
+  scale: SkuUnitScale | undefined,
+): [number, number] | null {
+  if (a.qty == null || b.qty == null) return null;
+  if (!scale) return [a.qty, b.qty];
+  const fa = leafFactor(a.unit, scale, a.nullIsRoot);
+  const fb = leafFactor(b.unit, scale, b.nullIsRoot);
+  return fa == null || fb == null ? null : [a.qty * fa, b.qty * fb];
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /** A finite number or null (advisory-null: anything non-finite is treated as unknown,
@@ -152,6 +226,8 @@ export function buildThreeWayLines(
   deliveryLines: DeliveryLineInput[],
   invoiceLines: InvoiceLineInput[],
   hasInvoice: boolean,
+  /** Per-SKU units of multi-level chains (W04/B045); absent = raw comparison. */
+  unitScales: ReadonlyMap<string, SkuUnitScale> = new Map(),
 ): ThreeWayView {
   // Received qty by skuId (last write wins if a SKU somehow appears twice — a delivery
   // has one line per SKU in practice; we don't sum to avoid double-counting a re-open).
@@ -171,6 +247,7 @@ export function buildThreeWayLines(
       receivedQty: d ? fin(d.qty) : null,
       receivedLevel: d ? d.level : null,
       billedQty: null,
+      billedUnit: null,
       billedCents: null,
       flags: [],
     };
@@ -190,6 +267,7 @@ export function buildThreeWayLines(
       receivedQty: fin(d.qty),
       receivedLevel: d.level,
       billedQty: null,
+      billedUnit: null,
       billedCents: null,
       flags: [],
     });
@@ -209,6 +287,7 @@ export function buildThreeWayLines(
     if (matchKey != null) {
       const row = rows.find((r) => r.key === matchKey)!;
       row.billedQty = fin(inv.qty);
+      row.billedUnit = inv.unit;
       row.billedCents = fin(inv.extendedCents);
       billedRowKeys.add(matchKey);
     } else {
@@ -222,6 +301,7 @@ export function buildThreeWayLines(
         receivedQty: null,
         receivedLevel: null,
         billedQty: fin(inv.qty),
+        billedUnit: inv.unit,
         billedCents: fin(inv.extendedCents),
         flags: [credit ? "invoice_credit" : "unmatched_invoice_line"],
       });
@@ -232,12 +312,18 @@ export function buildThreeWayLines(
   for (const row of rows) {
     if (row.flags.includes("unmatched_invoice_line") || row.flags.includes("invoice_credit")) continue; // its own row; no cross-leg compare.
 
+    // W04/B045: each comparison is made in ONE unit through the SKU's pack chain; a unit
+    // that cannot be resolved leaves its flag off.
+    const scale = unitScales.get(row.key);
+    const received = { qty: row.receivedQty, unit: row.receivedLevel, nullIsRoot: true };
     // billed_over_received: the invoice charges for more than the door counted.
-    if (row.billedQty != null && row.receivedQty != null && row.billedQty > row.receivedQty) {
+    const billedVsReceived = inOneUnit({ qty: row.billedQty, unit: row.billedUnit, nullIsRoot: false }, received, scale);
+    if (billedVsReceived && billedVsReceived[0] > billedVsReceived[1]) {
       row.flags.push("billed_over_received");
     }
     // short_received: the door count came in under what was ordered.
-    if (row.receivedQty != null && row.orderedQty != null && row.receivedQty < row.orderedQty) {
+    const receivedVsOrdered = inOneUnit(received, { qty: row.orderedQty, unit: row.orderedUnit, nullIsRoot: true }, scale);
+    if (receivedVsOrdered && receivedVsOrdered[0] < receivedVsOrdered[1]) {
       row.flags.push("short_received");
     }
     // not_billed: an ordered+received SKU with no invoice line, but an invoice exists.
