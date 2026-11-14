@@ -16,7 +16,7 @@ describe('native crave motion',()=>{
       expect(canAnimateCrave({still:false,reducedMotion:false,saveData:false,height:812,...overrides})).toBe(false);
   });
   it('anchors only visually inspected ingredients on the full-frame L083 crop',()=>{
-    expect(fieldGuideAnchors.map(a=>a.id)).toEqual(['bread','chips','turkey','iceberg','pickles','provolone']);
+    expect(fieldGuideAnchors.map(a=>a.id)).toEqual(['bread','chips','turkey','iceberg','provolone','pickles']);
     for(const a of fieldGuideAnchors){expect(a.x).toBeGreaterThan(0);expect(a.x).toBeLessThan(1);expect(a.y).toBeGreaterThan(0);expect(a.y).toBeLessThan(1);}
   });
 });

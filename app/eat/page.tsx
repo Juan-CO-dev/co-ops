@@ -26,6 +26,7 @@ import { CateringLink } from "@/components/landing/CateringLink";
 import { SectionView } from "@/components/landing/SectionView";
 import { CrunchyOrder } from "@/components/landing/CrunchyOrder";
 import { spriteMedia } from "@/lib/landing/media";
+import { GUIDE_NO_JS_CSS } from "@/lib/landing/field-guide-shared";
 import type { CSSProperties } from "react";
 
 export const dynamic = "force-dynamic";
@@ -52,8 +53,8 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
   return <div lang={language} className="landing-v2-page" style={pageStyle}>
     <ShopStructuredData origin={origin.origin} stores={stores}/>
     <MotionPolicy/>
-    {/* Without JS the Field Guide never reaches six-of-six: drop its reserved action box. */}
-    <noscript><style>{'.landing-v2 .landing-v4-guide-cta { display: none; }'}</style></noscript>
+    {/* Without JS the Field Guide never reaches six-of-six: drop its reserved action box, and it never pins. */}
+    <noscript><style>{'.landing-v2 .landing-v4-guide-cta { display: none; } '+GUIDE_NO_JS_CSS}</style></noscript>
     <header className="landing-v2-header"><img loading="eager" src="/brand/co-wordmark.svg" fetchPriority="low" alt={TENANT_NAME} width={1125} height={140} className="h-12 w-44 object-contain"/><CateringLink config={config} language={language}/><LanguageToggle language={language} query={queryString} label={serverT(language,"landing.language")} policy={attributionPolicy}/></header>
     <main>
       <Hero language={language} config={{...config,stores:publicStores}} ad={ad} details={details}/>
