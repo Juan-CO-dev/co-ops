@@ -6,9 +6,11 @@
 -- ── WHY THIS LAYER ──────────────────────────────────────────────────────────────────────────────────────
 -- The staff JWT carries `role:'authenticated'` and is a valid PostgREST bearer (AGENTS.md, Database & RLS).
 -- Every app-layer check is invisible on that path: only RLS quals, table grants and function grants stand.
--- Pre-flight against the repo 2026-11-14: the app reads none of the tables below through a user-context
--- client that depends on the predicates changed here (catering and checklist corrections are service-role;
--- nothing reads opening_setup_items), so this changes what a cookie + curl can reach, not what a screen shows.
+-- Pre-flight against the repo 2026-11-14: catering reads and the checklist corrections are service-role and
+-- nothing reads opening_setup_items, so B, C and D change what a cookie + curl can reach, not what a screen
+-- shows. A is the one staff can see: a person taken off a shop also stops seeing that shop on the screens that
+-- read through their own JWT (checklists, reports). That is the point of removing them; the app's own shop
+-- lists (JWT `locations`, resolveChecklistWriteActor) already left that shop out.
 --
 -- WHAT:
 --   A. B009 — current_user_locations() counts ACTIVE memberships only.
@@ -33,6 +35,13 @@
 --      level 8+ still needs no membership (0287's ruling, unchanged), and every other statement, the lock
 --      order (instance FOR NO KEY UPDATE, then the completion), SECURITY INVOKER, the pinned search_path and
 --      the service_role-only grants are 0287's. checklist_confirm_instance is NOT touched.
+--   D. B152 — opening_setup_items is no longer readable without signing in.
+--      0054 created its read policy as `FOR SELECT USING (true)` with no role, and the table carries the
+--      default anon SELECT grant, so the anon key alone returned every row (labels, stations, ranges, shop).
+--      The policy now applies TO authenticated and requires a live session (current_user_id() IS NOT NULL,
+--      0200), and SELECT is revoked from anon and PUBLIC (table and columns). Signed-in staff read it exactly
+--      as before; the write side (0106 / 0272: no user write at all) is untouched. Nothing in the app reads
+--      this table today.
 --
 -- CODE: nothing in the application depends on this migration. The app already filters active memberships
 --   (lib/session.ts, resolveChecklistWriteActor), so it behaves the same before and after the apply. The same
@@ -41,7 +50,8 @@
 --
 -- DEPENDS ON: 0029 (the SECURITY DEFINER helpers), 0078 (user_locations.active), 0200 (current_user_id),
 --   0113 / 0120 (the child read policies and the catering_*_loc oracles), 0189 (the level helper),
---   0287 (the three correction RPCs) and 0228 (assignment_author_level).
+--   0287 (the three correction RPCs) and 0228 (assignment_author_level),
+--   0054 / 0106 / 0272 (opening_setup_items, its policies and its write lockdown).
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select pg_get_functiondef('public.current_user_locations()'::regprocedure);
@@ -57,6 +67,10 @@
 --     from pg_proc where pronamespace = 'public'::regnamespace
 --      and proname in ('checklist_revoke_completion', 'checklist_revoke_with_reason', 'checklist_mark_not_done');
 --     -- three rows, all true (the pre-flight refuses any other definition)
+--   select policyname, cmd, roles, qual from pg_policies where schemaname = 'public' and tablename = 'opening_setup_items';
+--     -- opening_setup_items_select_policy: SELECT, {public}, true  (+ the three _no_user_* denies)
+--   select grantee, privilege_type from information_schema.role_table_grants
+--    where table_schema = 'public' and table_name = 'opening_setup_items' order by 1, 2;   -- anon: SELECT today
 --
 -- VERIFY AFTER APPLY:
 --   select prosrc from pg_proc where oid = 'public.current_user_locations()'::regprocedure;   -- "and active"
@@ -72,12 +86,21 @@
 --     and routine_name in ('checklist_revoke_completion', 'checklist_revoke_with_reason', 'checklist_mark_not_done');
 --     -- service_role (+ postgres) only
 --   Run scripts/sim/checklist-0287-lock-check.mjs on the sim (the lock order is unchanged; this re-proves it).
+--   select policyname, roles, qual from pg_policies where schemaname = 'public'
+--    and tablename = 'opening_setup_items' and cmd = 'SELECT';   -- {authenticated}, (current_user_id() IS NOT NULL)
+--   select grantee, privilege_type from information_schema.role_table_grants
+--    where table_schema = 'public' and table_name = 'opening_setup_items' order by 1, 2;
+--     -- anon: nothing; authenticated: SELECT; service_role unchanged
+--   curl "$SUPABASE_URL/rest/v1/opening_setup_items?select=id" -H "apikey: $ANON" -H "Authorization: Bearer $ANON"
+--     -- 401 / 42501 permission denied (was 200 with rows)
 --   select action, resource_table, metadata->>'bug' from public.audit_log
---    where metadata->>'migration' = '0305_rls_membership_and_read_floors' order by 3;           -- one row per section
+--    where metadata->>'migration' = '0305_rls_membership_and_read_floors' order by 3;
+--     -- six rows: B009 x1, B010 x3 (one per child table), B150 x1, B152 x1
 --
 -- ROLLBACK: re-create current_user_locations() without `and active` (re-opens B009; prefer fixing forward);
 --   ALTER the three child policies back to 0113 / 0120's quals (re-opens B010); re-run 0287's three
---   `create function` bodies as `create or replace` (re-opens B150).
+--   `create function` bodies as `create or replace` (re-opens B150); ALTER the opening_setup_items policy
+--   back TO public USING (true) and re-grant SELECT to anon (re-opens B152).
 --   Nothing here drops data.
 
 begin;
@@ -452,5 +475,77 @@ values (null, null, 'security.grants_change', 'checklist_completions', null, tru
     'bug', 'B150',
     'functions', jsonb_build_array('checklist_revoke_completion', 'checklist_revoke_with_reason', 'checklist_mark_not_done'),
     'change', 'below level 8 a correction requires an ACTIVE membership at the instance''s shop (0287 accepted an inactive row)'));
+
+-- ════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- D. B152 — opening_setup_items: signed-in staff only
+-- ════════════════════════════════════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  obj constant text := 'public.opening_setup_items';
+  v_authed_before boolean;
+  v_service_before boolean;
+  v_others text;
+  c record;
+  p text;
+  v_pol record;
+begin
+  if to_regclass(obj) is null or not (select relrowsecurity from pg_class where oid = obj::regclass) then
+    raise exception '0305: public.opening_setup_items (0054) must exist with RLS enabled';
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'opening_setup_items'
+                  and policyname = 'opening_setup_items_select_policy' and cmd = 'SELECT' and permissive = 'PERMISSIVE') then
+    raise exception '0305: policy opening_setup_items_select_policy (0054) is missing: refusing';
+  end if;
+  -- Permissive policies OR-stack: another read policy would keep the table open whatever this one says.
+  select string_agg(policyname, ', ' order by policyname) into v_others from pg_policies
+   where schemaname = 'public' and tablename = 'opening_setup_items' and permissive = 'PERMISSIVE'
+     and cmd in ('SELECT', 'ALL') and policyname <> 'opening_setup_items_select_policy';
+  if v_others is not null then
+    raise exception '0305: public.opening_setup_items has another permissive read policy (%): refusing', v_others;
+  end if;
+  v_authed_before := has_table_privilege('authenticated', obj, 'SELECT');
+  v_service_before := has_table_privilege('service_role', obj, 'SELECT');
+
+  alter policy opening_setup_items_select_policy on public.opening_setup_items
+    to authenticated
+    using (public.current_user_id() is not null);
+  revoke select on table public.opening_setup_items from public, anon;
+  -- A table REVOKE does not remove column ACLs (0272): revoke every column explicitly.
+  for c in select attname from pg_attribute where attrelid = obj::regclass and attnum > 0 and not attisdropped loop
+    execute format('revoke select (%I) on table public.opening_setup_items from public, anon', c.attname);
+  end loop;
+
+  -- ── guards ──
+  select roles, qual into v_pol from pg_policies
+   where schemaname = 'public' and tablename = 'opening_setup_items' and policyname = 'opening_setup_items_select_policy';
+  if v_pol.roles is distinct from array['authenticated']::name[] or v_pol.qual !~* 'current_user_id\(\) IS NOT NULL' then
+    raise exception '0305: opening_setup_items_select_policy is not (TO authenticated, live session) after apply: % / %', v_pol.roles, v_pol.qual;
+  end if;
+  -- anon holds NOTHING on the table (0272 already removed the writes; this section removes the read).
+  foreach p in array array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] loop
+    if has_table_privilege('anon', obj, p) then
+      raise exception '0305: anon still holds % on public.opening_setup_items', p;
+    end if;
+  end loop;
+  if has_any_column_privilege('anon', obj, 'SELECT') then
+    raise exception '0305: anon still holds a column-level SELECT on public.opening_setup_items';
+  end if;
+  -- Nobody else's read moved: authenticated and service_role keep exactly what they had; no user write came back.
+  if has_table_privilege('authenticated', obj, 'SELECT') is distinct from v_authed_before
+     or has_table_privilege('service_role', obj, 'SELECT') is distinct from v_service_before then
+    raise exception '0305: the authenticated / service_role read on public.opening_setup_items changed';
+  end if;
+  foreach p in array array['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] loop
+    if has_table_privilege('authenticated', obj, p) then
+      raise exception '0305: authenticated holds % on public.opening_setup_items (0272 revoked it)', p;
+    end if;
+  end loop;
+end $$;
+
+insert into public.audit_log (actor_id, actor_role, action, resource_table, resource_id, destructive, metadata)
+values (null, null, 'security.grants_change', 'opening_setup_items', null, true,
+  jsonb_build_object('actor_context', 'migration_apply', 'migration', '0305_rls_membership_and_read_floors',
+    'bug', 'B152', 'policy', 'opening_setup_items_select_policy',
+    'change', 'read policy TO authenticated with a live session (was USING (true) for every role); SELECT revoked from anon and PUBLIC'));
 
 commit;
