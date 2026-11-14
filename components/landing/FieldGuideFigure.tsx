@@ -2,7 +2,7 @@
 import {useEffect,useRef,useState,type CSSProperties,type ReactNode} from 'react';
 import {TexturePhoto} from './CraveScene';
 import {fieldGuideAnchors} from '@/lib/landing/crave-motion-shared';
-import {foundCount,GUIDE_STEP_AT,GUIDE_WORDS_ABOVE,guideStepRootMargin,leaderPath,leaderStart,nextUnfound,stepReached,stepTarget} from '@/lib/landing/field-guide-shared';
+import {findsNow,foundCount,GUIDE_FLUSH_AT,GUIDE_STEP_AT,GUIDE_WORDS_ABOVE,guideStepRootMargin,leaderPath,leaderStart,stepReached,stepTarget} from '@/lib/landing/field-guide-shared';
 import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
 
 type AnchorId=(typeof fieldGuideAnchors)[number]['id'];
@@ -29,8 +29,8 @@ const ADVANCE_MS=350;
  * reads). Reduced motion / Save-Data show every line at once with all six found and no runway;
  * without JS the words stay a list and the page's noscript rule (GUIDE_NO_JS_CSS) drops the pin. */
 export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pickups,cta,ctaLabel}:Props) {
-  const pin=useRef<HTMLDivElement>(null),photo=useRef<HTMLDivElement>(null);
-  const steps=useRef<(HTMLSpanElement|null)[]>([]);
+  const root=useRef<HTMLDivElement>(null),pin=useRef<HTMLDivElement>(null),photo=useRef<HTMLDivElement>(null);
+  const steps=useRef<(HTMLSpanElement|null)[]>([]),flushLine=useRef<HTMLSpanElement>(null);
   const words=useRef<Partial<Record<AnchorId,HTMLLIElement|null>>>({});
   const [paths,setPaths]=useState<Partial<Record<AnchorId,{d:string;x:number;y:number}>>>({});
   // Bit masks over fieldGuideAnchors: found (by scroll or tap) and still drawing its line.
@@ -74,20 +74,40 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
     // Scroll progress only sets a target; one word per beat walks up to it.
     const step=()=>{
       advance=undefined;
-      if(calm||foundCount(mask,total)>=target)return;
-      find(nextUnfound(mask,total));
+      if(calm)return;
+      for(const index of findsNow(mask,target,total,false))find(index);
       if(foundCount(mask,total)<target)advance=setTimeout(step,ADVANCE_MS);
+    };
+    // The flush line (still pinned, past the last find): every queued word lands at once, collected,
+    // so no stagger carries on after the photo scrolls away. Cancels the walk and the draw timers.
+    const flush=()=>{
+      if(calm)return;
+      clearTimeout(advance);advance=undefined;
+      for(const timer of draws)clearTimeout(timer);
+      draws.clear();
+      for(const index of findsNow(mask,target,total,true))mask|=1<<index;
+      target=total;setFound(mask);setDrawing(0);setLatest(-1);stop();
     };
     // Each step marker reports once it reaches the top band; reaching marker k makes k+1 words due.
     // The band is in pixels of the current viewport height, so the observer is rebuilt (debounced)
     // when that height changes; a fresh observer re-reports every marker, and the target only rises.
     let done=false,bandHeight=0,rebuild:ReturnType<typeof setTimeout>|undefined;
+    // The observer stays on until every word is found (find() and flush() stop it), so the flush
+    // line (and the guide leaving the band) can still report while the last words are queued.
     const report=(entries:IntersectionObserverEntry[])=>{
-      let next=target;
-      for(const entry of entries)next=stepTarget(next,steps.current.indexOf(entry.target as HTMLSpanElement),stepReached(entry.isIntersecting,entry.boundingClientRect.bottom),total);
+      let next=target,flushed=false;
+      for(const entry of entries){
+        const reached=stepReached(entry.isIntersecting,entry.boundingClientRect.bottom);
+        if(entry.target===flushLine.current){flushed||=reached;continue;}
+        // The guide itself covers the band all through the runway; it leaves it with its bottom above
+        // the viewport only when the reader jumps clean past (markers that never touch the band
+        // report nothing), which flushes too.
+        if(entry.target===root.current){flushed||=!entry.isIntersecting&&entry.boundingClientRect.bottom<0;continue;}
+        next=stepTarget(next,steps.current.indexOf(entry.target as HTMLSpanElement),reached,total);
+      }
+      if(flushed)return flush();
       if(next<=target)return;
       target=next;
-      if(target>=total)stop();
       if(!advance)step();
     };
     let observer:IntersectionObserver|undefined;
@@ -96,7 +116,7 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       if(done||calm||innerHeight===bandHeight)return;
       bandHeight=innerHeight;observer?.disconnect();
       observer=new IntersectionObserver(report,{rootMargin:guideStepRootMargin(bandHeight)});
-      for(const marker of steps.current)if(marker)observer.observe(marker);
+      for(const marker of [...steps.current,flushLine.current,root.current])if(marker)observer.observe(marker);
     };
     const viewportChanged=()=>{clearTimeout(rebuild);rebuild=setTimeout(watch,150);};
     function stop(){done=true;observer?.disconnect();clearTimeout(rebuild);window.removeEventListener('resize',viewportChanged);}
@@ -121,7 +141,7 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       {mode==='motion'?<button type="button" className="landing-v4-guide-word" onClick={()=>findRef.current(index)}>{word}</button>:word}
     </li>;
   };
-  return <div className="landing-v3-guide" data-guide-mode={mode} data-guide-found={foundCount(found,total)}>
+  return <div ref={root} className="landing-v3-guide" data-guide-mode={mode} data-guide-found={foundCount(found,total)}>
     <div ref={pin} className="landing-v5-guide-pin">
     <div role="group" aria-labelledby="field-guide-labels-title" className="landing-v6-guide-board">
     <span id="field-guide-labels-title" className="sr-only">{groupLabel}</span>
@@ -156,5 +176,6 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
     {/* The runway the pinned guide is scrolled through, and its six invisible step markers. */}
     <div className="landing-v5-guide-runway" aria-hidden="true"/>
     {GUIDE_STEP_AT.map((at,index)=><span key={index} ref={node=>{steps.current[index]=node;}} aria-hidden="true" data-guide-step={index} className="landing-v5-guide-step" style={{'--guide-step':at} as CSSProperties}/>)}
+    <span ref={flushLine} aria-hidden="true" data-guide-flush className="landing-v5-guide-step" style={{'--guide-step':GUIDE_FLUSH_AT} as CSSProperties}/>
   </div>;
 }

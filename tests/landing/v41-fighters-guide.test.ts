@@ -6,7 +6,7 @@ import roster from '@/config/tenant/landing-products.json';
 import { products, validateProducts } from '@/lib/landing/products';
 import { LineupPhoto } from '@/components/landing/LineupPhoto';
 import { CARD_VISIBLE, focalPosition, STAGE_VISIBLE } from '@/lib/landing/fighter-select-shared';
-import { foundCount, GUIDE_RUNWAY_SCREENS, GUIDE_STEP_AT, GUIDE_STEP_BAND, GUIDE_WORDS_ABOVE, guideStepRootMargin, leaderPath, leaderStart, nextUnfound, stepReached, stepTarget } from '@/lib/landing/field-guide-shared';
+import { findsNow, foundCount, GUIDE_FLUSH_AT, GUIDE_RUNWAY_SCREENS, GUIDE_STEP_AT, GUIDE_STEP_BAND, GUIDE_WORDS_ABOVE, guideStepRootMargin, leaderPath, leaderStart, nextUnfound, stepReached, stepTarget } from '@/lib/landing/field-guide-shared';
 import { fieldGuideAnchors } from '@/lib/landing/crave-motion-shared';
 
 const css = readFileSync('app/eat/landing-v2.css', 'utf8');
@@ -115,6 +115,41 @@ describe('v4.1: scroll-driven Field Guide progress', () => {
     expect(stepTarget(4, 5, false, 6)).toBe(4);
     expect(stepTarget(2, 9, true, 6)).toBe(6);
     expect(stepTarget(2, -1, true, 6)).toBe(2);
+  });
+  // Astra review (PR #543): the one-per-beat walk must not carry on after the photo has scrolled away.
+  it('walks one find per beat inside the runway, and flushes every queued find at the flush line', () => {
+    // Normal scrolling staggers: one word now, the rest wait their beat.
+    expect(findsNow(0, 1, 6, false)).toEqual([0]);
+    expect(findsNow(0b000001, 4, 6, false)).toEqual([1]);
+    expect(findsNow(0b000011, 2, 6, false)).toEqual([]);
+    // A tapped word is never found twice.
+    expect(findsNow(0b000101, 6, 6, false)).toEqual([1]);
+    // The flush line: every word not yet found lands at once, whatever the target says.
+    expect(findsNow(0b000011, 3, 6, true)).toEqual([2, 3, 4, 5]);
+    expect(findsNow(0, 0, 6, true)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(findsNow(0b010101, 6, 6, true)).toEqual([1, 3, 5]);
+    expect(findsNow(0b111111, 6, 6, true)).toEqual([]);
+    expect(findsNow(0b111111, 6, 6, false)).toEqual([]);
+    // Still pinned (the pin lets go at 1), past the last find with room for a fast flick to land there.
+    expect(GUIDE_FLUSH_AT).toBeGreaterThan(GUIDE_STEP_AT[5]! + 0.1);
+    expect(GUIDE_FLUSH_AT).toBeLessThan(1);
+  });
+  it('keeps the observer on until every word is found, and cancels every timer on flush, calm and unmount', () => {
+    const source = readFileSync('components/landing/FieldGuideFigure.tsx', 'utf8');
+    // The flush line is observed by the ONE observer, beside the step markers.
+    expect(source).toContain('for(const marker of [...steps.current,flushLine.current,root.current])if(marker)observer.observe(marker);');
+    // Jumping clean past the guide (no marker touches the band) flushes too: the guide leaves the band above.
+    expect(source).toContain('flushed||=!entry.isIntersecting&&entry.boundingClientRect.bottom<0;');
+    expect(source).toContain('data-guide-flush');
+    // Reaching the full target no longer disconnects the observer (the flush line must still report).
+    expect(source).not.toContain('if(target>=total)stop();');
+    expect(source).toContain('if(mask===all)stop();');
+    const flush = source.slice(source.indexOf('const flush=()=>{'), source.indexOf('};', source.indexOf('const flush=()=>{')));
+    expect(flush).toContain('clearTimeout(advance)');
+    expect(flush).toContain('for(const timer of draws)clearTimeout(timer)');
+    expect(flush).toContain('stop()');
+    // Unmount still clears the walk and every draw timer.
+    expect(source).toContain('return ()=>{resize.disconnect();stop();clearTimeout(advance);for(const timer of draws)clearTimeout(timer);');
   });
   it('finds the first unfound word next, so a tapped word is never found twice', () => {
     expect(nextUnfound(0, 6)).toBe(0);

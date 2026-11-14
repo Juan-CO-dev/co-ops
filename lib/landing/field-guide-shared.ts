@@ -24,6 +24,11 @@ export const GUIDE_WORDS_ABOVE=3;
 export function leaderStart(word:{left:number;width:number;top:number;bottom:number},photo:{top:number;bottom:number}):Point {
   return {x:word.left+word.width/2,y:word.top>=photo.bottom-1?word.top:word.bottom};
 }
+/** The flush line, as a fraction of the runway: still pinned (the pin lets go at 1), well past the
+ * last find. A reader who gets here with words still queued is scrolling fast (or jumped), so the
+ * one-per-beat stagger would carry on after the photo has scrolled away: every queued word lands at
+ * once instead (findsNow). Astra review, PR #543. */
+export const GUIDE_FLUSH_AT=.92;
 /** The trigger band is the top tenth of the viewport. Each step marker runs from its own position
  * to the end of the runway, so it intersects the band exactly once its start has risen above the
  * band's lower edge. The CSS places markers with the same 10svh (see .landing-v5-guide-step). */
@@ -54,6 +59,15 @@ export function stepTarget(current:number,index:number,reached:boolean,total:num
 export function nextUnfound(found:number,total:number):number {
   for(let index=0;index<total;index++)if(!(found&(1<<index)))return index;
   return -1;
+}
+/** Which words to find right now. Inside the runway the scroll finds one more per beat while the
+ * target is ahead (the rest wait their turn); once the flush line is reached, every word not yet
+ * found lands at once. Never a word already found (taps can skip ahead). */
+export function findsNow(mask:number,target:number,total:number,flush:boolean):number[] {
+  if(flush){const due:number[]=[];for(let index=0;index<total;index++)if(!(mask&(1<<index)))due.push(index);return due;}
+  if(foundCount(mask,total)>=target)return [];
+  const next=nextUnfound(mask,total);
+  return next<0?[]:[next];
 }
 export function foundCount(mask:number,total:number):number {
   let count=0;for(let index=0;index<total;index++)if(mask&(1<<index))count++;

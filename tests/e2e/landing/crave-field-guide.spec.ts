@@ -584,12 +584,16 @@ for(const size of guideSizes)test(`no Field Guide pointer deploys before the who
   for(let y=partly.y;;y+=30){
     await page.evaluate(v=>scrollTo(0,v),y);await page.waitForTimeout(220);
     const s=await read();
-    if(s.progress>1.06)break;
     if(fullFrom===null&&s.photoTop>=0&&s.photoBottom<=s.vh+.5)fullFrom=s.y;
+    // Every rise is recorded, including one past the runway (which the checks below then refuse).
     if(s.found>last){rises.push(s);last=s.found;}
+    if(s.progress>1.06)break;
   }
-  await expect.poll(async()=>(await read()).found,{timeout:5000}).toBe(6);
-  expect(rises.length).toBeGreaterThanOrEqual(3);
+  // Astra review: EACH of the six finds, #6 included, was seen appearing at a recorded scroll
+  // position, one at a time, inside the loop; nothing appears after it.
+  expect(rises.map(s=>s.found)).toEqual([1,2,3,4,5,6]);
+  await page.waitForTimeout(1500);
+  expect((await read()).found).toBe(6);
   // The whole photo fits the pinned screen at this viewport (none of the six sizes needs the
   // "as fully visible as it gets" fallback), and it was whole on screen before the first find.
   expect(fullFrom).not.toBeNull();
@@ -643,4 +647,45 @@ for(const size of guideSizes)test(`no Field Guide pointer deploys before the who
     expect(crossed,`${lines[i]!.id} crosses ${lines[j]!.id}`).toBe(false);
     expect(Math.hypot(lines[i]!.dot.x-lines[j]!.dot.x,lines[i]!.dot.y-lines[j]!.dot.y),`${lines[i]!.id}/${lines[j]!.id} apart`).toBeGreaterThan(24);
   }
+});
+
+// Astra review (PR #543): a fast scroll must not leave the one-per-beat stagger running after the
+// photo has gone. At the flush line (still pinned) every queued find lands at once, collected.
+for(const size of [{width:1536,height:730},{width:390,height:844}])for(const motion of ['flick','jump'] as const)test(`a fast ${motion} past the Field Guide lands every queued pointer at once (${size.width}x${size.height})`,async({page})=>{
+  await page.setViewportSize(size);
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  await page.evaluate(()=>document.fonts.ready);
+  const found=async()=>Number(await guide.getAttribute('data-guide-found'));
+  // Scroll to a runway fraction from the LIVE layout (content above the guide may change height).
+  const toProgress=(p:number)=>guide.evaluate((el,f)=>{scrollTo(0,Math.round(el.getBoundingClientRect().top+scrollY-16+el.querySelector('.landing-v5-guide-runway')!.getBoundingClientRect().height*f));},p);
+  // Approach: settle the order groups above the guide, then start a quarter into the runway.
+  await page.locator('.landing-v5-guide-photo').evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-innerHeight+40));
+  await page.waitForTimeout(600);
+  expect(await found()).toBe(0);
+  await toProgress(.25);
+  await expect.poll(found,{timeout:3000}).toBe(2);
+  const slot=page.locator('#field-guide [data-guide-cta]');
+  await expect(slot).toHaveAttribute('data-ready','false');
+  if(motion==='flick'){
+    // A flick: three frames to just short of the pin's end (past the flush line, still pinned).
+    for(const p of [.5,.75,.96]){await toProgress(p);await page.waitForTimeout(16);}
+  } else await toProgress(1.6); // the whole guide (and its markers) jumps above the viewport
+  // All four queued finds land together: the stagger would need ~1.4 s more, plus the line draws.
+  await expect.poll(found,{timeout:500,intervals:[50]}).toBe(6);
+  await expect(slot).toHaveAttribute('data-ready','true',{timeout:300});
+  await expect(guide.locator('[data-anatomy-label][data-collected="true"]')).toHaveCount(6);
+  await expect(guide.locator('[data-line][data-state="shown"]')).toHaveCount(6);
+  if(motion==='flick'){
+    // Landed while the page is still pinned with the whole photo on screen.
+    const g=await page.evaluate(()=>{const r=(s:string)=>document.querySelector(s)!.getBoundingClientRect();return {pin:r('.landing-v5-guide-pin').top,photo:r('.landing-v5-guide-photo').toJSON() as DOMRect};});
+    expect(Math.abs(g.pin-16)).toBeLessThan(2);
+    expect(g.photo.top).toBeGreaterThanOrEqual(0);
+    expect(g.photo.bottom).toBeLessThanOrEqual(size.height+.5);
+  }
+  // Nothing keeps walking afterwards.
+  await page.waitForTimeout(800);
+  expect(await found()).toBe(6);
+  await expect(guide.locator('[data-line][data-state="drawing"]')).toHaveCount(0);
 });
