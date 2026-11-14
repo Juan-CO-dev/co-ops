@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 
 /**
- * Audit W04/B043: loadSkuReceivingLedger against a fake service-role client.
+ * Audit W04/B043 + B149: loadSkuReceivingLedger against a fake service-role client.
  * Chain: case = 6 x bag, bag = 5 lb, so one root = 480 oz; current case price $48.
  */
 type Row = Record<string, unknown>;
@@ -86,5 +86,27 @@ describe("W04/B043 SKU receiving ledger", () => {
     const led = (await loadSkuReceivingLedger(actor, ["sku"])).get("sku")!;
     expect(led.receivedOz).toBe(1440);
     expect(led.receivedDollars).toBe(150);
+  });
+});
+
+describe("W04/B149 SKU receiving ledger reads are bounded and loud", () => {
+  it.each(["vendor_deliveries", "vendors", "vendor_items"])("a failed %s read throws instead of rendering partial history", async (table) => {
+    state.errors[table] = "boom";
+    await expect(loadSkuReceivingLedger(actor, ["sku"])).rejects.toThrow(/boom/);
+  });
+
+  it("chunks delivery, vendor and SKU id lists to 100 and still finds every delivery", async () => {
+    const n = 250;
+    state.tables.vendor_delivery_items = Array.from({ length: n }, (_, i) => ({ id: `l${i}`, vendor_item_id: "sku", delivery_id: `d${i}`, qty_received: 1, unit_price: 48, received_level_label: null, resolved_oz: null }));
+    state.tables.vendor_deliveries = Array.from({ length: n }, (_, i) => ({ id: `d${i}`, delivery_date: `2026-10-${String((i % 28) + 1).padStart(2, "0")}`, vendor_id: `v${i % 130}` }));
+    state.tables.vendors = Array.from({ length: 130 }, (_, i) => ({ id: `v${i}`, name: `Vendor ${i}`, source_kind: "vendor" }));
+    const skuIds = ["sku", ...Array.from({ length: 149 }, (_, i) => `other${i}`)];
+    const led = (await loadSkuReceivingLedger(actor, skuIds)).get("sku")!;
+    expect(led.deliveries).toHaveLength(n);
+    expect(led.deliveries.every((d) => d.date !== "" && d.vendorName !== "(vendor)")).toBe(true);
+    expect(led.receivedDollars).toBe(48 * n);
+    for (const table of ["vendor_deliveries", "vendors", "vendor_delivery_items", "vendor_items"]) {
+      expect(Math.max(...state.inSizes[table]!)).toBeLessThanOrEqual(100);
+    }
   });
 });

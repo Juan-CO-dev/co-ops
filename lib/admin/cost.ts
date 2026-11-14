@@ -82,6 +82,20 @@ function num(v: number | string | null): number | null {
 const PRICE_COLUMNS = "id, vendor_item_id, unit_price, effective_date, recorded_at, location_id, price_lane_id";
 const PRICE_ID_CHUNK = 100;
 
+/** Read rows for an id list in chunks of PRICE_ID_CHUNK (the request-line ceiling), each chunk
+ *  paged past the row cap; a failed page throws (selectAllRows). W04/B149. */
+async function selectByIdChunks<T>(
+  ids: readonly string[],
+  build: (chunk: string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error?: { message: string } | null }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < ids.length; i += PRICE_ID_CHUNK) {
+    const chunk = ids.slice(i, i + PRICE_ID_CHUNK);
+    out.push(...await selectAllRows<T>((from, to) => build(chunk, from, to)));
+  }
+  return out;
+}
+
 /** This shop's LIVE price lanes for these SKUs (0259): skuId → lane id. Paged; throws on error. */
 export async function loadLiveShopPriceLanes(skuIds: string[], locationId: string): Promise<Map<string, string>> {
   const out = new Map<string, string>();
@@ -173,13 +187,15 @@ async function loadChainAwareContent(
   measuresMap: Map<string, MeasureUnitFactor>,
 ): Promise<Map<string, { oz: number | null; rootLabel: string | null }>> {
   if (skuIds.length === 0) return new Map();
-  const [{ data: skuRows }, chains] = await Promise.all([
-    sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each, pack_format").in("id", skuIds)
-      .returns<Array<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null; pack_format: string | null }>>(),
+  const [skuRows, chains] = await Promise.all([
+    // W04/B149: chunked + paged, and a failed read throws instead of leaving SKUs "missing oz".
+    selectByIdChunks<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null; pack_format: string | null }>(
+      skuIds, (chunk, from, to) => sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each, pack_format")
+        .in("id", chunk).order("id", { ascending: true }).range(from, to)),
     loadSkuPackChains(skuIds, null), // the drawer's ledgers span every shop: the global default
   ]);
   return new Map(
-    (skuRows ?? []).map((s) => {
+    skuRows.map((s) => {
       const chain = chains.get(s.id) ?? null;
       const rootLabel = chain && chain.length > 0 ? chainRootLabel(buildPackChain(chain)) : s.pack_format;
       return [s.id, {
@@ -332,12 +348,13 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
 
   // Paginate: vendor_delivery_items grows with every receiving session; a raw
   // scan truncates at 1000 and silently under-counts received $/oz. Order by the
-  // unique `id` for a stable total order across pages.
-  const lines = await selectAllRows<{ vendor_item_id: string; delivery_id: string; qty_received: number | string; unit_price: number | string | null; received_level_label: string | null; resolved_oz: number | string | null }>(
-    (from, to) => sb
+  // unique `id` for a stable total order across pages. The SKU list is chunked too (W04/B149):
+  // /admin/skus passes the whole catalog, which outgrows the request line.
+  const lines = await selectByIdChunks<{ vendor_item_id: string; delivery_id: string; qty_received: number | string; unit_price: number | string | null; received_level_label: string | null; resolved_oz: number | string | null }>(
+    skuIds, (chunk, from, to) => sb
       .from("vendor_delivery_items")
       .select("vendor_item_id, delivery_id, qty_received, unit_price, received_level_label, resolved_oz")
-      .in("vendor_item_id", skuIds)
+      .in("vendor_item_id", chunk)
       .order("id", { ascending: true })
       .range(from, to),
   );
@@ -350,11 +367,17 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
   const deliveryIds = [...new Set(lines.map((l) => l.delivery_id))];
   const delMeta = new Map<string, { date: string; vendorName: string; store: boolean }>();
   if (deliveryIds.length > 0) {
-    const { data: dels } = await sb.from("vendor_deliveries").select("id, delivery_date, vendor_id").in("id", deliveryIds).returns<Array<{ id: string; delivery_date: string; vendor_id: string }>>();
-    const vendorIds = [...new Set((dels ?? []).map((d) => d.vendor_id))];
-    const { data: vends } = vendorIds.length ? await sb.from("vendors").select("id, name, source_kind").in("id", vendorIds).returns<Array<{ id: string; name: string; source_kind: string | null }>>() : { data: [] as Array<{ id: string; name: string; source_kind: string | null }> };
-    const vById = new Map((vends ?? []).map((v) => [v.id, v]));
-    for (const d of dels ?? []) {
+    // W04/B149: the delivery id list grows with every truck. Chunked, paged, and loud on error
+    // (a swallowed error rendered a blank date and "(vendor)" for every missed delivery).
+    const dels = await selectByIdChunks<{ id: string; delivery_date: string; vendor_id: string }>(
+      deliveryIds, (chunk, from, to) => sb.from("vendor_deliveries").select("id, delivery_date, vendor_id")
+        .in("id", chunk).order("id", { ascending: true }).range(from, to));
+    const vendorIds = [...new Set(dels.map((d) => d.vendor_id))];
+    const vends = await selectByIdChunks<{ id: string; name: string; source_kind: string | null }>(
+      vendorIds, (chunk, from, to) => sb.from("vendors").select("id, name, source_kind")
+        .in("id", chunk).order("id", { ascending: true }).range(from, to));
+    const vById = new Map(vends.map((v) => [v.id, v]));
+    for (const d of dels) {
       const v = vById.get(d.vendor_id);
       delMeta.set(d.id, { date: d.delivery_date, vendorName: v?.name ?? "(vendor)", store: v?.source_kind === "store" });
     }
