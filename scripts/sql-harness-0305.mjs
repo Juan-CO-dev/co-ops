@@ -8,7 +8,7 @@
  * sources, never forked: current_user_id (0200), current_user_role_level (0189), the live
  * current_user_locations body (Foundation Spec v1.3 §5, never re-emitted by a migration until 0305), the
  * cash_reports policy (0067), the catering oracles and read policies (0113, 0120) and the parents' floored
- * quals (0189). Every request runs as PostgREST runs it: `set local role authenticated` plus
+ * quals (0189), and the three correction RPCs with their grants (0287) over assignment_author_level (0228). Every request runs as PostgREST runs it: `set local role authenticated` plus
  * the JWT claims in `request.jwt.claims`.
  *
  *   A  B009  current_user_locations() counts ACTIVE memberships only: a removed shop closes on the curl path
@@ -16,6 +16,9 @@
  *   B  B010  the catering child tables (quote lines, order lines, lead history) take the parents' level-5
  *            floor on the location arm: the whole role x membership matrix, child never wider than parent,
  *            the unassigned-lead arm (6+) and the level-9 arm unchanged; a second read policy is refused.
+ *   C  B150  the three checklist correction RPCs (0287, real bodies) require an ACTIVE membership below
+ *            level 8: all 15 roles x active / inactive / missing membership, for the authority path and both
+ *            self paths; each re-emitted body is 0287's with exactly one changed line; grants and context kept.
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
@@ -47,6 +50,10 @@ function grab(sql, re, what) {
 const SHOP_A = id(101), SHOP_B = id(102);
 const LEAD_A = id(301), LEAD_B = id(302), LEAD_NONE = id(303);
 const ORDER_A = id(311), ORDER_B = id(312), QUOTE_A = id(321), QUOTE_B = id(322);
+const TEMPLATE_ITEM = id(401), INSTANCE_A = id(402), COMPLETION = id(403), CORRECTOR = id(50);
+const M0287 = mig("0287_checklist_corrections_serialized.sql");
+const CORRECTION_RPCS = ["checklist_revoke_completion", "checklist_revoke_with_reason", "checklist_mark_not_done"];
+const correctionBody = (name) => grab(M0287, new RegExp(`create function public\\.${name}\\([\\s\\S]*?\\nend \\$\\$;`), `0287 ${name}`);
 /** [user id, session id, role]. Everyone starts as an ACTIVE member of both shops unless a test says otherwise. */
 const PEOPLE = {
   employee: [id(1), id(201), "employee"],
@@ -135,6 +142,25 @@ async function base() {
     [m0189, /alter policy catering_pipeline_read[\s\S]*?\);/, "0189 catering_pipeline_read"],
     [m0189, /alter policy catering_orders_read[\s\S]*?\);/, "0189 catering_orders_read"],
   ]) await db.exec(grab(sql, re, what));
+
+  // Checklist corrections: the columns the three RPCs touch, 0228's level helper, 0287's REAL bodies and grants.
+  await db.exec(`create table checklist_template_items(id uuid primary key, report_reference_type text);
+    create table checklist_instances(id uuid primary key, location_id uuid not null, status text not null default 'open');
+    create table checklist_completions(id uuid primary key, instance_id uuid not null references checklist_instances,
+      template_item_id uuid not null references checklist_template_items, completed_by uuid not null references users,
+      completed_at timestamptz not null default now(), prep_data jsonb, superseded_at timestamptz, revoked_at timestamptz,
+      revoked_by uuid references users, revocation_reason text, revocation_note text);
+    insert into users values('${CORRECTOR}','key_holder',true);
+    insert into user_locations values('${CORRECTOR}','${SHOP_A}',true);
+    insert into checklist_template_items values('${TEMPLATE_ITEM}', null);
+    insert into checklist_instances values('${INSTANCE_A}','${SHOP_A}','open');
+    insert into checklist_completions(id, instance_id, template_item_id, completed_by, completed_at)
+      values('${COMPLETION}','${INSTANCE_A}','${TEMPLATE_ITEM}','${PEOPLE.employee[0]}', now() - interval '1 hour');`);
+  await db.exec(grab(mig("0228_assignment_attribution.sql"), /create function public\.assignment_author_level[\s\S]*?end \$\$;/i, "0228 assignment_author_level"));
+  await db.exec(`revoke all on function assignment_author_level(uuid) from public, anon, authenticated;
+    grant execute on function assignment_author_level(uuid) to service_role;`);
+  for (const name of CORRECTION_RPCS) await db.exec(correctionBody(name));
+  await db.exec(grab(M0287, /revoke all on function public\.checklist_revoke_completion[\s\S]*?grant execute on function public\.checklist_mark_not_done\(uuid,uuid,text\) to service_role;/, "0287 correction grants"));
   return db;
 }
 
@@ -273,9 +299,101 @@ async function cateringChildren() {
   console.log("B  B010 catering child reads: floored at level 5 on the location arm; matrix, structure and refusals verified");
 }
 
+// ── C. B150 ─────────────────────────────────────────────────────────────────────────────────────
+const ROLES = [["prospect", 0], ["hired_not_yet_worked", 1], ["trainee", 2], ["employee", 3], ["trainer", 4], ["key_holder", 4], ["shift_lead", 5],
+  ["agm", 6], ["catering_mgr", 6], ["prep_mgr", 6], ["social_media_mgr", 6], ["gm", 7], ["moo", 8], ["owner", 9], ["cgs", 10]];
+const CORRECT = {
+  authority: `select public.checklist_mark_not_done('${COMPLETION}','${CORRECTOR}','not done')`,
+  reason: `select public.checklist_revoke_with_reason('${COMPLETION}','${CORRECTOR}','other','a correction')`,
+  quick: `select public.checklist_revoke_completion('${COMPLETION}','${CORRECTOR}')`,
+};
+/** One service-role call, always rolled back (with `change` applied first): "allowed" or the refusal. */
+async function attempt(db, call, change = "", role = "service_role") {
+  await db.exec("begin");
+  try {
+    if (change) await db.exec(change);
+    await db.exec(`set local role ${role}`);
+    await db.query(call);
+    return "allowed";
+  } catch (e) { return e.code === "P0001" ? e.message : `${e.code}:${e.message}`; }
+  finally { await db.exec("rollback"); }
+}
+const membershipSql = (m) => m === "missing"
+  ? `delete from user_locations where user_id = '${CORRECTOR}';`
+  : `update user_locations set active = ${m === "active"} where user_id = '${CORRECTOR}';`;
+
+async function corrections() {
+  let db = await base();
+  // The bug, on 0287 alone: a key holder whose membership row is inactive still corrects the shop's checklist.
+  check(await attempt(db, CORRECT.authority, membershipSql("inactive")) === "allowed",
+    "C0 before 0305: a key holder removed from the shop (inactive membership) still marks a completion not done (the bug)");
+  check(await attempt(db, CORRECT.reason, membershipSql("inactive") + `update checklist_completions set completed_by = '${CORRECTOR}';`) === "allowed",
+    "C0 before 0305: the same person still revokes their own completion there (the bug)");
+  const before = Object.fromEntries((await db.query(`select proname, prosrc from pg_proc where proname = any($1::text[])`, [CORRECTION_RPCS])).rows.map((r) => [r.proname, r.prosrc]));
+  await db.exec(M0305);
+
+  let cases = 0;
+  for (const [role, level] of ROLES) for (const membership of ["active", "inactive", "missing"]) {
+    const setup = `update users set role = '${role}' where id = '${CORRECTOR}';` + membershipSql(membership);
+    const scoped = membership === "active" || level >= 8;
+    const authority = await attempt(db, CORRECT.authority, setup);
+    check((authority === "allowed") === (level >= 4 && scoped), `C1 mark-not-done ${role}/${membership}: ${authority}`);
+    if (!scoped) check(authority === "not_authorized", `C1 mark-not-done ${role}/${membership} refuses not_authorized`);
+    const mine = setup + `update checklist_completions set completed_by = '${CORRECTOR}';`;
+    const reason = await attempt(db, CORRECT.reason, mine);
+    check((reason === "allowed") === scoped, `C1 revoke-with-reason ${role}/${membership}: ${reason}`);
+    const quick = await attempt(db, CORRECT.quick, mine + "update checklist_completions set completed_at = clock_timestamp();");
+    check((quick === "allowed") === scoped, `C1 quick revoke ${role}/${membership}: ${quick}`);
+    cases++;
+  }
+  // A membership at ANOTHER shop is not a membership here.
+  check(await attempt(db, CORRECT.authority, `update user_locations set location_id = '${SHOP_B}' where user_id = '${CORRECTOR}';`) === "not_authorized",
+    "C1 an active membership at another shop does not count");
+
+  // Everything else is 0287's: the bodies differ by exactly the one membership line, and behaviour holds.
+  const after = (await db.query(`select proname, prosrc, prosecdef, proconfig from pg_proc where proname = any($1::text[])`, [CORRECTION_RPCS])).rows;
+  check(after.length === 3, "C2 exactly three correction RPCs (no overload added)");
+  for (const fn of after) {
+    const a = before[fn.proname].split("\n"), b = fn.prosrc.split("\n");
+    const changed = a.map((line, i) => [line, b[i]]).filter(([x, y]) => x !== y);
+    check(a.length === b.length && changed.length === 2
+      && changed[0][0].includes("Deliberately no active filter") && changed[0][1].trim().startsWith("-- 0305 (B150)")
+      && changed[1][1] === changed[1][0].replace("v_instance.location_id for share", "v_instance.location_id and active for share"),
+      `C2 ${fn.proname} is 0287's body with one changed statement (and its comment)`);
+    check(!fn.prosecdef && fn.proconfig.includes("search_path=pg_catalog, public"), `C2 ${fn.proname} stays SECURITY INVOKER with a pinned search_path`);
+  }
+  for (const [call, change, code, what] of [
+    [CORRECT.authority, "update checklist_instances set status = 'confirmed';", "instance_not_open", "a confirmed instance refuses"],
+    [CORRECT.authority, `update checklist_completions set completed_by = '${CORRECTOR}';`, "use_self_revoke", "authority is cross-user only"],
+    [CORRECT.reason, "", "not_self", "self revoke is self only"],
+    [CORRECT.authority, `update users set role = 'owner' where id = '${PEOPLE.employee[0]}';`, "revoke_hierarchy_violation", "never above the completer's level"],
+    [CORRECT.authority, "update checklist_completions set completed_at = clock_timestamp();", "use_quick_revoke", "the 60-second window"],
+    [CORRECT.authority, `update users set active = false where id = '${CORRECTOR}';`, "not_authorized", "a deactivated actor"],
+    [CORRECT.authority, "update checklist_template_items set report_reference_type = 'cash_report';", "reference_row_not_correctable", "reference rows"],
+  ]) check(await attempt(db, call, change) === code, `C2 unchanged 0287 refusal: ${what} -> ${code}`);
+  for (const role of ["anon", "authenticated"]) for (const call of Object.values(CORRECT)) {
+    check((await attempt(db, call, "", role)).startsWith("42501"), `C3 ${role} cannot call ${call.slice(14, call.indexOf("("))}`);
+  }
+  check((await db.query(`select count(*)::int as n from audit_log where metadata->>'bug' = 'B150'`)).rows[0].n === 1, "C3 one audit row for the RPC re-emission");
+  await db.close();
+
+  // Refusal: a definition that is not 0287's is never clobbered.
+  db = await base();
+  await db.exec(correctionBody("checklist_mark_not_done").replace("create function", "create or replace function")
+    .replace("where user_id = p_actor and location_id = v_instance.location_id for share", "where user_id = p_actor and location_id = v_instance.location_id and true for share"));
+  await applyRefuses(db, "is not 0287's definition", "C4 refuses when a correction RPC is not 0287's body (a later re-emission)");
+  await db.close();
+  db = await base();
+  await db.exec("drop function public.checklist_revoke_completion(uuid,uuid);");
+  await applyRefuses(db, "0305: 0287", "C4 refuses without 0287");
+  await db.close();
+  console.log(`C  B150 correction RPCs: ${cases} role/membership cases x 3 writers; active membership below level 8, level 8+ preserved`);
+}
+
 try {
   await membership();
   await cateringChildren();
+  await corrections();
   if (failures) { console.error(`FAIL 0305: ${failures} of ${checks} checks failed`); process.exitCode = 1; }
   else console.log(`PASS 0305: ${checks} checks`);
 } catch (e) { console.error(`FAIL 0305: ${e.stack ?? e}`); process.exitCode = 1; }

@@ -1724,6 +1724,32 @@ function throwCorrectionError(error: PostgrestError, completionId: string, actor
 }
 
 /**
+ * Audit W05 / B150 — bind the correcting actor to the completion's shop BEFORE the RPC.
+ *
+ * The rule is the correction RPCs' own (0287, tightened by 0305): an ACTIVE member of the
+ * instance's shop, or level 8+. `actor.locations` comes from resolveChecklistWriteActor, which
+ * reads active memberships fresh, so a person removed from the shop is refused here even where
+ * the database copy of the rule still counted an inactive membership row. SQL repeats the check
+ * under the parent lock; this is the early, app-side half (the user-context reads above it only
+ * prove RLS read scope, which is wider).
+ *
+ * Refusals mirror `throwCorrectionError`'s `not_authorized` mapping, so a caller cannot tell the
+ * app-side refusal from the SQL one: the self paths answer the hidden-row "not found", the
+ * authority path a role violation.
+ */
+async function requireCorrectionShop(
+  authed: SupabaseClient,
+  instanceId: string,
+  actor: ChecklistWriteActor,
+  operation: "revoke" | "revoke_with_reason" | "revoke_by_authority",
+): Promise<void> {
+  const instance = await loadInstanceOrThrow(authed, instanceId);
+  if (actor.active && (actor.locations.includes(instance.location_id) || actor.level >= 8)) return;
+  if (operation !== "revoke_by_authority") throw new ChecklistError("Completion not found.", "completion_not_found");
+  throw new ChecklistRoleViolationError(4, actor.level, "You do not manage that location");
+}
+
+/**
  * Silent self-revoke for a just-tapped completion. Window is QUICK_WINDOW_MS
  * (60s) measured from the live row's completed_at. Self-only.
  *
@@ -1744,13 +1770,14 @@ export async function revokeCompletion(
   authed: SupabaseClient,
   args: {
     completionId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     ipAddress?: string | null;
     userAgent?: string | null;
   },
 ): Promise<{ completion: ChecklistCompletion }> {
   const { completionId, actor } = args;
   const target = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireCorrectionShop(authed, target.instance_id, actor, "revoke");
   await requireChecklistTaskAccess(authed, target.instance_id, actor);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
   const { data, error } = await getServiceRoleClient().rpc("checklist_revoke_completion", {
@@ -1812,7 +1839,7 @@ export async function revokeWithReason(
   authed: SupabaseClient,
   args: {
     completionId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     reason: "not_actually_done" | "other";
     note?: string | null;
     ipAddress?: string | null;
@@ -1824,6 +1851,7 @@ export async function revokeWithReason(
   if (!["not_actually_done", "other"].includes(reason)) throw new ChecklistError("Invalid correction reason.", "invalid_payload");
   if (reason === "other" && note.length === 0) throw new ChecklistRevocationNoteRequiredError(completionId);
   const target = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireCorrectionShop(authed, target.instance_id, actor, "revoke_with_reason");
   await requireChecklistTaskAccess(authed, target.instance_id, actor);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
   const { data, error } = await getServiceRoleClient().rpc("checklist_revoke_with_reason", {
@@ -1899,7 +1927,7 @@ export async function markNotDoneByAuthority(
   authed: SupabaseClient,
   args: {
     completionId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     note?: string | null;
     ipAddress?: string | null;
     userAgent?: string | null;
@@ -1909,6 +1937,7 @@ export async function markNotDoneByAuthority(
   const note = args.note?.trim() ?? "";
   if (note.length === 0) throw new ChecklistRevocationNoteRequiredError(completionId);
   const target = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireCorrectionShop(authed, target.instance_id, actor, "revoke_by_authority");
   await requireChecklistTaskAccess(authed, target.instance_id, actor);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
   const { data, error } = await getServiceRoleClient().rpc("checklist_mark_not_done", {

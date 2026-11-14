@@ -25,12 +25,23 @@
 --        level >= 9  OR  (level >= 5 AND the PARENT's shop = ANY(current_user_locations()))
 --      and catering_pipeline_events keeps its third arm unchanged (an unassigned lead's history: level >= 6).
 --      ALTER POLICY only: names, the level-9 arm and the write side (0272: no user write at all) are untouched.
+--   C. B150 — the three checklist correction RPCs require an ACTIVE membership.
+--      0287's checklist_revoke_completion / checklist_revoke_with_reason / checklist_mark_not_done checked
+--      user_locations WITHOUT `active` ("parity with today's current_user_locations"), so a person removed
+--      from a shop could still correct that shop's checklist entries. With section A the parity argument
+--      points the other way. Re-emitted from 0287 with ONE changed line each (`... and active for share`);
+--      level 8+ still needs no membership (0287's ruling, unchanged), and every other statement, the lock
+--      order (instance FOR NO KEY UPDATE, then the completion), SECURITY INVOKER, the pinned search_path and
+--      the service_role-only grants are 0287's. checklist_confirm_instance is NOT touched.
 --
 -- CODE: nothing in the application depends on this migration. The app already filters active memberships
---   (lib/session.ts, resolveChecklistWriteActor), so it behaves the same before and after the apply.
+--   (lib/session.ts, resolveChecklistWriteActor), so it behaves the same before and after the apply. The same
+--   PR adds the app-side half of C (lib/checklists.ts binds the verified actor to the instance's shop before
+--   calling the RPCs), which closes the app path on its own; either order of deploy and apply is safe.
 --
 -- DEPENDS ON: 0029 (the SECURITY DEFINER helpers), 0078 (user_locations.active), 0200 (current_user_id),
---   0113 / 0120 (the child read policies and the catering_*_loc oracles), 0189 (the level helper).
+--   0113 / 0120 (the child read policies and the catering_*_loc oracles), 0189 (the level helper),
+--   0287 (the three correction RPCs) and 0228 (assignment_author_level).
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select pg_get_functiondef('public.current_user_locations()'::regprocedure);
@@ -42,6 +53,10 @@
 --   select tablename, policyname, cmd, roles, qual from pg_policies where schemaname = 'public'
 --    and tablename in ('catering_quote_items', 'catering_order_items', 'catering_pipeline_events') order by 1, 2;
 --     -- exactly ONE SELECT policy per table (<table>_read), its location arm NOT floored yet
+--   select proname, strpos(prosrc, 'location_id = v_instance.location_id for share') > 0 as is_0287
+--     from pg_proc where pronamespace = 'public'::regnamespace
+--      and proname in ('checklist_revoke_completion', 'checklist_revoke_with_reason', 'checklist_mark_not_done');
+--     -- three rows, all true (the pre-flight refuses any other definition)
 --
 -- VERIFY AFTER APPLY:
 --   select prosrc from pg_proc where oid = 'public.current_user_locations()'::regprocedure;   -- "and active"
@@ -50,11 +65,19 @@
 --   select tablename, qual from pg_policies where schemaname = 'public' and cmd = 'SELECT'
 --    and tablename in ('catering_quote_items', 'catering_order_items', 'catering_pipeline_events');
 --     -- every qual contains ">= (5)" in front of its catering_*_loc(...) = ANY (current_user_locations()) arm
+--   select proname, strpos(prosrc, 'location_id = v_instance.location_id and active for share') > 0 as active_only
+--     from pg_proc where pronamespace = 'public'::regnamespace
+--      and proname in ('checklist_revoke_completion', 'checklist_revoke_with_reason', 'checklist_mark_not_done');  -- all true
+--   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
+--     and routine_name in ('checklist_revoke_completion', 'checklist_revoke_with_reason', 'checklist_mark_not_done');
+--     -- service_role (+ postgres) only
+--   Run scripts/sim/checklist-0287-lock-check.mjs on the sim (the lock order is unchanged; this re-proves it).
 --   select action, resource_table, metadata->>'bug' from public.audit_log
 --    where metadata->>'migration' = '0305_rls_membership_and_read_floors' order by 3;           -- one row per section
 --
 -- ROLLBACK: re-create current_user_locations() without `and active` (re-opens B009; prefer fixing forward);
---   ALTER the three child policies back to 0113 / 0120's quals (re-opens B010).
+--   ALTER the three child policies back to 0113 / 0120's quals (re-opens B010); re-run 0287's three
+--   `create function` bodies as `create or replace` (re-opens B150).
 --   Nothing here drops data.
 
 begin;
@@ -205,5 +228,229 @@ select null, null, 'security.grants_change', t.tbl, null, true,
     'bug', 'B010', 'policy', t.tbl || '_read',
     'change', 'location arm floored at role level 5 (the parent table''s read floor); level-9 arm unchanged')
 from (values ('catering_quote_items'), ('catering_order_items'), ('catering_pipeline_events')) t(tbl);
+
+-- ════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- C. B150 — checklist correction RPCs: an ACTIVE membership (0287 re-emitted, one line each)
+-- ════════════════════════════════════════════════════════════════════════════════════════════════════════
+do $$
+declare f regprocedure; v record;
+begin
+  if to_regprocedure('public.checklist_revoke_completion(uuid,uuid)') is null
+     or to_regprocedure('public.checklist_revoke_with_reason(uuid,uuid,text,text)') is null
+     or to_regprocedure('public.checklist_mark_not_done(uuid,uuid,text)') is null
+     or to_regprocedure('public.assignment_author_level(uuid)') is null then
+    raise exception '0305: 0287 (the checklist correction RPCs) and 0228 must be applied first';
+  end if;
+  foreach f in array array[
+    'public.checklist_revoke_completion(uuid,uuid)'::regprocedure,
+    'public.checklist_revoke_with_reason(uuid,uuid,text,text)'::regprocedure,
+    'public.checklist_mark_not_done(uuid,uuid,text)'::regprocedure
+  ] loop
+    select prosecdef, prosrc into v from pg_proc where oid = f;
+    -- Only 0287's body is replaced: a later re-emission must be re-synced into this file, never clobbered.
+    if v.prosecdef or strpos(v.prosrc, 'where user_id = p_actor and location_id = v_instance.location_id for share') = 0
+       or strpos(v.prosrc, 'for no key update') = 0 then
+      raise exception '0305: % is not 0287''s definition: re-sync section C before applying', f;
+    end if;
+  end loop;
+end $$;
+
+create or replace function public.checklist_revoke_completion(p_completion uuid, p_actor uuid)
+returns jsonb language plpgsql security invoker set search_path = pg_catalog, public as $$
+declare
+  v_parent uuid; v_instance public.checklist_instances%rowtype;
+  v_completion public.checklist_completions%rowtype;
+  v_level integer; v_completer_level integer; v_n integer;
+  v_at timestamptz; v_elapsed bigint;
+begin
+  -- Resolve identity only before the parent lock; every mutable field is re-read.
+  select instance_id into v_parent from public.checklist_completions where id = p_completion;
+  if not found then raise exception 'completion_not_found'; end if;
+  select * into v_instance from public.checklist_instances where id = v_parent for no key update;
+  if not found then raise exception 'instance_not_found'; end if;
+  if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;
+  -- Reference/prep identity is immutable after insert; refuse before target lock.
+  select * into v_completion from public.checklist_completions where id = p_completion;
+  if exists(select 1 from public.checklist_template_items
+    where id = v_completion.template_item_id and report_reference_type is not null) then
+    raise exception 'reference_row_not_correctable';
+  end if;
+  if v_completion.prep_data is not null then raise exception 'prep_data_not_correctable'; end if;
+  select * into v_completion from public.checklist_completions
+    where id = p_completion and instance_id = v_parent for no key update;
+  if not found or v_completion.revoked_at is not null or v_completion.superseded_at is not null then
+    raise exception 'completion_not_found';
+  end if;
+  perform 1 from public.users where id = p_actor and active for share;
+  if not found then raise exception 'not_authorized'; end if;
+  v_level := public.assignment_author_level(p_actor);
+  if v_level is null then raise exception 'not_authorized'; end if;
+  if v_level < 8 then
+    -- 0305 (B150): an ACTIVE membership only. 0287 kept parity with the then-unfiltered current_user_locations().
+    perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id and active for share;
+    if not found then raise exception 'not_authorized'; end if;
+  end if;
+  if v_completion.completed_by is distinct from p_actor then raise exception 'not_self'; end if;
+  v_at := clock_timestamp(); -- after parent/target/authority lock waits
+  v_elapsed := floor(extract(epoch from (v_at - v_completion.completed_at)) * 1000)::bigint;
+  if v_elapsed >= 60000 then raise exception 'outside_quick_window'
+    using detail = jsonb_build_object('elapsed_ms', v_elapsed)::text; end if;
+
+  update public.checklist_completions set revoked_at = v_at, revoked_by = p_actor,
+    revocation_reason = 'error_tap'
+    where id = p_completion and instance_id = v_parent and revoked_at is null and superseded_at is null
+    returning * into v_completion;
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then raise exception 'concurrent_modification'; end if;
+  return jsonb_build_object('completion', to_jsonb(v_completion), 'elapsed_ms', v_elapsed,
+    'actor_level', v_level, 'completer_level', v_completer_level);
+end $$;
+
+create or replace function public.checklist_revoke_with_reason(p_completion uuid, p_actor uuid, p_reason text, p_note text default null)
+returns jsonb language plpgsql security invoker set search_path = pg_catalog, public as $$
+declare
+  v_parent uuid; v_instance public.checklist_instances%rowtype;
+  v_completion public.checklist_completions%rowtype;
+  v_level integer; v_completer_level integer; v_n integer;
+  v_at timestamptz; v_elapsed bigint; v_note text;
+begin
+  v_note := btrim(coalesce(p_note, ''), U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF');
+  if p_reason is null or p_reason not in ('not_actually_done', 'other') then raise exception 'invalid_payload'; end if;
+  if p_reason = 'other' and v_note = '' then raise exception 'revocation_note_required'; end if;
+  -- Resolve identity only before the parent lock; every mutable field is re-read.
+  select instance_id into v_parent from public.checklist_completions where id = p_completion;
+  if not found then raise exception 'completion_not_found'; end if;
+  select * into v_instance from public.checklist_instances where id = v_parent for no key update;
+  if not found then raise exception 'instance_not_found'; end if;
+  if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;
+  -- Reference/prep identity is immutable after insert; refuse before target lock.
+  select * into v_completion from public.checklist_completions where id = p_completion;
+  if exists(select 1 from public.checklist_template_items
+    where id = v_completion.template_item_id and report_reference_type is not null) then
+    raise exception 'reference_row_not_correctable';
+  end if;
+  if v_completion.prep_data is not null then raise exception 'prep_data_not_correctable'; end if;
+  select * into v_completion from public.checklist_completions
+    where id = p_completion and instance_id = v_parent for no key update;
+  if not found or v_completion.revoked_at is not null or v_completion.superseded_at is not null then
+    raise exception 'completion_not_found';
+  end if;
+  perform 1 from public.users where id = p_actor and active for share;
+  if not found then raise exception 'not_authorized'; end if;
+  v_level := public.assignment_author_level(p_actor);
+  if v_level is null then raise exception 'not_authorized'; end if;
+  if v_level < 8 then
+    -- 0305 (B150): an ACTIVE membership only. 0287 kept parity with the then-unfiltered current_user_locations().
+    perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id and active for share;
+    if not found then raise exception 'not_authorized'; end if;
+  end if;
+  if v_completion.completed_by is distinct from p_actor then raise exception 'not_self'; end if;
+  v_at := clock_timestamp(); -- after parent/target/authority lock waits
+  v_elapsed := floor(extract(epoch from (v_at - v_completion.completed_at)) * 1000)::bigint;
+  if v_elapsed < 60000 then raise exception 'use_quick_revoke'; end if;
+  update public.checklist_completions set revoked_at = v_at, revoked_by = p_actor,
+    revocation_reason = p_reason, revocation_note = case when p_reason = 'other' then v_note else null end
+    where id = p_completion and instance_id = v_parent and revoked_at is null and superseded_at is null
+    returning * into v_completion;
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then raise exception 'concurrent_modification'; end if;
+  return jsonb_build_object('completion', to_jsonb(v_completion), 'elapsed_ms', v_elapsed,
+    'actor_level', v_level, 'completer_level', v_completer_level);
+end $$;
+
+create or replace function public.checklist_mark_not_done(p_completion uuid, p_actor uuid, p_note text)
+returns jsonb language plpgsql security invoker set search_path = pg_catalog, public as $$
+declare
+  v_parent uuid; v_instance public.checklist_instances%rowtype;
+  v_completion public.checklist_completions%rowtype;
+  v_level integer; v_completer_level integer; v_n integer;
+  v_at timestamptz; v_elapsed bigint; v_note text;
+begin
+  v_note := btrim(coalesce(p_note, ''), U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF');
+  if v_note = '' then raise exception 'revocation_note_required'; end if;
+  -- Resolve identity only before the parent lock; every mutable field is re-read.
+  select instance_id into v_parent from public.checklist_completions where id = p_completion;
+  if not found then raise exception 'completion_not_found'; end if;
+  select * into v_instance from public.checklist_instances where id = v_parent for no key update;
+  if not found then raise exception 'instance_not_found'; end if;
+  if v_instance.status is distinct from 'open' then raise exception 'instance_not_open'; end if;
+  -- Reference/prep identity is immutable after insert; refuse before target lock.
+  select * into v_completion from public.checklist_completions where id = p_completion;
+  if exists(select 1 from public.checklist_template_items
+    where id = v_completion.template_item_id and report_reference_type is not null) then
+    raise exception 'reference_row_not_correctable';
+  end if;
+  if v_completion.prep_data is not null then raise exception 'prep_data_not_correctable'; end if;
+  select * into v_completion from public.checklist_completions
+    where id = p_completion and instance_id = v_parent for no key update;
+  if not found or v_completion.revoked_at is not null or v_completion.superseded_at is not null then
+    raise exception 'completion_not_found';
+  end if;
+  perform 1 from public.users where id = p_actor and active for share;
+  if not found then raise exception 'not_authorized'; end if;
+  v_level := public.assignment_author_level(p_actor);
+  if v_level is null then raise exception 'not_authorized'; end if;
+  if v_level < 8 then
+    -- 0305 (B150): an ACTIVE membership only. 0287 kept parity with the then-unfiltered current_user_locations().
+    perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id and active for share;
+    if not found then raise exception 'not_authorized'; end if;
+  end if;
+  if v_completion.completed_by = p_actor then raise exception 'use_self_revoke'; end if;
+  if v_level < 4 then raise exception 'role_level_insufficient'
+    using detail = jsonb_build_object('required', 4, 'actual', v_level)::text; end if;
+  v_completer_level := public.assignment_author_level(v_completion.completed_by);
+  if v_completer_level is null then raise exception 'completer_not_found'; end if;
+  v_at := clock_timestamp(); -- after parent/target/authority lock waits
+  v_elapsed := floor(extract(epoch from (v_at - v_completion.completed_at)) * 1000)::bigint;
+  if v_elapsed < 60000 then raise exception 'use_quick_revoke'; end if;
+  if v_level < v_completer_level then raise exception 'revoke_hierarchy_violation'
+    using detail = jsonb_build_object('actor_level', v_level, 'completer_level', v_completer_level)::text; end if;
+  update public.checklist_completions set revoked_at = v_at, revoked_by = p_actor,
+    revocation_reason = 'not_actually_done', revocation_note = v_note
+    where id = p_completion and instance_id = v_parent and revoked_at is null and superseded_at is null
+    returning * into v_completion;
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then raise exception 'concurrent_modification'; end if;
+  return jsonb_build_object('completion', to_jsonb(v_completion), 'elapsed_ms', v_elapsed,
+    'actor_level', v_level, 'completer_level', v_completer_level);
+end $$;
+
+revoke all on function public.checklist_revoke_completion(uuid,uuid) from public, anon, authenticated;
+grant execute on function public.checklist_revoke_completion(uuid,uuid) to service_role;
+revoke all on function public.checklist_revoke_with_reason(uuid,uuid,text,text) from public, anon, authenticated;
+grant execute on function public.checklist_revoke_with_reason(uuid,uuid,text,text) to service_role;
+revoke all on function public.checklist_mark_not_done(uuid,uuid,text) from public, anon, authenticated;
+grant execute on function public.checklist_mark_not_done(uuid,uuid,text) to service_role;
+
+do $$
+declare f regprocedure; v_src text;
+begin
+  foreach f in array array[
+    'public.checklist_revoke_completion(uuid,uuid)'::regprocedure,
+    'public.checklist_revoke_with_reason(uuid,uuid,text,text)'::regprocedure,
+    'public.checklist_mark_not_done(uuid,uuid,text)'::regprocedure
+  ] loop
+    if has_function_privilege('anon', f, 'EXECUTE') or has_function_privilege('authenticated', f, 'EXECUTE')
+      or not has_function_privilege('service_role', f, 'EXECUTE') then
+      raise exception '0305: RPC execution grant escaped on %', f;
+    end if;
+    if exists(select 1 from pg_proc where oid = f and (prosecdef or
+      not ('search_path=pg_catalog, public' = any(coalesce(proconfig, '{}'::text[]))))) then
+      raise exception '0305: RPC execution context escaped on %', f;
+    end if;
+    select prosrc into v_src from pg_proc where oid = f;
+    if strpos(v_src, 'where user_id = p_actor and location_id = v_instance.location_id and active for share') = 0
+       or strpos(v_src, 'location_id = v_instance.location_id for share') > 0 then
+      raise exception '0305: % does not require an active membership after apply', f;
+    end if;
+  end loop;
+end $$;
+
+insert into public.audit_log (actor_id, actor_role, action, resource_table, resource_id, destructive, metadata)
+values (null, null, 'security.grants_change', 'checklist_completions', null, true,
+  jsonb_build_object('actor_context', 'migration_apply', 'migration', '0305_rls_membership_and_read_floors',
+    'bug', 'B150',
+    'functions', jsonb_build_array('checklist_revoke_completion', 'checklist_revoke_with_reason', 'checklist_mark_not_done'),
+    'change', 'below level 8 a correction requires an ACTIVE membership at the instance''s shop (0287 accepted an inactive row)'));
 
 commit;

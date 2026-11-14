@@ -36,6 +36,18 @@ describe("0305 RLS membership and read floors", () => {
       "B2 cateringMgr (level 6, none): unassigned-lead history readable",
       "B3 exactly one SELECT policy per child table, carrying the level-5 floor and the level-9 arm",
       "B4 refuses when a second read policy would OR the floor away",
+      // B150
+      "C0 before 0305: a key holder removed from the shop (inactive membership) still marks a completion not done (the bug)",
+      "C1 mark-not-done key_holder/inactive refuses not_authorized",
+      "C1 revoke-with-reason key_holder/inactive: not_authorized",
+      "C1 quick revoke gm/missing: not_authorized",
+      "C1 mark-not-done moo/missing: allowed",
+      "C1 mark-not-done employee/active: role_level_insufficient",
+      "C2 checklist_mark_not_done is 0287's body with one changed statement (and its comment)",
+      "C2 checklist_revoke_completion is 0287's body with one changed statement (and its comment)",
+      "C2 checklist_revoke_with_reason is 0287's body with one changed statement (and its comment)",
+      "C3 authenticated cannot call checklist_mark_not_done",
+      "C4 refuses when a correction RPC is not 0287's body (a later re-emission)",
     ]) expect(output).toContain(`ok   ${line}`);
   }, 250_000);
 
@@ -44,7 +56,7 @@ describe("0305 RLS membership and read floors", () => {
     expect(sql.match(/^begin;$/gm)).toHaveLength(1);
     expect(sql.match(/^commit;$/gm)).toHaveLength(1);
     expect(sql.trimEnd().endsWith("commit;")).toBe(true);
-    for (const bug of ["B009", "B010"]) expect(sql).toContain(`'bug', '${bug}'`);
+    for (const bug of ["B009", "B010", "B150"]) expect(sql).toContain(`'bug', '${bug}'`);
     // Never a destructive statement: this wave changes predicates and grants only.
     expect(sql).not.toMatch(/\b(drop table|truncate|delete from|drop column)\b/i);
   });
