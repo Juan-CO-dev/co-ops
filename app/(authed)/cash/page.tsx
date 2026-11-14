@@ -15,7 +15,7 @@ import { hasTaskAccess } from "@/lib/assignments";
 import { redirect } from "next/navigation";
 
 import { loadCashReport } from "@/lib/cash";
-import { overShortReadout } from "@/lib/cash-shared";
+import { closingLocksCash, overShortReadout } from "@/lib/cash-shared";
 import { loadToastCashProjected, type ToastProjected } from "@/lib/cash-toast";
 import { submittedToastLine } from "@/lib/cash-toast-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
@@ -71,7 +71,8 @@ export default async function CashPage({ searchParams }: PageProps) {
 
   const report = await loadCashReport(sb, { locationId: locationParam, date: today });
 
-  // Up-front lock: when no report exists but today's closing is already finalized,
+  // Up-front lock: when no report exists but today's closing is already finalized
+  // (confirmed, incomplete_confirmed or auto_finalized — closingLocksCash, W03/B040),
   // show a locked state instead of the entry form. Mirrors the edit-window gate
   // in lib/cash.ts submitCashReport (lines 127–137).
   let closingFinalized = false;
@@ -92,7 +93,7 @@ export default async function CashPage({ searchParams }: PageProps) {
         .eq("location_id", locationParam)
         .eq("date", today)
         .maybeSingle<{ status: string }>();
-      if (cInst && (cInst.status === "confirmed" || cInst.status === "incomplete_confirmed")) {
+      if (closingLocksCash(cInst?.status)) {
         closingFinalized = true;
       }
     }

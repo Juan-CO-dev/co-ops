@@ -12,6 +12,20 @@ export const CASH_REPORT_BASE_LEVEL = 4;
 /** $200 float kept in the register. */
 export const DEFAULT_FLOAT_CENTS = 20000;
 
+/**
+ * W03/B040: every closing status that closes the cash edit window — the closer's two PIN
+ * attestations AND the system's `auto_finalized` (opener release / the 16 h auto-release). The
+ * gate used to list only the first two, so a key holder could rewrite a past night's deposit
+ * after the system had closed it. ONE list: lib/cash.ts's write gate, the /cash page's up-front
+ * lock and migration 0304's in-transaction re-check (pinned equal by tests) all read it.
+ */
+export const CASH_LOCKING_CLOSING_STATUSES = ["confirmed", "incomplete_confirmed", "auto_finalized"] as const;
+
+/** Does a closing instance in this status lock the day's cash report? (null = no instance.) */
+export function closingLocksCash(status: string | null | undefined): boolean {
+  return status != null && (CASH_LOCKING_CLOSING_STATUSES as readonly string[]).includes(status);
+}
+
 /** US denomination units in cents, largest first (bills then coins). */
 export const DENOMINATION_UNITS_CENTS = [10000, 5000, 2000, 1000, 500, 100, 25, 10, 5, 1] as const;
 

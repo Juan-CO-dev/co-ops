@@ -10,6 +10,7 @@ import {
   DEFAULT_FLOAT_CENTS,
   DENOMINATION_UNITS_CENTS,
   computeCashTotals,
+  closingLocksCash,
   sumDenominations,
   type Denominations,
   type OnShiftEntry,
@@ -127,7 +128,8 @@ export async function submitCashReport(
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report" }))) {
     return { ok: false, reason: "assignment_required" };
   }
-  // Edit-window gate: refuse if today's closing is confirmed. PR-3 date-aware
+  // Edit-window gate: refuse if the day's closing is finalized — confirmed, incomplete_confirmed
+  // OR auto_finalized (W03/B040: the system's release locks it too). PR-3 date-aware
   // resolution — resolve the closing version effective on args.date (the instance
   // lookup keys on that date).
   const cTmplBase = service.from("checklist_templates").select("id")
@@ -137,7 +139,7 @@ export async function submitCashReport(
     const { data: cInst } = await service.from("checklist_instances").select("status")
       .eq("template_id", cTmpl.id).eq("location_id", args.locationId).eq("date", args.date)
       .maybeSingle<{ status: string }>();
-    if (cInst && (cInst.status === "confirmed" || cInst.status === "incomplete_confirmed")) {
+    if (closingLocksCash(cInst?.status)) {
       return { ok: false, reason: "closing_finalized" };
     }
   }
