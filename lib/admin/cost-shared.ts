@@ -95,3 +95,43 @@ export function contentOzForSku(
     measuresByLabel,
   );
 }
+
+/** One delivery line as the SKU receiving ledger reads it (W04/B043). */
+export interface ReceivedLineFacts {
+  /** `qty_received`: the count AT the received level when a level was named, else root packs. */
+  qty: number;
+  /** `received_level_label`; null on legacy rows (= the root pack). */
+  levelLabel: string | null;
+  /** `resolved_oz`, frozen at write time through the pack chain in force then. */
+  resolvedOz: number | null;
+  /** `unit_price` as entered: a ROOT-pack price from a vendor, a per-LEVEL price from a store run. */
+  linePrice: number | null;
+  /** The SKU's current root-pack price, used when the line carries none. */
+  currentRootPrice: number | null;
+  /** Today's content oz of ONE root pack. */
+  contentOz: number | null;
+  /** Today's root level label (chain root, else the flat pack format). */
+  rootLabel: string | null;
+  /** True for a store-run line, whose `linePrice` is per received level. */
+  priceIsPerLevel: boolean;
+}
+
+/**
+ * What ONE received line adds to the ledger, in oz and dollars (W04/B043). A line entered at an INNER
+ * level ("bag", or an inner-pack scan) is not a whole case: its oz is the frozen `resolved_oz`, so a
+ * later chain edit cannot rewrite history, and its root-pack count is that oz over one root's oz.
+ * Only a legacy line (no level) or a root-level line falls back to qty × content oz. Null = cannot be
+ * known honestly; the caller excludes and counts it, never guesses.
+ */
+export function receivedLineContribution(l: ReceivedLineFacts): { oz: number | null; dollars: number | null } {
+  const level = l.levelLabel?.trim() || null;
+  const atRoot = level == null || (l.rootLabel != null && level === l.rootLabel);
+  const stored = l.resolvedOz != null && Number.isFinite(l.resolvedOz) && l.resolvedOz >= 0 ? l.resolvedOz : null;
+  const content = l.contentOz != null && Number.isFinite(l.contentOz) && l.contentOz > 0 ? l.contentOz : null;
+  const oz = stored ?? (atRoot && content != null ? l.qty * content : null);
+  const roots = atRoot ? l.qty : stored != null && content != null ? stored / content : null;
+  let dollars: number | null = null;
+  if (l.linePrice != null) dollars = l.priceIsPerLevel ? l.qty * l.linePrice : roots != null ? roots * l.linePrice : null;
+  else if (l.currentRootPrice != null && roots != null) dollars = roots * l.currentRootPrice;
+  return { oz, dollars: dollars != null && Number.isFinite(dollars) ? dollars : null };
+}
