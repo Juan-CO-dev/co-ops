@@ -4967,6 +4967,7 @@
   "order.build.quick_add": "Quick add {item}",
   "order.build.customize_item": "Customize {item}",
   "order.build.cart_repriced": "Some prices or items on your menu changed since you saved this order. Your cart now shows today's menu — please check it before you continue.",
+  "order.build.save_failed": "We couldn't save your latest changes. Check your connection and tap Continue again.",
   "admin.catering.prep_demand.tab_surplus": "Surplus",
   "admin.catering.prep_demand.surplus_empty": "No surplus from recent cancellations.",
   "catering.surplus.section_perishable": "Perishable prep surplus",

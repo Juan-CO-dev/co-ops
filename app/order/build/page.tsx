@@ -48,6 +48,7 @@ import type { CateringMenuItem } from "@/lib/catering/menu";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 import { catForSection, orderSections, orderWithinSection, sectionLabel, type MenuCat } from "@/lib/portal/menu-order-shared";
 import { coverageSegments } from "@/lib/portal/coverage-shared";
+import { createCartSaveQueue, type CartSaveOutcome } from "@/lib/portal/cart-save-queue-shared";
 
 type Cat = MenuCat;
 /** Portion selector for portionable subs. Matches the draft-lines API portion values. */
@@ -446,7 +447,41 @@ function OrderBuild() {
 
 
   // ── Debounced persistence (D20 — references + qty + portion + sizeId only, never prices) ──
-  const persistTimer = useRef<number | null>(null);
+  // Saves go through ONE queue (audit W01/B033): Continue flushes it before navigating, and an unmount
+  // sends any unsent edit with keepalive — an edit inside the 400 ms debounce is never dropped.
+  const [saveError, setSaveError] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [saveQueue] = useState(() => createCartSaveQueue({
+    delayMs: 400,
+    send: async (body: string): Promise<CartSaveOutcome> => {
+      try {
+        const res = await fetch("/api/portal/order/draft/lines", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        });
+        // Session expiry (hardening 2026-07-31, council P1): a 401 means the
+        // portal session cookie expired — cart writes are silently dropping.
+        // Surface it (a sticky banner) instead of leaving the customer to
+        // believe their cart is persisting. The draft row survives, so
+        // /order/start resumes it.
+        if (res.status === 401) { setSessionExpired(true); return "unauthorized"; }
+        if (res.status === 409) return "not_draft";
+        if (!res.ok) return "failed";
+        const json = (await res.json()) as { ok?: boolean; stack?: DraftStack };
+        if (json?.ok && json.stack) setSubtotalCents(json.stack.subtotalCents);
+        setSaveError(false);
+        return "ok";
+      } catch {
+        return "failed"; // transient — the local subtotal echo still shows the customer their cart
+      }
+    },
+  }));
+  // Unmount (navigation away by any route): send the unsent edit, best effort, surviving the unload.
+  useEffect(() => () => {
+    const body = saveQueue.takePending();
+    if (body) void fetch("/api/portal/order/draft/lines", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
+  }, [saveQueue]);
   // Serialize the reference payload so the effect only fires when the persisted shape actually changes
   // (not on a display-only customization edit). sizeId is included so a size change re-triggers POST.
   const linesPayload = useMemo(
@@ -473,28 +508,7 @@ function OrderBuild() {
       if (!resaveAfterHydrate.current) return;
       resaveAfterHydrate.current = false;
     }
-    if (persistTimer.current !== null) window.clearTimeout(persistTimer.current);
-    persistTimer.current = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch("/api/portal/order/draft/lines", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ quoteId: draftId, lines: linesPayload }),
-          });
-          // Session expiry (hardening 2026-07-31, council P1): a 401 means the
-          // portal session cookie expired — cart writes are silently dropping.
-          // Surface it (a sticky banner) instead of leaving the customer to
-          // believe their cart is persisting. The draft row survives, so
-          // /order/start resumes it.
-          if (res.status === 401) { setSessionExpired(true); return; }
-          if (!res.ok) return; // other server reject (e.g. no longer a draft) — keep the local echo.
-          const body = (await res.json()) as { ok?: boolean; stack?: DraftStack };
-          if (body?.ok && body.stack) setSubtotalCents(body.stack.subtotalCents);
-        } catch { /* transient — the local subtotal echo still shows the customer their cart */ }
-      })();
-    }, 400);
-    return () => { if (persistTimer.current !== null) window.clearTimeout(persistTimer.current); };
+    saveQueue.schedule(JSON.stringify({ quoteId: draftId, lines: linesPayload }));
     // payloadKey captures the persisted-reference shape (incl. sizeId + pkgCart); linesPayload/draftId/loadState are stable deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payloadKey, draftId, loadState]);
@@ -506,8 +520,16 @@ function OrderBuild() {
   // mid-debounce; fall back to the server value (e.g. cart just hydrated, no local recompute yet).
   const displaySubtotalCents = count === 0 ? 0 : (localSubtotalCents || subtotalCents);
 
-  const goToReview = () => {
-    if ((lines.length === 0 && pkgEntries.length === 0) || !draftId) return;
+  const goToReview = async () => {
+    if ((lines.length === 0 && pkgEntries.length === 0) || !draftId || leaving) return;
+    setLeaving(true);
+    // Save the latest cart FIRST (audit W01/B033) — the review page reads what is saved.
+    const outcome = await saveQueue.flush();
+    if (outcome !== "ok") {
+      setLeaving(false);
+      if (outcome === "failed") setSaveError(true);
+      return; // unauthorized → the session banner already shows
+    }
     router.push(`/order/review?draft=${draftId}`);
   };
 
@@ -547,6 +569,11 @@ function OrderBuild() {
         <div className="sticky top-0 z-40 bg-co-cta px-5 py-3 text-center text-sm font-bold text-co-text">
           Your session timed out — new items aren&apos;t saving.{" "}
           <a href="/order/start" className="underline underline-offset-2">Tap to sign back in →</a>
+        </div>
+      ) : null}
+      {saveError ? (
+        <div role="alert" className="border-b border-co-border bg-co-danger-surface px-5 py-3 text-center text-sm font-semibold text-co-cta-text">
+          {t("order.build.save_failed")}
         </div>
       ) : null}
       {cartRepriced ? (
@@ -664,7 +691,7 @@ function OrderBuild() {
             onCustomize={setModalKey}
             dec={dec}
             add={quickAdd}
-            onContinue={goToReview}
+            onContinue={() => { void goToReview(); }}
             onPkgEdit={openPkgEdit}
             onPkgDec={decPkg}
             onPkgInc={incPkg}
@@ -715,7 +742,7 @@ function OrderBuild() {
             </button>
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
               <div className="text-sm"><span className="font-bold text-co-text">{count} item{count === 1 ? "" : "s"}</span><span className="ml-2 text-co-text-muted">{money(displaySubtotalCents)}</span></div>
-              <button type="button" onClick={goToReview} disabled={!hasItems} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
+              <button type="button" onClick={() => { void goToReview(); }} disabled={!hasItems || leaving} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
             </div>
           </div>
         </div>

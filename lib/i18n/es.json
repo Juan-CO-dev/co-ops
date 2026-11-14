@@ -4967,6 +4967,7 @@
   "order.build.quick_add": "Agregar rápido {item}",
   "order.build.customize_item": "Personalizar {item}",
   "order.build.cart_repriced": "Algunos precios o artículos del menú cambiaron desde que guardaste este pedido. Tu carrito ya muestra el menú de hoy — revísalo antes de continuar.",
+  "order.build.save_failed": "No pudimos guardar tus últimos cambios. Revisa tu conexión y toca Continuar otra vez.",
   "admin.catering.prep_demand.tab_surplus": "Excedente",
   "admin.catering.prep_demand.surplus_empty": "Sin excedente de cancelaciones recientes.",
   "catering.surplus.section_perishable": "Excedente de prep perecedero",
