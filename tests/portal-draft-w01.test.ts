@@ -244,5 +244,35 @@ describe("B144 — submit is all or nothing (flip + napkins line + deposit inten
   });
 });
 
+describe("B002 — the customer's allergy / special-instructions note reaches staff", () => {
+  it("with 0302: the note rides the submit transaction (p_set_dietary_notes + the text)", async () => {
+    const db = useDb(seed(), { portal_draft_submit: rpcOk() });
+    await submitDraft(CUST, QUOTE, { dietaryNotes: "No peanuts on table 3 · hold the onions" });
+    expect(db.rpcCalls[0]!.args).toMatchObject({ p_set_dietary_notes: true, p_dietary_notes: "No peanuts on table 3 · hold the onions" });
+  });
+  it("a submit that does not send a note leaves the lead's intake note alone", async () => {
+    const db = useDb(seed(), { portal_draft_submit: rpcOk() });
+    await submitDraft(CUST, QUOTE, {});
+    expect(db.rpcCalls[0]!.args).toMatchObject({ p_set_dietary_notes: false, p_dietary_notes: null });
+  });
+  it("before 0302 (legacy path): the note is written to the lead (trimmed; blank clears it), before the status flip", async () => {
+    let db = useDb();
+    await submitDraft(CUST, QUOTE, { dietaryNotes: "  Shellfish allergy  " });
+    expect(db.tables.catering_pipeline![0]!.dietary_notes).toBe("Shellfish allergy");
+    const order = db.writes.map((w) => `${w.table}:${w.op}`);
+    expect(order.indexOf("catering_pipeline:update")).toBeLessThan(order.indexOf("catering_quotes:update"));
+    db = useDb(seed());
+    db.tables.catering_pipeline![0]!.dietary_notes = "old";
+    await submitDraft(CUST, QUOTE, { dietaryNotes: "   " });
+    expect(db.tables.catering_pipeline![0]!.dietary_notes).toBeNull();
+  });
+  it("a note over 2000 characters is a clean 400 before anything is written", async () => {
+    const db = useDb(seed(), { portal_draft_submit: rpcOk() });
+    await expect(submitDraft(CUST, QUOTE, { dietaryNotes: "x".repeat(2001) })).rejects.toMatchObject({ status: 400, code: "invalid_notes" });
+    expect(db.rpcCalls).toEqual([]);
+    expect(db.writes).toEqual([]);
+  });
+});
+
 // Keep the imports referenced while later describe blocks are added bug by bug.
 void loadDraft; void PortalDraftError;

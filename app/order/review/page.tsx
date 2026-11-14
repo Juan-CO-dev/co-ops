@@ -88,6 +88,9 @@ function OrderReview() {
   const [stack, setStack] = useState<ChargeStack | null>(null);
   const [tipRate, setTipRate] = useState<TipRate>(0);
   const [napkins, setNapkins] = useState(false);
+  // The order's allergy / special-instructions note — the lead's dietary_notes, saved with the submit
+  // and shown to staff on the lead (audit W01/B002).
+  const [dietaryNotes, setDietaryNotes] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   // Does THIS shop take a card online? A server fact (lib/stripe/client.ts, resolved per
   // location), delivered beside the draft. It changes what the copy PROMISES and nothing
@@ -114,6 +117,7 @@ function OrderReview() {
         if (!res.ok) { setLoadError("Couldn't load your order. Please refresh or start over."); return; }
         const json = (await res.json()) as { ok: boolean; draft: DraftLoad; paymentsOnline?: boolean };
         setDraft(json.draft);
+        setDietaryNotes(json.draft.lead?.dietaryNotes ?? "");
         setPaymentsOnline(json.paymentsOnline === true);
       } catch {
         setLoadError("Couldn't load your order. Please refresh or start over.");
@@ -170,6 +174,7 @@ function OrderReview() {
           quoteId: draft.quoteId,
           tipBps,
           napkins,
+          dietaryNotes,
         }),
       });
       const json = (await res.json()) as { ok?: boolean; quoteId?: string; error?: string };
@@ -286,6 +291,23 @@ function OrderReview() {
                 );
               })}
             </ul>
+          </section>
+        </Reveal>
+
+        {/* Allergies & special instructions — saved with the order, seen by the kitchen team */}
+        <Reveal className="mt-5">
+          <section className="rounded-3xl border border-co-border/70 bg-co-surface p-6 shadow-sm">
+            <label htmlFor="order-dietary-notes" className="text-sm font-extrabold text-co-text">{t("order.review.notes_heading")}</label>
+            <p className="mt-0.5 text-xs text-co-text-dim">{t("order.review.notes_help")}</p>
+            <textarea
+              id="order-dietary-notes"
+              value={dietaryNotes}
+              onChange={(e) => setDietaryNotes(e.target.value)}
+              maxLength={2000}
+              rows={3}
+              placeholder={t("order.review.notes_placeholder")}
+              className="mt-3 w-full rounded-xl border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm text-co-text"
+            />
           </section>
         </Reveal>
 

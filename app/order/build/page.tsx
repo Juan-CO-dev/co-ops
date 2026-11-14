@@ -32,8 +32,10 @@
  * COVERAGE is best-effort: real menu rows have no explicit `serves`/`cat`, so category is derived
  * heuristically from `section`. With 0 catering data the menu is empty (correct dormant behavior).
  *
- * Per-line customization (allergens / notes / subs / drink) has no server home in 3a — kept as
- * local display-only state in the modal; it is NEVER part of the persisted payload.
+ * Per-line customization (subs / drink) has no server home in 3a — kept as local display-only
+ * state; it is NEVER part of the persisted payload. Allergies and special instructions are NOT
+ * collected per line (they were dropped on the floor — audit W01/B002): the order-level note lives
+ * on /order/review, is saved with the submit, and staff see it on the lead.
  *
  * PACKAGES (W1b): packages are a separate cart slice (pkgCart) — each configured package instance
  * is one PkgEntry keyed by a per-instance UUID. The payload carries references + qty only (D20).
@@ -96,7 +98,7 @@ interface DraftLoad {
 }
 
 /** Local-only line state. Only { portion, qty, sizeId } drive the persisted payload; the rest is display-only. */
-interface Line { qty: number; portion: Portion; sizeId: string | null; notes: string; allergens: string[]; subs: string[]; sub: string; drink: string }
+interface Line { qty: number; portion: Portion; sizeId: string | null; subs: string[]; sub: string; drink: string }
 /** A cart entry keyed by its stable cart key. line.sizeId carries the chosen size for a sized item. */
 interface CartEntry { key: string; item: CateringMenuItem; line: Line }
 /** A single sellable menu row. A sized item expands into one card per size (each independently
@@ -112,7 +114,6 @@ const PORTION_LABELS: Record<Portion, { label: string; aria: string; symbol: str
   whole:   { label: "Whole", aria: "Whole portion", symbol: "Whole" },
 };
 
-const ALLERGENS = ["Peanuts", "Tree nuts", "Dairy", "Eggs", "Gluten", "Soy", "Shellfish", "Sesame"];
 /** Generic house facts. Real menu ids are UUIDs (won't match the mock ITEM_FACTS keys) so the ticker
  *  falls back to these house facts — item-keyed facts return once the config tables are authored. */
 const FACTS = [
@@ -126,7 +127,7 @@ const FACTS = [
 
 /** Money helper — takes CENTS (the whole page is in the cents model; the draft + menu are cents). */
 const money = (cents: number) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
-const emptyLine = (): Line => ({ qty: 1, portion: "whole", sizeId: null, notes: "", allergens: [], subs: [], sub: "", drink: "" });
+const emptyLine = (): Line => ({ qty: 1, portion: "whole", sizeId: null, subs: [], sub: "", drink: "" });
 /** Cart key. Sized items key by item+size so two sizes coexist as distinct lines; subs/plain by kind:id. */
 const keyFor = (item: CateringMenuItem, sizeId: string | null) =>
   item.kind === "item" && sizeId ? `item:${item.id}:${sizeId}` : `${item.kind}:${item.id}`;
@@ -168,7 +169,7 @@ function catFor(item: CateringMenuItem): Cat {
   return catForSection(item.section);
 }
 
-/** Human summary of a customized line (portion / size / subs / drink / allergen holds / notes) — display only. */
+/** Human summary of a customized line (portion / size / subs / drink) — display only. */
 function lineSummary(e: CartEntry): string {
   const bits: string[] = [];
   if (isPortionable(e.item) && e.line.portion !== "whole") bits.push(PORTION_LABELS[e.line.portion].symbol);
@@ -179,8 +180,6 @@ function lineSummary(e: CartEntry): string {
   if (e.line.subs.length) bits.push(e.line.subs.join(", "));
   if (e.line.sub) bits.push(e.line.sub);
   if (e.line.drink) bits.push(e.line.drink);
-  if (e.line.allergens.length) bits.push(`no ${e.line.allergens.join(", ").toLowerCase()}`);
-  if (e.line.notes) bits.push(e.line.notes);
   return bits.join(" · ");
 }
 
@@ -1181,22 +1180,11 @@ function PortionSelector({ item, portion, onChange }: {
   );
 }
 
-function Chips({ options, selected, onToggle }: { options: string[]; selected: string[]; onToggle: (v: string) => void }) {
-  return (
-    <div className="mt-2 flex flex-wrap gap-2">
-      {options.map((o) => {
-        const on = selected.includes(o);
-        return <button key={o} type="button" onClick={() => onToggle(o)} aria-pressed={on} className={`rounded-full border-2 px-3 py-1 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${on ? "border-co-text bg-co-text/10 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-muted hover:text-co-text"}`}>{o}</button>;
-      })}
-    </div>
-  );
-}
-
 /**
  * Customize modal. Portionable subs get the ¼/½/whole PortionSelector (portion IS persisted).
  * A sized card carries a FIXED size (size = identity — chosen on the menu row, not switched here);
- * the modal shows it read-only. Allergen / special-instructions fields are LOCAL display-only state —
- * they have no server home in 3a and are NOT part of the persisted payload.
+ * the modal shows it read-only. Allergies / special instructions are taken once for the whole order on
+ * /order/review (saved with the submit) — never here, where nothing would persist them (audit W01/B002).
  */
 function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; existing: Line | null; onClose: () => void; onSave: (line: Line) => void }) {
   const { t } = useTranslation();
@@ -1212,7 +1200,6 @@ function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; e
 
   const [line, setLine] = useState<Line>(initialLine);
   const set = (patch: Partial<Line>) => setLine((l) => ({ ...l, ...patch }));
-  const toggleAllergen = (a: string) => set({ allergens: line.allergens.includes(a) ? line.allergens.filter((x) => x !== a) : [...line.allergens, a] });
 
   const unit = unitCents(item, line);
 
@@ -1241,16 +1228,7 @@ function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; e
             </div>
           )}
 
-          <div className="mt-5">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">Allergen alert — flag anything a guest can&apos;t have</p>
-            <Chips options={ALLERGENS} selected={line.allergens} onToggle={toggleAllergen} />
-            <p className="mt-1.5 text-[11px] text-co-text-dim">We&apos;ll confirm exactly how we handle it before you pay.</p>
-          </div>
-
-          <div className="mt-5">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">Special instructions</p>
-            <textarea value={line.notes} onChange={(e) => set({ notes: e.target.value })} rows={2} placeholder="e.g. hold the onions, extra hot honey…" className="mt-2 w-full rounded-xl border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm text-co-text" />
-          </div>
+          <p className="mt-5 rounded-2xl border border-co-border bg-co-surface px-4 py-3 text-sm text-co-text-muted">{t("order.build.notes_on_review")}</p>
 
           <div className="mt-6 flex items-center gap-4">
             <div className="inline-flex items-center gap-3 rounded-full border-2 border-co-border-2 px-2 py-1.5">
@@ -1258,7 +1236,7 @@ function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; e
               <span className="min-w-6 text-center text-base font-bold tabular-nums">{line.qty}</span>
               <button type="button" onClick={() => set({ qty: line.qty + 1 })} aria-label={t("order.build.increase_qty", { item: card.label })} className="grid h-11 w-11 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">+</button>
             </div>
-            <button type="button" onClick={() => onSave({ ...line, notes: line.notes.trim() })} className="flex min-h-[52px] flex-1 items-center justify-center rounded-full bg-co-text text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">{existing ? "Update" : "Add"} · {money(unit * line.qty)}</button>
+            <button type="button" onClick={() => onSave(line)} className="flex min-h-[52px] flex-1 items-center justify-center rounded-full bg-co-text text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">{existing ? "Update" : "Add"} · {money(unit * line.qty)}</button>
           </div>
           <button type="button" onClick={onClose} className="mt-3 w-full rounded-md py-2 text-center text-sm font-semibold text-co-text-muted focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">Cancel</button>
         </div>

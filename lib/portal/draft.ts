@@ -701,7 +701,15 @@ export async function previewDraft(customerId: string, quoteId: string, opts: Pr
 
 // ── Submit (draft → submitted, the one completing click) ───────────────────────────
 
-export interface SubmitOpts { tipBps?: number | null; napkins?: boolean }
+export interface SubmitOpts {
+  tipBps?: number | null;
+  napkins?: boolean;
+  /** The order's allergy / special-instructions note (audit W01/B002), saved on the lead's dietary_notes
+   *  in the submit (trimmed; blank clears it). Undefined = leave the intake note as it is. */
+  dietaryNotes?: string | null;
+}
+/** Same cap as the intake parser's dietary notes (lib/portal/intake-parser.ts CAP_NOTES) and 0302. */
+export const MAX_DIETARY_NOTES = 2000;
 export interface SubmitResult { quoteId: string; depositCents: number; totalCents: number }
 
 function defaultExpiry(): string { return new Date(Date.now() + DEFAULT_EXPIRY_DAYS * 86400 * 1000).toISOString(); }
@@ -722,6 +730,9 @@ function eventDateLabel(d: string | null): string {
  * authoritative charge stack, create the deposit-due payment intent, best-effort confirm email,
  * audit. Owned + 'draft' only. Requires at least one line. */
 export async function submitDraft(customerId: string, quoteId: string, opts: SubmitOpts = {}): Promise<SubmitResult> {
+  if (opts.dietaryNotes != null && (typeof opts.dietaryNotes !== "string" || opts.dietaryNotes.length > MAX_DIETARY_NOTES)) {
+    throw new PortalDraftError(400, "invalid_notes", `Notes can be at most ${MAX_DIETARY_NOTES} characters`);
+  }
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
 
@@ -752,12 +763,19 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
     p_snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId),
     p_napkins: napkins ? { item_id: napkins.id, description: napkins.name, unit_price_cents: napkins.unitPriceCents } : null,
     p_expires_at: expiresAt,
-    p_set_dietary_notes: false,
-    p_dietary_notes: null,
+    p_set_dietary_notes: opts.dietaryNotes !== undefined,
+    p_dietary_notes: opts.dietaryNotes ?? null,
   });
   if (rpcErr && !rpcMissing(rpcErr)) rpcRefusal("submitDraft", rpcErr);
   if (rpcErr) {
     warnLegacy("submitDraft");
+    // The note first: it is a lead field (idempotent), so a later failure never leaves an order
+    // submitted without the allergy note the customer typed.
+    if (opts.dietaryNotes !== undefined && header.pipeline_id) {
+      const notes = opts.dietaryNotes?.trim() ? opts.dietaryNotes.trim() : null;
+      const { error: nErr } = await sb.from("catering_pipeline").update({ dietary_notes: notes }).eq("id", header.pipeline_id).eq("customer_id", customerId);
+      if (nErr) throw new Error(`submitDraft dietary notes: ${nErr.message}`);
+    }
     await submitLegacy(sb, { customerId, quoteId, snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId), expiresAt, napkins, napkinsOrder: baseLineTotals.length, depositCents: stack.depositCents });
   }
 

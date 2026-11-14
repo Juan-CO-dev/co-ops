@@ -30,12 +30,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
 
+  // The order's allergy / special-instructions note (audit W01/B002): a string, null (clear), or absent.
+  const dietaryNotes = body.dietaryNotes;
+  if (dietaryNotes !== undefined && dietaryNotes !== null && typeof dietaryNotes !== "string") {
+    return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
+  }
+
   try {
     const result = await submitDraft(ctx.customerId, body.quoteId, {
       // Delivery vs pickup and the delivery zone are decided server-side (audit W01/B001); a body's
       // isDelivery / deliveryZoneId is ignored.
       tipBps: Number.isFinite(body.tipBps) ? (body.tipBps as number) : undefined,
       napkins: body.napkins === true,
+      dietaryNotes: dietaryNotes as string | null | undefined,
     });
     return NextResponse.json({ ok: true, quoteId: result.quoteId, depositCents: result.depositCents, totalCents: result.totalCents });
   } catch (e) {
