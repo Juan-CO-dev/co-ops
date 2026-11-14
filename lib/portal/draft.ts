@@ -27,6 +27,7 @@ import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import { createPaymentDue } from "@/lib/catering/payments";
 import { sendEmail } from "@/lib/email";
 import { renderOrderConfirmationEmail } from "@/lib/email-templates/order-confirmation";
+import { allowlistMatches } from "./magic-link-shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The dedicated menu section the napkins/utensils add-on lives in (excluded from the shopping list). */
@@ -596,9 +597,10 @@ export interface SubmitOpts { isDelivery?: boolean; deliveryZoneId?: string | nu
 export interface SubmitResult { quoteId: string; depositCents: number; totalCents: number }
 
 function defaultExpiry(): string { return new Date(Date.now() + DEFAULT_EXPIRY_DAYS * 86400 * 1000).toISOString(); }
+/** The confirmation email follows the SAME allowlist as the magic link (audit W01/B003): one matcher,
+ *  so "*" (the go-live posture) opens both — a private copy here treated "*" as an address. */
 function allowlisted(email: string): boolean {
-  const raw = process.env.PORTAL_MAGIC_LINK_ALLOWLIST ?? "juan@complimentsonlysubs.com";
-  return raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean).includes(email.toLowerCase());
+  return allowlistMatches(process.env.PORTAL_MAGIC_LINK_ALLOWLIST, email);
 }
 // customer portal is English-only by design (portal-i18n = Wave-2)
 function centsToUsd(cents: number): string { return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" }); }
