@@ -31,3 +31,20 @@ export function resolvePortalDeliveryZone(zones: readonly PortalZone[], isDelive
   }
   return { zoneId: null, feeCents: 0, reason: "ambiguous_zones" };
 }
+
+/**
+ * What /order/review does when a draft call fails (audit W01/B034 — it used to swallow every failure
+ * and spin on "Loading your order…" forever). `hasStack`: a price breakdown is already on screen (a
+ * later tip / napkins recompute failed), in which case a transient failure keeps the last breakdown.
+ *   not_draft (409)    → the order was already submitted: go to its quote page.
+ *   cart_changed (409) → a price moved or an item is gone: send the customer back to the cart.
+ *   401                → the portal session expired: offer sign-in.
+ *   anything else      → an error with Try again / Start over (or keep the shown breakdown).
+ */
+export type ReviewFailure = "go_to_quote" | "cart_changed" | "session_expired" | "error" | "keep";
+export function reviewFailure(status: number | null, code: string | null, hasStack: boolean): ReviewFailure {
+  if (status === 409 && code === "not_draft") return "go_to_quote";
+  if (status === 409 && code === "cart_changed") return "cart_changed";
+  if (status === 401) return "session_expired";
+  return hasStack ? "keep" : "error";
+}

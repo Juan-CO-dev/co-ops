@@ -22,6 +22,7 @@ import { FAQ, GTK } from "@/components/portal/portal-content";
 import type { DraftLoad } from "@/lib/portal/draft";
 import type { ChargeStack } from "@/lib/catering/quotes";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
+import { reviewFailure } from "@/lib/portal/draft-shared";
 
 // ── Tip presets ──────────────────────────────────────────────────────────────────────
 const TIP_PRESETS = [0, 0.15, 0.18, 0.2] as const;
@@ -92,6 +93,10 @@ function OrderReview() {
   // and shown to staff on the lead (audit W01/B002).
   const [dietaryNotes, setDietaryNotes] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  // A failure that needs the customer somewhere else (audit W01/B034): the cart changed under them, or
+  // the portal session expired. Never an endless "Loading your order…".
+  const [blocked, setBlocked] = useState<"cart_changed" | "session_expired" | null>(null);
+  const hasStack = useRef(false);
   // Does THIS shop take a card online? A server fact (lib/stripe/client.ts, resolved per
   // location), delivered beside the draft. It changes what the copy PROMISES and nothing
   // else — LRA-210's lesson is that a page must never describe a provider the deployment
@@ -114,16 +119,19 @@ function OrderReview() {
       try {
         const res = await fetch(`/api/portal/order/draft/${encodeURIComponent(quoteId)}`);
         if (res.status === 404) { router.push("/order/start"); return; }
-        if (!res.ok) { setLoadError("Couldn't load your order. Please refresh or start over."); return; }
+        if (res.status === 401) { setBlocked("session_expired"); return; }
+        if (!res.ok) { setLoadError(t("order.review.error_load")); return; }
         const json = (await res.json()) as { ok: boolean; draft: DraftLoad; paymentsOnline?: boolean };
+        // Already submitted (e.g. Back after placing it): the order lives on its quote page now.
+        if (json.draft.status !== "draft") { router.replace(`/order/quote/${encodeURIComponent(json.draft.quoteId)}`); return; }
         setDraft(json.draft);
         setDietaryNotes(json.draft.lead?.dietaryNotes ?? "");
         setPaymentsOnline(json.paymentsOnline === true);
       } catch {
-        setLoadError("Couldn't load your order. Please refresh or start over.");
+        setLoadError(t("order.review.error_load"));
       }
     })();
-  }, [router]);
+  }, [router, t]);
 
   // ── Step 2: fetch server-authoritative preview whenever tip or napkins changes ──────
   useEffect(() => {
@@ -135,6 +143,13 @@ function OrderReview() {
     previewAbort.current = ac;
 
     const tipBps = Math.round(tipRate * 10000);
+    const fail = (status: number | null, code: string | null) => {
+      const action = reviewFailure(status, code, hasStack.current);
+      if (action === "go_to_quote") router.replace(`/order/quote/${encodeURIComponent(draft.quoteId)}`);
+      else if (action === "cart_changed" || action === "session_expired") setBlocked(action);
+      else if (action === "error") setLoadError(t("order.review.error_load"));
+      // "keep": a recompute failed while a breakdown is shown — keep the last one.
+    };
 
     void (async () => {
       try {
@@ -149,16 +164,20 @@ function OrderReview() {
           signal: ac.signal,
         });
         if (ac.signal.aborted) return;
-        if (!res.ok) return; // keep showing prior stack
+        if (!res.ok) {
+          const code = await res.json().then((j: { error?: unknown }) => (typeof j?.error === "string" ? j.error : null)).catch(() => null);
+          if (!ac.signal.aborted) fail(res.status, code);
+          return;
+        }
         const json = (await res.json()) as { ok: boolean; stack: ChargeStack };
-        if (!ac.signal.aborted) setStack(json.stack);
+        if (!ac.signal.aborted) { hasStack.current = true; setStack(json.stack); }
       } catch (e) {
         // AbortError is expected on rapid tip/napkins changes — silently ignore.
         if (e instanceof DOMException && e.name === "AbortError") return;
-        // Other errors: leave prior stack in place; don't surface to the user.
+        fail(null, null); // network: an error screen when nothing is shown yet, else keep the breakdown
       }
     })();
-  }, [draft, tipRate, napkins]);
+  }, [draft, tipRate, napkins, router, t]);
 
   // ── Submit handler ─────────────────────────────────────────────────────────────────
   async function handleComplete() {
@@ -177,26 +196,50 @@ function OrderReview() {
           dietaryNotes,
         }),
       });
-      const json = (await res.json()) as { ok?: boolean; quoteId?: string; error?: string };
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; quoteId?: string; error?: string };
       if (json.ok && json.quoteId) {
         router.push(`/order/quote/${json.quoteId}`);
-      } else {
-        setSubmitError("Something went wrong. Please try again.");
-        setSubmitting(false);
+        return;
       }
+      const action = reviewFailure(res.status, json.error ?? null, true);
+      if (action === "go_to_quote") { router.replace(`/order/quote/${encodeURIComponent(draft.quoteId)}`); return; }
+      if (action === "cart_changed" || action === "session_expired") { setBlocked(action); setSubmitting(false); return; }
+      setSubmitError(t("order.review.submit_failed"));
+      setSubmitting(false);
     } catch {
-      setSubmitError("Something went wrong. Please try again.");
+      setSubmitError(t("order.review.submit_failed"));
       setSubmitting(false);
     }
   }
 
   // ── Render: loading / error states ────────────────────────────────────────────────
+  if (blocked) {
+    const quoteId = draft?.quoteId ?? (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("draft") : null);
+    return (
+      <div className="grid min-h-screen place-items-center bg-co-bg px-6 text-center text-co-text">
+        <div className="max-w-md">
+          <p role="alert" className="text-sm font-semibold text-co-text">
+            {t(blocked === "cart_changed" ? "order.review.cart_changed" : "order.review.session_expired")}
+          </p>
+          {blocked === "cart_changed" && quoteId ? (
+            <Link href={`/order/build?draft=${encodeURIComponent(quoteId)}`} className="mt-4 inline-flex min-h-[44px] items-center text-sm font-bold underline">{t("order.review.edit_order")}</Link>
+          ) : (
+            <Link href="/order/start" className="mt-4 inline-flex min-h-[44px] items-center text-sm font-bold underline">{t("order.review.sign_in")}</Link>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (loadError) {
     return (
       <div className="grid min-h-screen place-items-center bg-co-bg px-6 text-center text-co-text">
         <div>
-          <p className="text-sm font-semibold text-co-text">{loadError}</p>
-          <Link href="/order/start" className="mt-4 inline-block text-sm font-bold underline">Start over</Link>
+          <p role="alert" className="text-sm font-semibold text-co-text">{loadError}</p>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-4">
+            <button type="button" onClick={() => window.location.reload()} className="inline-flex min-h-[44px] items-center text-sm font-bold underline">{t("order.review.retry")}</button>
+            <Link href="/order/start" className="inline-flex min-h-[44px] items-center text-sm font-bold underline">{t("order.review.start_over")}</Link>
+          </div>
         </div>
       </div>
     );
