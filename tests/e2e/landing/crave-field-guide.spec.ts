@@ -418,7 +418,8 @@ test('finding all six by taps alone stops the scroll observer',async({page})=>{
   expect(Number(await guide.getAttribute('data-guide-found'))).toBe(0);
   for(const word of await guide.locator('.landing-v4-guide-word').all())await word.click();
   await expect(guide).toHaveAttribute('data-guide-found','6');
-  expect(await page.evaluate(()=>(window as unknown as {__guideObserverDisconnected:boolean}).__guideObserverDisconnected)).toBe(true);
+  // Released once the six lines have drawn (Astra: a fast exit may still need to flush until then).
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {__guideObserverDisconnected:boolean}).__guideObserverDisconnected),{timeout:3000}).toBe(true);
 });
 
 for(const policy of ['reduce','save-data'] as const)test(`${policy}: no find animation, all six found and the action reachable`,async({page})=>{
@@ -688,4 +689,35 @@ for(const size of [{width:1536,height:730},{width:390,height:844}])for(const mot
   await page.waitForTimeout(800);
   expect(await found()).toBe(6);
   await expect(guide.locator('[data-line][data-state="drawing"]')).toHaveCount(0);
+});
+
+// Astra re-review (PR #543): all six found but the last line still drawing, then a fast exit. The
+// observer must still be on, and the flush completes the draw and readies the action at once.
+for(const size of [{width:1536,height:730},{width:390,height:844}])test(`six found and still drawing, a fast exit completes every line at once (${size.width}x${size.height})`,async({page})=>{
+  await page.setViewportSize(size);
+  await page.goto('/');
+  const guide=page.locator('.landing-v3-guide');
+  await expect(guide).toHaveAttribute('data-guide-mode','motion');
+  await page.evaluate(()=>document.fonts.ready);
+  const found=async()=>Number(await guide.getAttribute('data-guide-found'));
+  const toProgress=(p:number)=>guide.evaluate((el,f)=>{scrollTo(0,Math.round(el.getBoundingClientRect().top+scrollY-16+el.querySelector('.landing-v5-guide-runway')!.getBoundingClientRect().height*f));},p);
+  await page.locator('.landing-v5-guide-photo').evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-innerHeight+40));
+  await page.waitForTimeout(600);
+  // Normal pace to five, all five lines drawn.
+  for(const p of [.2,.35,.5,.6,.7]){await toProgress(p);await page.waitForTimeout(450);}
+  await expect.poll(found,{timeout:3000}).toBe(5);
+  await page.waitForTimeout(1300);
+  const slot=page.locator('#field-guide [data-guide-cta]');
+  // The sixth find appears (~80%); its line starts drawing (1.1 s).
+  await toProgress(.84);
+  await expect.poll(found,{timeout:2000,intervals:[20]}).toBe(6);
+  await expect(guide.locator('[data-anatomy-label="pickles"]')).toHaveAttribute('data-active','true');
+  await expect(slot).toHaveAttribute('data-ready','false');
+  // Fast exit at once: through the flush line and on past the guide.
+  for(const p of [.94,1.6]){await toProgress(p);await page.waitForTimeout(16);}
+  // The draw completes now, not ~1 s later off screen.
+  await expect(slot).toHaveAttribute('data-ready','true',{timeout:400});
+  await expect(guide.locator('[data-anatomy-label][data-collected="true"]')).toHaveCount(6);
+  await expect(guide.locator('[data-line][data-state="shown"]')).toHaveCount(6);
+  await expect(guide.locator('[data-anatomy-label][data-active="true"]')).toHaveCount(0);
 });

@@ -69,6 +69,12 @@ export function findsNow(mask:number,target:number,total:number,flush:boolean):n
   const next=nextUnfound(mask,total);
   return next<0?[]:[next];
 }
+/** The find game is settled once all words are found and no line is still drawing: only then is the
+ * action ready and the scroll observer released (until then a fast exit must still flush). */
+export function findsSettled(mask:number,drawing:number,total:number):boolean {
+  const all=(1<<total)-1;
+  return (mask&all)===all&&(drawing&all)===0;
+}
 export function foundCount(mask:number,total:number):number {
   let count=0;for(let index=0;index<total;index++)if(mask&(1<<index))count++;
   return count;

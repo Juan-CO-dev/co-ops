@@ -2,7 +2,7 @@
 import {useEffect,useRef,useState,type CSSProperties,type ReactNode} from 'react';
 import {TexturePhoto} from './CraveScene';
 import {fieldGuideAnchors} from '@/lib/landing/crave-motion-shared';
-import {findsNow,foundCount,GUIDE_FLUSH_AT,GUIDE_STEP_AT,GUIDE_WORDS_ABOVE,guideStepRootMargin,leaderPath,leaderStart,stepReached,stepTarget} from '@/lib/landing/field-guide-shared';
+import {findsNow,findsSettled,foundCount,GUIDE_FLUSH_AT,GUIDE_STEP_AT,GUIDE_WORDS_ABOVE,guideStepRootMargin,leaderPath,leaderStart,stepReached,stepTarget} from '@/lib/landing/field-guide-shared';
 import {prefersCalm,subscribeCalm} from '@/lib/landing/motion-policy-shared';
 
 type AnchorId=(typeof fieldGuideAnchors)[number]['id'];
@@ -60,14 +60,18 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       setMode('static');setFound(all);return ()=>resize.disconnect();
     }
     setMode('motion');
-    let mask=0,target=0,advance:ReturnType<typeof setTimeout>|undefined,calm=false;
+    // mask: found; inFlight: found but its line still drawing (the effect's own copy of `drawing`).
+    let mask=0,inFlight=0,target=0,advance:ReturnType<typeof setTimeout>|undefined,calm=false;
     const draws=new Set<ReturnType<typeof setTimeout>>();
     const find=(index:number)=>{
       if(calm||index<0||index>=total||mask&(1<<index))return;
-      mask|=1<<index;setFound(mask);setLatest(index);setDrawing(value=>value|(1<<index));
-      // Found by taps alone: nothing is left for scrolling to find.
-      if(mask===all)stop();
-      const timer=setTimeout(()=>{draws.delete(timer);setDrawing(value=>value&~(1<<index));},STEP_MS);
+      mask|=1<<index;inFlight|=1<<index;setFound(mask);setLatest(index);setDrawing(value=>value|(1<<index));
+      const timer=setTimeout(()=>{
+        draws.delete(timer);inFlight&=~(1<<index);setDrawing(value=>value&~(1<<index));
+        // All six found (by scroll or taps) AND every line drawn: the action is ready, nothing is
+        // left for the observer to flush. Until then it keeps watching (a fast exit still flushes).
+        if(findsSettled(mask,inFlight,total))stop();
+      },STEP_MS);
       draws.add(timer);
     };
     findRef.current=find;
@@ -78,13 +82,14 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
       for(const index of findsNow(mask,target,total,false))find(index);
       if(foundCount(mask,total)<target)advance=setTimeout(step,ADVANCE_MS);
     };
-    // The flush line (still pinned, past the last find): every queued word lands at once, collected,
-    // so no stagger carries on after the photo scrolls away. Cancels the walk and the draw timers.
+    // The flush line (still pinned, past the last find): every queued word lands at once, and every
+    // line still drawing completes, so neither the stagger nor a draw carries on after the photo
+    // scrolls away; the action is ready at once. Cancels the walk and the draw timers.
     const flush=()=>{
       if(calm)return;
       clearTimeout(advance);advance=undefined;
       for(const timer of draws)clearTimeout(timer);
-      draws.clear();
+      draws.clear();inFlight=0;
       for(const index of findsNow(mask,target,total,true))mask|=1<<index;
       target=total;setFound(mask);setDrawing(0);setLatest(-1);stop();
     };
@@ -92,8 +97,9 @@ export function FieldGuideFigure({labels,groupLabel,counter,crossAlt,caption,pic
     // The band is in pixels of the current viewport height, so the observer is rebuilt (debounced)
     // when that height changes; a fresh observer re-reports every marker, and the target only rises.
     let done=false,bandHeight=0,rebuild:ReturnType<typeof setTimeout>|undefined;
-    // The observer stays on until every word is found (find() and flush() stop it), so the flush
-    // line (and the guide leaving the band) can still report while the last words are queued.
+    // The observer stays on until every word is found AND drawn (the last draw timer or flush()
+    // stops it), so the flush line (and the guide leaving the band) can still report while words
+    // are queued or lines are drawing.
     const report=(entries:IntersectionObserverEntry[])=>{
       let next=target,flushed=false;
       for(const entry of entries){

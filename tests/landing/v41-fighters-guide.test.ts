@@ -6,7 +6,7 @@ import roster from '@/config/tenant/landing-products.json';
 import { products, validateProducts } from '@/lib/landing/products';
 import { LineupPhoto } from '@/components/landing/LineupPhoto';
 import { CARD_VISIBLE, focalPosition, STAGE_VISIBLE } from '@/lib/landing/fighter-select-shared';
-import { findsNow, foundCount, GUIDE_FLUSH_AT, GUIDE_RUNWAY_SCREENS, GUIDE_STEP_AT, GUIDE_STEP_BAND, GUIDE_WORDS_ABOVE, guideStepRootMargin, leaderPath, leaderStart, nextUnfound, stepReached, stepTarget } from '@/lib/landing/field-guide-shared';
+import { findsNow, findsSettled, foundCount, GUIDE_FLUSH_AT, GUIDE_RUNWAY_SCREENS, GUIDE_STEP_AT, GUIDE_STEP_BAND, GUIDE_WORDS_ABOVE, guideStepRootMargin, leaderPath, leaderStart, nextUnfound, stepReached, stepTarget } from '@/lib/landing/field-guide-shared';
 import { fieldGuideAnchors } from '@/lib/landing/crave-motion-shared';
 
 const css = readFileSync('app/eat/landing-v2.css', 'utf8');
@@ -134,6 +134,14 @@ describe('v4.1: scroll-driven Field Guide progress', () => {
     expect(GUIDE_FLUSH_AT).toBeGreaterThan(GUIDE_STEP_AT[5]! + 0.1);
     expect(GUIDE_FLUSH_AT).toBeLessThan(1);
   });
+  it('is settled only when all six are found and no line is still drawing', () => {
+    expect(findsSettled(0b111111, 0, 6)).toBe(true);
+    // Six found, the sixth line still drawing: not settled (a fast exit must still flush).
+    expect(findsSettled(0b111111, 0b100000, 6)).toBe(false);
+    expect(findsSettled(0b111111, 0b111111, 6)).toBe(false);
+    expect(findsSettled(0b011111, 0, 6)).toBe(false);
+    expect(findsSettled(0, 0, 6)).toBe(false);
+  });
   it('keeps the observer on until every word is found, and cancels every timer on flush, calm and unmount', () => {
     const source = readFileSync('components/landing/FieldGuideFigure.tsx', 'utf8');
     // The flush line is observed by the ONE observer, beside the step markers.
@@ -143,11 +151,16 @@ describe('v4.1: scroll-driven Field Guide progress', () => {
     expect(source).toContain('data-guide-flush');
     // Reaching the full target no longer disconnects the observer (the flush line must still report).
     expect(source).not.toContain('if(target>=total)stop();');
-    expect(source).toContain('if(mask===all)stop();');
+    // Nor does finding the sixth word: the observer is released only when every line has drawn.
+    expect(source).not.toContain('if(mask===all)stop();');
+    expect(source).toContain('if(findsSettled(mask,inFlight,total))stop();');
     const flush = source.slice(source.indexOf('const flush=()=>{'), source.indexOf('};', source.indexOf('const flush=()=>{')));
     expect(flush).toContain('clearTimeout(advance)');
     expect(flush).toContain('for(const timer of draws)clearTimeout(timer)');
     expect(flush).toContain('stop()');
+    // Flush completes every line still drawing.
+    expect(flush).toContain('inFlight=0');
+    expect(flush).toContain('setDrawing(0)');
     // Unmount still clears the walk and every draw timer.
     expect(source).toContain('return ()=>{resize.disconnect();stop();clearTimeout(advance);for(const timer of draws)clearTimeout(timer);');
   });
