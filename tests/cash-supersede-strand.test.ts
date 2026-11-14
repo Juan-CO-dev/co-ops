@@ -111,6 +111,8 @@ interface Scenario {
   rollbackRows?: number;
   /** What a post-rollback liveness re-read finds (the fix's new question). */
   liveAfter?: string | null;
+  /** W03/B147: rows the compare-and-set supersede matched (0 = a concurrent submit got there first). */
+  supersedeRows?: number;
 }
 
 function scenarioService(s: Scenario) {
@@ -136,6 +138,7 @@ function scenarioService(s: Scenario) {
           ? { error: { message: "duplicate key value violates unique constraint", code: "23505" } }
           : { count: s.rollbackRows ?? 1 };
       }
+      if (typeof op.payload?.superseded_at === "string") return { count: s.supersedeRows ?? 1 };
       return { count: 1 };
     }
     return { data: null };
@@ -272,5 +275,33 @@ describe("submitCashReport — the paths that already worked still work", () => 
 
     await expect(submitCashReport(service, ARGS)).resolves.toEqual({ ok: true, id: "new-report-1" });
     expect(cashUpdates(ops)).toHaveLength(0);
+  });
+});
+
+describe("submitCashReport — the supersede is a compare-and-set (W03/B147)", () => {
+  // Two submits for the same shop/day both read prior=P. Without a compare-and-set the loser
+  // re-stamped P's superseded_at after the winner, and the winner's back-pointer then left
+  // P.superseded_at (loser's instant) disagreeing with P.superseded_by (winner's row).
+  it("supersedes only a row that is still live, and counts it", async () => {
+    const { service, ops } = scenarioService({ prior: true });
+    await expect(submitCashReport(service, ARGS)).resolves.toEqual({ ok: true, id: "new-report-1" });
+    const supersede = cashUpdates(ops).find((o) => typeof o.payload?.superseded_at === "string")!;
+    expect(supersede.filters).toEqual(expect.arrayContaining([
+      { op: "eq", column: "id", value: PRIOR },
+      { op: "is", column: "superseded_at", value: null },
+    ]));
+    expect(supersede.options).toMatchObject({ count: "exact" });
+  });
+
+  it("a supersede that matched no row is a lost race: concurrent_submit, and nothing else is written", async () => {
+    const { service, ops } = scenarioService({ prior: true, supersedeRows: 0 });
+    await expect(submitCashReport(service, ARGS)).resolves.toEqual({ ok: false, reason: "concurrent_submit" });
+    expect(ops.some((o) => o.table === "cash_reports" && o.kind === "insert" && o.spent)).toBe(false);
+    expect(cashUpdates(ops)).toHaveLength(1); // the refused supersede only: no back-pointer, no rollback
+  });
+
+  it("a first submit that loses the one-live-row index to a concurrent first submit is concurrent_submit, not a 500", async () => {
+    const { service } = scenarioService({ prior: false, insertFails: true });
+    await expect(submitCashReport(service, ARGS)).resolves.toEqual({ ok: false, reason: "concurrent_submit" });
   });
 });

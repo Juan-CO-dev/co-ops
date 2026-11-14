@@ -85,6 +85,9 @@ export async function POST(req: NextRequest) {
     if (!result.ok && result.reason === "closing_finalized") {
       return jsonError(409, "closing_finalized", { message: "Today's closing is finalized — the cash deposit is locked." });
     }
+    if (!result.ok && result.reason === "concurrent_submit") {
+      return jsonError(409, "cash_concurrent_submit", { message: "Someone else just submitted this deposit." });
+    }
     if (!result.ok) return jsonError(400, "cash_submit_failed", {});
     return jsonOk({ id: result.id });
   } catch (err) {

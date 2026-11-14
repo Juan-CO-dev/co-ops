@@ -100,7 +100,10 @@ export async function loadCashDashboardState(
 
 export type CashSubmitResult =
   | { ok: true; id: string }
-  | { ok: false; reason: "closing_finalized" | "assignment_required" | "location_access_denied" };
+  | { ok: false; reason: "closing_finalized" | "assignment_required" | "location_access_denied" | "concurrent_submit" };
+
+/** Postgres unique violation: cash_reports_one_live_per_day refused a second live row. */
+const PG_UNIQUE_VIOLATION = "23505";
 
 /**
  * Append-only signed write. Recomputes totals server-side (never trusts the
@@ -163,9 +166,14 @@ export async function submitCashReport(
   if (prior) {
     // BUG 4 fix: surface the supersede error (the insert has a partial-unique
     // backstop, so this is diagnostic clarity — match the file's discipline).
-    const { error: supersedeErr } = await service
-      .from("cash_reports").update({ superseded_at: nowIso }).eq("id", prior.id);
+    // W03/B147: compare-and-set. Two submits that both read this prior row used to both stamp it,
+    // and the winner's back-pointer then disagreed with the loser's superseded_at. Only a row that
+    // is still live is superseded; 0 rows = a concurrent submit got there first.
+    const { error: supersedeErr, count: superseded } = await service
+      .from("cash_reports").update({ superseded_at: nowIso }, { count: "exact" })
+      .eq("id", prior.id).is("superseded_at", null);
     if (supersedeErr) throw new Error(`submitCashReport: supersede: ${supersedeErr.message}`);
+    if ((superseded ?? 0) === 0) return { ok: false, reason: "concurrent_submit" };
   }
 
   const { data: inserted, error: insErr } = await service.from("cash_reports").insert({
@@ -181,6 +189,9 @@ export async function submitCashReport(
     toast_projected_as_of: args.toastProjected?.asOf ?? null,
   }).select("id").single<{ id: string }>();
   if (insErr) {
+    // A first submit that lost cash_reports_one_live_per_day to a concurrent first submit: the
+    // winner's row stands and nothing of ours was written (W03/B147 — a named 409, not a 500).
+    if (!prior && insErr.code === PG_UNIQUE_VIOLATION) return { ok: false, reason: "concurrent_submit" };
     // Attempt to undo the supersede so the prior row remains live.
     if (prior) {
       // The rollback lifts OUR OWN stamp and nobody else's. Two simultaneous

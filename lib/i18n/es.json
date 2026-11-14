@@ -2387,6 +2387,7 @@
   "cash.error.generic": "No se pudo enviar. Intenta de nuevo.",
   "cash.submit.needs_count": "Escribe la cifra proyectada y cuenta la caja para enviar.",
   "cash.error.drawer_not_counted": "Cuenta la caja antes de enviar.",
+  "cash.error.concurrent_submit": "Alguien más acaba de enviar este depósito. Actualiza para verlo.",
   "cash.locked.closing_finalized": "El cierre de hoy ya está finalizado — el depósito de efectivo está bloqueado.",
   "cash.read_only.banner": "Depositado {amount} · firmado por {name} a las {time}",
   "mid_day_prep.page.title": "Preparación de mediodía",

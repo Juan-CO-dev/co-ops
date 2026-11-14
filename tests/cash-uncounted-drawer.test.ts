@@ -129,3 +129,12 @@ describe("cash-client never submits an untouched form (B007)", () => {
     expect(src).toContain('body.error === "drawer_not_counted"');
   });
 });
+
+describe("POST /api/cash names a lost double-submit (W03/B147)", () => {
+  it("concurrent_submit → 409 cash_concurrent_submit", async () => {
+    mocks.cashSubmit.mockResolvedValue({ ok: false, reason: "concurrent_submit" });
+    const res = await cashPost(req({ ...base, countMethod: "hand", drawerTotalCents: 60_000 }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("cash_concurrent_submit");
+  });
+});
