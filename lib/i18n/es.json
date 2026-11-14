@@ -4965,6 +4965,7 @@
   "order.build.decrease_qty_generic": "Disminuir la cantidad",
   "order.build.quick_add": "Agregar rápido {item}",
   "order.build.customize_item": "Personalizar {item}",
+  "order.build.cart_repriced": "Algunos precios o artículos del menú cambiaron desde que guardaste este pedido. Tu carrito ya muestra el menú de hoy — revísalo antes de continuar.",
   "admin.catering.prep_demand.tab_surplus": "Excedente",
   "admin.catering.prep_demand.surplus_empty": "Sin excedente de cancelaciones recientes.",
   "catering.surplus.section_perishable": "Excedente de prep perecedero",

@@ -76,6 +76,8 @@ interface DraftItem {
   id: string;
   itemId: string | null; menuItemId: string | null; portion: Portion | null; quantity: number;
   sizeId: string | null;
+  /** The unit price the line was SAVED at (the server re-prices at submit — audit W01/B031). */
+  unitPriceCents: number;
   /** Present for package lines only. */
   packageId: string | null;
   /** Per-slot picks for package lines. */
@@ -246,6 +248,11 @@ function OrderBuild() {
   // Portal session expired mid-cart (a 401 on a persist POST). Renders a sticky
   // banner so the customer isn't silently losing cart writes (hardening 2026-07-31).
   const [sessionExpired, setSessionExpired] = useState(false);
+  // A returning customer's saved cart no longer matches today's menu (a price moved, or an item /
+  // package is gone — audit W01/B031). The cart is re-saved once at today's prices right after
+  // hydration (the server refuses to submit a stale cart), and the customer is told why.
+  const [cartRepriced, setCartRepriced] = useState(false);
+  const resaveAfterHydrate = useRef(false);
 
   // ── Load the draft (Next 16: read ?draft from window.location.search in an effect, not useSearchParams). ──
   useEffect(() => {
@@ -270,11 +277,13 @@ function OrderBuild() {
         const cardsByKey = new Map(expandCards(d.menu).map((c) => [c.key, c] as const));
         const initial: Record<string, Line> = {};
         const initialPkg: Record<string, PkgEntry> = {};
+        let stale = false;
         for (const it of d.items) {
           if (it.packageId) {
             // Package line: hydrate into pkgCart.
             const pkg = (d.packages ?? []).find((p) => p.id === it.packageId);
-            if (!pkg) continue;
+            if (!pkg) { stale = true; continue; }
+            if (pkg.priceCents !== it.unitPriceCents) stale = true;
             initialPkg[it.id] = { key: it.id, pkg, quantity: it.quantity, options: it.options ?? [] };
             continue;
           }
@@ -284,9 +293,9 @@ function OrderBuild() {
             : it.itemId
               ? (it.sizeId ? `item:${it.itemId}:${it.sizeId}` : `item:${it.itemId}`)
               : null;
-          if (!key) continue;
+          if (!key) { stale = true; continue; }
           const card = cardsByKey.get(key);
-          if (!card) continue; // references something not in the shopping menu (e.g. napkins / retired size) — skip.
+          if (!card) { stale = true; continue; } // no longer on the shopping menu (retired item / size) — dropped, and the cart is re-saved.
           const prev = initial[key];
           initial[key] = {
             ...emptyLine(),
@@ -294,7 +303,10 @@ function OrderBuild() {
             portion: it.portion ?? "whole",
             sizeId: card.sizeId,
           };
+          if (unitCents(card.item, initial[key]) !== it.unitPriceCents) stale = true;
         }
+        resaveAfterHydrate.current = stale;
+        setCartRepriced(stale);
         setCart(initial);
         setPkgCart(initialPkg);
         setLoadState("ready");
@@ -455,8 +467,13 @@ function OrderBuild() {
   const didHydrate = useRef(false);
   useEffect(() => {
     if (!draftId || loadState !== "ready") return;
-    // Skip the first ready-render (the cart was just hydrated from the server — no re-POST needed).
-    if (!didHydrate.current) { didHydrate.current = true; return; }
+    // Skip the first ready-render (the cart was just hydrated from the server — no re-POST needed),
+    // UNLESS the saved cart no longer matches today's menu: then it is re-saved at today's prices.
+    if (!didHydrate.current) {
+      didHydrate.current = true;
+      if (!resaveAfterHydrate.current) return;
+      resaveAfterHydrate.current = false;
+    }
     if (persistTimer.current !== null) window.clearTimeout(persistTimer.current);
     persistTimer.current = window.setTimeout(() => {
       void (async () => {
@@ -531,6 +548,11 @@ function OrderBuild() {
         <div className="sticky top-0 z-40 bg-co-cta px-5 py-3 text-center text-sm font-bold text-co-text">
           Your session timed out — new items aren&apos;t saving.{" "}
           <a href="/order/start" className="underline underline-offset-2">Tap to sign back in →</a>
+        </div>
+      ) : null}
+      {cartRepriced ? (
+        <div role="status" className="border-b border-co-border bg-co-warning-surface px-5 py-3 text-center text-sm font-semibold text-co-warning-text">
+          {t("order.build.cart_repriced")}
         </div>
       ) : null}
       <div className="sticky top-0 z-30">

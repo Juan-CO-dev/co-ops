@@ -133,5 +133,38 @@ describe("B001 — the delivery fee of a self-serve delivery order is decided by
   });
 });
 
+describe("B031 — a draft is submitted at TODAY's menu prices, never the price saved weeks ago", () => {
+  it("a price raised since the line was saved: preview and submit refuse 409 cart_changed; nothing is written", async () => {
+    const db = useDb();
+    h.menu = [chips(1200)];
+    await expect(previewDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "cart_changed" });
+    await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "cart_changed" });
+    expect(quoteRow(db).status).toBe("draft");
+    expect(h.createPaymentDue).not.toHaveBeenCalled();
+    expect(db.writes.filter((w) => w.table === "catering_quotes")).toEqual([]);
+  });
+  it("an item no longer on the menu (deactivated) is cart_changed too, never submitted", async () => {
+    const db = useDb();
+    h.menu = [];
+    await expect(previewDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "cart_changed" });
+    await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "cart_changed" });
+    expect(quoteRow(db).status).toBe("draft");
+  });
+  it("after the cart is saved again (the build page re-saves a stale cart), submit goes through at the new price", async () => {
+    const db = useDb();
+    h.menu = [chips(1200)];
+    await setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 10 }]);
+    const res = await submitDraft(CUST, QUOTE, {});
+    expect(res.totalCents).toBe(12000);
+    expect(quoteRow(db)).toMatchObject({ status: "submitted", subtotal_cents: 12000 });
+  });
+  it("unchanged prices submit exactly as before", async () => {
+    const db = useDb();
+    expect((await previewDraft(CUST, QUOTE, {})).subtotalCents).toBe(10000);
+    await submitDraft(CUST, QUOTE, {});
+    expect(quoteRow(db)).toMatchObject({ status: "submitted", subtotal_cents: 10000, deposit_cents: 2500 });
+  });
+});
+
 // Keep the imports referenced while later describe blocks are added bug by bug.
 void loadDraft; void PortalDraftError;

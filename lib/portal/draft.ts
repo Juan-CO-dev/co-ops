@@ -501,11 +501,68 @@ function serverDeliveryZone(pricing: { zones: Array<{ id: string; feeCents: numb
   return resolvePortalDeliveryZone(pricing.zones, isDelivery);
 }
 
-/** The draft's current persisted per-line totals (server-owned; never client-supplied). */
-async function currentLineTotals(sb: ReturnType<typeof getServiceRoleClient>, quoteId: string): Promise<number[]> {
-  const { data, error } = await sb.from("catering_quote_items").select("line_total_cents").eq("quote_id", quoteId).returns<Array<{ line_total_cents: number }>>();
-  if (error) throw new Error(`currentLineTotals: ${error.message}`);
-  return (data ?? []).map((r) => r.line_total_cents);
+/** A draft line as stored (the references it was priced from + the price it was saved at). */
+interface StoredLine {
+  id: string; itemId: string | null; menuItemId: string | null; packageId: string | null; sizeId: string | null;
+  portion: Portion | null; quantity: number; unitPriceCents: number; lineTotalCents: number; options: PackageOption[];
+}
+
+/** The draft's persisted lines in display order, with their package picks (server-owned; never client-supplied). */
+async function loadStoredLines(sb: ReturnType<typeof getServiceRoleClient>, quoteId: string): Promise<StoredLine[]> {
+  const { data, error } = await sb.from("catering_quote_items")
+    .select("id, item_id, menu_item_id, package_id, size_id, portion, quantity, unit_price_cents, line_total_cents, display_order")
+    .eq("quote_id", quoteId).order("display_order", { ascending: true })
+    .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; size_id: string | null; portion: string | null; quantity: number | string; unit_price_cents: number; line_total_cents: number; display_order: number }>>();
+  if (error) throw new Error(`loadStoredLines: ${error.message}`);
+  const rows = data ?? [];
+  const optionsByLine = new Map<string, PackageOption[]>();
+  const packageLineIds = rows.filter((r) => r.package_id).map((r) => r.id);
+  if (packageLineIds.length > 0) {
+    const { data: optRows, error: oErr } = await sb.from("catering_quote_item_options")
+      .select("quote_item_id, package_item_id, item_id, menu_item_id, quantity")
+      .in("quote_item_id", packageLineIds)
+      .returns<Array<{ quote_item_id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>();
+    if (oErr) throw new Error(`loadStoredLines options: ${oErr.message}`);
+    for (const o of optRows ?? []) {
+      const arr = optionsByLine.get(o.quote_item_id) ?? [];
+      arr.push({ packageItemId: o.package_item_id, itemId: o.item_id, menuItemId: o.menu_item_id, quantity: Number(o.quantity) });
+      optionsByLine.set(o.quote_item_id, arr);
+    }
+  }
+  return rows.map((r) => ({
+    id: r.id, itemId: r.item_id, menuItemId: r.menu_item_id, packageId: r.package_id, sizeId: r.size_id,
+    portion: r.portion === "quarter" || r.portion === "half" || r.portion === "whole" ? r.portion : null,
+    quantity: Number(r.quantity), unitPriceCents: r.unit_price_cents, lineTotalCents: r.line_total_cents,
+    options: optionsByLine.get(r.id) ?? [],
+  }));
+}
+
+/**
+ * Re-price the draft's STORED lines against the location's CURRENT menu (audit W01/B031). A draft can
+ * sit for weeks; the price it was saved at is not the price of today. A line that no longer resolves
+ * (item / sub / package / size / slot deactivated or removed) or whose price moved refuses
+ * 409 `cart_changed` — the customer reviews the cart again (the build page re-saves it at today's
+ * prices). Unchanged lines return their resolution, whose totals equal the stored ones.
+ */
+async function repriceStoredLines(locationId: string, stored: StoredLine[]): Promise<ResolvedLine[]> {
+  const inputs: DraftLineInput[] = stored.map((l) => ({
+    itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, sizeId: l.sizeId, portion: l.portion, quantity: l.quantity,
+    packageOptions: l.options.map((o) => ({ packageItemId: o.packageItemId, itemId: o.itemId, menuItemId: o.menuItemId, quantity: o.quantity })),
+  }));
+  let resolved: ResolvedLine[];
+  try {
+    resolved = await resolveLines(locationId, inputs);
+  } catch (e) {
+    if (e instanceof PortalDraftError && e.status === 400) throw new PortalDraftError(409, "cart_changed", "Something on your order is no longer available. Please review your order.");
+    throw e;
+  }
+  resolved.forEach((r, i) => {
+    const s = stored[i]!;
+    if (r.unitPriceCents !== s.unitPriceCents || r.lineTotalCents !== s.lineTotalCents) {
+      throw new PortalDraftError(409, "cart_changed", "A price on your order changed. Please review your order.");
+    }
+  });
+  return resolved;
 }
 
 /** The napkins add-on menu item for a location (the first ADDON_SECTION row), or null. */
@@ -585,7 +642,7 @@ export interface PreviewOpts { tipBps?: number | null; napkins?: boolean }
 export async function previewDraft(customerId: string, quoteId: string, opts: PreviewOpts = {}): Promise<ChargeStack> {
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
-  const lineTotals = await currentLineTotals(sb, quoteId);
+  const lineTotals = (await repriceStoredLines(header.location_id, await loadStoredLines(sb, quoteId))).map((l) => l.lineTotalCents);
   if (opts.napkins) {
     const napkins = await loadNapkinsAddon(header.location_id);
     if (napkins) lineTotals.push(lineTotalCents(1, napkins.unitPriceCents));
@@ -621,8 +678,9 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
 
-  const baseLineTotals = await currentLineTotals(sb, quoteId);
-  if (baseLineTotals.length === 0) throw new PortalDraftError(400, "empty_cart", "Your order is empty");
+  const stored = await loadStoredLines(sb, quoteId);
+  if (stored.length === 0) throw new PortalDraftError(400, "empty_cart", "Your order is empty");
+  const baseLineTotals = (await repriceStoredLines(header.location_id, stored)).map((l) => l.lineTotalCents);
 
   // Resolve the napkins add-on price UP FRONT (to fold into the snapshot) but do NOT insert the line
   // yet — only the submit that WINS the atomic status flip may mutate line items or create a payment
