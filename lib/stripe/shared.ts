@@ -224,7 +224,7 @@ export type CheckoutEventKind =
   | "async_succeeded"  // checkout.session.async_payment_succeeded → advance the row
   | "async_failed"     // checkout.session.async_payment_failed → leave it 'due'
   | "expired"          // checkout.session.expired → leave it 'due'
-  | "refunded"         // charge.refunded → move 'paid' → 'refunded'
+  | "refunded"         // charge.refunded → 'paid' → 'refunded' ONLY when fully refunded
   | "ignored";         // everything else, INCLUDING a completed-but-unpaid session
 
 export interface CheckoutEventOutcome {
@@ -242,6 +242,15 @@ export interface CheckoutEventOutcome {
   paymentId?: string;
   /** Session `amount_total`, or a charge's `amount_refunded`. Integer cents, or absent. */
   amountCents?: number;
+  /**
+   * `charge.refunded` ONLY — Stripe's own `refunded` flag on the charge: true exactly when
+   * the WHOLE charge has been refunded, false while any of it is still captured. Absent
+   * when the payload does not carry a boolean there. `charge.refunded` fires for every
+   * refund, partial ones included, so this (not the event type) is what says "fully".
+   */
+  chargeFullyRefunded?: boolean;
+  /** `charge.refunded` ONLY — the charge's own `amount` (what was captured). Evidence. */
+  chargeAmountCents?: number;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -303,6 +312,8 @@ export function parseCheckoutEvent(event: unknown): CheckoutEventOutcome {
       quoteId: isUuid(metadata?.quote_id) ? (metadata?.quote_id as string) : undefined,
       paymentId: isUuid(metadata?.payment_id) ? (metadata?.payment_id as string) : undefined,
       amountCents: cents(object.amount_refunded),
+      chargeFullyRefunded: typeof object.refunded === "boolean" ? object.refunded : undefined,
+      chargeAmountCents: cents(object.amount),
     };
   }
 

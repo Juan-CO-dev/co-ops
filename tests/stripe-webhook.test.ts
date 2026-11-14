@@ -327,6 +327,76 @@ describe("charge.refunded", () => {
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "catering.payment.provider_refunded" }));
   });
 
+  it("W02/B036 — a PARTIAL refund leaves the row `paid` and audits the amount", async () => {
+    const paid300 = { ...PAID_ROW, amount_cents: 30000 };
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: paid300 } }));
+    const out = await processStripeEvent(
+      client,
+      refundEvent({ amount: 30000, amount_refunded: 2000, refunded: false }),
+      SINGLE,
+      noNotify,
+    );
+
+    expect(out.result).toBe("partially_refunded");
+    // The row is NOT touched: the customer has still paid, and the pay panel must stay shut.
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "catering.payment.provider_refunded",
+        metadata: expect.objectContaining({
+          partial: true,
+          row_status: "paid",
+          refunded_amount_cents: 2000,
+          amount_cents: 30000,
+        }),
+      }),
+    );
+    expect(ops.find((o) => o.table === "stripe_events" && o.kind === "update")?.payload).toMatchObject({
+      outcome: "partially_refunded",
+    });
+  });
+
+  it("W02/B036 — Stripe's own `refunded: true` is a FULL refund and moves the row", async () => {
+    const paid300 = { ...PAID_ROW, amount_cents: 30000 };
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: paid300 } }));
+    const out = await processStripeEvent(
+      client,
+      refundEvent({ amount: 30000, amount_refunded: 30000, refunded: true }),
+      SINGLE,
+      noNotify,
+    );
+
+    expect(out.result).toBe("refunded");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload).toEqual({ status: "refunded" });
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ partial: false, row_status: "refunded" }) }),
+    );
+  });
+
+  it("W02/B036 — partial refunds that TOGETHER cover the row read as full (amount_refunded is cumulative)", async () => {
+    const paid300 = { ...PAID_ROW, amount_cents: 30000 };
+    const { client } = stubClient(handlerFor({ paymentByRef: { data: paid300 } }));
+    // No boolean on the payload: the cumulative amount alone decides.
+    const out = await processStripeEvent(client, refundEvent({ amount_refunded: 30000 }), SINGLE, noNotify);
+    expect(out.result).toBe("refunded");
+  });
+
+  it("W02/B036 — a refund payload with NEITHER signal is treated as partial, never as a re-opened order", async () => {
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: PAID_ROW } }));
+    const out = await processStripeEvent(client, refundEvent({ amount_refunded: undefined }), SINGLE, noNotify);
+    expect(out.result).toBe("partially_refunded");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
+  });
+
+  it("W02/B036 — a partial refund against a row that is not `paid` reports `no_paid_row`", async () => {
+    const { client } = stubClient(
+      handlerFor({ paymentByRef: { data: { ...PAID_ROW, amount_cents: 30000, status: "refunded" } } }),
+    );
+    const out = await processStripeEvent(client, refundEvent({ amount_refunded: 2000, refunded: false }), SINGLE, noNotify);
+    expect(out.result).toBe("no_paid_row");
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+
   it("reports `no_paid_row` when the guarded update matches nothing (already refunded)", async () => {
     const { client } = stubClient(handlerFor({ paymentByRef: { data: PAID_ROW }, paymentUpdate: { count: 0 } }));
     const out = await processStripeEvent(client, refundEvent(), SINGLE, noNotify);

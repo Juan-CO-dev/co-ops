@@ -80,7 +80,8 @@ export type StripeProcessingResult =
   | "location_mismatch"   // per-location mode: the payment belongs to another shop
   | "async_failed"        // delayed-notification payment failed; the row stays 'due'
   | "expired"             // the Checkout Session expired unpaid; the row stays 'due'
-  | "refunded"            // a paid row became refunded
+  | "refunded"            // a paid row became refunded (the WHOLE charge was refunded)
+  | "partially_refunded"  // part of the charge was refunded; the row stays 'paid', the amount is audited
   | "no_paid_row"         // charge.refunded arrived for a payment that was not 'paid'
   | "ignored"             // an event type (or a completed-but-unpaid session) we do not act on
   | "duplicate"           // this exact event id is already on the ledger WITH a terminal verdict
@@ -420,14 +421,21 @@ async function dispatch(
  * `charge.refunded` — the only event that moves a row BACKWARDS. It is located by
  * `provider_ref = the charge's payment_intent`, which is exactly the id the paid flip
  * wrote, so a refund can only ever find a payment we actually took. The guard is
- * `.eq("status","paid")`: a partial-refund event replayed against an already-refunded row
+ * `.eq("status","paid")`: a refund event replayed against an already-refunded row
  * reports `no_paid_row` instead of writing again.
  *
- * PARTIAL REFUNDS ARE NOT MODELLED, AND THIS SAYS SO RATHER THAN GUESSING. `status` has no
- * "partially_refunded" member (migration 0127's CHECK), so any `charge.refunded` moves the
- * row to `refunded` and the event's `amount_refunded` is recorded in the audit metadata as
- * the honest detail. Splitting the status is a settlement-ledger decision, not a webhook
- * one.
+ * ── ONLY A FULL REFUND MOVES THE ROW (audit W02/B036) ────────────────────────────────
+ * Stripe sends `charge.refunded` for EVERY refund, a $20 goodwill refund on a $300 deposit
+ * included. `status` has no "partially_refunded" member (migration 0127's CHECK), and the
+ * row used to move to `refunded` on any of them — which told the customer portal nothing
+ * had been paid, re-opened the pay panel, and let the already-paid gate wave a second
+ * deposit through. So the row moves to `refunded` only when the WHOLE charge is refunded:
+ * Stripe's own `refunded: true`, or a cumulative `amount_refunded` that covers the row's
+ * `amount_cents`. Anything less leaves the row `paid` — the customer HAS paid — and the
+ * refunded amount is recorded on the same audit action with `partial: true`, result
+ * `partially_refunded`. A payload that carries neither signal is treated as partial: when
+ * we cannot tell, the conservative reading is the one that does not invite a second
+ * charge. Splitting the status is still a settlement-ledger decision, not a webhook one.
  */
 async function refund(
   sb: ServiceClient,
@@ -450,13 +458,24 @@ async function refund(
     return { result: "location_mismatch", locationId };
   }
 
-  const { error, count } = await sb
-    .from("catering_payments")
-    .update({ status: "refunded" }, { count: "exact" })
-    .eq("id", payment.id)
-    .eq("status", "paid");
-  if (error) throw new Error(`stripe refund update: ${error.message}`);
-  if (count === 0) return { result: "no_paid_row", locationId };
+  // `amountCents` is the charge's CUMULATIVE `amount_refunded` (Stripe sums every refund on
+  // the charge), so two partial refunds that together cover the row do read as full.
+  const fullyRefunded =
+    outcome.chargeFullyRefunded === true ||
+    (outcome.amountCents != null && outcome.amountCents >= payment.amount_cents);
+
+  if (fullyRefunded) {
+    const { error, count } = await sb
+      .from("catering_payments")
+      .update({ status: "refunded" }, { count: "exact" })
+      .eq("id", payment.id)
+      .eq("status", "paid");
+    if (error) throw new Error(`stripe refund update: ${error.message}`);
+    if (count === 0) return { result: "no_paid_row", locationId };
+  } else if (payment.status !== "paid") {
+    // A partial refund against a row that is not `paid` has nothing to annotate.
+    return { result: "no_paid_row", locationId };
+  }
 
   void audit({
     actorId: null,
@@ -470,6 +489,10 @@ async function refund(
       kind: payment.kind,
       amount_cents: payment.amount_cents,
       refunded_amount_cents: outcome.amountCents ?? null,
+      charge_amount_cents: outcome.chargeAmountCents ?? null,
+      // `partial: true` ⇒ the row was NOT moved; it is still `paid`.
+      partial: !fullyRefunded,
+      row_status: fullyRefunded ? "refunded" : "paid",
       payment_intent_id: outcome.paymentIntentId,
       stripe_event_id: outcome.eventId,
       livemode: outcome.livemode,
@@ -480,7 +503,7 @@ async function refund(
     userAgent: null,
   });
 
-  return { result: "refunded", locationId };
+  return { result: fullyRefunded ? "refunded" : "partially_refunded", locationId };
 }
 
 // ── The paid notification ───────────────────────────────────────────────────────────
