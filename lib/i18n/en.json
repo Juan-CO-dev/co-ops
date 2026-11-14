@@ -3553,6 +3553,7 @@
   "receiving.detail.received_against": "Received against",
   "receiving.error.invalid_missing_lines": "Something was off with the missing items — try again.",
   "receiving.error.missing_requires_po": "Shorts can only be claimed against a purchase order.",
+  "receiving.error.missing_not_on_po": "That item was not on this purchase order, so it cannot be claimed as missing.",
   "receiving.error.invalid_missing_sku": "One of the missing items is no longer available.",
   "receiving.badge.in_progress": "In progress",
   "receiving.badge.discrepant": "Discrepant",

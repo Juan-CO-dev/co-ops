@@ -549,7 +549,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   // Validate the entire missing-credit payload before the delivery header or any line is
   // written. A forged foreign-shop SKU must leave no partial delivery behind.
   const missingCreditDrafts = await prepareMissingExpectedCredits(
-    sb, input.vendorId, input.locationId, missingExpected, new Set(input.lines.map((l) => l.skuId)),
+    sb, input.vendorId, input.locationId, missingExpected, new Set(input.lines.map((l) => l.skuId)), poId,
   );
 
   // 0160 columns — apply 0160 BEFORE deploying this code (additive; old code unaffected).
@@ -972,6 +972,8 @@ async function deriveAndUpsertCredits(
  *   • a SKU that ALSO has a real delivery line is dropped: it arrived, so the lined
  *     discrepancy path owns it (and a double credit for one SKU would be a false debt)
  *   • duplicate skuIds collapse to one credit
+ *   • W04/B148: the SKU must be ON the linked PO (`missing_not_on_po`), and the claimed qty is
+ *     capped at the qty that PO ordered (a whole missing item is at most what was ordered)
  *
  * IDEMPOTENCY NOTE: the 0168 unique index is `(delivery_item_id, reason) WHERE
  * delivery_item_id IS NOT NULL`, so these line-less rows have no index-level dedupe.
@@ -988,6 +990,7 @@ async function prepareMissingExpectedCredits(
   locationId: string,
   missing: MissingExpectedLine[],
   deliveredSkuIds: Set<string>,
+  poId: string | null,
 ): Promise<ReturnType<typeof deriveMissingCreditDrafts>> {
   if (missing.length === 0) return [];
   for (const m of missing) {
@@ -1023,7 +1026,22 @@ async function prepareMissingExpectedCredits(
     throw new ReceivingError(400, "sku_vendor_mismatch", "A missing item belongs to a different vendor than this delivery");
   }
 
-  return deriveMissingCreditDrafts(usable);
+  // W04/B148: a missing-item short is a debt for something this PO ORDERED. recordDelivery
+  // already refuses missing lines without a PO; the PO's own lines bound what can be claimed.
+  if (!poId) throw new ReceivingError(400, "missing_requires_po", "Missing-item shorts can only be filed against a purchase order");
+  const { data: poLines, error: plErr } = await sb.from("po_lines")
+    .select("sku_id, order_qty").eq("po_id", poId).in("sku_id", skuIds)
+    .returns<Array<{ sku_id: string; order_qty: number | string | null }>>();
+  if (plErr) throw new Error(`insertMissingExpectedCredits po lines: ${plErr.message}`);
+  const orderedBySku = new Map<string, number>();
+  for (const l of poLines ?? []) {
+    const q = num(l.order_qty);
+    if (q != null && q > 0) orderedBySku.set(l.sku_id, (orderedBySku.get(l.sku_id) ?? 0) + q);
+  }
+  for (const m of usable) {
+    if (!orderedBySku.has(m.skuId)) throw new ReceivingError(400, "missing_not_on_po", "A missing item was not on this purchase order");
+  }
+  return deriveMissingCreditDrafts(usable.map((m) => ({ ...m, expectedQty: Math.min(m.expectedQty, orderedBySku.get(m.skuId)!) })));
 }
 
 async function insertMissingExpectedCredits(

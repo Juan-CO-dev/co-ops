@@ -3553,6 +3553,7 @@
   "receiving.detail.received_against": "Recibido contra",
   "receiving.error.invalid_missing_lines": "Algo falló con los artículos faltantes — intenta otra vez.",
   "receiving.error.missing_requires_po": "Solo puedes reclamar faltantes contra una orden de compra.",
+  "receiving.error.missing_not_on_po": "Ese artículo no estaba en esta orden de compra, así que no puedes reclamarlo como faltante.",
   "receiving.error.invalid_missing_sku": "Uno de los artículos faltantes ya no está disponible.",
   "receiving.badge.in_progress": "En curso",
   "receiving.badge.discrepant": "Con discrepancia",
