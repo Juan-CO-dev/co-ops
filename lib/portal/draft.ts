@@ -217,6 +217,34 @@ async function loadOwnedDraftHeader(
   return { id: row.id, location_id: row.location_id, is_delivery: row.is_delivery, delivery_zone_id: row.delivery_zone_id, pipeline_id: row.pipeline_id };
 }
 
+// ── The atomic draft writers (migration 0302) ─────────────────────────────────────
+
+/**
+ * 0302's portal_draft_set_lines / portal_draft_submit replace the multi-statement writes below with
+ * ONE transaction each, both taking the quote row FOR UPDATE first (audit W01/B032 + B144). Until
+ * 0302 is applied the RPC does not exist (PGRST202 / 42883) and the previous path runs — so this
+ * code is safe to deploy before the migration, and the migration is safe to apply after it.
+ */
+function rpcMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+let legacyWarned = false;
+function warnLegacy(fn: string): void {
+  if (legacyWarned) return;
+  legacyWarned = true;
+  console.warn(`[portal draft] ${fn}: migration 0302 not applied — using the non-transactional path`);
+}
+/** The 0302 refusal vocabulary (raise exception <code>) → the lib's own errors. */
+function rpcRefusal(where: string, error: { message?: string }): never {
+  const code = (error.message ?? "").trim();
+  if (code === "not_found") throw new PortalDraftError(404, "not_found", "Draft not found");
+  if (code === "not_draft") throw new PortalDraftError(409, "not_draft", "This order can no longer be edited");
+  if (code === "cart_changed") throw new PortalDraftError(409, "cart_changed", "Your order changed while it was being placed. Please review it.");
+  if (code === "empty_cart") throw new PortalDraftError(400, "empty_cart", "Your order is empty");
+  if (code === "invalid_notes") throw new PortalDraftError(400, "invalid_notes", "Notes can be at most 2000 characters");
+  throw new Error(`${where}: ${error.message ?? "rpc failed"}`);
+}
+
 // ── Create (from intake, post-verify) ─────────────────────────────────────────────
 
 /**
@@ -588,10 +616,9 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
   const isDelivery = header.is_delivery;
 
   // A-M3: ALL validation + the full charge stack are computed BEFORE any write — resolveLines
-  // (bounds/refs) and ratesWithTip (tip validation) throw here, before the
-  // delete, so a bad payload can never leave the line items replaced with a stale snapshot. (Full
-  // delete+insert+update transactional atomicity would need an RPC; the residual is only a sub-ms
-  // concurrent-self-read window — tracked as an optional deeper fix.)
+  // (bounds/refs) and ratesWithTip (tip validation) throw here, before any write, so a bad payload can
+  // never leave the line items replaced with a stale snapshot. The write itself is 0302's one-transaction
+  // portal_draft_set_lines (audit W01/B032); the multi-statement path below runs only before 0302.
   const resolved = await resolveLines(header.location_id, lines);
   const pricing = await loadPublicPricingContext(header.location_id);
   const zone = serverDeliveryZone(pricing, isDelivery);
@@ -599,7 +626,28 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
   const rates = ratesWithTip(pricing.rates, opts.tipBps);
   const stack = computeChargeStack(resolved.map((l) => l.lineTotalCents), zone.feeCents, rates);
 
-  // Replace the line set (delete-then-insert; the quote stays the same row → no new version).
+  const view: DraftView = {
+    quoteId, pipelineId: header.pipeline_id, locationId: header.location_id, status: "draft", isDelivery, deliveryZoneId, stack,
+    items: resolved.map((l) => ({ id: `resolved-${l.displayOrder}`, itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, sizeId: l.sizeId, portion: l.portion, description: l.description, quantity: l.quantity, unitPriceCents: l.unitPriceCents, lineTotalCents: l.lineTotalCents, displayOrder: l.displayOrder, options: l.options })),
+  };
+
+  // 0302: replace the lines + write the snapshot in ONE transaction under the quote row lock, re-checking
+  // owned + 'draft' there — a submit that won the lock first makes this a 409 that wrote nothing (B032).
+  const { error: rpcErr } = await sb.rpc("portal_draft_set_lines", {
+    p_customer_id: customerId, p_quote_id: quoteId,
+    p_lines: resolved.map((l) => ({
+      item_id: l.itemId, menu_item_id: l.menuItemId, package_id: l.packageId, size_id: l.sizeId, portion: l.portion,
+      description: l.description, quantity: l.quantity, unit_price_cents: l.unitPriceCents, line_total_cents: l.lineTotalCents,
+      display_order: l.displayOrder, line_kind: l.lineKind, components_listed: l.componentsListed,
+      options: l.options.map((o) => ({ package_item_id: o.packageItemId, item_id: o.itemId, menu_item_id: o.menuItemId, quantity: o.quantity })),
+    })),
+    p_snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId),
+  });
+  if (!rpcErr) return view;
+  if (!rpcMissing(rpcErr)) rpcRefusal("setDraftLines", rpcErr);
+  warnLegacy("setDraftLines");
+
+  // Pre-0302 path: replace the line set (delete-then-insert; the quote stays the same row → no new version).
   const { error: delErr } = await sb.from("catering_quote_items").delete().eq("quote_id", quoteId);
   if (delErr) throw new Error(`setDraftLines delete: ${delErr.message}`);
   if (resolved.length > 0) {
@@ -621,15 +669,14 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
       if (optErr) throw new Error(`setDraftLines options insert: ${optErr.message}`);
     }
   }
-  const { error: upErr } = await sb.from("catering_quotes")
-    .update(snapshotColumns(rates, stack, isDelivery, deliveryZoneId))
+  const { error: upErr, count: upCount } = await sb.from("catering_quotes")
+    .update(snapshotColumns(rates, stack, isDelivery, deliveryZoneId), { count: "exact" })
     .eq("id", quoteId).eq("status", "draft");
   if (upErr) throw new Error(`setDraftLines update: ${upErr.message}`);
+  // Silent-UPDATE law: the draft was submitted meanwhile — say so instead of reporting a save.
+  if (upCount === 0) throw new PortalDraftError(409, "not_draft", "This order can no longer be edited");
 
-  return {
-    quoteId, pipelineId: header.pipeline_id, locationId: header.location_id, status: "draft", isDelivery, deliveryZoneId, stack,
-    items: resolved.map((l) => ({ id: `resolved-${l.displayOrder}`, itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, sizeId: l.sizeId, portion: l.portion, description: l.description, quantity: l.quantity, unitPriceCents: l.unitPriceCents, lineTotalCents: l.lineTotalCents, displayOrder: l.displayOrder, options: l.options })),
-  };
+  return view;
 }
 
 // ── Preview (compute-only, review page) ────────────────────────────────────────────
@@ -696,26 +743,24 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   const rates = ratesWithTip(pricing.rates, opts.tipBps);
   const stack = computeChargeStack(lineTotals, zone.feeCents, rates);
 
-  // ATOMIC CLAIM: flip draft → submitted with the final (napkins-inclusive) snapshot. Guard on
-  // status='draft' — the LOSER of a double-submit gets count=0 → 409 having mutated NOTHING.
-  const { error: upErr, count } = await sb.from("catering_quotes")
-    .update({ status: "submitted", ...snapshotColumns(rates, stack, isDelivery, deliveryZoneId), expires_at: defaultExpiry() }, { count: "exact" })
-    .eq("id", quoteId).eq("status", "draft");
-  if (upErr) throw new Error(`submitDraft flip: ${upErr.message}`);
-  if (count === 0) throw new PortalDraftError(409, "not_draft", "This order was already submitted");
-
-  // WON the claim — now it is safe to append the napkins line (only one submitter reaches here).
-  if (napkins) {
-    const { error: nErr } = await sb.from("catering_quote_items").insert({
-      quote_id: quoteId, item_id: napkins.id, menu_item_id: null, package_id: null, portion: null,
-      description: napkins.name, quantity: 1, unit_price_cents: napkins.unitPriceCents,
-      line_total_cents: lineTotalCents(1, napkins.unitPriceCents), display_order: baseLineTotals.length, created_by: null,
-    });
-    if (nErr) throw new Error(`submitDraft napkins: ${nErr.message}`);
+  // 0302: ONE transaction under the quote row lock — the lines priced above must still be the draft's
+  // lines (else cart_changed, B032), then flip + napkins line + deposit-due intent, all or nothing (B144).
+  const expiresAt = defaultExpiry();
+  const { error: rpcErr } = await sb.rpc("portal_draft_submit", {
+    p_customer_id: customerId, p_quote_id: quoteId,
+    p_expected_lines: stored.map((l) => ({ id: l.id, quantity: l.quantity, unit_price_cents: l.unitPriceCents })),
+    p_snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId),
+    p_napkins: napkins ? { item_id: napkins.id, description: napkins.name, unit_price_cents: napkins.unitPriceCents } : null,
+    p_expires_at: expiresAt,
+    p_set_dietary_notes: false,
+    p_dietary_notes: null,
+  });
+  if (rpcErr && !rpcMissing(rpcErr)) rpcRefusal("submitDraft", rpcErr);
+  if (rpcErr) {
+    warnLegacy("submitDraft");
+    await submitLegacy(sb, { customerId, quoteId, snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId), expiresAt, napkins, napkinsOrder: baseLineTotals.length, depositCents: stack.depositCents });
   }
 
-  // Deposit-due payment intent (self-serve is deposit-required).
-  await createPaymentDue(sb, { quoteId, customerId, kind: "deposit", amountCents: stack.depositCents, createdBy: customerId });
 
   // Best-effort confirmation email (allowlist-gated; never throws).
   try {
@@ -740,4 +785,31 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
     metadata: { customer_id: customerId, total_cents: stack.totalCents, deposit_cents: stack.depositCents, napkins: !!opts.napkins }, ipAddress: null, userAgent: null,
   });
   return { quoteId, depositCents: stack.depositCents, totalCents: stack.totalCents };
+}
+
+/** The pre-0302 submit writes (unchanged): three separate statements, not one transaction. */
+async function submitLegacy(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  a: { customerId: string; quoteId: string; snapshot: ReturnType<typeof snapshotColumns>; expiresAt: string; napkins: CateringMenuItem | null; napkinsOrder: number; depositCents: number },
+): Promise<void> {
+  // ATOMIC CLAIM: flip draft → submitted with the final (napkins-inclusive) snapshot. Guard on
+  // status='draft' — the LOSER of a double-submit gets count=0 → 409 having mutated NOTHING.
+  const { error: upErr, count } = await sb.from("catering_quotes")
+    .update({ status: "submitted", ...a.snapshot, expires_at: a.expiresAt }, { count: "exact" })
+    .eq("id", a.quoteId).eq("status", "draft");
+  if (upErr) throw new Error(`submitDraft flip: ${upErr.message}`);
+  if (count === 0) throw new PortalDraftError(409, "not_draft", "This order was already submitted");
+
+  // WON the claim — now it is safe to append the napkins line (only one submitter reaches here).
+  if (a.napkins) {
+    const { error: nErr } = await sb.from("catering_quote_items").insert({
+      quote_id: a.quoteId, item_id: a.napkins.id, menu_item_id: null, package_id: null, portion: null,
+      description: a.napkins.name, quantity: 1, unit_price_cents: a.napkins.unitPriceCents,
+      line_total_cents: lineTotalCents(1, a.napkins.unitPriceCents), display_order: a.napkinsOrder, created_by: null,
+    });
+    if (nErr) throw new Error(`submitDraft napkins: ${nErr.message}`);
+  }
+
+  // Deposit-due payment intent (self-serve is deposit-required).
+  await createPaymentDue(sb, { quoteId: a.quoteId, customerId: a.customerId, kind: "deposit", amountCents: a.depositCents, createdBy: a.customerId });
 }

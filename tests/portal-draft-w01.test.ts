@@ -166,5 +166,83 @@ describe("B031 — a draft is submitted at TODAY's menu prices, never the price 
   });
 });
 
+// A JS stand-in for 0302's writers (the SQL itself is proven by scripts/sql-harness-0302.mjs): it
+// records the call and answers like PostgREST. `refuse` makes it raise that refusal code.
+function rpcOk(data: unknown = { quote_id: QUOTE }): FakeRpc { return () => ({ data, error: null }); }
+function rpcRefuse(code: string): FakeRpc { return () => ({ data: null, error: { code: "P0001", message: code } }); }
+const directWrites = (db: DraftFakeDb) => db.writes.filter((w) => ["catering_quotes", "catering_quote_items", "catering_quote_item_options", "catering_payments"].includes(w.table));
+
+describe("B032 — a cart save can never replace the lines of an order already submitted", () => {
+  it("with 0302: the save is ONE call to portal_draft_set_lines (lines + picks + snapshot), no direct writes", async () => {
+    const db = useDb(seed(), { portal_draft_set_lines: rpcOk() });
+    const view = await setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 3 }], { tipBps: 1500 });
+    expect(view.stack.subtotalCents).toBe(3000);
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.rpcCalls[0]).toEqual({ name: "portal_draft_set_lines", args: {
+      p_customer_id: CUST, p_quote_id: QUOTE,
+      p_lines: [{ item_id: ITEM, menu_item_id: null, package_id: null, size_id: null, portion: null, description: "Chips", quantity: 3, unit_price_cents: 1000, line_total_cents: 3000, display_order: 0, line_kind: null, components_listed: null, options: [] }],
+      p_snapshot: expect.objectContaining({ subtotal_cents: 3000, gratuity_bps: 1500, gratuity_cents: 450, is_delivery: false, delivery_zone_id: null }),
+    } });
+    expect(Object.keys(db.rpcCalls[0]!.args.p_snapshot as object)).toHaveLength(15);
+    expect(directWrites(db)).toEqual([]);
+  });
+  it("with 0302: the writer's not_draft (a submit won the row lock) is a 409, and nothing else runs", async () => {
+    const db = useDb(seed(), { portal_draft_set_lines: rpcRefuse("not_draft") });
+    await expect(setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 3 }])).rejects.toMatchObject({ status: 409, code: "not_draft" });
+    expect(directWrites(db)).toEqual([]);
+  });
+  it("an unknown database error is thrown, never mistaken for the missing-function fallback", async () => {
+    const db = useDb(seed(), { portal_draft_set_lines: () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }) });
+    await expect(setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 3 }])).rejects.toThrow(/setDraftLines: canceling statement/);
+    expect(directWrites(db)).toEqual([]);
+  });
+  it("before 0302 (legacy path): a submit landing mid-save is reported as 409 not_draft, not a silent success", async () => {
+    const db = useDb();
+    db.beforeWrite = (w) => { if (w.table === "catering_quote_items" && w.op === "delete") quoteRow(db).status = "submitted"; };
+    await expect(setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 3 }])).rejects.toMatchObject({ status: 409, code: "not_draft" });
+  });
+});
+
+describe("B144 — submit is all or nothing (flip + napkins line + deposit intent)", () => {
+  it("with 0302: submit is ONE call to portal_draft_submit carrying the priced lines, the snapshot, napkins and expiry", async () => {
+    vi.stubEnv("PORTAL_MAGIC_LINK_ALLOWLIST", "*");
+    h.menu = [chips(), { ...chips(500), id: "77777777-7777-4777-8777-777777777777", name: "Napkins", section: "Add-ons" }];
+    const db = useDb(seed(), { portal_draft_submit: rpcOk({ quote_id: QUOTE, payment_id: "pay-9" }) });
+    const res = await submitDraft(CUST, QUOTE, { napkins: true });
+    expect(res).toEqual({ quoteId: QUOTE, depositCents: 2625, totalCents: 10500 });
+    expect(db.rpcCalls).toHaveLength(1);
+    const call = db.rpcCalls[0]!;
+    expect(call.name).toBe("portal_draft_submit");
+    expect(call.args).toMatchObject({
+      p_customer_id: CUST, p_quote_id: QUOTE,
+      p_expected_lines: [{ id: "line-1", quantity: 10, unit_price_cents: 1000 }],
+      p_snapshot: expect.objectContaining({ subtotal_cents: 10500, total_cents: 10500, deposit_cents: 2625 }),
+      p_napkins: { item_id: "77777777-7777-4777-8777-777777777777", description: "Napkins", unit_price_cents: 500 },
+      p_set_dietary_notes: false, p_dietary_notes: null,
+    });
+    expect(Date.parse(call.args.p_expires_at as string)).toBeGreaterThan(Date.now() + 13 * 86400_000);
+    expect(directWrites(db)).toEqual([]);
+    expect(h.createPaymentDue).not.toHaveBeenCalled();
+    expect(h.sendEmail).toHaveBeenCalledTimes(1);
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "catering.draft.submit", resourceId: QUOTE }));
+  });
+  it("with 0302: a refusal (cart_changed / not_draft) sends no email and writes no audit row", async () => {
+    vi.stubEnv("PORTAL_MAGIC_LINK_ALLOWLIST", "*");
+    for (const [code, status] of [["cart_changed", 409], ["not_draft", 409], ["not_found", 404]] as const) {
+      useDb(seed(), { portal_draft_submit: rpcRefuse(code) });
+      await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status, code });
+    }
+    expect(h.sendEmail).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+  it("before 0302 (legacy path) the previous three writes still run, in order", async () => {
+    const db = useDb();
+    await submitDraft(CUST, QUOTE, {});
+    expect(db.rpcCalls.map((c) => c.name)).toEqual(["portal_draft_submit"]);
+    expect(quoteRow(db).status).toBe("submitted");
+    expect(h.createPaymentDue).toHaveBeenCalledWith(expect.anything(), { quoteId: QUOTE, customerId: CUST, kind: "deposit", amountCents: 2500, createdBy: CUST });
+  });
+});
+
 // Keep the imports referenced while later describe blocks are added bug by bug.
 void loadDraft; void PortalDraftError;
