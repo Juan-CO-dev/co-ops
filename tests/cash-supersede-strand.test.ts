@@ -24,7 +24,7 @@
  * env here, so it fails open into its own console.error — which is why the strand assertions
  * match on the strand message specifically rather than on "console.error was called".
  */
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
 // Task authorization is covered by assignment-gates; these tests exercise rollback.
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn(async () => true), auditTaskOverride: vi.fn(async () => {}) }));
@@ -79,6 +79,12 @@ function makeService(answer: (op: RecordedOp) => Answer) {
   };
 
   const service = {
+    // W03/B041: lib/cash.ts tries 0304's transactional writer first. These tests pin the DIRECT
+    // path, which runs only while that function is not installed — so the fake says exactly that.
+    rpc: (name: string) => {
+      ops.push({ table: `rpc:${name}`, kind: "select", filters: [], spent: true });
+      return Promise.resolve({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${name}` } });
+    },
     from: (table: string) => ({
       select: () => push({ table, kind: "select" }),
       insert: (payload: Record<string, unknown>) => push({ table, kind: "insert", payload }),
@@ -150,6 +156,7 @@ const rollbackOp = (ops: RecordedOp[]) => cashUpdates(ops).find((o) => o.payload
 const cashSelects = (ops: RecordedOp[]) => ops.filter((o) => o.table === "cash_reports" && o.kind === "select" && o.spent);
 
 afterEach(() => { vi.restoreAllMocks(); });
+beforeEach(() => { vi.spyOn(console, "error").mockImplementation(() => {}); });
 
 describe("submitCashReport — the rollback lifts our own stamp and nobody else's", () => {
   it("filters the rollback on the supersede stamp it wrote, and counts the rows", async () => {

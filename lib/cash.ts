@@ -105,25 +105,118 @@ export type CashSubmitResult =
 /** Postgres unique violation: cash_reports_one_live_per_day refused a second live row. */
 const PG_UNIQUE_VIOLATION = "23505";
 
+type CashSubmitArgs = {
+  locationId: string; date: string; actor: CashActor & LocationActor;
+  projectedCents: number; drawerTotalCents: number; floatCents: number;
+  countMethod: "hand" | "denomination"; denominations: Denominations | null;
+  cashTipsCents: number; onShift: OnShiftEntry[]; overShortNote: string | null;
+  /**
+   * B10: the Toast CASH figure the SERVER read for this shop+day (lib/cash-toast.ts) — never a
+   * client-sent number. null = Toast had no figure. Stored beside the typed projected_cents.
+   */
+  toastProjected: ToastProjected | null;
+};
+
+/**
+ * W03/B041: the named arguments of migration 0304's `submit_cash_report_atomic`, in its signature
+ * order (tests/cash-atomic-0304.test.ts pins the keys against the migration file). Pure.
+ */
+export function cashAtomicRpcArgs(
+  args: CashSubmitArgs,
+  w: { closingTemplateId: string | null; overShortCents: number; depositCents: number; nowIso: string },
+): Record<string, unknown> {
+  return {
+    p_location_id: args.locationId,
+    p_report_date: args.date,
+    p_closing_template_id: w.closingTemplateId,
+    p_projected_cents: args.projectedCents,
+    p_drawer_total_cents: args.drawerTotalCents,
+    p_float_cents: args.floatCents,
+    p_count_method: args.countMethod,
+    p_denominations: args.countMethod === "denomination" ? args.denominations : null,
+    p_cash_tips_cents: args.cashTipsCents,
+    p_on_shift: args.onShift,
+    p_over_short_cents: w.overShortCents,
+    p_deposit_cents: w.depositCents,
+    p_over_short_note: args.overShortNote,
+    p_toast_projected_cents: args.toastProjected?.cents ?? null,
+    p_toast_projected_as_of: args.toastProjected?.asOf ?? null,
+    p_actor_id: args.actor.userId,
+    p_now: w.nowIso,
+  };
+}
+
+/** The function is not installed (0304 not applied yet): PostgREST's PGRST202 or Postgres's 42883. */
+function isMissingFunction(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883"
+    || /could not find the function/i.test(error.message ?? "");
+}
+
+type AtomicOutcome =
+  | { kind: "written"; id: string; supersededId: string | null }
+  | { kind: "refused"; reason: "closing_finalized" | "concurrent_submit" }
+  | { kind: "not_installed" };
+
+/**
+ * W03/B041: the write through 0304's transactional writer — the closing re-check (FOR SHARE on the
+ * day's closing instance), the compare-and-set supersede, the insert and the back-pointer in ONE
+ * transaction, so a confirm or the auto-release that commits mid-request can no longer be overtaken.
+ */
+async function writeCashReportAtomic(
+  service: SupabaseClient,
+  rpcArgs: Record<string, unknown>,
+): Promise<AtomicOutcome> {
+  const { data, error } = await service.rpc("submit_cash_report_atomic", rpcArgs);
+  if (error) {
+    if (isMissingFunction(error)) {
+      console.error("[cash 0304_missing] submit_cash_report_atomic (0304) is not installed; using the direct write path", { code: error.code });
+      return { kind: "not_installed" };
+    }
+    if (error.message === "closing_finalized") return { kind: "refused", reason: "closing_finalized" };
+    if (error.code === PG_UNIQUE_VIOLATION) return { kind: "refused", reason: "concurrent_submit" };
+    throw new Error(`submitCashReport: submit_cash_report_atomic: ${error.message}`);
+  }
+  const row = (Array.isArray(data) && data.length === 1 ? data[0] : null) as { new_id?: unknown; superseded_id?: unknown } | null;
+  if (!row || typeof row.new_id !== "string" || (row.superseded_id !== null && typeof row.superseded_id !== "string")) {
+    throw new Error("submitCashReport: submit_cash_report_atomic returned an unexpected shape");
+  }
+  return { kind: "written", id: row.new_id, supersededId: (row.superseded_id as string | null) ?? null };
+}
+
+/** The audit row + the task-override row for a written cash report (both write paths). */
+async function recordCashWrite(
+  service: SupabaseClient,
+  args: CashSubmitArgs,
+  w: { id: string; supersededId: string | null; overShortCents: number; depositCents: number },
+): Promise<void> {
+  const action = w.supersededId ? "cash_report.supersede" : "cash_report.submit";
+  void audit({
+    actorId: args.actor.userId, actorRole: args.actor.role,
+    action,
+    resourceTable: "cash_reports", resourceId: w.id,
+    metadata: {
+      over_short_cents: w.overShortCents, deposit_cents: w.depositCents, superseded: w.supersededId,
+      projected_cents: args.projectedCents, toast_projected_cents: args.toastProjected?.cents ?? null,
+    },
+    ipAddress: null, userAgent: null,
+  });
+  await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report", operation: action });
+}
+
 /**
  * Append-only signed write. Recomputes totals server-side (never trusts the
- * client). Supersedes the prior live row (edit). Refuses if today's closing is
+ * client). Supersedes the prior live row (edit). Refuses if the day's closing is
  * already finalized (edit window closed). PIN already verified by the route;
  * signedBy is the authenticated actor.
+ *
+ * W03/B041: the write goes through 0304's `submit_cash_report_atomic`, which re-checks the
+ * closing under a lock in the same transaction as the supersede + insert. Until 0304 is applied
+ * (the function is missing) it falls back to the direct three-write path below, which carries the
+ * same status list (B040) and a compare-and-set supersede (B147) but not the in-transaction lock.
  */
 export async function submitCashReport(
   service: SupabaseClient,
-  args: {
-    locationId: string; date: string; actor: CashActor & LocationActor;
-    projectedCents: number; drawerTotalCents: number; floatCents: number;
-    countMethod: "hand" | "denomination"; denominations: Denominations | null;
-    cashTipsCents: number; onShift: OnShiftEntry[]; overShortNote: string | null;
-    /**
-     * B10: the Toast CASH figure the SERVER read for this shop+day (lib/cash-toast.ts) — never a
-     * client-sent number. null = Toast had no figure. Stored beside the typed projected_cents.
-     */
-    toastProjected: ToastProjected | null;
-  },
+  args: CashSubmitArgs,
 ): Promise<CashSubmitResult> {
   if (!lockLocationContext(args.actor, args.locationId)) {
     return { ok: false, reason: "location_access_denied" };
@@ -154,6 +247,17 @@ export async function submitCashReport(
   });
   const nowIso = new Date().toISOString();
 
+  // The early refusal above is the friendly one; this is the binding one (inside the transaction).
+  const atomic = await writeCashReportAtomic(service, cashAtomicRpcArgs(args, {
+    closingTemplateId: cTmpl?.id ?? null, overShortCents, depositCents, nowIso,
+  }));
+  if (atomic.kind === "refused") return { ok: false, reason: atomic.reason };
+  if (atomic.kind === "written") {
+    await recordCashWrite(service, args, { id: atomic.id, supersededId: atomic.supersededId, overShortCents, depositCents });
+    return { ok: true, id: atomic.id };
+  }
+
+  // ── Direct path: only while 0304 is not applied (atomic.kind === "not_installed") ──
   const { data: prior } = await service.from("cash_reports").select("id")
     .eq("location_id", args.locationId).eq("report_date", args.date).is("superseded_at", null)
     .maybeSingle<{ id: string }>();
@@ -268,16 +372,6 @@ export async function submitCashReport(
     }
   }
 
-  void audit({
-    actorId: args.actor.userId, actorRole: args.actor.role,
-    action: prior ? "cash_report.supersede" : "cash_report.submit",
-    resourceTable: "cash_reports", resourceId: inserted.id,
-    metadata: {
-      over_short_cents: overShortCents, deposit_cents: depositCents, superseded: prior?.id ?? null,
-      projected_cents: args.projectedCents, toast_projected_cents: args.toastProjected?.cents ?? null,
-    },
-    ipAddress: null, userAgent: null,
-  });
-  await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report", operation: prior ? "cash_report.supersede" : "cash_report.submit" });
+  await recordCashWrite(service, args, { id: inserted.id, supersededId: prior?.id ?? null, overShortCents, depositCents });
   return { ok: true, id: inserted.id };
 }
