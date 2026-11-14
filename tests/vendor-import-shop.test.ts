@@ -178,7 +178,8 @@ describe("shop staging snapshots", () => {
     ];
     (state.tables.vendor_items![0] as Record<string, unknown>).price_basis = "per_each";
     const view = await stage({ ...row(), pack_qty: count, pack_size: 384 / count, pack_unit: "OZ", price_cents: 6000 });
-    if (count === 12) expect(view.ops[0]).toMatchObject({ after: { unit_price: 5 } });
+    // W04/B008: the price lands at the 12 x 32 oz case root ($60), not per bottle.
+    if (count === 12) expect(view.ops[0]).toMatchObject({ after: { unit_price: 60 } });
     else {
       expect(view.ops).toEqual([]);
       expect(view.observations[0]).toMatchObject({ kind: "needs_person", reason: "pack_hierarchy_review" });
