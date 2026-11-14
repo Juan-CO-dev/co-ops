@@ -31,7 +31,7 @@ import {
 } from "@/lib/catering/quotes-shared";
 import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import type { Payment } from "@/lib/catering/payments";
-import { postJson, resolveErrorKey, isStepUpCode } from "./shared";
+import { postJson, resolveErrorKey, isStepUpCode, quoteDetailActions } from "./shared";
 
 const WRITE_MIN = 6;
 
@@ -779,8 +779,7 @@ function QuoteDetailPanel({
 
   const q = detail.quote;
   const effectiveStatus = q.isExpired && q.status === "sent" ? "expired" : q.status;
-  const sendable = canWrite && (q.status === "draft" || q.status === "sent") && !q.isExpired;
-  const decidable = canWrite && q.status === "sent" && !q.isExpired;
+  const { sendable, decidable } = quoteDetailActions(q, canWrite);
 
   return (
     <div className="mt-4 flex flex-col gap-4">

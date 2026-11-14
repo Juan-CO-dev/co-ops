@@ -74,3 +74,16 @@ export function resolveErrorKey(code: string): TranslationKey {
 export function isStepUpCode(code: string): boolean {
   return code === "step_up_required" || code === "step_up_stale";
 }
+
+/**
+ * Which decision buttons a quote's detail view offers (audit W01/B004). A customer's self-serve
+ * order lands as 'submitted' (lib/portal/draft.ts submitDraft) and waits on staff, so it must be
+ * decidable exactly like a 'sent' staff quote — setQuoteStatus already accepts submitted → accepted
+ * / declined. "Send" stays draft/sent only (sendQuote refuses any other status).
+ */
+export function quoteDetailActions(q: { status: string; isExpired: boolean }, canWrite: boolean): { sendable: boolean; decidable: boolean } {
+  return {
+    sendable: canWrite && (q.status === "draft" || q.status === "sent") && !q.isExpired,
+    decidable: canWrite && (q.status === "sent" || q.status === "submitted") && !q.isExpired,
+  };
+}
