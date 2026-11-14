@@ -20,9 +20,19 @@
  * `submitDraft` stamps the same 14-day window on those) whose `expires_at` has passed.
  * `accepted` is not an open offer any more — the team has confirmed it — and `draft` has
  * not been offered yet, so neither is judged by the clock.
+ *
+ * ── A DRAFT IS NOT AN OFFER (B038) ───────────────────────────────────────────────────
+ * Only three statuses are payable: `submitted` (the customer completed a self-serve
+ * order), `sent` (the team offered a quote) and `accepted` (the team confirmed it). A
+ * `draft` is neither priced for good nor offered: a self-serve draft's deposit moves with
+ * every line the customer adds, and a staff draft is a working revision nobody has sent.
+ * The gate used to let a draft raise a `due` intent at whatever the deposit happened to be
+ * that minute. The allow-list is closed on purpose — a status this code does not know is
+ * not payable either.
  */
 
 export type QuoteUnpayableReason =
+  | "draft" // not offered yet: still being built (self-serve) or prepared (staff)
   | "superseded" // a newer revision replaced this one
   | "declined"
   | "expired"; // the status, or the clock on an open offer
@@ -52,6 +62,9 @@ export function quotePayability(quote: QuotePayabilityInput, now: number = Date.
   if (quote.status === "declined") return { payable: false, reason: "declined" };
   if (quote.status === "expired" || quoteTimeExpired(quote.status, quote.expiresAt, now)) {
     return { payable: false, reason: "expired" };
+  }
+  if (quote.status !== "submitted" && quote.status !== "sent" && quote.status !== "accepted") {
+    return { payable: false, reason: "draft" };
   }
   return { payable: true };
 }

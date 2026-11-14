@@ -61,6 +61,35 @@ describe("W02/B037 — expiry is a clock, not only a status", () => {
   });
 });
 
+describe("W02/B038 — a draft is not payable", () => {
+  it("a draft (not offered yet) is refused, with its own reason", () => {
+    expect(quotePayability(live({ status: "draft", expiresAt: null }), NOW)).toEqual({ payable: false, reason: "draft" });
+  });
+
+  it("only submitted / sent / accepted are payable — an unknown status is not", () => {
+    for (const status of ["submitted", "sent", "accepted"]) {
+      expect(quotePayability(live({ status }), NOW), status).toEqual({ payable: true });
+    }
+    expect(quotePayability(live({ status: "something_new" }), NOW)).toEqual({ payable: false, reason: "draft" });
+  });
+
+  it("the pay panel shows no buttons on a draft and says why", () => {
+    expect(payPanelState({ payability: { payable: false, reason: "draft" }, paidCount: 0 })).toEqual({
+      showOptions: false,
+      notice: "draft",
+    });
+  });
+
+  it("the draft notice exists in English and Spanish, and the page maps every reason to a sentence", () => {
+    const en = JSON.parse(read("lib/i18n/en.json")) as Record<string, string>;
+    const es = JSON.parse(read("lib/i18n/es.json")) as Record<string, string>;
+    expect(en["order.quote.notice_draft"]).toBeTruthy();
+    expect(es["order.quote.notice_draft"]).toBeTruthy();
+    expect(es["order.quote.notice_draft"]).not.toBe(en["order.quote.notice_draft"]);
+    expect(read("app/order/quote/[id]/page.tsx")).toMatch(/draft: "order\.quote\.notice_draft"/);
+  });
+});
+
 describe("W02/B037 — the pay panel follows the same rule", () => {
   it("draws buttons only for a payable quote with nothing paid", () => {
     expect(payPanelState({ payability: { payable: true }, paidCount: 0 })).toEqual({ showOptions: true, notice: null });

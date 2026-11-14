@@ -157,9 +157,39 @@ export interface CreatePaymentDueInput {
 }
 
 /**
+ * Bring a still-`due` intent to the amount that is owed NOW. Guarded on `status = 'due'`:
+ * returns false when the row was advanced in the meantime (the silent-UPDATE law — the
+ * caller decides what a lost race means). THROWS on a write error.
+ *
+ * WHY THIS EXISTS (audit W02/B038). One due intent per (quote, kind) is the DB's rule
+ * (0130), so an intent is REUSED rather than re-created — and it was reused at the amount
+ * it was born with. A deposit intent raised at $150 was still $150 after the order grew to
+ * a $200 deposit, and $150 is what the customer was sent to pay. The row's `amount_cents`
+ * is the authority the webhook, the staff board and the reports all read, so the row is
+ * what must move.
+ */
+export async function syncDuePaymentAmount(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  paymentId: string,
+  amountCents: number,
+): Promise<boolean> {
+  const { error, count } = await sb
+    .from("catering_payments")
+    .update({ amount_cents: amountCents }, { count: "exact" })
+    .eq("id", paymentId)
+    .eq("status", "due");
+  if (error) throw new Error(`syncDuePaymentAmount: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+/**
  * Insert a single `status='due'` payment intent (service-role; no staff actor).
  * `sb` is a passed-in getServiceRoleClient() instance so the caller (the submit flow)
  * can order this write within its own lead→quote→items→payment sequence.
+ *
+ * IDEMPOTENT ON THE (quote, kind) DUE INTENT, AND THE AMOUNT IS PART OF THAT: when a due
+ * intent already exists it is returned at the amount this call asked for, re-priced if it
+ * had drifted (see `syncDuePaymentAmount`).
  */
 export async function createPaymentDue(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -183,13 +213,25 @@ export async function createPaymentDue(
     if (error.code === "23505") {
       const { data: existing } = await sb
         .from("catering_payments")
-        .select("id")
+        .select("id, amount_cents")
         .eq("quote_id", input.quoteId)
         .eq("kind", input.kind)
         .eq("status", "due")
         .limit(1)
-        .maybeSingle<{ id: string }>();
-      if (existing) return { id: existing.id };
+        .maybeSingle<{ id: string; amount_cents: number }>();
+      if (existing) {
+        if (existing.amount_cents !== input.amountCents) {
+          let repriced: boolean;
+          try {
+            repriced = await syncDuePaymentAmount(sb, existing.id, input.amountCents);
+          } catch (e) {
+            throw new Error(`createPaymentDue re-price: ${e instanceof Error ? e.message : String(e)}`);
+          }
+          // Advanced between the read and the write: it is no longer a due intent to reuse.
+          if (!repriced) throw new Error("createPaymentDue re-price: the existing intent is no longer due");
+        }
+        return { id: existing.id };
+      }
     }
     throw new Error(`createPaymentDue: ${error.message}`);
   }

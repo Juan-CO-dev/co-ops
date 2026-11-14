@@ -51,6 +51,7 @@ const PAY_LABEL_KEY: Record<"deposit" | "full", TranslationKey> = {
 };
 /** Why there is nothing to pay here, when that is the quote's own state. */
 const NOTICE_KEY: Record<QuoteUnpayableReason, TranslationKey> = {
+  draft: "order.quote.notice_draft",
   expired: "order.quote.notice_expired",
   superseded: "order.quote.notice_superseded",
   declined: "order.quote.notice_declined",

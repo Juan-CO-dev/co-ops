@@ -237,3 +237,67 @@ describe("W02/B037 — an expired quote cannot be paid", () => {
     expect((await refusal(initiatePayment(CUSTOMER, QUOTE, "deposit"))).code).toBe("not_payable");
   });
 });
+
+describe("W02/B038 — a draft cannot be paid, and a reused intent carries the CURRENT amount", () => {
+  it("a DRAFT is refused 409 not_payable and no intent is written", async () => {
+    db.tables.catering_quotes = [quoteRow({ status: "draft", origin: "self_serve", expires_at: null })];
+
+    const err = await refusal(initiatePayment(CUSTOMER, QUOTE, "deposit"));
+
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("not_payable");
+    expect(db.tables.catering_payments).toEqual([]);
+  });
+
+  it("a status this code does not know is not payable either — only submitted / sent / accepted are", async () => {
+    db.tables.catering_quotes = [quoteRow({ status: "something_new" })];
+    expect((await refusal(initiatePayment(CUSTOMER, QUOTE, "deposit"))).code).toBe("not_payable");
+  });
+
+  it("REUSING a due intent re-prices it to the quote's current snapshot", async () => {
+    // The intent was raised when the deposit was $150; the order has since grown to $200.
+    db.tables.catering_payments!.push(dueRow({ amount_cents: 15000 }));
+
+    const out = await initiatePayment(CUSTOMER, QUOTE, "deposit");
+
+    expect(out.paymentId).toBe(PAYMENT);
+    expect(out.amountCents).toBe(20000);
+    expect(db.tables.catering_payments).toHaveLength(1);
+    // The ROW is what the webhook and the staff board read — it must say what is owed now.
+    expect(db.tables.catering_payments![0]!.amount_cents).toBe(20000);
+  });
+
+  it("a due intent already at the current amount is reused without a write", async () => {
+    db.tables.catering_payments!.push(dueRow());
+
+    await initiatePayment(CUSTOMER, QUOTE, "deposit");
+
+    expect(db.ops.filter((o) => o.table === "catering_payments" && o.kind === "update")).toEqual([]);
+  });
+
+  it("a re-price that loses the race to a payment is refused, never silently skipped", async () => {
+    const row = dueRow({ amount_cents: 15000 });
+    db.tables.catering_payments!.push(row);
+    // The row is read as `due`, then advanced before the guarded re-price lands.
+    const client = db.client as unknown as { from: (t: string) => Record<string, unknown> };
+    const realFrom = client.from;
+    let armed = true;
+    client.from = (table: string) => {
+      const q = realFrom(table);
+      if (table === "catering_payments" && armed) {
+        const update = q.update as (p: unknown, o?: unknown) => unknown;
+        q.update = (p: unknown, o?: unknown) => {
+          armed = false;
+          row.status = "paid";
+          return update(p, o);
+        };
+      }
+      return q;
+    };
+
+    const err = await refusal(initiatePayment(CUSTOMER, QUOTE, "deposit"));
+
+    expect(err.code).toBe("not_due");
+    expect(row.amount_cents).toBe(15000);
+  });
+});

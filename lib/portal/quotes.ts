@@ -29,7 +29,7 @@
 import { portalOrigin } from "@/lib/portal/origin-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
-import { createPaymentDue } from "@/lib/catering/payments";
+import { createPaymentDue, syncDuePaymentAmount } from "@/lib/catering/payments";
 import { paymentPlan } from "@/lib/catering/payment-plan";
 import { createCheckoutSession, stripeCredentialsFor, StripeError } from "@/lib/stripe/client";
 import { TENANT_NAME } from "@/lib/tenant";
@@ -310,8 +310,9 @@ async function loadPayableQuote(
     throw new PortalQuoteError(404, "not_found", "Quote not found");
   }
   // PAYABILITY GATE — the one rule in lib/portal/payability-shared.ts, which the quote page
-  // reads too, so a button is never drawn for a quote this gate refuses. A superseded
-  // revision and a declined quote are not payable; neither is an EXPIRED one, and expiry is
+  // reads too, so a button is never drawn for a quote this gate refuses. A DRAFT is not an
+  // offer and cannot be paid (audit W02/B038); a superseded revision and a declined quote
+  // are not payable; neither is an EXPIRED one, and expiry is
   // the clock as well as the status (audit W02/B037): nothing sweeps `expires_at`, so a
   // quote past its date used to stay payable at its old price for as long as its status
   // still said `sent`.
@@ -455,13 +456,23 @@ export async function initiatePayment(
   // fast path in front of it, not the guard.
   const { data: existing, error: exErr } = await sb
     .from("catering_payments")
-    .select("id")
+    .select("id, amount_cents")
     .eq("quote_id", quoteId)
     .eq("kind", kind)
     .eq("status", "due")
     .limit(1)
-    .maybeSingle<{ id: string }>();
+    .maybeSingle<{ id: string; amount_cents: number }>();
   if (exErr) throw new Error(`initiatePayment existing: ${exErr.message}`);
+
+  // A REUSED INTENT CARRIES TODAY'S AMOUNT (audit W02/B038). `amountCents` is read from
+  // the quote's snapshot on this request; the row may have been raised when the snapshot
+  // said something else. The row is the authority the webhook and the staff board read, so
+  // it is re-priced before anyone is sent to pay it — guarded on `due`, so a row a payment
+  // advanced in the meantime refuses instead of being rewritten under the money.
+  if (existing && existing.amount_cents !== amountCents) {
+    const repriced = await syncDuePaymentAmount(sb, existing.id, amountCents);
+    if (!repriced) throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
+  }
 
   const paymentId = existing
     ? existing.id
