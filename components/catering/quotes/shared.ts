@@ -60,6 +60,7 @@ const KNOWN_ERROR_CODES = new Set([
   "status_changed", // guarded setQuoteStatus 409 (stale read) — actionable, not generic
   "quote_expired", // expired→accepted block — needs a revision, not a retry
   "invalid_customer", // a client outside the actor's shops (or gone) — pick another client
+  "lead_location_mismatch", // W05/B011: the picked lead is at another shop (or gone) — match the shop or the lead
   "generic",
 ]);
 
