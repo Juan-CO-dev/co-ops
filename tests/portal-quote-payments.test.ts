@@ -185,3 +185,55 @@ describe("W02/B146 — a FAILED shop lookup never resolves the shared Stripe acc
     expect(credsMock).toHaveBeenCalledWith("EM");
   });
 });
+
+describe("W02/B037 — an expired quote cannot be paid", () => {
+  const PAST = "2020-01-01T00:00:00.000Z";
+
+  it("a SENT quote past its expires_at is refused 409 quote_expired, and no intent is written", async () => {
+    db.tables.catering_quotes = [quoteRow({ status: "sent", expires_at: PAST })];
+
+    const err = await refusal(initiatePayment(CUSTOMER, QUOTE, "deposit"));
+
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("quote_expired");
+    expect(db.tables.catering_payments).toEqual([]);
+  });
+
+  it("a self-serve SUBMITTED order past its window is refused the same way", async () => {
+    db.tables.catering_quotes = [quoteRow({ status: "submitted", origin: "self_serve", expires_at: PAST })];
+    expect((await refusal(initiatePayment(CUSTOMER, QUOTE, "deposit"))).code).toBe("quote_expired");
+  });
+
+  it("a quote a manager marked `expired` answers quote_expired too", async () => {
+    db.tables.catering_quotes = [quoteRow({ status: "expired" })];
+    expect((await refusal(initiatePayment(CUSTOMER, QUOTE, "deposit"))).code).toBe("quote_expired");
+  });
+
+  it("the CHECKOUT step re-checks it: an intent raised in time cannot mint a session after the date", async () => {
+    db.tables.catering_quotes = [quoteRow({ status: "sent", expires_at: PAST })];
+    db.tables.catering_payments!.push(dueRow());
+
+    const err = await refusal(createQuoteCheckout(checkoutInput()));
+
+    expect(err.code).toBe("quote_expired");
+    expect(createSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("an offer still inside its window pays as before", async () => {
+    const out = await initiatePayment(CUSTOMER, QUOTE, "deposit");
+    expect(out).toMatchObject({ ok: true, amountCents: 20000, stub: false });
+    expect(db.tables.catering_payments).toHaveLength(1);
+  });
+
+  it("a team-CONFIRMED order is not judged by the offer's clock", async () => {
+    db.tables.catering_quotes = [quoteRow({ status: "accepted", expires_at: PAST })];
+    expect((await initiatePayment(CUSTOMER, QUOTE, "deposit")).ok).toBe(true);
+  });
+
+  it("superseded and declined keep their existing refusal", async () => {
+    db.tables.catering_quotes = [quoteRow({ superseded_at: PAST })];
+    expect((await refusal(initiatePayment(CUSTOMER, QUOTE, "deposit"))).code).toBe("not_payable");
+    db.tables.catering_quotes = [quoteRow({ status: "declined" })];
+    expect((await refusal(initiatePayment(CUSTOMER, QUOTE, "deposit"))).code).toBe("not_payable");
+  });
+});

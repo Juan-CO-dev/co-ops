@@ -23,6 +23,7 @@ import { redirect } from "next/navigation";
 import { getCustomerFromHeaders } from "@/lib/portal/session";
 import { loadCustomerQuoteDetail, type PortalPayment } from "@/lib/portal/quotes";
 import { paymentPlan } from "@/lib/catering/payment-plan";
+import { payPanelState, quotePayability, type QuoteUnpayableReason } from "@/lib/portal/payability-shared";
 import { serverT } from "@/lib/i18n/server";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -47,6 +48,12 @@ const PAID_LINE_KEY: Record<PortalPayment["kind"], TranslationKey> = {
 const PAY_LABEL_KEY: Record<"deposit" | "full", TranslationKey> = {
   deposit: "order.quote.pay_deposit",
   full: "order.quote.pay_full",
+};
+/** Why there is nothing to pay here, when that is the quote's own state. */
+const NOTICE_KEY: Record<QuoteUnpayableReason, TranslationKey> = {
+  expired: "order.quote.notice_expired",
+  superseded: "order.quote.notice_superseded",
+  declined: "order.quote.notice_declined",
 };
 
 const money = (cents: number) =>
@@ -127,7 +134,19 @@ export default async function QuotePage({
   // `balance` intent the team raises (lib/catering/payment-plan.ts: deposit → team
   // confirms → balance), and this surface has never been able to create one.
   const paid = detail.payments.filter((p) => p.status === "paid");
-  const payOptions = paid.length > 0 ? [] : plan.options;
+  // …AND THE PANEL ONLY OPENS FOR A QUOTE THE SERVER WOULD LET THEM PAY (audit W02/B037,
+  // B038). The pay route refuses a superseded, declined or expired quote; this page used
+  // to draw the buttons anyway and let the tap fail. Both now read the one rule in
+  // lib/portal/payability-shared.ts, so they cannot drift apart again.
+  const panel = payPanelState({
+    payability: quotePayability({
+      status: quote.status,
+      supersededAt: quote.supersededAt,
+      expiresAt: quote.expiresAt,
+    }),
+    paidCount: paid.length,
+  });
+  const payOptions = panel.showOptions ? plan.options : [];
   // What the customer still owes AFTER what has cleared. The closed panel must not read as
   // "nothing left to pay" when only the deposit landed (LRA-236): the balance is real money
   // the team raises later, so name it and say when it comes.
@@ -194,6 +213,13 @@ export default async function QuotePage({
           }`}
         >
           {checkoutHint === "success" ? t("order.quote.checkout_success") : t("order.quote.checkout_cancel")}
+        </p>
+      )}
+
+      {/* Nothing to pay because of the quote's own state — say so, instead of a dead button. */}
+      {panel.notice && (
+        <p className="mt-5 rounded-2xl border border-co-border bg-co-surface px-5 py-4 text-sm font-semibold text-co-text-muted">
+          {t(NOTICE_KEY[panel.notice])}
         </p>
       )}
 

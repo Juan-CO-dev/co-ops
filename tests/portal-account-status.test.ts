@@ -1,0 +1,78 @@
+/**
+ * Unit spine — `customerOrderStatus` (lib/portal/account.ts): what the customer's account
+ * list tells them to do next (audit wave W02, B037 + B039).
+ *
+ * `customerOrderStatus` is pure; the module around it is not (it imports the service
+ * client), so that one import is replaced and nothing here ever reaches a database.
+ */
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/supabase-server", () => ({
+  getServiceRoleClient: () => {
+    throw new Error("customerOrderStatus must not touch the database");
+  },
+}));
+
+import { customerOrderStatus, type PortalQuote } from "@/lib/portal/account";
+import type { Payment } from "@/lib/catering/payments";
+
+function quote(over: Partial<PortalQuote> = {}): PortalQuote {
+  return {
+    origin: "staff",
+    id: "q1",
+    status: "sent",
+    isExpired: false,
+    supersededAt: null,
+    expiresAt: null,
+    totalCents: 100000,
+    depositCents: 20000,
+    ...over,
+  } as PortalQuote;
+}
+
+function payment(kind: Payment["kind"], status: Payment["status"], amountCents = 20000): Payment {
+  return {
+    id: `${kind}-${status}`,
+    quoteId: "q1",
+    customerId: null,
+    kind,
+    amountCents,
+    currency: "usd",
+    status,
+    provider: null,
+    providerRef: null,
+    createdAt: "2026-11-01T00:00:00.000Z",
+    paidAt: status === "paid" ? "2026-11-02T00:00:00.000Z" : null,
+    createdBy: null,
+  };
+}
+
+describe("W02/B037 — an offer past its date is not presented as payable", () => {
+  it("a sent quote past its expires_at reads `expired`, with no pay call to action", () => {
+    const s = customerOrderStatus(quote({ status: "sent", isExpired: true }), []);
+    expect(s.key).toBe("expired");
+    expect(s.payable).toBe(false);
+  });
+
+  it("a self-serve order past its window reads `expired` too", () => {
+    const s = customerOrderStatus(quote({ origin: "self_serve", status: "submitted", isExpired: true }), [payment("deposit", "due")]);
+    expect(s.key).toBe("expired");
+    expect(s.payable).toBe(false);
+  });
+
+  it("a deposit paid inside the window keeps the order `pending` after the date passes — it was taken up in time", () => {
+    const s = customerOrderStatus(quote({ status: "sent", isExpired: true }), [payment("deposit", "paid")]);
+    expect(s.key).toBe("pending");
+  });
+
+  it("an offer still inside its window is unchanged", () => {
+    expect(customerOrderStatus(quote({ origin: "self_serve", status: "submitted" }), []).key).toBe("reserve");
+    expect(customerOrderStatus(quote({ status: "sent" }), []).key).toBe("review");
+    expect(customerOrderStatus(quote({ status: "sent" }), []).payable).toBe(true);
+  });
+
+  it("the manual `expired` and `declined` statuses are unchanged", () => {
+    expect(customerOrderStatus(quote({ status: "expired" }), []).key).toBe("expired");
+    expect(customerOrderStatus(quote({ status: "declined" }), []).key).toBe("declined");
+  });
+});

@@ -21,6 +21,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { Quote, QuoteStatus } from "@/lib/catering/quotes";
 import { isQuoteStatus } from "@/lib/catering/quotes";
 import type { Payment, PaymentKind, PaymentStatus } from "@/lib/catering/payments";
+import { quoteTimeExpired } from "@/lib/portal/payability-shared";
 
 // ── View types ──────────────────────────────────────────────────────────────────
 
@@ -124,7 +125,9 @@ function normalizeOrigin(v: string): QuoteOrigin {
 
 function mapQuote(r: DbQuoteRow, now: number = Date.now()): PortalQuote {
   const status: QuoteStatus = isQuoteStatus(r.status) ? r.status : "draft";
-  const isExpired = status === "sent" && r.expires_at != null && Date.parse(r.expires_at) < now;
+  // An open offer (`sent`, or a self-serve `submitted` order) past its date — the same
+  // rule the pay gate enforces (lib/portal/payability-shared.ts).
+  const isExpired = quoteTimeExpired(status, r.expires_at, now);
   return {
     origin: normalizeOrigin(r.origin),
     id: r.id,
@@ -195,7 +198,11 @@ function mapPayment(r: DbPaymentRow): Payment {
  *   3. fully paid          → all set (a paid `full`, OR a paid `deposit` AND a paid `balance`)
  *   4. accepted + not paid → team-confirmed, balance due (payable)
  *   5. deposit/full paid   → deposit taken, pending our confirmation (not yet accepted)
- *   6. otherwise           → self_serve: reserve your date; staff: review & pay (both payable)
+ *   6. offer past its date → expired (muted). Evaluated AFTER the paid rules on purpose: a
+ *                            deposit paid inside the window took the offer up in time, and
+ *                            that order is pending, not expired. (Audit W02/B037 — this
+ *                            rule did not exist, so a lapsed quote kept its pay button.)
+ *   7. otherwise           → self_serve: reserve your date; staff: review & pay (both payable)
  *
  * `origin` is read from `quote.origin` (PortalQuote carries it — the staff Quote type drops it).
  */
@@ -227,6 +234,12 @@ export function customerOrderStatus(quote: PortalQuote, payments: Payment[]): Cu
       tone: "pending",
       payable: false,
     };
+  }
+
+  // Nothing paid and the offer's date has passed (`isExpired` is the clock on an open
+  // offer): the pay gate refuses this quote, so the list must not invite the customer to it.
+  if (quote.isExpired) {
+    return { key: "expired", label: "Expired", tone: "muted", payable: false };
   }
 
   // Submitted / sent with nothing paid — the customer's next action is to pay.

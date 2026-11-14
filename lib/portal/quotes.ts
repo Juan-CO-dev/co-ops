@@ -36,6 +36,7 @@ import { TENANT_NAME } from "@/lib/tenant";
 import type { Quote, QuoteItem, QuoteDetail } from "@/lib/catering/quotes";
 import { isQuoteLineKind } from "@/lib/catering/prep-demand-shared";
 import { isQuoteStatus } from "@/lib/catering/quotes";
+import { quotePayability, quoteTimeExpired } from "@/lib/portal/payability-shared";
 
 /** 404-style error for the customer path (ownership failures surface as "not found"). */
 export class PortalQuoteError extends Error {
@@ -130,7 +131,9 @@ const ITEM_COLS =
 
 function mapQuote(r: DbQuoteRow, now: number = Date.now()): Quote {
   const status = isQuoteStatus(r.status) ? r.status : "draft";
-  const isExpired = status === "sent" && r.expires_at != null && Date.parse(r.expires_at) < now;
+  // The customer-side reading of the clock: an open offer (`sent`, or a self-serve
+  // `submitted` order) past its date. One rule, lib/portal/payability-shared.ts.
+  const isExpired = quoteTimeExpired(status, r.expires_at, now);
   return {
     id: r.id,
     rootId: r.root_id,
@@ -287,7 +290,7 @@ async function loadPayableQuote(
   if (!UUID_RE.test(quoteId)) throw new PortalQuoteError(404, "not_found", "Quote not found");
   const { data: row, error } = await sb
     .from("catering_quotes")
-    .select("id, customer_id, location_id, origin, status, superseded_at, event_date, deposit_cents, total_cents")
+    .select("id, customer_id, location_id, origin, status, superseded_at, expires_at, event_date, deposit_cents, total_cents")
     .eq("id", quoteId)
     .maybeSingle<{
       id: string;
@@ -296,6 +299,7 @@ async function loadPayableQuote(
       origin: string;
       status: string;
       superseded_at: string | null;
+      expires_at: string | null;
       event_date: string | null;
       deposit_cents: number;
       total_cents: number;
@@ -305,8 +309,21 @@ async function loadPayableQuote(
   if (!row || row.customer_id !== customerId) {
     throw new PortalQuoteError(404, "not_found", "Quote not found");
   }
-  // PAYABILITY GATE — a superseded revision or a terminal quote (declined/expired) is not payable.
-  if (row.superseded_at != null || row.status === "declined" || row.status === "expired") {
+  // PAYABILITY GATE — the one rule in lib/portal/payability-shared.ts, which the quote page
+  // reads too, so a button is never drawn for a quote this gate refuses. A superseded
+  // revision and a declined quote are not payable; neither is an EXPIRED one, and expiry is
+  // the clock as well as the status (audit W02/B037): nothing sweeps `expires_at`, so a
+  // quote past its date used to stay payable at its old price for as long as its status
+  // still said `sent`.
+  const payability = quotePayability({
+    status: row.status,
+    supersededAt: row.superseded_at,
+    expiresAt: row.expires_at,
+  });
+  if (!payability.payable) {
+    if (payability.reason === "expired") {
+      throw new PortalQuoteError(409, "quote_expired", "This quote has expired");
+    }
     throw new PortalQuoteError(409, "not_payable", "This quote can no longer be paid");
   }
   return {

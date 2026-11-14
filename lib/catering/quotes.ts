@@ -1051,9 +1051,9 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   const sb = getServiceRoleClient();
   const { data: row, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, location_id, status, superseded_at")
+    .select("id, location_id, status, superseded_at, expires_at")
     .eq("id", id)
-    .maybeSingle<{ id: string; location_id: string; status: string; superseded_at: string | null }>();
+    .maybeSingle<{ id: string; location_id: string; status: string; superseded_at: string | null; expires_at: string | null }>();
   if (lErr) throw new Error(`setQuoteStatus load: ${lErr.message}`);
   if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
   assertCanWrite(actor, row.location_id);
@@ -1061,7 +1061,12 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   // An expired quote is not acceptable — the customer's price/terms window has closed, so the
   // path back to a sale is a revision, not an accept. Other transitions stay open on purpose
   // (declined → accepted is a legitimate manager reversal).
-  if (row.status === "expired" && status === "accepted") {
+  // "Expired" is the clock as well as the status (audit W02/B037). Nothing sweeps
+  // `expires_at`, so a sent quote past its date still reads `sent` here — exactly the rule
+  // `mapQuote` derives `isExpired` from, and the one the board already hides Accept on.
+  // The board hid the button; this refuses the request whatever the page did.
+  const lapsed = row.status === "sent" && row.expires_at != null && Date.parse(row.expires_at) < Date.now();
+  if ((row.status === "expired" || lapsed) && status === "accepted") {
     throw new CateringQuoteError(409, "quote_expired", "This quote has expired — revise it before accepting");
   }
 
