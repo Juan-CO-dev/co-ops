@@ -196,7 +196,12 @@ function mapPayment(r: DbPaymentRow): Payment {
  *   1. declined            → not available (muted)
  *   2. expired             → expired (muted)
  *   3. fully paid          → all set (a paid `full`, OR a paid `deposit` AND a paid `balance`)
- *   4. accepted + not paid → team-confirmed, balance due (payable)
+ *   4. accepted + not paid → team-confirmed, balance due. Payable ONLY while nothing is
+ *                            paid (the portal can then still take the deposit or the full
+ *                            amount). Once a payment has landed, what remains is a `balance`
+ *                            — and nothing raises a `balance` intent yet, nor does the pay
+ *                            route accept one — so there is no button to offer (audit
+ *                            W02/B039: "Review & pay" led to a page with no pay panel).
  *   5. deposit/full paid   → deposit taken, pending our confirmation (not yet accepted)
  *   6. offer past its date → expired (muted). Evaluated AFTER the paid rules on purpose: a
  *                            deposit paid inside the window took the offer up in time, and
@@ -222,8 +227,16 @@ export function customerOrderStatus(quote: PortalQuote, payments: Payment[]): Cu
     return { key: "paid", label: "All set 🎉", tone: "success", payable: false };
   }
   if (quote.status === "accepted") {
-    // Team-confirmed and not fully paid — the balance is now due.
-    return { key: "balance_due", label: "Confirmed — balance due", tone: "action", payable: true };
+    // Team-confirmed and not fully paid — the balance is now due. Whether the CUSTOMER can
+    // do anything about it here is a separate fact (see rule 4 above): `payable` must match
+    // what /order/quote/[id] will actually offer, and after a payment it offers nothing.
+    const anythingPaid = payments.some((p) => p.status === "paid");
+    return {
+      key: "balance_due",
+      label: "Confirmed — balance due",
+      tone: anythingPaid ? "pending" : "action",
+      payable: !anythingPaid,
+    };
   }
   if (paid("deposit") || paid("full")) {
     // A deposit (or a full payment not yet reconciled to fully-paid) exists, but the team

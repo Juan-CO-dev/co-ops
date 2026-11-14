@@ -76,3 +76,38 @@ describe("W02/B037 — an offer past its date is not presented as payable", () =
     expect(customerOrderStatus(quote({ status: "declined" }), []).key).toBe("declined");
   });
 });
+
+describe("W02/B039 — `balance due` never offers a pay button the portal cannot honour", () => {
+  // Nothing in the codebase raises a `balance` intent, and the pay route accepts only
+  // `deposit` and `full`. Once a deposit is paid, "Review & pay" led to a page with no pay
+  // panel, and a hand-rolled POST was refused (`invalid_kind` / `already_paid`).
+  it("confirmed with the deposit paid: still `balance_due`, but NOT payable from the portal", () => {
+    const s = customerOrderStatus(quote({ status: "accepted" }), [payment("deposit", "paid")]);
+    expect(s.key).toBe("balance_due");
+    expect(s.payable).toBe(false);
+    // Not an "action" badge either: there is no action the customer can take here.
+    expect(s.tone).toBe("pending");
+  });
+
+  it("confirmed with NOTHING paid: the portal can still take the deposit or the full amount, so it stays payable", () => {
+    const s = customerOrderStatus(quote({ status: "accepted" }), []);
+    expect(s.key).toBe("balance_due");
+    expect(s.payable).toBe(true);
+    expect(s.tone).toBe("action");
+  });
+
+  it("a due (unpaid) intent does not count as a payment", () => {
+    expect(customerOrderStatus(quote({ status: "accepted" }), [payment("deposit", "due")]).payable).toBe(true);
+  });
+
+  it("a refunded deposit re-opens the portal's own options", () => {
+    expect(customerOrderStatus(quote({ status: "accepted" }), [payment("deposit", "refunded")]).payable).toBe(true);
+  });
+
+  it("fully paid orders are unchanged", () => {
+    expect(customerOrderStatus(quote({ status: "accepted" }), [payment("full", "paid", 100000)]).key).toBe("paid");
+    expect(
+      customerOrderStatus(quote({ status: "accepted" }), [payment("deposit", "paid"), payment("balance", "paid", 80000)]).key,
+    ).toBe("paid");
+  });
+});
