@@ -37,6 +37,7 @@
 
 import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
+import type { ResolvedPack } from "@/lib/sku-versions-shared";
 
 /** The variance flags a three-way line may carry (spec §5). */
 export type ThreeWayFlag =
@@ -131,6 +132,20 @@ export interface SkuUnitScale {
   leafMeasure: { dimension: MeasureUnitFactor["dimension"]; base: number } | null;
   /** The measure registry, keyed by canonical label. */
   measures: ReadonlyMap<string, MeasureUnitFactor>;
+  /** What one leaf IS (label, size, measure): two scales count the same leaf only when these agree (W04 r2). */
+  leafKey: string;
+}
+
+/**
+ * A versioned SKU's units PER LEG (W04 r2): each leg read through the pack in force when THAT leg
+ * happened (the order at confirm, the receipt at the door, the invoice when it arrived). A null leg
+ * is a pack that cannot be established, and every comparison touching it is suppressed.
+ */
+export interface SkuLegScales {
+  kind: "legs";
+  ordered: SkuUnitScale | null;
+  received: SkuUnitScale | null;
+  billed: SkuUnitScale | null;
 }
 
 /**
@@ -214,6 +229,40 @@ export function unitScaleFromChain(
     leafPerLevel: new Map([...leafPerLevel].reverse()),
     leafMeasure: m && base != null && Number.isFinite(base) && base > 0 ? { dimension: m.dimension, base } : null,
     measures: canon,
+    leafKey: `${canonicalUnit(leaf.label) ?? ""}|${leaf.containsQty}|${leaf.containsLevelId == null ? canonicalUnit(leaf.containsMeasureUnit) ?? "" : "?"}`,
+  };
+}
+
+/** The scale of a pack in force at some instant: its chain, or the pre-chain flat baseline it preserved. */
+export function unitScaleFromPack(pack: ResolvedPack | undefined, measures?: ReadonlyMap<string, MeasureUnitFactor>): SkuUnitScale | null {
+  if (!pack) return null;
+  if (pack.levels.length > 0) return unitScaleFromChain(pack.levels, measures);
+  const chain = pack.flat ? flatPackChain(pack.flat) : null;
+  return chain ? unitScaleFromChain(chain, measures) : null;
+}
+
+/**
+ * One SKU's three-way units (W04 r2). A SKU that has pack versions answers PER LEG from the pack in
+ * force at each leg's instant (undefined = none in force then = unknown, never today's pack). A SKU
+ * that never had a version has only ever had its current pack, which answers for every leg; null when
+ * it has none (only the same unit on both sides compares, as before).
+ */
+export function legScalesFromPacks(
+  input: {
+    versioned: boolean;
+    current: readonly PackChainLevel[] | null;
+    ordered: ResolvedPack | undefined;
+    received: ResolvedPack | undefined;
+    billed: ResolvedPack | undefined;
+  },
+  measures?: ReadonlyMap<string, MeasureUnitFactor>,
+): SkuUnitScale | SkuLegScales | null {
+  if (!input.versioned) return unitScaleFromChain(input.current, measures);
+  return {
+    kind: "legs",
+    ordered: unitScaleFromPack(input.ordered, measures),
+    received: unitScaleFromPack(input.received, measures),
+    billed: unitScaleFromPack(input.billed, measures),
   };
 }
 
@@ -258,20 +307,39 @@ function bareUnitKey(unit: string | null, nullIsRoot: boolean): string | null {
 }
 
 /** Two quantities in one unit, or null (the flag stays off: advisory-null). Without a scale, only the
- *  SAME unit on both sides compares (W04 r1); never two raw numbers of unknown units. */
+ *  SAME unit on both sides compares (W04 r1); never two raw numbers of unknown units. Each side carries
+ *  its own leg's scale (W04 r2); a leg-scaled SKU with an unknown leg compares nothing. */
 function inOneUnit(
   a: { qty: number | null; unit: string | null; nullIsRoot: boolean },
   b: { qty: number | null; unit: string | null; nullIsRoot: boolean },
-  scale: SkuUnitScale | undefined,
+  scaleA: SkuUnitScale | null | undefined,
+  scaleB: SkuUnitScale | null | undefined,
+  legScaled: boolean,
 ): [number, number] | null {
   if (a.qty == null || b.qty == null) return null;
-  if (!scale) {
+  if (!scaleA || !scaleB) {
+    if (legScaled) return null; // a leg whose pack cannot be established: suppress, never flag.
     const ka = bareUnitKey(a.unit, a.nullIsRoot);
     return ka != null && ka === bareUnitKey(b.unit, b.nullIsRoot) ? [a.qty, b.qty] : null;
   }
-  const fa = leafFactor(a.unit, scale, a.nullIsRoot);
-  const fb = leafFactor(b.unit, scale, b.nullIsRoot);
-  return fa == null || fb == null ? null : [a.qty * fa, b.qty * fb];
+  const fa = leafFactor(a.unit, scaleA, a.nullIsRoot);
+  const fb = leafFactor(b.unit, scaleB, b.nullIsRoot);
+  if (fa == null || fb == null) return null;
+  if (scaleA === scaleB || scaleA.leafKey === scaleB.leafKey) return [a.qty * fa, b.qty * fb];
+  // Different leaves (the pack changed between the legs): relate them only through a shared measure.
+  const ma = scaleA.leafMeasure;
+  const mb = scaleB.leafMeasure;
+  if (ma && mb && ma.dimension === mb.dimension) return [a.qty * fa * ma.base, b.qty * fb * mb.base];
+  return null;
+}
+
+/** A row's scale for each leg: one scale for all three, or the per-leg answer (W04 r2). */
+function legsOf(entry: SkuUnitScale | SkuLegScales | undefined): {
+  ordered: SkuUnitScale | null | undefined; received: SkuUnitScale | null | undefined; billed: SkuUnitScale | null | undefined; legScaled: boolean;
+} {
+  if (entry && "kind" in entry && entry.kind === "legs") return { ordered: entry.ordered, received: entry.received, billed: entry.billed, legScaled: true };
+  const one = entry as SkuUnitScale | undefined;
+  return { ordered: one, received: one, billed: one, legScaled: false };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -313,8 +381,8 @@ export function buildThreeWayLines(
   deliveryLines: DeliveryLineInput[],
   invoiceLines: InvoiceLineInput[],
   hasInvoice: boolean,
-  /** Per-SKU units (W04/B045, r1); absent = only the same unit on both sides compares. */
-  unitScales: ReadonlyMap<string, SkuUnitScale> = new Map(),
+  /** Per-SKU units (W04/B045, r1): one scale, or per-leg scales (r2); absent = only the same unit on both sides compares. */
+  unitScales: ReadonlyMap<string, SkuUnitScale | SkuLegScales> = new Map(),
 ): ThreeWayView {
   // Received qty by skuId (last write wins if a SKU somehow appears twice — a delivery
   // has one line per SKU in practice; we don't sum to avoid double-counting a re-open).
@@ -401,15 +469,16 @@ export function buildThreeWayLines(
 
     // W04/B045: each comparison is made in ONE unit through the SKU's pack chain; a unit
     // that cannot be resolved leaves its flag off.
-    const scale = unitScales.get(row.key);
+    // W04 r2: each leg through the pack in force when it happened.
+    const legs = legsOf(unitScales.get(row.key));
     const received = { qty: row.receivedQty, unit: row.receivedLevel, nullIsRoot: true };
     // billed_over_received: the invoice charges for more than the door counted.
-    const billedVsReceived = inOneUnit({ qty: row.billedQty, unit: row.billedUnit, nullIsRoot: false }, received, scale);
+    const billedVsReceived = inOneUnit({ qty: row.billedQty, unit: row.billedUnit, nullIsRoot: false }, received, legs.billed, legs.received, legs.legScaled);
     if (billedVsReceived && billedVsReceived[0] > billedVsReceived[1]) {
       row.flags.push("billed_over_received");
     }
     // short_received: the door count came in under what was ordered.
-    const receivedVsOrdered = inOneUnit(received, { qty: row.orderedQty, unit: row.orderedUnit, nullIsRoot: true }, scale);
+    const receivedVsOrdered = inOneUnit(received, { qty: row.orderedQty, unit: row.orderedUnit, nullIsRoot: true }, legs.received, legs.ordered, legs.legScaled);
     if (receivedVsOrdered && receivedVsOrdered[0] < receivedVsOrdered[1]) {
       row.flags.push("short_received");
     }

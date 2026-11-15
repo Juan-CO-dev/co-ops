@@ -34,13 +34,15 @@ import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadPoDetail } from "@/lib/purchase-orders";
-import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadMeasures, loadSkuPackChains, loadSkuPacksAtPoints } from "@/lib/prep-consumption";
 import type { AuthContext } from "@/lib/session";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import type { PackPoint } from "@/lib/sku-versions-shared";
 import {
   buildThreeWayLines,
   flatPackChain,
-  unitScaleFromChain,
+  legScalesFromPacks,
+  type SkuLegScales,
   type SkuUnitScale,
   type ThreeWayView,
   type SnapshotLineInput,
@@ -120,18 +122,38 @@ export async function buildThreeWayView(actor: AuthContext, poId: string): Promi
     loadInvoiceLeg(sb, poId),
   ]);
 
-  // W04/B045 (r1): the three legs compare in ONE unit through each SKU's pack chain as this
-  // PO's shop receives it (any depth; a flat-only SKU through the chain its flat pack describes),
-  // converting known measures (LB, oz, EA on a count leaf). A SKU with no resolvable pack
-  // compares only the same unit on both sides; nothing else is compared (advisory-null).
+  // W04/B045 (r1): the three legs compare in ONE unit through each SKU's pack chain (any depth; a
+  // flat-only SKU through the chain its flat pack describes), converting known measures (LB, oz, EA
+  // on a count leaf). A SKU with no resolvable pack compares only the same unit on both sides.
+  // W04 r2: a SKU with pack versions reads EACH LEG through the pack in force when that leg happened
+  // (the order at confirm, at this PO's shop; each receipt line when it was written, at the
+  // delivery's shop; the invoice when it arrived), so reopening an old PO after a pack edit never
+  // re-reads history through today's pack. A leg with no pack in force then compares nothing.
   const skuIds = [...new Set([...snapshotLines.map((l) => l.skuId), ...deliveryLines.map((l) => l.skuId)])];
-  const [chains, measures] = await Promise.all([loadSkuPackChains(skuIds, detail.locationId), loadMeasures()]);
+  const orderedSkus = new Set(snapshotLines.map((l) => l.skuId));
+  const points: PackPoint[] = [];
+  for (const skuId of skuIds) {
+    if (detail.confirmedAt && orderedSkus.has(skuId)) points.push({ key: `o|${skuId}`, skuId, scope: detail.locationId, asOf: detail.confirmedAt });
+    if (invoiceLeg.receivedAt) points.push({ key: `b|${skuId}`, skuId, scope: detail.locationId, asOf: invoiceLeg.receivedAt });
+  }
+  for (const d of deliveryLines) {
+    if (d.createdAt) points.push({ key: `r|${d.skuId}`, skuId: d.skuId, scope: d.locationId ?? detail.locationId, asOf: d.createdAt });
+  }
+  const [chains, measures, atPoints] = await Promise.all([
+    loadSkuPackChains(skuIds, detail.locationId), loadMeasures(), loadSkuPacksAtPoints(points),
+  ]);
   const unchained = skuIds.filter((id) => (chains.get(id)?.length ?? 0) === 0);
   const flats = await loadFlatPacks(sb, unchained);
-  const unitScales = new Map<string, SkuUnitScale>();
+  const unitScales = new Map<string, SkuUnitScale | SkuLegScales>();
   for (const skuId of skuIds) {
     const levels = chains.get(skuId);
-    const scale = unitScaleFromChain(levels && levels.length > 0 ? levels : flats.get(skuId) ?? null, measures);
+    const scale = legScalesFromPacks({
+      versioned: atPoints.versioned.has(skuId),
+      current: levels && levels.length > 0 ? levels : flats.get(skuId) ?? null,
+      ordered: atPoints.packs.get(`o|${skuId}`),
+      received: atPoints.packs.get(`r|${skuId}`),
+      billed: atPoints.packs.get(`b|${skuId}`),
+    }, measures);
     if (scale) unitScales.set(skuId, scale);
   }
 
@@ -170,25 +192,41 @@ async function loadFlatPacks(sb: ServiceClient, skuIds: string[]): Promise<Map<s
  * a non-goal today) we take the LAST line per SKU rather than summing, so a re-open never
  * double-counts; the pure brain treats one line per SKU.
  */
-async function loadDeliveryLines(sb: ServiceClient, deliveryIds: string[]): Promise<DeliveryLineInput[]> {
+async function loadDeliveryLines(sb: ServiceClient, deliveryIds: string[]): Promise<ReceivedLine[]> {
   if (deliveryIds.length === 0) return [];
-  const { data: rows, error } = await sb.from("vendor_delivery_items")
-    .select("vendor_item_id, qty_received, received_qty_at_level, received_level_label")
-    .in("delivery_id", deliveryIds)
-    .order("created_at", { ascending: true })
-    .returns<Array<{ vendor_item_id: string; qty_received: number | string | null; received_qty_at_level: number | string | null; received_level_label: string | null }>>();
+  const [{ data: rows, error }, { data: dels, error: dErr }] = await Promise.all([
+    sb.from("vendor_delivery_items")
+      .select("vendor_item_id, delivery_id, qty_received, received_qty_at_level, received_level_label, created_at")
+      .in("delivery_id", deliveryIds)
+      .order("created_at", { ascending: true })
+      .returns<Array<{ vendor_item_id: string; delivery_id: string; qty_received: number | string | null; received_qty_at_level: number | string | null; received_level_label: string | null; created_at: string | null }>>(),
+    // W04 r2: the shop each delivery landed at (its pack is that shop's pack at the line's instant).
+    sb.from("vendor_deliveries").select("id, location_id").in("id", deliveryIds)
+      .returns<Array<{ id: string; location_id: string | null }>>(),
+  ]);
   if (error) throw new Error(`buildThreeWayView delivery lines: ${error.message}`);
+  if (dErr) throw new Error(`buildThreeWayView deliveries: ${dErr.message}`);
+  const shopByDelivery = new Map((dels ?? []).map((d) => [d.id, d.location_id]));
 
-  // One line per SKU (last write wins on the ascending-created order → the latest count).
-  const bySku = new Map<string, DeliveryLineInput>();
+  // One line per SKU (last write wins on the ascending-created order → the latest count). The
+  // frozen door quantity is read as written; the line's own instant dates its pack (W04 r2).
+  const bySku = new Map<string, ReceivedLine>();
   for (const r of rows ?? []) {
     bySku.set(r.vendor_item_id, {
       skuId: r.vendor_item_id,
       qty: num(r.received_qty_at_level) ?? num(r.qty_received),
       level: r.received_level_label,
+      createdAt: r.created_at,
+      locationId: shopByDelivery.get(r.delivery_id) ?? null,
     });
   }
   return [...bySku.values()];
+}
+
+/** A received line plus when and where it was written (W04 r2: dates the pack it was counted in). */
+interface ReceivedLine extends DeliveryLineInput {
+  createdAt: string | null;
+  locationId: string | null;
 }
 
 /**
@@ -199,7 +237,7 @@ async function loadDeliveryLines(sb: ServiceClient, deliveryIds: string[]): Prom
  * top-level `.lines`), and validates each field. hasInvoice is TRUE whenever such a
  * receipt EXISTS even if it parsed zero lines (so `not_billed` still applies).
  */
-async function loadInvoiceLeg(sb: ServiceClient, poId: string): Promise<{ lines: InvoiceLineInput[]; hasInvoice: boolean }> {
+async function loadInvoiceLeg(sb: ServiceClient, poId: string): Promise<{ lines: InvoiceLineInput[]; hasInvoice: boolean; receivedAt: string | null }> {
   const { data: rows, error } = await sb.from("email_receipts")
     .select("id, parsed_json, received_at")
     .eq("linked_po_id", poId).eq("doc_kind", "invoice")
@@ -208,9 +246,10 @@ async function loadInvoiceLeg(sb: ServiceClient, poId: string): Promise<{ lines:
     .returns<Array<{ id: string; parsed_json: unknown; received_at: string }>>();
   if (error) throw new Error(`buildThreeWayView invoice: ${error.message}`);
   const row = (rows ?? [])[0];
-  if (!row) return { lines: [], hasInvoice: false };
+  if (!row) return { lines: [], hasInvoice: false, receivedAt: null };
 
-  return { lines: readInvoiceLines(row.parsed_json), hasInvoice: true };
+  // W04 r2: the invoice's instant dates the pack its units are read in.
+  return { lines: readInvoiceLines(row.parsed_json), hasInvoice: true, receivedAt: row.received_at ?? null };
 }
 
 /** The invoice-line shape from a parse row's parsed_json. Task 5 nests the extraction
