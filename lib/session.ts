@@ -314,6 +314,17 @@ export function isStepUpSurface(currentPath: string): boolean {
 }
 
 /**
+ * The idle heartbeat (POST /api/auth/heartbeat) is BACKGROUND keep-alive, not "leaving the step-up surface": with the
+ * throttled activity heartbeat (audit W06/B013) it fires every couple of minutes while someone types, and clearing
+ * there would drop a password unlock between the prompt and the action it was typed for (counts, receipts, catering
+ * send). It neither preserves anything for a gate (it is NOT a step-up surface — no route asserts a tier on it) nor
+ * clears: the flag is left exactly as it stands. Page visits and every other route still clear it.
+ */
+export function isHeartbeatPath(currentPath: string): boolean {
+  return currentPath === "/api/auth/heartbeat";
+}
+
+/**
  * Core session validation — pure function over (rawJwt, ipAddress, userAgent,
  * currentPath). Used by both the NextRequest-shaped route-handler wrapper
  * (`requireSession`) and the next/headers-shaped server-component wrapper
@@ -419,7 +430,7 @@ async function requireSessionCore(
   // retries on the next request; the context below therefore reports the row as
   // it actually stands rather than asserting a clear that did not land.
   let stepUpCleared = false;
-  if (row.step_up_unlocked && !isStepUpSurface(currentPath)) {
+  if (row.step_up_unlocked && !isStepUpSurface(currentPath) && !isHeartbeatPath(currentPath)) {
     try {
       await clearStepUp(row.id);
       stepUpCleared = true;
