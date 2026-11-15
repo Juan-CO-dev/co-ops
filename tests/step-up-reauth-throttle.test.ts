@@ -14,7 +14,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  session: vi.fn(), verifyPassword: vi.fn(), verifyActorPin: vi.fn(), audit: vi.fn(async () => undefined),
+  session: vi.fn(), verifyPassword: vi.fn(), verifyActorPin: vi.fn(), audit: vi.fn(async (_input: unknown) => undefined),
   rpc: vi.fn(), revokeSession: vi.fn(async () => ({ rowsAffected: 1 })), unlockStepUp: vi.fn(async () => undefined),
   createCountEvent: vi.fn(async () => ({ countEventId: "count-1", advisories: [] })),
 }));

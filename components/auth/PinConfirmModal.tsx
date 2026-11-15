@@ -217,15 +217,16 @@ export function PinConfirmModal({
           return;
         }
 
+        // Five wrong PINs in a row: the server signed this session out (audit W07 B159). Say so, then go to sign-in.
+        if (body.code === REAUTH_LOCKED_CODE) {
+          triggerError(t("auth.reauth.signed_out"));
+          leaveAfterReauthLock();
+          return;
+        }
+
         switch (body.code) {
           case "pin_mismatch":
             triggerError(t("auth.pin_modal.error_pin_mismatch"));
-            return;
-
-          // Five wrong PINs in a row: the server signed this session out (audit W07 B159).
-          case REAUTH_LOCKED_CODE:
-            triggerError(t("auth.reauth.signed_out"));
-            leaveAfterReauthLock();
             return;
 
           case "missing_pin_hash":

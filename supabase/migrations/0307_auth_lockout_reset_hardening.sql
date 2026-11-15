@@ -54,7 +54,10 @@
 --      ever live) and inserts the new one. It stores a HASH; the lib mails the raw link, and ONLY when the owner's
 --      delivery switches allow it (lib/admin/email-confirm-shared.ts). /api/auth/verify — unchanged, already in the
 --      app — is what the link opens: the person sets their own password, the email is marked confirmed, they are
---      signed in. The '>= 6' literal is the twin of lib/roles.ts hasEmailAuth (pinned by the migration test).
+--      signed in. The level floor (below 6 is refused) is the twin of lib/roles.ts hasEmailAuth (pinned by the
+--      migration test). No function in this file sets email_verified: a promoted manager is confirmed only by
+--      using their link.
+--   8. A ONE-TIME BACKFILL (B053, owner decision W07-2 a) — see EXISTING ROWS below.
 --   9. sessions.reauth_failed_count + session_reauth_reserve(p_session) + session_reauth_clear(p_session) — NEW (B159,
 --      owner decisions W07-3 a and W07-4 a). The re-check screens — the password step-up, and the PIN re-entered on
 --      counts, the cash deposit and the checklist confirm — took unlimited guesses from anyone holding a signed-in
