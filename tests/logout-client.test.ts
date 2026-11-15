@@ -164,3 +164,28 @@ describe("round 7 — stalled response bodies", () => {
   });
 });
 
+
+// ── Fix round 8 (CC's deadline inventory) — the attempt deadline holds whatever the request does ────────────────────
+describe("round 8 — the per-attempt deadline does not depend on the request honouring its signal", () => {
+  it("a request that ignores its abort signal is still abandoned at the deadline and retried", async () => {
+    const signals: AbortSignal[] = [];
+    fetchMock.mockImplementationOnce((_url: string, init: RequestInit) => {
+      signals.push(init.signal!);
+      return new Promise(() => {}); // never settles, whatever the signal says
+    });
+    fetchMock.mockResolvedValue(res(200));
+    let settled: unknown = null;
+    void requestSignOut("session-1").then((r) => (settled = r));
+    await vi.advanceTimersByTimeAsync(LOGOUT_ATTEMPT_TIMEOUT_MS + LOGOUT_RETRY_DELAYS_MS[0]!);
+    expect(settled).toEqual({ ended: true, attempts: 2 });
+    expect(signals[0]!.aborted).toBe(true);
+  });
+
+  it("every request ignores its signal: ended: false within the bounded total", async () => {
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    let settled: unknown = null;
+    void requestSignOut("session-1").then((r) => (settled = r));
+    await vi.advanceTimersByTimeAsync(MAX_TOTAL_MS);
+    expect(settled).toEqual({ ended: false, attempts: LOGOUT_RETRY_DELAYS_MS.length + 1 });
+  });
+});

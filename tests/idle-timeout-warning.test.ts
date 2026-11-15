@@ -432,7 +432,9 @@ describe("B012 / B153 round 4 — other tabs leave only after the logout request
     const logout = deferLogout();
     mountTab("A");
     mountTab("B");
-    await advance(605);
+    // Round 8: the deferred logout settles INSIDE its 5 s attempt deadline (a real fetch is aborted there; the deadline
+    // now holds even for this mock, which ignores its signal).
+    await advance(603);
     expect(logout.pending()).toBeGreaterThanOrEqual(1);
     expect(h.push).not.toHaveBeenCalled();
     expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toBeNull(); // not published yet
@@ -454,7 +456,9 @@ describe("B012 / B153 round 4 — other tabs leave only after the logout request
     mountTab("B");
     await advance(121);
     fireEvent.keyDown(window, { key: "a" });
-    await advance(5);
+    // Round 8: the deferred logout settles INSIDE its 5 s attempt deadline (a real fetch is aborted there; the deadline
+    // now holds even for this mock, which ignores its signal).
+    await advance(3);
     expect(calls("/api/auth/logout")).toHaveLength(1);
     expect(h.push).not.toHaveBeenCalled();
     expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toBeNull();
@@ -598,7 +602,9 @@ describe("B012 round 5 — a sign-out names the session it ends", () => {
     const logout = deferLogoutEach();
     mountTab("A");
     mountTab("B");
-    await advance(605);
+    // Round 8: the deferred logout settles INSIDE its 5 s attempt deadline (a real fetch is aborted there; the deadline
+    // now holds even for this mock, which ignores its signal).
+    await advance(603);
     expect(logout.pending()).toBe(2); // both tabs reached the deadline together
     expect([logoutBody(0), logoutBody(1)]).toEqual([{ sessionId: "session-1" }, { sessionId: "session-1" }]);
     await logout.settleNext(); // the first settles; that tab goes to the login page

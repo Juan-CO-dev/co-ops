@@ -14,6 +14,8 @@
  * network failure or a 504 (nothing named by a 503 body) used to revoke whatever session the cookie carried by then.
  */
 
+import { fetchStatusWithin } from "@/lib/bounded-fetch";
+
 /** Waits between attempts (ms): four attempts at most, settled within about 3.5 s plus the requests themselves. */
 export const LOGOUT_RETRY_DELAYS_MS: readonly number[] = [500, 1000, 2000];
 /** One attempt that has not answered by then is a failed attempt (a hung request must not hold the page). */
@@ -25,13 +27,12 @@ export interface SignOutResult {
   attempts: number;
 }
 
-function logoutInit(sessionId: string, signal: AbortSignal): RequestInit {
+function logoutInit(sessionId: string): Omit<RequestInit, "signal"> {
   return {
     method: "POST",
     redirect: "manual",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionId }),
-    signal,
   };
 }
 
@@ -41,20 +42,12 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
  * One attempt, decided by the STATUS alone (round 7): fetch() resolves when the headers arrive, and no body is ever
  * read — a body that stalls on a poor connection can no longer hold the sign-out past this attempt's deadline. The
  * request (its body stream included) is aborted as soon as the attempt is decided, so nothing of it outlives it.
- * Null = no status: a network failure, or no headers before the deadline.
+ * Null = no status: a network failure, or no headers before the deadline. Round 8: the deadline holds even for a
+ * request that ignores its abort signal (lib/bounded-fetch.ts races it), so an attempt can never outlive it.
  */
 async function attempt(sessionId: string): Promise<number | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), LOGOUT_ATTEMPT_TIMEOUT_MS);
-  try {
-    const res = await fetch("/api/auth/logout", logoutInit(sessionId, controller.signal));
-    return res.status;
-  } catch {
-    return null; // network failure or timeout: not ended
-  } finally {
-    clearTimeout(timer);
-    controller.abort(); // release an unread (possibly stalled) body; a no-op once the response is complete
-  }
+  const res = await fetchStatusWithin("/api/auth/logout", logoutInit(sessionId), LOGOUT_ATTEMPT_TIMEOUT_MS);
+  return res === null ? null : res.status; // null: network failure or timeout, not ended
 }
 
 /**
