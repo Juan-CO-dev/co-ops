@@ -17,7 +17,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeFridgeStatus, type FridgeStatus, type TempReading } from "@/lib/maintenance";
-import { buildTempItemRegistry, FRIDGE_REGISTRY_COLUMNS, FRIDGE_DEFAULT_SAFE_MAX_F, itemsOwnedBy } from "@/lib/fridge-registry";
+import { buildTempItemRegistry, FRIDGE_REGISTRY_COLUMNS, FRIDGE_DEFAULT_SAFE_MAX_F, itemsOwnedBy, loadFridgeLinkedLines } from "@/lib/fridge-registry";
 import { selectAllRows } from "@/lib/supabase-paginate";
 
 export interface FridgeToday {
@@ -46,7 +46,9 @@ export async function loadFridgesToday(service: SupabaseClient, args: { location
     signal,
   );
   if (eqRes.error) throw new Error(`fridges today equipment: ${eqRes.error.message}`);
-  const registry = buildTempItemRegistry(eqRes.data ?? []);
+  // W15/B022: republished temp lines (new ids after a publish) still count for their fridge.
+  const linked = await loadFridgeLinkedLines(service, locationId, (eqRes.data ?? []).map((f) => f.id), signal);
+  const registry = buildTempItemRegistry(eqRes.data ?? [], linked);
   const fridges = (eqRes.data ?? []).filter((f) => f.active !== false);
   if (fridges.length === 0) return [];
   const owned = new Map(fridges.map((f) => [f.id, new Set(itemsOwnedBy(registry, f.id))] as const));

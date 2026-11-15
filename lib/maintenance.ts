@@ -325,17 +325,24 @@ async function loadEquipmentSourceLines(
   const templateIds = [...new Set(rows.map((r) => r.template_id))];
   const { data: tRows } = await service
     .from("checklist_templates")
-    .select("id, name")
+    .select("id, name, type")
     .in("id", templateIds)
-    .returns<Array<{ id: string; name: string | null }>>();
+    .returns<Array<{ id: string; name: string | null; type: string | null }>>();
   const templateNames = new Map((tRows ?? []).map((t) => [t.id, t.name]));
+  // W15/B022: an older version's line is neither pointer; its list type still says AM / PM.
+  const templateTypes = new Map((tRows ?? []).map((t) => [t.id, t.type]));
+  const typePhase = (templateId: string): EquipmentSourceLine["phase"] => {
+    if (equip.kind !== "fridge") return null;
+    const ty = templateTypes.get(templateId);
+    return ty === "opening" ? "AM" : ty === "closing" ? "PM" : null;
+  };
 
   const lines: EquipmentSourceLine[] = rows.map((r) => ({
     templateItemId: r.id,
     label: r.label ?? "",
     templateName: templateNames.get(r.template_id) ?? null,
     phase:
-      r.id === equip.openingTempItemId ? "AM" : r.id === equip.closingTempItemId ? "PM" : null,
+      r.id === equip.openingTempItemId ? "AM" : r.id === equip.closingTempItemId ? "PM" : typePhase(r.template_id),
     active: r.active !== false,
   }));
   // Total order: AM before PM before unphased, then label, then id.
