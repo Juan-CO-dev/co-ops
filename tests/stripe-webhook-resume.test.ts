@@ -51,9 +51,9 @@ const FULL = "d0000000-0000-4000-8000-000000000002";
 const SINGLE: StripeWebhookContext = { locationId: null, locationCode: null };
 
 let db: PaymentsFake;
-const notifyPaid = vi.fn(async (_args: unknown) => {});
+const notifyPaid = vi.fn(async () => {});
 /** The shop's way to Stripe. Retiring an already-expired session answers `expired` again. */
-const retireSession = vi.fn(async (_sessionId: string): Promise<"expired" | "complete"> => "expired");
+const retireSession = vi.fn(async (): Promise<"expired" | "complete"> => "expired");
 const deps = { notifyPaid, retireSession };
 
 function pay(over: Row): Row {

@@ -537,6 +537,5 @@ if (process.env.PRINT_PAYMENT_WRITERS === "1") {
     const guard = [at ? at.guards.map((g) => `\`${g.replace(":", " ")}\``).join(" · ") || "—" : "?", w.thenAlso ? `then \`${w.thenAlso}\`` : ""].filter(Boolean).join("; ");
     lines.push(`| ${i + 1} | \`${w.fn}\` (${w.verb}) | \`${w.file}:${at?.line ?? "?"}\` | ${w.writes} | ${guard}. **${w.bind}** | \`${w.pinnedBy.file}\` › "${w.pinnedBy.title}" |`);
   });
-  // eslint-disable-next-line no-console
   console.log(`\n${lines.join("\n")}\n`);
 }

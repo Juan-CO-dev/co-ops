@@ -71,7 +71,7 @@ const LOCATION = "b0000000-0000-4000-8000-000000000001";
 const OTHER_LOCATION = "b0000000-0000-4000-8000-000000000002";
 
 const SINGLE: StripeWebhookContext = { locationId: null, locationCode: null };
-const notifyPaid = vi.fn(async (_args: unknown) => {});
+const notifyPaid = vi.fn(async () => {});
 const deps = { notifyPaid, retireSession: (id: string) => stripe.retire("sk_shop", id) };
 
 function quoteRow(over: Row = {}): Row {
