@@ -40,6 +40,9 @@
  * once it settles; the other tabs are told only then. Since round 9 that
  * request-then-signal is lib/logout-client.ts signOutAndBroadcast, shared with
  * LogoutButton and the UserMenu's Sign out (which used to skip the signal).
+ * Round 10: a tab told by another tab that its session ended raises the same cover BEFORE it navigates (a slow or
+ * offline navigation never leaves its screen operable), and the cover sits above every dialog with the page beneath
+ * inert (components/auth/SigningOutOverlay.tsx).
  * Storage blocked (private mode) = the per-tab clock, as before.
  *
  * The SERVER clock only sees requests (B013): typing for ten minutes with no
@@ -362,6 +365,9 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
         // A sign-out of ANOTHER session (a late signal from before a new sign-in) is not this tab's (round 5).
         if (signal.sessionId && sessionId && signal.sessionId !== sessionId) return;
         expiredRef.current = true;
+        // Round 10: covered BEFORE navigating — a slow or offline navigation must not leave this tab's authenticated
+        // screen readable or operable (its idle guard and heartbeat already stood down with expiredRef).
+        setSigningOut(true);
         const here = window.location.pathname + window.location.search;
         router.push(signal.kind === "logout" ? "/" : signInHref({ reason: "idle", next: here, forUser: userId }));
       }

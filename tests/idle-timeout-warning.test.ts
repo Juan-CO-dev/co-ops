@@ -825,3 +825,126 @@ describe("B013 round 8 — a stalled heartbeat is bounded", () => {
     expect(h.push).toHaveBeenCalledWith(IDLE_TARGET);
   });
 });
+
+// ── Fix round 10 (review W06-r10, two P2s) ────────────────────────────────────────────────────────────────────────────
+// (1) A tab told by another tab that the session ended went to the login page but never covered itself: while that
+//     navigation was slow (or offline) the authenticated screen stayed readable and operable. It now raises the opaque
+//     cover BEFORE navigating, and still sends no logout of its own.
+// (2) The cover sat at z-[60], under PasswordModal's z-[1100], and left everything beneath it focusable. It is now the
+//     last child of <body>, above every dialog, the rest of the page is inert while it shows, focus moves into it, and
+//     no click / submit / key beneath reaches the app.
+describe("B012 round 10 — the sign-out cover covers every tab and every dialog", () => {
+  it("a receiving tab whose navigation never completes is covered at once and sends no logout", async () => {
+    h.session = "session-1";
+    mount();
+    expect(screen.queryByTestId(OVERLAY)).toBeNull();
+    await otherTab(SIGNED_OUT_KEY, `${Date.now()}:idle:session-1`);
+    expect(h.push).toHaveBeenCalledWith(IDLE_TARGET); // the (mock) navigation never completes
+    expect(screen.getByTestId(OVERLAY)).toBeTruthy(); // covered meanwhile
+    await advance(700); // long past the idle limit: the cover stays, nothing else happens
+    expect(screen.getByTestId(OVERLAY)).toBeTruthy();
+    expect(calls("/api/auth/logout")).toHaveLength(0);
+    expect(h.push).toHaveBeenCalledTimes(1);
+  });
+
+  it("an explicit Log out signal from another tab covers this tab as well", async () => {
+    mount();
+    await otherTab(SIGNED_OUT_KEY, `${Date.now()}:logout:session-1`);
+    expect(h.push).toHaveBeenCalledWith("/");
+    expect(screen.getByTestId(OVERLAY)).toBeTruthy();
+    expect(calls("/api/auth/logout")).toHaveLength(0);
+  });
+
+  it("a signal for another session raises no cover", async () => {
+    mount();
+    await otherTab(SIGNED_OUT_KEY, `${Date.now()}:idle:session-other`);
+    expect(screen.queryByTestId(OVERLAY)).toBeNull();
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
+  it("with the password dialog open during a deferred logout: the cover is above it, the app is inert, focus is in the cover, nothing beneath submits", async () => {
+    const { PasswordModal } = await import("@/components/auth/PasswordModal");
+    h.fetch.mockImplementation(async (url: string) =>
+      url === "/api/auth/logout" ? new Promise<Response>(() => {}) : ok(),
+    );
+    const onConfirm = vi.fn();
+    const { container } = render(jsx(TranslationProvider, {
+      initialLanguage: "en",
+      children: [
+        jsx(PasswordModal, { key: "pw", open: true, onConfirm, onCancel: () => {} }),
+        jsx(IdleTimeoutWarning, { key: "idle", userId: "user-1", sessionId: h.session }),
+      ],
+    }));
+    const input = container.querySelector<HTMLInputElement>("#step-up-password")!;
+    await advance(0.1);
+    fireEvent.change(input, { target: { value: "hunter22" } });
+    input.focus();
+    await advance(600); // the idle limit: the logout is sent and never answers
+    await advance(0.1);
+    expect(calls("/api/auth/logout")).toHaveLength(1);
+    const overlay = screen.getByTestId(OVERLAY);
+    // Above every dialog: the last child of <body>, with a z-index over PasswordModal's 1100.
+    expect(overlay.parentElement).toBe(document.body);
+    expect(document.body.lastElementChild).toBe(overlay);
+    const z = (cls: string) => Number(/z-\[(\d+)\]/.exec(cls)?.[1] ?? "0");
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(z(dialog.className)).toBe(1100);
+    expect(z(overlay.className)).toBeGreaterThan(1100);
+    // The app underneath is inert; the cover is not; focus moved into the cover.
+    expect(container.hasAttribute("inert")).toBe(true);
+    expect(overlay.hasAttribute("inert")).toBe(false);
+    expect(overlay.contains(document.activeElement)).toBe(true);
+    // Focus cannot go back beneath it.
+    input.focus();
+    expect(overlay.contains(document.activeElement)).toBe(true);
+    // Enter (implicit submission = a submit event) and space (= a click on the button) beneath reach nothing.
+    const confirmBtn = dialog.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false); // default prevented
+    expect(fireEvent.keyDown(confirmBtn, { key: " " })).toBe(false);
+    fireEvent.keyUp(confirmBtn, { key: " " });
+    fireEvent.submit(dialog.querySelector("form")!);
+    fireEvent.click(confirmBtn);
+    await advance(1);
+    expect(calls("/api/auth/step-up")).toHaveLength(0);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("the cover gives the page back when it goes (nothing it did not set stays inert)", async () => {
+    const { SigningOutOverlay } = await import("@/components/auth/SigningOutOverlay");
+    const already = document.createElement("div");
+    already.setAttribute("inert", "");
+    document.body.appendChild(already);
+    const { container, unmount } = render(jsx(TranslationProvider, {
+      initialLanguage: "en",
+      children: jsx(SigningOutOverlay, {}),
+    }));
+    expect(document.body.lastElementChild?.getAttribute("data-testid")).toBe(OVERLAY);
+    const late = document.createElement("div");
+    document.body.appendChild(late); // a portal mounted after the cover is inert too
+    await act(async () => {});
+    expect(container.hasAttribute("inert")).toBe(true);
+    expect(late.hasAttribute("inert")).toBe(true);
+    unmount();
+    expect(container.hasAttribute("inert")).toBe(false);
+    expect(late.hasAttribute("inert")).toBe(false);
+    expect(already.hasAttribute("inert")).toBe(true); // set by someone else: left alone
+    already.remove();
+    late.remove();
+  });
+
+  it("two covers at once: the page stays inert until the last one goes", async () => {
+    const { SigningOutOverlay } = await import("@/components/auth/SigningOutOverlay");
+    const app = document.createElement("div");
+    document.body.appendChild(app);
+    const one = render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(SigningOutOverlay, {}) }));
+    const two = render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(SigningOutOverlay, {}) }));
+    await act(async () => {});
+    expect(app.hasAttribute("inert")).toBe(true);
+    for (const cover of screen.getAllByTestId(OVERLAY)) expect(cover.hasAttribute("inert")).toBe(false);
+    one.unmount();
+    expect(app.hasAttribute("inert")).toBe(true);
+    two.unmount();
+    expect(app.hasAttribute("inert")).toBe(false);
+    app.remove();
+  });
+});
