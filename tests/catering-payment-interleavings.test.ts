@@ -1146,14 +1146,26 @@ describe("W02 review r6 — interleavings: a refund that is processed before its
   it("webhook completed × refund — the ledger could not be read for an earlier refund: flagged `refund_check_failed`, and the settlement is NOT recorded as done", async () => {
     seedDeposit();
     const session = await sessionFor(DEPOSIT, 20000);
-    db.failSelect.push("stripe_events"); // a first-seen delivery reads the ledger only for this look
+    const payment = paidEvent(session);
+    await webhook(refundEvent(`pi_${session}`, whole(20000), "evt_refund_unread")); // seen first: `payment_not_found`
+    // The settlement's look for it fails: the payment delivery's FIRST read of the ledger (a
+    // first-seen delivery reads the ledger only for this look).
+    db.failSelect.push("stripe_events");
 
-    const out = await webhook(paidEvent(session));
+    const out = await webhook(payment);
 
-    expect(out.result).toBe("paid_needs_review");
+    // Review r7: not a terminal verdict. A 200 here was the last time anything looked — and
+    // the refund the look did not see would have left a refunded charge `paid` for good.
+    expect(out.result).toBe("settlement_incomplete");
     expect(rowOf(DEPOSIT).status).toBe("paid"); // the money is recorded regardless
     expect(metaOf("catering.payment.provider_paid")[0]).toMatchObject({ needs_review: ["refund_check_failed"] });
     expect(rowOf(DEPOSIT).settlement_cleanup_at ?? null).toBeNull();
+
+    // The SAME event, redelivered, can read the ledger: it finds the earlier refund and applies it.
+    const again = await webhook(payment);
+    expect(again.result).toBe("paid_needs_review");
+    expect(rowOf(DEPOSIT).status).toBe("refunded");
+    expect(ledger("evt_refund_unread").outcome).toBe("refunded");
   });
 });
 

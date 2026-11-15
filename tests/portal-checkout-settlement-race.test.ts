@@ -395,12 +395,21 @@ describe.each(MIGRATION_STATES)("W02 review r3 (P1) — settlement racing a seco
     stripe.down = true; // Stripe cannot be reached when the webhook tries to close it
     const settled = await processStripeEvent(db.client, event, SINGLE, { notifyPaid });
 
-    expect(settled.result).toBe("paid_needs_review");
+    // Not finished, and not answered 2xx (review r7): Stripe will send this event again.
+    expect(settled.result).toBe("settlement_incomplete");
     expect(rowOf(DEPOSIT).status).toBe("paid"); // the money is always recorded
     expect(lastAuditMeta("catering.payment.provider_paid").needs_review).toEqual(["sibling_checkout_open"]);
     expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: ["sibling_checkout_open"] }));
     // The voided intent still NAMES the checkout it could not close: nothing forgets it.
     expect(byKind("full")[0]).toMatchObject({ status: "void", provider_session_id: fullSession.id });
+
+    // Stripe is reachable again, and the SAME event is redelivered: the checkout is closed.
+    stripe.down = false;
+    const again = await processStripeEvent(db.client, event, SINGLE, { notifyPaid });
+    expect(again.result).toBe("paid");
+    expect(fullSession.status).toBe("expired");
+    expect(byKind("full")[0]).toMatchObject({ status: "void", provider_session_id: null });
+    expect(openSessions()).toEqual([]);
   });
 
   it("a deposit request racing a settled FULL payment is refused the same way", async () => {
@@ -911,7 +920,7 @@ describe.each(MIGRATION_STATES)("W02 review r4 (P1) — a settlement that stradd
     hold.release();
     const settled = await settling;
 
-    expect(settled.result).toBe("paid_needs_review");
+    expect(settled.result).toBe("settlement_incomplete"); // review r7: retryable until it is closed
     expect(lastAuditMeta("catering.payment.provider_paid").needs_review).toEqual(["sibling_checkout_open"]);
     expect(byKind("full")[0]).toMatchObject({ status: "void", provider_session_id: fullSession.id });
   });
@@ -1111,7 +1120,9 @@ describe("W02 review r4 (P1) — closing an order's checkouts does not depend on
     const settled = await processStripeEvent(db.client, event, SINGLE, { notifyPaid });
 
     expect(rowOf(DEPOSIT).status).toBe("paid");
-    expect(settled.result).toBe("paid_needs_review");
+    // An order that could not be looked at to the end is not a finished settlement (review
+    // r7): the delivery is retryable, and the next one looks again.
+    expect(settled.result).toBe("settlement_incomplete");
     expect(lastAuditMeta("catering.payment.provider_paid").needs_review).toContain("sibling_checkout_open");
   });
 });

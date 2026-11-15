@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { audit } from "@/lib/audit";
-import { processStripeEvent, resolveWebhookLocation, type StripeWebhookContext } from "@/lib/stripe/webhook";
+import { isRetryableResult, processStripeEvent, resolveWebhookLocation, type StripeWebhookContext } from "@/lib/stripe/webhook";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 const auditMock = vi.mocked(audit);
@@ -83,6 +83,13 @@ function stubClient(handler: (op: Op) => Settled) {
         op.filters[`${k}:neq`] = v;
         return builder;
       },
+      // The settlement marker's compare-and-set (`settlement_cleanup_at IS NULL`). Review r7:
+      // without it that write threw inside the stub, read as a FAILED marker write, and a
+      // failed marker write is now `settlement_incomplete` instead of a quiet `paid`.
+      is: (k: string, v: unknown) => {
+        op.filters[`${k}:is`] = v;
+        return builder;
+      },
       in: (k: string, v: unknown) => {
         op.filters[`${k}:in`] = v;
         return builder;
@@ -118,6 +125,8 @@ function handlerFor(over: {
   paymentByRef?: Settled;
   quote?: Settled;
   paymentUpdate?: Settled;
+  /** The write of `settlement_cleanup_at` (review r6 / r7). Default: it lands. */
+  markerUpdate?: Settled;
 } = {}) {
   return (op: Op): Settled => {
     if (op.table === "stripe_events") {
@@ -136,6 +145,8 @@ function handlerFor(over: {
       // A guarded flip answers with the row it wrote (the paid flip reads it back — review
       // r4) and its rowcount (the refund flip). `{ count: 0 }` = it matched nothing.
       if (op.kind === "update") {
+        // The settlement marker's compare-and-set lands (NULL → now) unless a test says not.
+        if (op.payload && "settlement_cleanup_at" in op.payload) return over.markerUpdate ?? { count: 1 };
         return over.paymentUpdate ?? { count: 1, data: [{ id: PAYMENT_ID, quote_id: QUOTE_ID, provider_session_id: null }] };
       }
       if ("id" in op.filters) return over.paymentById ?? { data: DUE_ROW };
@@ -175,20 +186,57 @@ beforeEach(() => {
 });
 
 describe("ledger-first idempotency", () => {
-  it("a DUPLICATE of a FINISHED event reads its verdict and does nothing else — no payment reads, no writes, no audit", async () => {
+  // Review r7: "no payment reads" became ONE read. A terminal verdict on the ledger used to
+  // end the event by itself — including over a settlement whose marker was still NULL, which
+  // then nothing ever read. The duplicate gate now asks the rows first: is a paid row
+  // carrying this charge with its cleanup unrecorded? No → `duplicate`, and still no write.
+  it("a DUPLICATE of a FINISHED event reads its verdict, asks the row ONCE whether its settlement is finished, and does nothing else — no writes, no audit", async () => {
     const { client, ops } = stubClient(
       handlerFor({
         ledgerInsert: { error: { code: "23505" } },
         ledgerRow: { data: { id: "evt_1", outcome: "paid" } },
+        paymentByRef: { data: [{ id: PAYMENT_ID, status: "paid", provider_ref: "pi_1", settlement_cleanup_at: "2026-11-01T00:00:00.000Z" }] },
       }),
     );
     const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
 
     expect(out.result).toBe("duplicate");
-    expect(ops.filter((o) => o.table === "catering_payments")).toEqual([]);
-    expect(ops.filter((o) => o.table === "stripe_events" && o.kind === "update")).toEqual([]);
+    const paymentOps = ops.filter((o) => o.table === "catering_payments");
+    expect(paymentOps).toHaveLength(1);
+    expect(paymentOps[0]).toMatchObject({ kind: "select", filters: { provider_ref: "pi_1", status: "paid" } });
+    expect(ops.filter((o) => o.kind === "update")).toEqual([]);
     expect(auditMock).not.toHaveBeenCalled();
     expect(noNotify.notifyPaid).not.toHaveBeenCalled();
+  });
+
+  it("a duplicate of an event that is NOT about a payment (expired, ignored, …) reads no payment at all", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({ ledgerInsert: { error: { code: "23505" } }, ledgerRow: { data: { id: "evt_1", outcome: "expired" } } }),
+    );
+    const out = await processStripeEvent(client, sessionEvent({}, "checkout.session.expired"), SINGLE, noNotify);
+
+    expect(out.result).toBe("duplicate");
+    expect(ops.filter((o) => o.table === "catering_payments")).toEqual([]);
+  });
+
+  it("a duplicate whose row says the settlement is NOT finished (marker NULL) is worked again, whatever verdict the ledger carries", async () => {
+    const { client, ops } = stubClient((op) => {
+      // The gate's question: a paid row carries pi_1 and its cleanup is unrecorded.
+      if (op.table === "catering_payments" && op.kind === "select" && "provider_ref" in op.filters) {
+        return { data: [{ id: PAYMENT_ID, status: "paid", provider_ref: "pi_1", settlement_cleanup_at: null }] };
+      }
+      return handlerFor({
+        ledgerInsert: { error: { code: "23505" } },
+        ledgerRow: { data: { id: "evt_1", outcome: "paid_needs_review" } },
+        paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1", settlement_cleanup_at: null } },
+        paymentUpdate: { count: 0, data: [] },
+      })(op);
+    });
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("paid"); // the bug: `duplicate`
+    expect(ops.some((o) => o.table === "catering_payments" && o.kind === "update" && o.payload && "settlement_cleanup_at" in o.payload)).toBe(true);
+    expect(noNotify.notifyPaid).toHaveBeenCalledTimes(1);
   });
 
   it("a FAILED ledger append throws, so the route can answer 500 and Stripe retries", async () => {
@@ -647,14 +695,37 @@ describe("W02/B005 — an event that was SEEN but never FINISHED is worked again
     await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
 
     const stamp = ops.find((o) => o.table === "stripe_events" && o.kind === "update");
-    expect(stamp?.filters).toMatchObject({ id: "evt_1", or: "outcome.is.null,outcome.eq.processing_failed" });
+    // Only an UNFINISHED row may be stamped: never stamped, `processing_failed`, or
+    // `settlement_incomplete` (review r7 — retryable too, and replaceable by the run that finishes).
+    expect(stamp?.filters).toMatchObject({
+      id: "evt_1",
+      or: "outcome.is.null,outcome.eq.processing_failed,outcome.eq.settlement_incomplete",
+    });
   });
 
-  it("the ROUTE answers 500 to `processing_failed`, so Stripe redelivers", () => {
+  it("the ROUTE answers 500 to every retryable result (`processing_failed`, `settlement_incomplete`), so Stripe redelivers the same event", () => {
     const src = readFileSync(join(ROOT, "app/api/webhooks/stripe/_handler.ts"), "utf8");
-    expect(src).toMatch(/if \(result === "processing_failed"\) return jsonError\(500, "processing_failed"\)/);
+    expect(src).toMatch(/if \(isRetryableResult\(result\)\) return jsonError\(500, result\)/);
     // …and the 500 sits BEFORE the catch-all 200.
-    expect(src.indexOf('jsonError(500, "processing_failed")')).toBeLessThan(src.indexOf("return jsonOk({ result })"));
+    expect(src.indexOf("jsonError(500, result)")).toBeGreaterThan(-1);
+    expect(src.indexOf("jsonError(500, result)")).toBeLessThan(src.indexOf("return jsonOk({ result })"));
+    // The one predicate the route reads is exactly those two results.
+    expect(isRetryableResult("processing_failed")).toBe(true);
+    expect(isRetryableResult("settlement_incomplete")).toBe(true);
+    expect(isRetryableResult("paid_needs_review")).toBe(false);
+    expect(isRetryableResult("paid")).toBe(false);
+    expect(isRetryableResult("duplicate")).toBe(false);
+  });
+
+  it("a settlement whose marker write does not land is `settlement_incomplete` — stamped as such, never `paid`", async () => {
+    const { client, ops } = stubClient(handlerFor({ markerUpdate: { error: { message: "connection reset" } } }));
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("settlement_incomplete");
+    expect(ops.find((o) => o.table === "stripe_events" && o.kind === "update")?.payload).toMatchObject({ outcome: "settlement_incomplete" });
+    // The ordinary "payment received" waits for the run whose marker write lands.
+    expect(noNotify.notifyPaid).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
   });
 });
 

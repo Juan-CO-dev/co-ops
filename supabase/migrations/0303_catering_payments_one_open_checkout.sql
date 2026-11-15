@@ -122,7 +122,8 @@
 --     message exactly as before, and "Mark paid" works exactly as before (its marker write is best-effort).
 --   · The webhook: a paid flip never depends on this file. A delivery that finds its charge ALREADY on the
 --     row reads `settlement_cleanup_at`; without the column that read fails, the event is `processing_failed`
---     (500) and Stripe redelivers until the file is applied.
+--     (500) and Stripe redelivers until the file is applied. (Review r7: the delivery that MADE the flip
+--     cannot write the marker either, so it answers `settlement_incomplete` — also a 500, also redelivered.)
 -- ORDER OF ROLLOUT: (1) apply this file (sim, then prod), (2) deploy, (3) only then may Stripe keys be set.
 -- With no key set the order of (1) and (2) does not matter.
 --

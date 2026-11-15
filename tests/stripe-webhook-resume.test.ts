@@ -34,6 +34,15 @@
  *     write to a concurrent one stays quiet. A payment that NEEDS REVIEW is told BEFORE the
  *     marker, by every run that finds it — a finding is never the thing a cut-off loses.
  *
+ *   - UNFINISHED WORK IS NEVER ANSWERED 2xx (review r7 P1: "incomplete settlement becomes
+ *     permanently non-retryable"). Round r6 answered a settlement that could not confirm its
+ *     cleanup `paid_needs_review` — a 200, stamped on the ledger as a terminal verdict — and
+ *     every later delivery of that event was a `duplicate` before anything read the marker.
+ *     Now it is `settlement_incomplete` (the route's 500), a retryable ledger state, and the
+ *     duplicate gate asks the ROW before it says `duplicate`. Every recovery in the last
+ *     describe block replays the SAME event id — that is what Stripe sends again; a second
+ *     event id walks around the gate the bug lived in.
+ *
  * "Cut off" is modelled as a statement that never answers (tests/payments-fake-client.ts
  * `beforeOp` → "cut"): the first delivery's promise stays pending for ever, exactly like a
  * function the platform killed. No DB, no network, no mail, no real Stripe.
@@ -41,7 +50,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { audit } from "@/lib/audit";
-import { processStripeEvent, type StripeWebhookContext } from "@/lib/stripe/webhook";
+import { isRetryableLedgerOutcome, isRetryableResult, processStripeEvent, type StripeWebhookContext } from "@/lib/stripe/webhook";
 
 import { paymentsFake, sameMigrationState, type PaymentsFake, type Row } from "./payments-fake-client";
 
@@ -332,14 +341,15 @@ describe("W02 review r5 — a settlement cut off after the paid flip is finished
 });
 
 describe("W02 review r5 — the ledger is never stamped clean over a checkout that may still be open", () => {
-  it("a resumed settlement that CANNOT confirm the checkout closed is `paid_needs_review`, the id stays on its row, and the email says so", async () => {
+  it("a resumed settlement that CANNOT confirm the checkout closed is NOT finished (`settlement_incomplete`, review r7), the id stays on its row, and the email says so", async () => {
     await deliverAndCutOff(depositPaid(), isVoidWrite);
     retireSession.mockRejectedValue(new Error("socket hang up"));
 
     const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
 
-    expect(out.result).toBe("paid_needs_review");
-    expect(ledger("evt_1").outcome).toBe("paid_needs_review");
+    // Round r6 answered `paid_needs_review` here — a 200, after which nothing looked again.
+    expect(out.result).toBe("settlement_incomplete");
+    expect(ledger("evt_1").outcome).toBe("settlement_incomplete");
     // Closed on our books, still an unresolved checkout: the pay path goes on refusing.
     expect(row(FULL)).toMatchObject({ status: "void", provider_session_id: "cs_full" });
     // …and nothing on the row says the settlement is finished: the next look tries again.
@@ -375,13 +385,19 @@ describe("W02 review r5 — the ledger is never stamped clean over a checkout th
     const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
     db.beforeOp = null;
 
-    expect(out.result).toBe("paid_needs_review");
-    expect(ledger("evt_1").outcome).toBe("paid_needs_review");
+    expect(out.result).toBe("settlement_incomplete");
+    expect(ledger("evt_1").outcome).toBe("settlement_incomplete");
     expect(auditMetas()[0]).toMatchObject({ resumed: true, needs_review: ["sibling_checkout_open"], closed_checkouts: { stillOpen: [DEPOSIT] } });
     expect(marker(DEPOSIT)).toBeNull();
+
+    // The SAME event, sent again, can read the order now — and finishes it.
+    const again = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(again.result).toBe("paid");
+    expectRecordedAsDone();
+    expect(ledger("evt_1").outcome).toBe("paid");
   });
 
-  it("a sibling void that FAILED is unfinished cleanup: flagged, not recorded as done — and the next delivery voids it", async () => {
+  it("a sibling void that FAILED is unfinished cleanup: flagged, not recorded as done, NOT answered 2xx — and the SAME event's redelivery voids it", async () => {
     db.beforeOp = (op) => {
       if (!isVoidWrite(op)) return;
       db.beforeOp = null;
@@ -391,17 +407,37 @@ describe("W02 review r5 — the ledger is never stamped clean over a checkout th
     const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
 
     // The full intent is still DUE on a quote with a paid deposit. That is told to a person…
-    expect(out.result).toBe("paid_needs_review");
+    expect(out.result).toBe("settlement_incomplete");
+    expect(ledger("evt_1").outcome).toBe("settlement_incomplete");
     expect(row(FULL).status).toBe("due");
     expect(auditMetas()[0]).toMatchObject({ needs_review: ["sibling_check_failed"], voided_sibling_ids: [] });
     // …and nothing says the settlement is finished.
     expect(marker(DEPOSIT)).toBeNull();
 
-    // Any later delivery about this charge finishes it (here: another event for the same charge).
-    const again = await processStripeEvent(db.client, depositPaid("evt_2"), SINGLE, deps);
+    // Stripe sends evt_1 again (review r7: the recovery is the SAME event, not another one).
+    const again = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
     expect(again.result).toBe("paid");
     expect(row(FULL)).toMatchObject({ status: "void", provider_session_id: null });
     expect(marker(DEPOSIT)).toEqual(expect.any(String));
+    expect(ledger("evt_1").outcome).toBe("paid");
+  });
+
+  it("…and ANOTHER event about the same charge finishes it just as well (whoever finds the marker NULL)", async () => {
+    db.beforeOp = (op) => {
+      if (!isVoidWrite(op)) return;
+      db.beforeOp = null;
+      db.failUpdate.push("catering_payments");
+    };
+    await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    const other = await processStripeEvent(db.client, depositPaid("evt_2"), SINGLE, deps);
+    expect(other.result).toBe("paid");
+    expect(row(FULL)).toMatchObject({ status: "void", provider_session_id: null });
+    expect(marker(DEPOSIT)).toEqual(expect.any(String));
+    // evt_1's own redelivery then has nothing left to do.
+    const redelivery = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(redelivery.result).toBe("already_advanced");
+    expect(ledger("evt_1").outcome).toBe("already_advanced");
   });
 });
 
@@ -451,7 +487,10 @@ describe("W02 review r5 / r6 — the report rides on the marker", () => {
 
     const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
 
-    expect(out.result).toBe("paid_needs_review");
+    // Told — and, with the checkout still open, not finished either (review r7). The other
+    // delivery's terminal stamp is not replaced by this run's retryable one.
+    expect(out.result).toBe("settlement_incomplete");
+    expect(ledger("evt_1").outcome).toBe("paid");
     expect(auditMetas()[0]).toMatchObject({ needs_review: ["sibling_checkout_open"] });
     expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: ["sibling_checkout_open"] }));
   });
@@ -470,14 +509,14 @@ describe("W02 review r5 / r6 — the report rides on the marker", () => {
     // …and the event is still open, so its redelivery looks again and tells again.
     const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
 
-    expect(out.result).toBe("paid_needs_review");
-    expect(ledger("evt_1").outcome).toBe("paid_needs_review");
+    expect(out.result).toBe("settlement_incomplete");
+    expect(ledger("evt_1").outcome).toBe("settlement_incomplete");
     expect(auditMock).toHaveBeenCalledTimes(2);
     expect(auditMetas()[1]).toMatchObject({ resumed: true, needs_review: ["sibling_checkout_open"] });
     expect(notifyPaid).toHaveBeenCalledTimes(2);
   });
 
-  it("a marker write that FAILED is not a lost one: that run reports, because nobody else is known to — and the next delivery finds the cleanup still unrecorded", async () => {
+  it("a marker write that FAILED is not a lost one — and not a finished settlement either: retryable, and the report waits for the run whose write lands (review r7)", async () => {
     db.beforeOp = (op) => {
       if (!isMarkerWrite(op)) return;
       db.beforeOp = null;
@@ -486,10 +525,12 @@ describe("W02 review r5 / r6 — the report rides on the marker", () => {
 
     const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
 
-    expect(out.result).toBe("paid");
+    // Round r6 answered `paid` and reported here "because nobody else is known to". Now the
+    // redelivery IS known to: it records the cleanup and tells the team, once.
+    expect(out.result).toBe("settlement_incomplete");
     expect(marker(DEPOSIT)).toBeNull();
-    expect(auditMock).toHaveBeenCalledTimes(1);
-    expect(notifyPaid).toHaveBeenCalledTimes(1);
+    expect(auditMock).not.toHaveBeenCalled();
+    expect(notifyPaid).not.toHaveBeenCalled();
   });
 
   it("a stamp that FAILED costs nothing: the cleanup is recorded and reported, and the redelivery only closes the event", async () => {
@@ -589,22 +630,26 @@ describe("W02 review r6 (P1) — two OVERLAPPING deliveries of one event, and on
     expect(notifyPaid).toHaveBeenCalledTimes(1);
   });
 
-  it("B dies before the cleanup AND Stripe will not confirm the checkout closed for A: `paid_needs_review`, told, NOT recorded as done — and the next delivery still tries", async () => {
+  it("B dies before the cleanup AND Stripe will not confirm the checkout closed for A: told, NOT recorded as done, NOT answered 2xx — and the SAME event, sent again, finishes it", async () => {
     retireSession.mockRejectedValue(new Error("socket hang up"));
 
     const out = await overlap(isVoidWrite);
 
-    expect(out.result).toBe("paid_needs_review");
-    expect(ledger("evt_1").outcome).toBe("paid_needs_review");
+    expect(out.result).toBe("settlement_incomplete");
+    expect(ledger("evt_1").outcome).toBe("settlement_incomplete");
     expect(row(FULL)).toMatchObject({ status: "void", provider_session_id: "cs_full" }); // unresolved, on the record
     expect(marker(DEPOSIT)).toBeNull();
     expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: ["sibling_checkout_open"] }));
 
-    // A second event about the same charge (or anything else that looks) finishes it once Stripe answers.
+    // Stripe answers again — and what recovers the order is the redelivery of evt_1 ITSELF
+    // (review r7: this used to be shown with a second event id, which walks around the
+    // duplicate gate the bug lived in).
     retireSession.mockImplementation(async () => "expired");
-    const later = await processStripeEvent(db.client, depositPaid("evt_2"), SINGLE, deps);
+    const later = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
     expect(later.result).toBe("paid");
     expectRecordedAsDone();
+    expect(ledger("evt_1").outcome).toBe("paid");
+    expect((await processStripeEvent(db.client, depositPaid(), SINGLE, deps)).result).toBe("duplicate");
   });
 
   it("neither dies: both run the idempotent cleanup side by side — one marker, ONE report, the sibling closed once", async () => {
@@ -672,14 +717,26 @@ describe("W02 review r6 (P1) — two OVERLAPPING deliveries of one event, and on
     db.settlementMarkerColumn = false;
 
     const first = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
-    // Money is recorded and the cleanup ran; only the marker could not be written — reported, because nobody else is known to.
-    expect(first.result).toBe("paid");
+    // Money is recorded and the cleanup ran; only the marker could not be written — so the
+    // settlement is not recorded as finished, and the answer is the retryable one (review r7).
+    expect(first.result).toBe("settlement_incomplete");
     expectSettledAndClean();
-    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMock).not.toHaveBeenCalled();
 
     const other = await processStripeEvent(db.client, depositPaid("evt_2"), SINGLE, deps);
     expect(other.result).toBe("processing_failed"); // 500: Stripe delivers it again once 0303 is applied
     expect(ledger("evt_2").outcome).toBe("processing_failed");
+    // …and so is the first event's own redelivery, until then.
+    const redelivery = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(redelivery.result).toBe("processing_failed");
+
+    // 0303 is applied: the next redelivery of evt_1 records the cleanup and reports it, once.
+    db.settlementMarkerColumn = true;
+    const after = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(after.result).toBe("paid");
+    expect(marker(DEPOSIT)).toEqual(expect.any(String));
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(notifyPaid).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -710,5 +767,304 @@ describe("W02 review r5 / r6 — `already_advanced` is only ever said about a fi
     expect(out.result).toBe("already_advanced");
     expect(auditMock).not.toHaveBeenCalled();
     expect(retireSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("W02 review r7 (P1) — an incomplete settlement is retried by the SAME event until its work is done", () => {
+  /**
+   * The reviewer's two reproductions, replayed with the SAME event id — which is what Stripe
+   * sends again after a non-2xx (docs.stripe.com/webhooks, "Automatic retries"). Round r6
+   * answered these `paid_needs_review` (200), stamped that on the ledger, and every replay of
+   * the event was then a `duplicate` before anything read the marker.
+   */
+  const refundSeenFirst = (eventId = "evt_refund") => ({
+    id: eventId,
+    type: "charge.refunded",
+    livemode: false,
+    data: { object: { id: "ch_1", payment_intent: "pi_1", metadata: {}, amount: 20000, amount_refunded: 20000, refunded: true } },
+  });
+  const isRefundWrite = (op: Op) => op.table === "catering_payments" && op.kind === "update" && (op.payload as Row).status === "refunded";
+  const paidFlips = () =>
+    db.ops.filter((o) => o.table === "catering_payments" && o.kind === "update" && (o.payload as Row).status === "paid" && o.matched > 0);
+  /** Fail the next statement `at` matches, once, with a database error (not a death). */
+  const failOnce = (at: (op: Op) => boolean) => {
+    db.beforeOp = (op) => {
+      if (!at(op)) return;
+      db.beforeOp = null;
+      db.failUpdate.push(op.table);
+    };
+  };
+
+  it("the retryable results are exactly the two the route answers 500 to", () => {
+    expect(isRetryableResult("settlement_incomplete")).toBe(true);
+    expect(isRetryableResult("processing_failed")).toBe(true);
+    for (const terminal of ["paid", "paid_needs_review", "already_advanced", "duplicate", "refunded", "payment_not_found", "ignored"] as const) {
+      expect(isRetryableResult(terminal)).toBe(false);
+    }
+    expect(isRetryableLedgerOutcome("settlement_incomplete")).toBe(true);
+    expect(isRetryableLedgerOutcome("paid_needs_review")).toBe(false);
+  });
+
+  it("REPRODUCTION 1 — the checkout cannot be retired for a moment: NOT a terminal verdict; the SAME event, sent again, retires it", async () => {
+    retireSession.mockRejectedValueOnce(new Error("socket hang up"));
+
+    const first = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    // The money is recorded — and the answer is the one the route turns into a 500.
+    expect(first.result).toBe("settlement_incomplete");
+    expect(isRetryableResult(first.result)).toBe(true);
+    expect(row(DEPOSIT)).toMatchObject({ status: "paid", provider_ref: "pi_1" });
+    expect(row(FULL)).toMatchObject({ status: "void", provider_session_id: "cs_full" }); // still attached, still payable
+    expect(marker(DEPOSIT)).toBeNull();
+    expect(ledger("evt_1").outcome).toBe("settlement_incomplete");
+    // A person was told what is open (NEEDS REVIEW is at-least-once).
+    expect(notifyPaid).toHaveBeenCalledTimes(1);
+    expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: ["sibling_checkout_open"] }));
+    expect(retireSession).toHaveBeenCalledTimes(1);
+
+    // Stripe redelivers evt_1. The bug: `duplicate`, one retirement attempt for ever.
+    const again = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(again.result).toBe("paid");
+    expect(retireSession).toHaveBeenCalledTimes(2);
+    expectRecordedAsDone();
+    expect(ledger("evt_1").outcome).toBe("paid");
+    // The paid flip was not repeated: one write ever moved the row to `paid`.
+    expect(paidFlips()).toHaveLength(1);
+    // Now that nothing is open, the ordinary "payment received" goes out — once.
+    expect(notifyPaid).toHaveBeenCalledTimes(2);
+    expect(notifyPaid).toHaveBeenLastCalledWith(expect.objectContaining({ reviewReasons: [] }));
+
+    // Only NOW is the event a duplicate — over a settlement that is finished.
+    const third = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(third.result).toBe("duplicate");
+    expect(notifyPaid).toHaveBeenCalledTimes(2);
+    expect(retireSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("…and it stays retryable for as many deliveries as Stripe is down for: each one answers `settlement_incomplete`, none is a duplicate", async () => {
+    retireSession.mockRejectedValue(new Error("socket hang up"));
+
+    for (let delivery = 1; delivery <= 3; delivery += 1) {
+      const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+      expect(out.result).toBe("settlement_incomplete");
+      expect(retireSession).toHaveBeenCalledTimes(delivery);
+      expect(ledger("evt_1").outcome).toBe("settlement_incomplete");
+      expect(marker(DEPOSIT)).toBeNull();
+    }
+    // The deposit was flipped once; the sibling voided once.
+    expect(paidFlips()).toHaveLength(1);
+    expect(db.ops.filter((o) => isVoidWrite(o as Op) && o.matched > 0)).toHaveLength(1);
+
+    retireSession.mockImplementation(async () => "expired");
+    const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(out.result).toBe("paid");
+    expectRecordedAsDone();
+  });
+
+  it("THE DUPLICATE GATE READS THE MARKER: a ledger row already stamped with a TERMINAL verdict over an unfinished settlement is not a duplicate", async () => {
+    // The state round r6 left behind: the event closed `paid_needs_review`, the marker NULL.
+    retireSession.mockRejectedValueOnce(new Error("socket hang up"));
+    await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    ledger("evt_1").outcome = "paid_needs_review";
+    expect(marker(DEPOSIT)).toBeNull();
+
+    const replay = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(replay.result).toBe("paid"); // the bug: `duplicate`
+    expectRecordedAsDone();
+    // The first terminal verdict stands on the ledger; the ROW is what says it is finished.
+    expect(ledger("evt_1").outcome).toBe("paid_needs_review");
+
+    const after = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(after.result).toBe("duplicate");
+  });
+
+  it("…and while that settlement still cannot finish, the replay answers `settlement_incomplete` again — a terminal stamp is not a way out", async () => {
+    retireSession.mockRejectedValue(new Error("socket hang up"));
+    await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    ledger("evt_1").outcome = "paid_needs_review";
+
+    const replay = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(replay.result).toBe("settlement_incomplete");
+    expect(ledger("evt_1").outcome).toBe("paid_needs_review"); // never rewritten
+    expect(marker(DEPOSIT)).toBeNull();
+  });
+
+  it("a duplicate of a FINISHED payment event costs one read of the row and nothing else", async () => {
+    await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expectRecordedAsDone();
+    const before = db.ops.length;
+    auditMock.mockClear();
+    notifyPaid.mockClear();
+    retireSession.mockClear();
+
+    const dup = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(dup.result).toBe("duplicate");
+    const since = db.ops.slice(before);
+    expect(since.filter((o) => o.kind === "update")).toEqual([]);
+    expect(since.filter((o) => o.table === "catering_payments")).toHaveLength(1);
+    expect(auditMock).not.toHaveBeenCalled();
+    expect(notifyPaid).not.toHaveBeenCalled();
+    expect(retireSession).not.toHaveBeenCalled();
+  });
+
+  it("the gate's own read failing is not `duplicate`: it throws, so the route answers 500 and Stripe asks again", async () => {
+    await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    db.failSelect.push("catering_payments");
+
+    await expect(processStripeEvent(db.client, depositPaid(), SINGLE, deps)).rejects.toThrow(/duplicate gate/);
+  });
+
+  it("REPRODUCTION 2 — a WHOLE-CHARGE refund seen before its payment, whose application fails ONCE: the SAME payment event, sent again, applies it → refunded", async () => {
+    // Stripe delivered the refund first: nothing carries pi_1 yet.
+    const early = await processStripeEvent(db.client, refundSeenFirst(), SINGLE, deps);
+    expect(early.result).toBe("payment_not_found");
+
+    // The payment lands; applying the earlier refund hits one database error.
+    failOnce(isRefundWrite);
+    const first = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(first.result).toBe("settlement_incomplete");
+    expect(row(DEPOSIT)).toMatchObject({ status: "paid", provider_ref: "pi_1" }); // money given back, row still `paid`
+    expect(marker(DEPOSIT)).toBeNull();
+    expect(ledger("evt_refund").outcome).toBe("payment_not_found");
+    expect(ledger("evt_1").outcome).toBe("settlement_incomplete");
+    expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: expect.arrayContaining(["refund_seen_first"]) }));
+
+    // Stripe redelivers evt_1. The bug: `duplicate`, and the refunded charge stays `paid`.
+    const again = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(again.result).toBe("paid_needs_review");
+    expect(row(DEPOSIT).status).toBe("refunded");
+    expect(ledger("evt_refund").outcome).toBe("refunded");
+    expect(ledger("evt_1").outcome).toBe("paid_needs_review");
+    // One refund write ever landed, and one paid flip.
+    expect(db.ops.filter((o) => isRefundWrite(o as Op) && o.matched > 0)).toHaveLength(1);
+    expect(paidFlips()).toHaveLength(1);
+
+    // Both events are finished now, and both replays say so.
+    expect((await processStripeEvent(db.client, depositPaid(), SINGLE, deps)).result).toBe("duplicate");
+    expect((await processStripeEvent(db.client, refundSeenFirst(), SINGLE, deps)).result).toBe("duplicate");
+    expect(row(DEPOSIT).status).toBe("refunded");
+  });
+
+  it("…or the REFUND event is the one sent again (same id): `payment_not_found` is not a duplicate while a paid row carries its charge — it is applied and its verdict corrected", async () => {
+    await processStripeEvent(db.client, refundSeenFirst(), SINGLE, deps);
+    failOnce(isRefundWrite);
+    const first = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(first.result).toBe("settlement_incomplete");
+    expect(row(DEPOSIT).status).toBe("paid");
+
+    const refundReplay = await processStripeEvent(db.client, refundSeenFirst(), SINGLE, deps);
+
+    expect(refundReplay.result).toBe("refunded"); // the bug: `duplicate`
+    expect(row(DEPOSIT).status).toBe("refunded");
+    expect(ledger("evt_refund").outcome).toBe("refunded");
+
+    // The payment event's redelivery finds a refunded row: nothing left to resume.
+    const paymentReplay = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(paymentReplay.result).toBe("already_advanced");
+    expect(ledger("evt_1").outcome).toBe("already_advanced");
+    expect((await processStripeEvent(db.client, refundSeenFirst(), SINGLE, deps)).result).toBe("duplicate");
+  });
+
+  it("a refund event that found no payment, and still has none, stays a duplicate (no write)", async () => {
+    await processStripeEvent(db.client, refundSeenFirst(), SINGLE, deps);
+    const before = db.ops.length;
+
+    const dup = await processStripeEvent(db.client, refundSeenFirst(), SINGLE, deps);
+
+    expect(dup.result).toBe("duplicate");
+    expect(db.ops.slice(before).filter((o) => o.kind === "update")).toEqual([]);
+    expect(ledger("evt_refund").outcome).toBe("payment_not_found");
+  });
+
+  it("the ledger could not be READ for an earlier refund: retryable — and the same event's redelivery looks again and finishes", async () => {
+    let ledgerReads = 0;
+    db.beforeOp = (op) => {
+      // The look for refunds seen first is the settlement's only read of the ledger.
+      if (op.table === "stripe_events" && op.kind === "select" && ++ledgerReads === 1) db.failSelect.push("stripe_events");
+    };
+    const first = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    db.beforeOp = null;
+
+    expect(first.result).toBe("settlement_incomplete");
+    expect(marker(DEPOSIT)).toBeNull();
+    expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: ["refund_check_failed"] }));
+
+    const again = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+    expect(again.result).toBe("paid");
+    expectRecordedAsDone();
+  });
+
+  it("a look that came back FULL is not something a retry can fix: told (`refund_check_failed`), NOT retried, and the settlement is recorded", async () => {
+    // 200 refund events for OTHER charges that never matched a payment.
+    for (let i = 0; i < 200; i += 1) {
+      db.tables.stripe_events!.push({
+        id: `evt_other_${i}`,
+        type: "charge.refunded",
+        outcome: "payment_not_found",
+        payload: {
+          id: `evt_other_${i}`,
+          type: "charge.refunded",
+          data: { object: { id: `ch_o${i}`, payment_intent: `pi_other_${i}`, amount: 100, amount_refunded: 100, refunded: true } },
+        },
+      });
+    }
+
+    const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(out.result).toBe("paid_needs_review");
+    expect(isRetryableResult(out.result)).toBe(false);
+    expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: ["refund_check_failed"] }));
+    expectRecordedAsDone();
+    expect((await processStripeEvent(db.client, depositPaid(), SINGLE, deps)).result).toBe("duplicate");
+  });
+
+  it("a marker write that FAILED: `settlement_incomplete`, nobody told yet — the same event's redelivery records it and tells them exactly once", async () => {
+    failOnce(isMarkerWrite);
+
+    const first = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(first.result).toBe("settlement_incomplete");
+    expectSettledAndClean(); // the work itself was done
+    expect(marker(DEPOSIT)).toBeNull();
+    expect(auditMock).not.toHaveBeenCalled();
+    expect(notifyPaid).not.toHaveBeenCalled();
+
+    const again = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(again.result).toBe("paid");
+    expect(marker(DEPOSIT)).toEqual(expect.any(String));
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(notifyPaid).toHaveBeenCalledTimes(1);
+    expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: [] }));
+  });
+
+  it("a card charge on a row SETTLED BY HAND whose checkouts cannot be closed yet: retryable too — the same event closes them when Stripe answers", async () => {
+    // The deposit was marked paid by hand and that request died before its cleanup: the
+    // hosted pages stayed payable, and the customer has just paid the deposit page.
+    Object.assign(row(DEPOSIT), { status: "paid", provider: "manual", provider_ref: null, paid_at: "2030-01-01T00:00:00.000Z" });
+    retireSession.mockRejectedValueOnce(new Error("socket hang up"));
+
+    const first = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(first.result).toBe("settlement_incomplete");
+    expect(row(FULL).provider_session_id).toBe("cs_full");
+    expect(marker(DEPOSIT)).toBeNull();
+    expect(notifyPaid).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewReasons: expect.arrayContaining(["already_settled", "sibling_checkout_open"]) }),
+    );
+
+    const again = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(again.result).toBe("paid_needs_review"); // the second charge still needs a person
+    expect(row(FULL).provider_session_id).toBeNull();
+    expect(marker(DEPOSIT)).toEqual(expect.any(String));
+    expect(row(DEPOSIT)).toMatchObject({ status: "paid", provider: "manual", provider_ref: null }); // never re-written
+    expect((await processStripeEvent(db.client, depositPaid(), SINGLE, deps)).result).toBe("duplicate");
   });
 });

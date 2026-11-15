@@ -19,10 +19,13 @@
  *   - 200 on a recorded, FINISHED outcome — a provider reads non-2xx as "retry", and there
  *     is nothing to retry about an event we understood.
  *   - 500 when the ledger append (or the read of a previously-seen event's verdict) fails,
- *     AND when processing failed below the ledger (`processing_failed`). Those are exactly
- *     the cases where we DO want the retry: the ledger treats an unfinished event as
- *     retryable, so the redelivery completes the work instead of answering "duplicate"
- *     (audit W02/B005 — a card payment taken must not stay `due` because one write hiccuped).
+ *     when processing failed below the ledger (`processing_failed`), AND when a payment was
+ *     recorded but its required follow-up work is unfinished (`settlement_incomplete`, review
+ *     r7). Those are exactly the cases where we DO want the retry: the ledger treats an
+ *     unfinished event as retryable, so the redelivery completes the work instead of
+ *     answering "duplicate" (audit W02/B005 — a card payment taken must not stay `due`
+ *     because one write hiccuped; and a checkout that could not be closed for a moment must
+ *     not stay payable for good).
  *
  * ONE DELIBERATE DIFFERENCE from ezCater: an unknown/inactive `locationCode` is a 404, not
  * a 503. 503 means "this leg is asleep"; a URL naming a shop that does not exist is a
@@ -37,7 +40,7 @@ import { checkAndRecord } from "@/lib/portal/rate-limit";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { stripeCredentialsFor } from "@/lib/stripe/client";
 import { verifyStripeSignature } from "@/lib/stripe/shared";
-import { processStripeEvent, resolveWebhookLocation } from "@/lib/stripe/webhook";
+import { isRetryableResult, processStripeEvent, resolveWebhookLocation } from "@/lib/stripe/webhook";
 
 export async function handleStripeWebhook(req: NextRequest, locationCode: string | null) {
   // Unauthenticated surface: throttle before any DB read or write. 120/min/IP is far above
@@ -84,8 +87,13 @@ export async function handleStripeWebhook(req: NextRequest, locationCode: string
       locationCode: resolvedCode,
     });
     if (result === "invalid_payload") return jsonError(400, "invalid_payload");
-    // Recorded on the ledger as failed, and retryable there: non-2xx so Stripe redelivers.
-    if (result === "processing_failed") return jsonError(500, "processing_failed");
+    // Recorded on the ledger as unfinished, and retryable there: non-2xx so Stripe sends the
+    // SAME event again. `processing_failed` = something below the ledger threw.
+    // `settlement_incomplete` (audit W02 review r7) = the money IS recorded, but the work
+    // that has to follow it (closing the order's other checkouts, applying a refund Stripe
+    // reported first, recording the cleanup as done) is not finished — a 200 here would be
+    // the last time anything looked.
+    if (isRetryableResult(result)) return jsonError(500, result);
     return jsonOk({ result });
   } catch (e) {
     console.error("[/api/webhooks/stripe] ledger failed:", e instanceof Error ? e.message : e);

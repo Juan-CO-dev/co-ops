@@ -300,13 +300,25 @@ describe("W02/B035 — nothing after the flip may throw", () => {
 
     const out = await processStripeEvent(db.client, completed(DEPOSIT), SINGLE, deps);
 
+    client.from = realFrom;
+
     expect(paymentReads).toBe(1);
-    expect(out.result).toBe("paid_needs_review");
+    // Nothing threw, the money is recorded and a person was told — and the settlement is NOT
+    // finished (review r7): the order's other payments were never looked at, so the answer is
+    // the retryable one. (Not `processing_failed` either: nothing failed below the ledger.)
+    expect(out.result).toBe("settlement_incomplete");
     expect(row(DEPOSIT).status).toBe("paid");
     expect(lastAuditMeta().needs_review).toEqual(["sibling_check_failed"]);
     expect(notifyPaid).toHaveBeenCalledTimes(1);
-    // NOT `processing_failed`: a retry would find the row paid and tell nobody.
-    expect(ledger("evt_1").outcome).toBe("paid_needs_review");
+    expect(ledger("evt_1").outcome).toBe("settlement_incomplete");
+
+    // The SAME event, redelivered, finds the row paid with its cleanup unrecorded, reads the
+    // order this time, and finishes: an ordinary payment, reported once more as such.
+    const again = await processStripeEvent(db.client, completed(DEPOSIT), SINGLE, deps);
+    expect(again.result).toBe("paid");
+    expect(ledger("evt_1").outcome).toBe("paid");
+    expect(row(DEPOSIT).settlement_cleanup_at).toEqual(expect.any(String));
+    expect(notifyPaid).toHaveBeenCalledTimes(2);
   });
 });
 
