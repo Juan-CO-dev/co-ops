@@ -1,6 +1,6 @@
 /**
- * Stripe REST client — SERVER-ONLY, no SDK. Two calls: create a Checkout Session, and
- * retire one (`retireCheckoutSession`, audit W02/B035).
+ * Stripe REST client — SERVER-ONLY, no SDK. Three calls: create a Checkout Session, retire
+ * one (`retireCheckoutSession`, audit W02/B035) and read one (`retrieveCheckoutSession`).
  *
  * package.json carries no `stripe` package and this file is why that is fine: the request
  * is a form POST with a bearer token, exactly the shape lib/receipt-parse.ts uses for the
@@ -149,11 +149,15 @@ export interface CreateCheckoutSessionResult {
 /**
  * Create a hosted Checkout Session.
  *
- * `idempotencyKey` makes a double-tap (or a Vercel retry) return the SAME session instead
- * of a second one: Stripe replays the original response for 24 hours. The caller keys it
- * on the `catering_payments` row id PLUS the amount — the id alone would make a legitimately
- * re-priced intent collide with its own earlier session and 400, and the amount is the one
- * field of the request that can honestly change for a given payment row.
+ * `idempotencyKey` protects ONE HTTP REQUEST: if the transport retries it, Stripe replays
+ * the original response instead of minting twice. It must NOT be used to mean "the same
+ * checkout attempt" (audit W02/B035, review r1). Stripe replays a key's ORIGINAL response
+ * for 24 hours — whatever has happened to the session since — and refuses a key re-used
+ * with different parameters (docs.stripe.com/api/idempotent_requests). A key derived from
+ * the payment row therefore handed customers a session we had already retired, and 400'd
+ * a revised quote for a day. The caller passes a key no request has used before
+ * (`<payment id>:<uuid>`) and decides "same attempt" itself, from the row's stored session
+ * (`retrieveCheckoutSession`, lib/portal/quotes.ts `createQuoteCheckout`).
  *
  * Throws StripeError on any non-2xx, carrying Stripe's own `error.message` (which describes
  * the request, never the credential) so the route can log something actionable without
@@ -207,7 +211,7 @@ export async function createCheckoutSession(
   return { id, url };
 }
 
-// ── Retiring a Checkout Session (audit W02/B035) ────────────────────────────────────
+// ── Retiring and reading a Checkout Session (audit W02/B035) ────────────────────────
 
 /** A session nobody can pay any more, or one whose payment is already under way. */
 export type RetiredCheckoutSession = "expired" | "complete";
@@ -296,4 +300,56 @@ export async function retireCheckoutSession(secretKey: string, sessionId: string
   if (status === "expired") return "expired";
   if (status === "complete") return "complete";
   throw new StripeError(409, "session_still_open", "The Checkout Session could not be expired and is not complete");
+}
+
+/** What a Checkout Session is right now, as far as a payment decision needs to know. */
+export interface CheckoutSessionState {
+  /** `gone` = this account has never heard of the id (404): nobody can pay it here. */
+  status: "open" | "complete" | "expired" | "gone";
+  /** The hosted Checkout URL. Stripe only returns one while the session is `open`. */
+  url: string | null;
+  /** `amount_total`, integer cents. */
+  amountTotal: number | null;
+  /** `metadata.quote_id` / `metadata.payment_id` exactly as we wrote them at creation. */
+  quoteId: string | null;
+  paymentId: string | null;
+}
+
+/**
+ * Read a Checkout Session we created (review r1 of audit W02/B035).
+ *
+ * WHY THIS EXISTS. "Is this tap the same checkout attempt?" used to be answered by an
+ * idempotency key, which cannot answer it (see `createCheckoutSession`). The row's stored
+ * session id can: the caller reads the session and hands the SAME checkout back only while
+ * it is still open for this quote, this intent and this amount. The metadata compared is
+ * our own, written by `checkoutSessionParams`; a session whose metadata does not match is
+ * simply not reused.
+ *
+ * THROWS StripeError on a transport failure, any non-404 refusal, or a status this code
+ * does not know. The caller fails closed: its next step is to mint a way to pay.
+ */
+export async function retrieveCheckoutSession(secretKey: string, sessionId: string): Promise<CheckoutSessionState> {
+  if (!secretKey) throw new StripeError(500, "not_configured", "Stripe secret key is not set");
+  // A stored id that is not a session id names nothing Stripe could let anyone pay.
+  if (!CHECKOUT_SESSION_ID_RE.test(sessionId)) {
+    return { status: "gone", url: null, amountTotal: null, quoteId: null, paymentId: null };
+  }
+  const read = await stripeSessionCall(secretKey, "GET", `${CHECKOUT_SESSIONS_URL}/${sessionId}`);
+  if (read.status === 404) return { status: "gone", url: null, amountTotal: null, quoteId: null, paymentId: null };
+  if (!read.ok) throw stripeErrorFrom(read.status, read.json);
+
+  const status = read.json?.status;
+  if (status !== "open" && status !== "complete" && status !== "expired") {
+    throw new StripeError(502, "bad_payload", "Stripe returned a Checkout Session with no usable status");
+  }
+  const metadata = (read.json?.metadata ?? null) as Record<string, unknown> | null;
+  const text = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+  const amount = read.json?.amount_total;
+  return {
+    status,
+    url: status === "open" ? text(read.json?.url) : null,
+    amountTotal: typeof amount === "number" && Number.isInteger(amount) ? amount : null,
+    quoteId: text(metadata?.quote_id),
+    paymentId: text(metadata?.payment_id),
+  };
 }

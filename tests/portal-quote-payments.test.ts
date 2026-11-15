@@ -23,10 +23,18 @@ vi.mock("@/lib/stripe/client", async (importOriginal) => {
     stripeCredentialsFor: vi.fn(),
     createCheckoutSession: vi.fn(),
     retireCheckoutSession: vi.fn(),
+    retrieveCheckoutSession: vi.fn(),
   };
 });
 
-import { createCheckoutSession, retireCheckoutSession, stripeCredentialsFor, StripeError } from "@/lib/stripe/client";
+import {
+  createCheckoutSession,
+  retireCheckoutSession,
+  retrieveCheckoutSession,
+  stripeCredentialsFor,
+  StripeError,
+  type CheckoutSessionState,
+} from "@/lib/stripe/client";
 import {
   createQuoteCheckout,
   initiatePayment,
@@ -37,6 +45,17 @@ import {
 const credsMock = vi.mocked(stripeCredentialsFor);
 const createSessionMock = vi.mocked(createCheckoutSession);
 const retireMock = vi.mocked(retireCheckoutSession);
+const retrieveMock = vi.mocked(retrieveCheckoutSession);
+
+/** What Stripe says a stored session is. Default: open, for this quote / intent / amount. */
+const sessionState = (over: Partial<CheckoutSessionState> = {}): CheckoutSessionState => ({
+  status: "open",
+  url: "https://checkout.stripe.test/cs_stored",
+  amountTotal: 20000,
+  quoteId: QUOTE,
+  paymentId: PAYMENT,
+  ...over,
+});
 
 const CUSTOMER = "c0000000-0000-4000-8000-000000000001";
 const QUOTE = "a0000000-0000-4000-8000-000000000001";
@@ -116,6 +135,9 @@ beforeEach(() => {
   createSessionMock.mockResolvedValue({ id: "cs_new", url: "https://checkout.stripe.test/cs_new" });
   retireMock.mockReset();
   retireMock.mockResolvedValue("expired");
+  retrieveMock.mockReset();
+  // A stored session nobody described is one Stripe has never heard of.
+  retrieveMock.mockResolvedValue(sessionState({ status: "gone", url: null, amountTotal: null, quoteId: null, paymentId: null }));
   twoAccounts();
   db = paymentsFake({
     catering_quotes: [quoteRow()],
@@ -362,34 +384,114 @@ describe("W02/B035 — one open checkout per quote", () => {
     expect(byId(PAYMENT).provider_session_id).toBe("cs_dep");
   });
 
-  it("a RE-PRICED intent retires its own earlier session (the one at the old amount)", async () => {
+  // The intent's OWN stored session (review r1): tests/portal-checkout-attempts.test.ts runs
+  // these against a stateful Stripe; here each branch is pinned on its own.
+  it("a stored session at ANOTHER amount is retired BEFORE a new one is minted, and replaced", async () => {
     db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_old" }));
-
-    await createQuoteCheckout(checkoutInput());
-
-    expect(retireMock).toHaveBeenCalledWith("sk_shop", "cs_old");
-    expect(byId(PAYMENT).provider_session_id).toBe("cs_new");
-  });
-
-  it("the SAME session coming back (an idempotent replay) is not retired from under the customer", async () => {
-    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_new" }));
+    retrieveMock.mockResolvedValue(sessionState({ amountTotal: 15000 }));
+    const order: string[] = [];
+    retireMock.mockImplementation(async (_key, id) => {
+      order.push(`retire:${id}`);
+      return "expired";
+    });
+    createSessionMock.mockImplementation(async () => {
+      order.push(`mint@${String(byId(PAYMENT).provider_session_id)}`);
+      return { id: "cs_new", url: "https://checkout.stripe.test/cs_new" };
+    });
 
     const out = await createQuoteCheckout(checkoutInput());
 
+    expect(retrieveMock).toHaveBeenCalledWith("sk_shop", "cs_old");
+    // Retired, and its id cleared, before the new session exists.
+    expect(order).toEqual(["retire:cs_old", "mint@null"]);
     expect(out.url).toBe("https://checkout.stripe.test/cs_new");
-    expect(retireMock).not.toHaveBeenCalled();
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_new");
   });
 
-  it("if the intent's own earlier session is COMPLETE, the new one is abandoned and nothing is offered", async () => {
+  it("a stored session for ANOTHER quote (a revise) or another intent is not reused either", async () => {
+    for (const stale of [sessionState({ quoteId: "a0000000-0000-4000-8000-0000000000aa" }), sessionState({ paymentId: "d0000000-0000-4000-8000-0000000000aa" })]) {
+      db.tables.catering_payments = [dueRow({ provider: "stripe", provider_session_id: "cs_old" })];
+      retrieveMock.mockResolvedValue(stale);
+      retireMock.mockClear();
+
+      const out = await createQuoteCheckout(checkoutInput());
+
+      expect(retireMock).toHaveBeenCalledWith("sk_shop", "cs_old");
+      expect(out.url).toBe("https://checkout.stripe.test/cs_new");
+    }
+  });
+
+  it("the SAME attempt — still open, this quote, this intent, this amount — is handed back; nothing is minted or retired", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_stored" }));
+    retrieveMock.mockResolvedValue(sessionState());
+
+    const out = await createQuoteCheckout(checkoutInput());
+
+    expect(out.url).toBe("https://checkout.stripe.test/cs_stored");
+    expect(createSessionMock).not.toHaveBeenCalled();
+    expect(retireMock).not.toHaveBeenCalled();
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_stored");
+  });
+
+  it("a stored session that already lapsed is cleared without an expire call, then replaced", async () => {
     db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_old" }));
-    retireMock.mockImplementation(async (_key, id) => (id === "cs_old" ? "complete" : "expired"));
+    retrieveMock.mockResolvedValue(sessionState({ status: "expired", url: null }));
+
+    await createQuoteCheckout(checkoutInput());
+
+    expect(retireMock).not.toHaveBeenCalled();
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_new");
+  });
+
+  it("if the intent's own stored session is COMPLETE, nothing is minted and nothing is offered", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_old" }));
+    retrieveMock.mockResolvedValue(sessionState({ status: "complete", url: null }));
 
     const err = await refusal(createQuoteCheckout(checkoutInput()));
 
     expect(err.code).toBe("payment_in_progress");
-    // The session we just minted is closed again, and the row still names the one being paid.
-    expect(retireMock).toHaveBeenCalledWith("sk_shop", "cs_new");
+    expect(createSessionMock).not.toHaveBeenCalled();
+    // The row still names the session being paid, so the webhook's fallback lookup finds it.
     expect(byId(PAYMENT).provider_session_id).toBe("cs_old");
+  });
+
+  it("…also when it completes between the read and the expire call", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_old" }));
+    retrieveMock.mockResolvedValue(sessionState({ amountTotal: 15000 }));
+    retireMock.mockResolvedValue("complete");
+
+    const err = await refusal(createQuoteCheckout(checkoutInput()));
+
+    expect(err.code).toBe("payment_in_progress");
+    expect(createSessionMock).not.toHaveBeenCalled();
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_old");
+  });
+
+  it("if the stored session cannot be read or cannot be retired, it FAILS CLOSED: 502, nothing minted, row untouched", async () => {
+    db.tables.catering_payments!.push(dueRow({ provider: "stripe", provider_session_id: "cs_old" }));
+    retrieveMock.mockRejectedValueOnce(new StripeError(502, "network_error", "socket hang up"));
+    expect((await refusal(createQuoteCheckout(checkoutInput()))).code).toBe("provider_error");
+
+    retrieveMock.mockResolvedValue(sessionState({ amountTotal: 15000 }));
+    retireMock.mockRejectedValue(new StripeError(502, "network_error", "socket hang up"));
+    const err = await refusal(createQuoteCheckout(checkoutInput()));
+
+    expect(err.status).toBe(502);
+    expect(err.code).toBe("provider_error");
+    expect(createSessionMock).not.toHaveBeenCalled();
+    expect(byId(PAYMENT).provider_session_id).toBe("cs_old");
+  });
+
+  it("every mint carries a key no earlier mint used, prefixed with the intent it is for", async () => {
+    db.tables.catering_payments!.push(dueRow());
+    await createQuoteCheckout(checkoutInput());
+    byId(PAYMENT).provider_session_id = null; // (retired elsewhere)
+    await createQuoteCheckout(checkoutInput());
+
+    const keys = createSessionMock.mock.calls.map((c) => c[2]);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+    for (const k of keys) expect(k).toMatch(new RegExp(`^${PAYMENT}:[0-9a-f-]{36}$`));
   });
 
   it("a quote with no other open checkout is untouched by any of this", async () => {

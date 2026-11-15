@@ -17,7 +17,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { retireCheckoutSession, StripeError } from "@/lib/stripe/client";
+import { createCheckoutSession, retireCheckoutSession, retrieveCheckoutSession, StripeError } from "@/lib/stripe/client";
 
 const fetchMock = vi.fn();
 
@@ -109,5 +109,90 @@ describe("W02/B035 — retireCheckoutSession", () => {
     const err: unknown = await retireCheckoutSession("sk_test_fake", "cs_test_1").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StripeError);
     expect(String((err as StripeError).message)).not.toContain("sk_test_fake");
+  });
+});
+
+describe("W02/B035 review r1 — retrieveCheckoutSession", () => {
+  const OPEN = {
+    id: "cs_test_1",
+    status: "open",
+    url: "https://checkout.stripe.com/c/pay/cs_test_1",
+    amount_total: 20000,
+    metadata: { quote_id: "q-1", payment_id: "p-1", kind: "deposit" },
+  };
+
+  it("GETs the session with the shop's key and reports what a payment decision needs", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, OPEN));
+
+    expect(await retrieveCheckoutSession("sk_test_fake", "cs_test_1")).toEqual({
+      status: "open",
+      url: "https://checkout.stripe.com/c/pay/cs_test_1",
+      amountTotal: 20000,
+      quoteId: "q-1",
+      paymentId: "p-1",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://api.stripe.com/v1/checkout/sessions/cs_test_1");
+    expect(init.method).toBe("GET");
+    expect(init.headers.Authorization).toBe("Bearer sk_test_fake");
+  });
+
+  it("a session that is not open has no URL to send anyone to, whatever the payload carries", async () => {
+    for (const status of ["complete", "expired"]) {
+      fetchMock.mockResolvedValueOnce(reply(200, { ...OPEN, status }));
+      expect(await retrieveCheckoutSession("sk_test_fake", "cs_test_1")).toMatchObject({ status, url: null });
+    }
+  });
+
+  it("a session this account has never heard of (404) is `gone`", async () => {
+    fetchMock.mockResolvedValueOnce(reply(404, { error: { type: "invalid_request_error", code: "resource_missing", message: "No such checkout.session" } }));
+    expect(await retrieveCheckoutSession("sk_test_fake", "cs_test_1")).toEqual({ status: "gone", url: null, amountTotal: null, quoteId: null, paymentId: null });
+  });
+
+  it("a stored value that could not be a session id is `gone`, without calling Stripe", async () => {
+    expect((await retrieveCheckoutSession("sk_test_fake", "cs_test_1/../../v1/refunds")).status).toBe("gone");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("anything it cannot read THROWS — a 5xx, an auth failure, a transport failure, an unknown status", async () => {
+    fetchMock.mockResolvedValueOnce(reply(500, { error: { type: "api_error", message: "boom" } }));
+    await expect(retrieveCheckoutSession("sk_test_fake", "cs_test_1")).rejects.toBeInstanceOf(StripeError);
+    fetchMock.mockResolvedValueOnce(reply(401, { error: { type: "invalid_request_error", message: "Invalid API Key provided" } }));
+    await expect(retrieveCheckoutSession("sk_test_fake", "cs_test_1")).rejects.toBeInstanceOf(StripeError);
+    fetchMock.mockRejectedValueOnce(new Error("socket hang up"));
+    await expect(retrieveCheckoutSession("sk_test_fake", "cs_test_1")).rejects.toMatchObject({ code: "network_error" });
+    fetchMock.mockResolvedValueOnce(reply(200, { ...OPEN, status: "something_new" }));
+    await expect(retrieveCheckoutSession("sk_test_fake", "cs_test_1")).rejects.toMatchObject({ code: "bad_payload" });
+  });
+
+  it("metadata that is missing or not text reads as null — such a session is simply never reused", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, { ...OPEN, metadata: { quote_id: 7 }, amount_total: "20000" }));
+    expect(await retrieveCheckoutSession("sk_test_fake", "cs_test_1")).toMatchObject({ quoteId: null, paymentId: null, amountTotal: null });
+  });
+});
+
+describe("W02/B035 review r1 — createCheckoutSession sends the caller's idempotency key verbatim", () => {
+  it("the key is the caller's alone: this client neither derives nor rewrites it", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, { id: "cs_test_9", url: "https://checkout.stripe.com/c/pay/cs_test_9" }));
+
+    await createCheckoutSession(
+      "sk_test_fake",
+      {
+        quoteId: "q-1",
+        paymentId: "p-1",
+        kind: "deposit",
+        amountCents: 20000,
+        currency: "usd",
+        productName: "Deposit",
+        description: "Deposit",
+        customerEmail: "customer@example.com",
+        successUrl: "https://portal.example.com/ok",
+        cancelUrl: "https://portal.example.com/cancel",
+      },
+      "p-1:11111111-1111-4111-8111-111111111111",
+    );
+
+    expect(fetchMock.mock.calls[0]![1].headers["Idempotency-Key"]).toBe("p-1:11111111-1111-4111-8111-111111111111");
   });
 });

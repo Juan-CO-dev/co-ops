@@ -26,6 +26,8 @@
  * pure `paymentPlan` allows — the same authority the staff path answers to.
  */
 
+import { randomUUID } from "node:crypto";
+
 import { portalOrigin } from "@/lib/portal/origin-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
@@ -34,8 +36,10 @@ import { paymentPlan } from "@/lib/catering/payment-plan";
 import {
   createCheckoutSession,
   retireCheckoutSession,
+  retrieveCheckoutSession,
   stripeCredentialsFor,
   StripeError,
+  type CheckoutSessionState,
 } from "@/lib/stripe/client";
 import { TENANT_NAME } from "@/lib/tenant";
 import type { Quote, QuoteItem, QuoteDetail } from "@/lib/catering/quotes";
@@ -557,38 +561,82 @@ export interface QuoteCheckout {
 }
 
 /**
- * Mint a hosted Stripe Checkout Session for an intent `initiatePayment` just guaranteed.
+ * What a row's stored Checkout Session is RIGHT NOW, or refuse. Fails CLOSED like
+ * `retireOrRefuse`: if Stripe cannot be asked, nothing new is offered (502).
+ */
+async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<CheckoutSessionState> {
+  try {
+    return await retrieveCheckoutSession(secretKey, sessionId);
+  } catch (e) {
+    if (e instanceof StripeError) {
+      console.error(`[stripe] could not read a checkout session (${e.status}/${e.code}):`, e.message);
+      throw new PortalQuoteError(502, "provider_error", "Payment provider is unavailable");
+    }
+    throw e;
+  }
+}
+
+/**
+ * Mint a hosted Stripe Checkout Session for an intent `initiatePayment` just guaranteed —
+ * or hand back the one this attempt already has.
  *
  * ── ORDER OF OPERATIONS, AND WHY ─────────────────────────────────────────────────────
  *   1. re-load + re-own the quote (a second request is a second authorization),
  *   2. resolve the shop's credentials (no keys ⇒ 409 `not_configured`; the route should
  *      never have got here, and guessing a different account's keys is not a fallback),
- *   3. create the session at Stripe,
- *   4. GUARDED UPDATE of the still-`due` row with `provider='stripe'` + the session id.
+ *   3. retire every OTHER open session of the quote,
+ *   4. settle the intent's OWN stored session: hand it back, or close it for good,
+ *   5. create a session at Stripe under a key no request has used before,
+ *   6. COMPARE-AND-SET the still-`due`, session-less row to `provider='stripe'` + the id.
  *
  * ── ONE OPEN CHECKOUT PER QUOTE (audit W02/B035) ─────────────────────────────────────
  * A staff quote far enough out offers two ways to pay — a deposit, or the full amount —
  * and each `catering_payments` row gets its own hosted session. Nothing closed the first
  * when the customer opened the second, so BOTH stayed payable for a day and both charges
- * were accepted: a deposit and the full total for one order. So between steps 2 and 3
- * every OTHER open session on this quote's `due` rows is retired at Stripe
- * (`retireCheckoutSession`) and its id cleared from its row; and after step 3, if this row
- * already pointed at a DIFFERENT session (the intent was re-priced, so the idempotency key
- * moved and Stripe minted a new one), the earlier one is retired too. Both fail CLOSED:
- * a session we cannot retire is a 502 and nothing new is offered; a session that turns out
- * to be already `complete` is a 409 `payment_in_progress`, because that customer's money is
- * landing and the only honest next screen is "your payment is being processed".
+ * were accepted: a deposit and the full total for one order. So in step 3 every OTHER open
+ * session on this quote's `due` rows is retired at Stripe (`retireCheckoutSession`) and
+ * its id cleared from its row. It fails CLOSED: a session we cannot retire is a 502 and
+ * nothing new is offered; a session that turns out to be already `complete` is a 409
+ * `payment_in_progress`, because that customer's money is landing and the only honest next
+ * screen is "your payment is being processed".
  * Migration 0303's partial unique index (`catering_payments_one_open_checkout`) makes the
  * same rule a database fact for the one case code cannot close — two requests racing — and
- * step 4 reads its 23505 as exactly that. Everything here works before 0303 is applied;
+ * step 6 reads its 23505 as exactly that. Everything here works before 0303 is applied;
  * the index only narrows the race.
  *
- * Step 4 runs AFTER step 3 on purpose: a session is not a charge, so a session we then
+ * ── A CHECKOUT ATTEMPT IS ONE SESSION, AND A RETIRED ONE NEVER COMES BACK (review r1) ─
+ * The first cut keyed Stripe's idempotency on `<payment id>:<amount>` and let Stripe decide
+ * whether a tap was "the same attempt". Stripe's contract (docs.stripe.com/api/
+ * idempotent_requests) makes that wrong twice over: a key replays the ORIGINAL response
+ * for 24 hours — whatever has happened to the session since — and a key re-used with other
+ * parameters is an error. So deposit → full → deposit handed the customer the deposit
+ * session we had just retired (a dead link), and a revise that kept the amount moved the
+ * row to a new quote id under the same key (a 400 for a day).
+ *
+ * The attempt is therefore OURS to identify, and the row already does: its stored
+ * `provider_session_id` IS the attempt. Step 4 asks Stripe what that session is now:
+ *   · `open`, for THIS quote, THIS intent and THIS amount → the same checkout is handed
+ *     back and nothing is minted. That is idempotency within an attempt, decided on facts
+ *     (a second tap, a second tab) instead of on a key Stripe forgets after a day.
+ *   · `complete` → 409 `payment_in_progress`: the money is landing.
+ *   · anything else — lapsed, gone, another amount, another quote (a revise whose carry
+ *     could not retire it) — is not this attempt. It is retired if it is still open (fail
+ *     closed) and its id cleared, guarded on that exact id.
+ * Step 5 then mints under a FRESH key every time (`<payment id>:<uuid>`): a session we
+ * retired, abandoned or never recorded can never be replayed to a customer, and no two
+ * mints can collide on parameters. The key still protects what it is for — one HTTP
+ * request retried at the transport layer — and nothing else leans on it.
+ *
+ * Two requests that both reach step 5 each mint their own session; step 6 is what picks
+ * ONE. The write is guarded on `status = 'due'` AND `provider_session_id IS NULL` — the
+ * state step 4 left — so the second writer matches nothing, closes the session it minted
+ * (best-effort) and answers 409 `payment_in_progress`; a row a webhook advanced to `paid`
+ * in the meantime answers 409 `not_due`. Either way the customer is never handed a second
+ * checkout for money that is already on its way.
+ *
+ * Step 6 runs AFTER step 5 on purpose: a session is not a charge, so a session we then
  * fail to record costs nothing but an unused Stripe object, whereas recording a session id
- * we failed to create would leave the webhook's fallback lookup pointing at nothing. And
- * the update is guarded on `status='due'` so a row a webhook advanced to `paid` in the
- * meantime REFUSES — count 0 ⇒ 409, and the customer is told the payment already landed
- * instead of being handed a second checkout for money they have already sent.
+ * we failed to create would leave the webhook's fallback lookup pointing at nothing.
  *
  * The audit row carries ids and the amount and NOTHING ELSE: no URLs (the success/cancel
  * links are ours but the Checkout URL is a live payment surface), no email, no card data.
@@ -656,6 +704,38 @@ export async function createQuoteCheckout(input: {
     retiredSessions += 1;
   }
 
+  // THE INTENT'S OWN STORED SESSION (see the header): the same attempt, or not ours to reuse.
+  const stored = payRow.provider_session_id;
+  if (stored) {
+    const state = await inspectOrRefuse(creds.secretKey, stored);
+    if (state.status === "complete") {
+      throw new PortalQuoteError(409, "payment_in_progress", "A payment for this order is already in progress");
+    }
+    const sameAttempt =
+      state.status === "open" &&
+      state.url != null &&
+      state.amountTotal === input.amountCents &&
+      state.quoteId === input.quoteId &&
+      state.paymentId === input.paymentId;
+    if (sameAttempt) return { url: state.url as string };
+
+    // Not this attempt. Close it for good before anything new exists (an open one may
+    // still be paid; `retireOrRefuse` also catches one completed since the read above).
+    if (state.status === "open") await retireOrRefuse(creds.secretKey, stored);
+    const { error: clearErr, count: cleared } = await sb
+      .from("catering_payments")
+      .update({ provider_session_id: null }, { count: "exact" })
+      .eq("id", input.paymentId)
+      .eq("status", "due")
+      .eq("provider_session_id", stored);
+    if (clearErr) throw new Error(`createQuoteCheckout clear own session: ${clearErr.message}`);
+    // Zero rows: the row moved under us (paid, or another request replaced the session).
+    if ((cleared ?? 0) === 0) {
+      throw new PortalQuoteError(409, "payment_in_progress", "A payment for this order is already in progress");
+    }
+    retiredSessions += 1;
+  }
+
   const origin = portalOrigin({ ...process.env, NEXT_PUBLIC_APP_URL: input.appOrigin })!.replace(/\/$/, "");
   const label = input.kind === "deposit" ? "Catering deposit" : "Catering order";
   const dateLabel = quote.eventDate ?? "date to be confirmed";
@@ -677,10 +757,9 @@ export async function createQuoteCheckout(input: {
         successUrl: `${origin}/order/quote/${input.quoteId}?checkout=success`,
         cancelUrl: `${origin}/order/quote/${input.quoteId}?checkout=cancel`,
       },
-      // Keyed on the row AND the amount: the row id alone would make a re-priced intent
-      // collide with its own earlier session (Stripe 400s a key replayed with different
-      // params), and the amount is the only field of this request that can honestly move.
-      `${input.paymentId}:${input.amountCents}`,
+      // A FRESH KEY PER MINT (see the header). The payment id is a prefix only so the
+      // request is findable in Stripe's logs; the uuid is what makes it this mint's alone.
+      `${input.paymentId}:${randomUUID()}`,
     );
   } catch (e) {
     if (e instanceof StripeError) {
@@ -691,26 +770,13 @@ export async function createQuoteCheckout(input: {
     throw e;
   }
 
-  // This row already pointed at a DIFFERENT session: the intent was re-priced (or its
-  // idempotency window lapsed), so the earlier session — at the earlier amount — may still
-  // be open. Retire it before the new URL leaves the building. If that cannot be done, the
-  // session minted a moment ago is closed again (best-effort) so it is not left payable
-  // with no row pointing at it.
-  if (payRow.provider_session_id && payRow.provider_session_id !== session.id) {
-    try {
-      await retireOrRefuse(creds.secretKey, payRow.provider_session_id);
-    } catch (e) {
-      await abandonSession(creds.secretKey, session.id);
-      throw e;
-    }
-    retiredSessions += 1;
-  }
-
+  // COMPARE-AND-SET: only the still-due row that still holds NO session takes this one.
   const { error: updErr, count } = await sb
     .from("catering_payments")
     .update({ provider: "stripe", provider_session_id: session.id }, { count: "exact" })
     .eq("id", input.paymentId)
-    .eq("status", "due");
+    .eq("status", "due")
+    .is("provider_session_id", null);
   if (updErr) {
     await abandonSession(creds.secretKey, session.id);
     // 0303's `catering_payments_one_open_checkout`: another request attached a session to
@@ -722,8 +788,17 @@ export async function createQuoteCheckout(input: {
   }
   if (count === 0) {
     await abandonSession(creds.secretKey, session.id);
-    // Advanced between the read and the write — the money already landed. Refuse the
-    // redirect rather than invite a second payment.
+    // Lost the compare-and-set. Either the money already landed (the row is no longer due)
+    // or another request recorded its own checkout on this intent first. Tell them apart
+    // for the customer's sake; refuse the redirect either way.
+    const { data: now } = await sb
+      .from("catering_payments")
+      .select("id, status")
+      .eq("id", input.paymentId)
+      .maybeSingle<{ id: string; status: string }>();
+    if (now?.status === "due") {
+      throw new PortalQuoteError(409, "payment_in_progress", "A payment for this order is already in progress");
+    }
     throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
   }
 
