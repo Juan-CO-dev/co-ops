@@ -289,10 +289,18 @@ export function isCateringInboxSendPath(currentPath: string): boolean {
   return /^\/api\/catering\/inbox\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/send$/i.test(currentPath);
 }
 
+/** "Move conflicted receipt" (PATCH action=move) takes Tier A and lives OUTSIDE /admin (audit W06/B014): exactly the
+ *  email-receipts endpoint keeps the unlock the preceding POST /api/auth/step-up set, or assertStepUp could never pass
+ *  and the password modal reopened forever. The receiving pages and every other receiving route still clear it. The
+ *  endpoint's other actions only PRESERVE an unlock (they never assert one), the same as /api/operations/counts. */
+export function isReceiptMoveStepUpPath(currentPath: string): boolean {
+  return currentPath === "/api/operations/receiving/email-receipts";
+}
+
 /** Paths where an unlocked step-up flag survives requireSession (does not auto-clear). */
 export function isStepUpSurface(currentPath: string): boolean {
   return isAdminPath(currentPath) || isCateringStepUpPath(currentPath) || isCountsStepUpPath(currentPath) || isScheduleStepUpPath(currentPath)
-    || isCateringInboxSendPath(currentPath);
+    || isCateringInboxSendPath(currentPath) || isReceiptMoveStepUpPath(currentPath);
 }
 
 /**
