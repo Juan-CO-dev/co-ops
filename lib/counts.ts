@@ -2321,7 +2321,8 @@ async function finishDepletionWatermark(
     : await loadSalesCoverageDisclosure(sb, { locationId, fromDate: candidate, untilDateExclusive });
   return coverage.byLocation[locationId]?.hasGaps === false ? candidate : null;
 }
-async function sumConsumedOzWindow(
+/** Exported for tests/counts-product-consumed-window.test.ts. */
+export async function sumConsumedOzWindow(
   sb: ReturnType<typeof getServiceRoleClient>,
   skuIds: string[],
   locationId: string,
@@ -2330,35 +2331,29 @@ async function sumConsumedOzWindow(
 ): Promise<Map<string, number | null>> {
   const out = new Map<string, number | null>();
   for (const id of skuIds) out.set(id, 0);
-  // Live production headers at this location in the window.
-  // BOTH reads are PAGED (the PR #63 lesson): the header set is bounded only by
-  // location + window, and its inputs multiply it — a truncated page would silently
-  // UNDERSTATE the consumed term, inflating computed on-hand. `id` (the PK) gives the
-  // stable total order paging requires; both reads are order-insensitive sums.
-  const hdrs = await selectAllRows<{ id: string }>(
+  // Inputs of LIVE productions at this location in the window (after, until], scoped through
+  // the header embed (service role — the read loadOnHandLedgers uses). It used to read the
+  // header ids first and spend ALL of them in one production-id `.in()` list: past 220 live
+  // productions since the oldest lot the request line was refused, and every count sheet with
+  // a product line answered 500 (audit B023). `skuIds` is one product's members — a small list.
+  // PAGED (the PR #63 lesson): a truncated page would silently UNDERSTATE the consumed term,
+  // inflating computed on-hand. `id` (the PK) gives the stable total order paging requires;
+  // the sum is order-insensitive.
+  type InputRow = { input_sku_id: string; input_oz: number | string | null };
+  const lines = await selectAllRows<InputRow>(
     async (from, to) => {
-      let hq = sb.from("productions").select("id").eq("location_id", locationId)
-        .is("superseded_at", null).is("revoked_at", null).gt("produced_at", afterIso);
-      if (untilIso != null) hq = hq.lte("produced_at", untilIso);
-      const { data, error } = await hq
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ id: string }>>();
-      if (error) throw new Error(`sumConsumedOzWindow productions: ${error.message}`);
-      return { data };
-    },
-  );
-  const prodIds = hdrs.map((h) => h.id);
-  if (prodIds.length === 0) return out;
-  const lines = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("production_inputs")
-        .select("input_sku_id, input_oz")
+      let q = sb.from("production_inputs")
+        .select(`id, input_sku_id, input_oz, ${PRODUCTION_HEADER_EMBED}`)
         .in("input_sku_id", skuIds)
-        .in("production_id", prodIds)
+        .eq("productions.location_id", locationId)
+        .is("productions.superseded_at", null)
+        .is("productions.revoked_at", null)
+        .gt("productions.produced_at", afterIso);
+      if (untilIso != null) q = q.lte("productions.produced_at", untilIso);
+      const { data, error } = await q
         .order("id", { ascending: true })
         .range(from, to)
-        .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+        .returns<InputRow[]>();
       if (error) throw new Error(`sumConsumedOzWindow production_inputs: ${error.message}`);
       return { data };
     },
