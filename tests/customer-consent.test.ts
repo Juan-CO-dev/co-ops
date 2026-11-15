@@ -20,6 +20,26 @@ describe("latestConsent", () => {
     expect(latestConsent([ev("z", "opted_in", "2026-10-05T00:00:00Z", "2026-10-09T00:00:00Z"), ev("a", "opted_out", "2026-10-05T00:00:00Z")])!.status).toBe("opted_out");
   });
   it("no events = no status", () => expect(latestConsent([])).toBeNull());
+  it("between two imports on the same date the newer import wins (W12/B071)", () => {
+    const partialOut = { ...ev("a", "opted_out", "2026-11-14T05:00:00Z", "2026-11-14T15:00:00Z"), importCreatedAt: "2026-11-14T15:00:00Z" };
+    const correctedIn = { ...ev("b", "opted_in", "2026-11-14T05:00:00Z", "2026-11-14T16:00:00Z"), importCreatedAt: "2026-11-14T16:00:00Z" };
+    expect(latestConsent([partialOut, correctedIn])!.id).toBe("b");
+    expect(latestConsent([correctedIn, partialOut])!.id).toBe("b");
+    // And the other way: a newer partial file still wins over an older complete one on the same date.
+    const olderIn = { ...correctedIn, importCreatedAt: "2026-11-14T14:00:00Z" };
+    expect(latestConsent([olderIn, partialOut])!.id).toBe("a");
+  });
+  it("inside one import an opt-out still wins the tie (W12/B071)", () => {
+    const at = "2026-11-14T15:00:00Z";
+    const inA = { ...ev("z", "opted_in", "2026-11-14T05:00:00Z", "2026-11-14T15:00:02Z"), importCreatedAt: at };
+    const outB = { ...ev("a", "opted_out", "2026-11-14T05:00:00Z", "2026-11-14T15:00:01Z"), importCreatedAt: at };
+    expect(latestConsent([inA, outB])!.status).toBe("opted_out");
+  });
+  it("a non-import opt-out still wins a tie against an import (W12/B071)", () => {
+    const erase = ev("a", "opted_out", "2026-11-14T05:00:00Z", "2026-11-14T05:00:00Z");
+    const imported = { ...ev("z", "opted_in", "2026-11-14T05:00:00Z", "2026-11-14T16:00:00Z"), importCreatedAt: "2026-11-14T16:00:00Z" };
+    expect(latestConsent([imported, erase])!.id).toBe("a");
+  });
 });
 
 describe("parseConsentCsv (Toast Web Marketing export)", () => {

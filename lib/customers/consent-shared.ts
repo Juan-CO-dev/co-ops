@@ -3,7 +3,8 @@
  *
  * Juan 2026-10-07: "Those emails live in toast rn… this can also track when new people opt into the
  * emails". Consent is an APPEND-ONLY event stream; the current status of (person, channel) is the
- * latest event, and an opt-out wins a tie. SQL is the authority (customer_consent_current /
+ * latest event; on a tie a non-import opt-out wins, then the newer import, then (inside one import) an
+ * opt-out (0312, W12/B071). SQL is the authority (customer_consent_current /
  * customer_consent_latest); `latestConsent` below is the same rule in TypeScript so the app's second
  * filter and the tests speak the same language.
  *
@@ -24,9 +25,16 @@ import { classifyEmail, normalizeEmail, normalizePhoneE164 } from "./identity-sh
 
 export type ConsentStatus = "opted_in" | "opted_out";
 export type ConsentChannel = "email" | "sms";
-export interface ConsentEventLike { status: ConsentStatus; effectiveAt: string; recordedAt: string; id: string }
+export interface ConsentEventLike {
+  status: ConsentStatus; effectiveAt: string; recordedAt: string; id: string;
+  /** created_at of the import that wrote the event; absent / null = not an import (0312, W12/B071). */
+  importCreatedAt?: string | null;
+}
 
-/** Latest event wins; on the same effective instant an opt-out wins; then recorded order, then id. */
+/**
+ * Latest event wins. On the same effective instant (0312, W12/B071): a NON-import opt-out wins; then the
+ * newer import; then, inside one import, an opt-out; then recorded order, then id. Same rule as SQL.
+ */
 export function latestConsent<T extends ConsentEventLike>(events: readonly T[]): T | null {
   let best: T | null = null;
   for (const e of events) {
@@ -34,6 +42,16 @@ export function latestConsent<T extends ConsentEventLike>(events: readonly T[]):
     const d = Date.parse(e.effectiveAt) - Date.parse(best.effectiveAt);
     if (d > 0) { best = e; continue; }
     if (d < 0) continue;
+    const plainOutE = e.status === "opted_out" && !e.importCreatedAt ? 1 : 0;
+    const plainOutB = best.status === "opted_out" && !best.importCreatedAt ? 1 : 0;
+    if (plainOutE !== plainOutB) { if (plainOutE > plainOutB) best = e; continue; }
+    // Newer import first; a non-import event sorts after every import (SQL: created_at desc nulls last).
+    const impE = e.importCreatedAt ? Date.parse(e.importCreatedAt) : null;
+    const impB = best.importCreatedAt ? Date.parse(best.importCreatedAt) : null;
+    if (impE !== impB) {
+      if (impB === null || (impE !== null && impE > impB)) best = e;
+      continue;
+    }
     const outE = e.status === "opted_out" ? 1 : 0;
     const outB = best.status === "opted_out" ? 1 : 0;
     if (outE !== outB) { if (outE > outB) best = e; continue; }
