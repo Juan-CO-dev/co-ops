@@ -30,6 +30,7 @@ import { redirect } from "next/navigation";
 
 import { signJwt, verifyJwt, hashToken, type AppJwtClaims } from "./auth";
 import { trustedClientIp } from "./client-ip";
+import { jsonError } from "./api-helpers";
 import { getServiceRoleClient } from "./supabase-server";
 import { type RoleCode, getRoleLevel } from "./roles";
 import { audit } from "./audit";
@@ -67,6 +68,14 @@ function cookieOptions(maxAgeSeconds: number) {
 
 function clearedCookieOptions() {
   return cookieOptions(0);
+}
+
+/**
+ * Audit W06/B048 — the session could not be CHECKED (a PostgREST error on the sessions or users read), which is not the
+ * same as "not signed in". A 503 that KEEPS the cookie: one transient blip must not sign a working operator out.
+ */
+function sessionUnavailable(): NextResponse {
+  return jsonError(503, "session_unavailable", { message: "Sign-in check failed. Try again." });
 }
 
 function unauthorized(): NextResponse {
@@ -310,16 +319,19 @@ export function isStepUpSurface(currentPath: string): boolean {
  * (`requireSessionFromHeaders`) so dual-verification, idle-timeout, last-
  * activity touch, and step-up auto-clear logic all live in exactly one place.
  *
- * Returns AuthContext on success or { denied: true } on any failure. Wrappers
- * convert the sentinel into the appropriate response shape (NextResponse 401
- * vs server-side redirect).
+ * Returns AuthContext on success, { denied: true } when the session is not
+ * valid, or { unavailable: true } when the sessions / users READ itself failed
+ * (audit W06/B048: a transient database error is not a sign-out). Wrappers
+ * convert the sentinels into the appropriate response shape (401 + cleared
+ * cookie vs server-side redirect for a denial; 503 keeping the cookie vs a
+ * thrown error for unavailable).
  */
 async function requireSessionCore(
   rawJwt: string | null,
   ipAddress: string | null,
   userAgent: string | null,
   currentPath: string,
-): Promise<AuthContext | { denied: true }> {
+): Promise<AuthContext | { denied: true } | { unavailable: true }> {
   if (!rawJwt) return { denied: true };
 
   let claims;
@@ -335,7 +347,8 @@ async function requireSessionCore(
     .select("*")
     .eq("id", claims.session_id)
     .maybeSingle<SessionRow>();
-  if (error || !rowRaw) return { denied: true };
+  if (error) return { unavailable: true };
+  if (!rowRaw) return { denied: true };
   const row = rowRaw;
 
   // Token-hash dual verification — guards against AUTH_JWT_SECRET-leak forgery.
@@ -372,7 +385,8 @@ async function requireSessionCore(
     .select("*")
     .eq("id", claims.user_id)
     .maybeSingle<UserRow>();
-  if (userErr || !userRowRaw) return { denied: true };
+  if (userErr) return { unavailable: true };
+  if (!userRowRaw) return { denied: true };
   if (!userRowRaw.active) return { denied: true };
   const userRow = userRowRaw;
 
@@ -440,8 +454,10 @@ async function requireSessionCore(
  *                      flag is cleared automatically so the next admin entry
  *                      requires re-confirmation.
  *
- * Returns AuthContext on success. On any failure returns a 401 NextResponse
- * with a cleared cookie. Callers should `return result` directly when they
+ * Returns AuthContext on success. On a denial returns a 401 NextResponse
+ * with a cleared cookie; when the session could not be read (a transient
+ * database error) returns a 503 `session_unavailable` that keeps the cookie
+ * (audit W06/B048). Callers should `return result` directly when they
  * get a NextResponse — and treat the AuthContext as the request-scoped identity.
  */
 export async function requireSession(
@@ -455,6 +471,7 @@ export async function requireSession(
     req.headers.get("user-agent"),
     currentPath,
   );
+  if ("unavailable" in result) return sessionUnavailable();
   if ("denied" in result) return unauthorized();
   return result;
 }
@@ -485,6 +502,8 @@ export async function requireSessionFromHeaders(
   const userAgent = headerStore.get("user-agent");
 
   const result = await requireSessionCore(rawJwt, ipAddress, userAgent, currentPath);
+  // Audit W06/B048: a failed READ renders the error page ("Try again"), never the sign-in page.
+  if ("unavailable" in result) throw new Error("session_unavailable");
   if ("denied" in result) {
     const target = currentPath ? `/?next=${encodeURIComponent(currentPath)}` : "/";
     redirect(target); // throws — `never` return type narrows the type below
