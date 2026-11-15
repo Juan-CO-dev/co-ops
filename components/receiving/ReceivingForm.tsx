@@ -113,6 +113,7 @@ import {
 import type { OpenCreditRow } from "@/lib/credits";
 import {
   INTAKE_DRAFT_CAP,
+  levelChangePatch,
   pricedLineCount,
   removeIntakeDraft,
   upsertIntakeDraft,
@@ -597,8 +598,21 @@ export function ReceivingForm({
     : [];
   const levelsFor = (skuId: string): string[] => (skuId ? (skuById.get(skuId)?.chainLabels ?? []) : []);
 
+  // W04/B046: a level change rescales a seeded expectation into the new level (or clears it
+  // and its flag when the two levels cannot be converted), so Short/Over and the credit
+  // never compare a PO's case count with an each count.
+  // W04 r3: the ONE conversion every level-changing transition takes — the picker below AND a
+  // scan that moves a row's level (applyScan passes it to applyScanToIntake).
+  const relevel = (l: LineDraft, nextLevel: string): Partial<LineDraft> => {
+    const sku = skuById.get(l.skuId);
+    return levelChangePatch(l, nextLevel, sku?.chainLabels ?? [], sku?.chainCounts ?? []);
+  };
   const setLine = (i: number, patch: Partial<IntakeLine>) =>
-    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+    setLines((ls) => ls.map((l, j) => {
+      if (j !== i) return l;
+      if (patch.level === undefined || patch.level === l.level) return { ...l, ...patch };
+      return { ...l, ...patch, ...relevel(l, patch.level) };
+    }));
 
   const num = (s: string): number | null => {
     const v = s.trim();
@@ -660,7 +674,7 @@ export function ReceivingForm({
     const fresh = offeredLine(sku);
     setIntake((prev) => {
       const next = applyScanToIntake(prev, {
-        skuId, levelLabel: label, level, code, newLine: fresh, lineKey,
+        skuId, levelLabel: label, level, code, newLine: fresh, lineKey, relevel,
       });
       // Nothing moved: hand back the same object so React bails out of the render.
       return next.lines === prev.lines && next.scanned === prev.scanned ? prev : next;

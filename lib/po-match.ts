@@ -20,7 +20,8 @@
  *
  * ── UNTRUSTED VENDOR CONTENT ────────────────────────────────────────────────────
  * The invoice lines are an LLM parse of an untrusted vendor document
- * (lib/receipt-parse.ts, which already validated numbers finite/≥0 before storage).
+ * (lib/receipt-parse.ts, which already validated numbers finite before storage; qty and
+ * extendedCents are signed, negative on a credit line — W04/B044).
  * We read them as DATA only and pass opaque strings/numbers to the pure brain; the
  * panel renders every string as text (no markup, no href/src) — house untrusted law.
  *
@@ -33,9 +34,17 @@ import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadPoDetail } from "@/lib/purchase-orders";
+import { loadMeasures, loadSkuPackChains, loadSkuPacksAtPoints } from "@/lib/prep-consumption";
 import type { AuthContext } from "@/lib/session";
+import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import type { PackPoint } from "@/lib/sku-versions-shared";
 import {
   buildThreeWayLines,
+  flatPackChain,
+  invoicePackFromEvidence,
+  legScalesFromPacks,
+  type SkuLegScales,
+  type SkuUnitScale,
   type ThreeWayView,
   type SnapshotLineInput,
   type DeliveryLineInput,
@@ -114,7 +123,44 @@ export async function buildThreeWayView(actor: AuthContext, poId: string): Promi
     loadInvoiceLeg(sb, poId),
   ]);
 
-  const view = buildThreeWayLines(snapshotLines, deliveryLines, invoiceLeg.lines, invoiceLeg.hasInvoice);
+  // W04/B045 (r1): the three legs compare in ONE unit through each SKU's pack chain (any depth; a
+  // flat-only SKU through the chain its flat pack describes), converting known measures (LB, oz, EA
+  // on a count leaf). A SKU with no resolvable pack compares only the same unit on both sides.
+  // W04 r2: a SKU with pack versions reads EACH LEG through the pack in force when that leg happened
+  // (the order at confirm, at this PO's shop; each receipt line when it was written, at the
+  // delivery's shop), so reopening an old PO after a pack edit never re-reads history through today's
+  // pack. A leg with no pack in force then compares nothing.
+  // W04 r3: the INVOICE is not dated by the email's arrival (a delayed invoice is normal): it bills the
+  // linked transaction, so its pack is the one the order and the receipt agree on; when they disagree
+  // the billed comparison is suppressed (invoicePackFromEvidence).
+  const skuIds = [...new Set([...snapshotLines.map((l) => l.skuId), ...deliveryLines.map((l) => l.skuId)])];
+  const orderedSkus = new Set(snapshotLines.map((l) => l.skuId));
+  const points: PackPoint[] = [];
+  for (const skuId of skuIds) {
+    if (detail.confirmedAt && orderedSkus.has(skuId)) points.push({ key: `o|${skuId}`, skuId, scope: detail.locationId, asOf: detail.confirmedAt });
+  }
+  for (const d of deliveryLines) {
+    if (d.createdAt) points.push({ key: `r|${d.skuId}`, skuId: d.skuId, scope: d.locationId ?? detail.locationId, asOf: d.createdAt });
+  }
+  const [chains, measures, atPoints] = await Promise.all([
+    loadSkuPackChains(skuIds, detail.locationId), loadMeasures(), loadSkuPacksAtPoints(points),
+  ]);
+  const unchained = skuIds.filter((id) => (chains.get(id)?.length ?? 0) === 0);
+  const flats = await loadFlatPacks(sb, unchained);
+  const unitScales = new Map<string, SkuUnitScale | SkuLegScales>();
+  for (const skuId of skuIds) {
+    const levels = chains.get(skuId);
+    const scale = legScalesFromPacks({
+      versioned: atPoints.versioned.has(skuId),
+      current: levels && levels.length > 0 ? levels : flats.get(skuId) ?? null,
+      ordered: atPoints.packs.get(`o|${skuId}`),
+      received: atPoints.packs.get(`r|${skuId}`),
+      billed: invoicePackFromEvidence({ ordered: atPoints.packs.get(`o|${skuId}`), received: atPoints.packs.get(`r|${skuId}`) }, measures),
+    }, measures);
+    if (scale) unitScales.set(skuId, scale);
+  }
+
+  const view = buildThreeWayLines(snapshotLines, deliveryLines, invoiceLeg.lines, invoiceLeg.hasInvoice, unitScales);
 
   // The pure brain fills a received-but-not-ordered row's `name` with the skuId as a
   // placeholder (it has no snapshot name for a SKU that wasn't ordered). Resolve the
@@ -122,6 +168,23 @@ export async function buildThreeWayView(actor: AuthContext, poId: string): Promi
   await resolveUnorderedRowNames(sb, view);
 
   return view;
+}
+
+/** Flat-only SKUs' packs as chains (W04 r1), chunked to the request-line budget; a failed read throws. */
+async function loadFlatPacks(sb: ServiceClient, skuIds: string[]): Promise<Map<string, PackChainLevel[]>> {
+  const out = new Map<string, PackChainLevel[]>();
+  for (let i = 0; i < skuIds.length; i += 100) {
+    const { data, error } = await sb.from("vendor_items")
+      .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure")
+      .in("id", skuIds.slice(i, i + 100))
+      .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null }>>();
+    if (error) throw new Error(`buildThreeWayView flat packs: ${error.message}`);
+    for (const r of data ?? []) {
+      const chain = flatPackChain(r);
+      if (chain) out.set(r.id, chain);
+    }
+  }
+  return out;
 }
 
 /**
@@ -132,25 +195,41 @@ export async function buildThreeWayView(actor: AuthContext, poId: string): Promi
  * a non-goal today) we take the LAST line per SKU rather than summing, so a re-open never
  * double-counts; the pure brain treats one line per SKU.
  */
-async function loadDeliveryLines(sb: ServiceClient, deliveryIds: string[]): Promise<DeliveryLineInput[]> {
+async function loadDeliveryLines(sb: ServiceClient, deliveryIds: string[]): Promise<ReceivedLine[]> {
   if (deliveryIds.length === 0) return [];
-  const { data: rows, error } = await sb.from("vendor_delivery_items")
-    .select("vendor_item_id, qty_received, received_qty_at_level, received_level_label")
-    .in("delivery_id", deliveryIds)
-    .order("created_at", { ascending: true })
-    .returns<Array<{ vendor_item_id: string; qty_received: number | string | null; received_qty_at_level: number | string | null; received_level_label: string | null }>>();
+  const [{ data: rows, error }, { data: dels, error: dErr }] = await Promise.all([
+    sb.from("vendor_delivery_items")
+      .select("vendor_item_id, delivery_id, qty_received, received_qty_at_level, received_level_label, created_at")
+      .in("delivery_id", deliveryIds)
+      .order("created_at", { ascending: true })
+      .returns<Array<{ vendor_item_id: string; delivery_id: string; qty_received: number | string | null; received_qty_at_level: number | string | null; received_level_label: string | null; created_at: string | null }>>(),
+    // W04 r2: the shop each delivery landed at (its pack is that shop's pack at the line's instant).
+    sb.from("vendor_deliveries").select("id, location_id").in("id", deliveryIds)
+      .returns<Array<{ id: string; location_id: string | null }>>(),
+  ]);
   if (error) throw new Error(`buildThreeWayView delivery lines: ${error.message}`);
+  if (dErr) throw new Error(`buildThreeWayView deliveries: ${dErr.message}`);
+  const shopByDelivery = new Map((dels ?? []).map((d) => [d.id, d.location_id]));
 
-  // One line per SKU (last write wins on the ascending-created order → the latest count).
-  const bySku = new Map<string, DeliveryLineInput>();
+  // One line per SKU (last write wins on the ascending-created order → the latest count). The
+  // frozen door quantity is read as written; the line's own instant dates its pack (W04 r2).
+  const bySku = new Map<string, ReceivedLine>();
   for (const r of rows ?? []) {
     bySku.set(r.vendor_item_id, {
       skuId: r.vendor_item_id,
       qty: num(r.received_qty_at_level) ?? num(r.qty_received),
       level: r.received_level_label,
+      createdAt: r.created_at,
+      locationId: shopByDelivery.get(r.delivery_id) ?? null,
     });
   }
   return [...bySku.values()];
+}
+
+/** A received line plus when and where it was written (W04 r2: dates the pack it was counted in). */
+interface ReceivedLine extends DeliveryLineInput {
+  createdAt: string | null;
+  locationId: string | null;
 }
 
 /**
@@ -172,6 +251,7 @@ async function loadInvoiceLeg(sb: ServiceClient, poId: string): Promise<{ lines:
   const row = (rows ?? [])[0];
   if (!row) return { lines: [], hasInvoice: false };
 
+  // W04 r3: the email's arrival does NOT date the invoice's pack (the linked transaction does).
   return { lines: readInvoiceLines(row.parsed_json), hasInvoice: true };
 }
 
@@ -186,8 +266,8 @@ interface RawInvoiceLine {
 }
 
 /** Coerce a receipt's parsed_json into typed BILLED lines (advisory-null per field).
- *  Untrusted-LLM content: numbers accepted only when finite (the parse engine already
- *  bounded them ≥0); strings copied opaquely. Never throws on a malformed jsonb. */
+ *  Untrusted-LLM content: numbers accepted only when finite (qty and extendedCents are
+ *  signed: negative on a credit line, W04/B044); strings copied opaquely. Never throws on a malformed jsonb. */
 function readInvoiceLines(parsedJson: unknown): InvoiceLineInput[] {
   if (!parsedJson || typeof parsedJson !== "object") return [];
   const pj = parsedJson as { extraction?: { lines?: unknown }; lines?: unknown };
