@@ -30,6 +30,21 @@ export function shapeToColumns(shape: LineInputType, includeNote = false): PrepC
 }
 
 /**
+ * W15/B087: does the section editor hold a SHAPE change that needs the shape endpoint?
+ * A different shape, or a Yes/No section whose "include note" box no longer matches
+ * its columns (the note is part of the yes_no shape: ["yes_no"] vs ["yes_no","free_text"]).
+ * Numeric shapes ignore includeNote. CLIENT-SAFE (pure).
+ */
+export function sectionShapeDirty(
+  section: { shape: PrepSectionShape; columns: readonly PrepColumn[] },
+  shape: PrepSectionShape,
+  includeNote: boolean,
+): boolean {
+  if (shape !== section.shape) return true;
+  return shape === "yes_no" && includeNote !== section.columns.includes("free_text");
+}
+
+/**
  * A LINE's input type, derived from its prep_meta.columns (the per-line source
  * of truth — inverse of shapeToColumns). Used by the operator render to pick a
  * per-line control in mixed sections. CLIENT-SAFE (pure).
