@@ -18,10 +18,11 @@
  *   - NEVER STAMPED CLEAN WHILE SOMETHING IS OPEN. A resumed settlement that cannot confirm
  *     a checkout closed is `paid_needs_review` (`sibling_checkout_open`), the id stays on
  *     its row, and the staff email says so.
- *   - THE REPORT RIDES ON THE STAMP. The audit row and the staff email are written after the
- *     verdict, by the run whose stamp landed: a run that was cut off told nobody, the run
- *     that finishes tells them once, and a run that lost the stamp to a concurrent delivery
- *     stays quiet unless it found something to review.
+ *   - THE REPORT RIDES ON THE STAMP. An ordinary payment's audit row and staff email are
+ *     written after the verdict, by the run whose stamp landed: a run that was cut off told
+ *     nobody, the run that finishes tells them once, and a run that lost the stamp to a
+ *     concurrent delivery stays quiet. A payment that NEEDS REVIEW is told BEFORE the stamp,
+ *     by every run that finds it — a finding is never the thing a cut-off loses.
  *   - A FIRST-SEEN EVENT IS NOT A RESUME. A different event about a charge that is already
  *     recorded is still the quiet `already_advanced`.
  *
@@ -362,6 +363,27 @@ describe("W02 review r5 — the report rides on the stamp", () => {
     expect(out.result).toBe("paid_needs_review");
     expect(auditMetas()[0]).toMatchObject({ needs_review: ["sibling_checkout_open"] });
     expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: ["sibling_checkout_open"] }));
+  });
+
+  it("a FINDING is told before the event is closed: a delivery cut off at its stamp had already said so, and the redelivery says so again", async () => {
+    retireSession.mockRejectedValue(new Error("socket hang up"));
+
+    await deliverAndCutOff(depositPaid(), isStamp);
+    // The checkout could not be confirmed closed. That was reported BEFORE the stamp…
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMetas()[0]).toMatchObject({ needs_review: ["sibling_checkout_open"] });
+    expect(auditMetas()[0]).not.toHaveProperty("resumed");
+    expect(notifyPaid).toHaveBeenCalledTimes(1);
+    expect(ledger("evt_1").outcome ?? null).toBeNull();
+
+    // …and the event is still open, so its redelivery looks again and tells again.
+    const out = await processStripeEvent(db.client, depositPaid(), SINGLE, deps);
+
+    expect(out.result).toBe("paid_needs_review");
+    expect(ledger("evt_1").outcome).toBe("paid_needs_review");
+    expect(auditMock).toHaveBeenCalledTimes(2);
+    expect(auditMetas()[1]).toMatchObject({ resumed: true, needs_review: ["sibling_checkout_open"] });
+    expect(notifyPaid).toHaveBeenCalledTimes(2);
   });
 
   it("a stamp that FAILED is not a lost stamp: that run reports, because nobody else will", async () => {

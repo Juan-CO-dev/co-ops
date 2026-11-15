@@ -111,14 +111,18 @@
  *     was inserted by this run) whose charge is already on the row. Another event recorded
  *     that charge, and that event's own ledger row carries the settlement — to its end, by
  *     the rule above. Also: the same charge on a row that has since been refunded.
- *   · THE REPORT RIDES ON THE STAMP. The audit row and the staff email are sent AFTER the
- *     verdict is stamped, by the run whose stamp landed. So an unstamped ledger row means
- *     nobody has been told yet, and the delivery that resumes the settlement is the one that
- *     tells them — once. Two deliveries of one event running at the same moment both do the
- *     (idempotent) work; one stamp wins and that run reports. The run that lost the stamp
- *     stays quiet UNLESS it found something to review: a finding is never dropped to avoid a
- *     second email. A stamp that FAILED (a database error) is not a lost stamp — that run
- *     reports, because nobody else will.
+ *   · THE REPORT RIDES ON THE STAMP — AND WHICH SIDE OF IT DEPENDS ON WHAT THERE IS TO SAY.
+ *     An ORDINARY payment (nothing to review) is reported AFTER the verdict is stamped, by
+ *     the run whose stamp landed: an unstamped ledger row then means nobody has been told
+ *     yet, the delivery that resumes the settlement tells them, and nobody is told twice
+ *     (two deliveries of one event at the same moment both do the idempotent work; one stamp
+ *     wins and that run reports; a stamp that FAILED — a database error — is not a lost
+ *     stamp, and that run reports because nobody else will). The price is that a run cut off
+ *     between its stamp and its email sends no "payment received" note; the row says it.
+ *     A payment that NEEDS REVIEW is reported BEFORE the stamp, by every run that finds it:
+ *     a finding must never be the thing a cut-off loses, so if the run dies while telling
+ *     someone, the event is still unstamped and its redelivery finds and tells it again.
+ *     A person may hear about one problem twice; they never hear about it zero times.
  *   · One fact a resumed settlement cannot recompute: whether the intent had been VOID
  *     before it was paid (`intent_was_void`) — the flip overwrote that status. Everything
  *     else (the amount, the order's price now, its deadline, its other payments, its open
@@ -373,10 +377,11 @@ async function finalizeEvent(
 }
 
 /**
- * What a settlement has to TELL people, held until its verdict is on the ledger (see the
+ * What a settlement has to TELL people, timed against its verdict on the ledger (see the
  * header: the report rides on the stamp). `run` writes the audit row and sends the staff
  * email; it NEVER THROWS. `needsReview` = the settlement found something a person must look
- * at, which is reported even by a run that lost the stamp.
+ * at: that is reported BEFORE the stamp, by every run that finds it; anything else after it,
+ * by the run whose stamp landed.
  */
 interface SettlementReport {
   needsReview: boolean;
@@ -596,11 +601,13 @@ export async function processStripeEvent(
     return { result: "processing_failed", locationId: resolvedLocation };
   }
 
+  // THE REPORT RIDES ON THE STAMP (see the header). Something a person must look at is told
+  // BEFORE the event is closed — at least once, by every run that finds it. An ordinary
+  // payment is told AFTER, by the run whose stamp landed (`lost` = another delivery of this
+  // event stamped first and is the one that reports) — at most once.
+  if (report?.needsReview) await report.run();
   const stamp = await finalizeEvent(sb, outcome.eventId, result, resolvedLocation);
-  // THE REPORT RIDES ON THE STAMP (see the header). `lost` = another delivery of this event
-  // stamped its verdict first and is the one that reports — unless this run found something
-  // a person must look at, which is never dropped.
-  if (report && (stamp !== "lost" || report.needsReview)) await report.run();
+  if (report && !report.needsReview && stamp !== "lost") await report.run();
   return { result, locationId: resolvedLocation };
 }
 
