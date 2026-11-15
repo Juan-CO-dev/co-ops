@@ -414,7 +414,15 @@ describe("W02/B006 review r1 — a failed carry never leaves a revision that can
 
     await initiatePayment(CUSTOMER, V1, "deposit");
 
-    expect(db.ops.filter((o) => o.table === "catering_quotes")).toHaveLength(1);
+    // Two reads of the quote ROW ITSELF: the payability read, and (review r5) the re-read of
+    // `superseded_at` once the request exists — a revise can land between the two. Each
+    // matches exactly this one row. A FAMILY read asks for the rows that name this quote as
+    // their root and, for a quote that was never revised, matches none: there is none here.
+    const quoteOps = db.ops.filter((o) => o.table === "catering_quotes");
+    expect(quoteOps.map((o) => [o.kind, o.matched])).toEqual([
+      ["select", 1],
+      ["select", 1],
+    ]);
     expect(db.ops.filter((o) => o.table === "catering_payments" && o.kind === "update")).toEqual([]);
   });
 
