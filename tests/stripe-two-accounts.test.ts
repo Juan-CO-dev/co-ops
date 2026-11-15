@@ -407,6 +407,11 @@ describe("W02 review r4 — the rules are written where the next reader will loo
     expect(webhook).toMatch(/\.in\("status", \["due", "void"\]\)\s*\.select\("id, quote_id, provider_session_id"\)/);
     // Neither hands the cleanup a quote id from an earlier read.
     expect(manual).toMatch(/quoteId: paid\.quote_id/);
-    expect(webhook).toMatch(/quoteId: flipped\.quote_id/);
+    // (Review r5: the after-flip work moved into `settle`, which is handed the flip's own
+    // returned row — or, for a resumed settlement, the re-read that found the charge — as
+    // `row`, and nothing else to take a revision from.)
+    expect(webhook).toMatch(/row: flipped,/);
+    expect(webhook).toMatch(/quoteId: row\.quote_id/);
+    expect(webhook).toMatch(/settledSessionId: row\.provider_session_id \?\? null/);
   });
 });
