@@ -33,8 +33,8 @@ describe("instants compare as Postgres compares timestamptz", () => {
   });
 });
 
-const line = (skuId: string, oz: number | string | null, created: string, header = created): DeliveryLedgerLine =>
-  ({ id: `${skuId}-${created}`, skuId, resolvedOz: oz, receivedLevelLabel: null, receivedQtyAtLevel: null, createdUs: instantMicros(created), deliveryCreatedUs: instantMicros(header) });
+const line = (skuId: string, oz: number | string | null, created: string): DeliveryLedgerLine =>
+  ({ id: `${skuId}-${created}`, skuId, resolvedOz: oz, receivedLevelLabel: null, receivedQtyAtLevel: null, createdUs: instantMicros(created) });
 
 describe("received / consumed windows are (after, until]", () => {
   const lines = [
@@ -43,11 +43,13 @@ describe("received / consumed windows are (after, until]", () => {
     line("a", 7, "2026-10-03T00:00:00Z"),             // exactly at `until` → in
     line("b", null, "2026-10-02T00:00:00Z"),          // null oz → b is advisory-null
     line("b", 3, "2026-10-02T00:00:00Z"),
-    line("c", 4, "2026-10-02T00:00:00Z", "2026-09-30T00:00:00Z"), // header written before the window → out
+    // B185: a line appended after the window opens counts, whatever its header's age (this one's
+    // delivery was started on 2026-09-30, before the count; a receipt has no header instant here).
+    line("c", 4, "2026-10-02T00:00:00Z"),
   ];
   it("sums in-window lines, starts every SKU at 0, and lets a null line taint its SKU", () => {
     expect(receivedOzWindow(lines, ["a", "b", "c", "d"], "2026-10-01T12:00:00+00:00", "2026-10-03T00:00:00+00:00"))
-      .toEqual(new Map([["a", 12], ["b", null], ["c", 0], ["d", 0]]));
+      .toEqual(new Map([["a", 12], ["b", null], ["c", 4], ["d", 0]]));
   });
   it("an open window runs to the end of the ledger", () => {
     expect(receivedOzWindow(lines, ["a"], "2026-10-01T12:00:00Z", null).get("a")).toBe(12);

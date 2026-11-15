@@ -1506,8 +1506,8 @@ async function salesDisclosure(
 }
 
 /**
- * THE RENDER'S ONE READ OF EACH LEDGER (B9 step 2): the location's receipt lines (with
- * their header's write instant, via the service-role embed — see DELIVERY_HEADER_EMBED),
+ * THE RENDER'S ONE READ OF EACH LEDGER (B9 step 2): the location's receipt lines (scoped
+ * to the shop via the service-role embed — see DELIVERY_HEADER_EMBED),
  * its delivery headers (the retro-edit probe), and the inputs of its LIVE productions,
  * each from the earliest instant any tier's window reaches. Extra anchor groups now cost
  * nothing: every group's received / consumed / staleness figure is a filter over these.
@@ -1525,7 +1525,7 @@ interface OnHandLedgers {
  * at ~220 deliveries). Disambiguated by FK name: vendor_delivery_items has TWO FKs to
  * vendor_deliveries.
  */
-const DELIVERY_HEADER_EMBED = "vendor_deliveries!vendor_delivery_items_delivery_id_fkey!inner(location_id, created_at)";
+const DELIVERY_HEADER_EMBED = "vendor_deliveries!vendor_delivery_items_delivery_id_fkey!inner(location_id)";
 /** production_inputs has ONE FK to productions; the embed scopes inputs to live productions here. */
 const PRODUCTION_HEADER_EMBED = "productions!inner(location_id, produced_at, superseded_at, revoked_at)";
 
@@ -1540,7 +1540,7 @@ async function loadOnHandLedgers(
   // as "nothing arrived / nothing was used", which would fabricate on-hand).
   type LineRow = { id: string; vendor_item_id: string; resolved_oz: number | string | null; created_at: string;
     received_level_label: string | null; received_qty_at_level: number | string | null;
-    vendor_deliveries: { location_id: string; created_at: string } };
+    vendor_deliveries: { location_id: string } };
   type HeaderRow = { id: string; created_at: string; delivery_date: string | null };
   type InputRow = { id: string; input_sku_id: string; input_oz: number | string | null; productions: { produced_at: string } };
   const [lines, headers, inputs] = await Promise.all([
@@ -1548,7 +1548,8 @@ async function loadOnHandLedgers(
       const { data, error } = await sb.from("vendor_delivery_items")
         .select(`id, vendor_item_id, resolved_oz, created_at, received_level_label, received_qty_at_level, ${DELIVERY_HEADER_EMBED}`)
         .eq("vendor_deliveries.location_id", locationId)
-        .gt("vendor_deliveries.created_at", deliveriesAfter)
+        // The LINE's own write instant is the window (audit B185): a line appended to a delivery
+        // whose header predates the floor is still a receipt after it. The header only scopes the shop.
         .gt("created_at", deliveriesAfter)
         .order("id", { ascending: true })
         .range(from, to)
@@ -1589,7 +1590,7 @@ async function loadOnHandLedgers(
     deliveryLines: lines.map((l) => ({
       id: l.id, skuId: l.vendor_item_id, resolvedOz: l.resolved_oz,
       receivedLevelLabel: l.received_level_label, receivedQtyAtLevel: l.received_qty_at_level,
-      createdUs: instantMicros(l.created_at), deliveryCreatedUs: instantMicros(l.vendor_deliveries.created_at),
+      createdUs: instantMicros(l.created_at),
     })),
     deliveryHeaders: headers.map((h) => ({ createdUs: instantMicros(h.created_at), deliveryDate: h.delivery_date })),
     productionInputs: inputs.map((r) => ({ skuId: r.input_sku_id, inputOz: r.input_oz, producedUs: instantMicros(r.productions.produced_at) })),

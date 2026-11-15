@@ -171,17 +171,15 @@ export function salesSnapshotCovers(snap: SalesSnapshot, fromDate: string, end: 
 }
 
 // ── The receiving + production ledgers, loaded once ───────────────────────────────
-/** One receipt line at the location, with its delivery header's write instant (µs). */
+/** One receipt line at the location. */
 export interface DeliveryLedgerLine {
   id: string;
   skuId: string;
   resolvedOz: number | string | null;
   receivedLevelLabel: string | null;
   receivedQtyAtLevel: number | string | null;
-  /** vendor_delivery_items.created_at, µs. */
+  /** vendor_delivery_items.created_at, µs — the receipt's own write instant, and its ONLY window key. */
   createdUs: number;
-  /** vendor_deliveries.created_at of its header, µs. */
-  deliveryCreatedUs: number;
 }
 /** One delivery header at the location (the retro-edit probe reads headers, lines or not). */
 export interface DeliveryLedgerHeader { createdUs: number; deliveryDate: string | null }
@@ -201,10 +199,13 @@ function inWindowUs(t: number, afterUs: number, untilUs: number | null): boolean
 }
 
 /**
- * Received oz per SKU over (after, until] — sumReceivedOzWindow over the loaded lines:
- * the delivery header AND the line must both fall in the window (the old two-step
- * filtered headers by window, then lines by window). Every SKU starts at 0; a SKU with
- * ANY null resolved_oz line in the window is null (advisory: no clean received term).
+ * Received oz per SKU over (after, until] — sumReceivedOzWindow over the loaded lines.
+ * A RECEIPT IS WINDOWED BY ITS OWN WRITE INSTANT (audit B185). The old two-step also required
+ * the delivery HEADER to fall in the window, so a line appended after a count to a delivery
+ * started before it (addDeliveryLines) belonged to no window at all: it was never "received
+ * since the count", and on-hand silently under-counted by exactly those cases. Every SKU
+ * starts at 0; a SKU with ANY null resolved_oz line in the window is null (advisory: no clean
+ * received term).
  */
 export function receivedOzWindow(
   lines: readonly DeliveryLedgerLine[],
@@ -220,7 +221,7 @@ export function receivedOzWindow(
   const sums = new Map<string, number>();
   const nulled = new Set<string>();
   for (const l of lines) {
-    if (!selected.has(l.skuId) || !inWindowUs(l.deliveryCreatedUs, afterUs, untilUs) || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
+    if (!selected.has(l.skuId) || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
     const oz = num(l.resolvedOz);
     if (oz == null) { nulled.add(l.skuId); continue; }
     sums.set(l.skuId, (sums.get(l.skuId) ?? 0) + oz);
@@ -299,7 +300,7 @@ export function receivedUnitsWindow(
   let any = false;
   let sum = 0;
   for (const l of lines) {
-    if (l.skuId !== skuId || !inWindowUs(l.deliveryCreatedUs, afterUs, untilUs) || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
+    if (l.skuId !== skuId || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
     any = true;
     const level = l.receivedLevelLabel?.trim();
     const qty = num(l.receivedQtyAtLevel);
