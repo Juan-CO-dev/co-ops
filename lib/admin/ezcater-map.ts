@@ -12,6 +12,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
+import { integrationsReadScope } from "@/lib/admin/integrations-scope";
 
 export const EZCATER_ADMIN_MIN = 7; // GM+ — mirrors toast-map
 export const EZCATER_READ_MIN = 6;  // AGM+ — events visibility
@@ -39,14 +40,17 @@ export interface EzcaterAdminState {
 export async function loadEzcaterAdminState(actor: AuthContext): Promise<EzcaterAdminState> {
   requireLevel(actor, EZCATER_READ_MIN);
   const sb = getServiceRoleClient();
-  // W08/B161: below all-locations access, only the actor's own shops (their caterer UUIDs) and the events
-  // whose lead belongs to one of them. ezcater_events has no location column (0149): its only shop link is
+  // W08/B161: a GM / AGM sees only their own shops (their caterer UUIDs) and the events whose lead belongs to
+  // one of them. The MoO, owner and CGS roles see every shop and every shop's events by role (owner ruling
+  // 2026-11-15; lib/admin/integrations-scope.ts). ezcater_events has no location column (0149): its only shop link is
   // lead_id → catering_pipeline.location_id (the one FK between the two tables). The shop filter rides an
   // inner embed on that FK so it applies BEFORE the limit — another shop's traffic can never push this
   // shop's events out of the window (fix round 1). Service-role read, so the embed is the AGENTS.md
   // "service-role embed" case, not the RLS-scoped hazard. An event with no lead (unmatched caterer, bad
-  // signature) has no shop, so only all-locations viewers see it.
-  const scope = isAllLocationsAccess({ role: actor.user.role, locations: actor.locations }) ? null : [...actor.locations];
+  // signature) has no shop, so only all-locations viewers (owner, CGS) see it; the MoO sees every shop's
+  // LINKED events, filtered in the query before the limit like the per-shop case.
+  const scope = integrationsReadScope(actor);
+  const seesUnlinked = scope === null && isAllLocationsAccess({ role: actor.user.role, locations: actor.locations });
   type LocRow = { id: string; name: string; ezcater_caterer_uuid: string | null };
   type EvtRow = { id: string; event_key: string | null; entity_id: string | null; processing_result: string | null; signature_valid: boolean; received_at: string; lead_id: string | null };
   const EVENT_COLS = "id, event_key, entity_id, processing_result, signature_valid, received_at, lead_id";
@@ -56,7 +60,9 @@ export async function loadEzcaterAdminState(actor: AuthContext): Promise<Ezcater
     const [{ data: l, error: lErr }, { data: e, error: eErr }] = await Promise.all([
       sb.from("locations").select("id, name, ezcater_caterer_uuid").eq("active", true)
         .order("name", { ascending: true }).returns<LocRow[]>(),
-      sb.from("ezcater_events").select(EVENT_COLS)
+      (seesUnlinked
+        ? sb.from("ezcater_events").select(EVENT_COLS)
+        : sb.from("ezcater_events").select(`${EVENT_COLS}, catering_pipeline!inner(location_id)`))
         .order("received_at", { ascending: false }).limit(20).returns<EvtRow[]>(),
     ]);
     if (lErr) throw new Error(`ezcater locations: ${lErr.message}`);

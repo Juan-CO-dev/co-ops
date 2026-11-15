@@ -20,7 +20,8 @@ import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
-import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
+import { lockLocationContext } from "@/lib/locations";
+import { integrationsReadScope } from "@/lib/admin/integrations-scope";
 import type { AuthContext } from "@/lib/session";
 import { toastConfigured } from "@/lib/toast/client";
 import { fetchToastMenuItems, fetchToastModifierOptions } from "@/lib/toast/menus";
@@ -160,10 +161,11 @@ async function loadActiveRows(locationId?: string, locationIds?: readonly string
 export async function loadToastMapState(actor: AuthContext): Promise<ToastMapState> {
   requireLevel(actor, TOAST_MAP_MIN);
   const sb = getServiceRoleClient();
-  // W08/B161: the read shows no more than the writes allow (assertLocationAccess = lockLocationContext):
-  // below all-locations access, only the actor's own shops, their restaurant GUIDs and crosswalk rows.
-  // The entity / package / SKU reads are the shared name lookup and matcher pool, so they stay whole.
-  const scope = isAllLocationsAccess({ role: actor.user.role, locations: actor.locations }) ? null : [...actor.locations];
+  // W08/B161: a GM sees only their own shops, their restaurant GUIDs and crosswalk rows. The MoO, owner and
+  // CGS roles see both shops by role (owner ruling 2026-11-15; lib/admin/integrations-scope.ts). The writes
+  // keep assertLocationAccess (lockLocationContext). The entity / package / SKU reads are the shared name
+  // lookup and matcher pool, so they stay whole.
+  const scope = integrationsReadScope(actor);
   const locQuery = () => {
     const q = sb.from("locations").select("id, name, toast_restaurant_guid").eq("active", true);
     return (scope ? q.in("id", scope) : q).order("name", { ascending: true })
