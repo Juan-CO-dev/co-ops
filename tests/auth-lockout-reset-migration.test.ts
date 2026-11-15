@@ -27,6 +27,8 @@ const REEMITS: Record<string, readonly Mod[]> = {
       "  else update public.users set password_hash = p_hash where id = p_user; end if;\n",
       [
         "  else update public.users set password_hash = p_hash where id = p_user; end if;",
+        "  -- 0307 B158: a manager's reset also ends the lockout — the person can sign in with the new credential at once.",
+        "  update public.users set failed_login_count = 0, locked_until = null where id = p_user;",
         "  -- 0307 B157: a password set by an admin retires the person's open reset links (an older email must not overwrite it).",
         "  if p_kind = 'password' then",
         "    update public.password_resets set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;",
@@ -88,6 +90,9 @@ describe("0307_auth_lockout_reset_hardening", () => {
       "B157 two open links: using T2 retires T1; another person's link untouched", "B157 T1 then → token_consumed",
       "B157 an admin password set retires the person's open reset links, nobody else's",
       "B157 an admin PIN reset leaves the reset link alone",
+      "B158 a GM's PIN reset clears locked_until and failed_login_count; the new PIN signs in at once",
+      "B158 a GM's password set clears the lockout too",
+      "B158 a refused reset (a peer, never below the actor) clears nothing → forbidden",
       "PASS 0307:",
     ]) expect(out, s).toContain(s);
   }, 260_000);

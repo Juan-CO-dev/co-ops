@@ -32,6 +32,9 @@
 --      so a failed password write no longer burns the link (B156: the route consumed the link, then wrote the
 --      password in a separate request; a failure there left the link dead and the password unchanged).
 --   5. admin_user_set_credential — 0279's writer RE-EMITTED, same signature, the gate unchanged and still first:
+--      + B158: a PIN or password set by an admin also clears failed_login_count / locked_until, as the self-service
+--        reset always has. A locked-out person whose PIN a manager just reset used to stay locked for the rest of
+--        the 15 minutes (and, before B049, re-lock on the first typo after it).
 --      + B157: a password set by an admin also consumes the person's open reset links (an older reset email could
 --        otherwise overwrite the password the GM just set). Returns the extra key reset_links_retired.
 --
@@ -254,6 +257,8 @@ begin
   perform public.user_admin_lock(p_actor, p_user);
   if p_kind = 'pin' then update public.users set pin_hash = p_hash where id = p_user;
   else update public.users set password_hash = p_hash where id = p_user; end if;
+  -- 0307 B158: a manager's reset also ends the lockout — the person can sign in with the new credential at once.
+  update public.users set failed_login_count = 0, locked_until = null where id = p_user;
   -- 0307 B157: a password set by an admin retires the person's open reset links (an older email must not overwrite it).
   if p_kind = 'password' then
     update public.password_resets set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;

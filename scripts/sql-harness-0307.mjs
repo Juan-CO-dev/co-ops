@@ -18,6 +18,7 @@
  *        email change, is refused and inserts nothing; a good mint inserts one session and clears the lockout
  *   B156 the self-service reset is one transaction: a failed password write leaves the link usable
  *   B157 a reset (and an admin password set) retires every other open reset link of that person, nobody else's
+ *   B158 an admin PIN / password reset clears the lockout; a refused reset clears nothing
  *   S8   the re-emitted 0279 writers still take the ONE gate (user_admin_lock) and no lock of their own
  */
 import { readFileSync } from "node:fs";
@@ -325,6 +326,34 @@ try {
     const t4 = await resetLink(u);
     const pinSet = await rpc(setUserCredentialCall({ actorId: gm, userId: u, kind: "pin", hash: HASH("pin-set") }));
     check(pinSet.reset_links_retired === 0 && !(await linkConsumed(t4)), "B157 an admin PIN reset leaves the reset link alone");
+  }
+
+  // ── B158: an admin reset ends the lockout ──
+  {
+    const locked = () => ({ failed_login_count: 5, locked_until: new Date(Date.now() + 15 * 60_000).toISOString() });
+    const e = await user("employee", { pin_hash: HASH("forgot"), ...locked() });
+    await member(e, SA);
+    check((await rpc(reserveAttemptCall(e))).allowed === false, "B158 (setup) the person is locked out");
+    await rpc(setUserCredentialCall({ actorId: gm, userId: e, kind: "pin", hash: HASH("fresh-pin") }));
+    const s = await lockState(e);
+    const next = await rpc(reserveAttemptCall(e));
+    const signedIn = await mint(e, { kind: "pin", hash: HASH("fresh-pin") });
+    check(s.n === 0 && s.until === null && next.allowed === true && next.attempt === 1 && signedIn.r.session_id === signedIn.sessionId,
+      "B158 a GM's PIN reset clears locked_until and failed_login_count; the new PIN signs in at once");
+
+    const m = await user("agm", { email: "locked-mgr@example.test", password_hash: HASH("old-pw"), email_verified: true, ...locked() });
+    await member(m, SA);
+    await rpc(setUserCredentialCall({ actorId: gm, userId: m, kind: "password", hash: HASH("new-pw") }));
+    const ms = await lockState(m);
+    check(ms.n === 0 && ms.until === null, "B158 a GM's password set clears the lockout too");
+
+    // the gate still decides first: a GM cannot reset (and so cannot unlock) another GM
+    const peer = await user("gm", { pin_hash: HASH("peer"), ...locked() });
+    await member(peer, SA);
+    await refuses(() => rpc(setUserCredentialCall({ actorId: gm, userId: peer, kind: "pin", hash: HASH("nope") })), "forbidden",
+      "B158 a refused reset (a peer, never below the actor) clears nothing");
+    const ps = await one("select pin_hash, failed_login_count as n, locked_until > now() as live from public.users where id = $1", [peer]);
+    check(ps.pin_hash === HASH("peer") && ps.n === 5 && ps.live === true, "B158 … the peer's PIN and lock are untouched");
   }
 } catch (e) {
   failures++;
