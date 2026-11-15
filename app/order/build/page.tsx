@@ -49,6 +49,7 @@ import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 import { catForSection, orderSections, orderWithinSection, sectionLabel, type MenuCat } from "@/lib/portal/menu-order-shared";
 import { coverageSegments } from "@/lib/portal/coverage-shared";
 import { createCartSaveQueue, type CartSaveOutcome } from "@/lib/portal/cart-save-queue-shared";
+import { isEligiblePackagePick as isEligiblePick } from "@/lib/portal/draft-shared";
 
 type Cat = MenuCat;
 /** Portion selector for portionable subs. Matches the draft-lines API portion values. */
@@ -290,7 +291,12 @@ function OrderBuild() {
             const pkg = (d.packages ?? []).find((p) => p.id === it.packageId);
             if (!pkg) { stale = true; continue; }
             if (pkg.priceCents !== it.unitPriceCents) stale = true;
-            initialPkg[it.id] = { key: it.id, pkg, quantity: it.quantity, options: it.options ?? [] };
+            // A pick that is no longer an eligible option (deactivated — audit W01/B031 r1) is dropped,
+            // and the cart is re-saved without it (the server refuses to save or submit it).
+            const stored = it.options ?? [];
+            const options = stored.filter((o) => isEligiblePick(pkg, o));
+            if (options.length !== stored.length) stale = true;
+            initialPkg[it.id] = { key: it.id, pkg, quantity: it.quantity, options };
             continue;
           }
           // Reconstruct the sellable-card key from the persisted reference (incl. sizeId for sized items).

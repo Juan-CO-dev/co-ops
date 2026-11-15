@@ -150,6 +150,35 @@ describe("B031 — a draft is submitted at TODAY's menu prices, never the price 
     await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "cart_changed" });
     expect(quoteRow(db).status).toBe("draft");
   });
+  // A package line with one pick (B031 r1): the package loader drops a package whose fixed ingredient
+  // was deactivated and a pick that was deactivated (tests/portal-package-availability.test.ts).
+  const PKG = "88888888-8888-4888-8888-888888888888";
+  const SLOT = "99999999-9999-4999-8999-999999999999";
+  const PICK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const pkgSeed = () => {
+    const t = seed();
+    t.catering_quote_items = [{ id: "line-p", quote_id: QUOTE, item_id: null, menu_item_id: null, package_id: PKG, size_id: null, portion: null, description: "Box lunch", quantity: 2, unit_price_cents: 5000, line_total_cents: 10000, display_order: 0 }];
+    t.catering_quote_item_options = [{ id: "opt-1", quote_item_id: "line-p", package_item_id: SLOT, item_id: null, menu_item_id: PICK, quantity: 1 }];
+    return t;
+  };
+  const boxLunch = (options: Array<{ kind: "item" | "menu_item"; refId: string; name: string }>) => ({ id: PKG, labelEn: "Box lunch", labelEs: null, pricingMode: "flat", priceCents: 5000, minHeadcount: null, leadTimeHours: null, serves: 10, items: [], slots: [{ packageItemId: SLOT, label: "Pick one", pickN: 1, options }] });
+  it("a package whose pick is still offered re-prices clean", async () => {
+    h.packages = [boxLunch([{ kind: "menu_item", refId: PICK, name: "Turkey" }])];
+    useDb(pkgSeed());
+    expect((await previewDraft(CUST, QUOTE, {})).subtotalCents).toBe(10000);
+  });
+  it("a package whose chosen pick was deactivated, or that is no longer offered, is cart_changed — never submitted", async () => {
+    h.packages = [boxLunch([])];
+    let db = useDb(pkgSeed());
+    await expect(previewDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "cart_changed" });
+    await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "cart_changed" });
+    expect(quoteRow(db).status).toBe("draft");
+    h.packages = [];
+    db = useDb(pkgSeed());
+    await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "cart_changed" });
+    expect(quoteRow(db).status).toBe("draft");
+    expect(h.createPaymentDue).not.toHaveBeenCalled();
+  });
   it("after the cart is saved again (the build page re-saves a stale cart), submit goes through at the new price", async () => {
     const db = useDb();
     h.menu = [chips(1200)];

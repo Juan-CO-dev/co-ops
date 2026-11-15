@@ -48,3 +48,19 @@ export function reviewFailure(status: number | null, code: string | null, hasSta
   if (status === 401) return "session_expired";
   return hasStack ? "keep" : "error";
 }
+
+/**
+ * Is a stored package pick still an eligible option of its package (audit W01/B031 r1)? The SAME rule
+ * resolveLines applies on save (lib/portal/draft.ts): the slot exists and lists that reference. The
+ * build page drops a pick that fails it when it hydrates a saved cart, then re-saves the cart, so a
+ * deactivated pick never loops the customer between the cart and a refused review.
+ */
+export interface PortalPickSlot { packageItemId: string; options: ReadonlyArray<{ kind: "item" | "menu_item"; refId: string }> }
+export interface PortalPick { packageItemId: string; itemId?: string | null; menuItemId?: string | null }
+export function isEligiblePackagePick(pkg: { slots: readonly PortalPickSlot[] }, pick: PortalPick): boolean {
+  const slot = pkg.slots.find((s) => s.packageItemId === pick.packageItemId);
+  if (!slot) return false;
+  const kind: "item" | "menu_item" = pick.menuItemId ? "menu_item" : "item";
+  const refId = pick.menuItemId ?? pick.itemId ?? "";
+  return slot.options.some((o) => o.kind === kind && o.refId === refId);
+}
