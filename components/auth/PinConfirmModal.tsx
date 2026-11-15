@@ -64,6 +64,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ChecklistApiError } from "@/components/ChecklistItem";
 import { useTranslation } from "@/lib/i18n/provider";
+import { REAUTH_LOCKED_CODE, leaveAfterReauthLock } from "@/lib/auth-reauth-client";
 import { createPinEntry } from "@/lib/pin-entry";
 import type { ChecklistInstance } from "@/lib/types";
 
@@ -213,6 +214,13 @@ export function PinConfirmModal({
           body = (await res.json()) as ChecklistApiError;
         } catch {
           triggerError(t("auth.pin_modal.error_unknown"));
+          return;
+        }
+
+        // Five wrong PINs in a row: the server signed this session out (audit W07 B159). Say so, then go to sign-in.
+        if (body.code === REAUTH_LOCKED_CODE) {
+          triggerError(t("auth.reauth.signed_out"));
+          leaveAfterReauthLock();
           return;
         }
 

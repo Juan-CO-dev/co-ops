@@ -397,9 +397,10 @@ describe("0187 / 0188 — authored, gated, and NOT called by shipped code", () =
     // P1 #3): 0215 re-emits it as its latest definer (recipe row lock + the one-output rule
     // for batch_mode recipes) and lib/recipes.ts now calls it — 0187 is applied (lineage at
     // 0212) and 0215 deploys before this code. The pin below replaces the old "no caller".
-    for (const f of ["lib/recipes.ts", "lib/cash.ts"]) {
-      expect(srcOf(f).includes('.rpc("submit_cash_report_atomic"'), `${f} → submit_cash_report_atomic`).toBe(false);
-    }
+    // submit_cash_report_atomic LEFT this list on 2026-11-14 (bug-audit W03/B041): 0304 re-emits it
+    // (closing lock + compare-and-set + 0253's columns) and lib/cash.ts now calls it, falling back to
+    // the direct writes only while the function is missing — pinned in tests/cash-atomic-0304.test.ts.
+    expect(srcOf("lib/recipes.ts").includes('.rpc("submit_cash_report_atomic"'), "lib/recipes.ts → submit_cash_report_atomic").toBe(false);
   });
 
   it("addRecipeOutput calls add_recipe_output (0187, latest definer 0215) and no longer inserts directly", () => {
@@ -408,10 +409,10 @@ describe("0187 / 0188 — authored, gated, and NOT called by shipped code", () =
     expect(body).not.toContain('from("recipe_outputs").insert');
   });
 
-  it("lib/cash.ts is untouched by the authoring — it still does its three round trips", () => {
-    // 0188 removes the strand window only once the caller is swapped, which is the named
-    // follow-up. Until then the #304 rollback/strand machinery is the live guarantee and
-    // must not be deleted ahead of the function that makes it unnecessary.
+  it("lib/cash.ts keeps its three round trips as the pre-0304 fallback", () => {
+    // 0188 removes the strand window only once the caller is swapped. The swap landed with 0304
+    // (W03/B041), but shipped code must keep working before 0304 is applied, so the direct path —
+    // and the #304 rollback/strand machinery that guards it — stays until 0304 is on prod.
     const src = srcOf("lib/cash.ts");
     expect(src).toContain("supersede_strand");
     expect(src).toContain("superseded_by: inserted.id");

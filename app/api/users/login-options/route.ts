@@ -27,13 +27,11 @@ import { type NextRequest } from "next/server";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
-import { ROLES, type RoleCode } from "@/lib/roles";
+// isRoleCode is lib/roles.ts's (Object.hasOwn): a local `v in ROLES` accepted every Object.prototype name
+// ("constructor", "toString", "__proto__") as a role code (audit W07 / B160).
+import { isRoleCode, type RoleCode } from "@/lib/roles";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isRoleCode(v: string): v is RoleCode {
-  return v in ROLES;
-}
 
 interface UserRow {
   id: string;
