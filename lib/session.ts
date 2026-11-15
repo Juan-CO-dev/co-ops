@@ -79,7 +79,8 @@ function sessionUnavailable(): NextResponse {
 }
 
 function unauthorized(): NextResponse {
-  const res = NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // `code` (audit W06/B154): clients tell a dead session from a wrong password by the machine code; `error` stays.
+  const res = NextResponse.json({ error: "unauthorized", code: "unauthorized" }, { status: 401 });
   res.cookies.set(COOKIE_NAME, "", clearedCookieOptions());
   return res;
 }

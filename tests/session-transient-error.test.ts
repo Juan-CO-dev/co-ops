@@ -106,3 +106,11 @@ describe("a transient session-read error is not a sign-out (B048)", () => {
   });
 });
 
+
+describe("unauthorized carries a machine code (B154)", () => {
+  it("no cookie → 401 { error, code: 'unauthorized' }", async () => {
+    const r = (await requireSession(req(false), "/api/x")) as Response;
+    expect(r.status).toBe(401);
+    expect(await r.json()).toEqual({ error: "unauthorized", code: "unauthorized" });
+  });
+});

@@ -22,8 +22,12 @@
  *                                  lockout on failure per Session 3 lock, but
  *                                  the underlying session could be in a locked
  *                                  state from elsewhere)
- *   401 unauthorized             → onCancel (parent's protected-route
- *                                  enforcement bounces user to login)
+ *   401 (any code but invalid_credentials), or an opaque redirect (the proxy's
+ *   307 for an expired JWT under redirect: "manual")
+ *                                → the SESSION is dead, not the password (audit
+ *                                  W06/B154): onCancel() resets the parent, then
+ *                                  the page goes to sign in, with a return link
+ *                                  bound to this tab's user (W06-2 hybrid).
  *   network/server               → inline error
  *
  * NO LOCKOUT on repeated step-up failures (locked Phase 2 Session 3 — actor is
@@ -35,6 +39,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { StepUpPurpose } from "@/lib/admin/step-up-shared";
+import { signInHref, signedInUser } from "@/lib/nav-sign-in-return";
+
+/** Audit W06/B154: a dead session sends the person to sign in instead of reading as "wrong password". */
+function goSignIn(): void {
+  const here = window.location.pathname + window.location.search;
+  window.location.assign(signInHref({ next: here, forUser: signedInUser() }));
+}
 
 export interface PasswordModalProps {
   open: boolean;
@@ -124,14 +135,21 @@ export function PasswordModal({ open, onConfirm, onCancel, purpose = null, catal
           await onConfirm();
           return;
         }
+        if (res.type === "opaqueredirect") {
+          // The proxy 307'd (expired JWT) — the session is gone, the password was never checked.
+          onCancel();
+          goSignIn();
+          return;
+        }
         const body = (await res.json().catch(() => ({}))) as {
           code?: string;
           message?: string;
           retry_after_seconds?: number;
         };
-        if (res.status === 401 && body.code === "unauthorized") {
-          // Session itself is dead — let parent's enforcement handle re-auth.
+        if (res.status === 401 && body.code !== "invalid_credentials") {
+          // Session itself is dead (requireSession's 401) — sign in again rather than "wrong password".
           onCancel();
+          goSignIn();
           return;
         }
         if (res.status === 401) {
