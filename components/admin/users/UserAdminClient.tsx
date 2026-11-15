@@ -26,6 +26,7 @@ import type { AdminUserListItem } from "@/lib/admin/users";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { CreateUserForm } from "./CreateUserForm";
 import { UserActions } from "./UserActions";
+import { emailSignInNotice } from "@/lib/admin/email-confirm-shared";
 import { EmploymentChip, EmploymentRecord, RehireOverrides } from "./Employment";
 import type { UserAdminClientProps } from "./shared";
 
@@ -111,6 +112,10 @@ export function UserAdminClient({
                 </div>
               </div>
 
+              {(() => {
+                const notice = emailSignInNotice(u);
+                return notice ? <p className="mt-2 text-sm text-co-warning-text">{t(`admin.users.email_notice.${notice}` as TranslationKey)}</p> : null;
+              })()}
               <EmploymentRecord detail={u.employment?.detail ?? null} />
               <RehireOverrides overrides={u.employment?.overrides} />
               {u.dormancy.dormant && statusOf(u) === "active" && <p className="mt-2 text-sm text-co-text-muted">

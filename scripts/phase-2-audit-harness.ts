@@ -913,21 +913,37 @@ async function casesStepUp(f: Fixtures) {
       .select("failed_login_count, locked_until")
       .eq("id", f.gmId)
       .maybeSingle<{ failed_login_count: number; locked_until: string | null }>();
+    // Audit W07 B159 (migration 0307): five wrong re-checks in a row sign the SESSION out — the account is still
+    // never locked. With 0307 applied: 5 failure audits (the 5th carries signed_out), the session is revoked, and
+    // the 6th request dies at requireSession (401, no audit row). Before 0307 is applied the re-check is uncounted:
+    // 6 failure audits and the session stays live. Either way: every answer is 401, no 423, no auth_account_locked,
+    // and the users counters are untouched.
+    const { data: sess } = await sb
+      .from("sessions")
+      .select("revoked_at")
+      .eq("user_id", f.gmId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ revoked_at: string | null }>();
+    const sessionSignedOut = sess?.revoked_at != null;
     const allUnauthorized = statuses.every((s) => s === 401);
     const noLockout = u?.failed_login_count === 0 && u?.locked_until === null;
+    const counted = audit.length === 5 && sessionSignedOut
+      && (audit.filter((r) => (r.metadata as { signed_out?: boolean } | null)?.signed_out === true).length === 1);
+    const uncounted = audit.length === 6 && !sessionSignedOut;
     const passed =
-      allUnauthorized && audit.length === 6 && accountLocked.length === 0 && noLockout;
+      allUnauthorized && (counted || uncounted) && accountLocked.length === 0 && noLockout;
     record({
       id: "step-up-no-lockout-on-failure",
       endpoint: "POST /api/auth/step-up (×6 wrong)",
       expected_status: "401×6 (no 423)",
       actual_status: statuses[5] ?? 0,
-      expected_audit_actions: ["auth_step_up_failure ×6 (no auth_account_locked)"],
+      expected_audit_actions: ["auth_step_up_failure ×5 + session signed out (0307 applied) — or ×6 before 0307; never auth_account_locked"],
       captured_audit_rows: summarize([...audit, ...accountLocked]),
       passed,
       evidence: passed
-        ? "all 6 attempts → 401, 6 step_up_failure audits, no account_locked row, users counters untouched"
-        : `statuses=${statuses.join(",")}, audit=${audit.length}, lock=${accountLocked.length}, count=${u?.failed_login_count}`,
+        ? `all 6 attempts → 401, ${audit.length} step_up_failure audits, session ${sessionSignedOut ? "signed out after the 5th" : "still live (0307 not applied)"}, no account_locked row, users counters untouched`
+        : `statuses=${statuses.join(",")}, audit=${audit.length}, signed_out=${sessionSignedOut}, lock=${accountLocked.length}, count=${u?.failed_login_count}`,
     });
     await revokeAllSessionsForUser(f.gmId);
   }

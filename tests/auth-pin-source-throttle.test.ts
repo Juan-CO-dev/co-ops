@@ -21,7 +21,7 @@
  * see — so it is pinned at the source, the house fallback
  * (tests/auth-step-up-hardening.test.ts, tests/catering-authz.test.ts).
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -130,11 +130,11 @@ describe("/api/auth/pin wires both guards, ahead of every credential decision", 
 /**
  * THE OTHER TWO PUBLIC AUTH POSTS, ADJUDICATED RATHER THAN SWEPT.
  *
- * /api/auth/pin-confirm TAKES THE GUARD. It is a cookie-authenticated POST —
- * the textbook CSRF shape — and it has no live caller today (PinConfirmModal
- * says so in its own header: the modal attests in-place and never calls it).
- * A dormant route is the cheapest possible moment to close it, because there
- * is no traffic to regress.
+ * /api/auth/pin-confirm IS GONE (audit W07 B159). It was a cookie-authenticated
+ * POST with no caller (PinConfirmModal attests in place and never called it) that
+ * answered right / wrong for a PIN with no limit — an oracle for anyone holding a
+ * session. It took the origin guard first (P2-6); it has now been removed outright,
+ * and this file pins that it stays removed.
  *
  * /api/auth/logout DELIBERATELY DOES NOT, and this test PINS that so the
  * absence reads as a decision instead of an oversight. Forced logout is a
@@ -147,14 +147,11 @@ describe("/api/auth/pin wires both guards, ahead of every credential decision", 
  */
 describe("the origin guard is applied by adjudication, not by sweep", () => {
   const read = (...seg: string[]) => readFileSync(join(repoRoot, ...seg), "utf8");
-  const pinConfirm = read("app", "api", "auth", "pin-confirm", "route.ts");
   const logout = read("app", "api", "auth", "logout", "route.ts");
 
-  it("pin-confirm asserts same-origin before verifying the actor's PIN", () => {
-    const guard = pinConfirm.indexOf("assertSameOrigin(");
-    const verify = pinConfirm.indexOf("verifyActorPin(");
-    expect([guard, verify].every((i) => i > -1)).toBe(true);
-    expect(guard).toBeLessThan(verify);
+  it("the unthrottled pin-confirm route no longer exists (B159)", () => {
+    expect(existsSync(join(repoRoot, "app", "api", "auth", "pin-confirm", "route.ts"))).toBe(false);
+    expect(existsSync(join(repoRoot, "app", "api", "auth", "pin-confirm"))).toBe(false);
   });
 
   it("logout stays unguarded, and says why in its own header", () => {

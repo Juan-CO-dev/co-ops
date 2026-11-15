@@ -333,7 +333,7 @@ it("UserActions offers CGS Positions only with a floor role at an accessible mem
   const { UserActions } = await import("@/components/admin/users/UserActions");
   const { userAdminRefusal } = await import("@/lib/admin/user-access-shared");
   const user: import("@/lib/admin/users").AdminUserListItem = {
-    id: EMP, name: "Office account", email: null, role: "cgs", level: 10, active: true,
+    id: EMP, name: "Office account", email: null, emailVerified: false, role: "cgs", level: 10, active: true,
     lastLoginAt: null, dormantAt: null, dormancy: { dormant: false }, locationIds: [A],
   };
   const picker: ShopPositionPicker = { locationId: A, positions: [], rolesKnown: true, settings: {}, suggestions: {} };

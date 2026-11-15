@@ -22,7 +22,10 @@
  *                                  lockout on failure per Session 3 lock, but
  *                                  the underlying session could be in a locked
  *                                  state from elsewhere)
- *   401 (any code but invalid_credentials), or an opaque redirect (the proxy's
+ *   401 reauth_locked            → "Too many wrong tries — you've been signed out", then
+ *                                  the sign-in page (audit W07 B159: five wrong passwords
+ *                                  in a row end the SESSION; the account is not locked)
+ *   401 (any other code but invalid_credentials), or an opaque redirect (the proxy's
  *   307 for an expired JWT under redirect: "manual")
  *                                → the SESSION is dead, not the password (audit
  *                                  W06/B154): onCancel() resets the parent, then
@@ -46,6 +49,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { withDeadline } from "@/lib/bounded-fetch";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { StepUpPurpose } from "@/lib/admin/step-up-shared";
+import { REAUTH_LOCKED_CODE, leaveAfterReauthLock } from "@/lib/auth-reauth-client";
 import { signInHref, signedInUser } from "@/lib/nav-sign-in-return";
 
 /** One step-up request (password check included) that has not answered by then is a network error (round 8). */
@@ -176,6 +180,12 @@ export function PasswordModal({ open, onConfirm, onCancel, purpose = null, catal
           return;
         }
         const body = res.body;
+        if (res.status === 401 && body.code === REAUTH_LOCKED_CODE) {
+          // Five wrong passwords in a row (W07 B159): the server signed this session out. Say so, then go to sign-in.
+          setError({ kind: "transient", message: t("auth.reauth.signed_out") });
+          leaveAfterReauthLock();
+          return;
+        }
         if (res.status === 401 && body.code !== "invalid_credentials") {
           // Session itself is dead (requireSession's 401) — sign in again rather than "wrong password".
           onCancel();

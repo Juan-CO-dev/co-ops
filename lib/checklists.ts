@@ -50,6 +50,7 @@ import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js";
 import type { ChecklistWriteActor } from "./checklist-write-actor";
 import { verifyPin } from "./auth";
 import { audit } from "./audit";
+import { clearReauth, reauthFailed, reserveReauth } from "./auth-reauth";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
 import { lockLocationContext } from "./locations";
@@ -191,6 +192,17 @@ export class ChecklistPinMismatchError extends ChecklistError {
   constructor() {
     super("PIN does not match.", "pin_mismatch");
     this.name = "ChecklistPinMismatchError";
+  }
+}
+
+/**
+ * Too many wrong confirmation PINs in a row on this session (audit W07 B159): the session has been signed out.
+ * The account is not locked; the person signs in again. The route answers 401 with the cookie cleared.
+ */
+export class ChecklistReauthLockedError extends ChecklistError {
+  constructor() {
+    super("Too many wrong tries. You have been signed out — sign in again.", "reauth_locked");
+    this.name = "ChecklistReauthLockedError";
   }
 }
 
@@ -1218,6 +1230,8 @@ export async function confirmInstance(
     incompleteReasons: Array<{ templateItemId: string; reason: string }>;
     ipAddress?: string | null;
     userAgent?: string | null;
+    /** The signed-in session (audit W07 B159): wrong confirmation PINs are counted on it; five in a row sign it out. */
+    sessionId?: string;
   },
 ): Promise<{
   instance: ChecklistInstance;
@@ -1452,7 +1466,13 @@ export async function confirmInstance(
     });
     throw new ChecklistPinMismatchError();
   }
-  const pinOk = typeof pin === "string" && /^\d{4}$/.test(pin) && await verifyPin(pin, userRow.pin_hash);
+  // Counted per session BEFORE the PIN is checked (audit W07 B159; see lib/auth-reauth.ts). A value that is not
+  // four digits is a malformed request, not a guess, and spends no attempt.
+  const pinShaped = typeof pin === "string" && /^\d{4}$/.test(pin);
+  const reauth = pinShaped && args.sessionId ? await reserveReauth(args.sessionId) : null;
+  if (reauth && !reauth.allowed) throw new ChecklistReauthLockedError();
+  const pinOk = pinShaped && await verifyPin(pin, userRow.pin_hash);
+  if (pinOk && reauth && args.sessionId) await clearReauth(args.sessionId, reauth);
   if (!pinOk) {
     await audit({
       actorId: actor.userId,
@@ -1469,6 +1489,8 @@ export async function confirmInstance(
       ipAddress: args.ipAddress ?? null,
       userAgent: args.userAgent ?? null,
     });
+    // The fifth wrong PIN in a row signs this session out.
+    if (reauth && args.sessionId && await reauthFailed(args.sessionId, reauth)) throw new ChecklistReauthLockedError();
     throw new ChecklistPinMismatchError();
   }
 

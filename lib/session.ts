@@ -29,6 +29,7 @@ import { cookies as nextCookies, headers as nextHeaders } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { signJwt, verifyJwt, hashToken, type AppJwtClaims } from "./auth";
+import { createSessionCall, isMissingRpc, type VerifiedCredential } from "./auth-lockout-shared";
 import { trustedClientIp } from "./client-ip";
 import { jsonError } from "./api-helpers";
 import { signInHref } from "./nav-sign-in-return";
@@ -179,12 +180,44 @@ export interface CreateSessionResult {
   /** Apply via res.cookies.set(...spreadCookie(jwt)) in the route handler. */
   cookieName: string;
   cookieMaxAgeSeconds: number;
+  /**
+   * true = minted by 0307's `auth_create_session`: the row was inserted under the users row lock only because the
+   * verified credential was still the stored one, and the lockout counters were cleared in that same transaction.
+   * false = migration 0307 is not applied yet and the pre-0307 insert ran (the caller clears the counters itself).
+   */
+  atomic: boolean;
 }
 
+/**
+ * The credential (or, for a password sign-in, the email) changed between the moment the sign-in read it and the
+ * moment the session would have been minted — an admin reset, a self-service reset or an email change committed in
+ * between and already revoked the account's sessions. No session was created. Audit W07 / B051.
+ */
+export class CredentialChangedError extends Error {
+  constructor() {
+    super("credential_changed");
+    this.name = "CredentialChangedError";
+  }
+}
+
+export type { VerifiedCredential };
+
+/** Logged once per server instance: before 0307 is applied every sign-in mints the pre-0307 way. */
+let warnedMintMissing = false;
+
+/**
+ * Mint a session for a credential the caller JUST verified.
+ *
+ * `credential` is REQUIRED so every caller has to say which stored hash it verified (and, for a password sign-in,
+ * which email it looked the account up by). 0307's `auth_create_session` re-reads the users row under its row lock
+ * and inserts the session only while that is still true — otherwise a sign-in that read the old hash before an
+ * admin reset could insert a live session AFTER the reset's revoke (B051). Throws CredentialChangedError then.
+ */
 export async function createSession(
   userId: string,
   authMethod: AuthMethod,
-  context?: { ipAddress?: string | null; userAgent?: string | null },
+  context: { ipAddress?: string | null; userAgent?: string | null } | undefined,
+  credential: VerifiedCredential,
 ): Promise<CreateSessionResult> {
   const sb = getServiceRoleClient();
 
@@ -224,24 +257,46 @@ export async function createSession(
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_DURATION_HOURS * 3600 * 1000);
 
-  const { error: insertErr } = await sb.from("sessions").insert({
-    id: sessionId,
-    user_id: userId,
-    token_hash: tokenHash,
-    auth_method: authMethod,
-    step_up_unlocked: false,
-    last_activity_at: now.toISOString(),
-    expires_at: expiresAt.toISOString(),
-    ip_address: context?.ipAddress ?? null,
-    user_agent: context?.userAgent ?? null,
+  // The mint: compare-and-set on the verified credential, in one transaction with the counter reset (0307).
+  const call = createSessionCall({
+    sessionId, userId, authMethod, credential, tokenHash, expiresAt: expiresAt.toISOString(),
+    ipAddress: context?.ipAddress ?? null, userAgent: context?.userAgent ?? null,
   });
-  if (insertErr) throw new Error(`createSession: insert failed: ${insertErr.message}`);
+  const { error: mintErr } = await sb.rpc(call.fn, call.args);
+  let atomic = true;
+  if (mintErr) {
+    if (!isMissingRpc(mintErr)) {
+      if (mintErr.message === "credential_changed") throw new CredentialChangedError();
+      throw new Error(`createSession: mint failed: ${mintErr.message}`);
+    }
+    // PRE-0307 PATH — only when the function is not installed (never on any other error): the plain insert this
+    // code always did. It keeps every sign-in working before the migration is applied; B051's race stays open
+    // until then, exactly as it is today.
+    atomic = false;
+    if (!warnedMintMissing) {
+      warnedMintMissing = true;
+      console.warn("[session] auth_create_session is not installed (migration 0307 not applied): minting with the pre-0307 insert");
+    }
+    const { error: insertErr } = await sb.from("sessions").insert({
+      id: sessionId,
+      user_id: userId,
+      token_hash: tokenHash,
+      auth_method: authMethod,
+      step_up_unlocked: false,
+      last_activity_at: now.toISOString(),
+      expires_at: expiresAt.toISOString(),
+      ip_address: context?.ipAddress ?? null,
+      user_agent: context?.userAgent ?? null,
+    });
+    if (insertErr) throw new Error(`createSession: insert failed: ${insertErr.message}`);
+  }
 
   return {
     sessionId,
     jwt,
     cookieName: COOKIE_NAME,
     cookieMaxAgeSeconds: SESSION_DURATION_HOURS * 3600,
+    atomic,
   };
 }
 

@@ -3,9 +3,11 @@ import { hasTaskAccess } from "@/lib/assignments";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
-import { verifyActorPin } from "@/lib/auth-flows";
+import { reauthLockedResponse } from "@/lib/auth-reauth";
+import { verifyActorPinForSession } from "@/lib/auth-reauth-pin";
 import { loadToastCashProjected } from "@/lib/cash-toast";
 import { CASH_REPORT_BASE_LEVEL, DENOMINATION_UNITS_CENTS, sumDenominations, submitCashReport, type Denominations, type OnShiftEntry } from "@/lib/cash";
+import { uncountedDrawer } from "@/lib/cash-shared";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -44,6 +46,11 @@ export async function POST(req: NextRequest) {
     if (!isCents(b.drawerTotalCents)) return jsonError(400, "invalid_payload", { field: "drawerTotalCents" });
     drawerTotalCents = b.drawerTotalCents as number;
   }
+  // W03/B007: an untouched form sent drawerTotalCents 0 and filed a negative deposit. A $0
+  // drawer files only when the client says the closer COUNTED it empty.
+  if (uncountedDrawer(drawerTotalCents, b.drawerCountedEmpty)) {
+    return jsonError(400, "drawer_not_counted", { message: "Count the drawer before submitting." });
+  }
   const floatCents = isCents(b.floatCents) ? (b.floatCents as number) : 20000;
   const onShift = Array.isArray(b.onShift)
     ? (b.onShift as unknown[]).filter((e): e is OnShiftEntry => typeof e === "object" && e !== null && typeof (e as OnShiftEntry).name === "string")
@@ -58,7 +65,10 @@ export async function POST(req: NextRequest) {
     return jsonError(403, "role_insufficient", { required_level: CASH_REPORT_BASE_LEVEL });
   }
 
-  if (!(await verifyActorPin(ctx.user.id, b.pin as string))) {
+  // Counted per session (audit W07 B159): five wrong PINs in a row sign this device out; the account is not locked.
+  const pinCheck = await verifyActorPinForSession(ctx.session.id, ctx.user.id, b.pin as string);
+  if (pinCheck === "signed_out") return reauthLockedResponse();
+  if (pinCheck !== "ok") {
     return jsonError(401, "pin_invalid", { message: "Incorrect PIN." });
   }
 
@@ -78,6 +88,9 @@ export async function POST(req: NextRequest) {
     if (!result.ok && result.reason === "assignment_required") return jsonError(403, "role_insufficient", {});
     if (!result.ok && result.reason === "closing_finalized") {
       return jsonError(409, "closing_finalized", { message: "Today's closing is finalized — the cash deposit is locked." });
+    }
+    if (!result.ok && result.reason === "concurrent_submit") {
+      return jsonError(409, "cash_concurrent_submit", { message: "Someone else just submitted this deposit." });
     }
     if (!result.ok) return jsonError(400, "cash_submit_failed", {});
     return jsonOk({ id: result.id });
