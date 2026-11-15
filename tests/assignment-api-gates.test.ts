@@ -30,7 +30,7 @@ const ctx = { user: { id: USER }, session: { id: "session" }, role: "employee", 
 function req(body: unknown): NextRequest {
   return new NextRequest("http://localhost/api/test", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify(body) });
 }
-const cashBody = { locationId: SHOP, date: DATE, pin: "1234", projectedCents: 0, cashTipsCents: 0, countMethod: "hand", drawerTotalCents: 0 };
+const cashBody = { locationId: SHOP, date: DATE, pin: "1234", projectedCents: 0, cashTipsCents: 0, countMethod: "hand", drawerTotalCents: 0, drawerCountedEmpty: true }; // W03/B007: a $0 drawer files only when counted empty
 
 beforeEach(() => {
   vi.clearAllMocks();
