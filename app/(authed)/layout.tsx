@@ -67,7 +67,7 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
       <CanvasWatermark />
       {/* Idle-timeout guard for ALL authenticated pages — hoisted here (was
           mounted on only 2 pages) so the 10-min idle logout warning is global. */}
-      <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} />
+      <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} />
       {/* B2: an explicit ?location= / ?loc= pick becomes the remembered shop (lib/shop-context-shared.ts). */}
       <Suspense fallback={null}>
         <ShopContextSync allowed={accessibleLocations({ role: auth.role, locations: auth.locations })} />

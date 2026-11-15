@@ -6,6 +6,8 @@
  *        "Stay signed in", signs out instead of pretending; the idle limit is the server's.
  *  B153: one idle clock across tabs (localStorage + the storage event); blocked storage keeps the per-tab clock.
  *  Round 4: other tabs are told of a sign-out only after its logout request settles.
+ *  Round 5: the sign-out names the session it ends (the logout body and the cross-tab signal), so a late logout can
+ *           neither end nor sign out a NEW session (the server half: tests/logout-revoke-only.test.ts).
  *  W06-2: the idle sign-in link carries a return link bound to this user.
  */
 import { act } from "react";
@@ -16,7 +18,9 @@ import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
 
-const h = vi.hoisted(() => ({ push: vi.fn(), fetch: vi.fn(), tab: "A", pushes: [] as Array<[string, string]> }));
+const h = vi.hoisted(() => ({
+  push: vi.fn(), fetch: vi.fn(), tab: "A", pushes: [] as Array<[string, string]>, session: undefined as string | undefined,
+}));
 // One stable router per mounted component (like Next's), tagged with the tab it was mounted as.
 vi.mock("next/navigation", async () => {
   const { useRef } = await import("react");
@@ -49,7 +53,10 @@ const unavailable = () => ({ ok: false, status: 503, type: "basic", json: async 
 const HEARTBEAT_KEY = "co_ops_last_heartbeat";
 const calls = (url: string) => h.fetch.mock.calls.filter((c) => c[0] === url);
 const mount = (props: { idleMinutes?: number } = {}) =>
-  render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(IdleTimeoutWarning, { userId: "user-1", ...props }) }));
+  render(jsx(TranslationProvider, {
+    initialLanguage: "en",
+    children: jsx(IdleTimeoutWarning, { userId: "user-1", ...(h.session ? { sessionId: h.session } : {}), ...props }),
+  }));
 const advance = (seconds: number) => act(async () => { await vi.advanceTimersByTimeAsync(seconds * 1000); });
 const otherTab = (key: string, value: string) => act(() => {
   window.localStorage.setItem(key, value);
@@ -61,6 +68,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.tab = "A";
   h.pushes = [];
+  h.session = undefined;
   window.localStorage.clear();
   window.sessionStorage.clear();
   window.history.replaceState(null, "", "/operations/counts?loc=a");
@@ -539,5 +547,86 @@ describe("B153 round 4 — the throttled shared activity clock keeps the latest 
     view.unmount();
     await advance(10);
     expect(activityWrites()).toHaveLength(2);
+  });
+});
+
+// ── Fix round 5 (review W06-r5) ────────────────────────────────────────────────────────────────────────────
+/** POST /api/auth/logout hangs; each pending response is settled ON ITS OWN (the r4 helper settled all at once). */
+const deferLogoutEach = () => {
+  const pending: Array<() => void> = [];
+  h.fetch.mockImplementation((url: string) =>
+    url === "/api/auth/logout" ? new Promise<Response>((resolve) => pending.push(() => resolve(ok()))) : Promise.resolve(ok()),
+  );
+  return {
+    pending: () => pending.length,
+    settleNext: () =>
+      act(async () => {
+        pending.shift()?.();
+        await vi.advanceTimersByTimeAsync(0);
+      }),
+  };
+};
+const logoutBody = (i = 0) => {
+  const init = calls("/api/auth/logout")[i]?.[1] as RequestInit | undefined;
+  return init?.body ? JSON.parse(String(init.body)) : null;
+};
+
+describe("B012 round 5 — a sign-out names the session it ends", () => {
+  it("the idle sign-out sends the session it observed, and signals it to the other tabs", async () => {
+    h.session = "session-1";
+    mount();
+    await advance(605);
+    expect(logoutBody()).toEqual({ sessionId: "session-1" });
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle:session-1$/);
+  });
+
+  it("Log out now sends it too", async () => {
+    h.session = "session-1";
+    mount();
+    await advance(575);
+    fireEvent.click(screen.getByRole("button", { name: LOGOUT_NOW }));
+    await advance(1);
+    expect(logoutBody()).toEqual({ sessionId: "session-1" });
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:logout:session-1$/);
+  });
+
+  it("two tabs at the deadline, logouts settled SEPARATELY around a new sign-in: the new session's tab stays", async () => {
+    linkTabs();
+    h.session = "session-1";
+    const logout = deferLogoutEach();
+    mountTab("A");
+    mountTab("B");
+    await advance(605);
+    expect(logout.pending()).toBe(2); // both tabs reached the deadline together
+    expect([logoutBody(0), logoutBody(1)]).toEqual([{ sessionId: "session-1" }, { sessionId: "session-1" }]);
+    await logout.settleNext(); // the first settles; that tab goes to the login page
+    expect(h.pushes).toHaveLength(1);
+    h.session = "session-2"; // someone signs in there: a new page with the NEW session
+    mountTab("C");
+    await logout.settleNext(); // the other tab's late logout lands only now
+    expect(pushedTabs()).toEqual(["A", "B"]);
+    expect(h.pushes.some(([tab]) => tab === "C")).toBe(false); // its signal was for session-1, not this one
+    await advance(5);
+    expect(h.pushes.some(([tab]) => tab === "C")).toBe(false);
+    expect(calls("/api/auth/logout")).toHaveLength(2); // and C sent no logout of its own
+  });
+
+  it("a signal for this tab's own session (or an older signal naming none) still signs it out", async () => {
+    h.session = "session-1";
+    mount();
+    await otherTab(SIGNED_OUT_KEY, `${Date.now()}:idle:session-1`);
+    expect(h.push).toHaveBeenCalledWith(IDLE_TARGET);
+    cleanup();
+    h.push.mockClear();
+    mount();
+    await otherTab(SIGNED_OUT_KEY, `${Date.now() + 1}:logout`);
+    expect(h.push).toHaveBeenCalledWith("/");
+  });
+
+  it("with no session known the request carries no body (the cookie's session, as before)", async () => {
+    mount();
+    await advance(605);
+    expect(logoutBody()).toBeNull();
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle$/);
   });
 });

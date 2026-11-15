@@ -26,8 +26,13 @@
  * (writes are throttled to one per 5 s, with one trailing write for the latest
  * suppressed activity, so every tab works to the same deadline), and activity elsewhere closes this tab's warning. A sign-out in one tab
  * (`co_ops_signed_out`) sends the other tabs to the login page without a
- * second logout — published only once that tab's logout request has settled,
- * so a slow logout response can never clear a sign-in made in another tab.
+ * second logout — published only once that tab's logout request has settled.
+ * The logout route is REVOKE-ONLY (round 5): it never sets a cookie, so no
+ * logout response — however late — can clear a sign-in made meanwhile. Both
+ * the logout request and the signal NAME the session this page was served for
+ * (`sessionId`): a late logout from another tab cannot end a NEW session (the
+ * server finds a different session on the cookie and leaves it), and its late
+ * signal cannot send a NEW session's tab to the login page.
  * Storage blocked (private mode) = the per-tab clock, as before.
  *
  * The SERVER clock only sees requests (B013): typing for ten minutes with no
@@ -110,9 +115,29 @@ export interface IdleTimeoutWarningProps {
   idleMinutes?: number;
   /** The signed-in user — binds the idle sign-out's return link to them (W06-2). */
   userId?: string;
+  /** The session this page was served for — a sign-out names it (round 5); not a credential (dual verification). */
+  sessionId?: string;
 }
 
-export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId }: IdleTimeoutWarningProps = {}) {
+/** The logout request: revoke-only, naming the session it means to end when it is known. */
+function logoutRequest(sessionId: string | undefined): RequestInit {
+  return sessionId
+    ? { method: "POST", redirect: "manual", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }) }
+    : { method: "POST", redirect: "manual" };
+}
+
+/** The cross-tab sign-out signal: `<ms>:<idle|logout>[:<session id>]`. */
+function signedOutSignal(kind: "idle" | "logout", sessionId: string | undefined): string {
+  return `${Date.now()}:${kind}${sessionId ? `:${sessionId}` : ""}`;
+}
+
+/** Parse a signal; one written before round 5 names no session and applies to every tab. */
+function parseSignedOutSignal(value: string): { kind: string; sessionId: string | null } {
+  const [, kind = "", sessionId = ""] = value.split(":");
+  return { kind, sessionId: sessionId || null };
+}
+
+export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId, sessionId }: IdleTimeoutWarningProps = {}) {
   const { t } = useTranslation();
   const router = useRouter();
   const totalIdleMs = (Number.isFinite(idleMinutes) && idleMinutes > 0 ? idleMinutes : DEFAULT_IDLE_MINUTES) * 60 * 1000;
@@ -181,20 +206,21 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
    * The idle sign-out: revoke for real (B012), then tell the other tabs and go to the login page. Runs once.
    * The other tabs hear about it only once the logout request has SETTLED (round 4): told earlier, another tab
    * reached the login page while the logout was still in flight, someone signed in there, and the slow logout
-   * response then cleared the NEW session's cookie.
+   * response then cleared the NEW session's cookie. Since round 5 the route never sets a cookie at all, and the
+   * request and the signal name this page's session, so a late one cannot end or sign out a newer session.
    */
   const expire = useCallback(async () => {
     if (expiredRef.current) return;
     expiredRef.current = true;
     const here = window.location.pathname + window.location.search;
     try {
-      await fetch("/api/auth/logout", { method: "POST", redirect: "manual" });
+      await fetch("/api/auth/logout", logoutRequest(sessionId));
     } catch {
-      // Best-effort, like onLogout: the route always clears the cookie when it is reached.
+      // Best-effort, like onLogout: a revoked-or-not session still meets the server's own idle limit.
     }
-    writeStored(IDLE_SIGNED_OUT_KEY, `${Date.now()}:idle`);
+    writeStored(IDLE_SIGNED_OUT_KEY, signedOutSignal("idle", sessionId));
     router.push(signInHref({ reason: "idle", next: here, forUser: userId }));
-  }, [router, userId]);
+  }, [router, userId, sessionId]);
 
   const heartbeat = useCallback(async (): Promise<Response | null> => {
     try {
@@ -327,14 +353,17 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
         return;
       }
       if (e.key === IDLE_SIGNED_OUT_KEY && e.newValue && !expiredRef.current) {
+        const signal = parseSignedOutSignal(e.newValue);
+        // A sign-out of ANOTHER session (a late signal from before a new sign-in) is not this tab's (round 5).
+        if (signal.sessionId && sessionId && signal.sessionId !== sessionId) return;
         expiredRef.current = true;
         const here = window.location.pathname + window.location.search;
-        router.push(e.newValue.endsWith(":logout") ? "/" : signInHref({ reason: "idle", next: here, forUser: userId }));
+        router.push(signal.kind === "logout" ? "/" : signInHref({ reason: "idle", next: here, forUser: userId }));
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [router, userId, warningSeconds]);
+  }, [router, userId, sessionId, warningSeconds]);
 
   // Tick loop: decide whether to show modal / sign out.
   useEffect(() => {
@@ -392,14 +421,14 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
   const onLogout = useCallback(async () => {
     expiredRef.current = true;
     try {
-      await fetch("/api/auth/logout", { method: "POST", redirect: "manual" });
+      await fetch("/api/auth/logout", logoutRequest(sessionId));
     } catch {
       // Logout is intent-honoring; navigate regardless.
     }
-    // Only now tell the other tabs (round 4, as in expire): never while the logout response can still clear a new sign-in.
-    writeStored(IDLE_SIGNED_OUT_KEY, `${Date.now()}:logout`);
+    // Only now tell the other tabs (round 4, as in expire), naming the session that ended (round 5).
+    writeStored(IDLE_SIGNED_OUT_KEY, signedOutSignal("logout", sessionId));
     router.push("/");
-  }, [router]);
+  }, [router, sessionId]);
 
   // Tab-trap inside the two buttons. Esc is intentionally ignored.
   const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {

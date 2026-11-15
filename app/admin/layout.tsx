@@ -51,7 +51,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       <CanvasWatermark />
       {/* Idle-timeout guard also covers the admin section (its own top-level
           route group, not under (authed)). */}
-      <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} />
+      <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} />
       {/* B2: an explicit ?location= / ?loc= pick becomes the remembered shop (lib/shop-context-shared.ts). */}
       <Suspense fallback={null}>
         <ShopContextSync allowed={accessibleLocations({ role: auth.role, locations: auth.locations })} />
