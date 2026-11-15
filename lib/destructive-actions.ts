@@ -60,6 +60,15 @@ export const DESTRUCTIVE_ACTIONS = [
   "ezcater.customization_map.approve",
   "ezcater.customization_map.ignore",
   "catering.pipeline.transfer_location", // Human reassignment of a catering order and its demand.
+  // Owner request (Juan 2026-11-15): resend an EXPIRED quote with a new expiry. Adjudicated
+  // DESTRUCTIVE, unlike its sibling `catering.quote.send` (non-destructive: a first offer
+  // creates a deadline, it does not replace one): a person REWRITES IN PLACE the deadline of
+  // an offer that had lapsed, which re-opens payment at the old price on the same quote id —
+  // no new revision records the change, so this row is the only record that the offer the
+  // customer is paying on today is not the one that expired. "Who re-opened this quote?" has
+  // to be one filter. (Membership feeds the `destructive` column only; the route's Tier B
+  // step-up is its own decision — see the header.)
+  "catering.quote.resend",
   "task.override", // A human acts on another assignee's accountability record.
   "station.create",
   "station.update",

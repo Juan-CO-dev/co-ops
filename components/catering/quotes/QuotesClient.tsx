@@ -15,7 +15,8 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
-import { etCalendarDate } from "@/lib/operational-day";
+import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
+import { quoteTimeExpired } from "@/lib/portal/payability-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { Quote, QuoteItem, DeliveryZone, ChargeRates, ChargeStack } from "@/lib/catering/quotes";
@@ -28,6 +29,8 @@ import {
   type QuoteLeadOption,
   type QuoteLeadRef,
   type QuoteLineKind,
+  QUOTE_RESEND_DEFAULT_DAYS,
+  QUOTE_RESEND_MAX_DAYS,
 } from "@/lib/catering/quotes-shared";
 import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import type { Payment } from "@/lib/catering/payments";
@@ -674,6 +677,16 @@ function QuoteDetailPanel({
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
   const [flashKey, setFlashKey] = useState<TranslationKey | null>(null);
   const [stepUpOpen, setStepUpOpen] = useState(false);
+  // Resend an EXPIRED quote with a new expiry (owner request 2026-11-15). The date the
+  // manager picked ("" = the default, 14 days out), whether the confirm line is showing, and
+  // whether the last resend found a payment that landed after the old expiry.
+  const [resendDate, setResendDate] = useState("");
+  const [resendConfirm, setResendConfirm] = useState(false);
+  const [lateNote, setLateNote] = useState(false);
+  // Which action the password modal retries: the panel has one modal and two Tier B actions.
+  const stepUpFor = useRef<"send" | "resend">("send");
+  const todayEt = etCalendarDate(new Date().toISOString());
+  const resendOn = resendDate || etYmdMinusDays(todayEt, -QUOTE_RESEND_DEFAULT_DAYS);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -726,8 +739,10 @@ function QuoteDetailPanel({
   }, [id]);
 
   const doSend = useCallback(async () => {
+    stepUpFor.current = "send";
     setBusy(true);
     setErrorKey(null);
+    setLateNote(false);
     const res = await postJson(`/api/catering/quotes/${id}/send`, {}, "POST");
     setBusy(false);
     if (res.ok) {
@@ -755,6 +770,45 @@ function QuoteDetailPanel({
     return false;
   }, [id, load]);
 
+  // Same reactive step-up idiom as Send: fire, and open the password modal only when the
+  // server asks. The quote keeps its id, its lines and its payments — only the expiry moves.
+  // (A plain function, not a useCallback: it reads the date being picked on every render.)
+  const doResend = async () => {
+    stepUpFor.current = "resend";
+    setBusy(true);
+    setErrorKey(null);
+    setFlashKey(null);
+    setLateNote(false);
+    const res = await postJson(`/api/catering/quotes/${id}/resend`, { expiresOn: resendOn }, "POST");
+    setBusy(false);
+    if (res.ok) {
+      setStepUpOpen(false);
+      setResendConfirm(false);
+      setResendDate("");
+      const outcome = res.data.emailOutcome;
+      setFlashKey(
+        outcome === "sent" || res.data.emailed
+          ? "catering.quotes.resend_expired.done_emailed"
+          : outcome === "send_failed"
+            ? "catering.quotes.resend_expired.done_send_failed"
+            : outcome === "no_address"
+              ? "catering.quotes.resend_expired.done_no_address"
+              : "catering.quotes.resend_expired.done_no_customer",
+      );
+      // A payment that landed after the OLD expiry is still flagged: say so here, where the
+      // person who just re-opened the offer is looking.
+      setLateNote(typeof res.data.latePayments === "number" && res.data.latePayments > 0);
+      await load();
+      return true;
+    }
+    if (isStepUpCode(res.code)) {
+      setStepUpOpen(true);
+      return false;
+    }
+    setErrorKey(resolveErrorKey(res.code));
+    return false;
+  };
+
   const setStatus = useCallback(
     async (status: "accepted" | "declined" | "expired") => {
       setBusy(true);
@@ -781,6 +835,9 @@ function QuoteDetailPanel({
   const effectiveStatus = q.isExpired && q.status === "sent" ? "expired" : q.status;
   const sendable = canWrite && (q.status === "draft" || q.status === "sent") && !q.isExpired;
   const decidable = canWrite && q.status === "sent" && !q.isExpired;
+  // An open offer (sent, or a self-serve submitted order) past its date: the ONE shared clock
+  // rule the server's gates read. The server re-decides; this only chooses what to draw.
+  const resendable = canWrite && quoteTimeExpired(q.status, q.expiresAt);
 
   return (
     <div className="mt-4 flex flex-col gap-4">
@@ -848,7 +905,56 @@ function QuoteDetailPanel({
         />
       )}
 
+      {resendable && (
+        <div className="co-card flex flex-col gap-3 p-4">
+          <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("catering.quotes.resend_expired.title")}</h3>
+          <p className="text-sm text-co-text-muted">{t("catering.quotes.resend_expired.body")}</p>
+          <label className="flex flex-col gap-1 text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+            {t("catering.quotes.resend_expired.date_label")}
+            <input
+              type="date"
+              aria-label={t("catering.quotes.resend_expired.date_label")}
+              value={resendOn}
+              min={todayEt}
+              max={etYmdMinusDays(todayEt, -QUOTE_RESEND_MAX_DAYS)}
+              disabled={busy}
+              onChange={(e) => {
+                setResendDate(e.target.value);
+                setResendConfirm(false);
+              }}
+              className="min-h-[44px] w-full max-w-[16rem] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-sm font-semibold normal-case tracking-normal text-co-text disabled:opacity-50"
+            />
+          </label>
+          {!resendConfirm ? (
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setResendConfirm(true)} disabled={busy || !resendOn} className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-co-text px-5 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-co-cta shadow-sm transition hover:bg-co-text/90 disabled:opacity-50">
+                {t("catering.quotes.resend_expired.button")}
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-semibold text-co-text">
+                {t("catering.quotes.resend_expired.confirm", { date: formatDateLabel(resendOn, language) })}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => void doResend()} disabled={busy} className="inline-flex min-h-[48px] items-center justify-center rounded-xl bg-co-text px-5 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-co-cta shadow-sm transition hover:bg-co-text/90 disabled:opacity-50">
+                  {busy ? t("catering.quotes.resend_expired.working") : t("catering.quotes.resend_expired.confirm_button")}
+                </button>
+                <button type="button" onClick={() => setResendConfirm(false)} disabled={busy} className="inline-flex min-h-[48px] items-center justify-center rounded-xl border-2 border-co-border-2 bg-co-surface px-5 py-2.5 text-sm font-semibold text-co-text transition hover:border-co-text disabled:opacity-50">
+                  {t("catering.quotes.resend_expired.cancel")}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {flashKey && <p className="rounded-lg border-2 border-co-success/40 bg-co-success/10 px-3 py-2 text-sm font-semibold text-co-confirm-text">{t(flashKey)}</p>}
+      {lateNote && (
+        <p className="rounded-lg border-2 border-co-warning/50 bg-co-warning-surface px-3 py-2 text-sm font-semibold text-co-warning-text">
+          {t("catering.quotes.resend_expired.late_payment")}
+        </p>
+      )}
       {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
 
       {canWrite && (
@@ -877,7 +983,14 @@ function QuoteDetailPanel({
         </div>
       )}
 
-      <PasswordModal open={stepUpOpen} onConfirm={async () => { await doSend(); }} onCancel={() => setStepUpOpen(false)} />
+      <PasswordModal
+        open={stepUpOpen}
+        onConfirm={async () => {
+          if (stepUpFor.current === "resend") await doResend();
+          else await doSend();
+        }}
+        onCancel={() => setStepUpOpen(false)}
+      />
     </div>
   );
 }

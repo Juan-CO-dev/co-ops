@@ -61,6 +61,8 @@ const KNOWN_ERROR_CODES = new Set([
   "quote_expired", // expired→accepted block — needs a revision, not a retry
   "payments_unreconciled", // send/accept held: earlier payments are not on this revision yet — retry
   "invalid_customer", // a client outside the actor's shops (or gone) — pick another client
+  "not_expired", // resend-with-new-expiry on a quote that has not lapsed — Send does that
+  "invalid_expiry", // resend: the new expiry is not a future date within the allowed window
   "generic",
 ]);
 
