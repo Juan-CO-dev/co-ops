@@ -1,12 +1,14 @@
 /**
  * GET /api/photos/[id] — the canonical read seam for a photo (photo uploader
- * seam, 0164). Location-binds the actor against the photo's location, mints a
- * short-lived (60s) signed URL for the private-bucket object, and 302-redirects
- * to it. The client only ever holds this app URL — never a Storage URL.
+ * seam, 0164). Checks the actor may read the photo's shop, mints a short-lived
+ * (60s) signed URL for the private-bucket object, and 302-redirects to it. The
+ * client only ever holds this app URL — never a Storage URL.
  *
- * Visible to any authenticated viewer bound to the photo's location (NOT L5-gated
- * — a photo link on a report is visible to anyone who can see the report). A
- * missing photo and an out-of-location photo both return 404 (no IDOR oracle).
+ * Visible to any authenticated viewer who can read the photo's shop's reports
+ * (NOT L5-gated — a photo link on a report is visible to anyone who can see the
+ * report): a member of the shop, or level 8+ (audit W10 / B064 — the Manager of
+ * Operations opens every shop's reports, so their photos open too). A missing
+ * photo and an out-of-scope photo both return 404 (no IDOR oracle).
  *
  * A malformed id (not a uuid) is the same 404, answered here before any database
  * work (audit W10 / B166): it used to reach the uuid column, come back as
