@@ -7,6 +7,7 @@
  * the two-box recount total, eligibility, shelf life, and the reject-whole parser of the
  * stored batch object.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -18,6 +19,7 @@ import {
   defaultCameOutTo,
   isOverBatch,
   isPastShelfLife,
+  sessionBackupBefore,
   minBatches,
   needForLine,
   needsTypoGuard,
@@ -172,5 +174,33 @@ describe("parseBatchRecord / readBatchFromPrepData — reject whole", () => {
     expect(readBatchFromPrepData({ inputs: { total: 6 }, snapshot: {}, batch: stored })?.batches).toBe(2);
     expect(readBatchFromPrepData({ phase2: { opener_prepped: 6 } })).toBeNull();
     expect(readBatchFromPrepData({ inputs: { total: 6 }, snapshot: {} })).toBeNull();
+  });
+});
+
+/**
+ * Audit W14 / B020 — the client twin of 0315's rule in save_phase2_item_atomic. The AM prep form
+ * totals a blank BACK UP as 0 and Phase 1 lets that section verify without a recount, so a batch
+ * row whose BACK UP was left blank had backupBefore = null: the gate said "needs_batch" forever,
+ * the RPC said backup_unknown, and the opening could never be finalized.
+ */
+describe("sessionBackupBefore — a blank BACK UP is 0, a blank LINE is unknown (B020)", () => {
+  it("a blank BACK UP with a known LINE is zero", () => {
+    expect(sessionBackupBefore({ recountBackUp: null, snapshotBackUp: null, line: 6 })).toBe(0);
+    expect(sessionBackupBefore({ recountBackUp: null, snapshotBackUp: null, line: 0 })).toBe(0);
+  });
+  it("with no LINE the backup stays unknown (the two-box recount is still owed)", () => {
+    expect(sessionBackupBefore({ recountBackUp: null, snapshotBackUp: null, line: null })).toBeNull();
+  });
+  it("the opener's recount wins over the snapshot, and a counted value is never replaced", () => {
+    expect(sessionBackupBefore({ recountBackUp: 3, snapshotBackUp: 8, line: 6 })).toBe(3);
+    expect(sessionBackupBefore({ recountBackUp: null, snapshotBackUp: 8, line: 6 })).toBe(8);
+    expect(sessionBackupBefore({ recountBackUp: 0, snapshotBackUp: 8, line: null })).toBe(0);
+  });
+  it("the opening page and the RPC state the same rule", () => {
+    const page = readFileSync("app/(authed)/operations/opening/opening-client.tsx", "utf8");
+    expect(page).toContain("const backupBefore = sessionBackupBefore({");
+    expect(page).not.toContain("const backupBefore = split?.backUp ?? snapshot?.backUpCount ?? null;");
+    const sql = readFileSync("supabase/migrations/0315_opening_counts_batch_prep.sql", "utf8");
+    expect(sql).toContain("IF v_backup_before IS NULL AND v_line IS NOT NULL THEN");
   });
 });

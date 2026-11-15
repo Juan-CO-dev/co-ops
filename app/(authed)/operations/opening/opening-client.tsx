@@ -37,6 +37,7 @@ import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku } from "@/lib/prep-consumption";
 import {
   needForLine,
+  sessionBackupBefore,
   type BatchItemContext,
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
@@ -466,7 +467,7 @@ export function OpeningClient({
   // 0215 batch vs bottle — the batch row's context per batch_mode item. The counted bulk
   // backup is the opener's recount BACK UP when there was one (persisted beside
   // opener_recount by the Phase 1 RPC), else last night's closing BACK UP from the
-  // snapshot; LINE likewise; need_for_line = max(0, par − LINE). The RPC re-derives every
+  // snapshot, else 0 when the LINE is known (sessionBackupBefore); LINE likewise; need_for_line = max(0, par − LINE). The RPC re-derives every
   // number from the same two sources, so what the row previews is what the server accepts.
   const batchByItem = useMemo(() => {
     const map = new Map<string, BatchRowContext>();
@@ -481,7 +482,13 @@ export function OpeningClient({
       const snapshot = closerSnapshotsMap.get(templateItemId) ?? null;
       const split = splitByItem.get(templateItemId) ?? null;
       const lineCount = split?.line ?? snapshot?.lineCount ?? null;
-      const backupBefore = split?.backUp ?? snapshot?.backUpCount ?? null;
+      // Audit W14 / B020 — a BACK UP the closer left blank is 0 when the LINE is known (the
+      // RPC states the same rule, 0315); only a missing LINE leaves the backup unknown.
+      const backupBefore = sessionBackupBefore({
+        recountBackUp: split?.backUp ?? null,
+        snapshotBackUp: snapshot?.backUpCount ?? null,
+        line: lineCount,
+      });
       map.set(templateItemId, {
         recipeName: ctx.recipeName,
         yieldPerBatch: ctx.yieldPerBatch ?? 0,
