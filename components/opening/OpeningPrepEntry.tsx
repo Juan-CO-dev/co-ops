@@ -47,7 +47,7 @@ import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
 import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
 import { BatchEntryFields } from "@/components/prep/BatchEntryFields";
 import { emptyBatchFormValue, isBatchContractCode, type BatchFormValue, type BatchRowContext } from "@/lib/batch-prep-shared";
-import { formatPrepQty, parseDecimalDraft, prepNeedLabel, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
+import { draftOf, formatPrepQty, parseDecimalDraft, prepNeedLabel, prepQtyParts, roundQty } from "@/lib/prep-display-shared";
 import { blurLeavesForMadeTheNeed, canMakeTheNeed, MADE_THE_NEED_ATTR } from "@/lib/made-the-need-shared";
 import { ActionButton } from "@/components/ActionButton";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
@@ -1019,8 +1019,6 @@ interface NumericInputProps {
   /** Locked (read-only) — the input renders its value but cannot be edited. */
   disabled?: boolean;
 }
-
-const draftOf = (v: number | null) => (v === null ? "" : String(v));
 
 /**
  * B1 #5 — the box keeps what was TYPED (a local draft) instead of re-rendering String(value):
