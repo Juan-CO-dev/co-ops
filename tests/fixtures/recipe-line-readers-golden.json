@@ -143,6 +143,7 @@
       "s-pickle": [],
       "s-ham-a": [],
       "s-ham-b": [],
+      "s-store-ham": [],
       "s-twin-x": [],
       "s-twin-y": []
     }
@@ -180,7 +181,7 @@
       "s-pickle>i-slaw": "invalid_conversion",
       "s-relish>i-slaw": "invalid_conversion",
       "s-salt>i-slaw": "invalid_conversion",
-      "s-store-ham>i-slaw": "invalid_sku",
+      "s-store-ham>i-slaw": "invalid_conversion",
       "s-tomato>i-slaw": "invalid_conversion",
       "s-turkey>i-slaw": "invalid_conversion",
       "s-twin-x>i-slaw": "invalid_conversion",
