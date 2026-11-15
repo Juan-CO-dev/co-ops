@@ -18,7 +18,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { paymentsFake, type PaymentsFake, type Row } from "./payments-fake-client";
+import { paymentsFake, unapply0303, type PaymentsFake, type Row } from "./payments-fake-client";
 import { stripeFake, type StripeFake } from "./stripe-fake";
 
 let db: PaymentsFake;
@@ -175,6 +175,67 @@ describe("W02 review r5 — a hand mark cut off after its flip", () => {
   });
 });
 
+describe("W02 review r6 — whether a hand mark's cleanup is still owed is a fact on the row, not a guess", () => {
+  const marker = (id: string) => row(id).settlement_cleanup_at ?? null;
+
+  it("a mark that finished RECORDS it: `settlement_cleanup_at` is set, once, on the paid row only", async () => {
+    await markPaymentPaid(owner, DEPOSIT, QUOTE);
+
+    expect(marker(DEPOSIT)).toEqual(expect.any(String));
+    expect(marker(FULL)).toBeNull();
+    const first = marker(DEPOSIT);
+    await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE));
+    expect(marker(DEPOSIT)).toBe(first); // never rewritten
+  });
+
+  it("a mark cut off after its flip leaves the marker NULL — and the second press, having closed everything, sets it", async () => {
+    await markPaidAndCutOffAfterTheFlip(DEPOSIT);
+    expect(row(DEPOSIT).status).toBe("paid");
+    expect(marker(DEPOSIT)).toBeNull();
+
+    await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE));
+
+    expect(marker(DEPOSIT)).toEqual(expect.any(String));
+    // …so a third press has nothing to ask anyone.
+    retireMock.mockClear();
+    auditMock.mockClear();
+    await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE));
+    expect(retireMock).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  it("a pass that could NOT confirm a checkout closed never writes the marker — so the next press tries again, and then it does", async () => {
+    stripe.down = true;
+    await markPaymentPaid(owner, DEPOSIT, QUOTE); // the money is recorded whatever Stripe does
+    expect(row(DEPOSIT).status).toBe("paid");
+    expect(marker(DEPOSIT)).toBeNull();
+    expect(markAudits()[0]!.metadata).toMatchObject({ closed_checkouts: { stillOpen: [DEPOSIT, FULL] } });
+
+    await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE)); // Stripe still down
+    expect(marker(DEPOSIT)).toBeNull();
+
+    stripe.down = false;
+    await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE));
+    expect(stripe.sessions.get(depositSession)!.status).toBe("expired");
+    expect(stripe.sessions.get(fullSession)!.status).toBe("expired");
+    expect(marker(DEPOSIT)).toEqual(expect.any(String));
+  });
+
+  it("WITHOUT migration 0303 (no marker column): a hand mark is recorded exactly as before, and every later press runs the idempotent cleanup", async () => {
+    unapply0303(db);
+
+    await markPaymentPaid(owner, DEPOSIT, QUOTE);
+
+    expect(row(DEPOSIT)).toMatchObject({ status: "paid", provider: "manual", provider_session_id: null });
+    expect(stripe.sessions.get(depositSession)!.status).toBe("expired");
+    expect(stripe.sessions.get(fullSession)!.status).toBe("expired");
+    expect("settlement_cleanup_at" in row(DEPOSIT)).toBe(false); // the column does not exist: nothing was written
+    // The second press cannot read a marker; it looks again (and finds nothing left to close).
+    const err = await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE));
+    expect(err).toMatchObject({ status: 409, code: "not_due" });
+  });
+});
+
 describe("W02 review r5 — pressing Mark paid on a payment that is already paid changes nothing it should not", () => {
   it("a mark that FINISHED: pressing again is 409 not_due, asks Stripe nothing and writes no audit row", async () => {
     await markPaymentPaid(owner, DEPOSIT, QUOTE);
@@ -189,8 +250,8 @@ describe("W02 review r5 — pressing Mark paid on a payment that is already paid
     expect(auditMock).not.toHaveBeenCalled();
   });
 
-  it("a payment STRIPE recorded is the webhook's to finish, not this function's: 409, nothing retired", async () => {
-    Object.assign(row(DEPOSIT), { status: "paid", provider: "stripe", provider_ref: "pi_1" });
+  it("a payment STRIPE recorded AND FINISHED (its cleanup is recorded): 409, nothing retired, nothing written", async () => {
+    Object.assign(row(DEPOSIT), { status: "paid", provider: "stripe", provider_ref: "pi_1", settlement_cleanup_at: "2026-11-01T00:00:00.000Z" });
 
     const err = await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE));
 
@@ -198,6 +259,34 @@ describe("W02 review r5 — pressing Mark paid on a payment that is already paid
     expect(retireMock).not.toHaveBeenCalled();
     expect(stripe.sessions.get(fullSession)!.status).toBe("open");
     expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  // Review r6: cleanup that is still owed is finished by WHOEVER finds it. A card payment
+  // whose webhook was cut off after its flip leaves the full-amount page payable; a person
+  // pressing Mark paid on it closes that page now. The card settlement's own work — void the
+  // other intent, judge the payment, tell the team — stays with its next delivery, so the
+  // marker is deliberately left NULL for it to find.
+  it("a payment STRIPE recorded whose cleanup is NOT recorded: the press closes the order's OTHER checkout, and leaves the marker for the event's next delivery", async () => {
+    stripe.complete(depositSession); // the session the money came through
+    Object.assign(row(DEPOSIT), { status: "paid", provider: "stripe", provider_ref: "pi_1" });
+
+    const err = await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE));
+
+    expect(err).toMatchObject({ status: 409, code: "not_due" });
+    // The other option's hosted page is closed and its id cleared…
+    expect(stripe.sessions.get(fullSession)!.status).toBe("expired");
+    expect(row(FULL)).toMatchObject({ status: "due", provider_session_id: null });
+    // …the paid row's own session is history and was not asked about…
+    expect(retireMock).toHaveBeenCalledTimes(1);
+    expect(row(DEPOSIT)).toMatchObject({ status: "paid", provider: "stripe", provider_session_id: depositSession });
+    // …and nothing says the card settlement is finished: its own delivery still has to.
+    expect(row(DEPOSIT).settlement_cleanup_at ?? null).toBeNull();
+    expect(markAudits()).toHaveLength(1);
+    expect(markAudits()[0]!.metadata).toMatchObject({
+      resumed: true,
+      provider: "stripe",
+      closed_checkouts: { retired: [FULL], stillOpen: [], completing: [] },
+    });
   });
 
   it("a VOID or REFUNDED payment is refused as before, with no cleanup", async () => {

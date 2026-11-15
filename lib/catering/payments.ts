@@ -24,7 +24,12 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
-import { closeQuoteCheckouts } from "@/lib/catering/payment-sessions";
+import {
+  closeQuoteCheckouts,
+  markSettlementCleanupDone,
+  settlementCleanupComplete,
+  settlementCleanupRecorded,
+} from "@/lib/catering/payment-sessions";
 import type { AuthContext } from "@/lib/session";
 
 export const PAYMENT_READ_MIN = 5; // shift_lead+ may view a quote's payment intents
@@ -325,17 +330,32 @@ export async function createPaymentDue(
  *     on the earlier read (`closeQuoteCheckouts`, which also documents the order of
  *     operations and why no lock is added).
  *
- * ── A MARK THAT WAS CUT OFF IS FINISHED BY PRESSING IT AGAIN (review r5) ─────────────
+ * ── A MARK THAT WAS CUT OFF IS FINISHED BY PRESSING IT AGAIN (review r5, then r6) ────
  * The flip and the cleanup are two steps, and the request can be cut off between them (a
  * timeout, a crash, a deploy): the row is `paid` and the hosted pages are still payable. The
- * webhook's settlements are finished by Stripe's redelivery; a person's request has only the
- * person. So when this is asked to mark a payment that is ALREADY paid BY HAND, it still
+ * webhook's settlements are finished by Stripe's next delivery; a person's request has only
+ * the person. So when this is asked to mark a payment that is ALREADY `paid`, it still
  * refuses — 409 `not_due`, exactly what the screen has always been told, and nothing is
- * recorded twice — but FIRST it runs the cleanup again, from the row as it is now. The
- * cleanup is idempotent (it asks Stripe nothing when no row names a session), so a second
- * press after a mark that had finished costs one read and changes nothing. An audit row
- * (`resumed: true`) is written only when that pass closed, or could not close, something.
- * A payment Stripe recorded is not touched here: its own event finishes it.
+ * recorded twice — but FIRST it asks the row whether its cleanup is recorded as done.
+ *
+ * THAT IS A DURABLE FACT, NOT A GUESS (review r6): `catering_payments.settlement_cleanup_at`
+ * (migration 0303; the rule is in lib/catering/payment-sessions.ts).
+ *   · SET → the press is the plain 409. No read of the order, no Stripe call.
+ *   · NULL → the cleanup is run again, from the row as it is now. It is idempotent (it asks
+ *     Stripe nothing when no row names a session). An audit row (`resumed: true`) is written
+ *     only when that pass closed, or could not close, something.
+ *   · The marker is written by THIS function only for a payment recorded BY HAND, and only
+ *     when the pass left nothing open (`settlementCleanupComplete`). A pass that could not
+ *     confirm a checkout closed leaves it NULL, so the next press tries again.
+ *   · A payment STRIPE recorded whose marker is NULL (its webhook was cut off, or could not
+ *     confirm a checkout closed): the press closes the order's OTHER checkouts as well —
+ *     that much is safe for anyone to do — and deliberately does NOT write the marker. The
+ *     card settlement has more to finish (void the other intent, judge the payment, write
+ *     its audit row, tell the team) and its own next delivery does that, finding the marker
+ *     still NULL. The row's own session is left alone: it is the one the money came through.
+ * WITHOUT MIGRATION 0303 the marker can be neither read nor written: both degrade to "not
+ * recorded" (never an error), so a hand mark behaves exactly as it did before the column
+ * existed — every later press runs the idempotent cleanup.
  */
 export async function markPaymentPaid(
   actor: AuthContext,
@@ -346,16 +366,22 @@ export async function markPaymentPaid(
   const { status, locationId, quoteId, provider, sessionId } = await loadPaymentQuoteContext(sb, paymentId, expectedQuoteId);
   assertCanWrite(actor, locationId);
   if (status !== "due") {
-    if (status === "paid" && provider === "manual") {
-      // ALREADY RECORDED BY HAND. Finish what an earlier, cut-off press may not have reached
-      // (see the header), then refuse as always. Never throws.
+    // ALREADY PAID. Is its cleanup recorded as done (see the header)? `null` = the marker
+    // could not be read; that is treated as "not recorded" — the cleanup is idempotent.
+    if (status === "paid" && (await settlementCleanupRecorded(sb, paymentId)) !== true) {
+      const byHand = provider === "manual";
+      // Finish what an earlier, cut-off settlement may not have reached, then refuse as
+      // always. Never throws.
       const closed = await closeQuoteCheckouts(sb, {
         quoteId,
         locationId,
         settledPaymentId: paymentId,
-        // A hand-recorded row's own session is a second way to pay the same money.
-        settledSessionId: sessionId,
+        // A hand-recorded row's own session is a second way to pay the same money. A card
+        // payment's own session is the one the money came through: left to its own event.
+        settledSessionId: byHand ? sessionId : null,
       });
+      // Only a HAND settlement is this function's to call finished, and only a clean pass.
+      if (byHand && settlementCleanupComplete(closed)) await markSettlementCleanupDone(sb, paymentId);
       if (closed.retired.length + closed.stillOpen.length + closed.completing.length > 0) {
         void audit({
           actorId: actor.user.id,
@@ -363,8 +389,9 @@ export async function markPaymentPaid(
           action: "catering.payment.mark_paid",
           resourceTable: "catering_payments",
           resourceId: paymentId,
-          // `resumed: true` ⇒ this press recorded NO payment; it finished an earlier one's cleanup.
-          metadata: { location_id: locationId, provider: "manual", resumed: true, closed_checkouts: closed },
+          // `resumed: true` ⇒ this press recorded NO payment; it finished an earlier one's
+          // cleanup. `provider` is how that earlier payment was recorded.
+          metadata: { location_id: locationId, provider: provider ?? null, resumed: true, closed_checkouts: closed },
           ipAddress: null,
           userAgent: null,
         });
@@ -405,6 +432,10 @@ export async function markPaymentPaid(
     settledPaymentId: paymentId,
     settledSessionId: paid.provider_session_id ?? null,
   });
+  // RECORD THE CLEANUP AS DONE — only when it is (review r6). A pass that left a checkout
+  // unconfirmed leaves the marker NULL: the audit row below names what is still open, and
+  // the next press tries again. Never throws.
+  if (settlementCleanupComplete(closed)) await markSettlementCleanupDone(sb, paymentId);
 
   void audit({
     actorId: actor.user.id,

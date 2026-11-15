@@ -67,8 +67,8 @@
  * guarded clears. It takes no quote lock and holds nothing across a Stripe call, so it adds
  * no lock order to the one 0303 documents (quote row, then payment rows). What keeps a NEW
  * checkout from appearing after the look is the other half of that function: once the flip
- * has committed, an attach on this order answers `already_paid` (before 0303: the attach's
- * own re-read does). A hand-recorded payment's flip is additionally a compare-and-set on
+ * has committed, an attach on this order answers `already_paid` (there is no attach without
+ * 0303 — review r6: the pay path refuses). A hand-recorded payment's flip is additionally a compare-and-set on
  * the revision it was read on (lib/catering/payments.ts `markPaymentPaid`): a payment the
  * carry moved first is refused instead of recorded on a row nobody was looking at.
  *
@@ -87,15 +87,39 @@
  * ── A HAND-RECORDED PAYMENT HAS NO REDELIVERY, SO IT HAS A SECOND PRESS (review r5) ──
  * `markPaymentPaid` calls this once, inside the person's request. If that request is cut
  * off between its flip and this call, no redelivery will ever run it again. So the same
- * function, asked to mark a payment that is already paid BY HAND, runs this cleanup again
- * before it refuses (lib/catering/payments.ts) — pressing "Mark paid" again finishes the
- * job. KNOWN LIMIT: that needs the person to press it again. Until then every OTHER intent's
+ * function, asked to mark a payment that is already paid and whose cleanup is NOT recorded
+ * as done (review r6 — the marker, below), runs this cleanup again before it refuses
+ * (lib/catering/payments.ts) — pressing "Mark paid" again finishes the job.
+ * KNOWN LIMIT: that needs the person to press it again. Until then every OTHER intent's
  * checkout keeps its id on its `due` / `void` row (visible to the pay path, which refuses
  * new collection on a paid order anyway), and a card charge through any leftover page is
  * recorded and flagged by the webhook (`already_settled` / `another_payment_already_paid`).
  * A hosted page cannot outlive Stripe's own limit either way ("It can be anywhere from 30
  * minutes to 24 hours after Checkout Session creation" — docs.stripe.com/api/checkout/
  * sessions/create, `expires_at`).
+ *
+ * ── "IS THE CLEANUP STILL OWED?" IS A FACT ON THE PAYMENT ROW (review r6) ────────────
+ * Recording money is a flip followed by cleanup, and the two can be separated by a death
+ * (a timeout, a crash, a deploy) — or run twice at once by two overlapping deliveries of one
+ * Stripe event. Whether the cleanup had finished used to be INFERRED: by the webhook from
+ * which delivery had inserted the event's ledger row, by "Mark paid" from nothing at all (it
+ * ran the cleanup on every later press). The inference was wrong for two overlapping
+ * deliveries — the one that inserted the ledger row found the charge recorded, was "not a
+ * redelivery", and stamped the event finished while the one that had flipped the row was
+ * dead before its cleanup. Nothing ever looked again.
+ *
+ * So it is recorded: `catering_payments.settlement_cleanup_at` (migration 0303).
+ *   · NULL on a paid row = the cleanup is NOT confirmed complete. WHOEVER next finds that row
+ *     paid runs it again — any delivery of any event about that charge, a second "Mark paid"
+ *     press. It is idempotent, so running it beside another run, or after one that had in
+ *     fact finished, changes nothing.
+ *   · A timestamp = it is done: `settlementCleanupComplete` held (below) and
+ *     `markSettlementCleanupDone` wrote it — ONCE, by compare-and-set (NULL → now, on a row
+ *     still `paid`). It is never cleared. A cleanup that could not confirm everything closed
+ *     NEVER writes it: the unresolved checkout keeps its id on its row, a person is told, and
+ *     the next look tries again.
+ *   · The compare-and-set is also what makes "tell the team a payment arrived" happen once:
+ *     of two runs finishing the same cleanup, the one whose write lands reports it.
  */
 import "server-only";
 
@@ -119,6 +143,73 @@ export interface ClosedCheckouts {
 }
 
 export const NO_CHECKOUTS = (): ClosedCheckouts => ({ retired: [], stillOpen: [], completing: [] });
+
+/**
+ * Did this pass leave NOTHING for a later one (see the header, review r6)? True only when
+ * no checkout is `stillOpen` — which also covers an order that could not be looked at to the
+ * end (that is reported `stillOpen` under the settled payment's own id). A `completing`
+ * checkout does not hold it back: that money is landing and its own event records it.
+ */
+export function settlementCleanupComplete(closed: ClosedCheckouts): boolean {
+  return closed.stillOpen.length === 0;
+}
+
+/**
+ * What writing the settlement marker came to:
+ *   `won`    — this call wrote it: the cleanup is now recorded as done, by this run;
+ *   `lost`   — nothing was written: another run recorded it first (or the row is no longer
+ *              `paid`, e.g. refunded in between). An explicit rowcount of zero, nothing else;
+ *   `failed` — the write itself failed (a database error, or migration 0303's column is not
+ *              there). NOBODY is known to have recorded it: the next look runs the cleanup again.
+ */
+export type CleanupMark = "won" | "lost" | "failed";
+
+/**
+ * Record that a paid payment's settlement cleanup is COMPLETE (see the header, review r6).
+ * A compare-and-set on the row as the settlement left it: still `paid`, marker still NULL.
+ * NEVER THROWS — it runs after money was recorded, where nothing may fail the settlement.
+ * Call it ONLY after `settlementCleanupComplete` held for this run (and, for a card
+ * payment, after its sibling intents were voided and anything to review was reported).
+ */
+export async function markSettlementCleanupDone(sb: ServiceClient, paymentId: string): Promise<CleanupMark> {
+  try {
+    const { error, count } = await sb
+      .from("catering_payments")
+      .update({ settlement_cleanup_at: new Date().toISOString() }, { count: "exact" })
+      .eq("id", paymentId)
+      .eq("status", "paid")
+      .is("settlement_cleanup_at", null);
+    if (error) {
+      console.error(`[catering] could not record the settlement cleanup of payment ${paymentId} as done:`, error.message);
+      return "failed";
+    }
+    return (count ?? 0) > 0 ? "won" : "lost";
+  } catch (e) {
+    console.error(`[catering] could not record the settlement cleanup of payment ${paymentId} as done:`, e instanceof Error ? e.message : e);
+    return "failed";
+  }
+}
+
+/**
+ * Is this payment's settlement cleanup recorded as done? `null` = it could not be read (a
+ * database error, or migration 0303's column is not there): the caller treats that as NOT
+ * done and runs the idempotent cleanup. NEVER THROWS. For the caller that cannot let a
+ * failed read fail its request ("Mark paid"); the webhook reads the column with the row and
+ * lets a failed read fail the delivery, because Stripe will deliver it again.
+ */
+export async function settlementCleanupRecorded(sb: ServiceClient, paymentId: string): Promise<boolean | null> {
+  try {
+    const { data, error } = await sb
+      .from("catering_payments")
+      .select("id, settlement_cleanup_at")
+      .eq("id", paymentId)
+      .maybeSingle<{ id: string; settlement_cleanup_at: string | null }>();
+    if (error || !data) return null;
+    return data.settlement_cleanup_at != null;
+  } catch {
+    return null;
+  }
+}
 
 export interface CloseQuoteCheckoutsInput {
   /** ANY revision of the order's family (see the header): the one the flip returned is the

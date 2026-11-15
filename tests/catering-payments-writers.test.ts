@@ -25,6 +25,11 @@
  * The PR's writer table is printed from this list (`PRINT_PAYMENT_WRITERS=1 npx vitest run
  * tests/catering-payments-writers.test.ts`), so the table and the code cannot disagree.
  *
+ * Review r6 changed two things in it. The lock-free attach ("write, re-read, undo" for a
+ * database without migration 0303) is GONE, with both of its statements: no application
+ * statement sets a session id any more — only 0303's function does. And one writer was
+ * added: the settlement marker (`markSettlementCleanupDone`), a compare-and-set like the rest.
+ *
  * Not in scope, and why: SQL that is not application code — migration 0303's attach function
  * (listed below as the attach; proved by scripts/sql-harness-0303.mjs), migration 0193 (the
  * one-off builder test-data purge, already applied), `scripts/guide-test/reset-catering-fn.sql`
@@ -165,6 +170,15 @@ const WRITERS: Writer[] = [
   // ── lib/catering/payment-sessions.ts — closing checkouts after a settlement ────────
   {
     file: "lib/catering/payment-sessions.ts",
+    fn: "markSettlementCleanupDone",
+    verb: "update",
+    writes: "settlement_cleanup_at = now: a paid payment's cleanup is recorded as done, once (r6)",
+    guards: ["eq:id", "eq:status", "is:settlement_cleanup_at"],
+    bind: "status (paid) + marker IS NULL CAS: written once, by the run that finished the cleanup; the run whose write lands reports an ordinary payment",
+    pinnedBy: { file: "tests/stripe-webhook-resume.test.ts", title: "two deliveries of one event at once: the run that LOSES the marker, with nothing to review, stays quiet" },
+  },
+  {
+    file: "lib/catering/payment-sessions.ts",
     fn: "closeQuoteCheckouts",
     verb: "update",
     writes: "provider_session_id = null, after Stripe confirmed that session expired",
@@ -222,24 +236,6 @@ const WRITERS: Writer[] = [
   },
   {
     file: "lib/portal/quotes.ts",
-    fn: "attachCheckoutSessionUnlocked",
-    verb: "update",
-    writes: "ATTACH (before 0303): provider + provider_session_id on the due intent",
-    guards: ["eq:id", "eq:status", "eq:quote_id", "eq:amount_cents", "is:provider_session_id"],
-    bind: "status + quote_id + amount + no-session CAS, then a re-read (paid? still live? another checkout?) and an undo",
-    pinnedBy: { file: "tests/catering-payment-carry-concurrency.test.ts", title: "an intent a revise moved and re-priced while our session was at Stripe does not get that session" },
-  },
-  {
-    file: "lib/portal/quotes.ts",
-    fn: "attachCheckoutSessionUnlocked",
-    verb: "update",
-    writes: "undo our own attach: provider_session_id = null",
-    guards: ["eq:id", "eq:provider_session_id"],
-    bind: "provider_session_id CAS (the session this request minted)",
-    pinnedBy: { file: "tests/portal-checkout-settlement-race.test.ts", title: "the same race one step later: the settlement lands while the full checkout is being ATTACHED — refused, and the minted session is closed" },
-  },
-  {
-    file: "lib/portal/quotes.ts",
     fn: "createQuoteCheckout",
     verb: "update",
     writes: "clear ANOTHER intent's session, after its owning account confirmed it retired",
@@ -290,7 +286,7 @@ const WRITERS: Writer[] = [
     verb: "update",
     writes: "THE PAID FLIP: due or void → paid, paid_at, provider, provider_ref (returns the row it wrote)",
     guards: ["eq:id", "in:status"],
-    bind: "status CAS. DELIBERATELY NOT bound to a revision: money Stripe took is recorded wherever its row now is. The flip RETURNS the row; the order is re-judged and cleaned up on that row's revision and family; a cut-off settlement is resumed by its redelivery (r5)",
+    bind: "status CAS. DELIBERATELY NOT bound to a revision: money Stripe took is recorded wherever its row now is. The flip RETURNS the row; the order is re-judged and cleaned up on that row's revision and family; a cut-off settlement is finished by ANY delivery that finds the row paid with its marker NULL (r5, r6)",
     pinnedBy: { file: "tests/portal-checkout-settlement-race.test.ts", title: "THE WEBHOOK'S VERSION: the event reads P on v1, a revise carries P and a FULL checkout opens on v2, the flip lands — that checkout is closed, not left beside a paid deposit" },
   },
   {
@@ -313,10 +309,16 @@ const SESSION_SITES: Array<{ what: string; pattern: RegExp; sites: Record<string
     pinnedBy: { file: "tests/portal-quote-payments.test.ts", title: "every mint carries a key no earlier mint used, prefixed with the intent it is for" },
   },
   {
-    what: "ATTACH with 0303 applied (rpc catering_payment_attach_checkout: quote row + payment rows locked)",
+    what: "ATTACH — the ONLY way a session id is ever written (rpc catering_payment_attach_checkout, 0303: quote row + payment rows locked)",
     pattern: /\.rpc\("catering_payment_attach_checkout"/g,
     sites: { "lib/portal/quotes.ts": 1 },
-    pinnedBy: { file: "tests/portal-checkout-settlement-race.test.ts", title: "the attach goes through 0303's function and falls back, by name, when it is not there" },
+    pinnedBy: { file: "tests/portal-checkout-settlement-race.test.ts", title: "the attach goes through 0303's function, and there is NO second way to attach when it is not there (review r6)" },
+  },
+  {
+    what: "READY? — asked before anything reaches Stripe; no 0303 = no checkout (rpc catering_payment_checkout_ready, r6)",
+    pattern: /\.rpc\("catering_payment_checkout_ready"\)/g,
+    sites: { "lib/portal/quotes.ts": 1 },
+    pinnedBy: { file: "tests/portal-checkout-settlement-race.test.ts", title: "one tap: 503 `payment_unavailable`, the intent is recorded, and Stripe was never called — no session exists" },
   },
   {
     what: "RETIRE with one key (retireCheckoutSession): the definition, the owner loop, and a session minted in this same request",
@@ -363,9 +365,9 @@ describe("W02 review r5 — every writer of catering_payments is on the list, wi
     for (const w of found.filter((f) => f.verb === "update" && revisionBound.includes(f.fn))) {
       expect(w.guards.some((g) => g.endsWith(":quote_id")), `${w.file}:${w.line} ${w.fn}`).toBe(true);
     }
-    // …and the one attach that is not the 0303 function.
-    const attach = found.find((f) => f.fn === "attachCheckoutSessionUnlocked" && f.guards.includes("eq:amount_cents"))!;
-    expect(attach.guards).toContain("eq:quote_id");
+    // …and there is no application attach left to check (review r6): 0303's function is the
+    // attach, and it compares quote_id and amount under the quote's lock.
+    expect(found.some((f) => /attach/i.test(f.fn))).toBe(false);
   });
 
   it("every write that touches a session id is bound to the session it is about (or to there being none)", () => {
@@ -404,14 +406,14 @@ describe("W02 review r5 — every place a Checkout Session is minted, attached o
     expect(counts).toEqual(site.sites);
   });
 
-  it("the only way `provider_session_id` is ever SET to a value is the attach (the 0303 function, or its compare-and-set twin)", () => {
+  it("the only way `provider_session_id` is ever SET to a value is the attach — 0303's function; NO application statement sets one (review r6)", () => {
     // In a statement's own payload, i.e. before its first filter…
     const payloadOf = (w: FoundWriter): string => {
       const firstFilter = w.stmt.search(/\.(eq|neq|in|is)\(/);
       return firstFilter > 0 ? w.stmt.slice(0, firstFilter) : w.stmt;
     };
     const setters = found.filter((w) => /provider_session_id:\s*(?!null\b)[A-Za-z]/.test(payloadOf(w)));
-    expect(setters.map((w) => `${w.file} ${w.fn}`)).toEqual(["lib/portal/quotes.ts attachCheckoutSessionUnlocked"]);
+    expect(setters.map((w) => `${w.file} ${w.fn}`)).toEqual([]);
     // …and in the two patches that are built before their statement (the carry's, and the
     // carry is the only writer handed a patch object): only ever `null`.
     const carry = codeOf(SOURCES.find((x) => x.file === "lib/catering/payment-carry.ts")!.src);

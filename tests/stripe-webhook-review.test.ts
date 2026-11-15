@@ -211,8 +211,10 @@ describe("W02/B035 — a charge for an intent that was ALREADY settled another w
     expect(notifyPaid).toHaveBeenCalledWith(expect.objectContaining({ reviewReasons: ["already_settled"] }));
   });
 
-  it("a second delivery about the SAME charge is still just `already_advanced` — no audit, no email", async () => {
-    db.tables.catering_payments!.push(pay({ id: DEPOSIT, status: "paid", provider: "stripe", provider_ref: "pi_1" }));
+  it("a second delivery about the SAME charge, on a row whose cleanup is recorded as done, is still just `already_advanced` — no audit, no email", async () => {
+    db.tables.catering_payments!.push(
+      pay({ id: DEPOSIT, status: "paid", provider: "stripe", provider_ref: "pi_1", settlement_cleanup_at: "2026-11-01T00:00:00.000Z" }),
+    );
 
     const out = await processStripeEvent(db.client, completed(DEPOSIT), SINGLE, deps);
 
@@ -221,10 +223,8 @@ describe("W02/B035 — a charge for an intent that was ALREADY settled another w
     expect(notifyPaid).not.toHaveBeenCalled();
   });
 
-  it("two deliveries racing on one charge: the loser re-reads the row and reports `already_advanced`", async () => {
-    const r = pay({ id: DEPOSIT });
-    db.tables.catering_payments!.push(r);
-    // The loser read the row as `due`; the winner lands before the loser's guarded flip.
+  /** Let ANOTHER delivery of this charge win the flip: `winner` runs just before the loser's first payment write. */
+  function winnerLandsFirst(r: Record<string, unknown>, winner: Record<string, unknown>) {
     const client = db.client as unknown as { from: (t: string) => Record<string, unknown> };
     const realFrom = client.from;
     let armed = true;
@@ -234,17 +234,39 @@ describe("W02/B035 — a charge for an intent that was ALREADY settled another w
         const update = q.update as (p: unknown, o?: unknown) => unknown;
         q.update = (p: unknown, o?: unknown) => {
           armed = false;
-          Object.assign(r, { status: "paid", provider: "stripe", provider_ref: "pi_1" });
+          Object.assign(r, winner);
           return update(p, o);
         };
       }
       return q;
     };
+  }
+
+  it("two deliveries racing on one charge, the winner FINISHED (its cleanup is recorded): the loser re-reads the row and reports `already_advanced`", async () => {
+    const r = pay({ id: DEPOSIT });
+    db.tables.catering_payments!.push(r);
+    // The loser read the row as `due`; the winner lands — flip, cleanup, marker — before the loser's guarded flip.
+    winnerLandsFirst(r, { status: "paid", provider: "stripe", provider_ref: "pi_1", settlement_cleanup_at: "2026-11-01T00:00:00.000Z" });
 
     const out = await processStripeEvent(db.client, completed(DEPOSIT), SINGLE, deps);
 
     expect(out.result).toBe("already_advanced");
     expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  // Review r6 (P1). The loser used to answer `already_advanced` whatever the winner had got
+  // to — and when the winner then died before its cleanup, nobody ever ran it.
+  it("…the winner has only FLIPPED the row (its cleanup is not recorded): the loser does not assume it will finish — it runs the settlement itself", async () => {
+    const r = pay({ id: DEPOSIT });
+    db.tables.catering_payments!.push(r);
+    winnerLandsFirst(r, { status: "paid", provider: "stripe", provider_ref: "pi_1" });
+
+    const out = await processStripeEvent(db.client, completed(DEPOSIT), SINGLE, deps);
+
+    expect(out.result).toBe("paid");
+    expect(row(DEPOSIT).settlement_cleanup_at).toEqual(expect.any(String));
+    expect(lastAuditMeta()).toMatchObject({ resumed: true, needs_review: [] });
+    expect(notifyPaid).toHaveBeenCalledTimes(1);
   });
 
   it("a REFUNDED intent that is somehow charged again is flagged too", async () => {
