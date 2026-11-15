@@ -24,17 +24,17 @@
  *                                  state from elsewhere)
  *   401 unauthorized             → onCancel (parent's protected-route
  *                                  enforcement bounces user to login)
+ *   401 reauth_locked            → "Too many wrong tries — you've been signed out", then
+ *                                  the sign-in page (audit W07 B159: five wrong passwords
+ *                                  in a row end the SESSION; the account is not locked)
  *   network/server               → inline error
- *
- * NO LOCKOUT on repeated step-up failures (locked Phase 2 Session 3 — actor is
- * already authenticated; locking them out of admin doesn't meaningfully raise
- * the bar). Audit captures every failure for forensic visibility.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { StepUpPurpose } from "@/lib/admin/step-up-shared";
+import { REAUTH_LOCKED_CODE, leaveAfterReauthLock } from "@/lib/auth-reauth-client";
 
 export interface PasswordModalProps {
   open: boolean;
@@ -129,6 +129,12 @@ export function PasswordModal({ open, onConfirm, onCancel, purpose = null, catal
           message?: string;
           retry_after_seconds?: number;
         };
+        if (res.status === 401 && body.code === REAUTH_LOCKED_CODE) {
+          // Five wrong passwords in a row: the server signed this session out. Say so, then go to sign-in.
+          setError({ kind: "transient", message: t("auth.reauth.signed_out") });
+          leaveAfterReauthLock();
+          return;
+        }
         if (res.status === 401 && body.code === "unauthorized") {
           // Session itself is dead — let parent's enforcement handle re-auth.
           onCancel();

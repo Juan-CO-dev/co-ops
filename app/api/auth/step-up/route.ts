@@ -16,14 +16,22 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *   3. If user.role.hasEmailAuth = false (level <6) OR password_hash IS NULL,
  *      respond 403 step_up_not_available. (PIN-only roles can't step up; they
  *      have no password to verify against.)
- *   4. verifyPassword. Wrong → audit auth_step_up_failure, return 401.
- *   5. Success → unlockStepUp(sessionId), audit auth_step_up_success, 200.
+ *   3b. Reserve the re-check (reserveReauth; audit W07 B159, migration 0307): counted on
+ *      the session BEFORE the password is checked. Out of attempts → the session is
+ *      already revoked: 401 reauth_locked, cookie cleared, the password is not checked.
+ *   4. verifyPassword. Wrong → audit auth_step_up_failure, return 401 — and on the FIFTH
+ *      wrong answer in a row the session is signed out (401 reauth_locked).
+ *   5. Success → the run of wrong answers is cleared, unlockStepUp(sessionId), audit
+ *      auth_step_up_success, 200.
  *
- * NO LOCKOUT on repeated step-up failures. The actor is already authenticated;
- * locking them out of admin would just lock them out of admin access without
- * meaningfully raising the bar (an attacker who knows the PIN already owns the
- * session). Audit every failure for forensic visibility — Phase 5+ admin
- * tooling can flag clusters of step-up failures from a single session.
+ * FIVE WRONG RE-CHECKS IN A ROW SIGN THE SESSION OUT (owner decision W07-3 a, 2026-11-15 —
+ * this REVERSES the Phase 2 Session 3 ruling "no lockout on step-up failures"). The old
+ * reasoning was that locking the ACCOUNT would not raise the bar; it still holds, and the
+ * account is still never locked here. What changed: a signed-in device (an unattended
+ * tablet, a copied cookie) was an unlimited oracle for a manager's password. Now the
+ * SESSION ends after five wrong answers and the person signs in again — which is where the
+ * account lockout lives. Every failure is still audited. Before migration 0307 is applied
+ * the reservation is a no-op and the route behaves exactly as before.
  */
 
 import { randomUUID } from "node:crypto";
@@ -31,6 +39,7 @@ import { type NextRequest } from "next/server";
 
 import { verifyPassword } from "@/lib/auth";
 import { upgradeLegacyPasswordHash } from "@/lib/auth-flows";
+import { clearReauth, reauthFailed, reauthLockedResponse, reserveReauth } from "@/lib/auth-reauth";
 import { audit, auditChecked } from "@/lib/audit";
 import { requireSession, unlockStepUp } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -121,21 +130,47 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 4. Verify password
-  const ok = await verifyPassword(password, pwRow.password_hash);
-  if (!ok) {
+  // 3b. Reserve this re-check BEFORE the password is checked (audit W07 B159). The count lives on the session
+  // row, so a burst of guesses queues on it and only five reach bcrypt. Refused = the database has already
+  // revoked this session: answer without checking anything.
+  const reauth = await reserveReauth(session.id);
+  if (!reauth.allowed) {
     await audit({
       actorId: user.id,
       actorRole: user.role,
       action: "auth_step_up_failure",
       resourceTable: "sessions",
       resourceId: session.id,
-      metadata: { reason: "wrong_password" },
+      metadata: { reason: "reauth_limit", signed_out: true },
       ipAddress,
       userAgent,
     });
-    return jsonError(401, "invalid_credentials");
+    return reauthLockedResponse();
   }
+
+  // 4. Verify password
+  const ok = await verifyPassword(password, pwRow.password_hash);
+  if (!ok) {
+    // The fifth wrong answer in a row signs this session out (the account itself is never locked here).
+    const signedOut = await reauthFailed(session.id, reauth);
+    await audit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: "auth_step_up_failure",
+      resourceTable: "sessions",
+      resourceId: session.id,
+      metadata: {
+        reason: "wrong_password",
+        ...(reauth.attempt !== null ? { attempt_number: reauth.attempt } : {}),
+        ...(signedOut ? { signed_out: true } : {}),
+      },
+      ipAddress,
+      userAgent,
+    });
+    return signedOut ? reauthLockedResponse() : jsonError(401, "invalid_credentials");
+  }
+  // A correct password ends the run of wrong ones.
+  await clearReauth(session.id, reauth);
 
   // 4b. Rehash-on-verify (password scheme v2, 2026-09-01): step-up is the other place the
   // plaintext exists, so a manager who never signs in with a password (PIN + step-up

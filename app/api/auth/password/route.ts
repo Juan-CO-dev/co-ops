@@ -11,10 +11,16 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *   3. Role must allow email auth (level 6+). Otherwise → 401 invalid_credentials.
  *   4. Inactive user → 403 account_inactive.
  *   5. Email not yet verified → 403 email_not_verified.
- *   6. Locked → 423 account_locked with retry_after_seconds.
+ *   6. Reserve the attempt (reserveAttempt; audit W07 B049/B050, migration 0307): the lock
+ *      check and the attempt count are one step, before the password is checked.
+ *      Locked → 423 account_locked with retry_after_seconds.
  *   7. Verify password. Wrong → recordFailedAttempt; if it crossed threshold,
  *      return 423; otherwise 401 invalid_credentials.
- *   8. Success → recordSuccessfulAuth, return 200 with session cookie.
+ *   8. Success → recordSuccessfulAuth, return 200 with session cookie. The session is
+ *      minted only while the password hash verified in step 7 (and the email looked up
+ *      in step 2) are still the stored ones (audit W07 B051): a reset or an email change
+ *      that committed in between → 401, no session. The legacy-hash rewrite runs AFTER
+ *      the mint, never before it.
  *
  * Disclosure policy (Juan-confirmed Phase 2 Session 3):
  *   - account_locked is told (admin gave the user the email, so existence is
@@ -27,12 +33,14 @@ import { type NextRequest } from "next/server";
 
 import { verifyPassword } from "@/lib/auth";
 import {
-  isLocked,
+  lockedRetryAfterSeconds,
   recordFailedAttempt,
   recordSuccessfulAuth,
+  reserveAttempt,
+  reservedOf,
   upgradeLegacyPasswordHash,
 } from "@/lib/auth-flows";
-import { applySessionCookie } from "@/lib/session";
+import { applySessionCookie, CredentialChangedError, type CreateSessionResult } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
 import { ROLES, type RoleCode } from "@/lib/roles";
@@ -120,14 +128,17 @@ export async function POST(req: NextRequest) {
     return jsonError(403, "email_not_verified");
   }
 
-  // 6. Locked
-  const lockState = await isLocked(user.id);
-  if (lockState.locked) {
+  // 6. Reserve the attempt — the lock check AND the count in one row lock, BEFORE bcrypt runs
+  // (audit W07 B049/B050; see /api/auth/pin). The role, inactive and email-not-verified gates
+  // above stay AHEAD of the reservation, so those refusals never count toward a lockout.
+  const reservation = await reserveAttempt(user.id);
+  if (!reservation.allowed) {
     await recordFailedAttempt(user.id, "password", "account_locked_attempt", ctx);
     return jsonError(423, "account_locked", {
-      retry_after_seconds: lockState.retryAfterSeconds,
+      retry_after_seconds: reservation.retryAfterSeconds,
     });
   }
+  const reserved = reservedOf(reservation);
 
   // 7. Verify password
   if (!user.password_hash) {
@@ -136,35 +147,51 @@ export async function POST(req: NextRequest) {
     // toward lockout (see lib/auth-flows.ts COUNTABLE_FAILURE_REASONS) — if
     // this attempt crossed the threshold, return 423 immediately so the user
     // doesn't see a misleading 401 on the threshold-crossing attempt.
-    const result = await recordFailedAttempt(user.id, "password", "missing_password_hash", ctx);
+    const result = await recordFailedAttempt(user.id, "password", "missing_password_hash", ctx, undefined, { reserved });
     if (result.locked) {
-      const fresh = await isLocked(user.id);
       return jsonError(423, "account_locked", {
-        retry_after_seconds: fresh.retryAfterSeconds,
+        retry_after_seconds: await lockedRetryAfterSeconds(user.id, reserved),
       });
     }
     return jsonError(401, "invalid_credentials");
   }
   const ok = await verifyPassword(password, user.password_hash);
   if (!ok) {
-    const result = await recordFailedAttempt(user.id, "password", "wrong_password", ctx);
+    const result = await recordFailedAttempt(user.id, "password", "wrong_password", ctx, undefined, { reserved });
     if (result.locked) {
-      const fresh = await isLocked(user.id);
       return jsonError(423, "account_locked", {
-        retry_after_seconds: fresh.retryAfterSeconds,
+        retry_after_seconds: await lockedRetryAfterSeconds(user.id, reserved),
       });
     }
     return jsonError(401, "invalid_credentials");
   }
 
-  // 7b. Rehash-on-login (password scheme v2, 2026-09-01). A legacy pepper-prepended
+  // 8. Success — the mint is a compare-and-set on the hash just verified AND the email the account was
+  // looked up by (audit W07 B051). A reset or an email change that committed while bcrypt ran has already
+  // revoked the account's sessions; this sign-in must not create a fresh one behind it.
+  //
+  // ORDER IS LOAD-BEARING: the mint runs BEFORE the legacy-hash rewrite below. The rewrite replaces
+  // users.password_hash; were it first, the mint would compare the hash verified here against the freshly
+  // rewritten one and refuse EVERY legacy-hash sign-in as credential_changed.
+  let session: CreateSessionResult;
+  try {
+    session = await recordSuccessfulAuth(user.id, "password", ctx, {
+      kind: "password", hash: user.password_hash, loginEmail: normalizedEmail,
+    });
+  } catch (e) {
+    if (!(e instanceof CredentialChangedError)) throw e;
+    await recordFailedAttempt(user.id, "password", "credential_changed", ctx);
+    return jsonError(401, "invalid_credentials");
+  }
+
+  // 8b. Rehash-on-login (password scheme v2, 2026-09-01). A legacy pepper-prepended
   // hash just verified once more above; rewrite it under v2 while the plaintext is
   // in hand. Non-fatal by construction (never throws) — a correct login must not
   // become an error because housekeeping failed. NO session revoke: same credential,
-  // same person. See lib/auth-flows.ts upgradeLegacyPasswordHash.
+  // same person. Compare-and-set on the same stored hash, so a reset that lands
+  // between the mint and here makes this a no-op (and that reset revokes the session
+  // just minted, which is correct). See lib/auth-flows.ts upgradeLegacyPasswordHash.
   await upgradeLegacyPasswordHash(user.id, password, user.password_hash, user.role, ctx, "signin");
 
-  // 8. Success
-  const session = await recordSuccessfulAuth(user.id, "password", ctx);
   return applySessionCookie(jsonOk({ ok: true, user_id: user.id }), session);
 }

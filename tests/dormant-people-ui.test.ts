@@ -9,7 +9,7 @@ import type { LinkReview } from "@/lib/toast/employee-links";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 vi.mock("@/components/admin/StepUpProvider", () => ({ useStepUp: () => ({ requestStepUp: vi.fn() }) }));
-const user: AdminUserListItem = { id: "u", name: "Ana", email: null, role: "employee", level: 3,
+const user: AdminUserListItem = { id: "u", name: "Ana", email: null, emailVerified: false, role: "employee", level: 3,
   active: true, lastLoginAt: null, locationIds: [], dormantAt: "2026-10-01",
   dormancy: { dormant: true, reason: "manual", since: "2026-10-01" } };
 const filters = { role: "", status: "", location: "", q: "" };
