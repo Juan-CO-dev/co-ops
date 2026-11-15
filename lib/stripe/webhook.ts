@@ -65,6 +65,14 @@
  *   - THE OTHER INTENT IS CLOSED. When a deposit or a full payment lands, the quote's other
  *     due deposit/full intent is voided: both are priced for an UNPAID quote, so neither is
  *     collectable any more.
+ *   - …AND SO IS ITS CHECKOUT (review r3). Voiding an intent is our bookkeeping; its hosted
+ *     Checkout Session stays payable at Stripe until it is retired. A full-amount checkout
+ *     attached a moment before the deposit landed was left open by the void — the customer
+ *     could pay the deposit and the whole total. So after the flip every other deposit /
+ *     full checkout of the quote is retired (`closeQuoteCheckouts`, lib/catering/
+ *     payment-sessions.ts) and its id cleared on Stripe's confirmation. One that cannot be
+ *     confirmed closed keeps its id on its row — the pay path goes on treating it as an
+ *     unresolved checkout — and the payment is flagged `sibling_checkout_open`.
  * EVERYTHING AFTER THE FLIP IS NON-THROWING. An event whose processing fails is retried
  * (B005), and a retry of a flip that did land reports `already_advanced` with no audit row
  * and no email. A failure in the review step therefore degrades to a reason
@@ -91,6 +99,8 @@ import { resolveCateringManager } from "@/lib/catering/system-intake";
 import { TENANT_NAME } from "@/lib/tenant";
 import { parseCheckoutEvent, stripeEnvSuffix, type CheckoutEventOutcome } from "@/lib/stripe/shared";
 import { quoteTimeExpired } from "@/lib/portal/payability-shared";
+import { closeQuoteCheckouts, type ClosedCheckouts } from "@/lib/catering/payment-sessions";
+import type { RetireSession } from "@/lib/catering/payment-carry";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
@@ -108,7 +118,7 @@ export type StripeProcessingResult =
   | "payment_not_found"   // metadata + session-id lookup both came up empty
   | "location_mismatch"   // per-location mode: the payment belongs to another shop
   | "async_failed"        // delayed-notification payment failed; the row stays 'due'
-  | "expired"             // the Checkout Session expired unpaid; the row stays 'due'
+  | "expired"             // the Checkout Session expired unpaid; the row keeps its status, its session id is cleared
   | "refunded"            // a paid row became refunded (the WHOLE charge was refunded)
   | "partially_refunded"  // part of the charge was refunded; the row stays 'paid', the amount is audited
   | "no_paid_row"         // charge.refunded arrived for a payment that was not 'paid'
@@ -168,6 +178,9 @@ export async function resolveWebhookLocation(
  *  service client and no mail. Production passes nothing and gets the real notifier. */
 export interface StripeWebhookDeps {
   notifyPaid?: (args: NotifyPaidArgs) => Promise<void>;
+  /** Retire a Checkout Session of the paid quote's shop. Omitted in production: the shop's
+   *  own credentials are resolved (`retireSessionFor`). Null = this shop cannot reach Stripe. */
+  retireSession?: RetireSession;
 }
 
 /**
@@ -182,7 +195,8 @@ export type PaymentReviewReason =
   | "quote_not_payable"            // the quote is superseded, declined or expired
   | "paid_after_expiry"            // the payment settled after the open offer's expires_at
   | "already_settled"              // the row was already paid/refunded another way; NOT moved
-  | "sibling_check_failed";        // we could not read the quote's other payments
+  | "sibling_check_failed"         // we could not read the quote's other payments
+  | "sibling_checkout_open";       // another checkout of the quote could not be confirmed closed
 
 export interface NotifyPaidArgs {
   paymentId: string;
@@ -494,7 +508,25 @@ async function dispatch(
   }
 
   if (outcome.kind === "async_failed") return { result: "async_failed", locationId };
-  if (outcome.kind === "expired") return { result: "expired", locationId };
+  if (outcome.kind === "expired") {
+    // STRIPE'S OWN WORD THAT A CHECKOUT IS CLOSED (review r3). A session id on a due or void
+    // row is an unresolved checkout that blocks new collection on the quote until its
+    // retirement is CONFIRMED (lib/catering/payment-sessions.ts). `checkout.session.expired`
+    // is that confirmation, from the only party that can give it — so the id is cleared here
+    // too, which is what un-blocks a quote whose shop could not reach Stripe to retire it.
+    // Guarded on the exact session the event names: a row that has since been given another
+    // checkout is left alone. The intent itself is untouched (a due row stays due).
+    if (outcome.sessionId) {
+      const { error: clearErr } = await sb
+        .from("catering_payments")
+        .update({ provider_session_id: null })
+        .eq("id", payment.id)
+        .in("status", ["due", "void"])
+        .eq("provider_session_id", outcome.sessionId);
+      if (clearErr) throw new Error(`stripe expired clear session: ${clearErr.message}`);
+    }
+    return { result: "expired", locationId };
+  }
 
   // completed / async_succeeded — the money is real. Guarded flip: only a row that is
   // still `due` — or one we had VOIDED, because a charge on a closed intent is still a
@@ -601,6 +633,16 @@ async function dispatch(
   if (settledLate) reasons.push("paid_after_expiry");
   const siblings = await reviewSiblings(sb, payment);
   reasons.push(...siblings.reasons);
+  // CLOSE WHAT CAN NO LONGER BE COLLECTED (review r3 — see the header). After the siblings
+  // are voided, so a checkout attached a moment ago is found on a row this payment closed.
+  // Never throws; what it could not confirm closed is a reason for a person to look.
+  const closed: ClosedCheckouts = await closeQuoteCheckouts(sb, {
+    quoteId: payment.quote_id,
+    locationId,
+    settledPaymentId: payment.id,
+    retire: deps.retireSession,
+  });
+  if (closed.stillOpen.length > 0) reasons.push("sibling_checkout_open");
 
   void audit({
     actorId: null,
@@ -629,6 +671,9 @@ async function dispatch(
       // Empty for an ordinary payment. See PaymentReviewReason.
       needs_review: reasons,
       voided_sibling_ids: siblings.voided,
+      // The quote's other checkouts, by payment id: retired / could not be confirmed closed
+      // / already complete (that money is landing; its own event records it).
+      closed_checkouts: closed,
     },
     ipAddress: null,
     userAgent: null,
@@ -793,6 +838,8 @@ const REVIEW_SENTENCE: Record<PaymentReviewReason, string> = {
   already_settled:
     "This payment was already recorded another way (for example marked paid by hand), so this card charge may be a duplicate that needs a refund.",
   sibling_check_failed: "We could not check this order's other payments. Please check for a duplicate charge.",
+  sibling_checkout_open:
+    "Another online checkout for this order could not be closed, so the customer may still be able to pay it. Expire that checkout session in the Stripe dashboard and check this order for a second charge.",
 };
 
 export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs): Promise<void> {

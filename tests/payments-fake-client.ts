@@ -12,14 +12,20 @@
  *     violate one returns a real `23505` and applies nothing.
  *   - per-table failure injection for reads (`failSelect`) and writes (`failUpdate`,
  *     `failInsert`), each consumed once per listed entry.
+ *   - `rpc()`: migration 0303's `catering_payment_attach_checkout` (review r3). OFF by
+ *     default — the call answers PGRST202, exactly what PostgREST says for a function that
+ *     does not exist, i.e. "0303 is not applied" — and with `attachFunction` on it runs the
+ *     function's rule in one synchronous step (the real one runs under the quote's row
+ *     lock; scripts/sql-harness-0303.mjs proves the SQL itself).
  *
  * Never a real database. Rows are plain objects the test owns and may inspect afterwards.
  */
 export type Row = Record<string, unknown>;
 
 export interface FakeOp {
+  /** A table name, or `rpc:<function>` for an rpc call. */
   table: string;
-  kind: "select" | "insert" | "update";
+  kind: "select" | "insert" | "update" | "rpc";
   payload?: unknown;
   matched: number;
 }
@@ -34,6 +40,15 @@ export interface PaymentsFake {
   failInsert: string[];
   /** Enforce 0303's one-open-checkout index (off by default = "migration not applied"). */
   enforceOneOpenCheckout: boolean;
+  /** 0303's `catering_payment_attach_checkout` exists (off by default = PGRST202). */
+  attachFunction: boolean;
+}
+
+/** Both halves of migration 0303 at once: the index and the attach function. */
+export function apply0303(fake: PaymentsFake): PaymentsFake {
+  fake.enforceOneOpenCheckout = true;
+  fake.attachFunction = true;
+  return fake;
 }
 
 type Settled = { data: unknown; error: { code?: string; message: string } | null; count: number | null };
@@ -77,7 +92,47 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
     failUpdate: [],
     failInsert: [],
     enforceOneOpenCheckout: false,
+    attachFunction: false,
   };
+
+  /**
+   * `catering_payment_attach_checkout` (0303), rule for rule and in the same order as the
+   * SQL: the intent first (not_due / not_payable / in_progress), then the quote
+   * (already_paid / session_unresolved), then the write. One synchronous step, as the real
+   * function is one transaction under the quote's row lock.
+   */
+  function attachCheckout(args: Row): Settled {
+    const ok = (outcome: string): Settled => ({ data: outcome, error: null, count: null });
+    const pays = (tables.catering_payments ??= []);
+    const quote = (tables.catering_quotes ?? []).find((q) => q.id === args.p_quote_id);
+    if (!quote || !isNull(quote.superseded_at)) return ok("not_payable");
+    const pay = pays.find((r) => r.id === args.p_payment_id);
+    if (!pay || pay.status !== "due") return ok("not_due");
+    if (pay.quote_id !== args.p_quote_id || pay.amount_cents !== args.p_amount_cents) return ok("not_payable");
+    if (!isNull(pay.provider_session_id)) return ok("in_progress");
+    const onQuote = pays.filter((r) => r.quote_id === args.p_quote_id);
+    if (onQuote.some((r) => r.status === "paid")) return ok("already_paid");
+    if (onQuote.some((r) => r.id !== pay.id && (r.status === "due" || r.status === "void") && !isNull(r.provider_session_id))) {
+      return ok("session_unresolved");
+    }
+    pay.provider = "stripe";
+    pay.provider_session_id = args.p_session_id;
+    return ok("attached");
+  }
+
+  async function rpc(name: string, args: Row): Promise<Settled> {
+    if (name !== "catering_payment_attach_checkout" || !db.attachFunction) {
+      db.ops.push({ table: `rpc:${name}`, kind: "rpc", payload: args, matched: 0 });
+      return {
+        data: null,
+        error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` },
+        count: null,
+      };
+    }
+    const out = attachCheckout(args);
+    db.ops.push({ table: `rpc:${name}`, kind: "rpc", payload: args, matched: out.data === "attached" ? 1 : 0 });
+    return out;
+  }
 
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
@@ -196,6 +251,6 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
     return q;
   }
 
-  db.client = { from } as never;
+  db.client = { from, rpc } as never;
   return db;
 }

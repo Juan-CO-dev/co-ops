@@ -54,6 +54,15 @@
  * exactly what was charged and flags it (`amount_not_current`; `intent_was_void` for an
  * intent this pass had to close). Nothing is silently lost, and no row lies about money.
  *
+ * A VOIDED INTENT WHOSE SESSION COULD NOT BE RETIRED KEEPS ITS SESSION ID, AND THAT ID MEANS
+ * SOMETHING (review r3). Voiding is our bookkeeping; the hosted page is still payable. So a
+ * `void` row that still names a session is an UNRESOLVED CHECKOUT, exactly like a `due` one
+ * (the rule is written out in lib/catering/payment-sessions.ts): the pay path refuses to
+ * open any other checkout on the quote until Stripe confirms that session expired, and only
+ * then clears the id (lib/portal/quotes.ts `createQuoteCheckout`; migration 0303's attach
+ * function holds the same line under the quote's lock). This pass clears the id ONLY for a
+ * session it retired itself (`sessionCleared`) — never to make a row look tidy.
+ *
  * ── A PAYMENT THAT LANDS WHILE WE ARE MOVING IT ──────────────────────────────────────
  * The Stripe webhook can advance a row (due → paid) between this module's read and its
  * write. Every write that DECIDES something about an intent (re-price it, void it) is
@@ -332,6 +341,9 @@ async function carryPass(
     if (wrote === "conflict") {
       // VOID it (and move it with the rest of the family's history). A void row is outside
       // both unique indexes, so this write cannot collide.
+      // The session id is cleared ONLY when its session was confirmed retired above. One we
+      // could not retire stays on the void row: that is what tells the pay path a checkout
+      // for this order may still be open (review r3 — see the header).
       const patch: Record<string, unknown> = { status: "void", quote_id: input.newQuoteId };
       if (sessionCleared) patch.provider_session_id = null;
       wrote = await writeDue(sb, p, patch);

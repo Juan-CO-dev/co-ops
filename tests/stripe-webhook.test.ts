@@ -282,15 +282,37 @@ describe("completed / async_succeeded — the paid flip", () => {
 });
 
 describe("failures and expiries leave the row DUE", () => {
-  it.each([
-    ["checkout.session.expired", "expired"],
-    ["checkout.session.async_payment_failed", "async_failed"],
-  ])("%s → %s, and no payment row is written", async (type, expected) => {
+  it("checkout.session.async_payment_failed → async_failed, and no payment row is written", async () => {
     const { client, ops } = stubClient(handlerFor());
-    const out = await processStripeEvent(client, sessionEvent({ payment_status: "unpaid" }, type, "evt_f"), SINGLE, noNotify);
+    const out = await processStripeEvent(
+      client,
+      sessionEvent({ payment_status: "unpaid" }, "checkout.session.async_payment_failed", "evt_f"),
+      SINGLE,
+      noNotify,
+    );
 
-    expect(out.result).toBe(expected);
+    expect(out.result).toBe("async_failed");
     expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  // Review r3: an expiry is Stripe's own confirmation that a checkout is closed, so the dead
+  // session id is cleared (it would otherwise go on blocking new collection on the quote).
+  // The intent's STATUS, amount and money columns are never written by it.
+  it("checkout.session.expired → expired: the row's status is untouched; only the expired session's id is cleared, guarded on that id", async () => {
+    const { client, ops } = stubClient(handlerFor());
+    const out = await processStripeEvent(
+      client,
+      sessionEvent({ payment_status: "unpaid" }, "checkout.session.expired", "evt_f"),
+      SINGLE,
+      noNotify,
+    );
+
+    expect(out.result).toBe("expired");
+    const writes = ops.filter((o) => o.table === "catering_payments" && o.kind === "update");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.payload).toEqual({ provider_session_id: null });
+    expect(writes[0]!.filters).toMatchObject({ id: PAYMENT_ID, provider_session_id: "cs_1", "status:in": ["due", "void"] });
     expect(auditMock).not.toHaveBeenCalled();
   });
 

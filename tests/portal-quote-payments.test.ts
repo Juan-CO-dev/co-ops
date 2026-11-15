@@ -503,7 +503,21 @@ describe("W02/B035 — one open checkout per quote", () => {
     expect(byId(FULL).provider_session_id).toBe("cs_new");
   });
 
-  it("a PAID or VOID sibling's old session id is not chased — only `due` rows can still be paid into", async () => {
+  it("a PAID or REFUNDED sibling's old session id is history and is not chased", async () => {
+    db.tables.catering_payments!.push(
+      dueRow({ status: "refunded", provider: "stripe", provider_ref: "pi_old", provider_session_id: "cs_refunded" }),
+      fullRow(),
+    );
+
+    await createQuoteCheckout(fullInput());
+
+    expect(retireMock).not.toHaveBeenCalled();
+  });
+
+  // Review r3 (P1): this test used to say a VOID sibling's session id "is not chased — only
+  // `due` rows can still be paid into". That was the bug: voiding an intent is our
+  // bookkeeping; its hosted checkout stays payable until Stripe confirms it expired.
+  it("a VOID sibling that still names a session IS an open checkout: it is retired, and cleared, before the new one is minted", async () => {
     db.tables.catering_payments!.push(
       dueRow({ status: "void", provider: "stripe", provider_session_id: "cs_void" }),
       fullRow(),
@@ -511,7 +525,10 @@ describe("W02/B035 — one open checkout per quote", () => {
 
     await createQuoteCheckout(fullInput());
 
-    expect(retireMock).not.toHaveBeenCalled();
+    expect(retireMock).toHaveBeenCalledTimes(1);
+    expect(retireMock).toHaveBeenCalledWith(expect.any(String), "cs_void");
+    expect(retireMock.mock.invocationCallOrder[0]!).toBeLessThan(createSessionMock.mock.invocationCallOrder[0]!);
+    expect(byId(PAYMENT)).toMatchObject({ status: "void", provider_session_id: null });
   });
 
   it("with migration 0303's index, a RACING second checkout loses at the database and is abandoned", async () => {

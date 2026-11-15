@@ -24,6 +24,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
+import { closeQuoteCheckouts } from "@/lib/catering/payment-sessions";
 import type { AuthContext } from "@/lib/session";
 
 export const PAYMENT_READ_MIN = 5; // shift_lead+ may view a quote's payment intents
@@ -123,7 +124,7 @@ async function loadPaymentQuoteContext(
    *  money route — adversarial review cosmetic; the location gate remains the
    *  security authority). Mismatch → the same IDOR-safe 404. */
   expectedQuoteId?: string,
-): Promise<{ status: string; locationId: string }> {
+): Promise<{ status: string; locationId: string; quoteId: string }> {
   const { data: pay, error } = await sb
     .from("catering_payments")
     .select("id, status, quote_id")
@@ -143,7 +144,7 @@ async function loadPaymentQuoteContext(
   if (qErr) throw new Error(`loadPaymentQuoteContext quote: ${qErr.message}`);
   if (!quote) throw new CateringPaymentError(404, "not_found", "Payment's quote not found");
 
-  return { status: pay.status, locationId: quote.location_id };
+  return { status: pay.status, locationId: quote.location_id, quoteId: pay.quote_id };
 }
 
 // ── Writes ──────────────────────────────────────────────────────────────────────
@@ -266,6 +267,18 @@ export async function createPaymentDue(
  * via the owning quote. The `.eq("status","due")` guard makes the flip idempotent-safe — a
  * count of 0 means the row was already advanced (or not `due`), surfaced as a 409. A real
  * provider webhook replaces this manual advance.
+ *
+ * ── …AND THE QUOTE'S OPEN CHECKOUTS ARE CLOSED (review r3) ───────────────────────────
+ * A payment recorded by hand is a settlement like any other, and a hosted Checkout Session
+ * left open beside it is a second charge waiting to happen: the intent's own (the customer
+ * paid by phone with the card page still open in a tab), or the other option's (a
+ * full-amount checkout open while the deposit is marked paid). After the flip both are
+ * retired at Stripe and their ids cleared (`closeQuoteCheckouts`). BEST-EFFORT, and it
+ * never fails the mark: a person received real money and the record must say so. What
+ * could not be confirmed closed keeps its id on its row and is named on the audit row
+ * (`closed_checkouts.stillOpen`); if the customer does pay it, the webhook records and
+ * flags that charge. The other intent itself is NOT voided here — whether a hand-recorded
+ * deposit leaves a `full` intent to be marked later is the team's call.
  */
 export async function markPaymentPaid(
   actor: AuthContext,
@@ -273,7 +286,7 @@ export async function markPaymentPaid(
   expectedQuoteId?: string,
 ): Promise<void> {
   const sb = getServiceRoleClient();
-  const { status, locationId } = await loadPaymentQuoteContext(sb, paymentId, expectedQuoteId);
+  const { status, locationId, quoteId } = await loadPaymentQuoteContext(sb, paymentId, expectedQuoteId);
   assertCanWrite(actor, locationId);
   if (status !== "due") {
     throw new CateringPaymentError(409, "not_due", "Only a due payment can be marked paid");
@@ -292,13 +305,17 @@ export async function markPaymentPaid(
     throw new CateringPaymentError(409, "not_due", "Payment was concurrently advanced or is not due");
   }
 
+  // The money is recorded. Close the checkouts that could still take it a second time
+  // (see the header). Never throws.
+  const closed = await closeQuoteCheckouts(sb, { quoteId, locationId, settledPaymentId: paymentId, includeSettled: true });
+
   void audit({
     actorId: actor.user.id,
     actorRole: actor.user.role,
     action: "catering.payment.mark_paid",
     resourceTable: "catering_payments",
     resourceId: paymentId,
-    metadata: { location_id: locationId, provider: "manual" },
+    metadata: { location_id: locationId, provider: "manual", closed_checkouts: closed },
     ipAddress: null,
     userAgent: null,
   });

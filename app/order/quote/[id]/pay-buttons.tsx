@@ -43,6 +43,9 @@ const money = (cents: number) =>
  */
 const ERROR_KEY: Record<string, TranslationKey> = {
   payment_unavailable: "order.quote.error_unavailable",
+  // The provider could not be reached, or could not confirm an earlier checkout closed
+  // (review r3): nothing was opened and nothing was charged; trying again shortly is right.
+  provider_error: "order.quote.error_unavailable",
   quote_expired: "order.quote.error_expired",
   not_payable: "order.quote.error_not_payable",
   payment_in_progress: "order.quote.error_in_progress",

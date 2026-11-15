@@ -549,6 +549,29 @@ export async function initiatePayment(
     ? existing.id
     : (await createPaymentDue(sb, { quoteId, customerId, kind, amountCents, createdBy: customerId })).id;
 
+  // THE GATE ABOVE IS A READ, AND A SETTLEMENT CAN LAND AFTER IT (review r3). The deposit's
+  // webhook can finish between the already-paid read and the insert just made: it found no
+  // `full` intent to void, and this request would go on to open a checkout for the whole
+  // total beside a paid deposit. So the question is asked AGAIN now that the intent exists.
+  // The two sides each WRITE and then READ the other's write (the webhook: flip to paid,
+  // then void the quote's due deposit/full intents; this request: insert the intent, then
+  // read for a paid row), so whichever order they land in, at least one of them sees the
+  // other. An intent THIS request raised is voided — it is priced for an unpaid quote and
+  // must not sit on the board as money due; one that was already there is left as it is.
+  if (await quoteHasPaidPayment(sb, quoteId, "initiatePayment paid re-check")) {
+    if (!existing) {
+      const { error: voidErr } = await sb
+        .from("catering_payments")
+        .update({ status: "void" })
+        .eq("id", paymentId)
+        .eq("quote_id", quoteId)
+        .eq("status", "due")
+        .is("provider_session_id", null);
+      if (voidErr) console.error(`[catering] could not void the intent ${paymentId} raised beside a settled payment:`, voidErr.message);
+    }
+    throw new PortalQuoteError(409, "already_paid", "A payment has already been received for this order");
+  }
+
   void audit({
     actorId: null,
     actorRole: null,
@@ -566,6 +589,181 @@ export async function initiatePayment(
   const stub = stripeCredentialsFor(code) === null;
 
   return { ok: true, paymentId, amountCents, stub };
+}
+
+/** Is there a `paid` payment on this quote RIGHT NOW? THROWS on a read error — "we could not
+ *  look" is never "nothing is paid". */
+async function quoteHasPaidPayment(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  quoteId: string,
+  label: string,
+): Promise<boolean> {
+  const { data, error } = await sb
+    .from("catering_payments")
+    .select("id")
+    .eq("quote_id", quoteId)
+    .eq("status", "paid")
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (error) throw new Error(`${label}: ${error.message}`);
+  return data != null;
+}
+
+/**
+ * The quote's UNRESOLVED checkouts other than `exceptPaymentId`'s own: every `due` OR `void`
+ * row that still names a Checkout Session (lib/catering/payment-sessions.ts has the rule).
+ * A void intent is closed on OUR books only — its hosted page stays payable until Stripe
+ * confirms it expired, and only then is its id cleared (review r3). `paid` / `refunded`
+ * rows keep their id as history and are never returned.
+ */
+async function unresolvedCheckouts(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  quoteId: string,
+  exceptPaymentId: string,
+  label: string,
+): Promise<Array<{ id: string; status: string; provider_session_id: string }>> {
+  const { data, error } = await sb
+    .from("catering_payments")
+    .select("id, status, provider_session_id")
+    .eq("quote_id", quoteId)
+    .in("status", ["due", "void"])
+    .not("provider_session_id", "is", null)
+    .returns<Array<{ id: string; status: string; provider_session_id: string | null }>>();
+  if (error) throw new Error(`${label}: ${error.message}`);
+  return (data ?? []).filter(
+    (r): r is { id: string; status: string; provider_session_id: string } =>
+      r.id !== exceptPaymentId && r.provider_session_id != null,
+  );
+}
+
+/** What recording a minted session on its intent came to. Only `attached` hands out a URL. */
+type AttachOutcome =
+  | "attached" //           the intent now names the session
+  | "already_paid" //       a payment has landed on the quote: nothing more is collectable here
+  | "session_unresolved" // another due/void intent of the quote still names a checkout
+  | "in_progress" //        the intent already names a session (another request attached first)
+  | "not_due" //            the intent is gone or no longer due
+  | "not_payable"; //       the quote was superseded, or the intent moved / was re-priced
+
+const ATTACH_OUTCOMES: readonly AttachOutcome[] = ["attached", "already_paid", "session_unresolved", "in_progress", "not_due", "not_payable"];
+
+interface AttachInput {
+  paymentId: string;
+  quoteId: string;
+  amountCents: number;
+  sessionId: string;
+}
+
+/**
+ * Record a minted Checkout Session on its intent — the step that makes the checkout the
+ * customer is about to be sent to OURS — and decide, at that same moment, whether the quote
+ * may still be collected on at all (review r3).
+ *
+ * ── WITH MIGRATION 0303: ONE DECISION UNDER THE QUOTE'S LOCK ─────────────────────────
+ * `catering_payment_attach_checkout` locks the quote row (FOR UPDATE — which also holds
+ * back any payment being inserted on, or moved onto, the quote: their foreign-key check
+ * needs that row) and every payment row of the quote (which holds back a status flip:
+ * a webhook's or a person's `due → paid`), and only then reads: is the intent still due,
+ * on this quote, at this amount, with no session; is anything on the quote PAID; does any
+ * other due/void intent still name a checkout. A settlement therefore lands entirely
+ * before the attach (which then refuses) or entirely after it (and the settlement closes
+ * the checkout it finds — lib/catering/payment-sessions.ts). Never in between.
+ *
+ * ── BEFORE 0303: WRITE, THEN LOOK AGAIN ──────────────────────────────────────────────
+ * PostgREST answers PGRST202 for a function that does not exist. The attach is then the
+ * compare-and-set it always was, FOLLOWED by a re-read of the same two facts. If either
+ * has turned true the attach is undone (guarded on the exact session) and refused. That is
+ * not a lock, but it is not a hole either: this request writes its session and then reads;
+ * a settlement writes `paid` and then reads the quote's open checkouts; a competing attach
+ * writes its own session and then reads. Whatever the order, the later READ sees the
+ * earlier WRITE, and the side that sees it backs out. Two attaches that see each other
+ * both back out — nobody is sent to pay, which is the safe way to lose a race.
+ */
+async function attachCheckoutSession(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  input: AttachInput,
+): Promise<AttachOutcome> {
+  const { data, error } = await sb.rpc("catering_payment_attach_checkout", {
+    p_payment_id: input.paymentId,
+    p_quote_id: input.quoteId,
+    p_amount_cents: input.amountCents,
+    p_session_id: input.sessionId,
+  });
+  if (!error) {
+    if (typeof data === "string" && (ATTACH_OUTCOMES as readonly string[]).includes(data)) return data as AttachOutcome;
+    throw new Error(`createQuoteCheckout attach: unexpected answer ${JSON.stringify(data)}`);
+  }
+  // 0303 not applied (see above). Anything else about the function is a real failure.
+  if (error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message)) {
+    return attachCheckoutSessionUnlocked(sb, input);
+  }
+  // 0303's `catering_payments_one_open_checkout`, or a lock the function could not take:
+  // another request is working this quote's checkout right now. That request wins.
+  if (error.code === "23505" || error.code === "40P01" || error.code === "55P03") return "in_progress";
+  throw new Error(`createQuoteCheckout attach: ${error.message}`);
+}
+
+/** The pre-0303 attach: compare-and-set, then re-check, then undo if the quote moved. */
+async function attachCheckoutSessionUnlocked(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  input: AttachInput,
+): Promise<AttachOutcome> {
+  // COMPARE-AND-SET: only the still-due row that still holds NO session takes this one —
+  // and only while it is still the intent this session was MINTED FOR (review r2): on this
+  // quote, at this amount. A manager's revise can land while the mint is at Stripe; its
+  // carry moves the intent to the new revision and re-prices it, and a session at the old
+  // amount must not then be recorded on a row that says the new one.
+  const { error: updErr, count } = await sb
+    .from("catering_payments")
+    .update({ provider: "stripe", provider_session_id: input.sessionId }, { count: "exact" })
+    .eq("id", input.paymentId)
+    .eq("status", "due")
+    .eq("quote_id", input.quoteId)
+    .eq("amount_cents", input.amountCents)
+    .is("provider_session_id", null);
+  if (updErr) {
+    // 0303's index without its function cannot happen (one file), but the index is the
+    // same fact either way: another request attached a session to this quote first.
+    if (updErr.code === "23505") return "in_progress";
+    throw new Error(`createQuoteCheckout persist session: ${updErr.message}`);
+  }
+  if (count === 0) {
+    // Lost the compare-and-set. Either the money already landed (the row is no longer due),
+    // or the quote was revised under us (the intent now belongs to another revision or
+    // carries another amount), or another request recorded its own checkout on this intent
+    // first. Tell them apart for the customer's sake; the redirect is refused every time.
+    const { data: now } = await sb
+      .from("catering_payments")
+      .select("id, status, quote_id, amount_cents")
+      .eq("id", input.paymentId)
+      .maybeSingle<{ id: string; status: string; quote_id: string; amount_cents: number }>();
+    if (now?.status === "due" && (now.quote_id !== input.quoteId || now.amount_cents !== input.amountCents)) return "not_payable";
+    if (now?.status === "due") return "in_progress";
+    return "not_due";
+  }
+
+  // WRITE, THEN LOOK AGAIN (see `attachCheckoutSession`). A failed read here must not leave
+  // the session attached AND unexamined, so it is treated as the worst answer.
+  let verdict: AttachOutcome = "attached";
+  try {
+    if (await quoteHasPaidPayment(sb, input.quoteId, "createQuoteCheckout paid re-check")) verdict = "already_paid";
+    else if ((await unresolvedCheckouts(sb, input.quoteId, input.paymentId, "createQuoteCheckout session re-check")).length > 0) {
+      verdict = "session_unresolved";
+    }
+  } catch (e) {
+    console.error("[catering] could not re-check the quote after attaching a checkout:", e instanceof Error ? e.message : e);
+    verdict = "session_unresolved";
+  }
+  if (verdict === "attached") return verdict;
+
+  // Undo our own attach, guarded on the exact session: the caller closes it at Stripe.
+  const { error: undoErr } = await sb
+    .from("catering_payments")
+    .update({ provider_session_id: null })
+    .eq("id", input.paymentId)
+    .eq("provider_session_id", input.sessionId);
+  if (undoErr) console.error(`[catering] could not detach checkout ${input.sessionId} from payment ${input.paymentId}:`, undoErr.message);
+  return verdict;
 }
 
 /**
@@ -631,10 +829,13 @@ async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<Ch
  *   1. re-load + re-own the quote (a second request is a second authorization),
  *   2. resolve the shop's credentials (no keys ⇒ 409 `not_configured`; the route should
  *      never have got here, and guessing a different account's keys is not a fallback),
- *   3. retire every OTHER open session of the quote,
+ *   3. refuse if anything on the quote is already paid; then resolve every OTHER unresolved
+ *      checkout of the quote (a `due` OR a `void` row that still names a session),
  *   4. settle the intent's OWN stored session: hand it back, or close it for good,
  *   5. create a session at Stripe under a key no request has used before,
- *   6. COMPARE-AND-SET the still-`due`, session-less row to `provider='stripe'` + the id.
+ *   6. ATTACH it — and decide, in that same step, whether the quote may still be collected
+ *      on (`attachCheckoutSession`: 0303's function under the quote's lock, or before 0303 a
+ *      compare-and-set followed by a re-check).
  *
  * ── ONE OPEN CHECKOUT PER QUOTE (audit W02/B035) ─────────────────────────────────────
  * A staff quote far enough out offers two ways to pay — a deposit, or the full amount —
@@ -649,7 +850,25 @@ async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<Ch
  * Migration 0303's partial unique index (`catering_payments_one_open_checkout`) makes the
  * same rule a database fact for the one case code cannot close — two requests racing — and
  * step 6 reads its 23505 as exactly that. Everything here works before 0303 is applied;
- * the index only narrows the race.
+ * the index and the attach function only make the race's outcome a database fact.
+ *
+ * ── A VOID INTENT'S CHECKOUT IS NOT CLOSED UNTIL STRIPE SAYS SO (review r3) ──────────
+ * Step 3 used to look at `due` rows only. But an intent is voided on OUR books — by a
+ * revise whose new deposit is zero, by a payment landing on its sibling — and its hosted
+ * page stays payable unless the session was actually retired. When that retirement failed,
+ * the row was `void` with the session id still on it, invisible here, and a second checkout
+ * opened beside it. A session id on a `due` or `void` row is an UNRESOLVED checkout (the
+ * rule is written out in lib/catering/payment-sessions.ts): it blocks this request until
+ * Stripe confirms it expired — 502 when Stripe will not, 409 when it is already complete —
+ * and its id is cleared only then. A replacement is offered after confirmed retirement,
+ * never instead of it.
+ *
+ * ── SETTLEMENT AND CHECKOUT ARE DECIDED TOGETHER, PER QUOTE (review r3) ──────────────
+ * `initiatePayment`'s already-paid gate is a read, and a deposit's webhook could land
+ * between that read and this function's attach: the full-amount checkout then opened
+ * beside a PAID deposit — which is not a due row, so nothing above saw it, and not in
+ * 0303's index either. A paid row on the quote now refuses in step 3 and again, decisively,
+ * in step 6 (see `attachCheckoutSession` for why that second look cannot be raced past).
  *
  * ── A CHECKOUT ATTEMPT IS ONE SESSION, AND A RETIRED ONE NEVER COMES BACK (review r1) ─
  * The first cut keyed Stripe's idempotency on `<payment id>:<amount>` and let Stripe decide
@@ -675,8 +894,8 @@ async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<Ch
  * request retried at the transport layer — and nothing else leans on it.
  *
  * Two requests that both reach step 5 each mint their own session; step 6 is what picks
- * ONE. The write is guarded on `status = 'due'` AND `provider_session_id IS NULL` — the
- * state step 4 left — so the second writer matches nothing, closes the session it minted
+ * ONE. The attach requires `status = 'due'` AND `provider_session_id IS NULL` — the
+ * state step 4 left — so the second writer is refused, closes the session it minted
  * (best-effort) and answers 409 `payment_in_progress`; a row a webhook advanced to `paid`
  * in the meantime answers 409 `not_due`. Either way the customer is never handed a second
  * checkout for money that is already on its way. The same write is guarded on the intent
@@ -740,27 +959,31 @@ export async function createQuoteCheckout(input: {
     throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
   }
 
-  // ONE OPEN CHECKOUT PER QUOTE (see the header): retire every other open session on this
-  // quote's due rows BEFORE a second way to pay exists. Only `due` rows matter — a paid,
-  // refunded or void row's old session id is history, not a live payment surface.
-  const { data: openRows, error: openErr } = await sb
-    .from("catering_payments")
-    .select("id, provider_session_id")
-    .eq("quote_id", input.quoteId)
-    .eq("status", "due")
-    .not("provider_session_id", "is", null)
-    .returns<Array<{ id: string; provider_session_id: string | null }>>();
-  if (openErr) throw new Error(`createQuoteCheckout open sessions: ${openErr.message}`);
+  // NOTHING IS COLLECTED ON A QUOTE THAT HAS BEEN PAID TOWARD (review r3). `initiatePayment`
+  // asked this; a settlement can have landed since (this is a second request, and the first
+  // one's answer is not inherited). Asked here before anything is retired or minted, and
+  // once more, atomically, when the session is attached (`attachCheckoutSession`).
+  if (await quoteHasPaidPayment(sb, input.quoteId, "createQuoteCheckout paid check")) {
+    throw new PortalQuoteError(409, "already_paid", "A payment has already been received for this order");
+  }
+
+  // ONE OPEN CHECKOUT PER QUOTE (see the header): resolve every OTHER unresolved checkout
+  // of the quote BEFORE a second way to pay exists. That is every `due` row that names a
+  // session AND every `void` one (review r3): a voided intent whose session could not be
+  // retired — a revise's carry with Stripe down, a webhook that could not close a sibling
+  // — is closed on our books and still payable at Stripe. Each is retired or the request is
+  // refused (`retireOrRefuse`, fail closed), and its id is cleared only on Stripe's word. A
+  // paid or refunded row's id is history, not a live payment surface.
+  const others = await unresolvedCheckouts(sb, input.quoteId, input.paymentId, "createQuoteCheckout open sessions");
   let retiredSessions = 0;
-  for (const other of openRows ?? []) {
-    if (other.id === input.paymentId || !other.provider_session_id) continue;
+  for (const other of others) {
     await retireOrRefuse(creds.secretKey, other.provider_session_id);
     // Guarded on the exact session we retired: a row that moved in the meantime is left alone.
     const { error: clearErr } = await sb
       .from("catering_payments")
       .update({ provider_session_id: null }, { count: "exact" })
       .eq("id", other.id)
-      .eq("status", "due")
+      .in("status", ["due", "void"])
       .eq("provider_session_id", other.provider_session_id);
     if (clearErr) throw new Error(`createQuoteCheckout clear retired session: ${clearErr.message}`);
     retiredSessions += 1;
@@ -844,46 +1067,37 @@ export async function createQuoteCheckout(input: {
     throw e;
   }
 
-  // COMPARE-AND-SET: only the still-due row that still holds NO session takes this one —
-  // and only while it is still the intent this session was MINTED FOR (review r2): on this
-  // quote, at this amount. A manager's revise can land while the mint is at Stripe; its
-  // carry moves the intent to the new revision and re-prices it, and a session at the old
-  // amount must not then be recorded on a row that says the new one.
-  const { error: updErr, count } = await sb
-    .from("catering_payments")
-    .update({ provider: "stripe", provider_session_id: session.id }, { count: "exact" })
-    .eq("id", input.paymentId)
-    .eq("status", "due")
-    .eq("quote_id", input.quoteId)
-    .eq("amount_cents", input.amountCents)
-    .is("provider_session_id", null);
-  if (updErr) {
+  // RECORD IT, AND DECIDE ELIGIBILITY AT THE SAME MOMENT (`attachCheckoutSession`): the
+  // intent must still be due, on THIS quote, at THIS amount (review r2), holding no session;
+  // nothing on the quote may be paid, and no other intent may still name a checkout (review
+  // r3). Any answer but `attached` closes the session we just minted — it must not stay
+  // payable with nothing of ours naming it — and refuses the redirect.
+  let attached: AttachOutcome;
+  try {
+    attached = await attachCheckoutSession(sb, {
+      paymentId: input.paymentId,
+      quoteId: input.quoteId,
+      amountCents: input.amountCents,
+      sessionId: session.id,
+    });
+  } catch (e) {
     await abandonSession(creds.secretKey, session.id);
-    // 0303's `catering_payments_one_open_checkout`: another request attached a session to
-    // this quote between our read and this write. That request won; ours is closed.
-    if (updErr.code === "23505") {
-      throw new PortalQuoteError(409, "payment_in_progress", "A payment for this order is already in progress");
-    }
-    throw new Error(`createQuoteCheckout persist session: ${updErr.message}`);
+    throw e;
   }
-  if (count === 0) {
+  if (attached !== "attached") {
     await abandonSession(creds.secretKey, session.id);
-    // Lost the compare-and-set. Either the money already landed (the row is no longer due),
-    // or the quote was revised under us (the intent now belongs to another revision or
-    // carries another amount), or another request recorded its own checkout on this intent
-    // first. Tell them apart for the customer's sake; refuse the redirect every time.
-    const { data: now } = await sb
-      .from("catering_payments")
-      .select("id, status, quote_id, amount_cents")
-      .eq("id", input.paymentId)
-      .maybeSingle<{ id: string; status: string; quote_id: string; amount_cents: number }>();
-    if (now?.status === "due" && (now.quote_id !== input.quoteId || now.amount_cents !== input.amountCents)) {
-      throw new PortalQuoteError(409, "not_payable", "This quote can no longer be paid");
+    switch (attached) {
+      case "already_paid":
+        // A payment landed while this checkout was being opened.
+        throw new PortalQuoteError(409, "already_paid", "A payment has already been received for this order");
+      case "not_payable":
+        throw new PortalQuoteError(409, "not_payable", "This quote can no longer be paid");
+      case "not_due":
+        throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
+      default:
+        // `in_progress` / `session_unresolved`: another checkout for this order exists.
+        throw new PortalQuoteError(409, "payment_in_progress", "A payment for this order is already in progress");
     }
-    if (now?.status === "due") {
-      throw new PortalQuoteError(409, "payment_in_progress", "A payment for this order is already in progress");
-    }
-    throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
   }
 
   void audit({

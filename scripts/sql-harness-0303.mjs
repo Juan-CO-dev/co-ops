@@ -20,7 +20,16 @@
  *       attaching the other (the app's retire-then-mint order); a paid / refunded / void row keeping its
  *       session id beside a new due one; different quotes each with their own open checkout
  *   P4  0130 is untouched: still one due intent per (quote, kind)
- *   P5  the rollback in the header (`drop index`) restores the pre-0303 behaviour
+ *   P5  the rollback in the header (`drop function` + `drop index`) restores the pre-0303 behaviour
+ *   P6  the attach FUNCTION (review r3), `catering_payment_attach_checkout`: every answer it can give
+ *       (attached / in_progress / not_due / not_payable / already_paid / session_unresolved), that a
+ *       refusal writes nothing, that a void row's session blocks and a paid / refunded row's does not,
+ *       its privilege ceiling (service_role only: anon and authenticated are refused by Postgres), that
+ *       it is SECURITY DEFINER with a pinned search_path, and that it takes the quote row and the
+ *       quote's payment rows FOR UPDATE before it reads
+ *
+ * WHAT A SINGLE SESSION CANNOT SHOW: that a concurrent settlement actually WAITS on those locks. That
+ * is a two-session proof and belongs on the sim, run by CC when 0303 is applied there.
  */
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -110,6 +119,10 @@ try {
     const again = await base();
     await again.exec(M0303);
     await refuses(() => again.exec(M0303), "0303: catering_payments_one_open_checkout already exists: refusing a second apply", "P0 a second apply is refused");
+    await again.exec("rollback");
+    // Half a rollback (the index dropped, the function left): still refused, by the function's own guard.
+    await again.exec("drop index public.catering_payments_one_open_checkout;");
+    await refuses(() => again.exec(M0303), "0303: catering_payment_attach_checkout already exists: refusing a second apply", "P0 a re-apply over a leftover function is refused");
     await again.close();
 
     // Rows that already break the rule: two due intents of ONE quote, both at Stripe.
@@ -172,6 +185,22 @@ try {
   check((await db.query("select relrowsecurity from pg_class where oid = 'public.catering_payments'::regclass")).rows[0].relrowsecurity === true,
     "P1 RLS is still enabled on catering_payments");
 
+  // …and the second object: one function, behind its ceiling.
+  const FN = "public.catering_payment_attach_checkout(uuid,uuid,integer,text)";
+  const fnRows = (await db.query(
+    "select p.oid::regprocedure::text as sig, p.prosecdef, p.proconfig, pg_get_function_result(p.oid) as returns from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'catering_payment_attach_checkout'")).rows;
+  check(fnRows.length === 1 && fnRows[0].returns === "text", "P1 the apply adds exactly one function: catering_payment_attach_checkout(uuid, uuid, integer, text) returns text");
+  check(fnRows[0]?.prosecdef === true && JSON.stringify(fnRows[0]?.proconfig) === JSON.stringify(["search_path=pg_catalog, public"]),
+    "P1 it is SECURITY DEFINER with search_path = pg_catalog, public");
+  const priv = (await db.query(
+    `select has_function_privilege('anon', $1, 'EXECUTE') as anon, has_function_privilege('authenticated', $1, 'EXECUTE') as authed, has_function_privilege('service_role', $1, 'EXECUTE') as svc`, [FN])).rows[0];
+  check(priv.anon === false && priv.authed === false && priv.svc === true, "P1 EXECUTE: service_role only — not anon, not authenticated");
+  check((await db.query("select count(*)::int as n from pg_proc p, lateral aclexplode(p.proacl) a where p.oid = $1::regprocedure and a.grantee = 0", [FN])).rows[0].n === 0,
+    "P1 …and not PUBLIC");
+  check((await db.query(
+    "select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prokind = 'f' and p.proname like 'catering_payment%'")).rows[0].n === 1,
+    "P1 no other catering_payment function was created");
+
   // ── P2 — the rule ────────────────────────────────────────────────────────────────────────────
   await refuses(
     () => db.query("update public.catering_payments set provider = 'stripe', provider_session_id = 'cs_test_q1_full' where id = $1 and status = 'due'", [q1Full]),
@@ -220,7 +249,120 @@ try {
   // ── P4 — 0130 is untouched ───────────────────────────────────────────────────────────────────
   await refuses(() => f.pay(Q4, "deposit", "due", null), "catering_payments_one_due", "P4 0130 still allows only one due intent per (quote, kind)");
 
+  // ── P6 — the attach function (review r3) ─────────────────────────────────────────────────────
+  {
+    const attach = async (paymentId, quoteId, amount, session) =>
+      (await db.query("select public.catering_payment_attach_checkout($1, $2, $3, $4) as out", [paymentId, quoteId, amount, session])).rows[0].out;
+    const rowOf = async (id) => (await db.query("select status, provider, provider_session_id, quote_id, amount_cents from public.catering_payments where id = $1", [id])).rows[0];
+    const untouched = async (fn, what) => { const before = await snapshot(db); const out = await fn(); check((await snapshot(db)) === before, `${what} — and wrote nothing`); return out; };
+
+    // attached: a due intent with no session, on a quote with nothing paid and no other checkout.
+    const A = await f.quote();
+    const aDeposit = await f.pay(A, "deposit");
+    const aFull = await f.pay(A, "full");
+    check((await attach(aFull, A, 1000, "cs_fn_a_full")) === "attached", "P6 a due intent on a clean quote → attached");
+    const afterAttach = await rowOf(aFull);
+    check(afterAttach.provider === "stripe" && afterAttach.provider_session_id === "cs_fn_a_full" && afterAttach.status === "due",
+      "P6 …provider = 'stripe' and the session id are on the row; it is still due");
+    // in_progress: the intent already names a session.
+    check((await untouched(() => attach(aFull, A, 1000, "cs_fn_a_full_2"), "P6 a second attach to the same intent")) === "in_progress",
+      "P6 an intent that already holds a session → in_progress");
+    // session_unresolved: ANOTHER due intent of the quote holds a session (never the index's 23505).
+    check((await untouched(() => attach(aDeposit, A, 1000, "cs_fn_a_dep"), "P6 an attach beside another DUE intent's checkout")) === "session_unresolved",
+      "P6 another DUE intent of the quote holds a session → session_unresolved (decided before the index is reached)");
+
+    // session_unresolved: a VOID intent that still names a session — outside the index, inside the rule.
+    const B = await f.quote();
+    const bVoid = await f.pay(B, "deposit", "void", "cs_fn_b_void");
+    const bFull = await f.pay(B, "full");
+    check((await untouched(() => attach(bFull, B, 1000, "cs_fn_b_full"), "P6 an attach beside a VOID intent's unresolved checkout")) === "session_unresolved",
+      "P6 a VOID intent that still names a session → session_unresolved (the index does not see it; the function does)");
+    // …and once that session is confirmed retired (its id cleared), the replacement attaches.
+    await db.query("update public.catering_payments set provider_session_id = null where id = $1", [bVoid]);
+    check((await attach(bFull, B, 1000, "cs_fn_b_full")) === "attached", "P6 after the void row's session id is cleared (confirmed retired) → attached");
+
+    // already_paid: any paid payment on the quote, whatever its kind.
+    for (const paidKind of ["deposit", "full", "balance"]) {
+      const C = await f.quote();
+      await f.pay(C, paidKind, "paid", paidKind === "balance" ? null : `cs_fn_paid_${paidKind}`);
+      const other = await f.pay(C, paidKind === "full" ? "deposit" : "full");
+      check((await untouched(() => attach(other, C, 1000, `cs_fn_c_${paidKind}`), `P6 an attach beside a PAID ${paidKind}`)) === "already_paid",
+        `P6 a PAID ${paidKind} on the quote → already_paid`);
+    }
+    // History does not block: a REFUNDED row (with its old session id) re-opens collection.
+    const D = await f.quote();
+    await f.pay(D, "deposit", "refunded", "cs_fn_d_history");
+    const dFull = await f.pay(D, "full");
+    check((await attach(dFull, D, 1000, "cs_fn_d_full")) === "attached", "P6 a REFUNDED row keeping its session id as history blocks nothing → attached");
+    // A void row with NO session id blocks nothing either.
+    const E = await f.quote();
+    await f.pay(E, "deposit", "void", null);
+    const eFull = await f.pay(E, "full");
+    check((await attach(eFull, E, 1000, "cs_fn_e_full")) === "attached", "P6 a VOID row with no session id blocks nothing → attached");
+
+    // not_due: the intent is paid, void, or does not exist.
+    const G = await f.quote();
+    const gVoid = await f.pay(G, "deposit", "void", null);
+    check((await untouched(() => attach(gVoid, G, 1000, "cs_fn_g"), "P6 an attach to a VOID intent")) === "not_due", "P6 a void intent → not_due");
+    check((await untouched(() => attach(randomUUID(), G, 1000, "cs_fn_g2"), "P6 an attach to an intent that does not exist")) === "not_due", "P6 an unknown intent → not_due");
+    const H = await f.quote();
+    const hPaid = await f.pay(H, "deposit", "paid", null);
+    check((await untouched(() => attach(hPaid, H, 1000, "cs_fn_h"), "P6 an attach to a PAID intent")) === "not_due", "P6 a paid intent → not_due");
+
+    // not_payable: another quote, another amount, a superseded quote, a quote that does not exist.
+    const I = await f.quote(), J = await f.quote();
+    const iFull = await f.pay(I, "full");
+    check((await untouched(() => attach(iFull, J, 1000, "cs_fn_i"), "P6 an attach naming ANOTHER quote")) === "not_payable",
+      "P6 the intent is on another quote (a revise moved it) → not_payable");
+    check((await untouched(() => attach(iFull, I, 999, "cs_fn_i"), "P6 an attach at ANOTHER amount")) === "not_payable",
+      "P6 the intent carries another amount (it was re-priced) → not_payable");
+    check((await untouched(() => attach(iFull, randomUUID(), 1000, "cs_fn_i"), "P6 an attach naming a quote that does not exist")) === "not_payable",
+      "P6 an unknown quote → not_payable");
+    await db.query("update public.catering_quotes set superseded_at = now() where id = $1", [I]);
+    check((await attach(iFull, I, 1000, "cs_fn_i")) === "not_payable", "P6 a SUPERSEDED quote → not_payable");
+    check((await rowOf(iFull)).provider_session_id === null, "P6 …and nothing was attached to its intent");
+
+    // Bad arguments raise (22023); they are never a quiet answer.
+    await refuses(() => attach(null, I, 1000, "cs_x"), "invalid_arguments", "P6 a null payment id raises invalid_arguments");
+    await refuses(() => attach(iFull, I, 1000, "   "), "invalid_arguments", "P6 a blank session id raises invalid_arguments");
+    await refuses(() => attach(iFull, I, null, "cs_x"), "22023", "P6 …with errcode 22023");
+
+    // THE CEILING, exercised: Postgres itself refuses the PostgREST roles; service_role is let through.
+    const K = await f.quote();
+    const kFull = await f.pay(K, "full");
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      try {
+        await refuses(() => attach(kFull, K, 1000, "cs_fn_k"), "permission denied for function catering_payment_attach_checkout", `P6 ${role} cannot execute the function (42501)`);
+      } finally {
+        await db.exec("reset role");
+      }
+    }
+    check((await rowOf(kFull)).provider_session_id === null, "P6 a refused role wrote nothing");
+    await db.exec("set role service_role");
+    try {
+      check((await attach(kFull, K, 1000, "cs_fn_k")) === "attached", "P6 service_role may execute it → attached");
+    } finally {
+      await db.exec("reset role");
+    }
+
+    // The locks it takes, read from its own source: the quote row FOR UPDATE, then the quote's payment
+    // rows FOR UPDATE, both BEFORE the first check that can answer already_paid / session_unresolved.
+    const src = (await db.query("select prosrc from pg_proc where oid = $1::regprocedure", [FN])).rows[0].prosrc;
+    const iQuoteLock = src.search(/from public\.catering_quotes q where q\.id = p_quote_id for update/);
+    const iRowsLock = src.search(/from public\.catering_payments p where p\.quote_id = p_quote_id order by p\.id for update/);
+    const iPaid = src.indexOf("return 'already_paid'");
+    const iUnresolved = src.indexOf("return 'session_unresolved'");
+    const iWrite = src.search(/update public\.catering_payments/);
+    check(iQuoteLock >= 0 && iRowsLock > iQuoteLock, "P6 it locks the quote row FOR UPDATE, then every payment row of the quote FOR UPDATE");
+    check(iPaid > iRowsLock && iUnresolved > iRowsLock && iWrite > iPaid && iWrite > iUnresolved,
+      "P6 …and reads for a paid row and an unresolved checkout only AFTER both locks, and writes only after both reads");
+  }
+
   // ── P5 — the documented rollback ─────────────────────────────────────────────────────────────
+  await db.exec("drop function public.catering_payment_attach_checkout(uuid, uuid, integer, text);");
+  check((await db.query("select to_regprocedure('public.catering_payment_attach_checkout(uuid,uuid,integer,text)') is null as gone")).rows[0].gone === true,
+    "P5 `drop function` removes the attach function (the app falls back to its own sequence)");
   await db.exec("drop index public.catering_payments_one_open_checkout;");
   await db.query("update public.catering_payments set provider_session_id = 'cs_test_q1_dep_again' where id = $1 and status = 'due'", [q1Deposit]);
   check((await db.query("select count(*)::int as n from public.catering_payments where quote_id = $1 and status = 'due' and provider_session_id is not null", [Q1])).rows[0].n === 2,
