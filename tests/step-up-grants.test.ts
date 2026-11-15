@@ -27,6 +27,8 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/session", () => ({ requireSession: h.session, unlockStepUp: h.unlock }));
 vi.mock("@/lib/auth", () => ({ verifyPassword: h.verify }));
 vi.mock("@/lib/auth-flows", () => ({ upgradeLegacyPasswordHash: async () => undefined }));
+// The per-session re-check counter (audit W07 B159) is not what this file tests: every re-check is allowed.
+vi.mock("@/lib/auth-reauth", async () => (await import("./helpers/reauth-mock")).reauthAllowAll());
 vi.mock("@/lib/products", () => ({
   setProductActive: h.setActive,
   ProductError: class ProductError extends Error { constructor(public status: number, public code: string) { super(code); } },

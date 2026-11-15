@@ -10,6 +10,11 @@
  *   - Lock is time-bound: locked_until > now() means refuse, regardless of
  *     credential correctness — checked at the route layer before verifyPin /
  *     verifyPassword runs.
+ *   - The check and the count are ONE step (audit W07 B049 / B050, migration
+ *     0307): `reserveAttempt` counts the attempt and decides the lock under the
+ *     users row lock BEFORE the credential is checked, so a burst of guesses
+ *     cannot all slip past a lock that is about to land, and an expired lock
+ *     restarts the count instead of re-locking on the next wrong answer.
  *
  * Audit vocabulary (locked Phase 2 Session 3):
  *   - auth_signin_<method>_success     happy path (resourceTable=sessions)
@@ -24,12 +29,20 @@
 
 import { audit } from "./audit";
 import { verifyPin, hashPassword, isLegacyPasswordHash } from "./auth";
-import { createSession, type AuthMethod, type CreateSessionResult } from "./session";
+import { createSession, type AuthMethod, type CreateSessionResult, type VerifiedCredential } from "./session";
 import { getServiceRoleClient } from "./supabase-server";
 import type { RoleCode } from "./roles";
+import {
+  FAILURE_LIMIT,
+  LOCKOUT_MINUTES,
+  isMissingRpc,
+  lockRetryAfterSeconds,
+  parseAttemptReservation,
+  reserveAttemptCall,
+  type AttemptReservation,
+} from "./auth-lockout-shared";
 
-const FAILURE_LIMIT = 5;
-const LOCKOUT_MINUTES = 15;
+export { FAILURE_LIMIT, LOCKOUT_MINUTES, type AttemptReservation };
 
 /**
  * Reasons that count toward the failure threshold.
@@ -91,6 +104,63 @@ export async function isLocked(userId: string): Promise<LockoutState> {
   };
 }
 
+/** Logged once per server instance: before 0307 is applied every sign-in takes the pre-0307 path. */
+let warnedReserveMissing = false;
+
+/**
+ * Reserve this sign-in attempt BEFORE the credential is checked (audit W07 B049 / B050, migration 0307).
+ *
+ * `auth_reserve_attempt` takes the users row lock, refuses when a lock is live (writing nothing), and otherwise
+ * counts the attempt and — on the attempt that reaches FAILURE_LIMIT — writes the lock, all in one statement.
+ * Concurrent attempts queue on that row lock, so exactly FAILURE_LIMIT of a burst reach the credential check.
+ * A successful sign-in clears the count again (the session mint does it).
+ *
+ * DEGRADED PATH, on purpose and never silent: when the function is not installed yet (0307 not applied) or the
+ * call fails, this answers from the pre-0307 read (`isLocked`) with `degraded: true`, and the caller counts the
+ * failure the old way (`recordFailedAttempt` without a reservation → `increment_failed_login`). That path is
+ * exactly today's behaviour, so the limiter is never WEAKER than before this change and a limiter fault never
+ * fails a sign-in closed.
+ */
+export async function reserveAttempt(userId: string): Promise<AttemptReservation> {
+  const sb = getServiceRoleClient();
+  const call = reserveAttemptCall(userId);
+  const { data, error } = await sb.rpc(call.fn, call.args);
+  if (!error) {
+    const parsed = parseAttemptReservation(data, Date.now());
+    if (parsed) return parsed;
+    console.error(`[auth-flows] auth_reserve_attempt returned an unexpected shape for user ${userId}: using the pre-0307 lock check`);
+  } else if (isMissingRpc(error)) {
+    if (!warnedReserveMissing) {
+      warnedReserveMissing = true;
+      console.warn("[auth-flows] auth_reserve_attempt is not installed (migration 0307 not applied): using the pre-0307 lock check");
+    }
+  } else {
+    console.error(`[auth-flows] auth_reserve_attempt failed for user ${userId}: ${error.message} — using the pre-0307 lock check`);
+  }
+  const state = await isLocked(userId);
+  return { allowed: !state.locked, attempt: null, lockedUntil: null, retryAfterSeconds: state.retryAfterSeconds, degraded: true };
+}
+
+/** The reservation a route hands to `recordFailedAttempt`: present only when 0307 counted the attempt. */
+export interface ReservedAttempt {
+  attempt: number;
+  lockedUntil: string | null;
+}
+
+/** `reserveAttempt`'s answer → what `recordFailedAttempt` needs, or undefined on the degraded path. */
+export function reservedOf(r: AttemptReservation): ReservedAttempt | undefined {
+  return !r.degraded && r.allowed && r.attempt !== null ? { attempt: r.attempt, lockedUntil: r.lockedUntil } : undefined;
+}
+
+/**
+ * Seconds to wait after an attempt that just locked the account: from the reservation's own lock when 0307
+ * counted it (no extra read), otherwise the stored lock (the pre-0307 read).
+ */
+export async function lockedRetryAfterSeconds(userId: string, reserved: ReservedAttempt | undefined): Promise<number> {
+  if (reserved?.lockedUntil) return Math.max(1, lockRetryAfterSeconds(reserved.lockedUntil, Date.now()));
+  return (await isLocked(userId)).retryAfterSeconds;
+}
+
 /**
  * Record a failed auth attempt.
  *
@@ -104,6 +174,11 @@ export async function isLocked(userId: string): Promise<LockoutState> {
  *
  * Returns {locked: true} only when *this* attempt crossed the threshold (so
  * the route can return 423 immediately rather than 401).
+ *
+ * `opts.reserved` (0307): the attempt was ALREADY counted — and its lock, if it reached the limit, already
+ * written — by `reserveAttempt`, in one row lock, before the credential was checked. Then this function writes
+ * nothing to the counter or the lock; it only audits, with the reserved attempt number. Without it (0307 not
+ * applied, or the reservation degraded) the pre-0307 path below runs unchanged.
  */
 /**
  * Write `locked_until`, and PROVE it landed. Returns whether the lock is real.
@@ -149,6 +224,7 @@ export async function recordFailedAttempt(
   reason: string,
   ctx: AuthAttemptContext,
   extraMetadata?: Record<string, unknown>,
+  opts?: { reserved?: ReservedAttempt },
 ): Promise<{ locked: boolean }> {
   let lockedThisAttempt = false;
   let lockedUntilIso: string | null = null;
@@ -175,72 +251,84 @@ export async function recordFailedAttempt(
         .maybeSingle<{ role: RoleCode }>();
       userRole = cur?.role ?? null;
 
-      // Atomic increment via RPC (BUG 1 fix). The prior read-modify-write was
-      // non-atomic — concurrent failed attempts both read N and wrote N+1,
-      // undercounting toward lockout. The RPC does a single UPDATE ... RETURNING
-      // so the post-increment count is authoritative even under concurrency.
-      // Audit-log-and-continue semantics (per lib/audit.ts philosophy): on RPC
-      // error we log and proceed with the failure audit rather than throwing,
-      // but we do NOT silently miss the error.
-      const { data: rpcCount, error: rpcErr } = await sb.rpc("increment_failed_login", {
-        p_user_id: userId,
-      });
-      if (rpcErr) {
-        console.error(
-          `[auth-flows] increment_failed_login failed for user ${userId}: ${rpcErr.message}`,
-        );
-        // ── DEGRADED LOCKOUT PATH (deferred finding 4, closed here) ──────────────
-        //
-        // The counter did NOT advance, and nothing in this branch pretends otherwise.
-        // What changed: the LOCK DECISION is no longer abandoned along with the write.
-        //
-        // WHY A READ AND NOT A READ-MODIFY-WRITE. The RPC exists precisely because the
-        // old caller-side `read N → write N+1` undercounted under concurrency, and the
-        // audit's own caution is that a fallback "must stay atomic, so it belongs in the
-        // RPC or beside it, not in a caller-side read-then-update branch". So this
-        // fallback WRITES NOTHING to the counter. It reads the stored value and derives
-        // `stored + 1` as the decision input only — a pure lower bound on how many
-        // failures this account has actually seen, since a concurrent attempt can only
-        // have pushed the true number higher. A lower bound can fail to lock; it can
-        // never lock someone who should not be locked, which is the right direction for
-        // an error to point on an auth surface.
-        //
-        // WHY NO NEW RPC WAS AUTHORED FOR THIS. An "atomic fallback for a broken atomic
-        // RPC" is circular: if `sb.rpc(...)` is failing, a second RPC fails with it. The
-        // durable fix for a persistently broken counter is repairing that function, not
-        // minting a twin — and a migration that pretended otherwise would be ceremony.
-        //
-        // THE RESIDUAL, STATED. While the RPC is down the stored count is frozen, so a
-        // fresh account can never climb to the limit and lockout is effectively off for
-        // it. That is unchanged from before; what is new is that an account ALREADY at
-        // or near the limit still locks, and that the condition is greppable in the trail
-        // rather than console-only.
-        counterError = true;
-        const { data: stored } = await sb
-          .from("users")
-          .select("failed_login_count")
-          .eq("id", userId)
-          .maybeSingle<{ failed_login_count: number | null }>();
-        const storedCount = typeof stored?.failed_login_count === "number" ? stored.failed_login_count : null;
-        degradedStoredCount = storedCount;
-        // `newCount` stays 0 so the audit row never CLAIMS a counted attempt number —
-        // the derived value below is a separate, separately-labelled fact.
-        newCount = 0;
-        derivedCount = storedCount === null ? null : storedCount + 1;
+      const reserved = opts?.reserved;
+      if (reserved) {
+        // 0307: counted and (at the limit) locked by auth_reserve_attempt BEFORE the credential check, atomically.
+        // Nothing to write here — the number below is the reservation's, and the lock is already in the row.
+        newCount = reserved.attempt;
+        if (reserved.attempt >= FAILURE_LIMIT) {
+          lockedThisAttempt = true;
+          lockedUntilIso = reserved.lockedUntil;
+          lockPersisted = reserved.lockedUntil !== null;
+        }
       } else {
-        newCount = typeof rpcCount === "number" ? rpcCount : 0;
-      }
+        // Atomic increment via RPC (BUG 1 fix). The prior read-modify-write was
+        // non-atomic — concurrent failed attempts both read N and wrote N+1,
+        // undercounting toward lockout. The RPC does a single UPDATE ... RETURNING
+        // so the post-increment count is authoritative even under concurrency.
+        // Audit-log-and-continue semantics (per lib/audit.ts philosophy): on RPC
+        // error we log and proceed with the failure audit rather than throwing,
+        // but we do NOT silently miss the error.
+        const { data: rpcCount, error: rpcErr } = await sb.rpc("increment_failed_login", {
+          p_user_id: userId,
+        });
+        if (rpcErr) {
+          console.error(
+            `[auth-flows] increment_failed_login failed for user ${userId}: ${rpcErr.message}`,
+          );
+          // ── DEGRADED LOCKOUT PATH (deferred finding 4, closed here) ──────────────
+          //
+          // The counter did NOT advance, and nothing in this branch pretends otherwise.
+          // What changed: the LOCK DECISION is no longer abandoned along with the write.
+          //
+          // WHY A READ AND NOT A READ-MODIFY-WRITE. The RPC exists precisely because the
+          // old caller-side `read N → write N+1` undercounted under concurrency, and the
+          // audit's own caution is that a fallback "must stay atomic, so it belongs in the
+          // RPC or beside it, not in a caller-side read-then-update branch". So this
+          // fallback WRITES NOTHING to the counter. It reads the stored value and derives
+          // `stored + 1` as the decision input only — a pure lower bound on how many
+          // failures this account has actually seen, since a concurrent attempt can only
+          // have pushed the true number higher. A lower bound can fail to lock; it can
+          // never lock someone who should not be locked, which is the right direction for
+          // an error to point on an auth surface.
+          //
+          // WHY NO NEW RPC WAS AUTHORED FOR THIS. An "atomic fallback for a broken atomic
+          // RPC" is circular: if `sb.rpc(...)` is failing, a second RPC fails with it. The
+          // durable fix for a persistently broken counter is repairing that function, not
+          // minting a twin — and a migration that pretended otherwise would be ceremony.
+          //
+          // THE RESIDUAL, STATED. While the RPC is down the stored count is frozen, so a
+          // fresh account can never climb to the limit and lockout is effectively off for
+          // it. That is unchanged from before; what is new is that an account ALREADY at
+          // or near the limit still locks, and that the condition is greppable in the trail
+          // rather than console-only.
+          counterError = true;
+          const { data: stored } = await sb
+            .from("users")
+            .select("failed_login_count")
+            .eq("id", userId)
+            .maybeSingle<{ failed_login_count: number | null }>();
+          const storedCount = typeof stored?.failed_login_count === "number" ? stored.failed_login_count : null;
+          degradedStoredCount = storedCount;
+          // `newCount` stays 0 so the audit row never CLAIMS a counted attempt number —
+          // the derived value below is a separate, separately-labelled fact.
+          newCount = 0;
+          derivedCount = storedCount === null ? null : storedCount + 1;
+        } else {
+          newCount = typeof rpcCount === "number" ? rpcCount : 0;
+        }
 
-      // Derive the lock decision from the RPC's returned count — or, when the RPC
-      // errored, from the read-only lower bound above. `derivedCount` is null only when
-      // the counter could not be READ either, and then there is genuinely nothing to
-      // decide from and the attempt stays non-threshold-crossing as before.
-      const decisionCount = counterError ? (derivedCount ?? 0) : newCount;
-      if (decisionCount >= FAILURE_LIMIT) {
-        const until = new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000);
-        lockedUntilIso = until.toISOString();
-        lockedThisAttempt = true;
-        lockPersisted = await persistLockout(sb, userId, lockedUntilIso);
+        // Derive the lock decision from the RPC's returned count — or, when the RPC
+        // errored, from the read-only lower bound above. `derivedCount` is null only when
+        // the counter could not be READ either, and then there is genuinely nothing to
+        // decide from and the attempt stays non-threshold-crossing as before.
+        const decisionCount = counterError ? (derivedCount ?? 0) : newCount;
+        if (decisionCount >= FAILURE_LIMIT) {
+          const until = new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000);
+          lockedUntilIso = until.toISOString();
+          lockedThisAttempt = true;
+          lockPersisted = await persistLockout(sb, userId, lockedUntilIso);
+        }
       }
 
       if (lockedThisAttempt) {
@@ -332,6 +420,13 @@ export async function recordFailedAttempt(
  * mint goes first so a downstream failure doesn't leave us with reset counters
  * but no session (which would silently let the user retry indefinitely).
  *
+ * `credential` (audit W07 B051) is the stored hash the caller JUST verified. With
+ * migration 0307 applied, steps 1 and 2 are ONE transaction (`auth_create_session`):
+ * the session is inserted only while that hash is still the stored one — a reset
+ * that committed while bcrypt ran makes this throw CredentialChangedError, and no
+ * session exists. Before 0307 the pre-0307 insert runs and step 2 is the separate
+ * UPDATE below, as before.
+ *
  * Used by /api/auth/pin, /api/auth/password, and /api/auth/verify
  * (auto-sign-in after email verification + password set).
  */
@@ -339,11 +434,12 @@ export async function recordSuccessfulAuth(
   userId: string,
   method: AuthMethod,
   ctx: AuthAttemptContext,
+  credential: VerifiedCredential,
 ): Promise<CreateSessionResult> {
   const session = await createSession(userId, method, {
     ipAddress: ctx.ipAddress,
     userAgent: ctx.userAgent,
-  });
+  }, credential);
 
   const sb = getServiceRoleClient();
   const { data: roleRow } = await sb
@@ -352,14 +448,17 @@ export async function recordSuccessfulAuth(
     .eq("id", userId)
     .maybeSingle<{ role: RoleCode }>();
 
-  await sb
-    .from("users")
-    .update({
-      failed_login_count: 0,
-      locked_until: null,
-      last_login_at: new Date().toISOString(),
-    })
-    .eq("id", userId);
+  // 0307's mint already cleared the counters in its own transaction; only the pre-0307 insert needs this.
+  if (!session.atomic) {
+    await sb
+      .from("users")
+      .update({
+        failed_login_count: 0,
+        locked_until: null,
+        last_login_at: new Date().toISOString(),
+      })
+      .eq("id", userId);
+  }
 
   await audit({
     actorId: userId,
@@ -376,9 +475,11 @@ export async function recordSuccessfulAuth(
 }
 
 /**
- * Verifies a PIN against the given user's pin_hash. Used by /api/auth/pin-confirm
- * and the cash deposit signature gate. NO lockout — the actor is already
- * authenticated (mirrors the step-up modal philosophy, AGENTS.md).
+ * Verifies a PIN against the given user's pin_hash — the one PIN comparison for an actor who is already signed in.
+ * It counts nothing itself. The re-check surfaces (counts, the cash deposit) call it through
+ * `verifyActorPinForSession` (lib/auth-reauth-pin.ts), which counts wrong answers on the SESSION and signs it out
+ * after five in a row (audit W07 B159); the vault reveal has its own slot cap (lib/vault.ts takeRevealSlot).
+ * The account is never locked by a re-check.
  */
 export async function verifyActorPin(userId: string, pin: string): Promise<boolean> {
   if (!/^\d{4}$/.test(pin)) return false; // 4-digit PINs only
