@@ -115,3 +115,17 @@ it("binds product evidence with zero recipes and refuses changed primary revisio
  race = async () => { await db.query("update product_primaries set primary_sku_id=primary_sku_id where location_id=$1", [ID.shopA]); };
  await expect(startSkuSwap(actor, p.request, p.token)).rejects.toMatchObject({ status: 409, code: "product_changed" });
 });
+it("W08/B057: preview refuses a shop-scoped swap of an existing product with no default, before any recipe read", async () => {
+ const product = "00000000-0000-4000-8000-00000000fbbb";
+ const [x1, x2] = ["00000000-0000-4000-8000-00000000fb01", "00000000-0000-4000-8000-00000000fb02"];
+ await db.query("insert into products(id,name,created_by,updated_by) values($1,'No default group',$2,$2)", [product, ID.actor]);
+ await db.query("insert into vendor_items(id,name,product_id) values ($1,'Member one',$3),($2,'Member two',$3)", [x1, x2, product]);
+ snapshot = createFakeDb(await persistedCatalogRows(db));
+ rpc.mockClear();
+ await expect(previewSkuSwap(actor, { ...req, oldSkuId: x1, newSkuId: x2 })).rejects.toMatchObject({ status: 409, code: "product_needs_primary" });
+ expect(rpc.mock.calls.map(([name]) => name)).not.toContain("sku_swap_recipe_snapshot");
+ // A GLOBAL (MoO) swap of the same product is not this rule.
+ const moo = { user: { id: ID.actor, role: "moo" }, level: 8, locations: [ID.shopA] } as unknown as AuthContext;
+ const code = await previewSkuSwap(moo, { ...req, oldSkuId: x1, newSkuId: x2, scope: null, mode: "for_good" }).then(() => "ok", (e: { code?: string }) => e.code);
+ expect(code).not.toBe("product_needs_primary");
+});

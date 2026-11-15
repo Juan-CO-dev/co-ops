@@ -27,6 +27,11 @@ import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import { createPaymentDue } from "@/lib/catering/payments";
 import { sendEmail } from "@/lib/email";
 import { renderOrderConfirmationEmail } from "@/lib/email-templates/order-confirmation";
+import { allowlistMatches } from "./magic-link-shared";
+import { portalDeliveryInfo, portalDeliveryRefusal, resolvePortalDeliveryZone, type PortalDeliveryInfo } from "./draft-shared";
+
+export { resolvePortalDeliveryZone } from "./draft-shared";
+export type { PortalZoneResolution, PortalDeliveryInfo } from "./draft-shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The dedicated menu section the napkins/utensils add-on lives in (excluded from the shopping list). */
@@ -134,6 +139,9 @@ export interface DraftView {
 
 /** loadDraft's full payload: the build page's data (draft + real menu + lead intake + napkins add-on). */
 export interface DraftLoad extends DraftView {
+  /** Still a live draft (status 'draft', not superseded) — the only state a cart may be edited in.
+   *  A submitted or superseded order is shown read-only (audit W01/B145). */
+  editable: boolean;
   lead: DraftLead | null;
   menu: CateringMenuItem[];
   packages: CateringPackage[]; // orderable catering packages (sub-project B)
@@ -210,6 +218,40 @@ async function loadOwnedDraftHeader(
     throw new PortalDraftError(409, "not_draft", "This order can no longer be edited");
   }
   return { id: row.id, location_id: row.location_id, is_delivery: row.is_delivery, delivery_zone_id: row.delivery_zone_id, pipeline_id: row.pipeline_id };
+}
+
+// ── The atomic draft writers (migration 0302) ─────────────────────────────────────
+
+/**
+ * 0302's portal_draft_set_lines / portal_draft_submit replace the multi-statement writes below with
+ * ONE transaction each, both taking the quote row FOR UPDATE first (audit W01/B032 + B144). Until
+ * 0302 is applied the RPC does not exist (PGRST202 / 42883) and the previous path runs — so this
+ * code is safe to deploy before the migration, and the migration is safe to apply after it.
+ */
+function rpcMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+let legacyWarned = false;
+function warnLegacy(fn: string): void {
+  if (legacyWarned) return;
+  legacyWarned = true;
+  console.warn(`[portal draft] ${fn}: migration 0302 not applied — using the non-transactional path`);
+}
+/** The 0302 refusal vocabulary (raise exception <code>) → the lib's own errors. */
+function rpcRefusal(where: string, error: { message?: string }): never {
+  const code = (error.message ?? "").trim();
+  if (code === "not_found") throw new PortalDraftError(404, "not_found", "Draft not found");
+  if (code === "not_draft") throw new PortalDraftError(409, "not_draft", "This order can no longer be edited");
+  if (code === "cart_changed") throw new PortalDraftError(409, "cart_changed", "Your order changed while it was being placed. Please review it.");
+  if (code === "empty_cart") throw new PortalDraftError(400, "empty_cart", "Your order is empty");
+  if (code === "invalid_notes") throw new PortalDraftError(400, "invalid_notes", "Notes can be at most 2000 characters");
+  if (code === "invalid_rev") throw new PortalDraftError(400, "invalid_rev", "Invalid edit revision");
+  // Delivery re-checked by 0302 under the lock (Juan 2026-11-15). `delivery_changed`: the shop's zones
+  // moved between this server's read and the lock — the customer reviews the new price.
+  if (code === "delivery_unavailable") throw new PortalDraftError(409, "delivery_unavailable", "Delivery isn't available for online orders at this shop right now");
+  if (code === "below_delivery_minimum") throw new PortalDraftError(409, "below_delivery_minimum", "This delivery order is under the minimum");
+  if (code === "delivery_changed") throw new PortalDraftError(409, "cart_changed", "The delivery fee changed. Please review your order.");
+  throw new Error(`${where}: ${error.message ?? "rpc failed"}`);
 }
 
 // ── Create (from intake, post-verify) ─────────────────────────────────────────────
@@ -333,10 +375,10 @@ export async function loadDraft(customerId: string, quoteId: string): Promise<Dr
   const sb = getServiceRoleClient();
   const { data: row, error } = await sb
     .from("catering_quotes")
-    .select("id, customer_id, pipeline_id, location_id, status, is_delivery, delivery_zone_id, subtotal_cents, delivery_fee_cents, service_charge_cents, gratuity_cents, tax_cents, total_cents, deposit_cents")
+    .select("id, customer_id, pipeline_id, location_id, status, superseded_at, is_delivery, delivery_zone_id, subtotal_cents, delivery_fee_cents, service_charge_cents, gratuity_cents, tax_cents, total_cents, deposit_cents")
     .eq("id", quoteId)
     .maybeSingle<{
-      id: string; customer_id: string | null; pipeline_id: string | null; location_id: string; status: string;
+      id: string; customer_id: string | null; pipeline_id: string | null; location_id: string; status: string; superseded_at: string | null;
       is_delivery: boolean; delivery_zone_id: string | null; subtotal_cents: number; delivery_fee_cents: number;
       service_charge_cents: number; gratuity_cents: number; tax_cents: number; total_cents: number; deposit_cents: number;
     }>();
@@ -381,6 +423,7 @@ export async function loadDraft(customerId: string, quoteId: string): Promise<Dr
 
   return {
     quoteId: row.id, pipelineId: row.pipeline_id, locationId: row.location_id, status: row.status,
+    editable: row.status === "draft" && row.superseded_at == null,
     isDelivery: row.is_delivery, deliveryZoneId: row.delivery_zone_id,
     stack: {
       subtotalCents: row.subtotal_cents, deliveryFeeCents: row.delivery_fee_cents,
@@ -490,20 +533,75 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
   });
 }
 
-/** Resolve the delivery fee for a chosen zone (0 unless delivery + a valid zone for this location). */
-async function resolveDeliveryFee(locationId: string, isDelivery: boolean, deliveryZoneId: string | null): Promise<number> {
-  if (!isDelivery || deliveryZoneId == null) return 0;
-  const pricing = await loadPublicPricingContext(locationId);
-  const zone = pricing.zones.find((z) => z.id === deliveryZoneId);
-  if (!zone) throw new PortalDraftError(400, "invalid_payload", "Delivery zone not found for this location");
-  return zone.feeCents;
+/** The draft's delivery zone + fee, decided by the SERVER from the location's active zones and the
+ * draft's own is_delivery (set at intake). Nothing the browser sends reaches it (audit W01/B001).
+ * Two or more zones → the most expensive one (Juan 2026-11-15); see resolvePortalDeliveryZone. */
+function serverDeliveryZone(pricing: { zones: Array<{ id: string; feeCents: number; minOrderCents: number | null }> }, isDelivery: boolean) {
+  return resolvePortalDeliveryZone(pricing.zones, isDelivery);
 }
 
-/** The draft's current persisted per-line totals (server-owned; never client-supplied). */
-async function currentLineTotals(sb: ReturnType<typeof getServiceRoleClient>, quoteId: string): Promise<number[]> {
-  const { data, error } = await sb.from("catering_quote_items").select("line_total_cents").eq("quote_id", quoteId).returns<Array<{ line_total_cents: number }>>();
-  if (error) throw new Error(`currentLineTotals: ${error.message}`);
-  return (data ?? []).map((r) => r.line_total_cents);
+/** A draft line as stored (the references it was priced from + the price it was saved at). */
+interface StoredLine {
+  id: string; itemId: string | null; menuItemId: string | null; packageId: string | null; sizeId: string | null;
+  portion: Portion | null; quantity: number; unitPriceCents: number; lineTotalCents: number; options: PackageOption[];
+}
+
+/** The draft's persisted lines in display order, with their package picks (server-owned; never client-supplied). */
+async function loadStoredLines(sb: ReturnType<typeof getServiceRoleClient>, quoteId: string): Promise<StoredLine[]> {
+  const { data, error } = await sb.from("catering_quote_items")
+    .select("id, item_id, menu_item_id, package_id, size_id, portion, quantity, unit_price_cents, line_total_cents, display_order")
+    .eq("quote_id", quoteId).order("display_order", { ascending: true })
+    .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; size_id: string | null; portion: string | null; quantity: number | string; unit_price_cents: number; line_total_cents: number; display_order: number }>>();
+  if (error) throw new Error(`loadStoredLines: ${error.message}`);
+  const rows = data ?? [];
+  const optionsByLine = new Map<string, PackageOption[]>();
+  const packageLineIds = rows.filter((r) => r.package_id).map((r) => r.id);
+  if (packageLineIds.length > 0) {
+    const { data: optRows, error: oErr } = await sb.from("catering_quote_item_options")
+      .select("quote_item_id, package_item_id, item_id, menu_item_id, quantity")
+      .in("quote_item_id", packageLineIds)
+      .returns<Array<{ quote_item_id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>();
+    if (oErr) throw new Error(`loadStoredLines options: ${oErr.message}`);
+    for (const o of optRows ?? []) {
+      const arr = optionsByLine.get(o.quote_item_id) ?? [];
+      arr.push({ packageItemId: o.package_item_id, itemId: o.item_id, menuItemId: o.menu_item_id, quantity: Number(o.quantity) });
+      optionsByLine.set(o.quote_item_id, arr);
+    }
+  }
+  return rows.map((r) => ({
+    id: r.id, itemId: r.item_id, menuItemId: r.menu_item_id, packageId: r.package_id, sizeId: r.size_id,
+    portion: r.portion === "quarter" || r.portion === "half" || r.portion === "whole" ? r.portion : null,
+    quantity: Number(r.quantity), unitPriceCents: r.unit_price_cents, lineTotalCents: r.line_total_cents,
+    options: optionsByLine.get(r.id) ?? [],
+  }));
+}
+
+/**
+ * Re-price the draft's STORED lines against the location's CURRENT menu (audit W01/B031). A draft can
+ * sit for weeks; the price it was saved at is not the price of today. A line that no longer resolves
+ * (item / sub / package / size / slot deactivated or removed) or whose price moved refuses
+ * 409 `cart_changed` — the customer reviews the cart again (the build page re-saves it at today's
+ * prices). Unchanged lines return their resolution, whose totals equal the stored ones.
+ */
+async function repriceStoredLines(locationId: string, stored: StoredLine[]): Promise<ResolvedLine[]> {
+  const inputs: DraftLineInput[] = stored.map((l) => ({
+    itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, sizeId: l.sizeId, portion: l.portion, quantity: l.quantity,
+    packageOptions: l.options.map((o) => ({ packageItemId: o.packageItemId, itemId: o.itemId, menuItemId: o.menuItemId, quantity: o.quantity })),
+  }));
+  let resolved: ResolvedLine[];
+  try {
+    resolved = await resolveLines(locationId, inputs);
+  } catch (e) {
+    if (e instanceof PortalDraftError && e.status === 400) throw new PortalDraftError(409, "cart_changed", "Something on your order is no longer available. Please review your order.");
+    throw e;
+  }
+  resolved.forEach((r, i) => {
+    const s = stored[i]!;
+    if (r.unitPriceCents !== s.unitPriceCents || r.lineTotalCents !== s.lineTotalCents) {
+      throw new PortalDraftError(409, "cart_changed", "A price on your order changed. Please review your order.");
+    }
+  });
+  return resolved;
 }
 
 /** The napkins add-on menu item for a location (the first ADDON_SECTION row), or null. */
@@ -514,28 +612,60 @@ async function loadNapkinsAddon(locationId: string): Promise<CateringMenuItem | 
 
 // ── Set lines (build cart persistence, in place) ───────────────────────────────────
 
-export interface SetLinesOpts { isDelivery?: boolean; deliveryZoneId?: string | null; tipBps?: number | null }
+export interface SetLinesOpts {
+  /** IGNORED (audit W01/B001): delivery vs pickup is the draft row's is_delivery, set at intake, and the
+   *  zone is decided by the server. Kept so existing callers type-check; never read. */
+  isDelivery?: boolean;
+  tipBps?: number | null;
+  /** The build page's edit revision (audit W01-r2): with 0302 the writer refuses (answers `stale`, writes
+   *  nothing) a save from the same page epoch whose seq is not newer than the one it stored — so an older
+   *  save that arrives late never overwrites a newer one. Null/absent: no ordering check (as before).
+   *  The pre-0302 path cannot honour it (no column to keep it in). */
+  rev?: { epoch: string; seq: number } | null;
+}
 
 /** Replace the draft's lines + recompute + snapshot the charge stack IN PLACE (owned + 'draft'
- * only — no version churn). Returns the updated DraftView. */
-export async function setDraftLines(customerId: string, quoteId: string, lines: DraftLineInput[], opts: SetLinesOpts = {}): Promise<DraftView> {
+ * only — no version churn). Returns the updated DraftView; `stale: true` when the save was older than
+ * the revision already stored and so wrote nothing. */
+export async function setDraftLines(customerId: string, quoteId: string, lines: DraftLineInput[], opts: SetLinesOpts = {}): Promise<DraftView & { stale: boolean }> {
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
-  const isDelivery = opts.isDelivery ?? header.is_delivery;
-  const deliveryZoneId = opts.deliveryZoneId !== undefined ? opts.deliveryZoneId : header.delivery_zone_id;
+  const isDelivery = header.is_delivery;
 
   // A-M3: ALL validation + the full charge stack are computed BEFORE any write — resolveLines
-  // (bounds/refs), ratesWithTip (tip validation), and resolveDeliveryFee all throw here, before the
-  // delete, so a bad payload can never leave the line items replaced with a stale snapshot. (Full
-  // delete+insert+update transactional atomicity would need an RPC; the residual is only a sub-ms
-  // concurrent-self-read window — tracked as an optional deeper fix.)
+  // (bounds/refs) and ratesWithTip (tip validation) throw here, before any write, so a bad payload can
+  // never leave the line items replaced with a stale snapshot. The write itself is 0302's one-transaction
+  // portal_draft_set_lines (audit W01/B032); the multi-statement path below runs only before 0302.
   const resolved = await resolveLines(header.location_id, lines);
   const pricing = await loadPublicPricingContext(header.location_id);
-  const deliveryFee = await resolveDeliveryFee(header.location_id, isDelivery, deliveryZoneId);
+  const zone = serverDeliveryZone(pricing, isDelivery);
+  const deliveryZoneId = zone.zoneId;
   const rates = ratesWithTip(pricing.rates, opts.tipBps);
-  const stack = computeChargeStack(resolved.map((l) => l.lineTotalCents), deliveryFee, rates);
+  const stack = computeChargeStack(resolved.map((l) => l.lineTotalCents), zone.feeCents, rates);
 
-  // Replace the line set (delete-then-insert; the quote stays the same row → no new version).
+  const view: DraftView = {
+    quoteId, pipelineId: header.pipeline_id, locationId: header.location_id, status: "draft", isDelivery, deliveryZoneId, stack,
+    items: resolved.map((l) => ({ id: `resolved-${l.displayOrder}`, itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, sizeId: l.sizeId, portion: l.portion, description: l.description, quantity: l.quantity, unitPriceCents: l.unitPriceCents, lineTotalCents: l.lineTotalCents, displayOrder: l.displayOrder, options: l.options })),
+  };
+
+  // 0302: replace the lines + write the snapshot in ONE transaction under the quote row lock, re-checking
+  // owned + 'draft' there — a submit that won the lock first makes this a 409 that wrote nothing (B032).
+  const { data: rpcData, error: rpcErr } = await sb.rpc("portal_draft_set_lines", {
+    p_customer_id: customerId, p_quote_id: quoteId,
+    p_lines: resolved.map((l) => ({
+      item_id: l.itemId, menu_item_id: l.menuItemId, package_id: l.packageId, size_id: l.sizeId, portion: l.portion,
+      description: l.description, quantity: l.quantity, unit_price_cents: l.unitPriceCents, line_total_cents: l.lineTotalCents,
+      display_order: l.displayOrder, line_kind: l.lineKind, components_listed: l.componentsListed,
+      options: l.options.map((o) => ({ package_item_id: o.packageItemId, item_id: o.itemId, menu_item_id: o.menuItemId, quantity: o.quantity })),
+    })),
+    p_snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId),
+    p_rev_epoch: opts.rev?.epoch ?? null, p_rev_seq: opts.rev?.seq ?? null,
+  });
+  if (!rpcErr) return { ...view, stale: (rpcData as { stale?: unknown } | null)?.stale === true };
+  if (!rpcMissing(rpcErr)) rpcRefusal("setDraftLines", rpcErr);
+  warnLegacy("setDraftLines");
+
+  // Pre-0302 path: replace the line set (delete-then-insert; the quote stays the same row → no new version).
   const { error: delErr } = await sb.from("catering_quote_items").delete().eq("quote_id", quoteId);
   if (delErr) throw new Error(`setDraftLines delete: ${delErr.message}`);
   if (resolved.length > 0) {
@@ -557,48 +687,61 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
       if (optErr) throw new Error(`setDraftLines options insert: ${optErr.message}`);
     }
   }
-  const { error: upErr } = await sb.from("catering_quotes")
-    .update(snapshotColumns(rates, stack, isDelivery, deliveryZoneId))
+  const { error: upErr, count: upCount } = await sb.from("catering_quotes")
+    .update(snapshotColumns(rates, stack, isDelivery, deliveryZoneId), { count: "exact" })
     .eq("id", quoteId).eq("status", "draft");
   if (upErr) throw new Error(`setDraftLines update: ${upErr.message}`);
+  // Silent-UPDATE law: the draft was submitted meanwhile — say so instead of reporting a save.
+  if (upCount === 0) throw new PortalDraftError(409, "not_draft", "This order can no longer be edited");
 
-  return {
-    quoteId, pipelineId: header.pipeline_id, locationId: header.location_id, status: "draft", isDelivery, deliveryZoneId, stack,
-    items: resolved.map((l) => ({ id: `resolved-${l.displayOrder}`, itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, sizeId: l.sizeId, portion: l.portion, description: l.description, quantity: l.quantity, unitPriceCents: l.unitPriceCents, lineTotalCents: l.lineTotalCents, displayOrder: l.displayOrder, options: l.options })),
-  };
+  return { ...view, stale: false };
 }
 
 // ── Preview (compute-only, review page) ────────────────────────────────────────────
 
-export interface PreviewOpts { isDelivery?: boolean; deliveryZoneId?: string | null; tipBps?: number | null; napkins?: boolean }
+export interface PreviewOpts { tipBps?: number | null; napkins?: boolean }
+
+/** The preview's answer: the charge stack plus what the page shows about delivery (fee, minimum,
+ * and whether the order can be placed as it stands). */
+export type DraftPreview = ChargeStack & { delivery: PortalDeliveryInfo };
 
 /** Compute-only charge stack for the review page (owned + 'draft'). Reads the draft's CURRENT
  * persisted lines, optionally + the napkins add-on, applies the chosen tip/delivery — persists
- * NOTHING. Keeps the review breakdown server-authoritative (no client illustrative rates). */
-export async function previewDraft(customerId: string, quoteId: string, opts: PreviewOpts = {}): Promise<ChargeStack> {
+ * NOTHING. Keeps the review breakdown server-authoritative (no client illustrative rates). A delivery
+ * order the submit would refuse (no zone, under the minimum) still previews, with `delivery.refusal`
+ * set, so the page can say why before the customer taps. */
+export async function previewDraft(customerId: string, quoteId: string, opts: PreviewOpts = {}): Promise<DraftPreview> {
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
-  const lineTotals = await currentLineTotals(sb, quoteId);
+  const lineTotals = (await repriceStoredLines(header.location_id, await loadStoredLines(sb, quoteId))).map((l) => l.lineTotalCents);
   if (opts.napkins) {
     const napkins = await loadNapkinsAddon(header.location_id);
     if (napkins) lineTotals.push(lineTotalCents(1, napkins.unitPriceCents));
   }
   const pricing = await loadPublicPricingContext(header.location_id);
-  const isDelivery = opts.isDelivery ?? header.is_delivery;
-  const deliveryZoneId = opts.deliveryZoneId !== undefined ? opts.deliveryZoneId : header.delivery_zone_id;
-  const deliveryFee = await resolveDeliveryFee(header.location_id, isDelivery, deliveryZoneId);
-  return computeChargeStack(lineTotals, deliveryFee, ratesWithTip(pricing.rates, opts.tipBps));
+  const zone = serverDeliveryZone(pricing, header.is_delivery);
+  const stack = computeChargeStack(lineTotals, zone.feeCents, ratesWithTip(pricing.rates, opts.tipBps));
+  return { ...stack, delivery: portalDeliveryInfo(zone, stack.subtotalCents) };
 }
 
 // ── Submit (draft → submitted, the one completing click) ───────────────────────────
 
-export interface SubmitOpts { isDelivery?: boolean; deliveryZoneId?: string | null; tipBps?: number | null; napkins?: boolean }
+export interface SubmitOpts {
+  tipBps?: number | null;
+  napkins?: boolean;
+  /** The order's allergy / special-instructions note (audit W01/B002), saved on the lead's dietary_notes
+   *  in the submit (trimmed; blank clears it). Undefined = leave the intake note as it is. */
+  dietaryNotes?: string | null;
+}
+/** Same cap as the intake parser's dietary notes (lib/portal/intake-parser.ts CAP_NOTES) and 0302. */
+export const MAX_DIETARY_NOTES = 2000;
 export interface SubmitResult { quoteId: string; depositCents: number; totalCents: number }
 
 function defaultExpiry(): string { return new Date(Date.now() + DEFAULT_EXPIRY_DAYS * 86400 * 1000).toISOString(); }
+/** The confirmation email follows the SAME allowlist as the magic link (audit W01/B003): one matcher,
+ *  so "*" (the go-live posture) opens both — a private copy here treated "*" as an address. */
 function allowlisted(email: string): boolean {
-  const raw = process.env.PORTAL_MAGIC_LINK_ALLOWLIST ?? "juan@complimentsonlysubs.com";
-  return raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean).includes(email.toLowerCase());
+  return allowlistMatches(process.env.PORTAL_MAGIC_LINK_ALLOWLIST, email);
 }
 // customer portal is English-only by design (portal-i18n = Wave-2)
 function centsToUsd(cents: number): string { return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" }); }
@@ -612,11 +755,15 @@ function eventDateLabel(d: string | null): string {
  * authoritative charge stack, create the deposit-due payment intent, best-effort confirm email,
  * audit. Owned + 'draft' only. Requires at least one line. */
 export async function submitDraft(customerId: string, quoteId: string, opts: SubmitOpts = {}): Promise<SubmitResult> {
+  if (opts.dietaryNotes != null && (typeof opts.dietaryNotes !== "string" || opts.dietaryNotes.length > MAX_DIETARY_NOTES)) {
+    throw new PortalDraftError(400, "invalid_notes", `Notes can be at most ${MAX_DIETARY_NOTES} characters`);
+  }
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
 
-  const baseLineTotals = await currentLineTotals(sb, quoteId);
-  if (baseLineTotals.length === 0) throw new PortalDraftError(400, "empty_cart", "Your order is empty");
+  const stored = await loadStoredLines(sb, quoteId);
+  if (stored.length === 0) throw new PortalDraftError(400, "empty_cart", "Your order is empty");
+  const baseLineTotals = (await repriceStoredLines(header.location_id, stored)).map((l) => l.lineTotalCents);
 
   // Resolve the napkins add-on price UP FRONT (to fold into the snapshot) but do NOT insert the line
   // yet — only the submit that WINS the atomic status flip may mutate line items or create a payment
@@ -626,32 +773,40 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   const lineTotals = napkinsTotal != null ? [...baseLineTotals, napkinsTotal] : baseLineTotals;
 
   const pricing = await loadPublicPricingContext(header.location_id);
-  const isDelivery = opts.isDelivery ?? header.is_delivery;
-  const deliveryZoneId = opts.deliveryZoneId !== undefined ? opts.deliveryZoneId : header.delivery_zone_id;
-  const deliveryFee = await resolveDeliveryFee(header.location_id, isDelivery, deliveryZoneId);
+  const isDelivery = header.is_delivery;
+  const zone = serverDeliveryZone(pricing, isDelivery);
+  const deliveryZoneId = zone.zoneId;
   const rates = ratesWithTip(pricing.rates, opts.tipBps);
-  const stack = computeChargeStack(lineTotals, deliveryFee, rates);
-
-  // ATOMIC CLAIM: flip draft → submitted with the final (napkins-inclusive) snapshot. Guard on
-  // status='draft' — the LOSER of a double-submit gets count=0 → 409 having mutated NOTHING.
-  const { error: upErr, count } = await sb.from("catering_quotes")
-    .update({ status: "submitted", ...snapshotColumns(rates, stack, isDelivery, deliveryZoneId), expires_at: defaultExpiry() }, { count: "exact" })
-    .eq("id", quoteId).eq("status", "draft");
-  if (upErr) throw new Error(`submitDraft flip: ${upErr.message}`);
-  if (count === 0) throw new PortalDraftError(409, "not_draft", "This order was already submitted");
-
-  // WON the claim — now it is safe to append the napkins line (only one submitter reaches here).
-  if (napkins) {
-    const { error: nErr } = await sb.from("catering_quote_items").insert({
-      quote_id: quoteId, item_id: napkins.id, menu_item_id: null, package_id: null, portion: null,
-      description: napkins.name, quantity: 1, unit_price_cents: napkins.unitPriceCents,
-      line_total_cents: lineTotalCents(1, napkins.unitPriceCents), display_order: baseLineTotals.length, created_by: null,
-    });
-    if (nErr) throw new Error(`submitDraft napkins: ${nErr.message}`);
+  const stack = computeChargeStack(lineTotals, zone.feeCents, rates);
+  // A delivery order is never placed free or under its zone's minimum (Juan 2026-11-15): refused here,
+  // before any write, and again by 0302 under the quote row lock against the zones as they are then.
+  const deliveryRefusal = portalDeliveryRefusal(zone, stack.subtotalCents);
+  if (deliveryRefusal === "delivery_unavailable") {
+    throw new PortalDraftError(409, "delivery_unavailable", "Delivery isn't available for online orders at this shop right now");
+  }
+  if (deliveryRefusal === "below_delivery_minimum") {
+    throw new PortalDraftError(409, "below_delivery_minimum", `Delivery orders need at least ${centsToUsd(zone.minOrderCents ?? 0)} in food`);
   }
 
-  // Deposit-due payment intent (self-serve is deposit-required).
-  await createPaymentDue(sb, { quoteId, customerId, kind: "deposit", amountCents: stack.depositCents, createdBy: customerId });
+  // 0302: ONE transaction under the quote row lock — the lines priced above must still be the draft's
+  // lines (else cart_changed, B032), then flip + napkins line + deposit-due intent, all or nothing (B144).
+  const expiresAt = defaultExpiry();
+  const { error: rpcErr } = await sb.rpc("portal_draft_submit", {
+    p_customer_id: customerId, p_quote_id: quoteId,
+    p_expected_lines: stored.map((l) => ({ id: l.id, quantity: l.quantity, unit_price_cents: l.unitPriceCents })),
+    p_snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId),
+    p_napkins: napkins ? { item_id: napkins.id, description: napkins.name, unit_price_cents: napkins.unitPriceCents } : null,
+    p_expires_at: expiresAt,
+    p_set_dietary_notes: opts.dietaryNotes !== undefined,
+    p_dietary_notes: opts.dietaryNotes ?? null,
+  });
+  if (rpcErr && !rpcMissing(rpcErr)) rpcRefusal("submitDraft", rpcErr);
+  if (rpcErr) {
+    warnLegacy("submitDraft");
+    const dietaryNotes = opts.dietaryNotes === undefined || !header.pipeline_id ? undefined
+      : { pipelineId: header.pipeline_id, notes: opts.dietaryNotes?.trim() ? opts.dietaryNotes.trim() : null };
+    await submitLegacy(sb, { customerId, quoteId, snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId), expiresAt, napkins, napkinsOrder: baseLineTotals.length, depositCents: stack.depositCents, dietaryNotes });
+  }
 
   // Best-effort confirmation email (allowlist-gated; never throws).
   try {
@@ -676,4 +831,44 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
     metadata: { customer_id: customerId, total_cents: stack.totalCents, deposit_cents: stack.depositCents, napkins: !!opts.napkins }, ipAddress: null, userAgent: null,
   });
   return { quoteId, depositCents: stack.depositCents, totalCents: stack.totalCents };
+}
+
+/** The pre-0302 submit writes: separate statements, not one transaction. Every write after the
+ *  status flip — the allergy note included — runs ONLY for the submit that won the flip, so a losing
+ *  concurrent submit (409) never touches the accepted order or its lead (audit W01/B002 r1). */
+async function submitLegacy(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  a: {
+    customerId: string; quoteId: string; snapshot: ReturnType<typeof snapshotColumns>; expiresAt: string; napkins: CateringMenuItem | null; napkinsOrder: number; depositCents: number;
+    /** Undefined = leave the lead's note alone. */
+    dietaryNotes?: { pipelineId: string; notes: string | null };
+  },
+): Promise<void> {
+  // ATOMIC CLAIM: flip draft → submitted with the final (napkins-inclusive) snapshot. Guard on
+  // status='draft' — the LOSER of a double-submit gets count=0 → 409 having mutated NOTHING.
+  const { error: upErr, count } = await sb.from("catering_quotes")
+    .update({ status: "submitted", ...a.snapshot, expires_at: a.expiresAt }, { count: "exact" })
+    .eq("id", a.quoteId).eq("status", "draft");
+  if (upErr) throw new Error(`submitDraft flip: ${upErr.message}`);
+  if (count === 0) throw new PortalDraftError(409, "not_draft", "This order was already submitted");
+
+  // WON the claim — the order's allergy note goes on the lead first (before anything else can fail).
+  if (a.dietaryNotes) {
+    const { error: dErr } = await sb.from("catering_pipeline").update({ dietary_notes: a.dietaryNotes.notes })
+      .eq("id", a.dietaryNotes.pipelineId).eq("customer_id", a.customerId);
+    if (dErr) throw new Error(`submitDraft dietary notes: ${dErr.message}`);
+  }
+
+  // WON the claim — now it is safe to append the napkins line (only one submitter reaches here).
+  if (a.napkins) {
+    const { error: nErr } = await sb.from("catering_quote_items").insert({
+      quote_id: a.quoteId, item_id: a.napkins.id, menu_item_id: null, package_id: null, portion: null,
+      description: a.napkins.name, quantity: 1, unit_price_cents: a.napkins.unitPriceCents,
+      line_total_cents: lineTotalCents(1, a.napkins.unitPriceCents), display_order: a.napkinsOrder, created_by: null,
+    });
+    if (nErr) throw new Error(`submitDraft napkins: ${nErr.message}`);
+  }
+
+  // Deposit-due payment intent (self-serve is deposit-required).
+  await createPaymentDue(sb, { quoteId: a.quoteId, customerId: a.customerId, kind: "deposit", amountCents: a.depositCents, createdBy: a.customerId });
 }
