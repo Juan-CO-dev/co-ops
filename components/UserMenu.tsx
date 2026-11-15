@@ -52,7 +52,7 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: User
   const [blurbStatus, setBlurbStatus] = useState<"idle" | "saved" | "error">("idle");
 
   // Mirrors LogoutButton: POST /api/auth/logout (idempotent, public path —
-  // server clears the cookie regardless of session state), then navigate to
+  // server revokes the session; revoke-only, never a Set-Cookie), then navigate to
   // the login surface regardless of outcome (logout is intent-honoring).
   const handleSignOut = async () => {
     if (signingOut) return;

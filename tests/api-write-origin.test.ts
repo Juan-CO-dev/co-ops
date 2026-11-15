@@ -25,7 +25,7 @@ const exceptions: Record<string, { kind: string; reason: string }> = {
   'app/api/webhooks/meta-leads/route.ts POST': { kind: 'webhook', reason: 'X-Hub-Signature-256 HMAC over the raw bytes (app secret) authenticates Meta before any parse or ledger write.' },
   'app/api/webhooks/resend-inbound/route.ts POST': { kind: 'webhook', reason: 'Svix signature verifies inbound mail before payload processing.' },
   'app/api/webhooks/twilio-inbound/route.ts POST': { kind: 'webhook', reason: 'Twilio URL/form signature verifies external SMS.' },
-  'app/api/auth/logout/route.ts POST': { kind: 'logout', reason: 'Unconditional cookie clearing/session termination; auth-pin-source-throttle.test.ts pins the ruling.' },
+  'app/api/auth/logout/route.ts POST': { kind: 'logout', reason: 'Unconditional session termination (revoke-only, never a Set-Cookie); auth-pin-source-throttle.test.ts pins the ruling.' },
   'app/api/ai/route.ts POST': { kind: 'stub', reason: 'Inert 501 only; implementing requires reclassification.' },
   'app/api/notifications/route.ts POST': { kind: 'stub', reason: 'Alias to inert GET 501; full AST pinned.' },
   'app/api/shifts/route.ts POST': { kind: 'stub', reason: 'Alias to inert GET 501; full AST pinned.' },

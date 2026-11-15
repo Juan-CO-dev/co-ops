@@ -1501,7 +1501,9 @@ async function casesLogout(f: Fixtures) {
       actions: ["auth_logout"],
     });
     const outcome = (audit[0]?.metadata as { outcome?: string })?.outcome;
-    const cookieCleared = res.setCookieCleared === true;
+    // Revoke-only since audit W06/B012 round 5: logout never sets a cookie (a late response must not clear a newer
+    // sign-in); the revoked cookie is cleared by the next protected request's 401.
+    const cookieUntouched = res.setCookieCleared !== true && res.setCookieJwt === undefined;
     // Verify session is revoked
     const { count: liveSessions } = await sb
       .from("sessions")
@@ -1512,7 +1514,7 @@ async function casesLogout(f: Fixtures) {
       res.status === 200 &&
       audit.length === 1 &&
       outcome === "revoked" &&
-      cookieCleared &&
+      cookieUntouched &&
       liveSessions === 0;
     record({
       id: "logout-valid-revoked",
@@ -1523,8 +1525,8 @@ async function casesLogout(f: Fixtures) {
       captured_audit_rows: summarize(audit),
       passed,
       evidence: passed
-        ? "200 + cookie cleared + outcome=revoked + sessions row revoked"
-        : `status=${res.status}, outcome=${outcome}, cleared=${cookieCleared}, liveSessions=${liveSessions}`,
+        ? "200 + no Set-Cookie + outcome=revoked + sessions row revoked"
+        : `status=${res.status}, outcome=${outcome}, cookieUntouched=${cookieUntouched}, liveSessions=${liveSessions}`,
     });
 
     // G2 already-revoked: re-use the same cookie

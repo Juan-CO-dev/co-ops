@@ -4,8 +4,9 @@
  * LogoutButton — Phase 2 Session 4.
  *
  * Small client component. POSTs /api/auth/logout (idempotent, public path —
- * server clears the cookie regardless of session state), then router.push('/')
- * for a fresh login surface.
+ * the server revokes the session the request carried; it never sets a cookie,
+ * so a slow response cannot clear a later sign-in), then router.push('/') for a
+ * fresh login surface.
  */
 
 import { useCallback, useState } from "react";
