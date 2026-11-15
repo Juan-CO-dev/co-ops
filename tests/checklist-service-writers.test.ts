@@ -152,20 +152,68 @@ describe("verified route authority and separate read/write clients", () => {
     if (rpc) expect(mocks.rpc).toHaveBeenCalledWith(rpc, expect.objectContaining({ p_actor: "actor" }));
     else expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({ triggered_by_user_id: "actor" }));
   });
-  for (const state of ["revoked", "expired", "mismatch", "inactive", "inactive-membership", "foreign", "global-reader"] as const) {
+  // "gm-elsewhere" / "smm-elsewhere": below level 8 the shop membership stays required (W05B).
+  for (const state of ["revoked", "expired", "mismatch", "inactive", "inactive-membership", "foreign", "gm-elsewhere", "smm-elsewhere", "inactive-moo"] as const) {
     it.each(endpoints)(`%s refuses ${state} before mutation`, async (name, post, body) => {
       if (state === "revoked") session.revoked_at = new Date().toISOString();
       if (state === "expired") session.expires_at = new Date(Date.now() - 1).toISOString();
       if (state === "mismatch") session.user_id = "other";
-      if (state === "inactive") user.active = false;
+      if (state === "inactive" || state === "inactive-moo") user.active = false;
       if (state === "inactive-membership") memberships = [{ location_id: "shop", active: false }];
-      if (state === "foreign" || state === "global-reader") memberships = [];
-      if (state === "global-reader") user.role = "moo";
+      if (state === "foreign" || state === "gm-elsewhere" || state === "smm-elsewhere") memberships = [{ location_id: "other-shop", active: true }];
+      if (state === "gm-elsewhere") user.role = "gm";
+      if (state === "smm-elsewhere") user.role = "social_media_mgr";
+      if (state === "inactive-moo") { user.role = "moo"; memberships = []; }
       if (name === "instances") exists = false; // Assert creation refusal, not broader READ authority.
       const response = await post(request(name, body));
       expect(response.status).toBe(403); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.insert).not.toHaveBeenCalled();
     });
   }
+});
+
+describe("W05B — level 8+ (MoO, owner, CGS) work checklist tasks at any active shop (Juan 2026-11-15)", () => {
+  for (const role of ["moo", "owner", "cgs"] as const) {
+    it.each(endpoints)(`%s: a ${role} with no membership at the shop is allowed, as the verified actor`, async (name, post, body, rpc) => {
+      user.role = role; memberships = [{ location_id: "other-shop", active: true }];
+      if (name === "instances") exists = false;
+      const response = await post(request(name, body));
+      expect(response.status).toBe(200);
+      if (rpc) expect(mocks.rpc).toHaveBeenCalledWith(rpc, expect.objectContaining({ p_actor: "actor" }));
+      else expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({ location_id: "shop", triggered_by_user_id: "actor" }));
+    });
+  }
+  it.each(endpoints)("%s: a MoO whose membership row here is INACTIVE is allowed too (no membership needed at 8+)", async (name, post, body) => {
+    user.role = "moo"; memberships = [{ location_id: "shop", active: false }];
+    if (name === "instances") exists = false;
+    expect((await post(request(name, body))).status).toBe(200);
+  });
+  it("the lib functions apply the same rule: completeItem / submitBatch / confirmInstance for a MoO elsewhere", async () => {
+    const moo = checklistActor({ role: "moo", level: 8, locations: ["other-shop"] });
+    await expect(completeItem(mocks.reader, { ...completionArgs, actor: moo })).resolves.toHaveProperty("completion");
+    await expect(submitBatch(mocks.reader, { instanceId: "instance", actor: moo, completionIds: ["completion"] })).resolves.toHaveProperty("submission");
+    await expect(confirmInstance(mocks.reader, { ...confirmArgs, actor: moo })).resolves.toMatchObject({ status: "confirmed" });
+  });
+  it.each([["a GM (7)", { role: "gm", level: 7 }], ["an AGM (6)", { role: "agm", level: 6 }], ["an SMM (6)", { role: "social_media_mgr", level: 6 }],
+    ["a key holder (4)", { role: "key_holder", level: 4 }]] as const)("%s of another shop is refused every writer before the RPC", async (_n, who) => {
+    const actorElsewhere = checklistActor({ ...who, locations: ["other-shop"] });
+    await expect(completeItem(mocks.reader, { ...completionArgs, actor: actorElsewhere })).rejects.toMatchObject({ code: "role_level_insufficient", message: "You do not manage that location" });
+    await expect(submitBatch(mocks.reader, { instanceId: "instance", actor: actorElsewhere, completionIds: ["completion"] })).rejects.toMatchObject({ code: "role_level_insufficient" });
+    await expect(confirmInstance(mocks.reader, { ...confirmArgs, actor: actorElsewhere })).rejects.toMatchObject({ code: "role_level_insufficient" });
+    expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.pin).not.toHaveBeenCalled();
+  });
+  it("an inactive level-8+ actor is refused whatever their memberships", async () => {
+    const inactive = checklistActor({ role: "cgs", level: 10, locations: ["shop"], active: false });
+    await expect(completeItem(mocks.reader, { ...completionArgs, actor: inactive })).rejects.toMatchObject({ code: "role_level_insufficient" });
+    await expect(submitBatch(mocks.reader, { instanceId: "instance", actor: inactive, completionIds: ["completion"] })).rejects.toMatchObject({ code: "role_level_insufficient" });
+    await expect(confirmInstance(mocks.reader, { ...confirmArgs, actor: inactive })).rejects.toMatchObject({ code: "role_level_insufficient" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("before 0318 is applied the RPC's not_authorized still answers a plain 403 (nothing written)", async () => {
+    user.role = "moo"; memberships = []; rpcError = "not_authorized";
+    const response = await complete(request("completions", endpoints[0][2]));
+    expect(response.status).toBe(403);
+    expect(mocks.insert).not.toHaveBeenCalled();
+  });
 });
 
 describe("application gates and RPC outcome mapping", () => {
@@ -271,10 +319,16 @@ describe("application gates and RPC outcome mapping", () => {
       .rejects.toHaveProperty("code");
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
-  it("refuses creation by an owner without membership despite global read authority", async () => {
+  it("W05B: an owner without a membership starts the shop's checklist (level 8+ work any shop)", async () => {
     exists = false;
     await expect(getOrCreateInstance(mocks.reader, { templateId: "template", locationId: "shop", date: "2026-10-19",
-      actor: checklistActor({ role: "owner", level: 9, locations: [] }) })).rejects.toMatchObject({ code: "role_level_insufficient" });
+      actor: checklistActor({ userId: "owner", role: "owner", level: 9, locations: [] }) })).resolves.toMatchObject({ created: true });
+    expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({ location_id: "shop", triggered_by_user_id: "owner" }));
+  });
+  it("W05B: a GM (7) of another shop still cannot start this shop's checklist", async () => {
+    exists = false;
+    await expect(getOrCreateInstance(mocks.reader, { templateId: "template", locationId: "shop", date: "2026-10-19",
+      actor: checklistActor({ role: "gm", level: 7, locations: ["other-shop"] }) })).rejects.toMatchObject({ code: "role_level_insufficient" });
     expect(mocks.insert).not.toHaveBeenCalled();
   });
   it("completed-item role floor still gates confirmation", async () => {

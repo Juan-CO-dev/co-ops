@@ -65,18 +65,37 @@ beforeEach(() => {
 });
 
 describe("closing page read authority without write authority", () => {
-  it.each([["owner", 9], ["cgs", 10]] as const)("renders existing close read-only for nonmember %s", async (role, level) => {
+  // Audit W05B (Juan 2026-11-15): level 8+ work the closing at any shop, so a non-member MoO / owner / CGS
+  // gets the write UI (and starts today's close) where they used to get the read-only view.
+  it.each([["moo", 8], ["owner", 9], ["cgs", 10]] as const)("renders the existing close WRITABLE for nonmember %s", async (role, level) => {
     auth(role, level, false);
     const tree = await page();
     expect(tree.type).toBe(ClosingClient);
-    expect(tree.props.initialState).toMatchObject({ readOnly: true, instance: { id: instance.id } });
+    expect(tree.props.initialState).toMatchObject({ readOnly: false, instance: { id: instance.id } });
+    expect(h.create).toHaveBeenCalledOnce();
+    expect(h.create.mock.calls[0]![1]).toMatchObject({ locationId: shop, actor: { role, level } });
+  });
+
+  it.each([["moo", 8], ["owner", 9], ["cgs", 10]] as const)("starts today's close for nonmember %s (no no-instance dead end)", async (role, level) => {
+    fixtures(false);
+    auth(role, level, false);
+    const tree = await page();
+    expect(tree.type).toBe(ClosingClient);
+    expect(tree.props.initialState.readOnly).toBe(false);
+    expect(h.create).toHaveBeenCalledOnce();
+  });
+
+  it.each([["gm", 7], ["agm", 6], ["social_media_mgr", 6], ["key_holder", 4]] as const)("still redirects a nonmember %s (below 8 the shop is required)", async (role, level) => {
+    auth(role, level, false);
+    await expect(page()).rejects.toThrow("redirect:/dashboard");
     expectNoWrites();
   });
 
-  it.each([["owner", 9], ["cgs", 10]] as const)("shows no-instance for nonmember %s without creating", async (role, level) => {
-    fixtures(false);
-    auth(role, level, false);
-    expect(renderToStaticMarkup(await page())).toContain("closing.no_instance.body");
+  it("an INACTIVE level-8+ write actor stays read-only (the session already refuses inactive users)", async () => {
+    auth("moo", 8, false);
+    h.actor.mockResolvedValue({ role: "moo", level: 8, active: false, userId: "viewer", sessionId: "session", locations: [] });
+    const tree = await page();
+    expect(tree.props.initialState.readOnly).toBe(true);
     expectNoWrites();
   });
 

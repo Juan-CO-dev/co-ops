@@ -54,6 +54,7 @@ import { clearReauth, reauthFailed, reserveReauth } from "./auth-reauth";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
 import { lockLocationContext } from "./locations";
+import { worksShopTasks } from "./checklist-write-guard-shared";
 import { CLOSING_CONFIRM_FLOOR_LEVEL } from "./admin/template-builder-shared";
 import { canCompleteChecklistItem, evaluateLockUpGate } from "./checklist-constants";
 import {
@@ -845,7 +846,7 @@ export async function getOrCreateInstance(
   },
 ): Promise<{ instance: ChecklistInstance; created: boolean }> {
   const { templateId, locationId, date, actor } = args;
-  if (!actor.active || (!actor.locations.includes(locationId) && actor.level < 8)) {
+  if (!worksShopTasks(actor, locationId)) {
     throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
   }
 
@@ -864,7 +865,8 @@ export async function getOrCreateInstance(
     return { instance: rowToInstance(existing), created: false };
   }
   // Reading an existing close is open to staff; starting one retains main's employee floor.
-  if (actor.level < 3 || !actor.locations.includes(locationId)) {
+  // W05B (Juan 2026-11-15): level 8+ start a shop's checklist without a membership there too.
+  if (actor.level < 3 || !worksShopTasks(actor, locationId)) {
     throw new ChecklistRoleViolationError(3, actor.level);
   }
 
@@ -1015,7 +1017,7 @@ export async function completeItem(
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);
-  if (!actor.active || !actor.locations.includes(instance.location_id)) {
+  if (!worksShopTasks(actor, instance.location_id)) {
     throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
   }
   await requireChecklistTaskAccess(authed, instanceId, actor);
@@ -1134,7 +1136,7 @@ export async function submitBatch(
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);
-  if (!actor.active || !actor.locations.includes(instance.location_id)) {
+  if (!worksShopTasks(actor, instance.location_id)) {
     throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
   }
   await requireChecklistTaskAccess(authed, instanceId, actor);
@@ -1272,7 +1274,7 @@ export async function confirmInstance(
 
   const instance = await loadInstanceOrThrow(authed, instanceId);
   ensureInstanceOpen(instance);
-  if (!actor.active || !actor.locations.includes(instance.location_id)) {
+  if (!worksShopTasks(actor, instance.location_id)) {
     throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
   }
   await requireChecklistTaskAccess(authed, instanceId, actor);
