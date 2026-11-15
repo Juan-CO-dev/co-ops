@@ -46,7 +46,8 @@
  * takes its account's key OUT of the configuration — a shop's pair replaced by another
  * account's keys, or removed. That checkout's row stays unresolved (and the pay path
  * refuses on that order) until one of two things happens:
- *   · Stripe's own `checkout.session.expired` event for it arrives and the webhook clears
+ *   · Stripe's own `checkout.session.expired` event for it arrives (or, for a session whose
+ *     delayed payment failed, `checkout.session.async_payment_failed`) and the webhook clears
  *     the id (lib/stripe/webhook.ts) — which needs the old account's webhook endpoint and
  *     signing secret to be still configured. A session expires by itself at most 24 hours
  *     after it was created ("It can be anywhere from 30 minutes to 24 hours after Checkout

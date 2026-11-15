@@ -264,8 +264,8 @@ export function checkoutSessionParams(
 export type CheckoutEventKind =
   | "completed"        // checkout.session.completed AND already paid → advance the row
   | "async_succeeded"  // checkout.session.async_payment_succeeded → advance the row
-  | "async_failed"     // checkout.session.async_payment_failed → leave it 'due'
-  | "expired"          // checkout.session.expired → leave it 'due'
+  | "async_failed"     // checkout.session.async_payment_failed → leave it 'due'; clear that session's id
+  | "expired"          // checkout.session.expired → leave it 'due'; clear that session's id
   | "refunded"         // charge.refunded → 'paid' → 'refunded' ONLY when fully refunded
   | "ignored";         // everything else, INCLUDING a completed-but-unpaid session
 
