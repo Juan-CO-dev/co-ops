@@ -12,6 +12,20 @@ export const CASH_REPORT_BASE_LEVEL = 4;
 /** $200 float kept in the register. */
 export const DEFAULT_FLOAT_CENTS = 20000;
 
+/**
+ * W03/B040: every closing status that closes the cash edit window — the closer's two PIN
+ * attestations AND the system's `auto_finalized` (opener release / the 16 h auto-release). The
+ * gate used to list only the first two, so a key holder could rewrite a past night's deposit
+ * after the system had closed it. ONE list: lib/cash.ts's write gate, the /cash page's up-front
+ * lock and migration 0304's in-transaction re-check (pinned equal by tests) all read it.
+ */
+export const CASH_LOCKING_CLOSING_STATUSES = ["confirmed", "incomplete_confirmed", "auto_finalized"] as const;
+
+/** Does a closing instance in this status lock the day's cash report? (null = no instance.) */
+export function closingLocksCash(status: string | null | undefined): boolean {
+  return status != null && (CASH_LOCKING_CLOSING_STATUSES as readonly string[]).includes(status);
+}
+
 /** US denomination units in cents, largest first (bills then coins). */
 export const DENOMINATION_UNITS_CENTS = [10000, 5000, 2000, 1000, 500, 100, 25, 10, 5, 1] as const;
 
@@ -82,9 +96,33 @@ export function cashReadoutVisible(input: {
   enteredDenoms?: readonly string[];
 }): boolean {
   if (input.projected.trim() === "") return false;
+  return drawerFigureEntered(input);
+}
+
+/**
+ * W03/B007: has the closer entered a drawer figure at all (the hand total, or at least one
+ * denomination field — a typed 0 included)? An untouched form used to submit
+ * `drawerTotalCents: 0` and file a negative deposit; Submit is now held until this (and the
+ * projected figure) are in, and the client tells the server when a zero drawer was COUNTED.
+ */
+export function drawerFigureEntered(input: {
+  mode: "hand" | "denomination";
+  handTotal: string;
+  denoms: Denominations;
+  enteredDenoms?: readonly string[];
+}): boolean {
   return input.mode === "hand"
     ? input.handTotal.trim() !== ""
     : sumDenominations(input.denoms) > 0 || (input.enteredDenoms?.length ?? 0) > 0;
+}
+
+/**
+ * W03/B007 (server): a $0 drawer files only when the client says it was counted empty
+ * (`drawerCountedEmpty: true`). Without it, a 0 is an untouched form (or an older client that
+ * sent 0 for an empty field), never a count. A non-zero drawer is always a figure someone typed.
+ */
+export function uncountedDrawer(drawerTotalCents: number, drawerCountedEmpty: unknown): boolean {
+  return drawerTotalCents === 0 && drawerCountedEmpty !== true;
 }
 
 /**

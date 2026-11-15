@@ -3,13 +3,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import type { RoleCode } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
-import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 
 import {
   CASH_REPORT_BASE_LEVEL,
   DEFAULT_FLOAT_CENTS,
   DENOMINATION_UNITS_CENTS,
   computeCashTotals,
+  closingLocksCash,
   sumDenominations,
   type Denominations,
   type OnShiftEntry,
@@ -97,29 +97,146 @@ export async function loadCashDashboardState(
   return { isVisibleToActor: true, report: await loadCashReport(service, args) };
 }
 
+/**
+ * Is the day's cash report locked by a finalized closing? (W03/B040, review r1.)
+ *
+ * Reads EVERY closing instance the shop has for the date — the embed joins checklist_templates on
+ * type = 'closing' with no `active` / effective-date filter, so a night closed on a template version
+ * that has since been retired (an admin published V2 and deactivated V1) stays locked. Keying the
+ * lock on today's current-template resolution let that night fall out of it: the resolution returned
+ * V2 (no instance) or nothing, and the gate went quiet. Any instance in a locking status locks
+ * (closingLocksCash). A failed read THROWS — never "no closing, the edit window is open".
+ * Migration 0304's in-transaction gate is the same rule in SQL. Service-role read, bounded by shop/date.
+ */
+export async function cashLockedByClosing(
+  service: SupabaseClient, args: { locationId: string; date: string },
+): Promise<boolean> {
+  const { data, error } = await service.from("checklist_instances")
+    .select("status, checklist_templates!inner(type)")
+    .eq("location_id", args.locationId).eq("date", args.date)
+    .eq("checklist_templates.type", "closing");
+  if (error) throw new Error(`closing lock lookup: ${error.message}`);
+  return ((data ?? []) as Array<{ status: string }>).some((r) => closingLocksCash(r.status));
+}
+
 export type CashSubmitResult =
   | { ok: true; id: string }
-  | { ok: false; reason: "closing_finalized" | "assignment_required" | "location_access_denied" };
+  | { ok: false; reason: "closing_finalized" | "assignment_required" | "location_access_denied" | "concurrent_submit" };
+
+/** Postgres unique violation: cash_reports_one_live_per_day refused a second live row. */
+const PG_UNIQUE_VIOLATION = "23505";
+
+type CashSubmitArgs = {
+  locationId: string; date: string; actor: CashActor & LocationActor;
+  projectedCents: number; drawerTotalCents: number; floatCents: number;
+  countMethod: "hand" | "denomination"; denominations: Denominations | null;
+  cashTipsCents: number; onShift: OnShiftEntry[]; overShortNote: string | null;
+  /**
+   * B10: the Toast CASH figure the SERVER read for this shop+day (lib/cash-toast.ts) — never a
+   * client-sent number. null = Toast had no figure. Stored beside the typed projected_cents.
+   */
+  toastProjected: ToastProjected | null;
+};
+
+/**
+ * W03/B041: the named arguments of migration 0304's `submit_cash_report_atomic`, in its signature
+ * order (tests/cash-atomic-0304.test.ts pins the keys against the migration file). Pure.
+ */
+export function cashAtomicRpcArgs(
+  args: CashSubmitArgs,
+  w: { overShortCents: number; depositCents: number; nowIso: string },
+): Record<string, unknown> {
+  return {
+    p_location_id: args.locationId,
+    p_report_date: args.date,
+    p_projected_cents: args.projectedCents,
+    p_drawer_total_cents: args.drawerTotalCents,
+    p_float_cents: args.floatCents,
+    p_count_method: args.countMethod,
+    p_denominations: args.countMethod === "denomination" ? args.denominations : null,
+    p_cash_tips_cents: args.cashTipsCents,
+    p_on_shift: args.onShift,
+    p_over_short_cents: w.overShortCents,
+    p_deposit_cents: w.depositCents,
+    p_over_short_note: args.overShortNote,
+    p_toast_projected_cents: args.toastProjected?.cents ?? null,
+    p_toast_projected_as_of: args.toastProjected?.asOf ?? null,
+    p_actor_id: args.actor.userId,
+    p_now: w.nowIso,
+  };
+}
+
+/** The function is not installed (0304 not applied yet): PostgREST's PGRST202 or Postgres's 42883. */
+function isMissingFunction(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883"
+    || /could not find the function/i.test(error.message ?? "");
+}
+
+type AtomicOutcome =
+  | { kind: "written"; id: string; supersededId: string | null }
+  | { kind: "refused"; reason: "closing_finalized" | "concurrent_submit" }
+  | { kind: "not_installed" };
+
+/**
+ * W03/B041: the write through 0304's transactional writer — the closing re-check (FOR SHARE on every
+ * closing instance the shop has for the day, any template version), the compare-and-set supersede, the insert and the back-pointer in ONE
+ * transaction, so a confirm or the auto-release that commits mid-request can no longer be overtaken.
+ */
+async function writeCashReportAtomic(
+  service: SupabaseClient,
+  rpcArgs: Record<string, unknown>,
+): Promise<AtomicOutcome> {
+  const { data, error } = await service.rpc("submit_cash_report_atomic", rpcArgs);
+  if (error) {
+    if (isMissingFunction(error)) {
+      console.error("[cash 0304_missing] submit_cash_report_atomic (0304) is not installed; using the direct write path", { code: error.code });
+      return { kind: "not_installed" };
+    }
+    if (error.message === "closing_finalized") return { kind: "refused", reason: "closing_finalized" };
+    if (error.code === PG_UNIQUE_VIOLATION) return { kind: "refused", reason: "concurrent_submit" };
+    throw new Error(`submitCashReport: submit_cash_report_atomic: ${error.message}`);
+  }
+  const row = (Array.isArray(data) && data.length === 1 ? data[0] : null) as { new_id?: unknown; superseded_id?: unknown } | null;
+  if (!row || typeof row.new_id !== "string" || (row.superseded_id !== null && typeof row.superseded_id !== "string")) {
+    throw new Error("submitCashReport: submit_cash_report_atomic returned an unexpected shape");
+  }
+  return { kind: "written", id: row.new_id, supersededId: (row.superseded_id as string | null) ?? null };
+}
+
+/** The audit row + the task-override row for a written cash report (both write paths). */
+async function recordCashWrite(
+  service: SupabaseClient,
+  args: CashSubmitArgs,
+  w: { id: string; supersededId: string | null; overShortCents: number; depositCents: number },
+): Promise<void> {
+  const action = w.supersededId ? "cash_report.supersede" : "cash_report.submit";
+  void audit({
+    actorId: args.actor.userId, actorRole: args.actor.role,
+    action,
+    resourceTable: "cash_reports", resourceId: w.id,
+    metadata: {
+      over_short_cents: w.overShortCents, deposit_cents: w.depositCents, superseded: w.supersededId,
+      projected_cents: args.projectedCents, toast_projected_cents: args.toastProjected?.cents ?? null,
+    },
+    ipAddress: null, userAgent: null,
+  });
+  await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report", operation: action });
+}
 
 /**
  * Append-only signed write. Recomputes totals server-side (never trusts the
- * client). Supersedes the prior live row (edit). Refuses if today's closing is
+ * client). Supersedes the prior live row (edit). Refuses if the day's closing is
  * already finalized (edit window closed). PIN already verified by the route;
  * signedBy is the authenticated actor.
+ *
+ * W03/B041: the write goes through 0304's `submit_cash_report_atomic`, which re-checks the
+ * closing under a lock in the same transaction as the supersede + insert. Until 0304 is applied
+ * (the function is missing) it falls back to the direct three-write path below, which carries the
+ * same status list (B040) and a compare-and-set supersede (B147) but not the in-transaction lock.
  */
 export async function submitCashReport(
   service: SupabaseClient,
-  args: {
-    locationId: string; date: string; actor: CashActor & LocationActor;
-    projectedCents: number; drawerTotalCents: number; floatCents: number;
-    countMethod: "hand" | "denomination"; denominations: Denominations | null;
-    cashTipsCents: number; onShift: OnShiftEntry[]; overShortNote: string | null;
-    /**
-     * B10: the Toast CASH figure the SERVER read for this shop+day (lib/cash-toast.ts) — never a
-     * client-sent number. null = Toast had no figure. Stored beside the typed projected_cents.
-     */
-    toastProjected: ToastProjected | null;
-  },
+  args: CashSubmitArgs,
 ): Promise<CashSubmitResult> {
   if (!lockLocationContext(args.actor, args.locationId)) {
     return { ok: false, reason: "location_access_denied" };
@@ -127,19 +244,11 @@ export async function submitCashReport(
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report" }))) {
     return { ok: false, reason: "assignment_required" };
   }
-  // Edit-window gate: refuse if today's closing is confirmed. PR-3 date-aware
-  // resolution — resolve the closing version effective on args.date (the instance
-  // lookup keys on that date).
-  const cTmplBase = service.from("checklist_templates").select("id")
-    .eq("location_id", args.locationId).eq("type", "closing") as unknown as EffectiveResolvableBuilder;
-  const { data: cTmpl } = await applyEffectiveResolution(cTmplBase, args.date).maybeSingle<{ id: string }>();
-  if (cTmpl) {
-    const { data: cInst } = await service.from("checklist_instances").select("status")
-      .eq("template_id", cTmpl.id).eq("location_id", args.locationId).eq("date", args.date)
-      .maybeSingle<{ status: string }>();
-    if (cInst && (cInst.status === "confirmed" || cInst.status === "incomplete_confirmed")) {
-      return { ok: false, reason: "closing_finalized" };
-    }
+  // Edit-window gate: refuse if any of the day's closing instances is finalized — confirmed,
+  // incomplete_confirmed OR auto_finalized (W03/B040: the system's release locks it too), on
+  // whichever template version it was run (review r1 — see cashLockedByClosing).
+  if (await cashLockedByClosing(service, { locationId: args.locationId, date: args.date })) {
+    return { ok: false, reason: "closing_finalized" };
   }
 
   const { overShortCents, depositCents } = computeCashTotals({
@@ -149,6 +258,15 @@ export async function submitCashReport(
   });
   const nowIso = new Date().toISOString();
 
+  // The early refusal above is the friendly one; this is the binding one (inside the transaction).
+  const atomic = await writeCashReportAtomic(service, cashAtomicRpcArgs(args, { overShortCents, depositCents, nowIso }));
+  if (atomic.kind === "refused") return { ok: false, reason: atomic.reason };
+  if (atomic.kind === "written") {
+    await recordCashWrite(service, args, { id: atomic.id, supersededId: atomic.supersededId, overShortCents, depositCents });
+    return { ok: true, id: atomic.id };
+  }
+
+  // ── Direct path: only while 0304 is not applied (atomic.kind === "not_installed") ──
   const { data: prior } = await service.from("cash_reports").select("id")
     .eq("location_id", args.locationId).eq("report_date", args.date).is("superseded_at", null)
     .maybeSingle<{ id: string }>();
@@ -161,9 +279,14 @@ export async function submitCashReport(
   if (prior) {
     // BUG 4 fix: surface the supersede error (the insert has a partial-unique
     // backstop, so this is diagnostic clarity — match the file's discipline).
-    const { error: supersedeErr } = await service
-      .from("cash_reports").update({ superseded_at: nowIso }).eq("id", prior.id);
+    // W03/B147: compare-and-set. Two submits that both read this prior row used to both stamp it,
+    // and the winner's back-pointer then disagreed with the loser's superseded_at. Only a row that
+    // is still live is superseded; 0 rows = a concurrent submit got there first.
+    const { error: supersedeErr, count: superseded } = await service
+      .from("cash_reports").update({ superseded_at: nowIso }, { count: "exact" })
+      .eq("id", prior.id).is("superseded_at", null);
     if (supersedeErr) throw new Error(`submitCashReport: supersede: ${supersedeErr.message}`);
+    if ((superseded ?? 0) === 0) return { ok: false, reason: "concurrent_submit" };
   }
 
   const { data: inserted, error: insErr } = await service.from("cash_reports").insert({
@@ -179,6 +302,9 @@ export async function submitCashReport(
     toast_projected_as_of: args.toastProjected?.asOf ?? null,
   }).select("id").single<{ id: string }>();
   if (insErr) {
+    // A first submit that lost cash_reports_one_live_per_day to a concurrent first submit: the
+    // winner's row stands and nothing of ours was written (W03/B147 — a named 409, not a 500).
+    if (!prior && insErr.code === PG_UNIQUE_VIOLATION) return { ok: false, reason: "concurrent_submit" };
     // Attempt to undo the supersede so the prior row remains live.
     if (prior) {
       // The rollback lifts OUR OWN stamp and nobody else's. Two simultaneous
@@ -255,16 +381,6 @@ export async function submitCashReport(
     }
   }
 
-  void audit({
-    actorId: args.actor.userId, actorRole: args.actor.role,
-    action: prior ? "cash_report.supersede" : "cash_report.submit",
-    resourceTable: "cash_reports", resourceId: inserted.id,
-    metadata: {
-      over_short_cents: overShortCents, deposit_cents: depositCents, superseded: prior?.id ?? null,
-      projected_cents: args.projectedCents, toast_projected_cents: args.toastProjected?.cents ?? null,
-    },
-    ipAddress: null, userAgent: null,
-  });
-  await auditTaskOverride(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report", operation: prior ? "cash_report.supersede" : "cash_report.submit" });
+  await recordCashWrite(service, args, { id: inserted.id, supersededId: prior?.id ?? null, overShortCents, depositCents });
   return { ok: true, id: inserted.id };
 }
