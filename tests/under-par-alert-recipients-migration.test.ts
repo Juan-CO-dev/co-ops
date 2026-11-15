@@ -54,10 +54,16 @@ const raw = read(FILE);
 const emitted = extract(raw);
 
 describe("0255 re-emits submit_phase2_atomic from its latest definer", () => {
-  it("0215 was the previous latest definer and 0255 is the latest now", () => {
+  it("0215 was the previous latest definer; 0255 re-emitted it, and 0320 re-emits 0255 (the Phase 2 universe only)", () => {
     const defining = files.filter((f) => read(f).includes(START));
-    expect(defining[defining.length - 1]).toBe(FILE);
-    expect(defining[defining.length - 2]).toBe(SOURCE);
+    // 0320 (audit W15/B085) is the latest definer now; tests/checklist-publish-activation-migration.test.ts
+    // pins the 0255 body as a line-subsequence of it, so both owner decisions below still hold in what runs.
+    const LATER = "0320_checklist_publish_activation.sql";
+    expect(defining[defining.length - 1]).toBe(LATER);
+    expect(defining[defining.length - 2]).toBe(FILE);
+    expect(defining[defining.length - 3]).toBe(SOURCE);
+    const check = isLineSubsequence(emitted, extract(read(LATER)));
+    expect(check.ok, `0255 line missing from 0320 → ${check.missing}`).toBe(true);
   });
 
   it("the 0215 body (± the enumerated mods) is a line-subsequence of the 0255 body", () => {

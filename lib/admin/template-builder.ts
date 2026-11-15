@@ -24,6 +24,7 @@
  */
 
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { syncStationsFromClosing } from "@/lib/closing-stations";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -58,6 +59,7 @@ import {
   nextOperationalDay,
   versionOutranks,
   resolveEffectiveVersionId,
+  lineageHeadId,
   type ReferenceTarget,
   type ReferenceTargetsView,
   type ItemTranslationFill,
@@ -849,6 +851,14 @@ export async function publishTemplateVersion(
   const lineage = lineageRows ?? [];
   const lineageIds = lineage.map((r) => r.id);
 
+  // W15/B083 — STALE SOURCE. The builder edits the lineage head (a pending version wins);
+  // a publish from any other row was made on an out-of-date screen and would silently
+  // retire another manager's pending version (4a) with their edits. Refuse it before the
+  // mint (no orphan). The 0320 activation RPC re-checks this under the lineage lock.
+  if (lineageHeadId(lineage) !== src.id) {
+    throw new TemplateBuilderError(409, "stale_source", "A newer version of this list was published — reload");
+  }
+
   // 3. APPLY-NOW GATE — a live-today publish is blocked if TODAY's list is already
   // in use on ANY version of the lineage (a mid-shift swap would strand closers).
   if (applyNow && lineageIds.length > 0) {
@@ -962,8 +972,10 @@ export async function publishTemplateVersion(
   const newTemplateId = minted.id;
 
 
-  // 4d. Copy items (SELECT * verbatim) onto the new version, applying edits.
-  await copyItemsToVersion(sb, {
+  // 4d. Copy items (SELECT * verbatim) onto the new version, applying edits. W15/B022:
+  // each copy gets an explicit id, and the old → new map rides into the activation so
+  // the fridge pointers move with the line staff will actually fill in.
+  const itemMap = await copyItemsToVersion(sb, {
     actor,
     newTemplateId,
     srcItems,
@@ -971,6 +983,52 @@ export async function publishTemplateVersion(
     templateType: src.type,
   });
 
+  // W15 (0320) — ONE-TRANSACTION ACTIVATION. The RPC takes the lineage lock, re-checks the
+  // stale source (B083) and the apply-now gate (B084) under it, retires by the same 4a/4b
+  // rules as below, activates, and moves this shop's fridge pointers (B022) — atomically.
+  // Before 0320 is applied the function is missing and the publish falls back to the
+  // pre-0320 steps below (so the app keeps working before the apply).
+  const activated = await activateViaRpc(sb, {
+    actorId: actor.user.id,
+    sourceId: src.id,
+    newTemplateId,
+    applyNow,
+    today,
+    itemMap,
+  });
+  if (activated) {
+    for (const row of activated.retired) {
+      await audit({
+        actorId: actor.user.id,
+        actorRole: actor.user.role,
+        action: "checklist_template.delete_or_deactivate",
+        resourceTable: "checklist_templates",
+        resourceId: row.id,
+        metadata: {
+          publish_op: row.publish_op,
+          template_type: src.type,
+          location_id: src.location_id,
+          ...(row.collided ? {} : { superseded_by_template_id: newTemplateId }),
+          effective_from: row.effective_from,
+        },
+        ipAddress: null,
+        userAgent: null,
+      });
+    }
+    await auditVersionMint(actor, { src, newTemplateId, effectiveFrom, applyNow, diff, templatePatch: args.templatePatch });
+    if (src.type === "closing") {
+      try {
+        await syncStationsFromClosing(src.location_id, {
+          userId: actor.user.id, role: actor.user.role, locations: actor.locations,
+        });
+      } catch (error) {
+        console.error("Closing station sync failed after publish", error);
+      }
+    }
+    return { newTemplateId, effectiveFrom, diff };
+  }
+
+  // ── PRE-0320 FALLBACK (the activation function is not installed yet) ──
   // 4a. PRE-ACTIVATION RETIREMENT (runs AFTER the copy, R0 ordering fix) — retire
   // any OTHER active row COLLIDING on the active-name-ef unique index (an active row
   // whose effective_from EQUALS effectiveFrom). The index is partial (WHERE active),
@@ -1026,37 +1084,7 @@ export async function publishTemplateVersion(
   // Mint audit fires AFTER activation (adversarial review L3): the log records a
   // version that actually went LIVE — a mid-copy failure leaves an inactive
   // orphan and NO create row (forensically honest).
-  await audit({
-    actorId: actor.user.id,
-    actorRole: actor.user.role,
-    action: "checklist_template.create",
-    resourceTable: "checklist_templates",
-    resourceId: newTemplateId,
-    metadata: {
-      publish_op: "version_mint",
-      template_type: src.type,
-      location_id: src.location_id,
-      supersedes_template_id: src.id,
-      effective_from: effectiveFrom,
-      apply_now: applyNow,
-      diff_summary: {
-        added: diff.added.length,
-        removed: diff.removed.length,
-        relabeled: diff.relabeled.length,
-        reordered: diff.reordered,
-        roleChanged: diff.roleChanged.length,
-        requiredChanged: diff.requiredChanged.length,
-        gateChanged: diff.gateChanged.length,
-        referenceChanged: diff.referenceChanged,
-        inputTypeChanged: diff.inputTypeChanged.length,
-      },
-      // PR-4: record a submission-gate predicate change on the version (spec §5).
-      submission_gate_predicate_changed:
-        args.templatePatch !== undefined && "submissionGatePredicate" in args.templatePatch,
-    },
-    ipAddress: null,
-    userAgent: null,
-  });
+  await auditVersionMint(actor, { src, newTemplateId, effectiveFrom, applyNow, diff, templatePatch: args.templatePatch });
 
 
   // 4b. CLEANUP — the currently-effective (served-or-legacy) row + any OTHER active
@@ -1106,6 +1134,11 @@ export async function publishTemplateVersion(
     });
   }
 
+  // W15/B022 (fallback path only): move this shop's fridge pointers to the copies. Not
+  // atomic with the activation (the 0320 RPC is); the registry reads every version's
+  // fridge-linked lines anyway, so a failure here never hides a reading.
+  await moveFridgePointersFallback(sb, src.location_id, itemMap);
+
   if (src.type === "closing") {
     try {
       await syncStationsFromClosing(src.location_id, {
@@ -1116,6 +1149,125 @@ export async function publishTemplateVersion(
     }
   }
   return { newTemplateId, effectiveFrom, diff };
+}
+
+/** The mint audit row (one place for both activation paths). */
+async function auditVersionMint(
+  actor: AuthContext,
+  a: {
+    src: SourceTemplateRow;
+    newTemplateId: string;
+    effectiveFrom: string;
+    applyNow: boolean;
+    diff: TemplateDiffSummary;
+    templatePatch: TemplatePatch | undefined;
+  },
+): Promise<void> {
+  const { src, diff } = a;
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template.create",
+    resourceTable: "checklist_templates",
+    resourceId: a.newTemplateId,
+    metadata: {
+      publish_op: "version_mint",
+      template_type: src.type,
+      location_id: src.location_id,
+      supersedes_template_id: src.id,
+      effective_from: a.effectiveFrom,
+      apply_now: a.applyNow,
+      diff_summary: {
+        added: diff.added.length,
+        removed: diff.removed.length,
+        relabeled: diff.relabeled.length,
+        reordered: diff.reordered,
+        roleChanged: diff.roleChanged.length,
+        requiredChanged: diff.requiredChanged.length,
+        gateChanged: diff.gateChanged.length,
+        referenceChanged: diff.referenceChanged,
+        inputTypeChanged: diff.inputTypeChanged.length,
+      },
+      // PR-4: record a submission-gate predicate change on the version (spec §5).
+      submission_gate_predicate_changed:
+        a.templatePatch !== undefined && "submissionGatePredicate" in a.templatePatch,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+interface ActivationResult {
+  retired: Array<{ id: string; effective_from: string | null; publish_op: "pending_replaced" | "superseded"; collided: boolean }>;
+  pointers_moved: number;
+  currently_effective: string | null;
+}
+
+/** PostgREST / Postgres "that function does not exist" — 0320 not applied yet. */
+function isActivationRpcMissing(err: { code?: string | null; message?: string | null }): boolean {
+  if (err.code === "PGRST202" || err.code === "42883") return true;
+  const msg = (err.message ?? "").toLowerCase();
+  return msg.includes("checklist_template_activate_version") && (msg.includes("could not find") || msg.includes("does not exist"));
+}
+
+/**
+ * W15 (0320): the one-transaction activation. Returns null when the function is not
+ * installed (the caller falls back to the pre-0320 steps). Named refusals map to 409s;
+ * anything else throws (the inactive mint stays an invisible orphan, as before).
+ */
+async function activateViaRpc(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  a: { actorId: string; sourceId: string; newTemplateId: string; applyNow: boolean; today: string; itemMap: Map<string, string> },
+): Promise<ActivationResult | null> {
+  const { data, error } = await sb.rpc("checklist_template_activate_version", {
+    p_actor: a.actorId,
+    p_source: a.sourceId,
+    p_new: a.newTemplateId,
+    p_apply_now: a.applyNow,
+    p_today: a.today,
+    p_item_map: Object.fromEntries(a.itemMap),
+  });
+  if (error) {
+    if (isActivationRpcMissing(error)) return null;
+    const msg = error.message ?? "";
+    if (/\bstale_source\b/.test(msg)) {
+      throw new TemplateBuilderError(409, "stale_source", "A newer version of this list was published — reload");
+    }
+    if (/\bapply_now_blocked_open_instance\b/.test(msg)) {
+      throw new TemplateBuilderError(409, "apply_now_blocked_open_instance", "Today's list is already in use — publish for tomorrow morning");
+    }
+    throw new Error(`publishTemplateVersion activate: ${msg}`);
+  }
+  const out = data as ActivationResult | null;
+  if (!out || !Array.isArray(out.retired)) throw new Error("publishTemplateVersion activate: no result");
+  return out;
+}
+
+/** W15/B022, pre-0320 fallback: move this shop's fridge pointers from source items to copies. */
+async function moveFridgePointersFallback(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  itemMap: Map<string, string>,
+): Promise<void> {
+  if (itemMap.size === 0) return;
+  const ids = [...itemMap.keys()];
+  const { data, error } = await sb
+    .from("maintenance_equipment")
+    .select("id, opening_temp_item_id, closing_temp_item_id")
+    .eq("location_id", locationId)
+    .returns<Array<{ id: string; opening_temp_item_id: string | null; closing_temp_item_id: string | null }>>();
+  if (error) {
+    console.error("publishTemplateVersion pointer read failed", error.message);
+    return;
+  }
+  for (const row of data ?? []) {
+    const patch: Record<string, string> = {};
+    if (row.opening_temp_item_id && ids.includes(row.opening_temp_item_id)) patch.opening_temp_item_id = itemMap.get(row.opening_temp_item_id)!;
+    if (row.closing_temp_item_id && ids.includes(row.closing_temp_item_id)) patch.closing_temp_item_id = itemMap.get(row.closing_temp_item_id)!;
+    if (Object.keys(patch).length === 0) continue;
+    const { error: uErr } = await sb.from("maintenance_equipment").update(patch).eq("id", row.id).eq("location_id", locationId);
+    if (uErr) console.error("publishTemplateVersion pointer move failed", uErr.message);
+  }
 }
 
 /**
@@ -1179,8 +1331,10 @@ async function copyItemsToVersion(
     edits: readonly TemplateItemEdit[];
     templateType: string;
   },
-): Promise<void> {
+): Promise<Map<string, string>> {
   const { newTemplateId, srcItems, edits } = args;
+  // W15/B022: source item id → its copy's id (copied rows only; added rows are new).
+  const itemMap = new Map<string, string>();
 
   // Index edits by source item id (mirror rows ignore edits; see below).
   const editsById = new Map<string, TemplateItemEdit[]>();
@@ -1202,7 +1356,10 @@ async function copyItemsToVersion(
     const rest: Record<string, unknown> = { ...raw };
     delete rest.id;
     delete rest.template_id;
-    const row: Record<string, unknown> = { ...rest, template_id: newTemplateId };
+    // W15/B022: an explicit fresh id, so the old → new mapping is exact (never by label).
+    const copyId = randomUUID();
+    itemMap.set(raw.id, copyId);
+    const row: Record<string, unknown> = { ...rest, id: copyId, template_id: newTemplateId };
 
     const isMirror = isMirrorItemRaw(raw.prep_meta);
     if (!isMirror) {
@@ -1287,7 +1444,7 @@ async function copyItemsToVersion(
     });
   }
 
-  if (copiedRows.length === 0) return;
+  if (copiedRows.length === 0) return itemMap;
 
   const { data: inserted, error: insErr } = await sb
     .from("checklist_template_items")
@@ -1318,6 +1475,7 @@ async function copyItemsToVersion(
     ipAddress: null,
     userAgent: null,
   });
+  return itemMap;
 }
 
 /** Mutate a copied item row in place per one edit. Pure column writes; never touches

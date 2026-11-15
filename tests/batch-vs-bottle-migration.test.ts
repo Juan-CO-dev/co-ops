@@ -137,10 +137,11 @@ const REEMITS: Reemit[] = [
 
 /**
  * Later migrations that re-emit a 0215 body FROM 0215 (each has its own line-subsequence pin).
- * 0255 (B11a, under-par alert recipients + par) → tests/under-par-alert-recipients-migration.test.ts.
+ * 0255 (B11a, under-par alert recipients + par) → tests/under-par-alert-recipients-migration.test.ts;
+ * 0320 (audit W15/B085) re-emits 0255's → tests/checklist-publish-activation-migration.test.ts.
  */
 const LATER_REEMITTERS: Readonly<Record<string, string>> = {
-  submit_phase2_atomic: "0255_under_par_alert_recipients.sql",
+  submit_phase2_atomic: "0320_checklist_publish_activation.sql",
   // 0258 (catalog Phase 1, Astra r2 #1): the recipe-graph lock + in-transaction output cycle refusal
   // → tests/recipe-input-write-atomic.test.ts pins both as line-subsequences of 0215.
   // 0262 (catalog Phase 3a) re-emits both FROM 0258 (+ the per-shop cycle sweep, + the journal actor)

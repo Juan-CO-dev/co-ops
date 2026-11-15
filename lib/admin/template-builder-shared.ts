@@ -1116,6 +1116,21 @@ export function versionOutranks(a: LineageVersionRow, b: LineageVersionRow): boo
 }
 
 /**
+ * W15/B083: the lineage HEAD — the newest ACTIVE row by versionOutranks (a pending
+ * version wins). It is the builder's edit target (pickLineageLatest), so a publish whose
+ * source is not the head was made from an out-of-date screen. Null when nothing is active.
+ * Pure; the 0320 activation RPC re-checks the same rule under the lineage lock.
+ */
+export function lineageHeadId(rows: readonly LineageVersionRow[]): string | null {
+  let best: LineageVersionRow | null = null;
+  for (const r of rows) {
+    if (!r.active) continue;
+    if (best === null || versionOutranks(r, best)) best = r;
+  }
+  return best?.id ?? null;
+}
+
+/**
  * The CURRENTLY-EFFECTIVE version on `opDate` from a lineage's rows — the newest
  * ACTIVE row whose effective_from is NULL or <= opDate (pending rows invisible),
  * ordered by versionOutranks. Returns null when only pending versions exist (a fresh
