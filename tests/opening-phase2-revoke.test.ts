@@ -103,7 +103,7 @@ describe("revokePhase2Completion — one transactional writer for every Undo (B0
     const err = await revokePhase2Completion(s.client, args).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(OpeningPhase2NotEligibleError);
     expect((err as OpeningPhase2NotEligibleError).status).toBe("phase2_complete");
-    expect(mapOpeningError(err, "/api/opening/prep/item/revoke").status).toBe(409);
+    expect(mapOpeningError(err).status).toBe(409);
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({
       action: "opening.phase2.revoke",
       metadata: expect.objectContaining({ outcome: "phase2_not_eligible", phase: "rpc", current_status: "phase2_complete" }),
@@ -121,7 +121,7 @@ describe("revokePhase2Completion — one transactional writer for every Undo (B0
     const s = service({ data: null, error: { code: "XX000", message: "boom" } });
     const err = await revokePhase2Completion(s.client, args).catch((e: unknown) => e);
     expect(err).not.toBeInstanceOf(OpeningRevokeConflictError);
-    expect(mapOpeningError(err, "/api/opening/prep/item/revoke").status).toBe(500);
+    expect(mapOpeningError(err).status).toBe(500);
   });
 });
 
@@ -130,7 +130,7 @@ describe("revokePhase2Completion — a deadlock or lock timeout is a retryable 4
     const s = service({ data: null, error: { code, message } });
     const err = await revokePhase2Completion(s.client, args).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(OpeningRevokeConflictError);
-    const res = mapOpeningError(err, "/api/opening/prep/item/revoke");
+    const res = mapOpeningError(err);
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ code: "revoke_conflict" });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({
