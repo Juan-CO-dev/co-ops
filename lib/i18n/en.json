@@ -3705,6 +3705,7 @@
   "receiving.scan.level_inner": "Inner pack",
   "receiving.scan.not_on_delivery": "Not on this delivery",
   "receiving.scan.twin_confirm": "Taught on the other vendor's {sku}. Use this vendor's?",
+  "receiving.scan.twin_confirm_retired": "Taught on an item this vendor no longer carries. Use {sku}?",
   "receiving.scan.level_confirm": "Taught as {stored}. Also teach it as {level}?",
   "receiving.scan.forget": "Forget this code",
   "receiving.scan.forgotten": "Code forgotten",

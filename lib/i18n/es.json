@@ -3705,6 +3705,7 @@
   "receiving.scan.level_inner": "Paquete interior",
   "receiving.scan.not_on_delivery": "No está en esta entrega",
   "receiving.scan.twin_confirm": "Enseñado en {sku} del otro proveedor. ¿Usar el de este proveedor?",
+  "receiving.scan.twin_confirm_retired": "Enseñado en un artículo que este proveedor ya no maneja. ¿Usar {sku}?",
   "receiving.scan.level_confirm": "Enseñado como {stored}. ¿Enseñarlo también como {level}?",
   "receiving.scan.forget": "Olvidar este código",
   "receiving.scan.forgotten": "Código olvidado",
