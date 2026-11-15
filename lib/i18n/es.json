@@ -2587,6 +2587,7 @@
   "auth.pin_modal.use_keypad": "Usar teclado en pantalla",
   "auth.pin_modal.loading_aria": "Cargando",
   "auth.pin_modal.error_pin_mismatch": "PIN incorrecto.",
+  "auth.reauth.signed_out": "Demasiados intentos fallidos. Se cerró tu sesión: vuelve a entrar.",
   "auth.pin_modal.error_missing_pin_hash": "Cuenta sin PIN configurado. Contacta al administrador.",
   "auth.pin_modal.error_already_submitted": "Este cierre ya fue enviado.",
   "auth.pin_modal.error_locked": "Esta lista está bloqueada.",

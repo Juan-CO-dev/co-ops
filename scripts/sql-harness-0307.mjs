@@ -22,12 +22,14 @@
  *   B052 an email change retires the person's open reset links (a name / phone edit and other people's links untouched)
  *   B053 the confirm-your-email issuer: behind the gate, only for an active level-6+ person with an unconfirmed email,
  *        one live link at a time; an email change retires it; the backfill vouches exactly the stranded managers
+ *   B159 the per-session re-check counter: five reservations, the sixth revokes the session; a success clears it
  *   S8   the re-emitted 0279 writers still take the ONE gate (user_admin_lock) and no lock of their own
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import {
-  FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, emailConfirmIssueCall, parseAttemptReservation, passwordResetConsumeCall, reserveAttemptCall,
+  FAILURE_LIMIT, LOCKOUT_MINUTES, REAUTH_LIMIT, createSessionCall, emailConfirmIssueCall, parseAttemptReservation, parseReauthReservation,
+  passwordResetConsumeCall, reauthExhausted, reserveAttemptCall, sessionReauthClearCall, sessionReauthReserveCall,
 } from "../lib/auth-lockout-shared.ts";
 import { setUserCredentialCall, setUserRoleCall, updateUserProfileCall } from "../lib/admin/user-admin-rpc-shared.ts";
 
@@ -59,7 +61,8 @@ async function base({ m0076 = true, m0279 = true } = {}) {
 const FNS = ["auth_reserve_attempt(uuid)", "increment_failed_login(uuid)",
   "auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text)",
   "auth_password_reset_consume(text, text)", "admin_user_set_credential(uuid, uuid, text, text)",
-  "admin_user_update_profile(uuid, uuid, jsonb)", "auth_email_confirm_issue(uuid, uuid, text, timestamptz)"];
+  "admin_user_update_profile(uuid, uuid, jsonb)", "auth_email_confirm_issue(uuid, uuid, text, timestamptz)",
+  "session_reauth_reserve(uuid)", "session_reauth_clear(uuid)"];
 /** The 0279 writers 0307 re-emits (each must still take the one gate). */
 const REEMITTED = ["admin_user_set_credential", "admin_user_update_profile"];
 
@@ -476,6 +479,52 @@ try {
     for (const role of ["anon", "authenticated"]) {
       await db.exec(`set role ${role}`);
       await refuses(() => db.query("select public.auth_email_confirm_issue(null, null, null, null)"), "42501", `B053 ${role} cannot EXECUTE auth_email_confirm_issue`);
+      await db.exec("reset role");
+    }
+  }
+
+  // ── B159: the per-session re-check counter ──
+  {
+    const u = await user("agm", { pin_hash: HASH("re"), password_hash: HASH("re-pw"), email: "recheck@example.test", email_verified: true });
+    const session = async () => (await mint(u, { kind: "pin", hash: HASH("re") })).sessionId;
+    const row = (s) => one("select reauth_failed_count as n, revoked_at from public.sessions where id = $1", [s]);
+    const col = await one(`select column_default as d, is_nullable as n from information_schema.columns
+      where table_schema = 'public' and table_name = 'sessions' and column_name = 'reauth_failed_count'`);
+    check(col.d === "0" && col.n === "NO", "B159 sessions.reauth_failed_count is NOT NULL DEFAULT 0 (existing sessions start at 0)");
+
+    const s1 = await session();
+    const results = [];
+    for (let i = 0; i < 6; i++) results.push(await rpc(sessionReauthReserveCall(s1)));
+    const after = await row(s1);
+    check(results.slice(0, 5).every((r, i) => r.allowed === true && r.attempt === i + 1) && results[5].allowed === false && results[5].session_revoked === true
+      && after.n === REAUTH_LIMIT && after.revoked_at !== null,
+      "B159 five re-check reservations allowed, the sixth refused and the session revoked");
+    const fifth = parseReauthReservation(results[4]);
+    check(fifth !== null && reauthExhausted(fifth) && !reauthExhausted(parseReauthReservation(results[3])) && parseReauthReservation(results[5]).allowed === false,
+      "B159 the lib reads the fifth reservation as the last one, the sixth as refused");
+    const again = await rpc(sessionReauthReserveCall(s1));
+    check(again.allowed === false && again.session_revoked === false, "B159 a revoked session gets no further re-check");
+    check((await lockState(u)).until === null && (await one("select active from public.users where id = $1", [u])).active === true,
+      "B159 the ACCOUNT is never locked or deactivated by re-checks (the person signs in again)");
+
+    const s2 = await session();
+    for (let i = 0; i < 4; i++) await rpc(sessionReauthReserveCall(s2));
+    await rpc(sessionReauthClearCall(s2));
+    const cleared = await row(s2);
+    const next = await rpc(sessionReauthReserveCall(s2));
+    check(cleared.n === 0 && cleared.revoked_at === null && next.allowed === true && next.attempt === 1, "B159 a success clears the count");
+
+    // one session's wrong answers never touch another session of the same person
+    const s3 = await session();
+    check((await row(s3)).n === 0 && (await rpc(sessionReauthReserveCall(s3))).attempt === 1, "B159 the count is per session, not per person");
+    const unknown = await rpc(sessionReauthReserveCall("00000000-0000-4000-8000-000000000000"));
+    check(unknown.allowed === false && unknown.session_revoked === false, "B159 an unknown session is refused");
+    await refuses(() => rpc({ fn: "session_reauth_reserve", args: { p_session: null } }), "invalid_payload", "B159 a null session is refused");
+    await refuses(() => db.query("update public.sessions set reauth_failed_count = -1 where id = $1", [s3]), "sessions_reauth_failed_count_nonneg", "B159 the count can never go negative");
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      await refuses(() => db.query("select public.session_reauth_reserve(gen_random_uuid())"), "42501", `B159 ${role} cannot EXECUTE session_reauth_reserve`);
+      await refuses(() => db.query("select public.session_reauth_clear(gen_random_uuid())"), "42501", `B159 ${role} cannot EXECUTE session_reauth_clear`);
       await db.exec("reset role");
     }
   }

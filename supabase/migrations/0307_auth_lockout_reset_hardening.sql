@@ -55,14 +55,25 @@
 --      delivery switches allow it (lib/admin/email-confirm-shared.ts). /api/auth/verify — unchanged, already in the
 --      app — is what the link opens: the person sets their own password, the email is marked confirmed, they are
 --      signed in. The '>= 6' literal is the twin of lib/roles.ts hasEmailAuth (pinned by the migration test).
+--   9. sessions.reauth_failed_count + session_reauth_reserve(p_session) + session_reauth_clear(p_session) — NEW (B159,
+--      owner decisions W07-3 a and W07-4 a). The re-check screens — the password step-up, and the PIN re-entered on
+--      counts, the cash deposit and the checklist confirm — took unlimited guesses from anyone holding a signed-in
+--      device (the recorded Phase 2 ruling "no lockout on re-checks", now reversed by the owner). The counter is PER
+--      SESSION and never locks the ACCOUNT: session_reauth_reserve counts the attempt BEFORE the credential is
+--      checked (so a burst cannot slip past, the B050 reasoning) and allows five; a sixth call — or any call on a
+--      session already at five — REVOKES that session and answers { allowed: false }. A correct answer calls
+--      session_reauth_clear. The app signs the device out on the fifth wrong answer (the person signs in again; a
+--      sign-in is where the account lockout lives). '< 5' is the twin of lib/auth-lockout-shared.ts REAUTH_LIMIT.
 --
 -- LOCK ORDER (unchanged from 0279): the identity lock → the per-person advisory lock → users rows → password_resets /
 --   email_verifications / sessions. auth_reserve_attempt and auth_create_session each take ONE users row lock (the mint then
 --   inserts its own sessions row); neither can deadlock. auth_password_reset_consume takes the 0279 per-person
 --   advisory key, then the users row, then the token row, then the person's other links and sessions — never a
---   password_resets or sessions row before the users row.
+--   password_resets or sessions row before the users row. session_reauth_reserve / _clear touch ONE sessions row and
+--   no users row, so they add no edge to that order.
 --
 -- EXISTING ROWS: none rewritten by sections 1–2. An account sitting on an expired lock restarts at its next attempt.
+--   B159: sessions.reauth_failed_count is added NOT NULL DEFAULT 0 — every existing session starts at 0, no table rewrite.
 --   B053 (owner decision W07-2 a: "unstick the people already promoted and blocked today"): every level-6+ person who
 --   HAS an email and is not yet marked verified is marked verified, once, by this file — the same admin-vouched
 --   state admin_user_create gives a manager a GM creates. No email is sent. ONE audit row
@@ -70,10 +81,18 @@
 --   first and record it here before the prod apply. A promoted person with NO email on file is not touched (there
 --   is nothing to vouch): a GM enters the email and the confirm-your-email link does the rest.
 --
--- APP COMPATIBILITY: every app caller of a function created here falls back to its pre-0307 path while the function
---   is missing (PGRST202 / 42883), so the app works unchanged before this file is applied; applying it switches each
---   path with no deploy. The re-emitted functions keep their signatures, so code deployed before this wave keeps
---   working after the apply. Details per path are in the PR for audit wave W07.
+-- APP COMPATIBILITY: this file can be applied BEFORE or AFTER the code of audit wave W07 ships.
+--   Code first, file later — every caller of a function CREATED here falls back while it is missing (PGRST202 /
+--   42883), pinned by tests/auth-lockout-reset-migration.test.ts:
+--     auth_reserve_attempt         lib/auth-flows.ts reserveAttempt → the old read of locked_until; failures counted by
+--                                  increment_failed_login as before (B049 / B050 stay open until the apply)
+--     auth_create_session          lib/session.ts createSession → the old plain insert + separate counter reset (B051 open)
+--     auth_password_reset_consume  the reset route → its old consume / write / revoke steps (B156 / B157 open)
+--     auth_email_confirm_issue     lib/admin/email-confirm.ts → outcome 'not_installed': nothing issued, nothing sent
+--     session_reauth_reserve/clear lib/auth-reauth.ts → the re-check is not counted (B159 open)
+--   File first, code later — the three RE-EMITTED functions keep their signatures and only ADD keys to their jsonb
+--   answers, so the code in production today keeps working; B052, B158, the admin half of B157 and the B053 backfill
+--   take effect at the apply with no deploy.
 --
 -- DEPENDS ON: users (failed_login_count, locked_until, last_login_at, pin_hash, password_hash, email, active), sessions
 --   (id, user_id, token_hash, auth_method, step_up_unlocked, last_activity_at, expires_at, ip_address, user_agent),
@@ -83,6 +102,8 @@
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select count(*) from users where failed_login_count >= 5 and locked_until <= now();  -- accounts B049 frees on their next try
 --   select count(*) from password_resets where consumed_at is null and expires_at > now();  -- open reset links right now
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'sessions'
+--     and column_name = 'reauth_failed_count';  -- 0 (not applied yet)
 --   select id, name, role, active from users where not coalesce(email_verified, false) and email is not null and btrim(email) <> ''
 --     and coalesce(public.user_admin_role_level(role), 0) >= 6;  -- the B053 backfill: WHO gets marked verified (record the count)
 --   select count(*) from users where coalesce(public.user_admin_role_level(role), 0) >= 6 and (email is null or btrim(email) = '');
@@ -91,14 +112,17 @@
 -- VERIFY AFTER APPLY:
 --   select proname, prosecdef, proconfig from pg_proc where proname in ('auth_reserve_attempt', 'increment_failed_login',
 --     'auth_create_session', 'auth_password_reset_consume', 'admin_user_set_credential', 'admin_user_update_profile',
---     'auth_email_confirm_issue');
+--     'auth_email_confirm_issue', 'session_reauth_reserve', 'session_reauth_clear');
 --     -- t, {search_path=pg_catalog, public} on each
 --   select count(*) from users where not coalesce(email_verified, false) and email is not null and btrim(email) <> ''
 --     and coalesce(public.user_admin_role_level(role), 0) >= 6;  -- 0 (the backfill ran)
 --   select metadata from audit_log where action = 'user.email_vouch_backfill';  -- one row when the count above was > 0 before apply
+--   select column_default, is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'sessions'
+--     and column_name = 'reauth_failed_count';  -- 0, NO
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
 --    and routine_name in ('auth_reserve_attempt', 'increment_failed_login', 'auth_create_session', 'auth_password_reset_consume',
---      'admin_user_set_credential', 'admin_user_update_profile', 'auth_email_confirm_issue');  -- service_role (+ postgres) only
+--      'admin_user_set_credential', 'admin_user_update_profile', 'auth_email_confirm_issue',
+--      'session_reauth_reserve', 'session_reauth_clear');  -- service_role (+ postgres) only
 --
 -- ROLLBACK: none needed for the app (it falls back on a missing function). Re-emit through a new reviewed migration.
 
@@ -127,6 +151,10 @@ begin
        and column_name in ('id', 'user_id', 'token_hash', 'auth_method', 'step_up_unlocked', 'last_activity_at', 'expires_at',
                            'revoked_at', 'ip_address', 'user_agent')) <> 10 then
     raise exception '0307: the sessions columns the session mint writes must exist';
+  end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'sessions'
+              and column_name = 'reauth_failed_count') then
+    raise exception '0307: already applied (sessions.reauth_failed_count exists)';
   end if;
   if (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'password_resets'
        and column_name in ('id', 'user_id', 'token_hash', 'expires_at', 'consumed_at')) <> 5 then
@@ -435,6 +463,43 @@ begin
   raise notice '0307: B053 backfill marked % manager email(s) verified', cardinality(v_ids);
 end $$;
 
+-- ── 9. B159: the per-session re-check counter (the ACCOUNT is never locked; the SESSION is signed out) ──
+alter table public.sessions add column reauth_failed_count integer not null default 0
+  constraint sessions_reauth_failed_count_nonneg check (reauth_failed_count >= 0);
+comment on column public.sessions.reauth_failed_count is
+  '0307 (audit W07 B159): wrong password / PIN re-checks in a row on this session. Counted by session_reauth_reserve '
+  'BEFORE the check, cleared by a correct answer; at 5 the session is revoked. Never an account lockout.';
+
+create function public.session_reauth_reserve(p_session uuid)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_n integer; v_revoked integer := 0;
+begin
+  if p_session is null then raise exception 'invalid_payload'; end if;
+  -- ONE statement decides and counts: concurrent re-checks on one session queue on its row, so exactly five get through.
+  update public.sessions set reauth_failed_count = reauth_failed_count + 1
+   where id = p_session and revoked_at is null and reauth_failed_count < 5   -- the twin of REAUTH_LIMIT
+  returning reauth_failed_count into v_n;
+  if found then return jsonb_build_object('allowed', true, 'attempt', v_n); end if;
+  -- Out of attempts (or already revoked / unknown): the session ends here, whatever the caller does next.
+  update public.sessions set revoked_at = clock_timestamp() where id = p_session and revoked_at is null;
+  get diagnostics v_revoked = row_count;
+  return jsonb_build_object('allowed', false, 'session_revoked', v_revoked > 0);
+end $$;
+comment on function public.session_reauth_reserve(uuid) is
+  '0307 (audit W07 B159): reserves one password / PIN re-check on a live session BEFORE the credential is checked. '
+  '{allowed:true, attempt:1..5} while under the limit; otherwise revokes the session and returns {allowed:false, session_revoked}.';
+revoke all on function public.session_reauth_reserve(uuid) from public, anon, authenticated;
+grant execute on function public.session_reauth_reserve(uuid) to service_role;
+
+create function public.session_reauth_clear(p_session uuid)
+returns void language sql security definer set search_path = pg_catalog, public as $$
+  update public.sessions set reauth_failed_count = 0 where id = p_session and reauth_failed_count <> 0
+$$;
+comment on function public.session_reauth_clear(uuid) is
+  '0307 (audit W07 B159): a correct password / PIN re-check ends the run of wrong ones on that session.';
+revoke all on function public.session_reauth_clear(uuid) from public, anon, authenticated;
+grant execute on function public.session_reauth_clear(uuid) to service_role;
+
 -- ── POST-APPLY: every function this file creates or re-emits is definer, search_path pinned, service_role only ──
 do $$
 declare
@@ -446,7 +511,9 @@ declare
     'public.auth_password_reset_consume(text,text)',
     'public.admin_user_set_credential(uuid,uuid,text,text)',
     'public.admin_user_update_profile(uuid,uuid,jsonb)',
-    'public.auth_email_confirm_issue(uuid,uuid,text,timestamptz)'
+    'public.auth_email_confirm_issue(uuid,uuid,text,timestamptz)',
+    'public.session_reauth_reserve(uuid)',
+    'public.session_reauth_clear(uuid)'
   ];
 begin
   foreach v_fn in array v_fns loop

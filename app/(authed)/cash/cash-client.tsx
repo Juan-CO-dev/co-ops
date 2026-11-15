@@ -26,6 +26,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
 import { ActionButton } from "@/components/ActionButton";
+import { REAUTH_LOCKED_CODE, leaveAfterReauthLock } from "@/lib/auth-reauth-client";
 import { PinKeypad, type PinKeypadError } from "@/components/auth/PinKeypad";
 import { DenominationCounter } from "@/components/cash/DenominationCounter";
 
@@ -119,7 +120,12 @@ export function CashClient({
         router.refresh(); // page re-renders into the read-only view (report now exists)
         return { ok: true };
       }
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+      if (body.code === REAUTH_LOCKED_CODE) {
+        // Five wrong PINs in a row: the server signed this session out (audit W07 B159).
+        leaveAfterReauthLock();
+        return { ok: false, error: { kind: "invalid", message: t("auth.reauth.signed_out") } };
+      }
       if (body.error === "pin_invalid") return { ok: false, error: { kind: "invalid", message: t("cash.error.pin_invalid") } };
       if (body.error === "closing_finalized") return { ok: false, error: { kind: "invalid", message: t("cash.error.closing_finalized") } };
       return { ok: false, error: { kind: "network", message: t("cash.error.generic") } };

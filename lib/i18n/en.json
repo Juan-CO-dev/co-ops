@@ -2587,6 +2587,7 @@
   "auth.pin_modal.use_keypad": "Use on-screen keypad",
   "auth.pin_modal.loading_aria": "Loading",
   "auth.pin_modal.error_pin_mismatch": "Incorrect PIN.",
+  "auth.reauth.signed_out": "Too many wrong tries. You've been signed out — sign in again.",
   "auth.pin_modal.error_missing_pin_hash": "Account not configured for PIN confirmation. Contact your administrator.",
   "auth.pin_modal.error_already_submitted": "This closing was already submitted.",
   "auth.pin_modal.error_locked": "This checklist is locked.",

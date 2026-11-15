@@ -7,7 +7,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, emailConfirmIssueCall, passwordResetConsumeCall, reserveAttemptCall,
+  FAILURE_LIMIT, LOCKOUT_MINUTES, REAUTH_LIMIT, createSessionCall, emailConfirmIssueCall, passwordResetConsumeCall, reserveAttemptCall,
+  sessionReauthClearCall, sessionReauthReserveCall,
 } from "@/lib/auth-lockout-shared";
 import { EMAIL_CONFIRM_RPC_ERRORS } from "@/lib/admin/email-confirm-shared";
 import { ROLES } from "@/lib/roles";
@@ -134,6 +135,13 @@ describe("0307_auth_lockout_reset_hardening", () => {
       "B053 a GM cannot send a link to a manager at a shop they do not manage → target_outside_shop",
       "B053 an AGM cannot send a link (GM and up only) → forbidden",
       "B053 anything but a sha-256 hex digest is refused (never a raw token) → invalid_payload",
+      "S1 session_reauth_reserve: SECURITY DEFINER, search_path pinned, service_role only",
+      "S1 session_reauth_clear: SECURITY DEFINER, search_path pinned, service_role only",
+      "B159 sessions.reauth_failed_count is NOT NULL DEFAULT 0 (existing sessions start at 0)",
+      "B159 five re-check reservations allowed, the sixth refused and the session revoked",
+      "B159 a success clears the count",
+      "B159 the ACCOUNT is never locked or deactivated by re-checks (the person signs in again)",
+      "B159 the count is per session, not per person",
       "PASS 0307:",
     ]) expect(out, s).toContain(s);
   }, 260_000);
@@ -188,6 +196,9 @@ describe("0307_auth_lockout_reset_hardening", () => {
     expect(Object.keys(cred.args)).toEqual(sqlParams(`create or replace function public.${cred.fn}(`));
     const issue = emailConfirmIssueCall({ actorId: "a", userId: "u", tokenHash: "h", expiresAt: "e" });
     expect(Object.keys(issue.args)).toEqual(sqlParams(`create function public.${issue.fn}(`));
+    for (const call of [sessionReauthReserveCall("s"), sessionReauthClearCall("s")]) {
+      expect(Object.keys(call.args), call.fn).toEqual(sqlParams(`create function public.${call.fn}(`));
+    }
     const profile = updateUserProfileCall({ actorId: "a", userId: "u", patch: {} });
     expect(Object.keys(profile.args)).toEqual(sqlParams(`create or replace function public.${profile.fn}(`));
   });
@@ -242,6 +253,25 @@ describe("0307_auth_lockout_reset_hardening", () => {
     }
   });
 
+  it("B159 the re-check counter: one statement decides and counts, the limit equals REAUTH_LIMIT, the account is never touched", () => {
+    expect(src).toContain("alter table public.sessions add column reauth_failed_count integer not null default 0\n  constraint sessions_reauth_failed_count_nonneg check (reauth_failed_count >= 0);");
+    const reserve = fnBody("create function public.session_reauth_reserve(");
+    expect(reserve).toContain(`where id = p_session and revoked_at is null and reauth_failed_count < ${REAUTH_LIMIT}`);
+    // the count and the decision are ONE update; the revoke happens only when that update matched nothing
+    expect(reserve.indexOf("update public.sessions set reauth_failed_count = reauth_failed_count + 1")).toBeLessThan(reserve.indexOf("if found then return"));
+    expect(reserve.indexOf("if found then return")).toBeLessThan(reserve.indexOf("update public.sessions set revoked_at = clock_timestamp() where id = p_session and revoked_at is null"));
+    for (const name of ["session_reauth_reserve", "session_reauth_clear"]) {
+      const fn = fnBody(`create function public.${name}(`);
+      expect(fn, name).not.toMatch(/public\.users|locked_until|failed_login_count/); // never an ACCOUNT lockout
+    }
+    // the app counts BEFORE it checks, degrades only to "uncounted", and never fails a re-check on a limiter fault
+    const lib = read("lib/auth-reauth.ts");
+    const fn = lib.slice(lib.indexOf("export async function reserveReauth("), lib.indexOf("/** A correct answer ends the run"));
+    expect(fn).toContain("isMissingRpc(error)");
+    expect(fn).not.toMatch(/throw /);
+    expect(fn).not.toMatch(/allowed: false/);
+  });
+
   it("B156/B157 the reset function takes the 0279 lock order and does everything in one body", () => {
     const fn = fnBody("create function public.auth_password_reset_consume(");
     const order = [
@@ -284,6 +314,26 @@ describe("0307_auth_lockout_reset_hardening", () => {
     const session = read("lib/session.ts");
     expect(session).toContain('if (mintErr.message === "credential_changed") throw new CredentialChangedError();');
     expect(session).toContain("if (!isMissingRpc(mintErr)) {");
+  });
+
+  it("every function the app calls has a pre-0307 path (the file can be applied AFTER the code ships)", () => {
+    // function → the file that calls it and names what happens while it is missing
+    const callers: Record<string, string> = {
+      auth_reserve_attempt: "lib/auth-flows.ts",
+      auth_create_session: "lib/session.ts",
+      auth_password_reset_consume: "app/api/auth/password-reset/route.ts",
+      auth_email_confirm_issue: "lib/admin/email-confirm.ts",
+      session_reauth_reserve: "lib/auth-reauth.ts",
+      session_reauth_clear: "lib/auth-reauth.ts",
+    };
+    const created = [...src.matchAll(/\ncreate function public\.([a-z_]+)\(/g)].map((m) => m[1]!);
+    expect([...created].sort()).toEqual(Object.keys(callers).sort()); // a new function must name its caller here
+    for (const [fn, file] of Object.entries(callers)) expect(read(file), `${fn} in ${file}`).toContain("isMissingRpc(");
+    // the three re-emitted functions keep their signatures, so code deployed BEFORE this wave keeps working after the apply
+    for (const sig of ["increment_failed_login(p_user_id uuid)", "admin_user_set_credential(p_actor uuid, p_user uuid, p_kind text, p_hash text)",
+      "admin_user_update_profile(p_actor uuid, p_user uuid, p_patch jsonb)"]) {
+      expect(src).toContain(`create or replace function public.${sig}`);
+    }
   });
 
   it("the app keeps a pre-0307 path: a missing function falls back, it never fails the sign-in", () => {

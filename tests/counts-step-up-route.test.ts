@@ -8,6 +8,8 @@ import { verifyActorPin } from "@/lib/auth-flows";
 
 vi.mock("@/lib/session", () => ({ requireSession: vi.fn() }));
 vi.mock("@/lib/auth-flows", () => ({ verifyActorPin: vi.fn() }));
+// The per-session re-check counter (audit W07 B159) is not what this file tests: every re-check is allowed.
+vi.mock("@/lib/auth-reauth", async () => (await import("./helpers/reauth-mock")).reauthAllowAll());
 vi.mock("@/lib/counts", () => ({
   COUNT_WRITE_MIN: 4,
   CountError: class extends Error {},
@@ -22,7 +24,7 @@ function request(pin?: string) {
 }
 function session(level: number, unlocked: boolean) {
   const role = Object.values(ROLES).find((r) => r.level === level)!.code;
-  vi.mocked(requireSession).mockResolvedValue({ user: { id: "actor", role }, session: { stepUpUnlocked: unlocked } } as never);
+  vi.mocked(requireSession).mockResolvedValue({ user: { id: "actor", role }, session: { id: "session", stepUpUnlocked: unlocked } } as never);
 }
 beforeEach(() => vi.clearAllMocks());
 describe("count confirmation follows the actor's credential tier", () => {

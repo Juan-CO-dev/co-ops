@@ -88,6 +88,8 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "auth_password_hash_upgraded",
   "auth_password_reset_requested",
   "auth_password_reset_success",
+  // Written by POST /api/auth/pin-confirm, which had no caller and was removed (audit W07 B159: an unthrottled PIN
+  // oracle). Kept in the vocabulary because the name may exist in historical rows; nothing emits it now.
   "auth_pin_confirm_failure",
   "auth_pin_confirm_success",
   "auth_signin_password_failure",

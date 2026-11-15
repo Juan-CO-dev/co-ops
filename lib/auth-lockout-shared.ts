@@ -13,6 +13,39 @@ export const FAILURE_LIMIT = 5;
 /** How long a lock lasts. SQL twin: `interval '15 minutes'`. */
 export const LOCKOUT_MINUTES = 15;
 
+/**
+ * Wrong password / PIN RE-CHECKS in a row on one signed-in session before that session is signed out (audit W07
+ * B159; owner decisions W07-3 a / W07-4 a). The account is never locked by a re-check. SQL twin: `reauth_failed_count < 5`.
+ */
+export const REAUTH_LIMIT = 5;
+
+/** `session_reauth_reserve` / `session_reauth_clear` arguments (0307), by name. */
+export const sessionReauthReserveCall = (sessionId: string) => ({ fn: "session_reauth_reserve", args: { p_session: sessionId } }) as const;
+export const sessionReauthClearCall = (sessionId: string) => ({ fn: "session_reauth_clear", args: { p_session: sessionId } }) as const;
+
+export interface ReauthReservation {
+  /** false = this session is out of re-check attempts and has been revoked; the credential must NOT be checked. */
+  allowed: boolean;
+  /** This re-check's number in the current run (1..REAUTH_LIMIT). null when refused or degraded. */
+  attempt: number | null;
+  /** true = 0307's function was missing or failed: the re-check proceeds uncounted, as it did before 0307. */
+  degraded: boolean;
+}
+
+/** `session_reauth_reserve`'s jsonb → the lib's shape, or null when it is not what 0307 returns. */
+export function parseReauthReservation(data: unknown): ReauthReservation | null {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
+  const r = data as Record<string, unknown>;
+  if (r.allowed === false) return { allowed: false, attempt: null, degraded: false };
+  if (r.allowed !== true || typeof r.attempt !== "number" || !Number.isInteger(r.attempt) || r.attempt < 1) return null;
+  return { allowed: true, attempt: r.attempt, degraded: false };
+}
+
+/** A wrong answer on this reservation was the last one allowed: the caller signs the session out. */
+export function reauthExhausted(r: ReauthReservation): boolean {
+  return !r.degraded && r.allowed && r.attempt !== null && r.attempt >= REAUTH_LIMIT;
+}
+
 /** The exact argument object the lib sends (the harness calls the function with the same names). */
 export const reserveAttemptCall = (userId: string) => ({ fn: "auth_reserve_attempt", args: { p_user: userId } }) as const;
 

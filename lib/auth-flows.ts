@@ -475,9 +475,11 @@ export async function recordSuccessfulAuth(
 }
 
 /**
- * Verifies a PIN against the given user's pin_hash. Used by /api/auth/pin-confirm
- * and the cash deposit signature gate. NO lockout — the actor is already
- * authenticated (mirrors the step-up modal philosophy, AGENTS.md).
+ * Verifies a PIN against the given user's pin_hash — the one PIN comparison for an actor who is already signed in.
+ * It counts nothing itself. The re-check surfaces (counts, the cash deposit) call it through
+ * `verifyActorPinForSession` (lib/auth-reauth-pin.ts), which counts wrong answers on the SESSION and signs it out
+ * after five in a row (audit W07 B159); the vault reveal has its own slot cap (lib/vault.ts takeRevealSlot).
+ * The account is never locked by a re-check.
  */
 export async function verifyActorPin(userId: string, pin: string): Promise<boolean> {
   if (!/^\d{4}$/.test(pin)) return false; // 4-digit PINs only
