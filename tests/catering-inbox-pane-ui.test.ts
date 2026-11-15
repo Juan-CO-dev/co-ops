@@ -103,11 +103,16 @@ describe("inbox interactive drawer",()=>{
   expect(within(dialog).getByRole("button", { name: "Mark handled" })).toBeTruthy();
   expect(within(dialog).queryByRole("button", { name: "Reassign" })).toBeNull();
  });
- it("renders noise as a count only and never points controls at missing content", () => {
-  render(createElement(TranslationProvider, { initialLanguage: "en" } as Parameters<typeof TranslationProvider>[0], createElement(InboxPane, { initial: { ...initial, messages: [...initial.messages, { ...initial.messages[0]!, id: "noise", subject: "Noise secret", group: "noise" }] } })));
-  expect(screen.getByText("Noise").closest("section")?.textContent).toContain("1 message");
-  expect(screen.queryByText("Noise secret")).toBeNull();
-  expect(screen.queryByRole("button", { name: /Noise/ })).toBeNull();
+ // Audit W11/B018 (owner decision W11-3 a): the Noise group is the safety net for real mail filed as noise, so staff can open it.
+ it("renders noise collapsed by default, opens on tap, and never points controls at missing content", () => {
+  render(createElement(TranslationProvider, { initialLanguage: "en" } as Parameters<typeof TranslationProvider>[0], createElement(InboxPane, { initial: { ...initial, messages: [...initial.messages, { ...initial.messages[0]!, id: "noise", subject: "Noise message", group: "noise" }] } })));
+  const noise = screen.getByRole("button", { name: /Noise/ });
+  expect(noise.textContent).toContain("1 message");
+  expect(noise.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText("Noise message")).toBeNull();
+  fireEvent.click(noise);
+  expect(noise.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByText("Noise message")).toBeTruthy();
   for (const button of screen.getAllByRole("button")) {
     const target = button.getAttribute("aria-controls");
     if (target) expect(document.getElementById(target)).not.toBeNull();

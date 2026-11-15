@@ -22,19 +22,67 @@
  *                                  lockout on failure per Session 3 lock, but
  *                                  the underlying session could be in a locked
  *                                  state from elsewhere)
- *   401 unauthorized             → onCancel (parent's protected-route
- *                                  enforcement bounces user to login)
  *   401 reauth_locked            → "Too many wrong tries — you've been signed out", then
  *                                  the sign-in page (audit W07 B159: five wrong passwords
  *                                  in a row end the SESSION; the account is not locked)
+ *   401 (any other code but invalid_credentials), or an opaque redirect (the proxy's
+ *   307 for an expired JWT under redirect: "manual")
+ *                                → the SESSION is dead, not the password (audit
+ *                                  W06/B154): onCancel() resets the parent, then
+ *                                  the page goes to sign in, with a return link
+ *                                  bound to this tab's user (W06-2 hybrid).
  *   network/server               → inline error
+ *   no answer by STEP_UP_TIMEOUT_MS → the network error (audit W06 round 8): the
+ *                                  request — and the body it reads — is under
+ *                                  one deadline and aborted there, so a stalled
+ *                                  request can no longer hold `submitting` (which
+ *                                  disables Confirm, Cancel and Esc) for good.
+ *                                  onConfirm runs after, outside the deadline.
+ *
+ * NO LOCKOUT on repeated step-up failures (locked Phase 2 Session 3 — actor is
+ * already authenticated; locking them out of admin doesn't meaningfully raise
+ * the bar). Audit captures every failure for forensic visibility.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { withDeadline } from "@/lib/bounded-fetch";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { StepUpPurpose } from "@/lib/admin/step-up-shared";
 import { REAUTH_LOCKED_CODE, leaveAfterReauthLock } from "@/lib/auth-reauth-client";
+import { signInHref, signedInUser } from "@/lib/nav-sign-in-return";
+
+/** One step-up request (password check included) that has not answered by then is a network error (round 8). */
+const STEP_UP_TIMEOUT_MS = 15_000;
+
+type StepUpAnswer = {
+  ok: boolean;
+  status: number;
+  type: ResponseType;
+  body: { code?: string; message?: string; retry_after_seconds?: number };
+};
+
+/** POST /api/auth/step-up and read what the decision needs, all under one deadline. Throws on a network failure or timeout. */
+function postStepUp(payload: Record<string, unknown>): Promise<StepUpAnswer> {
+  return withDeadline(STEP_UP_TIMEOUT_MS, async (signal) => {
+    const res = await fetch("/api/auth/step-up", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      redirect: "manual",
+      signal,
+    });
+    // A success and an opaque redirect are decided by the status / type alone; only an error reads its body.
+    const body = res.ok || res.type === "opaqueredirect" ? {} : ((await res.json().catch(() => ({}))) as StepUpAnswer["body"]);
+    return { ok: res.ok, status: res.status, type: res.type, body };
+  });
+}
+
+/** Audit W06/B154: a dead session sends the person to sign in instead of reading as "wrong password". */
+function goSignIn(): void {
+  const here = window.location.pathname + window.location.search;
+  window.location.assign(signInHref({ next: here, forUser: signedInUser() }));
+}
 
 export interface PasswordModalProps {
   open: boolean;
@@ -114,30 +162,34 @@ export function PasswordModal({ open, onConfirm, onCancel, purpose = null, catal
       setSubmitting(true);
       setError(null);
       try {
-        const res = await fetch("/api/auth/step-up", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password, ...(catalogWindow ? { catalogWindow: true } : {}), ...(purpose ? { purpose } : {}) }),
-          redirect: "manual",
-        });
+        let res: StepUpAnswer;
+        try {
+          res = await postStepUp({ password, ...(catalogWindow ? { catalogWindow: true } : {}), ...(purpose ? { purpose } : {}) });
+        } catch {
+          setError({ kind: "transient", message: t("auth.step_up.error_network") });
+          return;
+        }
         if (res.ok) {
           await onConfirm();
           return;
         }
-        const body = (await res.json().catch(() => ({}))) as {
-          code?: string;
-          message?: string;
-          retry_after_seconds?: number;
-        };
+        if (res.type === "opaqueredirect") {
+          // The proxy 307'd (expired JWT) — the session is gone, the password was never checked.
+          onCancel();
+          goSignIn();
+          return;
+        }
+        const body = res.body;
         if (res.status === 401 && body.code === REAUTH_LOCKED_CODE) {
-          // Five wrong passwords in a row: the server signed this session out. Say so, then go to sign-in.
+          // Five wrong passwords in a row (W07 B159): the server signed this session out. Say so, then go to sign-in.
           setError({ kind: "transient", message: t("auth.reauth.signed_out") });
           leaveAfterReauthLock();
           return;
         }
-        if (res.status === 401 && body.code === "unauthorized") {
-          // Session itself is dead — let parent's enforcement handle re-auth.
+        if (res.status === 401 && body.code !== "invalid_credentials") {
+          // Session itself is dead (requireSession's 401) — sign in again rather than "wrong password".
           onCancel();
+          goSignIn();
           return;
         }
         if (res.status === 401) {

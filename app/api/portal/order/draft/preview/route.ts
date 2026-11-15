@@ -31,13 +31,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const stack = await previewDraft(ctx.customerId, body.quoteId, {
-      isDelivery: typeof body.isDelivery === "boolean" ? body.isDelivery : undefined,
-      deliveryZoneId: typeof body.deliveryZoneId === "string" ? body.deliveryZoneId : (body.deliveryZoneId === null ? null : undefined),
+    const { delivery, ...stack } = await previewDraft(ctx.customerId, body.quoteId, {
+      // Delivery vs pickup and the delivery zone are decided server-side (audit W01/B001); a body's
+      // isDelivery / deliveryZoneId is ignored.
       tipBps: Number.isFinite(body.tipBps) ? (body.tipBps as number) : undefined,
       napkins: body.napkins === true,
     });
-    return NextResponse.json({ ok: true, stack });
+    // `delivery`: the fee, the zone's minimum and whether the submit would refuse (Juan 2026-11-15).
+    return NextResponse.json({ ok: true, stack, delivery });
   } catch (e) {
     if (e instanceof PortalDraftError) return NextResponse.json({ error: e.code }, { status: e.status });
     throw e;

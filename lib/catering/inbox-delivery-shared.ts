@@ -9,11 +9,11 @@ export type InboxDeliveryState = typeof INBOX_DELIVERY_STATES[number];
 export type InboxMode = "off" | "shadow" | "live";
 export const INBOX_MODES: readonly InboxMode[] = ["off", "shadow", "live"];
 /** Every refusal a send can answer with; each has an en + es `catering.inbox.send_error.<code>` message. */
-export const INBOX_SEND_ERRORS = ["delivery_off", "not_configured", "delivery_busy", "already_sent", "needs_review", "thread_cap",
+export const INBOX_SEND_ERRORS = ["delivery_off", "not_configured", "delivery_busy", "already_sent", "needs_review", "thread_cap", "recipient_cap",
   "revalidation_failed", "quote_revalidation_failed", "own_address", "assignee_unavailable", "invalid_recipient", "invalid_state", "no_draft", "stale_revision", "request_conflict", "attempts_exhausted",
   "not_new", "send_failed", "send_ambiguous", "inbox_unavailable"] as const;
 export type InboxSendError = typeof INBOX_SEND_ERRORS[number];
-export const INBOX_DELIVERY_ERROR_CODES = ["provider_rejected", "provider_uncertain", "idempotency_conflict", "lease_expired", "not_configured", "invalid_recipient", "send_failed", "revalidation_failed", "quote_revalidation_failed", "own_address"] as const;
+export const INBOX_DELIVERY_ERROR_CODES = ["provider_rejected", "provider_uncertain", "idempotency_conflict", "lease_expired", "not_configured", "invalid_recipient", "send_failed", "revalidation_failed", "quote_revalidation_failed", "own_address", "unsafe_preview"] as const;
 export type InboxDeliveryErrorCode = typeof INBOX_DELIVERY_ERROR_CODES[number];
 /** The cron gives a failed attempt up after this many; a human may still retry. Mirrors 0298. */
 export const INBOX_MAX_CRON_ATTEMPTS = 3;
@@ -102,7 +102,10 @@ export function buildInboxEscalation(input: { language: "en" | "es"; tenantName:
   sender: string | null; subject: string; translate: Translate }): EscalationEnvelope {
   const t = (suffix: string, params?: Record<string, string>) => input.translate(`catering.inbox.escalation.${suffix}`, params);
   const tenantName = input.tenantName.replace(/[\r\n\0]/g, " ").trim().slice(0, 120) || "-";
-  const clean = (value: string) => value.replace(/[\s\0]+/g, " ").trim().slice(0, 300);
+  // Customer text never carries a link or a "token=" into staff mail: the claim refuses those bodies (0298), which left the
+  // escalation stuck at the head of the queue for good (audit W11/B068). Staff open the inbox to see the original.
+  const clean = (value: string) => value.replace(/[\s\0]+/g, " ").replace(/(?:https?:\/\/|www\.)\S*/gi, t("link_removed"))
+    .replace(/token\s*=/gi, "token ").trim().slice(0, 300);
   const lines = [t("intro"), t("from", { sender: clean(input.sender ?? t("no_sender")) }), t("subject", { subject: clean(input.subject) || t("no_subject") }),
     t("reason", { reason: input.translate(`catering.inbox.reason.${input.reason}`) })];
   if (input.inboxUrl) lines.push(t("open"), input.inboxUrl);

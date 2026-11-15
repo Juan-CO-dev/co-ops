@@ -16,6 +16,7 @@ import type { AuthContext } from "@/lib/session";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { loadResolvedRecipeInputs, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { contentOzForScope } from "@/lib/sku-versions-shared";
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import type { MeasureDimension } from "@/lib/recipe-math";
 import { markSkuNameClashes, type ProductionSkuOption } from "@/lib/production-shared";
 
@@ -282,10 +283,13 @@ export async function loadProductionFormData(actor: AuthContext, locationId: str
   requireProduce(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ProductionError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
-  const { data: skus, error } = await sb.from("vendor_items").select("id, name, vendor_id").eq("active", true).order("name", { ascending: true }).returns<Array<{ id: string; name: string; vendor_id: string | null }>>();
+  const { data: allSkus, error } = await sb.from("vendor_items").select("id, name, vendor_id, location_id").eq("active", true).order("name", { ascending: true }).returns<Array<{ id: string; name: string; vendor_id: string | null; location_id?: string | null }>>();
   if (error) throw new Error(`loadProductionFormData skus: ${error.message}`);
-  const ids = (skus ?? []).map((s) => s.id);
-  const vendorIds = [...new Set((skus ?? []).flatMap((s) => (s.vendor_id ? [s.vendor_id] : [])))];
+  // W08/B055: only shared SKUs and THIS shop's own (store-run copies, shop-only items) are offered.
+  // Filtered in memory: locationId is caller-supplied, so it never builds a PostgREST filter string.
+  const skus = (allSkus ?? []).filter((s) => ownerVisible(s.location_id, locationId));
+  const ids = skus.map((s) => s.id);
+  const vendorIds = [...new Set(skus.flatMap((s) => (s.vendor_id ? [s.vendor_id] : [])))];
   const [skuToItems, inStock, vendorRes] = await Promise.all([
     loadSkuToItems(ids, locationId),
     loadInStockPacks(ids, locationId),
@@ -294,7 +298,7 @@ export async function loadProductionFormData(actor: AuthContext, locationId: str
   if (vendorRes.error) throw new Error(`loadProductionFormData vendors: ${vendorRes.error.message}`);
   const vendorName = new Map((vendorRes.data ?? []).map((v) => [v.id, v.name] as const));
   return {
-    skus: markSkuNameClashes((skus ?? []).map((s) => ({
+    skus: markSkuNameClashes(skus.map((s) => ({
       id: s.id, name: s.name, inStockPacks: inStock.get(s.id) ?? 0,
       vendorName: s.vendor_id ? (vendorName.get(s.vendor_id) ?? null) : null,
     }))),
@@ -331,9 +335,12 @@ export async function recordProduction(actor: AuthContext, input: RecordProducti
   if (!Number.isFinite(input.inputQty) || input.inputQty <= 0) throw new ProductionError(400, "invalid_input_qty", "Input qty must be positive");
   if (!Number.isFinite(input.outputQty) || input.outputQty <= 0) throw new ProductionError(400, "invalid_output_qty", "Output qty must be positive");
   const sb = getServiceRoleClient();
-  const { data: sku } = await sb.from("vendor_items").select("id, product_id").eq("id", input.inputSkuId).eq("active", true)
-    .maybeSingle<{ id: string; product_id: string | null }>();
+  const { data: sku } = await sb.from("vendor_items").select("id, product_id, location_id").eq("id", input.inputSkuId).eq("active", true)
+    .maybeSingle<{ id: string; product_id: string | null; location_id?: string | null }>();
   if (!sku) throw new ProductionError(400, "invalid_sku", "SKU not found or inactive");
+  // W08/B055: another shop's private SKU is never this shop's input — the receiving rule. Same
+  // code and message as a missing SKU, so the refusal does not reveal that it exists.
+  if (sku.location_id != null && sku.location_id !== input.locationId) throw new ProductionError(400, "invalid_sku", "SKU not found or inactive");
   const { data: item } = await sb.from("items").select("id").eq("id", input.outputItemId).eq("active", true).maybeSingle<{ id: string }>();
   if (!item) throw new ProductionError(400, "invalid_item", "Item not found or inactive");
   // Valid conversion = an ACTIVE recipe that takes this SKU as an input AND outputs

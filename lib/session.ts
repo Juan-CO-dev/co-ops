@@ -31,6 +31,8 @@ import { redirect } from "next/navigation";
 import { signJwt, verifyJwt, hashToken, type AppJwtClaims } from "./auth";
 import { createSessionCall, isMissingRpc, type VerifiedCredential } from "./auth-lockout-shared";
 import { trustedClientIp } from "./client-ip";
+import { jsonError } from "./api-helpers";
+import { signInHref } from "./nav-sign-in-return";
 import { getServiceRoleClient } from "./supabase-server";
 import { type RoleCode, getRoleLevel } from "./roles";
 import { audit } from "./audit";
@@ -48,6 +50,12 @@ export interface AuthContext {
   role: RoleCode;
   level: number;
   locations: string[];
+}
+
+/** The server's idle limit (SESSION_IDLE_MINUTES, default 10). Exported so the layouts hand the SAME number to the
+ *  client idle clock (components/auth/IdleTimeoutWarning, audit W06/B013) instead of a hard-coded 10. */
+export function sessionIdleMinutes(): number {
+  return idleMinutes();
 }
 
 function idleMinutes(): number {
@@ -70,8 +78,17 @@ function clearedCookieOptions() {
   return cookieOptions(0);
 }
 
+/**
+ * Audit W06/B048 — the session could not be CHECKED (a PostgREST error on the sessions or users read), which is not the
+ * same as "not signed in". A 503 that KEEPS the cookie: one transient blip must not sign a working operator out.
+ */
+function sessionUnavailable(): NextResponse {
+  return jsonError(503, "session_unavailable", { message: "Sign-in check failed. Try again." });
+}
+
 function unauthorized(): NextResponse {
-  const res = NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // `code` (audit W06/B154): clients tell a dead session from a wrong password by the machine code; `error` stays.
+  const res = NextResponse.json({ error: "unauthorized", code: "unauthorized" }, { status: 401 });
   res.cookies.set(COOKIE_NAME, "", clearedCookieOptions());
   return res;
 }
@@ -344,10 +361,29 @@ export function isCateringInboxSendPath(currentPath: string): boolean {
   return /^\/api\/catering\/inbox\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/send$/i.test(currentPath);
 }
 
+/** "Move conflicted receipt" (PATCH action=move) takes Tier A and lives OUTSIDE /admin (audit W06/B014): exactly the
+ *  email-receipts endpoint keeps the unlock the preceding POST /api/auth/step-up set, or assertStepUp could never pass
+ *  and the password modal reopened forever. The receiving pages and every other receiving route still clear it. The
+ *  endpoint's other actions only PRESERVE an unlock (they never assert one), the same as /api/operations/counts. */
+export function isReceiptMoveStepUpPath(currentPath: string): boolean {
+  return currentPath === "/api/operations/receiving/email-receipts";
+}
+
 /** Paths where an unlocked step-up flag survives requireSession (does not auto-clear). */
 export function isStepUpSurface(currentPath: string): boolean {
   return isAdminPath(currentPath) || isCateringStepUpPath(currentPath) || isCountsStepUpPath(currentPath) || isScheduleStepUpPath(currentPath)
-    || isCateringInboxSendPath(currentPath);
+    || isCateringInboxSendPath(currentPath) || isReceiptMoveStepUpPath(currentPath);
+}
+
+/**
+ * The idle heartbeat (POST /api/auth/heartbeat) is BACKGROUND keep-alive, not "leaving the step-up surface": with the
+ * throttled activity heartbeat (audit W06/B013) it fires every couple of minutes while someone types, and clearing
+ * there would drop a password unlock between the prompt and the action it was typed for (counts, receipts, catering
+ * send). It neither preserves anything for a gate (it is NOT a step-up surface — no route asserts a tier on it) nor
+ * clears: the flag is left exactly as it stands. Page visits and every other route still clear it.
+ */
+export function isHeartbeatPath(currentPath: string): boolean {
+  return currentPath === "/api/auth/heartbeat";
 }
 
 /**
@@ -357,16 +393,19 @@ export function isStepUpSurface(currentPath: string): boolean {
  * (`requireSessionFromHeaders`) so dual-verification, idle-timeout, last-
  * activity touch, and step-up auto-clear logic all live in exactly one place.
  *
- * Returns AuthContext on success or { denied: true } on any failure. Wrappers
- * convert the sentinel into the appropriate response shape (NextResponse 401
- * vs server-side redirect).
+ * Returns AuthContext on success, { denied: true } when the session is not
+ * valid, or { unavailable: true } when the sessions / users READ itself failed
+ * (audit W06/B048: a transient database error is not a sign-out). Wrappers
+ * convert the sentinels into the appropriate response shape (401 + cleared
+ * cookie vs server-side redirect for a denial; 503 keeping the cookie vs a
+ * thrown error for unavailable).
  */
 async function requireSessionCore(
   rawJwt: string | null,
   ipAddress: string | null,
   userAgent: string | null,
   currentPath: string,
-): Promise<AuthContext | { denied: true }> {
+): Promise<AuthContext | { denied: true; userId?: string } | { unavailable: true }> {
   if (!rawJwt) return { denied: true };
 
   let claims;
@@ -376,13 +415,18 @@ async function requireSessionCore(
     return { denied: true };
   }
 
+  // Past this point the JWT verified: a denial names whose session it was, so the sign-in return link can be bound to
+  // that person (owner decision W06-2). It is a navigation hint only, never authority.
+  const deniedFor = { denied: true as const, userId: claims.user_id };
+
   const sb = getServiceRoleClient();
   const { data: rowRaw, error } = await sb
     .from("sessions")
     .select("*")
     .eq("id", claims.session_id)
     .maybeSingle<SessionRow>();
-  if (error || !rowRaw) return { denied: true };
+  if (error) return { unavailable: true };
+  if (!rowRaw) return deniedFor;
   const row = rowRaw;
 
   // Token-hash dual verification — guards against AUTH_JWT_SECRET-leak forgery.
@@ -401,26 +445,36 @@ async function requireSessionCore(
     return { denied: true };
   }
 
-  if (row.revoked_at) return { denied: true };
+  if (row.revoked_at) return deniedFor;
   const now = new Date();
-  if (new Date(row.expires_at) <= now) return { denied: true };
+  if (new Date(row.expires_at) <= now) return deniedFor;
 
   const idleThresholdMs = idleMinutes() * 60 * 1000;
   const lastActivity = row.last_activity_at ? new Date(row.last_activity_at) : new Date(0);
-  if (now.getTime() - lastActivity.getTime() > idleThresholdMs) return { denied: true };
+  if (now.getTime() - lastActivity.getTime() > idleThresholdMs) return deniedFor;
 
   // Touch last_activity_at — non-blocking semantics: if the touch fails, keep
   // the request flowing rather than 401-ing on a transient write error.
+  // EXCEPT on the heartbeat (audit W06/B013 r3): its only job is this touch, and the client clears its pending
+  // activity on a 2xx, so a 200 over a failed or zero-row UPDATE left the server clock behind the client's (a later
+  // 401 and a lost draft). There, a touch that did not land is `unavailable` — a retryable 503 that keeps the cookie.
   const touchedAt = now.toISOString();
-  await sb.from("sessions").update({ last_activity_at: touchedAt }).eq("id", row.id);
+  const touch = sb.from("sessions").update({ last_activity_at: touchedAt }).eq("id", row.id);
+  if (isHeartbeatPath(currentPath)) {
+    const { data: touchedRows, error: touchErr } = await touch.select("id");
+    if (touchErr || !touchedRows?.length) return { unavailable: true };
+  } else {
+    await touch;
+  }
 
   const { data: userRowRaw, error: userErr } = await sb
     .from("users")
     .select("*")
     .eq("id", claims.user_id)
     .maybeSingle<UserRow>();
-  if (userErr || !userRowRaw) return { denied: true };
-  if (!userRowRaw.active) return { denied: true };
+  if (userErr) return { unavailable: true };
+  if (!userRowRaw) return deniedFor;
+  if (!userRowRaw.active) return deniedFor;
   const userRow = userRowRaw;
 
   // WB2-02: derive `locations` LIVE from user_locations (like role/level are already read live from
@@ -451,7 +505,7 @@ async function requireSessionCore(
   // retries on the next request; the context below therefore reports the row as
   // it actually stands rather than asserting a clear that did not land.
   let stepUpCleared = false;
-  if (row.step_up_unlocked && !isStepUpSurface(currentPath)) {
+  if (row.step_up_unlocked && !isStepUpSurface(currentPath) && !isHeartbeatPath(currentPath)) {
     try {
       await clearStepUp(row.id);
       stepUpCleared = true;
@@ -487,8 +541,10 @@ async function requireSessionCore(
  *                      flag is cleared automatically so the next admin entry
  *                      requires re-confirmation.
  *
- * Returns AuthContext on success. On any failure returns a 401 NextResponse
- * with a cleared cookie. Callers should `return result` directly when they
+ * Returns AuthContext on success. On a denial returns a 401 NextResponse
+ * with a cleared cookie; when the session could not be read (a transient
+ * database error) returns a 503 `session_unavailable` that keeps the cookie
+ * (audit W06/B048). Callers should `return result` directly when they
  * get a NextResponse — and treat the AuthContext as the request-scoped identity.
  */
 export async function requireSession(
@@ -502,6 +558,7 @@ export async function requireSession(
     req.headers.get("user-agent"),
     currentPath,
   );
+  if ("unavailable" in result) return sessionUnavailable();
   if ("denied" in result) return unauthorized();
   return result;
 }
@@ -532,8 +589,16 @@ export async function requireSessionFromHeaders(
   const userAgent = headerStore.get("user-agent");
 
   const result = await requireSessionCore(rawJwt, ipAddress, userAgent, currentPath);
+  // Audit W06/B048: a failed READ renders the error page ("Try again"), never the sign-in page.
+  if ("unavailable" in result) throw new Error("session_unavailable");
   if ("denied" in result) {
-    const target = currentPath ? `/?next=${encodeURIComponent(currentPath)}` : "/";
+    // Audit W06/B155: return to the page actually served (proxy.ts `x-co-path`), not the caller's hub path; fall back
+    // to currentPath. currentPath alone keeps driving the step-up auto-clear above. W06-2: when the JWT named a user
+    // the link is bound to them (a different person signing in lands on the dashboard); with no known user it is the
+    // proxy's old "you opened a link while signed out" meaning.
+    const served = headerStore.get("x-co-path");
+    const nextPath = served && served.startsWith("/") && !served.startsWith("//") ? served : currentPath;
+    const target = signInHref({ next: nextPath || null, forUser: result.userId ?? null, keepUnownedNext: true });
     redirect(target); // throws — `never` return type narrows the type below
   }
   return result;

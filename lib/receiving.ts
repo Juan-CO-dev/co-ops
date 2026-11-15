@@ -18,8 +18,8 @@ import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operat
  * Per-line note + PHOTO and a delivery-level receipt + note also land here. The
  * photo/receipt COLUMNS + persistence plumbing are wired (0160); the UI affordance
  * is a DISABLED Phase-6 stub (no storage bucket, no uploader this PR — a one-swap
- * seam, mirroring the checklist photo stub). Callers may pass photoUrl/receiptUrl
- * through, but the shipped form never sets them.
+ * seam, mirroring the checklist photo stub). photoUrl/receiptUrl are accepted only as the
+ * canonical `/api/photos/<id>` of a photo at the delivery's shop (bindDeliveryPhotos, W08/B162).
  *
  * ── A2: avg_oz_per_each REFINEMENT GATING (council L8) ─────────────────────────
  * The legacy refinement (feed observed oz/each into vendor_items.avg_oz_per_each)
@@ -54,6 +54,7 @@ import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
   AVG_FOLD_WEIGHT_CLASS,
   avgFoldSourceNote,
+  creditUnitPrice,
   deriveCreditDrafts,
   deriveMissingCreditDrafts,
   disposeAvgFold,
@@ -61,6 +62,7 @@ import {
   receivingPriceRows,
   storeRootPackPrice,
   isDuplicateAppend,
+  photoIdFromRef,
   type AppendLine,
   type IntakeLineForCredits,
   type MissingExpectedLine,
@@ -186,6 +188,9 @@ export interface ReceivingSkuOption {
   name: string;
   vendorId: string | null;
   chainLabels: string[];
+  /** W04/B046: `chainLabels[i]` holds `chainCounts[i]` of `chainLabels[i + 1]` (walk order);
+   *  empty when the chain is malformed. Lets the door rescale an expectation on a level change. */
+  chainCounts?: number[];
   packFormat: string | null;
   /** Trailing-30-day consumed oz for this SKU at this location = production_inputs.input_oz
    *  (live productions) + effective capture sales direct_oz. Higher = more used → ranked first
@@ -306,6 +311,7 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
       vendorId: s.vendor_id,
       packFormat: s.pack_format,
       chainLabels: chainLabelsInWalkOrder(chainsBySku.get(s.id) ?? []),
+      chainCounts: chainCountsInWalkOrder(chainsBySku.get(s.id) ?? []),
       usageRank: usageBySku.usage.get(s.id) ?? null,
       searchTerms: s.product_id ? productNames.get(s.product_id) ?? [] : [],
       locationId: s.location_id,
@@ -442,6 +448,22 @@ function chainLabelsInWalkOrder(levels: PackChainLevel[]): string[] {
   return out;
 }
 
+/** The counts between consecutive levels of `chainLabelsInWalkOrder` (W04/B046). Empty unless
+ *  the chain is one well-formed root → leaf path that covers every level. */
+function chainCountsInWalkOrder(levels: PackChainLevel[]): number[] {
+  const labels = chainLabelsInWalkOrder(levels);
+  if (labels.length !== levels.length) return [];
+  const byLabel = new Map(levels.map((l) => [l.label, l]));
+  const counts: number[] = [];
+  for (let i = 0; i < labels.length - 1; i++) {
+    const level = byLabel.get(labels[i]!);
+    const next = byLabel.get(labels[i + 1]!);
+    if (!level || !next || level.containsLevelId !== next.id) return [];
+    counts.push(level.containsQty);
+  }
+  return counts;
+}
+
 export interface RecordDeliveryResult {
   deliveryId: string;
   /** V2-D4: credit ids closed `resolved_redelivered` by this delivery. */
@@ -528,8 +550,11 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   // Validate the entire missing-credit payload before the delivery header or any line is
   // written. A forged foreign-shop SKU must leave no partial delivery behind.
   const missingCreditDrafts = await prepareMissingExpectedCredits(
-    sb, input.vendorId, input.locationId, missingExpected, new Set(input.lines.map((l) => l.skuId)),
+    sb, input.vendorId, input.locationId, missingExpected, new Set(input.lines.map((l) => l.skuId)), poId,
   );
+  // W08/B162: the receipt and line photos must be this shop's photos from the uploader — validated
+  // before any write, and stored in the canonical form only (never the caller's raw string).
+  const photos = await bindDeliveryPhotos(sb, input.locationId, input.receiptUrl, input.lines.map((l) => l.photoUrl));
 
   // 0160 columns — apply 0160 BEFORE deploying this code (additive; old code unaffected).
   // The 0160 `note` columns are the brief-canonical fields; the legacy `notes`
@@ -540,7 +565,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const { data: header, error: hErr } = await sb.from("vendor_deliveries").insert({
     vendor_id: input.vendorId, location_id: input.locationId, delivery_date: input.deliveryDate,
     invoice_number: invoiceNumber, invoice_total: input.invoiceTotal ?? null,
-    notes: headerNote, note: headerNote, receipt_url: input.receiptUrl?.trim() || null, received_by: actor.user.id,
+    notes: headerNote, note: headerNote, receipt_url: photos.receiptUrl, received_by: actor.user.id,
     delivery_status: input.deliveryStatus ?? "complete",
     purchase_order_id: poId,
   }).select("id").maybeSingle<{ id: string }>();
@@ -557,7 +582,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   if (!header) throw new Error("recordDelivery header returned no row");
 
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
-    buildLineRows(header.id, input.lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku),
+    buildLineRows(header.id, input.lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku, photos.lineUrls),
   );
   if (lErr) throw new Error(`recordDelivery lines: ${lErr.message}`);
 
@@ -824,10 +849,46 @@ async function validateAndResolveDeliveryLines(
   return { resolvedOzByLineIdx, chained, vendorIdBySku, weightClassBySku, priceLines };
 }
 
+/**
+ * W08/B162: bind a delivery's receipt and line photo references. Each ref must be the canonical
+ * `/api/photos/<uuid>` (or empty): anything else is 400 `invalid_photo`, refused BEFORE any read.
+ * Every referenced photo must exist with `location_id` = the delivery's shop (the attachDeliveryReceipt
+ * rule), else 404 `photo_not_found`. Returns the canonical strings to store, index-aligned with lineRefs.
+ */
+async function bindDeliveryPhotos(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  receiptRef: unknown,
+  lineRefs: readonly unknown[],
+): Promise<{ receiptUrl: string | null; lineUrls: Array<string | null> }> {
+  const parse = (ref: unknown): string | null => {
+    const r = photoIdFromRef(ref);
+    if (!r.ok) throw new ReceivingError(400, "invalid_photo", "Photos must come from the photo uploader");
+    return r.photoId;
+  };
+  const receiptId = parse(receiptRef);
+  const lineIds = lineRefs.map(parse);
+  const ids = [...new Set([receiptId, ...lineIds].filter((x): x is string => x !== null))];
+  if (ids.length > 0) {
+    const found = new Map<string, string | null>();
+    for (let start = 0; start < ids.length; start += 100) {
+      const { data, error } = await sb.from("photos").select("id, location_id").in("id", ids.slice(start, start + 100))
+        .returns<Array<{ id: string; location_id: string | null }>>();
+      if (error) throw new Error(`bindDeliveryPhotos: ${error.message}`);
+      for (const p of data ?? []) found.set(String(p.id).toLowerCase(), p.location_id);
+    }
+    for (const id of ids) {
+      if (!found.has(id) || found.get(id) !== locationId) throw new ReceivingError(404, "photo_not_found", "Photo not found");
+    }
+  }
+  const url = (id: string | null) => (id === null ? null : `/api/photos/${id}`);
+  return { receiptUrl: url(receiptId), lineUrls: lineIds.map(url) };
+}
+
 /** Build the vendor_delivery_items rows for a set of input lines (shared shape for
  *  recordDelivery + addDeliveryLines). resolvedOzByLineIdx is index-aligned with lines.
  *  vendorIdBySku carries each SKU's own vendor onto the row (P3 / migration 0178). */
-function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedOzByLineIdx: Array<number | null>, createdBy: string, vendorIdBySku: Map<string, string | null>) {
+function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedOzByLineIdx: Array<number | null>, createdBy: string, vendorIdBySku: Map<string, string | null>, photoUrls: ReadonlyArray<string | null>) {
   return lines.map((l, i) => ({
     delivery_id: deliveryId, vendor_item_id: l.skuId, qty_received: l.qtyReceived,
     vendor_id: vendorIdBySku.get(l.skuId) ?? null,
@@ -837,7 +898,7 @@ function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedO
     received_qty_at_level: l.receivedLevelLabel?.trim() ? l.qtyReceived : null,
     resolved_oz: resolvedOzByLineIdx[i] ?? null,
     note: l.notes?.trim() || null,
-    photo_url: l.photoUrl?.trim() || null,
+    photo_url: photoUrls[i] ?? null,
     expected_qty: l.expectedQty ?? null,
     discrepancy_type: l.discrepancyType ?? null,
   }));
@@ -866,19 +927,38 @@ async function deriveAndUpsertCredits(
   sb: ServiceClient, deliveryId: string, vendorId: string, locationId: string, createdBy: string,
 ): Promise<void> {
   const { data: itemRows, error: iErr } = await sb.from("vendor_delivery_items")
-    .select("id, vendor_item_id, received_qty_at_level, qty_received, expected_qty, unit_price, discrepancy_type")
+    .select("id, vendor_item_id, received_qty_at_level, qty_received, expected_qty, unit_price, discrepancy_type, received_level_label")
     .eq("delivery_id", deliveryId)
-    .returns<Array<{ id: string; vendor_item_id: string; received_qty_at_level: number | string | null; qty_received: number | string | null; expected_qty: number | string | null; unit_price: number | string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null }>>();
+    .returns<Array<{ id: string; vendor_item_id: string; received_qty_at_level: number | string | null; qty_received: number | string | null; expected_qty: number | string | null; unit_price: number | string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null; received_level_label: string | null }>>();
   if (iErr) throw new Error(`deriveAndUpsertCredits select: ${iErr.message}`);
-  const forCredits: IntakeLineForCredits[] = (itemRows ?? [])
-    .filter((r) => r.discrepancy_type != null)
+  const flagged = (itemRows ?? []).filter((r) => r.discrepancy_type != null);
+  // W04/B046: a credit counts LEVEL units, but a vendor line's price is per ROOT pack. For a
+  // line received at a named level, price the credit per that level (creditUnitPrice); a store
+  // run's price is already per level. A level the chain cannot place leaves the amount null.
+  const levelled = flagged.filter((r) => r.received_level_label?.trim());
+  let creditPrice = (r: (typeof flagged)[number]) => num(r.unit_price);
+  if (levelled.length > 0) {
+    const skuIds = [...new Set(levelled.map((r) => r.vendor_item_id))];
+    const [chains, { data: vendorRow, error: vErr }, { data: skuRows, error: sErr }] = await Promise.all([
+      loadSkuPackChains(skuIds, locationId),
+      sb.from("vendors").select("source_kind").eq("id", vendorId).maybeSingle<{ source_kind: string | null }>(),
+      sb.from("vendor_items").select("id, pack_format").in("id", skuIds).returns<Array<{ id: string; pack_format: string | null }>>(),
+    ]);
+    if (vErr) throw new Error(`deriveAndUpsertCredits vendor: ${vErr.message}`);
+    if (sErr) throw new Error(`deriveAndUpsertCredits skus: ${sErr.message}`);
+    const store = vendorRow?.source_kind === "store";
+    const packFormat = new Map((skuRows ?? []).map((s) => [s.id, s.pack_format]));
+    creditPrice = (r) => creditUnitPrice(num(r.unit_price), r.received_level_label,
+      chains.get(r.vendor_item_id) ?? null, packFormat.get(r.vendor_item_id) ?? null, store);
+  }
+  const forCredits: IntakeLineForCredits[] = flagged
     .map((r) => ({
       deliveryItemId: r.id,
       skuId: r.vendor_item_id,
       // received_qty_at_level is the level-unit qty when a level was named; fall back to qty_received.
       qtyReceived: num(r.received_qty_at_level) ?? num(r.qty_received) ?? 0,
       expectedQty: num(r.expected_qty),
-      unitPrice: num(r.unit_price),
+      unitPrice: creditPrice(r),
       discrepancyType: r.discrepancy_type,
     }));
   const drafts = deriveCreditDrafts(forCredits);
@@ -932,6 +1012,8 @@ async function deriveAndUpsertCredits(
  *   • a SKU that ALSO has a real delivery line is dropped: it arrived, so the lined
  *     discrepancy path owns it (and a double credit for one SKU would be a false debt)
  *   • duplicate skuIds collapse to one credit
+ *   • W04/B148: the SKU must be ON the linked PO (`missing_not_on_po`), and the claimed qty is
+ *     capped at the qty that PO ordered (a whole missing item is at most what was ordered)
  *
  * IDEMPOTENCY NOTE: the 0168 unique index is `(delivery_item_id, reason) WHERE
  * delivery_item_id IS NOT NULL`, so these line-less rows have no index-level dedupe.
@@ -948,6 +1030,7 @@ async function prepareMissingExpectedCredits(
   locationId: string,
   missing: MissingExpectedLine[],
   deliveredSkuIds: Set<string>,
+  poId: string | null,
 ): Promise<ReturnType<typeof deriveMissingCreditDrafts>> {
   if (missing.length === 0) return [];
   for (const m of missing) {
@@ -983,7 +1066,22 @@ async function prepareMissingExpectedCredits(
     throw new ReceivingError(400, "sku_vendor_mismatch", "A missing item belongs to a different vendor than this delivery");
   }
 
-  return deriveMissingCreditDrafts(usable);
+  // W04/B148: a missing-item short is a debt for something this PO ORDERED. recordDelivery
+  // already refuses missing lines without a PO; the PO's own lines bound what can be claimed.
+  if (!poId) throw new ReceivingError(400, "missing_requires_po", "Missing-item shorts can only be filed against a purchase order");
+  const { data: poLines, error: plErr } = await sb.from("po_lines")
+    .select("sku_id, order_qty").eq("po_id", poId).in("sku_id", skuIds)
+    .returns<Array<{ sku_id: string; order_qty: number | string | null }>>();
+  if (plErr) throw new Error(`insertMissingExpectedCredits po lines: ${plErr.message}`);
+  const orderedBySku = new Map<string, number>();
+  for (const l of poLines ?? []) {
+    const q = num(l.order_qty);
+    if (q != null && q > 0) orderedBySku.set(l.sku_id, (orderedBySku.get(l.sku_id) ?? 0) + q);
+  }
+  for (const m of usable) {
+    if (!orderedBySku.has(m.skuId)) throw new ReceivingError(400, "missing_not_on_po", "A missing item was not on this purchase order");
+  }
+  return deriveMissingCreditDrafts(usable.map((m) => ({ ...m, expectedQty: Math.min(m.expectedQty, orderedBySku.get(m.skuId)!) })));
 }
 
 async function insertMissingExpectedCredits(
@@ -1277,6 +1375,8 @@ export async function addDeliveryLines(
   if (sourceError) throw new Error(`addDeliveryLines source: ${sourceError.message}`);
   if (!source) throw new ReceivingError(400, "invalid_vendor");
   const resolved = await validateAndResolveDeliveryLines(sb, lines, h.vendor_id, source.source_kind, h.location_id);
+  // W08/B162: line photos bound to this delivery's shop before any write (see recordDelivery).
+  const photos = await bindDeliveryPhotos(sb, h.location_id, null, lines.map((l) => l.photoUrl));
 
   // Double-submit guard (P1 pragmatic window): a network retry / double-tap on the
   // append route would duplicate every line (and each dup spawns its own credit).
@@ -1301,7 +1401,7 @@ export async function addDeliveryLines(
   }
 
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
-    buildLineRows(h.id, lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku),
+    buildLineRows(h.id, lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku, photos.lineUrls),
   );
   if (lErr) throw new Error(`addDeliveryLines lines: ${lErr.message}`);
 

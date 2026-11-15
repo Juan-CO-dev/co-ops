@@ -117,6 +117,10 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     headers.set('x-co-app-role', claims.app_role);
     headers.set('x-co-role-level', String(claims.role_level));
     headers.set('x-co-session-id', claims.session_id);
+    // Audit W06/B155: the served path (Next's internal _rsc stripped) so a server-side session denial can send the
+    // person back to the page they asked for, not to the layout's hub path. Client x-co-* headers were removed above.
+    const served = req.nextUrl.clone(); served.searchParams.delete('_rsc');
+    headers.set('x-co-path', served.pathname + served.search);
     return NextResponse.next({ request: { headers } });
   } catch { return redirectToLogin(req); }
 }

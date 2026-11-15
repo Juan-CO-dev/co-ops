@@ -21,6 +21,7 @@
  */
 
 import { portalOrigin } from "@/lib/portal/origin-shared";
+import { acceptDeliveryRefusal } from "@/lib/portal/draft-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
@@ -799,11 +800,54 @@ export async function linkLeadToCustomer(
   }
 }
 
+/**
+ * A quote made FOR a lead is the lead's shop's quote (audit W05 / B011). 0225's insert trigger
+ * (`catering_quotes_bind_location`) files a new quote under its lead's CURRENT shop whatever
+ * `location_id` the insert carries — so authorizing and pricing at the body's `locationId` without
+ * reading the lead let a quote be approved and priced under shop A's rules and land at shop B.
+ * The quote's shop must therefore BE the lead's shop (a lead with no shop yet binds nothing).
+ *
+ * A lead id that names nothing gets the SAME answer as a lead at another shop: no existence oracle
+ * (the stance `assertQuoteCustomerAllowed` takes for customers). Read-only.
+ *
+ * A transfer that commits between this read and the insert still moves the quote with its lead:
+ * that is 0225's design ("bind outstanding obligations to its current shop"), identical to a quote
+ * created a moment before the transfer.
+ */
+async function assertLeadAtQuoteShop(pipelineId: string | null | undefined, locationId: string): Promise<void> {
+  if (!pipelineId) return;
+  const { data: lead, error } = await getServiceRoleClient()
+    .from("catering_pipeline")
+    .select("id, location_id")
+    .eq("id", pipelineId)
+    .maybeSingle<{ id: string; location_id: string | null }>();
+  if (error) throw new Error(`quote lead read failed: ${error.code ?? "unknown"}`);
+  if (!lead || (lead.location_id != null && lead.location_id !== locationId)) {
+    throw new CateringQuoteError(409, "lead_location_mismatch", "That lead belongs to another shop, or no longer exists");
+  }
+}
+
+/**
+ * The lead check that can refuse a NEW quote, before anything stateful: the actor may write the
+ * quote's shop, and the lead (when there is one) is at that shop. The quotes POST calls this
+ * BEFORE it resolves, creates or revives the customer, like `preflightQuoteLines`; createQuote
+ * runs the same checks again itself.
+ */
+export async function preflightQuoteLead(
+  actor: AuthContext,
+  input: { locationId: string; pipelineId?: string | null },
+): Promise<void> {
+  assertCanWrite(actor, input.locationId);
+  await assertLeadAtQuoteShop(input.pipelineId, input.locationId);
+}
+
 /** Create a draft quote (v1) — computes + freezes the charge stack, inserts header + lines. */
 export async function createQuote(actor: AuthContext, input: CreateQuoteInput): Promise<{ id: string; version: number }> {
   const locationId = input.locationId;
   if (!locationId) throw new CateringQuoteError(400, "invalid_payload", "locationId is required");
   assertCanWrite(actor, locationId);
+  // B011: the lead's shop IS the quote's shop — before pricing and before any write.
+  await assertLeadAtQuoteShop(input.pipelineId, locationId);
   // Review P1 / option b: a quote names a customer the actor can read, or one attached by the
   // typed email (pre-existing gap: the route passed any body `customerId` through). Before any write.
   if (input.customerId) await assertQuoteCustomerAllowed(actor, input.customerId, input.emailAttach);
@@ -1051,9 +1095,12 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   const sb = getServiceRoleClient();
   const { data: row, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, location_id, status, superseded_at")
+    .select("id, location_id, status, superseded_at, origin, is_delivery, delivery_zone_id, delivery_fee_cents, subtotal_cents")
     .eq("id", id)
-    .maybeSingle<{ id: string; location_id: string; status: string; superseded_at: string | null }>();
+    .maybeSingle<{
+      id: string; location_id: string; status: string; superseded_at: string | null; origin: string;
+      is_delivery: boolean; delivery_zone_id: string | null; delivery_fee_cents: number; subtotal_cents: number;
+    }>();
   if (lErr) throw new Error(`setQuoteStatus load: ${lErr.message}`);
   if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
   assertCanWrite(actor, row.location_id);
@@ -1063,6 +1110,26 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   // (declined → accepted is a legitimate manager reversal).
   if (row.status === "expired" && status === "accepted") {
     throw new CateringQuoteError(409, "quote_expired", "This quote has expired — revise it before accepting");
+  }
+  // A SELF-SERVE delivery order is re-checked on accept with the portal's own rule against the shop's
+  // CURRENT zones (Juan 2026-11-15): the most expensive active zone, its fee, its minimum. An order the
+  // portal would not take today (no zone, under the minimum, a fee that moved) is refused by name;
+  // revising re-prices it with the zone staff choose.
+  if (status === "accepted" && row.origin === "self_serve" && row.is_delivery) {
+    const { data: zoneRows, error: zErr } = await sb
+      .from("catering_delivery_zones")
+      .select("id, fee_cents, min_order_cents")
+      .eq("location_id", row.location_id)
+      .eq("active", true)
+      .returns<Array<{ id: string; fee_cents: number; min_order_cents: number | null }>>();
+    if (zErr) throw new Error(`setQuoteStatus zones: ${zErr.message}`);
+    const refusal = acceptDeliveryRefusal(
+      { origin: row.origin, isDelivery: row.is_delivery, deliveryZoneId: row.delivery_zone_id, deliveryFeeCents: row.delivery_fee_cents, subtotalCents: row.subtotal_cents },
+      (zoneRows ?? []).map((z) => ({ id: z.id, feeCents: z.fee_cents, minOrderCents: z.min_order_cents })),
+    );
+    if (refusal === "delivery_unavailable") throw new CateringQuoteError(409, refusal, "No active delivery zone at this shop — add one or revise the quote before accepting");
+    if (refusal === "below_delivery_minimum") throw new CateringQuoteError(409, refusal, "This delivery order is under its zone's minimum — revise it before accepting");
+    if (refusal === "delivery_fee_changed") throw new CateringQuoteError(409, refusal, "The delivery fee is out of date — revise the quote before accepting");
   }
 
   // Guard on the status the pre-read saw (silent-UPDATE law): count 0 means the status

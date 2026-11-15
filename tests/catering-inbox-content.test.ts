@@ -59,3 +59,31 @@ it("only bounded full template lines are stripped", () => {
   expect(inboxLatestText(long).text).toBe(long);
   expect(inboxLatestText("Hi customer, I need catering").text).toBe("Hi customer, I need catering");
 });
+
+// Audit W11/B017: one HTML-only email must never freeze the worker (quadratic regex on unclosed openers).
+describe("html-to-text is linear on unclosed openers", () => {
+  it.each([
+    ["<style>", 70_000], ["<script>", 60_000], ["<blockquote>", 40_000], ["<style ", 70_000], ["<br", 160_000], ["<STYLE>", 70_000],
+  ] as const)("%s x %d", (chunk, times) => {
+    const html = chunk.repeat(times);
+    const start = performance.now();
+    inboxHtmlToText(html);
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+  it("keeps today's output for closed and unclosed blocks", () => {
+    expect(inboxHtmlToText("<style>a</style>b<style>c")).toBe("b c");
+    expect(inboxHtmlToText("x<STYLE type=x>a</style >y<script>z")).toBe("x y z");
+    expect(inboxHtmlToText("a<style>b<script>c</script>d")).toBe("a b d");
+    expect(inboxHtmlToText("a<br>b<br/>c<br")).toBe("a\nb\nc");
+    expect(inboxHtmlToText("a<blockquote x>q<blockquote>r</blockquote>s</blockquote>t")).toBe("a s t");
+  });
+  it("caps HTML before conversion and records the truncation", () => {
+    const result = inboxContent({ html: "<p>x</p>" + "y".repeat(3_000_000) });
+    expect(result.body_truncated).toBe(true);
+    expect(result.body_original_bytes).toBeGreaterThan(Buffer.byteLength(result.body_text));
+    expect(result.body_from_html).toBe(true);
+  });
+  it("a small HTML body is not marked truncated", () => {
+    expect(inboxContent({ html: "<p>hello</p>" })).toMatchObject({ body_text: "hello", body_truncated: false });
+  });
+});

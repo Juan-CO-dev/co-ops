@@ -19,7 +19,14 @@ export class VendorImportError extends Error {
 }
 export { VENDOR_IMPORT_STAGE_MIN, VENDOR_IMPORT_APPLY_MIN } from "@/lib/vendor-import-shared/levels";
 export const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
-const ADAPTER_VERSION = "v3c2-v1";
+/**
+ * The semantics a staged batch's persisted proposals were computed under. Bump it whenever the matcher's
+ * meaning changes: a staged batch keeps its proposals, so an older batch must restage, never apply.
+ * v3c2-v2 (audit W04/B008 + B042): prices are per internal ROOT, and a global multi-level hierarchy is
+ * proved before pricing. Every batch staged as v3c2-v1 carries the old proposals.
+ */
+const ADAPTER_VERSION = "v3c2-v2";
+export const VENDOR_IMPORT_ADAPTER_VERSION = ADAPTER_VERSION;
 type BeforeState = Record<string, Record<string, unknown>>;
 interface PackRow {
   sku_id: string; id: string; label: string; contains_qty: number;
@@ -296,6 +303,14 @@ export async function applyVendorImport(actor: AuthContext, vendorId: string, ba
   await loadVendor(vendorId);
   const view = await loadImportBatch(actor, vendorId, batchId);
   requireScope(actor, view.batch.location_id, "apply");
+  if (view.batch.status === "staged" && view.batch.adapter_version !== ADAPTER_VERSION) {
+    // W04 r1: proposals staged under older semantics (e.g. a per-bag price at a box root) must never
+    // apply. Retire the batch so the same file restages under the current version, and say so.
+    const { error: supersedeError } = await getServiceRoleClient().from("vendor_import_batches").update({ status: "superseded" })
+      .eq("id", batchId).eq("vendor_id", vendorId).eq("status", "staged").eq("adapter_version", view.batch.adapter_version);
+    check(supersedeError);
+    throw new VendorImportError(409, "stale_before_state");
+  }
   const keys = new Set(view.observations.map(observationKey));
   if (Object.keys(decisions).some(k => !keys.has(k))) throw new VendorImportError(400, "invalid_payload");
   const ops = makeOps(view.observations, decisions, view.beforeState);
