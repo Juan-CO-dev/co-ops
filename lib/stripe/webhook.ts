@@ -85,10 +85,44 @@
  *     was just paid. A cleanup that could not finish looking reports itself the same way
  *     as one that could not close (`sibling_checkout_open`) — never as "nothing open".
  *     The flip itself stays unguarded on the revision: money Stripe took is recorded.
- * EVERYTHING AFTER THE FLIP IS NON-THROWING. An event whose processing fails is retried
- * (B005), and a retry of a flip that did land reports `already_advanced` with no audit row
- * and no email. A failure in the review step therefore degrades to a reason
- * (`sibling_check_failed`), never to an exception.
+ * EVERYTHING AFTER THE FLIP IS NON-THROWING. A failure in the review step degrades to a
+ * reason (`sibling_check_failed`), never to an exception.
+ *
+ * ── A SETTLEMENT IS FINISHED WHEN ITS EVENT IS STAMPED, NOT WHEN ITS ROW IS PAID (review r5) ─
+ * Recording money is four steps: (1) the paid flip, (2) voiding the order's other deposit /
+ * full intent, (3) closing the order's other checkouts, (4) the verdict on the ledger row.
+ * The function can be cut off between any two (a timeout, a crash, a deploy). A redelivery
+ * then found the row already paid by this same charge, answered `already_advanced`, and
+ * STAMPED that as the verdict: steps 2 and 3 never ran, a full-amount checkout stayed
+ * payable beside a paid deposit, and nothing would ever look again. "The row is paid" had
+ * been read as "the work is done".
+ *
+ * The ledger row is what says the work is done. So:
+ *   · A REDELIVERY OF AN EVENT WHOSE LEDGER ROW WAS NEVER STAMPED (outcome NULL or
+ *     `processing_failed`) that finds its own charge already on the row RESUMES the
+ *     settlement: steps 2 and 3 run again, from the row as it is now, and the order is
+ *     judged again. Every one of those writes is idempotent — the sibling void is guarded on
+ *     `due`, a retire of a session that is already expired answers `expired`, every clear is
+ *     guarded on the exact session id — so running them twice changes nothing the second
+ *     time. The verdict is then `paid`, or `paid_needs_review` when something could not be
+ *     confirmed closed (`sibling_checkout_open`): THE LEDGER IS NEVER STAMPED WITH A TERMINAL
+ *     VERDICT FOR A SETTLEMENT WHOSE CLEANUP NEITHER COMPLETED NOR WAS RECORDED AS UNRESOLVED.
+ *   · `already_advanced` is what is left: a delivery SEEN FOR THE FIRST TIME (its ledger row
+ *     was inserted by this run) whose charge is already on the row. Another event recorded
+ *     that charge, and that event's own ledger row carries the settlement — to its end, by
+ *     the rule above. Also: the same charge on a row that has since been refunded.
+ *   · THE REPORT RIDES ON THE STAMP. The audit row and the staff email are sent AFTER the
+ *     verdict is stamped, by the run whose stamp landed. So an unstamped ledger row means
+ *     nobody has been told yet, and the delivery that resumes the settlement is the one that
+ *     tells them — once. Two deliveries of one event running at the same moment both do the
+ *     (idempotent) work; one stamp wins and that run reports. The run that lost the stamp
+ *     stays quiet UNLESS it found something to review: a finding is never dropped to avoid a
+ *     second email. A stamp that FAILED (a database error) is not a lost stamp — that run
+ *     reports, because nobody else will.
+ *   · One fact a resumed settlement cannot recompute: whether the intent had been VOID
+ *     before it was paid (`intent_was_void`) — the flip overwrote that status. Everything
+ *     else (the amount, the order's price now, its deadline, its other payments, its open
+ *     checkouts) is read again and judged again.
  *
  * ── TWO DEPLOYMENT SHAPES, ONE PROCESSOR ─────────────────────────────────────────────
  * DEFAULT — one Stripe account for the whole business, endpoint `/api/webhooks/stripe`.
@@ -124,9 +158,9 @@ type ServiceClient = ReturnType<typeof getServiceRoleClient>;
  * takes with `AuditAction`.
  */
 export type StripeProcessingResult =
-  | "paid"                // a due row became paid (the happy path)
+  | "paid"                // a due row became paid AND its order was cleaned up (first delivery, or a resumed one)
   | "paid_needs_review"   // money was taken and recorded, but something about it needs a human
-  | "already_advanced"    // the guarded update matched 0 rows — this same charge got there first
+  | "already_advanced"    // a FIRST-SEEN delivery whose charge another event already recorded (or the row was since refunded)
   | "payment_not_found"   // metadata + session-id lookup both came up empty
   | "location_mismatch"   // per-location mode: the payment belongs to another shop
   | "async_failed"        // delayed-notification payment failed; the row stays 'due'
@@ -280,13 +314,21 @@ export function isRetryableLedgerOutcome(outcome: string | null): boolean {
  *  GUARDED on the row still being unfinished (`outcome` NULL or `processing_failed`): two
  *  deliveries of one event can run the dispatch concurrently, and the loser of the guarded
  *  money write must not replace the winner's `paid` with its own `already_advanced`. The
- *  first terminal verdict wins. */
+ *  first terminal verdict wins.
+ *
+ *  IT SAYS WHETHER ITS STAMP LANDED (review r5), because the report rides on the stamp (see
+ *  the header): `stamped` = this run wrote the verdict; `lost` = the guard matched nothing,
+ *  i.e. another delivery of this event already wrote a terminal one; `failed` = the write
+ *  itself failed, so NOBODY is known to have stamped it. Only an explicit rowcount of zero
+ *  is `lost`. */
+type StampResult = "stamped" | "lost" | "failed";
+
 async function finalizeEvent(
   sb: ServiceClient,
   id: string,
   result: StripeProcessingResult,
   locationId: string | null,
-): Promise<void> {
+): Promise<StampResult> {
   const patch: Record<string, unknown> = {
     outcome: result,
     processed_at: new Date().toISOString(),
@@ -294,12 +336,33 @@ async function finalizeEvent(
   // Single-account mode learns the shop during processing; never overwrite a known one
   // with null (`location_id` is only set here when we actually resolved it).
   if (locationId) patch.location_id = locationId;
-  const { error } = await sb
+  const { error, count } = await sb
     .from("stripe_events")
-    .update(patch)
+    .update(patch, { count: "exact" })
     .eq("id", id)
     .or("outcome.is.null,outcome.eq.processing_failed");
-  if (error) console.error(`[stripe webhook] outcome stamp failed for ${id}:`, error.message);
+  if (error) {
+    console.error(`[stripe webhook] outcome stamp failed for ${id}:`, error.message);
+    return "failed";
+  }
+  return count === 0 ? "lost" : "stamped";
+}
+
+/**
+ * What a settlement has to TELL people, held until its verdict is on the ledger (see the
+ * header: the report rides on the stamp). `run` writes the audit row and sends the staff
+ * email; it NEVER THROWS. `needsReview` = the settlement found something a person must look
+ * at, which is reported even by a run that lost the stamp.
+ */
+interface SettlementReport {
+  needsReview: boolean;
+  run: () => Promise<void>;
+}
+
+interface Dispatched {
+  result: StripeProcessingResult;
+  locationId: string | null;
+  report?: SettlementReport;
 }
 
 /**
@@ -477,13 +540,19 @@ export async function processStripeEvent(
     const prior = await readLedgerOutcome(sb, outcome.eventId);
     if (!isRetryableLedgerOutcome(prior)) return { result: "duplicate", locationId: ctx.locationId };
   }
+  // A REDELIVERY OF UNFINISHED WORK (review r5): this event's ledger row already existed and
+  // carries no terminal verdict. If its charge turns out to be on the payment row already,
+  // the earlier delivery was cut off after its flip, and this one resumes the settlement.
+  const redelivery = appended === "duplicate";
 
   let result: StripeProcessingResult = "ignored";
   let resolvedLocation: string | null = ctx.locationId;
+  let report: SettlementReport | undefined;
   try {
-    const dispatched = await dispatch(sb, outcome, ctx, deps);
+    const dispatched = await dispatch(sb, outcome, ctx, deps, redelivery);
     result = dispatched.result;
     resolvedLocation = dispatched.locationId ?? ctx.locationId;
+    report = dispatched.report;
   } catch (e) {
     // A processing failure is recorded on the ledger AND reported, so the route answers
     // 500 and Stripe redelivers: `processing_failed` is a retryable ledger state (see the
@@ -497,7 +566,11 @@ export async function processStripeEvent(
     return { result: "processing_failed", locationId: resolvedLocation };
   }
 
-  await finalizeEvent(sb, outcome.eventId, result, resolvedLocation);
+  const stamp = await finalizeEvent(sb, outcome.eventId, result, resolvedLocation);
+  // THE REPORT RIDES ON THE STAMP (see the header). `lost` = another delivery of this event
+  // stamped its verdict first and is the one that reports — unless this run found something
+  // a person must look at, which is never dropped.
+  if (report && (stamp !== "lost" || report.needsReview)) await report.run();
   return { result, locationId: resolvedLocation };
 }
 
@@ -506,7 +579,9 @@ async function dispatch(
   outcome: CheckoutEventOutcome,
   ctx: StripeWebhookContext,
   deps: StripeWebhookDeps,
-): Promise<{ result: StripeProcessingResult; locationId: string | null }> {
+  /** This event's ledger row already existed, unfinished (see `processStripeEvent`). */
+  redelivery: boolean,
+): Promise<Dispatched> {
   if (outcome.kind === "ignored") return { result: "ignored", locationId: null };
 
   if (outcome.kind === "refunded") return refund(sb, outcome, ctx);
@@ -514,7 +589,7 @@ async function dispatch(
   const payment = await findPaymentForSession(sb, outcome);
   if (!payment) return { result: "payment_not_found", locationId: null };
 
-  let quote = await quoteOfPayment(sb, payment.quote_id);
+  const quote = await quoteOfPayment(sb, payment.quote_id);
   const locationId = quote?.location_id ?? null;
 
   // PER-LOCATION MODE ONLY: an event signed by one shop's account may not touch another
@@ -577,76 +652,156 @@ async function dispatch(
   if (error) throw new Error(`stripe mark paid: ${error.message}`);
   const flipped = flippedRows?.[0] ?? null;
 
-  if (!flipped) {
-    // The row was already paid or refunded. WHO got there first decides what this is, so the
-    // row is re-read (the pre-read may predate a concurrent delivery of this very charge).
-    const { data: fresh, error: freshErr } = await sb
-      .from("catering_payments")
-      .select(PAYMENT_COLS)
-      .eq("id", payment.id)
-      .maybeSingle<PaymentRow>();
-    if (freshErr) throw new Error(`stripe mark paid re-read: ${freshErr.message}`);
-    const sameCharge =
-      outcome.paymentIntentId != null && fresh?.provider_ref != null && fresh.provider_ref === outcome.paymentIntentId;
-    if (sameCharge) return { result: "already_advanced", locationId };
-
-    // A DIFFERENT settlement got there first — staff marked it paid by hand, or it was paid
-    // and refunded — and now Stripe has taken money for it as well. There is no row to flip,
-    // and saying `already_advanced` would bury a charge nobody has recorded. Say it loudly.
-    const reasons: PaymentReviewReason[] = ["already_settled"];
-    void audit({
-      actorId: null,
-      actorRole: null,
-      action: "catering.payment.provider_paid",
-      resourceTable: "catering_payments",
-      resourceId: payment.id,
-      metadata: {
-        actor_context: "stripe_webhook",
-        quote_id: payment.quote_id,
-        kind: payment.kind,
-        amount_cents: payment.amount_cents,
-        event_amount_cents: outcome.amountCents ?? null,
-        session_id: outcome.sessionId ?? null,
-        payment_intent_id: outcome.paymentIntentId ?? null,
-        stripe_event_id: outcome.eventId,
-        livemode: outcome.livemode,
-        location_id: locationId,
-        location_code: ctx.locationCode,
-        // `row_moved: false` ⇒ this row was NOT written; it keeps its earlier settlement.
-        row_moved: false,
-        row_status: fresh?.status ?? null,
-        needs_review: reasons,
-        voided_sibling_ids: [],
-      },
-      ipAddress: null,
-      userAgent: null,
+  if (flipped) {
+    // THE ROW IS PAID. From here to the return NOTHING MAY THROW (see the header).
+    return settle(sb, {
+      payment,
+      quote,
+      locationId,
+      outcome,
+      ctx,
+      deps,
+      notify,
+      row: flipped,
+      settledAtMs,
+      wasVoid: payment.status === "void",
+      resumed: false,
     });
-    try {
-      await notify({
-        paymentId: payment.id,
-        quoteId: payment.quote_id,
-        locationId,
-        kind: payment.kind,
-        amountCents: outcome.amountCents ?? payment.amount_cents,
-        reviewReasons: reasons,
-      });
-    } catch (e) {
-      console.error(`[stripe webhook] review-notify failed for ${payment.id}:`, e instanceof Error ? e.message : e);
-    }
-    return { result: "paid_needs_review", locationId };
   }
 
-  // THE ROW IS PAID. From here to the return NOTHING MAY THROW (see the header).
+  // The row was already paid or refunded. WHO got there first decides what this is, so the
+  // row is re-read (the pre-read may predate a concurrent delivery of this very charge).
+  const { data: fresh, error: freshErr } = await sb
+    .from("catering_payments")
+    .select(`${PAYMENT_COLS}, provider_session_id`)
+    .eq("id", payment.id)
+    .maybeSingle<PaymentRow & { provider_session_id: string | null }>();
+  if (freshErr) throw new Error(`stripe mark paid re-read: ${freshErr.message}`);
+  const sameCharge =
+    outcome.paymentIntentId != null && fresh?.provider_ref != null && fresh.provider_ref === outcome.paymentIntentId;
+  if (sameCharge && fresh) {
+    // THIS CHARGE IS ALREADY ON THE ROW. Whether that means "finished" is the LEDGER's
+    // question, not the row's (review r5 — see the header).
+    //   · A REDELIVERY of this event whose ledger row was never stamped: the delivery that
+    //     flipped the row was cut off somewhere after its flip. The settlement is RESUMED —
+    //     the same steps, from the row as it is now. They are idempotent, so resuming a
+    //     settlement that had in fact finished its cleanup changes nothing.
+    //   · A row that is no longer `paid` (it has since been refunded) has no order to tidy.
+    //   · A FIRST-SEEN event: another event recorded this charge, and that event's own
+    //     ledger row carries the settlement to its end. Nothing to do here, quietly.
+    if (redelivery && fresh.status === "paid") {
+      return settle(sb, {
+        payment: { ...payment, kind: fresh.kind, amount_cents: fresh.amount_cents, status: fresh.status },
+        quote,
+        locationId,
+        outcome,
+        ctx,
+        deps,
+        notify,
+        row: { id: fresh.id, quote_id: fresh.quote_id, provider_session_id: fresh.provider_session_id ?? null },
+        settledAtMs,
+        // The flip overwrote the status it found; a resumed run cannot know (see the header).
+        wasVoid: null,
+        resumed: true,
+      });
+    }
+    return { result: "already_advanced", locationId };
+  }
+
+  // A DIFFERENT settlement got there first — staff marked it paid by hand, or it was paid
+  // and refunded — and now Stripe has taken money for it as well. There is no row to flip,
+  // and saying `already_advanced` would bury a charge nobody has recorded. Say it loudly.
+  const reasons: PaymentReviewReason[] = ["already_settled"];
+  return {
+    result: "paid_needs_review",
+    locationId,
+    report: {
+      needsReview: true,
+      run: async () => {
+        void audit({
+          actorId: null,
+          actorRole: null,
+          action: "catering.payment.provider_paid",
+          resourceTable: "catering_payments",
+          resourceId: payment.id,
+          metadata: {
+            actor_context: "stripe_webhook",
+            quote_id: payment.quote_id,
+            kind: payment.kind,
+            amount_cents: payment.amount_cents,
+            event_amount_cents: outcome.amountCents ?? null,
+            session_id: outcome.sessionId ?? null,
+            payment_intent_id: outcome.paymentIntentId ?? null,
+            stripe_event_id: outcome.eventId,
+            livemode: outcome.livemode,
+            location_id: locationId,
+            location_code: ctx.locationCode,
+            // `row_moved: false` ⇒ this row was NOT written; it keeps its earlier settlement.
+            row_moved: false,
+            row_status: fresh?.status ?? null,
+            needs_review: reasons,
+            voided_sibling_ids: [],
+          },
+          ipAddress: null,
+          userAgent: null,
+        });
+        try {
+          await notify({
+            paymentId: payment.id,
+            quoteId: payment.quote_id,
+            locationId,
+            kind: payment.kind,
+            amountCents: outcome.amountCents ?? payment.amount_cents,
+            reviewReasons: reasons,
+          });
+        } catch (e) {
+          console.error(`[stripe webhook] review-notify failed for ${payment.id}:`, e instanceof Error ? e.message : e);
+        }
+      },
+    },
+  };
+}
+
+interface SettleInput {
+  /** The payment as this delivery READ it (its `quote_id` is the revision it was read on). */
+  payment: PaymentRow;
+  /** The quote of that read. Re-read here when the row turns out to be on another revision. */
+  quote: QuoteContext | null;
+  locationId: string | null;
+  outcome: CheckoutEventOutcome;
+  ctx: StripeWebhookContext;
+  deps: StripeWebhookDeps;
+  notify: (args: NotifyPaidArgs) => Promise<void>;
+  /** WHERE THE PAID ROW IS NOW and the session it names: what the flip returned, or — for a
+   *  resumed settlement — the re-read that showed this charge already on the row. */
+  row: { id: string; quote_id: string; provider_session_id: string | null };
+  settledAtMs: number;
+  /** Was the intent `void` when it was paid? Null = a resumed run, which cannot know. */
+  wasVoid: boolean | null;
+  /** True when an earlier delivery of this event did the flip and was cut off (review r5). */
+  resumed: boolean;
+}
+
+/**
+ * EVERYTHING A SETTLEMENT DOES AFTER ITS ROW IS PAID: judge the order, void its other
+ * deposit / full intent, close its other checkouts — and hand back the verdict with the
+ * report to make once that verdict is stamped. Run by the delivery that flipped the row and,
+ * identically, by a redelivery that resumes a settlement cut off after its flip (see the
+ * header). NEVER THROWS. Every write in it is idempotent.
+ */
+async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched> {
+  const { outcome, ctx, deps, locationId, row } = input;
+  let quote = input.quote;
   const reasons: PaymentReviewReason[] = [];
   // WHERE THE PAYMENT IS NOW (review r4). If a revise moved it between the read and the
   // flip, the order is judged as it stands on the revision the row is on — its price, its
   // deadline, whether it is still open — not on the one that was read.
-  const readOnQuoteId = payment.quote_id;
-  const moved = flipped.quote_id !== readOnQuoteId;
+  const readOnQuoteId = input.payment.quote_id;
+  const moved = row.quote_id !== readOnQuoteId;
+  const payment: PaymentRow = { ...input.payment, quote_id: row.quote_id };
   if (moved) {
-    payment.quote_id = flipped.quote_id;
     try {
-      const now = await quoteOfPayment(sb, flipped.quote_id);
+      const now = await quoteOfPayment(sb, row.quote_id);
       if (!now) throw new Error("the revision the payment is on could not be found");
       quote = now;
     } catch (e) {
@@ -654,7 +809,7 @@ async function dispatch(
       reasons.push("quote_recheck_failed");
     }
   }
-  if (payment.status === "void") reasons.push("intent_was_void");
+  if (input.wasVoid === true) reasons.push("intent_was_void");
   if (outcome.amountCents != null && outcome.amountCents !== payment.amount_cents) reasons.push("amount_mismatch");
   // AN OLDER PRICE (review r1). An intent whose checkout could not be retired when the quote
   // was re-priced keeps the amount that checkout charges (lib/catering/payment-carry.ts), so
@@ -668,7 +823,7 @@ async function dispatch(
   }
   // SETTLED AFTER THE OFFER EXPIRED (review r2): the one shared clock rule, read at the
   // moment the money settled. An `accepted` order is not on that clock and is never flagged.
-  const settledLate = quote != null && quoteTimeExpired(quote.status ?? "", quote.expires_at, settledAtMs);
+  const settledLate = quote != null && quoteTimeExpired(quote.status ?? "", quote.expires_at, input.settledAtMs);
   if (settledLate) reasons.push("paid_after_expiry");
   const siblings = await reviewSiblings(sb, payment);
   reasons.push(...siblings.reasons);
@@ -678,69 +833,81 @@ async function dispatch(
   // reason for a person to look. It works from what the FLIP returned (review r4): the
   // session this row names is closed too unless it is the very session that was just paid.
   const closed: ClosedCheckouts = await closeQuoteCheckouts(sb, {
-    quoteId: flipped.quote_id,
+    quoteId: row.quote_id,
     locationId,
     settledPaymentId: payment.id,
-    settledSessionId: flipped.provider_session_id ?? null,
+    settledSessionId: row.provider_session_id ?? null,
     paidThroughSessionId: outcome.sessionId ?? null,
     retire: deps.retireSession,
   });
   if (closed.stillOpen.length > 0) reasons.push("sibling_checkout_open");
 
-  void audit({
-    actorId: null,
-    actorRole: null,
-    action: "catering.payment.provider_paid",
-    resourceTable: "catering_payments",
-    resourceId: payment.id,
-    metadata: {
-      actor_context: "stripe_webhook",
-      quote_id: payment.quote_id,
-      kind: payment.kind,
-      // The row's own amount is the authority; the event's is evidence beside it, so a
-      // disagreement is findable instead of adopted.
-      amount_cents: payment.amount_cents,
-      event_amount_cents: outcome.amountCents ?? null,
-      session_id: outcome.sessionId ?? null,
-      payment_intent_id: outcome.paymentIntentId ?? null,
-      stripe_event_id: outcome.eventId,
-      livemode: outcome.livemode,
-      location_id: locationId,
-      location_code: ctx.locationCode,
-      row_moved: true,
-      // Present only when a revise moved the payment between this event's read and its
-      // flip: `quote_id` above is where the payment is NOW, this is where it was read.
-      ...(moved ? { read_on_quote_id: readOnQuoteId } : {}),
-      // When the money settled (the row's `paid_at`), beside the offer's deadline.
-      settled_at: settledAt,
-      offer_expires_at: quote?.expires_at ?? null,
-      // Empty for an ordinary payment. See PaymentReviewReason.
-      needs_review: reasons,
-      voided_sibling_ids: siblings.voided,
-      // The quote's other checkouts, by payment id: retired / could not be confirmed closed
-      // / already complete (that money is landing; its own event records it).
-      closed_checkouts: closed,
-    },
-    ipAddress: null,
-    userAgent: null,
-  });
-
-  // BEST-EFFORT, ALWAYS. A mail failure must never fail a webhook: the money has landed
-  // and the row says so; the email is how a human hears about it sooner.
-  try {
-    await notify({
-      paymentId: payment.id,
-      quoteId: payment.quote_id,
-      locationId,
-      kind: payment.kind,
-      amountCents: payment.amount_cents,
-      reviewReasons: reasons,
+  const settledAt = new Date(input.settledAtMs).toISOString();
+  const report = async (): Promise<void> => {
+    void audit({
+      actorId: null,
+      actorRole: null,
+      action: "catering.payment.provider_paid",
+      resourceTable: "catering_payments",
+      resourceId: payment.id,
+      metadata: {
+        actor_context: "stripe_webhook",
+        quote_id: payment.quote_id,
+        kind: payment.kind,
+        // The row's own amount is the authority; the event's is evidence beside it, so a
+        // disagreement is findable instead of adopted.
+        amount_cents: payment.amount_cents,
+        event_amount_cents: outcome.amountCents ?? null,
+        session_id: outcome.sessionId ?? null,
+        payment_intent_id: outcome.paymentIntentId ?? null,
+        stripe_event_id: outcome.eventId,
+        livemode: outcome.livemode,
+        location_id: locationId,
+        location_code: ctx.locationCode,
+        row_moved: true,
+        // Present only when an EARLIER delivery of this event flipped the row and was cut
+        // off: this run finished its settlement (review r5). `voided_sibling_ids` and
+        // `closed_checkouts` below are then what THIS run did, and `needs_review` cannot
+        // include `intent_was_void` (the flip overwrote the status it found).
+        ...(input.resumed ? { resumed: true } : {}),
+        // Present only when a revise moved the payment between this event's read and its
+        // flip: `quote_id` above is where the payment is NOW, this is where it was read.
+        ...(moved ? { read_on_quote_id: readOnQuoteId } : {}),
+        // When the money settled (the row's `paid_at`), beside the offer's deadline.
+        settled_at: settledAt,
+        offer_expires_at: quote?.expires_at ?? null,
+        // Empty for an ordinary payment. See PaymentReviewReason.
+        needs_review: reasons,
+        voided_sibling_ids: siblings.voided,
+        // The quote's other checkouts, by payment id: retired / could not be confirmed closed
+        // / already complete (that money is landing; its own event records it).
+        closed_checkouts: closed,
+      },
+      ipAddress: null,
+      userAgent: null,
     });
-  } catch (e) {
-    console.error(`[stripe webhook] paid-notify failed for ${payment.id}:`, e instanceof Error ? e.message : e);
-  }
 
-  return { result: reasons.length > 0 ? "paid_needs_review" : "paid", locationId };
+    // BEST-EFFORT, ALWAYS. A mail failure must never fail a webhook: the money has landed
+    // and the row says so; the email is how a human hears about it sooner.
+    try {
+      await input.notify({
+        paymentId: payment.id,
+        quoteId: payment.quote_id,
+        locationId,
+        kind: payment.kind,
+        amountCents: payment.amount_cents,
+        reviewReasons: reasons,
+      });
+    } catch (e) {
+      console.error(`[stripe webhook] paid-notify failed for ${payment.id}:`, e instanceof Error ? e.message : e);
+    }
+  };
+
+  return {
+    result: reasons.length > 0 ? "paid_needs_review" : "paid",
+    locationId,
+    report: { needsReview: reasons.length > 0, run: report },
+  };
 }
 
 /** Has the WHOLE charge been refunded? Read from the charge alone (see `refund` below). */

@@ -13,9 +13,9 @@
  *     reasons, and the staff notification says a review is needed.
  *   - THE OTHER INTENT IS CLOSED. When a deposit or full payment lands, the quote's other
  *     due deposit/full intent is voided so the board stops showing it as collectable.
- *   - NOTHING AFTER THE FLIP MAY THROW. The event is retried when processing fails (B005),
- *     and a retry of a flip that DID land reports `already_advanced` with no audit and no
- *     email — so a failure in the review step must degrade to a reason, never an exception.
+ *   - NOTHING AFTER THE FLIP MAY THROW. A failure in the review step degrades to a reason,
+ *     never an exception. (What happens when a delivery is CUT OFF after its flip — the
+ *     redelivery resumes the settlement — is pinned in tests/stripe-webhook-resume.test.ts.)
  *
  * Runs against tests/payments-fake-client.ts (predicate-aware, in memory). No DB, no mail.
  */

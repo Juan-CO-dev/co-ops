@@ -17,6 +17,13 @@
  *     does not exist, i.e. "0303 is not applied" — and with `attachFunction` on it runs the
  *     function's rule in one synchronous step (the real one runs under the quote's row
  *     lock; scripts/sql-harness-0303.mjs proves the SQL itself).
+ *   - `beforeOp` (review r5): a hook that runs before EVERY statement, for the two things
+ *     a money path has to survive and a plain fake cannot show. It may be async, so a test
+ *     can run ANOTHER request to completion between one request's read and its write (a
+ *     revise landing under a re-price). And it may answer `"cut"`: that statement then
+ *     never answers at all — the promise stays pending for ever, which is what a function
+ *     that was killed there (a timeout, a crash, a deploy) looks like to everything after
+ *     it. Not an error: an error is caught and handled; a death is not.
  *
  * Never a real database. Rows are plain objects the test owns and may inspect afterwards.
  */
@@ -42,6 +49,9 @@ export interface PaymentsFake {
   enforceOneOpenCheckout: boolean;
   /** 0303's `catering_payment_attach_checkout` exists (off by default = PGRST202). */
   attachFunction: boolean;
+  /** See the header. Null = no hook. Statements the hook itself issues go through it too,
+   *  so a hook that runs another request disarms itself first. */
+  beforeOp: ((op: { table: string; kind: "select" | "insert" | "update"; payload: unknown }) => void | "cut" | Promise<void | "cut">) | null;
 }
 
 /** Both halves of migration 0303 at once: the index and the attach function. */
@@ -93,6 +103,7 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
     failInsert: [],
     enforceOneOpenCheckout: false,
     attachFunction: false,
+    beforeOp: null,
   };
 
   /**
@@ -206,6 +217,16 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
       return { data: out.map((r) => ({ ...r })), error: null, count: out.length };
     };
 
+    /** `run()`, after the test's hook has had its say (see `beforeOp`). With no hook this
+     *  executes at the moment the statement is awaited, exactly as before. */
+    const settle = async (): Promise<Settled> => {
+      if (db.beforeOp) {
+        const verdict = await db.beforeOp({ table, kind, payload });
+        if (verdict === "cut") return new Promise<Settled>(() => {});
+      }
+      return run();
+    };
+
     const one = (r: Settled, required: boolean): Settled => {
       if (r.error) return r;
       const list = (r.data as Row[] | null) ?? [];
@@ -244,9 +265,9 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
       returns: () => q,
       insert: (p: unknown) => { kind = "insert"; payload = p; return q; },
       update: (p: unknown, _opts?: unknown) => { kind = "update"; payload = p; return q; },
-      maybeSingle: async () => one(run(), false),
-      single: async () => one(run(), true),
-      then: (resolve: (v: Settled) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve(run()).then(resolve, reject),
+      maybeSingle: async () => one(await settle(), false),
+      single: async () => one(await settle(), true),
+      then: (resolve: (v: Settled) => unknown, reject?: (e: unknown) => unknown) => settle().then(resolve, reject),
     };
     return q;
   }

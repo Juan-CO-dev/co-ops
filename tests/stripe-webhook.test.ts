@@ -543,16 +543,36 @@ describe("W02/B005 — an event that was SEEN but never FINISHED is worked again
     });
   });
 
-  it("the retry of work that DID land is a reported no-op: no second audit, no second email", async () => {
-    const { client } = stubClient(
+  // Review r5. This test used to read "the row is already paid by this charge" as "all the
+  // work landed" and expect `already_advanced` with no audit and no email. The ROW cannot
+  // say that: an earlier delivery cut off after its flip leaves exactly this state with the
+  // order's other checkouts still open and nobody told. The LEDGER says whether the work is
+  // done, and here it says it is not (outcome NULL) — so the settlement is resumed, and
+  // because the report rides on the stamp, this is the delivery that makes it. Every cut
+  // point is pinned in tests/stripe-webhook-resume.test.ts.
+  it("a redelivery of an UNSTAMPED event whose charge is already on the row RESUMES the settlement: `paid`, reported once", async () => {
+    const { client, ops } = stubClient(
       handlerFor({
         ledgerInsert: SEEN,
         ledgerRow: { data: { id: "evt_1", outcome: null } },
         paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1" } },
-        paymentUpdate: { count: 0 },
+        paymentUpdate: { count: 0, data: [] },
       }),
     );
     const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("paid");
+    expect(ops.find((o) => o.table === "stripe_events" && o.kind === "update")?.payload).toMatchObject({ outcome: "paid" });
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMock.mock.calls[0]![0].metadata).toMatchObject({ resumed: true, row_moved: true, needs_review: [] });
+    expect(noNotify.notifyPaid).toHaveBeenCalledTimes(1);
+  });
+
+  it("…while a FIRST-SEEN event about a charge already on the row is still the quiet `already_advanced`", async () => {
+    const { client } = stubClient(
+      handlerFor({ paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1" } }, paymentUpdate: { count: 0, data: [] } }),
+    );
+    const out = await processStripeEvent(client, sessionEvent({}, "checkout.session.completed", "evt_other"), SINGLE, noNotify);
 
     expect(out.result).toBe("already_advanced");
     expect(auditMock).not.toHaveBeenCalled();
