@@ -118,8 +118,12 @@ export interface Phase2BlankRow {
  * saved did nothing: the box read empty, the row still read Saved, the finalize counter still
  * counted it, and finalize submitted the old number. Owner decision W14-2 b: deleting a saved
  * amount IS an Undo.
- *   - "ignore"       — nothing is on file (or this row's Undo is already pending / a save is in
- *                      flight): the row stays as it is.
+ *   - "ignore"       — nothing is on file (or this row's Undo is already pending): the row
+ *                      stays as it is.
+ *   - "after_save"   — a save of this row is in flight (fix round 1). The clear is QUEUED behind
+ *                      it: the row stays "saving" (never done), and when the save's answer
+ *                      arrives phase2SaveSettle judges it against the box as it is then — the
+ *                      newest thing the prepper did wins.
  *   - "undo"         — a saved entry is on file: the row stops counting as done
  *                      ("cleared_saved") and the ordinary revoke runs (the server still decides
  *                      silent vs reason-required; nothing is revoked without it).
@@ -128,13 +132,56 @@ export interface Phase2BlankRow {
  *                      undo, the prepper retypes the amount.
  * ONE rule read by the dispatcher (opening-client.tsx) and by the row (OpeningPrepEntry.tsx).
  */
-export function phase2BlankOutcome(row: Phase2BlankRow | null | undefined): "ignore" | "undo" | "mark_cleared" {
+export function phase2BlankOutcome(
+  row: Phase2BlankRow | null | undefined,
+): "ignore" | "after_save" | "undo" | "mark_cleared" {
   if (!row) return "ignore";
-  if (row.status === "saving") return "ignore";
+  if (row.status === "saving") return "after_save";
   if (row.incompleteReason === "cleared_saved") return "ignore";
   if (row.completionId !== null) return "undo";
   if (row.status === "saved") return "mark_cleared";
   return "ignore";
+}
+
+/**
+ * Audit W14 / B180, fix round 1 — what a save's ANSWER does to its row when the amount was
+ * cleared while the save was in flight.
+ *
+ * The box stays enabled during a save, so the prepper can delete the amount and leave the box
+ * before the answer arrives. The answer used to mark the row Saved regardless: an empty box, a
+ * row that counted as done, and a Finalize that submitted the deleted amount. The clear is now
+ * queued behind the save and judged here, on the row AS IT IS when the answer arrives:
+ *   "as_answered" — no blank was committed since this save left, or an amount is in the box
+ *                   again (the newest word is an amount; its own save decides), or the save
+ *                   failed with nothing on file: the row takes the answer exactly as before.
+ *   "wait"        — the box is still blank but ANOTHER save of this row is in flight: the row
+ *                   stays "saving" (never Saved); that save's answer decides.
+ *   "undo"        — the box is still blank and nothing else touched the row: it reads
+ *                   "cleared" (not done) and the ordinary Undo runs on the entry on file — the
+ *                   one this save just wrote, or on a failed save the one it failed to replace.
+ *                   The server still decides silent vs reason-required.
+ *   "cleared"     — the box is still blank, but the entry's id is unknown or an Undo already
+ *                   ran on this row meanwhile: the row reads "cleared" (not done) and offers
+ *                   Undo; nothing is undone on its own.
+ * A late success can therefore never mark a blank row Saved.
+ */
+export function phase2SaveSettle(args: {
+  answer: "saved" | "failed";
+  /** A blank amount was committed (the box was left empty) after this save left. */
+  clearedSince: boolean;
+  /** What the amount box holds when the answer arrives. */
+  preppedNow: number | null;
+  /** Another save of this row is still in flight. */
+  otherSaveInFlight: boolean;
+  /** The row when the answer arrives. */
+  row: Phase2BlankRow | null;
+  /** The entry on file once the answer is applied: the save's own id, or on a failure the prior one. */
+  completionOnFile: string | null;
+}): "as_answered" | "wait" | "undo" | "cleared" {
+  if (!args.clearedSince || args.preppedNow !== null) return "as_answered";
+  if (args.otherSaveInFlight) return "wait";
+  if (args.completionOnFile === null) return args.answer === "failed" ? "as_answered" : "cleared";
+  return args.row?.status === "saving" ? "undo" : "cleared";
 }
 
 /**

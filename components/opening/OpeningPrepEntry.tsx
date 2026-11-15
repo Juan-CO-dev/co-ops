@@ -161,6 +161,15 @@ export type Phase2RevokeOutcome =
   | { status: "needs_reason" }
   | { status: "error"; code: string };
 
+/**
+ * What a row's save resolves with when the amount was CLEARED while that save was in flight
+ * and the box is still blank at its answer (audit W14 / B180, fix round 1): the entry the
+ * queued clear undoes. The row runs the ordinary Undo on it. Nothing (void) otherwise.
+ */
+export interface Phase2SaveSettled {
+  undoCompletionId: string;
+}
+
 interface OpeningPrepEntryProps {
   actorLevel?: number;
   items: ChecklistTemplateItem[];
@@ -178,8 +187,11 @@ interface OpeningPrepEntryProps {
   saveStates: Map<string, Phase2SaveState>;
   /** Map<users.id, display name> for save attribution. */
   saverNames: Record<string, string>;
-  /** Fires a per-row persist for the given item with the value to save. */
-  onSaveItem: (templateItemId: string, value: OpeningPhase2FormValue) => void;
+  /**
+   * Fires a per-row persist for the given item with the value to save. Resolves when the save
+   * has settled — with the entry to undo when a clear was queued behind it (Phase2SaveSettled).
+   */
+  onSaveItem: (templateItemId: string, value: OpeningPhase2FormValue) => Promise<Phase2SaveSettled | void>;
   /**
    * Fires a per-row §8.4 revoke (Lane D). Called FIRST with no reason — the
    * SERVER decides silent (quick self-window) vs structured. On a "needs_reason"
@@ -190,6 +202,8 @@ interface OpeningPrepEntryProps {
     templateItemId: string,
     reason?: Phase2RevokeReason | null,
     note?: string | null,
+    /** Only for the Undo of a clear queued behind a save: the entry that save just wrote. */
+    queuedClearCompletionId?: string,
   ) => Promise<Phase2RevokeOutcome>;
   /** Map<templateItemId, snapshot row> from loadOpeningCloserCountSnapshots (persisted). */
   closerSnapshots: Map<string, OpeningCloserCountSnapshotRow>;
@@ -277,13 +291,28 @@ export function OpeningPrepEntry({
   // Optimistic no-reason revoke. The server decides silent-vs-structured; a
   // "needs_reason" outcome opens the inline form (re-dispatch carries reason+note);
   // an "error" outcome surfaces an inline notice on the row.
-  const handleRevokeClick = async (itemId: string) => {
+  const handleRevokeClick = async (itemId: string, queuedClearCompletionId?: string) => {
     setRevokingItemId(itemId);
     setRevokeErrorItemId(null);
-    const outcome = await onRevokeItem(itemId);
+    const outcome =
+      queuedClearCompletionId === undefined
+        ? await onRevokeItem(itemId)
+        : await onRevokeItem(itemId, null, null, queuedClearCompletionId);
     setRevokingItemId(null);
     if (outcome.status === "needs_reason") setRevokeModalItemId(itemId);
     else if (outcome.status === "error") setRevokeErrorItemId(itemId);
+  };
+
+  // Every save of a row leaves through here. Audit W14 / B180, fix round 1 — the box stays
+  // enabled while a save is in flight, so the amount can be cleared before the answer arrives.
+  // That clear is queued behind the save: when the save settles with the box still blank, the
+  // dispatcher marks the row "cleared" and names the entry it just wrote, and this runs the
+  // ordinary Undo on it (the SERVER still decides silent vs reason-required; a reason prompt
+  // opens as for any Undo).
+  const saveItem = (itemId: string, next: OpeningPhase2FormValue) => {
+    void onSaveItem(itemId, next).then((settled) => {
+      if (settled && !readOnly) void handleRevokeClick(itemId, settled.undoCompletionId);
+    });
   };
 
   // Group items by section (system key from prep_meta.section).
@@ -430,7 +459,7 @@ export function OpeningPrepEntry({
                     saverName={saverName}
                     onChange={(next) => onChange(item.id, next)}
                     onSave={(next) => {
-                      onSaveItem(item.id, next);
+                      saveItem(item.id, next);
                       // Audit W14 / B180 (owner decision W14-2 b) — deleting an amount that was
                       // already saved is an Undo. The dispatcher (same rule, same row state) has
                       // just marked the row "cleared"; this runs the ordinary revoke, where the
@@ -475,7 +504,7 @@ export function OpeningPrepEntry({
             };
             const next = { ...cur, overPar: capture };
             onChange(overParTarget.id, next);
-            onSaveItem(overParTarget.id, next);
+            saveItem(overParTarget.id, next);
             setOverParModalItemId(null);
           }}
           onCancel={() => setOverParModalItemId(null)}
@@ -498,7 +527,7 @@ export function OpeningPrepEntry({
             };
             const next = { ...cur, underPar: capture };
             onChange(underParTarget.id, next);
-            onSaveItem(underParTarget.id, next);
+            saveItem(underParTarget.id, next);
             setUnderParModalItemId(null);
           }}
           onCancel={() => setUnderParModalItemId(null)}

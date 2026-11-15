@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { phase2BlankOutcome, phase2RevokeSettle, phase2SaveGate, type Phase2GateContext } from "@/lib/opening-phase2-gate";
+import { phase2BlankOutcome, phase2RevokeSettle, phase2SaveGate, phase2SaveSettle, type Phase2GateContext } from "@/lib/opening-phase2-gate";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 import type { BatchRowContext } from "@/lib/batch-prep-shared";
@@ -118,8 +118,9 @@ describe("phase2BlankOutcome — clearing a saved amount is an Undo (B180)", () 
   it("a row already waiting on its Undo is not undone a second time on the next blur", () => {
     expect(phase2BlankOutcome(row({ status: "incomplete", incompleteReason: "cleared_saved", completionId: "c1" }))).toBe("ignore");
   });
-  it("a save in flight is left alone (its answer decides the row)", () => {
-    expect(phase2BlankOutcome(row({ status: "saving", completionId: "c1" }))).toBe("ignore");
+  it("a save in flight: the clear is queued behind it (fix round 1), never an Undo of the entry being replaced", () => {
+    expect(phase2BlankOutcome(row({ status: "saving", completionId: "c1" }))).toBe("after_save");
+    expect(phase2BlankOutcome(row({ status: "saving", completionId: null }))).toBe("after_save");
   });
   it("saved but the row id is unknown: the row stops counting as done, nothing to undo by id", () => {
     expect(phase2BlankOutcome(row({ status: "saved", completionId: null }))).toBe("mark_cleared");
@@ -147,6 +148,73 @@ describe("phase2BlankOutcome — clearing a saved amount is an Undo (B180)", () 
     expect(en["opening.phase2.save.incomplete_cleared"]).toBeTruthy();
     expect(es["opening.phase2.save.incomplete_cleared"]).toBeTruthy();
     expect(es["opening.phase2.save.incomplete_cleared"]).not.toBe(en["opening.phase2.save.incomplete_cleared"]);
+  });
+});
+
+/**
+ * Fix round 1 (Astra W14-r1, P2). The amount box stays enabled while a save is in flight; a
+ * clear committed then used to be ignored, and the save's late answer marked the row Saved
+ * behind an empty box. The clear is queued behind the save and judged at its answer.
+ * The whole sequence against the real page: tests/opening-phase2-clear-during-save.test.ts.
+ */
+describe("phase2SaveSettle — a save's answer after the amount was cleared in flight (B180, fix round 1)", () => {
+  const saving = { status: "saving" as const, completionId: "c1", incompleteReason: null };
+  const base = { answer: "saved" as const, clearedSince: true, preppedNow: null, otherSaveInFlight: false, row: saving, completionOnFile: "c2" };
+  it("nothing was cleared since the save left: the row takes the answer as before", () => {
+    expect(phase2SaveSettle({ ...base, clearedSince: false })).toBe("as_answered");
+    expect(phase2SaveSettle({ ...base, clearedSince: false, answer: "failed" })).toBe("as_answered");
+  });
+  it("cleared, then an amount typed again: the newest word is an amount, the answer stands", () => {
+    expect(phase2SaveSettle({ ...base, preppedNow: 7 })).toBe("as_answered");
+  });
+  it("cleared and still blank: the entry the save just wrote is undone", () => {
+    expect(phase2SaveSettle(base)).toBe("undo");
+  });
+  it("cleared and still blank, the save FAILED: the entry it failed to replace is undone; with nothing on file the failure stands", () => {
+    expect(phase2SaveSettle({ ...base, answer: "failed", completionOnFile: "c1" })).toBe("undo");
+    expect(phase2SaveSettle({ ...base, answer: "failed", completionOnFile: null })).toBe("as_answered");
+  });
+  it("another save of the row is still in flight: the row waits for that answer, never Saved", () => {
+    expect(phase2SaveSettle({ ...base, otherSaveInFlight: true })).toBe("wait");
+    expect(phase2SaveSettle({ ...base, otherSaveInFlight: true, answer: "failed", completionOnFile: null })).toBe("wait");
+  });
+  it("saved but the entry's id is unknown: the row stops counting as done, nothing to undo by id", () => {
+    expect(phase2SaveSettle({ ...base, completionOnFile: null })).toBe("cleared");
+  });
+  it("an Undo already ran on the row meanwhile (a stale answer): cleared and offered, not undone on its own", () => {
+    for (const row of [
+      { status: "unsaved" as const, completionId: null, incompleteReason: null },
+      { status: "incomplete" as const, completionId: "c9", incompleteReason: "cleared_saved" as const },
+      null,
+    ]) {
+      expect(phase2SaveSettle({ ...base, row })).toBe("cleared");
+    }
+  });
+  it("no verdict but as_answered may mark the row Saved, in the dispatcher too", () => {
+    const page = readFileSync(join(ROOT, "app", "(authed)", "operations", "opening", "opening-client.tsx"), "utf8");
+    const fn = page.slice(page.indexOf("const handlePhase2ItemSave = async ("), page.indexOf("const handlePhase2ItemRevoke = async ("));
+    // Every place the save's answer writes "saved" is gated on the verdict …
+    const savedWrites = fn.split(/\r?\n/).filter((line) => /^\s*status: .*"saved"/.test(line));
+    expect(savedWrites).toHaveLength(3);
+    expect(savedWrites.filter((line) => line.includes('verdict === "as_answered" ? "saved"'))).toHaveLength(2);
+    // … but the 409 that ADOPTS the winner's amount into the box (the box is not blank then).
+    const adopt = fn.slice(fn.indexOf("const adopted = hydrated.formValue;"), fn.indexOf("} else {", fn.indexOf("const adopted = hydrated.formValue;")));
+    expect(adopt).toContain("updated.set(templateItemId, adopted);");
+    expect(adopt).toContain('status: "saved",');
+    // Every committed blank is counted, and each save remembers the count it left with.
+    const blank = fn.slice(fn.indexOf('if (gate.kind === "blank")'), fn.indexOf('if (gate.kind === "incomplete")'));
+    expect(blank).toContain("phase2BlankBlurRef.current.set(templateItemId");
+    expect(fn).toContain("const blankBlursAtRequest = phase2BlankBlurRef.current.get(templateItemId) ?? 0;");
+    expect(fn).toContain("phase2SaveSettle({");
+    // The queued clear's Undo names the entry: the success hands back the id it just wrote.
+    expect(fn).toContain('if (verdict === "undo" && writtenId !== null) return { undoCompletionId: writtenId };');
+  });
+  it("the row runs the ordinary Undo on the entry a settled save names", () => {
+    const entry = readFileSync(join(ROOT, "components", "opening", "OpeningPrepEntry.tsx"), "utf8");
+    expect(entry).toContain("void handleRevokeClick(itemId, settled.undoCompletionId);");
+    // Every save of a row leaves through the one wrapper (the box, the shortcut, both modals).
+    expect(entry.match(/\bonSaveItem\(/g)).toHaveLength(1);
+    expect(entry.match(/\bsaveItem\(/g)!.length).toBeGreaterThanOrEqual(3);
   });
 });
 

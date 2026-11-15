@@ -42,7 +42,7 @@ import {
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
 import { hydratePhase2Row, phase2Signature, type HydratedPhase2Row } from "@/lib/opening-phase2-form-shared";
-import { phase2BlankOutcome, phase2RevokeSettle, phase2SaveGate } from "@/lib/opening-phase2-gate";
+import { phase2BlankOutcome, phase2RevokeSettle, phase2SaveGate, phase2SaveSettle } from "@/lib/opening-phase2-gate";
 import { OpeningDraftAutosaver } from "@/lib/opening-draft-autosave";
 import { createClientRequestId } from "@/lib/client-request-id";
 import { isDuplicateInFlight } from "@/lib/made-the-need-shared";
@@ -73,6 +73,7 @@ import {
   type Phase2IncompleteReason,
   type Phase2RevokeOutcome,
   type Phase2RevokeReason,
+  type Phase2SaveSettled,
   type Phase2SaveState,
 } from "@/components/opening/OpeningPrepEntry";
 import type { ManagerOption } from "@/components/opening/OverParModal";
@@ -736,9 +737,18 @@ export function OpeningClient({
    */
   const phase2InFlightSigRef = useRef<Map<string, string>>(new Map());
   /**
-   * The Phase 2 rows AS THEY ARE NOW, for the one handler that must look again after its own
-   * round trip (the Undo, below): a closure only knows the row as it was when the request left.
-   * Written in an effect, never during render.
+   * Audit W14 / B180, fix round 1 — a clear queued behind an in-flight save. Per Phase 2 row:
+   * how many saves are in flight, and a counter that goes up each time the amount box is left
+   * BLANK. A save remembers the counter when it leaves; a higher one when its answer arrives
+   * means the prepper cleared the amount meanwhile, and the answer is judged by
+   * phase2SaveSettle instead of marking the row Saved.
+   */
+  const phase2InFlightCountRef = useRef<Map<string, number>>(new Map());
+  const phase2BlankBlurRef = useRef<Map<string, number>>(new Map());
+  /**
+   * The Phase 2 rows AS THEY ARE NOW, for the handlers that must look again after their own
+   * round trip (the Undo, and a save's answer): a closure only knows the row as it was when the
+   * request left. Written in an effect, never during render.
    */
   const phase2LiveRef = useRef({ saveStates, phase2Values });
   useEffect(() => {
@@ -1150,10 +1160,14 @@ export function OpeningClient({
   // stale closure over phase2Values). The savability pre-gate IS the coalescing
   // mechanism: a blur while a required reason is still missing is a no-op, so
   // the only dispatch that lands is the one that follows the modal save.
+  //
+  // Resolves `{ undoCompletionId }` when the amount was cleared while this save was in flight
+  // and the box is still blank at its answer (B180, fix round 1): the row's caller
+  // (OpeningPrepEntry) then runs the ordinary Undo on that entry. Nothing otherwise.
   const handlePhase2ItemSave = async (
     templateItemId: string,
     valueToSave: OpeningPhase2FormValue,
-  ) => {
+  ): Promise<Phase2SaveSettled | void> => {
     const item = phase2ItemById.get(templateItemId);
     if (!item) return;
 
@@ -1222,7 +1236,14 @@ export function OpeningClient({
       // as done right here (so finalize can never submit the old number behind an empty
       // box), and OpeningPrepEntry — reading the same rule on the same row state — runs the
       // ordinary Undo. An untouched row stays "unsaved", exactly as before.
-      if (phase2BlankOutcome(saveStates.get(templateItemId)) !== "ignore") markIncomplete("cleared_saved");
+      //
+      // Fix round 1 — every blank the prepper commits is counted, so a save still in flight
+      // knows at its answer that the amount was cleared after it left ("after_save": the
+      // clear is queued behind that save; nothing is on file to undo yet, and the row stays
+      // "saving", which is not done).
+      phase2BlankBlurRef.current.set(templateItemId, (phase2BlankBlurRef.current.get(templateItemId) ?? 0) + 1);
+      const blank = phase2BlankOutcome(saveStates.get(templateItemId));
+      if (blank === "undo" || blank === "mark_cleared") markIncomplete("cleared_saved");
       return;
     }
     if (gate.kind === "incomplete") {
@@ -1238,6 +1259,47 @@ export function OpeningClient({
     if (current?.status === "saved" && current.savedSignature === newSig) return;
     if (isDuplicateInFlight(phase2InFlightSigRef.current.get(templateItemId), newSig)) return;
     phase2InFlightSigRef.current.set(templateItemId, newSig);
+    phase2InFlightCountRef.current.set(templateItemId, (phase2InFlightCountRef.current.get(templateItemId) ?? 0) + 1);
+    const blankBlursAtRequest = phase2BlankBlurRef.current.get(templateItemId) ?? 0;
+
+    // Audit W14 / B180, fix round 1 — this save's ANSWER, judged against the row as it is when
+    // the answer arrives (phase2SaveSettle, lib/opening-phase2-gate.ts). Unless the amount was
+    // cleared after the request left AND the box is still blank, the verdict is "as_answered"
+    // and the row takes the answer exactly as it always did.
+    const judgeAnswer = (answer: "saved" | "failed", completionOnFile: string | null) => {
+      const live = phase2LiveRef.current;
+      return phase2SaveSettle({
+        answer,
+        clearedSince: (phase2BlankBlurRef.current.get(templateItemId) ?? 0) !== blankBlursAtRequest,
+        preppedNow: live.phase2Values.get(templateItemId)?.openerPrepped ?? null,
+        otherSaveInFlight: (phase2InFlightCountRef.current.get(templateItemId) ?? 0) > 1,
+        row: live.saveStates.get(templateItemId) ?? null,
+        completionOnFile,
+      });
+    };
+    // A failed save. With a queued clear still standing, the entry this save failed to replace
+    // is the one the clear undoes; the row reads "cleared" (not done), never "failed" behind an
+    // empty box it cannot retry.
+    const settleFailure = (errorCode: string): Phase2SaveSettled | void => {
+      const onFile = phase2LiveRef.current.saveStates.get(templateItemId)?.completionId ?? null;
+      const verdict = judgeAnswer("failed", onFile);
+      setSaveStates((prev) => {
+        if (verdict === "wait") return prev;
+        const updated = new Map(prev);
+        const prior = prev.get(templateItemId);
+        updated.set(templateItemId, {
+          status: verdict === "as_answered" ? "failed" : "incomplete",
+          savedById: prior?.savedById ?? null,
+          savedAt: prior?.savedAt ?? null,
+          errorCode: verdict === "as_answered" ? errorCode : null,
+          incompleteReason: verdict === "as_answered" ? null : "cleared_saved",
+          savedSignature: prior?.savedSignature ?? null,
+          completionId: prior?.completionId ?? null,
+        });
+        return updated;
+      });
+      if (verdict === "undo" && onFile !== null) return { undoCompletionId: onFile };
+    };
 
     // Optimistic "saving" — preserve prior saved attribution so a re-save shows
     // "saving" without dropping the existing "saved by" line if it fails.
@@ -1332,15 +1394,19 @@ export function OpeningClient({
             // still no error badge; notice plus refresh, and savedSignature clears
             // so this prepper's next edit round-trips instead of being skipped by
             // the value-diff guard against a value that never persisted.
+            // Fix round 1 (B180): the winner is unknown, so there is no id to undo — but a
+            // box the prepper cleared meanwhile never reads Saved ("cleared", or still
+            // "saving" while another save of this row is out).
+            const verdict = judgeAnswer("saved", null);
             setSaveStates((prev) => {
               const updated = new Map(prev);
               const prior = prev.get(templateItemId);
               updated.set(templateItemId, {
-                status: "saved",
+                status: verdict === "as_answered" ? "saved" : verdict === "wait" ? "saving" : "incomplete",
                 savedById: prior?.savedById ?? null,
                 savedAt: prior?.savedAt ?? null,
                 errorCode: null,
-                incompleteReason: null,
+                incompleteReason: verdict === "cleared" ? "cleared_saved" : null,
                 savedSignature: null,
                 completionId: prior?.completionId ?? null,
                 raceNotice: true,
@@ -1351,60 +1417,42 @@ export function OpeningClient({
           router.refresh();
           return;
         }
-        const errorCode = res.status >= 500 ? "fallback" : (body.code ?? "fallback");
-        setSaveStates((prev) => {
-          const updated = new Map(prev);
-          const prior = prev.get(templateItemId);
-          updated.set(templateItemId, {
-            status: "failed",
-            savedById: prior?.savedById ?? null,
-            savedAt: prior?.savedAt ?? null,
-            errorCode,
-            incompleteReason: null,
-            savedSignature: prior?.savedSignature ?? null,
-            completionId: prior?.completionId ?? null,
-          });
-          return updated;
-        });
-        return;
+        return settleFailure(res.status >= 500 ? "fallback" : (body.code ?? "fallback"));
       }
 
       const body = (await res.json().catch(() => ({}))) as {
         completion?: { completedBy?: string; completedAt?: string };
         completionId?: string;
       };
+      // Fix round 1 (B180): a late success never marks a row Saved behind a box the prepper
+      // cleared after this save left. "undo" / "cleared" → the row reads "cleared" (not done)
+      // holding the entry this save just wrote; "wait" → another save of the row is still out.
+      const writtenId = body.completionId ?? null;
+      const verdict = judgeAnswer("saved", writtenId);
       setSaveStates((prev) => {
         const updated = new Map(prev);
         updated.set(templateItemId, {
-          status: "saved",
+          status: verdict === "as_answered" ? "saved" : verdict === "wait" ? "saving" : "incomplete",
           savedById: body.completion?.completedBy ?? null,
           savedAt: body.completion?.completedAt ?? null,
           errorCode: null,
-          incompleteReason: null,
+          incompleteReason: verdict === "undo" || verdict === "cleared" ? "cleared_saved" : null,
           savedSignature: newSig,
-          completionId: body.completionId ?? null,
+          completionId: writtenId,
         });
         return updated;
       });
+      // The queued clear: the caller runs the ordinary Undo on the entry just written.
+      if (verdict === "undo" && writtenId !== null) return { undoCompletionId: writtenId };
     } catch {
-      setSaveStates((prev) => {
-        const updated = new Map(prev);
-        const prior = prev.get(templateItemId);
-        updated.set(templateItemId, {
-          status: "failed",
-          savedById: prior?.savedById ?? null,
-          savedAt: prior?.savedAt ?? null,
-          errorCode: "network",
-          incompleteReason: null,
-          savedSignature: prior?.savedSignature ?? null,
-          completionId: prior?.completionId ?? null,
-        });
-        return updated;
-      });
+      return settleFailure("network");
     } finally {
       if (phase2InFlightSigRef.current.get(templateItemId) === newSig) {
         phase2InFlightSigRef.current.delete(templateItemId);
       }
+      const stillOut = (phase2InFlightCountRef.current.get(templateItemId) ?? 1) - 1;
+      if (stillOut > 0) phase2InFlightCountRef.current.set(templateItemId, stillOut);
+      else phase2InFlightCountRef.current.delete(templateItemId);
     }
   };
 
@@ -1420,13 +1468,19 @@ export function OpeningClient({
     templateItemId: string,
     reason?: Phase2RevokeReason | null,
     note?: string | null,
+    // Fix round 1 (B180) — the Undo of a clear that was queued behind a save names the entry
+    // that save just wrote. It is dispatched from the SAVE's continuation, whose closure is as
+    // old as the save: the id is handed over, and the box is read as it is now.
+    queuedClearCompletionId?: string,
   ): Promise<Phase2RevokeOutcome> => {
-    const completionId = saveStates.get(templateItemId)?.completionId ?? null;
+    const completionId = queuedClearCompletionId ?? saveStates.get(templateItemId)?.completionId ?? null;
     // No live completion to revoke (row never saved, or raced gone). The badge
     // is already non-"saved", so there's nothing to undo client-side.
     if (completionId === null) return { status: "error", code: "revoke_conflict" };
     // What the amount box held when the Undo left (null when the Undo IS the clear, B180).
-    const preppedAtRequest = phase2Values.get(templateItemId)?.openerPrepped ?? null;
+    const preppedAtRequest =
+      (queuedClearCompletionId !== undefined ? phase2LiveRef.current.phase2Values : phase2Values)
+        .get(templateItemId)?.openerPrepped ?? null;
 
     try {
       const res = await fetch("/api/opening/prep/item/revoke", {
