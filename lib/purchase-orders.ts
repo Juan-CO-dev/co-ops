@@ -576,10 +576,12 @@ export async function updateDraftLines(
     const existingSkus = new Set((existing ?? []).map((r) => r.sku_id));
 
     const { toUpdate, toInsert } = partitionDraftLines(lines, existingSkus);
-    // W08/B056: only lines that will be INSERTED must fit this PO (its vendor, its shop). Lines
-    // already on the draft stay editable — an old bad line can still be zeroed. Checked before
-    // any write of this lap, so a refusal leaves the draft untouched.
-    await assertPoSkusFit(sb, new Map(toInsert.map((l) => [l.skuId, po.vendor_id] as const)), po.location_id);
+    // W08/B056: every line that will be INSERTED, and every existing line set to a POSITIVE qty,
+    // must fit this PO (its vendor, its shop). Only setting an existing line to 0 skips the check,
+    // so a bad line left on a draft from before the fix can be removed but never re-ordered.
+    // Checked before any write of this lap, so a refusal leaves the draft untouched.
+    const mustFit = [...toInsert, ...toUpdate.filter((l) => l.orderQty > 0)];
+    await assertPoSkusFit(sb, new Map(mustFit.map((l) => [l.skuId, po.vendor_id] as const)), po.location_id);
 
     // UPDATE each existing line in place (rowcount-checked per the silent-UPDATE law).
     for (const l of toUpdate) {

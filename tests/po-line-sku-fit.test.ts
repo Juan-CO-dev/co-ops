@@ -81,11 +81,12 @@ describe("W08/B056 both draft writers call it", () => {
     expect(at).toBeLessThan(body.indexOf('.from("purchase_orders").insert('));
   });
 
-  it("updateDraftLines checks only the lines it will INSERT, inside the lap, before any write", () => {
+  it("updateDraftLines checks new lines and positive-qty updates, inside the lap, before any write", () => {
     const body = declaration("updateDraftLines").body!.getText(ast);
     expect(body).toContain('.select("id, location_id, vendor_id, status")');
     const lap = body.slice(body.indexOf("for (let lap = 0"));
-    const check = lap.indexOf("await assertPoSkusFit(sb, new Map(toInsert.map(");
+    expect(lap).toContain("const mustFit = [...toInsert, ...toUpdate.filter((l) => l.orderQty > 0)];");
+    const check = lap.indexOf("await assertPoSkusFit(sb, new Map(mustFit.map(");
     expect(check).toBeGreaterThan(lap.indexOf("partitionDraftLines(lines, existingSkus)"));
     expect(check).toBeLessThan(lap.indexOf('.from("po_lines")\n        .update('));
     expect(check).toBeLessThan(lap.indexOf("insertNewDraftLines("));
