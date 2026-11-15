@@ -209,7 +209,8 @@ describe("buildThreeWayLines — billed_over_received", () => {
     const v = buildThreeWayLines(
       [snap("s1", "Sub Roll", 4)],
       [deliv("s1", 3)],
-      [inv("Sub Roll", { qty: 5, extendedCents: 1500 })],
+      // W04 r1: the invoice names its unit (CS = the root pack); a unitless line is advisory-null.
+      [inv("Sub Roll", { qty: 5, unit: "CS", extendedCents: 1500 })],
       true,
     );
     expect(rowByKey(v, "s1").flags).toContain("billed_over_received");
@@ -291,7 +292,7 @@ describe("buildThreeWayLines — combined flags on one line", () => {
     const v = buildThreeWayLines(
       [snap("s1", "Sub Roll", 4)],
       [deliv("s1", 2)],
-      [inv("Sub Roll", { qty: 5, extendedCents: 1500 })],
+      [inv("Sub Roll", { qty: 5, unit: "CS", extendedCents: 1500 })], // W04 r1: a billed unit is required to compare
       true,
     );
     const r = rowByKey(v, "s1");

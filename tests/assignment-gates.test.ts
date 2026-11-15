@@ -92,10 +92,11 @@ describe("assignment gates at the writer boundary", () => {
   });
 
   it("cash rejects a revoked assignment before superseding any history", async () => {
-    const { service, from } = instanceClient();
+    const { service, from, rpc } = instanceClient();
     const result = await submitCashReport(service, { actor: { ...actor, locations: ["shop"] }, locationId: "shop", date: "2026-10-07", projectedCents: 0, drawerTotalCents: 0, floatCents: 0, countMethod: "hand", denominations: null, cashTipsCents: 0, onShift: [], overShortNote: null, toastProjected: null });
     expect(result).toEqual({ ok: false, reason: "assignment_required" });
     expect(from).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 });
 
@@ -141,8 +142,9 @@ describe("generic checklist routes cannot bypass task assignment", () => {
     await expect(completeItem(service, { ...base, templateItemId: "item" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(submitBatch(service, { ...base, completionIds: ["completion"] })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(confirmInstance(service, { ...base, pin: "1234", incompleteReasons: [] })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
-    await expect(revokeCompletion(service, { actor, completionId: "completion" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
-    await expect(revokeWithReason(service, { actor, completionId: "completion", reason: "not_actually_done" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
+    // W05/B150: the correction writers take the verified write actor (they bind it to the instance's shop first).
+    await expect(revokeCompletion(service, { actor: base.actor, completionId: "completion" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
+    await expect(revokeWithReason(service, { actor: base.actor, completionId: "completion", reason: "not_actually_done" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(dropInstance(service, { ...base, reason: "change" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
   });
 });

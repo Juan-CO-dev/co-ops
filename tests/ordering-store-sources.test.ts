@@ -71,7 +71,8 @@ describe("receiving sources stay out of ordering", () => {
     ) as (sb: unknown, ids: string[]) => Promise<void>;
     const q = { select: () => q, in: () => q, returns: async () => ({ data: [{ id: "store-sku", vendor_id: "store" }], error: null }) };
     await expect(guard({ from: () => q }, ["store-sku"])).rejects.toMatchObject({ status: 400, code: "invalid_sku" });
-    expect(source).toContain("await assertNoStoreSkus(sb, allSkuIds)");
+    // W08/B056: the create path's store check now rides inside assertPoSkusFit (tests/po-line-sku-fit.test.ts).
+    expect(source).toContain("await assertPoSkusFit(sb, expectedVendorBySku, locationId)");
     expect(source).toContain("await assertNoStoreSkus(sb, skuIds)");
   });
 });

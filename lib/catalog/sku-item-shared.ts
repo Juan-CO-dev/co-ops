@@ -19,7 +19,9 @@ export type ItemSection = "arrives" | "price" | "ordering" | "counting" | "barco
 
 /**
  * A door report's photo, through the REPORT-BOUND read (Astra 2b r2): the report's own photo, or one
- * addition's. Never the generic /api/photos/{id}, which a MoO outside the shop cannot read.
+ * addition's. It stays the route for these links: it signs only the photo stored on that report and
+ * refuses the social media manager by role. (The generic /api/photos/{id} was unreadable by a MoO
+ * outside the shop when this was written; since audit W10 / B064 it follows the report grant too.)
  */
 export function packRequestPhotoHref(requestId: string, additionId: string | null = null): string {
   const base = `/api/admin/catalog/pack-requests/${encodeURIComponent(requestId)}`;

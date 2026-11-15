@@ -22,8 +22,10 @@ import type { Quote, QuoteItem, DeliveryZone, ChargeRates, ChargeStack } from "@
 import {
   appendLines,
   expandPackageLines,
+  leadLockedLocationId,
   leadOptionLabel,
   prefillFromLead,
+  quotableLeads,
   type QuoteClientRef,
   type QuoteLeadOption,
   type QuoteLeadRef,
@@ -267,6 +269,12 @@ function QuoteBuilder({
 
   const pricing = pricingByLocation[locationId];
 
+  // Audit W05 / B011: a quote for a lead is the lead's shop's quote (the server refuses a
+  // mismatch). Offer only the leads this builder can quote, and let a picked lead that has a
+  // shop fix the shop. A revision keeps its own lead and shop (both controls are disabled).
+  const leadOptions = editing ? leads : quotableLeads(leads, locations.map((l) => l.id));
+  const shopLockedByLead = !editing && leadLockedLocationId(leads.find((l) => l.id === pipelineId)) != null;
+
   // Live server-computed preview (debounced). The server is the sole source of truth for
   // money. All setState lives inside the async callback (no synchronous effect-body setState).
   const previewSeq = useRef(0);
@@ -399,7 +407,7 @@ function QuoteBuilder({
               setLocationId(e.target.value);
               setDeliveryZoneId("");
             }}
-            disabled={!!editing}
+            disabled={!!editing || shopLockedByLead}
             className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-60"
           >
             {locations.map((l) => (
@@ -407,6 +415,9 @@ function QuoteBuilder({
             ))}
           </select>
         </Field>
+        {shopLockedByLead && (
+          <p className="text-xs text-co-text-muted">{t("catering.quotes.location_follows_lead")}</p>
+        )}
 
         {pricing && !pricing.hasPricingRule && (
           <p className="rounded-lg border-2 border-co-cta/40 bg-co-cta/10 px-3 py-2 text-xs font-semibold text-co-cta-text">
@@ -464,7 +475,7 @@ function QuoteBuilder({
         <Field label={t("catering.quotes.field.lead")}>
           <select value={pipelineId} onChange={(e) => pickLead(e.target.value)} disabled={!!editing} className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-60">
             <option value="">{t("catering.quotes.none")}</option>
-            {leads.map((l) => (
+            {leadOptions.map((l) => (
               <option key={l.id} value={l.id}>{leadOptionLabel(l, (d) => formatDateLabel(d, language))}</option>
             ))}
           </select>

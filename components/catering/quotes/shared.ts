@@ -63,6 +63,7 @@ const KNOWN_ERROR_CODES = new Set([
   "below_delivery_minimum", // self-serve delivery accept: under the zone's minimum
   "delivery_fee_changed", // self-serve delivery accept: the zones moved since the order was placed
   "invalid_customer", // a client outside the actor's shops (or gone) — pick another client
+  "lead_location_mismatch", // W05/B011: the picked lead is at another shop (or gone) — match the shop or the lead
   "generic",
 ]);
 

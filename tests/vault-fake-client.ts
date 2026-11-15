@@ -25,7 +25,8 @@ export interface FakeVaultClient {
 }
 
 let seq = 0;
-const nextId = (table: string) => `${table}-${++seq}`;
+/** Minted ids are uuids, as every `id` column here is in Postgres: the routes refuse anything else (audit W10 / B166). */
+const nextId = () => `00000000-0000-4000-8000-${String(++seq).padStart(12, "0")}`;
 
 export function fakeVaultClient(tables: Record<string, Row[]>, rowLimit = 1000): FakeVaultClient {
   const writes: Write[] = [];
@@ -51,7 +52,7 @@ export function fakeVaultClient(tables: Record<string, Row[]>, rowLimit = 1000):
         const defaults: Row = table === "vault_entries"
           ? { revision: 1, active: true, updated_by: null, updated_at: null, deactivated_by: null, deactivated_at: null }
           : table === "vault_reveals" ? { burst: false, at: new Date().toISOString() } : {};
-        const inserted = arr.map((p) => ({ id: nextId(table), created_at: new Date().toISOString(), ...defaults, ...p }));
+        const inserted = arr.map((p) => ({ id: nextId(), created_at: new Date().toISOString(), ...defaults, ...p }));
         rowsOf().push(...inserted);
         return { data: inserted, error: null };
       }
@@ -138,7 +139,7 @@ export function fakeVaultClient(tables: Record<string, Row[]>, rowLimit = 1000):
       let superseded = 0;
       for (const r of mine) if (r.superseded_at == null) { r.superseded_at = now; superseded += 1; }
       secrets.push({
-        id: nextId("vault_secrets"), entry_id: args.p_entry_id, version: next, ciphertext: args.p_ciphertext, iv: args.p_iv, tag: args.p_tag,
+        id: nextId(), entry_id: args.p_entry_id, version: next, ciphertext: args.p_ciphertext, iv: args.p_iv, tag: args.p_tag,
         wrapped_key: args.p_wrapped_key, key_iv: args.p_key_iv, key_tag: args.p_key_tag, master_key_id: args.p_master_key_id,
         created_by: args.p_actor_id, created_at: now, superseded_at: null, scrubbed_at: null,
       });
