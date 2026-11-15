@@ -252,11 +252,22 @@ export async function resolveCredit(
   // Append resolution notes to any existing notes — never clobber (and never
   // overwrite existing notes with null when no new note is supplied).
   if (trimmedNotes != null) update.notes = c.notes ? c.notes + "\n" + trimmedNotes : trimmedNotes;
-  const { error: uErr, count } = await sb.from("vendor_credits")
+  // W04/B047: compare-and-set on exactly what was read (status AND notes). Two managers who
+  // both read 'open' used to both land their UPDATE; the second silently replaced the first
+  // outcome and its notes. Now the loser matches no row.
+  const base = sb.from("vendor_credits")
     .update(update, { count: "exact" })
-    .eq("id", creditId);
+    .eq("id", creditId)
+    .eq("status", c.status);
+  const { error: uErr, count } = await (c.notes == null ? base.is("notes", null) : base.eq("notes", c.notes));
   if (uErr) throw new Error(`resolveCredit update: ${uErr.message}`);
-  if (count === 0) throw new CreditError(404, "not_found", "Credit not found");
+  if (count === 0) {
+    const { data: still, error: rErr } = await sb.from("vendor_credits")
+      .select("id").eq("id", creditId).maybeSingle<{ id: string }>();
+    if (rErr) throw new Error(`resolveCredit re-read: ${rErr.message}`);
+    if (still) throw new CreditError(409, "already_resolved", "This credit changed while you were resolving it");
+    throw new CreditError(404, "not_found", "Credit not found");
+  }
 
   await auditOperationalTaskOverride(actor, c.location_id, "receiving", "resolveCredit");
   await audit({

@@ -58,7 +58,8 @@ export function shopPackMatches(row: ExportRow, sku: CatalogSku): boolean {
   return source.length === target.length && source.every((n, i) => Math.abs(n - target[i]!) < 1e-8);
 }
 
-/** What ONE unit of the catalog's price basis contains, in the root's unit: the case root, the vendor's each, a pound, a dozen. */
+/** What ONE unit of the catalog's price basis contains, in the root's unit: the case root, the vendor's each, a pound, a dozen.
+ * Only a coherence check now (W04/B008): a basis this root cannot express holds the row for a person. */
 function basisContents(row: ExportRow, root: Root, basis: Basis): number | null {
   if (basis === "per_case" || basis === "per_bundle") return root.quantity;
   if (basis === "per_lb") return root.dimension === "weight" && root.unit === "oz" ? 16 : null;
@@ -68,12 +69,14 @@ function basisContents(row: ExportRow, root: Root, basis: Basis): number | null 
   return contents.quantity / (row.pack_qty! * (row.pack_inner_qty ?? 1));
 }
 
-/** Dollars for ONE unit of the catalog's declared price basis (`vendor_items.price_basis`, seed 38): unit_price is
- * per each for Butter (the pound) while its root is the 36 lb case. The basis is mandatory; never guess it. */
+/** Dollars for ONE internal purchase ROOT. `vendor_price_history.unit_price` is per root (0210's column comment;
+ * costing divides it by the root's content oz), so a $4.37/bag line on a 9-bag box root is $39.33 (W04/B008).
+ * The catalog basis (`vendor_items.price_basis`, seed 38) is still mandatory and must be one this root can
+ * express, but it no longer scales the result; how the vendor BILLS is read from the row itself. Never guess it. */
 export function priceAtRoot(row: ExportRow, root: Root | null, basis: Basis | null): number | null {
   if (!root || !positive(root.quantity) || !basis) return null;
-  const target = basisContents(row, root, basis);
-  if (!positive(target)) return null;
+  if (!positive(basisContents(row, root, basis))) return null;
+  const target = root.quantity;
   if (row.price_per_lb_cents != null) {
     if (root.dimension !== "weight" || root.unit !== "oz" || !positive(row.price_per_lb_cents)) return null;
     return round(row.price_per_lb_cents / 100 / 16 * target);
