@@ -279,6 +279,13 @@ describe("lib/production.ts — the prep capture form's SKU→item map fails lou
     expect(droppedErrorReads(body)).toEqual([]);
     expect(body).toContain("loadRecentProductions production_inputs:");
   });
+
+  it("predictOutput binds error on both reads (W16/B096: a failed read never predicts 'nothing')", () => {
+    const body = fnBody(src, "export async function predictOutput(");
+    expect(droppedErrorReads(body)).toEqual([]);
+    expect(body).toContain("predictOutput productions:");
+    expect(body).toContain("predictOutput production_inputs:");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
