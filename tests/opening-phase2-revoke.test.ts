@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mapOpeningError } from "@/app/api/opening/_helpers";
 import { audit } from "@/lib/audit";
 import {
+  OpeningError,
   OpeningPhase2NotEligibleError,
   OpeningRevocationReasonInvalidError,
   OpeningRevokeConflictError,
@@ -103,7 +104,7 @@ describe("revokePhase2Completion — one transactional writer for every Undo (B0
     const err = await revokePhase2Completion(s.client, args).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(OpeningPhase2NotEligibleError);
     expect((err as OpeningPhase2NotEligibleError).status).toBe("phase2_complete");
-    expect(mapOpeningError(err).status).toBe(409);
+    expect(mapOpeningError(err as OpeningPhase2NotEligibleError).status).toBe(409);
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({
       action: "opening.phase2.revoke",
       metadata: expect.objectContaining({ outcome: "phase2_not_eligible", phase: "rpc", current_status: "phase2_complete" }),
@@ -120,8 +121,9 @@ describe("revokePhase2Completion — one transactional writer for every Undo (B0
   it("an unknown RPC failure is still a 500 (never mistaken for a conflict)", async () => {
     const s = service({ data: null, error: { code: "XX000", message: "boom" } });
     const err = await revokePhase2Completion(s.client, args).catch((e: unknown) => e);
-    expect(err).not.toBeInstanceOf(OpeningRevokeConflictError);
-    expect(mapOpeningError(err).status).toBe(500);
+    // Not an OpeningError at all: the route's catch answers 500 for it.
+    expect(err).not.toBeInstanceOf(OpeningError);
+    expect((err as Error).message).toContain("revokePhase2Completion revoke_phase2_item_atomic: boom");
   });
 });
 
@@ -130,7 +132,7 @@ describe("revokePhase2Completion — a deadlock or lock timeout is a retryable 4
     const s = service({ data: null, error: { code, message } });
     const err = await revokePhase2Completion(s.client, args).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(OpeningRevokeConflictError);
-    const res = mapOpeningError(err);
+    const res = mapOpeningError(err as OpeningRevokeConflictError);
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ code: "revoke_conflict" });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({
