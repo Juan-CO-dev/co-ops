@@ -56,6 +56,7 @@ import { getRoleLevel, type RoleCode } from "./roles";
 import { lockLocationContext } from "./locations";
 import { CLOSING_CONFIRM_FLOOR_LEVEL } from "./admin/template-builder-shared";
 import { canCompleteChecklistItem, evaluateLockUpGate } from "./checklist-constants";
+import { isSystemTrackedItem } from "./checklist-write-guard-shared";
 import {
   applyEffectiveResolution,
   type EffectiveResolvableBuilder,
@@ -2018,7 +2019,11 @@ export async function tagActualCompleter(
   await requireChecklistTaskAccess(authed, completion.instance_id, actor);
 
   const item = await loadTemplateItemOrThrow(authed, completion.template_item_id);
-  if (item.report_reference_type) throw new ChecklistError("Reference rows use their report correction path.", "reference_row_not_correctable");
+  // Audit W14 / B182: an item-tracking tick is a system row too (it follows another item and
+  // is fixed there); it refuses with the report-reference code, like the 0315 SQL writers.
+  if (isSystemTrackedItem({ reportReferenceType: item.report_reference_type, refTrackItemCompletion: item.ref_track_item_completion, referencesTemplateItemId: item.references_template_item_id })) {
+    throw new ChecklistError("Reference and item-tracking rows are corrected at their source.", "reference_row_not_correctable");
+  }
   if (completion.prep_data != null) throw new ChecklistError("Prep rows use their prep correction path.", "prep_data_not_correctable");
 
   // Window check: tagging blocked during the actor's silent-correction window.
