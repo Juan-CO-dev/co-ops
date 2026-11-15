@@ -37,6 +37,11 @@
 --        the 15 minutes (and, before B049, re-lock on the first typo after it).
 --      + B157: a password set by an admin also consumes the person's open reset links (an older reset email could
 --        otherwise overwrite the password the GM just set). Returns the extra key reset_links_retired.
+--   6. admin_user_update_profile — 0279's writer RE-EMITTED, same signature, the identity lock and the gate unchanged
+--      and still first:
+--      + B052: an email change also consumes the person's open reset links. It already revoked their sessions, but a
+--        reset link mailed to the OLD address kept working for its hour and could set the password of the account
+--        now at the new address. Returns the extra key reset_links_retired.
 --
 -- LOCK ORDER (unchanged from 0279): the identity lock → the per-person advisory lock → users rows → password_resets /
 --   email_verifications / sessions. auth_reserve_attempt and auth_create_session each take ONE users row lock (the mint then
@@ -61,11 +66,11 @@
 --
 -- VERIFY AFTER APPLY:
 --   select proname, prosecdef, proconfig from pg_proc where proname in ('auth_reserve_attempt', 'increment_failed_login',
---     'auth_create_session', 'auth_password_reset_consume', 'admin_user_set_credential');
+--     'auth_create_session', 'auth_password_reset_consume', 'admin_user_set_credential', 'admin_user_update_profile');
 --     -- t, {search_path=pg_catalog, public} on each
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
 --    and routine_name in ('auth_reserve_attempt', 'increment_failed_login', 'auth_create_session', 'auth_password_reset_consume',
---      'admin_user_set_credential');  -- service_role (+ postgres) only
+--      'admin_user_set_credential', 'admin_user_update_profile');  -- service_role (+ postgres) only
 --
 -- ROLLBACK: none needed for the app (it falls back on a missing function). Re-emit through a new reviewed migration.
 
@@ -108,6 +113,17 @@ begin
      or strpos(v_def, 'perform public.user_admin_lock(p_actor, p_user);') = 0
      or strpos(v_def, 'password_resets') > 0 or strpos(v_def, 'failed_login_count') > 0 then
     raise exception '0307: admin_user_set_credential differs from 0279: refusing to overwrite it';
+  end if;
+  if to_regprocedure('public.admin_user_update_profile(uuid,uuid,jsonb)') is null
+     or to_regprocedure('public.user_admin_identity_lock()') is null then
+    raise exception '0307: 0279 (user_admin_lock and the user-admin writers) must be applied first';
+  end if;
+  select prosrc into v_def from pg_proc where oid = 'public.admin_user_update_profile(uuid,uuid,jsonb)'::regprocedure;
+  if strpos(v_def, 'if v_email_changed then') = 0
+     or strpos(v_def, 'perform public.user_admin_identity_lock();') = 0
+     or strpos(v_def, 'perform public.user_admin_lock(p_actor, p_user);') = 0
+     or strpos(v_def, 'password_resets') > 0 or strpos(v_def, 'email_verifications') > 0 then
+    raise exception '0307: admin_user_update_profile differs from 0279: refusing to overwrite it';
   end if;
   select prosrc into v_def from pg_proc where oid = 'public.increment_failed_login(uuid)'::regprocedure;
   if strpos(v_def, 'coalesce(failed_login_count, 0) + 1') = 0 or strpos(v_def, 'locked_until') > 0 then
@@ -271,6 +287,62 @@ end $$;
 revoke all on function public.admin_user_set_credential(uuid, uuid, text, text) from public, anon, authenticated;
 grant execute on function public.admin_user_set_credential(uuid, uuid, text, text) to service_role;
 
+-- ── 6. admin_user_update_profile: 0279's writer, re-emitted. Identical but for the lines marked 0307. ──
+create or replace function public.admin_user_update_profile(p_actor uuid, p_user uuid, p_patch jsonb)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_key text; v_name text; v_phone text; v_email text; v_old_email text; v_fields text[] := '{}'; v_revoked integer := 0;
+  v_email_changed boolean := false;
+  v_retired integer := 0;  -- 0307
+begin
+  if p_patch is null or jsonb_typeof(p_patch) <> 'object' then raise exception 'invalid_payload'; end if;
+  for v_key in select jsonb_object_keys(p_patch) loop
+    if v_key not in ('name', 'phone', 'email') then raise exception 'invalid_payload'; end if;
+    if jsonb_typeof(p_patch -> v_key) not in ('string', 'null') then raise exception 'invalid_payload'; end if;
+  end loop;
+  -- RANK 1 first: this writer changes phones (Astra BC-007/004 r3) — the identity lock, then the gate (ranks 2 and 3).
+  perform public.user_admin_identity_lock();
+  perform public.user_admin_lock(p_actor, p_user);
+  select email into v_old_email from public.users where id = p_user;
+  if p_patch ? 'name' then
+    v_name := btrim(coalesce(p_patch ->> 'name', ''));
+    if v_name = '' then raise exception 'invalid_name'; end if;
+    update public.users set name = v_name where id = p_user;
+    v_fields := array_append(v_fields, 'name');
+  end if;
+  if p_patch ? 'phone' then
+    v_phone := nullif(btrim(coalesce(p_patch ->> 'phone', '')), '');
+    if char_length(v_phone) > 40 then raise exception 'invalid_payload'; end if;
+    update public.users set phone = v_phone where id = p_user;
+    v_fields := array_append(v_fields, 'phone');
+  end if;
+  if p_patch ? 'email' then
+    v_email := nullif(lower(btrim(coalesce(p_patch ->> 'email', ''))), '');
+    if v_email is not null and exists (select 1 from public.users where lower(email) = v_email and id <> p_user) then
+      raise exception 'email_taken';
+    end if;
+    begin
+      update public.users set email = v_email where id = p_user;
+    exception when unique_violation then
+      get stacked diagnostics v_old_email = constraint_name;
+      if v_old_email ilike '%email%' then raise exception 'email_taken'; end if;
+      raise;
+    end;
+    v_fields := array_append(v_fields, 'email');
+    v_email_changed := v_email is distinct from v_old_email;
+  end if;
+  if v_email_changed then
+    -- 0307 B052: a reset link mailed to the OLD address must not set the password of the account at the new one.
+    update public.password_resets set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;
+    get diagnostics v_retired = row_count;
+    update public.sessions set revoked_at = clock_timestamp() where user_id = p_user and revoked_at is null;
+    get diagnostics v_revoked = row_count;
+  end if;
+  return jsonb_build_object('fields', to_jsonb(v_fields), 'email_changed', v_email_changed, 'sessions_revoked', v_revoked,
+    'reset_links_retired', v_retired);  -- 0307: + reset_links_retired
+end $$;
+revoke all on function public.admin_user_update_profile(uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.admin_user_update_profile(uuid, uuid, jsonb) to service_role;
+
 -- ── POST-APPLY: every function this file creates or re-emits is definer, search_path pinned, service_role only ──
 do $$
 declare
@@ -280,7 +352,8 @@ declare
     'public.increment_failed_login(uuid)',
     'public.auth_create_session(uuid,uuid,text,text,text,text,text,timestamptz,text,text)',
     'public.auth_password_reset_consume(text,text)',
-    'public.admin_user_set_credential(uuid,uuid,text,text)'
+    'public.admin_user_set_credential(uuid,uuid,text,text)',
+    'public.admin_user_update_profile(uuid,uuid,jsonb)'
   ];
 begin
   foreach v_fn in array v_fns loop
@@ -294,10 +367,15 @@ begin
       raise exception '0307: % must be SECURITY DEFINER with a pinned search_path', f;
     end if;
   end loop;
-  -- The re-emitted 0279 writer still takes the ONE gate, and no lock of its own.
+  -- The re-emitted 0279 writers still take the ONE gate (and the profile writer the identity lock before it).
   if strpos((select prosrc from pg_proc where oid = 'public.admin_user_set_credential(uuid,uuid,text,text)'::regprocedure),
             'perform public.user_admin_lock(p_actor, p_user);') = 0 then
     raise exception '0307: admin_user_set_credential lost its gate';
+  end if;
+  select prosrc into v_fn from pg_proc where oid = 'public.admin_user_update_profile(uuid,uuid,jsonb)'::regprocedure;
+  if strpos(v_fn, 'perform public.user_admin_identity_lock();') = 0
+     or strpos(v_fn, 'perform public.user_admin_lock(p_actor, p_user);') < strpos(v_fn, 'perform public.user_admin_identity_lock();') then
+    raise exception '0307: admin_user_update_profile lost its identity lock or its gate';
   end if;
 end $$;
 

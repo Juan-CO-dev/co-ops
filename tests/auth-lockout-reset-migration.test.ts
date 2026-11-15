@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, passwordResetConsumeCall, reserveAttemptCall } from "@/lib/auth-lockout-shared";
-import { setUserCredentialCall } from "@/lib/admin/user-admin-rpc-shared";
+import { setUserCredentialCall, updateUserProfileCall } from "@/lib/admin/user-admin-rpc-shared";
 import { applyMods, extractFunction, normalize, type Mod } from "../scripts/shop-versions/reemit-mods";
 
 const src = normalize(readFileSync("supabase/migrations/0307_auth_lockout_reset_hardening.sql", "utf8"));
@@ -40,6 +40,24 @@ const REEMITS: Record<string, readonly Mod[]> = {
     [
       "  return jsonb_build_object('kind', p_kind, 'sessions_revoked', v_revoked);",
       "  return jsonb_build_object('kind', p_kind, 'sessions_revoked', v_revoked, 'reset_links_retired', v_retired);  -- 0307: + reset_links_retired",
+    ],
+  ],
+  admin_user_update_profile: [
+    ["create function public.admin_user_update_profile(", "create or replace function public.admin_user_update_profile("],
+    ["  v_email_changed boolean := false;\n", "  v_email_changed boolean := false;\n  v_retired integer := 0;  -- 0307\n"],
+    [
+      "  if v_email_changed then\n",
+      [
+        "  if v_email_changed then",
+        "    -- 0307 B052: a reset link mailed to the OLD address must not set the password of the account at the new one.",
+        "    update public.password_resets set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;",
+        "    get diagnostics v_retired = row_count;",
+        "",
+      ].join("\n"),
+    ],
+    [
+      "  return jsonb_build_object('fields', to_jsonb(v_fields), 'email_changed', v_email_changed, 'sessions_revoked', v_revoked);",
+      "  return jsonb_build_object('fields', to_jsonb(v_fields), 'email_changed', v_email_changed, 'sessions_revoked', v_revoked,\n    'reset_links_retired', v_retired);  -- 0307: + reset_links_retired",
     ],
   ],
 };
@@ -93,6 +111,11 @@ describe("0307_auth_lockout_reset_hardening", () => {
       "B158 a GM's PIN reset clears locked_until and failed_login_count; the new PIN signs in at once",
       "B158 a GM's password set clears the lockout too",
       "B158 a refused reset (a peer, never below the actor) clears nothing → forbidden",
+      "S1 admin_user_update_profile: SECURITY DEFINER, search_path pinned, service_role only",
+      "S8 admin_user_update_profile takes the ONE gate (user_admin_lock) before any write, and no lock of its own",
+      "B052 an email change retires the person's open reset links; a name-only edit and another person's link are untouched",
+      "B052 the old address's link can no longer set the password → token_consumed",
+      "B052 a taken email is still refused and retires nothing → email_taken",
       "PASS 0307:",
     ]) expect(out, s).toContain(s);
   }, 260_000);
@@ -145,6 +168,8 @@ describe("0307_auth_lockout_reset_hardening", () => {
     // the re-emitted 0279 writer keeps the arguments lib/admin/user-admin-rpc-shared.ts sends
     const cred = setUserCredentialCall({ actorId: "a", userId: "u", kind: "pin", hash: "h" });
     expect(Object.keys(cred.args)).toEqual(sqlParams(`create or replace function public.${cred.fn}(`));
+    const profile = updateUserProfileCall({ actorId: "a", userId: "u", patch: {} });
+    expect(Object.keys(profile.args)).toEqual(sqlParams(`create or replace function public.${profile.fn}(`));
   });
 
   it("each re-emitted 0279 writer is 0279's own text plus exactly the listed 0307 changes — the gate untouched and first", () => {

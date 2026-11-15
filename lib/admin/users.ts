@@ -402,7 +402,11 @@ export async function updateUserProfile(
   const r = await userAdminRpc(getServiceRoleClient(), updateUserProfileCall({ actorId: actor.user.id, userId: id, patch: send }));
   if (r.email_changed === true) {
     await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.change_email",
-      resourceTable: "users", resourceId: id, metadata: { fields: r.fields ?? Object.keys(send), sessions_revoked: r.sessions_revoked ?? 0 }, ipAddress: null, userAgent: null });
+      resourceTable: "users", resourceId: id,
+      // reset_links_retired (0307, audit W07 B052): the open password-reset links the email change retired. Absent before 0307.
+      metadata: { fields: r.fields ?? Object.keys(send), sessions_revoked: r.sessions_revoked ?? 0,
+        ...(typeof r.reset_links_retired === "number" ? { reset_links_retired: r.reset_links_retired } : {}) },
+      ipAddress: null, userAgent: null });
   }
 }
 

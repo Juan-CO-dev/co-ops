@@ -19,6 +19,7 @@
  *   B156 the self-service reset is one transaction: a failed password write leaves the link usable
  *   B157 a reset (and an admin password set) retires every other open reset link of that person, nobody else's
  *   B158 an admin PIN / password reset clears the lockout; a refused reset clears nothing
+ *   B052 an email change retires the person's open reset links (a name / phone edit and other people's links untouched)
  *   S8   the re-emitted 0279 writers still take the ONE gate (user_admin_lock) and no lock of their own
  */
 import { readFileSync } from "node:fs";
@@ -55,9 +56,10 @@ async function base({ m0076 = true, m0279 = true } = {}) {
 }
 const FNS = ["auth_reserve_attempt(uuid)", "increment_failed_login(uuid)",
   "auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text)",
-  "auth_password_reset_consume(text, text)", "admin_user_set_credential(uuid, uuid, text, text)"];
+  "auth_password_reset_consume(text, text)", "admin_user_set_credential(uuid, uuid, text, text)",
+  "admin_user_update_profile(uuid, uuid, jsonb)"];
 /** The 0279 writers 0307 re-emits (each must still take the one gate). */
-const REEMITTED = ["admin_user_set_credential"];
+const REEMITTED = ["admin_user_set_credential", "admin_user_update_profile"];
 
 const db = await base();
 /** Call a function as the app does: service_role, named arguments. */
@@ -203,6 +205,7 @@ try {
     const body = (await one("select prosrc from pg_proc where proname = $1", [fn])).prosrc;
     const gateAt = body.indexOf("public.user_admin_lock(p_actor, p_user)");
     const firstWrite = body.search(/(update|insert into|delete from) public[.]/);
+    // (the profile writer reads the old email with a plain select after the gate: the gate already holds the row)
     check(gateAt >= 0 && firstWrite > gateAt && !/pg_advisory_xact_lock/.test(body) && !/for update/.test(body),
       `S8 ${fn} takes the ONE gate (user_admin_lock) before any write, and no lock of its own`);
   }
@@ -354,6 +357,32 @@ try {
       "B158 a refused reset (a peer, never below the actor) clears nothing");
     const ps = await one("select pin_hash, failed_login_count as n, locked_until > now() as live from public.users where id = $1", [peer]);
     check(ps.pin_hash === HASH("peer") && ps.n === 5 && ps.live === true, "B158 … the peer's PIN and lock are untouched");
+  }
+
+  // ── B052: an email change retires the person's open reset links ──
+  {
+    const u = await user("agm", { email: "old-box@example.test", password_hash: HASH("victim"), email_verified: true });
+    await member(u, SA);
+    const other = await user("agm", { email: "someone-else@example.test", password_hash: HASH("else"), email_verified: true });
+    await member(other, SA);
+    const mine = await resetLink(u), theirs = await resetLink(other);
+    // a name edit and a phone edit are not email changes: nothing is retired
+    const nameOnly = await rpc(updateUserProfileCall({ actorId: gm, userId: u, patch: { name: "Renamed" } }));
+    const phoneOnly = await rpc(updateUserProfileCall({ actorId: gm, userId: u, patch: { phone: "202-555-0100" } }));
+    const sameEmail = await rpc(updateUserProfileCall({ actorId: gm, userId: u, patch: { email: "old-box@example.test" } }));
+    const untouched = !(await linkConsumed(mine));
+    const changed = await rpc(updateUserProfileCall({ actorId: gm, userId: u, patch: { email: "New-Box@example.test" } }));
+    check(nameOnly.reset_links_retired === 0 && phoneOnly.reset_links_retired === 0 && sameEmail.email_changed === false && sameEmail.reset_links_retired === 0 && untouched
+      && changed.email_changed === true && changed.reset_links_retired === 1 && (await linkConsumed(mine)) && !(await linkConsumed(theirs))
+      && (await one("select email from public.users where id = $1", [u])).email === "new-box@example.test",
+      "B052 an email change retires the person's open reset links; a name-only edit and another person's link are untouched");
+    await refuses(() => consume(mine, HASH("attacker")), "token_consumed", "B052 the old address's link can no longer set the password");
+    check((await one("select password_hash from public.users where id = $1", [u])).password_hash === HASH("victim"), "B052 … and the password is unchanged");
+    // the writer's own refusals are unchanged, and a refused change retires nothing
+    const again = await resetLink(u);
+    await refuses(() => rpc(updateUserProfileCall({ actorId: gm, userId: u, patch: { email: "someone-else@example.test" } })), "email_taken",
+      "B052 a taken email is still refused and retires nothing");
+    check(!(await linkConsumed(again)), "B052 … the link survives the refused change");
   }
 } catch (e) {
   failures++;
