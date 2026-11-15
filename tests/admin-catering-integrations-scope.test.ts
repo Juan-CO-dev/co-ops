@@ -78,6 +78,22 @@ describe("W08/B161 catering integrations admin state is shop-scoped", () => {
     expect(JSON.stringify(s)).not.toContain("eb-caterer");
   });
 
+  it("other-shop traffic past any global cutoff never hides this shop's events (r1)", async () => {
+    const t = tables();
+    // 250 newer events at shop B, then 25 older ones at shop A: a global window of the newest N
+    // events, filtered by shop afterwards, would leave the A manager with nothing.
+    const busy = Array.from({ length: 250 }, (_, i) => ({ id: `ev-b${i}`, event_key: "k", entity_id: `b${i}`, processing_result: "ok",
+      signature_valid: true, received_at: new Date(Date.UTC(2026, 10, 10, 0, i)).toISOString(), lead_id: "lead-b" }));
+    const older = Array.from({ length: 25 }, (_, i) => ({ id: `ev-a${i}`, event_key: "k", entity_id: `a${i}`, processing_result: "ok",
+      signature_valid: true, received_at: new Date(Date.UTC(2026, 10, 5, 0, i)).toISOString(), lead_id: "lead-a" }));
+    t.ezcater_events = [...busy, ...older, ...t.ezcater_events];
+    current = createFakeDb(t);
+    const s = await loadEzcaterAdminState(gmAtA);
+    expect(s.events).toHaveLength(20);
+    expect(s.events.map((e) => e.id)).toEqual(Array.from({ length: 20 }, (_, i) => `ev-a${24 - i}`));
+    expect(s.events.every((e) => e.leadId === "lead-a")).toBe(true);
+  });
+
   it("the owner's ezCater state shows every shop and every event, unlinked ones included", async () => {
     current = createFakeDb(tables());
     const s = await loadEzcaterAdminState(owner);

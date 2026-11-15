@@ -41,8 +41,11 @@ export async function loadEzcaterAdminState(actor: AuthContext): Promise<Ezcater
   const sb = getServiceRoleClient();
   // W08/B161: below all-locations access, only the actor's own shops (their caterer UUIDs) and the events
   // whose lead belongs to one of them. ezcater_events has no location column (0149): its only shop link is
-  // lead_id → catering_pipeline.location_id, read in two steps. An event with no lead (unmatched caterer,
-  // bad signature) has no shop, so only all-locations viewers see it.
+  // lead_id → catering_pipeline.location_id (the one FK between the two tables). The shop filter rides an
+  // inner embed on that FK so it applies BEFORE the limit — another shop's traffic can never push this
+  // shop's events out of the window (fix round 1). Service-role read, so the embed is the AGENTS.md
+  // "service-role embed" case, not the RLS-scoped hazard. An event with no lead (unmatched caterer, bad
+  // signature) has no shop, so only all-locations viewers see it.
   const scope = isAllLocationsAccess({ role: actor.user.role, locations: actor.locations }) ? null : [...actor.locations];
   type LocRow = { id: string; name: string; ezcater_caterer_uuid: string | null };
   type EvtRow = { id: string; event_key: string | null; entity_id: string | null; processing_result: string | null; signature_valid: boolean; received_at: string; lead_id: string | null };
@@ -63,20 +66,13 @@ export async function loadEzcaterAdminState(actor: AuthContext): Promise<Ezcater
     const [{ data: l, error: lErr }, { data: e, error: eErr }] = await Promise.all([
       sb.from("locations").select("id, name, ezcater_caterer_uuid").eq("active", true).in("id", scope)
         .order("name", { ascending: true }).returns<LocRow[]>(),
-      sb.from("ezcater_events").select(EVENT_COLS).not("lead_id", "is", null)
-        .order("received_at", { ascending: false }).limit(200).returns<EvtRow[]>(),
+      sb.from("ezcater_events").select(`${EVENT_COLS}, catering_pipeline!inner(location_id)`)
+        .in("catering_pipeline.location_id", scope)
+        .order("received_at", { ascending: false }).limit(20).returns<EvtRow[]>(),
     ]);
     if (lErr) throw new Error(`ezcater locations: ${lErr.message}`);
     if (eErr) throw new Error(`ezcater events: ${eErr.message}`);
-    locs = l ?? [];
-    const leadIds = [...new Set((e ?? []).flatMap((x) => (x.lead_id ? [x.lead_id] : [])))];
-    if (leadIds.length > 0) {
-      const { data: leads, error: pErr } = await sb.from("catering_pipeline").select("id, location_id").in("id", leadIds)
-        .returns<Array<{ id: string; location_id: string | null }>>();
-      if (pErr) throw new Error(`ezcater event leads: ${pErr.message}`);
-      const mine = new Set((leads ?? []).filter((x) => x.location_id != null && scope.includes(x.location_id)).map((x) => x.id));
-      evts = (e ?? []).filter((x) => x.lead_id != null && mine.has(x.lead_id)).slice(0, 20);
-    }
+    locs = l ?? []; evts = e ?? [];
   }
   return {
     webhookConfigured: Boolean(process.env.EZCATER_WEBHOOK_SECRET),

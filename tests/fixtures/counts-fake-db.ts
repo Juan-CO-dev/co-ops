@@ -25,6 +25,8 @@ const RELATIONS: Record<string, { table: string; local: string; foreign: string 
   "par_pass_lines.par_pass_events": { table: "par_pass_events", local: "event_id", foreign: "id" },
   // Catalog Phase 2b — the item page's open orders (po_lines → purchase_orders, one FK).
   "po_lines.purchase_orders": { table: "purchase_orders", local: "po_id", foreign: "id" },
+  // W08/B161 r1 — the ezCater admin event list's shop filter (ezcater_events.lead_id → catering_pipeline, one FK).
+  "ezcater_events.catering_pipeline": { table: "catering_pipeline", local: "lead_id", foreign: "id" },
 };
 
 const TS = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}(?::?\d{2})?)?$/;
