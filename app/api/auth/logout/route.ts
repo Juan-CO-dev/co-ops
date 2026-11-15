@@ -29,11 +29,13 @@
  * can present any more, ends at the server's idle limit. The callers retry a
  * non-2xx briefly and still go to the login page (lib/logout-client.ts).
  *
- * The caller MAY name the session it means to end (`{ sessionId }`, JSON body;
- * the idle sign-out does). When the cookie's session is a different one — the
- * request went out after a new sign-in, e.g. from a background tab on its own
- * clock — nothing is revoked (outcome `session_superseded`). A missing or
- * unparseable body is "the session on the cookie" (the Log out buttons).
+ * The caller names the session it means to end (`{ sessionId }`, JSON body).
+ * Since round 7 EVERY in-app caller does, on every attempt and retry (the id is
+ * required by lib/logout-client.ts). When the cookie's session is a different
+ * one — the request went out after a new sign-in, e.g. a retry after a network
+ * failure, or a background tab on its own clock — nothing is revoked (outcome
+ * `session_superseded`). A missing or unparseable body is "the session on the
+ * cookie" (kept for non-app clients; no in-app caller sends one).
  *
  * NO CSRF ORIGIN GUARD, DELIBERATELY (P2-6 adjudication). Its siblings
  * /api/auth/pin and /api/auth/pin-confirm both took assertSameOrigin; this one
@@ -113,7 +115,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // The session the caller observed, when it names one (the idle sign-out). Anything else = the cookie's session.
+  // The session the caller observed (every in-app caller names it, round 7). No name = the cookie's session.
   const named = await namedSessionId(req);
 
   if (sessionId && named !== null && named !== sessionId) {
@@ -137,7 +139,7 @@ export async function POST(req: NextRequest) {
 
   if (outcome === "unconfirmed") {
     // Fail closed (round 6): the session may still be live, so this browser must stop carrying it. The 503 tells the
-    // caller to retry; it names the session so a retry cannot end a newer one.
+    // caller to retry (the client names its own session and never reads this body — round 7); the id is diagnostic.
     return clearSessionCookie(
       jsonError(503, "logout_unconfirmed", { message: "Sign-out could not be confirmed", sessionId }),
     );

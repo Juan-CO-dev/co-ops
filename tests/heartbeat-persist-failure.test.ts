@@ -150,7 +150,7 @@ describe("the heartbeat succeeds only when the idle clock was saved (B013 round 
       return res;
     });
 
-    render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(IdleTimeoutWarning, { userId: "user-1" }) }));
+    render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(IdleTimeoutWarning, { userId: "user-1", sessionId: "session-1" }) }));
     await advance(120); // 2:00
     fireEvent.keyDown(window, { key: "a" });
     await advance(0);

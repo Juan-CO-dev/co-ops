@@ -2,9 +2,9 @@
  * Audit W06/B012 fix round 6 — the client sign-out treats an unconfirmed end as NOT YET ENDED (lib/logout-client.ts).
  *
  * POST /api/auth/logout answers 503 `logout_unconfirmed` (and clears the cookie) when the server cannot confirm the
- * end. The helper retries any non-2xx / network failure / hung request with short, bounded backoff, names the session
- * on every retry (its own, else the one the 503 named), and reports whether the end was ever acknowledged. The route
- * half is tests/logout-revoke-only.test.ts.
+ * end. The helper retries any non-2xx / network failure / hung request with short, bounded backoff, names the caller's
+ * session on every attempt and retry (round 7: the id is required, there is no unnamed sign-out), and reports whether
+ * the end was ever acknowledged. The route half is tests/logout-revoke-only.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LOGOUT_ATTEMPT_TIMEOUT_MS, LOGOUT_RETRY_DELAYS_MS, requestSignOut } from "@/lib/logout-client";
@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 /** Run the helper to completion under fake timers. */
-async function settle(sessionId?: string) {
+async function settle(sessionId = "session-1") {
   const p = requestSignOut(sessionId);
   await vi.runAllTimersAsync();
   return p;
@@ -82,10 +82,14 @@ describe("round 6 — requestSignOut", () => {
     expect(await p).toEqual({ ended: true, attempts: 2 });
   });
 
-  it("a caller that does not know its session names the one the 503 named on every retry", async () => {
-    fetchMock.mockResolvedValueOnce(unconfirmed("session-9")).mockResolvedValue(res(200));
-    await settle();
-    expect(bodies()).toEqual([null, JSON.stringify({ sessionId: "session-9" })]);
+  it("round 7: every attempt and retry names the caller's session, whatever a 503 body says", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(res(504))
+      .mockResolvedValueOnce(unconfirmed("session-9"))
+      .mockResolvedValue(res(200));
+    expect(await settle("session-1")).toEqual({ ended: true, attempts: 4 });
+    expect(bodies()).toEqual(Array(4).fill(JSON.stringify({ sessionId: "session-1" })));
   });
 
   it("never throws", async () => {

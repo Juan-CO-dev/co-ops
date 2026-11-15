@@ -58,6 +58,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 import { POST as logout } from "@/app/api/auth/logout/route";
+import { requestSignOut } from "@/lib/logout-client";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
 
 const sessionRow = (id: string, jwt: string) => ({
@@ -149,7 +150,7 @@ describe("a logout sent after the new sign-in, for the session it observed", () 
   });
 });
 
-describe("the explicit Log out button (no session named)", () => {
+describe("a request that names no session (no in-app caller sends one since round 7; the route keeps the cookie fallback)", () => {
   it("revokes the session its request carried and sets no cookie", async () => {
     const res = await logout(send());
     expect(res.status).toBe(200);
@@ -311,5 +312,49 @@ describe("round 6 — a logout the server cannot confirm fails closed", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(outcomes()).toEqual(["session_superseded"]);
     expect(jar).toBe("jwt-s2");
+  });
+});
+
+// ── Fix round 7 (review W06-r7 P2 #1) — every attempt and every retry names the session ──────────────────────────────
+// The real client helper (lib/logout-client.ts) over the real route and the cookie jar. The dashboard and opening-page
+// Log out buttons used to send no session id: when the first request failed without a 503 naming one (a network error,
+// a 504) and someone signed in through another tab during the backoff, the unnamed retry revoked that NEW session.
+describe("round 7 — a retried sign-out after a failed first attempt and a sign-in in another tab", () => {
+  const wireFetch = (firstAttempt: "network" | "gateway") => {
+    let n = 0;
+    return vi.fn(async (url: string, init: RequestInit) => {
+      if (n++ === 0) {
+        if (firstAttempt === "network") throw new TypeError("Failed to fetch"); // never reached the route
+        return new Response(null, { status: 504 }); // the gateway gave up before the route answered
+      }
+      const headers = new Headers(init.headers);
+      if (jar) headers.set("cookie", `${SESSION_COOKIE_NAME}=${jar}`); // the cookie is attached when the retry is SENT
+      const res = await logout(new NextRequest(`http://localhost${url}`, { method: init.method, headers, body: init.body }));
+      arrive(res);
+      return res;
+    });
+  };
+
+  it.each(["network", "gateway"] as const)("first attempt %s failure → the retry leaves the new session alone (session_superseded)", async (first) => {
+    vi.useFakeTimers();
+    const fetchMock = wireFetch(first);
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const p = requestSignOut("session-1"); // the served session, as every caller now passes it
+      await vi.advanceTimersByTimeAsync(0); // the first attempt failed without naming anything
+      signIn(); // another tab signs in during the backoff
+      await vi.runAllTimersAsync();
+      expect(await p).toEqual({ ended: true, attempts: 2 });
+      for (const c of fetchMock.mock.calls) expect((c[1] as RequestInit).body).toBe(JSON.stringify({ sessionId: "session-1" }));
+      expect(outcomes()).toEqual(["session_superseded"]);
+      expect(row("session-2").revoked_at).toBeNull(); // the new sign-in survives…
+      expect(jar).toBe("jwt-s2");
+      const ctx = await nextRequest(); // …and keeps working
+      expect(ctx).not.toBeInstanceOf(Response);
+      expect((ctx as { session: { id: string } }).session.id).toBe("session-2");
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 });

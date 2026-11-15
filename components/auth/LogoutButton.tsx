@@ -20,11 +20,11 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { requestSignOut } from "@/lib/logout-client";
 
 export interface LogoutButtonProps {
-  /** The session this page was served for — a retried sign-out names it, so it can never end a newer one. */
-  sessionId?: string;
+  /** The session this page was served for (required, round 7) — every attempt names it, so it can never end a newer one. */
+  sessionId: string;
 }
 
-export function LogoutButton({ sessionId }: LogoutButtonProps = {}) {
+export function LogoutButton({ sessionId }: LogoutButtonProps) {
   const { t } = useTranslation();
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);

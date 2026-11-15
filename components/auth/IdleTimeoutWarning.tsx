@@ -122,13 +122,13 @@ export interface IdleTimeoutWarningProps {
   idleMinutes?: number;
   /** The signed-in user — binds the idle sign-out's return link to them (W06-2). */
   userId?: string;
-  /** The session this page was served for — a sign-out names it (round 5); not a credential (dual verification). */
-  sessionId?: string;
+  /** The session this page was served for — every sign-out names it (rounds 5 + 7); not a credential (dual verification). */
+  sessionId: string;
 }
 
 /** The cross-tab sign-out signal: `<ms>:<idle|logout>[:<session id>]`. */
-function signedOutSignal(kind: "idle" | "logout", sessionId: string | undefined): string {
-  return `${Date.now()}:${kind}${sessionId ? `:${sessionId}` : ""}`;
+function signedOutSignal(kind: "idle" | "logout", sessionId: string): string {
+  return `${Date.now()}:${kind}:${sessionId}`;
 }
 
 /** Parse a signal; one written before round 5 names no session and applies to every tab. */
@@ -137,7 +137,7 @@ function parseSignedOutSignal(value: string): { kind: string; sessionId: string 
   return { kind, sessionId: sessionId || null };
 }
 
-export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId, sessionId }: IdleTimeoutWarningProps = {}) {
+export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId, sessionId }: IdleTimeoutWarningProps) {
   const { t } = useTranslation();
   const router = useRouter();
   const totalIdleMs = (Number.isFinite(idleMinutes) && idleMinutes > 0 ? idleMinutes : DEFAULT_IDLE_MINUTES) * 60 * 1000;

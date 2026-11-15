@@ -37,7 +37,7 @@ interface UserMenuProps {
   /** Current saved blurb (null = unset) — seeds the editor. */
   initialBlurb: string | null;
   /** The session this page was served for — a retried sign-out names it, so it can never end a newer one. */
-  sessionId?: string;
+  sessionId: string;
 }
 
 export function UserMenu({ userName, userEmail, actorLevel, initialBlurb, sessionId }: UserMenuProps) {

@@ -8,8 +8,10 @@
  * then reports whether the end was ever acknowledged. The caller ALWAYS goes to the sign-in page afterwards and shows
  * no authenticated screen in the meantime (components/auth/SigningOutOverlay).
  *
- * Every retry names the session it means to end: the caller's own (`sessionId`), else the one a 503 named — so a retry
- * landing after a sign-in in another tab finds a different session on the cookie and leaves it alone (round 5).
+ * Every attempt and every retry names the session it means to end (round 7): `sessionId` is REQUIRED and every caller
+ * passes the session its page was served for. A retry landing after a sign-in in another tab finds a different session
+ * on the cookie and leaves it alone (`session_superseded`). There is no unnamed sign-out — an unnamed retry after a
+ * network failure or a 504 (nothing named by a 503 body) used to revoke whatever session the cookie carried by then.
  */
 
 /** Waits between attempts (ms): four attempts at most, settled within about 3.5 s plus the requests themselves. */
@@ -23,21 +25,19 @@ export interface SignOutResult {
   attempts: number;
 }
 
-function logoutInit(sessionId: string | null, signal: AbortSignal): RequestInit {
-  return sessionId
-    ? {
-        method: "POST",
-        redirect: "manual",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId }),
-        signal,
-      }
-    : { method: "POST", redirect: "manual", signal };
+function logoutInit(sessionId: string, signal: AbortSignal): RequestInit {
+  return {
+    method: "POST",
+    redirect: "manual",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId }),
+    signal,
+  };
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-async function attempt(sessionId: string | null): Promise<Response | null> {
+async function attempt(sessionId: string): Promise<Response | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LOGOUT_ATTEMPT_TIMEOUT_MS);
   try {
@@ -49,27 +49,14 @@ async function attempt(sessionId: string | null): Promise<Response | null> {
   }
 }
 
-/** The session a 503 named, if any (the Log out buttons may not know theirs). */
-async function namedBy(res: Response): Promise<string | null> {
-  try {
-    const body: unknown = await res.json();
-    if (body && typeof body === "object" && "sessionId" in body) {
-      const id = (body as { sessionId: unknown }).sessionId;
-      return typeof id === "string" && id.length > 0 ? id : null;
-    }
-  } catch {
-    // not JSON
-  }
-  return null;
-}
-
-/** End this browser's session, retrying an unacknowledged end a few times. Never throws. */
-export async function requestSignOut(sessionId?: string | null): Promise<SignOutResult> {
-  let named = sessionId ?? null;
+/**
+ * End the session this page was served for, retrying an unacknowledged end a few times. Never throws. Every attempt
+ * names `sessionId`; the decision reads only the status, never a response body.
+ */
+export async function requestSignOut(sessionId: string): Promise<SignOutResult> {
   for (let i = 0; ; i++) {
-    const res = await attempt(named);
+    const res = await attempt(sessionId);
     if (res && res.status >= 200 && res.status < 300) return { ended: true, attempts: i + 1 };
-    if (res && res.status === 503 && named === null) named = await namedBy(res);
     const delay = LOGOUT_RETRY_DELAYS_MS[i];
     if (delay === undefined) return { ended: false, attempts: i + 1 };
     await wait(delay);

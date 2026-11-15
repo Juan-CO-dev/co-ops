@@ -19,7 +19,7 @@ import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
 
 const h = vi.hoisted(() => ({
-  push: vi.fn(), fetch: vi.fn(), tab: "A", pushes: [] as Array<[string, string]>, session: undefined as string | undefined,
+  push: vi.fn(), fetch: vi.fn(), tab: "A", pushes: [] as Array<[string, string]>, session: "session-1",
 }));
 // One stable router per mounted component (like Next's), tagged with the tab it was mounted as.
 vi.mock("next/navigation", async () => {
@@ -55,7 +55,7 @@ const calls = (url: string) => h.fetch.mock.calls.filter((c) => c[0] === url);
 const mount = (props: { idleMinutes?: number } = {}) =>
   render(jsx(TranslationProvider, {
     initialLanguage: "en",
-    children: jsx(IdleTimeoutWarning, { userId: "user-1", ...(h.session ? { sessionId: h.session } : {}), ...props }),
+    children: jsx(IdleTimeoutWarning, { userId: "user-1", sessionId: h.session, ...props }),
   }));
 const advance = (seconds: number) => act(async () => { await vi.advanceTimersByTimeAsync(seconds * 1000); });
 const otherTab = (key: string, value: string) => act(() => {
@@ -68,7 +68,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.tab = "A";
   h.pushes = [];
-  h.session = undefined;
+  h.session = "session-1";
   window.localStorage.clear();
   window.sessionStorage.clear();
   window.history.replaceState(null, "", "/operations/counts?loc=a");
@@ -368,7 +368,7 @@ describe("B153 — one idle clock across tabs", () => {
   it("this tab's idle sign-out tells the other tabs", async () => {
     mount();
     await advance(600);
-    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle$/);
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle:session-1$/);
   });
 
   it("blocked storage falls back to the per-tab clock", async () => {
@@ -439,7 +439,7 @@ describe("B012 / B153 round 4 — other tabs leave only after the logout request
     await logout.settle();
     expect(pushedTabs()).toEqual(["A", "B"]);
     expect(h.pushes.every(([, url]) => url === IDLE_TARGET)).toBe(true);
-    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle$/);
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle:session-1$/);
   });
 
   it("a dead-session sign-out in one tab: the other tab waits for the logout, then follows without a second logout", async () => {
@@ -495,7 +495,7 @@ describe("B012 / B153 round 4 — other tabs leave only after the logout request
     await advance(4);
     expect(pushedTabs()).toEqual(["A", "B"]);
     expect(calls("/api/auth/logout")).toHaveLength(4);
-    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:logout$/);
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:logout:session-1$/);
   });
 });
 
@@ -625,11 +625,12 @@ describe("B012 round 5 — a sign-out names the session it ends", () => {
     expect(h.push).toHaveBeenCalledWith("/");
   });
 
-  it("with no session known the request carries no body (the cookie's session, as before)", async () => {
+  it("round 7: there is no unnamed sign-out — the request and the signal always carry the served session", async () => {
+    h.session = "session-7";
     mount();
     await advance(605);
-    expect(logoutBody()).toBeNull();
-    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle$/);
+    expect(logoutBody()).toEqual({ sessionId: "session-7" });
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle:session-7$/);
   });
 });
 
