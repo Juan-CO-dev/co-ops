@@ -12,8 +12,10 @@ import {
 } from "@/lib/maintenance";
 import { derivePrepHave, parStatusFromHave, reportParDeviation, isTempFlag, type TempItemRegistry } from "@/lib/report-signals";
 import { loadTempItemRegistry, type TempItemOwner } from "@/lib/fridge-registry";
-import { loadShiftWrapUp } from "@/lib/pm-report";
+import { loadShiftWrapUp, PmReportError } from "@/lib/pm-report";
 import type { ShiftWrapUpRow } from "@/lib/pm-report";
+import { loadDayResults, loadMyFeedbackV2, type MyFeedbackV2Day, type PmDayResultsView } from "@/lib/pm-report-v2";
+import type { PeopleActor } from "@/lib/people/access-shared";
 import { loadReportStatuses } from "@/lib/midshift";
 import type { ReportKey, ReportProgress } from "@/lib/midshift";
 import type { RoleCode } from "@/lib/roles";
@@ -1058,6 +1060,14 @@ export interface PmEvalDetail {
 
 export interface PmReportDetail {
   kind: "pm";
+  /**
+   * W09/B062: a v2 day keeps its evaluations in the manager copies, not in `evals`. For a v2 day `evals` and
+   * `gradientTally` are empty and the copies arrive as `v2Results` (L4+, the /pm-report J9 gate; null when that
+   * gate refuses) or, below KH, as the viewer's OWN bands for that day (`v2OwnBands`, owner decision W09-5 b).
+   */
+  format: "v1" | "v2";
+  v2Results: PmDayResultsView | null;
+  v2OwnBands: MyFeedbackV2Day | null;
   date: string;
   locationId: string;
   status: string;
@@ -1081,11 +1091,12 @@ export interface PmReportDetail {
 
 async function loadPmDetail(
   service: SupabaseClient,
-  args: { viewer: Viewer; id: string; locationId: string },
+  args: { viewer: Viewer; id: string; locationId: string; pmActor?: PeopleActor },
 ): Promise<PmReportDetail | null> {
+  // select("*"): the same posture as getOrCreatePmReport - works whether or not 0271's `format` column exists.
   const { data: report } = await service
     .from("pm_reports")
-    .select("id, location_id, report_date, status, mvp_user_id, mvp_note, submitted_at, submitted_by")
+    .select("*")
     .eq("id", args.id)
     .is("superseded_at", null)
     .maybeSingle<{
@@ -1097,12 +1108,14 @@ async function loadPmDetail(
       mvp_note: string | null;
       submitted_at: string | null;
       submitted_by: string | null;
+      format?: string | null;
     }>();
   if (!report) return null;
   // SECURITY: record must belong to the caller's authorized location (cross-location IDOR guard).
   if (report.location_id !== args.locationId) return null;
   if (args.viewer.level < 4 && !["submitted", "incomplete_confirmed", "auto_finalized"].includes(report.status)) return null;
   if ("status" in report && !isFinalizedReport(String(report.status)) && report.report_date >= etCalendarDate(new Date().toISOString())) return null;
+  if (report.format === "v2") return loadPmV2Detail(service, args, report);
 
   // Tier logic: L4+ see all evals; L3- see only their own eval (or null if none)
   const isManager = args.viewer.level >= REPORTS_HUB_CASH_LEVEL; // L4+
@@ -1231,6 +1244,9 @@ async function loadPmDetail(
 
   return {
     kind: "pm",
+    format: "v1",
+    v2Results: null,
+    v2OwnBands: null,
     date: report.report_date,
     locationId: report.location_id,
     status: report.status,
@@ -1243,6 +1259,60 @@ async function loadPmDetail(
     gradientTally,
     wrapUp,
     reportProgress,
+  };
+}
+
+/**
+ * W09/B062: a v2 day. L4+ readers get the day's results through `loadDayResults` (the ONE reader, the same J9
+ * gate as /pm-report: authors who wrote something, GM / Op-6, MoO+; never the SMM). It needs the trusted ROLE,
+ * which the hub's Viewer does not carry, so without `pmActor` there are no results (never a role guess). Below
+ * KH: the viewer's OWN bands for that day only (owner decision W09-5 b) - no author, no number, no note - or
+ * nothing when they were not graded, as on a v1 day.
+ */
+async function loadPmV2Detail(
+  service: SupabaseClient,
+  args: { viewer: Viewer; locationId: string; pmActor?: PeopleActor },
+  report: { location_id: string; report_date: string; status: string; mvp_user_id: string | null; mvp_note: string | null; submitted_at: string | null; submitted_by: string | null },
+): Promise<PmReportDetail | null> {
+  const isManager = args.viewer.level >= REPORTS_HUB_CASH_LEVEL;
+  let v2Results: PmDayResultsView | null = null;
+  let v2OwnBands: MyFeedbackV2Day | null = null;
+  if (!isManager) {
+    const days = await loadMyFeedbackV2(service, { userId: args.viewer.userId, only: { locationId: report.location_id, date: report.report_date } });
+    v2OwnBands = days.find((d) => d.locationId === report.location_id && d.date === report.report_date) ?? null;
+    if (!v2OwnBands) return null;
+  } else if (args.pmActor && args.pmActor.userId === args.viewer.userId) {
+    try {
+      v2Results = await loadDayResults(service, { actor: args.pmActor, locationId: report.location_id, date: report.report_date });
+    } catch (e) {
+      if (!(e instanceof PmReportError && e.code === "forbidden")) throw e;
+    }
+  }
+  const ids = [...new Set([report.submitted_by, report.mvp_user_id].filter((x): x is string => !!x))];
+  const nameById = new Map<string, string>();
+  if (ids.length) {
+    const { data: users } = await service.from("users").select("id, name").in("id", ids);
+    for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
+  }
+  let wrapUp: ShiftWrapUpRow[] = [];
+  let reportProgress: PmReportDetail["reportProgress"] = [];
+  if (isManager) {
+    wrapUp = await loadShiftWrapUp(service, { locationId: report.location_id, date: report.report_date });
+    const { rows: statusRows } = await loadReportStatuses(service, {
+      locationId: report.location_id, date: report.report_date,
+      actor: { userId: args.viewer.userId, role: "key_holder" as RoleCode, level: args.viewer.level },
+    });
+    reportProgress = statusRows.map((r) => ({ key: r.key, reportId: r.reportId, progress: r.progress, doneAt: r.doneAt }));
+  }
+  return {
+    kind: "pm", format: "v2", v2Results, v2OwnBands,
+    date: report.report_date, locationId: report.location_id, status: report.status,
+    submittedByName: report.submitted_by ? nameById.get(report.submitted_by) ?? null : null,
+    submittedAt: report.submitted_at ?? null,
+    mvpUserId: report.mvp_user_id ?? null,
+    mvpName: report.mvp_user_id ? nameById.get(report.mvp_user_id) ?? null : null,
+    mvpNote: isManager ? (report.mvp_note ?? null) : null,
+    evals: [], gradientTally: [], wrapUp, reportProgress,
   };
 }
 
@@ -1267,7 +1337,8 @@ async function templateMatchesReportType(service: SupabaseClient, templateId: st
 
 export async function loadReportDetail(
   service: SupabaseClient,
-  args: { viewer: Viewer; type: ReportTypeKey; id: string; locationId: string },
+  /** `pmActor`: the trusted people actor (`peopleActorFromAuth`), needed to read a PM v2 day's results (W09/B062). */
+  args: { viewer: Viewer; type: ReportTypeKey; id: string; locationId: string; pmActor?: PeopleActor },
 ): Promise<ReportDetail | null> {
   requireReportScope(args.viewer, args.locationId);
   if (args.type === "opening") {
@@ -1284,7 +1355,7 @@ export async function loadReportDetail(
     return loadCashDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId });
   }
   if (args.type === "pm") {
-    return loadPmDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId });
+    return loadPmDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId, ...(args.pmActor ? { pmActor: args.pmActor } : {}) });
   }
   if (args.type === "maintenance") {
     // id shape: "maintenance-{date}". The location is already authorized by the

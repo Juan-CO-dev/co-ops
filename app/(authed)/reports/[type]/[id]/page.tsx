@@ -29,6 +29,7 @@ import {
   type Viewer,
 } from "@/lib/reports-hub";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { peopleActorFromAuth } from "@/lib/people/access-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
@@ -92,7 +93,8 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
   }
 
   const sb = getServiceRoleClient();
-  const detail: ReportDetail | null = await loadReportDetail(sb, { viewer, type, id, locationId: locationParam });
+  // pmActor: the trusted role, so a PM v2 day can apply its J9 gate (W09/B062).
+  const detail: ReportDetail | null = await loadReportDetail(sb, { viewer, type, id, locationId: locationParam, pmActor: peopleActorFromAuth(auth) });
 
   if (!detail) {
     return (

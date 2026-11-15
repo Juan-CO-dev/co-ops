@@ -635,7 +635,8 @@ export interface MyFeedbackV2Day {
  * minutes each manager observed them), as BANDS. No author, no number, no note text (R9). Before 0271 is
  * applied it answers [] (the page shows v1 feedback only).
  */
-export async function loadMyFeedbackV2(service: SupabaseClient, args: { userId: string }): Promise<MyFeedbackV2Day[]> {
+/** `only` narrows to ONE day of one shop (the reports hub, W09/B062). */
+export async function loadMyFeedbackV2(service: SupabaseClient, args: { userId: string; only?: { locationId: string; date: string } }): Promise<MyFeedbackV2Day[]> {
   requireUuid(args.userId);
   let grades: GradeRow[];
   try {
@@ -658,7 +659,8 @@ export async function loadMyFeedbackV2(service: SupabaseClient, args: { userId: 
     days.push(...await selectAllRows<DayRow>((from, to) => service.from("pm_reports").select("*").in("id", ids).is("superseded_at", null)
       .order("id", { ascending: true }).range(from, to)));
   }
-  const submitted = new Map(days.filter((d) => d.format === "v2" && d.status !== "open").map((d) => [d.id, d] as const));
+  const submitted = new Map(days.filter((d) => d.format === "v2" && d.status !== "open"
+    && (!args.only || (d.location_id === args.only.locationId && d.report_date === args.only.date))).map((d) => [d.id, d] as const));
   const copyById = new Map(copies.filter((c) => submitted.has(c.pm_report_id)).map((c) => [c.id, c] as const));
   // B059: a self-grade (subject = the grading copy's author) never counts.
   const live = grades.filter((g) => copyById.has(g.copy_id) && copyById.get(g.copy_id)!.author_id !== g.subject_id);
