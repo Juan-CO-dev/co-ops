@@ -25,6 +25,8 @@ const IDLE_TARGET = "/?reason=idle&next=%2Foperations%2Fcounts%3Floc%3Da&for=use
 
 const ok = () => ({ ok: true, status: 200, type: "basic", json: async () => ({ ok: true }) }) as unknown as Response;
 const dead = () => ({ ok: false, status: 401, type: "basic", json: async () => ({ code: "unauthorized" }) }) as unknown as Response;
+const unavailable = () => ({ ok: false, status: 503, type: "basic", json: async () => ({ code: "unavailable" }) }) as unknown as Response;
+const HEARTBEAT_KEY = "co_ops_last_heartbeat";
 const calls = (url: string) => h.fetch.mock.calls.filter((c) => c[0] === url);
 const mount = (props: { idleMinutes?: number } = {}) =>
   render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(IdleTimeoutWarning, { userId: "user-1", ...props }) }));
@@ -115,6 +117,114 @@ describe("B013 — client and server idle clocks agree", () => {
     expect(h.push).not.toHaveBeenCalled();
   });
 
+  it("a trailing heartbeat that fails (503) is retried, so resumed typing does not hit an expired server session", async () => {
+    // The round-2 review sequence: type 2:00 (ok), type 3:59, the 4:00 trailing beat gets a transient 503,
+    // connectivity recovers, type again at 12:29. The client is only 8:30 idle, so nobody may be signed out.
+    const IDLE_MS = 600_000;
+    let serverLastActivity = Date.now();
+    let failNext = false;
+    h.fetch.mockImplementation(async (url: string) => {
+      if (url !== "/api/auth/heartbeat") return ok();
+      if (failNext) {
+        failNext = false;
+        return unavailable(); // the session lookup failed; last_activity_at was NOT touched
+      }
+      if (Date.now() - serverLastActivity >= IDLE_MS) return dead();
+      serverLastActivity = Date.now();
+      return ok();
+    });
+    mount();
+    await advance(120); // 2:00
+    fireEvent.keyDown(window, { key: "a" });
+    expect(calls("/api/auth/heartbeat")).toHaveLength(1);
+    await advance(119); // 3:59
+    fireEvent.keyDown(window, { key: "b" });
+    failNext = true;
+    await advance(1); // 4:00 — the trailing beat goes out and gets a 503
+    expect(calls("/api/auth/heartbeat")).toHaveLength(2);
+    await advance(60); // 5:00 — recovered; the unacknowledged activity is retried
+    expect(calls("/api/auth/heartbeat")).toHaveLength(3);
+    await advance(449); // 12:29 — nothing more is sent once the retry was acknowledged
+    expect(calls("/api/auth/heartbeat")).toHaveLength(3);
+    fireEvent.keyDown(window, { key: "c" });
+    await advance(1);
+    expect(calls("/api/auth/heartbeat")).toHaveLength(4);
+    expect(calls("/api/auth/logout")).toHaveLength(0);
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
+  it("a heartbeat lost to the network is retried with bounded backoff while the operator is active", async () => {
+    let failing = true;
+    h.fetch.mockImplementation(async (url: string) => {
+      if (url === "/api/auth/heartbeat" && failing) throw new TypeError("Failed to fetch");
+      return ok();
+    });
+    mount();
+    await advance(120);
+    fireEvent.keyDown(window, { key: "a" });
+    expect(calls("/api/auth/heartbeat")).toHaveLength(1);
+    await advance(240); // backoff: several retries in 4 minutes, but bounded (no hammering)
+    const retried = calls("/api/auth/heartbeat").length;
+    expect(retried).toBeGreaterThan(2);
+    expect(retried).toBeLessThan(12);
+    failing = false;
+    await advance(61); // the next retry is acknowledged ...
+    const settled = calls("/api/auth/heartbeat").length;
+    await advance(200); // ... and then nothing more is sent
+    expect(calls("/api/auth/heartbeat")).toHaveLength(settled);
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
+  it("retries stop once the unacknowledged activity is older than the idle limit", async () => {
+    h.fetch.mockImplementation(async (url: string) => (url === "/api/auth/heartbeat" ? unavailable() : ok()));
+    mount({ idleMinutes: 5 });
+    await advance(100);
+    fireEvent.keyDown(window, { key: "a" });
+    await advance(299); // just short of the client's own idle sign-out
+    const beforeLimit = calls("/api/auth/heartbeat").length;
+    expect(beforeLimit).toBeGreaterThan(1);
+    await advance(120);
+    expect(calls("/api/auth/heartbeat")).toHaveLength(beforeLimit);
+    expect(h.push).toHaveBeenCalledWith(IDLE_TARGET); // the ordinary client idle sign-out
+  });
+
+  it("only an acknowledged heartbeat is published to the other tabs", async () => {
+    let status = 503;
+    h.fetch.mockImplementation(async (url: string) =>
+      url === "/api/auth/heartbeat" ? (status === 503 ? unavailable() : ok()) : ok(),
+    );
+    mount();
+    await advance(120);
+    fireEvent.keyDown(window, { key: "a" });
+    const activityAt = Date.now();
+    await advance(1);
+    expect(calls("/api/auth/heartbeat")).toHaveLength(1);
+    expect(window.localStorage.getItem(HEARTBEAT_KEY)).toBeNull(); // attempted, not acknowledged
+    status = 200;
+    await advance(60);
+    expect(Number(window.localStorage.getItem(HEARTBEAT_KEY))).toBeGreaterThanOrEqual(activityAt);
+  });
+
+  it("another tab's failed heartbeat does not suppress this tab's; its acknowledged one does", async () => {
+    // Two tabs sharing one localStorage: tab A's beat gets a 503; tab B must still send its own (A's attempt
+    // is not "server reached"); B's acknowledged beat then makes A's retry unnecessary.
+    let n = 0;
+    h.fetch.mockImplementation(async (url: string) => {
+      if (url !== "/api/auth/heartbeat") return ok();
+      n += 1;
+      return n === 1 ? unavailable() : ok();
+    });
+    mount();
+    mount();
+    await advance(120);
+    fireEvent.keyDown(window, { key: "a" }); // both tabs see activity
+    await advance(1);
+    expect(calls("/api/auth/heartbeat")).toHaveLength(2);
+    await advance(120);
+    expect(calls("/api/auth/heartbeat")).toHaveLength(2);
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
   it("a trailing heartbeat is skipped when another tab already reached the server after the activity", async () => {
     mount();
     await advance(120);
@@ -155,6 +265,22 @@ describe("B013 — client and server idle clocks agree", () => {
     await advance(1);
     expect(screen.queryByRole("dialog")).toBeNull();
     await advance(500);
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
+  it("Stay signed in that only reaches a 503 closes the warning but keeps retrying until acknowledged", async () => {
+    mount();
+    await advance(571);
+    h.fetch.mockImplementation(async (url: string) => (url === "/api/auth/heartbeat" ? unavailable() : ok()));
+    fireEvent.click(screen.getByRole("button", { name: STAY }));
+    await advance(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(window.localStorage.getItem(HEARTBEAT_KEY)).toBeNull(); // not "server reached"
+    const afterClick = calls("/api/auth/heartbeat").length;
+    h.fetch.mockImplementation(async () => ok());
+    await advance(10);
+    expect(calls("/api/auth/heartbeat").length).toBeGreaterThan(afterClick);
+    expect(window.localStorage.getItem(HEARTBEAT_KEY)).not.toBeNull();
     expect(h.push).not.toHaveBeenCalled();
   });
 

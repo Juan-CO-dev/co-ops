@@ -35,8 +35,12 @@
  * window opens (unless any tab already reached the server since), so typing,
  * a pause shorter than the limit, then typing again never meets a server
  * session older than the client's clock. Nothing more is sent once that
- * activity is flushed. The idle limit is the server's own
- * SESSION_IDLE_MINUTES, passed in by the layouts.
+ * activity is flushed. A heartbeat only counts once the server ACKNOWLEDGES it
+ * (2xx): a network failure or a 503 keeps the activity pending and retries
+ * with bounded backoff (5 s doubling to 60 s) while that activity is still
+ * inside the idle window, and only an acknowledged beat is published to the
+ * other tabs as "server reached". A 401 signs out. The idle limit is the
+ * server's own SESSION_IDLE_MINUTES, passed in by the layouts.
  *
  * Activity-tracking events: mousedown, keydown, touchstart, scroll. This tab's
  * listeners are detached while the warning modal is open — the user must make
@@ -61,6 +65,9 @@ const TICK_MS = 1000;
 const ACTIVITY_WRITE_EVERY_MS = 5_000;
 /** The activity heartbeat, well under half the idle window (clamped for small SESSION_IDLE_MINUTES). */
 const HEARTBEAT_EVERY_MS = 2 * 60 * 1000;
+/** An unacknowledged heartbeat (network failure / 503) is retried after 5 s, doubling, capped at 60 s. */
+const HEARTBEAT_RETRY_BASE_MS = 5_000;
+const HEARTBEAT_RETRY_MAX_MS = 60_000;
 
 const IDLE_ACTIVITY_KEY = "co_ops_last_activity";
 const IDLE_HEARTBEAT_KEY = "co_ops_last_heartbeat";
@@ -90,6 +97,11 @@ function sessionIsDead(res: Response): boolean {
   return res.status === 401 || res.type === "opaqueredirect";
 }
 
+/** The server reached and touched the session (anything else, e.g. a network failure or a 503, is only an attempt). */
+function heartbeatAcknowledged(res: Response | null): boolean {
+  return res !== null && res.status >= 200 && res.status < 300;
+}
+
 export interface IdleTimeoutWarningProps {
   /** The server's idle limit (lib/session.ts sessionIdleMinutes()). */
   idleMinutes?: number;
@@ -109,7 +121,13 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
   // first tick (+1000ms), so the timer still measures from first paint.
   const lastActivityRef = useRef<number>(0);
   const lastActivityWriteRef = useRef<number>(0);
+  /** Send time of this tab's last ACKNOWLEDGED heartbeat (or the page load): the server saw activity up to here. */
   const lastHeartbeatRef = useRef<number>(0);
+  const heartbeatInFlightRef = useRef(false);
+  /** Consecutive unacknowledged heartbeats, and the earliest instant the next retry may go. */
+  const beatFailuresRef = useRef(0);
+  const retryNotBeforeRef = useRef(0);
+  const unmountedRef = useRef(false);
   /** Latest activity the heartbeat throttle suppressed (0 = none pending) and its trailing-send timer. */
   const pendingBeatActivityRef = useRef<number>(0);
   const trailingBeatTimerRef = useRef<number | null>(null);
@@ -152,24 +170,47 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
     }
   }, []);
 
+  /** The server acknowledged a heartbeat sent at sentAt: record it here and publish it to the other tabs. */
+  const noteBeatAcknowledged = useCallback((sentAt: number) => {
+    beatFailuresRef.current = 0;
+    retryNotBeforeRef.current = 0;
+    if (sentAt > lastHeartbeatRef.current) lastHeartbeatRef.current = sentAt;
+    if (sentAt > readStoredMs(IDLE_HEARTBEAT_KEY)) writeStored(IDLE_HEARTBEAT_KEY, String(sentAt));
+  }, []);
+
+  /** A heartbeat was only attempted (network failure / 503): keep its activity pending and back off. */
+  const noteBeatUnacknowledged = useCallback((activityAt: number) => {
+    if (activityAt > pendingBeatActivityRef.current) pendingBeatActivityRef.current = activityAt;
+    beatFailuresRef.current += 1;
+    const backoff = Math.min(HEARTBEAT_RETRY_BASE_MS * 2 ** (beatFailuresRef.current - 1), HEARTBEAT_RETRY_MAX_MS);
+    retryNotBeforeRef.current = Date.now() + backoff;
+  }, []);
+
   /**
    * Send the activity heartbeat now, or — inside the throttle window — remember the activity and send one
-   * trailing heartbeat when the window opens (B013 round 1). A heartbeat from any tab after the activity
-   * already told the server, so the trailing send is dropped.
+   * trailing heartbeat when the window opens (B013 round 1). An ACKNOWLEDGED heartbeat from any tab after the
+   * activity already told the server, so the trailing send is dropped. A failed attempt does not count: the
+   * activity stays pending and is retried with bounded backoff while it is inside the idle window (round 2).
    */
   const beatForActivity = useCallback(
     (activityAt: number) => {
-      if (expiredRef.current) return;
+      if (expiredRef.current || unmountedRef.current) return;
       if (activityAt > pendingBeatActivityRef.current) pendingBeatActivityRef.current = activityAt;
       const pendingAt = pendingBeatActivityRef.current;
       if (pendingAt === 0) return;
-      const lastBeat = Math.max(lastHeartbeatRef.current, readStoredMs(IDLE_HEARTBEAT_KEY));
-      if (lastBeat >= pendingAt) {
-        pendingBeatActivityRef.current = 0; // already flushed (here or in another tab)
+      const lastAck = Math.max(lastHeartbeatRef.current, readStoredMs(IDLE_HEARTBEAT_KEY));
+      if (lastAck >= pendingAt) {
+        pendingBeatActivityRef.current = 0; // already acknowledged (here or in another tab)
         return;
       }
+      if (heartbeatInFlightRef.current) return; // its response reschedules whatever is still pending
       const now = Date.now();
-      const wait = lastBeat + heartbeatEveryMs - now;
+      if (now - pendingAt >= totalIdleMs) {
+        pendingBeatActivityRef.current = 0; // no longer "still active": the client's own idle sign-out takes over
+        return;
+      }
+      const sendAt = beatFailuresRef.current > 0 ? retryNotBeforeRef.current : lastAck + heartbeatEveryMs;
+      const wait = sendAt - now;
       if (wait > 0) {
         if (trailingBeatTimerRef.current === null) {
           trailingBeatTimerRef.current = window.setTimeout(() => {
@@ -180,27 +221,35 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
         return;
       }
       pendingBeatActivityRef.current = 0;
-      lastHeartbeatRef.current = now;
-      writeStored(IDLE_HEARTBEAT_KEY, String(now));
+      heartbeatInFlightRef.current = true;
       void heartbeat().then((res) => {
-        if (res && sessionIsDead(res)) void expire();
+        heartbeatInFlightRef.current = false;
+        if (expiredRef.current) return;
+        if (res && sessionIsDead(res)) {
+          void expire();
+          return;
+        }
+        if (heartbeatAcknowledged(res)) noteBeatAcknowledged(now);
+        else noteBeatUnacknowledged(pendingAt);
+        beatForActivityRef.current(0); // activity during the flight, or the retry
       });
     },
-    [heartbeatEveryMs, heartbeat, expire],
+    [heartbeatEveryMs, totalIdleMs, heartbeat, expire, noteBeatAcknowledged, noteBeatUnacknowledged],
   );
 
   useEffect(() => {
     beatForActivityRef.current = beatForActivity;
   }, [beatForActivity]);
 
-  // The trailing-heartbeat timer dies with the component.
-  useEffect(
-    () => () => {
+  // The trailing-heartbeat / retry timer dies with the component (and a response landing after unmount schedules none).
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
       if (trailingBeatTimerRef.current !== null) window.clearTimeout(trailingBeatTimerRef.current);
       trailingBeatTimerRef.current = null;
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     const now = Date.now();
@@ -283,20 +332,25 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
   }, [warningOpen]);
 
   const onStay = useCallback(async () => {
+    const sentAt = Date.now();
     const res = await heartbeat();
     if (res && sessionIsDead(res)) {
       // B013: "Stay signed in" on a dead session must not pretend it worked.
       void expire();
       return;
     }
-    // A network failure is non-fatal — the next protected request surfaces the real session state.
+    // A network failure / 503 is non-fatal, but it is not "server reached": the click stays pending and is retried.
     const now = Date.now();
     markActivity(now, true);
-    lastHeartbeatRef.current = now;
-    writeStored(IDLE_HEARTBEAT_KEY, String(now));
+    if (heartbeatAcknowledged(res)) {
+      noteBeatAcknowledged(sentAt);
+    } else {
+      noteBeatUnacknowledged(sentAt);
+      beatForActivity(sentAt);
+    }
     setSecondsLeft(warningSeconds);
     setWarningOpen(false);
-  }, [heartbeat, expire, markActivity, warningSeconds]);
+  }, [heartbeat, expire, markActivity, noteBeatAcknowledged, noteBeatUnacknowledged, beatForActivity, warningSeconds]);
 
   const onLogout = useCallback(async () => {
     expiredRef.current = true;
