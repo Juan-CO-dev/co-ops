@@ -6,7 +6,7 @@
 --   Stripe Checkout Session and nothing closed the first when the second was opened, so BOTH stayed payable
 --   for a day and both charges were accepted: a deposit AND the full total for one order.
 --
--- WHAT: exactly TWO objects — one index, one function.
+-- WHAT: exactly FOUR objects — one index, two functions, one column.
 --   (1) create unique index catering_payments_one_open_checkout
 --         on public.catering_payments (quote_id)
 --         where status = 'due' and provider_session_id is not null;
@@ -18,6 +18,22 @@
 --       (review r3 of this wave.) The ONE writer that records a minted Checkout Session on its intent, and
 --       the place "may this quote still be collected on?" is decided — under the quote's own row lock, so a
 --       settlement cannot land between the question and the write. See the section below.
+--   (3) alter table public.catering_payments add column settlement_cleanup_at timestamptz;
+--       (review r6 of this wave.) THE DURABLE MARKER OF A FINISHED SETTLEMENT. Recording money is a flip
+--       (`due -> paid`) followed by cleanup: void the order's other deposit / full intent, close the order's
+--       other checkouts. A delivery can be cut off between the two, and two deliveries can overlap. "Is the
+--       cleanup still owed?" used to be inferred from WHICH delivery inserted the Stripe ledger row; the one
+--       that inserted it could stamp `already_advanced` while the one that flipped the row had died before
+--       the cleanup — and nothing ever looked again. Now it is a fact on the payment row: NULL = the cleanup
+--       has not been confirmed complete, and ANY delivery (or a second "Mark paid" press) that finds the
+--       money recorded runs the idempotent cleanup again; a timestamp = every sibling void landed and every
+--       other checkout was confirmed closed. It is written once, by compare-and-set (NULL -> now), by the app
+--       (lib/catering/payment-sessions.ts `markSettlementCleanupDone`). See the section below.
+--   (4) create function public.catering_payment_checkout_ready() returns boolean
+--       (review r6.) The app's ONE question before it lets anything reach Stripe: "is this file applied?"
+--       True only while the three objects above all exist. PostgREST answers PGRST202 when the function is
+--       not there, and the app REFUSES the pay tap on that answer — it opens no checkout. See the next but
+--       one section.
 --
 -- ── WHY AN INDEX, WHEN THE APP ALREADY RETIRES THE OTHER SESSION ─────────────────────────────────
 -- lib/portal/quotes.ts `createQuoteCheckout` (same PR) retires every other open session of the quote at
@@ -75,22 +91,50 @@
 --     the app moves a family's payments onto its live revision when a quote is revised (W02/B006), so the
 --     live revision is where this index does its work.
 --
--- ── THE APP WORKS BEFORE THIS IS APPLIED ─────────────────────────────────────────────────────────
--- Nothing reads this index and no code path requires it. The app CALLS the function and, when PostgREST
--- answers PGRST202 (no such function = this file is not applied), falls back to its own sequence: the
--- compare-and-set attach it always did, followed by a re-read of the same two facts (anything paid? any
--- other unresolved checkout?) and an undo when either turned true. That is "write, then look again" on
--- both sides of every race — each side's later read sees the other's earlier write — so the app refuses in
--- both states; this migration makes the refusal a single decision under a lock instead of two writes and
--- an undo. There is no ordering requirement between this migration and the deploy.
+-- ── THE SETTLEMENT MARKER: WHAT `settlement_cleanup_at` MEANS, EXACTLY (review r6, P1) ───────────
+--   NULL on a `paid` row   the settlement's after-flip work is NOT confirmed complete. Either it has not run
+--                          to its end (a delivery cut off after its flip), or it ran and something could not
+--                          be confirmed (a checkout Stripe would not confirm closed, an order that could not
+--                          be read) — in which case a person was told (ledger outcome `paid_needs_review`,
+--                          audit row, staff email) and the unresolved checkout keeps its session id on its
+--                          row. Whoever next finds this row paid runs the cleanup again: it is idempotent.
+--   a timestamp            the cleanup is DONE: every other due deposit / full intent of the order was voided
+--                          (or there was none), every other checkout was confirmed closed or is already
+--                          landing, and the whole family was looked at. Only then may a Stripe delivery that
+--                          finds its charge already on the row answer `already_advanced`.
+--   Written ONCE, NULL -> now, guarded on `status = 'paid'`; never cleared, never rewritten. The run whose
+--   write lands is the one that sends the ordinary "payment received" report, so two overlapping deliveries
+--   report it once. A row that is not `paid` never carries a meaning here.
+--   EXISTING ROWS keep NULL. Prod has never had Stripe keys, so every paid row there was recorded by hand
+--   and names no checkout: a second "Mark paid" press on one finds nothing to close and stamps it. No
+--   backfill is run — the apply writes no row.
 --
--- NO DATA IS WRITTEN, MOVED OR DELETED BY THE APPLY. No table, column or policy is created or changed:
--- `catering_payments` keeps the posture 0127 gave it (RLS enabled, no policies, service-role only). The one
--- UPDATE in this file is inside the function body and runs only when the app calls it.
--- PRIVILEGE CEILING (the 0257 / 0300 pattern): the function is SECURITY DEFINER with
--- `search_path = pg_catalog, public`; EXECUTE is revoked from PUBLIC, anon, authenticated and service_role
--- and granted back to service_role ONLY, and the post-flight asserts exactly that (a function left
--- executable by `authenticated` is callable by any staff cookie with curl — the 0189 lesson).
+-- ── THE APP FAILS CLOSED WITHOUT THIS FILE: APPLY 0303 BEFORE ANY STRIPE KEY IS SET (review r6) ──
+-- Rounds r3–r5 kept a second, lock-free attach for a database without this file: write the session, re-read
+-- the quote, undo if something had turned up. Review r6 broke it (a request that re-used the session before
+-- the undo walked away with a live checkout the row had forgotten), and a path that only exists to be raced
+-- is not worth keeping: STRIPE IS DORMANT IN PROD — no key is set — so nothing is lost by requiring the lock.
+--   · The pay tap asks `catering_payment_checkout_ready()` BEFORE it retires, re-uses or mints anything at
+--     Stripe. PGRST202 / 42883 (not applied) or anything but `true` → 503 `payment_unavailable` ("Payment is
+--     temporarily unavailable"), no Stripe call, no session. The same answer from the attach itself closes
+--     the session just minted and refuses.
+--   · A shop with NO Stripe credentials never asks: the pay tap records the intent and shows the stub
+--     message exactly as before, and "Mark paid" works exactly as before (its marker write is best-effort).
+--   · The webhook: a paid flip never depends on this file. A delivery that finds its charge ALREADY on the
+--     row reads `settlement_cleanup_at`; without the column that read fails, the event is `processing_failed`
+--     (500) and Stripe redelivers until the file is applied.
+-- ORDER OF ROLLOUT: (1) apply this file (sim, then prod), (2) deploy, (3) only then may Stripe keys be set.
+-- With no key set the order of (1) and (2) does not matter.
+--
+-- NO DATA IS WRITTEN, MOVED OR DELETED BY THE APPLY. No table or policy is created or changed; ONE nullable
+-- column is added, with no default, so no existing row is rewritten. `catering_payments` keeps the posture
+-- 0127 gave it (RLS enabled, no policies, service-role only) and its table grants are untouched. The one
+-- UPDATE in this file is inside the attach function's body and runs only when the app calls it.
+-- PRIVILEGE CEILING (the 0257 / 0300 pattern): the attach function is SECURITY DEFINER with
+-- `search_path = pg_catalog, public`; the readiness function reads the catalog only and is SECURITY INVOKER
+-- with the same pinned search_path. For BOTH, EXECUTE is revoked from PUBLIC, anon, authenticated and
+-- service_role and granted back to service_role ONLY, and the post-flight asserts exactly that (a function
+-- left executable by `authenticated` is callable by any staff cookie with curl — the 0189 lesson).
 --
 -- EXISTING ROWS: prod has never had Stripe keys (the leg is dormant), so no prod row carries a
 --   `provider_session_id` and the index builds over nothing. The sim may hold test sessions. The pre-flight
@@ -121,11 +165,19 @@
 --     -- service_role EXECUTE (plus the owner); NOT anon, NOT authenticated, NOT PUBLIC
 --   select prosecdef, proconfig from pg_proc where oid = 'public.catering_payment_attach_checkout(uuid,uuid,integer,text)'::regprocedure;
 --     -- t, {"search_path=pg_catalog, public"}
+--   select public.catering_payment_checkout_ready();                                             -- t
+--   select column_name, data_type, is_nullable, column_default from information_schema.columns
+--    where table_schema = 'public' and table_name = 'catering_payments' and column_name = 'settlement_cleanup_at';
+--     -- settlement_cleanup_at | timestamp with time zone | YES | (null)
+--   select count(*) from public.catering_payments where settlement_cleanup_at is not null;       -- 0
 --
--- ROLLBACK (if ever needed; restores the pre-0303 behaviour exactly, the app needs no change — it falls
--- back the moment the function is gone):
+-- ROLLBACK (if ever needed). FIRST remove every Stripe key (the app then never asks for a checkout); with a
+-- key still set, every pay tap answers 503 the moment the readiness function is gone — it never falls back
+-- to an unlocked attach. Then, in this order:
+--   drop function public.catering_payment_checkout_ready();
 --   drop function public.catering_payment_attach_checkout(uuid, uuid, integer, text);
 --   drop index public.catering_payments_one_open_checkout;
+--   alter table public.catering_payments drop column settlement_cleanup_at;
 
 begin;
 
@@ -154,6 +206,15 @@ begin
   if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
               where n.nspname = 'public' and p.proname = 'catering_payment_attach_checkout') then
     raise exception '0303: catering_payment_attach_checkout already exists: refusing a second apply';
+  end if;
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+              where n.nspname = 'public' and p.proname = 'catering_payment_checkout_ready') then
+    raise exception '0303: catering_payment_checkout_ready already exists: refusing a second apply';
+  end if;
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'catering_payments'
+                and column_name = 'settlement_cleanup_at') then
+    raise exception '0303: catering_payments.settlement_cleanup_at already exists: refusing a second apply';
   end if;
   if not exists (select 1 from information_schema.columns
                   where table_schema = 'public' and table_name = 'catering_quotes'
@@ -262,6 +323,44 @@ revoke all on function public.catering_payment_attach_checkout(uuid, uuid, integ
   from public, anon, authenticated, service_role;
 grant execute on function public.catering_payment_attach_checkout(uuid, uuid, integer, text) to service_role;
 
+-- ── THE SETTLEMENT MARKER (review r6) ───────────────────────────────────────────────────────────
+-- Nullable, no default: existing rows are not rewritten and every one of them reads "not confirmed".
+alter table public.catering_payments add column settlement_cleanup_at timestamptz;
+
+comment on column public.catering_payments.settlement_cleanup_at is
+  '0303: when this PAID payment''s settlement cleanup was confirmed complete (the order''s other deposit / '
+  'full intent voided, its other checkouts confirmed closed, the whole quote family looked at). NULL = not '
+  'confirmed: whoever next finds the row paid runs the idempotent cleanup again (a Stripe redelivery, an '
+  'overlapping delivery, a second "Mark paid" press). Written once, NULL -> now, guarded on status = paid '
+  '(lib/catering/payment-sessions.ts markSettlementCleanupDone); never cleared. A Stripe delivery answers '
+  'already_advanced only when this is set (audit W02 review r6).';
+
+-- ── THE READINESS FUNCTION (review r6) ──────────────────────────────────────────────────────────
+-- "Is 0303 applied, whole?" The app asks this before anything reaches Stripe and refuses on any answer but
+-- true — including PostgREST's PGRST202 for a function that does not exist. It reads the catalog only.
+create function public.catering_payment_checkout_ready() returns boolean
+language sql
+stable
+set search_path = pg_catalog, public
+as $$
+  select to_regprocedure('public.catering_payment_attach_checkout(uuid,uuid,integer,text)') is not null
+     and exists (select 1 from pg_indexes
+                  where schemaname = 'public' and indexname = 'catering_payments_one_open_checkout')
+     and exists (select 1 from pg_attribute a
+                  where a.attrelid = 'public.catering_payments'::regclass
+                    and a.attname = 'settlement_cleanup_at' and not a.attisdropped);
+$$;
+
+comment on function public.catering_payment_checkout_ready() is
+  '0303: true while the whole of 0303 is in place (the attach function, the one-open-checkout index, the '
+  'settlement marker column). The pay path asks it before any Stripe call and FAILS CLOSED on anything but '
+  'true — PGRST202 included (audit W02 review r6: there is no unlocked attach to fall back to). service_role '
+  'only; lib/portal/quotes.ts requireCheckoutSchema.';
+
+revoke all on function public.catering_payment_checkout_ready()
+  from public, anon, authenticated, service_role;
+grant execute on function public.catering_payment_checkout_ready() to service_role;
+
 -- ── POST-FLIGHT: the index is exactly the one above, and its neighbours are untouched ───────────
 do $$
 declare
@@ -307,6 +406,52 @@ begin
   end if;
   if exists (select 1 from pg_proc p, lateral aclexplode(p.proacl) a where p.oid = f and a.grantee = 0) then
     raise exception '0303: catering_payment_attach_checkout is executable by PUBLIC';
+  end if;
+end $$;
+
+-- ── POST-FLIGHT: the marker column is nullable with no default and no row carries it; the readiness
+--    function exists once, behind the same ceiling, and already answers true ──────────────────────
+do $$
+declare
+  r regprocedure := to_regprocedure('public.catering_payment_checkout_ready()');
+  v_nullable text;
+  v_default  text;
+  v_type     text;
+begin
+  select is_nullable, column_default, data_type into v_nullable, v_default, v_type
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'catering_payments' and column_name = 'settlement_cleanup_at';
+  if not found then
+    raise exception '0303: catering_payments.settlement_cleanup_at was not created';
+  end if;
+  if v_nullable <> 'YES' or v_default is not null or v_type <> 'timestamp with time zone' then
+    raise exception '0303: catering_payments.settlement_cleanup_at is not a nullable timestamptz with no default';
+  end if;
+  if exists (select 1 from public.catering_payments where settlement_cleanup_at is not null) then
+    raise exception '0303: the apply wrote a settlement marker: refusing';
+  end if;
+  if r is null then
+    raise exception '0303: catering_payment_checkout_ready was not created';
+  end if;
+  if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname = 'catering_payment_checkout_ready') <> 1 then
+    raise exception '0303: catering_payment_checkout_ready has more than one signature';
+  end if;
+  if not exists (select 1 from pg_proc p
+                  where p.oid = r and not p.prosecdef
+                    and exists (select 1 from unnest(p.proconfig) c where c = 'search_path=pg_catalog, public')) then
+    raise exception '0303: catering_payment_checkout_ready is not SECURITY INVOKER with search_path = pg_catalog, public';
+  end if;
+  if has_function_privilege('anon', r, 'EXECUTE')
+     or has_function_privilege('authenticated', r, 'EXECUTE')
+     or not has_function_privilege('service_role', r, 'EXECUTE') then
+    raise exception '0303: catering_payment_checkout_ready privilege ceiling is not held (service_role only)';
+  end if;
+  if exists (select 1 from pg_proc p, lateral aclexplode(p.proacl) a where p.oid = r and a.grantee = 0) then
+    raise exception '0303: catering_payment_checkout_ready is executable by PUBLIC';
+  end if;
+  if public.catering_payment_checkout_ready() is not true then
+    raise exception '0303: catering_payment_checkout_ready does not answer true after the apply';
   end if;
 end $$;
 

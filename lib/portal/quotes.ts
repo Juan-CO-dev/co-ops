@@ -542,6 +542,9 @@ export async function initiatePayment(
       if (accounts.length === 0) {
         throw new PortalQuoteError(503, "payment_unavailable", "Payment is temporarily unavailable — please try again");
       }
+      // Nothing of ours reaches Stripe without migration 0303 (review r6): a session is only
+      // ever on a row because 0303's function put it there, so this never refuses a real one.
+      await requireCheckoutSchema(sb);
       await retireOrRefuse(accounts, openSession);
     }
     // BOUND TO THIS QUOTE (review r5). `amountCents` is THIS revision's amount, and a
@@ -720,18 +723,24 @@ interface AttachInput {
  * before the attach (which then refuses) or entirely after it (and the settlement closes
  * the checkout it finds — lib/catering/payment-sessions.ts). Never in between.
  *
- * ── BEFORE 0303: WRITE, THEN LOOK AGAIN ──────────────────────────────────────────────
- * PostgREST answers PGRST202 for a function that does not exist. The attach is then the
- * compare-and-set it always was, FOLLOWED by a re-read of the same facts the function
- * reads: is anything on the quote paid, is the quote still the family's LIVE revision
- * (review r4 — a settlement can have been carried off a revision superseded under us), does
- * another intent still name a checkout. If any
- * has turned true the attach is undone (guarded on the exact session) and refused. That is
- * not a lock, but it is not a hole either: this request writes its session and then reads;
- * a settlement writes `paid` and then reads the quote's open checkouts; a competing attach
- * writes its own session and then reads. Whatever the order, the later READ sees the
- * earlier WRITE, and the side that sees it backs out. Two attaches that see each other
- * both back out — nobody is sent to pay, which is the safe way to lose a race.
+ * ── WITHOUT 0303 THERE IS NO ATTACH: FAIL CLOSED (review r6) ─────────────────────────
+ * Rounds r3–r5 kept a second, lock-free attach for a database without the function: write
+ * the session, re-read the quote, undo the write if something had turned up. Review r6 broke
+ * it — request A attached a session and paused before its re-read; request B found that
+ * session on the row and handed its URL to the customer; A's re-read failed, A cleared the
+ * id and could not retire the session; the next request saw no unresolved checkout and
+ * minted another. Two live checkouts, one of them forgotten. A fallback that exists only to
+ * be raced is not worth repairing: Stripe is dormant in production (no key is set), so
+ * requiring the lock costs nothing. THAT PATH IS DELETED. The only code that ever SETS
+ * `provider_session_id` is 0303's function.
+ *   · `requireCheckoutSchema` asks `catering_payment_checkout_ready()` (0303) BEFORE the pay
+ *     path retires, re-uses or mints anything at Stripe. Not there (PostgREST `PGRST202` /
+ *     `42883`), or anything but `true` → 503 `payment_unavailable`, which the pay panel shows
+ *     as `order.quote.error_unavailable`. No Stripe call is made and no session exists.
+ *   · The attach itself answering "no such function" is the same refusal; the caller closes
+ *     the session it had just minted.
+ * 0303 MUST BE APPLIED BEFORE A STRIPE KEY IS EVER SET (the migration's header says so too).
+ * A shop with no Stripe credentials never gets here: `initiatePayment` answers `stub`.
  */
 async function attachCheckoutSession(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -747,14 +756,45 @@ async function attachCheckoutSession(
     if (typeof data === "string" && (ATTACH_OUTCOMES as readonly string[]).includes(data)) return data as AttachOutcome;
     throw new Error(`createQuoteCheckout attach: unexpected answer ${JSON.stringify(data)}`);
   }
-  // 0303 not applied (see above). Anything else about the function is a real failure.
-  if (error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message)) {
-    return attachCheckoutSessionUnlocked(sb, input);
-  }
+  // 0303 not applied (see above): there is no other way to attach. FAIL CLOSED — the caller
+  // closes the session it minted. Anything else about the function is a real failure.
+  if (isMissingFunction(error)) throw checkoutUnavailable();
   // 0303's `catering_payments_one_open_checkout`, or a lock the function could not take:
   // another request is working this quote's checkout right now. That request wins.
   if (error.code === "23505" || error.code === "40P01" || error.code === "55P03") return "in_progress";
   throw new Error(`createQuoteCheckout attach: ${error.message}`);
+}
+
+/** PostgREST's (and Postgres's) answer for an rpc whose function does not exist. */
+function isMissingFunction(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+
+/** The one refusal for "this database cannot take a card payment safely right now". */
+function checkoutUnavailable(): PortalQuoteError {
+  return new PortalQuoteError(503, "payment_unavailable", "Payment is temporarily unavailable — please try again");
+}
+
+/**
+ * NOTHING REACHES STRIPE UNLESS MIGRATION 0303 IS APPLIED (review r6 — see
+ * `attachCheckoutSession`). Asks 0303's `catering_payment_checkout_ready()`; the function
+ * not existing, or any answer but `true`, is a 503 `payment_unavailable` and the request
+ * stops before it retires, re-uses or mints a session. A database error is thrown as it is
+ * (a 500): that is not "the migration is missing", and it opens nothing either.
+ */
+async function requireCheckoutSchema(sb: ReturnType<typeof getServiceRoleClient>): Promise<void> {
+  const { data, error } = await sb.rpc("catering_payment_checkout_ready");
+  if (error) {
+    if (isMissingFunction(error)) {
+      console.error("[catering] card checkout refused: migration 0303 is not applied (catering_payment_checkout_ready is missing)");
+      throw checkoutUnavailable();
+    }
+    throw new Error(`checkout readiness: ${error.message}`);
+  }
+  if (data !== true) {
+    console.error("[catering] card checkout refused: migration 0303 is not whole (catering_payment_checkout_ready did not answer true)");
+    throw checkoutUnavailable();
+  }
 }
 
 /** Is this quote row still its family's live revision? THROWS on a read error. */
@@ -768,75 +808,6 @@ async function quoteStillLive(sb: ReturnType<typeof getServiceRoleClient>, quote
   return data != null && data.superseded_at == null;
 }
 
-/** The pre-0303 attach: compare-and-set, then re-check, then undo if the quote moved. */
-async function attachCheckoutSessionUnlocked(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  input: AttachInput,
-): Promise<AttachOutcome> {
-  // COMPARE-AND-SET: only the still-due row that still holds NO session takes this one —
-  // and only while it is still the intent this session was MINTED FOR (review r2): on this
-  // quote, at this amount. A manager's revise can land while the mint is at Stripe; its
-  // carry moves the intent to the new revision and re-prices it, and a session at the old
-  // amount must not then be recorded on a row that says the new one.
-  const { error: updErr, count } = await sb
-    .from("catering_payments")
-    .update({ provider: "stripe", provider_session_id: input.sessionId }, { count: "exact" })
-    .eq("id", input.paymentId)
-    .eq("status", "due")
-    .eq("quote_id", input.quoteId)
-    .eq("amount_cents", input.amountCents)
-    .is("provider_session_id", null);
-  if (updErr) {
-    // 0303's index without its function cannot happen (one file), but the index is the
-    // same fact either way: another request attached a session to this quote first.
-    if (updErr.code === "23505") return "in_progress";
-    throw new Error(`createQuoteCheckout persist session: ${updErr.message}`);
-  }
-  if (count === 0) {
-    // Lost the compare-and-set. Either the money already landed (the row is no longer due),
-    // or the quote was revised under us (the intent now belongs to another revision or
-    // carries another amount), or another request recorded its own checkout on this intent
-    // first. Tell them apart for the customer's sake; the redirect is refused every time.
-    const { data: now } = await sb
-      .from("catering_payments")
-      .select("id, status, quote_id, amount_cents")
-      .eq("id", input.paymentId)
-      .maybeSingle<{ id: string; status: string; quote_id: string; amount_cents: number }>();
-    if (now?.status === "due" && (now.quote_id !== input.quoteId || now.amount_cents !== input.amountCents)) return "not_payable";
-    if (now?.status === "due") return "in_progress";
-    return "not_due";
-  }
-
-  // WRITE, THEN LOOK AGAIN (see `attachCheckoutSession`). A failed read here must not leave
-  // the session attached AND unexamined, so it is treated as the worst answer.
-  let verdict: AttachOutcome = "attached";
-  try {
-    if (await quoteHasPaidPayment(sb, input.quoteId, "createQuoteCheckout paid re-check")) verdict = "already_paid";
-    // IS THIS STILL THE ORDER? (review r4.) Both reads here ask about `input.quoteId`. A
-    // revise that landed while the session was at Stripe makes that a SUPERSEDED revision,
-    // and its carry empties it one row at a time — a deposit settled a moment ago may
-    // already be on the new revision while this intent has not been moved yet, so "nothing
-    // paid here" would be true and meaningless. 0303's function re-reads `superseded_at`
-    // under the quote's lock; this is the same question, asked after our own write.
-    else if (!(await quoteStillLive(sb, input.quoteId))) verdict = "not_payable";
-    else if ((await unresolvedCheckouts(sb, input.quoteId, input.paymentId, "createQuoteCheckout session re-check")).length > 0) {
-      verdict = "session_unresolved";
-    }
-  } catch (e) {
-    console.error("[catering] could not re-check the quote after attaching a checkout:", e instanceof Error ? e.message : e);
-    verdict = "session_unresolved";
-  }
-  if (verdict === "attached") return verdict;
-
-  // Undo our own attach, guarded on the exact session: the caller closes it at Stripe.
-  const { error: undoErr } = await sb
-    .from("catering_payments")
-    .update({ provider_session_id: null })
-    .eq("id", input.paymentId)
-    .eq("provider_session_id", input.sessionId);
-  if (undoErr) console.error(`[catering] could not detach checkout ${input.sessionId} from payment ${input.paymentId}:`, undoErr.message);
-  return verdict;
-}
 
 /**
  * Retire another Checkout Session of this quote, or refuse the request. Fails CLOSED:
@@ -912,8 +883,10 @@ async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<Ch
  *   4. settle the intent's OWN stored session: hand it back, or close it for good,
  *   5. create a session at Stripe under a key no request has used before,
  *   6. ATTACH it — and decide, in that same step, whether the quote may still be collected
- *      on (`attachCheckoutSession`: 0303's function under the quote's lock, or before 0303 a
- *      compare-and-set followed by a re-check).
+ *      on (`attachCheckoutSession`: 0303's function, under the quote's lock).
+ * Before step 3 — before ANYTHING reaches Stripe — `requireCheckoutSchema` proves migration
+ * 0303 is applied; without it the request is refused (503) and no session is retired,
+ * re-used or minted (review r6).
  *
  * ── ONE OPEN CHECKOUT PER QUOTE (audit W02/B035) ─────────────────────────────────────
  * A staff quote far enough out offers two ways to pay — a deposit, or the full amount —
@@ -927,8 +900,9 @@ async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<Ch
  * screen is "your payment is being processed".
  * Migration 0303's partial unique index (`catering_payments_one_open_checkout`) makes the
  * same rule a database fact for the one case code cannot close — two requests racing — and
- * step 6 reads its 23505 as exactly that. Everything here works before 0303 is applied;
- * the index and the attach function only make the race's outcome a database fact.
+ * step 6 reads its 23505 as exactly that. NOTHING here runs before 0303 is applied (review
+ * r6): the attach function is the only writer of a session id, and it is the lock every
+ * other flow that touches this quote's payments queues behind.
  *
  * ── A VOID INTENT'S CHECKOUT IS NOT CLOSED UNTIL STRIPE SAYS SO (review r3) ──────────
  * Step 3 used to look at `due` rows only. But an intent is voided on OUR books — by a
@@ -1020,6 +994,10 @@ export async function createQuoteCheckout(input: {
   const code = await locationCodeFor(sb, quote.locationId);
   const creds = stripeCredentialsFor(code);
   if (!creds) throw new PortalQuoteError(409, "not_configured", "Online payment is not enabled");
+  // FAIL CLOSED WITHOUT MIGRATION 0303 (review r6): asked before the first Stripe call of
+  // this request — nothing is retired, re-used or minted on a database that cannot attach
+  // a session under the quote's lock.
+  await requireCheckoutSchema(sb);
   // `creds` is where NEW money goes. A session that already exists is closed by the account
   // that OWNS it, which may be another one of the shop's (review r4 — `retireOrRefuse`).
   const accounts = stripeAccountsForShop(code);

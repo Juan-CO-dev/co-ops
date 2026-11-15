@@ -12,11 +12,17 @@
  *     violate one returns a real `23505` and applies nothing.
  *   - per-table failure injection for reads (`failSelect`) and writes (`failUpdate`,
  *     `failInsert`), each consumed once per listed entry.
- *   - `rpc()`: migration 0303's `catering_payment_attach_checkout` (review r3). OFF by
- *     default — the call answers PGRST202, exactly what PostgREST says for a function that
- *     does not exist, i.e. "0303 is not applied" — and with `attachFunction` on it runs the
+ *   - `rpc()`: migration 0303's `catering_payment_attach_checkout` (review r3) runs the
  *     function's rule in one synchronous step (the real one runs under the quote's row
- *     lock; scripts/sql-harness-0303.mjs proves the SQL itself).
+ *     lock; scripts/sql-harness-0303.mjs proves the SQL itself), and its
+ *     `catering_payment_checkout_ready` (review r6) answers `true`.
+ *   - MIGRATION 0303 IS APPLIED BY DEFAULT (review r6). The app no longer has a way to take
+ *     a card payment without it, so "applied" is the state every ordinary test runs in: the
+ *     one-open-checkout index is enforced, both functions exist, and
+ *     `catering_payments.settlement_cleanup_at` is a column. `unapply0303(fake)` is the
+ *     database WITHOUT the file: both rpcs answer PGRST202 — exactly what PostgREST says for
+ *     a function that does not exist — and any statement that reads, filters on or writes
+ *     the marker column fails with Postgres's 42703 (undefined column).
  *   - `beforeOp` (review r5): a hook that runs before EVERY statement, for the two things
  *     a money path has to survive and a plain fake cannot show. It may be async, so a test
  *     can run ANOTHER request to completion between one request's read and its write (a
@@ -45,21 +51,48 @@ export interface PaymentsFake {
   failSelect: string[];
   failUpdate: string[];
   failInsert: string[];
-  /** Enforce 0303's one-open-checkout index (off by default = "migration not applied"). */
+  /** Enforce 0303's one-open-checkout index. ON by default (see the header). */
   enforceOneOpenCheckout: boolean;
-  /** 0303's `catering_payment_attach_checkout` exists (off by default = PGRST202). */
+  /** 0303's two functions exist (`catering_payment_attach_checkout`,
+   *  `catering_payment_checkout_ready`). ON by default; off = PGRST202. */
   attachFunction: boolean;
+  /** 0303's `catering_payments.settlement_cleanup_at` column exists. ON by default; off =
+   *  every statement that names it fails with 42703. */
+  settlementMarkerColumn: boolean;
   /** See the header. Null = no hook. Statements the hook itself issues go through it too,
    *  so a hook that runs another request disarms itself first. */
   beforeOp: ((op: { table: string; kind: "select" | "insert" | "update"; payload: unknown }) => void | "cut" | Promise<void | "cut">) | null;
+  /** The same hook for an rpc call (review r6: a request can be held at 0303's attach, or at
+   *  its readiness question). Null = no hook. */
+  beforeRpc: ((name: string, args: Row) => void | "cut" | Promise<void | "cut">) | null;
 }
 
-/** Both halves of migration 0303 at once: the index and the attach function. */
+/** The whole of migration 0303: the index, both functions, the marker column. This is the
+ *  default; the call is kept so a test can say so out loud. */
 export function apply0303(fake: PaymentsFake): PaymentsFake {
   fake.enforceOneOpenCheckout = true;
   fake.attachFunction = true;
+  fake.settlementMarkerColumn = true;
   return fake;
 }
+
+/** A database WITHOUT migration 0303 (see the header). */
+export function unapply0303(fake: PaymentsFake): PaymentsFake {
+  fake.enforceOneOpenCheckout = false;
+  fake.attachFunction = false;
+  fake.settlementMarkerColumn = false;
+  return fake;
+}
+
+/** Give `conn` the migration state of `like` (a second connection to the same database). */
+export function sameMigrationState(conn: PaymentsFake, like: PaymentsFake): PaymentsFake {
+  conn.enforceOneOpenCheckout = like.enforceOneOpenCheckout;
+  conn.attachFunction = like.attachFunction;
+  conn.settlementMarkerColumn = like.settlementMarkerColumn;
+  return conn;
+}
+
+const MARKER_COLUMN = "settlement_cleanup_at";
 
 type Settled = { data: unknown; error: { code?: string; message: string } | null; count: number | null };
 
@@ -101,9 +134,11 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
     failSelect: [],
     failUpdate: [],
     failInsert: [],
-    enforceOneOpenCheckout: false,
-    attachFunction: false,
+    enforceOneOpenCheckout: true,
+    attachFunction: true,
+    settlementMarkerColumn: true,
     beforeOp: null,
+    beforeRpc: null,
   };
 
   /**
@@ -131,14 +166,25 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
     return ok("attached");
   }
 
-  async function rpc(name: string, args: Row): Promise<Settled> {
-    if (name !== "catering_payment_attach_checkout" || !db.attachFunction) {
+  async function rpc(name: string, args: Row = {}): Promise<Settled> {
+    if (db.beforeRpc) {
+      const verdict = await db.beforeRpc(name, args);
+      if (verdict === "cut") return new Promise<Settled>(() => {});
+    }
+    const known = name === "catering_payment_attach_checkout" || name === "catering_payment_checkout_ready";
+    if (!known || !db.attachFunction) {
       db.ops.push({ table: `rpc:${name}`, kind: "rpc", payload: args, matched: 0 });
       return {
         data: null,
         error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` },
         count: null,
       };
+    }
+    if (name === "catering_payment_checkout_ready") {
+      // 0303's readiness function: true only while the whole file is in place.
+      const ready = db.enforceOneOpenCheckout && db.settlementMarkerColumn;
+      db.ops.push({ table: `rpc:${name}`, kind: "rpc", payload: args, matched: ready ? 1 : 0 });
+      return { data: ready, error: null, count: null };
     }
     const out = attachCheckout(args);
     db.ops.push({ table: `rpc:${name}`, kind: "rpc", payload: args, matched: out.data === "attached" ? 1 : 0 });
@@ -151,9 +197,16 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
     let payload: unknown = null;
     let orderBy: { col: string; asc: boolean } | null = null;
     let limitN: number | null = null;
+    /** Does this statement name 0303's marker column (select list, filter or payload)? */
+    let namesMarker = false;
     const rows = () => (tables[table] ??= []);
 
     const run = (): Settled => {
+      if (table === "catering_payments" && namesMarker && !db.settlementMarkerColumn) {
+        // Postgres, for a column that does not exist (0303 not applied). Nothing is applied.
+        db.ops.push({ table, kind, payload, matched: 0 });
+        return { data: null, error: { code: "42703", message: `column catering_payments.${MARKER_COLUMN} does not exist` }, count: null };
+      }
       if (kind === "insert") {
         if (take(db.failInsert, table)) {
           db.ops.push({ table, kind, payload, matched: 0 });
@@ -236,11 +289,12 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
       return { data: list[0] ?? null, error: null, count: r.count };
     };
 
+    const names = (c: string) => { if (c === MARKER_COLUMN) namesMarker = true; };
     const q = {
-      select: (_columns?: string) => q,
-      eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
-      neq: (c: string, v: unknown) => { filters.push((r) => r[c] !== v); return q; },
-      is: (c: string, v: null | boolean) => { filters.push((r) => (v === null ? isNull(r[c]) : r[c] === v)); return q; },
+      select: (columns?: string) => { if (columns?.includes(MARKER_COLUMN)) namesMarker = true; return q; },
+      eq: (c: string, v: unknown) => { names(c); filters.push((r) => r[c] === v); return q; },
+      neq: (c: string, v: unknown) => { names(c); filters.push((r) => r[c] !== v); return q; },
+      is: (c: string, v: null | boolean) => { names(c); filters.push((r) => (v === null ? isNull(r[c]) : r[c] === v)); return q; },
       in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
       not: (c: string, operator: string, v: unknown) => {
         if (operator !== "is" || v !== null) throw new Error(`payments-fake: unsupported not(${c}, ${operator})`);
@@ -264,7 +318,12 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
       limit: (n: number) => { limitN = n; return q; },
       returns: () => q,
       insert: (p: unknown) => { kind = "insert"; payload = p; return q; },
-      update: (p: unknown, _opts?: unknown) => { kind = "update"; payload = p; return q; },
+      update: (p: unknown, _opts?: unknown) => {
+        kind = "update";
+        payload = p;
+        if (p && typeof p === "object" && MARKER_COLUMN in (p as Row)) namesMarker = true;
+        return q;
+      },
       maybeSingle: async () => one(await settle(), false),
       single: async () => one(await settle(), true),
       then: (resolve: (v: Settled) => unknown, reject?: (e: unknown) => unknown) => settle().then(resolve, reject),

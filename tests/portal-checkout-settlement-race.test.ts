@@ -18,11 +18,13 @@
  * THE RULE PINNED HERE: settlement and checkout eligibility are decided per QUOTE, at the
  * moment a checkout is reserved and again at the moment it is attached. A paid row on the
  * quote refuses both (409 `already_paid`), the session minted for the refused request is
- * closed, and the intent raised for it is voided. With migration 0303 applied the attach is
- * `catering_payment_attach_checkout`, which decides under the quote's row lock; before it
- * is applied the app re-reads after its own write (each side writes, then reads the other's
- * write — at least one of them always sees the other). And the other direction is closed
- * too: a settlement that lands AFTER a checkout was attached closes that checkout.
+ * closed, and the intent raised for it is voided. The attach is migration 0303's
+ * `catering_payment_attach_checkout`, which decides under the quote's row lock. WITHOUT 0303
+ * THERE IS NO ATTACH AT ALL (review r6): rounds r3–r5 kept a lock-free twin here ("write,
+ * re-read, undo") and ran every test below in both database states; the reviewer raced it,
+ * it is deleted, and the pay tap now refuses before anything reaches Stripe — pinned in the
+ * last describe of this file. And the other direction is closed too: a settlement that lands
+ * AFTER a checkout was attached closes that checkout.
  *
  * ── P1 (2): "voiding an intent does not close its Stripe session" ────────────────────
  * A revise that makes the deposit requirement zero voids the deposit intent. If retiring
@@ -43,7 +45,7 @@ import { readFileSync } from "node:fs";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { apply0303, paymentsFake, type PaymentsFake, type Row } from "./payments-fake-client";
+import { apply0303, paymentsFake, sameMigrationState, unapply0303, type PaymentsFake, type Row } from "./payments-fake-client";
 import { stripeFake, type StripeFake } from "./stripe-fake";
 
 let db: PaymentsFake;
@@ -236,10 +238,7 @@ function holdWhen(fake: PaymentsFake, when: (op: HeldOp) => boolean): { reached:
 
 /** A second connection over the SAME rows, with the same migration state. */
 function secondConnection(): PaymentsFake {
-  const conn = paymentsFake(db.tables);
-  conn.enforceOneOpenCheckout = db.enforceOneOpenCheckout;
-  conn.attachFunction = db.attachFunction;
-  return conn;
+  return sameMigrationState(paymentsFake(db.tables), db);
 }
 
 /** The pay route's second step, exactly as app/api/portal/quote/[id]/pay/route.ts runs it. */
@@ -270,11 +269,16 @@ async function refusal(p: Promise<unknown>): Promise<PortalQuoteError> {
   throw new Error("expected a PortalQuoteError, but the call succeeded");
 }
 
-/** The two database states the app must be right in: before 0303 is applied, and after. */
-const MIGRATION_STATES = [
-  { name: "before migration 0303 (the app's own re-checks)", applied: false },
-  { name: "with migration 0303 applied (index + attach function)", applied: true },
-] as const;
+/**
+ * THE ONE DATABASE STATE A CARD PAYMENT CAN BE TAKEN IN (review r6): migration 0303 applied.
+ * This table had a second row — "before migration 0303 (the app's own re-checks)" — until
+ * the lock-free attach it exercised was deleted; what the app does without 0303 now is refuse
+ * (the last describe of this file). Kept as a table so the describes below read as before.
+ */
+const MIGRATION_STATES = [{ name: "with migration 0303 applied (index + attach function)", applied: true }] as const;
+
+/** The attach itself — not 0303's readiness question, which is the request's FIRST rpc. */
+const isAttach = (op: HeldOp) => op.kind === "rpc" && op.table === "rpc:catering_payment_attach_checkout";
 
 beforeEach(() => {
   auditMock.mockClear();
@@ -338,11 +342,7 @@ describe.each(MIGRATION_STATES)("W02 review r3 (P1) — settlement racing a seco
 
     // Held at the attach: every read of createQuoteCheckout has passed, the session exists at Stripe.
     const connB = secondConnection();
-    const hold = holdWhen(connB, (op) =>
-      applied
-        ? op.kind === "rpc"
-        : op.table === "catering_payments" && op.kind === "update" && (op.payload as Row).provider_session_id != null,
-    );
+    const hold = holdWhen(connB, isAttach);
     current = connB;
     const fullRequest = checkoutFor(intent, "full");
     current = db;
@@ -431,8 +431,8 @@ describe.each(MIGRATION_STATES)("W02 review r3 (P1) — settlement racing a seco
     const first = await initiatePayment(CUSTOMER, QUOTE, "full");
 
     const connB = secondConnection();
-    // Held at the audit-free moment after the gate: the first UPDATE/RPC of the checkout step.
-    const hold = holdWhen(connB, (op) => op.kind === "rpc" || (op.table === "catering_payments" && op.kind === "update"));
+    // Held at the audit-free moment after the gate: the first UPDATE of the checkout step, or its attach.
+    const hold = holdWhen(connB, (op) => isAttach(op) || (op.table === "catering_payments" && op.kind === "update"));
     current = connB;
     const again = checkoutFor(first, "full");
     current = db;
@@ -564,11 +564,7 @@ describe.each(MIGRATION_STATES)("W02 review r3 (P1) — a checkout nobody confir
   it("an unresolved checkout that APPEARS while ours is at Stripe is caught at the attach: ours is closed, the request refused", async () => {
     const intent = await initiatePayment(CUSTOMER, QUOTE, "full");
     const connB = secondConnection();
-    const hold = holdWhen(connB, (op) =>
-      applied
-        ? op.kind === "rpc"
-        : op.table === "catering_payments" && op.kind === "update" && (op.payload as Row).provider_session_id != null,
-    );
+    const hold = holdWhen(connB, isAttach);
     current = connB;
     const request = checkoutFor(intent, "full");
     current = db;
@@ -765,11 +761,17 @@ describe("W02 review r3 (P1) — Stripe's own `checkout.session.expired` is a co
 describe("W02 review r3 — the rules are written where the next reader will look", () => {
   const read = (rel: string) => readFileSync(rel, "utf8").replace(/\r\n/g, "\n");
 
-  it("the attach goes through 0303's function and falls back, by name, when it is not there", () => {
+  it("the attach goes through 0303's function, and there is NO second way to attach when it is not there (review r6)", () => {
     const lib = read("lib/portal/quotes.ts");
     expect(lib).toMatch(/\.rpc\("catering_payment_attach_checkout"/);
+    // The readiness question is asked by name, and a missing function is a refusal, by name.
+    expect(lib).toMatch(/\.rpc\("catering_payment_checkout_ready"\)/);
     expect(lib).toMatch(/PGRST202/);
-    // Nothing queries the catalog to find out whether the migration is applied.
+    expect(lib).toMatch(/if \(isMissingFunction\(error\)\) throw checkoutUnavailable\(\);/);
+    // The lock-free twin is gone, with its write and its undo.
+    expect(lib).not.toMatch(/attachCheckoutSessionUnlocked/);
+    expect(lib).not.toMatch(/provider_session_id: input\.sessionId/);
+    // Nothing queries the catalog itself: 0303's own function answers for it.
     expect(lib).not.toMatch(/pg_indexes|to_regclass|pg_proc/);
   });
 
@@ -936,11 +938,7 @@ describe.each(MIGRATION_STATES)("W02 review r4 (P1) — a settlement that stradd
     // The customer asks to pay v1 in full; the request is held at its attach (minted, not yet recorded).
     const intent = await initiatePayment(CUSTOMER, V1, "full");
     const connB = secondConnection();
-    const hold = holdWhen(connB, (op) =>
-      applied
-        ? op.kind === "rpc"
-        : op.table === "catering_payments" && op.kind === "update" && (op.payload as Row).provider_session_id != null,
-    );
+    const hold = holdWhen(connB, isAttach);
     current = connB;
     const request = createQuoteCheckout({
       customerId: CUSTOMER,
@@ -1115,5 +1113,156 @@ describe("W02 review r4 (P1) — closing an order's checkouts does not depend on
     expect(rowOf(DEPOSIT).status).toBe("paid");
     expect(settled.result).toBe("paid_needs_review");
     expect(lastAuditMeta("catering.payment.provider_paid").needs_review).toContain("sibling_checkout_open");
+  });
+});
+
+/**
+ * ── REVIEW r6 (P1): WITHOUT MIGRATION 0303 THE PAY TAP OPENS NO CHECKOUT ─────────────
+ * The reviewer's sequence against the lock-free attach rounds r3–r5 kept for a database
+ * without 0303:
+ *
+ *   request A   mints session S, writes it on the intent, pauses before its re-read
+ *   request B   finds S on the row, asks Stripe (open, this attempt), hands S's URL back
+ *   request A   resumes: its re-read fails → it CLEARS S from the row → retiring S fails
+ *   request C   sees no unresolved checkout → mints T
+ *   ⇒ S and T both open, both URLs in customers' hands, and the row has forgotten S.
+ *
+ * A fallback that exists only to be raced is not repaired here — it is DELETED. Stripe is
+ * dormant in production (no key is set), so the rule costs nothing: no card checkout without
+ * 0303's attach function and its lock. What is pinned:
+ *   - the pay tap asks 0303's readiness function BEFORE anything reaches Stripe, and on
+ *     PGRST202 refuses 503 `payment_unavailable` — `order.quote.error_unavailable` on the
+ *     customer's screen. NOTHING is retired, read or minted;
+ *   - the reviewer's three requests, run in that order with the same failures injected, end
+ *     with ZERO sessions at Stripe;
+ *   - a shop with NO Stripe credentials is untouched: it never asks, and answers `stub`.
+ */
+describe("W02 review r6 (P1) — without migration 0303 the pay tap opens no checkout", () => {
+  beforeEach(() => {
+    unapply0303(db);
+  });
+
+  const stripeCalls = () => createSessionMock.mock.calls.length + retireMock.mock.calls.length + retrieveMock.mock.calls.length;
+
+  it("one tap: 503 `payment_unavailable`, the intent is recorded, and Stripe was never called — no session exists", async () => {
+    const err = await refusal(tapPay("deposit"));
+
+    expect(err.status).toBe(503);
+    expect(err.code).toBe("payment_unavailable");
+    expect(stripeCalls()).toBe(0);
+    expect(stripe.sessions.size).toBe(0);
+    // The request for a deposit is still a fact (as it is when Stripe itself is down)…
+    expect(byKind("deposit")).toHaveLength(1);
+    expect(byKind("deposit")[0]).toMatchObject({ status: "due" });
+    // …and no row names a checkout, because none exists.
+    expect(byKind("deposit")[0]!.provider_session_id ?? null).toBeNull();
+    expect(unresolvedRows()).toEqual([]);
+    // The question was asked, by name, and nothing was attached by any other route.
+    expect(db.ops.filter((o) => o.kind === "rpc").map((o) => o.table)).toEqual(["rpc:catering_payment_checkout_ready"]);
+    expect(db.ops.some((o) => o.table === "catering_payments" && o.kind === "update" && (o.payload as Row).provider_session_id != null)).toBe(false);
+  });
+
+  it("the customer is shown `order.quote.error_unavailable` — an existing key, in both languages", () => {
+    const buttons = readFileSync("app/order/quote/[id]/pay-buttons.tsx", "utf8");
+    expect(buttons).toMatch(/payment_unavailable: "order\.quote\.error_unavailable"/);
+    for (const lang of ["en", "es"]) {
+      const dict = JSON.parse(readFileSync(`lib/i18n/${lang}.json`, "utf8")) as Record<string, string>;
+      expect(dict["order.quote.error_unavailable"], lang).toEqual(expect.any(String));
+    }
+  });
+
+  it("THE REPORTED RACE CANNOT START: requests A, B and C, with the same failures injected, leave ZERO sessions at Stripe", async () => {
+    // A — the first tap.
+    const a = await refusal(tapPay("full"));
+    // B — a second tab at the same moment, on its own connection; and the failures the
+    // reviewer injected for the rest of the sequence: Stripe cannot be reached to retire
+    // anything, and the next read of the order's payments fails.
+    stripe.down = true;
+    const connB = secondConnection();
+    current = connB;
+    const b = await refusal(tapPay("full"));
+    current = db;
+    stripe.down = false;
+    // C — the next request.
+    const c = await refusal(tapPay("full"));
+
+    for (const r of [a, b, c]) expect(r).toMatchObject({ status: 503, code: "payment_unavailable" });
+    expect(stripe.sessions.size).toBe(0);
+    expect(stripe.creates).toEqual([]);
+    expect(stripeCalls()).toBe(0);
+    expect(unresolvedRows()).toEqual([]);
+    expect(byKind("full")).toHaveLength(1); // one intent, never given a session
+  });
+
+  it.each(["deposit", "full"] as const)("the %s option refuses the same way, however many times it is tapped", async (kind) => {
+    for (let i = 0; i < 3; i += 1) expect((await refusal(tapPay(kind))).code).toBe("payment_unavailable");
+    expect(stripeCalls()).toBe(0);
+    expect(byKind(kind)).toHaveLength(1); // one intent, reused
+  });
+
+  it("a stale amount is NOT re-priced under a checkout either: the readiness question comes before the retire", async () => {
+    // A session left on a due intent at an older amount (it can only be there if 0303 was
+    // applied once and has since been rolled back with a key still set — the forbidden order).
+    const old = await sessionAtStripe(DEPOSIT, QUOTE, 15000);
+    payments().push(depositRow({ amount_cents: 15000, provider: "stripe", provider_session_id: old }));
+    createSessionMock.mockClear();
+
+    const err = await refusal(tapPay("deposit"));
+
+    expect(err).toMatchObject({ status: 503, code: "payment_unavailable" });
+    expect(retireMock).not.toHaveBeenCalled();
+    expect(rowOf(DEPOSIT)).toMatchObject({ amount_cents: 15000, provider_session_id: old }); // untouched
+    expect(createSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("the readiness function answering anything but `true` (a half-applied file) is the same refusal", async () => {
+    apply0303(db);
+    db.settlementMarkerColumn = false; // the fake's readiness function then answers false
+
+    const err = await refusal(tapPay("deposit"));
+
+    expect(err).toMatchObject({ status: 503, code: "payment_unavailable" });
+    expect(stripeCalls()).toBe(0);
+  });
+
+  it("the attach function vanishing AFTER the readiness answer: the session just minted is closed, nothing is attached, 503", async () => {
+    apply0303(db);
+    const intent = await initiatePayment(CUSTOMER, QUOTE, "deposit");
+    const connB = secondConnection();
+    const hold = holdWhen(connB, isAttach);
+    current = connB;
+    const request = checkoutFor(intent, "deposit");
+    current = db;
+    await hold.reached;
+    const minted = openSessions()[0]!;
+    connB.attachFunction = false; // dropped between the two rpcs
+
+    hold.release();
+    const err = await refusal(request);
+
+    expect(err).toMatchObject({ status: 503, code: "payment_unavailable" });
+    expect(minted.status).toBe("expired");
+    expect(rowOf(intent.paymentId).provider_session_id ?? null).toBeNull();
+    expect(openSessions()).toEqual([]);
+  });
+
+  it("a shop with NO Stripe credentials never asks: the tap records the intent and answers `stub`, exactly as before", async () => {
+    vi.mocked(stripeClient.stripeCredentialsFor).mockReturnValueOnce(null);
+
+    const out = await initiatePayment(CUSTOMER, QUOTE, "deposit");
+
+    expect(out).toMatchObject({ ok: true, stub: true, amountCents: 20000 });
+    expect(db.ops.filter((o) => o.kind === "rpc")).toEqual([]);
+    expect(stripeCalls()).toBe(0);
+  });
+
+  it("with 0303 applied the same tap opens exactly one checkout (the control)", async () => {
+    apply0303(db);
+    const url = await tapPay("deposit");
+    expect(openSessions().map((s) => s.url)).toEqual([url]);
+    expect(db.ops.filter((o) => o.kind === "rpc").map((o) => o.table)).toEqual([
+      "rpc:catering_payment_checkout_ready",
+      "rpc:catering_payment_attach_checkout",
+    ]);
   });
 });

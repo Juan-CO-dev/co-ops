@@ -12,21 +12,31 @@
  *       on a second apply, and on rows that already break the rule (it names the count and picks no
  *       winner); a refused apply changes nothing
  *   P1  the apply itself: one new UNIQUE index on (quote_id) WHERE status = 'due' AND provider_session_id
- *       IS NOT NULL; the 0130 and 0204 indexes still there; no row written, moved or deleted; no grant,
- *       policy or column changed
+ *       IS NOT NULL; the 0130 and 0204 indexes still there; no row written, moved or deleted; no grant or
+ *       policy changed; exactly ONE column added (`settlement_cleanup_at`, a nullable timestamptz with no
+ *       default, NULL on every existing row) and every other column as it was; exactly TWO functions
  *   P2  the rule: a second due intent of one quote cannot ATTACH a session while another due intent holds
  *       one (23505 naming the index), by UPDATE and by INSERT
  *   P3  what stays allowed: a due deposit + a due full with only one at Stripe; clearing one session then
  *       attaching the other (the app's retire-then-mint order); a paid / refunded / void row keeping its
  *       session id beside a new due one; different quotes each with their own open checkout
  *   P4  0130 is untouched: still one due intent per (quote, kind)
- *   P5  the rollback in the header (`drop function` + `drop index`) restores the pre-0303 behaviour
+ *   P5  the rollback in the header (drop the two functions, the index, the column — in that order)
+ *       restores the pre-0303 schema exactly
  *   P6  the attach FUNCTION (review r3), `catering_payment_attach_checkout`: every answer it can give
  *       (attached / in_progress / not_due / not_payable / already_paid / session_unresolved), that a
  *       refusal writes nothing, that a void row's session blocks and a paid / refunded row's does not,
  *       its privilege ceiling (service_role only: anon and authenticated are refused by Postgres), that
  *       it is SECURITY DEFINER with a pinned search_path, and that it takes the quote row and the
  *       quote's payment rows FOR UPDATE before it reads
+ *   P7  the READINESS function (review r6), `catering_payment_checkout_ready`: true after the apply; false
+ *       the moment any of the three other objects is gone (the attach function, the index, the column), so
+ *       a half rollback can never read as "ready"; its privilege ceiling (service_role only); SECURITY
+ *       INVOKER with a pinned search_path
+ *   P8  the SETTLEMENT MARKER (review r6): the app's compare-and-set (`settlement_cleanup_at = now()
+ *       where status = 'paid' and settlement_cleanup_at is null`) lands exactly once per paid row, never on
+ *       a due / void / refunded row, is never rewritten by a second writer, and does not interact with
+ *       either unique index
  *
  * WHAT A SINGLE SESSION CANNOT SHOW: that a concurrent settlement actually WAITS on those locks. That
  * is a two-session proof and belongs on the sim, run by CC when 0303 is applied there.
@@ -89,6 +99,9 @@ const indexNames = async (db) =>
   (await db.query("select indexname from pg_indexes where schemaname = 'public' and tablename = 'catering_payments' order by 1")).rows.map((r) => r.indexname);
 const snapshot = async (db) =>
   JSON.stringify((await db.query("select id, quote_id, kind, amount_cents, status, provider, provider_ref, provider_session_id from public.catering_payments order by id")).rows);
+const columnsOf = async (db) =>
+  (await db.query(
+    "select column_name, data_type, is_nullable, column_default from information_schema.columns where table_schema = 'public' and table_name = 'catering_payments' order by ordinal_position")).rows;
 
 async function fixtures(db) {
   const shop = (await db.query("insert into public.locations (code) values ('S1') returning id")).rows[0].id;
@@ -123,6 +136,19 @@ try {
     // Half a rollback (the index dropped, the function left): still refused, by the function's own guard.
     await again.exec("drop index public.catering_payments_one_open_checkout;");
     await refuses(() => again.exec(M0303), "0303: catering_payment_attach_checkout already exists: refusing a second apply", "P0 a re-apply over a leftover function is refused");
+    await again.exec("rollback");
+    // …the attach function dropped too, the readiness function left:
+    await again.exec("drop function public.catering_payment_attach_checkout(uuid, uuid, integer, text);");
+    await refuses(() => again.exec(M0303), "0303: catering_payment_checkout_ready already exists: refusing a second apply", "P0 a re-apply over a leftover readiness function is refused");
+    await again.exec("rollback");
+    // …and that one dropped, the marker column left:
+    await again.exec("drop function public.catering_payment_checkout_ready();");
+    await refuses(() => again.exec(M0303), "0303: catering_payments.settlement_cleanup_at already exists: refusing a second apply", "P0 a re-apply over a leftover marker column is refused");
+    await again.exec("rollback");
+    // The whole documented rollback, and the file applies again from clean.
+    await again.exec("alter table public.catering_payments drop column settlement_cleanup_at;");
+    await again.exec(M0303);
+    check((await again.query("select public.catering_payment_checkout_ready() as ok")).rows[0].ok === true, "P0 after the full documented rollback, the file applies again");
     await again.close();
 
     // Rows that already break the rule: two due intents of ONE quote, both at Stripe.
@@ -156,8 +182,7 @@ try {
   const grantsBefore = JSON.stringify((await db.query(
     "select grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' and table_name = 'catering_payments' order by 1, 2")).rows);
   const policiesBefore = (await db.query("select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = 'catering_payments'")).rows[0].n;
-  const columnsBefore = JSON.stringify((await db.query(
-    "select column_name, data_type, is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'catering_payments' order by ordinal_position")).rows);
+  const columnsBefore = JSON.stringify(await columnsOf(db));
   const rowsBefore = await snapshot(db);
   const namesBefore = await indexNames(db);
 
@@ -179,9 +204,16 @@ try {
     "P1 no grant on catering_payments changed");
   check((await db.query("select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = 'catering_payments'")).rows[0].n === policiesBefore,
     "P1 no policy was added");
-  check(JSON.stringify((await db.query(
-    "select column_name, data_type, is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'catering_payments' order by ordinal_position")).rows) === columnsBefore,
-    "P1 no column was added or changed");
+  {
+    const after = await columnsOf(db);
+    const added = after.filter((c) => !JSON.parse(columnsBefore).some((b) => b.column_name === c.column_name));
+    check(JSON.stringify(added) === JSON.stringify([{ column_name: "settlement_cleanup_at", data_type: "timestamp with time zone", is_nullable: "YES", column_default: null }]),
+      "P1 exactly ONE column was added: settlement_cleanup_at, a nullable timestamptz with no default");
+    check(JSON.stringify(after.filter((c) => c.column_name !== "settlement_cleanup_at")) === columnsBefore,
+      "P1 every pre-existing column is exactly as it was");
+    check((await db.query("select count(*)::int as n from public.catering_payments where settlement_cleanup_at is not null")).rows[0].n === 0,
+      "P1 the apply wrote no marker: every existing row reads NULL (not confirmed)");
+  }
   check((await db.query("select relrowsecurity from pg_class where oid = 'public.catering_payments'::regclass")).rows[0].relrowsecurity === true,
     "P1 RLS is still enabled on catering_payments");
 
@@ -197,9 +229,83 @@ try {
   check(priv.anon === false && priv.authed === false && priv.svc === true, "P1 EXECUTE: service_role only — not anon, not authenticated");
   check((await db.query("select count(*)::int as n from pg_proc p, lateral aclexplode(p.proacl) a where p.oid = $1::regprocedure and a.grantee = 0", [FN])).rows[0].n === 0,
     "P1 …and not PUBLIC");
-  check((await db.query(
-    "select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prokind = 'f' and p.proname like 'catering_payment%'")).rows[0].n === 1,
-    "P1 no other catering_payment function was created");
+  check(JSON.stringify((await db.query(
+    "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prokind = 'f' and p.proname like 'catering_payment%' order by 1")).rows.map((r) => r.proname))
+      === JSON.stringify(["catering_payment_attach_checkout", "catering_payment_checkout_ready"]),
+    "P1 exactly two catering_payment functions exist: the attach and the readiness question");
+
+  // ── P7 — the readiness function (review r6) ──────────────────────────────────────────────────
+  {
+    const READY = "public.catering_payment_checkout_ready()";
+    const ready = async (d = db) => (await d.query("select public.catering_payment_checkout_ready() as ok")).rows[0].ok;
+    check((await ready()) === true, "P7 after the apply, catering_payment_checkout_ready() answers true");
+    const meta = (await db.query(
+      "select p.prosecdef, p.proconfig, p.provolatile, pg_get_function_result(p.oid) as returns from pg_proc p where p.oid = $1::regprocedure", [READY])).rows[0];
+    check(meta.returns === "boolean" && meta.prosecdef === false && meta.provolatile === "s"
+      && JSON.stringify(meta.proconfig) === JSON.stringify(["search_path=pg_catalog, public"]),
+      "P7 it returns boolean, is STABLE, SECURITY INVOKER, with search_path = pg_catalog, public");
+    const rp = (await db.query(
+      `select has_function_privilege('anon', $1, 'EXECUTE') as anon, has_function_privilege('authenticated', $1, 'EXECUTE') as authed, has_function_privilege('service_role', $1, 'EXECUTE') as svc`, [READY])).rows[0];
+    check(rp.anon === false && rp.authed === false && rp.svc === true, "P7 EXECUTE: service_role only — not anon, not authenticated");
+    check((await db.query("select count(*)::int as n from pg_proc p, lateral aclexplode(p.proacl) a where p.oid = $1::regprocedure and a.grantee = 0", [READY])).rows[0].n === 0,
+      "P7 …and not PUBLIC");
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      try {
+        await refuses(() => ready(), "permission denied for function catering_payment_checkout_ready", `P7 ${role} cannot execute it (42501)`);
+      } finally {
+        await db.exec("reset role");
+      }
+    }
+    await db.exec("set role service_role");
+    try {
+      check((await ready()) === true, "P7 service_role may execute it → true");
+    } finally {
+      await db.exec("reset role");
+    }
+    // A HALF ROLLBACK NEVER READS AS READY: each of the three other objects, removed alone.
+    for (const [what, undo] of [
+      ["the attach function", "drop function public.catering_payment_attach_checkout(uuid, uuid, integer, text);"],
+      ["the one-open-checkout index", "drop index public.catering_payments_one_open_checkout;"],
+      ["the settlement marker column", "alter table public.catering_payments drop column settlement_cleanup_at;"],
+    ]) {
+      const half = await base();
+      await half.exec(M0303);
+      await half.exec(undo);
+      check((await ready(half)) === false, `P7 with ${what} gone, it answers false (the app refuses the pay tap)`);
+      await half.close();
+    }
+    // …and without the file at all there is no function to ask: the error PostgREST turns into PGRST202.
+    const none = await base();
+    await refuses(() => ready(none), "42883", "P7 on a database without 0303 the function does not exist (42883; PostgREST: PGRST202)");
+    await none.close();
+  }
+
+  // ── P8 — the settlement marker's compare-and-set (review r6) ─────────────────────────────────
+  {
+    const mark = async (id) => (await db.query(
+      "update public.catering_payments set settlement_cleanup_at = now() where id = $1 and status = 'paid' and settlement_cleanup_at is null returning settlement_cleanup_at", [id])).rows;
+    const markerOf = async (id) => (await db.query("select settlement_cleanup_at from public.catering_payments where id = $1", [id])).rows[0].settlement_cleanup_at;
+    const M = await f.quote();
+    const mPaid = await f.pay(M, "deposit", "paid", "cs_marker_paid");
+    const mDue = await f.pay(M, "balance", "due", null);
+    const first = await mark(mPaid);
+    check(first.length === 1 && first[0].settlement_cleanup_at != null, "P8 the marker lands on a PAID row whose marker is NULL (one row)");
+    const stamped = String(await markerOf(mPaid));
+    check((await mark(mPaid)).length === 0, "P8 a second writer matches nothing: the marker is written ONCE");
+    check(String(await markerOf(mPaid)) === stamped, "P8 …and its value is not rewritten");
+    check((await mark(mDue)).length === 0 && (await markerOf(mDue)) === null, "P8 a DUE row never takes the marker");
+    const N = await f.quote();
+    const nVoid = await f.pay(N, "deposit", "void", "cs_marker_void");
+    const nRefunded = await f.pay(N, "full", "refunded", "cs_marker_ref");
+    check((await mark(nVoid)).length === 0 && (await mark(nRefunded)).length === 0, "P8 a VOID or REFUNDED row never takes it either");
+    // A paid row that was refunded AFTER its cleanup keeps the fact (it is history, never cleared).
+    await db.query("update public.catering_payments set status = 'refunded' where id = $1", [mPaid]);
+    check(String(await markerOf(mPaid)) === stamped, "P8 a later refund does not clear it");
+    // The marker is no part of either unique index: a due intent may still open its checkout beside it.
+    await db.query("update public.catering_payments set provider_session_id = 'cs_marker_bal' where id = $1 and status = 'due'", [mDue]);
+    check(true, "P8 the marker does not interact with catering_payments_one_open_checkout / one_due");
+  }
 
   // ── P2 — the rule ────────────────────────────────────────────────────────────────────────────
   await refuses(
@@ -359,14 +465,20 @@ try {
       "P6 …and reads for a paid row and an unresolved checkout only AFTER both locks, and writes only after both reads");
   }
 
-  // ── P5 — the documented rollback ─────────────────────────────────────────────────────────────
+  // ── P5 — the documented rollback, in the documented order ────────────────────────────────────
+  await db.exec("drop function public.catering_payment_checkout_ready();");
+  check((await db.query("select to_regprocedure('public.catering_payment_checkout_ready()') is null as gone")).rows[0].gone === true,
+    "P5 `drop function …checkout_ready` removes the readiness function FIRST (from here the app refuses every pay tap: 503)");
   await db.exec("drop function public.catering_payment_attach_checkout(uuid, uuid, integer, text);");
   check((await db.query("select to_regprocedure('public.catering_payment_attach_checkout(uuid,uuid,integer,text)') is null as gone")).rows[0].gone === true,
-    "P5 `drop function` removes the attach function (the app falls back to its own sequence)");
+    "P5 `drop function …attach_checkout` removes the attach function (there is no other way to attach: the app does not fall back)");
   await db.exec("drop index public.catering_payments_one_open_checkout;");
   await db.query("update public.catering_payments set provider_session_id = 'cs_test_q1_dep_again' where id = $1 and status = 'due'", [q1Deposit]);
   check((await db.query("select count(*)::int as n from public.catering_payments where quote_id = $1 and status = 'due' and provider_session_id is not null", [Q1])).rows[0].n === 2,
-    "P5 `drop index` restores the pre-0303 behaviour (the rule is gone, nothing else changed)");
+    "P5 `drop index` removes the rule (nothing else changed)");
+  await db.exec("alter table public.catering_payments drop column settlement_cleanup_at;");
+  check(JSON.stringify(await columnsOf(db)) === columnsBefore, "P5 `drop column` restores the pre-0303 columns exactly");
+  check(JSON.stringify(await indexNames(db)) === JSON.stringify(namesBefore), "P5 …and the pre-0303 indexes exactly");
 } catch (e) {
   failures++;
   console.error(`FAIL 0303 harness: ${e.stack ?? e}`);
