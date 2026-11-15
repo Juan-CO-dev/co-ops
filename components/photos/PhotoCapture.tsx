@@ -13,13 +13,21 @@
  * with the returned photoId — a checklist completion stores it in photo_id; a
  * receiving slot stores the URL /api/photos/{id} in a text column.
  *
- * The type/size guard mirrors lib/photos-shared (the server re-validates — this
- * is just a fast client-side reject so the operator gets an instant message).
+ * The type guard mirrors lib/photos-shared (the server re-validates — this is
+ * just a fast client-side reject so the operator gets an instant message).
+ *
+ * SIZE (audit W10 / B065): the photo is SHRUNK ON THE DEVICE before it is sent
+ * (lib/photos-client.ts: longest edge 2560 px, JPEG, never more than 4 MiB),
+ * because the upload passes through a hosting function whose request body is
+ * limited to 4.5 MB. Before this a 4.5–8 MB phone photo passed the 8 MB check
+ * here and then failed on every try. The busy label covers the shrink and the
+ * upload; the upload has a deadline, so the button never stays busy forever.
  */
 import { useRef, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
-import { isAllowedContentType, isWithinSizeCap } from "@/lib/photos-shared";
+import { PhotoTooLargeError, postPhoto, prepareUpload, type PreparedUpload } from "@/lib/photos-client";
+import { isAllowedContentType } from "@/lib/photos-shared";
 
 interface Props {
   locationId: string;
@@ -56,28 +64,26 @@ export function PhotoCapture({ locationId, onUploaded, initialPhotoId = null, la
       setError(t("photo.capture.error.unsupported_type"));
       return;
     }
-    if (!isWithinSizeCap(file.size)) {
-      setError(t("photo.capture.error.too_large"));
-      return;
-    }
 
     setBusy(true);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("locationId", locationId);
-      const res = await fetch("/api/photos", { method: "POST", body: form, redirect: "manual" });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { code?: string };
-        const code = body?.code;
-        if (code === "too_large") setError(t("photo.capture.error.too_large"));
-        else if (code === "unsupported_type") setError(t("photo.capture.error.unsupported_type"));
-        else setError(t("photo.capture.error.upload_failed"));
+      // Shrink first (B065): a big phone photo is re-encoded on the device so the request fits the
+      // hosting body limit. One that cannot be made small enough is refused here, with the clear message.
+      let prepared: PreparedUpload;
+      try {
+        prepared = await prepareUpload(file);
+      } catch (err) {
+        setError(t(err instanceof PhotoTooLargeError ? "photo.capture.error.too_large" : "photo.capture.error.upload_failed"));
         return;
       }
-      const data = (await res.json()) as { photoId: string };
-      setPhotoId(data.photoId);
-      onUploaded(data.photoId);
+      // The POST runs under a deadline and never throws; a platform 413 comes back as too_large.
+      const outcome = await postPhoto(prepared, locationId);
+      if (!outcome.ok) {
+        setError(t(`photo.capture.error.${outcome.error}`));
+        return;
+      }
+      setPhotoId(outcome.photoId);
+      onUploaded(outcome.photoId);
     } catch {
       setError(t("photo.capture.error.upload_failed"));
     } finally {
