@@ -9,6 +9,10 @@ afterEach(() => vi.unstubAllEnvs());
 const hosts = ['complimentsonlyoperations.com','co-ops-ashy.vercel.app','eat.complimentsonlyoperations.com','catering.complimentsonlyoperations.com','random-alias.vercel.app','EAT.complimentsonlyoperations.com:443','eat.complimentsonlyoperations.com.','bad host'];
 const paths = ['/','/privacy','/eat','/eat/privacy','/order','/order/start','/order/quote/12345678-1234-1234-1234-123456789abc?checkout=success','/api/portal/magic-link/request','/api/portal/order/draft/lines','/admin','/dashboard','/api/admin/x','/api/auth/pin','/api/cron/x','/api/webhooks/stripe','/_next/static/chunks/a.js','/_next/image?url=%2Fx&w=64&q=75','/_next/data/b/x.json','/robots.txt','/sitemap.xml','/favicon.ico','/media/a.png','/brand/co-icon.png','/order/..%2fadmin','//admin','/ORDER','/order/','/x.json','/api/landing/events','/opengraph-image.png'];
 const extras: Record<string,string>[] = [{}, {cookie:'co_ops_session=good'}, {cookie:'co_ops_session=bad'}, {rsc:'1','next-router-prefetch':'1'}, {'next-action':'abc', cookie:'co_ops_session=good'}, {'x-forwarded-host':'evil.test'}, {'x-co-user-id':'spoof'}];
+// Audit W06/B155 adds ONE request header on authenticated staff requests (x-co-path, the served path for the sign-in
+// return link). It is the only intended difference from the frozen pre-portal proxy; everything else stays byte-identical.
+const withoutServedPath = (headers: Headers) => [...headers].filter(([key]) => key !== 'x-middleware-request-x-co-path')
+  .map(([key, value]) => key === 'x-middleware-override-headers' ? [key, value.split(',').filter(name => name !== 'x-co-path').join(',')] : [key, value]);
 const url = (host: string, p: string) => `https://${host.includes(' ')?'x.test':host.replace(/\.$/,'')}${p}`;
 async function cmp(env: Record<string,string>, hs: string[], methods: string[]) {
   // Preserve the frozen fixture's canonical=indexable production behavior.
@@ -20,7 +24,7 @@ async function cmp(env: Record<string,string>, hs: string[], methods: string[]) 
     const mk = () => new NextRequest(url(host,p), { method, headers: { host, ...ex } });
     const a = await before(mk()); const b = await proxy(mk());
     const id = `${method} ${host}${p} ${JSON.stringify(ex)}`;
-    expect(b.status, id).toBe(a.status); expect([...b.headers], id).toEqual([...a.headers]); expect(await b.text(), id).toBe(await a.text()); n++;
+    expect(b.status, id).toBe(a.status); expect(withoutServedPath(b.headers), id).toEqual([...a.headers]); expect(await b.text(), id).toBe(await a.text()); n++;
   }
   return n;
 }
