@@ -303,6 +303,40 @@ describe("B016 — themes only from days the reader may read", () => {
   });
 });
 
+const COPY_SL = id(45);
+function withEmptySlCopyAndKimGraded(t: Tables): Tables {
+  t.pm_report_copies!.push({ id: COPY_SL, pm_report_id: DAY, location_id: A, author_id: SL, status: "sealed", observed_from: null, observed_to: null, created_at: "2026-10-15T14:00:00Z", sealed_at: null });
+  t.pm_copy_grades!.push({ id: "g-gm-kim", copy_id: COPY_GM, location_id: A, subject_id: KH, position_id: null, criterion_id: C_SHARED, grade: "needs_work", superseded_at: null });
+  t.pm_copy_notes!.push({ id: "n-gm-kim", copy_id: COPY_GM, location_id: A, subject_id: KH, position_id: null, note: "PRIVATE about Kim", superseded_at: null });
+  return t;
+}
+
+describe("B058 — an empty copy is not an author; the reader never sees themselves", () => {
+  it("a SL who only opened the page (empty copy) is refused the results after submit", async () => {
+    db = createFakeDb(withEmptySlCopyAndKimGraded(tables("submitted")));
+    await expect(v2.loadDayResults(service(), { actor: sl, locationId: A, date: DATE })).rejects.toMatchObject({ code: "forbidden" });
+  });
+  it("an author KH who was also graded never sees grades or notes about themselves", async () => {
+    db = createFakeDb(withEmptySlCopyAndKimGraded(tables("submitted")));
+    const r = await v2.loadDayResults(service(), { actor: kh, locationId: A, date: DATE });
+    expect(r!.people.some((p) => p.subjectId === KH)).toBe(false);
+    expect(r!.copies.flatMap((c) => c.entries).some((e) => e.subjectName === "Kim")).toBe(false);
+    expect(r!.copies.flatMap((c) => c.notes).some((n) => n.subjectName === "Kim")).toBe(false);
+    expect(JSON.stringify(r)).not.toContain("PRIVATE about Kim");
+  });
+  it("the GM (their superior) still sees what was written about the KH", async () => {
+    db = createFakeDb(withEmptySlCopyAndKimGraded(tables("submitted")));
+    const r = await v2.loadDayResults(service(), { actor: gm, locationId: A, date: DATE });
+    expect(r!.people.some((p) => p.subjectId === KH)).toBe(true);
+    expect(JSON.stringify(r)).toContain("PRIVATE about Kim");
+  });
+  it("empty copies are not listed", async () => {
+    db = createFakeDb(withEmptySlCopyAndKimGraded(tables("submitted")));
+    const r = await v2.loadDayResults(service(), { actor: gm, locationId: A, date: DATE });
+    expect(r!.copies.map((c) => c.authorName)).not.toContain("Sol");
+  });
+});
+
 describe("loadMyFeedbackV2 — bands from submitted v2 days, no author, no note", () => {
   it("open days are hidden; a submitted day shows bands only", async () => {
     expect(await v2.loadMyFeedbackV2(service(), { userId: EMP })).toEqual([]);

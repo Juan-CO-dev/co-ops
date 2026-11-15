@@ -496,16 +496,29 @@ export async function loadDayResults(service: SupabaseClient, args: { actor: Peo
   if (args.actor.role === "social_media_mgr" || args.actor.level < 4) refuse("forbidden");
   const day = await loadDay(service, args.locationId, args.date);
   if (!day || day.format !== "v2") return null;
-  const copies = await loadCopies(service, day.id);
-  if (!canReadPmDayResults(args.actor, dayRef(day, copies))) refuse("forbidden");
-  const copyIds = copies.map((c) => c.id);
-  const [grades, notes, added, { positions }, criteria] = await Promise.all([
+  const allCopies = await loadCopies(service, day.id);
+  // B058: an author is a copy that WROTE something; opening the page creates an empty copy, which is not one.
+  // The GM / Op-6 / MoO+ path needs no extra read.
+  if (!readsAsManager(args.actor, day)) {
+    const mine = allCopies.filter((c) => c.author_id === args.actor.userId);
+    const wrote = await copiesWithSubstance(service, mine);
+    const authorIds = mine.filter((c) => wrote.has(c.id)).map((c) => c.author_id);
+    if (!canReadPmDayResults(args.actor, { ...dayRef(day, allCopies), authorIds })) refuse("forbidden");
+  }
+  const copyIds = allCopies.map((c) => c.id);
+  // R9 / W09-2: the reader never sees the rows written ABOUT them (their superiors still do).
+  const notAboutReader = <T extends { subject_id: string }>(rows: T[]): T[] => rows.filter((r) => r.subject_id !== args.actor.userId);
+  const [gradesRaw, notesRaw, addedRaw, { positions }, criteria] = await Promise.all([
     loadLive<GradeRow>(service, "pm_copy_grades", "id, copy_id, location_id, subject_id, position_id, criterion_id, grade", copyIds),
     loadLive<NoteRow>(service, "pm_copy_notes", "id, copy_id, subject_id, position_id, note", copyIds),
     loadLive<AddedRow>(service, "pm_copy_positions", "id, copy_id, subject_id, position_id, reason", copyIds),
     loadShopPositions(service, args.locationId),
     loadCriteria(service, args.locationId, false),
   ]);
+  const grades = notAboutReader(gradesRaw), notes = notAboutReader(notesRaw), added = notAboutReader(addedRaw);
+  // An empty copy (nothing left after the filters) is not listed: it would only say who opened the page.
+  const withRows = new Set([...grades.map((g) => g.copy_id), ...notes.map((n) => n.copy_id)]);
+  const copies = allCopies.filter((c) => withRows.has(c.id));
   const subjects = [...new Set([...grades.map((g) => g.subject_id), ...notes.map((n) => n.subject_id)])];
   const intervals = await loadDayIntervals(service, args.locationId, args.date, subjects, args.now);
   const names = await loadNames(service, [...subjects, ...copies.map((c) => c.author_id), ...(day.submitted_by ? [day.submitted_by] : [])]);
