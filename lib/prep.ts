@@ -1733,6 +1733,7 @@ export async function saveMidDayPhase2Item(
         producedAt,
         madeBy,
         source: "mid_day_p2",
+        completionId: rpcOut.completionId,
       });
     } catch (e) {
       console.error(`saveMidDayPhase2Item: batch production capture failed (completion committed):`, e);
@@ -1748,6 +1749,7 @@ export async function saveMidDayPhase2Item(
         outputQty: args.prepped,
         confirmedConsumption,
         source: "mid_day_p2",
+        completionId: rpcOut.completionId,
       });
     } catch (e) {
       console.error(`saveMidDayPhase2Item: production capture failed (completion committed):`, e);

@@ -727,6 +727,8 @@ export interface RecordFromPrepInput {
    *  either way the SERVER's recipe decides which SKUs are lines; the prepper decides how much). */
   confirmedConsumption: ConfirmedInput[] | null;
   source: "opening_p2" | "mid_day_p2";
+  /** The Phase 2 completion this save committed (W16/B090): the fold writes only while it is the live head. */
+  completionId: string;
 }
 
 /**
@@ -803,8 +805,88 @@ export async function loadDerivedForItems(itemIds: string[], versionLocationId: 
   return out;
 }
 
+type ServiceClient = ReturnType<typeof getServiceRoleClient>;
+interface PrepProductionWrite {
+  completionId: string; locationId: string; instanceId: string; templateItemId: string;
+  outputItemId: string; outputQty: number; source: "opening_p2" | "mid_day_p2"; actorId: string;
+  lines: ConfirmedInput[];
+  /** A batch row's session facts (0215); null = a single-box row. */
+  batch: { producedAt: string; madeBy: string; batchesMade: number; cameOutTo: number; yieldAtTime: number } | null;
+}
+type PrepProductionOutcome = { status: "recorded"; productionId: string } | { status: "cleared" | "stale_completion"; productionId: null };
+
+/** 0322 is not installed yet: PostgREST's schema-cache miss or Postgres's undefined function. */
+function isMissingFoldRpc(error: { code?: string | null; message?: string | null }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+
 /**
- * Record a prep conversion idempotently, keyed by (instanceId, templateItemId):
+ * THE ONE WRITER of prep production headers (W16/B090 + B091), shared by both folds. It calls
+ * `record_prep_production_atomic` (0322), which in ONE transaction locks the completion this save
+ * committed, writes NOTHING when that completion is no longer the live head (a newer save or a revoke
+ * owns the row now, so a slow fold can no longer overwrite it), then supersedes the live header, inserts
+ * the new one (completion_id; a single-box re-save keeps the first save's produced_at) and its lines.
+ * It is ALWAYS called, even with no positive line, so an empty save clears only while it is still live.
+ *
+ * Before 0322 is applied the same rules run here as separate writes (not atomic: the race window
+ * narrows to the gap between the liveness read and the insert; 0322 closes it).
+ */
+async function writePrepProduction(sb: ServiceClient, w: PrepProductionWrite, who: string): Promise<PrepProductionOutcome> {
+  const positive = w.lines.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0);
+  const pLines = positive.map((c) => ({ sku_id: c.skuId, input_oz: c.qtyOz, qty_entered: c.qtyEntered, unit_entered: c.unitEntered, derived_oz: c.derivedOz }));
+  const pBatch = w.batch === null ? null : {
+    produced_at: w.batch.producedAt, made_by: w.batch.madeBy, batches_made: w.batch.batchesMade,
+    came_out_to: w.batch.cameOutTo, yield_at_time: w.batch.yieldAtTime,
+  };
+  const { data, error } = await sb.rpc("record_prep_production_atomic", {
+    p_completion_id: w.completionId, p_location_id: w.locationId, p_instance_id: w.instanceId, p_template_item_id: w.templateItemId,
+    p_output_item_id: w.outputItemId, p_output_qty: w.outputQty, p_source: w.source, p_actor_id: w.actorId,
+    p_lines: pLines, p_batch: pBatch,
+  });
+  if (error && !isMissingFoldRpc(error)) throw new Error(`${who} record_prep_production_atomic: ${error.message}`);
+  if (!error) {
+    const r = data as { status?: string; production_id?: string | null } | null;
+    if (r?.status === "recorded" && typeof r.production_id === "string") return { status: "recorded", productionId: r.production_id };
+    if (r?.status === "cleared" || r?.status === "stale_completion") return { status: r.status, productionId: null };
+    throw new Error(`${who} record_prep_production_atomic: unexpected result`);
+  }
+
+  // Pre-0322 fallback: the same rules, as separate writes.
+  const { data: c, error: cErr } = await sb.from("checklist_completions")
+    .select("id, instance_id, template_item_id, completed_at, superseded_at, revoked_at").eq("id", w.completionId)
+    .maybeSingle<{ id: string; instance_id: string; template_item_id: string; completed_at: string; superseded_at: string | null; revoked_at: string | null }>();
+  if (cErr) throw new Error(`${who} completion read: ${cErr.message}`);
+  if (!c || c.instance_id !== w.instanceId || c.template_item_id !== w.templateItemId) throw new Error(`${who}: completion_mismatch`);
+  if (c.superseded_at !== null || c.revoked_at !== null) return { status: "stale_completion", productionId: null };
+  // Check the supersede error: if it fails silently, the insert below lands a SECOND live header for this
+  // key, i.e. double-counted depletion (backstopped by the 0107 unique live index).
+  const { data: prior, error: supErr } = await sb.from("productions").update({ superseded_at: new Date().toISOString() })
+    .eq("instance_id", w.instanceId).eq("template_item_id", w.templateItemId)
+    .is("superseded_at", null).is("revoked_at", null).select("produced_at")
+    .returns<Array<{ produced_at: string }>>();
+  if (supErr) throw new Error(`${who} supersede: ${supErr.message}`);
+  if (positive.length === 0) return { status: "cleared", productionId: null };
+  const producedAt = w.batch !== null ? w.batch.producedAt : (prior?.[0]?.produced_at ?? c.completed_at);
+  const { data: hdr, error: hErr } = await sb.from("productions").insert({
+    location_id: w.locationId, output_item_id: w.outputItemId, output_qty: w.outputQty,
+    source: w.source, instance_id: w.instanceId, template_item_id: w.templateItemId, created_by: w.actorId,
+    produced_at: producedAt,
+    ...(w.batch !== null ? { batches_made: w.batch.batchesMade, came_out_to: w.batch.cameOutTo, yield_at_time: w.batch.yieldAtTime, made_by: w.batch.madeBy } : {}),
+  }).select("id").maybeSingle<{ id: string }>();
+  if (hErr) throw new Error(`${who} header: ${hErr.message}`);
+  if (!hdr) throw new Error(`${who} header returned no row`);
+  const { error: lErr } = await sb.from("production_inputs").insert(pLines.map((l) => ({
+    production_id: hdr.id, input_sku_id: l.sku_id, input_oz: l.input_oz,
+    qty_entered: l.qty_entered, unit_entered: l.unit_entered, derived_oz: l.derived_oz,
+  })));
+  if (lErr) throw new Error(`${who} lines: ${lErr.message}`);
+  return { status: "recorded", productionId: hdr.id };
+}
+
+/**
+ * Record a prep conversion idempotently, keyed by (instanceId, templateItemId), through
+ * writePrepProduction (W16/B090: only while `completionId` is still the live head; B091: a
+ * re-save keeps the first save's produced_at):
  * supersede any live production header for that key, then insert a fresh header +
  * one production_inputs line per recipe SKU (reconcileFoldLines: the recipe names the SKUs, a
  * confirmed panel sets the amounts). No positive line still
@@ -818,29 +900,18 @@ export async function recordProductionFromPrep(actor: { userId: string; role: Ro
   // crafted body can no longer charge stock to a SKU outside the recipe.
   const derived = await skuConsumptionForItem(input.outputItemId, input.outputQty, input.locationId);
   const lines = reconcileFoldLines(derived, input.confirmedConsumption, "recordProductionFromPrep");
-  // Check the supersede error: if it fails silently, the insert below lands a
-  // SECOND live header for this key → double-counted depletion. (Backstopped at
-  // the DB by the partial UNIQUE index productions_prep_live_idx, migration 0107,
-  // which also makes a concurrent racing insert fail loudly rather than duplicate.)
-  const { error: supErr } = await sb.from("productions").update({ superseded_at: new Date().toISOString() })
-    .eq("instance_id", input.instanceId).eq("template_item_id", input.templateItemId)
-    .is("superseded_at", null).is("revoked_at", null);
-  if (supErr) throw new Error(`recordProductionFromPrep supersede: ${supErr.message}`);
-  const positive = lines.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0);
-  if (positive.length === 0) return { productionId: null };
-  const { data: hdr, error: hErr } = await sb.from("productions").insert({
-    location_id: input.locationId, output_item_id: input.outputItemId, output_qty: input.outputQty,
-    source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, created_by: actor.userId,
-  }).select("id").maybeSingle<{ id: string }>();
-  if (hErr) throw new Error(`recordProductionFromPrep header: ${hErr.message}`);
-  if (!hdr) throw new Error("recordProductionFromPrep header returned no row");
-  const { error: lErr } = await sb.from("production_inputs").insert(positive.map((c) => ({
-    production_id: hdr.id, input_sku_id: c.skuId, input_oz: c.qtyOz,
-    qty_entered: c.qtyEntered, unit_entered: c.unitEntered, derived_oz: c.derivedOz,
-  })));
-  if (lErr) throw new Error(`recordProductionFromPrep lines: ${lErr.message}`);
-  await audit({ actorId: actor.userId, actorRole: actor.role, action: "production.recorded", resourceTable: "productions", resourceId: hdr.id, metadata: { source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, output_item_id: input.outputItemId, output_qty: input.outputQty, sku_count: positive.length }, ipAddress: null, userAgent: null });
-  return { productionId: hdr.id };
+  const out = await writePrepProduction(sb, {
+    completionId: input.completionId, locationId: input.locationId, instanceId: input.instanceId, templateItemId: input.templateItemId,
+    outputItemId: input.outputItemId, outputQty: input.outputQty, source: input.source, actorId: actor.userId, lines, batch: null,
+  }, "recordProductionFromPrep");
+  if (out.status === "stale_completion") {
+    console.info(`recordProductionFromPrep: completion ${input.completionId} is no longer the live head; fold skipped (a newer save owns the row)`);
+    return { productionId: null };
+  }
+  if (out.status !== "recorded") return { productionId: null };
+  const skuCount = lines.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0).length;
+  await audit({ actorId: actor.userId, actorRole: actor.role, action: "production.recorded", resourceTable: "productions", resourceId: out.productionId, metadata: { source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, completion_id: input.completionId, output_item_id: input.outputItemId, output_qty: input.outputQty, sku_count: skuCount }, ipAddress: null, userAgent: null });
+  return { productionId: out.productionId };
 }
 
 /** Reverse (revoke) the live production for a prep (instance, template_item). No-op if none live. */
@@ -934,17 +1005,20 @@ export interface RecordBatchFromPrepInput {
   /** The MAKER (the session's first saver), not the editor (ruling 5). */
   madeBy: string;
   source: "opening_p2" | "mid_day_p2";
+  /** The Phase 2 completion this save committed (W16/B090): the fold writes only while it is the live head. */
+  completionId: string;
 }
 
 /**
  * The batch fold. ONE graph read: `yield` and the per-batch SKU map come from the same
  * `loadRecipeGraph()` call, so `output_qty = batches × yield` and the lines
  * `batches × batchSkuOz` describe the same recipe state (ruling 3 — never a separately read
- * yield multiplied into a division by another). Same supersede-then-insert seam as
- * recordProductionFromPrep (the 0107 unique live index is the backstop), same fail-open
+ * yield multiplied into a division by another). Same writer as recordProductionFromPrep
+ * (writePrepProduction: 0322's record_prep_production_atomic — header and lines in one
+ * transaction, and only while this save's completion is the live head), same fail-open
  * posture at the call sites. LIMITATIONS, stated: the graph is still assembled from
- * separate queries; a failure after the header insert leaves a header without lines until
- * the next save heals it ("fold integrity check" is the filed follow-up).
+ * separate queries; until 0322 is applied the fallback writes are separate, so a failure
+ * after the header insert can leave a header without lines until the next save heals it.
  */
 export async function recordBatchProductionFromPrep(
   actor: { userId: string; role: RoleCode },
@@ -957,34 +1031,25 @@ export async function recordBatchProductionFromPrep(
   if (yieldAtTime == null || perBatch == null || !isSingleItemOutputFromGraph(graph, input.outputItemId)) {
     throw new Error(`recordBatchProductionFromPrep: batch_recipe_unresolved for item ${input.outputItemId}`);
   }
-  const { error: supErr } = await sb.from("productions").update({ superseded_at: new Date().toISOString() })
-    .eq("instance_id", input.instanceId).eq("template_item_id", input.templateItemId)
-    .is("superseded_at", null).is("revoked_at", null);
-  if (supErr) throw new Error(`recordBatchProductionFromPrep supersede: ${supErr.message}`);
-  if (!(input.batches > 0)) return { productionId: null, yieldAtTime };
-
   // Derived = batches × one batch, from THIS graph. A confirmed panel overrides qtyOz per SKU
   // (the prepper's actual-vs-theoretical, the fold's existing contract); derivedOz is always
   // this graph's number, and a SKU the recipe does not name is dropped and logged.
+  // 0 batches = no production: no lines, and the writer only supersedes while this save is live.
   const derived = new Map<string, number>();
-  for (const [sku, oz] of perBatch) derived.set(sku, oz * input.batches);
-  const lines = reconcileFoldLines(derived, input.confirmedConsumption, "recordBatchProductionFromPrep");
-  const positive = lines.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0);
-  if (positive.length === 0) return { productionId: null, yieldAtTime };
-  const outputQty = input.batches * yieldAtTime;
-  const { data: hdr, error: hErr } = await sb.from("productions").insert({
-    location_id: input.locationId, output_item_id: input.outputItemId, output_qty: outputQty,
-    source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, created_by: actor.userId,
-    batches_made: input.batches, came_out_to: input.cameOutTo, yield_at_time: yieldAtTime,
-    produced_at: input.producedAt, made_by: input.madeBy,
-  }).select("id").maybeSingle<{ id: string }>();
-  if (hErr) throw new Error(`recordBatchProductionFromPrep header: ${hErr.message}`);
-  if (!hdr) throw new Error("recordBatchProductionFromPrep header returned no row");
-  const { error: lErr } = await sb.from("production_inputs").insert(positive.map((c) => ({
-    production_id: hdr.id, input_sku_id: c.skuId, input_oz: c.qtyOz,
-    qty_entered: c.qtyEntered, unit_entered: c.unitEntered, derived_oz: c.derivedOz,
-  })));
-  if (lErr) throw new Error(`recordBatchProductionFromPrep lines: ${lErr.message}`);
-  await audit({ actorId: actor.userId, actorRole: actor.role, action: "production.recorded", resourceTable: "productions", resourceId: hdr.id, metadata: { source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, output_item_id: input.outputItemId, output_qty: outputQty, batches_made: input.batches, came_out_to: input.cameOutTo, yield_at_time: yieldAtTime, made_by: input.madeBy, produced_at: input.producedAt, sku_count: positive.length }, ipAddress: null, userAgent: null });
-  return { productionId: hdr.id, yieldAtTime };
+  if (input.batches > 0) for (const [sku, oz] of perBatch) derived.set(sku, oz * input.batches);
+  const lines = input.batches > 0 ? reconcileFoldLines(derived, input.confirmedConsumption, "recordBatchProductionFromPrep") : [];
+  const outputQty = input.batches > 0 ? input.batches * yieldAtTime : 0;
+  const out = await writePrepProduction(sb, {
+    completionId: input.completionId, locationId: input.locationId, instanceId: input.instanceId, templateItemId: input.templateItemId,
+    outputItemId: input.outputItemId, outputQty, source: input.source, actorId: actor.userId, lines,
+    batch: { producedAt: input.producedAt, madeBy: input.madeBy, batchesMade: input.batches, cameOutTo: input.cameOutTo, yieldAtTime },
+  }, "recordBatchProductionFromPrep");
+  if (out.status === "stale_completion") {
+    console.info(`recordBatchProductionFromPrep: completion ${input.completionId} is no longer the live head; fold skipped (a newer save owns the row)`);
+    return { productionId: null, yieldAtTime };
+  }
+  if (out.status !== "recorded") return { productionId: null, yieldAtTime };
+  const skuCount = lines.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0).length;
+  await audit({ actorId: actor.userId, actorRole: actor.role, action: "production.recorded", resourceTable: "productions", resourceId: out.productionId, metadata: { source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, completion_id: input.completionId, output_item_id: input.outputItemId, output_qty: outputQty, batches_made: input.batches, came_out_to: input.cameOutTo, yield_at_time: yieldAtTime, made_by: input.madeBy, produced_at: input.producedAt, sku_count: skuCount }, ipAddress: null, userAgent: null });
+  return { productionId: out.productionId, yieldAtTime };
 }

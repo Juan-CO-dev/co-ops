@@ -119,6 +119,7 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
     let upsertRows: Row[] | null = null;
     let insertRows: Row[] | null = null;
     let updatePatch: Row | null = null;
+    let updateSelected = false; // UPDATE … RETURNING (`.update().select(…)`): answer the updated rows
     let wantCount = false;
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
 
@@ -139,7 +140,8 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
         const hit = (tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
         for (const r of hit) Object.assign(r, updatePatch);
         writes.push({ table, rows: hit.map((r) => ({ ...r })) });
-        return { data: null, error: null, count: hit.length };
+        const data = updateSelected ? hit.map((r) => project(table, r, parseSelect(selectStr))).filter((r): r is Row => r !== null) : null;
+        return { data, error: null, count: hit.length };
       }
       if (upsertRows) {
         writes.push({ table, rows: upsertRows });
@@ -181,7 +183,7 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
     };
 
     const q = {
-      select(cols: string, opts?: { count?: string; head?: boolean }) { selectStr = cols.replace(/\s+/g, " "); wantCount = opts?.count === "exact"; return q; },
+      select(cols: string, opts?: { count?: string; head?: boolean }) { selectStr = cols.replace(/\s+/g, " "); wantCount = opts?.count === "exact"; if (updatePatch) updateSelected = true; return q; },
       eq(col: string, v: unknown) { preds.push((r) => valueAt(table, r, col) === v); return q; },
       neq(col: string, v: unknown) { preds.push((r) => valueAt(table, r, col) !== v); return q; },
       is(col: string, v: unknown) { preds.push((r) => (valueAt(table, r, col) ?? null) === v); return q; },

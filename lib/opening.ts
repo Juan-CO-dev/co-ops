@@ -2342,6 +2342,7 @@ export async function savePhase2Item(
         producedAt,
         madeBy,
         source: "opening_p2",
+        completionId: rpcResult.completionId,
       });
     } else if (tItem?.item_id) {
       // W16/B183: null (crew / untouched panel) and a confirmed set both go to the fold, which
@@ -2354,6 +2355,7 @@ export async function savePhase2Item(
         outputQty: args.entry.openerPrepped,
         confirmedConsumption,
         source: "opening_p2",
+        completionId: rpcResult.completionId,
       });
     }
   } catch (e) {
