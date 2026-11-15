@@ -12,11 +12,20 @@ import { canAccessOpeningInstance, savePhase2Item, submitPhase1Atomic, submitPha
 import { submitAmPrep, submitMidDayPhase1, saveMidDayPhase2Item, finalizeMidDayPhase2, PrepRoleViolationError } from "@/lib/prep";
 import { submitCashReport } from "@/lib/cash";
 
-import { requireChecklistTaskAccess, completeItem, submitBatch, confirmInstance, revokeCompletion, revokeWithReason, dropInstance, ChecklistRoleViolationError } from "@/lib/checklists";
+import { requireChecklistTaskAccess, completeItem, submitBatch, confirmInstance, revokeCompletion, revokeWithReason, dropInstance, getOrCreateInstance, ChecklistRoleViolationError, ChecklistWrongTemplateTypeError } from "@/lib/checklists";
+import { mapChecklistError } from "@/app/api/checklist/_helpers";
+import { etCalendarDate } from "@/lib/operational-day";
 
 const actor = { userId: "employee", role: "employee" as const, level: 3 };
-function instanceClient() {
-  const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { location_id: "stored-shop", date: "2026-10-07" }, error: null }) };
+type Tmpl = { type: string; prep_subtype: string | null };
+const OPENING: Tmpl = { type: "opening", prep_subtype: null };
+const AM_PREP: Tmpl = { type: "prep", prep_subtype: "am_prep" };
+const MID_DAY: Tmpl = { type: "prep", prep_subtype: "mid_day_prep" };
+const CLOSING: Tmpl = { type: "closing", prep_subtype: null };
+// The instance read embeds its template (W13/B019 + B073): every writer refuses an
+// instance of another checklist before the assignment lookup.
+function instanceClient(template: Tmpl | null = null) {
+  const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { location_id: "stored-shop", date: "2026-10-07", template }, error: null }) };
   const from = vi.fn((_table: string) => query);
   const rpc = vi.fn(() => { throw new Error("unauthorized write reached RPC"); });
   return { service: { from, rpc } as unknown as SupabaseClient, from, rpc };
@@ -26,7 +35,7 @@ beforeEach(() => { vi.clearAllMocks(); vi.mocked(hasTaskAccess).mockResolvedValu
 
 describe("assignment gates at the writer boundary", () => {
   it("opening scope comes from the stored instance and allows an assigned employee", async () => {
-    const { service } = instanceClient();
+    const { service } = instanceClient(OPENING);
     vi.mocked(hasTaskAccess).mockResolvedValue(true);
     expect(await canAccessOpeningInstance(service, { instanceId: "instance", actor })).toBe(true);
     expect(hasTaskAccess).toHaveBeenCalledWith(service, { ...actor, locationId: "stored-shop", date: "2026-10-07", task: "opening_report" });
@@ -34,7 +43,7 @@ describe("assignment gates at the writer boundary", () => {
 
   it("KH can finish an older assigned opening and the successful write records an override", async () => {
     const kh = { userId: "kh", role: "key_holder" as const, level: 4 };
-    const instance = { id: "instance", location_id: "stored-shop", date: "2026-09-01", status: "phase2_complete" };
+    const instance = { id: "instance", location_id: "stored-shop", date: "2026-09-01", status: "phase2_complete", template: OPENING };
     const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: instance, error: null }) };
     const rpc = vi.fn().mockResolvedValue({ data: { instance, completionIds: [], underParNotificationIds: [],
@@ -55,14 +64,14 @@ describe("assignment gates at the writer boundary", () => {
   });
 
   it("a rejected opening finalization does not record a successful override", async () => {
-    const { service } = instanceClient();
+    const { service } = instanceClient(OPENING);
     await expect(submitPhase2Atomic(service, { instanceId: "instance", actor: { userId: "kh", role: "key_holder", level: 4 } }))
       .rejects.toBeInstanceOf(OpeningRoleViolationError);
     expect(auditTaskOverride).not.toHaveBeenCalled();
   });
 
   it("retracted opening assignment blocks original submits, update bypass, saves and revokes before RPC", async () => {
-    const { service, rpc } = instanceClient();
+    const { service, rpc } = instanceClient(OPENING);
     const base = { instanceId: "instance", actor };
     await expect(submitPhase1Atomic(service, { ...base, entries: [], sectionVerifications: [], openerNoPriorDataAttestation: null, isUpdate: true })).rejects.toBeInstanceOf(OpeningRoleViolationError);
     await expect(submitPhase2Atomic(service, { ...base, isUpdate: true })).rejects.toBeInstanceOf(OpeningRoleViolationError);
@@ -72,7 +81,7 @@ describe("assignment gates at the writer boundary", () => {
   });
 
   it("all mid-day writers refuse a revoked assignment before loading items or writing", async () => {
-    const { service, rpc, from } = instanceClient();
+    const { service, rpc, from } = instanceClient(MID_DAY);
     const base = { instanceId: "instance", actor };
     await expect(submitMidDayPhase1(service, { ...base, entries: [] })).rejects.toBeInstanceOf(PrepRoleViolationError);
     await expect(saveMidDayPhase2Item(service, { ...base, templateItemId: "item", prepped: 1 })).rejects.toBeInstanceOf(PrepRoleViolationError);
@@ -82,7 +91,7 @@ describe("assignment gates at the writer boundary", () => {
   });
 
   it("AM prep ignores a stale assignment ID and checks update calls too", async () => {
-    const { service, rpc } = instanceClient();
+    const { service, rpc } = instanceClient(AM_PREP);
     const base = { instanceId: "instance", actor, entries: [], closingReportRefItemId: null, activeAssignmentId: "stale-assignment" };
     await expect(submitAmPrep(service, base)).rejects.toBeInstanceOf(PrepRoleViolationError);
     await expect(submitAmPrep(service, { ...base, isUpdate: true, originalSubmissionId: "old" })).rejects.toBeInstanceOf(PrepRoleViolationError);
@@ -110,7 +119,8 @@ function genericClient(type = "opening", prepSubtype: string | null = null) {
     const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }) };
     return query;
   });
-  return { service: { from } as unknown as SupabaseClient, from };
+  const rpc = vi.fn(() => { throw new Error("generic write reached RPC"); });
+  return { service: { from, rpc } as unknown as SupabaseClient, from, rpc };
 }
 
 describe("generic checklist routes cannot bypass task assignment", () => {
@@ -156,9 +166,111 @@ describe("KH authority survives assignments and historical dates", () => {
     vi.mocked(hasTaskAccess).mockImplementation(actual.hasTaskAccess);
     const elevated = { ...actor, level };
     const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: { location_id: "stored-shop", date: "2026-09-01" }, error: null }) };
+      maybeSingle: vi.fn().mockResolvedValue({ data: { location_id: "stored-shop", date: "2026-09-01", template: OPENING }, error: null }) };
     const service = { from: vi.fn(() => query) } as unknown as SupabaseClient;
     expect(await canAccessOpeningInstance(service, { instanceId: "instance", actor: elevated })).toBe(true);
     await expect(requireChecklistTaskAccess(genericClient().service, "instance", elevated)).resolves.toBeUndefined();
+  });
+});
+
+describe("W13/B019 + B073 — writers refuse an instance of another checklist", () => {
+  const amArgs = { instanceId: "instance", actor, entries: [], closingReportRefItemId: null, activeAssignmentId: null };
+
+  it("AM prep submit refuses a closing instance id before any RPC", async () => {
+    const { service, rpc } = instanceClient(CLOSING);
+    vi.mocked(hasTaskAccess).mockResolvedValue(true);
+    await expect(submitAmPrep(service, amArgs)).rejects.toBeInstanceOf(PrepRoleViolationError);
+    await expect(submitAmPrep(service, { ...amArgs, isUpdate: true, originalSubmissionId: "old" })).rejects.toBeInstanceOf(PrepRoleViolationError);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(hasTaskAccess).not.toHaveBeenCalled();
+  });
+
+  it("AM prep refuses a mid-day instance and mid-day writers refuse an AM prep instance", async () => {
+    vi.mocked(hasTaskAccess).mockResolvedValue(true);
+    const mid = instanceClient(MID_DAY);
+    await expect(submitAmPrep(mid.service, amArgs)).rejects.toBeInstanceOf(PrepRoleViolationError);
+    const am = instanceClient(AM_PREP);
+    const base = { instanceId: "instance", actor };
+    await expect(submitMidDayPhase1(am.service, { ...base, entries: [] })).rejects.toBeInstanceOf(PrepRoleViolationError);
+    await expect(saveMidDayPhase2Item(am.service, { ...base, templateItemId: "item", prepped: 1 })).rejects.toBeInstanceOf(PrepRoleViolationError);
+    await expect(finalizeMidDayPhase2(am.service, base)).rejects.toBeInstanceOf(PrepRoleViolationError);
+    expect(mid.rpc).not.toHaveBeenCalled();
+    expect(am.rpc).not.toHaveBeenCalled();
+    expect(hasTaskAccess).not.toHaveBeenCalled();
+  });
+
+  it("mid-day finalize never advances an opening in phase1_complete", async () => {
+    vi.mocked(hasTaskAccess).mockResolvedValue(true);
+    const update = vi.fn();
+    const from = vi.fn((table: string) => {
+      const q: Record<string, unknown> = {};
+      q.select = vi.fn(() => q); q.eq = vi.fn(() => q); q.is = vi.fn(() => q); q.in = vi.fn(() => q);
+      q.order = vi.fn(() => q); q.update = vi.fn((...a: unknown[]) => { update(...a); return q; });
+      q.maybeSingle = vi.fn(async () => ({
+        data: table === "checklist_instances"
+          ? { id: "instance", template_id: "t", location_id: "stored-shop", date: "2026-10-07", status: "phase1_complete", template: OPENING }
+          : null,
+        error: null,
+      }));
+      q.then = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve);
+      return q;
+    });
+    const service = { from, rpc: vi.fn() } as unknown as SupabaseClient;
+    await expect(finalizeMidDayPhase2(service, { instanceId: "instance", actor })).rejects.toBeInstanceOf(PrepRoleViolationError);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("opening writers refuse a closing or AM prep instance id before any RPC", async () => {
+    vi.mocked(hasTaskAccess).mockResolvedValue(true);
+    for (const tmpl of [CLOSING, AM_PREP]) {
+      const { service, rpc } = instanceClient(tmpl);
+      expect(await canAccessOpeningInstance(service, { instanceId: "instance", actor })).toBe(false);
+      await expect(submitPhase1Atomic(service, { instanceId: "instance", actor, entries: [], sectionVerifications: [], openerNoPriorDataAttestation: null }))
+        .rejects.toBeInstanceOf(OpeningRoleViolationError);
+      expect(rpc).not.toHaveBeenCalled();
+    }
+    expect(hasTaskAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("W13/B072 — generic checklist writers are closing-only", () => {
+  it.each([["opening", null], ["prep", "am_prep"], ["prep", "mid_day_prep"]] as const)(
+    "refuses complete, submit and confirm on %s/%s even with an assignment", async (type, subtype) => {
+      const { service, rpc } = genericClient(type, subtype);
+      vi.mocked(hasTaskAccess).mockResolvedValue(true);
+      const base = { actor: checklistActor({ ...actor, locations: ["stored-shop"] }), instanceId: "instance" };
+      await expect(completeItem(service, { ...base, templateItemId: "item" })).rejects.toMatchObject({ code: "wrong_checklist_type" });
+      await expect(submitBatch(service, { ...base, completionIds: ["completion"] })).rejects.toMatchObject({ code: "wrong_checklist_type" });
+      await expect(confirmInstance(service, { ...base, pin: "1234", incompleteReasons: [] })).rejects.toMatchObject({ code: "wrong_checklist_type" });
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+  it("maps wrong_checklist_type to 409", () => {
+    expect(mapChecklistError(new ChecklistWrongTemplateTypeError()).status).toBe(409);
+  });
+});
+
+describe("W13/B076 — a closing is never started for a future day", () => {
+  function createClient() {
+    const insert = vi.fn();
+    const from = vi.fn(() => {
+      const q: Record<string, unknown> = {};
+      q.select = vi.fn(() => q); q.eq = vi.fn(() => q);
+      q.insert = vi.fn((...a: unknown[]) => { insert(...a); return q; });
+      q.maybeSingle = vi.fn(async () => ({ data: null, error: null }));
+      return q;
+    });
+    return { service: { from } as unknown as SupabaseClient, insert };
+  }
+  it("getOrCreateInstance with no existing row and a future date refuses before any insert", async () => {
+    const { service, insert } = createClient();
+    const today = etCalendarDate(new Date().toISOString());
+    const d = new Date(`${today}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 3);
+    await expect(getOrCreateInstance(service, {
+      templateId: "template", locationId: "stored-shop", date: d.toISOString().slice(0, 10),
+      actor: checklistActor({ ...actor, locations: ["stored-shop"] }),
+    })).rejects.toMatchObject({ code: "closing_date_not_today" });
+    expect(insert).not.toHaveBeenCalled();
   });
 });
