@@ -36,7 +36,8 @@ import ClosingPage from "@/app/(authed)/operations/closing/page";
 import { ClosingClient } from "@/app/(authed)/operations/closing/closing-client";
 
 const shop = "10000000-0000-4000-8000-000000000001";
-const inst = (id: string, template: string, date: string, over: Partial<InstanceRow> = {}): InstanceRow & { allows_multiple_per_day: boolean } => ({
+type FakeInstance = InstanceRow & { allows_multiple_per_day: boolean } & Record<string, unknown>;
+const inst = (id: string, template: string, date: string, over: Partial<InstanceRow> = {}): FakeInstance => ({
   id, template_id: template, location_id: shop, date, shift_start_at: null, status: "open", confirmed_at: null,
   confirmed_by: null, created_at: `${date}T20:00:00Z`, triggered_by_user_id: null, triggered_at: null,
   finalized_at_actor_type: null, assigned_to: null, assignment_locked: false, dropped_at: null, dropped_by: null,
@@ -111,7 +112,7 @@ describe("W15/B084 today's closing started on a version an apply-now publish the
       checklist_template_items: [{ id: "t1-item", template_id: "T1", active: true, label: "Mop", display_order: 1 },
         { id: "t2-item", template_id: "T2", active: true, label: "Mop", display_order: 1 }],
     });
-    h.create.mockResolvedValue({ instance: rowToInstance(inst("B", "T2", "2026-10-21")), created: true });
+    h.create.mockResolvedValue({ instance: rowToInstance(inst("B", "T2", "2026-10-21") as InstanceRow), created: true });
     const tree = await page();
     expect(h.create).not.toHaveBeenCalled();
     expect(tree.props.initialState.instance).toMatchObject({ id: "A", templateId: "T1" });
@@ -120,7 +121,7 @@ describe("W15/B084 today's closing started on a version an apply-now publish the
 
   it("a day with no instance still creates on the effective version", async () => {
     setup({ checklist_templates: [tpl("T1", false, "2026-01-01"), tpl("T2", true, "2026-10-21")], checklist_instances: [] });
-    h.create.mockResolvedValue({ instance: rowToInstance(inst("B", "T2", "2026-10-21")), created: true });
+    h.create.mockResolvedValue({ instance: rowToInstance(inst("B", "T2", "2026-10-21") as InstanceRow), created: true });
     await page();
     expect(h.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ templateId: "T2", date: "2026-10-21" }));
   });

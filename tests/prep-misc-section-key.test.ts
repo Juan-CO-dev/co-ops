@@ -47,9 +47,10 @@ function render(section: string | undefined, toggled: string[]) {
     ...(section ? { section } : {}),
   };
   return renderToStaticMarkup(
-    createElement(TranslationProvider, { initialLanguage: "en" },
-      createElement(AmPrepCollapseContext.Provider, { value: collapse },
-        createElement(MiscSection, props))),
+    createElement(TranslationProvider, {
+      initialLanguage: "en",
+      children: createElement(AmPrepCollapseContext.Provider, { value: collapse }, createElement(MiscSection, props)),
+    }),
   );
 }
 
