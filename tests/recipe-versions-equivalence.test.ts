@@ -86,7 +86,16 @@ describe("no shop versions ⇒ every direct recipe-line reader answers exactly a
     const got = await computeLineReaderOutputs(buildRecipeVersionsFixture(), [LOC, OTHER]);
     if (process.env.UPDATE_RECIPE_LINE_READERS_GOLDEN === "1") writeFileSync(LINE_GOLDEN, `${JSON.stringify(got, null, 2)}\n`);
     expect(existsSync(LINE_GOLDEN), "line-reader golden missing").toBe(true);
-    expect(got).toEqual(JSON.parse(readFileSync(LINE_GOLDEN, "utf8")) as LineReaderOutputs);
+    const expected = JSON.parse(readFileSync(LINE_GOLDEN, "utf8")) as LineReaderOutputs;
+    // W08/B055 — the ONE deliberate delta, kept out of the frozen golden (which is also the pre-ownership
+    // reference tests/shop-owned-equivalence.test.ts compares against, where this SKU's owner is stripped):
+    // this fixture's s-store-ham is LOC's own store-run copy, so OTHER's production picker no longer offers it
+    // and OTHER's conversion check refuses it as invalid_sku. LOC is unchanged.
+    expect((expected.productionPicker[OTHER] as Record<string, unknown>)["s-store-ham"]).toEqual([]);
+    delete (expected.productionPicker[OTHER] as Record<string, unknown>)["s-store-ham"];
+    expect(expected.conversions[OTHER]!["s-store-ham>i-slaw"]).toBe("invalid_conversion");
+    expected.conversions[OTHER]!["s-store-ham>i-slaw"] = "invalid_sku";
+    expect(got).toEqual(expected);
   });
 
   it("the line-reader golden is not trivial — hand-checked anchors", () => {

@@ -139,9 +139,10 @@ it("catering PATCH returns owned_not_catering as a named 400 through the real wr
   const chain = {
     select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue({ data: { catering_available: false, catering_only: false }, error: null }),
-    update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({
+    // W08/B054: the UPDATE is bound to the owner it read (shared here: .is("location_id", null)).
+    update: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ is: vi.fn().mockResolvedValue({
       error: { code: "P0001", message: "shop_owned:owned_not_catering" }, count: null,
-    }) }),
+    }) }) }),
   };
   cateringState.from.mockReturnValue(chain);
   const response = await patchCatering(new NextRequest("http://localhost/api/admin/catering/menu/owned", {

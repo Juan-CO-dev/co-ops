@@ -14,6 +14,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { ownerWriteCheck } from "@/lib/catalog/shop-owned-shared";
 
 export const MENU_ADMIN_MIN = 7; // GM+ — menu-availability config (mirrors zones)
 
@@ -110,11 +111,17 @@ export async function setCateringFlags(
   requireLevel(actor, MENU_ADMIN_MIN);
   const sb = getServiceRoleClient();
   const table = kind === "menu_item" ? "menu_items" : "items";
-  const cols = kind === "menu_item" ? "catering_available, catering_only, catering_portionable" : "catering_available, catering_only";
+  const cols = kind === "menu_item" ? "catering_available, catering_only, catering_portionable, location_id" : "catering_available, catering_only, location_id";
   const { data: cur, error: lErr } = await sb.from(table).select(cols)
-    .eq("id", id).maybeSingle<{ catering_available: boolean; catering_only: boolean; catering_portionable?: boolean }>();
+    .eq("id", id).maybeSingle<{ catering_available: boolean; catering_only: boolean; catering_portionable?: boolean; location_id?: string | null }>();
   if (lErr) throw new Error(`setCateringFlags load: ${lErr.message}`);
   if (!cur) throw new AdminCateringMenuError(404, "not_found", "Not found");
+  // W08/B054: another shop's own item / menu item is 404; shared rows keep the GM floor.
+  const owner = cur.location_id ?? null;
+  if (owner !== null) {
+    const gate = ownerWriteCheck({ role: actor.user.role, level: getRoleLevel(actor.user.role), locations: actor.locations }, owner);
+    if (!gate.ok) throw new AdminCateringMenuError(gate.status, gate.code);
+  }
 
   let available = changes.cateringAvailable ?? cur.catering_available;
   let only = changes.cateringOnly ?? cur.catering_only;
@@ -135,9 +142,11 @@ export async function setCateringFlags(
     update.catering_portionable = portionable;
   }
 
-  const { error, count } = await sb.from(table).update(update, { count: "exact" }).eq("id", id);
+  let q = sb.from(table).update(update, { count: "exact" }).eq("id", id);
+  q = owner === null ? q.is("location_id", null) : q.eq("location_id", owner);
+  const { error, count } = await q;
   if (error) throw catalogWriteError(error, AdminCateringMenuError, "setCateringFlags update");
-  if (count === 0) throw new AdminCateringMenuError(404, "not_found", "Not found");
+  if (count === 0) throw new AdminCateringMenuError(409, "ownership_changed", "Ownership changed — reload");
 
   void audit({
     actorId: actor.user.id,

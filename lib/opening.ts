@@ -1743,6 +1743,34 @@ function extractTemplateItemId(msg: string): string | null {
  * raises P0001 'provenance_required' if missing, which translates to
  * `OpeningProvenanceRequiredError` here.
  */
+const OPENING_PHOTO_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * W08/B163: the non-empty photoIds of a Phase 1 submit must each exist in `photos` with the instance's
+ * `location_id` (the receiving / pack-change rule). A malformed id is `invalid_photo`; a missing or other
+ * shop's photo is `photo_not_found` — both OpeningEntryShapeError (400). No photo, no read.
+ */
+async function assertPhase1PhotosAtShop(
+  service: SupabaseClient,
+  instanceId: string,
+  entries: ReadonlyArray<{ photoId?: string | null }>,
+): Promise<void> {
+  const ids = [...new Set(entries.map((e) => (e.photoId ?? "").trim()).filter((id) => id !== ""))];
+  if (ids.length === 0) return;
+  if (ids.some((id) => !OPENING_PHOTO_ID_RE.test(id))) throw new OpeningEntryShapeError("invalid_photo");
+  const { data: inst, error: iErr } = await service.from("checklist_instances")
+    .select("location_id").eq("id", instanceId).maybeSingle<{ location_id: string }>();
+  if (iErr) throw new Error(`opening photo instance: ${iErr.message}`);
+  if (!inst) throw new OpeningEntryShapeError("photo_not_found");
+  const { data: rows, error: pErr } = await service.from("photos").select("id, location_id").in("id", ids)
+    .returns<Array<{ id: string; location_id: string | null }>>();
+  if (pErr) throw new Error(`opening photos: ${pErr.message}`);
+  const at = new Map((rows ?? []).map((r) => [String(r.id).toLowerCase(), r.location_id] as const));
+  for (const id of ids) {
+    if (at.get(id.toLowerCase()) !== inst.location_id) throw new OpeningEntryShapeError("photo_not_found");
+  }
+}
+
 export async function submitPhase1Atomic(
   service: SupabaseClient,
   args: {
@@ -1785,6 +1813,10 @@ export async function submitPhase1Atomic(
     });
     throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
   }
+
+  // W08/B163: every photo an entry carries must be a real photo of this instance's shop, checked
+  // before the RPC (submit_phase1_atomic casts and stores it as given).
+  await assertPhase1PhotosAtShop(service, args.instanceId, args.entries);
 
   // Marshal Phase 1 entries — RPC consumes countValue/photoId/notes via
   // NULLIF+cast (empty string → NULL), spotCheckStatus via NULLIF (empty → null),
