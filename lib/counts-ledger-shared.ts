@@ -180,6 +180,8 @@ export interface DeliveryLedgerLine {
   receivedQtyAtLevel: number | string | null;
   /** vendor_delivery_items.created_at, µs — the receipt's own write instant, and its ONLY window key. */
   createdUs: number;
+  /** The same instant as PostgREST spelled it — the as-of key for the pack in force at this receipt. */
+  createdIso: string;
 }
 /** One delivery header at the location (the retro-edit probe reads headers, lines or not). */
 export interface DeliveryLedgerHeader { createdUs: number; deliveryDate: string | null }
@@ -285,6 +287,16 @@ export function retroEditStale(headers: readonly DeliveryLedgerHeader[], anchorI
  * packaging SKUs on prod after the first full count); now it is a filter. No chain → null;
  * no line → 0; any line without a level / qty, or with a level the chain cannot walk →
  * the whole term is advisory-null (never a fabricated count).
+ *
+ * EACH RECEIPT IS PRICED BY THE PACK IN FORCE WHEN IT WAS WRITTEN (audit B100; D1 — the past
+ * resolves as of its day). `vendor_delivery_items` stores a level label and a quantity, never
+ * leaf units, so multiplying every past line by TODAY's chain let one pack edit ("case = 100"
+ * → "case = 200") re-price every case already received: on-hand jumped and the next count
+ * showed a loss that never happened. `chainAtReceipt` answers the chain as of a line (the
+ * caller resolves it through the one pure resolver); `chain` is the LIVE chain and stays the
+ * answer wherever history has none — a receipt older than the SKU's first version, a flat-pack
+ * baseline, or a label only today's chain can walk — which is exactly the old behaviour, so
+ * this can only correct a number, never null one that had a value.
  */
 export function receivedUnitsWindow(
   lines: readonly DeliveryLedgerLine[],
@@ -292,9 +304,19 @@ export function receivedUnitsWindow(
   afterIso: string,
   untilIso: string | null,
   chain: PackChainLevel[] | null,
+  chainAtReceipt?: (line: DeliveryLedgerLine) => PackChainLevel[] | null | undefined,
 ): number | null {
   if (chain == null || chain.length === 0) return null; // no chain → can't map to leaf units.
   const packChain = buildPackChain(chain);
+  // One built chain per distinct level set (the caller hands back the SAME array per version).
+  const built = new Map<PackChainLevel[], ReturnType<typeof buildPackChain>>();
+  const chainThen = (l: DeliveryLedgerLine) => {
+    const levels = chainAtReceipt?.(l);
+    if (levels == null || levels.length === 0) return null;
+    let hit = built.get(levels);
+    if (!hit) { hit = buildPackChain(levels); built.set(levels, hit); }
+    return hit;
+  };
   const afterUs = instantMicros(afterIso);
   const untilUs = untilIso == null ? null : instantMicros(untilIso);
   let any = false;
@@ -305,7 +327,8 @@ export function receivedUnitsWindow(
     const level = l.receivedLevelLabel?.trim();
     const qty = num(l.receivedQtyAtLevel);
     if (!level || qty == null) return null;
-    const perContainer = chainLeafUnitsFrom(packChain, level);
+    const then = chainThen(l);
+    const perContainer = (then ? chainLeafUnitsFrom(then, level) : null) ?? chainLeafUnitsFrom(packChain, level);
     if (perContainer == null) return null; // unresolvable level → advisory-null.
     sum += qty * perContainer;
   }

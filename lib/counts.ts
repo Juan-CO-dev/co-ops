@@ -73,7 +73,7 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import type { VersionScope } from "@/lib/sku-versions-shared";
+import { resolvePacksAtPoints, type PackPickWarning, type SkuPackHistory, type VersionScope } from "@/lib/sku-versions-shared";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { createCountsReadRefs, type CountsReadRefs, type RosterSku } from "@/lib/counts-read-refs";
 import { type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
@@ -1590,11 +1590,42 @@ async function loadOnHandLedgers(
     deliveryLines: lines.map((l) => ({
       id: l.id, skuId: l.vendor_item_id, resolvedOz: l.resolved_oz,
       receivedLevelLabel: l.received_level_label, receivedQtyAtLevel: l.received_qty_at_level,
-      createdUs: instantMicros(l.created_at),
+      createdUs: instantMicros(l.created_at), createdIso: l.created_at,
     })),
     deliveryHeaders: headers.map((h) => ({ createdUs: instantMicros(h.created_at), deliveryDate: h.delivery_date })),
     productionInputs: inputs.map((r) => ({ skuId: r.input_sku_id, inputOz: r.input_oz, producedUs: instantMicros(r.productions.produced_at) })),
   };
+}
+
+/**
+ * The pack chain in force when each count-dimension receipt was written (audit B100; D1).
+ * ONE call into the one pure resolver (`resolvePacksAtPoints`: this shop's version in force
+ * then, else the global one) for every such line in the loaded ledger — no per-line I/O and no
+ * second opinion. A line with no version in force then, or inside a flat-pack baseline, has no
+ * entry: the ledger falls back to the live chain for it (today's behaviour). Lines sharing a
+ * version share ONE levels array, so the ledger builds each chain once.
+ */
+function packChainsAtReceipts(
+  lines: readonly DeliveryLedgerLine[],
+  countSkuIds: ReadonlySet<string>,
+  history: SkuPackHistory,
+  shopScope: string,
+): (line: DeliveryLedgerLine) => PackChainLevel[] | null {
+  if (history.versions.length === 0) return () => null;
+  const points = lines.filter((l) => countSkuIds.has(l.skuId)).map((l) => ({ key: l.id, skuId: l.skuId, scope: shopScope, asOf: l.createdIso }));
+  const warnings: PackPickWarning[] = [];
+  const packs = resolvePacksAtPoints(history.versions, history.levels, points, warnings);
+  // NAMED, never silent (the as-of loaders' posture): a picked version with no loaded level is a data fault.
+  for (const w of warnings) console.warn(`counts_receipt_pack_${w.code}`, { skuId: w.skuId, versionId: w.versionId, locationId: w.locationId, fellBackToVersionId: w.fellBackToVersionId });
+  const levelsByVersion = new Map<string, PackChainLevel[]>();
+  const byLine = new Map<string, PackChainLevel[]>();
+  for (const [lineId, pack] of packs) {
+    if (pack.versionId == null || pack.levels.length === 0) continue; // a flat baseline has no chain
+    let levels = levelsByVersion.get(pack.versionId);
+    if (!levels) { levels = pack.levels; levelsByVersion.set(pack.versionId, levels); }
+    byLine.set(lineId, levels);
+  }
+  return (line) => byLine.get(line.id) ?? null;
 }
 
 /**
@@ -1605,6 +1636,7 @@ async function loadOnHandLedgers(
 function onHandLedgerContext(
   sales: SalesSnapshot | null,
   ledgers: OnHandLedgers,
+  chainAtReceipt: (line: DeliveryLedgerLine) => PackChainLevel[] | null = () => null,
 ): OnHandLedgerContext {
   const requireSales = (): SalesSnapshot => {
     if (!sales) throw new Error("onHand: a sales consumer ran without the render's sales read");
@@ -1625,7 +1657,7 @@ function onHandLedgerContext(
     salesOz: (skuIds, fromDate, untilExclusive, gaps) => salesDirectOz(requireSales(), skuIds, fromDate, untilExclusive, gaps),
     salesRowsFrom: (fromDate) => (sales ? salesRowsFrom(sales, fromDate) : []),
     receivedOz: (skuIds, afterIso, untilIso) => { requireDeliveries(afterIso); return receivedOzWindow(ledgers.deliveryLines, skuIds, afterIso, untilIso); },
-    receivedUnits: (skuId, afterIso, untilIso, chain) => { requireDeliveries(afterIso); return receivedUnitsWindow(ledgers.deliveryLines, skuId, afterIso, untilIso, chain); },
+    receivedUnits: (skuId, afterIso, untilIso, chain) => { requireDeliveries(afterIso); return receivedUnitsWindow(ledgers.deliveryLines, skuId, afterIso, untilIso, chain, chainAtReceipt); },
     consumedOz: (skuIds, afterIso, untilIso) => { requireProductions(afterIso); return consumedOzWindow(ledgers.productionInputs, skuIds, afterIso, untilIso); },
     productionInputsFrom: (fromIso) => { requireProductions(fromIso); return productionInputsFrom(ledgers.productionInputs, fromIso); },
     stale: (anchorIso) => {
@@ -1814,7 +1846,7 @@ async function onHandCore(
   const offRoster = skuIds.filter((id) => !rosterName.has(id));
 
   // ── 4. The second (and last) parallel wave: the sales read, the ledgers, the labels.
-  const [sales, ledgers, nameRes, chainsBySku, measures] = await Promise.all([
+  const [sales, ledgers, nameRes, chainsBySku, measures, packHistory] = await Promise.all([
     loadSalesSnapshot(sb, locationId, now, {
       fromDate: earliestDate([gapSince, laneFrom, disclosureFrom]),
     }),
@@ -1839,11 +1871,14 @@ async function onHandCore(
       : Promise.resolve({ data: [] as OffRosterSku[], error: null as { message: string } | null }),
     countSkuIds.length > 0 ? refs.packChains(countSkuIds) : Promise.resolve(new Map<string, PackChainLevel[]>()),
     countSkuIds.length > 0 ? refs.measures() : Promise.resolve(new Map<string, MeasureUnitFactor>()),
+    // Pack HISTORY, for the count rows only: each packaging receipt is read through the pack in
+    // force when it was written (audit B100), not through today's chain.
+    countSkuIds.length > 0 ? refs.packHistory() : Promise.resolve<SkuPackHistory>({ versions: [], levels: [] }),
   ]);
   // LABEL-ONLY read: names never touch the drift math (rows fall back to "(sku)"), so
   // a failure logs and continues best-effort rather than failing the whole panel.
   if (nameRes.error) console.error(`[counts] loadOnHand sku names lookup failed:`, nameRes.error.message);
-  const ctx = onHandLedgerContext(sales, ledgers);
+  const ctx = onHandLedgerContext(sales, ledgers, packChainsAtReceipts(ledgers.deliveryLines, new Set(countSkuIds), packHistory, locationId));
   const [salesCoverage, salesThrough] = await Promise.all([
     salesDisclosure(sb, locationId, disclosureFrom, sales),
     finishDepletionWatermark(watermarkStart, locationId, sb, sales),

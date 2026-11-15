@@ -304,7 +304,11 @@ describe("B9 step 4 — reference data read once per page render (sheet + panel 
     const old = await measure({}, v0PageRender);
     const t = byTable(neu.log);
     expect(t.measure_units).toBe(1);
-    expect(t.sku_pack_levels).toBe(1);
+    // Audit W17 / B100: the live chains, plus ONE read of the versioned levels and ONE of the pack
+    // versions — the history the count rows resolve each receipt's pack from (D1: a receipt is
+    // priced by the pack in force when it was written, never re-priced by a later pack edit).
+    expect(t.sku_pack_levels).toBe(2);
+    expect(t.sku_pack_versions).toBe(1);
     expect(t.vendors).toBe(1);
     expect(t.products).toBe(1); // the product index: read once, resolved once (product-identity law)
     expect(t.product_primaries).toBe(1);
@@ -331,12 +335,15 @@ describe("B9 step 5 — independent reads run together", () => {
     }
   });
 
-  it.each(MODES)("THE BUDGET: one page render ≤ 25 round trips on the ledger and reconciled sources (≤ 30 on raw capture), constant as anchor groups grow — %s", async (mode) => {
+  // BUDGET RAISED BY EXACTLY 2 (audit W17 / B100, 2026-11-15): 25 → 27 and 30 → 32. The two added
+  // round trips are the pack-version history (sku_pack_versions + its levels), read once per render
+  // in the same parallel wave and with no id list, so they stay 2 at any catalog or ledger size.
+  it.each(MODES)("THE BUDGET: one page render ≤ 27 round trips on the ledger and reconciled sources (≤ 32 on raw capture), constant as anchor groups grow — %s", async (mode) => {
     setMode(mode);
     await measure({}, pageRender);
     const base = await measure({}, pageRender);
     const scaled = await measure({ parWalks: 10, countSessions: 10, baselineInstants: 10 }, pageRender);
-    expect(base.trips).toBeLessThanOrEqual(mode === "capture" ? 30 : 25);
+    expect(base.trips).toBeLessThanOrEqual(mode === "capture" ? 32 : 27);
     expect(scaled.trips).toBe(base.trips);
     expect(scaled.reconciled).toBe(mode === "reconciled" ? 1 : 0);
   });

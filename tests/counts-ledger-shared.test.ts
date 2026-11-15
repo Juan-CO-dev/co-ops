@@ -34,7 +34,7 @@ describe("instants compare as Postgres compares timestamptz", () => {
 });
 
 const line = (skuId: string, oz: number | string | null, created: string): DeliveryLedgerLine =>
-  ({ id: `${skuId}-${created}`, skuId, resolvedOz: oz, receivedLevelLabel: null, receivedQtyAtLevel: null, createdUs: instantMicros(created) });
+  ({ id: `${skuId}-${created}`, skuId, resolvedOz: oz, receivedLevelLabel: null, receivedQtyAtLevel: null, createdUs: instantMicros(created), createdIso: created });
 
 describe("received / consumed windows are (after, until]", () => {
   const lines = [
@@ -124,6 +124,44 @@ describe("count-dimension received units (PR-C), from the shared receipt lines",
     expect(receivedUnitsWindow([], "bags", "2026-10-01T00:00:00Z", null, null)).toBeNull();
     expect(receivedUnitsWindow([at("2026-09-01T00:00:00Z", "case", 1)], "bags", "2026-10-01T00:00:00Z", null, chain)).toBe(0);
   });
+  // Audit B100: a receipt keeps the size of the pack it was received in.
+  describe("each receipt is priced by the pack in force when it was written", () => {
+    const pack = (casePer: number) => [
+      { id: `case-${casePer}`, label: "case", containsQty: casePer, containsLevelId: `each-${casePer}`, containsMeasureUnit: null, displayOrdinal: 1 },
+      { id: `each-${casePer}`, label: "bag", containsQty: 1, containsLevelId: null, containsMeasureUnit: "each", displayOrdinal: 2 },
+    ];
+    const v1 = pack(100), v2 = pack(200); // the pack was edited at T1: a case went from 100 bags to 200
+    const T1 = instantMicros("2026-10-05T00:00:00Z");
+    const asOf = (l: DeliveryLedgerLine) => (l.createdUs < T1 ? v1 : v2);
+    const before = at("2026-10-02T00:00:00Z", "case", 1);
+    const after = at("2026-10-06T00:00:00Z", "case", 1);
+
+    it("a pack edit after a receipt does not re-price that receipt", () => {
+      // Through today's chain alone the two cases read 200 + 200.
+      expect(receivedUnitsWindow([before, after], "bags", "2026-10-01T00:00:00Z", null, v2)).toBe(400);
+      expect(receivedUnitsWindow([before, after], "bags", "2026-10-01T00:00:00Z", null, v2, asOf)).toBe(300);
+    });
+    it("a line before any version falls back to the live chain", () => {
+      const none = (l: DeliveryLedgerLine) => (l.createdUs < T1 ? null : v2);
+      expect(receivedUnitsWindow([before, after], "bags", "2026-10-01T00:00:00Z", null, v2, none)).toBe(400);
+      expect(receivedUnitsWindow([before], "bags", "2026-10-01T00:00:00Z", null, v2, () => undefined)).toBe(200);
+      expect(receivedUnitsWindow([before], "bags", "2026-10-01T00:00:00Z", null, v2, () => [])).toBe(200);
+    });
+    it("a label the pack of that day cannot walk falls back to the live chain, then to unknown", () => {
+      const liveWithPallet = [{ id: "pallet", label: "pallet", containsQty: 10, containsLevelId: "case-200", containsMeasureUnit: null, displayOrdinal: 0 }, ...v2];
+      const pallet = at("2026-10-02T00:00:00Z", "pallet", 1);
+      expect(receivedUnitsWindow([pallet], "bags", "2026-10-01T00:00:00Z", null, liveWithPallet, asOf)).toBe(2000); // as before the fix
+      expect(receivedUnitsWindow([at("2026-10-02T00:00:00Z", "drum", 1)], "bags", "2026-10-01T00:00:00Z", null, v2, asOf)).toBeNull();
+    });
+    it("no live chain is still unknown, whatever history says", () => {
+      expect(receivedUnitsWindow([before], "bags", "2026-10-01T00:00:00Z", null, null, asOf)).toBeNull();
+    });
+    it("the window and the per-SKU filter are unchanged", () => {
+      expect(receivedUnitsWindow([before, after], "bags", "2026-10-05T00:00:00Z", null, v2, asOf)).toBe(200);
+      expect(receivedUnitsWindow([before, after], "cups", "2026-10-01T00:00:00Z", null, v2, asOf)).toBe(0);
+    });
+  });
+
   it("one level-less, qty-less or unwalkable line makes the whole term unknown", () => {
     for (const bad of [at("2026-10-02T00:00:00Z", null, 1), at("2026-10-02T00:00:00Z", "case", null), at("2026-10-02T00:00:00Z", "pallet", 1)]) {
       expect(receivedUnitsWindow([at("2026-10-02T00:00:00Z", "case", 1), bad], "bags", "2026-10-01T00:00:00Z", null, chain)).toBeNull();
