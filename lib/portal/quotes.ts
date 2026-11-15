@@ -544,8 +544,30 @@ export async function initiatePayment(
       }
       await retireOrRefuse(accounts, openSession);
     }
-    const repriced = await syncDuePaymentAmount(sb, existing.id, amountCents, openSession);
-    if (!repriced) throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
+    // BOUND TO THIS QUOTE (review r5). `amountCents` is THIS revision's amount, and a
+    // manager's revise can land between the read above and this write: its carry moves the
+    // intent to the new revision and prices it for that one. The write therefore names the
+    // quote and applies only while the intent is still on it — otherwise v1's $200 lands on
+    // v2's $300 intent. Nothing written = find out which of the two things happened.
+    const repriced = await syncDuePaymentAmount(sb, {
+      paymentId: existing.id,
+      quoteId,
+      amountCents,
+      retiredSessionId: openSession,
+    });
+    if (!repriced) {
+      const { data: now, error: nowErr } = await sb
+        .from("catering_payments")
+        .select("id, status, quote_id")
+        .eq("id", existing.id)
+        .maybeSingle<{ id: string; status: string; quote_id: string }>();
+      if (nowErr) throw new Error(`initiatePayment re-price re-read: ${nowErr.message}`);
+      if (now?.status === "due" && now.quote_id !== quoteId) {
+        // Still due, on another revision: the quote was revised under this request.
+        throw new PortalQuoteError(409, "not_payable", "This quote was revised — reload it to see the current one");
+      }
+      throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
+    }
   }
 
   const paymentId = existing
@@ -573,6 +595,32 @@ export async function initiatePayment(
       if (voidErr) console.error(`[catering] could not void the intent ${paymentId} raised beside a settled payment:`, voidErr.message);
     }
     throw new PortalQuoteError(409, "already_paid", "A payment has already been received for this order");
+  }
+
+  // …AND SO CAN A REVISE (review r5). `loadPayableQuote` read this quote as the live
+  // revision; a manager's revise can have superseded it before the intent was raised or
+  // re-priced above. The intent would then sit `due` on a revision that is no longer the
+  // offer, at that revision's amount, and this request would answer "recorded" (or go on to
+  // open a checkout the attach refuses). Asked AFTER our own write, for the same reason as
+  // the paid re-check: the revise supersedes and then its carry reads the family's
+  // payments; this request writes and then reads `superseded_at` — whichever order they
+  // land in, one of them sees the other. An intent THIS request raised is closed (guarded
+  // on the row exactly as it was inserted: still due, still on this quote, no session — if
+  // the carry has already taken it to the new revision it is that revision's intent and is
+  // left alone). One that was already there is the carry's to move. Either way the customer
+  // is told the quote changed.
+  if (!(await quoteStillLive(sb, quoteId))) {
+    if (!existing) {
+      const { error: voidErr } = await sb
+        .from("catering_payments")
+        .update({ status: "void" })
+        .eq("id", paymentId)
+        .eq("quote_id", quoteId)
+        .eq("status", "due")
+        .is("provider_session_id", null);
+      if (voidErr) console.error(`[catering] could not void the intent ${paymentId} raised on a superseded revision:`, voidErr.message);
+    }
+    throw new PortalQuoteError(409, "not_payable", "This quote was revised — reload it to see the current one");
   }
 
   void audit({
@@ -716,7 +764,7 @@ async function quoteStillLive(sb: ReturnType<typeof getServiceRoleClient>, quote
     .select("id, superseded_at")
     .eq("id", quoteId)
     .maybeSingle<{ id: string; superseded_at: string | null }>();
-  if (error) throw new Error(`createQuoteCheckout live re-check: ${error.message}`);
+  if (error) throw new Error(`quote live re-check: ${error.message}`);
   return data != null && data.superseded_at == null;
 }
 

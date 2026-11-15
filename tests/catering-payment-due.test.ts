@@ -79,7 +79,7 @@ describe("W02 review r1 — a due intent is never re-priced under an open checko
   it("syncDuePaymentAmount refuses a row that still points at a session, and writes nothing", async () => {
     const db = open();
 
-    expect(await syncDuePaymentAmount(db.client, "old", 20000)).toBe(false);
+    expect(await syncDuePaymentAmount(db.client, { paymentId: "old", quoteId: QUOTE, amountCents: 20000 })).toBe(false);
 
     expect(db.tables.catering_payments![0]).toMatchObject({ amount_cents: 30000, provider_session_id: "cs_old" });
   });
@@ -87,7 +87,7 @@ describe("W02 review r1 — a due intent is never re-priced under an open checko
   it("told which session the caller RETIRED, it writes the amount and clears the id in ONE update", async () => {
     const db = open();
 
-    expect(await syncDuePaymentAmount(db.client, "old", 20000, "cs_old")).toBe(true);
+    expect(await syncDuePaymentAmount(db.client, { paymentId: "old", quoteId: QUOTE, amountCents: 20000, retiredSessionId: "cs_old" })).toBe(true);
 
     expect(db.tables.catering_payments![0]).toMatchObject({ amount_cents: 20000, provider_session_id: null });
     const writes = db.ops.filter((o) => o.kind === "update");
@@ -99,7 +99,7 @@ describe("W02 review r1 — a due intent is never re-priced under an open checko
     const db = open();
     db.tables.catering_payments![0]!.provider_session_id = "cs_newer";
 
-    expect(await syncDuePaymentAmount(db.client, "old", 20000, "cs_old")).toBe(false);
+    expect(await syncDuePaymentAmount(db.client, { paymentId: "old", quoteId: QUOTE, amountCents: 20000, retiredSessionId: "cs_old" })).toBe(false);
 
     expect(db.tables.catering_payments![0]).toMatchObject({ amount_cents: 30000, provider_session_id: "cs_newer" });
   });

@@ -179,23 +179,42 @@ export interface CreatePaymentDueInput {
  *   · `retiredSessionId` set: the caller has ALREADY retired that session at Stripe. The
  *     row must still name it; the amount is written and the id cleared in the same UPDATE,
  *     so the row never says the new amount while pointing at the old checkout.
- * Returning false therefore means "not due any more, OR the row's checkout is not the one
- * you resolved". Either way the caller must not send anyone to pay.
+ *
+ * ── AND ONLY ON THE REVISION THE AMOUNT WAS COMPUTED FROM (review r5) ────────────────
+ * `amountCents` is a fact about ONE quote row: that revision's deposit, or its total. The
+ * caller read it, then a manager's revise can land before this write: the carry
+ * (payment-carry.ts) moves the intent to the new revision and prices it for THAT one. A
+ * write guarded on `status` and the session alone still matched — the row was still due and
+ * still held no session — and put the old revision's amount on the new revision's intent
+ * ($200 over $300, which staff could then mark paid as the deposit). So the caller NAMES the
+ * quote the amount came from (`quoteId`, required) and the write applies only while the
+ * intent is still on it: the same compare-and-set every other write to a due intent makes.
+ *
+ * Returning false therefore means one of: not due any more; the row's checkout is not the
+ * one you resolved; THE INTENT IS NO LONGER ON THE QUOTE YOU PRICED IT FOR. In every case
+ * the row was left exactly as it is and the caller must not send anyone to pay.
  */
 export async function syncDuePaymentAmount(
   sb: ReturnType<typeof getServiceRoleClient>,
-  paymentId: string,
-  amountCents: number,
-  retiredSessionId: string | null = null,
+  input: {
+    paymentId: string;
+    /** The quote row `amountCents` was computed from. The intent must still be on it. */
+    quoteId: string;
+    amountCents: number;
+    /** See above. Omitted / null = the row must hold NO Checkout Session. */
+    retiredSessionId?: string | null;
+  },
 ): Promise<boolean> {
+  const retiredSessionId = input.retiredSessionId ?? null;
   const base = sb
     .from("catering_payments")
     .update(
-      retiredSessionId ? { amount_cents: amountCents, provider_session_id: null } : { amount_cents: amountCents },
+      retiredSessionId ? { amount_cents: input.amountCents, provider_session_id: null } : { amount_cents: input.amountCents },
       { count: "exact" },
     )
-    .eq("id", paymentId)
-    .eq("status", "due");
+    .eq("id", input.paymentId)
+    .eq("status", "due")
+    .eq("quote_id", input.quoteId);
   const { error, count } = await (retiredSessionId
     ? base.eq("provider_session_id", retiredSessionId)
     : base.is("provider_session_id", null));
@@ -247,12 +266,15 @@ export async function createPaymentDue(
         if (existing.amount_cents !== input.amountCents && !existing.provider_session_id) {
           let repriced: boolean;
           try {
-            repriced = await syncDuePaymentAmount(sb, existing.id, input.amountCents);
+            // Bound to the quote this call was asked about (review r5): `existing` was read
+            // on `input.quoteId`, and `input.amountCents` is that quote's amount.
+            repriced = await syncDuePaymentAmount(sb, { paymentId: existing.id, quoteId: input.quoteId, amountCents: input.amountCents });
           } catch (e) {
             throw new Error(`createPaymentDue re-price: ${e instanceof Error ? e.message : String(e)}`);
           }
-          // Advanced between the read and the write: it is no longer a due intent to reuse.
-          if (!repriced) throw new Error("createPaymentDue re-price: the existing intent is no longer due");
+          // Advanced, given a checkout, or moved to another revision between the read and
+          // the write: it is no longer this quote's due intent to reuse at this amount.
+          if (!repriced) throw new Error("createPaymentDue re-price: the existing intent is no longer due on this quote");
         }
         return { id: existing.id };
       }
