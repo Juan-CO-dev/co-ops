@@ -10,7 +10,7 @@
  *           neither end nor sign out a NEW session (the server half: tests/logout-revoke-only.test.ts).
  *  W06-2: the idle sign-in link carries a return link bound to this user.
  */
-import { act } from "react";
+import { act, useEffect, useRef } from "react";
 import { jsx } from "react/jsx-runtime";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -659,7 +659,8 @@ describe("B012 round 6 — an unconfirmed idle sign-out is retried, covered, and
     await advance(0.1); // the first logout answered 503
     expect(calls("/api/auth/logout")).toHaveLength(1);
     expect(screen.getByTestId(OVERLAY)).toBeTruthy(); // nothing authenticated is shown
-    expect(screen.queryByRole("dialog")).toBeNull();
+    // The warning is gone; the only dialog left is the cover itself (a <dialog> since round 11).
+    expect(screen.queryAllByRole("dialog").filter((d) => d.getAttribute("data-testid") !== OVERLAY)).toHaveLength(0);
     expect(h.push).not.toHaveBeenCalled();
     expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toBeNull();
     await advance(1); // the retry (named) is acknowledged
@@ -944,6 +945,159 @@ describe("B012 round 10 — the sign-out cover covers every tab and every dialog
     one.unmount();
     expect(app.hasAttribute("inert")).toBe(true);
     two.unmount();
+    expect(app.hasAttribute("inert")).toBe(false);
+    app.remove();
+  });
+});
+
+// ── Fix round 11 (review W06-r11, P2) ─────────────────────────────────────────────────────────────────────────────────
+// A native <dialog> opened with showModal() (the dashboard's assignment-change dialog, ShiftBoardClient) sits in the
+// browser's TOP LAYER, above any z-index, and escapes ancestor `inert`, so it stayed readable and typeable above the
+// cover. Now, when the cover shows, every open native dialog is closed (and any opened while it shows), and the cover
+// is itself a <dialog> opened with showModal(), so it is the topmost thing in the top layer. Where showModal() is
+// missing (jsdom; very old engines) the round-10 fallback (last child of <body>, z-index, inert, focus, capture shield)
+// still holds.
+//
+// jsdom has no top layer, so these tests give HTMLDialogElement a minimal one (showModal / close / an ordered list, the
+// way browsers stack it: the most recent showModal() is on top).
+describe("B012 round 11 — native modal dialogs cannot stay above the sign-out cover", () => {
+  let topLayer: HTMLDialogElement[] = [];
+  const proto = HTMLDialogElement.prototype as unknown as Record<string, unknown>;
+  const installTopLayer = () => {
+    topLayer = [];
+    proto.showModal = function (this: HTMLDialogElement) {
+      if (this.hasAttribute("open")) throw new DOMException("already open", "InvalidStateError");
+      this.setAttribute("open", "");
+      topLayer.push(this);
+    };
+    proto.close = function (this: HTMLDialogElement) {
+      if (!this.hasAttribute("open")) return;
+      this.removeAttribute("open");
+      topLayer = topLayer.filter((d) => d !== this);
+      this.dispatchEvent(new Event("close"));
+    };
+  };
+  afterEach(() => {
+    delete proto.showModal;
+    delete proto.close;
+    topLayer = [];
+  });
+
+  // The assignment-change dialog's shape: a <dialog> shown with showModal() from an effect, a note field, a submit.
+  function ReasonDialog(props: { onInput: () => void; onSubmit: () => void }) {
+    const ref = useRef<HTMLDialogElement>(null);
+    useEffect(() => {
+      ref.current?.showModal();
+    }, []);
+    return jsx("dialog", {
+      ref,
+      "data-testid": "reason-dialog",
+      "aria-label": "Confirm change",
+      children: jsx("form", {
+        onSubmit: (e: Event) => { e.preventDefault(); props.onSubmit(); },
+        children: [
+          jsx("textarea", { key: "note", name: "reasonNote", onInput: props.onInput, onKeyDown: props.onInput }),
+          jsx("button", { key: "go", type: "submit", children: "Confirm change" }),
+        ],
+      }),
+    });
+  }
+
+  it("a showModal() dialog open during a deferred idle logout is closed, the cover is the top modal, and the dialog takes no input", async () => {
+    installTopLayer();
+    h.fetch.mockImplementation(async (url: string) =>
+      url === "/api/auth/logout" ? new Promise<Response>(() => {}) : ok(),
+    );
+    const onInput = vi.fn();
+    const onSubmit = vi.fn();
+    render(jsx(TranslationProvider, {
+      initialLanguage: "en",
+      children: [
+        jsx(ReasonDialog, { key: "reason", onInput, onSubmit }),
+        jsx(IdleTimeoutWarning, { key: "idle", userId: "user-1", sessionId: h.session }),
+      ],
+    }));
+    const reason = screen.getByTestId("reason-dialog") as HTMLDialogElement;
+    expect(topLayer).toEqual([reason]);
+    await advance(600); // the idle limit: the logout is sent and never answers
+    await advance(0.1);
+    expect(calls("/api/auth/logout")).toHaveLength(1);
+    const overlay = screen.getByTestId(OVERLAY);
+    // The native dialog is closed and gone from the top layer; the cover is a modal <dialog> and the only one there.
+    expect(reason.hasAttribute("open")).toBe(false);
+    expect(overlay.tagName).toBe("DIALOG");
+    expect(overlay.hasAttribute("open")).toBe(true);
+    expect(topLayer).toEqual([overlay]);
+    expect(overlay.contains(document.activeElement)).toBe(true);
+    // The dialog's controls take nothing: typing, Enter, a click on its submit, a submit event.
+    const note = reason.querySelector("textarea")!;
+    const submit = reason.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    note.focus();
+    expect(overlay.contains(document.activeElement)).toBe(true);
+    expect(fireEvent.keyDown(note, { key: "a" })).toBe(false);
+    fireEvent.input(note, { target: { value: "a" } });
+    expect(fireEvent.keyDown(note, { key: "Enter" })).toBe(false);
+    fireEvent.click(submit);
+    fireEvent.submit(reason.querySelector("form")!);
+    await advance(1);
+    expect(onInput).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("a dialog opened with showModal() WHILE the cover shows is closed again, and the cover stays on top", async () => {
+    installTopLayer();
+    const { SigningOutOverlay } = await import("@/components/auth/SigningOutOverlay");
+    const late = document.createElement("dialog");
+    document.body.appendChild(late);
+    render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(SigningOutOverlay, {}) }));
+    const overlay = screen.getByTestId(OVERLAY);
+    expect(topLayer).toEqual([overlay]);
+    late.showModal(); // e.g. a component's effect re-opening its dialog during the logout retries
+    await act(async () => {});
+    expect(late.hasAttribute("open")).toBe(false);
+    expect(topLayer).toEqual([overlay]);
+    late.remove();
+  });
+
+  it("Escape / a cancel request does not close the cover; if it is closed anyway it comes straight back", async () => {
+    installTopLayer();
+    const { SigningOutOverlay } = await import("@/components/auth/SigningOutOverlay");
+    render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(SigningOutOverlay, {}) }));
+    const overlay = screen.getByTestId(OVERLAY) as HTMLDialogElement;
+    expect(fireEvent.keyDown(overlay, { key: "Escape" })).toBe(false); // no close request
+    expect(overlay.dispatchEvent(new Event("cancel", { cancelable: true }))).toBe(false);
+    act(() => overlay.close());
+    expect(overlay.hasAttribute("open")).toBe(true);
+    expect(topLayer).toEqual([overlay]);
+  });
+
+  it("two covers at once do not close each other", async () => {
+    installTopLayer();
+    const { SigningOutOverlay } = await import("@/components/auth/SigningOutOverlay");
+    render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(SigningOutOverlay, {}) }));
+    render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(SigningOutOverlay, {}) }));
+    await act(async () => {});
+    const covers = screen.getAllByTestId(OVERLAY);
+    expect(covers).toHaveLength(2);
+    for (const cover of covers) expect(cover.hasAttribute("open")).toBe(true);
+  });
+
+  it("jsdom fallback (no showModal): open dialogs are still closed, and the cover is open, last in <body>, focused, the page inert", async () => {
+    expect(typeof (HTMLDialogElement.prototype as { showModal?: unknown }).showModal).toBe("undefined");
+    const { SigningOutOverlay } = await import("@/components/auth/SigningOutOverlay");
+    const app = document.createElement("div");
+    const open = document.createElement("dialog");
+    open.setAttribute("open", "");
+    app.appendChild(open);
+    document.body.appendChild(app);
+    const { unmount } = render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(SigningOutOverlay, {}) }));
+    const overlay = screen.getByTestId(OVERLAY);
+    expect(open.hasAttribute("open")).toBe(false);
+    expect(overlay.hasAttribute("open")).toBe(true);
+    expect(document.body.lastElementChild).toBe(overlay);
+    expect(overlay.contains(document.activeElement)).toBe(true);
+    expect(app.hasAttribute("inert")).toBe(true);
+    unmount();
     expect(app.hasAttribute("inert")).toBe(false);
     app.remove();
   });
