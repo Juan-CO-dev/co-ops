@@ -66,11 +66,15 @@ describe('portal proxy boundary', () => {
     req.headers.set('host','staff.example.test'); expect(assertSameOrigin(req)?.status).toBe(403);
   });
 });
+// Audit W06/B155 adds ONE request header on authenticated staff requests (x-co-path, the served path for the sign-in
+// return link). It is the only intended difference from the frozen pre-portal proxy; everything else stays byte-identical.
+const withoutServedPath = (headers: Headers) => [...headers].filter(([key]) => key !== 'x-middleware-request-x-co-path')
+  .map(([key, value]) => key === 'x-middleware-override-headers' ? [key, value.split(',').filter(name => name !== 'x-co-path').join(',')] : [key, value]);
 it.each([undefined,''])('unset env preserves full response bytes for existing hosts (%s)', async value => {
   vi.stubEnv('PORTAL_HOSTS',value);vi.stubEnv('PORTAL_ORIGIN',value);
   for(const host of ['staff.example.test','eat.example.test','unlisted.example.test']) for(const path of ['/',...allowed,...denied]) for(const cookie of ['', 'co_ops_session=test']) {
     const req = request(path,host,{cookie}); const before = await beforePortal(req); const after = await proxy(req);
-    expect(after.status,`${host}${path}`).toBe(before.status); expect([...after.headers]).toEqual([...before.headers]); expect(await after.text()).toBe(await before.text());
+    expect(after.status,`${host}${path}`).toBe(before.status); expect(withoutServedPath(after.headers)).toEqual([...before.headers]); expect(await after.text()).toBe(await before.text());
   }
 });
 it('configured portal leaves staff and landing response bytes unchanged', async () => {

@@ -105,7 +105,9 @@ interface LoadedAsset {
 }
 
 /** The validated extraction we store in parsed_json.extraction. Every field optional except
- *  docKind (always present, defaulted to "other"). Numbers are integer cents, finite, >= 0. */
+ *  docKind (always present, defaulted to "other"). Money is integer cents and finite;
+ *  totalCents, extendedCents and a line's qty are SIGNED (a credit/return is negative,
+ *  W04/B044); unitPriceCents stays >= 0. */
 interface Extraction {
   docKind: string;
   poCode?: string;
@@ -468,7 +470,9 @@ const EXTRACTION_INSTRUCTION =
   '"invoiceNumber": string, "shipTo": string, "vendorName": string, "accountNumber": string, "totalCents": integer, ' +
   '"lines": [{"description": string, "qty": number, "unit": string, "unitPriceCents": integer, ' +
   '"extendedCents": integer}]}\n' +
-  "Rules: all monetary amounts are INTEGER CENTS (e.g. $12.50 -> 1250). docKind is your best " +
+  "Rules: all monetary amounts are INTEGER CENTS (e.g. $12.50 -> 1250). Credits, returns and " +
+  "adjustments that reduce the bill are NEGATIVE: a negative extendedCents (and a negative qty when one " +
+  "is printed); totalCents is the signed document total. docKind is your best " +
   "classification of the whole document. accountNumber is the customer/ship-to account printed " +
   "on the invoice, never a bank or payment account; preserve leading zeros. NEVER invent a poCode — include it ONLY if a purchase-" +
   "order code is written literally in the document; transcribe it exactly. Omit unknown fields " +
@@ -499,7 +503,7 @@ function parseAndValidate(raw: string): Extraction | null {
   if (vendorName) out.vendorName = vendorName;
   const accountNumber = cleanString(src.accountNumber);
   if (accountNumber) out.accountNumber = accountNumber;
-  const totalCents = cleanCents(src.totalCents);
+  const totalCents = cleanSignedCents(src.totalCents);
   if (totalCents != null) out.totalCents = totalCents;
 
   if (Array.isArray(src.lines)) {
@@ -510,13 +514,13 @@ function parseAndValidate(raw: string): Extraction | null {
       const line: NonNullable<Extraction["lines"]>[number] = {};
       const description = cleanString(ls.description);
       if (description) line.description = description;
-      const qty = cleanNonNegNumber(ls.qty);
+      const qty = cleanFiniteNumber(ls.qty); // signed: a credit line's qty is negative (W04/B044)
       if (qty != null) line.qty = qty;
       const unit = cleanString(ls.unit);
       if (unit) line.unit = unit;
       const unitPriceCents = cleanCents(ls.unitPriceCents);
       if (unitPriceCents != null) line.unitPriceCents = unitPriceCents;
-      const extendedCents = cleanCents(ls.extendedCents);
+      const extendedCents = cleanSignedCents(ls.extendedCents);
       if (extendedCents != null) line.extendedCents = extendedCents;
       // Keep only lines that carried at least one usable field (drop empty objects).
       if (Object.keys(line).length > 0) lines.push(line);
@@ -576,9 +580,17 @@ function cleanCents(v: unknown): number | undefined {
   return Math.abs(v - rounded) < 1e-6 ? rounded : undefined;
 }
 
-/** Validate a non-negative finite number (qty may be fractional, e.g. 2.5 cases). */
-function cleanNonNegNumber(v: unknown): number | undefined {
-  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return undefined;
+/** Signed integer cents (W04/B044): a credit/return line or total is negative. Same integer
+ *  rule as cleanCents; only the sign is allowed. */
+function cleanSignedCents(v: unknown): number | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+  const magnitude = cleanCents(Math.abs(v));
+  return magnitude == null ? undefined : v < 0 ? -magnitude : magnitude;
+}
+
+/** Validate a finite number, signed (qty may be fractional, e.g. 2.5 cases, and negative on a credit). */
+function cleanFiniteNumber(v: unknown): number | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
   return v;
 }
 

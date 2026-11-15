@@ -45,7 +45,7 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { INBOUND_ASSET_LIMIT } from "@/lib/inbound-fetch";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { getRoleLevel } from "@/lib/roles";
+import { ROLES, getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, accessibleLocations, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
@@ -1489,9 +1489,12 @@ export async function overrideMatch(actor: AuthContext, deliveryId: string, note
   });
 }
 
-/** Both sides are authorized in the library, including explicit SMM exclusion. */
+/** Both sides are authorized in the library, including explicit SMM exclusion. The move takes Tier A (a password,
+ *  asserted by the route), so a PIN-only role (shift lead, key holder: `hasEmailAuth: false`) can never complete it —
+ *  audit W06/B014 owner decision (a): such roles are not offered the Move button and are refused here by name. */
 async function canMoveReceipt(actor: AuthContext, from: string, to: string): Promise<boolean> {
   if (actor.user.role === "social_media_mgr" || getRoleLevel(actor.user.role) < RECEIPT_MIN) return false;
+  if (!ROLES[actor.user.role].hasEmailAuth) return false;
   if (getRoleLevel(actor.user.role) >= 8) return true;
   return lockLocationContext(actorLoc(actor), from) && lockLocationContext(actorLoc(actor), to)
     && await canDoOperationalTask(actor, from, "receiving")

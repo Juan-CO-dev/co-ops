@@ -151,7 +151,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
       <AuthShell width="wide">
         <ScaffoldHeader language={language} />
         <NoLocationView language={language} />
-        <FooterActions />
+        <FooterActions sessionId={auth.session.id} />
       </AuthShell>
     );
   }
@@ -178,7 +178,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
           yesterdayDate={yesterday}
           language={language}
         />
-        <FooterActions />
+        <FooterActions sessionId={auth.session.id} />
       </AuthShell>
     );
   }
@@ -195,7 +195,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
       <AuthShell width="wide">
         <ScaffoldHeader language={language} />
         <NoTemplateView location={selectedLocation} language={language} />
-        <FooterActions />
+        <FooterActions sessionId={auth.session.id} />
       </AuthShell>
     );
   }
@@ -215,7 +215,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
           confirmedAt={state.instance.confirmedAt}
           language={language}
         />
-        <FooterActions />
+        <FooterActions sessionId={auth.session.id} />
       </AuthShell>
     );
   }
@@ -357,10 +357,10 @@ function ScaffoldHeader({ language }: { language: Language }) {
   );
 }
 
-function FooterActions() {
+function FooterActions({ sessionId }: { sessionId: string }) {
   return (
     <div className="mt-6 flex justify-center">
-      <LogoutButton />
+      <LogoutButton sessionId={sessionId} />
     </div>
   );
 }
