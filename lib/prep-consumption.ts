@@ -723,8 +723,36 @@ export interface ConfirmedInput { skuId: string; qtyOz: number; qtyEntered: numb
 export interface RecordFromPrepInput {
   locationId: string; instanceId: string; templateItemId: string;
   outputItemId: string; outputQty: number;
-  confirmedConsumption: ConfirmedInput[];
+  /** Confirmed/edited per-SKU consumption from the panel, or null = the derived default (W16/B183:
+   *  either way the SERVER's recipe decides which SKUs are lines; the prepper decides how much). */
+  confirmedConsumption: ConfirmedInput[] | null;
   source: "opening_p2" | "mid_day_p2";
+}
+
+/**
+ * The fold's ONE line rule (W16/B183 — the batch fold's reviewed contract, now shared by both folds):
+ * the recipe the SERVER resolved (`derived`, SKU → oz for this save) decides WHICH SKUs are consumed;
+ * a confirmed panel decides HOW MUCH of each. A confirmed SKU the recipe does not name is dropped and
+ * logged; a recipe SKU the panel did not send is filled at its derived oz; `derivedOz` is always the
+ * server's number. A SKU confirmed at 0 stays in the set (and is filtered out as non-positive later),
+ * so a deliberate zero is never refilled.
+ */
+function reconcileFoldLines(derived: ReadonlyMap<string, number>, confirmed: ConfirmedInput[] | null, who: string): ConfirmedInput[] {
+  const lines: ConfirmedInput[] = [];
+  if (confirmed === null) {
+    for (const [skuId, oz] of derived) lines.push({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz });
+    return lines;
+  }
+  const seen = new Set<string>();
+  for (const c of confirmed) {
+    const d = derived.get(c.skuId);
+    if (d === undefined) { console.warn(`${who}: confirmed SKU ${c.skuId} is not in the recipe; dropped`); continue; }
+    if (seen.has(c.skuId)) { console.warn(`${who}: confirmed SKU ${c.skuId} sent twice; the first line wins`); continue; }
+    seen.add(c.skuId);
+    lines.push({ skuId: c.skuId, qtyOz: c.qtyOz, qtyEntered: c.qtyEntered, unitEntered: c.unitEntered, derivedOz: d });
+  }
+  for (const [skuId, oz] of derived) if (!seen.has(skuId)) lines.push({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz });
+  return lines;
 }
 
 /**
@@ -778,13 +806,18 @@ export async function loadDerivedForItems(itemIds: string[], versionLocationId: 
 /**
  * Record a prep conversion idempotently, keyed by (instanceId, templateItemId):
  * supersede any live production header for that key, then insert a fresh header +
- * one production_inputs line per confirmed SKU. Empty confirmedConsumption still
+ * one production_inputs line per recipe SKU (reconcileFoldLines: the recipe names the SKUs, a
+ * confirmed panel sets the amounts). No positive line still
  * supersedes the prior (a corrected prep with no convertible inputs clears the old
  * depletion) and inserts nothing. Authorization is the CALLER's (the prep-save gate) —
  * this helper does NOT re-gate role.
  */
 export async function recordProductionFromPrep(actor: { userId: string; role: RoleCode }, input: RecordFromPrepInput): Promise<{ productionId: string | null }> {
   const sb = getServiceRoleClient();
+  // W16/B183: the lines come from THIS shop's recipe as the server reads it now — a stale screen or a
+  // crafted body can no longer charge stock to a SKU outside the recipe.
+  const derived = await skuConsumptionForItem(input.outputItemId, input.outputQty, input.locationId);
+  const lines = reconcileFoldLines(derived, input.confirmedConsumption, "recordProductionFromPrep");
   // Check the supersede error: if it fails silently, the insert below lands a
   // SECOND live header for this key → double-counted depletion. (Backstopped at
   // the DB by the partial UNIQUE index productions_prep_live_idx, migration 0107,
@@ -793,7 +826,7 @@ export async function recordProductionFromPrep(actor: { userId: string; role: Ro
     .eq("instance_id", input.instanceId).eq("template_item_id", input.templateItemId)
     .is("superseded_at", null).is("revoked_at", null);
   if (supErr) throw new Error(`recordProductionFromPrep supersede: ${supErr.message}`);
-  const positive = input.confirmedConsumption.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0);
+  const positive = lines.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0);
   if (positive.length === 0) return { productionId: null };
   const { data: hdr, error: hErr } = await sb.from("productions").insert({
     location_id: input.locationId, output_item_id: input.outputItemId, output_qty: input.outputQty,
@@ -935,19 +968,7 @@ export async function recordBatchProductionFromPrep(
   // this graph's number, and a SKU the recipe does not name is dropped and logged.
   const derived = new Map<string, number>();
   for (const [sku, oz] of perBatch) derived.set(sku, oz * input.batches);
-  const lines: ConfirmedInput[] = [];
-  if (input.confirmedConsumption === null) {
-    for (const [skuId, oz] of derived) lines.push({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz });
-  } else {
-    const seen = new Set<string>();
-    for (const c of input.confirmedConsumption) {
-      const d = derived.get(c.skuId);
-      if (d === undefined) { console.warn(`recordBatchProductionFromPrep: confirmed SKU ${c.skuId} is not in the recipe; dropped`); continue; }
-      seen.add(c.skuId);
-      lines.push({ skuId: c.skuId, qtyOz: c.qtyOz, qtyEntered: c.qtyEntered, unitEntered: c.unitEntered, derivedOz: d });
-    }
-    for (const [skuId, oz] of derived) if (!seen.has(skuId)) lines.push({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz });
-  }
+  const lines = reconcileFoldLines(derived, input.confirmedConsumption, "recordBatchProductionFromPrep");
   const positive = lines.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0);
   if (positive.length === 0) return { productionId: null, yieldAtTime };
   const outputQty = input.batches * yieldAtTime;

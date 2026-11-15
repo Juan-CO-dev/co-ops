@@ -67,24 +67,14 @@ describe("prep's 'each' comes from the SAME pack as its content (Astra 2a r2#1)"
     expect(unitToOz(1, "each", atOther)).toBe(16);
 
     // THE SAVE ITSELF (Astra r3 remark): the prep form's "1 each" goes through recordProductionFromPrep,
-    // and the persisted production_inputs row carries 160 oz. A recording client stands in for the
-    // database here (the fake db has no update(), which the supersede step uses).
-    const saved: Array<Record<string, unknown>> = [];
-    const chain = (table: string): Record<string, unknown> => {
-      const q: Record<string, unknown> = {
-        update: () => q, eq: () => q, is: () => q, select: () => q,
-        insert: (rows: unknown) => { if (table === "production_inputs") saved.push(...(rows as Array<Record<string, unknown>>)); return q; },
-        maybeSingle: async () => ({ data: { id: "prod-1" }, error: null }),
-        then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(resolve),
-      };
-      return q;
-    };
-    current = { client: { from: chain } } as never;
+    // and the persisted production_inputs row carries 160 oz. W16/B183: the fold now reads THIS shop's
+    // recipe graph itself (it reconciles the confirmed set against it), so the fake db stays installed.
     await recordProductionFromPrep({ userId: "u-cook", role: "key_holder" }, {
       locationId: LOC, instanceId: "inst-1", templateItemId: "tpl-1", outputItemId: "i-slaw", outputQty: 2, source: "opening_p2",
       confirmedConsumption: [{ skuId: "s-lettuce", qtyOz: unitToOz(1, "each", atLoc), qtyEntered: 1, unitEntered: "each", derivedOz: null }],
     });
-    expect(saved).toEqual([expect.objectContaining({ input_sku_id: "s-lettuce", input_oz: 160, qty_entered: 1, unit_entered: "each" })]);
+    const saved = current!.writes.filter((w) => w.table === "production_inputs").flatMap((w) => w.rows);
+    expect(saved).toContainEqual(expect.objectContaining({ input_sku_id: "s-lettuce", input_oz: 160, qty_entered: 1, unit_entered: "each" }));
   });
 });
 
