@@ -203,7 +203,11 @@ describe("ledger-first idempotency", () => {
     expect(out.result).toBe("duplicate");
     const paymentOps = ops.filter((o) => o.table === "catering_payments");
     expect(paymentOps).toHaveLength(1);
-    expect(paymentOps[0]).toMatchObject({ kind: "select", filters: { provider_ref: "pi_1", status: "paid" } });
+    // Found by the CHARGE alone (review r8): the gate reads the row whatever its money status
+    // and asks the marker — a `status = paid` filter here is how a refunded row whose cleanup
+    // was unfinished read as "no such row", i.e. a duplicate.
+    expect(paymentOps[0]).toMatchObject({ kind: "select", filters: { provider_ref: "pi_1" } });
+    expect(paymentOps[0]!.filters).not.toHaveProperty("status");
     expect(ops.filter((o) => o.kind === "update")).toEqual([]);
     expect(auditMock).not.toHaveBeenCalled();
     expect(noNotify.notifyPaid).not.toHaveBeenCalled();
@@ -237,6 +241,39 @@ describe("ledger-first idempotency", () => {
     expect(out.result).toBe("paid"); // the bug: `duplicate`
     expect(ops.some((o) => o.table === "catering_payments" && o.kind === "update" && o.payload && "settlement_cleanup_at" in o.payload)).toBe(true);
     expect(noNotify.notifyPaid).toHaveBeenCalledTimes(1);
+  });
+
+  // Review r8: the same question, asked of a row a refund has since been applied to. Round r7
+  // filtered the gate's read on `status = paid`, so this row was "no such row" → `duplicate`.
+  it("…and so is one whose row has since been REFUNDED with the marker still NULL: worked again, the marker written, the money status never written", async () => {
+    const { client, ops } = stubClient((op) => {
+      if (op.table === "catering_payments" && op.kind === "select" && "provider_ref" in op.filters) {
+        return { data: [{ id: PAYMENT_ID, status: "refunded", provider_ref: "pi_1", settlement_cleanup_at: null }] };
+      }
+      return handlerFor({
+        ledgerInsert: { error: { code: "23505" } },
+        ledgerRow: { data: { id: "evt_1", outcome: "already_advanced" } },
+        paymentById: { data: { ...PAID_ROW, status: "refunded", provider_ref: "pi_1", settlement_cleanup_at: null } },
+        paymentUpdate: { count: 0, data: [] },
+      })(op);
+    });
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).not.toBe("duplicate"); // the bug
+    expect(out.result).not.toBe("already_advanced");
+    const updates = ops.filter((o) => o.table === "catering_payments" && o.kind === "update");
+    // The marker write was attempted, guarded on "money was recorded on this row"…
+    const marker = updates.find((o) => o.payload && "settlement_cleanup_at" in o.payload);
+    expect(marker).toBeDefined();
+    expect(Object.keys(marker!.payload ?? {})).toEqual(["settlement_cleanup_at"]);
+    expect(marker!.filters["status:in"]).toEqual(["paid", "refunded"]);
+    // …and nothing this run wrote could have moved a refunded row's money status: the only
+    // status write is the paid flip, which is guarded on due / void.
+    for (const u of updates) {
+      if (u.payload && "status" in u.payload) expect(u.filters["status:in"]).toEqual(["due", "void"]);
+    }
+    // No "payment received" about a payment that was given back.
+    expect(noNotify.notifyPaid).not.toHaveBeenCalled();
   });
 
   it("a FAILED ledger append throws, so the route can answer 500 and Stripe retries", async () => {

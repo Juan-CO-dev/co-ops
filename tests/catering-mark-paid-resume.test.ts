@@ -289,12 +289,40 @@ describe("W02 review r5 — pressing Mark paid on a payment that is already paid
     });
   });
 
-  it("a VOID or REFUNDED payment is refused as before, with no cleanup", async () => {
+  it("a VOID payment — and a REFUNDED one whose cleanup IS recorded — is refused as before, with no cleanup", async () => {
+    // A closed intent has had no settlement: there is no cleanup to owe.
     row(DEPOSIT).status = "void";
     expect((await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE))).code).toBe("not_due");
-    Object.assign(row(DEPOSIT), { status: "refunded", provider: "manual" });
+    // A payment that was recorded, cleaned up, and later refunded: finished, the plain refusal.
+    Object.assign(row(DEPOSIT), { status: "refunded", provider: "stripe", provider_ref: "pi_1", settlement_cleanup_at: "2026-11-01T00:00:00.000Z" });
     expect((await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE))).code).toBe("not_due");
     expect(retireMock).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  // Review r8: the MARKER owns the cleanup, not the money status. Round r7 asked "is the row
+  // `paid`?" first, so a card payment refunded while its settlement was unfinished was a plain
+  // refusal here — with the order's other checkout still payable. A refund gives one charge
+  // back; it closes nothing.
+  it("a REFUNDED card payment whose cleanup is NOT recorded: refused — after closing the order's other checkout; the row stays refunded and the marker is left for its own event", async () => {
+    stripe.complete(depositSession); // the session the money came through
+    Object.assign(row(DEPOSIT), { status: "refunded", provider: "stripe", provider_ref: "pi_1" });
+
+    const err = await refusal(markPaymentPaid(owner, DEPOSIT, QUOTE));
+
+    expect(err).toMatchObject({ status: 409, code: "not_due" });
+    expect(stripe.sessions.get(fullSession)!.status).toBe("expired");
+    expect(row(FULL)).toMatchObject({ status: "due", provider_session_id: null });
+    expect(retireMock).toHaveBeenCalledTimes(1); // the refunded row's own session is history
+    // The money status is not this function's to write, and neither is a CARD settlement's marker.
+    expect(row(DEPOSIT)).toMatchObject({ status: "refunded", provider: "stripe", provider_session_id: depositSession });
+    expect(row(DEPOSIT).settlement_cleanup_at ?? null).toBeNull();
+    expect(markAudits()).toHaveLength(1);
+    expect(markAudits()[0]!.metadata).toMatchObject({
+      resumed: true,
+      provider: "stripe",
+      closed_checkouts: { retired: [FULL], stillOpen: [], completing: [] },
+    });
   });
 
   it("someone who may not write this shop's payments gets 403 and no cleanup, whatever the row's state", async () => {
