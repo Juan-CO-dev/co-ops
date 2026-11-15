@@ -10,6 +10,7 @@
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
+import { ownerWriteCheck } from "@/lib/catalog/shop-owned-shared";
 import type { AuthContext } from "@/lib/session";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import {
@@ -78,22 +79,30 @@ export async function setItemType(
   // Read the current value for the audit before-state (and to skip a no-op).
   const { data: cur, error: rErr } = await sb
     .from("items")
-    .select("item_type")
+    .select("item_type, location_id")
     .eq("id", args.itemId)
-    .maybeSingle<{ item_type: ItemType }>();
+    .maybeSingle<{ item_type: ItemType; location_id?: string | null }>();
   if (rErr) throw new Error(`setItemType read failed: ${rErr.message}`);
   if (!cur) throw new AdminCatalogError(404, "item_not_found", "Item not found");
+  // W08/B054: another shop's own item is not this GM's to retype (shared items keep the GM floor).
+  const owner = cur.location_id ?? null;
+  if (owner !== null) {
+    const gate = ownerWriteCheck({ role: actor.user.role, level: getRoleLevel(actor.user.role), locations: actor.locations }, owner);
+    if (!gate.ok) throw new AdminCatalogError(gate.status, gate.code);
+  }
   if (cur.item_type === args.itemType) return; // no-op
 
-  const { error, count } = await sb
+  let q = sb
     .from("items")
     .update(
       { item_type: args.itemType, updated_by: actor.user.id, updated_at: new Date().toISOString() },
       { count: "exact" },
     )
     .eq("id", args.itemId);
+  q = owner === null ? q.is("location_id", null) : q.eq("location_id", owner);
+  const { error, count } = await q;
   if (error) throw new Error(`setItemType update failed: ${error.message}`);
-  if (count === 0) throw new AdminCatalogError(404, "item_not_found", "Item not found");
+  if (count === 0) throw new AdminCatalogError(409, "ownership_changed", "Item ownership changed — reload");
 
   await audit({
     actorId: actor.user.id,
