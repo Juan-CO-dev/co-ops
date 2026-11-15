@@ -773,14 +773,9 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   if (rpcErr && !rpcMissing(rpcErr)) rpcRefusal("submitDraft", rpcErr);
   if (rpcErr) {
     warnLegacy("submitDraft");
-    // The note first: it is a lead field (idempotent), so a later failure never leaves an order
-    // submitted without the allergy note the customer typed.
-    if (opts.dietaryNotes !== undefined && header.pipeline_id) {
-      const notes = opts.dietaryNotes?.trim() ? opts.dietaryNotes.trim() : null;
-      const { error: nErr } = await sb.from("catering_pipeline").update({ dietary_notes: notes }).eq("id", header.pipeline_id).eq("customer_id", customerId);
-      if (nErr) throw new Error(`submitDraft dietary notes: ${nErr.message}`);
-    }
-    await submitLegacy(sb, { customerId, quoteId, snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId), expiresAt, napkins, napkinsOrder: baseLineTotals.length, depositCents: stack.depositCents });
+    const dietaryNotes = opts.dietaryNotes === undefined || !header.pipeline_id ? undefined
+      : { pipelineId: header.pipeline_id, notes: opts.dietaryNotes?.trim() ? opts.dietaryNotes.trim() : null };
+    await submitLegacy(sb, { customerId, quoteId, snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId), expiresAt, napkins, napkinsOrder: baseLineTotals.length, depositCents: stack.depositCents, dietaryNotes });
   }
 
   // Best-effort confirmation email (allowlist-gated; never throws).
@@ -808,10 +803,16 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   return { quoteId, depositCents: stack.depositCents, totalCents: stack.totalCents };
 }
 
-/** The pre-0302 submit writes (unchanged): three separate statements, not one transaction. */
+/** The pre-0302 submit writes: separate statements, not one transaction. Every write after the
+ *  status flip — the allergy note included — runs ONLY for the submit that won the flip, so a losing
+ *  concurrent submit (409) never touches the accepted order or its lead (audit W01/B002 r1). */
 async function submitLegacy(
   sb: ReturnType<typeof getServiceRoleClient>,
-  a: { customerId: string; quoteId: string; snapshot: ReturnType<typeof snapshotColumns>; expiresAt: string; napkins: CateringMenuItem | null; napkinsOrder: number; depositCents: number },
+  a: {
+    customerId: string; quoteId: string; snapshot: ReturnType<typeof snapshotColumns>; expiresAt: string; napkins: CateringMenuItem | null; napkinsOrder: number; depositCents: number;
+    /** Undefined = leave the lead's note alone. */
+    dietaryNotes?: { pipelineId: string; notes: string | null };
+  },
 ): Promise<void> {
   // ATOMIC CLAIM: flip draft → submitted with the final (napkins-inclusive) snapshot. Guard on
   // status='draft' — the LOSER of a double-submit gets count=0 → 409 having mutated NOTHING.
@@ -820,6 +821,13 @@ async function submitLegacy(
     .eq("id", a.quoteId).eq("status", "draft");
   if (upErr) throw new Error(`submitDraft flip: ${upErr.message}`);
   if (count === 0) throw new PortalDraftError(409, "not_draft", "This order was already submitted");
+
+  // WON the claim — the order's allergy note goes on the lead first (before anything else can fail).
+  if (a.dietaryNotes) {
+    const { error: dErr } = await sb.from("catering_pipeline").update({ dietary_notes: a.dietaryNotes.notes })
+      .eq("id", a.dietaryNotes.pipelineId).eq("customer_id", a.customerId);
+    if (dErr) throw new Error(`submitDraft dietary notes: ${dErr.message}`);
+  }
 
   // WON the claim — now it is safe to append the napkins line (only one submitter reaches here).
   if (a.napkins) {

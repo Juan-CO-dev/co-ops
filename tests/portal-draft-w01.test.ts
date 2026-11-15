@@ -255,16 +255,27 @@ describe("B002 — the customer's allergy / special-instructions note reaches st
     await submitDraft(CUST, QUOTE, {});
     expect(db.rpcCalls[0]!.args).toMatchObject({ p_set_dietary_notes: false, p_dietary_notes: null });
   });
-  it("before 0302 (legacy path): the note is written to the lead (trimmed; blank clears it), before the status flip", async () => {
+  it("before 0302 (legacy path): the note is written to the lead (trimmed; blank clears it), only AFTER this submit won the status flip", async () => {
     let db = useDb();
     await submitDraft(CUST, QUOTE, { dietaryNotes: "  Shellfish allergy  " });
     expect(db.tables.catering_pipeline![0]!.dietary_notes).toBe("Shellfish allergy");
     const order = db.writes.map((w) => `${w.table}:${w.op}`);
-    expect(order.indexOf("catering_pipeline:update")).toBeLessThan(order.indexOf("catering_quotes:update"));
+    expect(order.indexOf("catering_quotes:update")).toBeLessThan(order.indexOf("catering_pipeline:update"));
     db = useDb(seed());
     db.tables.catering_pipeline![0]!.dietary_notes = "old";
     await submitDraft(CUST, QUOTE, { dietaryNotes: "   " });
     expect(db.tables.catering_pipeline![0]!.dietary_notes).toBeNull();
+  });
+  it("before 0302 (legacy path): a submit that LOSES the race never overwrites the winner's note", async () => {
+    // Two tabs pass the draft check. Tab A submitted "Peanut allergy" and won the flip; tab B (a stale
+    // blank note box) reaches its flip second and gets 409 — the accepted order keeps A's warning.
+    const db = useDb();
+    db.tables.catering_pipeline![0]!.dietary_notes = "Peanut allergy";
+    db.beforeWrite = (w) => { if (w.table === "catering_quotes" && w.op === "update") quoteRow(db).status = "submitted"; };
+    await expect(submitDraft(CUST, QUOTE, { dietaryNotes: "" })).rejects.toMatchObject({ status: 409, code: "not_draft" });
+    expect(db.tables.catering_pipeline![0]!.dietary_notes).toBe("Peanut allergy");
+    expect(db.writes.filter((w) => w.table === "catering_pipeline")).toEqual([]);
+    expect(h.createPaymentDue).not.toHaveBeenCalled();
   });
   it("a note over 2000 characters is a clean 400 before anything is written", async () => {
     const db = useDb(seed(), { portal_draft_submit: rpcOk() });

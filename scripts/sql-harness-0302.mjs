@@ -151,6 +151,9 @@ try {
   check((await linesOf(q1)).length === 2, 'B032: the submitted lines are untouched');
   await reject(async () => submit(cust, q1, await expectedOf(q1), snap(10500)), /not_draft/, 'double submit → not_draft');
   check((await one('select count(*)::int n from catering_payments where quote_id=$1', [q1])).n === 1, 'double submit wrote no second payment');
+  // B002 r1: the LOSING submit (a stale blank note box in a second tab) never overwrites the winner's note.
+  await reject(async () => submit(cust, q1, await expectedOf(q1), snap(10500), null, true, ''), /not_draft/, 'losing submit with a blank note → not_draft');
+  check((await one('select dietary_notes from catering_pipeline where id=$1', [pipe])).dietary_notes === 'Peanut allergy: table 3', 'B002: the losing submit left the accepted note in place');
 
   // B032: a cart save that committed between the server's read and the submit's lock → cart_changed.
   const q2 = await newDraft();
