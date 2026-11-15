@@ -33,7 +33,8 @@
 --     'checklist_submit_batch') and strpos(prosrc, 'wrong_checklist_type') > 0;  -- 6 rows
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
 --     and routine_name in (<same six>);  -- service_role (+ postgres) only
---   Run scripts/sql-harness-0313.mjs (offline) and scripts/sim/checklist-0313-guard-check-management.mjs (sim, CC).
+--   Run scripts/sql-harness-0313.mjs (offline). No two-session proof is needed: 0313 adds no lock
+--   and changes no lock order (each guard is a plain read; see LOCK ORDER above).
 -- ROLLBACK: forward-only. Re-emit the prior bodies (0291 / 0215 / 0288 / 0276) in a NEW migration;
 --   never rewrite history.
 begin;

@@ -1275,8 +1275,64 @@ export async function createMidDayPrepInstance(
 ): Promise<
   | { ok: true; id: string }
   | { ok: false; reason: "cap_reached"; cap: number }
+  | { ok: false; reason: "date_not_today" }
 > {
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "mid_day_prep" }))) throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
+  // W13/B178: the count and the insert run in ONE transaction under an advisory lock per
+  // (template, shop, day), and SQL pins the date to the ET day (migration 0314). Two
+  // concurrent presses can no longer both see "1" and make a third instance.
+  const { data: created, error: rpcErr } = await service.rpc("create_mid_day_prep_instance_atomic", {
+    p_template_id: args.templateId,
+    p_location_id: args.locationId,
+    p_date: args.date,
+    p_actor_id: args.actor.userId,
+    p_cap: MAX_MID_DAY_PREP_PER_DAY,
+  });
+  let insertedId: string;
+  if (!rpcErr) {
+    const r = created as { ok?: boolean; id?: unknown; reason?: unknown; cap?: unknown } | null;
+    if (r?.ok === false && r.reason === "cap_reached") {
+      return { ok: false, reason: "cap_reached", cap: typeof r.cap === "number" ? r.cap : MAX_MID_DAY_PREP_PER_DAY };
+    }
+    if (r?.ok !== true || typeof r.id !== "string") throw new Error("createMidDayPrepInstance: RPC returned an invalid result");
+    insertedId = r.id;
+  } else if (rpcErr.message === "date_not_today") {
+    return { ok: false, reason: "date_not_today" };
+  } else if (rpcErr.code === "PGRST202" || rpcErr.code === "42883") {
+    // 0314 not applied yet: keep today's count-then-insert so the button works before apply.
+    console.error("[mid-day create 0314_missing]", { code: rpcErr.code });
+    const legacy = await createMidDayPrepInstanceLegacy(service, args);
+    if (!legacy.ok) return legacy;
+    insertedId = legacy.id;
+  } else {
+    throw new Error(`createMidDayPrepInstance: ${rpcErr.message}`);
+  }
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "checklist_instance.create",
+    resourceTable: "checklist_instances",
+    resourceId: insertedId,
+    metadata: {
+      template_id: args.templateId,
+      location_id: args.locationId,
+      date: args.date,
+      template_type: "prep",
+      prep_subtype: "mid_day_prep",
+      trigger: "manual_mid_day",
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+  return { ok: true, id: insertedId };
+}
+
+/** The pre-0314 count-then-insert, used ONLY while create_mid_day_prep_instance_atomic is absent. */
+async function createMidDayPrepInstanceLegacy(
+  service: SupabaseClient,
+  args: { templateId: string; locationId: string; date: string; actor: PrepActor },
+): Promise<{ ok: true; id: string } | { ok: false; reason: "cap_reached"; cap: number }> {
   // Cap enforcement (server-side authority; the tile also hides the New button
   // at cap, but a direct API caller must be blocked too).
   const { count, error: countErr } = await service
@@ -1307,24 +1363,6 @@ export async function createMidDayPrepInstance(
     .maybeSingle<{ id: string }>();
   if (insertErr) throw new Error(`createMidDayPrepInstance: insert: ${insertErr.message}`);
   if (!inserted) throw new Error(`createMidDayPrepInstance: insert returned no row`);
-
-  void audit({
-    actorId: args.actor.userId,
-    actorRole: args.actor.role,
-    action: "checklist_instance.create",
-    resourceTable: "checklist_instances",
-    resourceId: inserted.id,
-    metadata: {
-      template_id: args.templateId,
-      location_id: args.locationId,
-      date: args.date,
-      template_type: "prep",
-      prep_subtype: "mid_day_prep",
-      trigger: "manual_mid_day",
-    },
-    ipAddress: null,
-    userAgent: null,
-  });
   return { ok: true, id: inserted.id };
 }
 

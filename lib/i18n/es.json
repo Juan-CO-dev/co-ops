@@ -2352,6 +2352,7 @@
   "dashboard.mid_day_prep.status.phase2_complete": "Enviado",
   "dashboard.mid_day_prep.finalized_by": "Finalizado a las {time} por {name}",
   "dashboard.mid_day_prep.cap_reached": "Límite de preparación de mediodía alcanzado ({cap} por día).",
+  "dashboard.mid_day_prep.date_not_today": "Esta página es de otro día. Recarga para empezar la preparación de mediodía de hoy.",
   "cash.tile_label": "Depósito de efectivo",
   "cash.status.not_started": "No iniciado hoy",
   "cash.status.finalized_by": "Depositado a las {time} por {name}",
