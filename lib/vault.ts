@@ -106,7 +106,8 @@ function toView(row: EntryRow, actor: VaultActor, previous: Set<string>): VaultE
 
 async function loadEntry(service: SupabaseClient, entryId: string): Promise<EntryRow | null> {
   const { data, error } = await service.from("vault_entries").select(ENTRY_COLS).eq("id", entryId).maybeSingle<EntryRow>();
-  if (error) throw new VaultError("write_failed", 500);
+  // 22P02 = the id is not a uuid (B166): no such entry. Every caller maps null to entry_not_found.
+  if (error) { if (error.code === "22P02") return null; throw new VaultError("write_failed", 500); }
   return data ?? null;
 }
 

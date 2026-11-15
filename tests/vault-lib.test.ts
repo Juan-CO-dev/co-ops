@@ -441,3 +441,34 @@ describe("vault hardening", () => {
     expect(enqueueNotification).not.toHaveBeenCalled();
   });
 });
+
+describe("malformed entry ids (audit W10 / B166)", () => {
+  /** The entry read answers as Postgres does for a non-uuid id: an error with `code`, never "no row". */
+  function entryReadFails(code: string) {
+    const from = f.client.from.bind(f.client);
+    (f.client as unknown as { from: unknown }).from = (table: string) => {
+      if (table !== "vault_entries") return from(table);
+      const failing = { data: null, error: { code, message: "refused by the database" } };
+      return { select: () => ({ eq: () => ({ maybeSingle: async () => failing }) }) };
+    };
+  }
+  const calls = () => [
+    () => revealVaultSecret(f.client, maya, "abc", { burst: false }, META),
+    () => recoverPersonalSecret(f.client, pete, "abc", { burst: false }, META),
+    () => recoverPreviousSecret(f.client, cristian, "abc", { burst: false }, META),
+    () => updateVaultEntry(f.client, gmEm, "abc", shared(), META),
+    () => deactivateVaultEntry(f.client, gmEm, "abc", META),
+  ];
+  it("PostgREST 22P02 on the entry read is entry_not_found (404) at every entry point: no write, no record, no alert", async () => {
+    entryReadFails("22P02");
+    for (const call of calls()) await expect(call()).rejects.toMatchObject({ code: "entry_not_found", status: 404 });
+    expect(f.writes).toEqual([]);
+    expect(f.rpcCalls).toEqual([]);
+    expect(audit).not.toHaveBeenCalled();
+    expect(enqueueNotification).not.toHaveBeenCalled();
+  });
+  it("any other read error still fails as write_failed (500): a real outage is never reported as not found", async () => {
+    entryReadFails("57014");
+    for (const call of calls()) await expect(call()).rejects.toMatchObject({ code: "write_failed", status: 500 });
+  });
+});

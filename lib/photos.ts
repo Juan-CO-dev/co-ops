@@ -143,6 +143,8 @@ export async function getPhotoSignedUrl(
     .select("id, storage_path, location_id")
     .eq("id", photoId)
     .maybeSingle<{ id: string; storage_path: string; location_id: string }>();
+  // 22P02 = the id is not a uuid (B166): the same "not found" as an id that matches nothing, never a 500.
+  if (error?.code === "22P02") throw new PhotoError(404, "not_found", "Photo not found");
   if (error) throw new Error(`getPhotoSignedUrl load: ${error.message}`);
   if (!row) throw new PhotoError(404, "not_found", "Photo not found");
   if (!lockLocationContext(actorLoc(actor), row.location_id)) {
