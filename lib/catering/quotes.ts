@@ -30,6 +30,7 @@ import { redactEmailAddresses } from "@/lib/email-redact";
 import { escapeHtml } from "@/lib/email-templates/_layout";
 import type { AuthContext } from "@/lib/session";
 import { loadCateringReader } from "./ezcater-detail";
+import { carryPaymentsToRevision, retireSessionFor, type CarryPaymentsResult } from "./payment-carry";
 import { canReadCateringContact } from "./ezcater-detail-shared";
 
 export const QUOTE_READ_MIN = 5; // shift_lead+ may VIEW (a lead viewer sees its quote)
@@ -904,6 +905,20 @@ export interface ReviseQuoteInput {
  * validated + the new stack computed BEFORE the supersede UPDATE, which removes every
  * AVOIDABLE failure from below it.
  *
+ * ── THE REVISION IS THE SAME ORDER (audit W02/B006) ──────────────────────────────────
+ * Two things about the order are not the manager's to re-enter and were silently dropped:
+ *   · `origin` — it drives the payment plan (self-serve = deposit required). Left to the
+ *     column default, a revised self-serve order became a 'staff' quote.
+ *   · THE PAYMENTS. `catering_payments.quote_id` names one revision row, so every payment
+ *     stayed on the superseded row and the customer who had paid a deposit was shown none
+ *     and asked to pay again. Once the new revision exists (after its items land, and also
+ *     when they fail to — strand B below — because the revision is live either way), the
+ *     family's payments are carried onto it (lib/catering/payment-carry.ts — read its header
+ *     for what happens to each kind of row). That step is BEST-EFFORT by the same reasoning
+ *     as strand B below: the revision is already live, so a failure is audited
+ *     (`payments_carry_failed`) and healed by the next revise, never turned into a failed
+ *     request the manager retries into a 409.
+ *
  * ── THE TWO STRANDS BELOW THE SUPERSEDE (audit v2, seat C5 finding F8 · BC-036) ──────
  * Validating early does NOT make an INSERT infallible, and this docstring used to promise
  * that it did. Three round trips, no transaction, two ways to strand:
@@ -930,9 +945,9 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
   const sb = getServiceRoleClient();
   const { data: current, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, root_id, version, location_id, pipeline_id, customer_id, superseded_at")
+    .select("id, root_id, version, location_id, pipeline_id, customer_id, origin, superseded_at")
     .eq("id", quoteId)
-    .maybeSingle<{ id: string; root_id: string | null; version: number; location_id: string; pipeline_id: string | null; customer_id: string | null; superseded_at: string | null }>();
+    .maybeSingle<{ id: string; root_id: string | null; version: number; location_id: string; pipeline_id: string | null; customer_id: string | null; origin: string | null; superseded_at: string | null }>();
   if (lErr) throw new Error(`reviseQuote load: ${lErr.message}`);
   if (!current) throw new CateringQuoteError(404, "not_found", "Quote not found");
   assertCanWrite(actor, current.location_id);
@@ -972,6 +987,9 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
       customer_id: current.customer_id,
       location_id: current.location_id,
       status: "draft",
+      // The order's origin is carried, never re-defaulted (see the header). Anything that is
+      // not exactly 'self_serve' is 'staff', which is also the column's own CHECK vocabulary.
+      origin: current.origin === "self_serve" ? "self_serve" : "staff",
       event_date: input.eventDate ?? null,
       headcount: input.headcount ?? null,
       ...snapshotColumns(pricing.rates, stack, isDelivery, input.deliveryZoneId ?? null),
@@ -998,9 +1016,41 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
     throw new Error(`reviseQuote insert: ${iErr.message}`);
   }
 
+  // PAYMENTS FOLLOW THE ORDER (see the header). Best-effort and re-runnable: the revision is
+  // already live, so a failure here is recorded and healed by the next revise. NEVER throws.
+  const carryPayments = async (): Promise<CarryPaymentsResult | null> => {
+    try {
+      const retire = await retireSessionFor(sb, current.location_id);
+      return await carryPaymentsToRevision(
+        sb,
+        { rootId, newQuoteId: inserted.id, depositCents: stack.depositCents, totalCents: stack.totalCents },
+        retire,
+      );
+    } catch (carryErr) {
+      const message = carryErr instanceof Error ? carryErr.message : String(carryErr);
+      console.error(
+        `[catering] reviseQuote could not carry the payments of family ${rootId} onto revision ${inserted.id}: ${message}. LIVE-CHECK: select p.id, p.quote_id, p.status from catering_payments p join catering_quotes q on q.id = p.quote_id where coalesce(q.root_id, q.id) = the family and q.superseded_at is not null.`,
+      );
+      void audit({
+        actorId: actor.user.id,
+        actorRole: actor.user.role,
+        action: "catering.quote.revise",
+        resourceTable: "catering_quotes",
+        resourceId: inserted.id,
+        metadata: { outcome: "payments_carry_failed", from_quote_id: quoteId, root_id: rootId, version: inserted.version, error: message },
+        ipAddress: null,
+        userAgent: null,
+      });
+      return null;
+    }
+  };
+
   try {
     await insertQuoteItems(sb, inserted.id, lines, actor.user.id);
   } catch (itemsErr) {
+    // The empty revision is still the LIVE one, so the family's payments belong on it: a
+    // customer who paid must not also lose sight of the payment because the items failed.
+    const carriedOnFailure = await carryPayments();
     // STRAND B — the new revision is live and EMPTY. Not rolled back (see the header); made
     // queryable instead. `catering.quote.revise` is already in the closed action vocabulary,
     // so the signal rides its metadata rather than inventing a name. Awaited because we
@@ -1019,6 +1069,8 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
         total_cents: stack.totalCents,
         expected_line_count: lines.length,
         error: itemsErr instanceof Error ? itemsErr.message : String(itemsErr),
+        payments_carried: carriedOnFailure !== null,
+        payments: carriedOnFailure,
       },
       ipAddress: null,
       userAgent: null,
@@ -1026,13 +1078,24 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
     throw itemsErr;
   }
 
+  const carried = await carryPayments();
+
   void audit({
     actorId: actor.user.id,
     actorRole: actor.user.role,
     action: "catering.quote.revise",
     resourceTable: "catering_quotes",
     resourceId: inserted.id,
-    metadata: { from_quote_id: quoteId, root_id: rootId, version: inserted.version, total_cents: stack.totalCents },
+    metadata: {
+      from_quote_id: quoteId,
+      root_id: rootId,
+      version: inserted.version,
+      total_cents: stack.totalCents,
+      // Which payment rows now belong to this revision, and the revision each one left —
+      // the record of what a payment was ORIGINALLY raised against.
+      payments_carried: carried !== null,
+      payments: carried,
+    },
     ipAddress: null,
     userAgent: null,
   });

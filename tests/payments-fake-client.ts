@@ -94,7 +94,8 @@ export function paymentsFake(tables: Record<string, Row[]>): PaymentsFake {
           return { data: null, error: { message: "fake insert failure" }, count: null };
         }
         const inserted = ((Array.isArray(payload) ? payload : [payload]) as Row[]).map((p) => ({
-          id: `${table}-new-${++seq}`,
+          // UUID-shaped, because several loaders validate an id's shape before they query.
+          id: `00000000-0000-4000-8000-${String(++seq).padStart(12, "0")}`,
           created_at: new Date(Date.UTC(2030, 0, 1, 0, 0, seq)).toISOString(),
           ...p,
         }));
