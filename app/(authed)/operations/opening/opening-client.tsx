@@ -43,6 +43,8 @@ import {
 } from "@/lib/batch-prep-shared";
 import { hydratePhase2Row, phase2Signature, type HydratedPhase2Row } from "@/lib/opening-phase2-form-shared";
 import { phase2BlankOutcome, phase2SaveGate } from "@/lib/opening-phase2-gate";
+import { OpeningDraftAutosaver } from "@/lib/opening-draft-autosave";
+import { createClientRequestId } from "@/lib/client-request-id";
 import { isDuplicateInFlight } from "@/lib/made-the-need-shared";
 import { openingFooterHint } from "@/lib/prep-display-shared";
 import type {
@@ -158,6 +160,7 @@ interface OpeningClientProps {
  * well inside the window too.
  */
 const DRAFT_AUTOSAVE_DEBOUNCE_MS = 800;
+const DRAFT_ENDPOINT = "/api/opening/phase1/draft";
 
 interface SubmitState {
   status: "idle" | "submitting" | "error";
@@ -709,8 +712,13 @@ export function OpeningClient({
   // 'open': past that the submit RPC owns the truth and the route 409s anyway.
   //
   // NEVER BLOCKS THE OPERATOR. A failed save sets a calm status line and nothing else —
-  // no modal, no disabled control, no retry loop. Because `draftSentRef` is advanced only
-  // on SUCCESS, the very next edit re-sends the full latest draft, which is the retry.
+  // no modal, no disabled control, no retry loop. Because the saver's "sent" marker advances
+  // only on SUCCESS, the very next edit re-sends the full latest draft, which is the retry.
+  //
+  // The send logic lives in OpeningDraftAutosaver (lib/opening-draft-autosave.ts, framework-
+  // free and unit-tested; audit W14 / B078): every send carries this tab's revision, an older
+  // ack can never pull the marker back, and a settled send re-sends when the newest draft is
+  // still not the saved one. This component only wires the browser to it.
   const draftEnabled = instance.status === "open";
   const [draftState, setDraftState] = useState(initialSaveStatus);
   const draftStatusRef = useRef(initialSaveStatus);
@@ -721,16 +729,12 @@ export function OpeningClient({
     return next;
   }, []);
 
-  /** The serialized body of the last SUCCESSFULLY persisted draft. Dedup + retry anchor. */
-  const draftSentRef = useRef<string | null>(null);
   /**
    * B11a (Astra r1 P2-2) — per Phase 2 row, the signature of the save in flight. A second
    * request for the SAME value while it is pending (the "Made the need" save, then the box's
    * later blur) is dropped, so one gesture is one save.
    */
   const phase2InFlightSigRef = useRef<Map<string, string>>(new Map());
-  /** The serialized body of the newest local state, for the pagehide/visibility beacon. */
-  const draftLatestRef = useRef<string | null>(null);
 
   // Serialized here (not in the effect) so the effect's dependency is a plain string:
   // the debounce then coalesces a burst of keystrokes into one POST, and a change that
@@ -763,76 +767,91 @@ export function OpeningClient({
     [instance.id, values, sectionVerifications, attestationReason],
   );
 
-  const flushDraft = useCallback(async (body: string) => {
-    const revision = stepDraft({ type: "start" }).revision;
-    try {
-      const res = await fetch("/api/opening/phase1/draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (!res.ok) throw new Error(`draft save ${res.status}`);
-      draftSentRef.current = body;
-      stepDraft({ type: "ack", revision });
-    } catch {
-      // Deliberately swallowed past the status line: an autosave failure is not an
-      // operator error and must not interrupt the walk. draftSentRef stays put, so the
-      // next edit resends.
-      stepDraft({ type: "fail", revision });
-    }
-  }, [stepDraft]);
+  // The saver lives for exactly one MOUNT: created in the mount effect, stopped in its
+  // cleanup. A remount — React strict mode in dev — gets a fresh one, seeded from the current
+  // form (adopted as already saved: the form was hydrated FROM the server's draft, so the
+  // first payload is by construction what the server holds, and posting it would be a write
+  // per page load). The latest props ride in a ref, written only in an effect.
+  const draftSaverRef = useRef<OpeningDraftAutosaver | null>(null);
+  const draftLatest = useRef({ draftEnabled, draftBody });
+  useEffect(() => {
+    draftLatest.current = { draftEnabled, draftBody };
+  });
 
   useEffect(() => {
-    if (!draftEnabled) return;
-    draftLatestRef.current = draftBody;
-    // Mount: adopt the current body as "already saved" WITHOUT a POST. The form was just
-    // hydrated FROM this draft, so the first render's payload is by construction what the
-    // server already holds — posting it would be a write per page load.
-    if (draftSentRef.current === null) {
-      draftSentRef.current = draftBody;
-      return;
-    }
-    if (draftSentRef.current === draftBody) return;
-    stepDraft({ type: "edit" });
-    const timer = setTimeout(() => {
-      void flushDraft(draftBody);
-    }, DRAFT_AUTOSAVE_DEBOUNCE_MS);
-    // Cleanup on every re-run IS the coalescing: a burst of keystrokes cancels each
-    // pending send and only the last one, 800ms after the operator stops, goes out.
-    return () => clearTimeout(timer);
-  }, [draftEnabled, draftBody, flushDraft, stepDraft]);
-
-  // Navigating away, backgrounding the tab, or locking the tablet must not lose the last
-  // edit inside the debounce window. `fetch` is cancelled on unload; `sendBeacon` is
-  // queued by the browser and survives it. It cannot set headers, so the body goes out as
-  // text/plain — which the route accepts on purpose (it parses the body text without
-  // consulting Content-Type; see the route doc).
-  useEffect(() => {
-    if (!draftEnabled) return;
-    const flushBeacon = () => {
-      const body = draftLatestRef.current;
-      if (body === null || body === draftSentRef.current) return;
-      if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") {
-        return;
-      }
-      const queued = navigator.sendBeacon(
-        "/api/opening/phase1/draft",
-        new Blob([body], { type: "text/plain;charset=UTF-8" }),
-      );
-      // Only claim it on a successful ENQUEUE. A refused beacon (over the UA's queue
-      // budget) leaves the ref untouched so an ordinary save still retries it.
-      if (queued) draftSentRef.current = body;
-    };
+    const saver = new OpeningDraftAutosaver(
+      {
+        post: async (body) => {
+          const res = await fetch(DRAFT_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+          });
+          if (!res.ok) return { ok: false, applied: false };
+          const answer = (await res.json().catch(() => ({}))) as { applied?: boolean };
+          // `applied: false` = the server refused an OLDER request from this tab (0315).
+          return { ok: true, applied: answer.applied !== false };
+        },
+        // Navigating away, backgrounding the tab, or locking the tablet must not lose the
+        // last edit inside the debounce window. `fetch` is cancelled on unload; `sendBeacon`
+        // is queued by the browser and survives it. It cannot set headers, so the body goes
+        // out as text/plain — which the route accepts on purpose (it parses the body text
+        // without consulting Content-Type; see the route doc).
+        beacon: (body) => {
+          if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") {
+            return false;
+          }
+          return navigator.sendBeacon(
+            DRAFT_ENDPOINT,
+            new Blob([body], { type: "text/plain;charset=UTF-8" }),
+          );
+        },
+        setTimer: (fn, ms) => setTimeout(fn, ms),
+        clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+        onEdit: () => {
+          stepDraft({ type: "edit" });
+        },
+        onStart: () => stepDraft({ type: "start" }).revision,
+        onAck: (revision) => {
+          stepDraft({ type: "ack", revision });
+        },
+        onFail: (revision) => {
+          stepDraft({ type: "fail", revision });
+        },
+      },
+      // Per page load, not per person: it orders THIS tab's own requests on the server.
+      createClientRequestId(),
+      DRAFT_AUTOSAVE_DEBOUNCE_MS,
+    );
+    const init = draftLatest.current;
+    saver.setEnabled(init.draftEnabled);
+    saver.observe(init.draftBody);
+    draftSaverRef.current = saver;
     const onVisibility = () => {
-      if (document.visibilityState === "hidden") flushBeacon();
+      if (document.visibilityState === "hidden") saver.onHidden();
     };
+    const onPageHide = () => saver.onHidden();
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pagehide", flushBeacon);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", flushBeacon);
+      window.removeEventListener("pagehide", onPageHide);
+      saver.stop();
+      if (draftSaverRef.current === saver) draftSaverRef.current = null;
     };
+  }, [stepDraft]);
+
+  // Past 'open' the submit RPC owns the truth (and the route 409s): stop saving.
+  useEffect(() => {
+    draftSaverRef.current?.setEnabled(draftEnabled);
   }, [draftEnabled]);
+
+  // Every change of the serialized draft. The saver coalesces a burst of keystrokes into
+  // one POST, 800ms after the operator stops, and a change that normalizes back to the
+  // already-saved payload costs nothing at all.
+  useEffect(() => {
+    draftSaverRef.current?.observe(draftBody);
+  }, [draftBody]);
 
   // Group Phase 1 items by station — same pattern as closing-client.tsx.
   const stationGroups = useMemo(() => {
@@ -1980,7 +1999,7 @@ export function OpeningClient({
               <SaveStatus phase={draftState.phase}
                 detail={draftState.phase === "saving" ? t("opening.draft.saving")
                   : draftState.phase === "saved" ? t("opening.draft.saved") : t("opening.draft.error")}
-                onRetry={draftState.phase === "failed" ? () => void flushDraft(draftLatestRef.current ?? draftBody) : undefined} />
+                onRetry={draftState.phase === "failed" ? () => draftSaverRef.current?.retry() : undefined} />
             ) : null}
           </div>
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center">

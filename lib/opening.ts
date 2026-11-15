@@ -76,6 +76,7 @@ import {
 } from "./template-items";
 import {
   parseOpeningPhase1Draft,
+  type OpeningDraftRev,
   type OpeningPhase1Draft,
 } from "./opening-draft-shared";
 import type {
@@ -117,6 +118,7 @@ export {
   parseOpeningPhase1Draft,
 } from "./opening-draft-shared";
 export type {
+  OpeningDraftRev,
   OpeningPhase1Draft,
   OpeningPhase1DraftItem,
 } from "./opening-draft-shared";
@@ -1523,14 +1525,39 @@ export async function loadOpeningPhase1Draft(
 }
 
 /**
- * saveOpeningPhase1Draft — upsert the draft for one instance. LAST WRITE WINS.
+ * A draft save the WRITE refused (save_opening_phase1_draft, migration 0315). The route's own
+ * reads answer the same cases first; these are the same answers when the state moved between
+ * that read and the write (Phase 1 submitted in the gap).
+ */
+export class OpeningDraftRefusedError extends OpeningError {
+  constructor(public readonly code: "phase1_not_open" | "instance_not_found" | "location_mismatch" | "invalid_payload") {
+    super(`Opening Phase 1 draft refused: ${code}`, code);
+    this.name = "OpeningDraftRefusedError";
+  }
+}
+
+const OPENING_DRAFT_REFUSALS = ["phase1_not_open", "instance_not_found", "location_mismatch", "invalid_payload"] as const;
+
+/**
+ * saveOpeningPhase1Draft — save the draft for one instance.
  *
- * There is no per-field merge, and that is a decision, not an omission: two openers
- * editing the same instance at the same moment is not the shift this fixes (the real
- * sequence is sequential — employee walks, then key holder takes the tablet or opens it
- * on their own device). A field-level merge needs per-field timestamps and a conflict
+ * ACROSS DEVICES: LAST WRITE WINS. There is no per-field merge, and that is a decision, not
+ * an omission: two openers editing the same instance at the same moment is not the shift this
+ * fixes (the real sequence is sequential — employee walks, then key holder takes the tablet or
+ * opens it on their own device). A field-level merge needs per-field timestamps and a conflict
  * story the operator can read, which is its own design; shipping a silent, guessy merge
  * would be worse than a rule everyone can state. Documented as a later refinement.
+ *
+ * WITHIN ONE TAB: IN ORDER (audit W14 / B078). Last-write-wins was never meant to apply to one
+ * tab's own requests, but a slow older autosave (or a page-hide beacon) could commit after a
+ * newer one and leave the OLDER draft stored. The client now sends `rev` — its tab id and a
+ * counter — and `save_opening_phase1_draft` (migration 0315) refuses a request from the same
+ * tab whose counter is not higher, answering `applied: false` (a success: the server already
+ * holds something newer from this tab). It also locks the instance and requires
+ * `status = 'open'` in the write itself, closing the gap after the route's status read.
+ *
+ * BEFORE 0315 IS APPLIED the function does not exist (PGRST202 / 42883) and this falls back to
+ * the 0203 upsert — last write wins, as before — so the app keeps saving drafts.
  *
  * Returns the persisted `saved_at` so the client's status line shows SERVER time, not the
  * browser's.
@@ -1543,9 +1570,37 @@ export async function saveOpeningPhase1Draft(
     draft: OpeningPhase1Draft;
     savedBy: string | null;
     actor: OpeningActor;
+    /** This send's per-tab revision; null/absent = an older client (last write wins). */
+    rev?: OpeningDraftRev | null;
   },
-): Promise<{ savedAt: string }> {
+): Promise<{ savedAt: string; applied: boolean }> {
   if (!(await canAccessOpeningInstance(service, args))) throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
+  const { data: rpcData, error: rpcErr } = await service.rpc("save_opening_phase1_draft", {
+    p_instance_id: args.instanceId,
+    p_location_id: args.locationId,
+    p_draft: args.draft,
+    p_saved_by: args.savedBy,
+    p_client_tab: args.rev?.tab ?? null,
+    p_client_seq: args.rev?.seq ?? null,
+  });
+  if (!rpcErr) {
+    const result = rpcData as { applied?: boolean; savedAt?: string | null } | null;
+    if (!result || typeof result.applied !== "boolean") {
+      throw new Error("saveOpeningPhase1Draft: empty result");
+    }
+    return { savedAt: result.savedAt ?? new Date().toISOString(), applied: result.applied };
+  }
+  if (rpcErr.code === "P0001") {
+    const refusal = OPENING_DRAFT_REFUSALS.find((code) => (rpcErr.message ?? "").includes(`opening_draft:${code}`));
+    if (refusal) throw new OpeningDraftRefusedError(refusal);
+  }
+  const functionMissing =
+    rpcErr.code === "PGRST202" || rpcErr.code === "42883" || /could not find the function/i.test(rpcErr.message ?? "");
+  if (!functionMissing) {
+    throw new Error(`saveOpeningPhase1Draft: ${rpcErr.message}`);
+  }
+
+  // ── 0315 not applied yet: the 0203 upsert (its columns only). ──
   // saved_at is written explicitly: the column DEFAULT fires on INSERT only, and an
   // upsert that lands on the UPDATE arm would otherwise keep the first save's timestamp.
   const savedAt = new Date().toISOString();
@@ -1569,7 +1624,7 @@ export async function saveOpeningPhase1Draft(
     throw new Error(`saveOpeningPhase1Draft: ${error.message}`);
   }
 
-  return { savedAt: data?.saved_at ?? savedAt };
+  return { savedAt: data?.saved_at ?? savedAt, applied: true };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
