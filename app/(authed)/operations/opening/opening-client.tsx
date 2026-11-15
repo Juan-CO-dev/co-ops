@@ -767,8 +767,8 @@ export function OpeningClient({
     [instance.id, values, sectionVerifications, attestationReason],
   );
 
-  // The saver lives for exactly one MOUNT: created in the mount effect, stopped in its
-  // cleanup. A remount — React strict mode in dev — gets a fresh one, seeded from the current
+  // The saver lives for exactly one MOUNT: created in the mount effect, disposed in its
+  // cleanup (a disposed saver never sends again). A remount — React strict mode in dev — gets a fresh one, seeded from the current
   // form (adopted as already saved: the form was hydrated FROM the server's draft, so the
   // first payload is by construction what the server holds, and posting it would be a write
   // per page load). The latest props ride in a ref, written only in an effect.
@@ -836,7 +836,9 @@ export function OpeningClient({
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", onPageHide);
-      saver.stop();
+      // Unmount by a client-side navigation fires no pagehide: dispose() sends the edit
+      // still inside the debounce window as one last beacon (audit W14 / B079).
+      saver.dispose();
       if (draftSaverRef.current === saver) draftSaverRef.current = null;
     };
   }, [stepDraft]);

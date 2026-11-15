@@ -27,6 +27,9 @@
  * 0315 (or when it simply committed first) the server may now hold the older body; sending
  * the newest once more is cheap and idempotent.
  *
+ * UNMOUNT (B079). `dispose()` sends one final beacon when an edit is still pending, then the
+ * saver is dead: a client-side navigation used to drop the edit inside the debounce window.
+ *
  * NEVER BLOCKS THE OPERATOR, and never loops on failure: a failed save changes the quiet
  * status line and waits for the next edit (or the page-hide beacon), exactly as before.
  *
@@ -133,8 +136,18 @@ export class OpeningDraftAutosaver {
     void this.flush(true);
   }
 
-  /** The page is going away: no further send, re-send or status change. */
-  stop(): void {
+  /**
+   * The page is unmounting (audit W14 / B079). A client-side navigation — the "< Dashboard"
+   * link, the idle sign-out — fires no pagehide and no visibilitychange, and the debounce
+   * timer dies with the component, so an edit made within the last `debounceMs` was simply
+   * dropped. Send it as ONE final beacon (the component is gone; a beacon survives the
+   * navigation, and with the next sequence it can never overwrite a newer save), then
+   * nothing more: no send, no re-send, no status change from a late answer.
+   * A disabled saver (Phase 1 already submitted) sends nothing.
+   */
+  dispose(): void {
+    if (this.stopped) return;
+    this.onHidden();
     this.stopped = true;
     this.cancelTimer();
   }

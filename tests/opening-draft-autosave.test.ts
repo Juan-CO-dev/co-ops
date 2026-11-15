@@ -269,6 +269,85 @@ describe("OpeningDraftAutosaver — the beacon", () => {
   });
 });
 
+/**
+ * Audit W14 / B079 — leaving the page within the 800 ms debounce threw the last edit away.
+ * A client-side navigation (the "< Dashboard" next/link) unmounts the page without a pagehide
+ * or visibilitychange, the debounce timer was cleared by the effect cleanup, and nothing sent
+ * the pending body.
+ */
+describe("OpeningDraftAutosaver — dispose on unmount (B079)", () => {
+  it("dispose with a pending edit sends one beacon with the newest body; a second dispose sends nothing", () => {
+    const h = harness();
+    h.saver.observe(body(0));
+    h.saver.observe(body(1));
+    h.saver.observe(body(2)); // still inside the debounce window
+    h.saver.dispose();
+    expect(h.beacons.length).toBe(1);
+    expect(payloadOf(h.beacons[0]!)).toBe(body(2));
+    expect(seqOf(h.beacons[0]!)).toEqual({ tab: TAB, seq: 1 });
+    expect(h.live()).toEqual([]); // the debounced fetch is cancelled, not fired
+    h.saver.dispose();
+    expect(h.beacons.length).toBe(1);
+    expect(h.posts).toEqual([]);
+  });
+
+  it("dispose with nothing pending sends none", () => {
+    const h = harness();
+    h.saver.observe(body(0));
+    h.saver.dispose();
+    expect(h.beacons).toEqual([]);
+  });
+
+  it("the old cleanup (cancel the timer, send nothing) is the bug", () => {
+    const h = harness();
+    h.saver.observe(body(0));
+    h.saver.observe(body(1));
+    // What opening-client.tsx did on unmount before this change:
+    for (const t of h.live()) t.live = false;
+    expect(h.beacons).toEqual([]);
+    expect(h.posts).toEqual([]);
+    expect(h.saver.sentPayload()).toBe(body(0)); // …and the edit is gone
+  });
+
+  it("the unmount beacon carries a sequence above a fetch still in flight, so it cannot lose to it", async () => {
+    const h = harness();
+    h.saver.observe(body(0));
+    h.saver.observe(body(1));
+    h.fire(); // fetch seq 1
+    h.saver.observe(body(2));
+    h.saver.dispose(); // beacon seq 2
+    expect(seqOf(h.beacons[0]!).seq).toBe(2);
+    // A dead page changes nothing more: the late ack is ignored and nothing is re-sent.
+    const before = h.events.length;
+    h.posts[0]!.resolve({ ok: true, applied: true });
+    await tick();
+    expect(h.events.length).toBe(before);
+    expect(h.posts.length).toBe(1);
+    h.saver.observe(body(3));
+    h.saver.onHidden();
+    h.saver.retry();
+    expect(h.live()).toEqual([]);
+    expect(h.beacons.length).toBe(1);
+    expect(h.posts.length).toBe(1);
+  });
+
+  it("after Phase 1 was submitted (disabled) the unmount sends nothing", () => {
+    const h = harness();
+    h.saver.observe(body(0));
+    h.saver.observe(body(1));
+    h.saver.setEnabled(false);
+    h.saver.dispose();
+    expect(h.beacons).toEqual([]);
+  });
+
+  it("the page's unmount cleanup disposes the saver", () => {
+    const page = readFileSync("app/(authed)/operations/opening/opening-client.tsx", "utf8");
+    const cleanup = page.slice(page.indexOf('window.addEventListener("pagehide", onPageHide);'), page.indexOf("}, [stepDraft]);"));
+    expect(cleanup).toContain("saver.dispose();");
+    expect(cleanup).not.toContain("saver.stop();");
+  });
+});
+
 describe("the opening page is wired to the controller", () => {
   const page = readFileSync("app/(authed)/operations/opening/opening-client.tsx", "utf8");
   it("sends every draft through OpeningDraftAutosaver with a per-tab id", () => {
