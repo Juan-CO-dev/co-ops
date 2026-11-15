@@ -136,3 +136,32 @@ export function phase2BlankOutcome(row: Phase2BlankRow | null | undefined): "ign
   if (row.status === "saved") return "mark_cleared";
   return "ignore";
 }
+
+/**
+ * Audit W14 / B180 — what a SUCCESSFUL Undo may reset on its row, judged against the row as it
+ * is when the answer arrives (not as it was when the request left).
+ *
+ * Clearing a saved amount runs the Undo by itself, so the prepper is often already typing the
+ * next amount while it is in flight. Resetting blindly would wipe that amount, or mark a row
+ * "not saved" that a newer save has just written.
+ *   row:  "keep"      — a NEWER save already landed on this row (another completion id): the
+ *                       row belongs to that save; nothing is reset.
+ *         "forget_id" — a save is in flight: the revoked id is gone, the row stays "saving" and
+ *                       the save's own answer decides it.
+ *         "reopen"    — the ordinary case: the row returns to "unsaved".
+ *   clearForm: the amount box is emptied only when it still holds what it held when the Undo
+ *              left — an amount typed during the round trip is never wiped.
+ */
+export function phase2RevokeSettle(args: {
+  revokedCompletionId: string;
+  row: Phase2BlankRow | null;
+  preppedAtRequest: number | null;
+  preppedNow: number | null;
+}): { row: "keep" | "forget_id" | "reopen"; clearForm: boolean } {
+  const untouched = args.preppedNow === args.preppedAtRequest;
+  if (args.row && args.row.completionId !== null && args.row.completionId !== args.revokedCompletionId) {
+    return { row: "keep", clearForm: false };
+  }
+  if (args.row?.status === "saving") return { row: "forget_id", clearForm: false };
+  return { row: "reopen", clearForm: untouched };
+}

@@ -42,7 +42,7 @@ import {
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
 import { hydratePhase2Row, phase2Signature, type HydratedPhase2Row } from "@/lib/opening-phase2-form-shared";
-import { phase2BlankOutcome, phase2SaveGate } from "@/lib/opening-phase2-gate";
+import { phase2BlankOutcome, phase2RevokeSettle, phase2SaveGate } from "@/lib/opening-phase2-gate";
 import { OpeningDraftAutosaver } from "@/lib/opening-draft-autosave";
 import { createClientRequestId } from "@/lib/client-request-id";
 import { isDuplicateInFlight } from "@/lib/made-the-need-shared";
@@ -735,6 +735,15 @@ export function OpeningClient({
    * later blur) is dropped, so one gesture is one save.
    */
   const phase2InFlightSigRef = useRef<Map<string, string>>(new Map());
+  /**
+   * The Phase 2 rows AS THEY ARE NOW, for the one handler that must look again after its own
+   * round trip (the Undo, below): a closure only knows the row as it was when the request left.
+   * Written in an effect, never during render.
+   */
+  const phase2LiveRef = useRef({ saveStates, phase2Values });
+  useEffect(() => {
+    phase2LiveRef.current = { saveStates, phase2Values };
+  });
 
   // Serialized here (not in the effect) so the effect's dependency is a plain string:
   // the debounce then coalesces a burst of keystrokes into one POST, and a change that
@@ -1416,6 +1425,8 @@ export function OpeningClient({
     // No live completion to revoke (row never saved, or raced gone). The badge
     // is already non-"saved", so there's nothing to undo client-side.
     if (completionId === null) return { status: "error", code: "revoke_conflict" };
+    // What the amount box held when the Undo left (null when the Undo IS the clear, B180).
+    const preppedAtRequest = phase2Values.get(templateItemId)?.openerPrepped ?? null;
 
     try {
       const res = await fetch("/api/opening/prep/item/revoke", {
@@ -1447,13 +1458,33 @@ export function OpeningClient({
         path?: "silent" | "structured";
       };
 
+      // The Undo took a round trip. Since clearing a saved amount now runs it (audit W14 /
+      // B180), the prepper may have typed a NEW amount meanwhile — look at the row as it is
+      // now (phase2RevokeSettle, lib/opening-phase2-gate.ts) before resetting anything:
+      //   · a newer save already landed on this row → it is that save's row; touch nothing;
+      //   · a save is in flight → the revoked id is gone, the save's answer decides the row;
+      //   · otherwise → the row re-opens, as before.
+      const live = phase2LiveRef.current;
+      const preppedNow = live.phase2Values.get(templateItemId)?.openerPrepped ?? null;
+      const settle = phase2RevokeSettle({
+        revokedCompletionId: completionId,
+        row: live.saveStates.get(templateItemId) ?? null,
+        preppedAtRequest,
+        preppedNow,
+      });
+
       // Post-revoke Map reset (Juan's check #1): the row returns to "unsaved" —
       // NOT "incomplete"/blank — so outstandingCount re-blocks finalize via the
       // single-Map invariant. completionId clears (the revoked row is gone).
+      // Re-judged inside the updater on the freshest row, so a save that lands between this
+      // line and the render can never be overwritten by the Undo's reset.
       setSaveStates((prev) => {
+        const cur = prev.get(templateItemId) ?? null;
+        const fresh = phase2RevokeSettle({ revokedCompletionId: completionId, row: cur, preppedAtRequest, preppedNow });
+        if (fresh.row === "keep") return prev;
         const updated = new Map(prev);
         updated.set(templateItemId, {
-          status: "unsaved",
+          status: fresh.row === "forget_id" ? "saving" : "unsaved",
           savedById: null,
           savedAt: null,
           errorCode: null,
@@ -1465,22 +1496,26 @@ export function OpeningClient({
       });
       // Clear the prep entry so the re-opened row is empty, but preserve
       // openerRecount — that's a Phase 1 verify-beat value, not part of the
-      // revoked Phase 2 write.
-      setPhase2Values((prev) => {
-        const updated = new Map(prev);
-        const cur = prev.get(templateItemId);
-        updated.set(templateItemId, {
-          openerRecount: cur?.openerRecount ?? null,
-          openerPrepped: null,
-          overPar: null,
-          underPar: null,
-          confirmedConsumption: null,
-          // 0215 — the batch half is part of the revoked write (the server retracted any
-          // toss with it), so the row re-opens empty.
-          batch: null,
+      // revoked Phase 2 write. An amount typed during the round trip is the prepper's
+      // newest word and is never wiped (checked again on the freshest value).
+      if (settle.clearForm) {
+        setPhase2Values((prev) => {
+          const cur = prev.get(templateItemId);
+          if ((cur?.openerPrepped ?? null) !== preppedAtRequest) return prev;
+          const updated = new Map(prev);
+          updated.set(templateItemId, {
+            openerRecount: cur?.openerRecount ?? null,
+            openerPrepped: null,
+            overPar: null,
+            underPar: null,
+            confirmedConsumption: null,
+            // 0215 — the batch half is part of the revoked write (the server retracted any
+            // toss with it), so the row re-opens empty.
+            batch: null,
+          });
+          return updated;
         });
-        return updated;
-      });
+      }
 
       return { status: "revoked", path: body.path ?? "structured" };
     } catch {

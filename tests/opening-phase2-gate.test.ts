@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { phase2BlankOutcome, phase2SaveGate, type Phase2GateContext } from "@/lib/opening-phase2-gate";
+import { phase2BlankOutcome, phase2RevokeSettle, phase2SaveGate, type Phase2GateContext } from "@/lib/opening-phase2-gate";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 import type { BatchRowContext } from "@/lib/batch-prep-shared";
@@ -147,5 +147,42 @@ describe("phase2BlankOutcome — clearing a saved amount is an Undo (B180)", () 
     expect(en["opening.phase2.save.incomplete_cleared"]).toBeTruthy();
     expect(es["opening.phase2.save.incomplete_cleared"]).toBeTruthy();
     expect(es["opening.phase2.save.incomplete_cleared"]).not.toBe(en["opening.phase2.save.incomplete_cleared"]);
+  });
+});
+
+describe("phase2RevokeSettle — an Undo's answer never wipes what was typed meanwhile (B180)", () => {
+  const saved = (completionId: string | null, status: "saved" | "saving" | "incomplete" = "saved") =>
+    ({ status, completionId, incompleteReason: status === "incomplete" ? ("cleared_saved" as const) : null });
+  it("the Undo button: the row re-opens and the box is emptied", () => {
+    expect(phase2RevokeSettle({ revokedCompletionId: "c1", row: saved("c1"), preppedAtRequest: 12, preppedNow: 12 }))
+      .toEqual({ row: "reopen", clearForm: true });
+  });
+  it("clearing a saved amount: the row re-opens; the box was already empty", () => {
+    expect(phase2RevokeSettle({ revokedCompletionId: "c1", row: saved("c1", "incomplete"), preppedAtRequest: null, preppedNow: null }))
+      .toEqual({ row: "reopen", clearForm: true });
+  });
+  it("an amount typed during the round trip is kept", () => {
+    expect(phase2RevokeSettle({ revokedCompletionId: "c1", row: saved("c1", "incomplete"), preppedAtRequest: null, preppedNow: 15 }))
+      .toEqual({ row: "reopen", clearForm: false });
+  });
+  it("a save in flight keeps the row saving and its amount; only the revoked id is forgotten", () => {
+    expect(phase2RevokeSettle({ revokedCompletionId: "c1", row: saved("c1", "saving"), preppedAtRequest: null, preppedNow: 15 }))
+      .toEqual({ row: "forget_id", clearForm: false });
+  });
+  it("a newer save that already landed owns the row: nothing is reset", () => {
+    expect(phase2RevokeSettle({ revokedCompletionId: "c1", row: saved("c2"), preppedAtRequest: null, preppedNow: 15 }))
+      .toEqual({ row: "keep", clearForm: false });
+  });
+  it("the revoke dispatcher settles through it, against the row as it is now", () => {
+    const page = readFileSync(join(ROOT, "app", "(authed)", "operations", "opening", "opening-client.tsx"), "utf8");
+    const fn = page.slice(page.indexOf("const handlePhase2ItemRevoke = async ("), page.indexOf("const handleTabClick ="));
+    expect(fn).toContain("phase2RevokeSettle({");
+    expect(fn).toContain("const live = phase2LiveRef.current;");
+    expect(fn.indexOf("phase2RevokeSettle({")).toBeLessThan(fn.indexOf("setSaveStates("));
+    // …and again inside the updater, on the freshest row: a save that just landed is never overwritten.
+    const updater = fn.slice(fn.indexOf("setSaveStates((prev) => {"));
+    expect(updater.slice(0, 260)).toContain("const fresh = phase2RevokeSettle({ revokedCompletionId: completionId, row: cur, preppedAtRequest, preppedNow });");
+    expect(fn).toContain('if (fresh.row === "keep") return prev;');
+    expect(fn).toContain("if ((cur?.openerPrepped ?? null) !== preppedAtRequest) return prev;");
   });
 });
