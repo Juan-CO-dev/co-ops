@@ -55,6 +55,7 @@ import { buildPackChain, chainRootLabel } from "@/lib/pack-chain-shared";
 import { guideKeysFor } from "@/lib/order-guides";
 import { poLineGuideKey, resolveGuideKey } from "@/lib/order-guides-shared";
 import { compareByGuide } from "@/lib/order-guide-sort";
+import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
 export const PO_MIN = 4; // key_holder+
@@ -221,7 +222,11 @@ export async function createDraftsFromLines(
   // all vendors (one query — never per-SKU/per-vendor). V3-A: the key is snapshotted onto
   // the line so a confirmed order keeps its shape when the guide is edited later.
   const allSkuIds = [...new Set(vendorIds.flatMap((vid) => (byVendor.get(vid) ?? []).map((l) => l.skuId)))];
-  await assertNoStoreSkus(sb, allSkuIds);
+  // W08/B056: every line's SKU must exist, not be a store item, belong to the vendor whose PO it
+  // goes on, and be visible to this shop (shared or this shop's own) — before any PO is created.
+  const expectedVendorBySku = new Map<string, string>();
+  for (const vid of vendorIds) for (const l of byVendor.get(vid) ?? []) expectedVendorBySku.set(l.skuId, vid);
+  await assertPoSkusFit(sb, expectedVendorBySku, locationId);
   const [{ data: vendorRows, error: vErr }, guideKeys] = await Promise.all([
     sb.from("vendors").select("id, name").in("id", vendorIds).returns<Array<{ id: string; name: string }>>(),
     guideKeysFor(allSkuIds),
@@ -423,6 +428,45 @@ async function assertNoStoreSkus(sb: ServiceClient, skuIds: readonly string[]): 
 }
 
 /**
+ * W08/B056: the SKUs about to become NEW po_lines must fit the PO. One chunked read (100 ids) of
+ * `id, vendor_id, location_id`; refused, in this order, when the id does not exist (400
+ * invalid_sku), the SKU is a store item (400 invalid_sku — the assertNoStoreSkus rule, same
+ * message), it belongs to another vendor than the PO's (400 invalid_sku), or it is another
+ * shop's own SKU (404 not_found — the receiving rule). `active` is deliberately NOT checked: the
+ * walk orders a globally-inactive SKU a shop switched back on (`resolveActive`).
+ */
+async function assertPoSkusFit(
+  sb: ServiceClient,
+  expectedVendorBySku: ReadonlyMap<string, string>,
+  locationId: string,
+): Promise<void> {
+  const skuIds = [...expectedVendorBySku.keys()];
+  if (skuIds.length === 0) return;
+  const stores = await loadStoreVendorIds();
+  for (let start = 0; start < skuIds.length; start += 100) {
+    const chunk = skuIds.slice(start, start + 100);
+    const { data, error } = await sb.from("vendor_items").select("id, vendor_id, location_id")
+      .in("id", chunk)
+      .returns<Array<{ id: string; vendor_id: string | null; location_id: string | null }>>();
+    if (error) throw new Error(`assertPoSkusFit: ${error.message}`);
+    const byId = new Map((data ?? []).map((r) => [r.id, r] as const));
+    for (const id of chunk) {
+      const sku = byId.get(id);
+      if (!sku) throw new PurchaseOrderError(400, "invalid_sku", "A SKU is not found");
+      if (sku.vendor_id != null && stores.has(sku.vendor_id)) {
+        throw new PurchaseOrderError(400, "invalid_sku", "Store items cannot be ordered");
+      }
+      if (sku.vendor_id !== expectedVendorBySku.get(id)) {
+        throw new PurchaseOrderError(400, "invalid_sku", "A SKU belongs to a different vendor");
+      }
+      if (sku.location_id != null && sku.location_id !== locationId) {
+        throw new PurchaseOrderError(404, "not_found", "SKU not found");
+      }
+    }
+  }
+}
+
+/**
  * INSERT genuinely-new draft lines (fetch their current guide positions in one batch).
  * Returns the PostgREST error instead of throwing so the caller can read its `code` —
  * a 23505 from `po_lines_po_sku_uq` (0190) is a re-partition signal, not a failure.
@@ -435,10 +479,9 @@ async function assertNoStoreSkus(sb: ServiceClient, skuIds: readonly string[]): 
  *
  * This module reads no `products` at all, so a "discontinued" badge on the PO panel
  * is a new loader integration rather than a widened read; filed as debt in
- * docs/ROADMAP.md alongside the receiving one. NOTE the pre-existing, unrelated gap
- * this read already has: it does not check `active`, existence, or vendor-match on
- * an incoming skuId (sim P2 territory) — do not mistake the retirement note for
- * coverage of that.
+ * docs/ROADMAP.md alongside the receiving one. Existence, vendor-match and the shop
+ * owner of an incoming skuId are checked by the caller (`assertPoSkusFit`, W08/B056);
+ * `active` is deliberately not (see that function).
  */
 async function insertNewDraftLines(
   sb: ServiceClient,
@@ -492,8 +535,8 @@ export async function updateDraftLines(
 
   const sb = getServiceRoleClient();
   const { data: po, error: poErr } = await sb.from("purchase_orders")
-    .select("id, location_id, status").eq("id", poId)
-    .maybeSingle<{ id: string; location_id: string; status: string }>();
+    .select("id, location_id, vendor_id, status").eq("id", poId)
+    .maybeSingle<{ id: string; location_id: string; vendor_id: string; status: string }>();
   if (poErr) throw new Error(`updateDraftLines load: ${poErr.message}`);
   if (!po) throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
@@ -533,6 +576,10 @@ export async function updateDraftLines(
     const existingSkus = new Set((existing ?? []).map((r) => r.sku_id));
 
     const { toUpdate, toInsert } = partitionDraftLines(lines, existingSkus);
+    // W08/B056: only lines that will be INSERTED must fit this PO (its vendor, its shop). Lines
+    // already on the draft stay editable — an old bad line can still be zeroed. Checked before
+    // any write of this lap, so a refusal leaves the draft untouched.
+    await assertPoSkusFit(sb, new Map(toInsert.map((l) => [l.skuId, po.vendor_id] as const)), po.location_id);
 
     // UPDATE each existing line in place (rowcount-checked per the silent-UPDATE law).
     for (const l of toUpdate) {
@@ -1461,10 +1508,10 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   // One vendor catalog read for every status. Exclusion stays in memory, avoiding
   // an unbounded NOT IN request line. Pack-chain labels use the walk's authority.
   const { data: vendorSkuRows, error: vsErr } = await sb.from("vendor_items")
-    .select("id, name, item_number, pack_format")
+    .select("id, name, item_number, pack_format, location_id")
     .eq("vendor_id", po.vendor_id).eq("active", true)
     .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null }>>();
+    .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null; location_id: string | null }>>();
   if (vsErr) throw new Error(`loadPoDetail vendor skus: ${vsErr.message}`);
   // V3-A read law (`poLineGuideKey`): a DRAFT renders `snapshot ?? live` — the guide still
   // moves under it — while a PO past draft renders from its CONFIRMED SNAPSHOT, where an
@@ -1475,7 +1522,8 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   // draft, the picker feeds an ADD-ON — "two more cases of the same thing" is the common
   // case — so every active SKU stays offered (LRA-230, CC 2026-09-11).
   const onPo = new Set(po.status === "draft" ? (lineRows ?? []).map((l) => l.sku_id) : []);
-  const availableSkus = (vendorSkuRows ?? []).filter((s) => !onPo.has(s.id));
+  // W08/B056: never offer another shop's own SKU of this vendor (shared + this PO's shop only).
+  const availableSkus = (vendorSkuRows ?? []).filter((s) => !onPo.has(s.id) && ownerVisible(s.location_id, po.location_id));
   const chains = await loadSkuPackChains(availableSkus.map((s) => s.id), po.location_id);
   const vendorSkus = availableSkus.map((s) => ({
     skuId: s.id, name: s.name, itemNumber: s.item_number,
