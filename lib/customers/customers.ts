@@ -516,6 +516,9 @@ export async function importConsentCsv(
   let merged;
   try { merged = mergeConsentFiles(args.files.map((f) => parseConsentCsv(f.text))); }
   catch (e) { if (e instanceof ConsentCsvError) throw new CustomerError(400, e.code); throw e; }
+  // W12/B175: an empty snapshot opts out everyone still subscribed, so it always needs the importer's
+  // explicit confirmation. Refused BEFORE begin, so no running import is left behind to cancel.
+  if (merged.rows.length === 0 && !args.allowLargeOptOut) throw new CustomerError(409, "consent_import_empty_snapshot");
   const sha = createHash("sha256").update(canonicalImportPayload(merged.rows, merged.explicitStatus, args.exportDate), "utf8").digest("hex");
   const chunks = chunkRows(merged.rows);
   const sb = deps.client ?? getServiceRoleClient();

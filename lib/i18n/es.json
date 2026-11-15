@@ -6274,6 +6274,7 @@
   "customers.import.modeExplicit": "El archivo tenía columna de estado, así que se usó el estado de cada fila.",
   "customers.import.modeAbsence": "El archivo solo lista suscriptores: quien estaba en la lista anterior y ya no está se dio de baja.",
   "customers.import.error.largeOptOut": "Este archivo daría de baja a buena parte de la lista. Si subiste un archivo equivocado o incompleto, cancélalo en Importaciones recientes y sube el correcto. Si de verdad se fueron, confirma abajo.",
+  "customers.import.error.emptySnapshot": "Esta exportación no tiene a nadie. Importarla da de baja a todos los que siguen suscritos. Si es correcto, confirma abajo.",
   "customers.import.error.older": "Esta exportación es más vieja que la última importada.",
   "customers.import.error.busy": "Otra importación no terminó. Termínala o cancélala en Importaciones recientes y vuelve a intentar.",
   "customers.import.error.future": "La fecha de exportación no puede ser futura.",

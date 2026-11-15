@@ -6274,6 +6274,7 @@
   "customers.import.modeExplicit": "The file had a status column, so each row's status was used.",
   "customers.import.modeAbsence": "The file lists subscribers only: anyone on the last list and missing now was opted out.",
   "customers.import.error.largeOptOut": "This file would opt out a large part of the list. If you uploaded the wrong or a partial file, cancel it under Recent imports and upload the right one. If the people really left, confirm below.",
+  "customers.import.error.emptySnapshot": "This export lists nobody. Importing it opts out everyone still subscribed. If that is right, confirm below.",
   "customers.import.error.older": "This export is older than the last one imported.",
   "customers.import.error.busy": "Another import is not finished. Finish it, or cancel it under Recent imports, then try again.",
   "customers.import.error.future": "The export date can't be in the future.",

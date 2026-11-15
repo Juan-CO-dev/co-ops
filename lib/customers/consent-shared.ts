@@ -194,7 +194,11 @@ export function mergeConsentFiles(files: readonly ParsedConsentFile[]): { rows: 
     }
   }
   const rows = [...byEmail.values()].sort((a, b) => a.email.localeCompare(b.email));
-  if (rows.length === 0) throw new ConsentCsvError("csv_no_rows");
+  // W12/B175: a list-only export with its header and nobody under it is a real snapshot ("nobody is
+  // subscribed any more"), so SQL finish can diff it and opt out who is left. Still refused: an
+  // explicit-status file with no rows (it would change nothing) and a file whose rows were all
+  // unreadable or relay addresses (that is a broken export, not an empty list).
+  if (rows.length === 0 && (explicit || invalid > 0 || masked > 0)) throw new ConsentCsvError("csv_no_rows");
   if (rows.length > CONSENT_IMPORT_MAX_ROWS) throw new ConsentCsvError("csv_too_large");
   return { rows, explicitStatus: explicit, invalid, duplicates, masked };
 }

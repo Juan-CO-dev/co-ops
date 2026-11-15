@@ -83,6 +83,17 @@ describe("merging one export's files + the idempotency key", () => {
     const b = mergeConsentFiles([parseConsentCsv("email\nana2@example.com\n")]);
     expect(canonicalImportPayload(a.rows, false, "2026-10-08")).not.toBe(canonicalImportPayload(b.rows, false, "2026-10-08"));
   });
+  it("a header-only Toast export is an empty snapshot, not an error (W12/B175)", () => {
+    expect(mergeConsentFiles([parseConsentCsv("email\n")]).rows).toEqual([]);
+    expect(mergeConsentFiles([parseConsentCsv("First Name,Email\r\n"), parseConsentCsv("Email\n")]).rows).toEqual([]);
+  });
+  it("a file whose every row is unreadable or a relay is still refused (W12/B175)", () => {
+    expect(() => mergeConsentFiles([parseConsentCsv("email\nnot-an-email\n")])).toThrow("csv_no_rows");
+    expect(() => mergeConsentFiles([parseConsentCsv("email\nx@relay.toasttab.com\n")])).toThrow("csv_no_rows");
+  });
+  it("an empty explicit-status file is still refused: it would change nothing (W12/B175)", () => {
+    expect(() => mergeConsentFiles([parseConsentCsv("email,status\n")])).toThrow("csv_no_rows");
+  });
   it("chunks stay within the SQL's 1000-row bound", () => {
     const rows = Array.from({ length: 2501 }, (_, i) => i);
     const chunks = chunkRows(rows);

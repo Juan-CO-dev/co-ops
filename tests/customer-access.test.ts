@@ -143,6 +143,25 @@ describe("consent import: idempotent and chunked", () => {
     await expect(importConsentCsv(owner, { files: [{ name: "a.csv", text: "email\na@example.com\n" }], exportDate: "2026-10-08", allowLargeOptOut: false }, meta, { client: { rpc, from: vi.fn() } as never }))
       .rejects.toMatchObject({ status: 409, code: "consent_import_large_opt_out" });
   });
+  it("an empty snapshot needs the confirmation and makes no import until given (W12/B175)", async () => {
+    const calls: [string, Record<string, unknown>][] = [];
+    const rpc = vi.fn(async (fn: string, args: Record<string, unknown>) => {
+      calls.push([fn, args]);
+      if (fn === "customer_consent_import_begin") return { data: { import_id: ID, state: "started" }, error: null };
+      if (fn === "customer_consent_import_chunk") return { data: {}, error: null };
+      return { data: { import_id: ID, replay: false, rows_total: 0, new_opt_ins: 0, opt_outs: 1, baseline: false }, error: null };
+    });
+    const client = { rpc, from: vi.fn() } as never;
+    await expect(importConsentCsv(owner, { files: [{ name: "a.csv", text: "email\n" }], exportDate: "2026-10-08", allowLargeOptOut: false }, meta, { client }))
+      .rejects.toMatchObject({ status: 409, code: "consent_import_empty_snapshot" });
+    expect(rpc).not.toHaveBeenCalled();
+    const done = await importConsentCsv(owner, { files: [{ name: "a.csv", text: "email\n" }], exportDate: "2026-10-08", allowLargeOptOut: true }, meta, { client });
+    expect(done).toMatchObject({ optOuts: 1, rowsTotal: 0 });
+    expect(calls.map((c) => c[0])).toEqual(["customer_consent_import_begin", "customer_consent_import_chunk", "customer_consent_import_finish"]);
+    expect(calls[0]![1]).toMatchObject({ p_chunk_count: 1, p_explicit_status: false });
+    expect(calls[1]![1]).toMatchObject({ p_chunk_index: 0, p_rows: [] });
+    expect(calls[2]![1]).toMatchObject({ p_allow_large_opt_out: true });
+  });
   it("a bad file is a 400 with the parser's code", async () => {
     await expect(importConsentCsv(owner, { files: [{ name: "a.csv", text: "name\nAna\n" }], exportDate: "2026-10-08", allowLargeOptOut: false }, meta, { client: noClient() as never }))
       .rejects.toMatchObject({ status: 400, code: "csv_no_email_column" });
