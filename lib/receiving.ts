@@ -18,8 +18,8 @@ import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operat
  * Per-line note + PHOTO and a delivery-level receipt + note also land here. The
  * photo/receipt COLUMNS + persistence plumbing are wired (0160); the UI affordance
  * is a DISABLED Phase-6 stub (no storage bucket, no uploader this PR — a one-swap
- * seam, mirroring the checklist photo stub). Callers may pass photoUrl/receiptUrl
- * through, but the shipped form never sets them.
+ * seam, mirroring the checklist photo stub). photoUrl/receiptUrl are accepted only as the
+ * canonical `/api/photos/<id>` of a photo at the delivery's shop (bindDeliveryPhotos, W08/B162).
  *
  * ── A2: avg_oz_per_each REFINEMENT GATING (council L8) ─────────────────────────
  * The legacy refinement (feed observed oz/each into vendor_items.avg_oz_per_each)
@@ -61,6 +61,7 @@ import {
   receivingPriceRows,
   storeRootPackPrice,
   isDuplicateAppend,
+  photoIdFromRef,
   type AppendLine,
   type IntakeLineForCredits,
   type MissingExpectedLine,
@@ -530,6 +531,9 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const missingCreditDrafts = await prepareMissingExpectedCredits(
     sb, input.vendorId, input.locationId, missingExpected, new Set(input.lines.map((l) => l.skuId)),
   );
+  // W08/B162: the receipt and line photos must be this shop's photos from the uploader — validated
+  // before any write, and stored in the canonical form only (never the caller's raw string).
+  const photos = await bindDeliveryPhotos(sb, input.locationId, input.receiptUrl, input.lines.map((l) => l.photoUrl));
 
   // 0160 columns — apply 0160 BEFORE deploying this code (additive; old code unaffected).
   // The 0160 `note` columns are the brief-canonical fields; the legacy `notes`
@@ -540,7 +544,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const { data: header, error: hErr } = await sb.from("vendor_deliveries").insert({
     vendor_id: input.vendorId, location_id: input.locationId, delivery_date: input.deliveryDate,
     invoice_number: invoiceNumber, invoice_total: input.invoiceTotal ?? null,
-    notes: headerNote, note: headerNote, receipt_url: input.receiptUrl?.trim() || null, received_by: actor.user.id,
+    notes: headerNote, note: headerNote, receipt_url: photos.receiptUrl, received_by: actor.user.id,
     delivery_status: input.deliveryStatus ?? "complete",
     purchase_order_id: poId,
   }).select("id").maybeSingle<{ id: string }>();
@@ -557,7 +561,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   if (!header) throw new Error("recordDelivery header returned no row");
 
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
-    buildLineRows(header.id, input.lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku),
+    buildLineRows(header.id, input.lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku, photos.lineUrls),
   );
   if (lErr) throw new Error(`recordDelivery lines: ${lErr.message}`);
 
@@ -824,10 +828,46 @@ async function validateAndResolveDeliveryLines(
   return { resolvedOzByLineIdx, chained, vendorIdBySku, weightClassBySku, priceLines };
 }
 
+/**
+ * W08/B162: bind a delivery's receipt and line photo references. Each ref must be the canonical
+ * `/api/photos/<uuid>` (or empty): anything else is 400 `invalid_photo`, refused BEFORE any read.
+ * Every referenced photo must exist with `location_id` = the delivery's shop (the attachDeliveryReceipt
+ * rule), else 404 `photo_not_found`. Returns the canonical strings to store, index-aligned with lineRefs.
+ */
+async function bindDeliveryPhotos(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  receiptRef: unknown,
+  lineRefs: readonly unknown[],
+): Promise<{ receiptUrl: string | null; lineUrls: Array<string | null> }> {
+  const parse = (ref: unknown): string | null => {
+    const r = photoIdFromRef(ref);
+    if (!r.ok) throw new ReceivingError(400, "invalid_photo", "Photos must come from the photo uploader");
+    return r.photoId;
+  };
+  const receiptId = parse(receiptRef);
+  const lineIds = lineRefs.map(parse);
+  const ids = [...new Set([receiptId, ...lineIds].filter((x): x is string => x !== null))];
+  if (ids.length > 0) {
+    const found = new Map<string, string | null>();
+    for (let start = 0; start < ids.length; start += 100) {
+      const { data, error } = await sb.from("photos").select("id, location_id").in("id", ids.slice(start, start + 100))
+        .returns<Array<{ id: string; location_id: string | null }>>();
+      if (error) throw new Error(`bindDeliveryPhotos: ${error.message}`);
+      for (const p of data ?? []) found.set(String(p.id).toLowerCase(), p.location_id);
+    }
+    for (const id of ids) {
+      if (!found.has(id) || found.get(id) !== locationId) throw new ReceivingError(404, "photo_not_found", "Photo not found");
+    }
+  }
+  const url = (id: string | null) => (id === null ? null : `/api/photos/${id}`);
+  return { receiptUrl: url(receiptId), lineUrls: lineIds.map(url) };
+}
+
 /** Build the vendor_delivery_items rows for a set of input lines (shared shape for
  *  recordDelivery + addDeliveryLines). resolvedOzByLineIdx is index-aligned with lines.
  *  vendorIdBySku carries each SKU's own vendor onto the row (P3 / migration 0178). */
-function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedOzByLineIdx: Array<number | null>, createdBy: string, vendorIdBySku: Map<string, string | null>) {
+function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedOzByLineIdx: Array<number | null>, createdBy: string, vendorIdBySku: Map<string, string | null>, photoUrls: ReadonlyArray<string | null>) {
   return lines.map((l, i) => ({
     delivery_id: deliveryId, vendor_item_id: l.skuId, qty_received: l.qtyReceived,
     vendor_id: vendorIdBySku.get(l.skuId) ?? null,
@@ -837,7 +877,7 @@ function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedO
     received_qty_at_level: l.receivedLevelLabel?.trim() ? l.qtyReceived : null,
     resolved_oz: resolvedOzByLineIdx[i] ?? null,
     note: l.notes?.trim() || null,
-    photo_url: l.photoUrl?.trim() || null,
+    photo_url: photoUrls[i] ?? null,
     expected_qty: l.expectedQty ?? null,
     discrepancy_type: l.discrepancyType ?? null,
   }));
@@ -1277,6 +1317,8 @@ export async function addDeliveryLines(
   if (sourceError) throw new Error(`addDeliveryLines source: ${sourceError.message}`);
   if (!source) throw new ReceivingError(400, "invalid_vendor");
   const resolved = await validateAndResolveDeliveryLines(sb, lines, h.vendor_id, source.source_kind, h.location_id);
+  // W08/B162: line photos bound to this delivery's shop before any write (see recordDelivery).
+  const photos = await bindDeliveryPhotos(sb, h.location_id, null, lines.map((l) => l.photoUrl));
 
   // Double-submit guard (P1 pragmatic window): a network retry / double-tap on the
   // append route would duplicate every line (and each dup spawns its own credit).
@@ -1301,7 +1343,7 @@ export async function addDeliveryLines(
   }
 
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
-    buildLineRows(h.id, lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku),
+    buildLineRows(h.id, lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku, photos.lineUrls),
   );
   if (lErr) throw new Error(`addDeliveryLines lines: ${lErr.message}`);
 

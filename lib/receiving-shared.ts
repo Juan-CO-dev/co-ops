@@ -433,3 +433,22 @@ export function collapsedPriceNotice(rawPrice: string, hasQty: boolean): Collaps
 export function pricedLineCount(lines: ReadonlyArray<{ unitPrice: string }>): number {
   return lines.filter((l) => priceEntryState(l.unitPrice) === "ok").length;
 }
+
+// ── W08/B162: delivery photo references ────────────────────────────────────────
+
+const PHOTO_REF_RE = /^\/api\/photos\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+/**
+ * A receipt / line photo reference as the intake routes receive it. The column contract (0164) is
+ * the canonical `/api/photos/<photo id>` the shipped form writes; anything else (an external URL, a
+ * protocol-relative `//host`, a query string, a non-UUID id, a non-string) is refused rather than
+ * stored as a link other staff would click. null / undefined / "" (after trim) mean "no photo".
+ */
+export function photoIdFromRef(ref: unknown): { ok: true; photoId: string | null } | { ok: false } {
+  if (ref === null || ref === undefined) return { ok: true, photoId: null };
+  if (typeof ref !== "string") return { ok: false };
+  const trimmed = ref.trim();
+  if (trimmed === "") return { ok: true, photoId: null };
+  const m = PHOTO_REF_RE.exec(trimmed);
+  return m ? { ok: true, photoId: m[1]!.toLowerCase() } : { ok: false };
+}
