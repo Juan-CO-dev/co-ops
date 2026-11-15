@@ -378,3 +378,16 @@ describe("the human routes", () => {
     await expect(sendCateringInboxDraft({ ...actor, user: { ...actor.user, role: "agm" } } as AuthContext, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ status: 403 });
   });
 });
+
+// Audit W11/B068: a customer subject with a URL carrying ? or #, or "token=", made the claim refuse the escalation forever.
+it.each(["en", "es"] as const)("escalation text never carries a customer URL or token (%s)", language => {
+  const dict = (language === "en" ? en : es) as Record<string, string>;
+  const t = (key: string, params?: Record<string, string>) => (dict[key] ?? key).replace(/\{(\w+)\}/g, (m, n: string) => params?.[n] ?? m);
+  const envelope = buildInboxEscalation({ language, tenantName: "Synthetic", inboxUrl: inboxStaffUrl("https://staff.example.test"), reason: "urgent",
+    sender: "x@example.test?token=1", subject: "Urgent help with https://example.com/order?id=123 token=abc www.example.com/#frag TOKEN =2", translate: t });
+  expect(envelope.preview_text).not.toContain("example.com/order");
+  expect(envelope.preview_text).not.toMatch(/(https?:\/\/[^\s]*[?#]|token=)/);
+  expect(envelope.preview_text).not.toMatch(/token\s*=/i);
+  expect(envelope.preview_text).toContain(dict["catering.inbox.escalation.link_removed"]!);
+  expect(envelope.preview_text).toContain("https://staff.example.test/catering/inbox");
+});

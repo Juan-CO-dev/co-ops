@@ -8737,6 +8737,7 @@
   "catering.inbox.escalation.open": "Abre la bandeja de catering:",
   "catering.inbox.escalation.no_sender": "(sin remitente)",
   "catering.inbox.escalation.no_subject": "(sin asunto)",
+  "catering.inbox.escalation.link_removed": "[enlace eliminado]",
   "catering.inbox.escalation.signoff": "Operaciones de {tenantName}",
   "catering.inbox.all_assignees": "Todos",
   "catering.inbox.customer": "Cliente",

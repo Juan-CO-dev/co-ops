@@ -8737,6 +8737,7 @@
   "catering.inbox.escalation.open": "Open the catering inbox:",
   "catering.inbox.escalation.no_sender": "(sender missing)",
   "catering.inbox.escalation.no_subject": "(no subject)",
+  "catering.inbox.escalation.link_removed": "[link removed]",
   "catering.inbox.escalation.signoff": "{tenantName} operations",
   "catering.inbox.all_assignees": "Everyone",
   "catering.inbox.customer": "Customer",

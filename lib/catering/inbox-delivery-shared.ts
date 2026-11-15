@@ -102,7 +102,10 @@ export function buildInboxEscalation(input: { language: "en" | "es"; tenantName:
   sender: string | null; subject: string; translate: Translate }): EscalationEnvelope {
   const t = (suffix: string, params?: Record<string, string>) => input.translate(`catering.inbox.escalation.${suffix}`, params);
   const tenantName = input.tenantName.replace(/[\r\n\0]/g, " ").trim().slice(0, 120) || "-";
-  const clean = (value: string) => value.replace(/[\s\0]+/g, " ").trim().slice(0, 300);
+  // Customer text never carries a link or a "token=" into staff mail: the claim refuses those bodies (0298), which left the
+  // escalation stuck at the head of the queue for good (audit W11/B068). Staff open the inbox to see the original.
+  const clean = (value: string) => value.replace(/[\s\0]+/g, " ").replace(/(?:https?:\/\/|www\.)\S*/gi, t("link_removed"))
+    .replace(/token\s*=/gi, "token ").trim().slice(0, 300);
   const lines = [t("intro"), t("from", { sender: clean(input.sender ?? t("no_sender")) }), t("subject", { subject: clean(input.subject) || t("no_subject") }),
     t("reason", { reason: input.translate(`catering.inbox.reason.${input.reason}`) })];
   if (input.inboxUrl) lines.push(t("open"), input.inboxUrl);
