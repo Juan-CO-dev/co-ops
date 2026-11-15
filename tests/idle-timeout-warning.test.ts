@@ -5,6 +5,7 @@
  *  B013: steady typing keeps the server session alive (throttled heartbeat); a dead session on the heartbeat, or on
  *        "Stay signed in", signs out instead of pretending; the idle limit is the server's.
  *  B153: one idle clock across tabs (localStorage + the storage event); blocked storage keeps the per-tab clock.
+ *  Round 4: other tabs are told of a sign-out only after its logout request settles.
  *  W06-2: the idle sign-in link carries a return link bound to this user.
  */
 import { act } from "react";
@@ -15,8 +16,27 @@ import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
 
-const h = vi.hoisted(() => ({ push: vi.fn(), fetch: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push, refresh: vi.fn() }) }));
+const h = vi.hoisted(() => ({ push: vi.fn(), fetch: vi.fn(), tab: "A", pushes: [] as Array<[string, string]> }));
+// One stable router per mounted component (like Next's), tagged with the tab it was mounted as.
+vi.mock("next/navigation", async () => {
+  const { useRef } = await import("react");
+  return {
+    useRouter: () => {
+      const tab = useRef(h.tab);
+      const router = useRef<{ push: (url: string) => void; refresh: () => void } | null>(null);
+      if (router.current === null) {
+        router.current = {
+          push: (url: string) => {
+            h.push(url);
+            h.pushes.push([tab.current, url]);
+          },
+          refresh: () => {},
+        };
+      }
+      return router.current;
+    },
+  };
+});
 
 const STAY = (en as Record<string, string>)["auth.idle.stay"]!;
 const ACTIVITY_KEY = "co_ops_last_activity";
@@ -39,6 +59,8 @@ const otherTab = (key: string, value: string) => act(() => {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  h.tab = "A";
+  h.pushes = [];
   window.localStorage.clear();
   window.sessionStorage.clear();
   window.history.replaceState(null, "", "/operations/counts?loc=a");
@@ -348,5 +370,121 @@ describe("B153 — one idle clock across tabs", () => {
     await advance(600);
     expect(calls("/api/auth/logout")).toHaveLength(1);
     expect(h.push).toHaveBeenCalledWith(IDLE_TARGET);
+  });
+});
+
+// ── Fix round 4 (review W06-r4) ────────────────────────────────────────────────────────────────────────────
+const LOGOUT_NOW = (en as Record<string, string>)["auth.idle.logout_now"]!;
+const ACTIVITY_EVENT_TYPES = ["mousedown", "keydown", "touchstart", "scroll"];
+/** Two tabs in one jsdom window: every localStorage write also fires the `storage` event the other tab would see. */
+const linkTabs = () => {
+  const realSet = Storage.prototype.setItem;
+  return vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+    realSet.call(this, key, value);
+    window.dispatchEvent(new StorageEvent("storage", { key, newValue: value }));
+  });
+};
+/** Mount a tab. `input: false` = a background tab: this window's keyboard / mouse / scroll input never reaches it. */
+const mountTab = (tab: string, opts: { input?: boolean } = {}) => {
+  h.tab = tab;
+  if (opts.input !== false) return mount();
+  const realAdd = window.addEventListener.bind(window);
+  const spy = vi.spyOn(window, "addEventListener").mockImplementation(((type: string, fn: EventListenerOrEventListenerObject, o?: boolean | AddEventListenerOptions) => {
+    if (ACTIVITY_EVENT_TYPES.includes(type)) return;
+    realAdd(type, fn, o);
+  }) as typeof window.addEventListener);
+  try {
+    return mount();
+  } finally {
+    spy.mockRestore();
+  }
+};
+/** POST /api/auth/logout hangs until settle(); every other request answers 200 (or `other`). */
+const deferLogout = (other: (url: string) => Response = () => ok()) => {
+  const pending: Array<() => void> = [];
+  h.fetch.mockImplementation((url: string) =>
+    url === "/api/auth/logout"
+      ? new Promise<Response>((resolve) => pending.push(() => resolve(ok())))
+      : Promise.resolve(other(url)),
+  );
+  return {
+    pending: () => pending.length,
+    settle: () =>
+      act(async () => {
+        for (const resolve of pending.splice(0)) resolve();
+        await vi.advanceTimersByTimeAsync(0);
+      }),
+  };
+};
+const pushedTabs = () => h.pushes.map(([tab]) => tab).sort();
+
+describe("B012 / B153 round 4 — other tabs leave only after the logout request settles", () => {
+  it("an idle sign-out: neither tab navigates while logout is pending; both navigate after", async () => {
+    linkTabs();
+    const logout = deferLogout();
+    mountTab("A");
+    mountTab("B");
+    await advance(605);
+    expect(logout.pending()).toBeGreaterThanOrEqual(1);
+    expect(h.push).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toBeNull(); // not published yet
+    await logout.settle();
+    expect(pushedTabs()).toEqual(["A", "B"]);
+    expect(h.pushes.every(([, url]) => url === IDLE_TARGET)).toBe(true);
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle$/);
+  });
+
+  it("a dead-session sign-out in one tab: the other tab waits for the logout, then follows without a second logout", async () => {
+    linkTabs();
+    let beats = 0;
+    const logout = deferLogout((url) => {
+      if (url !== "/api/auth/heartbeat") return ok();
+      beats += 1;
+      return beats === 1 ? dead() : ok(); // only the first tab's heartbeat meets the dead session
+    });
+    mountTab("A");
+    mountTab("B");
+    await advance(121);
+    fireEvent.keyDown(window, { key: "a" });
+    await advance(5);
+    expect(calls("/api/auth/logout")).toHaveLength(1);
+    expect(h.push).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toBeNull();
+    await logout.settle();
+    expect(pushedTabs()).toEqual(["A", "B"]);
+    expect(calls("/api/auth/logout")).toHaveLength(1);
+  });
+
+  it("Log out now: the other tab goes to the login page only after the logout request settles", async () => {
+    linkTabs();
+    const logout = deferLogout();
+    mountTab("A");
+    mountTab("B");
+    await advance(575);
+    expect(screen.getAllByRole("dialog")).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole("button", { name: LOGOUT_NOW })[0]!);
+    await advance(3);
+    expect(calls("/api/auth/logout")).toHaveLength(1);
+    expect(h.push).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toBeNull();
+    await logout.settle();
+    expect(pushedTabs()).toEqual(["A", "B"]);
+    expect(h.pushes.every(([, url]) => url === "/")).toBe(true);
+    expect(calls("/api/auth/logout")).toHaveLength(1);
+  });
+
+  it("Log out now still navigates when the logout request fails, and tells the other tabs then", async () => {
+    linkTabs();
+    mountTab("A");
+    mountTab("B");
+    await advance(575);
+    h.fetch.mockImplementation(async (url: string) => {
+      if (url === "/api/auth/logout") throw new TypeError("Failed to fetch");
+      return ok();
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: LOGOUT_NOW })[0]!);
+    await advance(1);
+    expect(pushedTabs()).toEqual(["A", "B"]);
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:logout$/);
   });
 });

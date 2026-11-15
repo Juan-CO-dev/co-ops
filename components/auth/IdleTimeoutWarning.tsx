@@ -25,7 +25,9 @@
  * untouched background tab never signs out a person working in another tab,
  * and activity elsewhere closes this tab's warning. A sign-out in one tab
  * (`co_ops_signed_out`) sends the other tabs to the login page without a
- * second logout. Storage blocked (private mode) = the per-tab clock, as before.
+ * second logout — published only once that tab's logout request has settled,
+ * so a slow logout response can never clear a sign-in made in another tab.
+ * Storage blocked (private mode) = the per-tab clock, as before.
  *
  * The SERVER clock only sees requests (B013): typing for ten minutes with no
  * request used to end in a 401 and lost input. While activity continues, a
@@ -148,17 +150,22 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
     }
   }, []);
 
-  /** The idle sign-out: revoke for real (B012), tell the other tabs, then go to the login page. Runs once. */
+  /**
+   * The idle sign-out: revoke for real (B012), then tell the other tabs and go to the login page. Runs once.
+   * The other tabs hear about it only once the logout request has SETTLED (round 4): told earlier, another tab
+   * reached the login page while the logout was still in flight, someone signed in there, and the slow logout
+   * response then cleared the NEW session's cookie.
+   */
   const expire = useCallback(async () => {
     if (expiredRef.current) return;
     expiredRef.current = true;
     const here = window.location.pathname + window.location.search;
-    writeStored(IDLE_SIGNED_OUT_KEY, `${Date.now()}:idle`);
     try {
       await fetch("/api/auth/logout", { method: "POST", redirect: "manual" });
     } catch {
       // Best-effort, like onLogout: the route always clears the cookie when it is reached.
     }
+    writeStored(IDLE_SIGNED_OUT_KEY, `${Date.now()}:idle`);
     router.push(signInHref({ reason: "idle", next: here, forUser: userId }));
   }, [router, userId]);
 
@@ -354,12 +361,13 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
 
   const onLogout = useCallback(async () => {
     expiredRef.current = true;
-    writeStored(IDLE_SIGNED_OUT_KEY, `${Date.now()}:logout`);
     try {
       await fetch("/api/auth/logout", { method: "POST", redirect: "manual" });
     } catch {
       // Logout is intent-honoring; navigate regardless.
     }
+    // Only now tell the other tabs (round 4, as in expire): never while the logout response can still clear a new sign-in.
+    writeStored(IDLE_SIGNED_OUT_KEY, `${Date.now()}:logout`);
     router.push("/");
   }, [router]);
 
