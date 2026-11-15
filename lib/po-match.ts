@@ -41,6 +41,7 @@ import type { PackPoint } from "@/lib/sku-versions-shared";
 import {
   buildThreeWayLines,
   flatPackChain,
+  invoicePackFromEvidence,
   legScalesFromPacks,
   type SkuLegScales,
   type SkuUnitScale,
@@ -127,14 +128,16 @@ export async function buildThreeWayView(actor: AuthContext, poId: string): Promi
   // on a count leaf). A SKU with no resolvable pack compares only the same unit on both sides.
   // W04 r2: a SKU with pack versions reads EACH LEG through the pack in force when that leg happened
   // (the order at confirm, at this PO's shop; each receipt line when it was written, at the
-  // delivery's shop; the invoice when it arrived), so reopening an old PO after a pack edit never
-  // re-reads history through today's pack. A leg with no pack in force then compares nothing.
+  // delivery's shop), so reopening an old PO after a pack edit never re-reads history through today's
+  // pack. A leg with no pack in force then compares nothing.
+  // W04 r3: the INVOICE is not dated by the email's arrival (a delayed invoice is normal): it bills the
+  // linked transaction, so its pack is the one the order and the receipt agree on; when they disagree
+  // the billed comparison is suppressed (invoicePackFromEvidence).
   const skuIds = [...new Set([...snapshotLines.map((l) => l.skuId), ...deliveryLines.map((l) => l.skuId)])];
   const orderedSkus = new Set(snapshotLines.map((l) => l.skuId));
   const points: PackPoint[] = [];
   for (const skuId of skuIds) {
     if (detail.confirmedAt && orderedSkus.has(skuId)) points.push({ key: `o|${skuId}`, skuId, scope: detail.locationId, asOf: detail.confirmedAt });
-    if (invoiceLeg.receivedAt) points.push({ key: `b|${skuId}`, skuId, scope: detail.locationId, asOf: invoiceLeg.receivedAt });
   }
   for (const d of deliveryLines) {
     if (d.createdAt) points.push({ key: `r|${d.skuId}`, skuId: d.skuId, scope: d.locationId ?? detail.locationId, asOf: d.createdAt });
@@ -152,7 +155,7 @@ export async function buildThreeWayView(actor: AuthContext, poId: string): Promi
       current: levels && levels.length > 0 ? levels : flats.get(skuId) ?? null,
       ordered: atPoints.packs.get(`o|${skuId}`),
       received: atPoints.packs.get(`r|${skuId}`),
-      billed: atPoints.packs.get(`b|${skuId}`),
+      billed: invoicePackFromEvidence({ ordered: atPoints.packs.get(`o|${skuId}`), received: atPoints.packs.get(`r|${skuId}`) }, measures),
     }, measures);
     if (scale) unitScales.set(skuId, scale);
   }
@@ -237,7 +240,7 @@ interface ReceivedLine extends DeliveryLineInput {
  * top-level `.lines`), and validates each field. hasInvoice is TRUE whenever such a
  * receipt EXISTS even if it parsed zero lines (so `not_billed` still applies).
  */
-async function loadInvoiceLeg(sb: ServiceClient, poId: string): Promise<{ lines: InvoiceLineInput[]; hasInvoice: boolean; receivedAt: string | null }> {
+async function loadInvoiceLeg(sb: ServiceClient, poId: string): Promise<{ lines: InvoiceLineInput[]; hasInvoice: boolean }> {
   const { data: rows, error } = await sb.from("email_receipts")
     .select("id, parsed_json, received_at")
     .eq("linked_po_id", poId).eq("doc_kind", "invoice")
@@ -246,10 +249,10 @@ async function loadInvoiceLeg(sb: ServiceClient, poId: string): Promise<{ lines:
     .returns<Array<{ id: string; parsed_json: unknown; received_at: string }>>();
   if (error) throw new Error(`buildThreeWayView invoice: ${error.message}`);
   const row = (rows ?? [])[0];
-  if (!row) return { lines: [], hasInvoice: false, receivedAt: null };
+  if (!row) return { lines: [], hasInvoice: false };
 
-  // W04 r2: the invoice's instant dates the pack its units are read in.
-  return { lines: readInvoiceLines(row.parsed_json), hasInvoice: true, receivedAt: row.received_at ?? null };
+  // W04 r3: the email's arrival does NOT date the invoice's pack (the linked transaction does).
+  return { lines: readInvoiceLines(row.parsed_json), hasInvoice: true };
 }
 
 /** The invoice-line shape from a parse row's parsed_json. Task 5 nests the extraction

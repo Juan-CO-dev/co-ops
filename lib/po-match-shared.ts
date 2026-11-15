@@ -138,7 +138,7 @@ export interface SkuUnitScale {
 
 /**
  * A versioned SKU's units PER LEG (W04 r2): each leg read through the pack in force when THAT leg
- * happened (the order at confirm, the receipt at the door, the invoice when it arrived). A null leg
+ * happened (the order at confirm, the receipt at the door, the invoice through the transaction it bills, W04 r3). A null leg
  * is a pack that cannot be established, and every comparison touching it is suppressed.
  */
 export interface SkuLegScales {
@@ -264,6 +264,34 @@ export function legScalesFromPacks(
     received: unitScaleFromPack(input.received, measures),
     billed: unitScaleFromPack(input.billed, measures),
   };
+}
+
+/** Two scales count in the same units: the same leaf and the same leaves per level (W04 r3). */
+function sameUnits(a: SkuUnitScale, b: SkuUnitScale): boolean {
+  if (a.leafKey !== b.leafKey || a.rootLabel !== b.rootLabel || a.leafPerLevel.size !== b.leafPerLevel.size) return false;
+  for (const [label, n] of a.leafPerLevel) if (b.leafPerLevel.get(label) !== n) return false;
+  return true;
+}
+
+/**
+ * The pack an INVOICE is read in (W04 r3). An invoice's arrival is not when its units were fixed: a
+ * vendor bills the transaction it is linked to, and a delayed invoice is normal. So its pack comes from
+ * that transaction's own evidence: the order's pack (at confirm) and the receipt's pack (at the door).
+ * Both known and in the same units, or only one known: that pack. Both known and DIFFERENT (the pack
+ * changed between order and receipt): ambiguous, so undefined, and every billed comparison is
+ * suppressed. Neither known: undefined. (The parse stores no document date today; when it does, it is
+ * one more piece of evidence here.)
+ */
+export function invoicePackFromEvidence(
+  evidence: { ordered: ResolvedPack | undefined; received: ResolvedPack | undefined },
+  measures?: ReadonlyMap<string, MeasureUnitFactor>,
+): ResolvedPack | undefined {
+  const { ordered, received } = evidence;
+  if (!ordered || !received) return ordered ?? received;
+  const a = unitScaleFromPack(ordered, measures);
+  const b = unitScaleFromPack(received, measures);
+  if (!a || !b || !sameUnits(a, b)) return undefined;
+  return ordered;
 }
 
 /** A flat-only SKU's pack (the vendor_items mirror) as the chain it describes, or null. */
