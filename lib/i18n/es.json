@@ -2006,7 +2006,7 @@
   "admin.templates.error.item_not_found": "Ítem no encontrado.",
   "admin.templates.error.location_not_found": "Local no accesible.",
   "admin.templates.error.invalid_label": "La etiqueta no puede estar vacía.",
-  "admin.templates.error.invalid_par": "El par debe ser un número no negativo o vacío.",
+  "admin.templates.error.invalid_par": "El par debe ser un número, 0 o más (1.5 o 1,5).",
   "admin.templates.error.invalid_display_order": "El orden debe ser un número entero no negativo.",
   "admin.templates.error.invalid_min_role": "El nivel mínimo de rol debe estar entre 0 y 10.",
   "admin.templates.error.not_a_prep_item": "Este ítem no tiene detalles de prep editables.",

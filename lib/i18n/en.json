@@ -2006,7 +2006,7 @@
   "admin.templates.error.item_not_found": "Item not found.",
   "admin.templates.error.location_not_found": "Location not accessible.",
   "admin.templates.error.invalid_label": "Label can't be empty.",
-  "admin.templates.error.invalid_par": "Par must be a non-negative number or empty.",
+  "admin.templates.error.invalid_par": "Par must be a number, 0 or more (1.5 or 1,5).",
   "admin.templates.error.invalid_display_order": "Order must be a non-negative whole number.",
   "admin.templates.error.invalid_min_role": "Min role level must be between 0 and 10.",
   "admin.templates.error.not_a_prep_item": "This item has no editable prep details.",
