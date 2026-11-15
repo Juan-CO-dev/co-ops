@@ -357,6 +357,32 @@ describe("W02/B035 — the staff notification says when a payment needs a look",
     expect(mail.text).toMatch(/does not match/i);
     expect(mail.html).toMatch(/already marked paid/i);
   });
+
+  it("a notice about a payment that has SINCE BEEN REFUNDED never says `payment received` (review r8): it says refunded, and what is still open", async () => {
+    withAssignee();
+    await notifyPaymentPaid(db.client, {
+      paymentId: DEPOSIT,
+      quoteId: QUOTE,
+      locationId: LOCATION,
+      kind: "deposit",
+      amountCents: 20000,
+      reviewReasons: ["sibling_checkout_open"],
+      refunded: true,
+    });
+
+    const mail = sendEmailMock.mock.calls[0]![0];
+    expect(mail.to).toBe("manager@example.com");
+    expect(mail.subject).toMatch(/\$200\.00 deposit payment \(since refunded\) — NEEDS REVIEW$/);
+    expect(mail.subject).not.toMatch(/received/i);
+    expect(mail.text).toMatch(/has since been refunded in full/i);
+    expect(mail.text).not.toMatch(/payment received/i);
+    expect(mail.text).toMatch(/could not be confirmed closed/i);
+    expect(mail.text).toMatch(/still open on the order/i);
+    // The other notice's closing line would read as a contradiction here.
+    expect(mail.text).not.toMatch(/Nothing was refunded automatically/);
+    expect(mail.html).toMatch(/refunded in full/i);
+    expect(mail.html).not.toMatch(/just paid/i);
+  });
 });
 
 describe("W02 review r1 — a payment at a price the quote no longer asks for is flagged `amount_not_current`", () => {

@@ -172,9 +172,9 @@ const WRITERS: Writer[] = [
     file: "lib/catering/payment-sessions.ts",
     fn: "markSettlementCleanupDone",
     verb: "update",
-    writes: "settlement_cleanup_at = now: a paid payment's cleanup is recorded as done, once (r6)",
-    guards: ["eq:id", "eq:status", "is:settlement_cleanup_at"],
-    bind: "status (paid) + marker IS NULL CAS: written once, by the run that finished the cleanup; the run whose write lands reports an ordinary payment",
+    writes: "settlement_cleanup_at = now: a SETTLED payment's cleanup is recorded as done, once (r6). The marker and nothing else: never the money status (r8)",
+    guards: ["eq:id", "in:status", "is:settlement_cleanup_at"],
+    bind: "status IN (paid, refunded) = money was recorded on the row (r8: a row refunded mid-settlement owes the same cleanup; due / void never take it) + marker IS NULL CAS: written once, by the run that finished the cleanup; the run whose write lands reports an ordinary payment",
     pinnedBy: { file: "tests/stripe-webhook-resume.test.ts", title: "two deliveries of one event at once: the run that LOSES the marker, with nothing to review, stays quiet" },
   },
   {
@@ -286,7 +286,7 @@ const WRITERS: Writer[] = [
     verb: "update",
     writes: "THE PAID FLIP: due or void → paid, paid_at, provider, provider_ref (returns the row it wrote)",
     guards: ["eq:id", "in:status"],
-    bind: "status CAS. DELIBERATELY NOT bound to a revision: money Stripe took is recorded wherever its row now is. The flip RETURNS the row; the order is re-judged and cleaned up on that row's revision and family; a cut-off settlement is finished by ANY delivery that finds the row paid with its marker NULL (r5, r6)",
+    bind: "status CAS. DELIBERATELY NOT bound to a revision: money Stripe took is recorded wherever its row now is. The flip RETURNS the row; the order is re-judged and cleaned up on that row's revision and family; a cut-off settlement is finished by ANY delivery that finds the charge on the row with its marker NULL — paid, or refunded since (r5, r6, r8)",
     pinnedBy: { file: "tests/portal-checkout-settlement-race.test.ts", title: "THE WEBHOOK'S VERSION: the event reads P on v1, a revise carries P and a FULL checkout opens on v2, the flip lands — that checkout is closed, not left beside a paid deposit" },
   },
   {

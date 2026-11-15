@@ -29,6 +29,7 @@ import {
   markSettlementCleanupDone,
   settlementCleanupComplete,
   settlementCleanupRecorded,
+  settlementRecorded,
 } from "@/lib/catering/payment-sessions";
 import type { AuthContext } from "@/lib/session";
 
@@ -353,6 +354,10 @@ export async function createPaymentDue(
  *     card settlement has more to finish (void the other intent, judge the payment, write
  *     its audit row, tell the team) and its own next delivery does that, finding the marker
  *     still NULL. The row's own session is left alone: it is the one the money came through.
+ *   · A payment that was recorded and has since been REFUNDED is asked the same question
+ *     (review r8): the marker owns the cleanup, the money status does not. Its marker NULL →
+ *     the press closes the order's other checkouts, exactly as above, and then refuses 409
+ *     `not_due`; the row stays `refunded`. A `void` intent has had no settlement: plain 409.
  * WITHOUT MIGRATION 0303 the marker can be neither read nor written: both degrade to "not
  * recorded" (never an error), so a hand mark behaves exactly as it did before the column
  * existed — every later press runs the idempotent cleanup.
@@ -366,9 +371,12 @@ export async function markPaymentPaid(
   const { status, locationId, quoteId, provider, sessionId } = await loadPaymentQuoteContext(sb, paymentId, expectedQuoteId);
   assertCanWrite(actor, locationId);
   if (status !== "due") {
-    // ALREADY PAID. Is its cleanup recorded as done (see the header)? `null` = the marker
+    // ALREADY SETTLED. Is its cleanup recorded as done (see the header)? `null` = the marker
     // could not be read; that is treated as "not recorded" — the cleanup is idempotent.
-    if (status === "paid" && (await settlementCleanupRecorded(sb, paymentId)) !== true) {
+    // The MARKER decides, not the money status (review r8): a payment that was recorded and
+    // has since been refunded owes the same cleanup while its marker is NULL. A `void` row
+    // has had no settlement and owes none.
+    if (settlementRecorded(status) && (await settlementCleanupRecorded(sb, paymentId)) !== true) {
       const byHand = provider === "manual";
       // Finish what an earlier, cut-off settlement may not have reached, then refuse as
       // always. Never throws.

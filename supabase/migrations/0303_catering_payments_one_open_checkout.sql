@@ -102,9 +102,18 @@
 --                          (or there was none), every other checkout was confirmed closed or is already
 --                          landing, and the whole family was looked at. Only then may a Stripe delivery that
 --                          finds its charge already on the row answer `already_advanced`.
---   Written ONCE, NULL -> now, guarded on `status = 'paid'`; never cleared, never rewritten. The run whose
---   write lands is the one that sends the ordinary "payment received" report, so two overlapping deliveries
---   report it once. A row that is not `paid` never carries a meaning here.
+--   Written ONCE, NULL -> now, guarded on `status in ('paid', 'refunded')`; never cleared, never rewritten.
+--   The run whose write lands is the one that sends the ordinary "payment received" report, so two
+--   overlapping deliveries report it once.
+--   THE MARKER ALONE OWNS THE CLEANUP — NOT THE MONEY STATUS (review r8, P1). Rounds r6 / r7 guarded the
+--   write on `status = 'paid'` and read "NULL on a `paid` row" at every gate. A settlement can apply a
+--   whole-charge refund to its own row before its cleanup is finished (a refund Stripe reported before the
+--   payment), and the row then fell out of every gate with a voided intent's checkout still attached and
+--   payable — for good. So: NULL on a row MONEY WAS RECORDED ON (`paid`, or `refunded` since) = cleanup owed,
+--   and such a row takes the marker when the cleanup is done. The app writes this column and nothing else in
+--   that statement: a refunded row stays refunded. A `due` or `void` row has had no settlement; it owes no
+--   cleanup and never takes the marker. (The rule is the app's — lib/catering/payment-sessions.ts
+--   `SETTLED_PAYMENT_STATUSES` — and no object in this file changed for it: the column carries no CHECK.)
 --   EXISTING ROWS keep NULL. Prod has never had Stripe keys, so every paid row there was recorded by hand
 --   and names no checkout: a second "Mark paid" press on one finds nothing to close and stamps it. No
 --   backfill is run — the apply writes no row.
@@ -329,12 +338,13 @@ grant execute on function public.catering_payment_attach_checkout(uuid, uuid, in
 alter table public.catering_payments add column settlement_cleanup_at timestamptz;
 
 comment on column public.catering_payments.settlement_cleanup_at is
-  '0303: when this PAID payment''s settlement cleanup was confirmed complete (the order''s other deposit / '
-  'full intent voided, its other checkouts confirmed closed, the whole quote family looked at). NULL = not '
-  'confirmed: whoever next finds the row paid runs the idempotent cleanup again (a Stripe redelivery, an '
-  'overlapping delivery, a second "Mark paid" press). Written once, NULL -> now, guarded on status = paid '
-  '(lib/catering/payment-sessions.ts markSettlementCleanupDone); never cleared. A Stripe delivery answers '
-  'already_advanced only when this is set (audit W02 review r6).';
+  '0303: when this SETTLED payment''s cleanup was confirmed complete (the order''s other deposit / '
+  'full intent voided, its other checkouts confirmed closed, the whole quote family looked at). NULL on a '
+  'paid OR refunded row = not confirmed: whoever next finds it runs the idempotent cleanup again (a Stripe '
+  'redelivery, an overlapping delivery, a second "Mark paid" press). Written once, NULL -> now, guarded on '
+  'status in (paid, refunded) (lib/catering/payment-sessions.ts markSettlementCleanupDone); never cleared, '
+  'and independent of the money status: a refund neither sets nor clears it. A Stripe delivery answers '
+  'already_advanced only when this is set (audit W02 review r6, r8).';
 
 -- ── THE READINESS FUNCTION (review r6) ──────────────────────────────────────────────────────────
 -- "Is 0303 applied, whole?" The app asks this before anything reaches Stripe and refuses on any answer but

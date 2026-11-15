@@ -33,9 +33,11 @@
  *       the moment any of the three other objects is gone (the attach function, the index, the column), so
  *       a half rollback can never read as "ready"; its privilege ceiling (service_role only); SECURITY
  *       INVOKER with a pinned search_path
- *   P8  the SETTLEMENT MARKER (review r6): the app's compare-and-set (`settlement_cleanup_at = now()
- *       where status = 'paid' and settlement_cleanup_at is null`) lands exactly once per paid row, never on
- *       a due / void / refunded row, is never rewritten by a second writer, and does not interact with
+ *   P8  the SETTLEMENT MARKER (review r6, r8): the app's compare-and-set (`settlement_cleanup_at = now()
+ *       where status in ('paid', 'refunded') and settlement_cleanup_at is null`) lands exactly once per
+ *       SETTLED row — paid, or refunded with its cleanup still unrecorded (review r8: the marker owns the
+ *       cleanup, the money status does not) — never on a due / void row, never changes the status, is never
+ *       rewritten by a second writer, is neither set nor cleared by a refund, and does not interact with
  *       either unique index
  *
  * WHAT A SINGLE SESSION CANNOT SHOW: that a concurrent settlement actually WAITS on those locks. That
@@ -283,9 +285,12 @@ try {
 
   // ── P8 — the settlement marker's compare-and-set (review r6) ─────────────────────────────────
   {
+    // The statement lib/catering/payment-sessions.ts markSettlementCleanupDone issues (review r8: the
+    // guard is "money was recorded on this row", `paid` or `refunded` — SETTLED_PAYMENT_STATUSES).
     const mark = async (id) => (await db.query(
-      "update public.catering_payments set settlement_cleanup_at = now() where id = $1 and status = 'paid' and settlement_cleanup_at is null returning settlement_cleanup_at", [id])).rows;
+      "update public.catering_payments set settlement_cleanup_at = now() where id = $1 and status in ('paid', 'refunded') and settlement_cleanup_at is null returning settlement_cleanup_at, status", [id])).rows;
     const markerOf = async (id) => (await db.query("select settlement_cleanup_at from public.catering_payments where id = $1", [id])).rows[0].settlement_cleanup_at;
+    const statusOf = async (id) => (await db.query("select status from public.catering_payments where id = $1", [id])).rows[0].status;
     const M = await f.quote();
     const mPaid = await f.pay(M, "deposit", "paid", "cs_marker_paid");
     const mDue = await f.pay(M, "balance", "due", null);
@@ -298,10 +303,25 @@ try {
     const N = await f.quote();
     const nVoid = await f.pay(N, "deposit", "void", "cs_marker_void");
     const nRefunded = await f.pay(N, "full", "refunded", "cs_marker_ref");
-    check((await mark(nVoid)).length === 0 && (await mark(nRefunded)).length === 0, "P8 a VOID or REFUNDED row never takes it either");
+    check((await mark(nVoid)).length === 0 && (await markerOf(nVoid)) === null, "P8 a VOID row never takes it either (no settlement was recorded on it)");
+    // REVIEW r8: a row that was paid and REFUNDED before its cleanup was recorded still owes it — and
+    // takes the marker when it is done. The write names no status: the row stays refunded.
+    check((await markerOf(nRefunded)) === null, "P8 a REFUNDED row whose cleanup was never recorded reads NULL (still owed)");
+    const late = await mark(nRefunded);
+    check(late.length === 1 && late[0].settlement_cleanup_at != null, "P8 (r8) the marker lands on a REFUNDED row whose marker is NULL (one row)");
+    check(late[0]?.status === "refunded" && (await statusOf(nRefunded)) === "refunded", "P8 (r8) …and writing it does not change the money status: still refunded");
+    const lateStamp = String(await markerOf(nRefunded));
+    check((await mark(nRefunded)).length === 0 && String(await markerOf(nRefunded)) === lateStamp, "P8 (r8) …once: a second writer matches nothing and the value stands");
     // A paid row that was refunded AFTER its cleanup keeps the fact (it is history, never cleared).
     await db.query("update public.catering_payments set status = 'refunded' where id = $1", [mPaid]);
     check(String(await markerOf(mPaid)) === stamped, "P8 a later refund does not clear it");
+    check((await mark(mPaid)).length === 0 && String(await markerOf(mPaid)) === stamped, "P8 …and does not let it be written again");
+    // …and a refund of a paid row whose marker is NULL neither sets it nor loses the obligation.
+    const O = await f.quote();
+    const oPaid = await f.pay(O, "deposit", "paid", "cs_marker_owed");
+    await db.query("update public.catering_payments set status = 'refunded' where id = $1 and status = 'paid'", [oPaid]);
+    check((await markerOf(oPaid)) === null, "P8 (r8) a refund does not SET the marker: the cleanup is still owed on the refunded row");
+    check((await mark(oPaid)).length === 1 && (await statusOf(oPaid)) === "refunded", "P8 (r8) …and the run that finishes it records it there");
     // The marker is no part of either unique index: a due intent may still open its checkout beside it.
     await db.query("update public.catering_payments set provider_session_id = 'cs_marker_bal' where id = $1 and status = 'due'", [mDue]);
     check(true, "P8 the marker does not interact with catering_payments_one_open_checkout / one_due");

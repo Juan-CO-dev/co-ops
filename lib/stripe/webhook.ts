@@ -107,8 +107,8 @@
  * So "is the cleanup still owed?" is no longer inferred from the ledger at all. It is a
  * DURABLE FACT ON THE PAYMENT ROW: `catering_payments.settlement_cleanup_at` (migration
  * 0303; lib/catering/payment-sessions.ts has the rule). NULL = not confirmed complete.
- *   · ANY DELIVERY THAT FINDS ITS CHARGE ALREADY ON A `paid` ROW WHOSE MARKER IS NULL RUNS
- *     THE SETTLEMENT AGAIN (`settle`): the first delivery of the event or its tenth, the
+ *   · ANY DELIVERY THAT FINDS ITS CHARGE ALREADY ON A SETTLED ROW (`paid`, or `refunded`
+ *     since — review r8, below) WHOSE MARKER IS NULL RUNS THE SETTLEMENT AGAIN (`settle`): the first delivery of the event or its tenth, the
  *     delivery that inserted the ledger row or one that did not, the same event or another
  *     event about the same charge. (Stripe documents all three: "Webhook endpoints might
  *     occasionally receive the same event more than once"; "In some cases, two separate
@@ -125,10 +125,10 @@
  *     leaves the unresolved checkout's id on its row, LEAVES THE MARKER NULL — and answers
  *     `settlement_incomplete` (review r7, below), so Stripe sends the event again and the
  *     next delivery tries again.
- *   · `already_advanced` IS STAMPED ONLY WHEN THE MARKER IS SET (or the row has since been
- *     refunded: there is no order left to tidy). It means exactly: this charge is on its row
- *     and its cleanup is recorded as done. It never again means "somebody else is probably
- *     handling it".
+ *   · `already_advanced` IS STAMPED ONLY WHEN THE MARKER IS SET. It means exactly: this
+ *     charge is on its row and its cleanup is recorded as done. It never again means
+ *     "somebody else is probably handling it" — and never "the row was refunded, so there is
+ *     nothing to tidy" (review r8, below: that was false).
  *   · THE REPORT RIDES ON THE MARKER — AND WHICH SIDE OF IT DEPENDS ON WHAT THERE IS TO SAY.
  *     The marker is written by compare-and-set (NULL → now). An ORDINARY payment (nothing to
  *     review) is reported right AFTER that write, by the run whose write landed: a NULL
@@ -177,7 +177,8 @@
  *     (`refundsSeenFirst`) — tells a person (`refund_seen_first`), and THEN applies each one
  *     with the live path's own `refund` and corrects that event's ledger verdict. The telling
  *     comes first because the applying can move the row to `refunded`, after which no later
- *     run looks at it. A look that could not be made is `refund_check_failed`, the
+ *     run judges the payment again (a later run still finishes its cleanup — review r8,
+ *     below). A look that could not be made is `refund_check_failed`, the
  *     settlement's marker is not written, and — like a refund that could not be APPLIED —
  *     the delivery answers `settlement_incomplete`, so it is tried again (review r7).
  *
@@ -196,7 +197,7 @@
  *     THE ROUTE ANSWERS 500. Required work = the order's other payments read and every
  *     sibling void landed, every other checkout confirmed closed, every refund Stripe had
  *     already reported applied, and the marker written (`won`, or `lost` to a run that wrote
- *     it / to a row that is no longer `paid`). The money write is NOT undone and NOT repeated
+ *     it). The money write is NOT undone and NOT repeated
  *     — the paid flip stays a guarded compare-and-set — only the answer changes. Stripe then
  *     sends the SAME event again: "Stripe attempts to deliver events to your destination for
  *     up to three days with an exponential back off in live mode. … We retry event deliveries
@@ -209,13 +210,39 @@
  *     RETRYABLE ledger state like `processing_failed`: the redelivery runs the dispatch,
  *     finds its charge on the row with the marker NULL, and runs the settlement again.
  *   · THE DUPLICATE GATE CONSULTS THE ROW BEFORE IT SAYS `duplicate` (`workStillOwed`). A
- *     terminal verdict on the ledger no longer ends a payment event by itself: if a `paid`
- *     row carries this event's charge and its marker is NULL, the settlement is run again
+ *     terminal verdict on the ledger no longer ends a payment event by itself: if a settled
+ *     row (`paid` or `refunded` — review r8) carries this event's charge and its marker is
+ *     NULL, the settlement is run again
  *     (the marker is written only after every seen-first refund was applied, so "marker NULL"
  *     is also "a seen-first refund may be unapplied"). And a `charge.refunded` event whose
  *     verdict is `payment_not_found` is not a duplicate while a `paid` row now carries its
  *     charge: it is applied, and its verdict corrected. A failed read at the gate throws (the
  *     route answers 500): "finished" must be known, not assumed.
+ *
+ * ── THE MARKER ALONE OWNS THE CLEANUP — A REFUND NEVER ENDS A SETTLEMENT (review r8) ────
+ * Rounds r6 / r7 wrote "a `paid` row whose marker is NULL" in three places here — the resume
+ * gate, the duplicate gate (`workStillOwed`), and "`lost` = … or the row is no longer `paid`"
+ * at the marker — and `markSettlementCleanupDone` was itself guarded on `status = 'paid'`.
+ * But this file can move a row to `refunded` in the middle of its own settlement: a refund
+ * seen first is applied AFTER the report and BEFORE the marker. Reproduced by the reviewer: a
+ * whole-charge refund arrives before its payment; the payment lands, voids the full-amount
+ * intent, cannot retire its checkout for a moment, applies the refund, answers
+ * `settlement_incomplete` — and the SAME event, sent again, found a row that was not `paid`,
+ * answered `already_advanced`, and was a `duplicate` ever after. The checkout stayed attached
+ * and payable; retirement had been tried exactly once.
+ *
+ * The rule (lib/catering/payment-sessions.ts has it in full): WHETHER A SETTLEMENT'S CLEANUP
+ * IS OWED IS `settlement_cleanup_at` AND NOTHING ELSE. A row money was recorded on — `paid`,
+ * or `refunded` since (`settlementRecorded`) — whose marker is NULL owes it. Every gate reads
+ * that one definition: the resume gate and the "another settlement got there first" branch
+ * in `dispatch`, `workStillOwed`, the marker write, and "Mark paid"'s resume
+ * (lib/catering/payments.ts). THE CLEANUP NEVER WRITES THE MONEY STATUS: a refunded row stays
+ * refunded, and the order ends where "settled, then refunded" would have left it. What
+ * changes for a refunded row is only what is said about it (see `settle`). The one gate that
+ * still reads `paid` is the one that is ABOUT money: a refund is applied only to a `paid`
+ * row (`refund`, and `workStillOwed` for a refund event that had found no payment).
+ * tests/catering-payment-interleavings.test.ts walks every gate over every money status ×
+ * marker NULL / set.
  *
  * WHAT A PERSON HEARS (the stated policy). A payment that NEEDS REVIEW is told by every run
  * that finds it — AT LEAST ONCE, and once more per redelivery while its work is unfinished
@@ -279,6 +306,7 @@ import {
   closeQuoteCheckouts,
   markSettlementCleanupDone,
   settlementCleanupComplete,
+  settlementRecorded,
   type ClosedCheckouts,
 } from "@/lib/catering/payment-sessions";
 import { familyRevisionIds, type RetireSession } from "@/lib/catering/payment-carry";
@@ -295,7 +323,7 @@ type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 export type StripeProcessingResult =
   | "paid"                // a due row became paid AND its order was cleaned up (by the run that flipped it, or one that finished for it)
   | "paid_needs_review"   // money was taken and recorded, but something about it needs a human
-  | "already_advanced"    // this charge is already on its row AND its cleanup is recorded as done (or the row was since refunded)
+  | "already_advanced"    // this charge is already on its row AND its cleanup is recorded as done — whatever the row's money status (review r8)
   | "payment_not_found"   // metadata + session-id lookup both came up empty
   | "location_mismatch"   // per-location mode: the payment belongs to another shop
   | "async_failed"        // delayed-notification payment failed; the row keeps its status, the failed session's id is cleared
@@ -391,6 +419,10 @@ export interface NotifyPaidArgs {
   amountCents: number;
   /** Empty for an ordinary payment. Non-empty ⇒ the email asks for a review. */
   reviewReasons?: PaymentReviewReason[];
+  /** True when the payment has since been REFUNDED IN FULL and this notice is a later run
+   *  finishing its settlement (review r8): the email says so, and it only ever carries what
+   *  is still OPEN on the order. Never set on an ordinary "payment received". */
+  refunded?: boolean;
 }
 
 interface PaymentRow {
@@ -809,14 +841,20 @@ async function applyEarlierRefund(sb: ServiceClient, earlier: EarlierRefund, ctx
  * the ledger with a TERMINAL verdict; is there, all the same, work of ITS OWN that the rows
  * say is not finished?
  *
- *   · A PAYMENT event (`completed` / `async_succeeded`): a `paid` row carries this event's
+ *   · A PAYMENT event (`completed` / `async_succeeded`): a SETTLED row carries this event's
  *     charge (`provider_ref` = its PaymentIntent — the id only the paid flip writes) and its
  *     settlement marker is NULL. That is the whole of "required post-payment work is
  *     unfinished": the marker is written only after the sibling voids landed, the other
- *     checkouts were confirmed closed AND every refund seen first was applied.
+ *     checkouts were confirmed closed AND every refund seen first was applied. SETTLED IS
+ *     `paid` OR `refunded` (review r8, `settlementRecorded`): round r7 asked for `paid`, so a
+ *     row a refund had been applied to — by the settlement itself, a moment before it found
+ *     a checkout it could not close — was a `duplicate` with that checkout still payable.
+ *     The marker owns this question; the money status does not.
  *   · A REFUND event whose verdict is `payment_not_found`: a `paid` row NOW carries its
  *     charge — the payment landed after it, and whatever should have applied this refund
  *     since has not (the row would not be `paid`, or this verdict would have been corrected).
+ *     This one IS a question about the money status, and stays one: only a `paid` row has a
+ *     refund left to apply.
  *
  * One indexed read, no write. Any other event, or a payload with no PaymentIntent, has
  * nothing a replay could finish. THROWS on a read failure — the same posture as
@@ -832,13 +870,16 @@ async function workStillOwed(sb: ServiceClient, outcome: CheckoutEventOutcome, p
     .from("catering_payments")
     .select("id, status, provider_ref, settlement_cleanup_at")
     .eq("provider_ref", outcome.paymentIntentId)
-    .eq("status", "paid")
     .limit(1)
     .returns<Array<{ id: string; status: string; provider_ref: string | null; settlement_cleanup_at: string | null }>>();
   if (error) throw new Error(`stripe duplicate gate: ${error.message}`);
+  // The row is read WITHOUT a status filter, and each question reads the status it is about.
   const carrying = data?.[0] ?? null;
   if (!carrying) return false;
-  return unappliedRefund ? true : carrying.settlement_cleanup_at == null;
+  // A refund that found no payment: owed only while the row is still `paid`.
+  if (unappliedRefund) return carrying.status === "paid";
+  // A payment event: owed while the marker is NULL — `paid` or `refunded` alike (review r8).
+  return settlementRecorded(carrying.status) && carrying.settlement_cleanup_at == null;
 }
 
 /**
@@ -877,8 +918,9 @@ export async function processStripeEvent(
     const prior = await readLedgerOutcome(sb, outcome.eventId);
     if (!isRetryableLedgerOutcome(prior)) {
       // A TERMINAL verdict — and still not `duplicate` until the ROWS agree (review r7): a
-      // settlement whose marker is NULL, or a refund that found no payment and now has one,
-      // is worked again whatever the ledger says about the event.
+      // settlement whose marker is NULL (on a paid OR a since-refunded row — review r8), or a
+      // refund that found no payment and now has one, is worked again whatever the ledger
+      // says about the event.
       if (!(await workStillOwed(sb, outcome, prior))) return { result: "duplicate", locationId: ctx.locationId };
       if (outcome.kind === "refunded" && prior === "payment_not_found") reopened = "payment_not_found";
     }
@@ -1058,6 +1100,7 @@ async function dispatch(
       settledAtMs,
       wasVoid: payment.status === "void",
       resumed: false,
+      rowStatus: "paid",
     });
   }
 
@@ -1065,6 +1108,9 @@ async function dispatch(
   // row is re-read (the pre-read may predate a concurrent delivery of this very charge) —
   // with its settlement marker (migration 0303; a database without that column fails this
   // read, the event is `processing_failed`, and Stripe delivers it again).
+  // THE RESUME GATE (review r8). What follows asks ONE question of the row — "is the marker
+  // NULL?" — and never "is it still `paid`?". The money status only says which statuses a
+  // settlement can have left behind (`settlementRecorded`: paid, or refunded since).
   const { data: fresh, error: freshErr } = await sb
     .from("catering_payments")
     .select(`${PAYMENT_COLS}, provider, provider_session_id, settlement_cleanup_at`)
@@ -1076,14 +1122,19 @@ async function dispatch(
   if (sameCharge && fresh) {
     // THIS CHARGE IS ALREADY ON THE ROW. Whether that means "finished" is the ROW's own
     // recorded fact — never an inference from which delivery this is (review r6 — see the
-    // header).
-    //   · A row that is no longer `paid` (it has since been refunded) has no order to tidy.
+    // header), and never an inference from its MONEY STATUS either (review r8):
     //   · MARKER SET: the settlement's cleanup is recorded as done. Nothing to do, quietly.
     //   · MARKER NULL: whoever flipped the row has not finished — it is still working, it
     //     was cut off, or it could not confirm everything closed. THIS delivery runs the
     //     settlement again, from the row as it is now, whatever delivery or event it is. The
     //     steps are idempotent, so running beside the other run changes nothing twice.
-    if (fresh.status === "paid" && fresh.settlement_cleanup_at == null) {
+    //   · …AND THAT HOLDS FOR A ROW THAT HAS SINCE BEEN REFUNDED. Round r7 said "a row that
+    //     is no longer `paid` has no order to tidy" and answered `already_advanced` — over an
+    //     intent this settlement had voided and a checkout it had not managed to retire. A
+    //     refund gives one charge back; it closes nothing. The settlement runs again and the
+    //     row STAYS refunded: nothing in it writes the money status of a settled row (the
+    //     flip is guarded on due / void, a refund on `paid`, the marker write names no status).
+    if (settlementRecorded(fresh.status) && fresh.settlement_cleanup_at == null) {
       return settle(sb, {
         payment: { ...payment, kind: fresh.kind, amount_cents: fresh.amount_cents, status: fresh.status },
         quote,
@@ -1097,6 +1148,7 @@ async function dispatch(
         // The flip overwrote the status it found; a later run cannot know (see the header).
         wasVoid: null,
         resumed: true,
+        rowStatus: fresh.status,
       });
     }
     return { result: "already_advanced", locationId };
@@ -1113,8 +1165,10 @@ async function dispatch(
   // that was cut off after its flip: the hosted pages stayed payable, and the customer has
   // just paid one of them. The order's OTHER pages are closed now, not left for a third
   // charge. The row's own session is closed too unless it is the one this money came through.
+  // Owed by the MARKER, whatever the money status (review r8): a row that was paid and has
+  // since been refunded owes the same cleanup while its marker is NULL.
   let closed: ClosedCheckouts | null = null;
-  if (fresh?.status === "paid" && fresh.settlement_cleanup_at == null) {
+  if (fresh && settlementRecorded(fresh.status) && fresh.settlement_cleanup_at == null) {
     closed = await closeQuoteCheckouts(sb, {
       quoteId: fresh.quote_id,
       locationId,
@@ -1181,6 +1235,17 @@ async function dispatch(
   return { result: "paid_needs_review", locationId };
 }
 
+/**
+ * THE REASONS THAT NAME UNFINISHED WORK ON THE ORDER, as opposed to a judgement of the
+ * payment (review r8). They are the only ones told about a payment that has since been
+ * refunded in full: an intent that could not be closed and a checkout that could not be
+ * confirmed closed are still open whatever happened to this charge.
+ */
+const UNFINISHED_WORK_REASONS: ReadonlySet<PaymentReviewReason> = new Set<PaymentReviewReason>([
+  "sibling_check_failed",
+  "sibling_checkout_open",
+]);
+
 interface SettleInput {
   /** The payment as this delivery READ it (its `quote_id` is the revision it was read on). */
   payment: PaymentRow;
@@ -1200,6 +1265,10 @@ interface SettleInput {
   /** True when ANOTHER run flipped the row and this one found its cleanup not recorded as
    *  done (review r5 / r6): a redelivery, an overlapping delivery, another event. */
   resumed: boolean;
+  /** THE ROW'S MONEY STATUS AS THIS RUN FOUND IT (review r8): `paid` for the run that flipped
+   *  it; for a run that did not, what the re-read said — `paid`, or `refunded` since. It
+   *  decides what is SAID about the payment, never whether the cleanup runs. */
+  rowStatus: string;
 }
 
 /**
@@ -1208,11 +1277,27 @@ interface SettleInput {
  * done on the payment row when — and only when — it is. Run by the delivery that flipped the
  * row and, identically, by ANY delivery that finds the charge on the row with its marker
  * still NULL (see the header). NEVER THROWS. Every write in it is idempotent.
+ *
+ * ── ON A ROW THAT HAS SINCE BEEN REFUNDED (review r8) ────────────────────────────────
+ * The CLEANUP is the same, step for step — the other deposit / full intent voided, the
+ * order's other checkouts closed, the marker written — because it is owed by the marker,
+ * not by the money status, and the order must end where "settled, then refunded" would have
+ * left it. It never writes this row's money status. What differs is only what is SAID:
+ *   · THE PAYMENT IS NOT JUDGED AGAIN. Its amount, its timing, "another payment is already
+ *     paid" are questions about money on the books, and this money was given back whole. A
+ *     run that finds the row refunded tells a person only what is still OPEN on the order
+ *     (`UNFINISHED_WORK_REASONS`) — and the email says the payment was refunded.
+ *   · NO REFUND IS LOOKED FOR. A refund is applied to a `paid` row; there is none left here.
+ *   · NO ORDINARY "PAYMENT RECEIVED". When nothing is open, the audit row is written
+ *     (`row_status: "refunded"`, `resumed: true`, what was voided and closed) and nobody is
+ *     mailed that a payment arrived which is no longer on the books.
  */
 async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched> {
   const { outcome, ctx, deps, locationId, row } = input;
   let quote = input.quote;
   const reasons: PaymentReviewReason[] = [];
+  /** Is the money still on the books? False = refunded in full since (see the doc above). */
+  const onTheBooks = input.rowStatus === "paid";
   // WHERE THE PAYMENT IS NOW (review r4). If a revise moved it between the read and the
   // flip, the order is judged as it stands on the revision the row is on — its price, its
   // deadline, whether it is still open — not on the one that was read.
@@ -1263,9 +1348,22 @@ async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched
   if (closed.stillOpen.length > 0) reasons.push("sibling_checkout_open");
   // WAS THIS CHARGE ALREADY REFUNDED, AS FAR AS STRIPE HAS TOLD US? (review r6 — see
   // `refundsSeenFirst`.) Looked for now, told with everything else below, applied after that.
-  const earlierRefunds = await refundsSeenFirst(sb, outcome.paymentIntentId);
+  // Not on a row that is already refunded (review r8): a refund moves a `paid` row, so there
+  // is nothing left for one to be applied to.
+  const earlierRefunds = onTheBooks
+    ? await refundsSeenFirst(sb, outcome.paymentIntentId)
+    : { events: [] as EarlierRefund[], failed: false, truncated: false };
   if (earlierRefunds.events.length > 0) reasons.push("refund_seen_first");
   if (earlierRefunds.failed || earlierRefunds.truncated) reasons.push("refund_check_failed");
+  // A REFUNDED PAYMENT IS NOT JUDGED AGAIN (review r8 — see the doc above). Everything above
+  // RAN — the sibling void and the checkout cleanup are the work this run is here for — but
+  // of what it found, only what is still OPEN is told. Every other reason is a judgement of
+  // money that was given back.
+  if (!onTheBooks) {
+    const open = reasons.filter((r) => UNFINISHED_WORK_REASONS.has(r));
+    reasons.length = 0;
+    reasons.push(...open);
+  }
 
   const settledAt = new Date(input.settledAtMs).toISOString();
   const report = async (): Promise<void> => {
@@ -1295,6 +1393,10 @@ async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched
         // below are then what THIS run did, and `needs_review` cannot include
         // `intent_was_void` (the flip overwrote the status it found).
         ...(input.resumed ? { resumed: true } : {}),
+        // Present only when this run found the row no longer `paid` (review r8: refunded in
+        // full since). It finished that settlement's cleanup; `needs_review` then names only
+        // what is still open, and no "payment received" was mailed for it.
+        ...(onTheBooks ? {} : { row_status: input.rowStatus }),
         // Present only when a revise moved the payment between this event's read and its
         // flip: `quote_id` above is where the payment is NOW, this is where it was read.
         ...(moved ? { read_on_quote_id: readOnQuoteId } : {}),
@@ -1315,6 +1417,10 @@ async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched
       userAgent: null,
     });
 
+    // NO "PAYMENT RECEIVED" ABOUT A PAYMENT THAT WAS GIVEN BACK (review r8). The audit row
+    // above is the record of what this run finished; a mail goes only when something is
+    // still open, and then it says the payment was refunded.
+    if (!onTheBooks && reasons.length === 0) return;
     // BEST-EFFORT, ALWAYS. A mail failure must never fail a webhook: the money has landed
     // and the row says so; the email is how a human hears about it sooner.
     try {
@@ -1325,6 +1431,7 @@ async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched
         kind: payment.kind,
         amountCents: payment.amount_cents,
         reviewReasons: reasons,
+        ...(onTheBooks ? {} : { refunded: true }),
       });
     } catch (e) {
       console.error(`[stripe webhook] paid-notify failed for ${payment.id}:`, e instanceof Error ? e.message : e);
@@ -1337,8 +1444,9 @@ async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched
   // finds it: if this run dies here, the marker is still NULL and the next one tells it again.
   if (needsReview) await report();
   // …and only THEN is a refund that was seen first applied (it can move the row to
-  // `refunded`, after which no later run would look at this payment again — so the finding
-  // had to be told first). Oldest first; each is the live path's own `refund`.
+  // `refunded`, after which no later run JUDGES this payment again — it only finishes the
+  // cleanup, review r8 — so the finding had to be told first). Oldest first; each is the live
+  // path's own `refund`.
   let refundsApplied = true;
   for (const earlier of earlierRefunds.events) {
     if (!(await applyEarlierRefund(sb, earlier, ctx))) refundsApplied = false;
@@ -1352,8 +1460,10 @@ async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched
   // a later run would read the same page.
   const cleanupComplete = siblings.complete && settlementCleanupComplete(closed) && !earlierRefunds.failed && refundsApplied;
   // The marker: one compare-and-set, only over a cleanup that is complete. `lost` = another
-  // run recorded it first (that run is the one that reports an ordinary payment) — or the row
-  // is no longer `paid` (a refund seen first has just been applied): nothing is owed either way.
+  // run recorded it first (that run is the one that reports an ordinary payment). A row that
+  // is no longer `paid` — a refund seen first has just been applied, or it was refunded before
+  // this run began — takes the marker like any other (review r8): the cleanup it records was
+  // done, and a row left NULL is a row some later delivery would have to work again.
   const mark = cleanupComplete ? await markSettlementCleanupDone(sb, payment.id) : null;
   // An ordinary payment is reported by the ONE run whose marker write landed (review r7: a
   // write that FAILED no longer reports — the redelivery it now causes does, when its own
@@ -1502,6 +1612,12 @@ async function refund(
  * channel — it is not a new email, it is this one telling the truth: the subject ends
  * "NEEDS REVIEW" and the body names each reason in a plain sentence, because "payment
  * received" over a double charge is how a refund gets missed.
+ *
+ * `refunded: true` (review r8) — a later run finished the settlement of a payment that has
+ * since been refunded in full, and something on the order is STILL OPEN. Same person, same
+ * channel; the subject and the first line say the payment was refunded, so nobody reads
+ * "payment received" about money that is no longer on the books. It is only ever sent with
+ * reasons (an ordinary notice is never sent about a refunded payment).
  */
 const REVIEW_SENTENCE: Record<PaymentReviewReason, string> = {
   another_payment_already_paid:
@@ -1525,6 +1641,11 @@ const REVIEW_SENTENCE: Record<PaymentReviewReason, string> = {
   sibling_checkout_open:
     "An online checkout for this order could not be confirmed closed, so the customer may still be able to pay it. Expire the order's checkout sessions in the Stripe dashboard and check this order for a second charge.",
 };
+
+/** The last line of a review notice about a payment that has since been refunded (review r8). */
+const REFUNDED_CLOSING = "The refund was made in Stripe. What is listed above is still open on the order.";
+/** …and its lead-in: the payment is settled history; the ORDER is what still needs the look. */
+const REFUNDED_LEAD = "This order still needs a look:";
 
 export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs): Promise<void> {
   const { data: quote, error: qErr } = await sb
@@ -1557,7 +1678,10 @@ export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs)
   const dateLabel = quote.event_date ?? "date to be confirmed";
   const reasons = args.reviewReasons ?? [];
   const flagged = reasons.length > 0;
-  const subject = `${TENANT_NAME}: ${money} ${args.kind} payment received${flagged ? " — NEEDS REVIEW" : ""}`;
+  const refunded = args.refunded === true;
+  const subject = refunded
+    ? `${TENANT_NAME}: ${money} ${args.kind} payment (since refunded) — NEEDS REVIEW`
+    : `${TENANT_NAME}: ${money} ${args.kind} payment received${flagged ? " — NEEDS REVIEW" : ""}`;
   // appUrl() throws when NEXT_PUBLIC_APP_URL is unset (CI/local); a missing link must not
   // cost the notification, so the CTA degrades to the plain fact.
   let link: string | null = null;
@@ -1569,18 +1693,25 @@ export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs)
 
   const reviewHtml = flagged
     ? `
-      <p style="margin:16px 0 8px;"><strong>This payment needs a review:</strong></p>
+      <p style="margin:16px 0 8px;"><strong>${refunded ? REFUNDED_LEAD : "This payment needs a review:"}</strong></p>
       <ul style="margin:0 0 0 18px;padding:0;">${reasons.map((r) => `<li>${escapeHtml(REVIEW_SENTENCE[r])}</li>`).join("")}</ul>
-      <p style="margin:12px 0 0;">Nothing was refunded automatically.</p>`
+      <p style="margin:12px 0 0;">${refunded ? REFUNDED_CLOSING : "Nothing was refunded automatically."}</p>`
     : "";
   const reviewText = flagged
-    ? `\n\nThis payment needs a review:\n${reasons.map((r) => `- ${REVIEW_SENTENCE[r]}`).join("\n")}\nNothing was refunded automatically.`
+    ? `\n\n${refunded ? REFUNDED_LEAD : "This payment needs a review:"}\n${reasons.map((r) => `- ${REVIEW_SENTENCE[r]}`).join("\n")}\n${refunded ? REFUNDED_CLOSING : "Nothing was refunded automatically."}`
     : "";
-  const bodyHtml = `
+  const bodyHtml = refunded
+    ? `
+      <p style="margin:0 0 16px;">A customer paid a <strong>${escapeHtml(args.kind)}</strong> of <strong>${escapeHtml(money)}</strong> for the event on <strong>${escapeHtml(dateLabel)}</strong>, and that payment has since been <strong>refunded in full</strong>.</p>
+      <p style="margin:0;">Quote <code>${escapeHtml(args.quoteId)}</code> — the payment and its refund are recorded in CO-OPS.</p>${reviewHtml}
+    `
+    : `
       <p style="margin:0 0 16px;">A customer just paid a <strong>${escapeHtml(args.kind)}</strong> of <strong>${escapeHtml(money)}</strong> for the event on <strong>${escapeHtml(dateLabel)}</strong>.</p>
       <p style="margin:0;">Quote <code>${escapeHtml(args.quoteId)}</code> — the payment is recorded in CO-OPS.</p>${reviewHtml}
     `;
-  const text = `${money} ${args.kind} payment received for the event on ${dateLabel}. Quote ${args.quoteId} is recorded in CO-OPS.${reviewText}${link ? `\n\n${link}` : ""}`;
+  const text = refunded
+    ? `${money} ${args.kind} payment for the event on ${dateLabel} has since been refunded in full. Quote ${args.quoteId}: the payment and its refund are recorded in CO-OPS.${reviewText}${link ? `\n\n${link}` : ""}`
+    : `${money} ${args.kind} payment received for the event on ${dateLabel}. Quote ${args.quoteId} is recorded in CO-OPS.${reviewText}${link ? `\n\n${link}` : ""}`;
 
   await sendEmail({
     to: user.email,
@@ -1589,7 +1720,7 @@ export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs)
     html: link
       ? renderEmailLayout({
           preheader: subject,
-          heading: flagged ? "Payment received — needs review" : "Payment received",
+          heading: refunded ? "Refunded payment — needs review" : flagged ? "Payment received — needs review" : "Payment received",
           bodyHtml,
           cta: { label: "OPEN THE PIPELINE", url: link },
           footerNote: "Sent automatically when the payment provider confirmed the charge.",

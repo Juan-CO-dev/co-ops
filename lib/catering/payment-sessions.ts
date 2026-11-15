@@ -109,17 +109,43 @@
  * dead before its cleanup. Nothing ever looked again.
  *
  * So it is recorded: `catering_payments.settlement_cleanup_at` (migration 0303).
- *   · NULL on a paid row = the cleanup is NOT confirmed complete. WHOEVER next finds that row
- *     paid runs it again — any delivery of any event about that charge, a second "Mark paid"
+ *   · NULL on a SETTLED row = the cleanup is NOT confirmed complete. WHOEVER next finds that
+ *     row runs it again — any delivery of any event about that charge, a second "Mark paid"
  *     press. It is idempotent, so running it beside another run, or after one that had in
  *     fact finished, changes nothing.
  *   · A timestamp = it is done: `settlementCleanupComplete` held (below) and
  *     `markSettlementCleanupDone` wrote it — ONCE, by compare-and-set (NULL → now, on a row
- *     still `paid`). It is never cleared. A cleanup that could not confirm everything closed
- *     NEVER writes it: the unresolved checkout keeps its id on its row, a person is told, and
- *     the next look tries again.
+ *     money was recorded on). It is never cleared. A cleanup that could not confirm
+ *     everything closed NEVER writes it: the unresolved checkout keeps its id on its row, a
+ *     person is told, and the next look tries again.
  *   · The compare-and-set is also what makes "tell the team a payment arrived" happen once:
  *     of two runs finishing the same cleanup, the one whose write lands reports it.
+ *
+ * ── THE MARKER ALONE OWNS THE CLEANUP — NEVER THE MONEY STATUS (review r8) ───────────
+ * Rounds r6 and r7 read the rule above as "NULL on a `paid` row", and every gate asked "is
+ * the row `paid`?" BEFORE it asked "is the marker NULL?": the webhook's resume gate, its
+ * duplicate gate, the "Mark paid" resume, and this file's own marker write. A row can stop
+ * being `paid` while its cleanup is unfinished — a whole-charge refund is applied to it (seen
+ * before the payment and applied by the settlement itself, or delivered while a settlement
+ * lay dead after its flip) — and at that instant every one of those gates let go. Reproduced
+ * by the reviewer: the settlement voided the order's full-amount intent, could not retire its
+ * checkout for a moment, applied the refund, and the SAME event sent again answered
+ * `already_advanced`, then `duplicate`. The page stayed attached and payable for good.
+ * REFUNDING ONE CHARGE DOES NOT CLOSE ANOTHER HOSTED CHECKOUT.
+ *
+ * So the two facts are kept apart, and each has one owner:
+ *   · MONEY STATUS (`due` / `void` / `paid` / `refunded`) says what happened to the money.
+ *     Only the paid flip and a whole-charge refund write it.
+ *   · THE MARKER says whether the settlement's cleanup is finished. Only
+ *     `markSettlementCleanupDone` writes it.
+ * THE CLEANUP IS OWED BY EVERY ROW MONEY WAS RECORDED ON WHOSE MARKER IS NULL — `paid` or
+ * `refunded` alike (`settlementRecorded`, `SETTLED_PAYMENT_STATUSES`: the one definition,
+ * and every gate reads it). The cleanup NEVER writes the money status: a refunded row stays
+ * refunded through it, and the order ends exactly where "settled, then refunded" would have
+ * left it — the other deposit / full intent closed, its checkout retired, the marker set.
+ * A `due` or `void` row has had no settlement: it owes no cleanup and never takes the marker.
+ * A new money status that can follow `paid` joins `SETTLED_PAYMENT_STATUSES`
+ * (tests/catering-payment-interleavings.test.ts walks every gate over every status).
  */
 import "server-only";
 
@@ -155,21 +181,39 @@ export function settlementCleanupComplete(closed: ClosedCheckouts): boolean {
 }
 
 /**
+ * THE MONEY STATUSES A ROW CAN ONLY HAVE AFTER A SETTLEMENT (see the header, review r8):
+ * money was recorded on it (`paid`), and may since have been given back whole (`refunded`).
+ * `due` and `void` are before any settlement. The transitions, all of them: due → paid,
+ * void → paid (a charge on a closed intent is still a charge), due → void, paid → refunded.
+ * THIS LIST IS THE DEFINITION every cleanup gate reads — never a bare `=== "paid"`.
+ */
+export const SETTLED_PAYMENT_STATUSES = ["paid", "refunded"] as const;
+
+/** Was money recorded on a row with this status? Then a NULL marker on it is owed cleanup. */
+export function settlementRecorded(status: string | null | undefined): boolean {
+  return status != null && (SETTLED_PAYMENT_STATUSES as readonly string[]).includes(status);
+}
+
+/**
  * What writing the settlement marker came to:
  *   `won`    — this call wrote it: the cleanup is now recorded as done, by this run;
- *   `lost`   — nothing was written: another run recorded it first (or the row is no longer
- *              `paid`, e.g. refunded in between). An explicit rowcount of zero, nothing else;
+ *   `lost`   — nothing was written: another run recorded it first. An explicit rowcount of
+ *              zero, nothing else. (Review r8: a row that has since been REFUNDED no longer
+ *              reads as `lost` — it takes the marker like a paid one, because its cleanup was
+ *              owed like a paid one's.);
  *   `failed` — the write itself failed (a database error, or migration 0303's column is not
  *              there). NOBODY is known to have recorded it: the next look runs the cleanup again.
  */
 export type CleanupMark = "won" | "lost" | "failed";
 
 /**
- * Record that a paid payment's settlement cleanup is COMPLETE (see the header, review r6).
- * A compare-and-set on the row as the settlement left it: still `paid`, marker still NULL.
- * NEVER THROWS — it runs after money was recorded, where nothing may fail the settlement.
- * Call it ONLY after `settlementCleanupComplete` held for this run (and, for a card
- * payment, after its sibling intents were voided and anything to review was reported).
+ * Record that a settled payment's cleanup is COMPLETE (see the header, review r6 / r8).
+ * A compare-and-set: marker still NULL, on a row money was recorded on — `paid`, or
+ * `refunded` since (`SETTLED_PAYMENT_STATUSES`). It writes the marker and NOTHING else: the
+ * money status is not in the payload and is never changed here. A `due` / `void` row never
+ * takes it. NEVER THROWS — it runs after money was recorded, where nothing may fail the
+ * settlement. Call it ONLY after `settlementCleanupComplete` held for this run (and, for a
+ * card payment, after its sibling intents were voided and anything to review was reported).
  */
 export async function markSettlementCleanupDone(sb: ServiceClient, paymentId: string): Promise<CleanupMark> {
   try {
@@ -177,7 +221,7 @@ export async function markSettlementCleanupDone(sb: ServiceClient, paymentId: st
       .from("catering_payments")
       .update({ settlement_cleanup_at: new Date().toISOString() }, { count: "exact" })
       .eq("id", paymentId)
-      .eq("status", "paid")
+      .in("status", [...SETTLED_PAYMENT_STATUSES])
       .is("settlement_cleanup_at", null);
     if (error) {
       console.error(`[catering] could not record the settlement cleanup of payment ${paymentId} as done:`, error.message);
