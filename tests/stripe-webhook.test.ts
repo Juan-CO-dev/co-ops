@@ -126,10 +126,16 @@ function handlerFor(over: {
       return {};
     }
     if (op.table === "catering_quotes") {
+      // The family read (review r4): the revisions that name this quote as their root. None.
+      if ("root_id" in op.filters) return { data: [] };
       return over.quote ?? { data: { id: QUOTE_ID, location_id: LOCATION_ID } };
     }
     if (op.table === "catering_payments") {
-      if (op.kind === "update") return over.paymentUpdate ?? { count: 1 };
+      // A guarded flip answers with the row it wrote (the paid flip reads it back — review
+      // r4) and its rowcount (the refund flip). `{ count: 0 }` = it matched nothing.
+      if (op.kind === "update") {
+        return over.paymentUpdate ?? { count: 1, data: [{ id: PAYMENT_ID, quote_id: QUOTE_ID, provider_session_id: null }] };
+      }
       if ("id" in op.filters) return over.paymentById ?? { data: DUE_ROW };
       if ("provider_session_id" in op.filters) return over.paymentBySession ?? { data: null };
       if ("provider_ref" in op.filters) return over.paymentByRef ?? { data: null };

@@ -29,6 +29,42 @@
  * A `balance` intent is the next step of the designed deposit → balance sequence, not a
  * duplicate of what was just paid, so its checkout is never touched here.
  *
+ * ── A SETTLEMENT RUNS BESIDE A REVISE, NOT AFTER IT (review r4) ──────────────────────
+ * Recording money is "read the payment, flip it to paid, close the order's checkouts", and
+ * a manager's revise can land between any two of those: its carry (payment-carry.ts)
+ * re-points the family's payments at a NEW quote row. The first cut of this module was
+ * handed the quote id the settlement had READ and looked only there — so a payment that
+ * moved between the read and the flip was recorded paid while its own hosted page, attached
+ * on the new revision, stayed payable, and the audit row said nothing was open.
+ *
+ * So this module never trusts a revision:
+ *   1. THE SETTLED INTENT'S OWN CHECKOUT comes from the settlement's FLIP, which returns the
+ *      row it wrote (`settledSessionId`). It is retired FIRST, from that value alone — no
+ *      read, no quote filter, nothing a revise can move out from under it. A session a
+ *      payment was paid THROUGH (`paidThroughSessionId`, the webhook's event) is history and
+ *      is left alone; any OTHER session the paid row names is a second way to pay the same
+ *      money and is closed like the rest.
+ *   2. THE ORDER'S OTHER CHECKOUTS are looked for across the whole FAMILY (every revision:
+ *      `familyRevisionIds`), in one statement. A payment never leaves its family, so a row
+ *      the carry has moved, or has not moved yet, is found wherever it is.
+ *   3. …AND THE LOOK IS CHECKED. The family is read again afterwards; a revision that
+ *      appeared in between may hold rows the look could not see, so the look is repeated
+ *      (at most `MAX_FAMILY_LOOKS` times). A family still changing after that, or one that
+ *      could not be read at all, is reported `stillOpen` under the settled payment's id.
+ *      THIS MODULE NEVER ANSWERS "NOTHING OPEN" ABOUT AN ORDER IT COULD NOT FINISH LOOKING AT.
+ *
+ * THE ORDER OF OPERATIONS, AND WHY NO LOCK IS ADDED. A settlement is, in this order: the
+ * guarded flip of ONE payment row (a single-row write: it queues behind migration 0303's
+ * attach function, which holds every payment row of the quote while it decides, and behind
+ * a carry's compare-and-set on the same row) → this module's reads → its retire calls → its
+ * guarded clears. It takes no quote lock and holds nothing across a Stripe call, so it adds
+ * no lock order to the one 0303 documents (quote row, then payment rows). What keeps a NEW
+ * checkout from appearing after the look is the other half of that function: once the flip
+ * has committed, an attach on this order answers `already_paid` (before 0303: the attach's
+ * own re-read does). A hand-recorded payment's flip is additionally a compare-and-set on
+ * the revision it was read on (lib/catering/payments.ts `markPaymentPaid`): a payment the
+ * carry moved first is refused instead of recorded on a row nobody was looking at.
+ *
  * ── IT HAS A TIME BUDGET, BECAUSE OF WHO CALLS IT ────────────────────────────────────
  * The webhook runs this AFTER the paid flip and BEFORE its audit row and staff email — the
  * reasons it finds belong in both. A retried delivery of a flip that already landed reports
@@ -36,12 +72,12 @@
  * Stripe and was cut off would leave a payment recorded and nobody told. So the whole pass
  * is bounded (`budgetMs`, our own number — not a provider rule): a session whose retirement
  * has not been confirmed inside it is reported `stillOpen`, exactly like one that failed.
- * The common case costs nothing: no row of the quote names a session, Stripe is not asked.
+ * The common case costs nothing at Stripe: no row of the family names a session.
  */
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { retireSessionFor, type RetireSession } from "@/lib/catering/payment-carry";
+import { familyRevisionIds, retireSessionFor, type RetireSession } from "@/lib/catering/payment-carry";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
@@ -50,7 +86,9 @@ export interface ClosedCheckouts {
   /** Stripe confirmed the session expired; its id was cleared from the row. */
   retired: string[];
   /** Could not be confirmed closed (Stripe unreachable, no credentials, a failed read or
-   *  write). The row still names the session. A person needs to look. */
+   *  write) — OR the order could not be looked at to the end, in which case the settled
+   *  payment's own id stands in for "this order's checkouts". A row listed here still names
+   *  its session. A person needs to look. */
   stillOpen: string[];
   /** The session was already `complete`: that customer's money is landing, and its own
    *  webhook event will record and flag it. The row keeps the id. */
@@ -60,17 +98,22 @@ export interface ClosedCheckouts {
 export const NO_CHECKOUTS = (): ClosedCheckouts => ({ retired: [], stillOpen: [], completing: [] });
 
 export interface CloseQuoteCheckoutsInput {
+  /** ANY revision of the order's family (see the header): the one the flip returned is the
+   *  natural choice, but a stale one finds the same family. */
   quoteId: string;
-  /** The quote's shop: the account that owns its sessions. Null = unknown, nothing is retired. */
+  /** The order's shop: its sessions live in that shop's Stripe account(s). Null = unknown, nothing is retired. */
   locationId: string | null;
-  /**
-   * The payment that just settled. Its siblings' checkouts are closed. Its OWN session is
-   * closed too when `includeSettled` is true — a payment recorded BY HAND, whose hosted
-   * page the customer could still pay by card as well. A payment that settled THROUGH its
-   * session (the webhook) leaves that id alone: it is history.
-   */
+  /** The payment that just settled. */
   settledPaymentId: string;
-  includeSettled?: boolean;
+  /**
+   * The Checkout Session the settled row NAMED AT THE INSTANT IT WAS FLIPPED — what the
+   * flip's own returned row said, never an earlier read. Null = it named none. REQUIRED, so
+   * a new way to record money has to decide (see the header, step 1).
+   */
+  settledSessionId: string | null;
+  /** The session the money came THROUGH (the webhook's event). Omit for a payment recorded
+   *  by hand: every session its row names is then a second way to pay it. */
+  paidThroughSessionId?: string | null;
   /** Test seam. Production resolves the shop's own credentials (`retireSessionFor`). */
   retire?: RetireSession;
   /** The most this pass may spend waiting on Stripe, in ms (see the header). */
@@ -79,6 +122,9 @@ export interface CloseQuoteCheckoutsInput {
 
 /** The default budget: long enough for a healthy expire call, short enough for a webhook. */
 export const CLOSE_CHECKOUTS_BUDGET_MS = 6_000;
+
+/** How many times the family is looked at while revisions keep appearing under the look. */
+const MAX_FAMILY_LOOKS = 3;
 
 class BudgetSpent extends Error {}
 
@@ -104,62 +150,55 @@ interface SessionRow {
   provider_session_id: string | null;
 }
 
+const pushOnce = (list: string[], id: string): void => {
+  if (!list.includes(id)) list.push(id);
+};
+
 /**
- * Retire the quote's unresolved deposit / full checkouts (see the header). NEVER THROWS.
- * Asks Stripe nothing when no row of the quote names a session.
+ * Close the settled intent's own checkout and the order's other unresolved deposit / full
+ * checkouts (see the header). NEVER THROWS. Asks Stripe nothing when there is no session to
+ * close.
  */
 export async function closeQuoteCheckouts(sb: ServiceClient, input: CloseQuoteCheckoutsInput): Promise<ClosedCheckouts> {
   const out = NO_CHECKOUTS();
-  let targets: SessionRow[] = [];
-  try {
-    // Every row of the quote (a handful); the session filter is applied below.
-    const { data, error } = await sb
-      .from("catering_payments")
-      .select("id, kind, status, provider_session_id")
-      .eq("quote_id", input.quoteId)
-      .returns<SessionRow[]>();
-    if (error) throw new Error(error.message);
-    targets = (data ?? []).filter((r) => {
-      if (!r.provider_session_id) return false;
-      if (r.id === input.settledPaymentId) return input.includeSettled === true;
-      return (r.status === "due" || r.status === "void") && (r.kind === "deposit" || r.kind === "full");
-    });
-  } catch (e) {
-    // We could not look, so we cannot say the quote is clean. The settled payment's id
-    // stands in for "this quote's checkouts" — the caller flags it for a person.
-    console.error(`[catering] could not read the open checkouts of quote ${input.quoteId}:`, e instanceof Error ? e.message : e);
-    out.stillOpen.push(input.settledPaymentId);
-    return out;
-  }
-  if (targets.length === 0) return out;
-
-  let retire: RetireSession = null;
-  try {
-    retire = input.retire !== undefined ? input.retire : input.locationId ? await retireSessionFor(sb, input.locationId) : null;
-  } catch (e) {
-    console.error(`[catering] could not resolve Stripe for quote ${input.quoteId}:`, e instanceof Error ? e.message : e);
-  }
-
   const deadline = Date.now() + (input.budgetMs ?? CLOSE_CHECKOUTS_BUDGET_MS);
-  for (const row of targets) {
-    const sessionId = row.provider_session_id as string;
-    if (!retire) {
-      out.stillOpen.push(row.id);
-      continue;
+
+  // The shop's way to Stripe, resolved ONCE and only when there is something to retire.
+  let retire: RetireSession | undefined = input.retire;
+  const retireFn = async (): Promise<RetireSession> => {
+    if (retire !== undefined) return retire;
+    retire = null;
+    try {
+      if (input.locationId) retire = await retireSessionFor(sb, input.locationId);
+    } catch (e) {
+      console.error(`[catering] could not resolve Stripe for quote ${input.quoteId}:`, e instanceof Error ? e.message : e);
+    }
+    return retire;
+  };
+
+  /** Retire ONE session and, on Stripe's confirmation, clear it from its row. Never throws. */
+  const attempted = new Set<string>();
+  const closeOne = async (paymentId: string, sessionId: string): Promise<void> => {
+    if (attempted.has(`${paymentId}|${sessionId}`)) return;
+    attempted.add(`${paymentId}|${sessionId}`);
+    const call = await retireFn();
+    if (!call) {
+      pushOnce(out.stillOpen, paymentId);
+      return;
     }
     // Checked BEFORE the call is made: a retire we start and then abandon would be a Stripe
     // request nobody is listening to. (One that outlives the budget below is still raced, so
     // its late answer — or its late failure — is handled, never an unhandled rejection.)
     const left = deadline - Date.now();
     if (left <= 0) {
-      out.stillOpen.push(row.id);
-      continue;
+      pushOnce(out.stillOpen, paymentId);
+      return;
     }
     try {
-      const outcome = await within(retire(sessionId), left);
+      const outcome = await within(call(sessionId), left);
       if (outcome === "complete") {
-        out.completing.push(row.id);
-        continue;
+        pushOnce(out.completing, paymentId);
+        return;
       }
       // Confirmed expired. Clear the id — guarded on the exact session we retired, so a row
       // another request has since given a new checkout is left alone.
@@ -168,14 +207,69 @@ export async function closeQuoteCheckouts(sb: ServiceClient, input: CloseQuoteCh
       const { error } = await sb
         .from("catering_payments")
         .update({ provider_session_id: null })
-        .eq("id", row.id)
+        .eq("id", paymentId)
         .eq("provider_session_id", sessionId);
       if (error) throw new Error(error.message);
-      out.retired.push(row.id);
+      pushOnce(out.retired, paymentId);
     } catch (e) {
-      console.error(`[catering] could not close the checkout session of payment ${row.id}:`, e instanceof Error ? e.message : e);
-      out.stillOpen.push(row.id);
+      console.error(`[catering] could not close the checkout session of payment ${paymentId}:`, e instanceof Error ? e.message : e);
+      pushOnce(out.stillOpen, paymentId);
     }
+  };
+
+  /** We could not finish looking, so we cannot say the order is clean (see the header). */
+  const unresolved = (why: string, e?: unknown): ClosedCheckouts => {
+    console.error(
+      `[catering] the open checkouts of the order of payment ${input.settledPaymentId} (quote ${input.quoteId}) could not be checked: ${why}`,
+      e instanceof Error ? e.message : (e ?? ""),
+    );
+    pushOnce(out.stillOpen, input.settledPaymentId);
+    return out;
+  };
+
+  // 1. THE SETTLED INTENT'S OWN CHECKOUT — from the flip, before and regardless of any read.
+  const own = input.settledSessionId;
+  if (own && own !== (input.paidThroughSessionId ?? null)) await closeOne(input.settledPaymentId, own);
+
+  // 2. THE ORDER'S OTHER CHECKOUTS — across the family, and the look is checked (step 3).
+  let family: string[];
+  try {
+    family = await familyRevisionIds(sb, input.quoteId, "closeQuoteCheckouts");
+  } catch (e) {
+    return unresolved("its revisions could not be read", e);
   }
-  return out;
+  for (let look = 1; ; look += 1) {
+    let rows: SessionRow[];
+    try {
+      // Every row of the family (a handful) in ONE statement; the session filter is below.
+      const { data, error } = await sb
+        .from("catering_payments")
+        .select("id, kind, status, provider_session_id")
+        .in("quote_id", family)
+        .returns<SessionRow[]>();
+      if (error) throw new Error(error.message);
+      rows = data ?? [];
+    } catch (e) {
+      return unresolved("its payments could not be read", e);
+    }
+    for (const r of rows) {
+      if (!r.provider_session_id) continue;
+      if (r.id === input.settledPaymentId) continue; // its own checkout was step 1's, from the flip
+      if (r.status !== "due" && r.status !== "void") continue; // a paid / refunded row's id is history
+      if (r.kind !== "deposit" && r.kind !== "full") continue; // a balance is the next step, not a duplicate
+      await closeOne(r.id, r.provider_session_id);
+    }
+
+    // 3. Was that the whole family? A revision created during the look may hold rows a carry
+    //    moved onto it before our statement ran.
+    let now: string[];
+    try {
+      now = await familyRevisionIds(sb, input.quoteId, "closeQuoteCheckouts re-check");
+    } catch (e) {
+      return unresolved("its revisions could not be re-read", e);
+    }
+    if (now.every((id) => family.includes(id))) return out;
+    if (look >= MAX_FAMILY_LOOKS) return unresolved(`it was revised ${look} times while it was being checked`);
+    family = now;
+  }
 }

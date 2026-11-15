@@ -73,6 +73,18 @@
  *     payment-sessions.ts) and its id cleared on Stripe's confirmation. One that cannot be
  *     confirmed closed keeps its id on its row — the pay path goes on treating it as an
  *     unresolved checkout — and the payment is flagged `sibling_checkout_open`.
+ *   - …AND ALL OF THAT IS DONE WHERE THE PAYMENT IS NOW, NOT WHERE IT WAS READ (review r4).
+ *     A manager's revise can land between this processor's read of the payment and its
+ *     flip: the carry moves the payment (and the rest of the family) onto a new quote row,
+ *     and a checkout can be attached there. Reviewing and cleaning up against the revision
+ *     that was READ found nothing — a full-amount checkout stayed open beside a paid
+ *     deposit, unflagged. So the flip RETURNS the row it wrote (its revision now, the
+ *     session it names); the order is judged on that revision (re-read; a failed re-read is
+ *     `quote_recheck_failed`); the siblings are looked for across the whole FAMILY; and the
+ *     cleanup closes the paid row's own stored session too when it is not the session that
+ *     was just paid. A cleanup that could not finish looking reports itself the same way
+ *     as one that could not close (`sibling_checkout_open`) — never as "nothing open".
+ *     The flip itself stays unguarded on the revision: money Stripe took is recorded.
  * EVERYTHING AFTER THE FLIP IS NON-THROWING. An event whose processing fails is retried
  * (B005), and a retry of a flip that did land reports `already_advanced` with no audit row
  * and no email. A failure in the review step therefore degrades to a reason
@@ -100,7 +112,7 @@ import { TENANT_NAME } from "@/lib/tenant";
 import { parseCheckoutEvent, stripeEnvSuffix, type CheckoutEventOutcome } from "@/lib/stripe/shared";
 import { quoteTimeExpired } from "@/lib/portal/payability-shared";
 import { closeQuoteCheckouts, type ClosedCheckouts } from "@/lib/catering/payment-sessions";
-import type { RetireSession } from "@/lib/catering/payment-carry";
+import { familyRevisionIds, type RetireSession } from "@/lib/catering/payment-carry";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
@@ -196,6 +208,7 @@ export type PaymentReviewReason =
   | "paid_after_expiry"            // the payment settled after the open offer's expires_at
   | "already_settled"              // the row was already paid/refunded another way; NOT moved
   | "sibling_check_failed"         // we could not read the quote's other payments
+  | "quote_recheck_failed"         // a revise moved the payment mid-settlement and its new revision could not be read
   | "sibling_checkout_open";       // another checkout of the quote could not be confirmed closed
 
 export interface NotifyPaidArgs {
@@ -387,10 +400,14 @@ async function reviewSiblings(
   const reasons: PaymentReviewReason[] = [];
   const voided: string[] = [];
   try {
+    // THE ORDER'S OTHER PAYMENTS, WHEREVER A REVISE HAS PUT THEM (review r4). A settlement
+    // runs beside the carry: this payment's siblings may be on the revision it is on now, or
+    // still on the one it left. They are asked for across the family, in one statement.
+    const family = await familyRevisionIds(sb, payment.quote_id, "reviewSiblings");
     const { data, error } = await sb
       .from("catering_payments")
       .select("id, kind, status")
-      .eq("quote_id", payment.quote_id)
+      .in("quote_id", family)
       .neq("id", payment.id)
       .returns<Array<{ id: string; kind: string; status: string }>>();
     if (error) throw new Error(error.message);
@@ -497,7 +514,7 @@ async function dispatch(
   const payment = await findPaymentForSession(sb, outcome);
   if (!payment) return { result: "payment_not_found", locationId: null };
 
-  const quote = await quoteOfPayment(sb, payment.quote_id);
+  let quote = await quoteOfPayment(sb, payment.quote_id);
   const locationId = quote?.location_id ?? null;
 
   // PER-LOCATION MODE ONLY: an event signed by one shop's account may not touch another
@@ -539,22 +556,28 @@ async function dispatch(
   const nowMs = Date.now();
   const settledAtMs = outcome.createdSec != null ? Math.min(outcome.createdSec * 1000, nowMs) : nowMs;
   const settledAt = new Date(settledAtMs).toISOString();
-  const { error, count } = await sb
+  // THE FLIP RETURNS THE ROW IT WROTE (review r4). The read above can be a revise old: the
+  // carry may since have moved this payment onto a new revision and a checkout may have been
+  // attached there. The flip is deliberately NOT guarded on the revision (unlike a
+  // hand-recorded payment) — money Stripe took is recorded wherever its row now is — so the
+  // row's CURRENT revision and session come back from the write itself, and everything after
+  // this line works from them.
+  const { data: flippedRows, error } = await sb
     .from("catering_payments")
-    .update(
-      {
-        status: "paid",
-        paid_at: settledAt,
-        provider: "stripe",
-        provider_ref: outcome.paymentIntentId ?? null,
-      },
-      { count: "exact" },
-    )
+    .update({
+      status: "paid",
+      paid_at: settledAt,
+      provider: "stripe",
+      provider_ref: outcome.paymentIntentId ?? null,
+    })
     .eq("id", payment.id)
-    .in("status", ["due", "void"]);
+    .in("status", ["due", "void"])
+    .select("id, quote_id, provider_session_id")
+    .returns<Array<{ id: string; quote_id: string; provider_session_id: string | null }>>();
   if (error) throw new Error(`stripe mark paid: ${error.message}`);
+  const flipped = flippedRows?.[0] ?? null;
 
-  if (count === 0) {
+  if (!flipped) {
     // The row was already paid or refunded. WHO got there first decides what this is, so the
     // row is re-read (the pre-read may predate a concurrent delivery of this very charge).
     const { data: fresh, error: freshErr } = await sb
@@ -615,6 +638,22 @@ async function dispatch(
 
   // THE ROW IS PAID. From here to the return NOTHING MAY THROW (see the header).
   const reasons: PaymentReviewReason[] = [];
+  // WHERE THE PAYMENT IS NOW (review r4). If a revise moved it between the read and the
+  // flip, the order is judged as it stands on the revision the row is on — its price, its
+  // deadline, whether it is still open — not on the one that was read.
+  const readOnQuoteId = payment.quote_id;
+  const moved = flipped.quote_id !== readOnQuoteId;
+  if (moved) {
+    payment.quote_id = flipped.quote_id;
+    try {
+      const now = await quoteOfPayment(sb, flipped.quote_id);
+      if (!now) throw new Error("the revision the payment is on could not be found");
+      quote = now;
+    } catch (e) {
+      console.error(`[stripe webhook] could not re-read the quote of ${payment.id} after a revise:`, e instanceof Error ? e.message : e);
+      reasons.push("quote_recheck_failed");
+    }
+  }
   if (payment.status === "void") reasons.push("intent_was_void");
   if (outcome.amountCents != null && outcome.amountCents !== payment.amount_cents) reasons.push("amount_mismatch");
   // AN OLDER PRICE (review r1). An intent whose checkout could not be retired when the quote
@@ -635,11 +674,15 @@ async function dispatch(
   reasons.push(...siblings.reasons);
   // CLOSE WHAT CAN NO LONGER BE COLLECTED (review r3 — see the header). After the siblings
   // are voided, so a checkout attached a moment ago is found on a row this payment closed.
-  // Never throws; what it could not confirm closed is a reason for a person to look.
+  // Never throws; what it could not confirm closed — or could not finish looking for — is a
+  // reason for a person to look. It works from what the FLIP returned (review r4): the
+  // session this row names is closed too unless it is the very session that was just paid.
   const closed: ClosedCheckouts = await closeQuoteCheckouts(sb, {
-    quoteId: payment.quote_id,
+    quoteId: flipped.quote_id,
     locationId,
     settledPaymentId: payment.id,
+    settledSessionId: flipped.provider_session_id ?? null,
+    paidThroughSessionId: outcome.sessionId ?? null,
     retire: deps.retireSession,
   });
   if (closed.stillOpen.length > 0) reasons.push("sibling_checkout_open");
@@ -665,6 +708,9 @@ async function dispatch(
       location_id: locationId,
       location_code: ctx.locationCode,
       row_moved: true,
+      // Present only when a revise moved the payment between this event's read and its
+      // flip: `quote_id` above is where the payment is NOW, this is where it was read.
+      ...(moved ? { read_on_quote_id: readOnQuoteId } : {}),
       // When the money settled (the row's `paid_at`), beside the offer's deadline.
       settled_at: settledAt,
       offer_expires_at: quote?.expires_at ?? null,
@@ -838,8 +884,10 @@ const REVIEW_SENTENCE: Record<PaymentReviewReason, string> = {
   already_settled:
     "This payment was already recorded another way (for example marked paid by hand), so this card charge may be a duplicate that needs a refund.",
   sibling_check_failed: "We could not check this order's other payments. Please check for a duplicate charge.",
+  quote_recheck_failed:
+    "This order was revised while the payment was landing, and we could not re-read the new revision. Check the amount paid against what the current quote asks for.",
   sibling_checkout_open:
-    "Another online checkout for this order could not be closed, so the customer may still be able to pay it. Expire that checkout session in the Stripe dashboard and check this order for a second charge.",
+    "An online checkout for this order could not be confirmed closed, so the customer may still be able to pay it. Expire the order's checkout sessions in the Stripe dashboard and check this order for a second charge.",
 };
 
 export async function notifyPaymentPaid(sb: ServiceClient, args: NotifyPaidArgs): Promise<void> {

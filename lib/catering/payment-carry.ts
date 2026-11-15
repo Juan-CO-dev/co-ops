@@ -190,6 +190,38 @@ async function earlierRevisionIds(sb: ServiceClient, rootId: string, liveQuoteId
 }
 
 /**
+ * EVERY revision id of the family `quoteId` belongs to, itself included: the root, plus
+ * every row that names the root. THROWS on a read error — "we could not look" is never "it
+ * has no other revision".
+ *
+ * WHO MAY CALL THIS (review r4). Readers stay keyed on the quote id — a family's payments
+ * live on its live revision, and that is what makes a reader correct without knowing this
+ * file exists. The exception is a SETTLEMENT, which runs beside the carry instead of after
+ * it: between a settlement's read of a payment and its cleanup, the carry can have moved
+ * that payment, or be half way through moving its siblings. A payment never leaves its
+ * family, so "the order's other payments" is asked of the family, in ONE statement over
+ * these ids, and the answer does not depend on which revision a row is on at that instant
+ * (lib/catering/payment-sessions.ts `closeQuoteCheckouts`; the webhook's sibling review).
+ * A quote row that does not exist answers with its own id alone.
+ */
+export async function familyRevisionIds(sb: ServiceClient, quoteId: string, label: string): Promise<string[]> {
+  const { data: quote, error } = await sb
+    .from("catering_quotes")
+    .select("id, root_id")
+    .eq("id", quoteId)
+    .maybeSingle<{ id: string; root_id: string | null }>();
+  if (error) throw new Error(`${label} quote: ${error.message}`);
+  const rootId = quote?.root_id ?? quoteId;
+  const { data: revisions, error: revErr } = await sb
+    .from("catering_quotes")
+    .select("id")
+    .eq("root_id", rootId)
+    .returns<Array<{ id: string }>>();
+  if (revErr) throw new Error(`${label} family: ${revErr.message}`);
+  return [...new Set([rootId, quoteId, ...(revisions ?? []).map((r) => r.id)])];
+}
+
+/**
  * Move a family's payments onto `newQuoteId`. THROWS on a database error — the caller
  * catches, audits and carries on (see the header). `retire` is injected so the vitest
  * spine can drive every branch without a network.

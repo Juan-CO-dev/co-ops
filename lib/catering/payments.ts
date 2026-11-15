@@ -279,6 +279,23 @@ export async function createPaymentDue(
  * (`closed_checkouts.stillOpen`); if the customer does pay it, the webhook records and
  * flags that charge. The other intent itself is NOT voided here — whether a hand-recorded
  * deposit leaves a `full` intent to be marked later is the team's call.
+ *
+ * ── THE FLIP IS A COMPARE-AND-SET ON THE ROW AS READ, AND IT RETURNS THE ROW (review r4) ─
+ * A manager's revise can land between this function's read and its flip: the carry
+ * (payment-carry.ts) moves the payment onto the new revision — possibly re-priced — and a
+ * customer can open a checkout for it there. A flip guarded on `id` + `status` alone still
+ * landed, and the cleanup then looked for checkouts on the revision that had been READ: the
+ * payment was recorded paid, its own hosted page stayed payable, and the audit row said
+ * nothing was open. So:
+ *   · the flip is guarded on the revision the row was read on as well (the same rule every
+ *     carry write follows: a write to a due intent applies only to the row as it was read).
+ *     A payment that moved in between is REFUSED — 409 `not_current`, "this quote was revised
+ *     elsewhere, reload" — and nothing is recorded: the person was looking at a revision,
+ *     and an amount, that no longer exist;
+ *   · the flip RETURNS the row it wrote. The checkout that row names is closed from that
+ *     value, and the order's other checkouts are found across the family — neither depends
+ *     on the earlier read (`closeQuoteCheckouts`, which also documents the order of
+ *     operations and why no lock is added).
  */
 export async function markPaymentPaid(
   actor: AuthContext,
@@ -292,22 +309,38 @@ export async function markPaymentPaid(
     throw new CateringPaymentError(409, "not_due", "Only a due payment can be marked paid");
   }
 
-  const { error, count } = await sb
+  const { data: flipped, error } = await sb
     .from("catering_payments")
-    .update(
-      { status: "paid", paid_at: new Date().toISOString(), provider: "manual" },
-      { count: "exact" },
-    )
+    .update({ status: "paid", paid_at: new Date().toISOString(), provider: "manual" })
     .eq("id", paymentId)
-    .eq("status", "due");
+    .eq("status", "due")
+    .eq("quote_id", quoteId)
+    .select("id, quote_id, provider_session_id")
+    .returns<Array<{ id: string; quote_id: string; provider_session_id: string | null }>>();
   if (error) throw new Error(`markPaymentPaid update: ${error.message}`);
-  if (count === 0) {
+  const paid = flipped?.[0];
+  if (!paid) {
+    // Nothing was written. Which of the two things happened decides what the person is told.
+    const { data: now, error: nowErr } = await sb
+      .from("catering_payments")
+      .select("id, status, quote_id")
+      .eq("id", paymentId)
+      .maybeSingle<{ id: string; status: string; quote_id: string }>();
+    if (nowErr) throw new Error(`markPaymentPaid re-read: ${nowErr.message}`);
+    if (now?.status === "due" && now.quote_id !== quoteId) {
+      throw new CateringPaymentError(409, "not_current", "The quote was revised — reload it and mark the payment on the current revision");
+    }
     throw new CateringPaymentError(409, "not_due", "Payment was concurrently advanced or is not due");
   }
 
   // The money is recorded. Close the checkouts that could still take it a second time
-  // (see the header). Never throws.
-  const closed = await closeQuoteCheckouts(sb, { quoteId, locationId, settledPaymentId: paymentId, includeSettled: true });
+  // (see the header) — from what the flip returned, never from the read above. Never throws.
+  const closed = await closeQuoteCheckouts(sb, {
+    quoteId: paid.quote_id,
+    locationId,
+    settledPaymentId: paymentId,
+    settledSessionId: paid.provider_session_id ?? null,
+  });
 
   void audit({
     actorId: actor.user.id,

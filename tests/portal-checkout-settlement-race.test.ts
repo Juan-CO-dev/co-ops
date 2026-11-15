@@ -659,7 +659,7 @@ describe("W02 review r3 (P1) — closing checkouts after a settlement never hold
     return sessionId;
   }
   const close = (over: Record<string, unknown> = {}) =>
-    closeQuoteCheckouts(db.client, { quoteId: QUOTE, locationId: LOCATION, settledPaymentId: DEPOSIT, ...over });
+    closeQuoteCheckouts(db.client, { quoteId: QUOTE, locationId: LOCATION, settledPaymentId: DEPOSIT, settledSessionId: null, ...over });
 
   it("a Stripe call that hangs is given up on inside the budget, and the checkout is reported still open", async () => {
     const sessionId = await paidDepositBeside({ status: "void" });
@@ -781,5 +781,298 @@ describe("W02 review r3 — the rules are written where the next reader will loo
   it("the staff email has a plain sentence for a checkout that could not be closed", () => {
     const webhook = read("lib/stripe/webhook.ts");
     expect(webhook).toMatch(/sibling_checkout_open:\s*\n?\s*"/);
+  });
+});
+
+/**
+ * ── REVIEW r4 (P1): A SETTLEMENT THAT STRADDLES A REVISE ─────────────────────────────
+ * Recording money is "read the payment, flip it to paid, close the order's checkouts". A
+ * manager's revise can land between any two of those steps, and the family's payments then
+ * live on ANOTHER quote row (lib/catering/payment-carry.ts). Both settlement paths cleaned
+ * up against the revision they had READ:
+ *
+ *   mark paid   reads payment P on v1                       (held here)
+ *   revise      v1 → v2; the carry moves P onto v2, still due
+ *   customer    opens a checkout for P on v2
+ *   mark paid   resumes: the flip matched on id + status alone, so it landed; the cleanup
+ *               then looked for checkouts on v1, found none, and the audit row said so —
+ *               with P's own hosted page still payable.
+ *
+ * THE RULES PINNED HERE:
+ *   · a hand-recorded payment is a compare-and-set on the row AS READ (status AND revision):
+ *     a payment that moved is refused (409 `not_current`) and nothing is recorded;
+ *   · a settlement's flip RETURNS the row it wrote — the revision it is on now, the session
+ *     it names — and the cleanup works from that, never from an earlier read;
+ *   · the settled intent's OWN checkout is closed from what the flip returned, with no quote
+ *     filter at all; the order's other checkouts are found across the whole FAMILY;
+ *   · a cleanup that could not be completed is never reported as "nothing open".
+ */
+describe.each(MIGRATION_STATES)("W02 review r4 (P1) — a settlement that straddles a revise · $name", ({ applied }) => {
+  const paidFlip = (op: HeldOp) => op.table === "catering_payments" && op.kind === "update" && (op.payload as Row).status === "paid";
+
+  beforeEach(() => {
+    if (applied) apply0303(db);
+    // The family starts as ONE live revision (v1) with a due deposit nobody has opened.
+    db.tables.catering_quotes = [quoteRow({ id: V1 })];
+    payments().push(depositRow({ quote_id: V1 }));
+  });
+
+  /** A manager revises v1 → v2 at the same prices; the carry moves the family's payments. */
+  async function reviseToV2(): Promise<void> {
+    db.tables.catering_quotes!.find((q) => q.id === V1)!.superseded_at = "2026-11-12T00:00:00.000Z";
+    db.tables.catering_quotes!.push(quoteRow({ root_id: V1 }));
+    await carryPaymentsToRevision(
+      db.client,
+      { rootId: V1, newQuoteId: QUOTE, depositCents: 20000, totalCents: 100000 },
+      (id: string) => stripe.retire("sk_shop", id),
+    );
+  }
+
+  it("THE REPORTED INTERLEAVING: mark-paid reads P on v1, a revise carries P to v2 and a checkout is attached, mark-paid resumes — never `paid` beside an open checkout nobody knows about", async () => {
+    const connB = secondConnection();
+    const hold = holdWhen(connB, paidFlip);
+    current = connB;
+    const marking = markPaymentPaid(owner, DEPOSIT, V1);
+    current = db;
+    await hold.reached; // P was read on v1; the flip is built and waiting
+
+    await reviseToV2();
+    expect(rowOf(DEPOSIT)).toMatchObject({ quote_id: QUOTE, status: "due" });
+    const session = stripe.byUrl(await tapPay("deposit"))!;
+    expect(rowOf(DEPOSIT).provider_session_id).toBe(session.id);
+
+    hold.release();
+    const outcome: unknown = await marking.then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    // The one state that must never exist: money recorded by hand, the card page for the
+    // same money still open, and a record that says there is nothing left to close.
+    expect(rowOf(DEPOSIT).status === "paid" && session.status === "open").toBe(false);
+    // The payment is not the row that was read any more: refused, and nothing was recorded.
+    expect(outcome).toMatchObject({ status: 409, code: "not_current" });
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "due", quote_id: QUOTE, provider_session_id: session.id });
+    expect(auditMock.mock.calls.some((c) => c[0].action === "catering.payment.mark_paid")).toBe(false);
+
+    // The manager reloads and records it on the live revision: P's own checkout is closed.
+    await markPaymentPaid(owner, DEPOSIT, QUOTE);
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "paid", provider: "manual", provider_session_id: null });
+    expect(session.status).toBe("expired");
+    expect(openSessions()).toEqual([]);
+    expect(lastAuditMeta("catering.payment.mark_paid").closed_checkouts).toEqual({ retired: [DEPOSIT], stillOpen: [], completing: [] });
+  });
+
+  it("THE WEBHOOK'S VERSION: the event reads P on v1, a revise carries P and a FULL checkout opens on v2, the flip lands — that checkout is closed, not left beside a paid deposit", async () => {
+    // The customer finishes a deposit checkout our rows lost track of.
+    const stray = await sessionAtStripe(DEPOSIT, V1, 20000);
+    const event = completedEvent(stray);
+
+    const connB = secondConnection();
+    const hold = holdWhen(connB, paidFlip);
+    const settling = processStripeEvent(connB.client, event, SINGLE, { notifyPaid });
+    await hold.reached; // the payment and its quote (v1) were read; the flip is waiting
+
+    await reviseToV2();
+    const fullSession = stripe.byUrl(await tapPay("full"))!;
+    expect(fullSession.status).toBe("open");
+
+    hold.release();
+    const settled = await settling;
+
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "paid", quote_id: QUOTE }); // the money is always recorded
+    // The full checkout was priced for an unpaid order. It is closed, and its intent with it.
+    expect(fullSession.status).toBe("expired");
+    expect(openSessions()).toEqual([]);
+    expect(byKind("full")[0]).toMatchObject({ status: "void", provider_session_id: null });
+    expect(unresolvedRows()).toEqual([]);
+    expect(settled.result).toBe("paid");
+    const meta = lastAuditMeta("catering.payment.provider_paid");
+    // The audit row names the revision the payment is on NOW, and where it was read.
+    expect(meta.quote_id).toBe(QUOTE);
+    expect(meta.read_on_quote_id).toBe(V1);
+    expect(meta.voided_sibling_ids).toEqual([byKind("full")[0]!.id]);
+    expect(meta.closed_checkouts).toEqual({ retired: [byKind("full")[0]!.id], stillOpen: [], completing: [] });
+  });
+
+  it("…and when Stripe will not confirm that checkout closed, the straddled payment is flagged for a person", async () => {
+    const stray = await sessionAtStripe(DEPOSIT, V1, 20000);
+    const event = completedEvent(stray);
+    const connB = secondConnection();
+    const hold = holdWhen(connB, paidFlip);
+    const settling = processStripeEvent(connB.client, event, SINGLE, { notifyPaid });
+    await hold.reached;
+    await reviseToV2();
+    const fullSession = stripe.byUrl(await tapPay("full"))!;
+
+    stripe.down = true;
+    hold.release();
+    const settled = await settling;
+
+    expect(settled.result).toBe("paid_needs_review");
+    expect(lastAuditMeta("catering.payment.provider_paid").needs_review).toEqual(["sibling_checkout_open"]);
+    expect(byKind("full")[0]).toMatchObject({ status: "void", provider_session_id: fullSession.id });
+  });
+
+  it("…and when the revision the payment moved to cannot be re-read, the money is still recorded and the payment says why it needs a look", async () => {
+    const stray = await sessionAtStripe(DEPOSIT, V1, 20000);
+    const event = completedEvent(stray);
+    const connB = secondConnection();
+    const hold = holdWhen(connB, paidFlip);
+    const settling = processStripeEvent(connB.client, event, SINGLE, { notifyPaid });
+    await hold.reached;
+    await reviseToV2();
+
+    connB.failSelect.push("catering_quotes"); // the first quote read after the flip: the re-read
+    hold.release();
+    const settled = await settling;
+
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "paid", quote_id: QUOTE });
+    expect(settled.result).toBe("paid_needs_review");
+    expect(lastAuditMeta("catering.payment.provider_paid").needs_review).toEqual(["quote_recheck_failed"]);
+  });
+
+  it("a paid row that names a checkout OTHER than the one that was paid: that other checkout is closed too", async () => {
+    // One revision, and P's recorded checkout (open) is not the session the customer paid.
+    db.tables.catering_quotes = [quoteRow()];
+    rowOf(DEPOSIT).quote_id = QUOTE;
+    const recorded = stripe.byUrl(await tapPay("deposit"))!;
+    const stray = await sessionAtStripe(DEPOSIT, QUOTE, 20000);
+
+    const settled = await processStripeEvent(db.client, completedEvent(stray), SINGLE, { notifyPaid });
+
+    expect(settled.result).toBe("paid");
+    expect(rowOf(DEPOSIT).status).toBe("paid");
+    expect(recorded.status).toBe("expired");
+    expect(openSessions()).toEqual([]);
+    expect(lastAuditMeta("catering.payment.provider_paid").closed_checkouts).toEqual({ retired: [DEPOSIT], stillOpen: [], completing: [] });
+  });
+
+  it("the session a payment was PAID THROUGH is history: it is never asked to expire", async () => {
+    db.tables.catering_quotes = [quoteRow()];
+    rowOf(DEPOSIT).quote_id = QUOTE;
+    const session = stripe.byUrl(await tapPay("deposit"))!;
+    retireMock.mockClear();
+
+    await processStripeEvent(db.client, completedEvent(session.id), SINGLE, { notifyPaid });
+
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "paid", provider_session_id: session.id });
+    expect(retireMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("W02 review r4 (P1) — closing an order's checkouts does not depend on which revision the caller read", () => {
+  const FULL = "d0000000-0000-4000-8000-0000000000f4";
+  const family = () => {
+    db.tables.catering_quotes = [{ ...quoteRow(), id: V1, superseded_at: "2026-11-12T00:00:00.000Z" }, quoteRow({ root_id: V1 })];
+  };
+  const close = (over: Record<string, unknown>) =>
+    closeQuoteCheckouts(db.client, { quoteId: QUOTE, locationId: LOCATION, settledPaymentId: DEPOSIT, settledSessionId: null, ...over });
+
+  it("the settled intent's OWN checkout is closed from what the flip returned — a stale quote id does not hide it", async () => {
+    family();
+    const own = await sessionAtStripe(DEPOSIT, QUOTE, 20000);
+    payments().push(depositRow({ status: "paid", provider: "manual", provider_session_id: own })); // on v2
+
+    const closed = await close({ quoteId: V1, settledSessionId: own });
+
+    expect(closed).toEqual({ retired: [DEPOSIT], stillOpen: [], completing: [] });
+    expect(stripe.sessions.get(own)!.status).toBe("expired");
+    expect(rowOf(DEPOSIT).provider_session_id).toBeNull();
+  });
+
+  it("…even when not one row of the order can be read: the own checkout is still closed, and the rest is reported unresolved", async () => {
+    family();
+    const own = await sessionAtStripe(DEPOSIT, QUOTE, 20000);
+    payments().push(depositRow({ status: "paid", provider: "manual", provider_session_id: own }));
+    db.failSelect.push("catering_quotes");
+
+    const closed = await close({ quoteId: V1, settledSessionId: own });
+
+    expect(stripe.sessions.get(own)!.status).toBe("expired");
+    expect(closed.retired).toEqual([DEPOSIT]);
+    expect(closed.stillOpen).toEqual([DEPOSIT]); // never "nothing open" when we could not look
+  });
+
+  it.each([
+    { name: "the caller read the OLD revision; the other checkout is on the live one", stale: V1, siblingOn: QUOTE },
+    { name: "the caller read the LIVE revision; the other checkout is still on the old one (a carry half way)", stale: QUOTE, siblingOn: V1 },
+  ])("the order's other checkouts are found across the family — $name", async ({ stale, siblingOn }) => {
+    family();
+    const other = await sessionAtStripe(FULL, siblingOn, 100000, "full");
+    payments().push(
+      depositRow({ status: "paid", quote_id: stale }),
+      depositRow({ id: FULL, kind: "full", amount_cents: 100000, status: "void", quote_id: siblingOn, provider: "stripe", provider_session_id: other }),
+    );
+
+    const closed = await close({ quoteId: stale });
+
+    expect(closed).toEqual({ retired: [FULL], stillOpen: [], completing: [] });
+    expect(stripe.sessions.get(other)!.status).toBe("expired");
+    expect(rowOf(FULL).provider_session_id).toBeNull();
+  });
+
+  it("another family's checkouts are never touched", async () => {
+    family();
+    const ELSEWHERE = "a0000000-0000-4000-8000-0000000000ee";
+    db.tables.catering_quotes!.push(quoteRow({ id: ELSEWHERE }));
+    const theirs = await sessionAtStripe(FULL, ELSEWHERE, 100000, "full");
+    payments().push(
+      depositRow({ status: "paid" }),
+      depositRow({ id: FULL, kind: "full", amount_cents: 100000, quote_id: ELSEWHERE, provider: "stripe", provider_session_id: theirs }),
+    );
+
+    expect(await close({})).toEqual({ retired: [], stillOpen: [], completing: [] });
+    expect(retireMock).not.toHaveBeenCalled();
+    expect(stripe.sessions.get(theirs)!.status).toBe("open");
+  });
+
+  /** Every read of the payments table is followed by ANOTHER revise of the family. */
+  function revisedOnEveryLook(): void {
+    const client = db.client as unknown as { from: (t: string) => unknown };
+    const realFrom = client.from;
+    let n = 0;
+    client.from = (table: string) => {
+      if (table === "catering_payments") {
+        n += 1;
+        db.tables.catering_quotes!.push(quoteRow({ id: `a0000000-0000-4000-8000-0000000001${String(n).padStart(2, "0")}`, root_id: V1 }));
+      }
+      return realFrom(table);
+    };
+  }
+
+  it("a family that keeps being revised under the cleanup is reported UNRESOLVED — never as `no open checkouts`", async () => {
+    family();
+    payments().push(depositRow({ status: "paid" }));
+    revisedOnEveryLook();
+
+    const closed = await close({});
+
+    expect(closed.stillOpen).toEqual([DEPOSIT]);
+  });
+
+  it("…and the hand-recorded payment's audit row carries it", async () => {
+    family();
+    payments().push(depositRow());
+    revisedOnEveryLook();
+
+    await markPaymentPaid(owner, DEPOSIT, QUOTE);
+
+    expect(rowOf(DEPOSIT).status).toBe("paid"); // a person received real money: recorded regardless
+    expect(lastAuditMeta("catering.payment.mark_paid").closed_checkouts).toMatchObject({ stillOpen: [DEPOSIT] });
+  });
+
+  it("…and so does the card payment's: NEEDS REVIEW, with the reason", async () => {
+    family();
+    payments().push(depositRow());
+    const stray = await sessionAtStripe(DEPOSIT, QUOTE, 20000);
+    const event = completedEvent(stray);
+    revisedOnEveryLook();
+
+    const settled = await processStripeEvent(db.client, event, SINGLE, { notifyPaid });
+
+    expect(rowOf(DEPOSIT).status).toBe("paid");
+    expect(settled.result).toBe("paid_needs_review");
+    expect(lastAuditMeta("catering.payment.provider_paid").needs_review).toContain("sibling_checkout_open");
   });
 });
