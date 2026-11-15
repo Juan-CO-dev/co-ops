@@ -588,7 +588,9 @@ function OrderBuild() {
   }
 
   return (
-    <div className="min-h-screen bg-co-bg pb-28 text-co-text lg:pb-0">
+    // While Continue saves and navigates, the cart is frozen (audit W01/B033 r1): no edit can land after
+    // the last save the review page will read. A failed save sets `leaving` back and unfreezes it.
+    <div className="min-h-screen bg-co-bg pb-28 text-co-text lg:pb-0" inert={leaving} aria-busy={leaving}>
       {sessionExpired ? (
         <div className="sticky top-0 z-40 bg-co-cta px-5 py-3 text-center text-sm font-bold text-co-text">
           Your session timed out — new items aren&apos;t saving.{" "}

@@ -5,7 +5,8 @@
  *
  *   schedule(body) — remember the newest payload and (re)start the debounce.
  *   flush()        — cancel the debounce, wait for any save already in flight, then send whatever is
- *                    pending; resolves with the outcome of the LAST save. The caller navigates only
+ *                    pending, and keep going until no edit is left (an edit made DURING the flush is
+ *                    saved too); resolves with the outcome of the LAST save. The caller navigates only
  *                    on "ok".
  *   takePending()  — hand back an unsent payload (for a keepalive send when the page unmounts).
  *
@@ -68,9 +69,16 @@ export function createCartSaveQueue(opts: {
       cancelTimer();
       timer = timers.set(() => { timer = null; void run(); }, opts.delayMs);
     },
-    flush() {
-      cancelTimer();
-      return run();
+    async flush() {
+      // Drain through the LATEST revision (audit W01/B033 r1): an edit made while this flush is saving
+      // is sent too before the flush resolves — the caller navigates only when nothing is left unsaved.
+      // A non-ok outcome stops the drain and is reported (a failed edit stays pending for the retry).
+      let outcome: CartSaveOutcome;
+      do {
+        cancelTimer();
+        outcome = await run();
+      } while (outcome === "ok" && pending !== null);
+      return outcome;
     },
     takePending() {
       cancelTimer();

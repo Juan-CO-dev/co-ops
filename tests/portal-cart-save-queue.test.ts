@@ -43,6 +43,40 @@ describe("createCartSaveQueue", () => {
     await expect(flushed).resolves.toBe("ok");
     expect(order).toEqual(["start v1", "end v1", "start v2", "end v2"]);
   });
+  it("an edit made WHILE flush() is saving is drained too: flush resolves only once the latest edit is saved", async () => {
+    // Reviewer repro (W01-r1, slow connection): press Continue, then change a quantity while that save
+    // is pending. flush() used to resolve after the earlier save with the newer edit still unsent.
+    const t = manualTimers();
+    const sent: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const send = vi.fn(async (b: string): Promise<CartSaveOutcome> => { sent.push(b); if (b === "v1") await gate; return "ok"; });
+    const q = createCartSaveQueue({ send, delayMs: 400, timers: t.timers });
+    q.schedule("v1");
+    const flushed = q.flush();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    q.schedule("v2"); // the edit during the flush (its debounce is armed, not fired)
+    release();
+    await expect(flushed).resolves.toBe("ok");
+    expect(sent).toEqual(["v1", "v2"]);
+    expect(q.hasPending()).toBe(false);
+    expect(t.armed()).toBe(0); // the newer edit's debounce was cancelled, never a duplicate send
+  });
+  it("a failure while draining stops the flush and reports it (the edit stays pending for the retry)", async () => {
+    const t = manualTimers();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const send = vi.fn(async (b: string): Promise<CartSaveOutcome> => { if (b === "v1") { await gate; return "ok"; } return "failed"; });
+    const q = createCartSaveQueue({ send, delayMs: 400, timers: t.timers });
+    q.schedule("v1");
+    const flushed = q.flush();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    q.schedule("v2");
+    release();
+    await expect(flushed).resolves.toBe("failed");
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(q.hasPending()).toBe(true);
+  });
   it("flush() with nothing pending and nothing in flight is an immediate ok (no request)", async () => {
     const send = vi.fn(async (): Promise<CartSaveOutcome> => "ok");
     await expect(createCartSaveQueue({ send, delayMs: 400 }).flush()).resolves.toBe("ok");
@@ -84,5 +118,9 @@ describe("the build page uses it", () => {
     expect(page).toContain("createCartSaveQueue(");
     expect(page).toMatch(/const goToReview = async \(\) => \{[\s\S]*?await saveQueue\.flush\(\)[\s\S]*?router\.push\(`\/order\/review\?draft=\$\{draftId\}`\)/);
     expect(page).toMatch(/saveQueue\.takePending\(\)[\s\S]*?keepalive: true/);
+  });
+  it("the page is frozen (inert) while Continue saves and navigates, and unfreezes on a failed save", () => {
+    expect(page).toContain('inert={leaving} aria-busy={leaving}');
+    expect(page).toMatch(/if \(outcome !== "ok"\) \{\s*setLeaving\(false\);/);
   });
 });
