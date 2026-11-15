@@ -6532,6 +6532,7 @@
   "customers.history.total": "Total",
   "customers.history.items": "Productos",
   "customers.history.more": "+{count} más",
+  "customers.history.voided": "Anulado — no cuenta",
   "customers.source.toast": "Toast",
   "customers.source.catering": "Pedidos de catering",
   "customers.source.ezcater": "ezCater",
