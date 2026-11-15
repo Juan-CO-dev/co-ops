@@ -1,8 +1,8 @@
 /** Offline 0315 proof (audit W14). Only ephemeral in-memory PGlite; no credentials or network.
  *
  * Runs the REAL source functions (0056 delta helper, 0215 prep_batch_context / save / revoke,
- * 0255 finalize, 0228 author level, the three 0287 corrections, the 0203 drafts table) on a stub
- * schema, then the REAL 0315 file on top.
+ * 0255 finalize, 0228 author level, the three corrections as 0305 re-emitted them from 0287, the
+ * 0203 drafts table) on a stub schema, then the REAL 0315 file on top.
  *
  *   node scripts/sql-harness-0315.mjs                   the fixed behaviour, after 0315
  *   node scripts/sql-harness-0315.mjs --against-source  the bugs, reproduced on the source bodies
@@ -35,7 +35,7 @@ function grab(source, pattern, label) {
   return found;
 }
 
-async function setup({ apply = !AGAINST_SOURCE } = {}) {
+async function setup({ apply = !AGAINST_SOURCE, only0287 = false } = {}) {
   const db = new PGlite();
   try {
     await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
@@ -87,9 +87,12 @@ async function setup({ apply = !AGAINST_SOURCE } = {}) {
     await db.exec(grab(read('0255_under_par_alert_recipients.sql'),
       /CREATE OR REPLACE FUNCTION public\.submit_phase2_atomic\([\s\S]*?\$function\$;/, 'submit'));
     await db.exec(grab(read('0228_assignment_attribution.sql'), /create function public\.assignment_author_level[\s\S]*?end \$\$;/i, 'author level'));
+    // 0287 first (the original definers), then 0305's re-emission on top — the order prod takes.
     const s0287 = read('0287_checklist_corrections_serialized.sql');
+    const s0305 = read('0305_rls_membership_and_read_floors.sql');
     for (const name of ['checklist_revoke_completion', 'checklist_revoke_with_reason', 'checklist_mark_not_done']) {
       await db.exec(grab(s0287, new RegExp(`create function public\\.${name}\\([\\s\\S]*?end \\$\\$;`), name));
+      if (!only0287) await db.exec(grab(s0305, new RegExp(`create or replace function public\\.${name}\\([\\s\\S]*?end \\$\\$;`), `${name} (0305)`));
     }
     // The source migrations' own ceilings, so the fixture starts where prod is.
     await db.exec(`revoke all on all functions in schema public from public, anon, authenticated;
@@ -172,7 +175,7 @@ const SIGS = {
   draft: 'public.save_opening_phase1_draft(uuid,uuid,jsonb,uuid,uuid,bigint)',
 };
 
-// ── The bugs, reproduced on the source bodies (0215 / 0255 / 0287) ─────────────────────────
+// ── The bugs, reproduced on the source bodies (0215 / 0255 / 0305) ─────────────────────────
 async function reproduce(db) {
   await isolated(db, '', async () => {
     await expectRefusal(db, saveBatch(), 'backup_unknown', 'B020 source');
@@ -198,7 +201,7 @@ async function reproduce(db) {
   console.log('BEFORE 0315 B182: a generic correction revokes an item-tracking tick');
   check((await one(db, `select to_regprocedure(${q(SIGS.draft)}) is null as missing`)).missing, 'no draft writer before 0315');
   console.log('BEFORE 0315 B078: opening_phase1_drafts has no revision and no ordered writer');
-  console.log(`PASS 0315 --against-source: ${checks} checks reproduce the bugs on the 0215 / 0255 / 0287 bodies`);
+  console.log(`PASS 0315 --against-source: ${checks} checks reproduce the bugs on the 0215 / 0255 / 0305 bodies`);
 }
 
 // ── After 0315 ─────────────────────────────────────────────────────────────────────────────
@@ -238,6 +241,13 @@ async function guards() {
     check((await one(drifted, `select to_regprocedure(${q(SIGS.draft)}) is null as missing`)).missing, 'a refused apply creates nothing');
     check((await one(drifted, `select count(*)::int as n from information_schema.columns where table_name='opening_phase1_drafts' and column_name='client_seq'`)).n === 0, 'a refused apply adds no column');
   } finally { await drifted.close(); }
+  // 0305 not applied yet (the corrections are still 0287's): refused by name, 0305 goes first.
+  const before0305 = await setup({ apply: false, only0287: true });
+  try {
+    let message = '';
+    try { await before0305.exec(MIGRATION); } catch (e) { message = String(e.message); }
+    check(/0315: 0305 \(checklist corrections require an active membership\) must be applied first/.test(message), `0305-first refusal, got: ${message}`);
+  } finally { await before0305.close(); }
   const missing = await setup({ apply: false });
   try {
     await missing.exec(`drop function ${SIGS.revoke}`);
@@ -245,7 +255,7 @@ async function guards() {
     try { await missing.exec(MIGRATION); } catch (e) { message = String(e.message); }
     check(/0315: public\.revoke_phase2_item_atomic.* is missing \(0215 must be applied first\)/.test(message), `missing-source refusal, got: ${message}`);
   } finally { await missing.close(); }
-  console.log('0315 guards: re-run is a no-op; catalog fingerprints equal the file; a later definer and a missing source refuse');
+  console.log('0315 guards: re-run is a no-op; catalog fingerprints equal the file; a later definer, a missing source and a database without 0305 refuse');
 }
 
 async function blankBackup(db) {
@@ -384,12 +394,19 @@ async function trackingTicks(db) {
   await isolated(db, `update checklist_instances set status='confirmed' where id=${q(closing)}`, async () => {
     await expectRefusal(db, corrections(trackDone).reason, 'instance_not_open', '0287 order kept: the parent status is judged first');
   });
+  // W05 / B150 (0305) survives the re-emission: below level 8 an INACTIVE membership corrects nothing.
+  await isolated(db, `update user_locations set active=false where user_id=${q(other)}`, async () => {
+    await expectRefusal(db, corrections(plainDone).authority, 'not_authorized', '0305 kept: an inactive membership cannot mark not done');
+  });
+  await isolated(db, `update user_locations set active=false where user_id=${q(opener)}`, async () => {
+    await expectRefusal(db, corrections(plainDone).reason, 'not_authorized', '0305 kept: an inactive membership cannot revoke');
+  });
   for (const key of ['quick', 'reason', 'authority']) {
     const def = await fnDef(db, SIGS[key]);
     check(def.indexOf('for no key update') < def.indexOf('reference_row_not_correctable')
       && def.indexOf('reference_row_not_correctable') < def.lastIndexOf('for no key update'), `${key}: parent lock → reference refusal → completion lock`);
   }
-  console.log('0315 B182: an item-tracking tick refuses all three corrections; ordinary ticks and the 0287 order are unchanged');
+  console.log('0315 B182: an item-tracking tick refuses all three corrections; ordinary ticks, the 0287 order and the 0305 active-membership rule are unchanged');
 }
 
 async function ceilings(db) {

@@ -1,6 +1,6 @@
 -- Migration 0315_opening_counts_batch_prep
--- AUTHORED 2026-11-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0215, 0255 and 0287).
--- Provenance: bug-audit wave W14 "Opening counts and batch prep" (found at 7494f738, re-confirmed on main 0a6e3246):
+-- AUTHORED 2026-11-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0215, 0255, 0287 and 0305).
+-- Provenance: bug-audit wave W14 "Opening counts and batch prep" (found at 7494f738, re-confirmed on main 0a6e3246 and re-based on 3c32f330):
 --   B020 (a blank AM-prep BACK UP made the batch row unsaveable, so the opening could never be finalized),
 --   B078 (an older Phase 1 autosave or beacon could overwrite a newer draft),
 --   B080 (an Undo or a save in flight could spoil a finalized prep report),
@@ -40,11 +40,13 @@
 --   4. submit_phase2_atomic ← 0255, one change: the instance row FOR NO KEY UPDATE before the completeness
 --      count. Recipients, the card's par, the universe and the guarded status UPDATE are byte-identical.
 --
---   5. checklist_revoke_completion / checklist_revoke_with_reason / checklist_mark_not_done ← 0287, one change
---      each: the reference refusal (`reference_row_not_correctable`) also covers an item-tracking line
---      (ref_track_item_completion AND references_template_item_id IS NOT NULL). Once such a tick is revoked
---      nothing can tick it again (the reconciler never re-ticks over a revoke; a manual tick is refused), so
---      a hard-gated closing could never be confirmed. Lock order, clocks, authority and messages unchanged.
+--   5. checklist_revoke_completion / checklist_revoke_with_reason / checklist_mark_not_done ← 0305 (audit W05:
+--      0287's bodies with the ACTIVE-membership line, B150), one change each: the reference refusal
+--      (`reference_row_not_correctable`) also covers an item-tracking line (ref_track_item_completion AND
+--      references_template_item_id IS NOT NULL). Once such a tick is revoked nothing can tick it again (the
+--      reconciler never re-ticks over a revoke; a manual tick is refused), so a hard-gated closing could
+--      never be confirmed. Lock order, clocks, authority (W05's active membership included) and messages
+--      unchanged.
 --
 -- LOCK ORDER (the AGENTS.md checklist order is: AM instance → closing instance → completion rows; parent locks
 --   FOR NO KEY UPDATE; never a parent after a completion):
@@ -80,13 +82,17 @@
 --   Recommended order: SQL first (sim, then prod), then merge.
 --
 -- DEPENDS ON: 0203 (opening_phase1_drafts), 0215 (save / revoke, prep_batch_sessions, prep_batch_context),
---   0255 (submit_phase2_atomic), 0287 (the three corrections), 0057 (the revocation columns).
+--   0255 (submit_phase2_atomic), 0287 + 0305 (the three corrections), 0057 (the revocation columns).
+--   APPLY ORDER: 0305 BEFORE 0315. 0305's own pre-flight accepts only 0287's correction bodies, so it cannot
+--   be applied after this file; this file's pre-flight refuses by name when 0305 is missing.
 --
 -- PRE-FLIGHT (MCP, before apply):
 --   select to_regprocedure('public.save_phase2_item_atomic(uuid,uuid,uuid,numeric,jsonb,jsonb,text,text,jsonb)'),
 --          to_regprocedure('public.revoke_phase2_item_atomic(uuid,uuid,uuid,text,text)'),
 --          to_regprocedure('public.submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text)'),
 --          to_regprocedure('public.checklist_mark_not_done(uuid,uuid,text)');                       -- all present
+--   select strpos(prosrc, 'location_id = v_instance.location_id and active for share') > 0 from pg_proc
+--    where proname = 'checklist_mark_not_done';                                                    -- t (0305 applied)
 --   -- the live bodies this file re-emits (the DO block below refuses unless each is its source or this file's):
 --   select proname, md5(regexp_replace(prosrc, '[^\x21-\x7E]+', '', 'g')) from pg_proc
 --    where proname in ('save_phase2_item_atomic', 'revoke_phase2_item_atomic', 'submit_phase2_atomic',
@@ -120,7 +126,7 @@
 --
 -- ROLLBACK: revert the app first (it then stops calling save_opening_phase1_draft and takes the direct
 --   single-box undo again). The re-emitted functions keep their signatures and are safe to leave in place;
---   to restore the old bodies re-emit 0215 / 0255 / 0287 through a new reviewed migration. The two added
+--   to restore the old bodies re-emit 0215 / 0255 / 0305 through a new reviewed migration. The two added
 --   columns are harmless when left. Never delete or rewrite completion, submission or audit history.
 --
 -- Re-runnable: add column if not exists, create or replace; the pre-flight accepts this file's own bodies.
@@ -146,6 +152,14 @@ begin
      or to_regprocedure('public.prep_batch_context(uuid)') is null then
     raise exception '0315: 0215 (batch vs bottle) must be applied first';
   end if;
+  -- 0305 (audit W05) re-emitted the three correction RPCs with an ACTIVE-membership check, and its own
+  -- pre-flight accepts only 0287's bodies. This file re-emits FROM 0305, so 0305 goes first: applied
+  -- the other way round, 0305 could never be applied after it.
+  if exists (select 1 from pg_proc p
+              where p.oid = to_regprocedure('public.checklist_mark_not_done(uuid,uuid,text)')
+                and strpos(p.prosrc, 'location_id = v_instance.location_id and active for share') = 0) then
+    raise exception '0315: 0305 (checklist corrections require an active membership) must be applied first';
+  end if;
   if (select count(*) from information_schema.columns
        where table_schema = 'public' and table_name = 'checklist_template_items'
          and column_name in ('ref_track_item_completion', 'references_template_item_id', 'report_reference_type')) <> 3 then
@@ -161,9 +175,9 @@ begin
       ('public.save_phase2_item_atomic(uuid,uuid,uuid,numeric,jsonb,jsonb,text,text,jsonb)', '0215', '5fc8d3071c26f03253f48a11717a648b', '59014f4495ba6aae4648363b62b27623'),
       ('public.revoke_phase2_item_atomic(uuid,uuid,uuid,text,text)', '0215', '6bb5386ae3f96e584e97865c0baebe56', '4f3322d08ee03ec27a3a777f8bdbfdd3'),
       ('public.submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text)', '0255', '7a9d437044cc4db2aece57dbc15878ce', '13a3433b03ac9732dd33a061dba41a7f'),
-      ('public.checklist_revoke_completion(uuid,uuid)', '0287', 'a7e0749ffbe81e7e411b7b63608d9ead', 'b9c3aeac74e028af0cb8abb38640d50d'),
-      ('public.checklist_revoke_with_reason(uuid,uuid,text,text)', '0287', '9e4350acb4a687a55e20554d8dc77ff4', '3f34ea047c8f1ac01d501c7d96ebc925'),
-      ('public.checklist_mark_not_done(uuid,uuid,text)', '0287', 'aba3fa0bb7e6f777ab5451ed57d347b0', 'c3d66a0296cc51d2c38e129d08962be2')
+      ('public.checklist_revoke_completion(uuid,uuid)', '0305', 'a75f81a3a323c7e23cb0d3ebdcd52445', '2f9458d820c8650cc862695f73df8f28'),
+      ('public.checklist_revoke_with_reason(uuid,uuid,text,text)', '0305', 'd88c7d325c04a24bb83d5cfe4e73b0b5', 'a49ffe598b34f314e92226646b996c34'),
+      ('public.checklist_mark_not_done(uuid,uuid,text)', '0305', '0d7d62023c6cb35a983a96b3858c361b', 'f0cbff6f14f523c3228540b16d76081d')
     ) as t(sig, source_file, source_md5, own_md5)
   loop
     if to_regprocedure(r.sig) is null then
@@ -1054,8 +1068,9 @@ END;
 $function$;
 
 -- ═════════════════════════════════════════════════════════════════════════════════════════════
--- 5. The three generic corrections ← 0287 + item-tracking ticks refuse like report references (B182)
---    Exact 0287 bodies (security invoker, lock order, clocks, messages); only the reference check widens.
+-- 5. The three generic corrections ← 0305 + item-tracking ticks refuse like report references (B182)
+--    Exact 0305 bodies (0287's, with W05's ACTIVE-membership line: security invoker, lock order, clocks,
+--    messages); only the reference check widens.
 -- ═════════════════════════════════════════════════════════════════════════════════════════════
 create or replace function public.checklist_revoke_completion(p_completion uuid, p_actor uuid)
 returns jsonb language plpgsql security invoker set search_path = pg_catalog, public as $$
@@ -1093,8 +1108,8 @@ begin
   v_level := public.assignment_author_level(p_actor);
   if v_level is null then raise exception 'not_authorized'; end if;
   if v_level < 8 then
-    -- Deliberately no active filter: parity with today's current_user_locations.
-    perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id for share;
+    -- 0305 (B150): an ACTIVE membership only. 0287 kept parity with the then-unfiltered current_user_locations().
+    perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id and active for share;
     if not found then raise exception 'not_authorized'; end if;
   end if;
   if v_completion.completed_by is distinct from p_actor then raise exception 'not_self'; end if;
@@ -1152,8 +1167,8 @@ begin
   v_level := public.assignment_author_level(p_actor);
   if v_level is null then raise exception 'not_authorized'; end if;
   if v_level < 8 then
-    -- Deliberately no active filter: parity with today's current_user_locations.
-    perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id for share;
+    -- 0305 (B150): an ACTIVE membership only. 0287 kept parity with the then-unfiltered current_user_locations().
+    perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id and active for share;
     if not found then raise exception 'not_authorized'; end if;
   end if;
   if v_completion.completed_by is distinct from p_actor then raise exception 'not_self'; end if;
@@ -1208,8 +1223,8 @@ begin
   v_level := public.assignment_author_level(p_actor);
   if v_level is null then raise exception 'not_authorized'; end if;
   if v_level < 8 then
-    -- Deliberately no active filter: parity with today's current_user_locations.
-    perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id for share;
+    -- 0305 (B150): an ACTIVE membership only. 0287 kept parity with the then-unfiltered current_user_locations().
+    perform 1 from public.user_locations where user_id = p_actor and location_id = v_instance.location_id and active for share;
     if not found then raise exception 'not_authorized'; end if;
   end if;
   if v_completion.completed_by = p_actor then raise exception 'use_self_revoke'; end if;
@@ -1260,9 +1275,9 @@ begin
       ('public.save_phase2_item_atomic(uuid,uuid,uuid,numeric,jsonb,jsonb,text,text,jsonb)', '59014f4495ba6aae4648363b62b27623', true),
       ('public.revoke_phase2_item_atomic(uuid,uuid,uuid,text,text)', '4f3322d08ee03ec27a3a777f8bdbfdd3', true),
       ('public.submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text)', '13a3433b03ac9732dd33a061dba41a7f', true),
-      ('public.checklist_revoke_completion(uuid,uuid)', 'b9c3aeac74e028af0cb8abb38640d50d', false),
-      ('public.checklist_revoke_with_reason(uuid,uuid,text,text)', '3f34ea047c8f1ac01d501c7d96ebc925', false),
-      ('public.checklist_mark_not_done(uuid,uuid,text)', 'c3d66a0296cc51d2c38e129d08962be2', false),
+      ('public.checklist_revoke_completion(uuid,uuid)', '2f9458d820c8650cc862695f73df8f28', false),
+      ('public.checklist_revoke_with_reason(uuid,uuid,text,text)', 'a49ffe598b34f314e92226646b996c34', false),
+      ('public.checklist_mark_not_done(uuid,uuid,text)', 'f0cbff6f14f523c3228540b16d76081d', false),
       ('public.save_opening_phase1_draft(uuid,uuid,jsonb,uuid,uuid,bigint)', 'f01129c568967613148cd2d004f484fd', true)
     ) as t(sig, own_md5, definer)
   loop

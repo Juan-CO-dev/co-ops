@@ -11,7 +11,9 @@
  *   B080  save / revoke / submit   ← 0215, 0215, 0255   the opening instance lock FIRST
  *   B181  revoke_phase2_item_atomic          the batch session BEFORE the completion
  *   B078  save_opening_phase1_draft (new)    the same-tab compare-and-set
- *   B182  the three 0287 corrections         item-tracking ticks refuse like report references
+ *   B182  the three corrections ← 0305       item-tracking ticks refuse like report references
+ *         (0305 = audit W05's re-emission of 0287 with the ACTIVE-membership line; it merged to main
+ *          while this wave was built, so it — not 0287 — is the latest definer 0315 re-emits from)
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -114,8 +116,7 @@ begin
   where cc.id = p_completion_id and cc.instance_id = p_instance_id;
 ${REVOKE_SESSION_BLOCK}`],
 ] as const;
-const correctionMods = (name: string) => [
-  [`create function public.${name}(`, `create or replace function public.${name}(`],
+const correctionMods = () => [
   [`  if exists(select 1 from public.checklist_template_items
     where id = v_completion.template_item_id and report_reference_type is not null) then`,
    `  if exists(select 1 from public.checklist_template_items
@@ -147,9 +148,9 @@ const REEMITS: Reemit[] = [
     start: "CREATE OR REPLACE FUNCTION public.submit_phase2_atomic(", end: "$function$;", tag: "$function$", mods: SUBMIT_MODS },
   ...(["checklist_revoke_completion(uuid,uuid)", "checklist_revoke_with_reason(uuid,uuid,text,text)", "checklist_mark_not_done(uuid,uuid,text)"] as const).map((sig): Reemit => {
     const name = sig.slice(0, sig.indexOf("("));
-    return { name, signature: `public.${sig}`, sourceFile: "0287_checklist_corrections_serialized.sql",
-      sourceStart: `create function public.${name}(`, start: `create or replace function public.${name}(`,
-      end: "end $$;", tag: "$$", mods: correctionMods(name) };
+    return { name, signature: `public.${sig}`, sourceFile: "0305_rls_membership_and_read_floors.sql",
+      sourceStart: `create or replace function public.${name}(`, start: `create or replace function public.${name}(`,
+      end: "end $$;", tag: "$$", mods: correctionMods() };
   }),
 ];
 const definersOf = (r: Reemit) => files.filter((f) => read(f).includes(r.start) || read(f).includes(r.sourceStart));
@@ -177,6 +178,19 @@ describe("0315 re-emits every RPC from its latest definer — nothing dropped, n
       expect(raw).toMatch(new RegExp(`\\('${r.signature.replace(/[.()]/g, "\\$&")}', '${ownMd5}', (true|false)\\)`));
     });
   }
+
+  it("the corrections come from 0305, not 0287: W05's active-membership line is in all three", () => {
+    for (const name of ["checklist_revoke_completion", "checklist_revoke_with_reason", "checklist_mark_not_done"]) {
+      const body = extract(raw, `create or replace function public.${name}(`, "end $$;");
+      expect(body, name).toContain("where user_id = p_actor and location_id = v_instance.location_id and active for share;");
+      expect(body, name).not.toContain("location_id = v_instance.location_id for share;");
+      // 0287 spells its definitions `create function`; it is two definers back.
+      expect(read("0287_checklist_corrections_serialized.sql")).toContain(`create function public.${name}(`);
+    }
+    // 0305's own pre-flight accepts only 0287's bodies, so 0315 must come after it — and says so.
+    expect(raw).toContain("raise exception '0315: 0305 (checklist corrections require an active membership) must be applied first';");
+    expect(raw).toContain("APPLY ORDER: 0305 BEFORE 0315.");
+  });
 
   it("the new draft writer carries its own fingerprint in the post-apply assertion", () => {
     const fn = extract(raw, "create or replace function public.save_opening_phase1_draft(", "end $$;");
@@ -346,12 +360,12 @@ describe("0315 SQL harness (PGlite, the real files)", () => {
 
   it("proves the fixed behaviour after 0315", () => {
     const output = execFileSync(process.execPath, ["scripts/sql-harness-0315.mjs"], { encoding: "utf8", timeout: 120_000 });
-    expect(output).toContain("0315 guards: re-run is a no-op; catalog fingerprints equal the file; a later definer and a missing source refuse");
+    expect(output).toContain("0315 guards: re-run is a no-op; catalog fingerprints equal the file; a later definer, a missing source and a database without 0305 refuse");
     expect(output).toContain("0315 ceilings: seven RPCs service_role only, postures and search_path kept, drafts table deny-all");
     expect(output).toContain("0315 B020: a blank BACK UP with a known LINE saves as 0; a blank LINE is still backup_unknown");
     expect(output).toContain("0315 B080/B181: instance lock first in save / revoke / finalize; session before completion; an Undo or a save after finalize is refused");
     expect(output).toContain("0315 B078: an older same-tab draft is refused; another tab, a NULL revision and a pre-0315 row keep last-write-wins");
-    expect(output).toContain("0315 B182: an item-tracking tick refuses all three corrections; ordinary ticks and the 0287 order are unchanged");
+    expect(output).toContain("0315 B182: an item-tracking tick refuses all three corrections; ordinary ticks, the 0287 order and the 0305 active-membership rule are unchanged");
     expect(output).toContain("PASS 0315:");
     expect(output).toContain("two-connection sim proof NOT RUN");
   }, 130_000);
