@@ -1,5 +1,5 @@
 /**
- * The one client sign-out request — audit W06/B012 fix round 6.
+ * The one client sign-out request — audit W06/B012 fix rounds 6 + 7.
  *
  * POST /api/auth/logout answers 200 only when the end of the session is CONFIRMED (or there is nothing to end). When
  * the server cannot confirm it (a database blip) it answers 503 `logout_unconfirmed` and clears this browser's cookie
@@ -37,15 +37,23 @@ function logoutInit(sessionId: string, signal: AbortSignal): RequestInit {
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-async function attempt(sessionId: string): Promise<Response | null> {
+/**
+ * One attempt, decided by the STATUS alone (round 7): fetch() resolves when the headers arrive, and no body is ever
+ * read — a body that stalls on a poor connection can no longer hold the sign-out past this attempt's deadline. The
+ * request (its body stream included) is aborted as soon as the attempt is decided, so nothing of it outlives it.
+ * Null = no status: a network failure, or no headers before the deadline.
+ */
+async function attempt(sessionId: string): Promise<number | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LOGOUT_ATTEMPT_TIMEOUT_MS);
   try {
-    return await fetch("/api/auth/logout", logoutInit(sessionId, controller.signal));
+    const res = await fetch("/api/auth/logout", logoutInit(sessionId, controller.signal));
+    return res.status;
   } catch {
     return null; // network failure or timeout: not ended
   } finally {
     clearTimeout(timer);
+    controller.abort(); // release an unread (possibly stalled) body; a no-op once the response is complete
   }
 }
 
@@ -55,8 +63,8 @@ async function attempt(sessionId: string): Promise<Response | null> {
  */
 export async function requestSignOut(sessionId: string): Promise<SignOutResult> {
   for (let i = 0; ; i++) {
-    const res = await attempt(sessionId);
-    if (res && res.status >= 200 && res.status < 300) return { ended: true, attempts: i + 1 };
+    const status = await attempt(sessionId);
+    if (status !== null && status >= 200 && status < 300) return { ended: true, attempts: i + 1 };
     const delay = LOGOUT_RETRY_DELAYS_MS[i];
     if (delay === undefined) return { ended: false, attempts: i + 1 };
     await wait(delay);

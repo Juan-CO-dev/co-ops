@@ -97,3 +97,70 @@ describe("round 6 — requestSignOut", () => {
     await expect(settle()).resolves.toEqual({ ended: false, attempts: LOGOUT_RETRY_DELAYS_MS.length + 1 });
   });
 });
+
+// ── Fix round 7 (review W06-r7 P2 #2) — a response body can never hold the sign-out ─────────────────────────────────
+// fetch() resolves when the HEADERS arrive. The helper used to clear its abort timer then and await res.json() on a 503
+// with no deadline, so a body that stalled on a poor connection held "Signing out…" up forever. Now the decision reads
+// the status only (no body is read), and the attempt's request — body stream included — is aborted as soon as the
+// attempt is decided, so nothing of it outlives the attempt's own deadline.
+const MAX_TOTAL_MS = LOGOUT_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0) + (LOGOUT_RETRY_DELAYS_MS.length + 1) * LOGOUT_ATTEMPT_TIMEOUT_MS;
+
+/** Headers arrived; the body never finishes (and is only released by the request's abort signal). */
+function stalledBody(status: number, signal: AbortSignal) {
+  const json = vi.fn(() => new Promise<never>(() => {}));
+  const text = vi.fn(() => new Promise<never>(() => {}));
+  const body = new ReadableStream({
+    start(controller) {
+      signal.addEventListener("abort", () => controller.error(new Error("aborted")));
+    },
+  });
+  return { response: { ok: status >= 200 && status < 300, status, type: "basic", json, text, body } as unknown as Response, json, text };
+}
+
+describe("round 7 — stalled response bodies", () => {
+  it("a 503 whose body never finishes: no body read, its request is aborted, retried at once, settled in bounds", async () => {
+    const stalled: Array<ReturnType<typeof stalledBody>> = [];
+    const signals: AbortSignal[] = [];
+    fetchMock.mockImplementationOnce(async (_url: string, init: RequestInit) => {
+      signals.push(init.signal!);
+      const s = stalledBody(503, init.signal!);
+      stalled.push(s);
+      return s.response;
+    });
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
+      signals.push(init.signal!);
+      return res(200);
+    });
+    let settled: unknown = null;
+    const p = requestSignOut("session-1").then((r) => (settled = r));
+    await vi.advanceTimersByTimeAsync(LOGOUT_RETRY_DELAYS_MS[0]!);
+    expect(settled).toEqual({ ended: true, attempts: 2 }); // the retry went out on the backoff, not after a body
+    await p;
+    expect(stalled[0]!.json).not.toHaveBeenCalled();
+    expect(stalled[0]!.text).not.toHaveBeenCalled();
+    expect(signals[0]!.aborted).toBe(true); // the stalled body was released when the attempt was decided
+    expect(bodies()).toEqual(Array(2).fill(JSON.stringify({ sessionId: "session-1" })));
+  });
+
+  it("every response stalls after its headers: bounded retries, then ended: false within the bounded total", async () => {
+    const signals: AbortSignal[] = [];
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
+      signals.push(init.signal!);
+      return stalledBody(503, init.signal!).response;
+    });
+    let settled: unknown = null;
+    void requestSignOut("session-1").then((r) => (settled = r));
+    await vi.advanceTimersByTimeAsync(MAX_TOTAL_MS);
+    expect(settled).toEqual({ ended: false, attempts: LOGOUT_RETRY_DELAYS_MS.length + 1 });
+    expect(signals.every((s) => s.aborted)).toBe(true);
+  });
+
+  it("a 2xx with a stalled body is the end at once (the status decides)", async () => {
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) => stalledBody(200, init.signal!).response);
+    let settled: unknown = null;
+    void requestSignOut("session-1").then((r) => (settled = r));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toEqual({ ended: true, attempts: 1 });
+  });
+});
+

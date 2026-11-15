@@ -10,6 +10,7 @@ import { jsx } from "react/jsx-runtime";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LogoutButton } from "@/components/auth/LogoutButton";
+import { LOGOUT_ATTEMPT_TIMEOUT_MS, LOGOUT_RETRY_DELAYS_MS } from "@/lib/logout-client";
 import { UserMenu } from "@/components/UserMenu";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
@@ -79,6 +80,29 @@ describe.each(surfaces)("round 6 — $name", ({ mount, click }) => {
     click();
     await advance(10_000);
     expect(logoutCalls()).toHaveLength(4);
+    expect(h.push).toHaveBeenCalledTimes(1);
+    expect(h.push).toHaveBeenCalledWith("/");
+  });
+
+  it("round 7: every response's body stalls after its headers — the page still reaches the login page in bounds", async () => {
+    const stalled = (init: RequestInit) =>
+      ({
+        ok: false,
+        status: 503,
+        type: "basic",
+        json: () => new Promise<never>(() => {}),
+        text: () => new Promise<never>(() => {}),
+        body: new ReadableStream({ start: (c) => init.signal!.addEventListener("abort", () => c.error(new Error("aborted"))) }),
+      }) as unknown as Response;
+    h.fetch.mockImplementation(async (_url: string, init: RequestInit) => stalled(init));
+    mount();
+    click();
+    await advance(10);
+    expect(screen.getByTestId(OVERLAY)).toBeTruthy();
+    const bound = LOGOUT_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0) + (LOGOUT_RETRY_DELAYS_MS.length + 1) * LOGOUT_ATTEMPT_TIMEOUT_MS;
+    await advance(bound);
+    expect(logoutCalls()).toHaveLength(LOGOUT_RETRY_DELAYS_MS.length + 1);
+    for (const c of logoutCalls()) expect((c[1] as RequestInit).signal!.aborted).toBe(true);
     expect(h.push).toHaveBeenCalledTimes(1);
     expect(h.push).toHaveBeenCalledWith("/");
   });
