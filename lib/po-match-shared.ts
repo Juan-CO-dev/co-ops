@@ -36,6 +36,7 @@
  */
 
 import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
+import type { MeasureUnitFactor } from "@/lib/recipe-math";
 
 /** The variance flags a three-way line may carry (spec §5). */
 export type ThreeWayFlag =
@@ -118,19 +119,66 @@ export interface InvoiceLineInput {
 }
 
 /**
- * A multi-level SKU's units (W04/B045): how many LEAF containers one of each level holds
- * (case = 12 x each, each = 32 oz → case 12, each 1), keyed by normalized label. Built only
- * for chains with 2+ levels: a single-level SKU has no inner unit to confuse, so it keeps
- * the raw comparison it always had.
+ * A SKU's units (W04/B045, r1): how many LEAF containers one of each level holds (case = 12 x each,
+ * each = 32 oz → case 12, each 1), keyed by canonical label, plus what ONE leaf holds in its measure
+ * (12 count, 32 oz, 16 lb) so a billed measure (LB, oz, EA on a count leaf) converts too. Built for
+ * every resolvable chain, single-level included: a one-level "case of 16 lb" billed "16 LB" is one case.
  */
 export interface SkuUnitScale {
   rootLabel: string;
   leafPerLevel: ReadonlyMap<string, number>;
+  /** One leaf's content in its measure's base unit; null when the leaf measure is unknown. */
+  leafMeasure: { dimension: MeasureUnitFactor["dimension"]; base: number } | null;
+  /** The measure registry, keyed by canonical label. */
+  measures: ReadonlyMap<string, MeasureUnitFactor>;
 }
 
-/** The scale of an active pack chain, or null (single-level, malformed or cyclic chain). */
-export function unitScaleFromChain(levels: readonly PackChainLevel[] | null | undefined): SkuUnitScale | null {
-  if (!levels || levels.length < 2) return null;
+/**
+ * Vendor spellings of one unit → the canonical label (W04 r1: EA / ea / each / ct are one unit; CS / CA
+ * a case). Applied to level labels, order units, door levels and invoice units alike, so only the
+ * SAME unit ever matches. A label not listed is itself (lowercased, trimmed, trailing period dropped).
+ */
+const UNIT_ALIASES: Readonly<Record<string, string>> = {
+  ea: "each", each: "each", eaches: "each", ct: "each", cnt: "each", count: "each", pc: "each", pcs: "each", piece: "each", pieces: "each",
+  cs: "case", ca: "case", case: "case", cases: "case",
+  lb: "lb", lbs: "lb", "#": "lb", pound: "lb", pounds: "lb",
+  oz: "oz", ounce: "oz", ounces: "oz",
+  "fl oz": "fl oz", floz: "fl oz",
+  gal: "gallon", ga: "gallon", gallon: "gallon", gallons: "gallon",
+  g: "gram", gm: "gram", gram: "gram", grams: "gram", kg: "kg", kgs: "kg",
+  ml: "ml", l: "liter", lt: "liter", liter: "liter", liters: "liter", litre: "liter",
+  bx: "box", box: "box", boxes: "box", bg: "bag", bag: "bag", bags: "bag",
+  bt: "bottle", btl: "bottle", bottle: "bottle", bottles: "bottle", pk: "pack", pkg: "pack", pack: "pack", packs: "pack",
+};
+
+/** The canonical spelling of a unit, or null for none. */
+export function canonicalUnit(unit: string | null | undefined): string | null {
+  const key = norm(unit)?.replace(/\.$/, "").replace(/\s+/g, " ") ?? null;
+  if (!key) return null;
+  return UNIT_ALIASES[key] ?? key;
+}
+
+/** The registry's measure the canonical unit names ("each" is the count measure). */
+function measureFor(key: string, measures: ReadonlyMap<string, MeasureUnitFactor>): MeasureUnitFactor | undefined {
+  return measures.get(key) ?? (key === "each" ? measures.get("count") : undefined);
+}
+
+/** Canonicalize a measure registry's labels once. */
+function canonicalMeasures(measures: ReadonlyMap<string, MeasureUnitFactor> | undefined): Map<string, MeasureUnitFactor> {
+  const out = new Map<string, MeasureUnitFactor>();
+  for (const [label, m] of measures ?? []) {
+    const key = canonicalUnit(label);
+    if (key != null && !out.has(key) && Number.isFinite(m.toBaseFactor) && m.toBaseFactor > 0) out.set(key, m);
+  }
+  return out;
+}
+
+/** The scale of an active pack chain (any depth), or null (malformed or cyclic chain). */
+export function unitScaleFromChain(
+  levels: readonly PackChainLevel[] | null | undefined,
+  measures?: ReadonlyMap<string, MeasureUnitFactor>,
+): SkuUnitScale | null {
+  if (!levels || levels.length < 1) return null;
   const chain = buildPackChain([...levels]);
   const root = chainRootLabel(chain);
   if (root == null) return null;
@@ -143,7 +191,6 @@ export function unitScaleFromChain(levels: readonly PackChainLevel[] | null | un
     path.push(node);
     node = node.containsLevelId ? chain.byId.get(node.containsLevelId) : undefined;
   }
-  if (path.length < 2) return null;
   const leafPerLevel = new Map<string, number>();
   let factor = 1;
   for (let i = path.length - 1; i >= 0; i--) {
@@ -152,36 +199,76 @@ export function unitScaleFromChain(levels: readonly PackChainLevel[] | null | un
       if (!Number.isFinite(qty) || qty <= 0) return null;
       factor *= qty;
     }
-    const key = norm(path[i]!.label);
+    const key = canonicalUnit(path[i]!.label);
     if (key != null && !leafPerLevel.has(key)) leafPerLevel.set(key, factor);
   }
-  const rootKey = norm(root);
-  return rootKey == null ? null : { rootLabel: rootKey, leafPerLevel: new Map([...leafPerLevel].reverse()) };
+  const rootKey = canonicalUnit(root);
+  if (rootKey == null) return null;
+  const canon = canonicalMeasures(measures);
+  const leaf = path[path.length - 1]!;
+  const leafUnit = leaf.containsLevelId == null ? canonicalUnit(leaf.containsMeasureUnit) : null;
+  const m = leafUnit != null ? measureFor(leafUnit, canon) : undefined;
+  const base = m && Number.isFinite(leaf.containsQty) && leaf.containsQty > 0 ? leaf.containsQty * m.toBaseFactor : null;
+  return {
+    rootLabel: rootKey,
+    leafPerLevel: new Map([...leafPerLevel].reverse()),
+    leafMeasure: m && base != null && Number.isFinite(base) && base > 0 ? { dimension: m.dimension, base } : null,
+    measures: canon,
+  };
 }
 
-/** Vendor case codes: the root is the vendor's shipping pack (seed 38). */
-const CASE_CODES = new Set(["cs", "ca"]);
+/** A flat-only SKU's pack (the vendor_items mirror) as the chain it describes, or null. */
+export function flatPackChain(flat: {
+  pack_format: string | null; each_container_label: string | null;
+  units_per_pack: number | null; each_size: number | string | null; each_measure: string | null;
+}): PackChainLevel[] | null {
+  const units = flat.units_per_pack;
+  const size = flat.each_size == null ? null : Number(flat.each_size);
+  const root = flat.pack_format?.trim();
+  if (!root || units == null || !(units > 0) || size == null || !Number.isFinite(size) || !(size > 0) || !flat.each_measure) return null;
+  const each = flat.each_container_label?.trim() || "each";
+  if (canonicalUnit(each) === canonicalUnit(root)) {
+    return [{ id: "flat-root", label: root, containsQty: units * size, containsLevelId: null, containsMeasureUnit: flat.each_measure, displayOrdinal: 0 }];
+  }
+  return [
+    { id: "flat-root", label: root, containsQty: units, containsLevelId: "flat-each", containsMeasureUnit: null, displayOrdinal: 0 },
+    { id: "flat-each", label: each, containsQty: size, containsLevelId: null, containsMeasureUnit: flat.each_measure, displayOrdinal: 1 },
+  ];
+}
 
 /** Leaf containers in ONE `unit` of this SKU, or null when the unit cannot be resolved.
  *  `nullIsRoot`: a door count / order line with no level is in root packs (legacy rule);
  *  an invoice line with no unit is unknown. */
 function leafFactor(unit: string | null, scale: SkuUnitScale, nullIsRoot: boolean): number | null {
-  const key = norm(unit);
+  const key = canonicalUnit(unit);
   if (key == null) return nullIsRoot ? scale.leafPerLevel.get(scale.rootLabel) ?? null : null;
   const direct = scale.leafPerLevel.get(key) ?? (key.endsWith("s") ? scale.leafPerLevel.get(key.slice(0, -1)) : undefined);
   if (direct != null) return direct;
-  return CASE_CODES.has(key) ? scale.leafPerLevel.get(scale.rootLabel) ?? null : null;
+  if (key === "case") return scale.leafPerLevel.get(scale.rootLabel) ?? null; // CS/CA: the vendor's shipping pack (seed 38)
+  const m = measureFor(key, scale.measures);
+  if (m && scale.leafMeasure && m.dimension === scale.leafMeasure.dimension) return m.toBaseFactor / scale.leafMeasure.base;
+  return null;
 }
 
-/** Two quantities in one unit, or null (the flag stays off: advisory-null). Without a scale the
- *  raw numbers compare, exactly as before W04/B045. */
+/** A unit's identity when there is no chain to relate units: null-as-root and CS/CA are the root. */
+function bareUnitKey(unit: string | null, nullIsRoot: boolean): string | null {
+  const key = canonicalUnit(unit);
+  if (key == null) return nullIsRoot ? "@root" : null;
+  return key === "case" ? "@root" : key;
+}
+
+/** Two quantities in one unit, or null (the flag stays off: advisory-null). Without a scale, only the
+ *  SAME unit on both sides compares (W04 r1); never two raw numbers of unknown units. */
 function inOneUnit(
   a: { qty: number | null; unit: string | null; nullIsRoot: boolean },
   b: { qty: number | null; unit: string | null; nullIsRoot: boolean },
   scale: SkuUnitScale | undefined,
 ): [number, number] | null {
   if (a.qty == null || b.qty == null) return null;
-  if (!scale) return [a.qty, b.qty];
+  if (!scale) {
+    const ka = bareUnitKey(a.unit, a.nullIsRoot);
+    return ka != null && ka === bareUnitKey(b.unit, b.nullIsRoot) ? [a.qty, b.qty] : null;
+  }
   const fa = leafFactor(a.unit, scale, a.nullIsRoot);
   const fb = leafFactor(b.unit, scale, b.nullIsRoot);
   return fa == null || fb == null ? null : [a.qty * fa, b.qty * fb];
@@ -226,7 +313,7 @@ export function buildThreeWayLines(
   deliveryLines: DeliveryLineInput[],
   invoiceLines: InvoiceLineInput[],
   hasInvoice: boolean,
-  /** Per-SKU units of multi-level chains (W04/B045); absent = raw comparison. */
+  /** Per-SKU units (W04/B045, r1); absent = only the same unit on both sides compares. */
   unitScales: ReadonlyMap<string, SkuUnitScale> = new Map(),
 ): ThreeWayView {
   // Received qty by skuId (last write wins if a SKU somehow appears twice — a delivery

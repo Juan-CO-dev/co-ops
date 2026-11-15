@@ -34,10 +34,12 @@ import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadPoDetail } from "@/lib/purchase-orders";
-import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import type { AuthContext } from "@/lib/session";
+import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
   buildThreeWayLines,
+  flatPackChain,
   unitScaleFromChain,
   type SkuUnitScale,
   type ThreeWayView,
@@ -118,13 +120,18 @@ export async function buildThreeWayView(actor: AuthContext, poId: string): Promi
     loadInvoiceLeg(sb, poId),
   ]);
 
-  // W04/B045: the three legs compare in ONE unit through each SKU's pack chain as this
-  // PO's shop receives it. Single-level SKUs get no scale and keep the raw comparison.
+  // W04/B045 (r1): the three legs compare in ONE unit through each SKU's pack chain as this
+  // PO's shop receives it (any depth; a flat-only SKU through the chain its flat pack describes),
+  // converting known measures (LB, oz, EA on a count leaf). A SKU with no resolvable pack
+  // compares only the same unit on both sides; nothing else is compared (advisory-null).
   const skuIds = [...new Set([...snapshotLines.map((l) => l.skuId), ...deliveryLines.map((l) => l.skuId)])];
-  const chains = await loadSkuPackChains(skuIds, detail.locationId);
+  const [chains, measures] = await Promise.all([loadSkuPackChains(skuIds, detail.locationId), loadMeasures()]);
+  const unchained = skuIds.filter((id) => (chains.get(id)?.length ?? 0) === 0);
+  const flats = await loadFlatPacks(sb, unchained);
   const unitScales = new Map<string, SkuUnitScale>();
-  for (const [skuId, levels] of chains) {
-    const scale = unitScaleFromChain(levels);
+  for (const skuId of skuIds) {
+    const levels = chains.get(skuId);
+    const scale = unitScaleFromChain(levels && levels.length > 0 ? levels : flats.get(skuId) ?? null, measures);
     if (scale) unitScales.set(skuId, scale);
   }
 
@@ -136,6 +143,23 @@ export async function buildThreeWayView(actor: AuthContext, poId: string): Promi
   await resolveUnorderedRowNames(sb, view);
 
   return view;
+}
+
+/** Flat-only SKUs' packs as chains (W04 r1), chunked to the request-line budget; a failed read throws. */
+async function loadFlatPacks(sb: ServiceClient, skuIds: string[]): Promise<Map<string, PackChainLevel[]>> {
+  const out = new Map<string, PackChainLevel[]>();
+  for (let i = 0; i < skuIds.length; i += 100) {
+    const { data, error } = await sb.from("vendor_items")
+      .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure")
+      .in("id", skuIds.slice(i, i + 100))
+      .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null }>>();
+    if (error) throw new Error(`buildThreeWayView flat packs: ${error.message}`);
+    for (const r of data ?? []) {
+      const chain = flatPackChain(r);
+      if (chain) out.set(r.id, chain);
+    }
+  }
+  return out;
 }
 
 /**
