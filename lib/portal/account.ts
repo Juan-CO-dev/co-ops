@@ -21,7 +21,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { Quote, QuoteStatus } from "@/lib/catering/quotes";
 import { isQuoteStatus } from "@/lib/catering/quotes";
 import type { Payment, PaymentKind, PaymentStatus } from "@/lib/catering/payments";
-import { quoteSettlement, quoteTimeExpired } from "@/lib/portal/payability-shared";
+import { paidOnLapsedOffer, quoteSettlement, quoteTimeExpired } from "@/lib/portal/payability-shared";
+import type { TranslationKey } from "@/lib/i18n/types";
 
 // ── View types ──────────────────────────────────────────────────────────────────
 
@@ -44,9 +45,13 @@ export interface CustomerStatus {
     | "paid"
     | "balance_due"
     | "pending"
+    | "late_payment"
     | "reserve"
     | "review";
   label: string;
+  /** The i18n key for `label`, where the status has one (en + es). The page renders the key
+   *  when present; `label` stays as the English sentence for logs, scripts and tests. */
+  labelKey?: TranslationKey;
   tone: "action" | "pending" | "success" | "muted";
   payable: boolean;
   /**
@@ -201,6 +206,15 @@ function mapPayment(r: DbPaymentRow): Payment {
  * Translate (quote.status, its payments, origin) into what the CUSTOMER should do next.
  * Rules are evaluated in order — the first match wins:
  *   1. declined            → not available (muted)
+ *   1b. PAID ON A LAPSED OFFER → payment received, awaiting our review (review r3). The
+ *                            quote is expired (by hand, or an open offer past its date) and
+ *                            the money settled AFTER the offer's deadline — `paidOnLapsedOffer`,
+ *                            the rule the quote page reads too. It runs BEFORE every paid
+ *                            rule below: "the amounts cover the total" is not "all set" for
+ *                            an offer the team cannot accept until a person has looked
+ *                            (the webhook flags the same payment `paid_after_expiry`). The
+ *                            card shows what was received; no balance is promised and
+ *                            nothing is payable.
  *   2. expired             → expired (muted)
  *   3. fully paid          → all set: the PAID AMOUNTS cover the quote's current total
  *                            (`quoteSettlement`). Not "a paid `full` row exists" (review r2):
@@ -218,7 +232,8 @@ function mapPayment(r: DbPaymentRow): Payment {
  *                            UNPAID quote, so a second charge is not offered here either.
  *   6. offer past its date → expired (muted). Evaluated AFTER the paid rules on purpose: a
  *                            deposit paid inside the window took the offer up in time, and
- *                            that order is pending, not expired. (Audit W02/B037 — this
+ *                            that order is pending, not expired (one paid AFTER the date
+ *                            never gets this far: rule 1b). (Audit W02/B037 — this
  *                            rule did not exist, so a lapsed quote kept its pay button.)
  *   7. otherwise           → self_serve: reserve your date; staff: review & pay (both payable)
  *
@@ -227,6 +242,24 @@ function mapPayment(r: DbPaymentRow): Payment {
 export function customerOrderStatus(quote: PortalQuote, payments: Payment[]): CustomerStatus {
   if (quote.status === "declined") {
     return { key: "declined", label: "Not available", tone: "muted", payable: false, balanceDueCents: 0 };
+  }
+  // PAID ON A LAPSED OFFER (rule 1b). `isExpired` is the clock on an open offer; a manual
+  // `expired` is the status. A team-confirmed order is neither, so it is never late.
+  if (
+    paidOnLapsedOffer({
+      expired: quote.status === "expired" || quote.isExpired,
+      expiresAt: quote.expiresAt,
+      payments,
+    })
+  ) {
+    return {
+      key: "late_payment",
+      label: "Payment received — awaiting our review",
+      labelKey: "order.account.status_late_payment",
+      tone: "pending",
+      payable: false,
+      balanceDueCents: 0,
+    };
   }
   if (quote.status === "expired") {
     return { key: "expired", label: "Expired", tone: "muted", payable: false, balanceDueCents: 0 };

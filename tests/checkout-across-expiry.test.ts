@@ -57,8 +57,9 @@ vi.mock("@/lib/stripe/client", async (importOriginal) => {
 import { audit } from "@/lib/audit";
 import { sendEmail } from "@/lib/email";
 import { CateringQuoteError, setQuoteStatus } from "@/lib/catering/quotes";
-import { offerTakenUpInTime } from "@/lib/portal/payability-shared";
-import { createQuoteCheckout, initiatePayment } from "@/lib/portal/quotes";
+import { loadCustomerAccount } from "@/lib/portal/account";
+import { offerTakenUpInTime, payPanelState, quotePayability } from "@/lib/portal/payability-shared";
+import { createQuoteCheckout, initiatePayment, loadCustomerQuoteDetail } from "@/lib/portal/quotes";
 import type { AuthContext } from "@/lib/session";
 import * as stripeClient from "@/lib/stripe/client";
 import {
@@ -177,6 +178,8 @@ beforeEach(() => {
   retrieveMock.mockImplementation(stripe.retrieve);
   db = paymentsFake({
     stripe_events: [],
+    catering_customers: [{ id: CUSTOMER, name: "Pat Customer", email: "customer@example.com", company: null }],
+    catering_quote_items: [],
     catering_quotes: [quoteRow()],
     locations: [{ id: LOCATION, code: "EM" }],
     catering_payments: [],
@@ -321,6 +324,86 @@ describe("W02 review r2 (P2) — opened before expiry, COMPLETED after it", () =
     expect(err.status).toBe(409);
     expect(err.code).toBe("quote_expired");
     expect(quote().status).toBe("sent");
+  });
+
+  // ── Review r3 (P2): the SAME regression, through both customer surfaces ───────────────
+  // The webhook flagged it and the accept refused it, but the customer's own pages read
+  // "a paid row exists": the order list said "All set 🎉" and the quote page dropped the
+  // expiry notice. Both now read the one late-payment rule (`paidOnLapsedOffer`).
+
+  /** The customer's order list entry for the quote, as /order/account renders it. */
+  async function accountOrder() {
+    const account = await loadCustomerAccount(CUSTOMER);
+    return account.orders.find((o) => o.quote.id === QUOTE)!;
+  }
+  /** The quote page's pay panel, decided exactly as app/order/quote/[id]/page.tsx decides it. */
+  async function quotePagePanel() {
+    const detail = (await loadCustomerQuoteDetail(CUSTOMER, QUOTE))!;
+    const panel = payPanelState({
+      payability: quotePayability({
+        status: detail.quote.status,
+        supersededAt: detail.quote.supersededAt,
+        expiresAt: detail.quote.expiresAt,
+      }),
+      expiresAt: detail.quote.expiresAt,
+      payments: detail.payments,
+    });
+    return { panel, detail };
+  }
+
+  it("a FULL payment completed after the offer lapsed: the order list does NOT say `All set` — received, awaiting our review, amount kept", async () => {
+    const url = await tapPay("full");
+    const paidAt = T0 + 25 * MIN;
+    vi.setSystemTime(paidAt + 5_000);
+    const out = await processStripeEvent(db.client, completedEvent(url, paidAt), SINGLE, { notifyPaid });
+    expect(out.result).toBe("paid_needs_review");
+
+    const order = await accountOrder();
+
+    expect(order.status.key).toBe("late_payment");
+    expect(order.status.label).not.toMatch(/all set/i);
+    expect(order.status.labelKey).toBe("order.account.status_late_payment");
+    expect(order.status.payable).toBe(false);
+    // The amount is preserved: the card shows what was received.
+    expect(order.payments.filter((p) => p.status === "paid").map((p) => p.amountCents)).toEqual([100000]);
+  });
+
+  it("…and the quote page keeps the expiry notice (its late-payment form), lists the payment with its amount, and offers no button", async () => {
+    const url = await tapPay("full");
+    const paidAt = T0 + 25 * MIN;
+    vi.setSystemTime(paidAt + 5_000);
+    await processStripeEvent(db.client, completedEvent(url, paidAt), SINGLE, { notifyPaid });
+
+    const { panel, detail } = await quotePagePanel();
+
+    expect(panel.notice).toBe("expired_paid_late");
+    expect(panel.showOptions).toBe(false);
+    expect(detail.payments.filter((p) => p.status === "paid")).toEqual([
+      expect.objectContaining({ kind: "full", amountCents: 100000, paidAt: iso(paidAt) }),
+    ]);
+  });
+
+  it("a late DEPOSIT reads the same on both surfaces", async () => {
+    const url = await tapPay("deposit");
+    const paidAt = T0 + 25 * MIN;
+    vi.setSystemTime(paidAt + 5_000);
+    await processStripeEvent(db.client, completedEvent(url, paidAt), SINGLE, { notifyPaid });
+
+    expect((await accountOrder()).status.key).toBe("late_payment");
+    expect((await quotePagePanel()).panel.notice).toBe("expired_paid_late");
+  });
+
+  it("the SAME checkout completed in time, viewed after the date: `All set`, and no expiry notice — unchanged", async () => {
+    const url = await tapPay("full");
+    const paidAt = T0 + 10 * MIN;
+    vi.setSystemTime(paidAt + 1_000);
+    const out = await processStripeEvent(db.client, completedEvent(url, paidAt), SINGLE, { notifyPaid });
+    expect(out.result).toBe("paid");
+    vi.setSystemTime(T0 + 3 * HOUR); // the customer looks hours after the offer's date
+
+    expect((await accountOrder()).status.key).toBe("paid");
+    const { panel } = await quotePagePanel();
+    expect(panel).toEqual({ showOptions: false, notice: null });
   });
 
   it("a payment SETTLED in time is an ordinary payment, however late its webhook is delivered", async () => {

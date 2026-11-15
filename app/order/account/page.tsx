@@ -60,7 +60,9 @@ function StatusBadge({ status }: { status: CustomerStatus }) {
           : "bg-co-border/50 text-co-text-dim";
   return (
     <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ${toneClass}`}>
-      {status.label}
+      {/* A status with an i18n key renders through it (en + es); the older ones still carry
+          their English label. */}
+      {status.labelKey ? serverT(PORTAL_LANG, status.labelKey) : status.label}
     </span>
   );
 }
@@ -80,6 +82,13 @@ function OrderCard({ order }: { order: CustomerOrder }) {
             {quote.headcount ? `${quote.headcount} guests · ` : ""}
             <span className="font-bold tabular-nums text-co-text">{money(quote.totalCents)}</span>
           </p>
+          {/* Money received on an offer that had already lapsed (review r3): say what came in
+              and that a person is looking at it. Never a balance line, never "all set". */}
+          {status.key === "late_payment" && (
+            <p className="mt-1 text-sm font-semibold text-co-text-muted">
+              {serverT(PORTAL_LANG, "order.account.late_payment", { paid: money(paidCents) })}
+            </p>
+          )}
           {status.balanceDueCents > 0 && (
             <p className="mt-1 text-sm font-semibold text-co-text-muted">
               {serverT(PORTAL_LANG, "order.account.balance_due", {

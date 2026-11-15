@@ -173,3 +173,74 @@ describe("W02 review r2 (P2) — settled means the MONEY covers the current tota
     expect(customerOrderStatus(revised({ status: "declined" }), [carriedFull]).balanceDueCents).toBe(0);
   });
 });
+
+describe("W02 review r3 (P2) — a payment settled AFTER the offer expired is not `All set`", () => {
+  // A full-payment checkout opened before the offer's date and completed after it. The
+  // webhook records the money and flags it (`paid_after_expiry`); the staff accept refuses
+  // the lapsed offer (`offerTakenUpInTime`). The customer's list said "All set 🎉".
+  const DEADLINE = "2026-11-10T12:00:00.000Z";
+  const lapsed = (over: Partial<PortalQuote> = {}) => quote({ status: "sent", isExpired: true, expiresAt: DEADLINE, ...over });
+  const paidAt = (kind: Payment["kind"], amountCents: number, at: string | null): Payment => ({
+    ...payment(kind, "paid", amountCents),
+    paidAt: at,
+  });
+  const LATE = "2026-11-10T12:05:00.000Z";
+  const IN_TIME = "2026-11-10T11:55:00.000Z";
+
+  it("a full payment that landed five minutes late: received, awaiting our review — never `paid`", () => {
+    const s = customerOrderStatus(lapsed(), [paidAt("full", 100000, LATE)]);
+    expect(s.key).toBe("late_payment");
+    expect(s.label).not.toMatch(/all set/i);
+    expect(s.label).toMatch(/received/i);
+    expect(s.label).toMatch(/review/i);
+    expect(s.labelKey).toBe("order.account.status_late_payment");
+    expect(s.tone).toBe("pending");
+    expect(s.payable).toBe(false);
+  });
+
+  it("a late DEPOSIT is not `pending our confirmation` either — the team cannot confirm a lapsed offer on it", () => {
+    const s = customerOrderStatus(lapsed(), [paidAt("deposit", 20000, LATE)]);
+    expect(s.key).toBe("late_payment");
+    expect(s.payable).toBe(false);
+  });
+
+  it("a self-serve SUBMITTED order is on the same clock", () => {
+    const s = customerOrderStatus(lapsed({ origin: "self_serve", status: "submitted" }), [paidAt("deposit", 20000, LATE)]);
+    expect(s.key).toBe("late_payment");
+  });
+
+  it("a payment that cannot say when it was paid proves nothing: late", () => {
+    expect(customerOrderStatus(lapsed(), [paidAt("full", 100000, null)]).key).toBe("late_payment");
+  });
+
+  it("the SAME payment settled in time is unchanged: all set, or pending our confirmation", () => {
+    expect(customerOrderStatus(lapsed(), [paidAt("full", 100000, IN_TIME)]).key).toBe("paid");
+    expect(customerOrderStatus(lapsed(), [paidAt("deposit", 20000, IN_TIME)]).key).toBe("pending");
+  });
+
+  it("an in-time deposit keeps its standing when a second payment lands late", () => {
+    const s = customerOrderStatus(lapsed(), [paidAt("deposit", 20000, IN_TIME), paidAt("balance", 80000, LATE)]);
+    expect(s.key).toBe("paid");
+  });
+
+  it("an order the team CONFIRMED is off the offer's clock: a payment after the old date is an ordinary one", () => {
+    const s = customerOrderStatus(quote({ status: "accepted", isExpired: false, expiresAt: DEADLINE }), [paidAt("full", 100000, LATE)]);
+    expect(s.key).toBe("paid");
+  });
+
+  it("a quote marked expired BY HAND that was then paid is received-and-under-review too, not a bare `Expired`", () => {
+    const s = customerOrderStatus(quote({ status: "expired", expiresAt: DEADLINE }), [paidAt("full", 100000, LATE)]);
+    expect(s.key).toBe("late_payment");
+    // …while one nobody paid, or one paid before its date, is still just expired.
+    expect(customerOrderStatus(quote({ status: "expired", expiresAt: DEADLINE }), []).key).toBe("expired");
+    expect(customerOrderStatus(quote({ status: "expired", expiresAt: DEADLINE }), [paidAt("deposit", 20000, IN_TIME)]).key).toBe("expired");
+  });
+
+  it("no balance is promised on a lapsed offer: what was received is shown, the rest is the team's decision", () => {
+    expect(customerOrderStatus(lapsed(), [paidAt("deposit", 20000, LATE)]).balanceDueCents).toBe(0);
+  });
+
+  it("a declined quote is still `declined`", () => {
+    expect(customerOrderStatus(lapsed({ status: "declined" }), [paidAt("full", 100000, LATE)]).key).toBe("declined");
+  });
+});

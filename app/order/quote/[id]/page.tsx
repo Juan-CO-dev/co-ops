@@ -23,7 +23,7 @@ import { redirect } from "next/navigation";
 import { getCustomerFromHeaders } from "@/lib/portal/session";
 import { loadCustomerQuoteDetail, type PortalPayment } from "@/lib/portal/quotes";
 import { paymentPlan } from "@/lib/catering/payment-plan";
-import { payPanelState, quotePayability, quoteSettlement, type QuoteUnpayableReason } from "@/lib/portal/payability-shared";
+import { payPanelState, quotePayability, quoteSettlement, type PayPanelNotice } from "@/lib/portal/payability-shared";
 import { serverT } from "@/lib/i18n/server";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -50,9 +50,11 @@ const PAY_LABEL_KEY: Record<"deposit" | "full", TranslationKey> = {
   full: "order.quote.pay_full",
 };
 /** Why there is nothing to pay here, when that is the quote's own state. */
-const NOTICE_KEY: Record<QuoteUnpayableReason, TranslationKey> = {
+const NOTICE_KEY: Record<PayPanelNotice, TranslationKey> = {
   draft: "order.quote.notice_draft",
   expired: "order.quote.notice_expired",
+  // Expired, AND a payment came in after it lapsed: received, with our team for review.
+  expired_paid_late: "order.quote.notice_expired_paid_late",
   superseded: "order.quote.notice_superseded",
   declined: "order.quote.notice_declined",
 };
@@ -145,8 +147,14 @@ export default async function QuotePage({
       supersededAt: quote.supersededAt,
       expiresAt: quote.expiresAt,
     }),
-    paidCount: paid.length,
+    // The payments and the deadline, never a bare count (review r3): a payment that settled
+    // after the offer lapsed must not silence the expiry notice the way one made in time does.
+    expiresAt: quote.expiresAt,
+    payments: detail.payments,
   });
+  // Money received on an offer that had already lapsed: listed below with its amount, but
+  // never as "paid in full" and never under "nothing left to pay": a person is reviewing it.
+  const paidLate = panel.notice === "expired_paid_late";
   const payOptions = panel.showOptions ? plan.options : [];
   // What the customer still owes AFTER what has cleared. The closed panel must not read as
   // "nothing left to pay" when only the deposit landed (LRA-236): the balance is real money
@@ -159,7 +167,7 @@ export default async function QuotePage({
   // revised upward no longer covers the total, so its line must not say "Paid in full"
   // directly above "Balance of … still to come" (audit W02, review r2).
   const paidLineKey = (kind: PortalPayment["kind"]): TranslationKey =>
-    kind === "full" && !settlement.settled ? "order.quote.paid_payment" : PAID_LINE_KEY[kind];
+    kind === "full" && (!settlement.settled || paidLate) ? "order.quote.paid_payment" : PAID_LINE_KEY[kind];
 
   return (
     <Shell>
@@ -278,7 +286,10 @@ export default async function QuotePage({
           </div>
         </section>
       ) : (
-        paid.length > 0 && (
+        paid.length > 0 &&
+        // The late-payment notice above already says what happens next; "nothing left to
+        // pay" / "balance still to come" would both promise an order the team has not accepted.
+        panel.notice !== "expired_paid_late" && (
           <p className="mt-5 text-center text-sm font-semibold text-co-text-muted">
             {remainingCents > 0
               ? t("order.quote.balance_later", { amount: money(remainingCents) })

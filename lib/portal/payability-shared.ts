@@ -8,9 +8,10 @@
  *                          would accept, so the page and the gate cannot drift apart.
  *   lib/portal/account.ts  the account list's "Review & pay" call to action.
  *
- * It also holds the two facts about PAYMENTS those surfaces must agree on: whether an
- * expired offer was taken up in time (`offerTakenUpInTime`) and whether an order is paid
- * for (`quoteSettlement`) — both at the bottom of this file.
+ * It also holds the facts about PAYMENTS those surfaces must agree on: whether an expired
+ * offer was taken up in time (`offerTakenUpInTime`), whether money came in on an offer that
+ * had already lapsed (`paidOnLapsedOffer` — what the customer's own pages read), and
+ * whether an order is paid for (`quoteSettlement`).
  *
  * PURE: no I/O, no server imports (the `*-shared.ts` law), `now` is a parameter. Three
  * callers reading one function is the point — the bugs this closes were all a rule that
@@ -111,23 +112,64 @@ export function quotePayability(quote: QuotePayabilityInput, now: number = Date.
 }
 
 /**
+ * "Was money received on an offer that had ALREADY LAPSED when it settled?" — the one rule
+ * both customer surfaces read (audit W02, review r3).
+ *
+ * `offerTakenUpInTime` was written for the staff accept. The customer's own pages still
+ * asked the older question — "is there a paid row?" — so a full-payment checkout completed
+ * five minutes after the offer's date showed "All set 🎉" on the order list and dropped the
+ * expiry notice from the quote page, while the webhook had flagged that very payment
+ * (`paid_after_expiry`) and the team could not accept the order. The customer is owed the
+ * same truth the team sees: the money WAS received, and it is waiting on a person.
+ *
+ * `expired` is the caller's fact about the quote (the status, or the clock on an open
+ * offer); a team-confirmed order is not expired and is never late. PURE.
+ */
+export function paidOnLapsedOffer(input: {
+  expired: boolean;
+  expiresAt: string | null;
+  payments: ReadonlyArray<{ status: string; paidAt: string | null }>;
+}): boolean {
+  if (!input.expired) return false;
+  if (!input.payments.some((p) => p.status === "paid")) return false;
+  return !offerTakenUpInTime(input.expiresAt, input.payments);
+}
+
+/** Why the pay panel is closed: the quote's own state, or — for an expired quote — the fact
+ *  that a payment came in after it lapsed and is waiting on the team. */
+export type PayPanelNotice = QuoteUnpayableReason | "expired_paid_late";
+
+/**
  * What the quote page's pay area should do, from the server facts alone.
  *
  *   showOptions — draw the pay buttons. Never once anything is paid (both of the plan's
  *                 options are priced for an UNPAID quote), and never for a quote the server
  *                 gate would refuse.
  *   notice      — why there is nothing to pay, when that is the quote's own state. An
- *                 expiry that passed AFTER a payment landed is not a notice: the customer
- *                 took the offer up in time, and telling them it "expired" would be false.
+ *                 expiry that passed AFTER a payment landed IN TIME is not a notice: the
+ *                 customer took the offer up, and telling them it "expired" would be false.
+ *                 A payment that landed AFTER the expiry does not earn that silence (review
+ *                 r3): the notice becomes `expired_paid_late` — expired, payment received,
+ *                 under review — so the page never reads as a settled order.
+ *
+ * The panel is given the PAYMENTS and the offer's deadline, never a bare count: "how many
+ * rows are paid" cannot tell an order taken up in time from one paid after it lapsed.
  */
-export function payPanelState(input: { payability: QuotePayability; paidCount: number }): {
+export function payPanelState(input: {
+  payability: QuotePayability;
+  expiresAt: string | null;
+  payments: ReadonlyArray<{ status: string; paidAt: string | null }>;
+}): {
   showOptions: boolean;
-  notice: QuoteUnpayableReason | null;
+  notice: PayPanelNotice | null;
 } {
-  const { payability, paidCount } = input;
-  if (payability.payable) return { showOptions: paidCount === 0, notice: null };
-  const quiet = payability.reason === "expired" && paidCount > 0;
-  return { showOptions: false, notice: quiet ? null : payability.reason };
+  const { payability, expiresAt, payments } = input;
+  const anythingPaid = payments.some((p) => p.status === "paid");
+  if (payability.payable) return { showOptions: !anythingPaid, notice: null };
+  if (payability.reason !== "expired") return { showOptions: false, notice: payability.reason };
+  if (!anythingPaid) return { showOptions: false, notice: "expired" };
+  const late = paidOnLapsedOffer({ expired: true, expiresAt, payments });
+  return { showOptions: false, notice: late ? "expired_paid_late" : null };
 }
 
 // ── Settlement: is the order paid for? ──────────────────────────────────────────────
