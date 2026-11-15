@@ -92,9 +92,11 @@ import {
   etBusinessDate,
   salesWindowUntrustworthy,
   isProductCountLine,
+  productCountLineDisposition,
   type CountLineInput,
   type CountLineEntry,
   type CountProductLineInput,
+  type ResolvedCountLine,
   type OnHandResult,
   type OnHandUnitsResult,
   type SkuAnchor,
@@ -469,6 +471,16 @@ interface AllocatedProductLine {
   lotCount: number;
 }
 
+/** A PRODUCT line written as a direct count of the product's one active member (audit B099). */
+interface DirectProductLine {
+  productId: string;
+  productName: string;
+  primarySkuId: string;
+  rung: string;
+  /** The entered level resolved through that member's own chain (skuId = the member). */
+  line: ResolvedCountLine;
+}
+
 /**
  * Record one physical-count EVENT + its lines (council L5). Each line resolves oz
  * at write via the SKU pack chain (L3); an unresolvable line is REJECTED loudly (a
@@ -530,9 +542,9 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
     throw new CountError(503, "count_allocation_schema_pending", "Product counts arrive with migration 0180");
   }
 
-  const allocated = productLineInputs.length > 0
+  const { allocated, directSingleMember } = productLineInputs.length > 0
     ? await allocateProductLines(sb, input.locationId, productLineInputs)
-    : [];
+    : { allocated: [] as AllocatedProductLine[], directSingleMember: [] as DirectProductLine[] };
 
   // A member SKU counted BOTH through its product and directly would be counted
   // twice: the anchor sums a SKU's lines within an event by law (council L5
@@ -545,6 +557,12 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
       if (directSkuIds.has(a.skuId)) {
         throw new CountError(400, "product_line_overlaps_sku", "A SKU is counted both on its own and through its product");
       }
+    }
+  }
+  // The same law for a single-member packaging product (B099): its product row IS that SKU's row.
+  for (const d of directSingleMember) {
+    if (directSkuIds.has(d.primarySkuId)) {
+      throw new CountError(400, "product_line_overlaps_sku", "A SKU is counted both on its own and through its product");
     }
   }
 
@@ -573,7 +591,7 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
       `Can't anchor "${resolution.badLine.levelLabel}" for ${badSku?.name ? `"${badSku.name}"` : "a SKU"} — set the SKU's pack chain (a count leaf like "each" is enough for packaging) or its avg oz first`,
       { levelLabel: resolution.badLine.levelLabel, skuName: badSku?.name ?? null, skuId: resolution.badLine.skuId });
   }
-  if (resolution.resolved.length === 0 && allocated.length === 0) {
+  if (resolution.resolved.length === 0 && allocated.length === 0 && directSingleMember.length === 0) {
     throw new CountError(400, "no_lines", "At least one count line is required");
   }
 
@@ -596,7 +614,9 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   // count sheet in the building, so the column appears only when this very event also
   // carries derived rows — which can only happen once the migration has applied.
   const withAllocationColumn = allocated.length > 0;
-  const skuRows = resolution.resolved.map((l) => ({
+  // A single-member packaging product's line (B099) is written exactly like a direct SKU line —
+  // count dimension, leaf units, provenance NULL: it was measured AT that SKU, nothing was derived.
+  const skuRows = [...resolution.resolved, ...directSingleMember.map((d) => d.line)].map((l) => ({
     count_event_id: ev.id, sku_id: l.skuId, level_label: l.levelLabel.trim(), qty: l.qty,
     is_loose: l.isLoose === true, partial_fraction: l.partialFraction ?? null,
     anchor_dimension: l.anchorDimension, resolved_oz: l.resolvedOz, resolved_units: l.resolvedUnits,
@@ -653,6 +673,18 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
       // The derivation, reconstructible: which product, which primary answered and on
       // which rung, what the lots could place, and what the primary absorbed.
       allocated_line_count: productRows.length,
+      // Product rows that were written as a direct count of their one active member (B099).
+      direct_product_lines: directSingleMember.map((d) => ({
+        product_id: d.productId,
+        product_name: d.productName,
+        written_as: "direct_single_member",
+        sku_id: d.primarySkuId,
+        resolution_rung: d.rung,
+        level_label: d.line.levelLabel.trim(),
+        qty: d.line.qty,
+        anchor_dimension: d.line.anchorDimension,
+        resolved_units: d.line.resolvedUnits,
+      })),
       product_lines: allocated.map((p) => ({
         product_id: p.productId,
         product_name: p.productName,
@@ -701,7 +733,7 @@ async function allocateProductLines(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   productLines: CountProductLineInput[],
-): Promise<AllocatedProductLine[]> {
+): Promise<{ allocated: AllocatedProductLine[]; directSingleMember: DirectProductLine[] }> {
   const productIds = [...new Set(productLines.map((l) => l.productId))];
   const { byProduct } = await loadProductIndex(productIds, locationId);
   for (const id of productIds) {
@@ -731,6 +763,7 @@ async function allocateProductLines(
   const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(primaryIds, locationId)]);
 
   const out: AllocatedProductLine[] = [];
+  const directSingleMember: DirectProductLine[] = [];
   for (const line of productLines) {
     const entry = byProduct.get(line.productId)!;
     const primarySkuId = entry.resolution.skuId!;
@@ -750,7 +783,19 @@ async function allocateProductLines(
         { levelLabel: line.levelLabel, skuName: entry.name, skuId: null });
     }
     const only = resolved.resolved[0]!;
-    if (only.anchorDimension !== "weight" || only.resolvedOz == null) {
+    const disposition = productCountLineDisposition({
+      anchorDimension: only.anchorDimension,
+      resolvedOz: only.resolvedOz,
+      activeMemberSkuIds: memberIdsByProduct.get(line.productId) ?? [],
+      primarySkuId,
+    });
+    if (disposition === "direct_single_member") {
+      // Packaging with ONE active member (audit B099): that member is the product's whole
+      // shelf, so this is an ordinary direct count of that SKU, in leaf units.
+      directSingleMember.push({ productId: line.productId, productName: entry.name, primarySkuId, rung: entry.resolution.rung, line: only });
+      continue;
+    }
+    if (disposition === "refuse_count_dimension" || only.resolvedOz == null) {
       // A count-terminated chain (packaging) has no honest ounce, so there is nothing
       // to allocate across vendors. Count those per SKU — the split is the way.
       throw new CountError(400, "product_count_dimension", `"${entry.name}" is counted by unit, not by weight — count it by vendor instead`);
@@ -785,7 +830,7 @@ async function allocateProductLines(
       lotCount: lots.length,
     });
   }
-  return out;
+  return { allocated: out, directSingleMember };
 }
 
 /**
