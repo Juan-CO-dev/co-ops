@@ -16,7 +16,11 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *      Locked → 423 account_locked with retry_after_seconds.
  *   7. Verify password. Wrong → recordFailedAttempt; if it crossed threshold,
  *      return 423; otherwise 401 invalid_credentials.
- *   8. Success → recordSuccessfulAuth, return 200 with session cookie.
+ *   8. Success → recordSuccessfulAuth, return 200 with session cookie. The session is
+ *      minted only while the password hash verified in step 7 (and the email looked up
+ *      in step 2) are still the stored ones (audit W07 B051): a reset or an email change
+ *      that committed in between → 401, no session. The legacy-hash rewrite runs AFTER
+ *      the mint, never before it.
  *
  * Disclosure policy (Juan-confirmed Phase 2 Session 3):
  *   - account_locked is told (admin gave the user the email, so existence is
@@ -36,7 +40,7 @@ import {
   reservedOf,
   upgradeLegacyPasswordHash,
 } from "@/lib/auth-flows";
-import { applySessionCookie } from "@/lib/session";
+import { applySessionCookie, CredentialChangedError, type CreateSessionResult } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
 import { ROLES, type RoleCode } from "@/lib/roles";
@@ -162,14 +166,32 @@ export async function POST(req: NextRequest) {
     return jsonError(401, "invalid_credentials");
   }
 
-  // 7b. Rehash-on-login (password scheme v2, 2026-09-01). A legacy pepper-prepended
+  // 8. Success — the mint is a compare-and-set on the hash just verified AND the email the account was
+  // looked up by (audit W07 B051). A reset or an email change that committed while bcrypt ran has already
+  // revoked the account's sessions; this sign-in must not create a fresh one behind it.
+  //
+  // ORDER IS LOAD-BEARING: the mint runs BEFORE the legacy-hash rewrite below. The rewrite replaces
+  // users.password_hash; were it first, the mint would compare the hash verified here against the freshly
+  // rewritten one and refuse EVERY legacy-hash sign-in as credential_changed.
+  let session: CreateSessionResult;
+  try {
+    session = await recordSuccessfulAuth(user.id, "password", ctx, {
+      kind: "password", hash: user.password_hash, loginEmail: normalizedEmail,
+    });
+  } catch (e) {
+    if (!(e instanceof CredentialChangedError)) throw e;
+    await recordFailedAttempt(user.id, "password", "credential_changed", ctx);
+    return jsonError(401, "invalid_credentials");
+  }
+
+  // 8b. Rehash-on-login (password scheme v2, 2026-09-01). A legacy pepper-prepended
   // hash just verified once more above; rewrite it under v2 while the plaintext is
   // in hand. Non-fatal by construction (never throws) — a correct login must not
   // become an error because housekeeping failed. NO session revoke: same credential,
-  // same person. See lib/auth-flows.ts upgradeLegacyPasswordHash.
+  // same person. Compare-and-set on the same stored hash, so a reset that lands
+  // between the mint and here makes this a no-op (and that reset revokes the session
+  // just minted, which is correct). See lib/auth-flows.ts upgradeLegacyPasswordHash.
   await upgradeLegacyPasswordHash(user.id, password, user.password_hash, user.role, ctx, "signin");
 
-  // 8. Success
-  const session = await recordSuccessfulAuth(user.id, "password", ctx);
   return applySessionCookie(jsonOk({ ok: true, user_id: user.id }), session);
 }

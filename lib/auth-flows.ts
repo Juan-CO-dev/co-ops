@@ -29,7 +29,7 @@
 
 import { audit } from "./audit";
 import { verifyPin, hashPassword, isLegacyPasswordHash } from "./auth";
-import { createSession, type AuthMethod, type CreateSessionResult } from "./session";
+import { createSession, type AuthMethod, type CreateSessionResult, type VerifiedCredential } from "./session";
 import { getServiceRoleClient } from "./supabase-server";
 import type { RoleCode } from "./roles";
 import {
@@ -420,6 +420,13 @@ export async function recordFailedAttempt(
  * mint goes first so a downstream failure doesn't leave us with reset counters
  * but no session (which would silently let the user retry indefinitely).
  *
+ * `credential` (audit W07 B051) is the stored hash the caller JUST verified. With
+ * migration 0307 applied, steps 1 and 2 are ONE transaction (`auth_create_session`):
+ * the session is inserted only while that hash is still the stored one — a reset
+ * that committed while bcrypt ran makes this throw CredentialChangedError, and no
+ * session exists. Before 0307 the pre-0307 insert runs and step 2 is the separate
+ * UPDATE below, as before.
+ *
  * Used by /api/auth/pin, /api/auth/password, and /api/auth/verify
  * (auto-sign-in after email verification + password set).
  */
@@ -427,11 +434,12 @@ export async function recordSuccessfulAuth(
   userId: string,
   method: AuthMethod,
   ctx: AuthAttemptContext,
+  credential: VerifiedCredential,
 ): Promise<CreateSessionResult> {
   const session = await createSession(userId, method, {
     ipAddress: ctx.ipAddress,
     userAgent: ctx.userAgent,
-  });
+  }, credential);
 
   const sb = getServiceRoleClient();
   const { data: roleRow } = await sb
@@ -440,14 +448,17 @@ export async function recordSuccessfulAuth(
     .eq("id", userId)
     .maybeSingle<{ role: RoleCode }>();
 
-  await sb
-    .from("users")
-    .update({
-      failed_login_count: 0,
-      locked_until: null,
-      last_login_at: new Date().toISOString(),
-    })
-    .eq("id", userId);
+  // 0307's mint already cleared the counters in its own transaction; only the pre-0307 insert needs this.
+  if (!session.atomic) {
+    await sb
+      .from("users")
+      .update({
+        failed_login_count: 0,
+        locked_until: null,
+        last_login_at: new Date().toISOString(),
+      })
+      .eq("id", userId);
+  }
 
   await audit({
     actorId: userId,

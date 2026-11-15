@@ -14,9 +14,20 @@
 --   2. increment_failed_login(p_user_id) — 0076's counter RE-EMITTED with the same restart (B049), same signature and
 --      return. It is the app's fallback counter (when auth_reserve_attempt is missing or errors), so the fallback
 --      path no longer re-locks on the first wrong answer after an expired lock either.
+--   3. auth_create_session(session id, user, auth method, credential kind, verified hash, login email, token hash,
+--      expires at, ip, user agent) — NEW (B051). The sessions row is inserted only if the credential the sign-in
+--      VERIFIED is still the one in the users row: under the users row lock it refuses 'credential_changed' when the
+--      stored hash of that kind differs from the verified one, or (password sign-in) when the account's email is no
+--      longer the one that was looked up. A sign-in that read the old hash, sat in bcrypt while an admin reset the
+--      credential (which revokes live sessions in the same transaction), used to insert a NEW live session after
+--      that revoke. The admin writers hold the same row FOR UPDATE through their revoke, so either the mint commits
+--      first and the revoke kills it, or the mint waits, re-reads the new hash and refuses. It also clears
+--      failed_login_count / locked_until and stamps last_login_at in the same transaction (the app used to do that
+--      in a separate, unchecked UPDATE after the insert).
 --
 -- LOCK ORDER (unchanged from 0279): the identity lock → the per-person advisory lock → users rows → password_resets /
---   email_verifications / sessions. auth_reserve_attempt takes ONE users row lock and nothing else.
+--   email_verifications / sessions. auth_reserve_attempt and auth_create_session each take ONE users row lock (the mint then
+--   inserts its own sessions row); neither can deadlock.
 --
 -- EXISTING ROWS: none rewritten by sections 1–2. An account sitting on an expired lock restarts at its next attempt.
 --
@@ -25,16 +36,19 @@
 --   path with no deploy. The re-emitted functions keep their signatures, so code deployed before this wave keeps
 --   working after the apply. Details per path are in the PR for audit wave W07.
 --
--- DEPENDS ON: users (failed_login_count, locked_until, last_login_at), 0076 (increment_failed_login), 0279.
+-- DEPENDS ON: users (failed_login_count, locked_until, last_login_at, pin_hash, password_hash, email, active), sessions
+--   (id, user_id, token_hash, auth_method, step_up_unlocked, last_activity_at, expires_at, ip_address, user_agent),
+--   0076 (increment_failed_login), 0279.
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select count(*) from users where failed_login_count >= 5 and locked_until <= now();  -- accounts B049 frees on their next try
 --
 -- VERIFY AFTER APPLY:
---   select proname, prosecdef, proconfig from pg_proc where proname in ('auth_reserve_attempt', 'increment_failed_login');
+--   select proname, prosecdef, proconfig from pg_proc where proname in ('auth_reserve_attempt', 'increment_failed_login',
+--     'auth_create_session');
 --     -- t, {search_path=pg_catalog, public} on each
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
---    and routine_name in ('auth_reserve_attempt', 'increment_failed_login');  -- service_role (+ postgres) only
+--    and routine_name in ('auth_reserve_attempt', 'increment_failed_login', 'auth_create_session');  -- service_role (+ postgres) only
 --
 -- ROLLBACK: none needed for the app (it falls back on a missing function). Re-emit through a new reviewed migration.
 
@@ -58,6 +72,11 @@ begin
        and column_name in ('failed_login_count', 'locked_until', 'last_login_at', 'pin_hash', 'password_hash', 'email',
                            'email_verified', 'email_verified_at', 'active', 'role')) <> 10 then
     raise exception '0307: the users columns the auth functions use must exist';
+  end if;
+  if (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'sessions'
+       and column_name in ('id', 'user_id', 'token_hash', 'auth_method', 'step_up_unlocked', 'last_activity_at', 'expires_at',
+                           'revoked_at', 'ip_address', 'user_agent')) <> 10 then
+    raise exception '0307: the sessions columns the session mint writes must exist';
   end if;
   select prosrc into v_def from pg_proc where oid = 'public.increment_failed_login(uuid)'::regprocedure;
   if strpos(v_def, 'coalesce(failed_login_count, 0) + 1') = 0 or strpos(v_def, 'locked_until') > 0 then
@@ -112,13 +131,57 @@ $$;
 revoke all on function public.increment_failed_login(uuid) from public, anon, authenticated;
 grant execute on function public.increment_failed_login(uuid) to service_role;
 
+-- ── 3. B051: the session mint — compare-and-set on the credential the sign-in verified ──
+-- p_ip is TEXT and cast under a guard: a malformed address must never fail a sign-in (it is stored as null).
+create function public.auth_create_session(p_session_id uuid, p_user uuid, p_auth_method text, p_credential_kind text,
+  p_verified_hash text, p_login_email text, p_token_hash text, p_expires_at timestamptz, p_ip text, p_user_agent text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_active boolean; v_pin text; v_pw text; v_email text; v_now timestamptz; v_ip inet;
+begin
+  if p_session_id is null or p_user is null or p_auth_method is null or p_auth_method not in ('pin', 'password')
+     or p_credential_kind is null or p_credential_kind not in ('pin', 'password')
+     or p_verified_hash is null or p_verified_hash = '' or p_token_hash is null or p_token_hash = '' or p_expires_at is null then
+    raise exception 'invalid_payload';
+  end if;
+  select active, pin_hash, password_hash, email into v_active, v_pin, v_pw, v_email
+    from public.users where id = p_user for update;
+  if not found then raise exception 'user_not_found'; end if;
+  if not coalesce(v_active, false) then raise exception 'account_inactive'; end if;
+  -- The compare-and-set. An admin reset, a self-service reset or an email change that committed after the sign-in
+  -- read the row is SEEN here (this statement waited for it on the row lock), and the mint is refused.
+  if (p_credential_kind = 'pin' and v_pin is distinct from p_verified_hash)
+     or (p_credential_kind = 'password' and v_pw is distinct from p_verified_hash)
+     or (p_login_email is not null and lower(v_email) is distinct from lower(p_login_email)) then
+    raise exception 'credential_changed';
+  end if;
+  v_now := clock_timestamp();
+  if p_expires_at <= v_now then raise exception 'invalid_payload'; end if;
+  begin
+    v_ip := nullif(btrim(p_ip), '')::inet;
+  exception when others then
+    v_ip := null;
+  end;
+  insert into public.sessions (id, user_id, token_hash, auth_method, step_up_unlocked, last_activity_at, expires_at, ip_address, user_agent)
+    values (p_session_id, p_user, p_token_hash, p_auth_method, false, v_now, p_expires_at, v_ip, p_user_agent);
+  -- A successful sign-in ends the failure window (also what clears the count auth_reserve_attempt just took).
+  update public.users set failed_login_count = 0, locked_until = null, last_login_at = v_now where id = p_user;
+  return jsonb_build_object('session_id', p_session_id);
+end $$;
+comment on function public.auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text) is
+  '0307 (audit W07 B051): mints the sessions row only while the verified credential (and, for a password sign-in, '
+  'the looked-up email) is still the stored one, under the users row lock; clears the lockout counters and stamps '
+  'last_login_at in the same transaction. Refusals: credential_changed, account_inactive, user_not_found, invalid_payload.';
+revoke all on function public.auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text) from public, anon, authenticated;
+grant execute on function public.auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text) to service_role;
+
 -- ── POST-APPLY: every function this file creates or re-emits is definer, search_path pinned, service_role only ──
 do $$
 declare
   v_fn text; f regprocedure;
   v_fns text[] := array[
     'public.auth_reserve_attempt(uuid)',
-    'public.increment_failed_login(uuid)'
+    'public.increment_failed_login(uuid)',
+    'public.auth_create_session(uuid,uuid,text,text,text,text,text,timestamptz,text,text)'
   ];
 begin
   foreach v_fn in array v_fns loop

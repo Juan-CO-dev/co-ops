@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { FAILURE_LIMIT, LOCKOUT_MINUTES, reserveAttemptCall } from "@/lib/auth-lockout-shared";
+import { FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, reserveAttemptCall } from "@/lib/auth-lockout-shared";
 import { extractFunction, normalize } from "../scripts/shop-versions/reemit-mods";
 
 const src = normalize(readFileSync("supabase/migrations/0307_auth_lockout_reset_hardening.sql", "utf8"));
@@ -42,6 +42,13 @@ describe("0307_auth_lockout_reset_hardening", () => {
       "B049 the fallback counter leaves a live lock alone and still counts 2 → 3",
       "B050 thirty reservations in a row: exactly 5 allowed, the 5th sets locked_until, 25 refused, count stays 5",
       "B050 an attempt on a locked account is refused and does NOT move the counter",
+      "S1 auth_create_session: SECURITY DEFINER, search_path pinned, service_role only",
+      "B051 a mint with the pre-reset hash after admin_user_set_credential → credential_changed",
+      "B051 … and no sessions row was inserted (the reset's revoke stands)",
+      "B051 a password mint after an email change → credential_changed",
+      "B051 a mint with the current hash → one live session, failed_login_count 0, locked_until null, last_login_at set",
+      "B051 an inactive account → account_inactive",
+      "B051 a correct answer on the fifth reserved attempt signs in and clears the lock it reserved",
       "PASS 0307:",
     ]) expect(out, s).toContain(s);
   }, 260_000);
@@ -77,10 +84,37 @@ describe("0307_auth_lockout_reset_hardening", () => {
     expect(fn).toContain("else coalesce(failed_login_count, 0) + 1 end");
   });
 
-  it("the lib's builder names the SQL arguments", () => {
+  /** The parameter names of a function as the migration declares them, in order. */
+  const sqlParams = (start: string) => {
+    const head = src.slice(src.indexOf(start) + start.length);
+    return [...head.slice(0, head.indexOf(")\nreturns ")).matchAll(/\b(p_[a-z_]+) [a-z]+/g)].map((m) => m[1]!);
+  };
+
+  it("the lib's builders name the SQL arguments", () => {
     const call = reserveAttemptCall("u");
     expect(call.fn).toBe("auth_reserve_attempt");
     expect(src).toContain(`create function public.${call.fn}(${Object.keys(call.args).map((k) => `${k} uuid`).join(", ")})`);
+    const mint = createSessionCall({ sessionId: "s", userId: "u", authMethod: "pin", credential: { kind: "pin", hash: "h" }, tokenHash: "t", expiresAt: "e", ipAddress: null, userAgent: null });
+    expect(Object.keys(mint.args)).toEqual(sqlParams(`create function public.${mint.fn}(`));
+  });
+
+  it("B051 the mint compares the verified hash under the users row lock, before it inserts, and clears the counters in the same function", () => {
+    const fn = fnBody("create function public.auth_create_session(");
+    const lock = fn.indexOf("from public.users where id = p_user for update");
+    const cas = fn.indexOf("raise exception 'credential_changed'");
+    const insert = fn.indexOf("insert into public.sessions");
+    const reset = fn.indexOf("update public.users set failed_login_count = 0, locked_until = null, last_login_at = v_now");
+    expect(lock).toBeGreaterThan(-1);
+    expect(cas).toBeGreaterThan(lock);
+    expect(insert).toBeGreaterThan(cas);
+    expect(reset).toBeGreaterThan(insert);
+    expect(fn).toContain("v_pin is distinct from p_verified_hash");
+    expect(fn).toContain("v_pw is distinct from p_verified_hash");
+    expect(fn).toContain("lower(v_email) is distinct from lower(p_login_email)");
+    // the app maps exactly this message to CredentialChangedError, and falls back ONLY on a missing function
+    const session = read("lib/session.ts");
+    expect(session).toContain('if (mintErr.message === "credential_changed") throw new CredentialChangedError();');
+    expect(session).toContain("if (!isMissingRpc(mintErr)) {");
   });
 
   it("the app keeps a pre-0307 path: a missing function falls back, it never fails the sign-in", () => {

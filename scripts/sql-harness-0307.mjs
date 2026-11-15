@@ -14,10 +14,13 @@
  *   S1   the posture: every function 0307 creates or re-emits is SECURITY DEFINER, search_path pinned, service_role only
  *   B049 an expired lock restarts the count (the reservation and the fallback counter)
  *   B050 the lock check and the count are one step: thirty reservations in a row let exactly five through
+ *   B051 the session mint is a compare-and-set on the verified credential: a mint with a pre-reset hash, or after an
+ *        email change, is refused and inserts nothing; a good mint inserts one session and clears the lockout
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
-import { FAILURE_LIMIT, LOCKOUT_MINUTES, parseAttemptReservation, reserveAttemptCall } from "../lib/auth-lockout-shared.ts";
+import { FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, parseAttemptReservation, reserveAttemptCall } from "../lib/auth-lockout-shared.ts";
+import { setUserCredentialCall, updateUserProfileCall } from "../lib/admin/user-admin-rpc-shared.ts";
 
 const read = (p) => readFileSync(p, "utf8");
 const STUB = read("tests/fixtures/scheduling-pglite-stub.sql");
@@ -44,7 +47,8 @@ async function base({ m0076 = true, m0279 = true } = {}) {
   if (m0076) await db.exec(M0076);
   return db;
 }
-const FNS = ["auth_reserve_attempt(uuid)", "increment_failed_login(uuid)"];
+const FNS = ["auth_reserve_attempt(uuid)", "increment_failed_login(uuid)",
+  "auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text)"];
 
 const db = await base();
 /** Call a function as the app does: service_role, named arguments. */
@@ -66,6 +70,17 @@ const user = (role, extra = {}) => {
   const vals = [role, ...Object.values(extra)];
   return id(`insert into public.users (${cols.join(", ")}) values (${cols.map((_, i) => `$${i + 1}`).join(", ")}) returning id`, vals);
 };
+const shop = () => id("insert into public.locations (active) values (true) returning id");
+const member = (u, l) => db.query("insert into public.user_locations (user_id, location_id, active) values ($1, $2, true)", [u, l]);
+const HASH = (tag) => `$2a$10$${tag.padEnd(53, "x")}`; // bcrypt-shaped, synthetic
+let mintSeq = 0;
+/** The exact call lib/session.ts createSession makes. */
+const mint = (userId, credential, over = {}) => {
+  const sessionId = crypto.randomUUID();
+  return rpc(createSessionCall({ sessionId, userId, authMethod: credential.kind, credential, tokenHash: `tok-${++mintSeq}`,
+    expiresAt: new Date(Date.now() + 12 * 3600_000).toISOString(), ipAddress: "203.0.113.7", userAgent: "harness", ...over })).then((r) => ({ r, sessionId }));
+};
+const liveSessions = async (u) => (await one("select count(*)::int as n from public.sessions where user_id = $1 and revoked_at is null", [u])).n;
 const lockState = (u) => one("select failed_login_count as n, locked_until as until, locked_until > now() as live from public.users where id = $1", [u]);
 
 try {
@@ -163,6 +178,68 @@ try {
 
     await refuses(() => rpc(reserveAttemptCall("00000000-0000-4000-8000-000000000000")), "user_not_found", "B050 an unknown user is refused by name");
     await refuses(() => rpc({ fn: "auth_reserve_attempt", args: { p_user: null } }), "invalid_payload", "B050 a null user is refused");
+  }
+
+  // ── fixtures for the admin-writer cases (superuser) ──
+  const SA = await shop();
+  const gm = await user("gm");
+  await member(gm, SA);
+
+  // ── B051: the session mint is a compare-and-set on the verified credential ──
+  {
+    // a PIN sign-in racing an admin PIN reset: the sign-in verified H_OLD, the reset commits, THEN the mint runs
+    const e = await user("employee", { pin_hash: HASH("old-pin") });
+    await member(e, SA);
+    await db.query("insert into public.sessions (user_id) values ($1)", [e]); // a session that was live before the reset
+    const reset = await rpc(setUserCredentialCall({ actorId: gm, userId: e, kind: "pin", hash: HASH("new-pin") }));
+    check(reset.sessions_revoked === 1 && (await liveSessions(e)) === 0, "B051 (setup) the admin PIN reset revoked the live session");
+    await refuses(() => mint(e, { kind: "pin", hash: HASH("old-pin") }), "credential_changed",
+      "B051 a mint with the pre-reset hash after admin_user_set_credential");
+    check((await liveSessions(e)) === 0 && (await one("select count(*)::int as n from public.sessions where user_id = $1", [e])).n === 1,
+      "B051 … and no sessions row was inserted (the reset's revoke stands)");
+
+    // a password sign-in racing an email change (admin_user_update_profile revokes on an email change)
+    const m = await user("agm", { email: "old@example.test", password_hash: HASH("pw"), email_verified: true });
+    await member(m, SA);
+    await rpc(updateUserProfileCall({ actorId: gm, userId: m, patch: { email: "new@example.test" } }));
+    await refuses(() => mint(m, { kind: "password", hash: HASH("pw"), loginEmail: "old@example.test" }), "credential_changed",
+      "B051 a password mint after an email change");
+    check((await liveSessions(m)) === 0, "B051 … and that mint inserted nothing");
+    // the same person signing in with the NEW email (same password) is fine; the email compare is case-insensitive
+    const okNew = await mint(m, { kind: "password", hash: HASH("pw"), loginEmail: "NEW@example.test" });
+    check(okNew.r.session_id === okNew.sessionId && (await liveSessions(m)) === 1, "B051 the new email signs in (case-insensitive compare)");
+
+    // the happy path: one live session, the lockout cleared, last_login_at stamped — in the same transaction
+    const g = await user("employee", { pin_hash: HASH("good"), failed_login_count: 5, locked_until: new Date(Date.now() + 600_000).toISOString() });
+    const ok = await mint(g, { kind: "pin", hash: HASH("good") });
+    const row = await one("select failed_login_count as n, locked_until as until, last_login_at as at from public.users where id = $1", [g]);
+    const sess = await one("select token_hash, auth_method, step_up_unlocked, ip_address::text as ip, user_agent, expires_at > now() as live, revoked_at from public.sessions where id = $1", [ok.sessionId]);
+    check(ok.r.session_id === ok.sessionId && (await liveSessions(g)) === 1 && row.n === 0 && row.until === null && row.at !== null,
+      "B051 a mint with the current hash → one live session, failed_login_count 0, locked_until null, last_login_at set");
+    check(sess.auth_method === "pin" && sess.step_up_unlocked === false && sess.ip.startsWith("203.0.113.7") && sess.user_agent === "harness" && sess.live === true && sess.revoked_at === null,
+      "B051 the minted row carries the method, the address, the agent and no step-up");
+
+    // the wrong KIND of hash never matches, an inactive account never mints, a malformed address never blocks a sign-in
+    await refuses(() => mint(g, { kind: "password", hash: HASH("good") }), "credential_changed", "B051 a PIN hash offered as the password credential");
+    const off = await user("employee", { pin_hash: HASH("off"), active: false });
+    await refuses(() => mint(off, { kind: "pin", hash: HASH("off") }), "account_inactive", "B051 an inactive account");
+    const badIp = await mint(g, { kind: "pin", hash: HASH("good") }, { ipAddress: "not-an-ip" });
+    check((await one("select ip_address from public.sessions where id = $1", [badIp.sessionId])).ip_address === null, "B051 a malformed address is stored as null, the sign-in still succeeds");
+    await refuses(() => mint(g, { kind: "pin", hash: HASH("good") }, { expiresAt: new Date(Date.now() - 1000).toISOString() }), "invalid_payload", "B051 an already-expired session is refused");
+    await refuses(() => mint("00000000-0000-4000-8000-000000000000", { kind: "pin", hash: HASH("good") }), "user_not_found", "B051 an unknown user");
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      await refuses(() => db.query("select public.auth_create_session(null, null, null, null, null, null, null, null, null, null)"), "42501", `B051 ${role} cannot EXECUTE auth_create_session`);
+      await db.exec("reset role");
+    }
+
+    // B050 + B051 together: the fifth reserved attempt with the RIGHT credential signs in and clears its own lock
+    const fifth = await user("employee", { pin_hash: HASH("fifth"), failed_login_count: 4 });
+    const res = await rpc(reserveAttemptCall(fifth));
+    await mint(fifth, { kind: "pin", hash: HASH("fifth") });
+    const after = await lockState(fifth);
+    check(res.attempt === 5 && typeof res.locked_until === "string" && after.n === 0 && after.until === null,
+      "B051 a correct answer on the fifth reserved attempt signs in and clears the lock it reserved");
   }
 } catch (e) {
   failures++;

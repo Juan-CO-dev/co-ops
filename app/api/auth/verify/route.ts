@@ -195,9 +195,11 @@ export async function POST(req: NextRequest) {
     ipAddress,
     userAgent,
   });
+  // The credential is the hash this request just wrote (audit W07 B051): if anything replaced it before the
+  // mint, no session is created and the request fails rather than signing in on a superseded password.
   const session = await recordSuccessfulAuth(updatedUser.id, "password", {
     ipAddress,
     userAgent,
-  });
+  }, { kind: "password", hash: passwordHash });
   return applySessionCookie(jsonOk({ ok: true, user_id: updatedUser.id }), session);
 }

@@ -16,6 +16,28 @@ export const LOCKOUT_MINUTES = 15;
 /** The exact argument object the lib sends (the harness calls the function with the same names). */
 export const reserveAttemptCall = (userId: string) => ({ fn: "auth_reserve_attempt", args: { p_user: userId } }) as const;
 
+/** The credential a sign-in just verified: the session is minted only while it is still the stored one (B051). */
+export interface VerifiedCredential {
+  kind: "pin" | "password";
+  /** The exact stored hash the route read and verified against. Never a plaintext. */
+  hash: string;
+  /** Password sign-in only: the lowercased email the account was looked up by. */
+  loginEmail?: string;
+}
+
+/** `auth_create_session`'s arguments (0307), by name. */
+export const createSessionCall = (a: {
+  sessionId: string; userId: string; authMethod: "pin" | "password"; credential: VerifiedCredential;
+  tokenHash: string; expiresAt: string; ipAddress: string | null; userAgent: string | null;
+}) => ({
+  fn: "auth_create_session",
+  args: {
+    p_session_id: a.sessionId, p_user: a.userId, p_auth_method: a.authMethod, p_credential_kind: a.credential.kind,
+    p_verified_hash: a.credential.hash, p_login_email: a.credential.loginEmail ?? null, p_token_hash: a.tokenHash,
+    p_expires_at: a.expiresAt, p_ip: a.ipAddress, p_user_agent: a.userAgent,
+  },
+}) as const;
+
 /**
  * The function is not installed yet: PostgREST's schema-cache miss (PGRST202) or Postgres's undefined
  * function (42883). This — and only this — is what "0307 is not applied yet" looks like, and every 0307
