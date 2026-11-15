@@ -6,10 +6,10 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakeDb } from "./fixtures/counts-fake-db";
-import { buildRecipeVersionsFixture, LOC, OTHER } from "./fixtures/recipe-versions-fixture";
+import { buildRecipeVersionsFixture, withBackfilledRecipeVersions, LOC, OTHER } from "./fixtures/recipe-versions-fixture";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadRecipeInputsAcrossScopes, loadResolvedRecipeInputs } from "@/lib/prep-consumption";
-import { loadSkuToItems, recordProduction, ProductionError } from "@/lib/production";
+import { loadProductionFormData, loadSkuToItems, recordProduction, ProductionError } from "@/lib/production";
 import { loadDemandSources } from "@/lib/ordering";
 import { loadGraphRows } from "@/lib/admin/readiness-load";
 import { loadSkuUsageMap } from "@/lib/admin/cost";
@@ -92,6 +92,43 @@ describe("production follows the shop's recipe", () => {
     // …and accepts what it does make (chunk-2 review P3a: the positive case).
     expect(await tryRecord(LOC, "s-pickle")).toBe("accepted");
     expect(await tryRecord(OTHER, "s-mayo")).toBe("accepted");
+  });
+
+  /** W08/B055: LOC's private store-run ham (s-store-ham, location_id LOC, product p-ham) plus a GLOBAL
+   *  recipe that pins the PRODUCT p-ham and makes i-ham-sliced. */
+  function withSlicedHam() {
+    const t = buildRecipeVersionsFixture();
+    const store = t.vendor_items!.find((r) => r.id === "s-store-ham")!;
+    expect(store.location_id).toBe(LOC);
+    Object.assign(store, { active: true, pack_format: "case", units_per_pack: 1, each_size: 16, each_measure: "oz" });
+    t.items!.push({ id: "i-ham-sliced", name: "Sliced ham", active: true, oz_per_par_unit: 16, default_par_unit: "each" });
+    t.recipes!.push({ id: "r-ham-slice", name: "Slice ham", active: true, batch_yield: 1, created_at: "2026-10-01T00:00:00.000Z" });
+    t.recipe_inputs!.push({ id: "ri-ham-slice", recipe_id: "r-ham-slice", component_sku_id: null, component_item_id: null,
+      component_product_id: "p-ham", quantity: 16, unit: "oz", portioned: false, display_order: 0 });
+    t.recipe_outputs!.push({ id: "ro-ham-slice", recipe_id: "r-ham-slice", output_item_id: "i-ham-sliced", output_menu_item_id: null, yield: 1 });
+    return withBackfilledRecipeVersions(t);
+  }
+
+  it("W08/B055: refuses the other shop's private SKU even when a global product pin would accept it", async () => {
+    const t = withSlicedHam();
+    current = createFakeDb(t);
+    const before = (t.productions ?? []).length;
+    await expect(recordProduction(owner, { locationId: OTHER, inputSkuId: "s-store-ham", inputQty: 1, outputItemId: "i-ham-sliced", outputQty: 1 }))
+      .rejects.toMatchObject({ status: 400, code: "invalid_sku" });
+    expect((t.productions ?? []).length).toBe(before);
+    // Control: the owning shop may log it.
+    await expect(recordProduction(owner, { locationId: LOC, inputSkuId: "s-store-ham", inputQty: 1, outputItemId: "i-ham-sliced", outputQty: 1 }))
+      .resolves.toMatchObject({ productionId: expect.any(String) });
+  });
+
+  it("W08/B055: the picker lists only shared and own-shop SKUs", async () => {
+    current = createFakeDb(withSlicedHam());
+    const atOther = await loadProductionFormData(owner, OTHER);
+    expect(atOther.skus.map((s) => s.id)).not.toContain("s-store-ham");
+    expect(atOther.skus.map((s) => s.id)).toContain("s-ham-a");
+    expect(Object.keys(atOther.skuToItems)).not.toContain("s-store-ham");
+    const atLoc = await loadProductionFormData(owner, LOC);
+    expect(atLoc.skus.map((s) => s.id)).toContain("s-store-ham");
   });
 });
 

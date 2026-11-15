@@ -38,6 +38,7 @@ import {
   ChecklistRoleViolationError,
   ChecklistMissingCountError,
   ChecklistMissingPhotoError,
+  ChecklistInvalidPhotoError,
   ChecklistInvalidAnswerError,
   ChecklistPinMismatchError,
   ChecklistReauthLockedError,
@@ -90,6 +91,13 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
     });
   }
   if (err instanceof ChecklistMissingPhotoError) {
+    return jsonError(400, err.code, {
+      message: err.message,
+      template_item_id: err.templateItemId,
+      field: "photoId",
+    });
+  }
+  if (err instanceof ChecklistInvalidPhotoError) {
     return jsonError(400, err.code, {
       message: err.message,
       template_item_id: err.templateItemId,

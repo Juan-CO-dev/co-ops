@@ -21,6 +21,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import { lockLocationContext } from "@/lib/locations";
+import { integrationsReadScope } from "@/lib/admin/integrations-scope";
 import type { AuthContext } from "@/lib/session";
 import { toastConfigured } from "@/lib/toast/client";
 import { fetchToastMenuItems, fetchToastModifierOptions } from "@/lib/toast/menus";
@@ -144,12 +145,14 @@ async function loadRawSkus(): Promise<Array<{ id: string; name: string; location
   return data ?? [];
 }
 
-async function loadActiveRows(locationId?: string): Promise<DbMapRow[]> {
+async function loadActiveRows(locationId?: string, locationIds?: readonly string[]): Promise<DbMapRow[]> {
   const sb = getServiceRoleClient();
+  if (locationIds && locationIds.length === 0) return [];
   let q = sb.from("toast_menu_map")
     .select("id, location_id, menu_item_id, item_id, package_id, sku_id, toast_item_guid, toast_item_name, toast_price_cents, match_status, match_score, confirmed_at, is_modifier, disposition, portion_qty, portion_unit")
     .eq("active", true);
   if (locationId) q = q.eq("location_id", locationId);
+  if (locationIds) q = q.in("location_id", [...locationIds]);
   const { data, error } = await q.returns<DbMapRow[]>();
   if (error) throw new Error(`toast-map rows: ${error.message}`);
   return data ?? [];
@@ -158,11 +161,19 @@ async function loadActiveRows(locationId?: string): Promise<DbMapRow[]> {
 export async function loadToastMapState(actor: AuthContext): Promise<ToastMapState> {
   requireLevel(actor, TOAST_MAP_MIN);
   const sb = getServiceRoleClient();
+  // W08/B161: a GM sees only their own shops, their restaurant GUIDs and crosswalk rows. The MoO, owner and
+  // CGS roles see both shops by role (owner ruling 2026-11-15; lib/admin/integrations-scope.ts). The writes
+  // keep assertLocationAccess (lockLocationContext). The entity / package / SKU reads are the shared name
+  // lookup and matcher pool, so they stay whole.
+  const scope = integrationsReadScope(actor);
+  const locQuery = () => {
+    const q = sb.from("locations").select("id, name, toast_restaurant_guid").eq("active", true);
+    return (scope ? q.in("id", scope) : q).order("name", { ascending: true })
+      .returns<Array<{ id: string; name: string; toast_restaurant_guid: string | null }>>();
+  };
   const [{ data: locs, error: lErr }, rows, entities, allEntities, { data: pkgs, error: pErr }, rawSkus] = await Promise.all([
-    sb.from("locations").select("id, name, toast_restaurant_guid").eq("active", true)
-      .order("name", { ascending: true })
-      .returns<Array<{ id: string; name: string; toast_restaurant_guid: string | null }>>(),
-    loadActiveRows(),
+    scope && scope.length === 0 ? Promise.resolve({ data: [] as Array<{ id: string; name: string; toast_restaurant_guid: string | null }>, error: null }) : locQuery(),
+    loadActiveRows(undefined, scope ?? undefined),
     loadEntities(),
     loadEntities(true, null, true), // display names must cover MODIFIER targets (all items), not just the sellable lane
     sb.from("catering_packages").select("id, label_en").eq("active", true)
