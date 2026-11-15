@@ -691,3 +691,131 @@ describe("B012 round 6 — an unconfirmed idle sign-out is retried, covered, and
     expect(h.push).toHaveBeenCalledWith("/");
   });
 });
+
+// ── Fix round 8 (review W06-r8 P2) — a stalled heartbeat can never hold the keep-alive ──────────────────────────────
+// The heartbeat fetch had no deadline, and heartbeatInFlightRef blocked every later attempt until it settled. A request
+// that stalled before reaching the server left the operator typing against a server clock nobody refreshed: after the
+// server's idle limit the next save was a 401 and the draft was lost. Each heartbeat now has its own deadline
+// (HEARTBEAT_TIMEOUT_MS, well below the idle window); a timeout aborts it, releases the guard, keeps the activity
+// pending and goes to the existing backoff. The decision reads the status alone, and the request is aborted once
+// decided.
+const HEARTBEAT_TIMEOUT_S = 10;
+
+/** A request that never gets headers; it rejects only when its signal aborts (what a real fetch does). */
+const pendingUntilAbort = (init: RequestInit | undefined) =>
+  new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+  });
+
+describe("B013 round 8 — a stalled heartbeat is bounded", () => {
+  for (const variant of ["honours its abort signal", "ignores its abort signal entirely"] as const) {
+    it(`first heartbeat stays pending (${variant}), connectivity recovers, a retry refreshes the server before expiry`, async () => {
+      const IDLE_MS = 600_000;
+      let serverLastActivity = Date.now(); // the page load reached the server
+      let stalled = true;
+      const signals: AbortSignal[] = [];
+      h.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url !== "/api/auth/heartbeat") return ok();
+        if (init?.signal) signals.push(init.signal);
+        if (stalled) {
+          stalled = false; // only the first request is lost; connectivity is back for the next one
+          return variant === "honours its abort signal" ? pendingUntilAbort(init) : new Promise<Response>(() => {});
+        }
+        if (Date.now() - serverLastActivity >= IDLE_MS) return dead();
+        serverLastActivity = Date.now();
+        return ok();
+      });
+      mount();
+      await advance(120); // 2:00 — the first heartbeat goes out and stalls
+      fireEvent.keyDown(window, { key: "a" });
+      expect(calls("/api/auth/heartbeat")).toHaveLength(1);
+      // Steady typing through 12:00 — past the server's idle limit measured from the page load.
+      for (let s = 120; s < 720; s += 20) {
+        await advance(20);
+        fireEvent.keyDown(window, { key: "b" });
+      }
+      expect(calls("/api/auth/heartbeat").length).toBeGreaterThan(1); // the stalled one no longer blocks the next
+      expect(serverLastActivity).toBeGreaterThan(0);
+      expect(Date.now() - serverLastActivity).toBeLessThan(IDLE_MS); // the server clock is current
+      expect(signals[0]!.aborted).toBe(true); // the stalled request was abandoned at its deadline
+      expect(calls("/api/auth/logout")).toHaveLength(0);
+      expect(h.push).not.toHaveBeenCalled();
+    });
+  }
+
+  it("the stalled heartbeat is released at its deadline and retried on the backoff, not before", async () => {
+    let n = 0;
+    h.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url !== "/api/auth/heartbeat") return ok();
+      n += 1;
+      return n === 1 ? pendingUntilAbort(init) : ok();
+    });
+    mount();
+    await advance(120);
+    fireEvent.keyDown(window, { key: "a" });
+    await advance(HEARTBEAT_TIMEOUT_S - 1);
+    fireEvent.keyDown(window, { key: "b" }); // still in flight: no second request
+    expect(calls("/api/auth/heartbeat")).toHaveLength(1);
+    expect(window.localStorage.getItem(HEARTBEAT_KEY)).toBeNull();
+    await advance(1); // the deadline: aborted, unacknowledged, first backoff (5 s) starts
+    expect(calls("/api/auth/heartbeat")).toHaveLength(1);
+    await advance(5);
+    expect(calls("/api/auth/heartbeat")).toHaveLength(2); // the retry carries the pending activity
+    expect(window.localStorage.getItem(HEARTBEAT_KEY)).not.toBeNull(); // acknowledged
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
+  it("Stay signed in whose heartbeat stalls: released at the deadline, the warning closes, the retry is acknowledged", async () => {
+    mount();
+    await advance(571);
+    let n = 0;
+    h.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url !== "/api/auth/heartbeat") return ok();
+      n += 1;
+      return n === 1 ? pendingUntilAbort(init) : ok();
+    });
+    fireEvent.click(screen.getByRole("button", { name: STAY }));
+    await advance(HEARTBEAT_TIMEOUT_S);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await advance(10);
+    expect(calls("/api/auth/heartbeat").length).toBeGreaterThanOrEqual(2);
+    expect(window.localStorage.getItem(HEARTBEAT_KEY)).not.toBeNull();
+    await advance(400);
+    expect(h.push).not.toHaveBeenCalled();
+    expect(calls("/api/auth/logout")).toHaveLength(0);
+  });
+
+  it("a heartbeat whose body stalls is decided by its status at once, and its request is aborted", async () => {
+    const signals: AbortSignal[] = [];
+    const json = vi.fn(() => new Promise<never>(() => {}));
+    h.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url !== "/api/auth/heartbeat") return ok();
+      signals.push(init!.signal!);
+      return { ok: true, status: 200, type: "basic", json } as unknown as Response;
+    });
+    mount();
+    await advance(120);
+    fireEvent.keyDown(window, { key: "a" });
+    await advance(0.1);
+    expect(window.localStorage.getItem(HEARTBEAT_KEY)).not.toBeNull();
+    expect(json).not.toHaveBeenCalled();
+    expect(signals[0]!.aborted).toBe(true);
+  });
+
+  it("a Stay signed in heartbeat that settles after the idle sign-out started changes nothing", async () => {
+    mount();
+    await advance(595);
+    let release: (r: Response) => void = () => {};
+    h.fetch.mockImplementation(async (url: string) =>
+      url === "/api/auth/heartbeat" ? new Promise<Response>((r) => (release = r)) : ok(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: STAY }));
+    await advance(6); // 10:01 — the client's idle limit passed while the click's heartbeat was in flight
+    expect(h.push).toHaveBeenCalledWith(IDLE_TARGET);
+    const activityBefore = window.localStorage.getItem(ACTIVITY_KEY);
+    await act(async () => release(ok()));
+    await advance(1);
+    expect(window.localStorage.getItem(ACTIVITY_KEY)).toBe(activityBefore); // no activity published after the end
+    expect(h.push).toHaveBeenCalledWith(IDLE_TARGET);
+  });
+});

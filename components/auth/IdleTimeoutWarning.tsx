@@ -54,6 +54,12 @@
  * inside the idle window, and only an acknowledged beat is published to the
  * other tabs as "server reached". A 401 signs out. The idle limit is the
  * server's own SESSION_IDLE_MINUTES, passed in by the layouts.
+ * Every heartbeat has its own deadline (round 8: HEARTBEAT_TIMEOUT_MS, well
+ * below the idle window): a request that stalls is aborted there, releases the
+ * in-flight guard and counts as unacknowledged — its activity stays pending
+ * for the backoff — so one lost request can never stop the keep-alive. The
+ * decision reads the status alone, and the request is aborted once decided
+ * (lib/bounded-fetch.ts, as lib/logout-client.ts does for the sign-out).
  *
  * Activity-tracking events: mousedown, keydown, touchstart, scroll. This tab's
  * listeners are detached while the warning modal is open — the user must make
@@ -70,6 +76,7 @@ import { useRouter } from "next/navigation";
 
 import { SigningOutOverlay } from "@/components/auth/SigningOutOverlay";
 import { useTranslation } from "@/lib/i18n/provider";
+import { fetchStatusWithin, type RequestStatus } from "@/lib/bounded-fetch";
 import { requestSignOut } from "@/lib/logout-client";
 import { rememberSignedInUser, signInHref } from "@/lib/nav-sign-in-return";
 
@@ -83,6 +90,8 @@ const HEARTBEAT_EVERY_MS = 2 * 60 * 1000;
 /** An unacknowledged heartbeat (network failure / 503) is retried after 5 s, doubling, capped at 60 s. */
 const HEARTBEAT_RETRY_BASE_MS = 5_000;
 const HEARTBEAT_RETRY_MAX_MS = 60_000;
+/** One heartbeat that has not answered by then is unacknowledged (round 8) — well below the idle window (clamped too). */
+const HEARTBEAT_TIMEOUT_MS = 10_000;
 
 const IDLE_ACTIVITY_KEY = "co_ops_last_activity";
 const IDLE_HEARTBEAT_KEY = "co_ops_last_heartbeat";
@@ -108,12 +117,12 @@ function writeStored(key: string, value: string): void {
 }
 
 /** A heartbeat / step-up style response that means the session is gone. */
-function sessionIsDead(res: Response): boolean {
+function sessionIsDead(res: RequestStatus): boolean {
   return res.status === 401 || res.type === "opaqueredirect";
 }
 
 /** The server reached and touched the session (anything else, e.g. a network failure or a 503, is only an attempt). */
-function heartbeatAcknowledged(res: Response | null): boolean {
+function heartbeatAcknowledged(res: RequestStatus | null): boolean {
   return res !== null && res.status >= 200 && res.status < 300;
 }
 
@@ -143,6 +152,7 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
   const totalIdleMs = (Number.isFinite(idleMinutes) && idleMinutes > 0 ? idleMinutes : DEFAULT_IDLE_MINUTES) * 60 * 1000;
   const warningSeconds = Math.min(WARNING_BEFORE_SECONDS, Math.floor(totalIdleMs / 2000));
   const heartbeatEveryMs = Math.min(HEARTBEAT_EVERY_MS, Math.floor(totalIdleMs / 3));
+  const heartbeatTimeoutMs = Math.min(HEARTBEAT_TIMEOUT_MS, Math.floor(totalIdleMs / 6));
 
   // Seed to 0 at render — Date.now() during render is impure (react-hooks/purity).
   // The mount effect below stamps the real timestamp before the idle interval's
@@ -223,13 +233,15 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
     router.push(signInHref({ reason: "idle", next: here, forUser: userId }));
   }, [router, userId, sessionId]);
 
-  const heartbeat = useCallback(async (): Promise<Response | null> => {
-    try {
-      return await fetch("/api/auth/heartbeat", { method: "POST", redirect: "manual" });
-    } catch {
-      return null; // a network blip never signs anyone out
-    }
-  }, []);
+  /**
+   * One heartbeat, bounded (round 8): null = no status by the deadline or a network failure (a blip never signs anyone
+   * out; it is only unacknowledged). Decided by the status alone; the request is aborted once decided. Never hangs.
+   */
+  const heartbeat = useCallback(
+    (): Promise<RequestStatus | null> =>
+      fetchStatusWithin("/api/auth/heartbeat", { method: "POST", redirect: "manual" }, heartbeatTimeoutMs),
+    [heartbeatTimeoutMs],
+  );
 
   /** The server acknowledged a heartbeat sent at sentAt: record it here and publish it to the other tabs. */
   const noteBeatAcknowledged = useCallback((sentAt: number) => {
@@ -401,6 +413,8 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
   const onStay = useCallback(async () => {
     const sentAt = Date.now();
     const res = await heartbeat();
+    // The idle sign-out (or another tab's) began while the click was in flight: it decides; nothing more here.
+    if (expiredRef.current || unmountedRef.current) return;
     if (res && sessionIsDead(res)) {
       // B013: "Stay signed in" on a dead session must not pretend it worked.
       void expire();
