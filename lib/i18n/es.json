@@ -2332,6 +2332,7 @@
   "pm.my_feedback.mvp": "MVP ⭐",
   "pm.my_feedback.date_at": "{date} · {location}",
   "pm.error.generic": "No se pudo guardar. Intenta de nuevo.",
+  "pm.error.self_evaluation": "No puedes evaluarte a ti mismo.",
   "pm.error.already_submitted": "Este reporte de turno ya se envió, así que ya no se puede cambiar.",
   "dashboard.opening.tile_label": "Reporte de apertura",
   "dashboard.opening.cta": "Abrir / continuar",

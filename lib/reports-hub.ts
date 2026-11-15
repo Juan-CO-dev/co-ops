@@ -1181,7 +1181,8 @@ async function loadPmDetail(
     areaToImprove: r.area_to_improve ?? null,
     // SECURITY: note is present ONLY if manager (isManager); further redacted below L5
     // Employees never get note (not even selected in the query above)
-    note: isManager ? (showNotes ? (r.note ?? null) : null) : null,
+    // W09/B060: never the note a manager wrote about the viewer themselves (R9), whatever their level.
+    note: isManager && showNotes && r.employee_id !== args.viewer.userId ? (r.note ?? null) : null,
   }));
 
   // Compute gradient tally from the already-loaded (and tier-gated) rows.

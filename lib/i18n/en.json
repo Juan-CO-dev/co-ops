@@ -2332,6 +2332,7 @@
   "pm.my_feedback.mvp": "MVP ⭐",
   "pm.my_feedback.date_at": "{date} · {location}",
   "pm.error.generic": "Could not save. Try again.",
+  "pm.error.self_evaluation": "You can't evaluate yourself.",
   "pm.error.already_submitted": "This shift report has already been submitted, so it can no longer be changed.",
   "dashboard.opening.tile_label": "Opening Report",
   "dashboard.opening.cta": "Open / continue",

@@ -169,7 +169,9 @@ export async function loadPmReportForEdit(
     .select("id, employee_id, arrived_ready, attitude, production, team_player, area_to_improve, note")
     .eq("pm_report_id", report.id)
     .is("superseded_at", null);
-  const rows = (evalRows ?? []) as Array<{ id: string; employee_id: string; arrived_ready: Gradient; attitude: Gradient; production: Gradient; team_player: Gradient; area_to_improve: string | null; note: string | null }>;
+  // W09/B060: the viewer never sees their own card, nor the private note a manager wrote about them.
+  const rows = ((evalRows ?? []) as Array<{ id: string; employee_id: string; arrived_ready: Gradient; attitude: Gradient; production: Gradient; team_player: Gradient; area_to_improve: string | null; note: string | null }>)
+    .filter((r) => r.employee_id !== args.actor.userId);
   const ids = [...new Set(rows.map((r) => r.employee_id))];
   const nameById = new Map<string, string>();
   if (ids.length) {
@@ -373,6 +375,8 @@ export async function saveEmployeeEval(
     actor: PmActor;
   },
 ): Promise<{ id: string }> {
+  // W09/B060: nobody evaluates themselves (it would supersede the manager's evaluation of them). Before any I/O.
+  if (args.employeeId === args.actor.userId) throw new PmReportError(403, "self_evaluation", "You can't evaluate yourself");
   await requirePmTask(service, args.actor, args.locationId);
   await refuseV2Day(service, args.pmReportId);
   // The status guard, ahead of both writes — see readReportStatus for why it is a
@@ -422,6 +426,8 @@ export async function setMvp(
   service: SupabaseClient,
   args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null; actor: PmActor; locationId: string },
 ): Promise<void> {
+  // W09/B060: nobody names themselves the shift's MVP. Before any I/O.
+  if (args.mvpUserId !== null && args.mvpUserId === args.actor.userId) throw new PmReportError(403, "self_evaluation", "You can't name yourself MVP");
   await requirePmTask(service, args.actor, args.locationId);
   await refuseV2Day(service, args.pmReportId);
   const { error, count } = await service
