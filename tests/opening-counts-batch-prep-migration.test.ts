@@ -356,3 +356,32 @@ describe("0315 SQL harness (PGlite, the real files)", () => {
     expect(output).toContain("two-connection sim proof NOT RUN");
   }, 130_000);
 });
+
+/**
+ * scripts/phase2-discipline-check.sh is the CI gate for a file that defines save_phase2_item_atomic
+ * (no opening→closing auto-complete branch; the §8.4 twelve core fields; no 0050 blob). CI runs it
+ * on 0056 and 0215. 0315 is the latest definer now, so the same two disciplines are held here,
+ * reading the banned symbols and the core fields from the script itself (one list).
+ */
+describe("0315 holds the Phase 2 disciplines of scripts/phase2-discipline-check.sh", () => {
+  const script = readFileSync("scripts/phase2-discipline-check.sh", "utf8");
+  const list = (name: string) => {
+    const block = script.slice(script.indexOf(`${name}=(`) + name.length + 2);
+    return [...block.slice(0, block.indexOf("\n)")).matchAll(/^\s*"([^"]+)"\s*$/gm)].map((m) => m[1]!);
+  };
+  it("Discipline 1: no auto-complete branch symbol", () => {
+    const banned = list("BANNED");
+    expect(banned.length).toBeGreaterThanOrEqual(7);
+    for (const symbol of banned) expect(raw, symbol).not.toContain(symbol);
+  });
+  it("Discipline 2: the twelve core §8.4 fields, and no 0050 blob signature", () => {
+    const core = list("CORE_FIELDS");
+    expect(core).toHaveLength(12);
+    const save = extract(raw, "CREATE OR REPLACE FUNCTION public.save_phase2_item_atomic(", "$function$;");
+    for (const field of core) expect(save, field).toContain(field);
+    expect(raw).not.toContain("closerEstimateSnapshot");
+    // The two provenance fields are kept as well (the canonical set is 14).
+    expect(save).toContain("'saved_at', v_saved_at,");
+    expect(save).toContain("'saved_by', p_actor_id");
+  });
+});

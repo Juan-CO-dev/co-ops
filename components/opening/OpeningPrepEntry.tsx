@@ -435,7 +435,9 @@ export function OpeningPrepEntry({
                       // already saved is an Undo. The dispatcher (same rule, same row state) has
                       // just marked the row "cleared"; this runs the ordinary revoke, where the
                       // SERVER still decides silent vs reason-required.
-                      if (!readOnly && next.openerPrepped === null && phase2BlankOutcome(saveState) === "undo") void handleRevokeClick(item.id);
+                      // One Undo per clear: a second blur while it is in flight starts nothing.
+                      if (readOnly || next.openerPrepped !== null || revokingItemId === item.id) return;
+                      if (phase2BlankOutcome(saveState) === "undo") void handleRevokeClick(item.id);
                     }}
                     onRevoke={() => handleRevokeClick(item.id)}
                     revoking={revokingItemId === item.id}
