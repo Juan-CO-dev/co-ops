@@ -63,6 +63,31 @@ describe("B060 — no self-evaluation in v1", () => {
     await setMvp(service(), { pmReportId: DAY, locationId: A, mvpUserId: EMP, mvpNote: null, actor: bo });
     expect(t.pm_reports![0]!.mvp_user_id).toBe(EMP);
   });
+  // W09 fix round 1: the self check compares CANONICAL (lowercase) ids. The routes accept any-case UUIDs and
+  // Postgres resolves them to the same user, so an uppercased own id must not slip past a case-sensitive `===`.
+  const ALPHA = "cafebabe-dead-4bee-8eef-0123456789ab";
+  const alpha = { userId: ALPHA, role: "key_holder" as const, level: 4 };
+  it("an UPPERCASE own id is still yourself: eval and MVP refuse and write nothing", async () => {
+    await expect(saveEmployeeEval(service(), { pmReportId: DAY, locationId: A, employeeId: ALPHA.toUpperCase(), actor: alpha, ...grades }))
+      .rejects.toMatchObject({ status: 403, code: "self_evaluation" });
+    await expect(setMvp(service(), { pmReportId: DAY, locationId: A, mvpUserId: ALPHA.toUpperCase(), mvpNote: null, actor: alpha }))
+      .rejects.toMatchObject({ status: 403, code: "self_evaluation" });
+    await expect(setMvp(service(), { pmReportId: DAY, locationId: A, mvpUserId: "CafeBabe-Dead-4Bee-8eef-0123456789AB", mvpNote: null, actor: alpha }))
+      .rejects.toMatchObject({ status: 403, code: "self_evaluation" });
+    // An uppercased actor id (never from a session, but the check must not depend on it) is the same person too.
+    await expect(setMvp(service(), { pmReportId: DAY, locationId: A, mvpUserId: ALPHA, mvpNote: null, actor: { ...alpha, userId: ALPHA.toUpperCase() } }))
+      .rejects.toMatchObject({ status: 403, code: "self_evaluation" });
+    expect(db.writes).toHaveLength(0);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(t.pm_reports![0]!.mvp_user_id).toBeNull();
+  });
+  it("an uppercase id for someone else is stored and sent canonical (lowercase)", async () => {
+    const OTHER = "abcdef00-1111-4222-8333-444455556666";
+    await setMvp(service(), { pmReportId: DAY, locationId: A, mvpUserId: OTHER.toUpperCase(), mvpNote: null, actor: alpha });
+    expect(t.pm_reports![0]!.mvp_user_id).toBe(OTHER);
+    await saveEmployeeEval(service(), { pmReportId: DAY, locationId: A, employeeId: OTHER.toUpperCase(), actor: alpha, ...grades });
+    expect(rpc).toHaveBeenCalledWith("save_pm_employee_eval", expect.objectContaining({ p_employee: OTHER, p_actor: ALPHA }));
+  });
   it("loadPmReportForEdit never returns the viewer's own eval or its note", async () => {
     const r = await loadPmReportForEdit(service(), { locationId: A, date: DATE, actor: bo });
     expect(r!.evals.some((e) => e.employeeId === BO)).toBe(false);

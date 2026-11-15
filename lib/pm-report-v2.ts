@@ -53,6 +53,20 @@ function refuse(code: PmV2ErrorCode): never {
 function requireUuid(v: unknown): asserts v is string {
   if (typeof v !== "string" || !UUID.test(v)) refuse("invalid_payload");
 }
+/**
+ * W09 fix round 1: a validated UUID in CANONICAL (lowercase) form. The routes accept any case and Postgres
+ * resolves "CAFE..." and "cafe..." to the same user, so every self / subject / author comparison below runs on
+ * canonical ids; a case-sensitive `===` let an uppercased own id past subject_is_author (the
+ * lib/scheduling/settings.ts precedent). The writers send the canonical ids on to the RPCs and audits too.
+ */
+function canonUuid(v: unknown): string {
+  requireUuid(v);
+  return v.toLowerCase();
+}
+function canonNullableUuid(v: unknown): string | null {
+  return v === null ? null : canonUuid(v);
+}
+const isSelf = (actor: PeopleActor, id: string): boolean => id === actor.userId.toLowerCase();
 function chunk<T>(xs: readonly T[], n = ID_CHUNK): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
@@ -347,48 +361,46 @@ export interface PmCopyWriteArgs { actor: PeopleActor; locationId: string; copyI
 
 /** One grade (or null = "Didn't see"). Audited `pm_report.copy_grade` (ids and the grade; never a note). */
 export async function saveGrade(service: SupabaseClient, args: PmCopyWriteArgs & { subjectId: unknown; positionId: unknown; criterionId: unknown; grade: unknown }): Promise<{ id: string }> {
-  requireUuid(args.subjectId); requireUuid(args.criterionId);
-  if (args.subjectId === args.actor.userId) refuse("subject_is_author");
-  if (args.positionId !== null) requireUuid(args.positionId);
+  const subjectId = canonUuid(args.subjectId), criterionId = canonUuid(args.criterionId);
+  if (isSelf(args.actor, subjectId)) refuse("subject_is_author");
+  const positionId = canonNullableUuid(args.positionId);
   if (args.grade !== null && !(PM_GRADES as readonly unknown[]).includes(args.grade)) refuse("invalid_payload");
   const { copy, day } = await copyForAct(service, args.actor, args.locationId, args.copyId, "write");
-  const positionId = args.positionId as string | null;
-  await targetProblem(service, copy, day, args.subjectId, positionId, args.criterionId);
+  await targetProblem(service, copy, day, subjectId, positionId, criterionId);
   const { data, error } = await service.rpc("save_pm_copy_grade", {
-    p_actor: args.actor.userId, p_copy: copy.id, p_subject: args.subjectId, p_position: positionId, p_criterion: args.criterionId, p_grade: args.grade,
+    p_actor: args.actor.userId, p_copy: copy.id, p_subject: subjectId, p_position: positionId, p_criterion: criterionId, p_grade: args.grade,
   });
   if (error) pmRpcFailure(error);
   const id = (data as { id: string }).id;
-  await auditCopy(args.actor, "pm_report.copy_grade", copy.id, { grade_id: id, subject_id: args.subjectId, position_id: positionId, criterion_id: args.criterionId, grade: args.grade });
+  await auditCopy(args.actor, "pm_report.copy_grade", copy.id, { grade_id: id, subject_id: subjectId, position_id: positionId, criterion_id: criterionId, grade: args.grade });
   return { id };
 }
 
 /** The free text for a person (≤ 500; blank clears). Audited WITHOUT the text (R9). */
 export async function saveNote(service: SupabaseClient, args: PmCopyWriteArgs & { subjectId: unknown; positionId: unknown; note: unknown }): Promise<{ id: string | null }> {
-  requireUuid(args.subjectId);
-  if (args.subjectId === args.actor.userId) refuse("subject_is_author");
-  if (args.positionId !== null) requireUuid(args.positionId);
+  const subjectId = canonUuid(args.subjectId);
+  if (isSelf(args.actor, subjectId)) refuse("subject_is_author");
+  const positionId = canonNullableUuid(args.positionId);
   if (args.note !== null && typeof args.note !== "string") refuse("invalid_payload");
   const note = typeof args.note === "string" ? args.note.trim() : "";
   if (note.length > PM_V2_NOTE_MAX) refuse("invalid_note");
   const { copy, day } = await copyForAct(service, args.actor, args.locationId, args.copyId, "write");
-  const positionId = args.positionId as string | null;
-  await targetProblem(service, copy, day, args.subjectId, positionId);
-  const { data, error } = await service.rpc("save_pm_copy_note", { p_actor: args.actor.userId, p_copy: copy.id, p_subject: args.subjectId, p_position: positionId, p_note: note || null });
+  await targetProblem(service, copy, day, subjectId, positionId);
+  const { data, error } = await service.rpc("save_pm_copy_note", { p_actor: args.actor.userId, p_copy: copy.id, p_subject: subjectId, p_position: positionId, p_note: note || null });
   if (error) pmRpcFailure(error);
   const id = (data as { id: string | null }).id;
-  await auditCopy(args.actor, "pm_report.copy_note", copy.id, { note_id: id, subject_id: args.subjectId, position_id: positionId, cleared: id === null });
+  await auditCopy(args.actor, "pm_report.copy_note", copy.id, { note_id: id, subject_id: subjectId, position_id: positionId, cleared: id === null });
   return { id };
 }
 
 /** "Worked somewhere else?": checks 5–6 only (that is its purpose), a reason. Audited without the reason text. */
 export async function addPosition(service: SupabaseClient, args: PmCopyWriteArgs & { subjectId: unknown; positionId: unknown; reason: unknown }): Promise<{ id: string }> {
-  requireUuid(args.subjectId); requireUuid(args.positionId);
-  if (args.subjectId === args.actor.userId) refuse("subject_is_author");
+  const subjectId = canonUuid(args.subjectId), positionId = canonUuid(args.positionId);
+  if (isSelf(args.actor, subjectId)) refuse("subject_is_author");
   const reason = typeof args.reason === "string" ? args.reason.trim() : "";
   if (reason.length < 1 || reason.length > PM_V2_REASON_MAX) refuse("invalid_reason");
   const { copy } = await copyForAct(service, args.actor, args.locationId, args.copyId, "write");
-  const { data: p, error: pe } = await service.from("station_positions").select("id, station_id, location_id, active").eq("id", args.positionId).maybeSingle();
+  const { data: p, error: pe } = await service.from("station_positions").select("id, station_id, location_id, active").eq("id", positionId).maybeSingle();
   if (pe) throw new Error(`pm v2 position: ${pe.message}`);
   const row = p as { station_id: string; location_id: string; active: boolean } | null;
   let usable: { locationId: string; active: boolean } | null = null;
@@ -399,10 +411,10 @@ export async function addPosition(service: SupabaseClient, args: PmCopyWriteArgs
   }
   const problem = addedPositionProblem(usable, copy.location_id);
   if (problem) refuse(problem);
-  const { data, error } = await service.rpc("add_pm_copy_position", { p_actor: args.actor.userId, p_copy: copy.id, p_subject: args.subjectId, p_position: args.positionId, p_reason: reason });
+  const { data, error } = await service.rpc("add_pm_copy_position", { p_actor: args.actor.userId, p_copy: copy.id, p_subject: subjectId, p_position: positionId, p_reason: reason });
   if (error) pmRpcFailure(error);
   const id = (data as { id: string }).id;
-  await auditCopy(args.actor, "pm_report.copy_position_add", copy.id, { added_id: id, subject_id: args.subjectId, position_id: args.positionId });
+  await auditCopy(args.actor, "pm_report.copy_position_add", copy.id, { added_id: id, subject_id: subjectId, position_id: positionId });
   return { id };
 }
 
@@ -460,13 +472,13 @@ export async function submitDay(service: SupabaseClient, args: { actor: PeopleAc
  */
 export async function setMvpV2(service: SupabaseClient, args: { actor: PeopleActor; locationId: string; date: string; mvpUserId: string | null; mvpNote: string | null }): Promise<void> {
   await requireManagerAt(service, args.actor, args.locationId);
-  if (args.mvpUserId !== null) requireUuid(args.mvpUserId);
-  if (args.mvpUserId !== null && args.mvpUserId === args.actor.userId) refuse("subject_is_author");
+  const mvpUserId = canonNullableUuid(args.mvpUserId);
+  if (mvpUserId !== null && isSelf(args.actor, mvpUserId)) refuse("subject_is_author");
   const day = await loadDay(service, args.locationId, args.date);
   if (!day) refuse("not_found");
   if (day.format !== "v2") refuse("format_mismatch");
   const { error, count } = await service.from("pm_reports")
-    .update({ mvp_user_id: args.mvpUserId, mvp_note: args.mvpNote }, { count: "exact" })
+    .update({ mvp_user_id: mvpUserId, mvp_note: args.mvpNote }, { count: "exact" })
     .eq("id", day.id).eq("status", "open").eq("format", "v2").is("superseded_at", null);
   if (error) throw new Error(`setMvpV2: ${error.message}`);
   if (count === 0) refuse("report_already_submitted");

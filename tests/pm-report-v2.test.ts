@@ -346,6 +346,32 @@ describe("B059 — never yourself", () => {
     expect(rpc).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
   });
+  // W09 fix round 1: the routes accept any-case UUIDs and Postgres resolves them to the same user, so the self
+  // checks compare canonical (lowercase) ids. An alphabetic actor id, uppercased, must still be "yourself".
+  const ALPHA = "cafebabe-dead-4bee-8eef-0123456789ab";
+  const alphaKh = actor(ALPHA, "key_holder", 4);
+  it("an UPPERCASE own id still refuses subject_is_author for grade / note / position / MVP, before any write", async () => {
+    for (const subjectId of [ALPHA.toUpperCase(), "CafeBabe-DEAD-4bee-8EEF-0123456789Ab"]) {
+      const base = { actor: alphaKh, locationId: A, copyId: COPY_KH, subjectId, positionId: P_EXPO };
+      await expect(v2.saveGrade(service(), { ...base, criterionId: C_EXPO, grade: "great" })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+      await expect(v2.saveNote(service(), { ...base, note: "I was great" })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+      await expect(v2.addPosition(service(), { ...base, positionId: P_REG, reason: "me" })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+      await expect(v2.setMvpV2(service(), { actor: alphaKh, locationId: A, date: DATE, mvpUserId: subjectId, mvpNote: null })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+    }
+    const upperActor = actor(ALPHA.toUpperCase(), "key_holder", 4);
+    await expect(v2.saveGrade(service(), { actor: upperActor, locationId: A, copyId: COPY_KH, subjectId: ALPHA, positionId: P_EXPO, criterionId: C_EXPO, grade: "great" })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+    await expect(v2.setMvpV2(service(), { actor: upperActor, locationId: A, date: DATE, mvpUserId: ALPHA, mvpNote: null })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    expect(db.writes).toHaveLength(0);
+  });
+  it("setMvpV2 stores an uppercase id for someone else canonical (lowercase)", async () => {
+    const OTHER = "abcdef00-1111-4222-8333-444455556666";
+    const t = tables();
+    db = createFakeDb(t);
+    await v2.setMvpV2(service(), { actor: kh, locationId: A, date: DATE, mvpUserId: OTHER.toUpperCase(), mvpNote: null });
+    expect(t.pm_reports!.find((d) => d.id === DAY)!.mvp_user_id).toBe(OTHER);
+  });
   it("an RPC subject_is_author refusal maps by name", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: { message: "subject_is_author" } });
     await expect(v2.saveGrade(service(), { actor: kh, locationId: A, copyId: COPY_KH, subjectId: EMP, positionId: P_EXPO, criterionId: C_EXPO, grade: "good" })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });

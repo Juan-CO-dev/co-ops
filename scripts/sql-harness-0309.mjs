@@ -140,6 +140,12 @@ try {
   // ── C4 self ──
   await refuses(() => save(khA, R1, khA), "self_evaluation", "C4 the writer refuses evaluating yourself");
   await refuses(() => evalRow(R1, slA, slA, "2026-10-02T22:00:00Z"), "self_evaluation", "C4 the trigger refuses a direct self INSERT");
+  // W09 fix round 1: case can't dodge the self checks. Every identity compare in 0309 is uuid-typed, and an
+  // uppercased uuid literal parses to the same uuid, so the writer and the trigger refuse it too.
+  check(/[a-f]/.test(khA) && /[a-f]/.test(slA), "C4b the generated ids carry letters (so uppercasing changes them)");
+  await refuses(() => save(khA, R1, khA.toUpperCase()), "self_evaluation", "C4b the writer refuses an UPPERCASE own id");
+  await refuses(() => save(khA.toUpperCase(), R1, khA), "self_evaluation", "C4b the writer refuses an UPPERCASE actor id naming itself");
+  await refuses(() => evalRow(R1, slA.toUpperCase(), slA, "2026-10-02T22:00:01Z"), "self_evaluation", "C4b the trigger refuses an UPPERCASE self INSERT");
   const regrade = await save(gmA, R0, khA);
   const lk = await live(R0, khA);
   check(regrade.superseded === 1 && lk.length === 1 && lk[0].author_id === gmA,
@@ -161,6 +167,11 @@ try {
   await refuses(() => rpc("save_pm_copy_grade", [khA, copy, khA, null, crit, "great"]), "subject_is_author", "C6 save_pm_copy_grade for oneself");
   await refuses(() => rpc("save_pm_copy_note", [khA, copy, khA, null, "I was great"]), "subject_is_author", "C6 save_pm_copy_note for oneself");
   await refuses(() => rpc("add_pm_copy_position", [khA, copy, khA, pos, "me"]), "subject_is_author", "C6 add_pm_copy_position for oneself");
+  const KH_UP = khA.toUpperCase();
+  await refuses(() => rpc("save_pm_copy_grade", [khA, copy, KH_UP, null, crit, "great"]), "subject_is_author", "C6b save_pm_copy_grade for an UPPERCASE own id");
+  await refuses(() => rpc("save_pm_copy_note", [khA, copy, KH_UP, null, "I was great"]), "subject_is_author", "C6b save_pm_copy_note for an UPPERCASE own id");
+  await refuses(() => rpc("add_pm_copy_position", [khA, copy, KH_UP, pos, "me"]), "subject_is_author", "C6b add_pm_copy_position for an UPPERCASE own id");
+  await refuses(() => rpc("save_pm_copy_grade", [KH_UP, copy, khA, null, crit, "great"]), "subject_is_author", "C6b an UPPERCASE actor id grading itself");
   const g = await rpc("save_pm_copy_grade", [khA, copy, empA, null, crit, "good"]);
   check(typeof g.id === "string", "C6 grading another subject still succeeds");
   await refuses(() => rpc("save_pm_copy_grade", [gmA, copy, gmA, null, crit, "good"]), "not_copy_author", "C6 the lifecycle refusal comes first (another author's copy)");

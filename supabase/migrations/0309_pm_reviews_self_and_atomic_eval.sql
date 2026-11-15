@@ -26,6 +26,12 @@
 --      IDENTICAL to 0271 but for ONE line after pm_copy_lock: `if p_subject = p_actor then raise exception
 --      'subject_is_author'` (B059). The lifecycle refusals keep their order (who → day → copy state first).
 --
+-- CASE: every identity compare here (author_id = employee_id, p_employee = p_actor, p_subject = p_actor) is
+--   uuid = uuid, never text, so it is case-insensitive: 'CAFE...' and 'cafe...' parse to one uuid (the harness
+--   proves the writers and the trigger refuse an uppercased own id). The lib canonicalizes ids to lowercase before
+--   its own self checks (W09 fix round 1). The shift MVP has no SQL backstop (the UPDATE carries no actor); its
+--   self check is the lib's, on canonical ids.
+--
 -- EXISTING ROWS: only the older duplicate live v1 evaluations (if any) are superseded (W09-4 a); nothing is deleted.
 --   Self-written v1 evaluations and v2 self-grades stay as history (the lib hides v2 self rows at read time).
 --

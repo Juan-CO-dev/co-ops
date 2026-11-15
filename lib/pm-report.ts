@@ -363,15 +363,24 @@ function refuseClosedReport(status: string | null): never {
   );
 }
 
+/**
+ * W09 fix round 1: every id this lib compares for identity is CANONICAL (lowercase) first. The routes accept a
+ * UUID in any case and Postgres resolves "CAFE..." and "cafe..." to the same user, so a case-sensitive `===`
+ * against the actor let an uppercased own id slip past the self checks (the lib/scheduling/settings.ts precedent).
+ */
+const canonId = (v: string): string => v.toLowerCase();
+const canonActor = (actor: PmActor): PmActor => ({ ...actor, userId: canonId(actor.userId) });
+
 export async function saveEmployeeEval(
   service: SupabaseClient,
-  args: {
+  input: {
     pmReportId: string; locationId: string; employeeId: string;
     arrivedReady: Gradient; attitude: Gradient; production: Gradient; teamPlayer: Gradient;
     areaToImprove: string | null; note: string | null;
     actor: PmActor;
   },
 ): Promise<{ id: string }> {
+  const args = { ...input, employeeId: canonId(input.employeeId), actor: canonActor(input.actor) };
   // W09/B060: nobody evaluates themselves (it would supersede the manager's evaluation of them). Before any I/O.
   if (args.employeeId === args.actor.userId) throw new PmReportError(403, "self_evaluation", "You can't evaluate yourself");
   await requirePmTask(service, args.actor, args.locationId);
@@ -421,9 +430,10 @@ function evalRpcFailure(error: { code?: string; message: string }): never {
  */
 export async function setMvp(
   service: SupabaseClient,
-  args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null; actor: PmActor; locationId: string },
+  input: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null; actor: PmActor; locationId: string },
 ): Promise<void> {
-  // W09/B060: nobody names themselves the shift's MVP. Before any I/O.
+  const args = { ...input, mvpUserId: input.mvpUserId === null ? null : canonId(input.mvpUserId), actor: canonActor(input.actor) };
+  // W09/B060: nobody names themselves the shift's MVP. Before any I/O, on canonical ids (case can't dodge it).
   if (args.mvpUserId !== null && args.mvpUserId === args.actor.userId) throw new PmReportError(403, "self_evaluation", "You can't name yourself MVP");
   await requirePmTask(service, args.actor, args.locationId);
   await refuseV2Day(service, args.pmReportId);
