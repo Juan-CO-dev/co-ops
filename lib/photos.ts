@@ -12,7 +12,7 @@
  *     so the object path and the row PK match.
  *
  *   getPhotoSignedUrl(actor, photoId)
- *     Load the registry row → location-bind the actor against row.location_id →
+ *     Load the registry row → check the actor may READ row.location_id's reports →
  *     mint a SHORT-LIVED (60s) signed URL for the object. The GET /api/photos/[id]
  *     route 302-redirects to it; the client only ever holds the app URL
  *     /api/photos/{id}, never a Storage URL.
@@ -21,13 +21,22 @@
  * seam consumed by checklists + receiving, not an admin surface. The bucket's
  * deny-all storage policies + the photos-table deny-all RLS triad (0164) mean the
  * service-role client here is the sole authority.
+ *
+ * TWO BINDS, ON PURPOSE (audit W10 / B064; lib/locations.ts: "Report navigation
+ * grant only. Operational writes retain lockLocationContext."):
+ *   - UPLOAD is an operational write: lockLocationContext — a member of the shop,
+ *     or level 9+.
+ *   - READ follows the reports the photo links are shown on: canReadReportLocation
+ *     — a member of the shop, or level 8+ (the Manager of Operations opens every
+ *     shop's closing / opening / receiving reports, so the photos on them open
+ *     too). Below level 8 the read is still membership, role by role unchanged.
  */
 import "server-only";
 
 import { randomUUID } from "node:crypto";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import {
@@ -129,9 +138,11 @@ export async function uploadPhoto(
 }
 
 /**
- * Mint a short-lived signed URL for a photo, after a location-bind check against
- * the actor. Throws PhotoError(404) when the photo doesn't exist OR the actor is
- * not bound to its location (indistinguishable to the caller — no IDOR oracle).
+ * Mint a short-lived signed URL for a photo, after the REPORT-READ check against
+ * the actor (canReadReportLocation: a member of the photo's shop, or level 8+ —
+ * the same grant that opens the report the photo link sits on; B064). Throws
+ * PhotoError(404) when the photo doesn't exist OR the actor may not read its
+ * shop (indistinguishable to the caller — no IDOR oracle).
  */
 export async function getPhotoSignedUrl(
   actor: AuthContext,
@@ -143,9 +154,11 @@ export async function getPhotoSignedUrl(
     .select("id, storage_path, location_id")
     .eq("id", photoId)
     .maybeSingle<{ id: string; storage_path: string; location_id: string }>();
+  // 22P02 = the id is not a uuid (B166): the same "not found" as an id that matches nothing, never a 500.
+  if (error?.code === "22P02") throw new PhotoError(404, "not_found", "Photo not found");
   if (error) throw new Error(`getPhotoSignedUrl load: ${error.message}`);
   if (!row) throw new PhotoError(404, "not_found", "Photo not found");
-  if (!lockLocationContext(actorLoc(actor), row.location_id)) {
+  if (!canReadReportLocation(actorLoc(actor), row.location_id)) {
     // Same 404 as missing — never confirm existence to an out-of-location actor.
     throw new PhotoError(404, "not_found", "Photo not found");
   }
