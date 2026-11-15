@@ -1127,6 +1127,7 @@ const FLAG_TONE: Record<ThreeWayFlag, AlertPillTone> = {
   short_received: "warn",
   not_billed: "info",
   unmatched_invoice_line: "info",
+  invoice_credit: "info",
 };
 
 /** Qty display: advisory-null → em dash (never a fabricated 0 — the null-leg law). */
@@ -1247,6 +1248,7 @@ function ThreeWayRow({ line, hasOpenCredit }: { line: ThreeWayLine; hasOpenCredi
           </dt>
           <dd className="text-[14px] font-semibold text-co-text">
             {qtyOrDash(line.billedQty)}
+            {line.billedUnit ? <span className="text-[11px] font-normal text-co-text-dim"> {line.billedUnit}</span> : null}
             {line.billedCents != null ? (
               <span className="text-[11px] font-normal text-co-text-dim"> {money(line.billedCents)}</span>
             ) : null}

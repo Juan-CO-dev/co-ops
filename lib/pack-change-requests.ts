@@ -260,10 +260,11 @@ const PHOTO_URL_TTL_SECONDS = 60;
 /**
  * A REPORT-BOUND photo read (Astra 2b r2): the photo a door report (or one of its additions) carries,
  * signed for a REVIEWER of that report — packRequestReviewAllowed (the social media manager refused)
- * AND catalogShopAllowed for the REPORT's shop (a membership, or MoO+ for any shop, D2). This is why a
- * MoO reviewing another shop's report can see its evidence while lib/photos.ts (membership below 9)
- * stays exactly as narrow as it was. Only the photo id STORED on that report / addition is ever
+ * AND catalogShopAllowed for the REPORT's shop (a membership, or MoO+ for any shop, D2). This read is
+ * the STRICTER one and stays as it is: only the photo id STORED on that report / addition is ever
  * signed — never an arbitrary id — and it must be the report shop's photo. Every miss is 404.
+ * (When it was written lib/photos.ts read by membership below 9; since audit W10 / B064 that generic
+ * read follows the report grant — membership, or level 8+ — so a MoO opens other shops' report photos.)
  */
 export async function signPackRequestPhoto(actor: AuthContext, input: { requestId: string; additionId: string | null }): Promise<{ signedUrl: string }> {
   if (!packRequestReviewAllowed(actor)) throw new PackChangeRequestError(403, "forbidden");

@@ -34,6 +34,12 @@ export function matchObservations(rows: readonly ExportRow[], catalog: readonly 
       }
       const identity = result.findIndex(o => o.kind === "item_number");
       if (identity >= 0) result.splice(identity, 1);
+    } else if (sku.packCounts && sku.packCounts.length > 0 && !shopPackMatches(row, sku)) {
+      // W04/B042: a global import holds a multi-level chain to the same proof. The v1 proposal is
+      // root-only, so neither a price nor a pack change can be read against an unaccepted hierarchy.
+      // An item-number fill is identity, not pack, and stays.
+      add("needs_person", "pack_hierarchy_review");
+      return result;
     }
     const date = evidenceDate(row);
     if (sku.latestPrice && date && date < sku.latestPrice.effective_date) {

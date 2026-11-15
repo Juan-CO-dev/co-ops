@@ -6,7 +6,8 @@
  * Email + password sign-in for level 6+ users. Calls POST /api/auth/password.
  *
  * Response handling (Session 3 locked shapes):
- *   200 → onSuccess() (parent navigates to /dashboard)
+ *   200 → onSuccess(user_id) (parent navigates to /dashboard, or back to a return
+ *         link bound to that user — audit W06-2)
  *   401 invalid_credentials      → inline error under password field
  *   403 account_inactive         → inline error under password field
  *   403 email_not_verified       → inline error under email field
@@ -27,7 +28,8 @@ import { useTranslation } from "@/lib/i18n/provider";
 const MIN_PASSWORD_LENGTH = 8;
 
 export interface ManagerLoginFormProps {
-  onSuccess: () => void;
+  /** Receives the signed-in user's id (the route's `user_id`), when the response carried one. */
+  onSuccess: (userId?: string) => void;
   onTransientError: (message: string) => void;
 }
 
@@ -108,7 +110,8 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
           redirect: "manual",
         });
         if (res.ok) {
-          onSuccess();
+          const signedIn = (await res.json().catch(() => ({}))) as { user_id?: string };
+          onSuccess(signedIn.user_id);
           return;
         }
         const body = (await res.json().catch(() => ({}))) as {
