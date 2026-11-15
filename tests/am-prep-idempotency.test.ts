@@ -108,3 +108,17 @@ describe("0291 authorized replay", () => {
     expect(hashAmPrepIntent({ entries: [a] })).not.toBe(hashAmPrepIntent({ entries: [{ ...a, inputs: { onHand: 2 } }] }));
   });
 });
+
+describe("W13/B019 — the 0313 SQL type guard is a role refusal, never an edit cap", () => {
+  const sqlGuard = { code: "P0001", message: `submit_am_prep_atomic: wrong_checklist_type — instance ${INSTANCE} is not an AM prep` };
+  it("original submit: wrong_checklist_type maps to prep_role_violation", async () => {
+    const f = fixture({ noMatch: true, open: true, error: sqlGuard });
+    await expect(submitAmPrep(f.service, args)).rejects.toMatchObject({ code: "prep_role_violation" });
+    expect(f.rpc).toHaveBeenCalledOnce();
+  });
+  it("chain edit: wrong_checklist_type maps to prep_role_violation, not edit_limit_exceeded", async () => {
+    const f = fixture({ edit: true, noMatch: true, error: sqlGuard });
+    await expect(submitAmPrep(f.service, { ...args, isUpdate: true, originalSubmissionId: "head" })).rejects.toMatchObject({ code: "prep_role_violation" });
+    expect(f.rpc).toHaveBeenCalledOnce();
+  });
+});
