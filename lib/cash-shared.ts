@@ -50,8 +50,11 @@ export function cashWeekOf(dayYmd: string): { monday: string; sunday: string } {
 export function cashDateRefusal(level: number, dateYmd: string, nowIso: string): "outside_current_week" | null {
   if (level >= CASH_ANY_DATE_MIN_LEVEL) return null;
   if (!isCalendarYmd(dateYmd)) return "outside_current_week";
-  const { monday, sunday } = cashWeekOf(cashBusinessDay(nowIso));
-  return dateYmd >= monday && dateYmd <= sunday ? null : "outside_current_week";
+  // CC ruling 2026-11-15: "this week" means Monday through TODAY — cash for a day that has not
+  // happened yet is never real, so a later day of the same week is refused too.
+  const today = cashBusinessDay(nowIso);
+  const { monday } = cashWeekOf(today);
+  return dateYmd >= monday && dateYmd <= today ? null : "outside_current_week";
 }
 /** $200 float kept in the register. */
 export const DEFAULT_FLOAT_CENTS = 20000;

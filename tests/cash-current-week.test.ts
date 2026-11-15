@@ -49,9 +49,21 @@ describe("key holders: only the current week", () => {
   it.each([
     ["Monday", "2026-11-09"],
     ["Wednesday (today)", "2026-11-11"],
-    ["Sunday", "2026-11-15"],
-  ])("inside the week: %s is allowed", (_label, date) => {
+  ])("inside the week, up to today: %s is allowed", (_label, date) => {
     expect(cashDateRefusal(KH, date, WED_NOON)).toBeNull();
+  });
+
+  it.each([
+    ["Thursday (tomorrow)", "2026-11-12"],
+    ["Sunday (later this week)", "2026-11-15"],
+  ])("a day of this week that has not happened yet: %s is refused (CC ruling 2026-11-15)", (_label, date) => {
+    expect(cashDateRefusal(KH, date, WED_NOON)).toBe("outside_current_week");
+  });
+
+  it("on Sunday the whole week is open (Mon..Sun)", () => {
+    const SUN_NOON = "2026-11-15T17:00:00.000Z";
+    expect(cashDateRefusal(KH, "2026-11-09", SUN_NOON)).toBeNull();
+    expect(cashDateRefusal(KH, "2026-11-15", SUN_NOON)).toBeNull();
   });
 
   it.each([
@@ -192,14 +204,14 @@ describe("submitCashReport enforces the week before any I/O", () => {
   });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.each(["2026-11-08", "2026-11-16"])("a key holder filing %s is refused outside_current_week, nothing read or written", async (date) => {
+  it.each(["2026-11-08", "2026-11-12", "2026-11-16"])("a key holder filing %s is refused outside_current_week, nothing read or written", async (date) => {
     const { service, touched } = recordingService();
     await expect(submitCashReport(service, { ...ARGS, date })).resolves.toEqual({ ok: false, reason: "outside_current_week" });
     expect(touched).toEqual([]);
     expect(access.has).not.toHaveBeenCalled();
   });
 
-  it.each(["2026-11-09", "2026-11-15"])("a key holder filing %s (inside the week) writes", async (date) => {
+  it.each(["2026-11-09", "2026-11-11"])("a key holder filing %s (this week, up to today) writes", async (date) => {
     const { service, touched } = recordingService();
     vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(submitCashReport(service, { ...ARGS, date })).resolves.toEqual({ ok: true, id: "new-1" });
