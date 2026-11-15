@@ -124,12 +124,12 @@ async function loadPaymentQuoteContext(
    *  money route — adversarial review cosmetic; the location gate remains the
    *  security authority). Mismatch → the same IDOR-safe 404. */
   expectedQuoteId?: string,
-): Promise<{ status: string; locationId: string; quoteId: string }> {
+): Promise<{ status: string; locationId: string; quoteId: string; provider: string | null; sessionId: string | null }> {
   const { data: pay, error } = await sb
     .from("catering_payments")
-    .select("id, status, quote_id")
+    .select("id, status, quote_id, provider, provider_session_id")
     .eq("id", paymentId)
-    .maybeSingle<{ id: string; status: string; quote_id: string }>();
+    .maybeSingle<{ id: string; status: string; quote_id: string; provider: string | null; provider_session_id: string | null }>();
   if (error) throw new Error(`loadPaymentQuoteContext payment: ${error.message}`);
   if (!pay) throw new CateringPaymentError(404, "not_found", "Payment not found");
   if (expectedQuoteId !== undefined && pay.quote_id !== expectedQuoteId) {
@@ -144,7 +144,13 @@ async function loadPaymentQuoteContext(
   if (qErr) throw new Error(`loadPaymentQuoteContext quote: ${qErr.message}`);
   if (!quote) throw new CateringPaymentError(404, "not_found", "Payment's quote not found");
 
-  return { status: pay.status, locationId: quote.location_id, quoteId: pay.quote_id };
+  return {
+    status: pay.status,
+    locationId: quote.location_id,
+    quoteId: pay.quote_id,
+    provider: pay.provider ?? null,
+    sessionId: pay.provider_session_id ?? null,
+  };
 }
 
 // ── Writes ──────────────────────────────────────────────────────────────────────
@@ -318,6 +324,18 @@ export async function createPaymentDue(
  *     value, and the order's other checkouts are found across the family — neither depends
  *     on the earlier read (`closeQuoteCheckouts`, which also documents the order of
  *     operations and why no lock is added).
+ *
+ * ── A MARK THAT WAS CUT OFF IS FINISHED BY PRESSING IT AGAIN (review r5) ─────────────
+ * The flip and the cleanup are two steps, and the request can be cut off between them (a
+ * timeout, a crash, a deploy): the row is `paid` and the hosted pages are still payable. The
+ * webhook's settlements are finished by Stripe's redelivery; a person's request has only the
+ * person. So when this is asked to mark a payment that is ALREADY paid BY HAND, it still
+ * refuses — 409 `not_due`, exactly what the screen has always been told, and nothing is
+ * recorded twice — but FIRST it runs the cleanup again, from the row as it is now. The
+ * cleanup is idempotent (it asks Stripe nothing when no row names a session), so a second
+ * press after a mark that had finished costs one read and changes nothing. An audit row
+ * (`resumed: true`) is written only when that pass closed, or could not close, something.
+ * A payment Stripe recorded is not touched here: its own event finishes it.
  */
 export async function markPaymentPaid(
   actor: AuthContext,
@@ -325,9 +343,33 @@ export async function markPaymentPaid(
   expectedQuoteId?: string,
 ): Promise<void> {
   const sb = getServiceRoleClient();
-  const { status, locationId, quoteId } = await loadPaymentQuoteContext(sb, paymentId, expectedQuoteId);
+  const { status, locationId, quoteId, provider, sessionId } = await loadPaymentQuoteContext(sb, paymentId, expectedQuoteId);
   assertCanWrite(actor, locationId);
   if (status !== "due") {
+    if (status === "paid" && provider === "manual") {
+      // ALREADY RECORDED BY HAND. Finish what an earlier, cut-off press may not have reached
+      // (see the header), then refuse as always. Never throws.
+      const closed = await closeQuoteCheckouts(sb, {
+        quoteId,
+        locationId,
+        settledPaymentId: paymentId,
+        // A hand-recorded row's own session is a second way to pay the same money.
+        settledSessionId: sessionId,
+      });
+      if (closed.retired.length + closed.stillOpen.length + closed.completing.length > 0) {
+        void audit({
+          actorId: actor.user.id,
+          actorRole: actor.user.role,
+          action: "catering.payment.mark_paid",
+          resourceTable: "catering_payments",
+          resourceId: paymentId,
+          // `resumed: true` ⇒ this press recorded NO payment; it finished an earlier one's cleanup.
+          metadata: { location_id: locationId, provider: "manual", resumed: true, closed_checkouts: closed },
+          ipAddress: null,
+          userAgent: null,
+        });
+      }
+    }
     throw new CateringPaymentError(409, "not_due", "Only a due payment can be marked paid");
   }
 

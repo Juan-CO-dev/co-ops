@@ -5,9 +5,16 @@
  * ── WHAT A SESSION ID ON A ROW MEANS ─────────────────────────────────────────────────
  * `catering_payments.provider_session_id` on a row that is `due` OR `void` is an UNRESOLVED
  * CHECKOUT: a hosted page a customer may still be able to pay. It stops being one in
- * exactly two ways — Stripe confirms the session expired (the id is then CLEARED), or the
- * session is paid (the webhook flips the row to `paid`, and the id becomes history). A
- * `paid` / `refunded` row's id is history and is never read as an open checkout.
+ * exactly three ways, each of them Stripe's own word:
+ *   · Stripe confirms the session EXPIRED — a retire call that answered `expired`, or its
+ *     `checkout.session.expired` event — and the id is CLEARED;
+ *   · Stripe says the session's DELAYED PAYMENT FAILED (`checkout.session.
+ *     async_payment_failed`, review r5): the session is `complete` and can never be expired,
+ *     so the failure event is the only thing that ends that attempt — the id is CLEARED
+ *     (lib/stripe/webhook.ts has the rule and the Stripe pages it rests on);
+ *   · the session is PAID: the webhook flips the row to `paid`, and the id becomes history.
+ * Every clear is guarded on the exact session id it is about. A `paid` / `refunded` row's
+ * id is history and is never read as an open checkout.
  *
  * "The intent is void" was read as "its checkout is closed", and it is not: voiding is our
  * bookkeeping, the session lives at Stripe. A revise that could not retire a session moved
@@ -66,13 +73,29 @@
  * carry moved first is refused instead of recorded on a row nobody was looking at.
  *
  * ── IT HAS A TIME BUDGET, BECAUSE OF WHO CALLS IT ────────────────────────────────────
- * The webhook runs this AFTER the paid flip and BEFORE its audit row and staff email — the
- * reasons it finds belong in both. A retried delivery of a flip that already landed reports
- * `already_advanced` with no audit and no email, so a webhook that hung here on a slow
- * Stripe and was cut off would leave a payment recorded and nobody told. So the whole pass
- * is bounded (`budgetMs`, our own number — not a provider rule): a session whose retirement
- * has not been confirmed inside it is reported `stillOpen`, exactly like one that failed.
+ * The webhook runs this AFTER the paid flip and BEFORE it stamps its verdict, writes its
+ * audit row and sends the staff email — the reasons it finds belong in all three. A webhook
+ * that hung here on a slow Stripe would be cut off by the platform with nothing stamped and
+ * nobody told. That is no longer final (review r5: the redelivery RESUMES a settlement cut
+ * off after its flip, and this function is idempotent — retiring an expired session answers
+ * `expired`, every clear is guarded on its session id), but a redelivery is hours of an
+ * open checkout away, so the pass is still bounded (`budgetMs`, our own number — not a
+ * provider rule): a session whose retirement has not been confirmed inside it is reported
+ * `stillOpen`, exactly like one that failed, and the payment is flagged NOW.
  * The common case costs nothing at Stripe: no row of the family names a session.
+ *
+ * ── A HAND-RECORDED PAYMENT HAS NO REDELIVERY, SO IT HAS A SECOND PRESS (review r5) ──
+ * `markPaymentPaid` calls this once, inside the person's request. If that request is cut
+ * off between its flip and this call, no redelivery will ever run it again. So the same
+ * function, asked to mark a payment that is already paid BY HAND, runs this cleanup again
+ * before it refuses (lib/catering/payments.ts) — pressing "Mark paid" again finishes the
+ * job. KNOWN LIMIT: that needs the person to press it again. Until then every OTHER intent's
+ * checkout keeps its id on its `due` / `void` row (visible to the pay path, which refuses
+ * new collection on a paid order anyway), and a card charge through any leftover page is
+ * recorded and flagged by the webhook (`already_settled` / `another_payment_already_paid`).
+ * A hosted page cannot outlive Stripe's own limit either way ("It can be anywhere from 30
+ * minutes to 24 hours after Checkout Session creation" — docs.stripe.com/api/checkout/
+ * sessions/create, `expires_at`).
  */
 import "server-only";
 
