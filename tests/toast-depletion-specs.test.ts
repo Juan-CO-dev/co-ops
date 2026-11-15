@@ -251,3 +251,23 @@ describe("D: typed open items", () => {
     await expect(derive(line("o", "open", null, 1, "chips"))).rejects.toThrow(/read denied/);
   });
 });
+
+describe("W16/B095: a modifier under a nested sub resolves its immediate parent", () => {
+  it("a swap under a bundle child removes that sub's roll", async () => {
+    swapSetup();
+    const result = await derive(line("bun", "c"), line("a1", "a", "bun"), line("swap1", "swap", "a1"));
+    expect(result.skuConsumed.find((r) => r.skuId === "roll")).toMatchObject({ directOz: 0, removedOz: 6 });
+  });
+  it("a swap under a package pick removes the picked sub's roll", async () => {
+    packageSetup(); swapSetup();
+    tables.catering_package_slot_options = options("slot", "a", "b");
+    const result = await derive(line("p", "package"), line("pa", "pick-a", "p"), line("swap1", "swap", "pa"));
+    // a = 1 pick + 0.5 of the even-mix remainder = 1.5 subs x 6 oz roll; the swap removes the picked sub's 6.
+    expect(result.skuConsumed.find((r) => r.skuId === "roll")).toMatchObject({ directOz: 3, removedOz: 6 });
+  });
+  it("is independent of line order (grandchild before its parent)", async () => {
+    swapSetup();
+    const result = await derive(line("swap1", "swap", "a1"), line("a1", "a", "bun"), line("bun", "c"));
+    expect(result.skuConsumed.find((r) => r.skuId === "roll")).toMatchObject({ directOz: 0, removedOz: 6 });
+  });
+});

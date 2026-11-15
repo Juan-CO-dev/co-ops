@@ -646,6 +646,19 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
     const cur = qtyByEntity.get(key);
     if (cur) cur.quantity += qty; else qtyByEntity.set(key, { ...ent, quantity: qty });
   }
+  // W16/B095: every MODIFIER selection that STANDS FOR a sub/item (a base guid rung under a bundle, a
+  // package / add-a-sub pick) is recorded before any modifier resolves its parent, so a grandchild
+  // removal ("no bread", GF swap) sees its IMMEDIATE parent's recipe whatever order the lines arrived
+  // in. Lookup only: no quantity changes here, the modifier lane below is untouched.
+  for (const r of modifierLines) {
+    const key = selectionKey(r.check_guid, r.selection_guid);
+    if (entityBySelection.has(key) || assortmentByGuid.has(r.toast_item_guid)) continue;
+    const resolved = resolveLineTarget(true, entityByGuid.get(r.toast_item_guid), modifierByGuid.get(r.toast_item_guid));
+    if (resolved?.kind === "base" && resolved.target.kind !== "package") entityBySelection.set(key, resolved.target);
+    else if (resolved?.kind === "modifier" && resolved.effect.targetKind === "menu_item" && resolved.effect.disposition === "deplete") {
+      entityBySelection.set(key, { kind: "menu_item", id: resolved.effect.targetId });
+    }
+  }
 
   // ── Graph load once. BOTH lanes accumulate SIGNED before their clamp:
   //    menuItemUnits (whole subs) takes bases + platter spreads + menu_item
