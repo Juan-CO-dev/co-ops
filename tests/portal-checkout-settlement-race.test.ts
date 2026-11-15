@@ -932,6 +932,47 @@ describe.each(MIGRATION_STATES)("W02 review r4 (P1) — a settlement that stradd
     expect(lastAuditMeta("catering.payment.provider_paid").needs_review).toEqual(["quote_recheck_failed"]);
   });
 
+  it("THE ATTACH'S HALF: a checkout whose quote was SUPERSEDED while it was at Stripe is refused — a deposit settled and carried to the new revision is not raced past", async () => {
+    // The customer asks to pay v1 in full; the request is held at its attach (minted, not yet recorded).
+    const intent = await initiatePayment(CUSTOMER, V1, "full");
+    const connB = secondConnection();
+    const hold = holdWhen(connB, (op) =>
+      applied
+        ? op.kind === "rpc"
+        : op.table === "catering_payments" && op.kind === "update" && (op.payload as Row).provider_session_id != null,
+    );
+    current = connB;
+    const request = createQuoteCheckout({
+      customerId: CUSTOMER,
+      customerEmail: "customer@example.com",
+      quoteId: V1,
+      kind: "full",
+      paymentId: intent.paymentId,
+      amountCents: intent.amountCents,
+      appOrigin: "https://portal.example.com",
+    });
+    current = db;
+    await hold.reached;
+    const minted = openSessions()[0]!;
+
+    // The team records the deposit by hand; a manager's revise follows, and its carry is HALF
+    // WAY: the paid deposit is on v2 already, the due full intent has not been moved yet.
+    await markPaymentPaid(owner, DEPOSIT, V1);
+    db.tables.catering_quotes!.find((q) => q.id === V1)!.superseded_at = "2026-11-12T00:00:00.000Z";
+    db.tables.catering_quotes!.push(quoteRow({ root_id: V1 }));
+    rowOf(DEPOSIT).quote_id = QUOTE;
+
+    hold.release();
+    const err = await refusal(request);
+
+    // v1 holds no paid row any more — but v1 is not the order any more either.
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("not_payable");
+    expect(minted.status).toBe("expired");
+    expect(rowOf(intent.paymentId).provider_session_id ?? null).toBeNull();
+    expect(openSessions()).toEqual([]);
+  });
+
   it("a paid row that names a checkout OTHER than the one that was paid: that other checkout is closed too", async () => {
     // One revision, and P's recorded checkout (open) is not the session the customer paid.
     db.tables.catering_quotes = [quoteRow()];

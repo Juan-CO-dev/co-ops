@@ -674,7 +674,10 @@ interface AttachInput {
  *
  * ── BEFORE 0303: WRITE, THEN LOOK AGAIN ──────────────────────────────────────────────
  * PostgREST answers PGRST202 for a function that does not exist. The attach is then the
- * compare-and-set it always was, FOLLOWED by a re-read of the same two facts. If either
+ * compare-and-set it always was, FOLLOWED by a re-read of the same facts the function
+ * reads: is anything on the quote paid, is the quote still the family's LIVE revision
+ * (review r4 — a settlement can have been carried off a revision superseded under us), does
+ * another intent still name a checkout. If any
  * has turned true the attach is undone (guarded on the exact session) and refused. That is
  * not a lock, but it is not a hole either: this request writes its session and then reads;
  * a settlement writes `paid` and then reads the quote's open checkouts; a competing attach
@@ -704,6 +707,17 @@ async function attachCheckoutSession(
   // another request is working this quote's checkout right now. That request wins.
   if (error.code === "23505" || error.code === "40P01" || error.code === "55P03") return "in_progress";
   throw new Error(`createQuoteCheckout attach: ${error.message}`);
+}
+
+/** Is this quote row still its family's live revision? THROWS on a read error. */
+async function quoteStillLive(sb: ReturnType<typeof getServiceRoleClient>, quoteId: string): Promise<boolean> {
+  const { data, error } = await sb
+    .from("catering_quotes")
+    .select("id, superseded_at")
+    .eq("id", quoteId)
+    .maybeSingle<{ id: string; superseded_at: string | null }>();
+  if (error) throw new Error(`createQuoteCheckout live re-check: ${error.message}`);
+  return data != null && data.superseded_at == null;
 }
 
 /** The pre-0303 attach: compare-and-set, then re-check, then undo if the quote moved. */
@@ -750,6 +764,13 @@ async function attachCheckoutSessionUnlocked(
   let verdict: AttachOutcome = "attached";
   try {
     if (await quoteHasPaidPayment(sb, input.quoteId, "createQuoteCheckout paid re-check")) verdict = "already_paid";
+    // IS THIS STILL THE ORDER? (review r4.) Both reads here ask about `input.quoteId`. A
+    // revise that landed while the session was at Stripe makes that a SUPERSEDED revision,
+    // and its carry empties it one row at a time — a deposit settled a moment ago may
+    // already be on the new revision while this intent has not been moved yet, so "nothing
+    // paid here" would be true and meaningless. 0303's function re-reads `superseded_at`
+    // under the quote's lock; this is the same question, asked after our own write.
+    else if (!(await quoteStillLive(sb, input.quoteId))) verdict = "not_payable";
     else if ((await unresolvedCheckouts(sb, input.quoteId, input.paymentId, "createQuoteCheckout session re-check")).length > 0) {
       verdict = "session_unresolved";
     }
