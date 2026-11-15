@@ -11,7 +11,7 @@ const KEY = "22222222-2222-4222-8222-222222222222";
 const actor = { userId: "actor", role: "key_holder" as const, level: 4 };
 function fixture(opts: { edit?: boolean; otherActor?: boolean; noMatch?: boolean; badHash?: boolean; wrongMode?: boolean; payload?: boolean; open?: boolean; error?: { code: string; message: string } } = {}) {
   const reads: string[] = [];
-  const instance = { id: INSTANCE, location_id: "shop", date: "2026-11-04", status: opts.open ? "open" : "confirmed", template_id: "prep-template" };
+  const instance = { id: INSTANCE, location_id: "shop", date: "2026-11-04", status: opts.open ? "open" : "confirmed", template_id: "prep-template", template: { type: "prep", prep_subtype: "am_prep" } };
   const rpc = vi.fn(async () => ({ data: { instance, submissionId: "saved", completionIds: ["completion"], autoCompleteId: "closing", editCount: opts.edit ? 3 : 0, originalSubmissionId: opts.edit ? "head" : null, replayed: true }, error: opts.error ?? null }));
   const from = (table: string) => {
     reads.push(table);
