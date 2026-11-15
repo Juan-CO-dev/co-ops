@@ -33,7 +33,7 @@
  * PGlite is ONE connection, so R1 / R2 run each interleaving in the order its statements COMMIT (read → the other
  * writer → the function). What they cannot show is two sessions WAITING on each other: that is the lock order,
  * asserted here by what each function holds inside its transaction (the per-person advisory key and the users row),
- * and proven with two real sessions on the sim by CC, as for 0279.
+ * and proven with real sessions by scripts/sim-0307-lock-check.mjs (sim only, CC's to run, as for 0279).
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";

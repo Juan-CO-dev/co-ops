@@ -108,7 +108,10 @@
 --   auth_password_reset_consume) holds that advisory key AND the users row FOR UPDATE from before its retirement to
 --   its commit, and the issuer holds the same two from before its checks to its commit — the two transactions run
 --   one after the other, never interleaved. (PGlite is one connection: scripts/sql-harness-0307.mjs proves each
---   commit order and what each function holds; the two-session wait is CC's sim check, as for 0279.)
+--   commit order and what each function holds. That the sessions really QUEUE — the issuer and both consumers behind
+--   a retirer's gate, the gate behind the issuer, no deadlock — is scripts/sim-0307-lock-check.mjs: three real
+--   sessions, SIM ONLY, run by CC after this file is applied there and BEFORE prod, as for 0279. It commits no
+--   transaction and can change no account.)
 --
 -- EXISTING ROWS: none rewritten by sections 1–2. An account sitting on an expired lock restarts at its next attempt.
 --   B159: sessions.reauth_failed_count is added NOT NULL DEFAULT 0 — every existing session starts at 0, no table rewrite.

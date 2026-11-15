@@ -157,8 +157,10 @@ describe("the source pins", () => {
 
   it("every caller names the credential it verified", () => {
     expect(pin).toContain('recordSuccessfulAuth(user.id, "pin", ctx, { kind: "pin", hash: user.pin_hash })');
-    expect(verify).toContain('{ kind: "password", hash: passwordHash }');
-    for (const src of [pin, password]) expect(src).toContain("e instanceof CredentialChangedError");
+    // the confirmation names the hash it wrote AND (review round 1) the address the function confirmed
+    const tail = verify.slice(verify.indexOf("async function finishVerified("));
+    expect(tail).toMatch(/recordSuccessfulAuth\(a\.userId, "password", ctx, \{\s+kind: "password",\s+hash: a\.passwordHash,\s+\.\.\.\(a\.loginEmail \? \{ loginEmail: a\.loginEmail \} : \{\}\),\s+\}\)/);
+    for (const src of [pin, password, verify]) expect(src).toContain("e instanceof CredentialChangedError");
   });
 
   it("credential_changed is never a countable failure (it must not lock the account)", () => {
