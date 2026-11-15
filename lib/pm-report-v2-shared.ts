@@ -33,6 +33,8 @@ export const PM_V2_ERROR_STATUS = {
   invalid_window: 400, window_required: 409, format_mismatch: 409, pm_v2_unavailable: 409, report_already_submitted: 409,
   copy_done: 409, copy_sealed: 409, copy_not_done: 409, subject_unavailable: 422, position_not_at_shop: 422,
   position_retired: 422, position_not_worked: 422, criterion_mismatch: 422, write_failed: 500,
+  /** W09/B059: a manager never grades, notes, adds a position for, or names as MVP, themselves (lib + 0309). */
+  subject_is_author: 403,
 } as const;
 export type PmV2ErrorCode = keyof typeof PM_V2_ERROR_STATUS;
 export const PM_V2_ERROR_CODES = Object.keys(PM_V2_ERROR_STATUS) as PmV2ErrorCode[];
