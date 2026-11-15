@@ -464,8 +464,11 @@ export function buildThreeWayLines(
     // W04/B044: a credit (negative qty or amount) is never a SKU's billed leg, and a line with
     // no billed number at all (a legacy row whose credit amount was dropped) cannot take one
     // either: either would leave the real charge line with no free row to join.
+    // W04 r3: only a CHARGE joins — a positive billed amount. A zero-value adjustment, or a legacy
+    // credit that kept a positive qty but lost its negative amount (null), is not a charge; it stays
+    // on the view as its own row, so the real charge after it still finds the SKU.
     const credit = (fin(inv.qty) ?? 0) < 0 || (fin(inv.extendedCents) ?? 0) < 0;
-    const joinable = !credit && (fin(inv.qty) != null || fin(inv.extendedCents) != null);
+    const joinable = !credit && (fin(inv.extendedCents) ?? 0) > 0;
     const matchKey = joinable ? joinInvoiceLine(inv, rows, billedRowKeys) : null;
     if (matchKey != null) {
       const row = rows.find((r) => r.key === matchKey)!;
