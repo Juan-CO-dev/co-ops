@@ -18,6 +18,7 @@
   "catering/pipeline/[id]/transfer/route.ts": "POST",
   "catering/pipeline/route.ts": "POST",
   "catering/quotes/[id]/payments/route.ts": "POST",
+  "catering/quotes/[id]/resend/route.ts": "POST",
   "catering/quotes/[id]/route.ts": "PATCH",
   "catering/quotes/[id]/send/route.ts": "POST",
   "catering/quotes/preview/route.ts": "POST",
