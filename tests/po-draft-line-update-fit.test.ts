@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { resolveActive } from "@/lib/location-sku-shared";
+import { buildDraftEditPayload } from "@/lib/po-draft-edits-shared";
 
 const source = readFileSync("lib/purchase-orders.ts", "utf8");
 const ast = ts.createSourceFile("purchase-orders.ts", source, ts.ScriptTarget.Latest, true);
@@ -161,5 +162,54 @@ describe("W08/B056 r1: effective activity at the PO's shop", () => {
   it("a globally active SKU with an explicit 'on' override at this shop is accepted", async () => {
     const w = world([good], [], [{ location_id: SHOP, sku_id: "good", active_override: true }]);
     await expect(w.run([{ skuId: "good", orderQty: 1 }])).resolves.toEqual({ updated: 0, inserted: 1 });
+  });
+});
+
+describe("W08/B056 r2: an UNSAVED new line at qty 0 is skipped, never validated or inserted", () => {
+  const offHere = (sku: string): Overlay[] => [{ location_id: SHOP, sku_id: sku, active_override: false }];
+  const picked: Sku = { id: "picked", vendor_id: "V1", location_id: null, active: true };
+
+  it("a zero-qty new line for a SKU switched off at this shop does not block the rest of the save", async () => {
+    const w = world([good, picked], [line("good", 2)], offHere("picked"));
+    await expect(w.run([{ skuId: "good", orderQty: 3 }, { skuId: "picked", orderQty: 0 }])).resolves.toEqual({ updated: 1, inserted: 0 });
+    expect(w.inserted).toEqual([]);
+    expect(qtyOf(w, "good")).toBe(3);
+    expect(qtyOf(w, "picked")).toBeUndefined();
+  });
+
+  it.each([
+    ["another vendor's SKU", foreignVendor],
+    ["another shop's own SKU", foreignShop],
+    ["an unknown SKU", { id: "ghost", vendor_id: "V1", location_id: null, active: true } as Sku],
+  ])("a zero-qty new line for %s is skipped, not refused", async (_l, bad) => {
+    const w = world(bad.id === "ghost" ? [good] : [good, bad], [line("good", 2)]);
+    await expect(w.run([{ skuId: "good", orderQty: 4 }, { skuId: bad.id, orderQty: 0 }])).resolves.toEqual({ updated: 1, inserted: 0 });
+    expect(w.inserted).toEqual([]);
+  });
+
+  it("a positive new line is still validated (the skip is zero-only)", async () => {
+    const w = world([good, picked], [line("good", 2)], offHere("picked"));
+    await expect(w.run([{ skuId: "picked", orderQty: 1 }])).rejects.toMatchObject({ status: 400, code: "invalid_sku" });
+    expect(w.inserted).toEqual([]);
+  });
+
+  it("recovery: a picked SKU disabled before Save fails, then setting it to 0 saves the rest without a reload", async () => {
+    // The picker offered it (active here when the panel loaded); the manager picked it and raised the saved line.
+    const w = world([good, picked], [line("good", 2)]);
+    const savedSkus = new Set(["good"]);
+    const edits: Record<string, { qty: string; note: string | null; orderUnitLabel?: string | null }> = {
+      good: { qty: "5", note: null }, picked: { qty: "2", note: null },
+    };
+    // ...then the SKU is switched off at this shop before Save.
+    w.db.overlays.push(...offHere("picked"));
+    await expect(w.run(buildDraftEditPayload(edits, savedSkus))).rejects.toMatchObject({ status: 400, code: "invalid_sku" });
+    expect(qtyOf(w, "good")).toBe(2); // the refusal wrote nothing
+    // The manager sets the unsaved pick to 0 (same panel state, no reload) and saves again.
+    edits.picked = { qty: "0", note: null };
+    const payload = buildDraftEditPayload(edits, savedSkus);
+    expect(payload.map(l => l.skuId)).toEqual(["good"]);
+    await expect(w.run(payload)).resolves.toEqual({ updated: 1, inserted: 0 });
+    expect(qtyOf(w, "good")).toBe(5);
+    expect(w.inserted).toEqual([]);
   });
 });

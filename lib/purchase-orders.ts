@@ -526,7 +526,8 @@ async function insertNewDraftLines(
  * FORBIDDEN — we UPDATE existing (po_id, sku_id) rows' qty/note (rowcount-checked)
  * and INSERT genuinely-new SKUs. Removing a line is expressed as qty 0 (the review
  * UI treats 0 as removed; transmission rendering skips 0-qty lines) — the row
- * survives as history. Duplicate SKUs in the input are rejected. The guide key is
+ * survives as history. A NEW SKU sent at qty 0 is skipped (not inserted, not fit-checked —
+ * W08/B056 r2). Duplicate SKUs in the input are rejected. The guide key is
  * NOT re-snapshotted here (creation-time snapshot is the anchor); a new SKU added
  * during a draft edit gets its current guide position.
  */
@@ -590,7 +591,13 @@ export async function updateDraftLines(
     if (exErr) throw new Error(`updateDraftLines existing: ${exErr.message}`);
     const existingSkus = new Set((existing ?? []).map((r) => r.sku_id));
 
-    const { toUpdate, toInsert } = partitionDraftLines(lines, existingSkus);
+    const partition = partitionDraftLines(lines, existingSkus);
+    const toUpdate = partition.toUpdate;
+    // W08/B056 r2: a NEW line at qty 0 is "never mind" (a pick the manager zeroed before saving)
+    // and is simply not inserted — never fit-checked, so a pick that stopped fitting the PO (say,
+    // switched off at the shop) cannot block saving the rest. An EXISTING line at 0 still updates
+    // (that is removal).
+    const toInsert = partition.toInsert.filter((l) => l.orderQty > 0);
     // W08/B056: every line that will be INSERTED, and every existing line set to a POSITIVE qty,
     // must fit this PO (its vendor, its shop). Only setting an existing line to 0 skips the check,
     // so a bad line left on a draft from before the fix can be removed but never re-ordered.
