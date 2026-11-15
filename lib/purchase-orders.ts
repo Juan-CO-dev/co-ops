@@ -1524,24 +1524,39 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
 
   // One vendor catalog read for every status. Exclusion stays in memory, avoiding
   // an unbounded NOT IN request line. Pack-chain labels use the walk's authority.
-  const { data: vendorSkuRows, error: vsErr } = await sb.from("vendor_items")
-    .select("id, name, item_number, pack_format, location_id")
-    .eq("vendor_id", po.vendor_id).eq("active", true)
-    .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null; location_id: string | null }>>();
+  // W08/B056 r2: activity is the WRITER's rule (assertPoSkusFit), resolveActive(this shop's
+  // active_override, sku.active) — so the catalog is read regardless of the global flag, with
+  // this PO shop's explicit overrides beside it: a SKU switched off here is never offered (it
+  // would only fail Save), and a globally inactive one switched back on here is.
+  const [{ data: vendorSkuRows, error: vsErr }, { data: overrideRows, error: ovErr }] = await Promise.all([
+    sb.from("vendor_items")
+      .select("id, name, item_number, pack_format, location_id, active")
+      .eq("vendor_id", po.vendor_id)
+      .order("name", { ascending: true })
+      .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null; location_id: string | null; active: boolean }>>(),
+    sb.from("location_sku_settings").select("sku_id, active_override")
+      .eq("location_id", po.location_id).not("active_override", "is", null)
+      .returns<Array<{ sku_id: string; active_override: boolean | null }>>(),
+  ]);
   if (vsErr) throw new Error(`loadPoDetail vendor skus: ${vsErr.message}`);
-  // V3-A read law (`poLineGuideKey`): a DRAFT renders `snapshot ?? live` — the guide still
-  // moves under it — while a PO past draft renders from its CONFIRMED SNAPSHOT, where an
-  // explicitly recorded null means "off the guide when this order was frozen" and stays that
-  // way (Astra r2-2). The picker is always live. One read serves both.
-  const liveGuide = await guideKeysFor([...(lineRows ?? []).map((l) => l.sku_id), ...(vendorSkuRows ?? []).map((s) => s.id)]);
+  if (ovErr) throw new Error(`loadPoDetail sku overrides: ${ovErr.message}`);
+  const activeOverrideBySku = new Map((overrideRows ?? []).map((o) => [o.sku_id, o.active_override] as const));
   // A DRAFT's picker excludes what is already on the order (edit that row instead). Past
   // draft, the picker feeds an ADD-ON — "two more cases of the same thing" is the common
   // case — so every active SKU stays offered (LRA-230, CC 2026-09-11).
   const onPo = new Set(po.status === "draft" ? (lineRows ?? []).map((l) => l.sku_id) : []);
-  // W08/B056: never offer another shop's own SKU of this vendor (shared + this PO's shop only).
-  const availableSkus = (vendorSkuRows ?? []).filter((s) => !onPo.has(s.id) && ownerVisible(s.location_id, po.location_id));
+  // W08/B056: never offer another shop's own SKU of this vendor (shared + this PO's shop only),
+  // nor one that is not active AT THIS SHOP (r2: the same resolveActive rule the writer applies).
+  const availableSkus = (vendorSkuRows ?? []).filter((s) => !onPo.has(s.id)
+    && ownerVisible(s.location_id, po.location_id)
+    && resolveActive(activeOverrideBySku.get(s.id), s.active));
   const chains = await loadSkuPackChains(availableSkus.map((s) => s.id), po.location_id);
+  // V3-A read law (`poLineGuideKey`): a DRAFT renders `snapshot ?? live` — the guide still
+  // moves under it — while a PO past draft renders from its CONFIRMED SNAPSHOT, where an
+  // explicitly recorded null means "off the guide when this order was frozen" and stays that
+  // way (Astra r2-2). The picker is always live. One read serves both — the PO's lines plus the
+  // SKUs the picker offers (W08/B056 r2: not the vendor's inactive catalog, which is now read too).
+  const liveGuide = await guideKeysFor([...(lineRows ?? []).map((l) => l.sku_id), ...availableSkus.map((s) => s.id)]);
   const vendorSkus = availableSkus.map((s) => ({
     skuId: s.id, name: s.name, itemNumber: s.item_number,
     guidePosition: liveGuide.get(s.id)?.position ?? null, guideSection: liveGuide.get(s.id)?.section ?? null,
