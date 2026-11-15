@@ -429,10 +429,11 @@ async function assertNoStoreSkus(sb: ServiceClient, skuIds: readonly string[]): 
 }
 
 /**
- * W08/B056: the SKUs about to become NEW po_lines must fit the PO. One chunked read (100 ids) of
- * `id, vendor_id, location_id`; refused, in this order, when the id does not exist (400
+ * W08/B056: the SKUs about to become NEW po_lines (or an existing line set to a positive qty) must
+ * fit the PO. Per chunk of 100 ids, one read of `id, vendor_id, location_id, active` and one of this
+ * shop's overlay rows; refused, in this order, when the id does not exist (400
  * invalid_sku), the SKU is a store item (400 invalid_sku — the assertNoStoreSkus rule, same
- * message), it belongs to another vendor than the PO's (400 invalid_sku), or it is another
+ * message), it belongs to another vendor than the PO's (400 invalid_sku), it is another
  * shop's own SKU (404 not_found — the receiving rule), or it is not active AT THIS SHOP (400
  * invalid_sku). Activity is the walk submit's rule (lib/ordering.ts submitParPass):
  * `resolveActive(overlay.active_override, sku.active)` over this shop's `location_sku_settings`
