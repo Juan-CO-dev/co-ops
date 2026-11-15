@@ -310,7 +310,9 @@ export async function loadActiveExclusions(): Promise<ExclusionView[]> {
   return (data ?? []).map((r) => ({ id: r.id, locationId: r.location_id, kind: r.kind, value: r.value, note: r.note, createdAt: r.created_at }));
 }
 
-const KINDS = new Set(["dining_option", "menu_group", "toast_item_guid", "item_name_contains"]);
+// W16/B094: "menu_group" is no longer authorable — a capture selection carries no menu group, so such a rule
+// could never match. Existing rows stay (inert, shown "not applied"); the DB CHECK and the matcher keep the kind.
+const KINDS = new Set(["dining_option", "toast_item_guid", "item_name_contains"]);
 
 /**
  * Author an ingest exclusion FOR ONE SHOP. GM+, and the shop must be one the actor holds.
@@ -511,7 +513,9 @@ export async function deriveCapturedSalesConsumption(locationId: string, busines
       rows.set(`${s.check_guid}:${s.selection_guid}`, {
       check_guid: s.check_guid, selection_guid: s.selection_guid, parent_selection_guid: s.parent_selection_guid,
       toast_item_guid: s.item_guid, item_name: s.name, quantity: s.quantity, price_cents: null,
-      voided: s.voided || s.deleted || catering, dining_option: null, menu_group: null, snapshot_version: 1,
+      // W16/B094: the order's resolved dining option, so a dining_option exclusion can match (it was null,
+      // and every such rule silently matched nothing). A capture carries no menu group: menu_group stays null.
+      voided: s.voided || s.deleted || catering, dining_option: order.diningOption, menu_group: null, snapshot_version: 1,
     });
     }
   }

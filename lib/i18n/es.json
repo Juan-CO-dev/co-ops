@@ -4804,6 +4804,7 @@
   "admin.toastsales.exclusions_heading": "Exclusiones de ingesta",
   "admin.toastsales.no_exclusions": "Sin exclusiones — cada línea de Toast cuenta como venta regular.",
   "admin.toastsales.all_locations": "todas las ubicaciones",
+  "admin.toastsales.not_applied": "no se aplica",
   "admin.toastsales.exclusion_scope_note": "Las exclusiones nuevas aplican solo a esta tienda.",
   "admin.toastsales.remove": "Quitar",
   "admin.toastsales.add_exclusion": "Agregar exclusión",

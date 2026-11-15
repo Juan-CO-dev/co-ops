@@ -297,3 +297,20 @@ describe("W16/B093: register-only catering depletes like a sale; only checks ano
     expect(direct(result, "roll")).toBe(0);
   });
 });
+
+describe("W16/B094: dining-option exclusions match the order's dining option", () => {
+  it("a per-shop dining_option exclusion removes that option's lines and their modifiers", async () => {
+    swapSetup();
+    tables.toast_ingest_exclusions = [{ id: "ex", location_id: "shop", kind: "dining_option", value: "Staff Meal", note: null, created_at: "2026-10-01T00:00:00Z", active: true }];
+    const result = await deriveCapturedSalesConsumption("shop", "2026-10-07",
+      capturedDay({ salesChannel: "dine_in", diningOption: " staff meal " }, [line("a1", "a"), line("swap1", "swap", "a1")]));
+    expect(direct(result, "roll")).toBe(0);
+    expect(result.excludedCount).toBe(2);
+  });
+  it("another dining option is untouched by that rule", async () => {
+    tables.toast_ingest_exclusions = [{ id: "ex", location_id: "shop", kind: "dining_option", value: "Staff Meal", note: null, created_at: "2026-10-01T00:00:00Z", active: true }];
+    const result = await deriveCapturedSalesConsumption("shop", "2026-10-07", capturedDay({ salesChannel: "dine_in", diningOption: "Dine In" }, [line("a1", "a")]));
+    expect(direct(result, "roll")).toBe(6);
+    expect(result.excludedCount).toBe(0);
+  });
+});
