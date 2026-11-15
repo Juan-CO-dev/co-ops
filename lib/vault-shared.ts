@@ -89,7 +89,9 @@ export interface VaultEntryView {
 
 export type VaultErrorCode =
   | "not_enabled" | "invalid_payload" | "forbidden" | "location_access_denied" | "entry_not_found"
-  | "reveal_cap" | "no_previous_secret" | "vault_unavailable" | "write_failed" | "version_conflict";
+  | "reveal_cap" | "no_previous_secret" | "vault_unavailable" | "write_failed" | "version_conflict"
+  /** A reveal/recovery kept racing concurrent edits (B165): nothing was shown; the person tries again. */
+  | "entry_changed";
 
 export class VaultError extends Error {
   constructor(public readonly code: VaultErrorCode, public readonly status: number, public readonly field?: string) {

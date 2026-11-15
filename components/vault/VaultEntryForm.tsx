@@ -48,6 +48,7 @@ export function vaultErrorKey(code: string | undefined): TranslationKey {
     case "no_previous_secret": return "vault.error.no_previous_secret";
     case "vault_unavailable": return "vault.error.vault_unavailable";
     case "version_conflict": return "vault.error.version_conflict";
+    case "entry_changed": return "vault.error.entry_changed";
     case "invalid_payload": return "vault.error.invalid_payload";
     default: return "vault.error.generic";
   }
@@ -64,7 +65,12 @@ export function VaultEntryForm({ kind, initial, shops, createShops, canCreateBot
   const [showSecret, setShowSecret] = useState(false);
   const [url, setUrl] = useState(initial?.url ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
-  const [shop, setShop] = useState<string>(initial?.locationId ?? (createShops[0] ?? (canCreateBoth ? "both" : "")));
+  // An EDIT starts on the entry's own scope: a both-shop entry (locationId null) is "both", never the
+  // first shop — that default silently narrowed it to one shop on any save (audit W10 / B063). Same
+  // rule as the 409 reload below. Only a NEW entry defaults to the first shop the actor may author for.
+  const [shop, setShop] = useState<string>(
+    initial ? (initial.locationId ?? "both") : (createShops[0] ?? (canCreateBoth ? "both" : "")),
+  );
   const [floor, setFloor] = useState<VaultRoleFloor>((initial?.minLevel as VaultRoleFloor | undefined) ?? 4);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
