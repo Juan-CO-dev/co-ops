@@ -196,7 +196,7 @@ describe("the delivery worker (cron path)", () => {
     const { sb } = fakeInboxService({ tables: liveTables(), rpc });
     runtime.sendEmail.mockResolvedValue({ id: "p" });
     const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
-    expect(run).toEqual({ ran: true, swept: 0, replies: { attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 }, escalations: { attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 } });
+    expect(run).toEqual({ ran: true, swept: 0, replies: { attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0, errored: 0 }, escalations: { attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0, errored: 0 } });
     expect(claims.map(c => [c.p_message_id, c.p_kind, c.p_trigger, c.p_actor_id])).toEqual([[ids.message, "reply", "cron", null], [ids.escalation, "escalation", "cron", null]]);
     expect(claims[1]!.p_escalation).toMatchObject({ language: "es", params: { tenantName: expect.any(String), reason: "urgent", inboxUrl: "https://staff.example.test/catering/inbox" } });
     expect((claims[1]!.p_escalation as { preview_text: string }).preview_text).toContain(es["catering.inbox.reason.urgent"]);
@@ -219,10 +219,29 @@ describe("the delivery worker (cron path)", () => {
     ] }), rpc });
     runtime.sendEmail.mockResolvedValue({ error: "refused", code: "validation_error" });
     const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
-    expect(run.replies).toEqual({ attempted: 1, sent: 0, failed: 0, ambiguous: 0, skipped: 1 });
-    expect(run.escalations).toEqual({ attempted: 1, sent: 0, failed: 1, ambiguous: 0, skipped: 0 });
+    expect(run.replies).toEqual({ attempted: 1, sent: 0, failed: 0, ambiguous: 0, skipped: 1, errored: 0 });
+    expect(run.escalations).toEqual({ attempted: 1, sent: 0, failed: 1, ambiguous: 0, skipped: 0, errored: 0 });
     expect(rpc.mock.calls.find(([name, args]) => name === "claim_catering_inbox_delivery" && (args as Record<string, unknown>).p_kind === "escalation")![1]).toMatchObject({ p_escalation: null });
     expect(rpc).toHaveBeenCalledWith("finish_catering_inbox_delivery", expect.objectContaining({ p_outcome: "failed", p_error_code: "provider_rejected" }));
+  });
+  // Audit W11/B169: an unexpected claim error (a timeout, a network failure) was counted as an ordinary skip, with no log.
+  it("an unexpected claim error is logged and counted errored, not skipped", async () => {
+    const rpc = vi.fn((name: string) => {
+      if (name === "sweep_catering_inbox_delivery") return { data: [], error: null };
+      if (name === "catering_inbox_delivery_due") return { data: { replies: [{ message_id: ids.message, draft_id: ids.draft }], escalations: [] }, error: null };
+      if (name === "claim_catering_inbox_delivery") return { data: null, error: { message: "canceling statement due to statement timeout" } };
+      throw new Error(`Unexpected writer: ${name}`);
+    });
+    const { sb } = fakeInboxService({ tables: liveTables(), rpc });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
+      expect(run.replies).toEqual({ attempted: 1, sent: 0, failed: 0, ambiguous: 0, skipped: 0, errored: 1 });
+      expect(run.escalations).toEqual({ attempted: 0, sent: 0, failed: 0, ambiguous: 0, skipped: 0, errored: 0 });
+      expect(logged).toHaveBeenCalledWith("[catering-inbox] delivery attempt errored", { code: "write_failed", kind: "reply", message_id: ids.message });
+      expect(JSON.stringify(logged.mock.calls)).not.toContain("guest@example.test");
+      expect(runtime.sendEmail).not.toHaveBeenCalled();
+    } finally { logged.mockRestore(); }
   });
   it("the cron route: secret → switches → lease → run; busy lease skips; a thrown run is a fixed-code failure", async () => {
     const { sb } = fakeInboxService({ tables: liveTables(), rpc: (name) => name === "sweep_catering_inbox_delivery" ? { data: [], error: null }
@@ -299,8 +318,8 @@ describe("review round: uncertainty, starvation, the expiry sweep", () => {
     const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
     expect(claims.map(c => [c.p_message_id, c.p_kind])).toEqual([[fresh, "reply"], [freshEsc, "escalation"]]);
     expect(claims[1]!.p_escalation).toMatchObject({ language: "es", params: { reason: "urgent" } });
-    expect(run.replies).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 });
-    expect(run.escalations).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 });
+    expect(run.replies).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0, errored: 0 });
+    expect(run.escalations).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0, errored: 0 });
     expect(runtime.sendEmail).toHaveBeenCalledTimes(2);
     // No lane list read, no page walk: the only draft/message reads are the per-attempt lookups.
     expect(from.mock.calls.filter(([table]) => table === "catering_inbox_drafts").length).toBeLessThanOrEqual(1);
