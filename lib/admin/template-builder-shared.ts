@@ -486,6 +486,48 @@ export function buildBothLocationAdds(
   }));
 }
 
+/**
+ * W15/B082 (owner decision W15-3): where one quick-add lands. A fridge (equipment)
+ * belongs to ONE shop, so a line linked to a fridge goes only to the template at that
+ * fridge's shop — never to another shop's list with this shop's fridge. When the
+ * manager picked "every shop", each OTHER shop gets its own copy only if the manager
+ * picked THAT shop's fridge for it (`otherShopLinks`, keyed by template id); a shop with
+ * no pick gets no line. Shop-count-agnostic: any number of templates.
+ * Item and SKU links are global and fan out unchanged. Pure, zero I/O.
+ */
+export function planQuickAddTargets(args: {
+  base: Omit<Extract<TemplateItemEdit, { op: "add" }>, "op" | "tempId" | "displayOrder">;
+  allShops: boolean;
+  activeTemplateId: string;
+  templates: ReadonlyArray<{ id: string; locationId: string }>;
+  /** the shop an equipment id belongs to (null when unknown). */
+  equipmentLocationOf: (equipmentId: string) => string | null;
+  /** per other template: the fridge the manager picked for that shop. */
+  otherShopLinks?: Readonly<Record<string, SpineLinkTarget | null | undefined>>;
+}): Array<{ templateId: string; base: Omit<Extract<TemplateItemEdit, { op: "add" }>, "op" | "tempId" | "displayOrder"> }> {
+  const { base, allShops, activeTemplateId, templates } = args;
+  const active = templates.find((t) => t.id === activeTemplateId);
+  if (!active) return [];
+  const link = base.spineLink ?? null;
+  if (!link || link.kind !== "equipment") {
+    const targets = allShops ? templates : [active];
+    return targets.map((t) => ({ templateId: t.id, base }));
+  }
+  const out: Array<{ templateId: string; base: typeof base }> = [];
+  const home = templates.find((t) => t.locationId === args.equipmentLocationOf(link.id));
+  // The fridge's own shop (in practice the active tab — the picker only offers its fridges).
+  if (home) out.push({ templateId: home.id, base });
+  if (!allShops) return out.filter((o) => o.templateId === active.id);
+  for (const t of templates) {
+    if (home && t.id === home.id) continue;
+    const pick = args.otherShopLinks?.[t.id] ?? null;
+    if (!pick || pick.kind !== "equipment") continue;
+    if (args.equipmentLocationOf(pick.id) !== t.locationId) continue;
+    out.push({ templateId: t.id, base: { ...base, spineLink: pick } });
+  }
+  return out;
+}
+
 /** Severity of a role-floor finding for one required item. */
 export type RoleFloorSeverity =
   /** min_role_level > MAX_ROLE_LEVEL → no one can ever complete it. */

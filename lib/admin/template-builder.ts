@@ -924,6 +924,11 @@ export async function publishTemplateVersion(
     }
   }
 
+  // W15/B082: an added line linked to EQUIPMENT must name a fridge at THIS template's
+  // shop — the same rule fillItemSpineLink enforces on the drawer path. Runs BEFORE the
+  // mint so a refused publish leaves no inactive orphan behind.
+  await assertAddEquipmentAtShop(sb, args.edits, src.location_id);
+
   const currentlyEffectiveId = resolveEffectiveVersionId(lineage, today);
 
   // 4c. MINT the new version. effective_from set, supersedes = source id;
@@ -1111,6 +1116,47 @@ export async function publishTemplateVersion(
     }
   }
   return { newTemplateId, effectiveFrom, diff };
+}
+
+/**
+ * W15/B082: every add edit linked to equipment must name an ACTIVE maintenance_equipment
+ * row at the template's own shop. One batched read; a missing / retired id is
+ * 400 invalid_target, another shop's fridge is 400 equipment_location_mismatch
+ * (the same code and wording as fillItemSpineLink).
+ */
+async function assertAddEquipmentAtShop(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  edits: readonly TemplateItemEdit[],
+  templateLocationId: string,
+): Promise<void> {
+  const ids = [
+    ...new Set(
+      edits.flatMap((e) =>
+        e.op === "add" && e.expectsCount && e.spineLink?.kind === "equipment" ? [e.spineLink.id] : [],
+      ),
+    ),
+  ];
+  if (ids.length === 0) return;
+  const { data, error } = await sb
+    .from("maintenance_equipment")
+    .select("id, location_id, active")
+    .in("id", ids)
+    .returns<Array<{ id: string; location_id: string; active: boolean | null }>>();
+  if (error) throw new Error(`publishTemplateVersion equipment check: ${error.message}`);
+  const byId = new Map((data ?? []).map((r) => [r.id, r]));
+  for (const id of ids) {
+    const row = byId.get(id);
+    if (!row || row.active === false) {
+      throw new TemplateBuilderError(400, "invalid_target", "Equipment not found or inactive");
+    }
+    if (row.location_id !== templateLocationId) {
+      throw new TemplateBuilderError(
+        400,
+        "equipment_location_mismatch",
+        "That equipment belongs to a different location",
+      );
+    }
+  }
 }
 
 /**
