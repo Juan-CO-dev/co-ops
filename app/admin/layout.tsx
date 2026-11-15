@@ -46,6 +46,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           userEmail={auth.user.email}
           actorLevel={ROLES[auth.user.role].level}
           initialBlurb={auth.user.profileBlurb}
+          sessionId={auth.session.id}
         />
       </div>
       <CanvasWatermark />

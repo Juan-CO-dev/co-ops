@@ -33,6 +33,11 @@
  * (`sessionId`): a late logout from another tab cannot end a NEW session (the
  * server finds a different session on the cookie and leaves it), and its late
  * signal cannot send a NEW session's tab to the login page.
+ * An end the server cannot confirm (round 6: 503 `logout_unconfirmed`, which
+ * also clears the cookie, or a network failure) is NOT treated as done: the
+ * request is retried with short bounded backoff (lib/logout-client.ts) behind
+ * an opaque "Signing out…" cover, and the page still goes to the login page
+ * once it settles; the other tabs are told only then.
  * Storage blocked (private mode) = the per-tab clock, as before.
  *
  * The SERVER clock only sees requests (B013): typing for ten minutes with no
@@ -63,7 +68,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { SigningOutOverlay } from "@/components/auth/SigningOutOverlay";
 import { useTranslation } from "@/lib/i18n/provider";
+import { requestSignOut } from "@/lib/logout-client";
 import { rememberSignedInUser, signInHref } from "@/lib/nav-sign-in-return";
 
 const DEFAULT_IDLE_MINUTES = 10; // matches lib/session.ts DEFAULT_IDLE_MINUTES
@@ -119,13 +126,6 @@ export interface IdleTimeoutWarningProps {
   sessionId?: string;
 }
 
-/** The logout request: revoke-only, naming the session it means to end when it is known. */
-function logoutRequest(sessionId: string | undefined): RequestInit {
-  return sessionId
-    ? { method: "POST", redirect: "manual", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }) }
-    : { method: "POST", redirect: "manual" };
-}
-
 /** The cross-tab sign-out signal: `<ms>:<idle|logout>[:<session id>]`. */
 function signedOutSignal(kind: "idle" | "logout", sessionId: string | undefined): string {
   return `${Date.now()}:${kind}${sessionId ? `:${sessionId}` : ""}`;
@@ -168,6 +168,8 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
   const beatForActivityRef = useRef<(activityAt: number) => void>(() => {});
   const expiredRef = useRef(false);
   const [warningOpen, setWarningOpen] = useState(false);
+  /** A sign-out is in flight (round 6: an unconfirmed one is retried) — nothing authenticated shows meanwhile. */
+  const [signingOut, setSigningOut] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(warningSeconds);
   const stayBtnRef = useRef<HTMLButtonElement | null>(null);
   const logoutBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -213,11 +215,10 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
     if (expiredRef.current) return;
     expiredRef.current = true;
     const here = window.location.pathname + window.location.search;
-    try {
-      await fetch("/api/auth/logout", logoutRequest(sessionId));
-    } catch {
-      // Best-effort, like onLogout: a revoked-or-not session still meets the server's own idle limit.
-    }
+    setSigningOut(true);
+    // Round 6: an unconfirmed end (503, network) is retried briefly; settled either way, the page still leaves (the
+    // 503 cleared the cookie, and an orphaned session meets the server's own idle limit).
+    await requestSignOut(sessionId);
     writeStored(IDLE_SIGNED_OUT_KEY, signedOutSignal("idle", sessionId));
     router.push(signInHref({ reason: "idle", next: here, forUser: userId }));
   }, [router, userId, sessionId]);
@@ -419,12 +420,11 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
   }, [heartbeat, expire, markActivity, noteBeatAcknowledged, noteBeatUnacknowledged, beatForActivity, warningSeconds]);
 
   const onLogout = useCallback(async () => {
+    if (expiredRef.current) return;
     expiredRef.current = true;
-    try {
-      await fetch("/api/auth/logout", logoutRequest(sessionId));
-    } catch {
-      // Logout is intent-honoring; navigate regardless.
-    }
+    setSigningOut(true);
+    // Intent-honoring: an unconfirmed end is retried briefly (round 6), then the page leaves regardless.
+    await requestSignOut(sessionId);
     // Only now tell the other tabs (round 4, as in expire), naming the session that ended (round 5).
     writeStored(IDLE_SIGNED_OUT_KEY, signedOutSignal("logout", sessionId));
     router.push("/");
@@ -452,6 +452,7 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
     }
   }, []);
 
+  if (signingOut) return <SigningOutOverlay />;
   if (!warningOpen) return null;
 
   const mm = Math.floor(secondsLeft / 60);

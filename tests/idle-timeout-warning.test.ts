@@ -491,8 +491,10 @@ describe("B012 / B153 round 4 — other tabs leave only after the logout request
       return ok();
     });
     fireEvent.click(screen.getAllByRole("button", { name: LOGOUT_NOW })[0]!);
-    await advance(1);
+    // Round 6: a failed end is retried briefly first (bounded), then the tabs leave anyway.
+    await advance(4);
     expect(pushedTabs()).toEqual(["A", "B"]);
+    expect(calls("/api/auth/logout")).toHaveLength(4);
     expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:logout$/);
   });
 });
@@ -628,5 +630,63 @@ describe("B012 round 5 — a sign-out names the session it ends", () => {
     await advance(605);
     expect(logoutBody()).toBeNull();
     expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle$/);
+  });
+});
+
+// ── Fix round 6 (review W06-r6 P1) ─────────────────────────────────────────────────────────────────────────────────
+// A 503 logout_unconfirmed (or a network failure) is not a finished sign-out: the tab retries it briefly behind an
+// opaque cover, never shows the authenticated screen again, still goes to the login page, and tells the other tabs
+// only once the sign-out has settled.
+const OVERLAY = "signing-out-overlay";
+const unconfirmed = () =>
+  ({ ok: false, status: 503, type: "basic", json: async () => ({ code: "logout_unconfirmed", sessionId: "session-1" }) }) as unknown as Response;
+
+describe("B012 round 6 — an unconfirmed idle sign-out is retried, covered, and still leaves", () => {
+  it("503 then 200: retried; covered meanwhile; no navigation or signal until it settles", async () => {
+    linkTabs();
+    h.session = "session-1";
+    let n = 0;
+    h.fetch.mockImplementation(async (url: string) => (url === "/api/auth/logout" && n++ === 0 ? unconfirmed() : ok()));
+    mountTab("A");
+    await advance(600);
+    await advance(0.1); // the first logout answered 503
+    expect(calls("/api/auth/logout")).toHaveLength(1);
+    expect(screen.getByTestId(OVERLAY)).toBeTruthy(); // nothing authenticated is shown
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(h.push).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toBeNull();
+    await advance(1); // the retry (named) is acknowledged
+    expect(calls("/api/auth/logout")).toHaveLength(2);
+    for (const c of calls("/api/auth/logout")) expect((c[1] as RequestInit).body).toBe(JSON.stringify({ sessionId: "session-1" }));
+    expect(h.push).toHaveBeenCalledTimes(1);
+    expect(h.push).toHaveBeenCalledWith(IDLE_TARGET);
+    expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:idle:session-1$/);
+  });
+
+  it("503 every time: bounded retries, then the login page anyway, and the other tabs follow", async () => {
+    linkTabs();
+    h.fetch.mockImplementation(async (url: string) => (url === "/api/auth/logout" ? unconfirmed() : ok()));
+    mountTab("A");
+    mountTab("B");
+    await advance(601);
+    expect(h.push).not.toHaveBeenCalled();
+    await advance(5);
+    expect(calls("/api/auth/logout").length).toBeLessThanOrEqual(8); // two tabs reached the deadline, 4 tries each at most
+    expect(pushedTabs()).toEqual(["A", "B"]);
+    expect(h.pushes.every(([, url]) => url === IDLE_TARGET)).toBe(true);
+  });
+
+  it("Log out now with a 503: covered, retried, then the login page", async () => {
+    let n = 0;
+    h.fetch.mockImplementation(async (url: string) => (url === "/api/auth/logout" && n++ === 0 ? unconfirmed() : ok()));
+    mount();
+    await advance(575);
+    fireEvent.click(screen.getByRole("button", { name: LOGOUT_NOW }));
+    await advance(0.1);
+    expect(screen.getByTestId(OVERLAY)).toBeTruthy();
+    expect(h.push).not.toHaveBeenCalled();
+    await advance(1);
+    expect(calls("/api/auth/logout")).toHaveLength(2);
+    expect(h.push).toHaveBeenCalledWith("/");
   });
 });

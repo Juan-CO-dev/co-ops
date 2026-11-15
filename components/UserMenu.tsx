@@ -22,8 +22,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import { ActionButton } from "@/components/ActionButton";
+import { SigningOutOverlay } from "@/components/auth/SigningOutOverlay";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
+import { requestSignOut } from "@/lib/logout-client";
 
 interface UserMenuProps {
   /** User's display name — used to derive the initial for the trigger. */
@@ -34,9 +36,11 @@ interface UserMenuProps {
   actorLevel: number;
   /** Current saved blurb (null = unset) — seeds the editor. */
   initialBlurb: string | null;
+  /** The session this page was served for — a retried sign-out names it, so it can never end a newer one. */
+  sessionId?: string;
 }
 
-export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: UserMenuProps) {
+export function UserMenu({ userName, userEmail, actorLevel, initialBlurb, sessionId }: UserMenuProps) {
   const { language, t, setLanguage } = useTranslation();
   const [open, setOpen] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -52,16 +56,13 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: User
   const [blurbStatus, setBlurbStatus] = useState<"idle" | "saved" | "error">("idle");
 
   // Mirrors LogoutButton: POST /api/auth/logout (idempotent, public path —
-  // server revokes the session; revoke-only, never a Set-Cookie), then navigate to
-  // the login surface regardless of outcome (logout is intent-honoring).
+  // server revokes the session; a confirmed end sets no cookie). An end the
+  // server cannot confirm (round 6: 503 / network) is retried briefly behind an
+  // opaque cover, then navigate to the login surface regardless (intent-honoring).
   const handleSignOut = async () => {
     if (signingOut) return;
     setSigningOut(true);
-    try {
-      await fetch("/api/auth/logout", { method: "POST", redirect: "manual" });
-    } catch {
-      // Intent-honoring: navigate regardless.
-    }
+    await requestSignOut(sessionId);
     router.push("/");
   };
 
@@ -140,6 +141,7 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: User
 
   return (
     <div ref={containerRef} className="relative">
+      {signingOut ? <SigningOutOverlay /> : null}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
