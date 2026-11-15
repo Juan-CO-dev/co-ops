@@ -72,7 +72,7 @@ import { type NextRequest } from "next/server";
 
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { consumeAmPrepDraft } from "@/lib/am-prep-draft";
-import { lockLocationContext } from "@/lib/locations";
+import { canWorkShopTasks } from "@/lib/locations";
 import {
   PrepError,
   isPrepInputs,
@@ -226,9 +226,9 @@ export async function POST(req: NextRequest) {
   }
 
   // Defense-in-depth — RLS would also block, but explicit gate gives a
-  // clean message. Mirrors closing/page.tsx's lockLocationContext pattern.
+  // clean message. Mirrors closing/page.tsx's canWorkShopTasks pattern.
   if (
-    !lockLocationContext(
+    !canWorkShopTasks(
       { role: ctx.role, locations: ctx.locations },
       instance.location_id,
     )
