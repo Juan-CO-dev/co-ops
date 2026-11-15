@@ -414,6 +414,21 @@ export function prefillFromLead(
   };
 }
 
+/**
+ * The leads a NEW quote can be made for from this builder (audit W05 / B011): a quote for a lead is
+ * the lead's shop's quote, so a lead at a shop the builder does not offer cannot be quoted here. A
+ * lead with no shop yet stays (the quote's own shop stands). The server refuses the rest anyway
+ * (409 `lead_location_mismatch`); this keeps the dropdown from offering them.
+ */
+export function quotableLeads<T extends { locationId: string | null }>(leads: readonly T[], locationIds: readonly string[]): T[] {
+  return leads.filter((l) => l.locationId == null || locationIds.includes(l.locationId));
+}
+
+/** The shop a picked lead fixes for the quote (null = the lead has no shop, or there is no lead). */
+export function leadLockedLocationId(lead: { locationId: string | null } | null | undefined): string | null {
+  return lead?.locationId ?? null;
+}
+
 /** "Contact · Company · {date} · {shop}" so two leads with one name can be told apart (B5 #39). */
 export function leadOptionLabel(lead: QuoteLeadOption, formatDate: (yyyymmdd: string) => string): string {
   return [

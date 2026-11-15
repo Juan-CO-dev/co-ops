@@ -76,9 +76,14 @@ describe("Scheduling Phase 2 — the no-notify pin and the grep proofs", () => {
 });
 
 const OUTBOUND_SCOPE = [...files("app/api/schedule"), ...files("app/api/cron/schedule-draft"), ...files("lib/scheduling")];
-/** Reviewed: client components posting to our OWN /api routes, and a local helper named `fetch` (pagination). */
+/**
+ * Reviewed: client components posting to our OWN /api routes, and a local helper named `fetch` (pagination).
+ * `lib/bounded-fetch.ts` (audit W06 round 8) is the deadline wrapper PasswordModal's step-up POST goes through: it
+ * fetches only the URL its caller passes, and every caller passes a same-origin `/api/...` path.
+ */
 const OUTBOUND_REVIEWED = [
-  join("components", "admin", "vendors", "shared.ts"), join("components", "auth", "PasswordModal.tsx"), join("lib", "sales-reports.ts"),
+  join("components", "admin", "vendors", "shared.ts"), join("components", "auth", "PasswordModal.tsx"), join("lib", "bounded-fetch.ts"),
+  join("lib", "sales-reports.ts"),
 ].sort();
 
 describe("Astra chunk G P3-6 — the no-notify pin covers sinks, transitive imports and outbound calls", () => {

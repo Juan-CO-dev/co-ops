@@ -1746,6 +1746,32 @@ function throwCorrectionError(error: PostgrestError, completionId: string, actor
 }
 
 /**
+ * Audit W05 / B150 — bind the correcting actor to the completion's shop BEFORE the RPC.
+ *
+ * The rule is the correction RPCs' own (0287, tightened by 0305): an ACTIVE member of the
+ * instance's shop, or level 8+. `actor.locations` comes from resolveChecklistWriteActor, which
+ * reads active memberships fresh, so a person removed from the shop is refused here even where
+ * the database copy of the rule still counted an inactive membership row. SQL repeats the check
+ * under the parent lock; this is the early, app-side half (the user-context reads above it only
+ * prove RLS read scope, which is wider).
+ *
+ * Refusals mirror `throwCorrectionError`'s `not_authorized` mapping, so a caller cannot tell the
+ * app-side refusal from the SQL one: the self paths answer the hidden-row "not found", the
+ * authority path a role violation.
+ */
+async function requireCorrectionShop(
+  authed: SupabaseClient,
+  instanceId: string,
+  actor: ChecklistWriteActor,
+  operation: "revoke" | "revoke_with_reason" | "revoke_by_authority",
+): Promise<void> {
+  const instance = await loadInstanceOrThrow(authed, instanceId);
+  if (actor.active && (actor.locations.includes(instance.location_id) || actor.level >= 8)) return;
+  if (operation !== "revoke_by_authority") throw new ChecklistError("Completion not found.", "completion_not_found");
+  throw new ChecklistRoleViolationError(4, actor.level, "You do not manage that location");
+}
+
+/**
  * Silent self-revoke for a just-tapped completion. Window is QUICK_WINDOW_MS
  * (60s) measured from the live row's completed_at. Self-only.
  *
@@ -1766,13 +1792,14 @@ export async function revokeCompletion(
   authed: SupabaseClient,
   args: {
     completionId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     ipAddress?: string | null;
     userAgent?: string | null;
   },
 ): Promise<{ completion: ChecklistCompletion }> {
   const { completionId, actor } = args;
   const target = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireCorrectionShop(authed, target.instance_id, actor, "revoke");
   await requireChecklistTaskAccess(authed, target.instance_id, actor);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
   const { data, error } = await getServiceRoleClient().rpc("checklist_revoke_completion", {
@@ -1834,7 +1861,7 @@ export async function revokeWithReason(
   authed: SupabaseClient,
   args: {
     completionId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     reason: "not_actually_done" | "other";
     note?: string | null;
     ipAddress?: string | null;
@@ -1846,6 +1873,7 @@ export async function revokeWithReason(
   if (!["not_actually_done", "other"].includes(reason)) throw new ChecklistError("Invalid correction reason.", "invalid_payload");
   if (reason === "other" && note.length === 0) throw new ChecklistRevocationNoteRequiredError(completionId);
   const target = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireCorrectionShop(authed, target.instance_id, actor, "revoke_with_reason");
   await requireChecklistTaskAccess(authed, target.instance_id, actor);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
   const { data, error } = await getServiceRoleClient().rpc("checklist_revoke_with_reason", {
@@ -1921,7 +1949,7 @@ export async function markNotDoneByAuthority(
   authed: SupabaseClient,
   args: {
     completionId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     note?: string | null;
     ipAddress?: string | null;
     userAgent?: string | null;
@@ -1931,6 +1959,7 @@ export async function markNotDoneByAuthority(
   const note = args.note?.trim() ?? "";
   if (note.length === 0) throw new ChecklistRevocationNoteRequiredError(completionId);
   const target = await loadLiveCompletionOrThrow(authed, completionId);
+  await requireCorrectionShop(authed, target.instance_id, actor, "revoke_by_authority");
   await requireChecklistTaskAccess(authed, target.instance_id, actor);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
   const { data, error } = await getServiceRoleClient().rpc("checklist_mark_not_done", {
@@ -1989,6 +2018,8 @@ export async function markNotDoneByAuthority(
  *     ChecklistTagWithinQuickWindowError; within the silent window the
  *     actor self-corrects via revokeCompletion's Undo, NOT via tagging).
  *   - actor.level >= 4 OR actor.userId === completion.completed_by.
+ *   - actor is active AND (an ACTIVE member of the instance's shop OR level 8+) (W05 / B151;
+ *     the level-8+ cross-shop override is Juan's ruling 2026-11-15).
  *   - actualCompleterId must be in picker scope for this instance + location
  *     (loadPickerCandidates above), filtered by template_item.min_role_level.
  *     Failures discriminated by reason code on ChecklistInvalidPickerCandidateError.
@@ -2006,7 +2037,7 @@ export async function tagActualCompleter(
   authed: SupabaseClient,
   args: {
     completionId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
     actualCompleterId: string;
     ipAddress?: string | null;
     userAgent?: string | null;
@@ -2015,6 +2046,16 @@ export async function tagActualCompleter(
   const { completionId, actor, actualCompleterId } = args;
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
+  // Audit W05 / B151: the UPDATE below is service-role and the reads above only prove RLS READ
+  // scope, so the shop is bound here: an ACTIVE member of the instance's shop, or level 8+ (MoO,
+  // owner, CGS). The level-8+ override is Juan's ruling 2026-11-15: senior managers routinely work
+  // the shops they are needed at, so they keep tagging anywhere. Below level 8 (GM, SMM, KH, a
+  // person taken off the shop) the active membership is required. Same rule as the correction
+  // writers (requireCorrectionShop).
+  const instance = await loadInstanceOrThrow(authed, completion.instance_id);
+  if (!actor.active || (!actor.locations.includes(instance.location_id) && actor.level < 8)) {
+    throw new ChecklistRoleViolationError(4, actor.level, "You do not manage that location");
+  }
   await requireChecklistTaskAccess(authed, completion.instance_id, actor);
 
   const item = await loadTemplateItemOrThrow(authed, completion.template_item_id);
@@ -2040,11 +2081,8 @@ export async function tagActualCompleter(
     );
   }
 
-  // Load template_item to enforce min_role_level on the candidate, and the
-  // instance to derive location_id for picker scope.
-  const instance = await loadInstanceOrThrow(authed, completion.instance_id);
-
-  // Picker-scope check on the proposed actualCompleterId.
+  // Picker-scope check on the proposed actualCompleterId (the instance loaded above gives the
+  // location; the template item its min_role_level).
   const candidates = await loadPickerCandidates({
     instanceId: completion.instance_id,
     locationId: instance.location_id,

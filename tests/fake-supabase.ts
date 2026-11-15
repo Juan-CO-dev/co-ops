@@ -6,7 +6,8 @@
  * timestamps only) / order / limit / range / returns / maybeSingle / then, insert(…)…,
  * update(…)….  `failUpdates = n` / `failInserts = n` make the next n updates / inserts return an
  * error without applying. `failInsertTables` lists tables whose inserts ALWAYS fail (an
- * injected outage of one table, e.g. audit_log).
+ * injected outage of one table, e.g. audit_log). `failSelectTables` lists tables whose SELECTs always return
+ * `{ data: null, error }` (a transient PostgREST read failure, e.g. a 503 on `sessions`).
  * Never a real database. (tests/vault-fake-client.ts is the vault's own, richer twin.)
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -20,6 +21,7 @@ export interface FakeDb {
   failUpdates: number;
   failInserts: number;
   failInsertTables: string[];
+  failSelectTables: string[];
 }
 type Result = { data: Row[] | null; error: { message: string } | null };
 
@@ -30,7 +32,7 @@ const isNull = (v: unknown) => v === null || v === undefined;
 export type FakeRpc = (args: Record<string, unknown>, db: FakeDb) => { data: unknown; error: { code?: string; message: string } | null };
 
 export function fakeSupabase(tables: Record<string, Row[]>, rpcs: Record<string, FakeRpc> = {}): FakeDb {
-  const db: FakeDb = { client: null as unknown as SupabaseClient, tables, writes: [], failUpdates: 0, failInserts: 0, failInsertTables: [] };
+  const db: FakeDb = { client: null as unknown as SupabaseClient, tables, writes: [], failUpdates: 0, failInserts: 0, failInsertTables: [], failSelectTables: [] };
 
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
@@ -64,6 +66,7 @@ export function fakeSupabase(tables: Record<string, Row[]>, rpcs: Record<string,
         db.writes.push({ table, op, payload, matched: matched.length });
         return { data: matched.map((r) => ({ ...r })), error: null };
       }
+      if (db.failSelectTables.includes(table)) return { data: null, error: { message: "fake select failure" } };
       let out = [...matched];
       if (orderBy) {
         const { col, asc } = orderBy;

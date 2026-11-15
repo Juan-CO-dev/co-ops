@@ -63,6 +63,7 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_customer", // a client outside the actor's shops (or gone) — pick another client
   "not_expired", // resend-with-new-expiry on a quote that has not lapsed — Send does that
   "invalid_expiry", // resend: the new expiry is not a future date within the allowed window
+  "lead_location_mismatch", // W05/B011: the picked lead is at another shop (or gone) — match the shop or the lead
   "generic",
 ]);
 

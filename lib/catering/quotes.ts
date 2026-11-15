@@ -803,11 +803,54 @@ export async function linkLeadToCustomer(
   }
 }
 
+/**
+ * A quote made FOR a lead is the lead's shop's quote (audit W05 / B011). 0225's insert trigger
+ * (`catering_quotes_bind_location`) files a new quote under its lead's CURRENT shop whatever
+ * `location_id` the insert carries — so authorizing and pricing at the body's `locationId` without
+ * reading the lead let a quote be approved and priced under shop A's rules and land at shop B.
+ * The quote's shop must therefore BE the lead's shop (a lead with no shop yet binds nothing).
+ *
+ * A lead id that names nothing gets the SAME answer as a lead at another shop: no existence oracle
+ * (the stance `assertQuoteCustomerAllowed` takes for customers). Read-only.
+ *
+ * A transfer that commits between this read and the insert still moves the quote with its lead:
+ * that is 0225's design ("bind outstanding obligations to its current shop"), identical to a quote
+ * created a moment before the transfer.
+ */
+async function assertLeadAtQuoteShop(pipelineId: string | null | undefined, locationId: string): Promise<void> {
+  if (!pipelineId) return;
+  const { data: lead, error } = await getServiceRoleClient()
+    .from("catering_pipeline")
+    .select("id, location_id")
+    .eq("id", pipelineId)
+    .maybeSingle<{ id: string; location_id: string | null }>();
+  if (error) throw new Error(`quote lead read failed: ${error.code ?? "unknown"}`);
+  if (!lead || (lead.location_id != null && lead.location_id !== locationId)) {
+    throw new CateringQuoteError(409, "lead_location_mismatch", "That lead belongs to another shop, or no longer exists");
+  }
+}
+
+/**
+ * The lead check that can refuse a NEW quote, before anything stateful: the actor may write the
+ * quote's shop, and the lead (when there is one) is at that shop. The quotes POST calls this
+ * BEFORE it resolves, creates or revives the customer, like `preflightQuoteLines`; createQuote
+ * runs the same checks again itself.
+ */
+export async function preflightQuoteLead(
+  actor: AuthContext,
+  input: { locationId: string; pipelineId?: string | null },
+): Promise<void> {
+  assertCanWrite(actor, input.locationId);
+  await assertLeadAtQuoteShop(input.pipelineId, input.locationId);
+}
+
 /** Create a draft quote (v1) — computes + freezes the charge stack, inserts header + lines. */
 export async function createQuote(actor: AuthContext, input: CreateQuoteInput): Promise<{ id: string; version: number }> {
   const locationId = input.locationId;
   if (!locationId) throw new CateringQuoteError(400, "invalid_payload", "locationId is required");
   assertCanWrite(actor, locationId);
+  // B011: the lead's shop IS the quote's shop — before pricing and before any write.
+  await assertLeadAtQuoteShop(input.pipelineId, locationId);
   // Review P1 / option b: a quote names a customer the actor can read, or one attached by the
   // typed email (pre-existing gap: the route passed any body `customerId` through). Before any write.
   if (input.customerId) await assertQuoteCustomerAllowed(actor, input.customerId, input.emailAttach);
