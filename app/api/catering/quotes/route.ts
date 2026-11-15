@@ -7,6 +7,7 @@ import {
   createQuote,
   parseQuoteLinesFromBody,
   preflightQuoteLines,
+  preflightQuoteLead,
   CateringQuoteError,
   QUOTE_WRITE_MIN,
   type CreateQuoteInput,
@@ -37,6 +38,10 @@ export async function POST(req: NextRequest) {
     // resolver below can create or revive a customer for a save that will not land.
     const lines = parseQuoteLinesFromBody(b.lines);
     await preflightQuoteLines(lines);
+    // The lead next (audit W05 / B011), for the same reason: a quote for a lead at another shop
+    // (409 lead_location_mismatch) is refused before a customer is created for it.
+    const pipelineId = optStr(b.pipelineId);
+    await preflightQuoteLead(ctx, { locationId, pipelineId });
 
     // Email-as-identifier: when the builder supplies a client email (and no existing
     // customer), resolve-or-create the contact (auto-attributing to a company by domain).
@@ -57,7 +62,7 @@ export async function POST(req: NextRequest) {
 
     const input: CreateQuoteInput = {
       locationId,
-      pipelineId: optStr(b.pipelineId),
+      pipelineId,
       customerId,
       eventDate: optStr(b.eventDate),
       headcount: optInt(b.headcount),
