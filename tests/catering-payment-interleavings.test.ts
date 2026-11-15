@@ -280,8 +280,10 @@ const MATRIX: PairEntry[] = [
     a: "webhook completed",
     b: "refund",
     serialization:
-      "in order: CAS (`status = paid` + `provider_ref`, which only the paid flip writes). OUT OF ORDER (the refund processed before its payment): the ledger — the refund that found no row is remembered (`payment_not_found`), and the settlement looks for it, tells a person (`refund_seen_first`) and applies it",
+      "in order: CAS (`status = paid` + `provider_ref`, which only the paid flip writes). OUT OF ORDER (the refund processed before its payment): the ledger — the refund that found no row is remembered (`payment_not_found`), and the settlement looks for it, tells a person (`refund_seen_first`) and applies it. AND THE REFUND NEVER ENDS THE SETTLEMENT (review r8): the marker — not the money status — says whether its cleanup is owed, so a row refunded mid-settlement is still finished by the same event",
     pinnedBy: [
+      local("webhook completed × refund — the refund is applied by a settlement that could NOT close the order's other checkout: the SAME event, sent again, closes it, and the row stays refunded"),
+      local("webhook completed × refund — a settlement lies DEAD after its flip when the refund is delivered: the refund lands, the marker stays NULL, and the payment's redelivery finishes the cleanup on the refunded row"),
       local("webhook completed × refund — the refund is processed FIRST (its payment is not recorded yet): when the payment lands it is recorded, flagged, and the refund is applied — never left `paid`"),
       local("webhook completed × refund — the refund lands while the payment's delivery is held at its flip: the same end"),
       local("webhook completed × refund — the refund's delivery has looked for its payment (not there yet) and is still IN FLIGHT when the payment lands: the settlement finds its unfinished ledger row and applies it"),
@@ -1166,6 +1168,75 @@ describe("W02 review r6 — interleavings: a refund that is processed before its
     expect(again.result).toBe("paid_needs_review");
     expect(rowOf(DEPOSIT).status).toBe("refunded");
     expect(ledger("evt_refund_unread").outcome).toBe("refunded");
+    // The settlement is finished, and the ROW says so although it is refunded (review r8).
+    expect(rowOf(DEPOSIT).settlement_cleanup_at).toEqual(expect.any(String));
+  });
+
+  it("webhook completed × refund — the refund is applied by a settlement that could NOT close the order's other checkout: the SAME event, sent again, closes it, and the row stays refunded", async () => {
+    // Review r8's reproduction, against the Stripe fake. The deposit's page was paid; the
+    // order's full-amount intent is closed on our side and its page is still open at Stripe.
+    const depositSession = await sessionFor(DEPOSIT, 20000);
+    const fullSession = await sessionFor(FULL, 100000, "full");
+    seedDeposit({ provider: "stripe", provider_session_id: depositSession });
+    seedFull({ status: "void", provider: "stripe", provider_session_id: fullSession });
+    const payment = paidEvent(depositSession);
+    // Stripe delivers the whole-charge refund first…
+    expect((await webhook(refundEvent(pi(depositSession), whole(20000), "evt_refund_early"))).result).toBe("payment_not_found");
+
+    // …then the payment, at a moment Stripe cannot be reached to retire the other page.
+    stripe.down = true;
+    const first = await webhook(payment);
+
+    expect(first.result).toBe("settlement_incomplete");
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "refunded", provider_ref: pi(depositSession) });
+    expect(rowOf(DEPOSIT).settlement_cleanup_at ?? null).toBeNull();
+    expect(rowOf(FULL)).toMatchObject({ status: "void", provider_session_id: fullSession });
+    expect(openSessions().map((s) => s.id)).toEqual([fullSession]); // payable, and named by a void row
+    expect(ledger("evt_refund_early").outcome).toBe("refunded");
+    expectNoForgottenCheckout();
+
+    // Stripe is back and sends the SAME event again. Before this round: `already_advanced`,
+    // then `duplicate` for ever — one retirement attempt, a page payable for good.
+    stripe.down = false;
+    const again = await webhook(payment);
+
+    expect(again.result).toBe("paid");
+    expect(stripe.sessions.get(fullSession)!.status).toBe("expired");
+    expect(rowOf(FULL)).toMatchObject({ status: "void", provider_session_id: null });
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "refunded", settlement_cleanup_at: expect.any(String) });
+    expectNothingPayable();
+    // The finishing run is on the record as what it was, and mailed nobody "payment received".
+    expect(metaOf("catering.payment.provider_paid").at(-1)).toMatchObject({ resumed: true, row_status: "refunded", needs_review: [] });
+    expect(notifyPaid).toHaveBeenCalledTimes(1); // the first run's finding, and nothing after
+    expect(audits("catering.payment.provider_refunded")).toHaveLength(1);
+
+    expect((await webhook(payment)).result).toBe("duplicate");
+    expect(rowOf(DEPOSIT).status).toBe("refunded");
+  });
+
+  it("webhook completed × refund — a settlement lies DEAD after its flip when the refund is delivered: the refund lands, the marker stays NULL, and the payment's redelivery finishes the cleanup on the refunded row", async () => {
+    const depositSession = await sessionFor(DEPOSIT, 20000);
+    const fullSession = await sessionFor(FULL, 100000, "full");
+    seedDeposit({ provider: "stripe", provider_session_id: depositSession });
+    seedFull({ status: "void", provider: "stripe", provider_session_id: fullSession });
+    const payment = paidEvent(depositSession);
+    // The payment's delivery flips the row and is killed before any cleanup.
+    await cutOff(() => webhook(payment), () => rowOf(DEPOSIT).status === "paid");
+    expect(rowOf(DEPOSIT).status).toBe("paid");
+    expect(rowOf(DEPOSIT).settlement_cleanup_at ?? null).toBeNull();
+
+    // The refund is delivered while that settlement lies dead.
+    expect((await webhook(refundEvent(pi(depositSession), whole(20000)))).result).toBe("refunded");
+    expect(rowOf(DEPOSIT).status).toBe("refunded");
+    expect(rowOf(DEPOSIT).settlement_cleanup_at ?? null).toBeNull(); // a refund is not a cleanup
+    expect(openSessions().map((s) => s.id)).toEqual([fullSession]);
+
+    const again = await webhook(payment);
+
+    expect(again.result).toBe("paid");
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "refunded", settlement_cleanup_at: expect.any(String) });
+    expectNothingPayable();
+    expect(notifyPaid).not.toHaveBeenCalled(); // no "payment received" for money that was given back
   });
 });
 
@@ -1373,3 +1444,294 @@ if (process.env.PRINT_INTERLEAVING_MATRIX === "1") {
   const legend = FLOWS.map((f) => `- **${f}** — ${FLOW_WRITES[f]}`);
   console.log(`\n${legend.join("\n")}\n\n${lines.join("\n")}\n`);
 }
+
+// ── THE MONEY-STATUS AXIS (review r8) ───────────────────────────────────────────────
+//
+// The matrix above is flows × flows. Review r8 found the hole it could not show: a gate that
+// was right for every PAIR of flows and wrong for a STATUS — every cleanup gate asked "is the
+// row `paid`?", and a row a refund had been applied to mid-settlement fell out of all of them
+// at once. So this is the second axis: EVERY GATE THAT READS A PAYMENT ROW'S `status`, run
+// over every money status × the settlement marker NULL / set.
+//
+// The rule the table pins (lib/catering/payment-sessions.ts): WHETHER A SETTLEMENT'S CLEANUP
+// IS OWED IS THE MARKER'S FACT ALONE — NULL on a row money was recorded on (`paid`, or
+// `refunded` since) is owed; the cleanup never writes the money status; and the ONE gate that
+// reads `paid` on purpose is the one that is about money (a refund moves only a `paid` row).
+
+describe("W02 review r8 — the money-status axis: every gate that reads `status`, over due / void / paid / refunded × marker NULL / set", () => {
+  const STATUSES = ["due", "void", "paid", "refunded"] as const;
+  type Status = (typeof STATUSES)[number];
+  const GATES = [
+    "resume gate",
+    "duplicate gate",
+    "Mark paid resume",
+    "refund apply",
+    "refund apply (replay of a refund that had found no payment)",
+  ] as const;
+  type Gate = (typeof GATES)[number];
+  const MARKED = "2026-11-10T00:00:00.000Z";
+
+  interface Expected {
+    /** The flow's answer: a webhook result, `ok` (the press recorded a payment) or `409 not_due`. */
+    answer: string;
+    /** The deposit's money status afterwards. */
+    status: Status;
+    /** Did the settlement's cleanup run? = the order's leftover checkout was retired and forgotten. */
+    cleanup: boolean;
+    /** The marker afterwards: written by this run, still NULL, or exactly the value it had. */
+    marker: "written" | "null" | "kept";
+  }
+  interface Row8 {
+    gate: Gate;
+    status: Status;
+    marked: boolean;
+    expected: Expected;
+    why: string;
+  }
+
+  const TABLE: Row8[] = [
+    // ── THE RESUME GATE: a payment event (a NEW event id) for the deposit's own checkout ──
+    { gate: "resume gate", status: "due", marked: false, expected: { answer: "paid", status: "paid", cleanup: true, marker: "written" }, why: "the first settlement: flip, cleanup, marker" },
+    { gate: "resume gate", status: "due", marked: true, expected: { answer: "paid", status: "paid", cleanup: true, marker: "kept" }, why: "(unreachable: a due row never takes the marker) a flip is always followed by its cleanup" },
+    { gate: "resume gate", status: "void", marked: false, expected: { answer: "paid_needs_review", status: "paid", cleanup: true, marker: "written" }, why: "a charge on a closed intent is still a charge: recorded, flagged, cleaned up" },
+    { gate: "resume gate", status: "void", marked: true, expected: { answer: "paid_needs_review", status: "paid", cleanup: true, marker: "kept" }, why: "(unreachable: a void row never takes the marker) recorded, flagged, cleaned up" },
+    { gate: "resume gate", status: "paid", marked: false, expected: { answer: "paid", status: "paid", cleanup: true, marker: "written" }, why: "the charge is on the row and its cleanup is owed: this delivery finishes it" },
+    { gate: "resume gate", status: "paid", marked: true, expected: { answer: "already_advanced", status: "paid", cleanup: false, marker: "kept" }, why: "finished: nothing is asked of Stripe" },
+    { gate: "resume gate", status: "refunded", marked: false, expected: { answer: "paid", status: "refunded", cleanup: true, marker: "written" }, why: "THE r8 FINDING: a refund does not finish a settlement — the cleanup runs, the row stays refunded" },
+    { gate: "resume gate", status: "refunded", marked: true, expected: { answer: "already_advanced", status: "refunded", cleanup: false, marker: "kept" }, why: "finished before it was refunded: nothing to do" },
+
+    // ── THE DUPLICATE GATE: the SAME event id, already on the ledger with a terminal verdict ──
+    { gate: "duplicate gate", status: "due", marked: false, expected: { answer: "duplicate", status: "due", cleanup: false, marker: "null" }, why: "no settlement was recorded: a finished event moves nothing" },
+    { gate: "duplicate gate", status: "due", marked: true, expected: { answer: "duplicate", status: "due", cleanup: false, marker: "kept" }, why: "no settlement was recorded" },
+    { gate: "duplicate gate", status: "void", marked: false, expected: { answer: "duplicate", status: "void", cleanup: false, marker: "null" }, why: "no settlement was recorded" },
+    { gate: "duplicate gate", status: "void", marked: true, expected: { answer: "duplicate", status: "void", cleanup: false, marker: "kept" }, why: "no settlement was recorded" },
+    { gate: "duplicate gate", status: "paid", marked: false, expected: { answer: "paid", status: "paid", cleanup: true, marker: "written" }, why: "a terminal verdict over an unfinished settlement is not a duplicate (r7)" },
+    { gate: "duplicate gate", status: "paid", marked: true, expected: { answer: "duplicate", status: "paid", cleanup: false, marker: "kept" }, why: "finished: a duplicate" },
+    { gate: "duplicate gate", status: "refunded", marked: false, expected: { answer: "paid", status: "refunded", cleanup: true, marker: "written" }, why: "THE r8 FINDING: …nor over one whose row has since been refunded" },
+    { gate: "duplicate gate", status: "refunded", marked: true, expected: { answer: "duplicate", status: "refunded", cleanup: false, marker: "kept" }, why: "finished: a duplicate" },
+
+    // ── "MARK PAID" ON A ROW THAT IS NOT DUE: the hand path's resume ──
+    { gate: "Mark paid resume", status: "due", marked: false, expected: { answer: "ok", status: "paid", cleanup: true, marker: "written" }, why: "the hand settlement itself: flip, cleanup, marker" },
+    { gate: "Mark paid resume", status: "due", marked: true, expected: { answer: "ok", status: "paid", cleanup: true, marker: "kept" }, why: "(unreachable) a flip is always followed by its cleanup" },
+    { gate: "Mark paid resume", status: "void", marked: false, expected: { answer: "409 not_due", status: "void", cleanup: false, marker: "null" }, why: "a closed intent has had no settlement: the plain refusal" },
+    { gate: "Mark paid resume", status: "void", marked: true, expected: { answer: "409 not_due", status: "void", cleanup: false, marker: "kept" }, why: "the plain refusal" },
+    { gate: "Mark paid resume", status: "paid", marked: false, expected: { answer: "409 not_due", status: "paid", cleanup: true, marker: "null" }, why: "refused — after closing the order's other checkouts; a CARD settlement's marker is its own event's to write" },
+    { gate: "Mark paid resume", status: "paid", marked: true, expected: { answer: "409 not_due", status: "paid", cleanup: false, marker: "kept" }, why: "finished: the plain refusal, no Stripe call" },
+    { gate: "Mark paid resume", status: "refunded", marked: false, expected: { answer: "409 not_due", status: "refunded", cleanup: true, marker: "null" }, why: "THE r8 FINDING, by hand: refunded with its cleanup unrecorded is asked the same question" },
+    { gate: "Mark paid resume", status: "refunded", marked: true, expected: { answer: "409 not_due", status: "refunded", cleanup: false, marker: "kept" }, why: "finished: the plain refusal" },
+
+    // ── REFUND APPLY: a whole-charge `charge.refunded` (a NEW event id) — the gate that is ABOUT money ──
+    { gate: "refund apply", status: "due", marked: false, expected: { answer: "no_paid_row", status: "due", cleanup: false, marker: "null" }, why: "a refund moves only a paid row" },
+    { gate: "refund apply", status: "due", marked: true, expected: { answer: "no_paid_row", status: "due", cleanup: false, marker: "kept" }, why: "a refund moves only a paid row" },
+    { gate: "refund apply", status: "void", marked: false, expected: { answer: "no_paid_row", status: "void", cleanup: false, marker: "null" }, why: "a refund moves only a paid row" },
+    { gate: "refund apply", status: "void", marked: true, expected: { answer: "no_paid_row", status: "void", cleanup: false, marker: "kept" }, why: "a refund moves only a paid row" },
+    { gate: "refund apply", status: "paid", marked: false, expected: { answer: "refunded", status: "refunded", cleanup: false, marker: "null" }, why: "the money status moves; the marker does NOT — the cleanup is still owed (the resume gate's refunded/NULL row)" },
+    { gate: "refund apply", status: "paid", marked: true, expected: { answer: "refunded", status: "refunded", cleanup: false, marker: "kept" }, why: "the money status moves; the marker is never cleared" },
+    { gate: "refund apply", status: "refunded", marked: false, expected: { answer: "no_paid_row", status: "refunded", cleanup: false, marker: "null" }, why: "refunded once: a second refund writes nothing" },
+    { gate: "refund apply", status: "refunded", marked: true, expected: { answer: "no_paid_row", status: "refunded", cleanup: false, marker: "kept" }, why: "refunded once" },
+
+    // ── REFUND APPLY, replayed: the SAME refund event id, on the ledger as `payment_not_found` ──
+    { gate: "refund apply (replay of a refund that had found no payment)", status: "due", marked: false, expected: { answer: "duplicate", status: "due", cleanup: false, marker: "null" }, why: "still no paid row carries its charge" },
+    { gate: "refund apply (replay of a refund that had found no payment)", status: "due", marked: true, expected: { answer: "duplicate", status: "due", cleanup: false, marker: "kept" }, why: "still no paid row" },
+    { gate: "refund apply (replay of a refund that had found no payment)", status: "void", marked: false, expected: { answer: "duplicate", status: "void", cleanup: false, marker: "null" }, why: "still no paid row" },
+    { gate: "refund apply (replay of a refund that had found no payment)", status: "void", marked: true, expected: { answer: "duplicate", status: "void", cleanup: false, marker: "kept" }, why: "still no paid row" },
+    { gate: "refund apply (replay of a refund that had found no payment)", status: "paid", marked: false, expected: { answer: "refunded", status: "refunded", cleanup: false, marker: "null" }, why: "the payment landed since: applied, its verdict corrected, the marker untouched" },
+    { gate: "refund apply (replay of a refund that had found no payment)", status: "paid", marked: true, expected: { answer: "refunded", status: "refunded", cleanup: false, marker: "kept" }, why: "applied; the marker is never cleared" },
+    { gate: "refund apply (replay of a refund that had found no payment)", status: "refunded", marked: false, expected: { answer: "duplicate", status: "refunded", cleanup: false, marker: "null" }, why: "already applied: this gate reads `paid` ON PURPOSE (a NULL marker here is the PAYMENT event's to finish)" },
+    { gate: "refund apply (replay of a refund that had found no payment)", status: "refunded", marked: true, expected: { answer: "duplicate", status: "refunded", cleanup: false, marker: "kept" }, why: "already applied" },
+  ];
+
+  it("the table is COMPLETE: every gate × every money status × marker NULL / set, exactly once (40 cells)", () => {
+    const every: string[] = [];
+    for (const gate of GATES) for (const status of STATUSES) for (const marked of [false, true]) every.push(`${gate}|${status}|${marked}`);
+    expect(every).toHaveLength(40);
+    expect(TABLE.map((r) => `${r.gate}|${r.status}|${r.marked}`).sort()).toEqual([...every].sort());
+  });
+
+  it("the statuses walked are exactly the ones the column allows, and the settled ones are exactly the ones the code calls settled", async () => {
+    const { SETTLED_PAYMENT_STATUSES, settlementRecorded } = await import("@/lib/catering/payment-sessions");
+    // Migration 0127's CHECK: a fifth status means this table (and SETTLED_PAYMENT_STATUSES) must be revisited.
+    const m0127 = readFileSync(join(ROOT, "supabase/migrations/0127_catering_portal_orders.sql"), "utf8");
+    const table = m0127.slice(m0127.indexOf("CREATE TABLE catering_payments"));
+    const check = table.match(/status\s+text[^,]*?CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)/i);
+    expect(check, "0127's status CHECK").not.toBeNull();
+    const allowed = [...check![1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]).sort();
+    expect(allowed).toEqual([...STATUSES].sort());
+    expect([...SETTLED_PAYMENT_STATUSES].sort()).toEqual(["paid", "refunded"]);
+    expect(STATUSES.filter((s) => settlementRecorded(s))).toEqual(["paid", "refunded"]);
+    expect(settlementRecorded(null)).toBe(false);
+    expect(settlementRecorded(undefined)).toBe(false);
+  });
+
+  it("THE RULE, read off the table: in every gate that owns cleanup, a settled row with a NULL marker has its cleanup run and keeps its money status; a set marker never asks Stripe anything", () => {
+    for (const r of TABLE) {
+      const settled = r.status === "paid" || r.status === "refunded";
+      const cleanupGate = r.gate === "resume gate" || r.gate === "duplicate gate" || r.gate === "Mark paid resume";
+      if (cleanupGate && settled) {
+        expect(r.expected.cleanup, `${r.gate} / ${r.status} / marker ${r.marked ? "set" : "NULL"}`).toBe(!r.marked);
+        expect(r.expected.status, `${r.gate} / ${r.status}: the cleanup never writes the money status`).toBe(r.status);
+      }
+      // No gate ever clears a marker.
+      if (r.marked) expect(r.expected.marker, `${r.gate} / ${r.status}`).toBe("kept");
+      // A refund never runs a cleanup and never writes a marker.
+      if (!cleanupGate) {
+        expect(r.expected.cleanup).toBe(false);
+        expect(r.expected.marker).not.toBe("written");
+      }
+    }
+  });
+
+  /**
+   * ONE ORDER, THE SAME IN EVERY CELL but for the deposit's money status and its marker. The
+   * deposit's row names its own checkout and ALWAYS carries the charge (`pi_<session>`), so
+   * that the status is the only thing that varies (a charge on a due / void row, and a
+   * marker on one, are states no code path writes — their rows say "unreachable" and pin
+   * what the gate does anyway). The order's FULL-amount intent is closed on our side
+   * (`void`) while its hosted page is STILL OPEN at Stripe: the leftover a settlement's
+   * cleanup exists to close. "The cleanup ran" = that page was retired and its id cleared.
+   */
+  async function seedCell(status: Status, marked: boolean) {
+    const depositSession = await sessionFor(DEPOSIT, 20000);
+    const fullSession = await sessionFor(FULL, 100000, "full");
+    const settledRow = status === "paid" || status === "refunded";
+    seedDeposit({
+      status,
+      provider: "stripe",
+      provider_ref: `pi_${depositSession}`,
+      provider_session_id: depositSession,
+      paid_at: settledRow ? "2026-11-09T00:00:00.000Z" : null,
+      settlement_cleanup_at: marked ? MARKED : null,
+    });
+    seedFull({ status: "void", provider: "stripe", provider_session_id: fullSession });
+    if (settledRow) stripe.complete(depositSession);
+    return { depositSession, fullSession, pi: `pi_${depositSession}` };
+  }
+
+  async function run(gate: Gate, c: { depositSession: string; pi: string }): Promise<string> {
+    if (gate === "resume gate") return (await webhook(paidEvent(c.depositSession, "checkout.session.completed", "evt_axis_new"))).result;
+    if (gate === "duplicate gate") {
+      // The event is on the ledger already, closed with a terminal verdict (whichever: the
+      // gate asks the ROW, not the verdict).
+      const event = paidEvent(c.depositSession, "checkout.session.completed", "evt_axis_seen");
+      db.tables.stripe_events!.push({ id: "evt_axis_seen", type: event.type, livemode: false, payload: event, outcome: "paid_needs_review", received_at: "2026-11-09T00:00:01.000Z" });
+      return (await webhook(event)).result;
+    }
+    if (gate === "Mark paid resume") {
+      const out = await settled(markPaid(DEPOSIT));
+      if (out.ok) return "ok";
+      const refusal = refusalOf(out);
+      return `${refusal.status} ${refusal.code}`;
+    }
+    if (gate === "refund apply") return (await webhook(refundEvent(c.pi, whole(20000), "evt_axis_refund"))).result;
+    // The refund's own event, seen before any payment carried its charge.
+    const event = refundEvent(c.pi, whole(20000), "evt_axis_refund_seen");
+    db.tables.stripe_events!.push({ id: "evt_axis_refund_seen", type: event.type, livemode: false, payload: event, outcome: "payment_not_found", received_at: "2026-11-09T00:00:01.000Z" });
+    return (await webhook(event)).result;
+  }
+
+  it.each(TABLE.map((r) => [r.gate, r.status, r.marked ? "set" : "NULL", r.expected.answer, r] as const))(
+    "%s — a %s row, marker %s → %s",
+    async (_gate, _status, _marker, _answer, r) => {
+      const c = await seedCell(r.status, r.marked);
+
+      const answer = await run(r.gate, c);
+
+      expect(answer, r.why).toBe(r.expected.answer);
+      expect(rowOf(DEPOSIT).status, r.why).toBe(r.expected.status);
+      // The cleanup: the order's leftover checkout, at Stripe and on its row.
+      if (r.expected.cleanup) {
+        expect(stripe.retires, r.why).toContain(c.fullSession);
+        expect(stripe.sessions.get(c.fullSession)!.status, r.why).toBe("expired");
+        expect(rowOf(FULL), r.why).toMatchObject({ status: "void", provider_session_id: null });
+      } else {
+        expect(stripe.retires, r.why).toEqual([]);
+        expect(stripe.sessions.get(c.fullSession)!.status, r.why).toBe("open");
+        expect(rowOf(FULL), r.why).toMatchObject({ status: "void", provider_session_id: c.fullSession });
+      }
+      // The marker: written by this run, still NULL, or exactly what it was.
+      const marker = rowOf(DEPOSIT).settlement_cleanup_at ?? null;
+      if (r.expected.marker === "written") {
+        expect(marker, r.why).toEqual(expect.any(String));
+        expect(marker, r.why).not.toBe(MARKED);
+      } else if (r.expected.marker === "null") expect(marker, r.why).toBeNull();
+      else expect(marker, r.why).toBe(MARKED);
+      // Whatever the gate did, the charge on the row is the one it had.
+      expect(rowOf(DEPOSIT).provider_ref).toBe(c.pi);
+      // …and a settled row's money status moved only if a REFUND moved it.
+      const paidWrites = db.ops.filter((o) => o.table === "catering_payments" && o.kind === "update" && (o.payload as Row).status === "paid" && o.matched > 0);
+      expect(paidWrites.length, "a paid flip lands only on a due / void row").toBe(r.status === "due" || r.status === "void" ? (r.expected.status === "paid" ? 1 : 0) : 0);
+    },
+  );
+
+  it("the two halves meet: a refund applied to a paid row whose marker is NULL leaves the cleanup owed — and the payment event's replay then finishes it, on a row that stays refunded", async () => {
+    const c = await seedCell("paid", false);
+    const payment = paidEvent(c.depositSession, "checkout.session.completed", "evt_axis_pay");
+    db.tables.stripe_events!.push({ id: "evt_axis_pay", type: payment.type, livemode: false, payload: payment, outcome: "settlement_incomplete", received_at: "2026-11-09T00:00:01.000Z" });
+
+    expect((await webhook(refundEvent(c.pi, whole(20000)))).result).toBe("refunded");
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "refunded", settlement_cleanup_at: null });
+    expect(openSessions().map((s) => s.id)).toEqual([c.fullSession]); // still payable
+
+    const again = await webhook(payment);
+
+    expect(again.result).toBe("paid");
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "refunded", settlement_cleanup_at: expect.any(String) });
+    expectNothingPayable();
+    expect((await webhook(payment)).result).toBe("duplicate");
+  });
+
+  it("the stated consequence: a customer who opens a NEW checkout after the refund, before the payment's settlement is finished, has it closed by that settlement's retry — nothing is charged twice, and their next tap opens a fresh one", async () => {
+    // Refunded, cleanup unfinished (the settlement could not reach Stripe), exactly as above.
+    const depositSession = await sessionFor(DEPOSIT, 20000);
+    const fullSession = await sessionFor(FULL, 100000, "full");
+    seedDeposit({ provider: "stripe", provider_session_id: depositSession });
+    seedFull({ status: "void", provider: "stripe", provider_session_id: fullSession });
+    const payment = paidEvent(depositSession);
+    await webhook(refundEvent(`pi_${depositSession}`, whole(20000), "evt_refund_early"));
+    stripe.down = true;
+    expect((await webhook(payment)).result).toBe("settlement_incomplete");
+    stripe.down = false;
+    expect(rowOf(DEPOSIT).status).toBe("refunded");
+
+    // Nothing is paid on the order any more, so collection is open again (by design): the
+    // customer taps the deposit before Stripe's retry of the payment event arrives.
+    const url = await tap("deposit");
+    const fresh = stripe.byUrl(url)!;
+    expect(fresh.status).toBe("open");
+    expectNoForgottenCheckout();
+
+    // The retry finishes the ORIGINAL settlement: every due deposit / full intent of the order
+    // is closed, as it would have been at the first delivery — the new one among them.
+    const again = await webhook(payment);
+
+    expect(again.result).toBe("paid");
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "refunded", settlement_cleanup_at: expect.any(String) });
+    expect(stripe.sessions.get(fresh.id)!.status).toBe("expired");
+    expectNothingPayable();
+    expect(pays().filter((p) => p.status === "paid")).toEqual([]);
+
+    // The settlement is finished now, so the next tap is an ordinary one.
+    const next = stripe.byUrl(await tap("deposit"))!;
+    expect(next.status).toBe("open");
+    expect(next.id).not.toBe(fresh.id);
+    expectNoForgottenCheckout();
+    expect((await webhook(payment)).result).toBe("duplicate");
+    expect(stripe.sessions.get(next.id)!.status).toBe("open"); // a finished settlement closes nothing more
+  });
+
+  it("a hand-recorded payment keeps its own rule on the same axis: paid by hand, marker NULL → the press closes everything AND records it; marker set → the plain refusal", async () => {
+    const depositSession = await sessionFor(DEPOSIT, 20000);
+    const fullSession = await sessionFor(FULL, 100000, "full");
+    seedDeposit({ status: "paid", provider: "manual", provider_session_id: depositSession, paid_at: "2026-11-09T00:00:00.000Z" });
+    seedFull({ status: "void", provider: "stripe", provider_session_id: fullSession });
+
+    expect(refusalOf(await settled(markPaid(DEPOSIT)))).toEqual({ status: 409, code: "not_due" });
+    expect(stripe.retires.sort()).toEqual([depositSession, fullSession].sort());
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "paid", provider_session_id: null, settlement_cleanup_at: expect.any(String) });
+    expectNothingPayable();
+
+    stripe.retires.length = 0;
+    expect(refusalOf(await settled(markPaid(DEPOSIT)))).toEqual({ status: 409, code: "not_due" });
+    expect(stripe.retires).toEqual([]);
+  });
+});
