@@ -50,6 +50,12 @@ export interface AuthContext {
   locations: string[];
 }
 
+/** The server's idle limit (SESSION_IDLE_MINUTES, default 10). Exported so the layouts hand the SAME number to the
+ *  client idle clock (components/auth/IdleTimeoutWarning, audit W06/B013) instead of a hard-coded 10. */
+export function sessionIdleMinutes(): number {
+  return idleMinutes();
+}
+
 function idleMinutes(): number {
   const raw = process.env.SESSION_IDLE_MINUTES;
   const n = raw ? parseInt(raw, 10) : NaN;

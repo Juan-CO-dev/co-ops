@@ -1,26 +1,42 @@
 "use client";
 
 /**
- * IdleTimeoutWarning — Phase 2 Session 4.
+ * IdleTimeoutWarning — Phase 2 Session 4; audit W06 (B012, B013, B153).
  *
- * Tracks user activity client-side. After 9:30 of inactivity, opens a modal
- * with a live 30-second countdown:
+ * Tracks user activity client-side. 30 seconds before the idle limit it opens a
+ * modal with a live countdown:
  *   - "Stay signed in" → POST /api/auth/heartbeat (touches last_activity_at
  *                        server-side via requireSession side-effect) and
- *                        resets the local idle clock.
+ *                        resets the idle clock in every tab. A dead session
+ *                        (401, or the proxy's 307 seen as an opaque redirect)
+ *                        signs out instead of pretending it worked.
  *   - "Log out now"    → POST /api/auth/logout, redirect to /.
- * If the user does nothing for the full 10:00, silently redirects to
- * /?reason=idle so the login surface can show the "you were signed out" banner.
+ * If nobody does anything for the full idle limit, the session is REVOKED
+ * (POST /api/auth/logout, best-effort) before the page goes to the login
+ * surface with ?reason=idle (B012 — redirecting alone left the session alive,
+ * and the dashboard's background refresh kept it alive server-side, so the
+ * next person on a shared tablet was inside the previous person's account).
+ * The sign-in link carries a return link bound to this user (owner decision
+ * W06-2): the same person signing back in returns here, anyone else lands on
+ * the dashboard.
  *
- * Activity-tracking events: mousedown, keydown, touchstart, scroll. Listeners
- * are detached while the warning modal is open — the user must make an
- * explicit choice (locked Phase 2 Session 4 design).
+ * ONE idle clock across tabs (B153): the last-activity instant is shared via
+ * localStorage (`co_ops_last_activity`) and the `storage` event, so an
+ * untouched background tab never signs out a person working in another tab,
+ * and activity elsewhere closes this tab's warning. A sign-out in one tab
+ * (`co_ops_signed_out`) sends the other tabs to the login page without a
+ * second logout. Storage blocked (private mode) = the per-tab clock, as before.
  *
- * Server-side idle timeout (lib/session.ts SESSION_IDLE_MINUTES, default 10)
- * is the source of truth — this component mirrors that value. If they fall
- * out of sync, the server is authoritative: the next protected request will
- * 401 and the proxy will redirect the user to / regardless of what the local
- * countdown shows.
+ * The SERVER clock only sees requests (B013): typing for ten minutes with no
+ * request used to end in a 401 and lost input. While activity continues, a
+ * throttled heartbeat (at most every 2 minutes, shared across tabs via
+ * `co_ops_last_heartbeat`) keeps the server session alive. The idle limit is
+ * the server's own SESSION_IDLE_MINUTES, passed in by the layouts.
+ *
+ * Activity-tracking events: mousedown, keydown, touchstart, scroll. This tab's
+ * listeners are detached while the warning modal is open — the user must make
+ * an explicit choice (locked Phase 2 Session 4 design); another tab's activity
+ * still counts.
  *
  * Focus trap: on open, the "Stay signed in" button is focused; Tab cycles
  * within the two buttons; Esc is ignored (explicit-action-required); no
@@ -31,34 +47,123 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { rememberSignedInUser, signInHref } from "@/lib/nav-sign-in-return";
 
-const TOTAL_IDLE_SECONDS = 10 * 60; // matches default SESSION_IDLE_MINUTES = 10
+const DEFAULT_IDLE_MINUTES = 10; // matches lib/session.ts DEFAULT_IDLE_MINUTES
 const WARNING_BEFORE_SECONDS = 30; // show modal 30s before forced logout
 const TICK_MS = 1000;
+/** Shared-clock writes are throttled: `scroll` fires many times a second. */
+const ACTIVITY_WRITE_EVERY_MS = 5_000;
+/** The activity heartbeat, well under half the idle window (clamped for small SESSION_IDLE_MINUTES). */
+const HEARTBEAT_EVERY_MS = 2 * 60 * 1000;
+
+const IDLE_ACTIVITY_KEY = "co_ops_last_activity";
+const IDLE_HEARTBEAT_KEY = "co_ops_last_heartbeat";
+const IDLE_SIGNED_OUT_KEY = "co_ops_signed_out";
 
 const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
 
-export function IdleTimeoutWarning() {
+function readStoredMs(key: string): number {
+  try {
+    const n = Number(window.localStorage.getItem(key));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeStored(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Storage blocked — this tab keeps its own clock (the pre-B153 behaviour).
+  }
+}
+
+/** A heartbeat / step-up style response that means the session is gone. */
+function sessionIsDead(res: Response): boolean {
+  return res.status === 401 || res.type === "opaqueredirect";
+}
+
+export interface IdleTimeoutWarningProps {
+  /** The server's idle limit (lib/session.ts sessionIdleMinutes()). */
+  idleMinutes?: number;
+  /** The signed-in user — binds the idle sign-out's return link to them (W06-2). */
+  userId?: string;
+}
+
+export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId }: IdleTimeoutWarningProps = {}) {
   const { t } = useTranslation();
   const router = useRouter();
+  const totalIdleMs = (Number.isFinite(idleMinutes) && idleMinutes > 0 ? idleMinutes : DEFAULT_IDLE_MINUTES) * 60 * 1000;
+  const warningSeconds = Math.min(WARNING_BEFORE_SECONDS, Math.floor(totalIdleMs / 2000));
+  const heartbeatEveryMs = Math.min(HEARTBEAT_EVERY_MS, Math.floor(totalIdleMs / 3));
+
   // Seed to 0 at render — Date.now() during render is impure (react-hooks/purity).
   // The mount effect below stamps the real timestamp before the idle interval's
   // first tick (+1000ms), so the timer still measures from first paint.
   const lastActivityRef = useRef<number>(0);
+  const lastActivityWriteRef = useRef<number>(0);
+  const lastHeartbeatRef = useRef<number>(0);
+  const expiredRef = useRef(false);
   const [warningOpen, setWarningOpen] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(WARNING_BEFORE_SECONDS);
+  const [secondsLeft, setSecondsLeft] = useState(warningSeconds);
   const stayBtnRef = useRef<HTMLButtonElement | null>(null);
   const logoutBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  useEffect(() => {
-    lastActivityRef.current = Date.now();
+  /** Stamp activity in this tab and (throttled) in the shared clock. */
+  const markActivity = useCallback((now: number, forceShared = false) => {
+    lastActivityRef.current = now;
+    if (forceShared || now - lastActivityWriteRef.current >= ACTIVITY_WRITE_EVERY_MS) {
+      lastActivityWriteRef.current = now;
+      writeStored(IDLE_ACTIVITY_KEY, String(now));
+    }
   }, []);
+
+  /** The idle sign-out: revoke for real (B012), tell the other tabs, then go to the login page. Runs once. */
+  const expire = useCallback(async () => {
+    if (expiredRef.current) return;
+    expiredRef.current = true;
+    const here = window.location.pathname + window.location.search;
+    writeStored(IDLE_SIGNED_OUT_KEY, `${Date.now()}:idle`);
+    try {
+      await fetch("/api/auth/logout", { method: "POST", redirect: "manual" });
+    } catch {
+      // Best-effort, like onLogout: the route always clears the cookie when it is reached.
+    }
+    router.push(signInHref({ reason: "idle", next: here, forUser: userId }));
+  }, [router, userId]);
+
+  const heartbeat = useCallback(async (): Promise<Response | null> => {
+    try {
+      return await fetch("/api/auth/heartbeat", { method: "POST", redirect: "manual" });
+    } catch {
+      return null; // a network blip never signs anyone out
+    }
+  }, []);
+
+  useEffect(() => {
+    const now = Date.now();
+    markActivity(now, true);
+    lastHeartbeatRef.current = now; // the page load itself reached the server
+    if (userId) rememberSignedInUser(userId);
+  }, [markActivity, userId]);
 
   // Activity listeners: only when the warning modal is closed.
   useEffect(() => {
     if (warningOpen) return;
     const onActivity = () => {
-      lastActivityRef.current = Date.now();
+      const now = Date.now();
+      markActivity(now);
+      // Throttled heartbeat (B013): the server only sees requests, so keep it alive while someone types.
+      const lastBeat = Math.max(lastHeartbeatRef.current, readStoredMs(IDLE_HEARTBEAT_KEY));
+      if (now - lastBeat >= heartbeatEveryMs) {
+        lastHeartbeatRef.current = now;
+        writeStored(IDLE_HEARTBEAT_KEY, String(now));
+        void heartbeat().then((res) => {
+          if (res && sessionIsDead(res)) void expire();
+        });
+      }
     };
     for (const ev of ACTIVITY_EVENTS) {
       window.addEventListener(ev, onActivity, { passive: true });
@@ -68,24 +173,56 @@ export function IdleTimeoutWarning() {
         window.removeEventListener(ev, onActivity);
       }
     };
-  }, [warningOpen]);
+  }, [warningOpen, markActivity, heartbeatEveryMs, heartbeat, expire]);
 
-  // Tick loop: decide whether to show modal / redirect.
+  // Other tabs (B153): their activity counts here; their sign-out signs this tab out too.
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      const idleSec = (Date.now() - lastActivityRef.current) / 1000;
-      if (idleSec >= TOTAL_IDLE_SECONDS) {
-        router.push("/?reason=idle");
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === IDLE_ACTIVITY_KEY && e.newValue) {
+        const n = Number(e.newValue);
+        if (Number.isFinite(n) && n > lastActivityRef.current) {
+          lastActivityRef.current = n;
+          setWarningOpen(false);
+          setSecondsLeft(warningSeconds);
+        }
         return;
       }
-      const remaining = TOTAL_IDLE_SECONDS - idleSec;
-      if (remaining <= WARNING_BEFORE_SECONDS) {
+      if (e.key === IDLE_SIGNED_OUT_KEY && e.newValue && !expiredRef.current) {
+        expiredRef.current = true;
+        const here = window.location.pathname + window.location.search;
+        router.push(e.newValue.endsWith(":logout") ? "/" : signInHref({ reason: "idle", next: here, forUser: userId }));
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [router, userId, warningSeconds]);
+
+  // Tick loop: decide whether to show modal / sign out.
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (expiredRef.current) return;
+      const stored = readStoredMs(IDLE_ACTIVITY_KEY);
+      if (stored > lastActivityRef.current) {
+        // Someone is active in another tab: adopt their clock and stand down.
+        lastActivityRef.current = stored;
+        if (warningOpen) {
+          setWarningOpen(false);
+          setSecondsLeft(warningSeconds);
+        }
+      }
+      const idleMs = Date.now() - lastActivityRef.current;
+      if (idleMs >= totalIdleMs) {
+        void expire();
+        return;
+      }
+      const remaining = (totalIdleMs - idleMs) / 1000;
+      if (remaining <= warningSeconds) {
         if (!warningOpen) setWarningOpen(true);
         setSecondsLeft(Math.max(0, Math.ceil(remaining)));
       }
     }, TICK_MS);
     return () => window.clearInterval(interval);
-  }, [warningOpen, router]);
+  }, [warningOpen, totalIdleMs, warningSeconds, expire]);
 
   // Focus the primary button on open.
   useEffect(() => {
@@ -93,19 +230,24 @@ export function IdleTimeoutWarning() {
   }, [warningOpen]);
 
   const onStay = useCallback(async () => {
-    try {
-      await fetch("/api/auth/heartbeat", { method: "POST", redirect: "manual" });
-    } catch {
-      // Network failure on heartbeat is non-fatal — the next protected request
-      // surfaces the real session state. Reset locally; if the session is dead
-      // the next navigation will 401 → proxy redirects to /.
+    const res = await heartbeat();
+    if (res && sessionIsDead(res)) {
+      // B013: "Stay signed in" on a dead session must not pretend it worked.
+      void expire();
+      return;
     }
-    lastActivityRef.current = Date.now();
-    setSecondsLeft(WARNING_BEFORE_SECONDS);
+    // A network failure is non-fatal — the next protected request surfaces the real session state.
+    const now = Date.now();
+    markActivity(now, true);
+    lastHeartbeatRef.current = now;
+    writeStored(IDLE_HEARTBEAT_KEY, String(now));
+    setSecondsLeft(warningSeconds);
     setWarningOpen(false);
-  }, []);
+  }, [heartbeat, expire, markActivity, warningSeconds]);
 
   const onLogout = useCallback(async () => {
+    expiredRef.current = true;
+    writeStored(IDLE_SIGNED_OUT_KEY, `${Date.now()}:logout`);
     try {
       await fetch("/api/auth/logout", { method: "POST", redirect: "manual" });
     } catch {
