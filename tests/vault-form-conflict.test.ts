@@ -136,3 +136,8 @@ it("B063: a NEW shared entry still starts on the first shop the actor may author
   state.values = [];
   expect(shopSelect({ shops: [], createShops: [], canCreateBoth: true, actorLevel: 9, initial: undefined }).props.value).toBe("both");
 });
+
+it("B165: a reveal that kept racing edits has its own message, not the edit form's 'latest version is loaded'", () => {
+  expect(vaultErrorKey("entry_changed")).toBe("vault.error.entry_changed");
+  expect(vaultErrorKey("version_conflict")).toBe("vault.error.version_conflict");
+});

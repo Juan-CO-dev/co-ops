@@ -472,3 +472,151 @@ describe("malformed entry ids (audit W10 / B166)", () => {
     for (const call of calls()) await expect(call()).rejects.toMatchObject({ code: "write_failed", status: 500 });
   });
 });
+
+/**
+ * Audit W10 / B165. A reveal reads the ENTRY (who may see it), then the SECRET (what they see). An
+ * edit that committed between the two reads — the floor raised to owner-only together with a new
+ * secret — handed the new secret to someone the entry had just been closed to.
+ *
+ * `raceBefore` makes that interleaving real: a concurrent writer runs to completion, through the
+ * real lib, at the moment the reveal's nth read of `table` is on its way to the database.
+ */
+describe("reveal races a concurrent edit (audit W10 / B165)", () => {
+  function raceBefore(table: string, commit: () => Promise<unknown>, when: number | "every" = 1) {
+    const from = f.client.from.bind(f.client) as unknown as (t: string) => Record<string, unknown>;
+    let seen = 0;
+    let committing = false;
+    (f.client as unknown as { from: unknown }).from = (t: string) => {
+      const q = from(t);
+      if (t !== table || committing) return q;
+      seen += 1;
+      if (when !== "every" && seen !== when) return q;
+      const land = async () => { committing = true; try { await commit(); } finally { committing = false; } };
+      const maybeSingle = q.maybeSingle as () => Promise<unknown>;
+      const then = q.then as (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => unknown;
+      q.maybeSingle = async () => { await land(); return maybeSingle(); };
+      q.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => land().then(() => then(res, rej), rej);
+      return q;
+    };
+  }
+  const revealsOf = (kind: string) => f.tables.vault_reveals!.filter((r) => r.kind === kind);
+  const notifiedTypes = () => notified().map((n) => n.type);
+  const alerts = () => audited().filter((a) => a.action === "vault.decrypt_failure");
+
+  it("a floor raise WITH a new secret, committed between the entry read and the secret read, never returns the new secret", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META); // floor 4 at EM: Maya (KH) may reveal it
+    vi.clearAllMocks();
+    raceBefore("vault_secrets", () => updateVaultEntry(f.client, pete, entry.id, shared({ minLevel: 9, secret: "owner-only-secret" }), META));
+    const outcome = await revealVaultSecret(f.client, maya, entry.id, { burst: false }, META).then((r) => r, (e: unknown) => e);
+    expect(JSON.stringify(outcome)).not.toContain("owner-only-secret");
+    expect(outcome).toMatchObject({ code: "entry_not_found", status: 404 });
+    expect(f.tables.vault_entries![0]).toMatchObject({ min_level: 9, revision: 2 }); // the owner's edit really landed
+    expect(f.tables.vault_reveals).toEqual([]); // no record of a view that did not happen
+    expect(notifiedTypes()).not.toContain("vault_reveal");
+    expect(alerts()).toEqual([]); // and no false decrypt alarm
+    // The owner still reveals the new secret; Maya is refused from now on.
+    await expect(revealVaultSecret(f.client, pete, entry.id, { burst: false }, META)).resolves.toMatchObject({ secret: "owner-only-secret", version: 2 });
+    await expect(revealVaultSecret(f.client, maya, entry.id, { burst: false }, META)).rejects.toMatchObject({ code: "entry_not_found" });
+  });
+
+  it("a floor raise alone (no new secret) mid-reveal refuses too: no decrypt, no record, no notification", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    vi.clearAllMocks();
+    raceBefore("vault_secrets", () => updateVaultEntry(f.client, pete, entry.id, shared({ minLevel: 9, secret: null }), META));
+    await expect(revealVaultSecret(f.client, maya, entry.id, { burst: false }, META)).rejects.toMatchObject({ code: "entry_not_found", status: 404 });
+    expect(f.tables.vault_reveals).toEqual([]);
+    expect(notifiedTypes()).not.toContain("vault_reveal");
+  });
+
+  it("a move to another shop mid-reveal refuses a viewer who is not at that shop", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    raceBefore("vault_secrets", () => updateVaultEntry(f.client, pete, entry.id, shared({ locationId: MEP, secret: "mep-only" }), META));
+    const outcome = await revealVaultSecret(f.client, maya, entry.id, { burst: false }, META).then((r) => r, (e: unknown) => e);
+    expect(JSON.stringify(outcome)).not.toContain("mep-only");
+    expect(outcome).toMatchObject({ code: "entry_not_found" });
+    expect(f.tables.vault_reveals).toEqual([]);
+  });
+
+  it("a removal mid-reveal refuses (deactivation does not bump the revision; the active re-check catches it)", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    vi.clearAllMocks();
+    raceBefore("vault_secrets", () => deactivateVaultEntry(f.client, gmEm, entry.id, META));
+    await expect(revealVaultSecret(f.client, maya, entry.id, { burst: false }, META)).rejects.toMatchObject({ code: "entry_not_found", status: 404 });
+    expect(f.tables.vault_reveals).toEqual([]);
+    expect(notifiedTypes()).not.toContain("vault_reveal");
+  });
+
+  it("a harmless edit mid-reveal (a note) still reveals, after one quiet retry, with exactly ONE record and ONE notification", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    vi.clearAllMocks();
+    raceBefore("vault_secrets", () => updateVaultEntry(f.client, gmEm, entry.id, shared({ notes: "rotate in January", secret: null }), META));
+    await expect(revealVaultSecret(f.client, maya, entry.id, { burst: false }, META)).resolves.toEqual({ secret: "toast-pw-1", version: 1, recorded: true });
+    expect(revealsOf("reveal")).toHaveLength(1);
+    expect(notifiedTypes().filter((t) => t === "vault_reveal")).toHaveLength(1);
+  });
+
+  it("a same-floor rotation mid-reveal returns the secret that is current once things are stable, recorded under that version", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    raceBefore("vault_secrets", () => updateVaultEntry(f.client, gmEm, entry.id, shared({ secret: "toast-pw-2" }), META));
+    await expect(revealVaultSecret(f.client, maya, entry.id, { burst: false }, META)).resolves.toEqual({ secret: "toast-pw-2", version: 2, recorded: true });
+    expect(revealsOf("reveal")).toEqual([expect.objectContaining({ secret_version: 2, viewer_id: U.maya })]);
+  });
+
+  it("an entry edited on every attempt ends as entry_changed (409): nothing shown, nothing recorded, no alert", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    vi.clearAllMocks();
+    let revision = 1;
+    raceBefore("vault_secrets", () => updateVaultEntry(f.client, gmEm, entry.id, shared({ expectedRevision: revision, notes: `edit ${revision++}`, secret: null }), META), "every");
+    await expect(revealVaultSecret(f.client, maya, entry.id, { burst: false }, META)).rejects.toMatchObject({ code: "entry_changed", status: 409 });
+    expect(revision).toBe(4); // three attempts, three edits, then it stops
+    expect(f.tables.vault_reveals).toEqual([]);
+    expect(notifiedTypes()).not.toContain("vault_reveal");
+    expect(alerts()).toEqual([]);
+  });
+
+  it("previous-secret recovery: a floor raised to 9 between the entry read and the secret read refuses a level-8 actor", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    await updateVaultEntry(f.client, gmEm, entry.id, shared({ secret: "toast-pw-2" }), META); // v1 is now the previous secret
+    vi.clearAllMocks();
+    raceBefore("vault_secrets", () => updateVaultEntry(f.client, pete, entry.id, shared({ expectedRevision: 2, minLevel: 9, secret: "owner-only-secret" }), META));
+    const outcome = await recoverPreviousSecret(f.client, cristian, entry.id, { burst: false }, META).then((r) => r, (e: unknown) => e);
+    expect(JSON.stringify(outcome)).not.toMatch(/toast-pw|owner-only/);
+    expect(outcome).toMatchObject({ code: "entry_not_found", status: 404 });
+    expect(f.tables.vault_reveals).toEqual([]);
+    expect(notifiedTypes()).not.toContain("vault_recovery");
+  });
+
+  it("previous-secret recovery still works when nothing races it, and survives a harmless edit", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    await updateVaultEntry(f.client, gmEm, entry.id, shared({ secret: "toast-pw-2" }), META);
+    raceBefore("vault_secrets", () => updateVaultEntry(f.client, gmEm, entry.id, shared({ expectedRevision: 2, notes: "n", secret: null }), META));
+    await expect(recoverPreviousSecret(f.client, cristian, entry.id, { burst: false }, META)).resolves.toEqual({ secret: "toast-pw-1", version: 1, recorded: true });
+    expect(revealsOf("previous_recovery")).toHaveLength(1);
+  });
+
+  it("owner recovery of a personal entry: the owner removing it mid-read refuses the recovery, with no record and no notice to the owner", async () => {
+    const entry = await createVaultEntry(f.client, maya, personal(), META);
+    vi.clearAllMocks();
+    raceBefore("vault_secrets", () => deactivateVaultEntry(f.client, maya, entry.id, META));
+    await expect(recoverPersonalSecret(f.client, pete, entry.id, { burst: false }, META)).rejects.toMatchObject({ code: "entry_not_found", status: 404 });
+    expect(f.tables.vault_reveals).toEqual([]);
+    expect(enqueueNotification).not.toHaveBeenCalled();
+  });
+
+  it("the refusals keep their own codes: an owner 'recovering' their own entry is still forbidden (403)", async () => {
+    const mine = await createVaultEntry(f.client, pete, personal({ name: "Pete's" }), META);
+    await expect(recoverPersonalSecret(f.client, pete, mine.id, { burst: false }, META)).rejects.toMatchObject({ code: "forbidden", status: 403 });
+    expect(f.tables.vault_reveals).toEqual([]);
+  });
+
+  it("an undisturbed reveal reads the entry exactly twice and the secret once (one extra point read, no more)", async () => {
+    const entry = await createVaultEntry(f.client, gmEm, shared(), META);
+    const from = f.client.from.bind(f.client) as unknown as (t: string) => unknown;
+    const reads: string[] = [];
+    (f.client as unknown as { from: unknown }).from = (t: string) => { reads.push(t); return from(t); };
+    await revealVaultSecret(f.client, maya, entry.id, { burst: false }, META);
+    expect(reads.filter((t) => t === "vault_entries")).toHaveLength(2);
+    expect(reads.filter((t) => t === "vault_secrets")).toHaveLength(1);
+    expect(reads.slice(0, 3)).toEqual(["vault_entries", "vault_secrets", "vault_entries"]);
+  });
+});

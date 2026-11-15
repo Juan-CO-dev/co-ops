@@ -48,6 +48,7 @@ export function vaultErrorKey(code: string | undefined): TranslationKey {
     case "no_previous_secret": return "vault.error.no_previous_secret";
     case "vault_unavailable": return "vault.error.vault_unavailable";
     case "version_conflict": return "vault.error.version_conflict";
+    case "entry_changed": return "vault.error.entry_changed";
     case "invalid_payload": return "vault.error.invalid_payload";
     default: return "vault.error.generic";
   }

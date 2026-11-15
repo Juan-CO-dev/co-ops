@@ -321,15 +321,55 @@ export async function takeRevealSlot(service: SupabaseClient, actor: VaultServer
 
 // ── Reveal and recoveries ─────────────────────────────────────────────────────────────────────
 
+const STABLE_READ_ATTEMPTS = 3;
+
+/**
+ * The entry and the secret row an actor may be shown, read CONSISTENTLY (audit W10 / B165).
+ *
+ * The entry (who may see it) and the secret (what they see) are two separate reads. An edit that
+ * commits between them — a floor raised to owner-only together with a new secret — used to hand the
+ * NEW secret to someone the entry had just been closed to, and record it as a normal reveal.
+ *
+ * So: entry → secret → entry AGAIN, and the secret is used only when the second entry read is still
+ * active, still passes `authorize`, and carries the SAME revision as the first. That is enough
+ * because every change to an entry's metadata or its current secret goes through `vault_update_entry`
+ * (0241), which bumps `revision` in the same transaction, and `revision` only ever goes up: an
+ * unchanged revision on the re-read means nothing committed in between, so the secret read belongs
+ * to the entry state that was authorized. Deactivation does not bump the revision; the `active`
+ * re-check covers it. KEEP THAT INVARIANT: a new writer of vault_entries metadata or of the current
+ * secret must bump `revision` in its own transaction, or this pin stops holding.
+ *
+ * `authorize` throws the caller's own refusal. A harmless concurrent edit (a note) just retries; a
+ * few edits in a row give `entry_changed` (409, "try again"). No decrypt, record, notification or
+ * alert happens before this returns, so a refused reveal never produces plaintext or a false alarm.
+ */
+async function loadStableSecret(
+  service: SupabaseClient, entryId: string, authorize: (entry: EntryRow) => void, readSecret: (entry: EntryRow) => Promise<SecretRow | null>,
+): Promise<{ entry: EntryRow; row: SecretRow | null }> {
+  const authorized = async (): Promise<EntryRow> => {
+    const entry = await loadEntry(service, entryId);
+    if (!entry || !entry.active) throw new VaultError("entry_not_found", 404);
+    authorize(entry);
+    return entry;
+  };
+  for (let attempt = 0; attempt < STABLE_READ_ATTEMPTS; attempt += 1) {
+    const before = await authorized();
+    const row = await readSecret(before);
+    const after = await authorized();
+    if (after.revision === before.revision) return { entry: after, row };
+  }
+  throw new VaultError("entry_changed", 409);
+}
+
 /**
  * Reveals the CURRENT secret to an actor whose PIN the route already verified for this request.
  * Shared: record + notification BEFORE the plaintext is returned. Personal (owner): neither.
  */
 export async function revealVaultSecret(service: SupabaseClient, actor: VaultServerActor, entryId: string, opts: { burst: boolean }, meta: VaultRequestMeta): Promise<RevealResult> {
   assertEnabled();
-  const entry = await loadEntry(service, entryId);
-  if (!entry || !entry.active || !canRevealEntry(actor, access(entry))) throw new VaultError("entry_not_found", 404);
-  const row = await currentVersion(service, entry.id);
+  const { entry, row } = await loadStableSecret(service, entryId,
+    (e) => { if (!canRevealEntry(actor, access(e))) throw new VaultError("entry_not_found", 404); },
+    (e) => currentVersion(service, e.id));
   if (!row) return failClosed(service, actor, entry, null, "no_current_version", meta);
   const secret = await decryptRow(service, actor, entry, row, meta);
   if (entry.kind === "personal") return { secret, version: row.version, recorded: false };
@@ -345,16 +385,20 @@ export async function revealVaultSecret(service: SupabaseClient, actor: VaultSer
 export async function recoverPersonalSecret(service: SupabaseClient, actor: VaultServerActor, entryId: string, opts: { burst: boolean }, meta: VaultRequestMeta): Promise<RevealResult> {
   assertEnabled();
   if (actor.level < VAULT_OWNER_RECOVERY_LEVEL) throw new VaultError("forbidden", 403);
-  const entry = await loadEntry(service, entryId);
-  if (!entry || !entry.active || entry.kind !== "personal" || !entry.owner_id) throw new VaultError("entry_not_found", 404);
-  if (entry.owner_id === actor.userId) throw new VaultError("forbidden", 403); // your own entry is a reveal, not a recovery
-  const row = await currentVersion(service, entry.id);
+  const { entry, row } = await loadStableSecret(service, entryId,
+    (e) => {
+      if (e.kind !== "personal" || !e.owner_id) throw new VaultError("entry_not_found", 404);
+      if (e.owner_id === actor.userId) throw new VaultError("forbidden", 403); // your own entry is a reveal, not a recovery
+    },
+    (e) => currentVersion(service, e.id));
+  const ownerId = entry.owner_id;
+  if (!ownerId) throw new VaultError("entry_not_found", 404); // unreachable: `authorize` just required it
   if (!row) return failClosed(service, actor, entry, null, "no_current_version", meta);
   const secret = await decryptRow(service, actor, entry, row, meta);
   await recordReveal(service, { entry, actor, kind: "owner_recovery", version: row.version, burst: opts.burst });
   await notifyManagement(service, {
     type: NOTIFICATION_TYPES.VAULT_RECOVERY, priority: "urgent", titleKey: "notifications.vault_recovery.title.owner", bodyKey: "notifications.vault_recovery.body",
-    params: { actorName: actor.name, entryName: entry.name }, entry, actor, recipients: [entry.owner_id],
+    params: { actorName: actor.name, entryName: entry.name }, entry, actor, recipients: [ownerId],
   });
   return { secret, version: row.version, recorded: true };
 }
@@ -363,14 +407,16 @@ export async function recoverPersonalSecret(service: SupabaseClient, actor: Vaul
 export async function recoverPreviousSecret(service: SupabaseClient, actor: VaultServerActor, entryId: string, opts: { burst: boolean }, meta: VaultRequestMeta): Promise<RevealResult> {
   assertEnabled();
   if (actor.level < VAULT_PREVIOUS_RECOVERY_LEVEL) throw new VaultError("forbidden", 403);
-  const entry = await loadEntry(service, entryId);
-  if (!entry || !entry.active || entry.kind !== "shared" || !canSeeSharedEntry(actor, access(entry))) throw new VaultError("entry_not_found", 404);
-  const { data, error } = await service.from("vault_secrets").select(SECRET_COLS).eq("entry_id", entry.id)
-    .not("superseded_at", "is", null).is("scrubbed_at", null)
-    .gte("superseded_at", new Date(Date.now() - VAULT_PREVIOUS_SECRET_RETENTION_DAYS * 86_400_000).toISOString())
-    .order("version", { ascending: false }).limit(1);
-  if (error) throw new VaultError("write_failed", 500);
-  const row = ((data ?? []) as SecretRow[]).find((r) => previousSecretRecoverable({ supersededAt: r.superseded_at, scrubbedAt: r.scrubbed_at }));
+  const { entry, row } = await loadStableSecret(service, entryId,
+    (e) => { if (e.kind !== "shared" || !canSeeSharedEntry(actor, access(e))) throw new VaultError("entry_not_found", 404); },
+    async (e) => {
+      const { data, error } = await service.from("vault_secrets").select(SECRET_COLS).eq("entry_id", e.id)
+        .not("superseded_at", "is", null).is("scrubbed_at", null)
+        .gte("superseded_at", new Date(Date.now() - VAULT_PREVIOUS_SECRET_RETENTION_DAYS * 86_400_000).toISOString())
+        .order("version", { ascending: false }).limit(1);
+      if (error) throw new VaultError("write_failed", 500);
+      return ((data ?? []) as SecretRow[]).find((r) => previousSecretRecoverable({ supersededAt: r.superseded_at, scrubbedAt: r.scrubbed_at })) ?? null;
+    });
   if (!row) throw new VaultError("no_previous_secret", 404);
   const secret = await decryptRow(service, actor, entry, row, meta);
   await recordReveal(service, { entry, actor, kind: "previous_recovery", version: row.version, burst: opts.burst });
@@ -383,7 +429,12 @@ export async function recoverPreviousSecret(service: SupabaseClient, actor: Vaul
 
 // ── Lifecycle (create / update / deactivate) ──────────────────────────────────────────────────
 
-/** Encrypts for `version` and appends it through the definer RPC; the RPC refuses a stale version. */
+/**
+ * Encrypts for `version` and appends it through the definer RPC; the RPC refuses a stale version.
+ * Called for v1 at CREATE only. Every later secret is written inside `vault_update_entry`, which bumps
+ * the entry's `revision` in the same transaction — `loadStableSecret` (B165) relies on that, so never
+ * rotate a live entry's secret through this path.
+ */
 async function writeSecret(service: SupabaseClient, actor: VaultServerActor, entry: EntryRow, version: number, plaintext: string, meta: VaultRequestMeta): Promise<number> {
   let key: Buffer;
   try {
