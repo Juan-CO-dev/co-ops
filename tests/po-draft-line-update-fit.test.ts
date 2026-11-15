@@ -126,3 +126,40 @@ describe("W08/B056 r1: a line already on the draft is validated when set to a po
   });
 });
 
+describe("W08/B056 r1: effective activity at the PO's shop", () => {
+  const inactive: Sku = { id: "off", vendor_id: "V1", location_id: null, active: false };
+
+  it("a globally inactive SKU with no override is refused as a new line", async () => {
+    const w = world([inactive], []);
+    await expect(w.run([{ skuId: "off", orderQty: 2 }])).rejects.toMatchObject({ status: 400, code: "invalid_sku" });
+    expect(w.inserted).toEqual([]);
+  });
+
+  it("a SKU switched off at this shop is refused as a new line and as a positive update", async () => {
+    const off = [{ location_id: SHOP, sku_id: "good", active_override: false }];
+    const fresh = world([good], [], off);
+    await expect(fresh.run([{ skuId: "good", orderQty: 2 }])).rejects.toMatchObject({ status: 400, code: "invalid_sku" });
+    expect(fresh.inserted).toEqual([]);
+    const existing = world([good], [line("good", 1)], off);
+    await expect(existing.run([{ skuId: "good", orderQty: 2 }])).rejects.toMatchObject({ status: 400, code: "invalid_sku" });
+    expect(qtyOf(existing, "good")).toBe(1);
+    // ...and it can still be zeroed.
+    await expect(existing.run([{ skuId: "good", orderQty: 0 }])).resolves.toEqual({ updated: 1, inserted: 0 });
+  });
+
+  it("a globally inactive SKU switched back on at this shop is accepted", async () => {
+    const w = world([inactive], [], [{ location_id: SHOP, sku_id: "off", active_override: true }]);
+    await expect(w.run([{ skuId: "off", orderQty: 2 }])).resolves.toEqual({ updated: 0, inserted: 1 });
+    expect(w.inserted).toEqual([{ skuId: "off", orderQty: 2 }]);
+  });
+
+  it("another shop's override does not count", async () => {
+    const w = world([inactive], [], [{ location_id: "shop-b", sku_id: "off", active_override: true }]);
+    await expect(w.run([{ skuId: "off", orderQty: 2 }])).rejects.toMatchObject({ status: 400, code: "invalid_sku" });
+  });
+
+  it("a globally active SKU with an explicit 'on' override at this shop is accepted", async () => {
+    const w = world([good], [], [{ location_id: SHOP, sku_id: "good", active_override: true }]);
+    await expect(w.run([{ skuId: "good", orderQty: 1 }])).resolves.toEqual({ updated: 0, inserted: 1 });
+  });
+});

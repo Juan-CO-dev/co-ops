@@ -56,6 +56,7 @@ import { guideKeysFor } from "@/lib/order-guides";
 import { poLineGuideKey, resolveGuideKey } from "@/lib/order-guides-shared";
 import { compareByGuide } from "@/lib/order-guide-sort";
 import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
+import { resolveActive } from "@/lib/location-sku-shared";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
 export const PO_MIN = 4; // key_holder+
@@ -432,8 +433,11 @@ async function assertNoStoreSkus(sb: ServiceClient, skuIds: readonly string[]): 
  * `id, vendor_id, location_id`; refused, in this order, when the id does not exist (400
  * invalid_sku), the SKU is a store item (400 invalid_sku — the assertNoStoreSkus rule, same
  * message), it belongs to another vendor than the PO's (400 invalid_sku), or it is another
- * shop's own SKU (404 not_found — the receiving rule). `active` is deliberately NOT checked: the
- * walk orders a globally-inactive SKU a shop switched back on (`resolveActive`).
+ * shop's own SKU (404 not_found — the receiving rule), or it is not active AT THIS SHOP (400
+ * invalid_sku). Activity is the walk submit's rule (lib/ordering.ts submitParPass):
+ * `resolveActive(overlay.active_override, sku.active)` over this shop's `location_sku_settings`
+ * row, so a globally inactive SKU a shop switched back on (promotional override) stays orderable
+ * and one switched off at this shop does not.
  */
 async function assertPoSkusFit(
   sb: ServiceClient,
@@ -445,11 +449,18 @@ async function assertPoSkusFit(
   const stores = await loadStoreVendorIds();
   for (let start = 0; start < skuIds.length; start += 100) {
     const chunk = skuIds.slice(start, start + 100);
-    const { data, error } = await sb.from("vendor_items").select("id, vendor_id, location_id")
-      .in("id", chunk)
-      .returns<Array<{ id: string; vendor_id: string | null; location_id: string | null }>>();
+    const [{ data, error }, { data: overlays, error: oErr }] = await Promise.all([
+      sb.from("vendor_items").select("id, vendor_id, location_id, active")
+        .in("id", chunk)
+        .returns<Array<{ id: string; vendor_id: string | null; location_id: string | null; active: boolean }>>(),
+      sb.from("location_sku_settings").select("sku_id, active_override")
+        .eq("location_id", locationId).in("sku_id", chunk)
+        .returns<Array<{ sku_id: string; active_override: boolean | null }>>(),
+    ]);
     if (error) throw new Error(`assertPoSkusFit: ${error.message}`);
+    if (oErr) throw new Error(`assertPoSkusFit overlay: ${oErr.message}`);
     const byId = new Map((data ?? []).map((r) => [r.id, r] as const));
+    const overrideBySku = new Map((overlays ?? []).map((o) => [o.sku_id, o.active_override] as const));
     for (const id of chunk) {
       const sku = byId.get(id);
       if (!sku) throw new PurchaseOrderError(400, "invalid_sku", "A SKU is not found");
@@ -461,6 +472,9 @@ async function assertPoSkusFit(
       }
       if (sku.location_id != null && sku.location_id !== locationId) {
         throw new PurchaseOrderError(404, "not_found", "SKU not found");
+      }
+      if (!resolveActive(overrideBySku.get(id), sku.active)) {
+        throw new PurchaseOrderError(400, "invalid_sku", "A SKU is not found or inactive");
       }
     }
   }
@@ -480,8 +494,8 @@ async function assertPoSkusFit(
  * This module reads no `products` at all, so a "discontinued" badge on the PO panel
  * is a new loader integration rather than a widened read; filed as debt in
  * docs/ROADMAP.md alongside the receiving one. Existence, vendor-match and the shop
- * owner of an incoming skuId are checked by the caller (`assertPoSkusFit`, W08/B056);
- * `active` is deliberately not (see that function).
+ * owner of an incoming skuId, and its activity at this shop, are checked by the caller
+ * (`assertPoSkusFit`, W08/B056).
  */
 async function insertNewDraftLines(
   sb: ServiceClient,
