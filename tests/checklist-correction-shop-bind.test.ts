@@ -7,8 +7,8 @@
  *         (before 0305) accepted an INACTIVE membership row. The lib now applies the RPC's own rule to the
  *         verified actor before the RPC: an active member of the instance's shop, or level 8+.
  *   B151  tagActualCompleter writes with the service client and never checked the shop at all. It now uses
- *         the completion writers' rule (completeItem / submitBatch / confirmInstance): an active member,
- *         with no level override.
+ *         the correction writers' rule: an active member of the instance's shop, or level 8+ (the level-8+
+ *         override is Juan's ruling 2026-11-15; senior managers work whichever shop needs them).
  *
  * Behaviour tests over a small in-memory fake: a user-context READER (RLS already passed: the bug is that
  * the reader's scope was the only gate) and a service WRITER that records every RPC and UPDATE.
@@ -136,18 +136,24 @@ describe("B150 — the three correction writers bind the actor to the instance's
   });
 });
 
-describe("B151 — tagActualCompleter requires an active membership at the instance's shop", () => {
+describe("B151 — tagActualCompleter binds the actor to the instance's shop below level 8", () => {
   const tag = (actor: ReturnType<typeof checklistActor>) => tagActualCompleter(reader, { completionId: "completion", actor, actualCompleterId: "other" });
+  const smmElsewhere = checklistActor({ userId: "smm", role: "social_media_mgr", level: 6, locations: ["shop-b"] });
+  const cgsNoShops = checklistActor({ userId: "cgs", role: "cgs", level: 10, locations: [] });
+  const resetTag = () => {
+    mocks.db.checklist_completions![0]!.actual_completer_id = null;
+    mocks.db.checklist_completions![0]!.actual_completer_tagged_by = null;
+  };
 
-  it("a MoO who belongs only to another shop cannot re-credit a completion here: no UPDATE, no audit", async () => {
-    await expect(tag(mooElsewhere)).rejects.toMatchObject({ code: "role_level_insufficient", required: 4, message: "You do not manage that location" });
+  it("a GM (level 7) who belongs only to another shop cannot re-credit a completion here: no UPDATE, no audit", async () => {
+    await expect(tag(gmElsewhere)).rejects.toMatchObject({ code: "role_level_insufficient", required: 4, message: "You do not manage that location" });
     expect(mocks.updates).toEqual([]);
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 
-  it.each([["an owner with no membership", ownerNoShops], ["a GM of another shop", gmElsewhere], ["a key holder removed from the shop", removed]] as const)(
+  it.each([["an SMM of another shop", smmElsewhere], ["a key holder removed from the shop", removed]] as const)(
     "%s is refused the same way", async (_name, actor) => {
-      await expect(tag(actor)).rejects.toMatchObject({ code: "role_level_insufficient" });
+      await expect(tag(actor)).rejects.toMatchObject({ code: "role_level_insufficient", message: "You do not manage that location" });
       expect(mocks.updates).toEqual([]);
     });
 
@@ -157,12 +163,24 @@ describe("B151 — tagActualCompleter requires an active membership at the insta
     expect(mocks.updates).toEqual([]);
   });
 
+  it("an inactive level-8+ actor is refused whatever their memberships", async () => {
+    await expect(tag(checklistActor({ userId: "moo", role: "moo", level: 8, locations: ["shop-a"], active: false })))
+      .rejects.toMatchObject({ code: "role_level_insufficient" });
+    expect(mocks.updates).toEqual([]);
+  });
+
+  it.each([["a MoO (8) who belongs only to another shop", mooElsewhere], ["an owner (9) with no membership", ownerNoShops], ["a CGS (10) with no membership", cgsNoShops]] as const)(
+    "Juan's ruling 2026-11-15: %s still tags at a shop they are not a member of", async (_name, actor) => {
+      await expect(tag(actor)).resolves.toMatchObject({ replacedPriorTag: false, completion: { actualCompleterId: "other" } });
+      expect(mocks.updates).toHaveLength(1);
+      expect(mocks.updates[0]).toMatchObject({ table: "checklist_completions", patch: { actual_completer_id: "other", actual_completer_tagged_by: actor.userId } });
+    });
+
   it("an active member still tags (KH+), and a MoO who IS a member still tags", async () => {
     await expect(tag(member)).resolves.toMatchObject({ replacedPriorTag: false, completion: { actualCompleterId: "other" } });
     expect(mocks.updates).toHaveLength(1);
     expect(mocks.updates[0]).toMatchObject({ table: "checklist_completions", patch: { actual_completer_id: "other", actual_completer_tagged_by: "kh" } });
-    mocks.db.checklist_completions![0]!.actual_completer_id = null;
-    mocks.db.checklist_completions![0]!.actual_completer_tagged_by = null;
+    resetTag();
     const mooHere = checklistActor({ userId: "moo", role: "moo", level: 8, locations: ["shop-a", "shop-b"] });
     await expect(tag(mooHere)).resolves.toMatchObject({ completion: { actualCompleterId: "other" } });
   });
