@@ -500,6 +500,13 @@ function LeadDetail({
         </div>
       )}
 
+      {lead.dietaryNotes?.trim() && (
+        <div className="mb-2 rounded-md border border-co-warning bg-co-warning-surface px-2 py-1.5 text-xs">
+          <span className="font-semibold text-co-warning-text">{t("catering.pipeline.field.dietary_notes")}:</span>{" "}
+          <span className="whitespace-pre-wrap text-co-text">{lead.dietaryNotes}</span>
+        </div>
+      )}
+
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
         {lead.contactPhone && (
           <>

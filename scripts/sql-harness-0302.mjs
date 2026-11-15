@@ -1,0 +1,313 @@
+/** 0302 offline proof (audit W01: B032, B144, B002, and the delivery ruling of 2026-11-15): the REAL parent DDL + 0302 in PGlite, synthetic rows only. */
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { PGlite } from '@electric-sql/pglite';
+
+const read = (n) => readFileSync(new URL(`../supabase/migrations/${n}`, import.meta.url), 'utf8');
+const grab = (file, re, label) => { const m = read(file).match(re); assert.ok(m, `extract ${label}`); return m[0]; };
+const table = (file, name) => grab(file, new RegExp(`create table public\\.${name} \\([\\s\\S]*?\\n\\);`, 'i'), name);
+const migration = read('0302_portal_draft_atomic.sql');
+
+const db = new PGlite();
+let checks = 0;
+const check = (v, s) => { assert.ok(v, s); checks++; console.log(`ok ${s}`); };
+const one = async (s, a = []) => (await db.query(s, a)).rows[0];
+const all = async (s, a = []) => (await db.query(s, a)).rows;
+const reject = async (f, re, s) => { await assert.rejects(f, re); check(true, s); };
+
+const SNAP_KEYS = ['is_delivery', 'delivery_zone_id', 'subtotal_cents', 'delivery_fee_cents', 'service_charge_cents', 'gratuity_cents', 'tax_cents', 'total_cents', 'deposit_cents', 'tax_rate_bps', 'gratuity_bps', 'service_charge_bps', 'deposit_pct_bps', 'tax_on_delivery', 'tax_on_gratuity'];
+const snap = (subtotal, extra = {}) => ({ is_delivery: false, delivery_zone_id: null, subtotal_cents: subtotal, delivery_fee_cents: 0, service_charge_cents: 0, gratuity_cents: 0, tax_cents: 0, total_cents: subtotal, deposit_cents: Math.round(subtotal / 4), tax_rate_bps: 0, gratuity_bps: 0, service_charge_bps: 0, deposit_pct_bps: 2500, tax_on_delivery: false, tax_on_gratuity: false, ...extra });
+const setLines = (c, q, lines, s, epoch = null, seq = null) => one('select public.portal_draft_set_lines($1,$2,$3,$4,$5,$6) r', [c, q, JSON.stringify(lines), JSON.stringify(s), epoch, seq]).then((x) => x.r);
+const submit = (c, q, expected, s, napkins = null, setNotes = false, notes = null) =>
+  one('select public.portal_draft_submit($1,$2,$3,$4,$5,$6,$7,$8) r', [c, q, JSON.stringify(expected), JSON.stringify(s), napkins === null ? null : JSON.stringify(napkins), '2027-01-16T00:00:00Z', setNotes, notes]).then((x) => x.r);
+const linesOf = (q) => all('select id::text, item_id::text, package_id::text, quantity, unit_price_cents, line_total_cents, display_order, line_kind, components_listed from catering_quote_items where quote_id=$1 order by display_order', [q]);
+const expectedOf = async (q) => (await linesOf(q)).map((l) => ({ id: l.id, quantity: Number(l.quantity), unit_price_cents: l.unit_price_cents }));
+
+try {
+  await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
+    grant usage on schema public to anon, authenticated, service_role;
+    alter default privileges in schema public grant all on tables to public, anon, authenticated, service_role;
+    alter default privileges in schema public grant all on functions to public, anon, authenticated, service_role;
+    create function public.current_user_role_level() returns integer language sql as 'select 0';
+    create function public.current_user_locations() returns uuid[] language sql as 'select array[]::uuid[]';
+    create table public.locations(id uuid primary key);
+    create table public.users(id uuid primary key);
+    create table public.items(id uuid primary key);
+    create table public.menu_items(id uuid primary key);
+    create table public.catering_packages(id uuid primary key);
+    create table public.catering_package_items(id uuid primary key);
+    create table public.item_sizes(id uuid primary key);
+    ${table('0117_catering_delivery_zones.sql', 'catering_delivery_zones')}
+    create table public.catering_portal_tokens(id uuid primary key);
+    ${table('0108_catering_scaffold_capture.sql', 'catering_customers')}
+    ${table('0108_catering_scaffold_capture.sql', 'catering_pipeline')}
+    ${grab('0129_order_artifact_intake.sql', /ALTER TABLE public\.catering_pipeline\s+ADD COLUMN contact_phone[\s\S]*?ADD COLUMN dropoff_door\s+text;/i, '0129 pipeline columns')}
+    ${table('0120_catering_quotes.sql', 'catering_quotes')}
+    ${table('0120_catering_quotes.sql', 'catering_quote_items')}
+    ${grab('0127_catering_portal_orders.sql', /ALTER TABLE catering_quotes DROP CONSTRAINT catering_quotes_status_check;[\s\S]*?CHECK \(origin IN \('self_serve','staff'\)\);/i, '0127 status + origin')}
+    ${grab('0127_catering_portal_orders.sql', /CREATE TABLE catering_payments \([\s\S]*?\n\);/i, '0127 catering_payments')}
+    ${grab('0128_catering_pricing_core.sql', /ALTER TABLE public\.catering_quote_items\s+ADD COLUMN portion[\s\S]*?;/i, '0128 portion')}
+    ${grab('0130_catering_payments_one_due.sql', /CREATE UNIQUE INDEX catering_payments_one_due[\s\S]*?;/i, '0130 one due')}
+    ${grab('0143_item_sizes.sql', /alter table public\.catering_quote_items\s+add column size_id[\s\S]*?;/i, '0143 size_id')}
+    ${table('0144_catering_quote_item_options.sql', 'catering_quote_item_options')}
+    ${grab('0251_catering_quote_line_kind.sql', /alter table public\.catering_quote_items\s+add column line_kind[\s\S]*?components_listed_header_only check \([\s\S]*?\);/i, '0251 line kind')}
+    ${grab('0252_catering_quote_line_kind_enforce.sql', /alter table public\.catering_quote_items\s+add constraint catering_quote_items_package_line_has_kind[\s\S]*?;/i, '0252 package line has kind')}
+  `);
+
+  // ── Preflight refusals: each in a transaction, rolled back, leaving no partial DDL ─────────────
+  const noFunctions = async () => (await one("select to_regprocedure('public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb,text,bigint)') a, to_regprocedure('public.portal_draft_snapshot_ok(jsonb)') b")).a === null;
+  const refusePreflight = async (sql, re, label) => {
+    await db.exec('begin;' + sql);
+    await reject(() => db.exec(migration), re, label);
+    await db.exec('rollback');
+    check(await noFunctions(), `${label}: no partial DDL`);
+    check((await one("select count(*)::int n from information_schema.columns where table_name = 'catering_quotes' and column_name = 'portal_rev_epoch'")).n === 0, `${label}: no revision column left behind`);
+  };
+  await refusePreflight('alter table public.catering_pipeline drop column dietary_notes', /missing columns .*catering_pipeline\.dietary_notes/, 'missing dietary_notes refused');
+  await refusePreflight('alter table public.catering_quote_items drop column line_kind cascade', /missing columns .*catering_quote_items\.line_kind/, 'missing line_kind refused');
+  await refusePreflight('alter table catering_payments drop column created_by', /missing columns .*catering_payments\.created_by/, 'missing payments.created_by refused');
+  await refusePreflight('alter table public.catering_delivery_zones drop column min_order_cents', /missing columns .*catering_delivery_zones\.min_order_cents/, 'missing zones.min_order_cents refused');
+  await refusePreflight('drop index catering_payments_one_due', /missing the 0130 partial unique index/, 'missing 0130 index refused');
+  await refusePreflight("create function public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb,text,bigint) returns jsonb language sql as 'select null::jsonb'", /already applied/, 'already applied refused');
+  await refusePreflight('alter table public.catering_quotes add column portal_rev_seq bigint', /catering_quotes already has portal_rev/, 'a pre-existing revision column refused');
+
+  await db.exec(migration);
+  check(!(await noFunctions()), '0302 applies');
+  await reject(() => db.exec(migration), /already applied/, 're-apply refused');
+  await db.exec('rollback');
+
+  // ── Privileges ─────────────────────────────────────────────────────────────────────────────
+  for (const f of ['public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb,text,bigint)', 'public.portal_draft_submit(uuid,uuid,jsonb,jsonb,jsonb,timestamptz,boolean,text)']) {
+    const p = await one(`select has_function_privilege('anon',$1,'EXECUTE') a, has_function_privilege('authenticated',$1,'EXECUTE') b, has_function_privilege('service_role',$1,'EXECUTE') s, (select prosecdef from pg_proc where oid=$1::regprocedure) d, (select proconfig from pg_proc where oid=$1::regprocedure) c`, [f]);
+    check(!p.a && !p.b && p.s, `${f}: service_role only`);
+    check(p.d === true && p.c.includes('search_path=pg_catalog, public'), `${f}: security definer, pinned search_path`);
+  }
+  const helper = await one("select has_function_privilege('service_role','public.portal_draft_snapshot_ok(jsonb)','EXECUTE') s, has_function_privilege('anon','public.portal_draft_snapshot_ok(jsonb)','EXECUTE') a");
+  check(!helper.s && !helper.a, 'snapshot helper executable by no API role');
+  const tablePriv = await one("select has_table_privilege('anon','public.catering_quote_items','INSERT') a");
+  check(tablePriv.a === true, 'table grants untouched by 0302 (the synthetic default ACL still stands)');
+
+  // ── Fixtures ───────────────────────────────────────────────────────────────────────────────
+  const loc = randomUUID(), cust = randomUUID(), other = randomUUID(), pipe = randomUUID(), item = randomUUID(), item2 = randomUUID(), napkin = randomUUID(), pkg = randomUUID(), slot = randomUUID();
+  await db.query('insert into locations values($1)', [loc]);
+  await db.query('insert into items values($1),($2),($3)', [item, item2, napkin]);
+  await db.query('insert into catering_packages values($1)', [pkg]);
+  await db.query('insert into catering_package_items values($1)', [slot]);
+  await db.query("insert into catering_customers(id,name,email) values($1,'Synthetic','s@example.test'),($2,'Other','o@example.test')", [cust, other]);
+  await db.query("insert into catering_pipeline(id,customer_id,contact_name,stage,location_id) values($1,$2,'Synthetic','inquiry',$3)", [pipe, cust, loc]);
+  const newDraft = async (status = 'draft', isDelivery = false, location = loc) => {
+    const id = randomUUID();
+    await db.query("insert into catering_quotes(id,pipeline_id,customer_id,location_id,status,origin,is_delivery) values($1,$2,$3,$4,$5,'self_serve',$6)", [id, pipe, cust, location, status, isDelivery]);
+    return id;
+  };
+  const chips = (qty, unit = 1000, order = 0) => ({ item_id: item, menu_item_id: null, package_id: null, size_id: null, portion: null, description: 'Chips', quantity: qty, unit_price_cents: unit, line_total_cents: qty * unit, display_order: order, line_kind: null, components_listed: null, options: [] });
+  const pkgLine = (order) => ({ item_id: null, menu_item_id: null, package_id: pkg, size_id: null, portion: null, description: 'Box', quantity: 2, unit_price_cents: 5000, line_total_cents: 10000, display_order: order, line_kind: 'package_header', components_listed: false, options: [{ package_item_id: slot, item_id: item2, menu_item_id: null, quantity: 3 }] });
+
+  // ── set_lines: replace in place, options written, snapshot written ─────────────────────────
+  const q1 = await newDraft();
+  let r = await setLines(cust, q1, [chips(10), pkgLine(1)], snap(20000));
+  check(r.lines === 2, 'set_lines returns the line count');
+  let ls = await linesOf(q1);
+  check(ls.length === 2 && ls[1].line_kind === 'package_header' && ls[1].components_listed === false, 'lines + package header written');
+  const opt = await all('select o.quantity from catering_quote_item_options o join catering_quote_items i on i.id=o.quote_item_id where i.quote_id=$1', [q1]);
+  check(opt.length === 1 && Number(opt[0].quantity) === 3, 'package pick written against the new line id');
+  let qr = await one('select subtotal_cents, deposit_cents, status from catering_quotes where id=$1', [q1]);
+  check(qr.subtotal_cents === 20000 && qr.deposit_cents === 5000 && qr.status === 'draft', 'snapshot written, still draft');
+  r = await setLines(cust, q1, [chips(3)], snap(3000));
+  ls = await linesOf(q1);
+  check(ls.length === 1 && Number(ls[0].quantity) === 3, 'second save REPLACES the line set');
+  check((await one('select count(*)::int n from catering_quote_item_options')).n === 0, 'old package picks cascaded away');
+  r = await setLines(cust, q1, [], snap(0));
+  check((await linesOf(q1)).length === 0, 'an empty cart is a valid save');
+
+  // ── set_lines refusals, nothing written ─────────────────────────────────────────────────────
+  await setLines(cust, q1, [chips(2)], snap(2000));
+  const before = JSON.stringify(await linesOf(q1));
+  await reject(() => setLines(other, q1, [chips(9)], snap(9000)), /not_found/, 'set_lines: another customer → not_found');
+  await reject(() => setLines(cust, randomUUID(), [chips(9)], snap(9000)), /not_found/, 'set_lines: unknown quote → not_found');
+  await reject(() => setLines(cust, q1, [chips(9)], snap(1)), /subtotal_mismatch/, 'set_lines: snapshot subtotal ≠ lines → subtotal_mismatch');
+  await reject(() => setLines(cust, q1, [chips(9)], { ...snap(9000), extra: 1 }), /invalid_snapshot/, 'set_lines: extra snapshot key → invalid_snapshot');
+  const missing = snap(9000); delete missing.tax_cents;
+  await reject(() => setLines(cust, q1, [chips(9)], missing), /invalid_snapshot/, 'set_lines: missing snapshot key → invalid_snapshot');
+  await reject(() => setLines(cust, q1, [chips(9)], snap(9000, { is_delivery: 'yes' })), /invalid_snapshot/, 'set_lines: mistyped snapshot value → invalid_snapshot');
+  await reject(() => setLines(cust, q1, { not: 'an array' }, snap(0)), /invalid_lines/, 'set_lines: non-array lines → invalid_lines');
+  await reject(() => setLines(cust, q1, Array.from({ length: 201 }, (_, i) => chips(1, 1, i)), snap(201)), /invalid_lines/, 'set_lines: over 200 lines → invalid_lines');
+  await reject(() => setLines(cust, q1, [{ ...chips(1), quantity: 0, line_total_cents: 0 }], snap(0)), /catering_quote_items_quantity_check|violates check/, 'set_lines: a DB constraint violation rolls the whole save back');
+  check(JSON.stringify(await linesOf(q1)) === before, 'every refused save left the lines untouched');
+
+  // ── W01-r2: edit order is enforced by the writer — a save older than one already stored is refused ──
+  // The reviewer's interleaving: save v1 is in flight, the page sends v2, and v2 reaches the database FIRST.
+  const q6 = await newDraft();
+  const pageA = randomUUID(), pageB = randomUUID();
+  const qtyOf = async (q) => (await linesOf(q)).map((l) => Number(l.quantity));
+  r = await setLines(cust, q6, [chips(2)], snap(2000), pageA, 2); // v2 lands first
+  check(r.stale === false && r.lines === 1, 'r2: v2 (seq 2) is written');
+  r = await setLines(cust, q6, [chips(1)], snap(1000), pageA, 1); // then the older v1
+  check(r.stale === true, 'r2: the older v1 (seq 1) arriving after v2 is answered stale');
+  check(JSON.stringify(await qtyOf(q6)) === '[2]' && (await one('select subtotal_cents from catering_quotes where id=$1', [q6])).subtotal_cents === 2000, 'r2: v2 stands, lines and snapshot untouched by v1');
+  let rev = await one('select portal_rev_epoch, portal_rev_seq::int s from catering_quotes where id=$1', [q6]);
+  check(rev.portal_rev_epoch === pageA && rev.s === 2, 'r2: the stored revision is still the one v2 carried');
+  r = await setLines(cust, q6, [chips(2)], snap(2000), pageA, 2);
+  check(r.stale === true, 'r2: a retry of the stored revision is a no-op (already saved)');
+  r = await setLines(cust, q6, [chips(3)], snap(3000), pageA, 3);
+  check(r.stale === false && JSON.stringify(await qtyOf(q6)) === '[3]', 'r2: a newer seq from the same page is written');
+  r = await setLines(cust, q6, [chips(5)], snap(5000), pageB, 1);
+  check(r.stale === false && JSON.stringify(await qtyOf(q6)) === '[5]', 'r2: a new page load (another epoch) starts its own sequence and is written');
+  r = await setLines(cust, q6, [chips(4)], snap(4000), pageA, 4);
+  check(r.stale === false && JSON.stringify(await qtyOf(q6)) === '[4]', 'r2: epochs never compare across pages (the other page is not frozen out)');
+  r = await setLines(cust, q6, [chips(6)], snap(6000));
+  rev = await one('select portal_rev_epoch, portal_rev_seq::int s from catering_quotes where id=$1', [q6]);
+  check(r.stale === false && JSON.stringify(await qtyOf(q6)) === '[6]' && rev.portal_rev_epoch === pageA && rev.s === 4, 'r2: a save with no revision (an older cached page) is written and leaves the stored revision alone');
+  r = await setLines(cust, q6, [chips(1)], snap(1000), pageA, 4);
+  check(r.stale === true && JSON.stringify(await qtyOf(q6)) === '[6]', 'r2: so a late revision of that page is still refused');
+  for (const [e, s, label] of [[pageA, null, 'epoch without seq'], [null, 5, 'seq without epoch'], [pageA, 0, 'seq 0'], ['', 1, 'empty epoch'], ['x'.repeat(65), 1, 'epoch over 64 chars']]) {
+    await reject(() => setLines(cust, q6, [chips(1)], snap(1000), e, s), /invalid_rev/, `r2: ${label} → invalid_rev`);
+  }
+  check(JSON.stringify(await qtyOf(q6)) === '[6]', 'r2: every invalid_rev wrote nothing');
+  await reject(() => db.query("update catering_quotes set portal_rev_epoch = 'x', portal_rev_seq = null where id=$1", [q6]), /portal_rev|check/, 'r2: the epoch and seq columns are set together or not at all');
+  await db.query("update catering_quotes set status='submitted' where id=$1", [q6]);
+  await reject(() => setLines(cust, q6, [chips(9)], snap(9000), pageA, 99), /not_draft/, 'r2: a submitted draft is not_draft whatever the revision');
+
+  // ── submit: one transaction — flip + napkins + deposit + dietary notes ──────────────────────
+  await setLines(cust, q1, [chips(10)], snap(10000));
+  const napkins = { item_id: napkin, description: 'Napkins & utensils', unit_price_cents: 500 };
+  r = await submit(cust, q1, await expectedOf(q1), snap(10500), napkins, true, '  Peanut allergy: table 3  ');
+  qr = await one('select status, subtotal_cents, deposit_cents, expires_at from catering_quotes where id=$1', [q1]);
+  check(qr.status === 'submitted' && qr.subtotal_cents === 10500 && qr.deposit_cents === 2625 && qr.expires_at !== null, 'submit flips with the napkins-inclusive snapshot + expiry');
+  ls = await linesOf(q1);
+  check(ls.length === 2 && ls[1].unit_price_cents === 500 && ls[1].display_order === 1, 'napkins line appended after the cart lines');
+  const pay = await all('select id::text, kind, amount_cents, status, customer_id::text from catering_payments where quote_id=$1', [q1]);
+  check(pay.length === 1 && pay[0].kind === 'deposit' && pay[0].amount_cents === 2625 && pay[0].status === 'due' && pay[0].customer_id === cust, 'one deposit-due intent');
+  check(r.payment_id === pay[0].id && r.quote_id === q1, 'submit returns the payment id');
+  check((await one('select dietary_notes from catering_pipeline where id=$1', [pipe])).dietary_notes === 'Peanut allergy: table 3', 'dietary notes saved (trimmed) on the lead');
+
+  // B032: a cart save after the submit refuses; the frozen lines stand.
+  await reject(() => setLines(cust, q1, [chips(99)], snap(99000)), /not_draft/, 'B032: set_lines after submit → not_draft');
+  check((await linesOf(q1)).length === 2, 'B032: the submitted lines are untouched');
+  await reject(async () => submit(cust, q1, await expectedOf(q1), snap(10500)), /not_draft/, 'double submit → not_draft');
+  check((await one('select count(*)::int n from catering_payments where quote_id=$1', [q1])).n === 1, 'double submit wrote no second payment');
+  // B002 r1: the LOSING submit (a stale blank note box in a second tab) never overwrites the winner's note.
+  await reject(async () => submit(cust, q1, await expectedOf(q1), snap(10500), null, true, ''), /not_draft/, 'losing submit with a blank note → not_draft');
+  check((await one('select dietary_notes from catering_pipeline where id=$1', [pipe])).dietary_notes === 'Peanut allergy: table 3', 'B002: the losing submit left the accepted note in place');
+
+  // B032: a cart save that committed between the server's read and the submit's lock → cart_changed.
+  const q2 = await newDraft();
+  await setLines(cust, q2, [chips(1)], snap(1000));
+  const stale = await expectedOf(q2);
+  await setLines(cust, q2, [chips(50)], snap(50000));
+  await reject(() => submit(cust, q2, stale, snap(1000)), /cart_changed/, 'B032: lines changed since priced → cart_changed');
+  qr = await one('select status from catering_quotes where id=$1', [q2]);
+  check(qr.status === 'draft' && (await one('select count(*)::int n from catering_payments where quote_id=$1', [q2])).n === 0, 'cart_changed wrote nothing');
+  await reject(async () => submit(cust, q2, (await expectedOf(q2)).map((e) => ({ ...e, unit_price_cents: e.unit_price_cents + 1 })), snap(50000)), /cart_changed/, 'a different expected price → cart_changed');
+  await reject(async () => submit(cust, q2, await expectedOf(q2), snap(49999)), /subtotal_mismatch/, 'snapshot ≠ lines (+napkins) → subtotal_mismatch');
+
+  // B144: any failure after the flip rolls the flip back (here: the deposit insert violates its CHECK).
+  // The napkins insert runs AFTER the status flip; an unknown napkins item violates its FK there.
+  await reject(async () => submit(cust, q2, await expectedOf(q2), snap(50500), { item_id: randomUUID(), description: 'Napkins', unit_price_cents: 500 }), /foreign key/, 'B144: a write failing AFTER the flip (napkins line) raises');
+  await reject(async () => submit(cust, q2, await expectedOf(q2), snap(50000, { deposit_cents: -1 })), /check constraint|violates/, 'B144: a failing deposit write raises');
+  qr = await one('select status, subtotal_cents from catering_quotes where id=$1', [q2]);
+  check(qr.status === 'draft', 'B144: the status flip was rolled back with it — the order can be submitted again');
+  check((await linesOf(q2)).length === 1 && (await one('select count(*)::int n from catering_payments where quote_id=$1', [q2])).n === 0, 'B144: no napkins line, no orphan payment');
+  r = await submit(cust, q2, await expectedOf(q2), snap(50000), null, false, null);
+  check((await one('select status from catering_quotes where id=$1', [q2])).status === 'submitted', 'B144: the retry succeeds');
+  check((await linesOf(q2)).length === 1, 'no napkins chosen → no napkins line');
+  check((await one('select dietary_notes from catering_pipeline where id=$1', [pipe])).dietary_notes === 'Peanut allergy: table 3', 'p_set_dietary_notes=false leaves the lead notes alone');
+
+  // A pre-existing live deposit intent is reused, never duplicated (0130).
+  const q3 = await newDraft();
+  await setLines(cust, q3, [chips(4)], snap(4000));
+  await db.query("insert into catering_payments(quote_id,customer_id,kind,amount_cents,status) values($1,$2,'deposit',1,'due')", [q3, cust]);
+  r = await submit(cust, q3, await expectedOf(q3), snap(4000), null, true, '   ');
+  check((await one('select count(*)::int n from catering_payments where quote_id=$1', [q3])).n === 1, 'existing due intent reused');
+  check(r.payment_id === (await one("select id::text from catering_payments where quote_id=$1", [q3])).id, 'the reused intent id is returned');
+  check((await one('select dietary_notes from catering_pipeline where id=$1', [pipe])).dietary_notes === null, 'blank notes clear the lead notes (null, never "")');
+
+  // Submit refusals.
+  const q4 = await newDraft();
+  await reject(() => submit(cust, q4, [], snap(0)), /empty_cart/, 'no lines → empty_cart');
+  await setLines(cust, q4, [chips(1)], snap(1000));
+  await reject(async () => submit(other, q4, await expectedOf(q4), snap(1000)), /not_found/, 'another customer → not_found');
+  await reject(async () => submit(cust, q4, await expectedOf(q4), snap(1500), { item_id: napkin, unit_price_cents: 500 }), /invalid_napkins/, 'napkins without a description → invalid_napkins');
+  await reject(async () => submit(cust, q4, await expectedOf(q4), snap(1000), null, true, 'x'.repeat(2001)), /invalid_notes/, 'notes over 2000 chars → invalid_notes');
+  await reject(async () => submit(cust, q4, await expectedOf(q4), snap(1000), null, null, null), /invalid_notes/, 'a null notes switch → invalid_notes');
+  await db.query("update catering_quotes set superseded_at=now() where id=$1", [q4]);
+  await reject(async () => submit(cust, q4, await expectedOf(q4), snap(1000)), /not_draft/, 'superseded → not_draft');
+  await reject(() => setLines(cust, q4, [chips(1)], snap(1000)), /not_draft/, 'superseded → set_lines not_draft');
+  const q5 = await newDraft('sent');
+  await reject(() => setLines(cust, q5, [chips(1)], snap(1000)), /not_draft/, 'a staff-sent quote → not_draft');
+  check((await one('select status from catering_quotes where id=$1', [q4])).status === 'draft', 'refused submits changed no status');
+
+  // ── Delivery (Juan's ruling 2026-11-15): never free, the MOST EXPENSIVE zone, its minimum enforced ──
+  const dloc = randomUUID();
+  await db.query('insert into locations values($1)', [dloc]);
+  const dsnap = (subtotal, zoneId, fee) => snap(subtotal, { is_delivery: true, delivery_zone_id: zoneId, delivery_fee_cents: fee, total_cents: subtotal + fee });
+  const deliveryDraft = async (qty) => { const q = await newDraft('draft', true, dloc); await setLines(cust, q, [chips(qty)], dsnap(qty * 1000, null, 0)); return q; };
+  const statusOf = async (q) => (await one('select status from catering_quotes where id=$1', [q])).status;
+  // No active zone at the shop: refused, never free.
+  const dq = await deliveryDraft(10);
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, null, 0)), /delivery_unavailable/, 'delivery: no active zone → delivery_unavailable (never free)');
+  const zInactive = randomUUID();
+  await db.query("insert into catering_delivery_zones(id,location_id,slug,label_en,fee_cents,min_order_cents,active) values($1,$2,'old','Old',9999,null,false)", [zInactive, dloc]);
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, zInactive, 9999)), /delivery_unavailable/, 'delivery: an inactive zone covers nothing → delivery_unavailable');
+  check(await statusOf(dq) === 'draft' && (await one('select count(*)::int n from catering_payments where quote_id=$1', [dq])).n === 0, 'delivery_unavailable wrote nothing');
+  // Two active zones: the higher fee is the one the snapshot must carry.
+  const zLow = randomUUID(), zHigh = randomUUID();
+  await db.query("insert into catering_delivery_zones(id,location_id,slug,label_en,fee_cents,min_order_cents,active) values($1,$3,'near','Near',1500,null,true),($2,$3,'far','Far',3500,8000,true)", [zLow, zHigh, dloc]);
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, zLow, 1500)), /delivery_changed/, 'delivery: two zones, the cheaper one in the snapshot → delivery_changed');
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, null, 0)), /delivery_changed/, 'delivery: a free snapshot when zones exist → delivery_changed');
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, zHigh, 1500)), /delivery_changed/, 'delivery: the right zone with the wrong fee → delivery_changed');
+  await reject(async () => submit(cust, dq, await expectedOf(dq), snap(10000)), /invalid_snapshot/, 'delivery: a snapshot claiming pickup on a delivery draft → invalid_snapshot');
+  await submit(cust, dq, await expectedOf(dq), dsnap(10000, zHigh, 3500));
+  qr = await one('select status, delivery_zone_id::text z, delivery_fee_cents f from catering_quotes where id=$1', [dq]);
+  check(qr.status === 'submitted' && qr.z === zHigh && qr.f === 3500, 'delivery: two zones → submitted with the MORE EXPENSIVE zone and its fee recorded');
+  // The minimum (8000 on the far zone): one cent under refuses; exactly at it passes.
+  const dUnder = await newDraft('draft', true, dloc);
+  await setLines(cust, dUnder, [chips(1, 7999)], dsnap(7999, null, 0));
+  await reject(async () => submit(cust, dUnder, await expectedOf(dUnder), dsnap(7999, zHigh, 3500)), /below_delivery_minimum/, 'delivery: 1 cent under the minimum → below_delivery_minimum');
+  check(await statusOf(dUnder) === 'draft' && (await one('select count(*)::int n from catering_payments where quote_id=$1', [dUnder])).n === 0, 'below_delivery_minimum wrote nothing');
+  const dAt = await newDraft('draft', true, dloc);
+  await setLines(cust, dAt, [chips(1, 8000)], dsnap(8000, null, 0));
+  await submit(cust, dAt, await expectedOf(dAt), dsnap(8000, zHigh, 3500));
+  check(await statusOf(dAt) === 'submitted', 'delivery: exactly AT the minimum submits');
+  // Napkins count toward the minimum (the snapshot subtotal is the order as charged).
+  const dNap = await newDraft('draft', true, dloc);
+  await setLines(cust, dNap, [chips(1, 7500)], dsnap(7500, null, 0));
+  await submit(cust, dNap, await expectedOf(dNap), dsnap(8000, zHigh, 3500), { item_id: napkin, description: 'Napkins', unit_price_cents: 500 });
+  check(await statusOf(dNap) === 'submitted', 'delivery: the napkins add-on counts toward the minimum');
+  // A fee tie goes to the higher minimum, then the lower id (the app's resolvePortalDeliveryZone order).
+  const tloc = randomUUID();
+  await db.query('insert into locations values($1)', [tloc]);
+  const [tA, tB] = [randomUUID(), randomUUID()].sort();
+  await db.query("insert into catering_delivery_zones(id,location_id,slug,label_en,fee_cents,min_order_cents,active) values($1,$3,'a','A',2000,null,true),($2,$3,'b','B',2000,null,true)", [tA, tB, tloc]);
+  const dTie = await newDraft('draft', true, tloc);
+  await setLines(cust, dTie, [chips(5)], dsnap(5000, null, 0));
+  await reject(async () => submit(cust, dTie, await expectedOf(dTie), dsnap(5000, tB, 2000)), /delivery_changed/, 'delivery: equal fees, no minimums → the lower id, not the other');
+  await submit(cust, dTie, await expectedOf(dTie), dsnap(5000, tA, 2000));
+  check(await statusOf(dTie) === 'submitted', 'delivery: equal fees resolve to the lower id');
+  // Pickup carries no zone and no fee.
+  const pq = await newDraft();
+  await setLines(cust, pq, [chips(2)], snap(2000));
+  await reject(async () => submit(cust, pq, await expectedOf(pq), snap(2000, { delivery_fee_cents: 500, total_cents: 2500 })), /invalid_snapshot/, 'pickup with a delivery fee → invalid_snapshot');
+  await reject(async () => submit(cust, pq, await expectedOf(pq), snap(2000, { delivery_zone_id: zHigh })), /invalid_snapshot/, 'pickup with a zone → invalid_snapshot');
+  await reject(async () => submit(cust, pq, await expectedOf(pq), snap(2000, { is_delivery: true })), /invalid_snapshot/, 'a snapshot claiming delivery on a pickup draft → invalid_snapshot');
+  const zsrc = (await one("select prosrc from pg_proc where proname='portal_draft_submit'")).prosrc;
+  check(/from public\.catering_delivery_zones where location_id = q\.location_id and active for share/.test(zsrc), 'delivery: the zone rows are read FOR SHARE under the quote lock');
+  check(zsrc.indexOf('for share') > zsrc.indexOf('for update') && zsrc.indexOf('for share') < zsrc.indexOf("status = 'submitted'"), 'delivery: zones checked after the quote lock, before the flip');
+
+  // Lock: both writers take the quote row FOR UPDATE (the serialization point).
+  for (const fn of ['portal_draft_set_lines', 'portal_draft_submit']) {
+    const src = (await one("select prosrc from pg_proc where proname=$1", [fn])).prosrc;
+    check(/from public\.catering_quotes where id = p_quote_id for update/.test(src), `${fn} locks the quote row FOR UPDATE before any write`);
+    const lockAt = src.indexOf('for update'), firstWrite = Math.min(...['delete from', 'insert into', 'update public'].map((w) => { const i = src.indexOf(w); return i < 0 ? Infinity : i; }));
+    check(lockAt > 0 && lockAt < firstWrite, `${fn}: the lock precedes the first write`);
+  }
+  check(SNAP_KEYS.length === 15, 'snapshot key list is the 15 snapshot columns');
+
+  console.log(`PASS 0302: ${checks} checks`);
+} catch (e) {
+  console.log(`FAIL 0302: ${e instanceof Error ? e.stack : e}`);
+  process.exitCode = 1;
+} finally {
+  await db.close();
+}

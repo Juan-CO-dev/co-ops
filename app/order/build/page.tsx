@@ -32,8 +32,10 @@
  * COVERAGE is best-effort: real menu rows have no explicit `serves`/`cat`, so category is derived
  * heuristically from `section`. With 0 catering data the menu is empty (correct dormant behavior).
  *
- * Per-line customization (allergens / notes / subs / drink) has no server home in 3a — kept as
- * local display-only state in the modal; it is NEVER part of the persisted payload.
+ * Per-line customization (subs / drink) has no server home in 3a — kept as local display-only
+ * state; it is NEVER part of the persisted payload. Allergies and special instructions are NOT
+ * collected per line (they were dropped on the floor — audit W01/B002): the order-level note lives
+ * on /order/review, is saved with the submit, and staff see it on the lead.
  *
  * PACKAGES (W1b): packages are a separate cart slice (pkgCart) — each configured package instance
  * is one PkgEntry keyed by a per-instance UUID. The payload carries references + qty only (D20).
@@ -46,6 +48,8 @@ import type { CateringMenuItem } from "@/lib/catering/menu";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 import { catForSection, orderSections, orderWithinSection, sectionLabel, type MenuCat } from "@/lib/portal/menu-order-shared";
 import { coverageSegments } from "@/lib/portal/coverage-shared";
+import { createCartSaveQueue, newCartRevEpoch, type CartRevision, type CartSaveOutcome } from "@/lib/portal/cart-save-queue-shared";
+import { isEligiblePackagePick as isEligiblePick } from "@/lib/portal/draft-shared";
 
 type Cat = MenuCat;
 /** Portion selector for portionable subs. Matches the draft-lines API portion values. */
@@ -76,6 +80,8 @@ interface DraftItem {
   id: string;
   itemId: string | null; menuItemId: string | null; portion: Portion | null; quantity: number;
   sizeId: string | null;
+  /** The unit price the line was SAVED at (the server re-prices at submit — audit W01/B031). */
+  unitPriceCents: number;
   /** Present for package lines only. */
   packageId: string | null;
   /** Per-slot picks for package lines. */
@@ -83,6 +89,8 @@ interface DraftItem {
 }
 interface DraftLoad {
   quoteId: string; pipelineId: string | null; locationId: string; status: string;
+  /** False once submitted or superseded — the cart is then read-only (audit W01/B145). */
+  editable: boolean;
   isDelivery: boolean; deliveryZoneId: string | null;
   stack: DraftStack;
   items: DraftItem[];
@@ -94,7 +102,7 @@ interface DraftLoad {
 }
 
 /** Local-only line state. Only { portion, qty, sizeId } drive the persisted payload; the rest is display-only. */
-interface Line { qty: number; portion: Portion; sizeId: string | null; notes: string; allergens: string[]; subs: string[]; sub: string; drink: string }
+interface Line { qty: number; portion: Portion; sizeId: string | null; subs: string[]; sub: string; drink: string }
 /** A cart entry keyed by its stable cart key. line.sizeId carries the chosen size for a sized item. */
 interface CartEntry { key: string; item: CateringMenuItem; line: Line }
 /** A single sellable menu row. A sized item expands into one card per size (each independently
@@ -110,7 +118,6 @@ const PORTION_LABELS: Record<Portion, { label: string; aria: string; symbol: str
   whole:   { label: "Whole", aria: "Whole portion", symbol: "Whole" },
 };
 
-const ALLERGENS = ["Peanuts", "Tree nuts", "Dairy", "Eggs", "Gluten", "Soy", "Shellfish", "Sesame"];
 /** Generic house facts. Real menu ids are UUIDs (won't match the mock ITEM_FACTS keys) so the ticker
  *  falls back to these house facts — item-keyed facts return once the config tables are authored. */
 const FACTS = [
@@ -124,7 +131,7 @@ const FACTS = [
 
 /** Money helper — takes CENTS (the whole page is in the cents model; the draft + menu are cents). */
 const money = (cents: number) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
-const emptyLine = (): Line => ({ qty: 1, portion: "whole", sizeId: null, notes: "", allergens: [], subs: [], sub: "", drink: "" });
+const emptyLine = (): Line => ({ qty: 1, portion: "whole", sizeId: null, subs: [], sub: "", drink: "" });
 /** Cart key. Sized items key by item+size so two sizes coexist as distinct lines; subs/plain by kind:id. */
 const keyFor = (item: CateringMenuItem, sizeId: string | null) =>
   item.kind === "item" && sizeId ? `item:${item.id}:${sizeId}` : `${item.kind}:${item.id}`;
@@ -166,7 +173,7 @@ function catFor(item: CateringMenuItem): Cat {
   return catForSection(item.section);
 }
 
-/** Human summary of a customized line (portion / size / subs / drink / allergen holds / notes) — display only. */
+/** Human summary of a customized line (portion / size / subs / drink) — display only. */
 function lineSummary(e: CartEntry): string {
   const bits: string[] = [];
   if (isPortionable(e.item) && e.line.portion !== "whole") bits.push(PORTION_LABELS[e.line.portion].symbol);
@@ -177,8 +184,6 @@ function lineSummary(e: CartEntry): string {
   if (e.line.subs.length) bits.push(e.line.subs.join(", "));
   if (e.line.sub) bits.push(e.line.sub);
   if (e.line.drink) bits.push(e.line.drink);
-  if (e.line.allergens.length) bits.push(`no ${e.line.allergens.join(", ").toLowerCase()}`);
-  if (e.line.notes) bits.push(e.line.notes);
   return bits.join(" · ");
 }
 
@@ -246,6 +251,15 @@ function OrderBuild() {
   // Portal session expired mid-cart (a 401 on a persist POST). Renders a sticky
   // banner so the customer isn't silently losing cart writes (hardening 2026-07-31).
   const [sessionExpired, setSessionExpired] = useState(false);
+  // A returning customer's saved cart no longer matches today's menu (a price moved, or an item /
+  // package is gone — audit W01/B031). The cart is re-saved once at today's prices right after
+  // hydration (the server refuses to submit a stale cart), and the customer is told why.
+  const [cartRepriced, setCartRepriced] = useState(false);
+  const resaveAfterHydrate = useRef(false);
+  // The order can no longer be edited (submitted / superseded — audit W01/B145): from the load, or a
+  // 409 on a save. The page then shows a read-only "already placed" state, never a cart that looks
+  // saved while every write is refused.
+  const [locked, setLocked] = useState(false);
 
   // ── Load the draft (Next 16: read ?draft from window.location.search in an effect, not useSearchParams). ──
   useEffect(() => {
@@ -270,12 +284,19 @@ function OrderBuild() {
         const cardsByKey = new Map(expandCards(d.menu).map((c) => [c.key, c] as const));
         const initial: Record<string, Line> = {};
         const initialPkg: Record<string, PkgEntry> = {};
+        let stale = false;
         for (const it of d.items) {
           if (it.packageId) {
             // Package line: hydrate into pkgCart.
             const pkg = (d.packages ?? []).find((p) => p.id === it.packageId);
-            if (!pkg) continue;
-            initialPkg[it.id] = { key: it.id, pkg, quantity: it.quantity, options: it.options ?? [] };
+            if (!pkg) { stale = true; continue; }
+            if (pkg.priceCents !== it.unitPriceCents) stale = true;
+            // A pick that is no longer an eligible option (deactivated — audit W01/B031 r1) is dropped,
+            // and the cart is re-saved without it (the server refuses to save or submit it).
+            const stored = it.options ?? [];
+            const options = stored.filter((o) => isEligiblePick(pkg, o));
+            if (options.length !== stored.length) stale = true;
+            initialPkg[it.id] = { key: it.id, pkg, quantity: it.quantity, options };
             continue;
           }
           // Reconstruct the sellable-card key from the persisted reference (incl. sizeId for sized items).
@@ -284,9 +305,9 @@ function OrderBuild() {
             : it.itemId
               ? (it.sizeId ? `item:${it.itemId}:${it.sizeId}` : `item:${it.itemId}`)
               : null;
-          if (!key) continue;
+          if (!key) { stale = true; continue; }
           const card = cardsByKey.get(key);
-          if (!card) continue; // references something not in the shopping menu (e.g. napkins / retired size) — skip.
+          if (!card) { stale = true; continue; } // no longer on the shopping menu (retired item / size) — dropped, and the cart is re-saved.
           const prev = initial[key];
           initial[key] = {
             ...emptyLine(),
@@ -294,7 +315,10 @@ function OrderBuild() {
             portion: it.portion ?? "whole",
             sizeId: card.sizeId,
           };
+          if (unitCents(card.item, initial[key]) !== it.unitPriceCents) stale = true;
         }
+        resaveAfterHydrate.current = stale && d.editable !== false;
+        setCartRepriced(stale && d.editable !== false);
         setCart(initial);
         setPkgCart(initialPkg);
         setLoadState("ready");
@@ -435,7 +459,52 @@ function OrderBuild() {
 
 
   // ── Debounced persistence (D20 — references + qty + portion + sizeId only, never prices) ──
-  const persistTimer = useRef<number | null>(null);
+  // Saves go through ONE queue (audit W01/B033): Continue flushes it before navigating, and an unmount
+  // sends any unsent edit with keepalive — an edit inside the 400 ms debounce is never dropped. Each save
+  // carries this page's edit revision (W01-r2): the server refuses a save older than one it stored.
+  const [saveError, setSaveError] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [saveQueue] = useState(() => createCartSaveQueue({
+    delayMs: 400,
+    send: async (body: string): Promise<CartSaveOutcome> => {
+      try {
+        const res = await fetch("/api/portal/order/draft/lines", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        });
+        // Session expiry (hardening 2026-07-31, council P1): a 401 means the
+        // portal session cookie expired — cart writes are silently dropping.
+        // Surface it (a sticky banner) instead of leaving the customer to
+        // believe their cart is persisting. The draft row survives, so
+        // /order/start resumes it.
+        if (res.status === 401) { setSessionExpired(true); return "unauthorized"; }
+        if (res.status === 409) { setLocked(true); return "not_draft"; }
+        if (!res.ok) return "failed";
+        const json = (await res.json()) as { ok?: boolean; stack?: DraftStack };
+        if (json?.ok && json.stack) setSubtotalCents(json.stack.subtotalCents);
+        setSaveError(false);
+        return "ok";
+      } catch {
+        return "failed"; // transient — the local subtotal echo still shows the customer their cart
+      }
+    },
+  }));
+  // The edit revision: one epoch per page load, a seq that grows with every scheduled save (W01-r2).
+  const cartRev = useRef<CartRevision | null>(null);
+  const nextCartRev = (): CartRevision => {
+    const cur = cartRev.current ?? { epoch: newCartRevEpoch(), seq: 0 };
+    cartRev.current = { epoch: cur.epoch, seq: cur.seq + 1 };
+    return cartRev.current;
+  };
+  // Unmount (navigation away by any route): send the unsent edit, best effort, with keepalive — through
+  // the queue, so it goes out only AFTER a save already in flight (W01-r2), never beside it.
+  useEffect(() => () => {
+    void saveQueue.drainOnUnmount(async (body) => {
+      const res = await fetch("/api/portal/order/draft/lines", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true });
+      return res.ok ? "ok" : "failed";
+    });
+  }, [saveQueue]);
   // Serialize the reference payload so the effect only fires when the persisted shape actually changes
   // (not on a display-only customization edit). sizeId is included so a size change re-triggers POST.
   const linesPayload = useMemo(
@@ -455,30 +524,14 @@ function OrderBuild() {
   const didHydrate = useRef(false);
   useEffect(() => {
     if (!draftId || loadState !== "ready") return;
-    // Skip the first ready-render (the cart was just hydrated from the server — no re-POST needed).
-    if (!didHydrate.current) { didHydrate.current = true; return; }
-    if (persistTimer.current !== null) window.clearTimeout(persistTimer.current);
-    persistTimer.current = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch("/api/portal/order/draft/lines", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ quoteId: draftId, lines: linesPayload }),
-          });
-          // Session expiry (hardening 2026-07-31, council P1): a 401 means the
-          // portal session cookie expired — cart writes are silently dropping.
-          // Surface it (a sticky banner) instead of leaving the customer to
-          // believe their cart is persisting. The draft row survives, so
-          // /order/start resumes it.
-          if (res.status === 401) { setSessionExpired(true); return; }
-          if (!res.ok) return; // other server reject (e.g. no longer a draft) — keep the local echo.
-          const body = (await res.json()) as { ok?: boolean; stack?: DraftStack };
-          if (body?.ok && body.stack) setSubtotalCents(body.stack.subtotalCents);
-        } catch { /* transient — the local subtotal echo still shows the customer their cart */ }
-      })();
-    }, 400);
-    return () => { if (persistTimer.current !== null) window.clearTimeout(persistTimer.current); };
+    // Skip the first ready-render (the cart was just hydrated from the server — no re-POST needed),
+    // UNLESS the saved cart no longer matches today's menu: then it is re-saved at today's prices.
+    if (!didHydrate.current) {
+      didHydrate.current = true;
+      if (!resaveAfterHydrate.current) return;
+      resaveAfterHydrate.current = false;
+    }
+    saveQueue.schedule(JSON.stringify({ quoteId: draftId, lines: linesPayload, rev: nextCartRev() }));
     // payloadKey captures the persisted-reference shape (incl. sizeId + pkgCart); linesPayload/draftId/loadState are stable deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payloadKey, draftId, loadState]);
@@ -490,8 +543,16 @@ function OrderBuild() {
   // mid-debounce; fall back to the server value (e.g. cart just hydrated, no local recompute yet).
   const displaySubtotalCents = count === 0 ? 0 : (localSubtotalCents || subtotalCents);
 
-  const goToReview = () => {
-    if ((lines.length === 0 && pkgEntries.length === 0) || !draftId) return;
+  const goToReview = async () => {
+    if ((lines.length === 0 && pkgEntries.length === 0) || !draftId || leaving) return;
+    setLeaving(true);
+    // Save the latest cart FIRST (audit W01/B033) — the review page reads what is saved.
+    const outcome = await saveQueue.flush();
+    if (outcome !== "ok") {
+      setLeaving(false);
+      if (outcome === "failed") setSaveError(true);
+      return; // unauthorized → the session banner already shows
+    }
     router.push(`/order/review?draft=${draftId}`);
   };
 
@@ -525,12 +586,36 @@ function OrderBuild() {
     );
   }
 
+  if (locked || draft.editable === false) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-co-bg px-6 text-center text-co-text">
+        <div className="max-w-md">
+          <h1 className="text-2xl font-extrabold tracking-tight">{t("order.build.locked_title")}</h1>
+          <p className="mt-2 text-co-text-muted">{t("order.build.locked")}</p>
+          <Link href={`/order/quote/${encodeURIComponent(draft.quoteId)}`} className="mt-6 inline-flex min-h-[52px] items-center justify-center rounded-full bg-co-text px-8 text-sm font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90">{t("order.build.view_order")}</Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-co-bg pb-28 text-co-text lg:pb-0">
+    // While Continue saves and navigates, the cart is frozen (audit W01/B033 r1): no edit can land after
+    // the last save the review page will read. A failed save sets `leaving` back and unfreezes it.
+    <div className="min-h-screen bg-co-bg pb-28 text-co-text lg:pb-0" inert={leaving} aria-busy={leaving}>
       {sessionExpired ? (
         <div className="sticky top-0 z-40 bg-co-cta px-5 py-3 text-center text-sm font-bold text-co-text">
           Your session timed out — new items aren&apos;t saving.{" "}
           <a href="/order/start" className="underline underline-offset-2">Tap to sign back in →</a>
+        </div>
+      ) : null}
+      {saveError ? (
+        <div role="alert" className="border-b border-co-border bg-co-danger-surface px-5 py-3 text-center text-sm font-semibold text-co-cta-text">
+          {t("order.build.save_failed")}
+        </div>
+      ) : null}
+      {cartRepriced ? (
+        <div role="status" className="border-b border-co-border bg-co-warning-surface px-5 py-3 text-center text-sm font-semibold text-co-warning-text">
+          {t("order.build.cart_repriced")}
         </div>
       ) : null}
       <div className="sticky top-0 z-30">
@@ -643,7 +728,7 @@ function OrderBuild() {
             onCustomize={setModalKey}
             dec={dec}
             add={quickAdd}
-            onContinue={goToReview}
+            onContinue={() => { void goToReview(); }}
             onPkgEdit={openPkgEdit}
             onPkgDec={decPkg}
             onPkgInc={incPkg}
@@ -694,7 +779,7 @@ function OrderBuild() {
             </button>
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
               <div className="text-sm"><span className="font-bold text-co-text">{count} item{count === 1 ? "" : "s"}</span><span className="ml-2 text-co-text-muted">{money(displaySubtotalCents)}</span></div>
-              <button type="button" onClick={goToReview} disabled={!hasItems} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
+              <button type="button" onClick={() => { void goToReview(); }} disabled={!hasItems || leaving} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
             </div>
           </div>
         </div>
@@ -1159,22 +1244,11 @@ function PortionSelector({ item, portion, onChange }: {
   );
 }
 
-function Chips({ options, selected, onToggle }: { options: string[]; selected: string[]; onToggle: (v: string) => void }) {
-  return (
-    <div className="mt-2 flex flex-wrap gap-2">
-      {options.map((o) => {
-        const on = selected.includes(o);
-        return <button key={o} type="button" onClick={() => onToggle(o)} aria-pressed={on} className={`rounded-full border-2 px-3 py-1 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${on ? "border-co-text bg-co-text/10 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-muted hover:text-co-text"}`}>{o}</button>;
-      })}
-    </div>
-  );
-}
-
 /**
  * Customize modal. Portionable subs get the ¼/½/whole PortionSelector (portion IS persisted).
  * A sized card carries a FIXED size (size = identity — chosen on the menu row, not switched here);
- * the modal shows it read-only. Allergen / special-instructions fields are LOCAL display-only state —
- * they have no server home in 3a and are NOT part of the persisted payload.
+ * the modal shows it read-only. Allergies / special instructions are taken once for the whole order on
+ * /order/review (saved with the submit) — never here, where nothing would persist them (audit W01/B002).
  */
 function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; existing: Line | null; onClose: () => void; onSave: (line: Line) => void }) {
   const { t } = useTranslation();
@@ -1190,7 +1264,6 @@ function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; e
 
   const [line, setLine] = useState<Line>(initialLine);
   const set = (patch: Partial<Line>) => setLine((l) => ({ ...l, ...patch }));
-  const toggleAllergen = (a: string) => set({ allergens: line.allergens.includes(a) ? line.allergens.filter((x) => x !== a) : [...line.allergens, a] });
 
   const unit = unitCents(item, line);
 
@@ -1219,16 +1292,7 @@ function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; e
             </div>
           )}
 
-          <div className="mt-5">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">Allergen alert — flag anything a guest can&apos;t have</p>
-            <Chips options={ALLERGENS} selected={line.allergens} onToggle={toggleAllergen} />
-            <p className="mt-1.5 text-[11px] text-co-text-dim">We&apos;ll confirm exactly how we handle it before you pay.</p>
-          </div>
-
-          <div className="mt-5">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">Special instructions</p>
-            <textarea value={line.notes} onChange={(e) => set({ notes: e.target.value })} rows={2} placeholder="e.g. hold the onions, extra hot honey…" className="mt-2 w-full rounded-xl border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm text-co-text" />
-          </div>
+          <p className="mt-5 rounded-2xl border border-co-border bg-co-surface px-4 py-3 text-sm text-co-text-muted">{t("order.build.notes_on_review")}</p>
 
           <div className="mt-6 flex items-center gap-4">
             <div className="inline-flex items-center gap-3 rounded-full border-2 border-co-border-2 px-2 py-1.5">
@@ -1236,7 +1300,7 @@ function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; e
               <span className="min-w-6 text-center text-base font-bold tabular-nums">{line.qty}</span>
               <button type="button" onClick={() => set({ qty: line.qty + 1 })} aria-label={t("order.build.increase_qty", { item: card.label })} className="grid h-11 w-11 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">+</button>
             </div>
-            <button type="button" onClick={() => onSave({ ...line, notes: line.notes.trim() })} className="flex min-h-[52px] flex-1 items-center justify-center rounded-full bg-co-text text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">{existing ? "Update" : "Add"} · {money(unit * line.qty)}</button>
+            <button type="button" onClick={() => onSave(line)} className="flex min-h-[52px] flex-1 items-center justify-center rounded-full bg-co-text text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">{existing ? "Update" : "Add"} · {money(unit * line.qty)}</button>
           </div>
           <button type="button" onClick={onClose} className="mt-3 w-full rounded-md py-2 text-center text-sm font-semibold text-co-text-muted focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">Cancel</button>
         </div>
