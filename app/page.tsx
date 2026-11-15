@@ -35,6 +35,7 @@ import { pinErrorFromResponse } from "@/lib/auth-pin-errors";
 import { ManagerLoginForm } from "@/components/auth/ManagerLoginForm";
 import { BrandMark } from "@/components/BrandMark";
 import { safeNextPath } from "@/lib/nav-redirect";
+import { ownsReturnLink } from "@/lib/nav-sign-in-return";
 import { isShopId, loginLandingPath } from "@/lib/shop-context-shared";
 import { rememberShopOnDevice } from "@/components/ShopContextSync";
 import type { RoleCode } from "@/lib/roles";
@@ -137,9 +138,13 @@ function LoginPageContent() {
   // one sanitizer lives in lib/nav-redirect.ts (pure, zero-I/O, unit-tested).
   // B2 (#30): a tile login carries its shop forward — remembered on the device (every page that
   // opens without a shop in its URL reads it) and named on the plain dashboard landing.
-  const navigateToDashboard = useCallback((shopId?: string) => {
+  // Audit W06 / owner decision W06-2 (HYBRID): a return link bound to a person (`&for=<user id>`, set by an idle or
+  // server sign-out) is used only when THAT person signs back in; anyone else lands on the dashboard
+  // (lib/nav-sign-in-return.ts).
+  const navigateToDashboard = useCallback((shopId?: string, userId?: string) => {
     if (isShopId(shopId)) rememberShopOnDevice(shopId);
-    router.push(loginLandingPath(safeNextPath(searchParams?.get("next")), shopId));
+    const next = ownsReturnLink(searchParams?.get("for"), userId) ? searchParams?.get("next") : null;
+    router.push(loginLandingPath(safeNextPath(next), shopId));
   }, [router, searchParams]);
 
   // Initial location load.
@@ -206,7 +211,8 @@ function LoginPageContent() {
           redirect: "manual",
         });
         if (res.ok) {
-          navigateToDashboard(step.locationId);
+          const signedIn = (await res.json().catch(() => ({}))) as { user_id?: string };
+          navigateToDashboard(step.locationId, signedIn.user_id ?? step.userId);
           return { ok: true };
         }
         const body = (await res.json().catch(() => ({}))) as {
@@ -296,7 +302,7 @@ function LoginPageContent() {
         )}
 
         {surface === "manager" ? (
-          <ManagerSurface onSuccess={() => navigateToDashboard()} onTransientError={showToast} />
+          <ManagerSurface onSuccess={(userId) => navigateToDashboard(undefined, userId)} onTransientError={showToast} />
         ) : (
           <>
             {step.kind !== "pin" && (
@@ -405,7 +411,7 @@ function ManagerSurface({
   onSuccess,
   onTransientError,
 }: {
-  onSuccess: () => void;
+  onSuccess: (userId?: string) => void;
   onTransientError: (m: string) => void;
 }) {
   const { t } = useTranslation();
