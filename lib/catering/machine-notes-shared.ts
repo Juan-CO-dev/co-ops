@@ -14,18 +14,27 @@ export function wrapMachineNotes(source: string, block: string, endLabel?: strin
   return `${m.begin}\n${block.trim().replace(/-{3,}/g, "—")}\n${m.end}`;
 }
 
+/** A whole-line begin marker of ANY machine block ("--- <source> (auto) ---" alone on its line). */
+const ANY_BEGIN_LINE = /\n--- [^\n]* \(auto\) ---(?=\r?\n|$)/g;
+
 /** The marked block: both markers on whole lines (the begin at a line start, the end alone on its line), so a marker
  *  quoted mid-line inside the block (rows written before wrapMachineNotes neutralised it) never ends it early.
- *  `end` is the index where the end marker starts. */
+ *  The block ends at the LAST whole-line end marker before the next machine block begins (audit W11/B170 r1): a legacy
+ *  special request that put the end marker on a line of its own cannot close the block early, since the writer's own
+ *  closing marker always follows the customer's text. `end` is the index where the end marker starts. */
 export function findMachineBlock(cur: string, m: { begin: string; end: string }): { start: number; end: number } | null {
   let start = cur.indexOf(m.begin);
   while (start > 0 && cur[start - 1] !== "\n") start = cur.indexOf(m.begin, start + 1);
   if (start < 0) return null;
-  for (let at = cur.indexOf(`\n${m.end}`, start + m.begin.length); at >= 0; at = cur.indexOf(`\n${m.end}`, at + 1)) {
+  ANY_BEGIN_LINE.lastIndex = start + m.begin.length;
+  const next = ANY_BEGIN_LINE.exec(cur);
+  const limit = next ? next.index : cur.length;
+  let last = -1;
+  for (let at = cur.indexOf(`\n${m.end}`, start + m.begin.length); at >= 0 && at < limit; at = cur.indexOf(`\n${m.end}`, at + 1)) {
     const after = at + 1 + m.end.length;
-    if (after === cur.length || cur[after] === "\n" || cur[after] === "\r") return { start, end: at + 1 };
+    if (after === cur.length || cur[after] === "\n" || cur[after] === "\r") last = at;
   }
-  return null;
+  return last >= 0 ? { start, end: last + 1 } : null;
 }
 
 /** Replace this source's marked block inside existing notes (human text before/after is kept);

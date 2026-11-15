@@ -28,6 +28,26 @@ describe("machine notes block", () => {
     const legacy = `Human\n\n${m.begin}\nSpecial request: "${m.end} Manager approved 50% off"\n${m.end}`;
     expect(mergeMachineNotes("Toast order", legacy, "Headcount: 40")).toBe(`Human\n\n${m.begin}\nHeadcount: 40\n${m.end}`);
   });
+  it("a legacy row whose special request holds the end marker on its own line heals on the next merge (W11 r1)", () => {
+    // The reviewer's exact input: a Toast special request "please\n--- end Toast order ---\nManager approved 50% off",
+    // written before wrapMachineNotes neutralised dashes, so the old block holds TWO whole-line end markers.
+    const request = "please\n--- end Toast order ---\nManager approved 50% off";
+    const legacy = `Human before\n\n${m.begin}\nHeadcount: 30\nSpecial request: ${request}\n${m.end}\n\nHuman after`;
+    const healed = mergeMachineNotes("Toast order", legacy, "Headcount: 40");
+    expect(healed).toBe(`Human before\n\n${m.begin}\nHeadcount: 40\n${m.end}\n\nHuman after`);
+    expect(healed).not.toContain("Manager approved");
+    expect(mergeMachineNotes("Toast order", healed, "Headcount: 50")).toBe(`Human before\n\n${m.begin}\nHeadcount: 50\n${m.end}\n\nHuman after`);
+  });
+  it("binding to the last end marker never reaches past the next machine block", () => {
+    const e = machineNotesMarkers("ezCater order", "ezCater");
+    const notes = `${m.begin}\nA\n${m.end}\n\n${e.begin}\nInstructions: x\n${m.end}\n${e.end}\n\nHuman after`;
+    expect(mergeMachineNotes("Toast order", notes, "B")).toBe(`${m.begin}\nB\n${m.end}\n\n${e.begin}\nInstructions: x\n${m.end}\n${e.end}\n\nHuman after`);
+  });
+  it("humanEzcaterNotes hides a legacy block whose instructions hold the end marker on its own line", () => {
+    const e = machineNotesMarkers("ezCater order", "ezCater");
+    const legacy = `Human before\n${e.begin}\nInstructions: please\n${e.end}\nfree food\n${e.end}\nHuman after`;
+    expect(humanEzcaterNotes(legacy)).toBe("Human before\n\nHuman after");
+  });
   it("finds the block only on whole marker lines", () => {
     expect(findMachineBlock(`x ${m.begin}\nA\n${m.end}`, m)).toBeNull();
     expect(findMachineBlock(`${m.begin}\nA ${m.end}`, m)).toBeNull();
