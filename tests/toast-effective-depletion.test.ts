@@ -82,6 +82,24 @@ describe("effective capture depletion", () => {
     );
     expect((await loadEffectiveSalesRows(db(), window))[0]?.direct_oz).toBe(12);
   });
+  it("W16/B092: a batch produced before the window suppresses the next days' fallback for its carry window", async () => {
+    const days = ["2026-10-06", "2026-10-07", "2026-10-11", "2026-10-12"];
+    const perDay = (table: string, row: Record<string, unknown>) => { tables[table] = days.map((business_date) => ({ ...row, business_date })); };
+    perDay("toast_capture_runs", { location_id: "shop", id: "run1", status: "completed", finished_at: "2026-10-13T05:00:00Z" });
+    perDay("toast_depletion_day_coverage", { location_id: "shop", run_id: "run1", status: "success", computed_at: "2026-10-13T05:01:00Z", aggregate_count: 1, attribution_count: 1 });
+    perDay("toast_capture_daily_depletion", { location_id: "shop", sku_id: "sku", direct_oz: 2, flattened_oz: 10 });
+    perDay("toast_depletion_item_attribution", { location_id: "shop", item_id: "parent", item_path: ["parent", "child"], sku_id: "sku", sales_oz: 10 });
+    tables.productions!.push({ location_id: "shop", output_item_id: "parent", produced_at: "2026-10-05T14:00:00Z" }); // Mon ET, before the window
+    const rows = await loadEffectiveSalesRows(db(), { locationId: "shop", fromDate: "2026-10-06", untilDateExclusive: "2026-10-13" });
+    const byDay = Object.fromEntries(rows.map((r) => [r.business_date, r.direct_oz]));
+    // default carry 5 (no recipe row): Oct 6–10 covered (direct only), Oct 11 = D−6 → the fallback returns.
+    expect(byDay).toEqual({ "2026-10-06": 2, "2026-10-07": 2, "2026-10-11": 12, "2026-10-12": 12 });
+    // a recipe's shelf life widens it (7 days → Oct 12 still covered)
+    tables.recipes = [{ id: "r-parent", shelf_life_days: 7, location_id: null, active: true }];
+    tables.recipe_outputs = [{ id: "ro", recipe_id: "r-parent", output_item_id: "parent" }];
+    const wider = await loadEffectiveSalesRows(db(), { locationId: "shop", fromDate: "2026-10-06", untilDateExclusive: "2026-10-13" });
+    expect(Object.fromEntries(wider.map((r) => [r.business_date, r.direct_oz]))).toEqual({ "2026-10-06": 2, "2026-10-07": 2, "2026-10-11": 2, "2026-10-12": 2 });
+  });
   it("uses contiguous ET midnight production windows through both DST changes", async () => {
     for (const [businessDate, nextDate, late, next] of [
       ["2026-11-01", "2026-11-02", "2026-11-02T04:30:00Z", "2026-11-02T05:30:00Z"],

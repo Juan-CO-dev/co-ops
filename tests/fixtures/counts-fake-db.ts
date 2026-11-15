@@ -78,6 +78,9 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
   // EMPTY until somebody makes a shop version — exactly what "no shop versions" means. A fixture that
   // brings its own rows keeps them.
   for (const t of ["recipe_versions", "recipe_version_lines", "menu_item_shop_settings", "recipe_notice_dismissals"]) tables[t] ??= [];
+  // W16/B092: the production carry window reads the recipes that output prep items (shelf life). A fixture
+  // with no recipe rows means every item carries the 5-day default.
+  for (const t of ["recipes", "recipe_outputs"]) tables[t] ??= [];
   const log: QueryLogEntry[] = [];
   const writes: Array<{ table: string; rows: Row[] }> = [];
   // CRITICAL PATH: a query issued after a depth-d query has COMPLETED is at least d + 1.

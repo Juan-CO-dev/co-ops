@@ -267,12 +267,13 @@ describe("B9 step 5 — independent reads run together", () => {
     }
   });
 
-  it.each(MODES)("THE BUDGET: one page render ≤ 25 round trips on the ledger and reconciled sources (≤ 30 on raw capture), constant as anchor groups grow — %s", async (mode) => {
+  it.each(MODES)("THE BUDGET: one page render ≤ 25 round trips on the ledger and reconciled sources (≤ 32 on raw capture), constant as anchor groups grow — %s", async (mode) => {
     setMode(mode);
     await measure({}, pageRender);
     const base = await measure({}, pageRender);
     const scaled = await measure({ parWalks: 10, countSessions: 10, baselineInstants: 10 }, pageRender);
-    expect(base.trips).toBeLessThanOrEqual(mode === "capture" ? 30 : 25);
+    // W16/B092: raw capture +2 constant reads (the production carry window: recipes + recipe_outputs), 30 → 32.
+    expect(base.trips).toBeLessThanOrEqual(mode === "capture" ? 32 : 25);
     expect(scaled.trips).toBe(base.trips);
     expect(scaled.reconciled).toBe(mode === "reconciled" ? 1 : 0);
   });
