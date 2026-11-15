@@ -2149,12 +2149,15 @@ export async function loadCountsTileState(
 
   // (2) Distinct SKUs ever counted here. PostgREST has no DISTINCT, so we page
   // the sku_id column and dedupe in memory (still one batched read, never per-SKU).
-  const eventIds = events.map((e) => e.id);
+  // Scoped through the event embed (service role), the read loadCensusAnchors uses: events
+  // never go inactive, so an event-id `.in()` list crossed the request-line ceiling at
+  // ~220 sessions and the tile went blank (audit B184). Same rows: this shop's ACTIVE events.
   const lines = await selectAllRows<{ sku_id: string }>(
     async (from, to) => {
       const { data, error } = await sb.from("sku_count_lines")
-        .select("sku_id")
-        .in("count_event_id", eventIds)
+        .select(`id, sku_id, ${COUNT_EVENT_EMBED}`)
+        .eq("sku_count_events.location_id", locationId)
+        .eq("sku_count_events.active", true)
         .order("id", { ascending: true })
         .range(from, to)
         .returns<Array<{ sku_id: string }>>();
