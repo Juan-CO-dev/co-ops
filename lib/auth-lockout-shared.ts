@@ -42,6 +42,10 @@ export const createSessionCall = (a: {
 export const passwordResetConsumeCall = (a: { tokenHash: string; passwordHash: string }) =>
   ({ fn: "auth_password_reset_consume", args: { p_token_hash: a.tokenHash, p_password_hash: a.passwordHash } }) as const;
 
+/** `auth_email_confirm_issue`'s arguments (0307, B053), by name. The token travels as its SHA-256 HASH only. */
+export const emailConfirmIssueCall = (a: { actorId: string; userId: string; tokenHash: string; expiresAt: string }) =>
+  ({ fn: "auth_email_confirm_issue", args: { p_actor: a.actorId, p_user: a.userId, p_token_hash: a.tokenHash, p_expires_at: a.expiresAt } }) as const;
+
 /**
  * The function is not installed yet: PostgREST's schema-cache miss (PGRST202) or Postgres's undefined
  * function (42883). This — and only this — is what "0307 is not applied yet" looks like, and every 0307

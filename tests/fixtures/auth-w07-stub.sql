@@ -25,6 +25,13 @@ create table if not exists public.password_resets (
   expires_at timestamptz not null,
   consumed_at timestamptz
 );
+-- audit_log (Foundation Spec §4): the columns 0307's backfill row writes.
+create table if not exists public.audit_log (
+  id uuid primary key default gen_random_uuid(),
+  occurred_at timestamptz default now(),
+  actor_id uuid, actor_role text, action text not null, resource_table text not null, resource_id uuid,
+  metadata jsonb, destructive boolean default false
+);
 create table if not exists public.email_verifications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,

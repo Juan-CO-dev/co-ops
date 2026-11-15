@@ -20,14 +20,16 @@
  *   B157 a reset (and an admin password set) retires every other open reset link of that person, nobody else's
  *   B158 an admin PIN / password reset clears the lockout; a refused reset clears nothing
  *   B052 an email change retires the person's open reset links (a name / phone edit and other people's links untouched)
+ *   B053 the confirm-your-email issuer: behind the gate, only for an active level-6+ person with an unconfirmed email,
+ *        one live link at a time; an email change retires it; the backfill vouches exactly the stranded managers
  *   S8   the re-emitted 0279 writers still take the ONE gate (user_admin_lock) and no lock of their own
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import {
-  FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, parseAttemptReservation, passwordResetConsumeCall, reserveAttemptCall,
+  FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, emailConfirmIssueCall, parseAttemptReservation, passwordResetConsumeCall, reserveAttemptCall,
 } from "../lib/auth-lockout-shared.ts";
-import { setUserCredentialCall, updateUserProfileCall } from "../lib/admin/user-admin-rpc-shared.ts";
+import { setUserCredentialCall, setUserRoleCall, updateUserProfileCall } from "../lib/admin/user-admin-rpc-shared.ts";
 
 const read = (p) => readFileSync(p, "utf8");
 const STUB = read("tests/fixtures/scheduling-pglite-stub.sql");
@@ -57,9 +59,38 @@ async function base({ m0076 = true, m0279 = true } = {}) {
 const FNS = ["auth_reserve_attempt(uuid)", "increment_failed_login(uuid)",
   "auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text)",
   "auth_password_reset_consume(text, text)", "admin_user_set_credential(uuid, uuid, text, text)",
-  "admin_user_update_profile(uuid, uuid, jsonb)"];
+  "admin_user_update_profile(uuid, uuid, jsonb)", "auth_email_confirm_issue(uuid, uuid, text, timestamptz)"];
 /** The 0279 writers 0307 re-emits (each must still take the one gate). */
 const REEMITTED = ["admin_user_set_credential", "admin_user_update_profile"];
+
+// ── B053's backfill runs INSIDE the migration, so its people are seeded BEFORE the apply (on its own database). ──
+{
+  const pre = await base();
+  const q = async (sql, params = []) => (await pre.query(sql, params)).rows;
+  const mk = async (role, extra = {}) => {
+    const cols = ["role", ...Object.keys(extra)];
+    return (await q(`insert into public.users (${cols.join(", ")}) values (${cols.map((_, i) => `$${i + 1}`).join(", ")}) returning id`, [role, ...Object.values(extra)]))[0].id;
+  };
+  const stranded = await mk("agm", { email: "promoted@example.test" });                       // promoted, never verified
+  const strandedOff = await mk("gm", { email: "promoted-off@example.test", active: false });   // inactive: vouched too (a later reactivation must not be stuck)
+  const noEmail = await mk("agm");                                                             // nothing to vouch
+  const blankEmail = await mk("catering_mgr", { email: "  " });
+  const lead = await mk("shift_lead", { email: "lead@example.test" });                         // level 5: never
+  const already = await mk("moo", { email: "done@example.test", email_verified: true, email_verified_at: "2026-01-01T00:00:00Z" });
+  await pre.exec(M0307);
+  const row = async (u) => (await q("select email_verified as v, email_verified_at as at from public.users where id = $1", [u]))[0];
+  const [a, b, c, d, e, f] = [await row(stranded), await row(strandedOff), await row(noEmail), await row(blankEmail), await row(lead), await row(already)];
+  check(a.v === true && a.at !== null && b.v === true && b.at !== null && c.v === false && c.at === null && d.v === false && e.v === false
+    && f.v === true && new Date(f.at).toISOString() === "2026-01-01T00:00:00.000Z",
+    "B053 the backfill vouches exactly the stranded level-6+ rows (an email on file, any active state), nobody below 6, nobody without an email");
+  const auditRows = await q("select actor_id, action, resource_table, destructive, metadata from public.audit_log");
+  check(auditRows.length === 1 && auditRows[0].action === "user.email_vouch_backfill" && auditRows[0].destructive === true && auditRows[0].actor_id === null
+    && auditRows[0].resource_table === "users" && auditRows[0].metadata.actor_context === "migration_apply" && auditRows[0].metadata.count === 2
+    && JSON.stringify([...auditRows[0].metadata.user_ids].sort()) === JSON.stringify([stranded, strandedOff].sort())
+    && auditRows[0].metadata.migration === "0307_auth_lockout_reset_hardening",
+    "B053 the backfill writes ONE destructive audit row (actor_context migration_apply) naming the ids it vouched");
+  await pre.close();
+}
 
 const db = await base();
 /** Call a function as the app does: service_role, named arguments. */
@@ -120,6 +151,7 @@ try {
   }
   await db.exec(M0307);
   check(true, "0307 applied with every SQL guard (the post-apply posture guard included)");
+  check((await db.query("select count(*)::int as n from public.audit_log")).rows[0].n === 0, "B053 with nobody stranded the backfill writes no audit row");
   {
     // On its own database: a refused apply leaves that connection inside the aborted transaction.
     const again = await base();
@@ -383,6 +415,69 @@ try {
     await refuses(() => rpc(updateUserProfileCall({ actorId: gm, userId: u, patch: { email: "someone-else@example.test" } })), "email_taken",
       "B052 a taken email is still refused and retires nothing");
     check(!(await linkConsumed(again)), "B052 … the link survives the refused change");
+  }
+
+  // ── B053: the confirm-your-email issuer ──
+  {
+    let tokSeq = 0;
+    const tokenHash = () => (++tokSeq).toString(16).padStart(64, "0"); // sha256-hex shaped, synthetic
+    const in24h = () => new Date(Date.now() + 24 * 3600_000).toISOString();
+    const issue = (actorId, userId, over = {}) => rpc(emailConfirmIssueCall({ actorId, userId, tokenHash: tokenHash(), expiresAt: in24h(), ...over }));
+    const openLinks = async (u) => (await one("select count(*)::int as n from public.email_verifications where user_id = $1 and consumed_at is null", [u])).n;
+
+    // the bug's own path: a shift lead (created without email auth) is promoted to AGM and given an email
+    const p = await user("shift_lead", { pin_hash: HASH("sl") });
+    await member(p, SA);
+    await refuses(() => issue(gm, p), "email_confirm_not_available", "B053 a level-5 person gets no confirmation link");
+    await rpc(setUserRoleCall({ actorId: gm, userId: p, role: "agm" }));
+    check((await one("select email_verified as v from public.users where id = $1", [p])).v === false,
+      "B053 (the bug) promotion shift_lead → agm leaves email_verified false: manager sign-in is refused");
+    await refuses(() => issue(gm, p), "email_required", "B053 a promoted manager with no email on file is refused by name");
+    await rpc(updateUserProfileCall({ actorId: gm, userId: p, patch: { email: "Promoted.Mgr@example.test" } }));
+    const first = await issue(gm, p);
+    const stored = await one("select user_id, expires_at > now() as live, consumed_at from public.email_verifications where id = $1", [first.id]);
+    check(first.email === "promoted.mgr@example.test" && first.links_retired === 0 && stored.user_id === p && stored.live === true && stored.consumed_at === null,
+      "B053 promotion shift_lead→agm of a person with an email → one open confirmation link, the address returned lowercased");
+    // a resend replaces the link: at most ONE is ever live
+    const second = await issue(gm, p);
+    check(second.links_retired === 1 && (await openLinks(p)) === 1 && second.id !== first.id, "B053 a resend retires the older link: one live link at a time");
+    // an email change retires the link mailed to the old address (0307's re-emitted profile writer)
+    await rpc(updateUserProfileCall({ actorId: gm, userId: p, patch: { email: "right.address@example.test" } }));
+    check((await openLinks(p)) === 0, "B053 an email change retires the confirmation link mailed to the old address");
+    const third = await issue(gm, p);
+    check(third.email === "right.address@example.test" && (await openLinks(p)) === 1, "B053 … and a new link goes to the new address");
+
+    // once confirmed (what /api/auth/verify writes), no further link is issued
+    await db.query("update public.users set email_verified = true, email_verified_at = now() where id = $1", [p]);
+    await refuses(() => issue(gm, p), "email_already_confirmed", "B053 a confirmed email gets no further link");
+
+    // the gate decides who may send: never a peer, never another shop's person, never oneself, never an AGM
+    const SB = await shop();
+    const elsewhere = await user("agm", { email: "elsewhere@example.test" });
+    await member(elsewhere, SB);
+    await refuses(() => issue(gm, elsewhere), "target_outside_shop", "B053 a GM cannot send a link to a manager at a shop they do not manage");
+    const peerGm = await user("gm", { email: "peer@example.test" });
+    await member(peerGm, SA);
+    await refuses(() => issue(gm, peerGm), "forbidden", "B053 a GM cannot send a link to a peer");
+    const agmActor = await user("agm", { email: "agm-actor@example.test", email_verified: true });
+    await member(agmActor, SA);
+    const target = await user("catering_mgr", { email: "cm@example.test" });
+    await member(target, SA);
+    await refuses(() => issue(agmActor, target), "forbidden", "B053 an AGM cannot send a link (GM and up only)");
+    await refuses(() => issue(gm, gm), "forbidden", "B053 nobody issues a link for themselves");
+    // an inactive manager, and the payload rules
+    const off = await user("agm", { email: "off@example.test", active: false });
+    await member(off, SA);
+    await refuses(() => issue(gm, off), "email_confirm_not_available", "B053 an inactive manager gets no link");
+    await refuses(() => issue(gm, target, { tokenHash: "raw-token-not-a-hash" }), "invalid_payload", "B053 anything but a sha-256 hex digest is refused (never a raw token)");
+    await refuses(() => issue(gm, target, { expiresAt: new Date(Date.now() - 1000).toISOString() }), "invalid_payload", "B053 an expiry in the past is refused");
+    await refuses(() => issue(gm, target, { expiresAt: new Date(Date.now() + 30 * 86400_000).toISOString() }), "invalid_payload", "B053 an expiry beyond 7 days is refused");
+    check((await openLinks(target)) === 0 && (await openLinks(off)) === 0 && (await openLinks(elsewhere)) === 0, "B053 … and no refused call left a link behind");
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      await refuses(() => db.query("select public.auth_email_confirm_issue(null, null, null, null)"), "42501", `B053 ${role} cannot EXECUTE auth_email_confirm_issue`);
+      await db.exec("reset role");
+    }
   }
 } catch (e) {
   failures++;

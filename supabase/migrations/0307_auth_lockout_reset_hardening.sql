@@ -42,6 +42,19 @@
 --      + B052: an email change also consumes the person's open reset links. It already revoked their sessions, but a
 --        reset link mailed to the OLD address kept working for its hour and could set the password of the account
 --        now at the new address. Returns the extra key reset_links_retired.
+--      + B053: an email change also consumes the person's open "confirm your email" links (7).
+--   7. auth_email_confirm_issue(p_actor, p_user, p_token_hash, p_expires_at) — NEW (B053, owner decision W07-1 b:
+--      "build a confirm-your-email message for promoted managers"). admin_user_create marks a manager's email as
+--      verified when a GM CREATES them at level 6+, but nothing ever set email_verified for someone PROMOTED into a
+--      manager role, and nothing in the app issued email_verifications links — so a promoted manager could never use
+--      email + password sign-in or a password reset ("Email not verified yet. Check your inbox" — and no email came).
+--      This function is the issuer: behind the ONE gate (user_admin_lock: the actor rule on the locked rows) it
+--      requires an active level-6+ person with an email that is not yet confirmed ('email_confirm_not_available',
+--      'email_required', 'email_already_confirmed'), retires that person's older open links (at most ONE link is
+--      ever live) and inserts the new one. It stores a HASH; the lib mails the raw link, and ONLY when the owner's
+--      delivery switches allow it (lib/admin/email-confirm-shared.ts). /api/auth/verify — unchanged, already in the
+--      app — is what the link opens: the person sets their own password, the email is marked confirmed, they are
+--      signed in. The '>= 6' literal is the twin of lib/roles.ts hasEmailAuth (pinned by the migration test).
 --
 -- LOCK ORDER (unchanged from 0279): the identity lock → the per-person advisory lock → users rows → password_resets /
 --   email_verifications / sessions. auth_reserve_attempt and auth_create_session each take ONE users row lock (the mint then
@@ -50,6 +63,12 @@
 --   password_resets or sessions row before the users row.
 --
 -- EXISTING ROWS: none rewritten by sections 1–2. An account sitting on an expired lock restarts at its next attempt.
+--   B053 (owner decision W07-2 a: "unstick the people already promoted and blocked today"): every level-6+ person who
+--   HAS an email and is not yet marked verified is marked verified, once, by this file — the same admin-vouched
+--   state admin_user_create gives a manager a GM creates. No email is sent. ONE audit row
+--   (user.email_vouch_backfill, destructive, actor_context migration_apply) lists the ids. Run the PRE-FLIGHT count
+--   first and record it here before the prod apply. A promoted person with NO email on file is not touched (there
+--   is nothing to vouch): a GM enters the email and the confirm-your-email link does the rest.
 --
 -- APP COMPATIBILITY: every app caller of a function created here falls back to its pre-0307 path while the function
 --   is missing (PGRST202 / 42883), so the app works unchanged before this file is applied; applying it switches each
@@ -58,19 +77,28 @@
 --
 -- DEPENDS ON: users (failed_login_count, locked_until, last_login_at, pin_hash, password_hash, email, active), sessions
 --   (id, user_id, token_hash, auth_method, step_up_unlocked, last_activity_at, expires_at, ip_address, user_agent),
---   password_resets (id, user_id, token_hash, expires_at, consumed_at), 0076 (increment_failed_login), 0279.
+--   password_resets and email_verifications (id, user_id, token_hash, expires_at, consumed_at), audit_log, 0076
+--   (increment_failed_login), 0279.
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select count(*) from users where failed_login_count >= 5 and locked_until <= now();  -- accounts B049 frees on their next try
 --   select count(*) from password_resets where consumed_at is null and expires_at > now();  -- open reset links right now
+--   select id, name, role, active from users where not coalesce(email_verified, false) and email is not null and btrim(email) <> ''
+--     and coalesce(public.user_admin_role_level(role), 0) >= 6;  -- the B053 backfill: WHO gets marked verified (record the count)
+--   select count(*) from users where coalesce(public.user_admin_role_level(role), 0) >= 6 and (email is null or btrim(email) = '');
+--     -- managers with no email at all: NOT touched by the backfill; a GM must enter one
 --
 -- VERIFY AFTER APPLY:
 --   select proname, prosecdef, proconfig from pg_proc where proname in ('auth_reserve_attempt', 'increment_failed_login',
---     'auth_create_session', 'auth_password_reset_consume', 'admin_user_set_credential', 'admin_user_update_profile');
+--     'auth_create_session', 'auth_password_reset_consume', 'admin_user_set_credential', 'admin_user_update_profile',
+--     'auth_email_confirm_issue');
 --     -- t, {search_path=pg_catalog, public} on each
+--   select count(*) from users where not coalesce(email_verified, false) and email is not null and btrim(email) <> ''
+--     and coalesce(public.user_admin_role_level(role), 0) >= 6;  -- 0 (the backfill ran)
+--   select metadata from audit_log where action = 'user.email_vouch_backfill';  -- one row when the count above was > 0 before apply
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
 --    and routine_name in ('auth_reserve_attempt', 'increment_failed_login', 'auth_create_session', 'auth_password_reset_consume',
---      'admin_user_set_credential', 'admin_user_update_profile');  -- service_role (+ postgres) only
+--      'admin_user_set_credential', 'admin_user_update_profile', 'auth_email_confirm_issue');  -- service_role (+ postgres) only
 --
 -- ROLLBACK: none needed for the app (it falls back on a missing function). Re-emit through a new reviewed migration.
 
@@ -103,6 +131,14 @@ begin
   if (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'password_resets'
        and column_name in ('id', 'user_id', 'token_hash', 'expires_at', 'consumed_at')) <> 5 then
     raise exception '0307: password_resets (id, user_id, token_hash, expires_at, consumed_at) must exist';
+  end if;
+  if (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'email_verifications'
+       and column_name in ('id', 'user_id', 'token_hash', 'expires_at', 'consumed_at')) <> 5 then
+    raise exception '0307: email_verifications (id, user_id, token_hash, expires_at, consumed_at) must exist';
+  end if;
+  if (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'audit_log'
+       and column_name in ('actor_id', 'actor_role', 'action', 'resource_table', 'resource_id', 'destructive', 'metadata')) <> 7 then
+    raise exception '0307: audit_log must exist with the columns the backfill row writes';
   end if;
   -- The 0279 writer this file re-emits must still be 0279's (nothing else has re-emitted it): refuse otherwise.
   if to_regprocedure('public.admin_user_set_credential(uuid,uuid,text,text)') is null then
@@ -334,6 +370,8 @@ begin
     -- 0307 B052: a reset link mailed to the OLD address must not set the password of the account at the new one.
     update public.password_resets set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;
     get diagnostics v_retired = row_count;
+    -- 0307 B053: nor may a "confirm your email" link mailed to the old address confirm the new one.
+    update public.email_verifications set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;
     update public.sessions set revoked_at = clock_timestamp() where user_id = p_user and revoked_at is null;
     get diagnostics v_revoked = row_count;
   end if;
@@ -342,6 +380,60 @@ begin
 end $$;
 revoke all on function public.admin_user_update_profile(uuid, uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.admin_user_update_profile(uuid, uuid, jsonb) to service_role;
+
+-- ── 7. B053: issue a "confirm your email" link (the lib mails it only when the owner's delivery switches allow) ──
+create function public.auth_email_confirm_issue(p_actor uuid, p_user uuid, p_token_hash text, p_expires_at timestamptz)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_ctx jsonb; v_email text; v_verified boolean; v_now timestamptz; v_retired integer := 0; v_id uuid;
+begin
+  -- A SHA-256 hex digest, never a raw token.
+  if p_token_hash is null or p_token_hash !~ '^[0-9a-f]{64}$' or p_expires_at is null then raise exception 'invalid_payload'; end if;
+  -- The ONE gate (0279): the per-person lock, the target row FOR UPDATE, the actor rule on the locked rows.
+  v_ctx := public.user_admin_lock(p_actor, p_user);
+  select email, coalesce(email_verified, false) into v_email, v_verified from public.users where id = p_user;
+  -- Manager sign-in exists only at level 6+ (lib/roles.ts hasEmailAuth), and only for an active person.
+  if not coalesce((v_ctx ->> 'target_active')::boolean, false) or coalesce((v_ctx ->> 'target_level')::integer, 0) < 6 then
+    raise exception 'email_confirm_not_available';
+  end if;
+  if v_email is null or btrim(v_email) = '' then raise exception 'email_required'; end if;
+  if v_verified then raise exception 'email_already_confirmed'; end if;
+  v_now := clock_timestamp();
+  if p_expires_at <= v_now or p_expires_at > v_now + interval '7 days' then raise exception 'invalid_payload'; end if;
+  -- At most ONE live link per person: a newer email replaces every older one.
+  update public.email_verifications set consumed_at = v_now where user_id = p_user and consumed_at is null;
+  get diagnostics v_retired = row_count;
+  insert into public.email_verifications (user_id, token_hash, expires_at) values (p_user, p_token_hash, p_expires_at)
+    returning id into v_id;
+  return jsonb_build_object('id', v_id, 'email', lower(btrim(v_email)), 'links_retired', v_retired);
+end $$;
+comment on function public.auth_email_confirm_issue(uuid, uuid, text, timestamptz) is
+  '0307 (audit W07 B053): behind user_admin_lock, issues the one live "confirm your email" link (a token HASH) for an '
+  'active level-6+ person whose email is not yet confirmed, retiring older links. Returns {id, email, links_retired}. '
+  'Refusals: email_confirm_not_available, email_required, email_already_confirmed, invalid_payload + the gate''s.';
+revoke all on function public.auth_email_confirm_issue(uuid, uuid, text, timestamptz) from public, anon, authenticated;
+grant execute on function public.auth_email_confirm_issue(uuid, uuid, text, timestamptz) to service_role;
+
+-- ── 8. EXISTING ROWS — B053, owner decision W07-2 a: unstick the managers already blocked ──
+-- Admin-vouched, exactly as admin_user_create does for a manager a GM creates: level 6+, an email on file, not yet
+-- marked verified. Not filtered on active (a manager reactivated later must not be stuck again). No email is sent.
+do $$
+declare v_ids uuid[];
+begin
+  with vouched as (
+    update public.users set email_verified = true, email_verified_at = clock_timestamp()
+     where not coalesce(email_verified, false) and email is not null and btrim(email) <> ''
+       and coalesce(public.user_admin_role_level(role), 0) >= 6
+    returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_ids from vouched;
+  if cardinality(v_ids) > 0 then
+    insert into public.audit_log (actor_id, actor_role, action, resource_table, resource_id, destructive, metadata)
+    values (null, null, 'user.email_vouch_backfill', 'users', null, true,
+      jsonb_build_object('actor_context', 'migration_apply', 'migration', '0307_auth_lockout_reset_hardening',
+        'reason', 'audit W07 B053: managers promoted into a level-6+ role were never marked email-verified and could not use manager sign-in',
+        'count', cardinality(v_ids), 'user_ids', to_jsonb(v_ids)));
+  end if;
+  raise notice '0307: B053 backfill marked % manager email(s) verified', cardinality(v_ids);
+end $$;
 
 -- ── POST-APPLY: every function this file creates or re-emits is definer, search_path pinned, service_role only ──
 do $$
@@ -353,7 +445,8 @@ declare
     'public.auth_create_session(uuid,uuid,text,text,text,text,text,timestamptz,text,text)',
     'public.auth_password_reset_consume(text,text)',
     'public.admin_user_set_credential(uuid,uuid,text,text)',
-    'public.admin_user_update_profile(uuid,uuid,jsonb)'
+    'public.admin_user_update_profile(uuid,uuid,jsonb)',
+    'public.auth_email_confirm_issue(uuid,uuid,text,timestamptz)'
   ];
 begin
   foreach v_fn in array v_fns loop
@@ -376,6 +469,11 @@ begin
   if strpos(v_fn, 'perform public.user_admin_identity_lock();') = 0
      or strpos(v_fn, 'perform public.user_admin_lock(p_actor, p_user);') < strpos(v_fn, 'perform public.user_admin_identity_lock();') then
     raise exception '0307: admin_user_update_profile lost its identity lock or its gate';
+  end if;
+  -- The backfill left nobody behind.
+  if exists (select 1 from public.users where not coalesce(email_verified, false) and email is not null and btrim(email) <> ''
+              and coalesce(public.user_admin_role_level(role), 0) >= 6) then
+    raise exception '0307: the B053 backfill left an unverified level-6+ email';
   end if;
 end $$;
 
