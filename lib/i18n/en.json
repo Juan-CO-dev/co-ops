@@ -2514,7 +2514,7 @@
   "photo.capture.view": "View photo",
   "photo.capture.aria_input": "Choose or take a photo",
   "photo.capture.error.upload_failed": "Upload failed — try again.",
-  "photo.capture.error.too_large": "That image is too large (max 8 MB).",
+  "photo.capture.error.too_large": "That photo is too large to upload (max 4 MB). Take it again.",
   "photo.capture.error.unsupported_type": "Use a JPG, PNG, WebP, or HEIC image.",
   "closing.expand.notes_label": "Notes (optional)",
   "closing.expand.notes_placeholder": "Anything noteworthy?",

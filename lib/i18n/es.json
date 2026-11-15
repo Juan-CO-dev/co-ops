@@ -2514,7 +2514,7 @@
   "photo.capture.view": "Ver foto",
   "photo.capture.aria_input": "Elige o toma una foto",
   "photo.capture.error.upload_failed": "Falló la subida — inténtalo de nuevo.",
-  "photo.capture.error.too_large": "Esa imagen es muy grande (máx. 8 MB).",
+  "photo.capture.error.too_large": "Esa foto es muy grande para subirla (máx. 4 MB). Tómala de nuevo.",
   "photo.capture.error.unsupported_type": "Usa una imagen JPG, PNG, WebP o HEIC.",
   "closing.expand.notes_label": "Notas (opcional)",
   "closing.expand.notes_placeholder": "¿Algo importante?",
