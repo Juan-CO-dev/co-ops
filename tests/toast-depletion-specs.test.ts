@@ -271,3 +271,29 @@ describe("W16/B095: a modifier under a nested sub resolves its immediate parent"
     expect(result.skuConsumed.find((r) => r.skuId === "roll")).toMatchObject({ directOz: 0, removedOz: 6 });
   });
 });
+
+function capturedDay(order: Partial<CapturedToastDay["orders"][number]>, rows: LedgerRow[]): CapturedToastDay {
+  return { coverage: { runId: "run", finishedAt: "2026-10-08T00:00:00Z", orderCount: 1, missingPointerCount: 0, absenceRemovalApplied: false, configDegraded: false }, orders: [{
+    snapshotId: "snapshot", orderGuid: "order", modifiedAt: null, diningOptionGuid: null, diningOption: null, salesChannel: "retail", deleted: false, voided: false, excessFood: false,
+    checks: [{ checkGuid: "check", amountCents: 100, voided: false, deleted: false }],
+    selections: rows.map((r) => ({ check_guid: r.check_guid, selection_guid: r.selection_guid, parent_selection_guid: r.parent_selection_guid, item_guid: r.toast_item_guid, name: r.item_name, quantity: Number(r.quantity), voided: false, deleted: false })),
+    ...order,
+  }] };
+}
+
+describe("W16/B093: register-only catering depletes like a sale; only checks another source claims are excluded", () => {
+  it.each(["App Catering Delivery", "Catering", "Catering- Pick Up", "DeliverThat"])("a house/app catering ring (%s) depletes like a regular sale", async (diningOption) => {
+    const result = await deriveCapturedSalesConsumption("shop", "2026-10-07", capturedDay({ salesChannel: "catering", diningOption }, [line("a1", "a")]));
+    expect(direct(result, "roll")).toBe(6);
+    expect(result.diagnostics?.excluded_units).toBe(0);
+  });
+  it.each(["Ezcater", "EZ Cater", "ez-cater"])("an ezCater ring (%s) is still excluded on the raw path (ezCater depletes it)", async (diningOption) => {
+    const result = await deriveCapturedSalesConsumption("shop", "2026-10-07", capturedDay({ salesChannel: "catering", diningOption }, [line("a1", "a")]));
+    expect(direct(result, "roll")).toBe(0);
+    expect(result.diagnostics?.excluded_units).toBe(1);
+  });
+  it("a gift card stays excluded", async () => {
+    const result = await deriveCapturedSalesConsumption("shop", "2026-10-07", capturedDay({ salesChannel: "gift_card", diningOption: "Dine In" }, [line("a1", "a")]));
+    expect(direct(result, "roll")).toBe(0);
+  });
+});

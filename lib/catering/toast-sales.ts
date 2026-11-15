@@ -36,7 +36,7 @@ import {
   type AssortmentKind,
 } from "@/lib/toast/platter-shared";
 import { loadCapturedToastDay, type CapturedToastDay } from "@/lib/toast/captured-day";
-import { reconciledToastOrders, type DepletionLink } from "@/lib/ezcater/depletion-shared";
+import { isEzcaterDiningOption, reconciledToastOrders, type DepletionLink } from "@/lib/ezcater/depletion-shared";
 
 export const TOAST_SALES_WRITE_MIN = 7; // GM+ — pull + exclusions (mirrors toast-map)
 export const TOAST_SALES_READ_MIN = 6;  // AGM+ — consumption readout (prep-demand page floor)
@@ -498,7 +498,12 @@ export async function deriveCapturedSalesConsumption(locationId: string, busines
   let cateringExcludedUnits = 0;
   for (const order of reconciliationLinks ? reconciledToastOrders(day.orders, reconciliationLinks) : day.orders) {
     if (order.deleted || order.voided || order.excessFood) continue;
-    const catering = order.salesChannel === "catering" || order.salesChannel === "gift_card";
+    // W16/B093: a catering check is excluded ONLY where another source depletes it — an ezCater ring on the
+    // raw path (the reconciled path has already removed linked checks and relabelled unlinked rings as
+    // sales). House / app catering rung only on the register (Catering, Catering- Pick Up, DeliverThat, App
+    // Catering Delivery) has no other depletion source, so it depletes like any sale. Gift cards never do.
+    const claimedElsewhere = order.salesChannel === "catering" && !reconciliationLinks && isEzcaterDiningOption(order.diningOption);
+    const catering = order.salesChannel === "gift_card" || claimedElsewhere;
     const eligibleChecks = new Set(order.checks.filter((c) => !c.deleted && !c.voided).map((c) => c.checkGuid));
     for (const s of order.selections) {
       if (!eligibleChecks.has(s.check_guid)) continue;
