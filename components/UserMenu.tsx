@@ -30,7 +30,7 @@ import { SigningOutOverlay } from "@/components/auth/SigningOutOverlay";
 import { withDeadline } from "@/lib/bounded-fetch";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
-import { requestSignOut } from "@/lib/logout-client";
+import { signOutAndBroadcast } from "@/lib/logout-client";
 
 /** A language or blurb save that has not answered (headers and body) by then has failed (round 8). */
 const SAVE_TIMEOUT_MS = 10_000;
@@ -66,11 +66,12 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb, sessio
   // Mirrors LogoutButton: POST /api/auth/logout (idempotent, public path —
   // server revokes the session; a confirmed end sets no cookie). An end the
   // server cannot confirm (round 6: 503 / network) is retried briefly behind an
-  // opaque cover, then navigate to the login surface regardless (intent-honoring).
+  // opaque cover, the other tabs of this session are told once it settles (round 9),
+  // then navigate to the login surface regardless (intent-honoring).
   const handleSignOut = async () => {
     if (signingOut) return;
     setSigningOut(true);
-    await requestSignOut(sessionId);
+    await signOutAndBroadcast(sessionId, "logout");
     router.push("/");
   };
 

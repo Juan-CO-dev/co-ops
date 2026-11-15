@@ -33,10 +33,25 @@ describe("round 7 — every sign-out caller names its session", () => {
     for (const use of uses) expect(use, use.path).toMatchObject({ tag: expect.stringMatching(/sessionId=\{[^}]+\}/) });
   });
 
-  it("every requestSignOut call passes a session id (there is no unnamed sign-out)", () => {
-    const calls = SOURCES.flatMap(({ path, text }) => [...text.matchAll(/requestSignOut\(([^)]*)\)/g)].map((m) => ({ path, arg: m[1]!.trim() })));
+  it("every sign-out call passes a session id and a kind (there is no unnamed sign-out)", () => {
+    // Round 9: the surfaces call the shared signOutAndBroadcast(sessionId, kind), which wraps requestSignOut.
+    const calls = SOURCES.flatMap(({ path, text }) =>
+      [...text.matchAll(/signOutAndBroadcast\(([^)]*)\)/g)].map((m) => ({ path, args: m[1]!.split(",").map((a) => a.trim()) })),
+    );
     expect(calls.length).toBeGreaterThanOrEqual(4); // LogoutButton, UserMenu, the idle sign-out, Log out now
-    for (const call of calls) expect(call, call.path).toMatchObject({ arg: expect.stringMatching(/\S/) });
+    expect(calls.map((c) => c.path)).toEqual(
+      expect.arrayContaining(["components/auth/LogoutButton.tsx", "components/UserMenu.tsx", "components/auth/IdleTimeoutWarning.tsx"]),
+    );
+    for (const call of calls) {
+      expect(call.args, call.path).toHaveLength(2);
+      expect(call.args[0], call.path).toMatch(/\S/);
+      expect(call.args[1], call.path).toMatch(/^"(idle|logout)"$/);
+    }
+  });
+
+  it("round 9: no surface calls requestSignOut directly — every sign-out tells the other tabs", () => {
+    const direct = SOURCES.filter(({ text }) => /requestSignOut\(/.test(text)).map(({ path }) => path);
+    expect(direct).toEqual([]);
   });
 
   it("the session id is required by the type (tsc --noEmit is the gate for this one)", () => {

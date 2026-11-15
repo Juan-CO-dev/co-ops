@@ -37,7 +37,9 @@
  * also clears the cookie, or a network failure) is NOT treated as done: the
  * request is retried with short bounded backoff (lib/logout-client.ts) behind
  * an opaque "Signing out…" cover, and the page still goes to the login page
- * once it settles; the other tabs are told only then.
+ * once it settles; the other tabs are told only then. Since round 9 that
+ * request-then-signal is lib/logout-client.ts signOutAndBroadcast, shared with
+ * LogoutButton and the UserMenu's Sign out (which used to skip the signal).
  * Storage blocked (private mode) = the per-tab clock, as before.
  *
  * The SERVER clock only sees requests (B013): typing for ten minutes with no
@@ -77,7 +79,7 @@ import { useRouter } from "next/navigation";
 import { SigningOutOverlay } from "@/components/auth/SigningOutOverlay";
 import { useTranslation } from "@/lib/i18n/provider";
 import { fetchStatusWithin, type RequestStatus } from "@/lib/bounded-fetch";
-import { requestSignOut } from "@/lib/logout-client";
+import { parseSignedOutSignal, SIGNED_OUT_KEY, signOutAndBroadcast } from "@/lib/logout-client";
 import { rememberSignedInUser, signInHref } from "@/lib/nav-sign-in-return";
 
 const DEFAULT_IDLE_MINUTES = 10; // matches lib/session.ts DEFAULT_IDLE_MINUTES
@@ -95,7 +97,8 @@ const HEARTBEAT_TIMEOUT_MS = 10_000;
 
 const IDLE_ACTIVITY_KEY = "co_ops_last_activity";
 const IDLE_HEARTBEAT_KEY = "co_ops_last_heartbeat";
-const IDLE_SIGNED_OUT_KEY = "co_ops_signed_out";
+/** The cross-tab sign-out signal lives in lib/logout-client.ts (round 9: one place for every sign-out surface). */
+const IDLE_SIGNED_OUT_KEY = SIGNED_OUT_KEY;
 
 const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
 
@@ -133,17 +136,6 @@ export interface IdleTimeoutWarningProps {
   userId?: string;
   /** The session this page was served for — every sign-out names it (rounds 5 + 7); not a credential (dual verification). */
   sessionId: string;
-}
-
-/** The cross-tab sign-out signal: `<ms>:<idle|logout>[:<session id>]`. */
-function signedOutSignal(kind: "idle" | "logout", sessionId: string): string {
-  return `${Date.now()}:${kind}:${sessionId}`;
-}
-
-/** Parse a signal; one written before round 5 names no session and applies to every tab. */
-function parseSignedOutSignal(value: string): { kind: string; sessionId: string | null } {
-  const [, kind = "", sessionId = ""] = value.split(":");
-  return { kind, sessionId: sessionId || null };
 }
 
 export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId, sessionId }: IdleTimeoutWarningProps) {
@@ -228,8 +220,8 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
     setSigningOut(true);
     // Round 6: an unconfirmed end (503, network) is retried briefly; settled either way, the page still leaves (the
     // 503 cleared the cookie, and an orphaned session meets the server's own idle limit).
-    await requestSignOut(sessionId);
-    writeStored(IDLE_SIGNED_OUT_KEY, signedOutSignal("idle", sessionId));
+    // Round 9: the request and the post-settlement signal are the shared signOutAndBroadcast every surface uses.
+    await signOutAndBroadcast(sessionId, "idle");
     router.push(signInHref({ reason: "idle", next: here, forUser: userId }));
   }, [router, userId, sessionId]);
 
@@ -438,9 +430,9 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
     expiredRef.current = true;
     setSigningOut(true);
     // Intent-honoring: an unconfirmed end is retried briefly (round 6), then the page leaves regardless.
-    await requestSignOut(sessionId);
-    // Only now tell the other tabs (round 4, as in expire), naming the session that ended (round 5).
-    writeStored(IDLE_SIGNED_OUT_KEY, signedOutSignal("logout", sessionId));
+    // Only once it settles are the other tabs told (round 4, as in expire), naming the session that ended (round 5) —
+    // inside the shared signOutAndBroadcast (round 9).
+    await signOutAndBroadcast(sessionId, "logout");
     router.push("/");
   }, [router, sessionId]);
 
