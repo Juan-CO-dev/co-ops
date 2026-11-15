@@ -123,6 +123,9 @@ const KNOWN_ERROR_CODES = new Set([
   "use_rehire",
   "rehire_match",
   "rehire_permission_required",
+  // Confirm-your-email (audit W07 B053).
+  "email_already_confirmed",
+  "email_confirm_not_available",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {

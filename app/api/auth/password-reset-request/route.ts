@@ -19,7 +19,20 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *     "email_not_verified"    user exists but email_verified=false (must verify first)
  *     "email_sent"            token inserted, Resend accepted send
  *     "email_failed"          token inserted, Resend rejected (network/quota/etc.)
- *     "insert_failed"         token row insert failed (rare; DB transient)
+ *     "insert_failed"         the link could not be issued (rare; DB transient) — nothing is mailed
+ *     "email_changed" / "credential_changed"  (and the four above, with `rechecked: "under_lock"`): the account
+ *                             stopped being the one this request read before the link was issued — see below
+ *
+ * THE LINK IS ISSUED IN ONE LOCKED STEP (audit W07, review round 1 — completes B052 / B157).
+ *   This route used to read the account and then insert its token in a separate request. An admin's email change
+ *   that committed in between had already retired the person's reset links — before this one existed — and the
+ *   route went on to mail a usable link to the OLD address; the same gap let a link land behind a reset's or an
+ *   admin password set's "retire every open link". Migration 0307's `auth_password_reset_issue` now does the
+ *   insert: under the per-person lock and the users row lock every retirer holds, it re-checks on the LOCKED row
+ *   the email this request looked up, the password hash it read and the account's eligibility. Refused = nothing
+ *   inserted, nothing mailed, the same constant 200. Any other failure of that call fails CLOSED the same way (the
+ *   route never falls back to its own insert while the function exists). Only while 0307 is NOT applied
+ *   (PGRST202 / 42883) does the pre-0307 insert below still run, so the route works before the apply.
  *
  * Rate limiting is intentionally absent at this phase. Per the Phase 2 Session 3
  * scope decision, constant-shape responses prevent enumeration; per-IP rate
@@ -37,12 +50,18 @@ import { ROLES, type RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
 import { checkAndRecord } from "@/lib/portal/rate-limit";
+import {
+  PASSWORD_RESET_EXPIRES_HOURS,
+  isMissingRpc,
+  passwordResetIssueCall,
+  passwordResetIssueRefusal,
+} from "@/lib/auth-lockout-shared";
 
 interface ResetReqBody {
   email: string;
 }
 
-const RESET_EXPIRES_HOURS = 1;
+const RESET_EXPIRES_HOURS = PASSWORD_RESET_EXPIRES_HOURS;
 
 function isResetReqBody(raw: unknown): raw is ResetReqBody {
   if (typeof raw !== "object" || raw === null) return false;
@@ -91,13 +110,15 @@ export async function POST(req: NextRequest) {
   const sb = getServiceRoleClient();
   const { data: user } = await sb
     .from("users")
-    .select("id, role, active, email_verified")
+    .select("id, role, active, email_verified, password_hash")
     .eq("email", normalizedEmail)
     .maybeSingle<{
       id: string;
       role: RoleCode;
       active: boolean;
       email_verified: boolean;
+      /** Read ONLY to hand back to the issuer (the password generation this request saw). Never logged or audited. */
+      password_hash: string | null;
     }>();
 
   // Negative dispositions: audit + constant 200
@@ -128,38 +149,91 @@ export async function POST(req: NextRequest) {
 
   if (!user) return constantOk(); // narrow for TS; unreachable
 
-  // Generate + insert + send
+  // Generate + issue + send
   const rawToken = generateToken();
   const tokenHash = await hashToken(rawToken);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + RESET_EXPIRES_HOURS * 3600 * 1000);
 
-  const { data: inserted, error: insertErr } = await sb
-    .from("password_resets")
-    .insert({
-      user_id: user.id,
-      token_hash: tokenHash,
-      expires_at: expiresAt.toISOString(),
-    })
-    .select("id")
-    .maybeSingle<{ id: string }>();
+  // The link is issued by ONE locked transaction that re-checks, on the locked row, what was read above.
+  const call = passwordResetIssueCall({
+    userId: user.id,
+    email: normalizedEmail,
+    seenPasswordHash: user.password_hash ?? null,
+    tokenHash,
+    expiresAt: expiresAt.toISOString(),
+  });
+  const { data: issuedData, error: issueErr } = await sb.rpc(call.fn, call.args);
 
-  if (insertErr || !inserted) {
+  let inserted: { id: string } | null = null;
+  /** The address the link is for: the LOCKED row's (equal to the requested one, by the issuer's own check). */
+  let mailTo = normalizedEmail;
+
+  if (issueErr && isMissingRpc(issueErr)) {
+    // Migration 0307 is not applied yet: the pre-0307 insert, unchanged (the issuance race stays open until the apply).
+    console.warn("[auth/password-reset-request] auth_password_reset_issue is not installed (migration 0307 not applied): using the pre-0307 insert");
+    const { data: legacyRow, error: insertErr } = await sb
+      .from("password_resets")
+      .insert({
+        user_id: user.id,
+        token_hash: tokenHash,
+        expires_at: expiresAt.toISOString(),
+      })
+      .select("id")
+      .maybeSingle<{ id: string }>();
+    if (insertErr || !legacyRow) {
+      await audit({
+        actorId: user.id,
+        actorRole: user.role,
+        action: "auth_password_reset_requested",
+        resourceTable: "password_resets",
+        resourceId: null,
+        metadata: {
+          outcome: "insert_failed",
+          requested_email: normalizedEmail,
+          error: insertErr?.message ?? "no row returned",
+        },
+        ipAddress,
+        userAgent,
+      });
+      return constantOk();
+    }
+    inserted = legacyRow;
+  } else if (issueErr) {
+    // A named refusal: the account changed between the read above and the lock (an email change, a password
+    // reset, a demotion, a deactivation). Anything else: the call failed. Either way NOTHING was inserted, so
+    // nothing is mailed — and there is no fallback insert behind a function that exists.
+    const refusal = passwordResetIssueRefusal(issueErr.message);
     await audit({
       actorId: user.id,
       actorRole: user.role,
       action: "auth_password_reset_requested",
       resourceTable: "password_resets",
       resourceId: null,
-      metadata: {
-        outcome: "insert_failed",
-        requested_email: normalizedEmail,
-        error: insertErr?.message ?? "no row returned",
-      },
+      metadata: refusal
+        ? { outcome: refusal, requested_email: normalizedEmail, rechecked: "under_lock" }
+        : { outcome: "insert_failed", requested_email: normalizedEmail, error: issueErr.code ?? "unknown" },
       ipAddress,
       userAgent,
     });
     return constantOk();
+  } else {
+    const issued = (issuedData ?? {}) as { id?: unknown; email?: unknown };
+    if (typeof issued.id !== "string" || typeof issued.email !== "string" || issued.email === "") {
+      await audit({
+        actorId: user.id,
+        actorRole: user.role,
+        action: "auth_password_reset_requested",
+        resourceTable: "password_resets",
+        resourceId: null,
+        metadata: { outcome: "insert_failed", requested_email: normalizedEmail, error: "no row returned" },
+        ipAddress,
+        userAgent,
+      });
+      return constantOk();
+    }
+    inserted = { id: issued.id };
+    mailTo = issued.email;
   }
 
   const { html, text } = renderPasswordResetEmail({
@@ -167,7 +241,7 @@ export async function POST(req: NextRequest) {
     expiresInHours: RESET_EXPIRES_HOURS,
   });
   const result = await sendEmail({
-    to: normalizedEmail,
+    to: mailTo,
     subject: "Reset your password — CO-OPS",
     html,
     text,
