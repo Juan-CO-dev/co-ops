@@ -14,15 +14,20 @@
  *   C2  a second live row is refused by the index (23505, direct INSERT)
  *   C3  a save on a submitted day refuses report_already_submitted; a v2 day refuses format_mismatch; a missing
  *       day / another shop's id is not_found
- *   C4  self refuses self_evaluation; the trigger refuses a direct self INSERT; superseding an OLD self-written
- *       row (an UPDATE) still works, so a GM can re-grade that person (pins the trigger-not-CHECK choice)
+ *   C4  self refuses self_evaluation (any case); 0309 installs NO trigger on pm_employee_evals (the self INSERT
+ *       trigger is 0310, applied only after the W09 deploy drains: scripts/sql-harness-0310.mjs); superseding an OLD
+ *       self-written row still works, so a GM can re-grade that person
  *   C5  who: the SMM-free level rule (a level-3 actor and a non-member are forbidden); a non-member employee is
  *       invalid_target; a bad gradient is invalid_payload
  *   C6  B059 in SQL: save_pm_copy_grade / save_pm_copy_note / add_pm_copy_position refuse subject_is_author; grading
  *       another subject still succeeds; a sealed copy still answers its lifecycle code first
  *   C7  the re-emitted writers equal 0271's bodies plus exactly ONE line; grants, definer, pinned search_path,
- *       service_role only, the trigger function not callable, the PM ceilings unchanged
+ *       service_role only, the PM ceilings unchanged
  *   C8  the eval writer locks the day row FOR NO KEY UPDATE and never notifies
+ *   C9  OLD WRITER / NEW SCHEMA (W09 fix round 2): the deployed origin/main writer (supersede UPDATE, then INSERT, as
+ *       two separate statements, no self check) replayed against 0309: a normal save still works; a concurrent
+ *       duplicate only 23505s and always leaves exactly one live eval; a self save still lands (nothing is lost:
+ *       the reason the INSERT trigger waits for 0310); the new writer's self refusal keeps the GM's live eval
  * The two-session proof (a concurrent save WAITS on the day-row lock and then supersedes) cannot run in one
  * PGlite session: scripts/sim/pm-0309-lock-check-management.mjs, run by CC on SIM.
  */
@@ -139,13 +144,15 @@ try {
 
   // ── C4 self ──
   await refuses(() => save(khA, R1, khA), "self_evaluation", "C4 the writer refuses evaluating yourself");
-  await refuses(() => evalRow(R1, slA, slA, "2026-10-02T22:00:00Z"), "self_evaluation", "C4 the trigger refuses a direct self INSERT");
+  // W09 fix round 2: the self INSERT trigger moved to 0310 (the old app's two-call writer would lose the GM's row).
+  check((await db.query("select count(*)::int as n from pg_trigger where tgrelid = 'public.pm_employee_evals'::regclass and not tgisinternal")).rows[0].n === 0
+    && (await db.query("select to_regprocedure('public.pm_employee_evals_no_self()') is null as gone")).rows[0].gone === true,
+    "C4 0309 installs no trigger on pm_employee_evals (the self INSERT trigger is 0310)");
   // W09 fix round 1: case can't dodge the self checks. Every identity compare in 0309 is uuid-typed, and an
-  // uppercased uuid literal parses to the same uuid, so the writer and the trigger refuse it too.
+  // uppercased uuid literal parses to the same uuid, so the writer refuses it too.
   check(/[a-f]/.test(khA) && /[a-f]/.test(slA), "C4b the generated ids carry letters (so uppercasing changes them)");
   await refuses(() => save(khA, R1, khA.toUpperCase()), "self_evaluation", "C4b the writer refuses an UPPERCASE own id");
   await refuses(() => save(khA.toUpperCase(), R1, khA), "self_evaluation", "C4b the writer refuses an UPPERCASE actor id naming itself");
-  await refuses(() => evalRow(R1, slA.toUpperCase(), slA, "2026-10-02T22:00:01Z"), "self_evaluation", "C4b the trigger refuses an UPPERCASE self INSERT");
   const regrade = await save(gmA, R0, khA);
   const lk = await live(R0, khA);
   check(regrade.superseded === 1 && lk.length === 1 && lk[0].author_id === gmA,
@@ -195,9 +202,6 @@ try {
     check(r && r.d === true && JSON.stringify(r.c) === JSON.stringify(["search_path=pg_catalog, public"]) && !r.a && !r.u && r.s,
       `C7 ${fn.split("(")[0]}: SECURITY DEFINER, search_path pinned, service_role only`);
   }
-  const trig = (await db.query(`select has_function_privilege('service_role', 'public.pm_employee_evals_no_self()'::regprocedure, 'EXECUTE') as s,
-    has_function_privilege('authenticated', 'public.pm_employee_evals_no_self()'::regprocedure, 'EXECUTE') as u`)).rows[0];
-  check(!trig.s && !trig.u, "C7 the trigger function is callable by nobody but the trigger");
   let ceilingOk = true;
   for (const [t, allowed] of [["pm_employee_evals", ["SELECT", "INSERT", "UPDATE"]], ["pm_reports", ["SELECT", "INSERT", "UPDATE"]],
     ["pm_copy_grades", ["SELECT"]], ["pm_copy_notes", ["SELECT"]], ["pm_copy_positions", ["SELECT"]]]) {
@@ -214,6 +218,54 @@ try {
   check(/from public\.pm_reports where id = p_report and superseded_at is null for no key update/.test(src)
     && src.indexOf("for no key update") < src.indexOf("update public.pm_employee_evals"), "C8 the day row is locked FOR NO KEY UPDATE before any eval write");
   check(!/notifications|enqueue/i.test(M0309.replace(/^--.*$/gm, "")) && !/notification/i.test(src), "C8 no 0309 statement writes a notification; the eval writer never mentions one");
+
+  // ── C9 the OLD writer (origin/main lib/pm-report.ts saveEmployeeEval) against the 0309 schema ──
+  // It runs as service_role through PostgREST: one UPDATE (supersede the live row), then, as a SEPARATE call, one
+  // INSERT. Each statement commits on its own, so interleaving them here replays two racing requests exactly.
+  const asService = async (fn) => { await db.exec("set role service_role"); try { return await fn(); } finally { await db.exec("reset role"); } };
+  const oldSupersede = (report, emp) => asService(() => db.query(
+    "update public.pm_employee_evals set superseded_at = clock_timestamp() where pm_report_id = $1 and employee_id = $2 and superseded_at is null",
+    [report, emp]));
+  const oldInsert = (report, emp, author) => asService(() => id(`insert into public.pm_employee_evals
+      (pm_report_id, location_id, employee_id, arrived_ready, attitude, production, team_player, area_to_improve, note, author_id)
+      values ($1, $2, $3, 'good', 'great', 'good', 'good', null, null, $4) returning id`, [report, SA, emp, author]));
+  const oldSave = async (actor, report, emp) => { await oldSupersede(report, emp); return oldInsert(report, emp, actor); };
+
+  const R9 = await day();
+  const first = await oldSave(gmA, R9, empA);
+  const again = await oldSave(khA, R9, empA);
+  const l9 = await live(R9, empA);
+  check(l9.length === 1 && l9[0].id === again && l9[0].id !== first, "C9 an old-path save still works on 0309 (supersede, then insert: one live eval, the newest)");
+
+  // Race 1: both requests supersede (nothing yet), then both insert: the second INSERT is the index's 23505.
+  await oldSupersede(R9, emp2); await oldSupersede(R9, emp2);
+  const winner = await oldInsert(R9, emp2, gmA);
+  await refuses(() => oldInsert(R9, emp2, khA), "23505", "C9 a concurrent old-path duplicate (supersede, supersede, insert, insert) only 23505s");
+  const r1 = await live(R9, emp2);
+  check(r1.length === 1 && r1[0].id === winner, "C9 ... and leaves exactly one live eval (the first insert)");
+
+  // Race 2: A supersedes the live row, B supersedes nothing, B inserts, A's insert 23505s: B's row is live, never none.
+  await oldSupersede(R9, emp2); await oldSupersede(R9, emp2);
+  const bRow = await oldInsert(R9, emp2, khA);
+  await refuses(() => oldInsert(R9, emp2, gmA), "23505", "C9 the interleaving where the loser's supersede ran first also only 23505s");
+  const r2 = await live(R9, emp2);
+  check(r2.length === 1 && r2[0].id === bRow, "C9 ... and a 23505 always leaves one live eval (another live row is what it collided with)");
+
+  // The old path has no self check and 0309 adds no INSERT refusal: a self save LANDS, as it does today, and the
+  // pair keeps a live eval. (Under 0310's trigger the INSERT would be refused AFTER the supersede committed:
+  // no live eval left. That is why 0310 waits for the W09 deploy to drain.)
+  const gmOfKh = await oldSave(gmA, R9, khA);
+  const selfRow = await oldSave(khA, R9, khA);
+  const r3 = await live(R9, khA);
+  check(r3.length === 1 && r3[0].id === selfRow && gmOfKh !== selfRow,
+    "C9 an old-path self save still lands on 0309 (no INSERT refusal yet): the pair is never left with no live eval");
+
+  // The W09 writer refuses self_evaluation BEFORE it supersedes anything, in one transaction: the GM's row stays.
+  const R10 = await day();
+  const gmRow = (await save(gmA, R10, khA)).id;
+  await refuses(() => save(khA, R10, khA), "self_evaluation", "C9 the W09 writer refuses a self save");
+  const r4 = await live(R10, khA);
+  check(r4.length === 1 && r4[0].id === gmRow && r4[0].author_id === gmA, "C9 ... and the GM's live eval is untouched by the refusal");
 } finally {
   await db.close();
 }

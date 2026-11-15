@@ -1,5 +1,7 @@
 -- Migration 0309_pm_reviews_self_and_atomic_eval
 -- AUTHORED 2026-11-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0271; BEFORE the W09 PR merges).
+-- ROLLOUT (enforced order, W09 fix round 2): apply 0309 -> merge + deploy the W09 PR -> older deployments drain -> apply 0310.
+--   0309 is safe for the deployed (old) app; the self-evaluation INSERT trigger is NOT here: it is 0310, see CONSUMERS.
 -- Provenance: CO-OPS bug audit wave W09 (manager shift reviews: privacy and fairness) — B059, B060, B164.
 --   Owner decisions (2026-11-15): W09-3 (a) nobody evaluates themselves or names themselves MVP, either format;
 --   W09-4 (a) where two live v1 evaluations exist for one (report, employee), KEEP THE NEWEST; evaluations people
@@ -12,41 +14,49 @@
 --      (W09-4 a), under a SHARE ROW EXCLUSIVE lock on the table so no writer can add a duplicate between the
 --      collapse and the index. One audit row (pm_report.eval_duplicate_collapse, destructive, ids only) records
 --      exactly which rows were superseded; when there are none, nothing is written.
---   2. pm_employee_evals_no_self — a BEFORE INSERT trigger refusing author_id = employee_id ('self_evaluation',
---      B060). INSERT only, on purpose: superseding an OLD self-written row (an UPDATE of superseded_at) must keep
---      working so a GM can re-grade that person. A CHECK ... NOT VALID would be checked on that UPDATE and break it.
---   3. save_pm_employee_eval — the v1 evaluation writer (B164 + B060): locks the DAY ROW (FOR NO KEY UPDATE, the
+--   2. save_pm_employee_eval — the v1 evaluation writer (B164 + B060): locks the DAY ROW (FOR NO KEY UPDATE, the
 --      house mode for new parent locks), then judges, under that lock: the day exists at that shop (not_found),
 --      is v1 (format_mismatch), the actor is a KH+ member of the shop (forbidden; level only — v1's role and task
 --      rules stay in the lib), the day is open (report_already_submitted), the employee is not the actor
 --      (self_evaluation) and is a member of the shop (invalid_target); then supersedes the live row and inserts
 --      the new one in ONE transaction. submitPmReport's guarded status UPDATE waits on the same row lock, so a save
 --      can no longer land after submit, and two concurrent saves serialize (the second supersedes the first).
---   4. save_pm_copy_grade / save_pm_copy_note / add_pm_copy_position — the three 0271 writers RE-EMITTED
+--   3. save_pm_copy_grade / save_pm_copy_note / add_pm_copy_position — the three 0271 writers RE-EMITTED
 --      IDENTICAL to 0271 but for ONE line after pm_copy_lock: `if p_subject = p_actor then raise exception
 --      'subject_is_author'` (B059). The lifecycle refusals keep their order (who → day → copy state first).
 --
--- CASE: every identity compare here (author_id = employee_id, p_employee = p_actor, p_subject = p_actor) is
---   uuid = uuid, never text, so it is case-insensitive: 'CAFE...' and 'cafe...' parse to one uuid (the harness
---   proves the writers and the trigger refuse an uppercased own id). The lib canonicalizes ids to lowercase before
---   its own self checks (W09 fix round 1). The shift MVP has no SQL backstop (the UPDATE carries no actor); its
---   self check is the lib's, on canonical ids.
+-- NOT HERE (moved to 0310_pm_eval_no_self_trigger, W09 fix round 2): the BEFORE INSERT trigger refusing a
+--   self-written v1 evaluation. See CONSUMERS for why it must wait until the W09 deploy has drained.
+--
+-- CASE: every identity compare here (p_employee = p_actor, p_subject = p_actor) is uuid = uuid, never text, so it
+--   is case-insensitive: 'CAFE...' and 'cafe...' parse to one uuid (the harness proves the writers refuse an
+--   uppercased own id). The lib canonicalizes ids to lowercase before its own self checks (W09 fix round 1). The
+--   shift MVP has no SQL backstop (the UPDATE carries no actor); its self check is the lib's, on canonical ids.
 --
 -- EXISTING ROWS: only the older duplicate live v1 evaluations (if any) are superseded (W09-4 a); nothing is deleted.
 --   Self-written v1 evaluations and v2 self-grades stay as history (the lib hides v2 self rows at read time).
 --
 -- CONSUMERS (the W09 PR): lib/pm-report.ts saveEmployeeEval writes ONLY through save_pm_employee_eval, with NO
---   FALLBACK (the 0278 / 0279 rollout precedent): this file must be on prod BEFORE that PR merges. Before the
---   apply, the deployed (old) code keeps working: the index turns a racing duplicate into a 23505 (500) instead of
---   a second live row, and the lib's own self-evaluation refusal (403) runs before the trigger can.
---   lib/pm-report-v2.ts refuses subject_is_author before calling the three v2 writers.
+--   FALLBACK (the 0278 / 0279 rollout precedent): this file must be on prod BEFORE that PR merges.
+--   THE OLD APP AFTER THIS APPLY (until the W09 deploy drains). The deployed origin/main writer supersedes the live
+--   row and then inserts the new one as TWO separate PostgREST calls, with NO self-evaluation check of its own.
+--   Against 0309 it keeps working (the harness replays exactly that path, C9):
+--     - a normal save supersedes the live row and inserts the new one: one live row, as before;
+--     - a racing duplicate: the second INSERT fails 23505 (a 500 for that request) instead of landing a second live
+--       row; a 23505 means another live row exists, so the pair is never left with no live evaluation;
+--     - a self-evaluation still LANDS through the old path (as it does today): 0309 adds no INSERT refusal on
+--       pm_employee_evals. That is deliberate. An INSERT refusal behind the old path's already-committed supersede
+--       UPDATE would leave NO live evaluation (the GM's row superseded, the self row refused): hence 0310 waits.
+--     - the old v2 lib calls the three re-emitted writers; a self grade/note/position now answers subject_is_author
+--       inside the RPC's one transaction, so nothing is written (write_failed on the old app; a 403 once W09 deploys).
+--   lib/pm-report-v2.ts (W09) refuses subject_is_author before calling the three v2 writers.
 --
 -- DEPENDS ON: 0072/0073 (pm_employee_evals), 0217 (assignment_user_level), 0267 (the PM table ceilings),
 --   0271 (format, the three writers, pm_copy_lock).
 --
 -- IDEMPOTENT: a second apply changes nothing — the collapse finds no duplicates, the index is `if not exists`
---   (its definition is proven by the post-flight), the functions are `create or replace`, the trigger is dropped
---   and re-created, and no audit row is written.
+--   (its definition is proven by the post-flight), the functions are `create or replace`, and no audit row is
+--   written. Re-applying 0309 after 0310 leaves 0310's trigger in place (0309 never touches it).
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select to_regprocedure('public.save_pm_copy_grade(uuid,uuid,uuid,uuid,uuid,text)') is not null,
@@ -62,8 +72,8 @@
 --   select count(*) from (select 1 from public.pm_employee_evals where superseded_at is null
 --     group by pm_report_id, employee_id having count(*) > 1) d;                                    -- 0
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
---    and routine_name in ('save_pm_employee_eval', 'pm_employee_evals_no_self', 'save_pm_copy_grade',
---                         'save_pm_copy_note', 'add_pm_copy_position') order by 1, 2;              -- service_role (+ postgres); no trigger fn grant
+--    and routine_name in ('save_pm_employee_eval', 'save_pm_copy_grade',
+--                         'save_pm_copy_note', 'add_pm_copy_position') order by 1, 2;              -- service_role (+ postgres)
 --   select action, metadata from public.audit_log where action = 'pm_report.eval_duplicate_collapse';  -- one row iff duplicates existed
 --   Then CC runs scripts/sim/pm-0309-lock-check-management.mjs on SIM (two-session proof).
 
@@ -128,18 +138,7 @@ end $$;
 create unique index if not exists pm_employee_evals_one_live
   on public.pm_employee_evals (pm_report_id, employee_id) where superseded_at is null;
 
--- ── 2. no NEW self-written v1 evaluation (INSERT only; see the header) ─────────────────────────
-create or replace function public.pm_employee_evals_no_self() returns trigger
-language plpgsql security definer set search_path = pg_catalog, public as $$
-begin
-  if new.author_id = new.employee_id then raise exception 'self_evaluation'; end if;
-  return new;
-end $$;
-drop trigger if exists pm_employee_evals_no_self on public.pm_employee_evals;
-create trigger pm_employee_evals_no_self before insert on public.pm_employee_evals
-  for each row execute function public.pm_employee_evals_no_self();
-
--- ── 3. the v1 evaluation writer: the day row lock first, then supersede + insert in one transaction ──
+-- ── 2. the v1 evaluation writer: the day row lock first, then supersede + insert in one transaction ──
 create or replace function public.save_pm_employee_eval(
   p_actor uuid, p_report uuid, p_location uuid, p_employee uuid,
   p_arrived_ready text, p_attitude text, p_production text, p_team_player text, p_area text, p_note text)
@@ -180,7 +179,7 @@ begin
   return jsonb_build_object('id', v_id, 'superseded', v_superseded);
 end $$;
 
--- ── 4. the three 0271 writers, re-emitted IDENTICAL but for one line after pm_copy_lock (B059) ──
+-- ── 3. the three 0271 writers, re-emitted IDENTICAL but for one line after pm_copy_lock (B059) ──
 create or replace function public.save_pm_copy_grade(p_actor uuid, p_copy uuid, p_subject uuid, p_position uuid, p_criterion uuid, p_grade text)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_copy public.pm_report_copies%rowtype; v_crit public.pm_criteria%rowtype; v_id uuid; v_superseded integer;
@@ -252,7 +251,6 @@ begin
 end $$;
 
 -- ── GRANTS ─────────────────────────────────────────────────────────────────────────────────────
-revoke all on function public.pm_employee_evals_no_self() from public, anon, authenticated, service_role;
 revoke all on function public.save_pm_employee_eval(uuid, uuid, uuid, uuid, text, text, text, text, text, text) from public, anon, authenticated;
 grant execute on function public.save_pm_employee_eval(uuid, uuid, uuid, uuid, text, text, text, text, text, text) to service_role;
 -- re-asserted for the re-emitted 0271 writers (create or replace keeps them; the post-flight proves it)
@@ -275,16 +273,11 @@ begin
                   and indexdef ~* '^create unique index pm_employee_evals_one_live on public\.pm_employee_evals using btree \(pm_report_id, employee_id\) where \(superseded_at is null\)$') then
     raise exception '0309: pm_employee_evals_one_live is not UNIQUE (pm_report_id, employee_id) WHERE superseded_at IS NULL';
   end if;
-  if not exists (select 1 from pg_trigger where tgname = 'pm_employee_evals_no_self' and tgrelid = 'public.pm_employee_evals'::regclass
-                  and not tgisinternal and tgenabled = 'O') then
-    raise exception '0309: the pm_employee_evals_no_self trigger is missing or disabled';
-  end if;
   foreach f in array array[
     'public.save_pm_employee_eval(uuid, uuid, uuid, uuid, text, text, text, text, text, text)'::regprocedure,
     'public.save_pm_copy_grade(uuid, uuid, uuid, uuid, uuid, text)'::regprocedure,
     'public.save_pm_copy_note(uuid, uuid, uuid, uuid, text)'::regprocedure,
-    'public.add_pm_copy_position(uuid, uuid, uuid, uuid, text)'::regprocedure,
-    'public.pm_employee_evals_no_self()'::regprocedure] loop
+    'public.add_pm_copy_position(uuid, uuid, uuid, uuid, text)'::regprocedure] loop
     if not (select prosecdef from pg_proc where oid = f)
        or not coalesce((select proconfig from pg_proc where oid = f) @> array['search_path=pg_catalog, public'], false) then
       raise exception '0309: % must be SECURITY DEFINER with a pinned search_path', f;
@@ -292,9 +285,7 @@ begin
     if has_function_privilege('anon', f, 'EXECUTE') or has_function_privilege('authenticated', f, 'EXECUTE') then
       raise exception '0309: % is executable by a PostgREST role', f;
     end if;
-    if f = 'public.pm_employee_evals_no_self()'::regprocedure then
-      if has_function_privilege('service_role', f, 'EXECUTE') then raise exception '0309: the trigger function must not be callable'; end if;
-    elsif not has_function_privilege('service_role', f, 'EXECUTE') then
+    if not has_function_privilege('service_role', f, 'EXECUTE') then
       raise exception '0309: service_role cannot execute %', f;
     end if;
   end loop;

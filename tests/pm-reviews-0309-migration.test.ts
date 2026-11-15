@@ -1,7 +1,8 @@
 /**
- * W09 — migration 0309 pinned: the house header, the re-emitted 0271 writers equal to 0271 plus ONE line, the
- * duplicate collapse (keep the newest) before the unique index under a table lock, the INSERT-only trigger (never
- * a CHECK), the eval writer's day-row lock, the grants — and the executable PGlite proof runs green.
+ * W09 — migration 0309 pinned: the house header and the enforced rollout order, the re-emitted 0271 writers equal
+ * to 0271 plus ONE line, the duplicate collapse (keep the newest) before the unique index under a table lock, NO
+ * trigger on pm_employee_evals (the self INSERT trigger is 0310, after the W09 deploy drains: fix round 2), the eval
+ * writer's day-row lock, the grants — and the executable PGlite proof (old writer vs new schema included) runs green.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -18,6 +19,7 @@ describe("0309_pm_reviews_self_and_atomic_eval", () => {
     const lines = src.split("\n");
     expect(lines[0]).toBe("-- Migration 0309_pm_reviews_self_and_atomic_eval");
     expect(lines[1]).toMatch(/^-- AUTHORED 2026-11-15\. NOT YET APPLIED — apply via MCP after review \(sim first, prod on Juan's word, AFTER 0271; BEFORE the W09 PR merges\)\.$/);
+    expect(lines[2]).toBe("-- ROLLOUT (enforced order, W09 fix round 2): apply 0309 -> merge + deploy the W09 PR -> older deployments drain -> apply 0310.");
     for (const k of ["-- Provenance:", "-- WHAT:", "-- EXISTING ROWS:", "-- CONSUMERS", "-- DEPENDS ON:", "-- IDEMPOTENT:", "-- PRE-FLIGHT", "-- VERIFY AFTER APPLY:"]) expect(src).toContain(k);
   });
 
@@ -40,9 +42,13 @@ describe("0309_pm_reviews_self_and_atomic_eval", () => {
     expect(src).toContain("'pm_report.eval_duplicate_collapse'");
   });
 
-  it("self-evaluation is refused by an INSERT-only trigger, never a CHECK (superseding an old self row must work)", () => {
-    expect(src).toContain("create trigger pm_employee_evals_no_self before insert on public.pm_employee_evals");
-    expect(src.replace(/^--.*$/gm, "")).not.toMatch(/add constraint|check\s*\(\s*author_id/i);
+  it("0309 adds NO refusal on pm_employee_evals INSERT: the self trigger is 0310 (the old two-call writer would lose the GM's row)", () => {
+    const code = src.replace(/^--.*$/gm, "");
+    expect(code).not.toMatch(/create\s+(or\s+replace\s+)?trigger|pm_employee_evals_no_self|add constraint|check\s*\(\s*author_id/i);
+    // the header no longer claims the old app refuses self-evaluation; it says the old path still lands one
+    expect(src).not.toContain("the lib's own self-evaluation refusal (403) runs before the trigger can");
+    expect(src).toContain("a self-evaluation still LANDS through the old path (as it does today)");
+    expect(src).toContain("NOT HERE (moved to 0310_pm_eval_no_self_trigger");
   });
 
   it("the eval writer locks the day row FOR NO KEY UPDATE, then supersedes and inserts; service_role only", () => {
@@ -54,7 +60,6 @@ describe("0309_pm_reviews_self_and_atomic_eval", () => {
     expect(fn).toContain("security definer set search_path = pg_catalog, public");
     expect(src).toContain("revoke all on function public.save_pm_employee_eval(uuid, uuid, uuid, uuid, text, text, text, text, text, text) from public, anon, authenticated;");
     expect(src).toContain("grant execute on function public.save_pm_employee_eval(uuid, uuid, uuid, uuid, text, text, text, text, text, text) to service_role;");
-    expect(src).toContain("revoke all on function public.pm_employee_evals_no_self() from public, anon, authenticated, service_role;");
   });
 
   it("the executable proof (PGlite: the REAL 0072/0073/0267/0270/0271 + 0309) runs green in CI", () => {
@@ -63,6 +68,12 @@ describe("0309_pm_reviews_self_and_atomic_eval", () => {
     expect(out).toContain("C0 the duplicate pair collapsed to the NEWEST live eval (W09-4 a)");
     expect(out).toContain("C1 two saves for one (report, employee) leave exactly one live eval");
     expect(out).toContain("C4 superseding an OLD self-written row still works");
+    expect(out).toContain("C4 0309 installs no trigger on pm_employee_evals");
+    expect(out).toContain("C9 an old-path save still works on 0309");
+    expect(out).toContain("C9 a concurrent old-path duplicate (supersede, supersede, insert, insert) only 23505s");
+    expect(out).toContain("C9 ... and a 23505 always leaves one live eval");
+    expect(out).toContain("C9 an old-path self save still lands on 0309");
+    expect(out).toContain("C9 ... and the GM's live eval is untouched by the refusal");
     expect(out).toContain("PASS 0309:");
   }, 260_000);
 });
