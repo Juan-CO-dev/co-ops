@@ -6,6 +6,7 @@ import { ActionButton } from "@/components/ActionButton";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { CountSkuOption, CountProductOption } from "@/lib/counts";
 import { twinVendorLabels } from "@/lib/counts-shared";
+import { REAUTH_LOCKED_CODE, leaveAfterReauthLock } from "@/lib/auth-reauth-client";
 import type { TranslationKey, TranslationParams } from "@/lib/i18n/types";
 
 /**
@@ -210,6 +211,12 @@ export function CountForm({ skus, products, locationId, requiresPin }: {
     const j = await res.json().catch(() => ({} as { code?: string; detail?: { levelLabel?: string | null; skuName?: string | null; skuId?: string | null } | null }));
     if (j?.code === "pin_invalid") {
       setErr(t("auth.pin_modal.error_pin_mismatch"));
+      return;
+    }
+    if (j?.code === REAUTH_LOCKED_CODE) {
+      // Five wrong PINs in a row: the server signed this session out (audit W07 B159).
+      setErr(t("auth.reauth.signed_out"));
+      leaveAfterReauthLock();
       return;
     }
     if (j?.code === "step_up_required" || j?.code === "step_up_stale") {

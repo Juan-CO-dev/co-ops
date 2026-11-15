@@ -78,12 +78,18 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // Sign-in, lockout, token and step-up events. Security-relevant and
   // forensically vital, but not config mutations — the actor is proving who they
   // are, not changing what the kitchen is.
+  // A GM asked for a manager's "confirm your email" link (audit W07 B053). The row records the OUTCOME
+  // (sent / suppressed + which switch / throttled / send_failed) — never the token or the address. Asking is not
+  // a change to the kitchen's configuration; the confirmation itself is auth_email_verified.
+  "user.email_confirm_request",
   "auth_account_locked",
   "auth_email_verified",
   "auth_logout",
   "auth_password_hash_upgraded",
   "auth_password_reset_requested",
   "auth_password_reset_success",
+  // Written by POST /api/auth/pin-confirm, which had no caller and was removed (audit W07 B159: an unthrottled PIN
+  // oracle). Kept in the vocabulary because the name may exist in historical rows; nothing emits it now.
   "auth_pin_confirm_failure",
   "auth_pin_confirm_success",
   "auth_signin_password_failure",
@@ -381,6 +387,9 @@ export const RESERVED_ACTIONS = [
   // (LRA-001 credential columns readable, LRA-214 self-promotion via PATCH) and INSERTs its own
   // audit row with destructive=true literally. Grant changes never go through app code.
   "security.grants_change",
+  // SQL-only: migration 0307 (audit W07 B053) marks already-promoted managers' emails verified and INSERTs its own
+  // audit row (destructive literally true, actor_context migration_apply). No TypeScript call site.
+  "user.email_vouch_backfill",
   // SQL-only: 0201 atomically imports one reviewed Angel price/pack/weight bundle.
   "sku.angel_import",
   // Convention documented in AGENTS.md, written by hand during incident recovery
