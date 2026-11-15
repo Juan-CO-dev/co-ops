@@ -90,6 +90,7 @@ describe("POST /api/auth/password-reset (B156 / B157)", () => {
     ["token_consumed", "auth_token_consumed_replay"],
     ["token_expired", "auth_token_expired"],
     ["token_invalid", "auth_token_invalid"],
+    ["email_changed", "auth_token_invalid"], // review round 1: the link was issued for an address the account has left
   ])("a link that changed under the lock (%s) → the constant 400 and its own audit row", async (message, action) => {
     const sb = wire({ error: { code: "P0001", message } });
     const res = await POST(request());

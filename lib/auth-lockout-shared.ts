@@ -75,6 +75,50 @@ export const createSessionCall = (a: {
 export const passwordResetConsumeCall = (a: { tokenHash: string; passwordHash: string }) =>
   ({ fn: "auth_password_reset_consume", args: { p_token_hash: a.tokenHash, p_password_hash: a.passwordHash } }) as const;
 
+/** How long a self-service reset link lasts. `auth_password_reset_issue` (0307) refuses an expiry beyond 2 hours. */
+export const PASSWORD_RESET_EXPIRES_HOURS = 1;
+
+/**
+ * `auth_password_reset_issue`'s arguments (0307, fix round 1 of B052 / B157), by name. The route passes what it READ —
+ * the account's id, the email it was looked up by, the password hash that was stored then — and the function issues
+ * the link only while all of it is still true ON THE LOCKED ROW (and the account is still eligible). The token
+ * travels as its SHA-256 HASH only.
+ */
+export const passwordResetIssueCall = (a: { userId: string; email: string; seenPasswordHash: string | null; tokenHash: string; expiresAt: string }) =>
+  ({
+    fn: "auth_password_reset_issue",
+    args: { p_user: a.userId, p_email: a.email, p_seen_password_hash: a.seenPasswordHash, p_token_hash: a.tokenHash, p_expires_at: a.expiresAt },
+  }) as const;
+
+/**
+ * The issuer's named refusals: the account stopped being the one the request read between that read and the lock.
+ * Each becomes the request's audited `outcome`; the HTTP answer stays the constant 200 and NOTHING is mailed.
+ */
+export const PASSWORD_RESET_ISSUE_REFUSALS = [
+  "user_not_found", "email_changed", "user_inactive", "role_not_email_auth", "email_not_verified", "credential_changed",
+] as const;
+export type PasswordResetIssueRefusal = (typeof PASSWORD_RESET_ISSUE_REFUSALS)[number];
+export function passwordResetIssueRefusal(message: string | null | undefined): PasswordResetIssueRefusal | null {
+  return (PASSWORD_RESET_ISSUE_REFUSALS as readonly string[]).includes(message ?? "") ? (message as PasswordResetIssueRefusal) : null;
+}
+
+/** `auth_email_confirm_consume`'s arguments (0307, fix round 1 of B053), by name: both are HASHES, never a token or a password. */
+export const emailConfirmConsumeCall = (a: { tokenHash: string; passwordHash: string }) =>
+  ({ fn: "auth_email_confirm_consume", args: { p_token_hash: a.tokenHash, p_password_hash: a.passwordHash } }) as const;
+
+/**
+ * The confirm consumer's named refusals. The first three are the link's own state (re-checked under the lock); the
+ * rest are the PERSON's eligibility on the locked row. Every one of them leaves the link, the password and the
+ * verification exactly as they were.
+ */
+export const EMAIL_CONFIRM_CONSUME_REFUSALS = [
+  "token_invalid", "token_consumed", "token_expired", "role_not_email_auth", "email_changed", "account_inactive",
+] as const;
+export type EmailConfirmConsumeRefusal = (typeof EMAIL_CONFIRM_CONSUME_REFUSALS)[number];
+export function emailConfirmConsumeRefusal(message: string | null | undefined): EmailConfirmConsumeRefusal | null {
+  return (EMAIL_CONFIRM_CONSUME_REFUSALS as readonly string[]).includes(message ?? "") ? (message as EmailConfirmConsumeRefusal) : null;
+}
+
 /** `auth_email_confirm_issue`'s arguments (0307, B053), by name. The token travels as its SHA-256 HASH only. */
 export const emailConfirmIssueCall = (a: { actorId: string; userId: string; tokenHash: string; expiresAt: string }) =>
   ({ fn: "auth_email_confirm_issue", args: { p_actor: a.actorId, p_user: a.userId, p_token_hash: a.tokenHash, p_expires_at: a.expiresAt } }) as const;

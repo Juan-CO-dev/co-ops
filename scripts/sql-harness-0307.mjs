@@ -24,14 +24,25 @@
  *        one live link at a time; an email change retires it; the backfill vouches exactly the stranded managers
  *   B159 the per-session re-check counter: five reservations, the sixth revokes the session; a success clears it
  *   S8   the re-emitted 0279 writers still take the ONE gate (user_admin_lock) and no lock of their own
+ *   R1   (fix round 1) a reset link is ISSUED by one locked step: a request that read the account before an email
+ *        change, an admin password set or a reset is refused and inserts nothing; a link issued first is retired
+ *        by the change; a link is good only for the address it was issued for
+ *   R2   (fix round 1) "confirm your email" is ONE transaction: an email change, a demotion or a deactivation that
+ *        lands during the confirmation refuses it and writes nothing; a failed write leaves the link usable
+ *
+ * PGlite is ONE connection, so R1 / R2 run each interleaving in the order its statements COMMIT (read → the other
+ * writer → the function). What they cannot show is two sessions WAITING on each other: that is the lock order,
+ * asserted here by what each function holds inside its transaction (the per-person advisory key and the users row),
+ * and proven with two real sessions on the sim by CC, as for 0279.
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import {
   FAILURE_LIMIT, LOCKOUT_MINUTES, REAUTH_LIMIT, createSessionCall, emailConfirmIssueCall, parseAttemptReservation, parseReauthReservation,
   passwordResetConsumeCall, reauthExhausted, reserveAttemptCall, sessionReauthClearCall, sessionReauthReserveCall,
+  EMAIL_CONFIRM_CONSUME_REFUSALS, PASSWORD_RESET_EXPIRES_HOURS, PASSWORD_RESET_ISSUE_REFUSALS, emailConfirmConsumeCall, passwordResetIssueCall,
 } from "../lib/auth-lockout-shared.ts";
-import { setUserCredentialCall, setUserRoleCall, updateUserProfileCall } from "../lib/admin/user-admin-rpc-shared.ts";
+import { setUserActiveCall, setUserCredentialCall, setUserRoleCall, updateUserProfileCall } from "../lib/admin/user-admin-rpc-shared.ts";
 
 const read = (p) => readFileSync(p, "utf8");
 const STUB = read("tests/fixtures/scheduling-pglite-stub.sql");
@@ -62,7 +73,8 @@ const FNS = ["auth_reserve_attempt(uuid)", "increment_failed_login(uuid)",
   "auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text)",
   "auth_password_reset_consume(text, text)", "admin_user_set_credential(uuid, uuid, text, text)",
   "admin_user_update_profile(uuid, uuid, jsonb)", "auth_email_confirm_issue(uuid, uuid, text, timestamptz)",
-  "session_reauth_reserve(uuid)", "session_reauth_clear(uuid)"];
+  "session_reauth_reserve(uuid)", "session_reauth_clear(uuid)",
+  "auth_password_reset_issue(uuid, text, text, text, timestamptz)"];
 /** The 0279 writers 0307 re-emits (each must still take the one gate). */
 const REEMITTED = ["admin_user_set_credential", "admin_user_update_profile"];
 
@@ -528,6 +540,135 @@ try {
       await db.exec("reset role");
     }
   }
+
+  // ════ FIX ROUND 1 ════
+  let hexSeq = 0;
+  const sha = () => (0xf00000 + ++hexSeq).toString(16).padStart(64, "0"); // sha256-hex shaped, synthetic
+  const inHours = (h) => new Date(Date.now() + h * 3600_000).toISOString();
+  /** What the route READS before it asks for a link: the account's id, the email it was looked up by, the stored hash. */
+  const readAccount = async (email) => one("select id, email, password_hash from public.users where email = $1", [email]);
+  /** The exact call POST /api/auth/password-reset-request makes with that read. */
+  const issueReset = (seen, over = {}) => {
+    const tokenHash = over.tokenHash ?? sha();
+    return rpc(passwordResetIssueCall({ userId: seen.id, email: seen.email, seenPasswordHash: seen.password_hash,
+      expiresAt: inHours(PASSWORD_RESET_EXPIRES_HOURS), ...over, tokenHash })).then((r) => ({ r, tokenHash }));
+  };
+  const openResets = async (u) => (await one("select count(*)::int as n from public.password_resets where user_id = $1 and consumed_at is null", [u])).n;
+  const allResets = async (u) => (await one("select count(*)::int as n from public.password_resets where user_id = $1", [u])).n;
+  /**
+   * What a function HOLDS inside its own transaction: the per-person advisory key (the one 0279's gate takes) and
+   * the users row (FOR UPDATE stamps xmax with this transaction; a write makes it the new version's xmin).
+   */
+  const heldLocks = async (u, run) => {
+    await db.exec("begin");
+    try {
+      await run();
+      return await one(`select
+        (select count(*)::int from pg_locks where locktype = 'advisory' and granted and pid = pg_backend_pid()) as advisory_total,
+        (select count(*)::int from pg_locks where locktype = 'advisory' and granted and pid = pg_backend_pid()
+            and ((classid::bigint << 32) | objid::bigint) = hashtextextended('user-employment/' || $1::text, 0)) as advisory_person,
+        (select xmax::text = (txid_current() % 4294967296)::text or xmin::text = (txid_current() % 4294967296)::text
+           from public.users where id = $1::uuid) as row_locked`, [u]);
+    } finally { await db.exec("rollback"); }
+  };
+
+  // ── R1: a reset link is issued by ONE locked step with the retirers (B052 / B157, review P2 #1) ──
+  {
+    // (the bug, kept as the reason the route no longer inserts by itself) read → email change → a PLAIN insert: the
+    // change's retirement ran before the row existed, so the old mailbox holds a link the consumer accepts.
+    const v = await user("agm", { email: "victim-old@example.test", password_hash: HASH("victim-pw"), email_verified: true });
+    await member(v, SA);
+    const stale = await readAccount("victim-old@example.test");
+    await rpc(updateUserProfileCall({ actorId: gm, userId: v, patch: { email: "victim-new@example.test" } }));
+    const escaped = await resetLink(stale.id); // the pre-fix route: its own insert, after the pause
+    const took = await consume(escaped, HASH("attacker-pw"));
+    check(took.user_id === v && (await one("select password_hash from public.users where id = $1", [v])).password_hash === HASH("attacker-pw"),
+      "R1 (the bug) read → email change → a plain insert: the old address's link sets the password of the account at the new address");
+
+    // the fix, same interleaving: the function revalidates the email it was given on the LOCKED row
+    const u = await user("agm", { email: "mgr-old@example.test", password_hash: HASH("mgr-pw"), email_verified: true });
+    await member(u, SA);
+    const seen = await readAccount("mgr-old@example.test");
+    await rpc(updateUserProfileCall({ actorId: gm, userId: u, patch: { email: "mgr-new@example.test" } }));
+    await refuses(() => issueReset(seen), "email_changed", "R1 read → email change → issue: a request that read the old address is refused");
+    check((await allResets(u)) === 0, "R1 … and no reset link was inserted for the old address");
+
+    // the other order: the link is issued first, THEN the email changes — the change retires it (B052, now complete)
+    const now = await readAccount("mgr-new@example.test");
+    const first = await issueReset(now);
+    const stored = await one("select user_id, issued_email, consumed_at, expires_at > now() as live from public.password_resets where id = $1", [first.r.id]);
+    check(first.r.email === "mgr-new@example.test" && first.r.role === "agm" && stored.user_id === u && stored.issued_email === "mgr-new@example.test"
+      && stored.consumed_at === null && stored.live === true,
+      "R1 an eligible request issues ONE open link, bound to the address on the locked row (returned lowercased)");
+    await rpc(updateUserProfileCall({ actorId: gm, userId: u, patch: { email: "mgr-third@example.test" } }));
+    check((await openResets(u)) === 0, "R1 issue → email change: the change retires the link that was just issued");
+    await refuses(() => consume(first.tokenHash, HASH("attacker-pw")), "token_consumed", "R1 … and that link can no longer set the password");
+
+    // the binding itself: even a link that somehow ESCAPED retirement is good only for the address it was issued for
+    await db.query("update public.password_resets set consumed_at = null where id = $1", [first.r.id]);
+    await refuses(() => consume(first.tokenHash, HASH("attacker-pw")), "email_changed", "R1 a link issued for another address is refused by the consumer, retired or not");
+    check((await one("select password_hash from public.users where id = $1", [u])).password_hash === HASH("mgr-pw")
+      && !(await linkConsumed(first.tokenHash)), "R1 … the password is unchanged (and the refusal consumed nothing)");
+    await db.query("update public.password_resets set consumed_at = now() where id = $1", [first.r.id]);
+
+    // the reset generation: read → an ADMIN password set (which retires open links) → issue
+    const g = await user("agm", { email: "gen@example.test", password_hash: HASH("gen-0"), email_verified: true });
+    await member(g, SA);
+    const beforeAdminSet = await readAccount("gen@example.test");
+    await rpc(setUserCredentialCall({ actorId: gm, userId: g, kind: "password", hash: HASH("gen-1") }));
+    await refuses(() => issueReset(beforeAdminSet), "credential_changed", "R1 read → admin password set → issue: the request read an older password generation");
+    // … and read → a self-service RESET (which retires every open link) → issue
+    const viaLink = await issueReset(await readAccount("gen@example.test"));
+    const beforeReset = await readAccount("gen@example.test");
+    await consume(viaLink.tokenHash, HASH("gen-2"));
+    await refuses(() => issueReset(beforeReset), "credential_changed", "R1 read → self-service reset → issue: a link can not escape the reset's retirement");
+    check((await openResets(g)) === 0, "R1 … after a reset the person has NO open link (the one used, the others, and none issued late)");
+    // a request made AFTER the change is a new request on the new generation: it is served
+    const fresh = await issueReset(await readAccount("gen@example.test"));
+    check(typeof fresh.r.id === "string" && (await openResets(g)) === 1, "R1 a request that read the account after the reset gets its link");
+    await consume(fresh.tokenHash, HASH("gen-3"));
+
+    // eligibility is judged on the locked row, not on the request's read
+    const e = await user("agm", { email: "elig@example.test", password_hash: HASH("elig"), email_verified: true });
+    await member(e, SA);
+    const seenE = await readAccount("elig@example.test");
+    await rpc(setUserRoleCall({ actorId: gm, userId: e, role: "shift_lead" }));
+    await refuses(() => issueReset(seenE), "role_not_email_auth", "R1 read → demotion below manager → issue");
+    await rpc(setUserRoleCall({ actorId: gm, userId: e, role: "agm" }));
+    await rpc(setUserActiveCall({ actorId: gm, userId: e, active: false }));
+    await refuses(() => issueReset(seenE), "user_inactive", "R1 read → deactivation → issue");
+    await db.query("update public.users set active = true, email_verified = false where id = $1", [e]);
+    await refuses(() => issueReset(seenE), "email_not_verified", "R1 an unconfirmed email gets no reset link");
+    await refuses(() => issueReset({ ...seenE, id: "00000000-0000-4000-8000-000000000000" }), "user_not_found", "R1 an unknown user");
+    check((await allResets(e)) === 0, "R1 … and no refused request left a link behind");
+    check(JSON.stringify([...PASSWORD_RESET_ISSUE_REFUSALS].sort()) === JSON.stringify(["credential_changed", "email_changed", "email_not_verified", "role_not_email_auth", "user_inactive", "user_not_found"]),
+      "R1 every refusal exercised above is one the lib names (PASSWORD_RESET_ISSUE_REFUSALS)");
+
+    // the payload rules: a hash, never a raw token; a short life
+    await db.query("update public.users set email_verified = true where id = $1", [e]);
+    const ok = await readAccount("elig@example.test");
+    await refuses(() => issueReset(ok, { tokenHash: "raw-token-not-a-hash" }), "invalid_payload", "R1 anything but a sha-256 hex digest is refused (never a raw token)");
+    await refuses(() => issueReset(ok, { expiresAt: inHours(-1) }), "invalid_payload", "R1 an expiry in the past is refused");
+    await refuses(() => issueReset(ok, { expiresAt: inHours(3) }), "invalid_payload", "R1 an expiry beyond 2 hours is refused");
+    await refuses(() => issueReset({ ...ok, email: "  " }), "invalid_payload", "R1 a blank email is refused");
+    // case and padding never defeat the email check (the route sends it lowercased; the column may not be)
+    const mixed = await issueReset({ ...ok, email: " ELIG@example.test " });
+    check(mixed.r.email === "elig@example.test", "R1 the email check is case- and padding-insensitive");
+
+    // the lock order: the per-person advisory key, then the users row — the SAME two the retirers hold
+    const idle = await heldLocks(e, async () => { await one("select email from public.users where id = $1", [e]); });
+    check(idle.advisory_total === 0 && idle.advisory_person === 0 && idle.row_locked === false,
+      "R1 (control) the lock probe reads NOTHING held for a transaction that only read the row");
+    const held = await heldLocks(e, () => issueReset(ok));
+    check(held.advisory_total === 1 && held.advisory_person === 1 && held.row_locked === true,
+      "R1 the issuer holds the per-person advisory lock (0279's key, and only it) and the users row lock to the end of its transaction");
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      await refuses(() => db.query("select public.auth_password_reset_issue(null, null, null, null, null)"), "42501", `R1 ${role} cannot EXECUTE auth_password_reset_issue`);
+      await db.exec("reset role");
+    }
+  }
+
 } catch (e) {
   failures++;
   console.error("FAIL harness threw:", e);

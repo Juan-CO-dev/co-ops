@@ -7,7 +7,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  FAILURE_LIMIT, LOCKOUT_MINUTES, REAUTH_LIMIT, createSessionCall, emailConfirmIssueCall, passwordResetConsumeCall, reserveAttemptCall,
+  FAILURE_LIMIT, LOCKOUT_MINUTES, PASSWORD_RESET_EXPIRES_HOURS, PASSWORD_RESET_ISSUE_REFUSALS, REAUTH_LIMIT, createSessionCall,
+  emailConfirmIssueCall, passwordResetConsumeCall, passwordResetIssueCall, reserveAttemptCall,
   sessionReauthClearCall, sessionReauthReserveCall,
 } from "@/lib/auth-lockout-shared";
 import { EMAIL_CONFIRM_RPC_ERRORS } from "@/lib/admin/email-confirm-shared";
@@ -142,6 +143,27 @@ describe("0307_auth_lockout_reset_hardening", () => {
       "B159 a success clears the count",
       "B159 the ACCOUNT is never locked or deactivated by re-checks (the person signs in again)",
       "B159 the count is per session, not per person",
+      // review round 1 — P2 #1: reset links are issued under the retirers' locks
+      "S1 auth_password_reset_issue: SECURITY DEFINER, search_path pinned, service_role only",
+      "R1 (the bug) read → email change → a plain insert: the old address's link sets the password of the account at the new address",
+      "R1 read → email change → issue: a request that read the old address is refused → email_changed",
+      "R1 … and no reset link was inserted for the old address",
+      "R1 an eligible request issues ONE open link, bound to the address on the locked row (returned lowercased)",
+      "R1 issue → email change: the change retires the link that was just issued",
+      "R1 a link issued for another address is refused by the consumer, retired or not → email_changed",
+      "R1 read → admin password set → issue: the request read an older password generation → credential_changed",
+      "R1 read → self-service reset → issue: a link can not escape the reset's retirement → credential_changed",
+      "R1 … after a reset the person has NO open link (the one used, the others, and none issued late)",
+      "R1 a request that read the account after the reset gets its link",
+      "R1 read → demotion below manager → issue → role_not_email_auth",
+      "R1 read → deactivation → issue → user_inactive",
+      "R1 an unconfirmed email gets no reset link → email_not_verified",
+      "R1 … and no refused request left a link behind",
+      "R1 anything but a sha-256 hex digest is refused (never a raw token) → invalid_payload",
+      "R1 an expiry beyond 2 hours is refused → invalid_payload",
+      "R1 (control) the lock probe reads NOTHING held for a transaction that only read the row",
+      "R1 the issuer holds the per-person advisory lock (0279's key, and only it) and the users row lock to the end of its transaction",
+      "R1 anon cannot EXECUTE auth_password_reset_issue → 42501", "R1 authenticated cannot EXECUTE auth_password_reset_issue → 42501",
       "PASS 0307:",
     ]) expect(out, s).toContain(s);
   }, 260_000);
@@ -196,6 +218,8 @@ describe("0307_auth_lockout_reset_hardening", () => {
     expect(Object.keys(cred.args)).toEqual(sqlParams(`create or replace function public.${cred.fn}(`));
     const issue = emailConfirmIssueCall({ actorId: "a", userId: "u", tokenHash: "h", expiresAt: "e" });
     expect(Object.keys(issue.args)).toEqual(sqlParams(`create function public.${issue.fn}(`));
+    const resetIssue = passwordResetIssueCall({ userId: "u", email: "e", seenPasswordHash: "h", tokenHash: "t", expiresAt: "x" });
+    expect(Object.keys(resetIssue.args)).toEqual(sqlParams(`create function public.${resetIssue.fn}(`));
     for (const call of [sessionReauthReserveCall("s"), sessionReauthClearCall("s")]) {
       expect(Object.keys(call.args), call.fn).toEqual(sqlParams(`create function public.${call.fn}(`));
     }
@@ -290,11 +314,79 @@ describe("0307_auth_lockout_reset_hardening", () => {
     expect(m0279).toContain("perform pg_advisory_xact_lock(hashtextextended('user-employment/' || p_user::text, 0));");
     // the route maps exactly these messages, and falls back only on a missing function
     const route = read("app/api/auth/password-reset/route.ts");
-    for (const code of ["token_consumed", "token_expired", "token_invalid"]) {
+    for (const code of ["token_consumed", "token_expired", "token_invalid", "email_changed"]) {
       expect(fn).toContain(`raise exception '${code}'`);
       expect(route).toContain(`consumeErr.message === "${code}"`);
     }
     expect(route).toContain("if (consumeErr && isMissingRpc(consumeErr)) {");
+  });
+
+  it("review round 1: a reset link is ISSUED under the retirers' locks, after re-checking the request's read on the locked row", () => {
+    const fn = fnBody("create function public.auth_password_reset_issue(");
+    const order = [
+      "p_token_hash !~ '^[0-9a-f]{64}$'",
+      // the SAME per-person key 0279's gate and the reset consumer take, then the users row
+      "pg_advisory_xact_lock(hashtextextended('user-employment/' || p_user::text, 0))",
+      "from public.users where id = p_user for update",
+      "raise exception 'user_not_found'",
+      "lower(btrim(v_email)) is distinct from lower(btrim(p_email)) then raise exception 'email_changed'",
+      "raise exception 'user_inactive'",
+      "coalesce(public.user_admin_role_level(v_role), 0) < 6 then raise exception 'role_not_email_auth'",
+      "raise exception 'email_not_verified'",
+      "v_pw is distinct from p_seen_password_hash then raise exception 'credential_changed'",
+      "insert into public.password_resets (user_id, token_hash, expires_at, issued_email)",
+    ].map((s) => fn.indexOf(s));
+    expect(order.every((i) => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // ONE lock of each kind, nothing after the insert but the return: every check precedes the only write
+    expect(fn.match(/pg_advisory_xact_lock/g)).toHaveLength(1);
+    expect(fn.match(/for update/g)).toHaveLength(1);
+    expect(fn.match(/\b(update|delete from|insert into) public\./g)).toEqual(["insert into public."]);
+    // the level floor is hasEmailAuth's (pinned equal to `level >= 6` above), and the life ceiling admits the app's
+    for (const r of Object.values(ROLES)) expect(r.hasEmailAuth, r.code).toBe(r.level >= 6);
+    expect(fn).toContain("p_expires_at > v_now + interval '2 hours'");
+    expect(PASSWORD_RESET_EXPIRES_HOURS).toBeLessThanOrEqual(2);
+    // every refusal the lib names is raised by the function, and nothing else is treated as one
+    for (const code of PASSWORD_RESET_ISSUE_REFUSALS) expect(fn, code).toContain(`raise exception '${code}'`);
+    const raised = [...fn.matchAll(/raise exception '([a-z_]+)'/g)].map((m) => m[1]!).filter((c) => c !== "invalid_payload");
+    expect([...new Set(raised)].sort()).toEqual([...PASSWORD_RESET_ISSUE_REFUSALS].sort());
+    // every retirer of reset links holds the same two locks: 0279's gate, or the consumer's own pair
+    for (const name of Object.keys(REEMITS)) {
+      const body = fnBody(`create or replace function public.${name}(`);
+      expect(body.indexOf("perform public.user_admin_lock(p_actor, p_user);"), name).toBeLessThan(body.indexOf("update public.password_resets set consumed_at"));
+    }
+    expect(m0279).toContain("select role, active into v_target_role, v_target_active from public.users where id = p_user for update;");
+    // the consumer binds: a link issued for one address never sets the password of the account at another
+    const consume = fnBody("create function public.auth_password_reset_consume(");
+    expect(consume).toContain("if v_issued is not null and v_issued is distinct from lower(btrim(v_email)) then raise exception 'email_changed'; end if;");
+    expect(consume.indexOf("raise exception 'email_changed'")).toBeLessThan(consume.indexOf("update public.users set password_hash"));
+    expect(src).toContain("alter table public.password_resets add column issued_email text;");
+  });
+
+  it("review round 1: the reset-request route issues ONLY through that function — throttle first, fail closed, the old insert only while 0307 is missing", () => {
+    const route = read("app/api/auth/password-reset-request/route.ts");
+    const body = route.slice(route.indexOf("export async function POST("));
+    const at = (needle: string) => body.indexOf(needle);
+    // the rate limit is untouched and still runs before anything is read
+    expect(body).toContain("checkAndRecord(`pwreset_email:${normalizedEmail}`, 15 * 60, 3)");
+    expect(at("checkAndRecord(")).toBeGreaterThan(-1);
+    expect(at("checkAndRecord(")).toBeLessThan(at("getServiceRoleClient()"));
+    expect(at("getServiceRoleClient()")).toBeLessThan(at("await sb.rpc(call.fn, call.args)"));
+    // exactly ONE plain insert remains, and it sits inside the missing-function branch
+    expect(body.match(/\.from\("password_resets"\)/g)).toHaveLength(1);
+    const missing = at("if (issueErr && isMissingRpc(issueErr)) {");
+    const otherErr = at("} else if (issueErr) {");
+    expect(missing).toBeGreaterThan(-1);
+    expect(at('.from("password_resets")')).toBeGreaterThan(missing);
+    expect(at('.from("password_resets")')).toBeLessThan(otherErr);
+    // any other error returns before the send; the mail goes to the address the LOCKED row holds
+    const failClosed = body.slice(otherErr, body.indexOf("} else {", otherErr));
+    expect(failClosed).toContain("return constantOk();");
+    expect(failClosed).not.toMatch(/sendEmail|\.insert\(/);
+    expect(otherErr).toBeLessThan(at("await sendEmail("));
+    expect(body).toContain("to: mailTo,");
+    // never the token, never a hash, in a log line
+    for (const line of body.split("\n").filter((l) => /console\./.test(l))) expect(line).not.toMatch(/rawToken|tokenHash|password_hash/);
   });
 
   it("B051 the mint compares the verified hash under the users row lock, before it inserts, and clears the counters in the same function", () => {
@@ -322,6 +414,7 @@ describe("0307_auth_lockout_reset_hardening", () => {
       auth_reserve_attempt: "lib/auth-flows.ts",
       auth_create_session: "lib/session.ts",
       auth_password_reset_consume: "app/api/auth/password-reset/route.ts",
+      auth_password_reset_issue: "app/api/auth/password-reset-request/route.ts",
       auth_email_confirm_issue: "lib/admin/email-confirm.ts",
       session_reauth_reserve: "lib/auth-reauth.ts",
       session_reauth_clear: "lib/auth-reauth.ts",

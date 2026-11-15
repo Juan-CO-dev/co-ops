@@ -196,6 +196,20 @@ export async function POST(req: NextRequest) {
       });
       return invalidTokenResponse();
     }
+    if (consumeErr.message === "email_changed") {
+      // Review round 1: the link was issued for an address the account is no longer at. It sets nothing.
+      await audit({
+        actorId: row.user_id,
+        actorRole: null,
+        action: "auth_token_invalid",
+        resourceTable: "password_resets",
+        resourceId: row.id,
+        metadata: { context: "password_reset", reason: "email_changed" },
+        ipAddress,
+        userAgent,
+      });
+      return invalidTokenResponse();
+    }
     // Anything else (a timeout, a failed write): the transaction rolled back, so the link is STILL USABLE and
     // the password is unchanged. The person retries with the same email link. Never log the token or the hash.
     console.error(`[auth/password-reset] reset failed and was rolled back (link still usable) for reset ${row.id}: ${consumeErr.code ?? "unknown"}`);
