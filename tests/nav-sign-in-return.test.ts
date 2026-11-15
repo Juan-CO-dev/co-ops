@@ -3,7 +3,7 @@
  * they were on; a DIFFERENT person goes to the dashboard / hub.
  */
 import { describe, expect, it } from "vitest";
-import { returnPathAfterSignIn, signInHref } from "@/lib/nav-sign-in-return";
+import { ownsReturnLink, signInHref } from "@/lib/nav-sign-in-return";
 
 describe("signInHref", () => {
   it("binds the return link to its user", () => {
@@ -23,19 +23,17 @@ describe("signInHref", () => {
   });
 });
 
-describe("returnPathAfterSignIn", () => {
+describe("ownsReturnLink", () => {
   it("the same person returns to their page", () => {
-    expect(returnPathAfterSignIn({ next: "/catering/inbox/abc", forUser: "u1", signedInUserId: "u1" })).toBe("/catering/inbox/abc");
+    expect(ownsReturnLink("u1", "u1")).toBe(true);
   });
   it("a different person goes to the dashboard", () => {
-    expect(returnPathAfterSignIn({ next: "/catering/inbox/abc", forUser: "u1", signedInUserId: "u2" })).toBe("/dashboard");
-    expect(returnPathAfterSignIn({ next: "/catering/inbox/abc", forUser: "u1", signedInUserId: null })).toBe("/dashboard");
+    expect(ownsReturnLink("u1", "u2")).toBe(false);
+    expect(ownsReturnLink("u1", null)).toBe(false);
+    expect(ownsReturnLink("u1", undefined)).toBe(false);
   });
   it("an unowned link (opened while signed out) keeps its old meaning", () => {
-    expect(returnPathAfterSignIn({ next: "/catering/inbox/abc", forUser: null, signedInUserId: "u2" })).toBe("/catering/inbox/abc");
-  });
-  it("the next value is still sanitized", () => {
-    expect(returnPathAfterSignIn({ next: "//evil.com", forUser: "u1", signedInUserId: "u1" })).toBe("/dashboard");
-    expect(returnPathAfterSignIn({ next: null, forUser: null, signedInUserId: "u1" })).toBe("/dashboard");
+    expect(ownsReturnLink(null, "u2")).toBe(true);
+    expect(ownsReturnLink("", "u2")).toBe(true);
   });
 });

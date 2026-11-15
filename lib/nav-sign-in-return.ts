@@ -14,9 +14,9 @@
  * signed in on this tab, so the person signing in is the one who asked for the page).
  *
  * Zero I/O and no server imports: used by the login page, the idle timeout, the password modal, and
- * `requireSessionFromHeaders` alike. The `next` VALUE is still sanitized on the read side by `safeNextPath`.
+ * `requireSessionFromHeaders` alike. The `next` VALUE is still sanitized on the read side by `safeNextPath`
+ * (lib/nav-redirect.ts), which stays the login page's one sanitizer.
  */
-import { DEFAULT_NEXT_PATH, safeNextPath } from "./nav-redirect";
 
 /** Build the sign-in URL. With no `forUser` the return link is DROPPED (a client that cannot say whose page it is
  *  must not hand it to whoever signs in next); server callers that know nobody pass `keepUnownedNext`. */
@@ -37,14 +37,10 @@ export function signInHref(args: {
   return qs ? `/?${qs}` : "/";
 }
 
-/** The login page's post-sign-in destination (already sanitized). */
-export function returnPathAfterSignIn(args: {
-  next: string | null | undefined;
-  forUser: string | null | undefined;
-  signedInUserId: string | null | undefined;
-}): string {
-  if (args.forUser && args.forUser !== args.signedInUserId) return DEFAULT_NEXT_PATH;
-  return safeNextPath(args.next);
+/** Whether the person who just signed in may use the return link: always when it names nobody (`for` absent), else
+ *  only when it names them. The login page then sanitizes `next` with `safeNextPath` as before. */
+export function ownsReturnLink(forUser: string | null | undefined, signedInUserId: string | null | undefined): boolean {
+  return !forUser || forUser === signedInUserId;
 }
 
 const SIGNED_IN_USER_KEY = "co_ops_signed_in_user";

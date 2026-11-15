@@ -543,9 +543,11 @@ describe("source shape — every shop-defaulting page uses the one resolver", ()
 
   it("the tile login remembers its shop and lands on it", () => {
     const login = src("app/page.tsx");
-    expect(login).toMatch(/navigateToDashboard\(step\.locationId\)/);
+    expect(login).toMatch(/navigateToDashboard\(step\.locationId, signedIn\.user_id \?\? step\.userId\)/);
     expect(login).toMatch(/rememberShopOnDevice\(shopId\)/);
-    expect(login).toMatch(/loginLandingPath\(safeNextPath\(searchParams\?\.get\("next"\)\), shopId\)/);
+    // W06-2: `next` is first dropped when it is bound (`for`) to another person, then sanitized as before.
+    expect(login).toMatch(/const next = ownsReturnLink\(searchParams\?\.get\("for"\), userId\) \? searchParams\?\.get\("next"\) : null;/);
+    expect(login).toMatch(/loginLandingPath\(safeNextPath\(next\), shopId\)/);
   });
 
   it("every authenticated shell mounts the URL→cookie sync (behind Suspense for useSearchParams)", () => {
