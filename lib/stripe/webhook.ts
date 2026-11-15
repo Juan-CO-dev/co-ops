@@ -511,11 +511,17 @@ async function reviewSiblings(
     if (payment.kind === "deposit" || payment.kind === "full") {
       for (const s of siblings) {
         if (s.status !== "due" || (s.kind !== "deposit" && s.kind !== "full")) continue;
+        // Guarded on the row as it was read: still `due`, and still on a revision of THIS
+        // order (review r5 — every write to a due intent is bound to what was read; a payment
+        // never leaves its family, so this holds wherever a revise has put it). The session
+        // id is deliberately left on the row: voiding is our bookkeeping, and the checkout
+        // is closed — and its id cleared — only on Stripe's word (`closeQuoteCheckouts`).
         const { error: vErr, count } = await sb
           .from("catering_payments")
           .update({ status: "void" }, { count: "exact" })
           .eq("id", s.id)
-          .eq("status", "due");
+          .eq("status", "due")
+          .in("quote_id", family);
         if (vErr) {
           console.error(`[stripe webhook] could not void sibling intent ${s.id}:`, vErr.message);
           continue;
@@ -1049,11 +1055,17 @@ async function refund(
   const fullyRefunded = chargeFullyRefunded(outcome);
 
   if (fullyRefunded) {
+    // Guarded on the row as it was read (review r5): still `paid`, and still carrying THIS
+    // charge. The row was found by `provider_ref`, so the write is bound to the same fact —
+    // a refund can only ever move the payment whose money it gives back. Not bound to a
+    // revision on purpose: a refund is about a charge, and a paid row keeps its charge
+    // wherever a revise carries it.
     const { error, count } = await sb
       .from("catering_payments")
       .update({ status: "refunded" }, { count: "exact" })
       .eq("id", payment.id)
-      .eq("status", "paid");
+      .eq("status", "paid")
+      .eq("provider_ref", outcome.paymentIntentId);
     if (error) throw new Error(`stripe refund update: ${error.message}`);
     if (count === 0) return { result: "no_paid_row", locationId };
   } else if (payment.status !== "paid") {
