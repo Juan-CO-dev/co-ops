@@ -8,6 +8,9 @@
  *   expire succeeds                      → "expired"  (nobody can pay it now)
  *   expire refused, session is expired   → "expired"  (it lapsed on its own)
  *   expire refused, session is complete  → "complete" (the money is already in flight)
+ *   404: this key cannot see the session → THROWS `session_not_found` (review r4): the
+ *                                           session may be open in another account, so a
+ *                                           404 is never a retirement
  *
  * Stripe's contract (docs.stripe.com/api/checkout/sessions/expire): "A Checkout Session can
  * be expired when it is in one of these statuses: open" and "Returns an error if the
@@ -17,7 +20,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCheckoutSession, retireCheckoutSession, retrieveCheckoutSession, StripeError } from "@/lib/stripe/client";
+import { createCheckoutSession, isSessionNotFound, retireCheckoutSession, retrieveCheckoutSession, StripeError } from "@/lib/stripe/client";
 
 const fetchMock = vi.fn();
 
@@ -33,6 +36,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+const MISSING = { error: { type: "invalid_request_error", code: "resource_missing", message: "No such checkout.session: cs_test_elsewhere" } };
 const NOT_EXPIRABLE = { error: { type: "invalid_request_error", message: "Only Checkout Sessions with a status in [\"open\"] can be expired." } };
 
 describe("W02/B035 — retireCheckoutSession", () => {
@@ -66,10 +70,31 @@ describe("W02/B035 — retireCheckoutSession", () => {
     expect(await retireCheckoutSession("sk_test_fake", "cs_test_1")).toBe("complete");
   });
 
-  it("a session this account does not know cannot be paid through it: `expired`", async () => {
-    fetchMock.mockResolvedValueOnce(reply(404, { error: { code: "resource_missing", message: "No such checkout.session" } }));
-    expect(await retireCheckoutSession("sk_test_fake", "cs_test_gone")).toBe("expired");
+  it("a 404 is NOT a retirement: this key cannot see the session, which says nothing about whether it can still be paid — THROWS `session_not_found`", async () => {
+    // Review r4 (P2). This test used to pin "a session this account does not know cannot be
+    // paid through it: `expired`". It can still be paid through the account that minted it.
+    fetchMock.mockResolvedValueOnce(reply(404, MISSING));
+
+    const err: unknown = await retireCheckoutSession("sk_test_fake", "cs_test_elsewhere").catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(StripeError);
+    expect(err).toMatchObject({ status: 404, code: "session_not_found" });
+    expect(isSessionNotFound(err)).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("…and so is a 404 on the status read that follows a refused expire", async () => {
+    fetchMock.mockResolvedValueOnce(reply(400, NOT_EXPIRABLE));
+    fetchMock.mockResolvedValueOnce(reply(404, MISSING));
+    await expect(retireCheckoutSession("sk_test_fake", "cs_test_elsewhere")).rejects.toMatchObject({ code: "session_not_found" });
+  });
+
+  it("`isSessionNotFound` is true for that error and nothing else", () => {
+    expect(isSessionNotFound(new StripeError(404, "session_not_found"))).toBe(true);
+    expect(isSessionNotFound(new StripeError(404, "resource_missing"))).toBe(false);
+    expect(isSessionNotFound(new StripeError(502, "network_error"))).toBe(false);
+    expect(isSessionNotFound(new Error("session_not_found"))).toBe(false);
+    expect(isSessionNotFound(null)).toBe(false);
   });
 
   it("FAILS CLOSED when it cannot tell: a still-open session after a refused expire throws", async () => {
@@ -147,12 +172,14 @@ describe("W02/B035 review r1 — retrieveCheckoutSession", () => {
     }
   });
 
-  it("a session this account has never heard of (404) is `gone`", async () => {
-    fetchMock.mockResolvedValueOnce(reply(404, { error: { type: "invalid_request_error", code: "resource_missing", message: "No such checkout.session" } }));
-    expect(await retrieveCheckoutSession("sk_test_fake", "cs_test_1")).toEqual({ status: "gone", url: null, amountTotal: null, quoteId: null, paymentId: null });
+  it("a session this account does not know (404) is `not_found` — NOT `gone`: it may be open in another account", async () => {
+    // Review r4 (P2): this used to answer `gone`, which the pay path read as "clear it and
+    // mint another".
+    fetchMock.mockResolvedValueOnce(reply(404, MISSING));
+    expect(await retrieveCheckoutSession("sk_test_fake", "cs_test_1")).toEqual({ status: "not_found", url: null, amountTotal: null, quoteId: null, paymentId: null });
   });
 
-  it("a stored value that could not be a session id is `gone`, without calling Stripe", async () => {
+  it("a stored value that could not be a session id is `gone`, without calling Stripe — decided from its shape, not from a 404", async () => {
     expect((await retrieveCheckoutSession("sk_test_fake", "cs_test_1/../../v1/refunds")).status).toBe("gone");
     expect(fetchMock).not.toHaveBeenCalled();
   });

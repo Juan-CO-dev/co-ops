@@ -123,7 +123,8 @@
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { retireCheckoutSession, stripeCredentialsFor, type RetiredCheckoutSession } from "@/lib/stripe/client";
+import { type RetiredCheckoutSession } from "@/lib/stripe/client";
+import { retireSessionInOwningAccount, stripeAccountsForShop } from "@/lib/stripe/session-owner";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
@@ -474,7 +475,14 @@ async function moveSettled(sb: ServiceClient, read: ReadPayment, newQuoteId: str
  * The retire function for a shop, or null when this shop cannot reach Stripe (no
  * credentials, or its `locations.code` could not be read). NEVER resolves the shared
  * account from a failed read (audit W02/B146): a session can only be retired by the account
- * that owns it, and "we do not know which account" means "do not try".
+ * that owns it, and "we do not know which shop" means "do not try".
+ *
+ * THE OWNING ACCOUNT IS FOUND BY ASKING (review r4). A shop's Stripe account can change
+ * while a checkout is open, and the account the shop uses NOW answers 404 for a session
+ * minted in the one it used THEN. That 404 is not a retirement. The function returned here
+ * asks every account the shop is configured with (lib/stripe/session-owner.ts) and THROWS
+ * unless one that knows the session confirms it `expired` or `complete` — and every caller
+ * of a `RetireSession` already keeps the session id on its row when it throws.
  */
 export async function retireSessionFor(sb: ServiceClient, locationId: string): Promise<RetireSession> {
   const { data, error } = await sb
@@ -483,9 +491,9 @@ export async function retireSessionFor(sb: ServiceClient, locationId: string): P
     .eq("id", locationId)
     .maybeSingle<{ code: string | null }>();
   if (error || !data) return null;
-  const creds = stripeCredentialsFor(data.code ?? null);
-  if (!creds) return null;
-  return (sessionId: string) => retireCheckoutSession(creds.secretKey, sessionId);
+  const accounts = stripeAccountsForShop(data.code ?? null);
+  if (accounts.length === 0) return null;
+  return (sessionId: string) => retireSessionInOwningAccount(accounts, sessionId);
 }
 
 // ── The doors: is this family's money all on its live revision? (review r1) ──────────

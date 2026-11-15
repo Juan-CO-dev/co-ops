@@ -9,6 +9,9 @@
  *     under the same key" hands back an EXPIRED session, and "same key, new quote" is a 400.
  *   - SESSION STATUS. A session is `open`, `complete` or `expired`; only an open one can be
  *     expired, and only an open one has a hosted URL worth sending anyone to.
+ *   - AN ID THIS ACCOUNT DOES NOT KNOW (review r4) is not "expired": retiring it THROWS
+ *     `session_not_found` and reading it answers `not_found`, exactly as the real client
+ *     does for Stripe's 404. This fake is ONE account; tests/stripe-http-fake.ts models two.
  *
  * Both are modelled here and nothing else is. Never a network call. The functions have the
  * signatures of lib/stripe/client.ts so a test wires them in with `mockImplementation`.
@@ -42,7 +45,7 @@ export interface StripeFake {
   retrieve: (
     secretKey: string,
     sessionId: string,
-  ) => Promise<{ status: "open" | "complete" | "expired" | "gone"; url: string | null; amountTotal: number | null; quoteId: string | null; paymentId: string | null; expiresAt?: number | null }>;
+  ) => Promise<{ status: "open" | "complete" | "expired" | "not_found" | "gone"; url: string | null; amountTotal: number | null; quoteId: string | null; paymentId: string | null; expiresAt?: number | null }>;
   /** The customer finishes a checkout. */
   complete: (sessionId: string) => void;
   /** A session lapses on its own (24 h). */
@@ -101,7 +104,9 @@ export function stripeFake(): StripeFake {
       fake.retires.push(sessionId);
       if (fake.down) throw new StripeError(502, "network_error", "socket hang up");
       const s = sessions.get(sessionId);
-      if (!s) return "expired"; // this account has never heard of it
+      // THIS ACCOUNT HAS NEVER HEARD OF IT. That is a 404, and a 404 is not a retirement
+      // (review r4): the real client throws `session_not_found`, so this fake does too.
+      if (!s) throw new StripeError(404, "session_not_found", "This Stripe account has no such Checkout Session");
       if (s.status === "complete") return "complete";
       s.status = "expired";
       return "expired";
@@ -111,7 +116,7 @@ export function stripeFake(): StripeFake {
       fake.retrieves.push(sessionId);
       if (fake.down) throw new StripeError(502, "network_error", "socket hang up");
       const s = sessions.get(sessionId);
-      if (!s) return { status: "gone", url: null, amountTotal: null, quoteId: null, paymentId: null };
+      if (!s) return { status: "not_found", url: null, amountTotal: null, quoteId: null, paymentId: null };
       return {
         status: s.status,
         url: s.status === "open" ? s.url : null,

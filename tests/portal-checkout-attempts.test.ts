@@ -187,14 +187,33 @@ describe("W02/B035 review r1 — a retired checkout is never handed back", () =>
     expect(due("deposit").provider_session_id).toBe(stripe.byUrl(again)!.id);
   });
 
-  it("a session Stripe has never heard of (404) is treated as gone, and a fresh one is minted", async () => {
+  it("a stored session this shop's Stripe account does not know (404) is NOT treated as gone: nothing new is minted and the id stays on the row", async () => {
+    // Review r4 (P2). This test used to pin the opposite ("…is treated as gone, and a fresh
+    // one is minted"). A 404 says the account ASKED cannot see the session; it may be open
+    // in the account that minted it (the shop's credentials can change — the two-account
+    // sequence is tests/stripe-two-accounts.test.ts). Unconfirmed is unresolved.
     await initiatePayment(CUSTOMER, QUOTE, "deposit");
     due("deposit").provider_session_id = "cs_test_unknown";
 
-    const url = await tapPay("deposit");
+    const err = await refusal(tapPay("deposit"));
 
-    expect(stripe.byUrl(url)!.status).toBe("open");
-    expect(due("deposit").provider_session_id).toBe(stripe.byUrl(url)!.id);
+    expect(err.status).toBe(502);
+    expect(err.code).toBe("provider_error");
+    expect(stripe.creates).toEqual([]);
+    expect(due("deposit").provider_session_id).toBe("cs_test_unknown");
+    // It was asked to expire (its owner might have been this account) — and not forgotten.
+    expect(stripe.retires).toEqual(["cs_test_unknown"]);
+  });
+
+  it("…and the same id on ANOTHER intent of the quote blocks a new checkout the same way", async () => {
+    await initiatePayment(CUSTOMER, QUOTE, "deposit");
+    due("deposit").provider_session_id = "cs_test_unknown";
+
+    const err = await refusal(tapPay("full"));
+
+    expect(err.status).toBe(502);
+    expect(stripe.creates).toEqual([]);
+    expect(due("deposit").provider_session_id).toBe("cs_test_unknown");
   });
 
   it("no idempotency key is ever used for two mints", async () => {
@@ -294,7 +313,10 @@ describe("W02/B035 review r1 — two requests minting at once", () => {
     // While our FULL checkout is at Stripe, another request attaches one to the DEPOSIT intent.
     createSessionMock.mockImplementationOnce(async (key, input, idem) => {
       const mine = await stripe.create(key, input, idem);
-      due("deposit").provider_session_id = "cs_test_racer";
+      // The racer's checkout is a real session at Stripe (an id Stripe does not know could
+      // not be confirmed closed, and would block the retry below — review r4).
+      const racer = await stripe.create(key, { ...input, kind: "deposit", paymentId: due("deposit").id as string, amountCents: 20000 }, "racer-key");
+      due("deposit").provider_session_id = racer.id;
       return mine;
     });
     expect((await refusal(tapPay("full"))).code).toBe("payment_in_progress");

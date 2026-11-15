@@ -136,7 +136,9 @@ beforeEach(() => {
   retireMock.mockReset();
   retireMock.mockResolvedValue("expired");
   retrieveMock.mockReset();
-  // A stored session nobody described is one Stripe has never heard of.
+  // A stored session nobody described reads as `gone`: a value no account could have minted.
+  // (An id an account does not KNOW is `not_found`, which is never cleared on that say-so:
+  // review r4, tests/stripe-two-accounts.test.ts.)
   retrieveMock.mockResolvedValue(sessionState({ status: "gone", url: null, amountTotal: null, quoteId: null, paymentId: null }));
   twoAccounts();
   db = paymentsFake({

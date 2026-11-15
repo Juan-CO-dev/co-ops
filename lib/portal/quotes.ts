@@ -41,7 +41,9 @@ import {
   stripeCredentialsFor,
   StripeError,
   type CheckoutSessionState,
+  type StripeCredentials,
 } from "@/lib/stripe/client";
+import { retireSessionInOwningAccount, stripeAccountsForShop } from "@/lib/stripe/session-owner";
 import { TENANT_NAME } from "@/lib/tenant";
 import type { Quote, QuoteItem, QuoteDetail } from "@/lib/catering/quotes";
 import { isQuoteLineKind } from "@/lib/catering/prep-demand-shared";
@@ -531,15 +533,16 @@ export async function initiatePayment(
   // $300 was captured on a row that said $200. So the session is retired FIRST (fail
   // closed: 502 if Stripe will not confirm it, 409 if its payment is already landing, 503
   // if this shop can no longer reach Stripe at all), and the amount and the cleared id are
-  // then written in ONE guarded UPDATE.
+  // then written in ONE guarded UPDATE. "Confirm" means the account that OWNS the session
+  // says so (review r4): the account the shop uses now may not be the one it was minted in.
   if (existing && existing.amount_cents !== amountCents) {
     const openSession = existing.provider_session_id;
     if (openSession) {
-      const creds = stripeCredentialsFor(await locationCodeFor(sb, quote.locationId));
-      if (!creds) {
+      const accounts = stripeAccountsForShop(await locationCodeFor(sb, quote.locationId));
+      if (accounts.length === 0) {
         throw new PortalQuoteError(503, "payment_unavailable", "Payment is temporarily unavailable — please try again");
       }
-      await retireOrRefuse(creds.secretKey, openSession);
+      await retireOrRefuse(accounts, openSession);
     }
     const repriced = await syncDuePaymentAmount(sb, existing.id, amountCents, openSession);
     if (!repriced) throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
@@ -769,13 +772,19 @@ async function attachCheckoutSessionUnlocked(
 /**
  * Retire another Checkout Session of this quote, or refuse the request. Fails CLOSED:
  *   - it cannot be retired (Stripe down, a refusal we cannot explain) → 502, mint nothing;
+ *   - NO ACCOUNT THIS SHOP IS CONFIGURED WITH KNOWS IT (review r4) → 502 as well. A 404 is
+ *     "this key cannot see it", not "it is closed": the shop's Stripe account can have
+ *     changed since the session was minted, and it is still payable where it lives. So the
+ *     session's OWNING account is asked (`retireSessionInOwningAccount` tries each account
+ *     the shop is configured with); when none of them knows it, the id stays on its row and
+ *     nothing new is offered;
  *   - it is already `complete` → 409 `payment_in_progress`: that money is landing, and a
  *     second checkout would be a second charge.
  */
-async function retireOrRefuse(secretKey: string, sessionId: string): Promise<void> {
-  let outcome: Awaited<ReturnType<typeof retireCheckoutSession>>;
+async function retireOrRefuse(accounts: ReadonlyArray<Pick<StripeCredentials, "secretKey">>, sessionId: string): Promise<void> {
+  let outcome: Awaited<ReturnType<typeof retireSessionInOwningAccount>>;
   try {
-    outcome = await retireCheckoutSession(secretKey, sessionId);
+    outcome = await retireSessionInOwningAccount(accounts, sessionId);
   } catch (e) {
     if (e instanceof StripeError) {
       console.error(`[stripe] could not retire an open checkout session (${e.status}/${e.code}):`, e.message);
@@ -885,9 +894,13 @@ async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<Ch
  *     back and nothing is minted. That is idempotency within an attempt, decided on facts
  *     (a second tap, a second tab) instead of on a key Stripe forgets after a day.
  *   · `complete` → 409 `payment_in_progress`: the money is landing.
- *   · anything else — lapsed, gone, another amount, another quote (a revise whose carry
- *     could not retire it) — is not this attempt. It is retired if it is still open (fail
- *     closed) and its id cleared, guarded on that exact id.
+ *   · anything else — lapsed, another amount, another quote (a revise whose carry could not
+ *     retire it) — is not this attempt. It is retired if it is still open (fail closed) and
+ *     its id cleared, guarded on that exact id.
+ *   · `not_found` — the account this shop uses NOW does not know it (review r4). That is
+ *     not "lapsed": the session may be open in the account the shop used when it was minted.
+ *     It is treated exactly like an open one — its owning account must confirm it retired
+ *     (`retireOrRefuse`), or the request is refused (502) with the id still on the row.
  * Step 5 then mints under a FRESH key every time (`<payment id>:<uuid>`): a session we
  * retired, abandoned or never recorded can never be replayed to a customer, and no two
  * mints can collide on parameters. The key still protects what it is for — one HTTP
@@ -938,6 +951,9 @@ export async function createQuoteCheckout(input: {
   const code = await locationCodeFor(sb, quote.locationId);
   const creds = stripeCredentialsFor(code);
   if (!creds) throw new PortalQuoteError(409, "not_configured", "Online payment is not enabled");
+  // `creds` is where NEW money goes. A session that already exists is closed by the account
+  // that OWNS it, which may be another one of the shop's (review r4 — `retireOrRefuse`).
+  const accounts = stripeAccountsForShop(code);
 
   // The payment row is the authority for currency and for the fact that it is still due.
   const { data: payRow, error: payErr } = await sb
@@ -977,7 +993,7 @@ export async function createQuoteCheckout(input: {
   const others = await unresolvedCheckouts(sb, input.quoteId, input.paymentId, "createQuoteCheckout open sessions");
   let retiredSessions = 0;
   for (const other of others) {
-    await retireOrRefuse(creds.secretKey, other.provider_session_id);
+    await retireOrRefuse(accounts, other.provider_session_id);
     // Guarded on the exact session we retired: a row that moved in the meantime is left alone.
     const { error: clearErr } = await sb
       .from("catering_payments")
@@ -1017,7 +1033,9 @@ export async function createQuoteCheckout(input: {
 
     // Not this attempt. Close it for good before anything new exists (an open one may
     // still be paid; `retireOrRefuse` also catches one completed since the read above).
-    if (state.status === "open") await retireOrRefuse(creds.secretKey, stored);
+    // `not_found` is NOT closed (review r4): this account cannot see it, so the account that
+    // minted it has to say it is retired — or the id stays where it is and we refuse.
+    if (state.status === "open" || state.status === "not_found") await retireOrRefuse(accounts, stored);
     const { error: clearErr, count: cleared } = await sb
       .from("catering_payments")
       .update({ provider_session_id: null }, { count: "exact" })

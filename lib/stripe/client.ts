@@ -23,6 +23,18 @@
  * `/api/webhooks/stripe/<code>` for each. `<CODE>` is the `locations.code` value read from
  * the DB at runtime — there are NO shop codes in this file, per the tenant-vocabulary law.
  *
+ * …SO THE ACCOUNT A SHOP USES CAN CHANGE, AND A SESSION STAYS IN THE ACCOUNT THAT MINTED IT
+ * (review r4). Adding, replacing or removing a shop's own pair changes where NEW money
+ * goes; a Checkout Session already open is still open in the old account, and the new
+ * account's key gets a 404 for it. Nothing in this file treats that 404 as the session
+ * being closed (`retireCheckoutSession`, `retrieveCheckoutSession`); lib/stripe/
+ * session-owner.ts asks each account the shop is configured with. Giving a shop its own
+ * pair beside the shared one needs no care: the shared account stays reachable. A change
+ * that takes an account's key OUT of the configuration (a shop's pair replaced by another
+ * account's, or removed) puts any checkout still open in that account beyond our reach, and
+ * its row stays an unresolved checkout until it is closed some other way — session-owner.ts
+ * says how, and has the live-check to run before and after such a change.
+ *
  * THE PAIR IS ALL-OR-NOTHING, AND THAT IS THE POINT. If either per-location variable is
  * present, BOTH must be, and the default pair is not consulted. Falling back per-VARIABLE
  * would let a shop's own secret key be paired with the platform's webhook secret — two
@@ -62,6 +74,17 @@ export class StripeError extends Error {
     super(message ?? code);
     this.name = "StripeError";
   }
+}
+
+/** The `StripeError.code` for "this account's key cannot see that Checkout Session" (a 404). */
+export const SESSION_NOT_FOUND = "session_not_found";
+
+/**
+ * Is this the error `retireCheckoutSession` throws when the account it asked does not know
+ * the session? It is NOT a statement about the session — see `retireCheckoutSession`.
+ */
+export function isSessionNotFound(e: unknown): boolean {
+  return e instanceof StripeError && e.code === SESSION_NOT_FOUND;
 }
 
 export interface StripeCredentials {
@@ -263,11 +286,22 @@ function stripeErrorFrom(status: number, json: Record<string, unknown> | null): 
  * customer a new one (lib/portal/quotes.ts `createQuoteCheckout`).
  *
  * THE ANSWER IS ONE OF TWO FACTS, AND ANYTHING ELSE THROWS:
- *   "expired"  — nobody can pay it: we expired it just now, or it had already lapsed, or
- *                this account has never heard of it (404 — it cannot be paid through
- *                credentials that do not own it).
+ *   "expired"  — nobody can pay it: we expired it just now, or it had already lapsed. THE
+ *                ACCOUNT THAT OWNS THE SESSION SAID SO.
  *   "complete" — the customer already finished it; the money is landing or has landed.
  *                The caller must NOT offer another checkout.
+ *
+ * A 404 IS NEITHER (review r4). The first cut read "this account has never heard of it" as
+ * `expired`, on the reasoning that it cannot be paid through credentials that do not own
+ * it. True — and beside the point: it can still be paid through the account that DOES own
+ * it. A secret key sees only its own account's objects ("Stripe uses API keys to
+ * authenticate requests from your integration and determine which Stripe resources it can
+ * access" — docs.stripe.com/keys), and a shop's key can change (the per-shop override
+ * above). So a 404 ("The requested resource doesn't exist" — docs.stripe.com/api/errors)
+ * means "THIS KEY cannot see that session" and nothing about the session: it THROWS
+ * `session_not_found`, which every caller treats like any other failure to confirm — the
+ * session id stays on its row and no replacement checkout is offered. Finding the account
+ * that does know it is lib/stripe/session-owner.ts's job (`retireSessionInOwningAccount`).
  *
  * Stripe's contract (docs.stripe.com/api/checkout/sessions/expire): "A Checkout Session
  * can be expired when it is in one of these statuses: open", and it "returns an error if
@@ -286,7 +320,7 @@ export async function retireCheckoutSession(secretKey: string, sessionId: string
 
   const expire = await stripeSessionCall(secretKey, "POST", `${sessionUrl}/expire`);
   if (expire.ok) return "expired";
-  if (expire.status === 404) return "expired";
+  if (expire.status === 404) throw sessionNotFound();
   // Only a request-level 4xx can mean "not in an expirable state" (Stripe documents the
   // refusal, not its status code). A 5xx, an auth failure or a rate limit is OUR problem
   // and says nothing about the session.
@@ -294,7 +328,7 @@ export async function retireCheckoutSession(secretKey: string, sessionId: string
   if (!refusal) throw stripeErrorFrom(expire.status, expire.json);
 
   const read = await stripeSessionCall(secretKey, "GET", sessionUrl);
-  if (read.status === 404) return "expired";
+  if (read.status === 404) throw sessionNotFound();
   if (!read.ok) throw stripeErrorFrom(read.status, read.json);
   const status = typeof read.json?.status === "string" ? read.json.status : null;
   if (status === "expired") return "expired";
@@ -302,10 +336,22 @@ export async function retireCheckoutSession(secretKey: string, sessionId: string
   throw new StripeError(409, "session_still_open", "The Checkout Session could not be expired and is not complete");
 }
 
+/** The 404 of a session call: this account's key cannot see that session (see `retireCheckoutSession`). */
+function sessionNotFound(): StripeError {
+  return new StripeError(404, SESSION_NOT_FOUND, "This Stripe account has no such Checkout Session");
+}
+
 /** What a Checkout Session is right now, as far as a payment decision needs to know. */
 export interface CheckoutSessionState {
-  /** `gone` = this account has never heard of the id (404): nobody can pay it here. */
-  status: "open" | "complete" | "expired" | "gone";
+  /**
+   * `open` / `complete` / `expired` are Stripe's own statuses, from the account that owns it.
+   * `not_found` = the account asked does not know the id (404). That is NOT "nobody can pay
+   *   it": the session may be open in another account (review r4 — see
+   *   `retireCheckoutSession`). The caller must have its owner retire it, or refuse.
+   * `gone` = the stored value is not shaped like a Checkout Session id at all, so no account
+   *   could have minted it. Decided from the value itself; Stripe is not asked.
+   */
+  status: "open" | "complete" | "expired" | "not_found" | "gone";
   /** The hosted Checkout URL. Stripe only returns one while the session is `open`. */
   url: string | null;
   /** `amount_total`, integer cents. */
@@ -328,7 +374,9 @@ export interface CheckoutSessionState {
  * simply not reused.
  *
  * THROWS StripeError on a transport failure, any non-404 refusal, or a status this code
- * does not know. The caller fails closed: its next step is to mint a way to pay.
+ * does not know. The caller fails closed: its next step is to mint a way to pay. A 404 is
+ * returned as `not_found` rather than thrown because the caller has a next step for it —
+ * ask the session's owning account — but it is never a reason to forget the session.
  */
 export async function retrieveCheckoutSession(secretKey: string, sessionId: string): Promise<CheckoutSessionState> {
   if (!secretKey) throw new StripeError(500, "not_configured", "Stripe secret key is not set");
@@ -337,7 +385,7 @@ export async function retrieveCheckoutSession(secretKey: string, sessionId: stri
     return { status: "gone", url: null, amountTotal: null, quoteId: null, paymentId: null };
   }
   const read = await stripeSessionCall(secretKey, "GET", `${CHECKOUT_SESSIONS_URL}/${sessionId}`);
-  if (read.status === 404) return { status: "gone", url: null, amountTotal: null, quoteId: null, paymentId: null };
+  if (read.status === 404) return { status: "not_found", url: null, amountTotal: null, quoteId: null, paymentId: null };
   if (!read.ok) throw stripeErrorFrom(read.status, read.json);
 
   const status = read.json?.status;

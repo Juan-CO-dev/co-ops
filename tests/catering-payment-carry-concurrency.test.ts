@@ -266,7 +266,11 @@ describe("W02 review r2 (P1) — a carry write is a compare-and-set on what the 
     };
   }
 
-  beforeEach(() => retire.mockClear());
+  // Braces on purpose: `mockClear()` returns the mock, and a FUNCTION returned from a hook is
+  // run by vitest as that hook's cleanup — i.e. `retire(undefined)` after every test.
+  beforeEach(() => {
+    retire.mockClear();
+  });
 
   it("an intent another request already carried AND gave a checkout is left exactly as it is", async () => {
     payments().push(strandedDeposit());
