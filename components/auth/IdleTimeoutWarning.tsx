@@ -30,8 +30,13 @@
  * The SERVER clock only sees requests (B013): typing for ten minutes with no
  * request used to end in a 401 and lost input. While activity continues, a
  * throttled heartbeat (at most every 2 minutes, shared across tabs via
- * `co_ops_last_heartbeat`) keeps the server session alive. The idle limit is
- * the server's own SESSION_IDLE_MINUTES, passed in by the layouts.
+ * `co_ops_last_heartbeat`) keeps the server session alive. Activity the
+ * throttle suppresses is not dropped: one trailing heartbeat goes out when the
+ * window opens (unless any tab already reached the server since), so typing,
+ * a pause shorter than the limit, then typing again never meets a server
+ * session older than the client's clock. Nothing more is sent once that
+ * activity is flushed. The idle limit is the server's own
+ * SESSION_IDLE_MINUTES, passed in by the layouts.
  *
  * Activity-tracking events: mousedown, keydown, touchstart, scroll. This tab's
  * listeners are detached while the warning modal is open — the user must make
@@ -105,6 +110,11 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
   const lastActivityRef = useRef<number>(0);
   const lastActivityWriteRef = useRef<number>(0);
   const lastHeartbeatRef = useRef<number>(0);
+  /** Latest activity the heartbeat throttle suppressed (0 = none pending) and its trailing-send timer. */
+  const pendingBeatActivityRef = useRef<number>(0);
+  const trailingBeatTimerRef = useRef<number | null>(null);
+  /** The latest beatForActivity, for the trailing timer (a callback cannot name itself). */
+  const beatForActivityRef = useRef<(activityAt: number) => void>(() => {});
   const expiredRef = useRef(false);
   const [warningOpen, setWarningOpen] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(warningSeconds);
@@ -142,6 +152,56 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
     }
   }, []);
 
+  /**
+   * Send the activity heartbeat now, or — inside the throttle window — remember the activity and send one
+   * trailing heartbeat when the window opens (B013 round 1). A heartbeat from any tab after the activity
+   * already told the server, so the trailing send is dropped.
+   */
+  const beatForActivity = useCallback(
+    (activityAt: number) => {
+      if (expiredRef.current) return;
+      if (activityAt > pendingBeatActivityRef.current) pendingBeatActivityRef.current = activityAt;
+      const pendingAt = pendingBeatActivityRef.current;
+      if (pendingAt === 0) return;
+      const lastBeat = Math.max(lastHeartbeatRef.current, readStoredMs(IDLE_HEARTBEAT_KEY));
+      if (lastBeat >= pendingAt) {
+        pendingBeatActivityRef.current = 0; // already flushed (here or in another tab)
+        return;
+      }
+      const now = Date.now();
+      const wait = lastBeat + heartbeatEveryMs - now;
+      if (wait > 0) {
+        if (trailingBeatTimerRef.current === null) {
+          trailingBeatTimerRef.current = window.setTimeout(() => {
+            trailingBeatTimerRef.current = null;
+            beatForActivityRef.current(0);
+          }, wait);
+        }
+        return;
+      }
+      pendingBeatActivityRef.current = 0;
+      lastHeartbeatRef.current = now;
+      writeStored(IDLE_HEARTBEAT_KEY, String(now));
+      void heartbeat().then((res) => {
+        if (res && sessionIsDead(res)) void expire();
+      });
+    },
+    [heartbeatEveryMs, heartbeat, expire],
+  );
+
+  useEffect(() => {
+    beatForActivityRef.current = beatForActivity;
+  }, [beatForActivity]);
+
+  // The trailing-heartbeat timer dies with the component.
+  useEffect(
+    () => () => {
+      if (trailingBeatTimerRef.current !== null) window.clearTimeout(trailingBeatTimerRef.current);
+      trailingBeatTimerRef.current = null;
+    },
+    [],
+  );
+
   useEffect(() => {
     const now = Date.now();
     markActivity(now, true);
@@ -155,15 +215,8 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
     const onActivity = () => {
       const now = Date.now();
       markActivity(now);
-      // Throttled heartbeat (B013): the server only sees requests, so keep it alive while someone types.
-      const lastBeat = Math.max(lastHeartbeatRef.current, readStoredMs(IDLE_HEARTBEAT_KEY));
-      if (now - lastBeat >= heartbeatEveryMs) {
-        lastHeartbeatRef.current = now;
-        writeStored(IDLE_HEARTBEAT_KEY, String(now));
-        void heartbeat().then((res) => {
-          if (res && sessionIsDead(res)) void expire();
-        });
-      }
+      // Throttled heartbeat with a trailing send (B013): the server only sees requests, so keep it alive while someone types.
+      beatForActivity(now);
     };
     for (const ev of ACTIVITY_EVENTS) {
       window.addEventListener(ev, onActivity, { passive: true });
@@ -173,7 +226,7 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
         window.removeEventListener(ev, onActivity);
       }
     };
-  }, [warningOpen, markActivity, heartbeatEveryMs, heartbeat, expire]);
+  }, [warningOpen, markActivity, beatForActivity]);
 
   // Other tabs (B153): their activity counts here; their sign-out signs this tab out too.
   useEffect(() => {

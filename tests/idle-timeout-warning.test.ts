@@ -87,6 +87,46 @@ describe("B013 — client and server idle clocks agree", () => {
     expect(calls("/api/auth/logout")).toHaveLength(0);
   });
 
+  it("typing, a pause shorter than the limit, then typing again does not hit an expired server session", async () => {
+    // An expiring server clock: every request that reaches the server while the session is alive touches it;
+    // once the server's last activity is a full idle window old, the heartbeat is a 401.
+    const IDLE_MS = 600_000;
+    let serverLastActivity = Date.now(); // the page load reached the server
+    h.fetch.mockImplementation(async (url: string) => {
+      if (url !== "/api/auth/heartbeat") return ok();
+      if (Date.now() - serverLastActivity >= IDLE_MS) return dead();
+      serverLastActivity = Date.now();
+      return ok();
+    });
+    mount();
+    await advance(120); // 2:00 — typing; this heartbeat goes out
+    fireEvent.keyDown(window, { key: "a" });
+    expect(calls("/api/auth/heartbeat")).toHaveLength(1);
+    await advance(119); // 3:59 — more typing, inside the throttle window
+    fireEvent.keyDown(window, { key: "b" });
+    await advance(30); // the trailing heartbeat goes out once the window opens (4:00)
+    expect(calls("/api/auth/heartbeat")).toHaveLength(2);
+    await advance(480); // 12:29 — a pause shorter than the limit, no new activity: nothing more is sent
+    expect(calls("/api/auth/heartbeat")).toHaveLength(2);
+    fireEvent.keyDown(window, { key: "c" }); // typing again
+    await advance(1);
+    expect(calls("/api/auth/heartbeat")).toHaveLength(3);
+    expect(calls("/api/auth/logout")).toHaveLength(0);
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
+  it("a trailing heartbeat is skipped when another tab already reached the server after the activity", async () => {
+    mount();
+    await advance(120);
+    fireEvent.keyDown(window, { key: "a" }); // sent
+    await advance(60);
+    fireEvent.keyDown(window, { key: "b" }); // suppressed, trailing send pending
+    await advance(10);
+    act(() => window.localStorage.setItem("co_ops_last_heartbeat", String(Date.now()))); // another tab's heartbeat
+    await advance(300);
+    expect(calls("/api/auth/heartbeat")).toHaveLength(1);
+  });
+
   it("a dead session on the heartbeat sends the operator to sign in", async () => {
     h.fetch.mockImplementation(async (url: string) => (url === "/api/auth/heartbeat" ? dead() : ok()));
     mount();
