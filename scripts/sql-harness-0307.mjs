@@ -16,10 +16,15 @@
  *   B050 the lock check and the count are one step: thirty reservations in a row let exactly five through
  *   B051 the session mint is a compare-and-set on the verified credential: a mint with a pre-reset hash, or after an
  *        email change, is refused and inserts nothing; a good mint inserts one session and clears the lockout
+ *   B156 the self-service reset is one transaction: a failed password write leaves the link usable
+ *   B157 a reset (and an admin password set) retires every other open reset link of that person, nobody else's
+ *   S8   the re-emitted 0279 writers still take the ONE gate (user_admin_lock) and no lock of their own
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
-import { FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, parseAttemptReservation, reserveAttemptCall } from "../lib/auth-lockout-shared.ts";
+import {
+  FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, parseAttemptReservation, passwordResetConsumeCall, reserveAttemptCall,
+} from "../lib/auth-lockout-shared.ts";
 import { setUserCredentialCall, updateUserProfileCall } from "../lib/admin/user-admin-rpc-shared.ts";
 
 const read = (p) => readFileSync(p, "utf8");
@@ -48,7 +53,10 @@ async function base({ m0076 = true, m0279 = true } = {}) {
   return db;
 }
 const FNS = ["auth_reserve_attempt(uuid)", "increment_failed_login(uuid)",
-  "auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text)"];
+  "auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text)",
+  "auth_password_reset_consume(text, text)", "admin_user_set_credential(uuid, uuid, text, text)"];
+/** The 0279 writers 0307 re-emits (each must still take the one gate). */
+const REEMITTED = ["admin_user_set_credential"];
 
 const db = await base();
 /** Call a function as the app does: service_role, named arguments. */
@@ -80,6 +88,15 @@ const mint = (userId, credential, over = {}) => {
   return rpc(createSessionCall({ sessionId, userId, authMethod: credential.kind, credential, tokenHash: `tok-${++mintSeq}`,
     expiresAt: new Date(Date.now() + 12 * 3600_000).toISOString(), ipAddress: "203.0.113.7", userAgent: "harness", ...over })).then((r) => ({ r, sessionId }));
 };
+let linkSeq = 0;
+/** An open reset link for a person (superuser insert, as the reset-request route's service-role insert). Returns its token hash. */
+const resetLink = async (u, { expiresInMs = 3600_000 } = {}) => {
+  const tokenHash = `reset-${++linkSeq}`;
+  await db.query("insert into public.password_resets (user_id, token_hash, expires_at) values ($1, $2, $3)", [u, tokenHash, new Date(Date.now() + expiresInMs).toISOString()]);
+  return tokenHash;
+};
+const linkConsumed = async (tokenHash) => (await one("select consumed_at from public.password_resets where token_hash = $1", [tokenHash])).consumed_at !== null;
+const consume = (tokenHash, passwordHash) => rpc(passwordResetConsumeCall({ tokenHash, passwordHash }));
 const liveSessions = async (u) => (await one("select count(*)::int as n from public.sessions where user_id = $1 and revoked_at is null", [u])).n;
 const lockState = (u) => one("select failed_login_count as n, locked_until as until, locked_until > now() as live from public.users where id = $1", [u]);
 
@@ -180,6 +197,15 @@ try {
     await refuses(() => rpc({ fn: "auth_reserve_attempt", args: { p_user: null } }), "invalid_payload", "B050 a null user is refused");
   }
 
+  // S8 — the re-emitted 0279 writers keep the ONE gate
+  for (const fn of REEMITTED) {
+    const body = (await one("select prosrc from pg_proc where proname = $1", [fn])).prosrc;
+    const gateAt = body.indexOf("public.user_admin_lock(p_actor, p_user)");
+    const firstWrite = body.search(/(update|insert into|delete from) public[.]/);
+    check(gateAt >= 0 && firstWrite > gateAt && !/pg_advisory_xact_lock/.test(body) && !/for update/.test(body),
+      `S8 ${fn} takes the ONE gate (user_admin_lock) before any write, and no lock of its own`);
+  }
+
   // ── fixtures for the admin-writer cases (superuser) ──
   const SA = await shop();
   const gm = await user("gm");
@@ -240,6 +266,65 @@ try {
     const after = await lockState(fifth);
     check(res.attempt === 5 && typeof res.locked_until === "string" && after.n === 0 && after.until === null,
       "B051 a correct answer on the fifth reserved attempt signs in and clears the lock it reserved");
+  }
+
+  // ── B156: the reset is one transaction ──
+  {
+    const u = await user("agm", { email: "reset@example.test", password_hash: HASH("before"), email_verified: true,
+      failed_login_count: 5, locked_until: new Date(Date.now() + 600_000).toISOString() });
+    await db.query("insert into public.sessions (user_id) values ($1), ($1)", [u]);
+    const link = await resetLink(u);
+    // a password write that fails once (a transient fault on users), inside the function's own transaction
+    await db.exec(`create function public.harness_fail_users() returns trigger language plpgsql as $f$ begin raise exception 'harness: users write failed'; end $f$;
+      create trigger harness_fail_users before update on public.users for each row execute function public.harness_fail_users();`);
+    await refuses(() => consume(link, HASH("after")), "harness: users write failed", "B156 (setup) the password write fails inside the reset");
+    const mid = await one("select password_hash from public.users where id = $1", [u]);
+    check(!(await linkConsumed(link)) && mid.password_hash === HASH("before") && (await liveSessions(u)) === 2,
+      "B156 a reset whose password write fails rolls back the consume — the link is still open, nothing changed");
+    await db.exec("drop trigger harness_fail_users on public.users; drop function public.harness_fail_users();");
+    const r = await consume(link, HASH("after"));
+    const done = await one("select password_hash, failed_login_count as n, locked_until as until from public.users where id = $1", [u]);
+    check(r.user_id === u && r.role === "agm" && r.sessions_revoked === 2 && r.other_links_retired === 0 && typeof r.reset_id === "string"
+      && done.password_hash === HASH("after") && done.n === 0 && done.until === null && (await linkConsumed(link)) && (await liveSessions(u)) === 0,
+      "B156 … the same link then succeeds: password written, lockout cleared, link consumed, both sessions revoked");
+    await refuses(() => consume(link, HASH("again")), "token_consumed", "B156 a used link is refused by name");
+    check((await one("select password_hash from public.users where id = $1", [u])).password_hash === HASH("after"), "B156 … and the replay changed nothing");
+
+    const expired = await resetLink(u, { expiresInMs: -1000 });
+    await refuses(() => consume(expired, HASH("x")), "token_expired", "B156 an expired link is refused by name");
+    check(!(await linkConsumed(expired)), "B156 … and an expired link is not consumed by the refusal");
+    await refuses(() => consume("no-such-token", HASH("x")), "token_invalid", "B156 an unknown link is refused by name");
+    const forShort = await resetLink(u);
+    await refuses(() => consume(forShort, "short"), "invalid_payload", "B156 a malformed password hash is refused");
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      await refuses(() => db.query("select public.auth_password_reset_consume('a', 'b')"), "42501", `B156 ${role} cannot EXECUTE auth_password_reset_consume`);
+      await db.exec("reset role");
+    }
+  }
+
+  // ── B157: one reset retires the person's other open links ──
+  {
+    const u = await user("agm", { email: "two-links@example.test", password_hash: HASH("p0"), email_verified: true });
+    await member(u, SA);
+    const other = await user("agm", { email: "bystander@example.test", password_hash: HASH("o0"), email_verified: true });
+    const t1 = await resetLink(u), t2 = await resetLink(u), bystander = await resetLink(other);
+    const r = await consume(t2, HASH("p2"));
+    check(r.other_links_retired === 1 && (await linkConsumed(t1)) && (await linkConsumed(t2)) && !(await linkConsumed(bystander)),
+      "B157 two open links: using T2 retires T1; another person's link untouched");
+    await refuses(() => consume(t1, HASH("attacker")), "token_consumed", "B157 T1 then");
+    check((await one("select password_hash from public.users where id = $1", [u])).password_hash === HASH("p2"), "B157 … and the password is still the one T2 set");
+
+    // the same family on the admin path: a GM sets the password while a reset email is still out
+    const t3 = await resetLink(u);
+    const set = await rpc(setUserCredentialCall({ actorId: gm, userId: u, kind: "password", hash: HASH("gm-set") }));
+    check(set.kind === "password" && set.reset_links_retired === 1 && (await linkConsumed(t3)) && !(await linkConsumed(bystander)),
+      "B157 an admin password set retires the person's open reset links, nobody else's");
+    await refuses(() => consume(t3, HASH("stale-email")), "token_consumed", "B157 the older reset email can no longer overwrite the GM's password");
+    // a PIN reset is not a password event: an open reset link survives it
+    const t4 = await resetLink(u);
+    const pinSet = await rpc(setUserCredentialCall({ actorId: gm, userId: u, kind: "pin", hash: HASH("pin-set") }));
+    check(pinSet.reset_links_retired === 0 && !(await linkConsumed(t4)), "B157 an admin PIN reset leaves the reset link alone");
   }
 } catch (e) {
   failures++;

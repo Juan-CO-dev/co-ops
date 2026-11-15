@@ -6,12 +6,41 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, reserveAttemptCall } from "@/lib/auth-lockout-shared";
-import { extractFunction, normalize } from "../scripts/shop-versions/reemit-mods";
+import { FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, passwordResetConsumeCall, reserveAttemptCall } from "@/lib/auth-lockout-shared";
+import { setUserCredentialCall } from "@/lib/admin/user-admin-rpc-shared";
+import { applyMods, extractFunction, normalize, type Mod } from "../scripts/shop-versions/reemit-mods";
 
 const src = normalize(readFileSync("supabase/migrations/0307_auth_lockout_reset_hardening.sql", "utf8"));
 const read = (p: string) => normalize(readFileSync(p, "utf8"));
 const fnBody = (start: string) => extractFunction(src, start, "$$;");
+const m0279 = read("supabase/migrations/0279_user_employment_events.sql");
+
+/**
+ * The 0279 writers 0307 re-emits, as [old, new] modifications of 0279's own text: the SQL that ships IS this list
+ * applied to 0279 (asserted below), so a reviewer reads the changes, not two whole function bodies.
+ */
+const REEMITS: Record<string, readonly Mod[]> = {
+  admin_user_set_credential: [
+    ["create function public.admin_user_set_credential(", "create or replace function public.admin_user_set_credential("],
+    ["declare v_revoked integer := 0;\n", "declare v_revoked integer := 0;\n  v_retired integer := 0;  -- 0307\n"],
+    [
+      "  else update public.users set password_hash = p_hash where id = p_user; end if;\n",
+      [
+        "  else update public.users set password_hash = p_hash where id = p_user; end if;",
+        "  -- 0307 B157: a password set by an admin retires the person's open reset links (an older email must not overwrite it).",
+        "  if p_kind = 'password' then",
+        "    update public.password_resets set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;",
+        "    get diagnostics v_retired = row_count;",
+        "  end if;",
+        "",
+      ].join("\n"),
+    ],
+    [
+      "  return jsonb_build_object('kind', p_kind, 'sessions_revoked', v_revoked);",
+      "  return jsonb_build_object('kind', p_kind, 'sessions_revoked', v_revoked, 'reset_links_retired', v_retired);  -- 0307: + reset_links_retired",
+    ],
+  ],
+};
 
 describe("0307_auth_lockout_reset_hardening", () => {
   it("house header and gate line — and a later APPLIED stamp under it never breaks the pin", () => {
@@ -49,6 +78,16 @@ describe("0307_auth_lockout_reset_hardening", () => {
       "B051 a mint with the current hash → one live session, failed_login_count 0, locked_until null, last_login_at set",
       "B051 an inactive account → account_inactive",
       "B051 a correct answer on the fifth reserved attempt signs in and clears the lock it reserved",
+      "S1 auth_password_reset_consume: SECURITY DEFINER, search_path pinned, service_role only",
+      "S1 admin_user_set_credential: SECURITY DEFINER, search_path pinned, service_role only",
+      "S8 admin_user_set_credential takes the ONE gate (user_admin_lock) before any write, and no lock of its own",
+      "B156 a reset whose password write fails rolls back the consume — the link is still open, nothing changed",
+      "B156 … the same link then succeeds: password written, lockout cleared, link consumed, both sessions revoked",
+      "B156 a used link is refused by name → token_consumed", "B156 an expired link is refused by name → token_expired",
+      "B156 an unknown link is refused by name → token_invalid",
+      "B157 two open links: using T2 retires T1; another person's link untouched", "B157 T1 then → token_consumed",
+      "B157 an admin password set retires the person's open reset links, nobody else's",
+      "B157 an admin PIN reset leaves the reset link alone",
       "PASS 0307:",
     ]) expect(out, s).toContain(s);
   }, 260_000);
@@ -96,6 +135,49 @@ describe("0307_auth_lockout_reset_hardening", () => {
     expect(src).toContain(`create function public.${call.fn}(${Object.keys(call.args).map((k) => `${k} uuid`).join(", ")})`);
     const mint = createSessionCall({ sessionId: "s", userId: "u", authMethod: "pin", credential: { kind: "pin", hash: "h" }, tokenHash: "t", expiresAt: "e", ipAddress: null, userAgent: null });
     expect(Object.keys(mint.args)).toEqual(sqlParams(`create function public.${mint.fn}(`));
+    const reset = passwordResetConsumeCall({ tokenHash: "t", passwordHash: "p" });
+    expect(Object.keys(reset.args)).toEqual(sqlParams(`create function public.${reset.fn}(`));
+    // the re-emitted 0279 writer keeps the arguments lib/admin/user-admin-rpc-shared.ts sends
+    const cred = setUserCredentialCall({ actorId: "a", userId: "u", kind: "pin", hash: "h" });
+    expect(Object.keys(cred.args)).toEqual(sqlParams(`create or replace function public.${cred.fn}(`));
+  });
+
+  it("each re-emitted 0279 writer is 0279's own text plus exactly the listed 0307 changes — the gate untouched and first", () => {
+    for (const [name, mods] of Object.entries(REEMITS)) {
+      const original = extractFunction(m0279, `create function public.${name}(`, "end $$;");
+      const shipped = extractFunction(src, `create or replace function public.${name}(`, "end $$;");
+      expect(shipped, name).toBe(applyMods(original, mods));
+      const gate = shipped.search(/public\.user_admin_lock\(p_actor, p_user\)/);
+      const firstWrite = shipped.search(/(update|insert into|delete from) public\./);
+      expect(gate, name).toBeGreaterThan(-1);
+      expect(firstWrite, name).toBeGreaterThan(gate);
+      expect(shipped, name).not.toMatch(/pg_advisory_xact_lock|for update/);
+    }
+  });
+
+  it("B156/B157 the reset function takes the 0279 lock order and does everything in one body", () => {
+    const fn = fnBody("create function public.auth_password_reset_consume(");
+    const order = [
+      "pg_advisory_xact_lock(hashtextextended('user-employment/' || v_user::text, 0))",
+      "from public.users where id = v_user for update",
+      "from public.password_resets where token_hash = p_token_hash for update",
+      "raise exception 'token_consumed'",
+      "raise exception 'token_expired'",
+      "update public.users set password_hash = p_password_hash, failed_login_count = 0, locked_until = null where id = v_user",
+      "update public.password_resets set consumed_at = v_now where user_id = v_user and consumed_at is null",
+      "update public.sessions set revoked_at = v_now where user_id = v_user and revoked_at is null",
+    ].map((s) => fn.indexOf(s));
+    expect(order.every((i) => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // the per-person key is the SAME one 0279's gate takes
+    expect(m0279).toContain("perform pg_advisory_xact_lock(hashtextextended('user-employment/' || p_user::text, 0));");
+    // the route maps exactly these messages, and falls back only on a missing function
+    const route = read("app/api/auth/password-reset/route.ts");
+    for (const code of ["token_consumed", "token_expired", "token_invalid"]) {
+      expect(fn).toContain(`raise exception '${code}'`);
+      expect(route).toContain(`consumeErr.message === "${code}"`);
+    }
+    expect(route).toContain("if (consumeErr && isMissingRpc(consumeErr)) {");
   });
 
   it("B051 the mint compares the verified hash under the users row lock, before it inserts, and clears the counters in the same function", () => {

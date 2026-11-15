@@ -13,14 +13,25 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *     auth_token_expired           expires_at <= now()
  *     auth_token_consumed_replay   consumed_at != null
  *
- * On success:
- *   1. Atomic consumption: UPDATE … SET consumed_at = now() WHERE consumed_at IS NULL.
+ * On success — ONE transaction (audit W07 B156 / B157; migration 0307's
+ * `auth_password_reset_consume`), after the new password is hashed outside it:
+ *   1. The link is re-checked under lock (consumed / expired / unknown).
  *   2. UPDATE users SET password_hash, failed_login_count=0, locked_until=NULL.
  *      Reset clears any active lockout — the user proved control of the email,
  *      so a stale lockout shouldn't block them.
- *   3. Revoke ALL active sessions for this user (defense: assume the password
+ *   3. EVERY open reset link of this user is consumed — the one used and any
+ *      other still outstanding (B157: a second link requested within the hour
+ *      used to stay usable after this one).
+ *   4. Revoke ALL active sessions for this user (defense: assume the password
  *      was compromised; kill any active access).
- *   4. Audit auth_password_reset_success.
+ *   Then audit auth_password_reset_success.
+ *   A failure anywhere rolls the whole thing back: the link is NOT used up and
+ *   the same email link works on the next try (B156: the link used to be
+ *   consumed first and the password written by a separate request).
+ *
+ * Before migration 0307 is applied the function does not exist; the route then
+ * runs the pre-0307 steps (consume, write, revoke as separate requests), so the
+ * reset keeps working unchanged until the apply.
  *
  * Does NOT auto-sign-in. Implies "I forgot my password," user goes back to
  * the login screen with the new password.
@@ -30,9 +41,10 @@ import { type NextRequest } from "next/server";
 
 import { hashPassword, hashToken } from "@/lib/auth";
 import { audit } from "@/lib/audit";
+import { isMissingRpc, passwordResetConsumeCall } from "@/lib/auth-lockout-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
-import type { RoleCode } from "@/lib/roles";
+import { isRoleCode, type RoleCode } from "@/lib/roles";
 import { revokeAllUserSessions } from "@/lib/session";
 
 interface PasswordResetBody {
@@ -131,6 +143,97 @@ export async function POST(req: NextRequest) {
     return invalidTokenResponse();
   }
 
+  // 3. Hash the new password BEFORE the transaction (bcrypt is slow), then run the whole reset as one
+  // transaction: re-check the link under lock, write the hash, consume every open link, revoke sessions.
+  const passwordHash = await hashPassword(password);
+  const call = passwordResetConsumeCall({ tokenHash, passwordHash });
+  const { data: done, error: consumeErr } = await sb.rpc(call.fn, call.args);
+
+  if (consumeErr && isMissingRpc(consumeErr)) {
+    // Migration 0307 is not applied yet: the pre-0307 steps, unchanged (and B156 / B157 stay open until the apply).
+    console.warn("[auth/password-reset] auth_password_reset_consume is not installed (migration 0307 not applied): using the pre-0307 steps");
+    return legacyReset(sb, row, passwordHash, now, ipAddress, userAgent);
+  }
+
+  if (consumeErr) {
+    // The function's named refusals: the link changed between the pre-check above and the lock.
+    if (consumeErr.message === "token_consumed") {
+      await audit({
+        actorId: row.user_id,
+        actorRole: null,
+        action: "auth_token_consumed_replay",
+        resourceTable: "password_resets",
+        resourceId: row.id,
+        metadata: { context: "password_reset", note: "race_lost" },
+        ipAddress,
+        userAgent,
+      });
+      return invalidTokenResponse();
+    }
+    if (consumeErr.message === "token_expired") {
+      await audit({
+        actorId: row.user_id,
+        actorRole: null,
+        action: "auth_token_expired",
+        resourceTable: "password_resets",
+        resourceId: row.id,
+        metadata: { context: "password_reset", expires_at: row.expires_at },
+        ipAddress,
+        userAgent,
+      });
+      return invalidTokenResponse();
+    }
+    if (consumeErr.message === "token_invalid") {
+      await audit({
+        actorId: row.user_id,
+        actorRole: null,
+        action: "auth_token_invalid",
+        resourceTable: "password_resets",
+        resourceId: row.id,
+        metadata: { context: "password_reset", note: "gone_under_lock" },
+        ipAddress,
+        userAgent,
+      });
+      return invalidTokenResponse();
+    }
+    // Anything else (a timeout, a failed write): the transaction rolled back, so the link is STILL USABLE and
+    // the password is unchanged. The person retries with the same email link. Never log the token or the hash.
+    console.error(`[auth/password-reset] reset failed and was rolled back (link still usable) for reset ${row.id}: ${consumeErr.code ?? "unknown"}`);
+    return jsonError(500, "internal_error", { message: "password update failed" });
+  }
+
+  const result = (done ?? {}) as { role?: unknown; sessions_revoked?: unknown; other_links_retired?: unknown };
+  await audit({
+    actorId: row.user_id,
+    actorRole: typeof result.role === "string" && isRoleCode(result.role) ? result.role : null,
+    action: "auth_password_reset_success",
+    resourceTable: "users",
+    resourceId: row.user_id,
+    metadata: {
+      reset_id: row.id,
+      sessions_revoked: typeof result.sessions_revoked === "number" ? result.sessions_revoked : 0,
+      other_links_retired: typeof result.other_links_retired === "number" ? result.other_links_retired : 0,
+    },
+    ipAddress,
+    userAgent,
+  });
+
+  return jsonOk({ ok: true });
+}
+
+/**
+ * The pre-0307 reset: consume the link, then write the password, then revoke — three separate requests.
+ * Runs ONLY while migration 0307's `auth_password_reset_consume` is not installed, so the route keeps working
+ * before the apply. It is today's code, moved (the password is hashed by the caller now).
+ */
+async function legacyReset(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  row: { id: string; user_id: string },
+  passwordHash: string,
+  now: Date,
+  ipAddress: string | null,
+  userAgent: string | null,
+) {
   const nowIso = now.toISOString();
 
   // 3. Atomic consumption — wins-once
@@ -155,7 +258,6 @@ export async function POST(req: NextRequest) {
   }
 
   // 4. Update password + clear lockout state
-  const passwordHash = await hashPassword(password);
   const { data: updatedUser, error: updateErr } = await sb
     .from("users")
     .update({

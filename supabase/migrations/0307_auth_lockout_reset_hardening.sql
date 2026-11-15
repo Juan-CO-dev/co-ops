@@ -24,10 +24,22 @@
 --      first and the revoke kills it, or the mint waits, re-reads the new hash and refuses. It also clears
 --      failed_login_count / locked_until and stamps last_login_at in the same transaction (the app used to do that
 --      in a separate, unchecked UPDATE after the insert).
+--   4. auth_password_reset_consume(p_token_hash, p_password_hash) — NEW (B156 + B157). The WHOLE self-service reset
+--      in one transaction: the link is re-checked under lock ('token_consumed' / 'token_expired' / 'token_invalid'),
+--      the new password hash is written (clearing the lockout, as before), EVERY open reset link of that person is
+--      consumed — the one used and all the others (B157: a second link requested within the hour used to stay
+--      usable after the first one was used) — and the live sessions are revoked. Any failure rolls all of it back,
+--      so a failed password write no longer burns the link (B156: the route consumed the link, then wrote the
+--      password in a separate request; a failure there left the link dead and the password unchanged).
+--   5. admin_user_set_credential — 0279's writer RE-EMITTED, same signature, the gate unchanged and still first:
+--      + B157: a password set by an admin also consumes the person's open reset links (an older reset email could
+--        otherwise overwrite the password the GM just set). Returns the extra key reset_links_retired.
 --
 -- LOCK ORDER (unchanged from 0279): the identity lock → the per-person advisory lock → users rows → password_resets /
 --   email_verifications / sessions. auth_reserve_attempt and auth_create_session each take ONE users row lock (the mint then
---   inserts its own sessions row); neither can deadlock.
+--   inserts its own sessions row); neither can deadlock. auth_password_reset_consume takes the 0279 per-person
+--   advisory key, then the users row, then the token row, then the person's other links and sessions — never a
+--   password_resets or sessions row before the users row.
 --
 -- EXISTING ROWS: none rewritten by sections 1–2. An account sitting on an expired lock restarts at its next attempt.
 --
@@ -38,17 +50,19 @@
 --
 -- DEPENDS ON: users (failed_login_count, locked_until, last_login_at, pin_hash, password_hash, email, active), sessions
 --   (id, user_id, token_hash, auth_method, step_up_unlocked, last_activity_at, expires_at, ip_address, user_agent),
---   0076 (increment_failed_login), 0279.
+--   password_resets (id, user_id, token_hash, expires_at, consumed_at), 0076 (increment_failed_login), 0279.
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select count(*) from users where failed_login_count >= 5 and locked_until <= now();  -- accounts B049 frees on their next try
+--   select count(*) from password_resets where consumed_at is null and expires_at > now();  -- open reset links right now
 --
 -- VERIFY AFTER APPLY:
 --   select proname, prosecdef, proconfig from pg_proc where proname in ('auth_reserve_attempt', 'increment_failed_login',
---     'auth_create_session');
+--     'auth_create_session', 'auth_password_reset_consume', 'admin_user_set_credential');
 --     -- t, {search_path=pg_catalog, public} on each
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
---    and routine_name in ('auth_reserve_attempt', 'increment_failed_login', 'auth_create_session');  -- service_role (+ postgres) only
+--    and routine_name in ('auth_reserve_attempt', 'increment_failed_login', 'auth_create_session', 'auth_password_reset_consume',
+--      'admin_user_set_credential');  -- service_role (+ postgres) only
 --
 -- ROLLBACK: none needed for the app (it falls back on a missing function). Re-emit through a new reviewed migration.
 
@@ -77,6 +91,20 @@ begin
        and column_name in ('id', 'user_id', 'token_hash', 'auth_method', 'step_up_unlocked', 'last_activity_at', 'expires_at',
                            'revoked_at', 'ip_address', 'user_agent')) <> 10 then
     raise exception '0307: the sessions columns the session mint writes must exist';
+  end if;
+  if (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'password_resets'
+       and column_name in ('id', 'user_id', 'token_hash', 'expires_at', 'consumed_at')) <> 5 then
+    raise exception '0307: password_resets (id, user_id, token_hash, expires_at, consumed_at) must exist';
+  end if;
+  -- The 0279 writer this file re-emits must still be 0279's (nothing else has re-emitted it): refuse otherwise.
+  if to_regprocedure('public.admin_user_set_credential(uuid,uuid,text,text)') is null then
+    raise exception '0307: 0279 (user_admin_lock and the user-admin writers) must be applied first';
+  end if;
+  select prosrc into v_def from pg_proc where oid = 'public.admin_user_set_credential(uuid,uuid,text,text)'::regprocedure;
+  if strpos(v_def, 'update public.users set pin_hash = p_hash where id = p_user') = 0
+     or strpos(v_def, 'perform public.user_admin_lock(p_actor, p_user);') = 0
+     or strpos(v_def, 'password_resets') > 0 or strpos(v_def, 'failed_login_count') > 0 then
+    raise exception '0307: admin_user_set_credential differs from 0279: refusing to overwrite it';
   end if;
   select prosrc into v_def from pg_proc where oid = 'public.increment_failed_login(uuid)'::regprocedure;
   if strpos(v_def, 'coalesce(failed_login_count, 0) + 1') = 0 or strpos(v_def, 'locked_until') > 0 then
@@ -174,6 +202,70 @@ comment on function public.auth_create_session(uuid, uuid, text, text, text, tex
 revoke all on function public.auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text) from public, anon, authenticated;
 grant execute on function public.auth_create_session(uuid, uuid, text, text, text, text, text, timestamptz, text, text) to service_role;
 
+-- ── 4. B156 + B157: the whole self-service reset in ONE transaction ──
+-- The route hashes the new password first (bcrypt is slow and must not run inside the transaction), then calls this.
+create function public.auth_password_reset_consume(p_token_hash text, p_password_hash text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_user uuid; v_role text; v_id uuid; v_expires timestamptz; v_consumed timestamptz;
+  v_retired integer := 0; v_revoked integer := 0; v_now timestamptz;
+begin
+  if p_token_hash is null or p_token_hash = '' or p_password_hash is null or char_length(p_password_hash) not between 20 and 255 then
+    raise exception 'invalid_payload';
+  end if;
+  -- Learn whose link this is WITHOUT a lock, so the locks below are taken in the 0279 order.
+  select user_id into v_user from public.password_resets where token_hash = p_token_hash;
+  if not found then raise exception 'token_invalid'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('user-employment/' || v_user::text, 0));
+  select role into v_role from public.users where id = v_user for update;
+  if not found then raise exception 'token_invalid'; end if;
+  select id, expires_at, consumed_at into v_id, v_expires, v_consumed
+    from public.password_resets where token_hash = p_token_hash for update;
+  if not found then raise exception 'token_invalid'; end if;
+  v_now := clock_timestamp();
+  if v_consumed is not null then raise exception 'token_consumed'; end if;
+  if v_expires <= v_now then raise exception 'token_expired'; end if;
+  -- The password, and the lockout it clears (the person proved control of the mailbox).
+  update public.users set password_hash = p_password_hash, failed_login_count = 0, locked_until = null where id = v_user;
+  -- B157: this link AND every other open link of the person.
+  update public.password_resets set consumed_at = v_now where user_id = v_user and consumed_at is null;
+  get diagnostics v_retired = row_count;
+  -- Defense: assume the old password was compromised; kill every live session.
+  update public.sessions set revoked_at = v_now where user_id = v_user and revoked_at is null;
+  get diagnostics v_revoked = row_count;
+  return jsonb_build_object('reset_id', v_id, 'user_id', v_user, 'role', v_role,
+    'other_links_retired', greatest(v_retired - 1, 0), 'sessions_revoked', v_revoked);
+end $$;
+comment on function public.auth_password_reset_consume(text, text) is
+  '0307 (audit W07 B156/B157): the self-service password reset in one transaction — re-checks the link under lock, '
+  'writes the hash (clearing the lockout), consumes every open reset link of the person, revokes live sessions. '
+  'Refusals: token_invalid, token_consumed, token_expired, invalid_payload. A failure leaves the link usable.';
+revoke all on function public.auth_password_reset_consume(text, text) from public, anon, authenticated;
+grant execute on function public.auth_password_reset_consume(text, text) to service_role;
+
+-- ── 5. admin_user_set_credential: 0279's writer, re-emitted. Identical but for the lines marked 0307. ──
+create or replace function public.admin_user_set_credential(p_actor uuid, p_user uuid, p_kind text, p_hash text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_revoked integer := 0;
+  v_retired integer := 0;  -- 0307
+begin
+  if p_kind is null or p_kind not in ('pin', 'password') or p_hash is null or char_length(p_hash) not between 20 and 255 then
+    raise exception 'invalid_payload';
+  end if;
+  perform public.user_admin_lock(p_actor, p_user);
+  if p_kind = 'pin' then update public.users set pin_hash = p_hash where id = p_user;
+  else update public.users set password_hash = p_hash where id = p_user; end if;
+  -- 0307 B157: a password set by an admin retires the person's open reset links (an older email must not overwrite it).
+  if p_kind = 'password' then
+    update public.password_resets set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;
+    get diagnostics v_retired = row_count;
+  end if;
+  update public.sessions set revoked_at = clock_timestamp() where user_id = p_user and revoked_at is null;
+  get diagnostics v_revoked = row_count;
+  return jsonb_build_object('kind', p_kind, 'sessions_revoked', v_revoked, 'reset_links_retired', v_retired);  -- 0307: + reset_links_retired
+end $$;
+revoke all on function public.admin_user_set_credential(uuid, uuid, text, text) from public, anon, authenticated;
+grant execute on function public.admin_user_set_credential(uuid, uuid, text, text) to service_role;
+
 -- ── POST-APPLY: every function this file creates or re-emits is definer, search_path pinned, service_role only ──
 do $$
 declare
@@ -181,7 +273,9 @@ declare
   v_fns text[] := array[
     'public.auth_reserve_attempt(uuid)',
     'public.increment_failed_login(uuid)',
-    'public.auth_create_session(uuid,uuid,text,text,text,text,text,timestamptz,text,text)'
+    'public.auth_create_session(uuid,uuid,text,text,text,text,text,timestamptz,text,text)',
+    'public.auth_password_reset_consume(text,text)',
+    'public.admin_user_set_credential(uuid,uuid,text,text)'
   ];
 begin
   foreach v_fn in array v_fns loop
@@ -195,6 +289,11 @@ begin
       raise exception '0307: % must be SECURITY DEFINER with a pinned search_path', f;
     end if;
   end loop;
+  -- The re-emitted 0279 writer still takes the ONE gate, and no lock of its own.
+  if strpos((select prosrc from pg_proc where oid = 'public.admin_user_set_credential(uuid,uuid,text,text)'::regprocedure),
+            'perform public.user_admin_lock(p_actor, p_user);') = 0 then
+    raise exception '0307: admin_user_set_credential lost its gate';
+  end if;
 end $$;
 
 commit;

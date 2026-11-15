@@ -417,7 +417,10 @@ async function setCredential(
   const r = await userAdminRpc(getServiceRoleClient(), setUserCredentialCall({ actorId: actor.user.id, userId: id, kind, hash }));
   await audit({ actorId: actor.user.id, actorRole: actor.user.role,
     action: kind === "pin" ? "user.reset_pin" : "user.reset_password",
-    resourceTable: "users", resourceId: id, metadata: { sessions_revoked: r.sessions_revoked ?? 0 }, ipAddress: null, userAgent: null });
+    resourceTable: "users", resourceId: id,
+    // reset_links_retired (0307, audit W07 B157): the open password-reset links a password set retired. Absent before 0307.
+    metadata: { sessions_revoked: r.sessions_revoked ?? 0, ...(typeof r.reset_links_retired === "number" ? { reset_links_retired: r.reset_links_retired } : {}) },
+    ipAddress: null, userAgent: null });
 }
 
 export const resetPin = (actor: AuthContext, id: string, pin: string) => setCredential(actor, id, "pin", pin);
