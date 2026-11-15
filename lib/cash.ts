@@ -3,7 +3,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import type { RoleCode } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
-import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 
 import {
   CASH_REPORT_BASE_LEVEL,
@@ -98,6 +97,28 @@ export async function loadCashDashboardState(
   return { isVisibleToActor: true, report: await loadCashReport(service, args) };
 }
 
+/**
+ * Is the day's cash report locked by a finalized closing? (W03/B040, review r1.)
+ *
+ * Reads EVERY closing instance the shop has for the date — the embed joins checklist_templates on
+ * type = 'closing' with no `active` / effective-date filter, so a night closed on a template version
+ * that has since been retired (an admin published V2 and deactivated V1) stays locked. Keying the
+ * lock on today's current-template resolution let that night fall out of it: the resolution returned
+ * V2 (no instance) or nothing, and the gate went quiet. Any instance in a locking status locks
+ * (closingLocksCash). A failed read THROWS — never "no closing, the edit window is open".
+ * Migration 0304's in-transaction gate is the same rule in SQL. Service-role read, bounded by shop/date.
+ */
+export async function cashLockedByClosing(
+  service: SupabaseClient, args: { locationId: string; date: string },
+): Promise<boolean> {
+  const { data, error } = await service.from("checklist_instances")
+    .select("status, checklist_templates!inner(type)")
+    .eq("location_id", args.locationId).eq("date", args.date)
+    .eq("checklist_templates.type", "closing");
+  if (error) throw new Error(`closing lock lookup: ${error.message}`);
+  return ((data ?? []) as Array<{ status: string }>).some((r) => closingLocksCash(r.status));
+}
+
 export type CashSubmitResult =
   | { ok: true; id: string }
   | { ok: false; reason: "closing_finalized" | "assignment_required" | "location_access_denied" | "concurrent_submit" };
@@ -123,12 +144,11 @@ type CashSubmitArgs = {
  */
 export function cashAtomicRpcArgs(
   args: CashSubmitArgs,
-  w: { closingTemplateId: string | null; overShortCents: number; depositCents: number; nowIso: string },
+  w: { overShortCents: number; depositCents: number; nowIso: string },
 ): Record<string, unknown> {
   return {
     p_location_id: args.locationId,
     p_report_date: args.date,
-    p_closing_template_id: w.closingTemplateId,
     p_projected_cents: args.projectedCents,
     p_drawer_total_cents: args.drawerTotalCents,
     p_float_cents: args.floatCents,
@@ -158,8 +178,8 @@ type AtomicOutcome =
   | { kind: "not_installed" };
 
 /**
- * W03/B041: the write through 0304's transactional writer — the closing re-check (FOR SHARE on the
- * day's closing instance), the compare-and-set supersede, the insert and the back-pointer in ONE
+ * W03/B041: the write through 0304's transactional writer — the closing re-check (FOR SHARE on every
+ * closing instance the shop has for the day, any template version), the compare-and-set supersede, the insert and the back-pointer in ONE
  * transaction, so a confirm or the auto-release that commits mid-request can no longer be overtaken.
  */
 async function writeCashReportAtomic(
@@ -224,20 +244,11 @@ export async function submitCashReport(
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report" }))) {
     return { ok: false, reason: "assignment_required" };
   }
-  // Edit-window gate: refuse if the day's closing is finalized — confirmed, incomplete_confirmed
-  // OR auto_finalized (W03/B040: the system's release locks it too). PR-3 date-aware
-  // resolution — resolve the closing version effective on args.date (the instance
-  // lookup keys on that date).
-  const cTmplBase = service.from("checklist_templates").select("id")
-    .eq("location_id", args.locationId).eq("type", "closing") as unknown as EffectiveResolvableBuilder;
-  const { data: cTmpl } = await applyEffectiveResolution(cTmplBase, args.date).maybeSingle<{ id: string }>();
-  if (cTmpl) {
-    const { data: cInst } = await service.from("checklist_instances").select("status")
-      .eq("template_id", cTmpl.id).eq("location_id", args.locationId).eq("date", args.date)
-      .maybeSingle<{ status: string }>();
-    if (closingLocksCash(cInst?.status)) {
-      return { ok: false, reason: "closing_finalized" };
-    }
+  // Edit-window gate: refuse if any of the day's closing instances is finalized — confirmed,
+  // incomplete_confirmed OR auto_finalized (W03/B040: the system's release locks it too), on
+  // whichever template version it was run (review r1 — see cashLockedByClosing).
+  if (await cashLockedByClosing(service, { locationId: args.locationId, date: args.date })) {
+    return { ok: false, reason: "closing_finalized" };
   }
 
   const { overShortCents, depositCents } = computeCashTotals({
@@ -248,9 +259,7 @@ export async function submitCashReport(
   const nowIso = new Date().toISOString();
 
   // The early refusal above is the friendly one; this is the binding one (inside the transaction).
-  const atomic = await writeCashReportAtomic(service, cashAtomicRpcArgs(args, {
-    closingTemplateId: cTmpl?.id ?? null, overShortCents, depositCents, nowIso,
-  }));
+  const atomic = await writeCashReportAtomic(service, cashAtomicRpcArgs(args, { overShortCents, depositCents, nowIso }));
   if (atomic.kind === "refused") return { ok: false, reason: atomic.reason };
   if (atomic.kind === "written") {
     await recordCashWrite(service, args, { id: atomic.id, supersededId: atomic.supersededId, overShortCents, depositCents });

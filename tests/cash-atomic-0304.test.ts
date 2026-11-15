@@ -33,14 +33,13 @@ const ARGS = {
 
 type RpcAnswer = { data?: unknown; error?: { code?: string; message: string } | null };
 
-/** Fake client: the closing template + an open instance; the RPC answers per scenario; records every write. */
-function fakeService(rpcAnswer: RpcAnswer, closingTemplate: string | null = "closing-tmpl") {
+/** Fake client: an open closing instance for the day; the RPC answers per scenario; records every write. */
+function fakeService(rpcAnswer: RpcAnswer) {
   const writes: string[] = [];
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const chain = (table: string, kind: string) => {
     const done = () => {
-      if (table === "checklist_templates") return Promise.resolve({ data: closingTemplate ? { id: closingTemplate } : null, error: null });
-      if (table === "checklist_instances") return Promise.resolve({ data: { status: "open" }, error: null });
+      if (table === "checklist_instances") return Promise.resolve({ data: [{ status: "open" }], error: null });
       if (table === "cash_reports" && kind === "insert") return Promise.resolve({ data: { id: "direct-1" }, error: null });
       return Promise.resolve({ data: null, error: null, count: 1 });
     };
@@ -67,14 +66,14 @@ function fakeService(rpcAnswer: RpcAnswer, closingTemplate: string | null = "clo
 beforeEach(() => { vi.clearAllMocks(); vi.spyOn(console, "error").mockImplementation(() => {}); });
 
 describe("submitCashReport writes through 0304's transactional writer (B041)", () => {
-  it("calls submit_cash_report_atomic with the resolved closing template and the server's totals, and writes nothing directly", async () => {
+  it("calls submit_cash_report_atomic with the server's totals (no template id — the SQL locks every closing instance), and writes nothing directly", async () => {
     const { service, writes, rpcCalls } = fakeService({ data: [{ new_id: "new-1", superseded_id: "old-1" }] });
     await expect(submitCashReport(service, ARGS)).resolves.toEqual({ ok: true, id: "new-1" });
     expect(writes).toEqual([]);
     expect(rpcCalls).toHaveLength(1);
     expect(rpcCalls[0]!.name).toBe("submit_cash_report_atomic");
     expect(rpcCalls[0]!.args).toMatchObject({
-      p_location_id: "loc-1", p_report_date: "2026-11-10", p_closing_template_id: "closing-tmpl",
+      p_location_id: "loc-1", p_report_date: "2026-11-10",
       p_drawer_total_cents: 60_000, p_float_cents: 20_000,
       p_deposit_cents: 40_000, p_over_short_cents: -10_000, // computeCashTotals, never the client
       p_denominations: { "2000": 30 }, p_toast_projected_cents: 49_000, p_toast_projected_as_of: "2026-11-11T02:00:00.000Z",
@@ -91,10 +90,10 @@ describe("submitCashReport writes through 0304's transactional writer (B041)", (
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cash_report.submit", metadata: expect.objectContaining({ superseded: null }) }));
   });
 
-  it("no closing template → p_closing_template_id null (the SQL gate has nothing to lock)", async () => {
-    const { service, rpcCalls } = fakeService({ data: [{ new_id: "new-1", superseded_id: null }] }, null);
+  it("sends no template id: the in-transaction gate cannot be disarmed by the app's template resolution (review r1)", async () => {
+    const { service, rpcCalls } = fakeService({ data: [{ new_id: "new-1", superseded_id: null }] });
     await submitCashReport(service, ARGS);
-    expect(rpcCalls[0]!.args.p_closing_template_id).toBeNull();
+    expect(rpcCalls[0]!.args).not.toHaveProperty("p_closing_template_id");
   });
 
   it("the in-transaction refusal closing_finalized (a confirm won the race) → closing_finalized, nothing audited", async () => {
@@ -132,7 +131,7 @@ describe("submitCashReport writes through 0304's transactional writer (B041)", (
   });
 
   it("a hand count sends no denominations", () => {
-    const a = cashAtomicRpcArgs({ ...ARGS, countMethod: "hand" }, { closingTemplateId: null, overShortCents: 0, depositCents: 0, nowIso: "x" });
+    const a = cashAtomicRpcArgs({ ...ARGS, countMethod: "hand" }, { overShortCents: 0, depositCents: 0, nowIso: "x" });
     expect(a.p_denominations).toBeNull();
   });
 });
@@ -143,8 +142,8 @@ describe("the RPC contract matches migration 0304", () => {
     .split("\n").slice(1).map((l) => l.trim().split(/\s+/)[0]).filter(Boolean);
 
   it("lib/cash.ts sends exactly the function's named arguments, in order", () => {
-    const keys = Object.keys(cashAtomicRpcArgs(ARGS, { closingTemplateId: null, overShortCents: 0, depositCents: 0, nowIso: "x" }));
-    expect(params).toHaveLength(17);
+    const keys = Object.keys(cashAtomicRpcArgs(ARGS, { overShortCents: 0, depositCents: 0, nowIso: "x" }));
+    expect(params).toHaveLength(16);
     expect(keys).toEqual(params);
   });
 
@@ -153,11 +152,15 @@ describe("the RPC contract matches migration 0304", () => {
     expect(lower).toContain(`status in (${listed})`);
   });
 
-  it("locks the closing instance FOR SHARE (FOR KEY SHARE would not block a status update) before the supersede", () => {
+  it("locks the day's closing instances FOR SHARE (FOR KEY SHARE would not block a status update) before the supersede", () => {
     const body = lower.slice(start, lower.indexOf("end $$;", start));
-    const lock = body.indexOf("for share;");
+    const lock = body.indexOf("for share of ci;");
     expect(lock).toBeGreaterThan(-1);
     expect(body).not.toContain("for key share");
+    // review r1: every closing instance of the shop/day, any template version — no id, no active / effective filter.
+    expect(body).not.toContain("p_closing_template_id");
+    expect(body).toContain("join public.checklist_templates ct on ct.id = ci.template_id and ct.type = 'closing'");
+    expect(body).not.toMatch(/ct\.active|effective_from/);
     expect(lock).toBeLessThan(body.indexOf("update public.cash_reports"));
     expect(body).toContain("raise exception 'closing_finalized'");
     expect(body).toMatch(/and superseded_at is null\s+returning id into v_prior_id;/);

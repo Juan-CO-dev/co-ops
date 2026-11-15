@@ -15,11 +15,14 @@
  *   P3  an edit supersedes the prior row and the chain stamps agree: prior.superseded_at = new.signed_at,
  *       prior.superseded_by = new.id, one live row
  *   P4  the gate (B040 / B041): confirmed, incomplete_confirmed and auto_finalized each refuse
- *       `closing_finalized` and change nothing; open and no-instance write; a template that is not this
- *       shop's closing is `invalid_payload`; no template id = no gate (lib/cash.ts found no closing)
+ *       `closing_finalized` and change nothing; open and no-instance write; another shop's finalized
+ *       closing and this shop's finalized non-closing list do not lock
  *   P5  atomicity: an insert that fails rolls the supersede back with it — the prior row stays live,
  *       nothing is stranded (the state 0188's prose and #304's rollback machinery existed to describe)
  *   P6  invalid input refuses by name before any write
+ *   P7  review r1: the lock is the day's closing INSTANCES, any template version — a retired V1's
+ *       finalized instance refuses with V2 published (with or without a V2 instance), and so does a
+ *       finalized V2 over an open V1; the RPC takes no template id, so no resolution can disarm it
  * The two-session proofs (a confirm racing the FOR SHARE lock; two simultaneous submits → one 23505)
  * need two connections and are sim-only; P1 pins the lock and the compare-and-set in the body instead.
  */
@@ -49,7 +52,8 @@ create function public.current_user_locations() returns uuid[] language sql stab
 create table public.checklist_templates (
   id uuid primary key default gen_random_uuid(),
   location_id uuid not null references public.locations(id),
-  type text not null
+  type text not null,
+  active boolean not null default true
 );
 create table public.checklist_instances (
   id uuid primary key default gen_random_uuid(),
@@ -79,7 +83,7 @@ async function base({ m0188 = true, m0253 = true } = {}) {
   return db;
 }
 
-const SIG = "uuid,date,uuid,integer,integer,integer,text,jsonb,integer,jsonb,integer,integer,text,bigint,timestamptz,uuid,timestamptz";
+const SIG = "uuid,date,integer,integer,integer,text,jsonb,integer,jsonb,integer,integer,text,bigint,timestamptz,uuid,timestamptz";
 
 const db = await base();
 try {
@@ -130,13 +134,13 @@ try {
   await db.exec("set role service_role");
   const submit = async (o = {}) => {
     const a = {
-      loc: L, date: DAY, tmpl: TMPL, projected: 50000, drawer: 60000, float: 20000, method: "hand",
+      loc: L, date: DAY, projected: 50000, drawer: 60000, float: 20000, method: "hand",
       denoms: null, tips: 0, onShift: [], overShort: -10000, deposit: 40000, note: null,
       toastCents: 50000, toastAsOf: "2026-11-11T02:00:00Z", actor: KH, now: "2026-11-11T03:00:00Z", ...o,
     };
     const r = await db.query(
-      `select * from public.submit_cash_report_atomic($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
-      [a.loc, a.date, a.tmpl, a.projected, a.drawer, a.float, a.method, a.denoms === null ? null : JSON.stringify(a.denoms), a.tips,
+      `select * from public.submit_cash_report_atomic($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+      [a.loc, a.date, a.projected, a.drawer, a.float, a.method, a.denoms === null ? null : JSON.stringify(a.denoms), a.tips,
         JSON.stringify(a.onShift), a.overShort, a.deposit, a.note, a.toastCents, a.toastAsOf, a.actor, a.now]);
     return r.rows[0];
   };
@@ -190,17 +194,51 @@ try {
   check(third.superseded_id === second.new_id, "P4 an open closing writes");
   const otherDay = await submit({ date: "2026-11-09", now: "2026-11-11T03:11:00Z" });
   check(otherDay.new_id && otherDay.superseded_id === null, "P4 a day with no closing instance writes (nothing to lock)");
-  await refuses(() => submit({ tmpl: OTHER_TMPL }), "invalid_payload", "P4 another shop's closing template is refused");
-  await refuses(() => submit({ tmpl: PREP_TMPL }), "invalid_payload", "P4 a template that is not a closing is refused");
+  {
+    // Only THIS shop's CLOSING instances lock: another shop's finalized closing and this shop's
+    // finalized prep list leave the edit window open.
+    await db.exec("reset role");
+    await db.query("insert into public.checklist_instances (template_id, location_id, date, status) values ($1, $2, $3, 'confirmed')", [OTHER_TMPL, OTHER, DAY]);
+    await db.query("insert into public.checklist_instances (template_id, location_id, date, status) values ($1, $2, $3, 'confirmed')", [PREP_TMPL, L, DAY]);
+    await db.exec("set role service_role");
+    const unlocked = await submit({ drawer: 63000, now: "2026-11-11T03:12:00Z" });
+    check(unlocked.superseded_id === third.new_id, "P4 another shop's finalized closing and a finalized non-closing list do not lock");
+  }
+
+  // P7 — review r1: the lock is the day's closing INSTANCES, any template version. Template V1 is
+  //      retired (an admin published V2 and deactivated V1) with a finalized instance; whatever the app
+  //      resolves as current today, the RPC takes no template id and the locked deposit stands.
   {
     await db.exec("reset role");
-    await db.query("update public.checklist_instances set status = 'confirmed' where id = $1", [INST]);
+    const V2 = await id("insert into public.checklist_templates (location_id, type) values ($1, 'closing') returning id", [L]);
+    await db.query("update public.checklist_templates set active = false where id = $1", [TMPL]); // V1 retired
     await db.exec("set role service_role");
-    const noGate = await submit({ tmpl: null, drawer: 63000, now: "2026-11-11T03:12:00Z" });
-    check(noGate.superseded_id === third.new_id, "P4 no template id = no gate (lib/cash.ts resolved no closing template)");
+    for (const status of ["confirmed", "incomplete_confirmed", "auto_finalized"]) {
+      await db.exec("reset role");
+      await db.query("update public.checklist_instances set status = $1 where id = $2", [status, INST]);
+      await db.exec("set role service_role");
+      const before = JSON.stringify(await rows());
+      await refuses(() => submit({ drawer: 2 }), "closing_finalized", `P7 retired V1 ${status} + replacement V2 (no instance) → refused`);
+      check(JSON.stringify(await rows()) === before, `P7 ${status}: the locked deposit is untouched`);
+    }
+    await db.exec("reset role");
+    const V2_INST = await id("insert into public.checklist_instances (template_id, location_id, date) values ($1, $2, $3) returning id", [V2, L, DAY]);
+    await db.exec("set role service_role");
+    {
+      const before = JSON.stringify(await rows());
+      await refuses(() => submit({ drawer: 3 }), "closing_finalized", "P7 V1 finalized + V2 open the same night → still refused");
+      check(JSON.stringify(await rows()) === before, "P7 V1 finalized + V2 open: nothing changed");
+    }
     await db.exec("reset role");
     await db.query("update public.checklist_instances set status = 'open' where id = $1", [INST]);
+    await db.query("update public.checklist_instances set status = 'auto_finalized' where id = $1", [V2_INST]);
     await db.exec("set role service_role");
+    await refuses(() => submit({ drawer: 4 }), "closing_finalized", "P7 V2 finalized (V1 open) → refused");
+    await db.exec("reset role");
+    await db.query("update public.checklist_instances set status = 'open' where id = $1", [V2_INST]);
+    await db.exec("set role service_role");
+    const reopened = await submit({ drawer: 64000, now: "2026-11-11T03:15:00Z" });
+    check(reopened.new_id && reopened.superseded_id !== null, "P7 both versions open → the edit writes");
   }
 
   // P5 — atomicity: a failing insert takes the supersede with it
