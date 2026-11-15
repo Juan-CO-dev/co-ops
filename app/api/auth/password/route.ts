@@ -11,7 +11,9 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *   3. Role must allow email auth (level 6+). Otherwise → 401 invalid_credentials.
  *   4. Inactive user → 403 account_inactive.
  *   5. Email not yet verified → 403 email_not_verified.
- *   6. Locked → 423 account_locked with retry_after_seconds.
+ *   6. Reserve the attempt (reserveAttempt; audit W07 B049/B050, migration 0307): the lock
+ *      check and the attempt count are one step, before the password is checked.
+ *      Locked → 423 account_locked with retry_after_seconds.
  *   7. Verify password. Wrong → recordFailedAttempt; if it crossed threshold,
  *      return 423; otherwise 401 invalid_credentials.
  *   8. Success → recordSuccessfulAuth, return 200 with session cookie.
@@ -27,9 +29,11 @@ import { type NextRequest } from "next/server";
 
 import { verifyPassword } from "@/lib/auth";
 import {
-  isLocked,
+  lockedRetryAfterSeconds,
   recordFailedAttempt,
   recordSuccessfulAuth,
+  reserveAttempt,
+  reservedOf,
   upgradeLegacyPasswordHash,
 } from "@/lib/auth-flows";
 import { applySessionCookie } from "@/lib/session";
@@ -120,14 +124,17 @@ export async function POST(req: NextRequest) {
     return jsonError(403, "email_not_verified");
   }
 
-  // 6. Locked
-  const lockState = await isLocked(user.id);
-  if (lockState.locked) {
+  // 6. Reserve the attempt — the lock check AND the count in one row lock, BEFORE bcrypt runs
+  // (audit W07 B049/B050; see /api/auth/pin). The role, inactive and email-not-verified gates
+  // above stay AHEAD of the reservation, so those refusals never count toward a lockout.
+  const reservation = await reserveAttempt(user.id);
+  if (!reservation.allowed) {
     await recordFailedAttempt(user.id, "password", "account_locked_attempt", ctx);
     return jsonError(423, "account_locked", {
-      retry_after_seconds: lockState.retryAfterSeconds,
+      retry_after_seconds: reservation.retryAfterSeconds,
     });
   }
+  const reserved = reservedOf(reservation);
 
   // 7. Verify password
   if (!user.password_hash) {
@@ -136,22 +143,20 @@ export async function POST(req: NextRequest) {
     // toward lockout (see lib/auth-flows.ts COUNTABLE_FAILURE_REASONS) — if
     // this attempt crossed the threshold, return 423 immediately so the user
     // doesn't see a misleading 401 on the threshold-crossing attempt.
-    const result = await recordFailedAttempt(user.id, "password", "missing_password_hash", ctx);
+    const result = await recordFailedAttempt(user.id, "password", "missing_password_hash", ctx, undefined, { reserved });
     if (result.locked) {
-      const fresh = await isLocked(user.id);
       return jsonError(423, "account_locked", {
-        retry_after_seconds: fresh.retryAfterSeconds,
+        retry_after_seconds: await lockedRetryAfterSeconds(user.id, reserved),
       });
     }
     return jsonError(401, "invalid_credentials");
   }
   const ok = await verifyPassword(password, user.password_hash);
   if (!ok) {
-    const result = await recordFailedAttempt(user.id, "password", "wrong_password", ctx);
+    const result = await recordFailedAttempt(user.id, "password", "wrong_password", ctx, undefined, { reserved });
     if (result.locked) {
-      const fresh = await isLocked(user.id);
       return jsonError(423, "account_locked", {
-        retry_after_seconds: fresh.retryAfterSeconds,
+        retry_after_seconds: await lockedRetryAfterSeconds(user.id, reserved),
       });
     }
     return jsonError(401, "invalid_credentials");

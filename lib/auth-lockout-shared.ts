@@ -1,0 +1,64 @@
+/**
+ * Sign-in lockout — the PURE half (zero I/O; no runtime import, so scripts/sql-harness-0307.mjs imports it
+ * with plain node). The limits here are the twins of the SQL literals in migration 0307
+ * (`auth_reserve_attempt`), pinned equal by tests/auth-lockout-reset-migration.test.ts.
+ *
+ * Audit wave W07 (B049 / B050): the lock used to be decided AFTER the credential check, from a counter
+ * that only ever went up. 0307's `auth_reserve_attempt` decides and counts in one row lock BEFORE the
+ * check, and restarts the count when a lock has run out.
+ */
+
+/** Wrong answers before the account locks (locked Phase 2 Session 1). SQL twin: `v_count >= 5`. */
+export const FAILURE_LIMIT = 5;
+/** How long a lock lasts. SQL twin: `interval '15 minutes'`. */
+export const LOCKOUT_MINUTES = 15;
+
+/** The exact argument object the lib sends (the harness calls the function with the same names). */
+export const reserveAttemptCall = (userId: string) => ({ fn: "auth_reserve_attempt", args: { p_user: userId } }) as const;
+
+/**
+ * The function is not installed yet: PostgREST's schema-cache miss (PGRST202) or Postgres's undefined
+ * function (42883). This — and only this — is what "0307 is not applied yet" looks like, and every 0307
+ * caller falls back to its pre-0307 path on it.
+ */
+export function isMissingRpc(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+
+export interface AttemptReservation {
+  /** false = the account is locked right now; the credential must NOT be checked. */
+  allowed: boolean;
+  /** This attempt's number in the current window (1..FAILURE_LIMIT). null when refused or degraded. */
+  attempt: number | null;
+  /** Set when THIS reservation reached the limit (the lock is already written), or the live lock when refused. */
+  lockedUntil: string | null;
+  /** Seconds until a live lock ends; 0 when not locked. */
+  retryAfterSeconds: number;
+  /** true = 0307's function was missing or failed and the answer came from the pre-0307 read. */
+  degraded: boolean;
+}
+
+/** Seconds from `nowMs` until `lockedUntil` (at least 1 while the lock is live, 0 when it is not). */
+export function lockRetryAfterSeconds(lockedUntil: string | null, nowMs: number): number {
+  if (!lockedUntil) return 0;
+  const ms = new Date(lockedUntil).getTime() - nowMs;
+  return Number.isFinite(ms) && ms > 0 ? Math.max(1, Math.ceil(ms / 1000)) : 0;
+}
+
+/**
+ * `auth_reserve_attempt`'s jsonb → the lib's shape, or null when it is not the shape 0307 returns
+ * (the caller then degrades to the pre-0307 read rather than trusting a malformed answer).
+ */
+export function parseAttemptReservation(data: unknown, nowMs: number): AttemptReservation | null {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
+  const r = data as Record<string, unknown>;
+  if (typeof r.allowed !== "boolean") return null;
+  const lockedUntil = typeof r.locked_until === "string" ? r.locked_until : null;
+  if (!r.allowed) {
+    const fromDb = typeof r.retry_after_seconds === "number" && r.retry_after_seconds > 0 ? Math.ceil(r.retry_after_seconds) : 0;
+    return { allowed: false, attempt: null, lockedUntil, retryAfterSeconds: Math.max(1, fromDb || lockRetryAfterSeconds(lockedUntil, nowMs)), degraded: false };
+  }
+  if (typeof r.attempt !== "number" || !Number.isInteger(r.attempt) || r.attempt < 1) return null;
+  return { allowed: true, attempt: r.attempt, lockedUntil, retryAfterSeconds: lockRetryAfterSeconds(lockedUntil, nowMs), degraded: false };
+}

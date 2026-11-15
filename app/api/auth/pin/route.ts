@@ -11,7 +11,9 @@
  *      is never an account-existence oracle.
  *   2. Service-role lookup of users row. Unknown user → audit + 401 invalid_credentials.
  *   3. Inactive user → audit + 403 account_inactive.
- *   4. Locked user → audit + 423 account_locked with retry_after_seconds.
+ *   4. Reserve the attempt (reserveAttempt; audit W07 B049/B050, migration 0307): the lock
+ *      check and the attempt count are ONE step under the users row lock, BEFORE the PIN is
+ *      checked. Locked → audit + 423 account_locked with retry_after_seconds.
  *   5. Verify PIN. Wrong → recordFailedAttempt; if it crossed threshold,
  *      return 423 with fresh retry_after; otherwise 401 invalid_credentials.
  *   6. Success → recordSuccessfulAuth (creates session, resets counters,
@@ -34,7 +36,13 @@
 import { type NextRequest } from "next/server";
 
 import { verifyPin } from "@/lib/auth";
-import { isLocked, recordFailedAttempt, recordSuccessfulAuth } from "@/lib/auth-flows";
+import {
+  lockedRetryAfterSeconds,
+  recordFailedAttempt,
+  recordSuccessfulAuth,
+  reserveAttempt,
+  reservedOf,
+} from "@/lib/auth-flows";
 import { applySessionCookie } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
@@ -159,36 +167,40 @@ export async function POST(req: NextRequest) {
     return jsonError(403, "account_inactive");
   }
 
-  // 4. Locked
-  const lockState = await isLocked(user.id);
-  if (lockState.locked) {
+  // 4. Reserve the attempt — the lock check AND the count, in one row lock, BEFORE bcrypt runs
+  // (audit W07 B049/B050). A separate read of locked_until here let a burst of guesses all pass
+  // before any of them was counted; now exactly five of a burst reach the PIN check. A refused
+  // reservation writes nothing to the counter (the account_locked_attempt precondition law).
+  // Before migration 0307 is applied this answers from the old read, and the failures below are
+  // counted the old way — see reserveAttempt.
+  const reservation = await reserveAttempt(user.id);
+  if (!reservation.allowed) {
     await recordFailedAttempt(user.id, "pin", "account_locked_attempt", ctx);
     return jsonError(423, "account_locked", {
-      retry_after_seconds: lockState.retryAfterSeconds,
+      retry_after_seconds: reservation.retryAfterSeconds,
     });
   }
+  const reserved = reservedOf(reservation);
 
   // 5. Verify PIN (defensive: pin_hash should always be set for active users).
   // Counts toward lockout (see lib/auth-flows.ts COUNTABLE_FAILURE_REASONS) —
   // if this attempt crossed the threshold, return 423 immediately so the user
   // doesn't see a misleading 401 on the threshold-crossing attempt.
   if (!user.pin_hash) {
-    const result = await recordFailedAttempt(user.id, "pin", "missing_pin_hash", ctx);
+    const result = await recordFailedAttempt(user.id, "pin", "missing_pin_hash", ctx, undefined, { reserved });
     if (result.locked) {
-      const fresh = await isLocked(user.id);
       return jsonError(423, "account_locked", {
-        retry_after_seconds: fresh.retryAfterSeconds,
+        retry_after_seconds: await lockedRetryAfterSeconds(user.id, reserved),
       });
     }
     return jsonError(401, "invalid_credentials");
   }
   const ok = await verifyPin(pin, user.pin_hash);
   if (!ok) {
-    const result = await recordFailedAttempt(user.id, "pin", "wrong_pin", ctx);
+    const result = await recordFailedAttempt(user.id, "pin", "wrong_pin", ctx, undefined, { reserved });
     if (result.locked) {
-      const fresh = await isLocked(user.id);
       return jsonError(423, "account_locked", {
-        retry_after_seconds: fresh.retryAfterSeconds,
+        retry_after_seconds: await lockedRetryAfterSeconds(user.id, reserved),
       });
     }
     return jsonError(401, "invalid_credentials");
