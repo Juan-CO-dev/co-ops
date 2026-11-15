@@ -11,7 +11,7 @@ import type { MeasureUnitFactor } from "@/lib/recipe-math";
  */
 const base: ReceivedLineFacts = {
   qty: 2, levelLabel: "bag", resolvedOz: 160, linePrice: 60, currentRootPrice: 48,
-  contentOz: 480, rootLabel: "case", receivedRootOz: 480, receivedRootLabel: "case", priceIsPerLevel: false,
+  contentOz: 480, rootLabel: "case", receivedRootOz: 480, receivedRootLabel: "case", receivedLevelsPerRoot: 6, priceIsPerLevel: false,
 };
 
 describe("W04 r1: a frozen delivery price converts through the pack in force when received", () => {
@@ -20,11 +20,11 @@ describe("W04 r1: a frozen delivery price converts through the pack in force whe
   });
 
   it("a shop-specific pack prices the line against that shop's case, not the global default", () => {
-    expect(receivedLineContribution({ ...base, receivedRootOz: 240 })).toEqual({ oz: 160, dollars: 40 });
+    expect(receivedLineContribution({ ...base, receivedRootOz: 240, receivedLevelsPerRoot: 3 })).toEqual({ oz: 160, dollars: 40 });
   });
 
   it("an inner-level line whose received conversion is unknown is unpriced, never today's guess", () => {
-    expect(receivedLineContribution({ ...base, receivedRootOz: null, receivedRootLabel: null })).toEqual({ oz: 160, dollars: null });
+    expect(receivedLineContribution({ ...base, receivedRootOz: null, receivedRootLabel: null, receivedLevelsPerRoot: null })).toEqual({ oz: 160, dollars: null });
   });
 
   it("an unpriced line is valued at today's price over today's case (one consistent basis)", () => {
@@ -51,7 +51,7 @@ const versions: ScopedVersionRow[] = [
   { id: "s1", sku_id: "sku", location_id: "shopB", valid_from: "2026-06-01T00:00:00Z", valid_to: null },
 ];
 const levels = [...level("g1", null, 6), ...level("g2", null, 4), ...level("s1", "shopB", 3)];
-const flat = { pack_format: "case", unitsPerPack: 4, eachSize: 5, eachMeasure: "lb", avgOzPerEach: null };
+const flat = { pack_format: "case", eachContainerLabel: "bag", unitsPerPack: 4, eachSize: 5, eachMeasure: "lb", avgOzPerEach: null };
 
 describe("W04 r1: the pack in force at each delivery line, per shop", () => {
   const packs = resolvePacksAtPoints(versions, levels, [
@@ -61,15 +61,19 @@ describe("W04 r1: the pack in force at each delivery line, per shop", () => {
     { key: "before-any", skuId: "sku", scope: "shopA", asOf: "2025-01-01T00:00:00Z" },
   ]);
   it("picks the global version in force at the line's instant", () => {
-    expect(rootConversionOf(flat, packs.get("before-edit"), measures, true)).toEqual({ rootOz: 480, rootLabel: "case" });
-    expect(rootConversionOf(flat, packs.get("after-edit"), measures, true)).toEqual({ rootOz: 320, rootLabel: "case" });
+    expect(rootConversionOf(flat, packs.get("before-edit"), measures, true)).toMatchObject({ rootOz: 480, rootLabel: "case" });
+    expect(rootConversionOf(flat, packs.get("before-edit"), measures, true).levelsPerRoot.get("bag")).toBe(6);
+    expect(rootConversionOf(flat, packs.get("after-edit"), measures, true)).toMatchObject({ rootOz: 320, rootLabel: "case" });
+    expect(rootConversionOf(flat, packs.get("after-edit"), measures, true).levelsPerRoot.get("bag")).toBe(4);
   });
   it("a shop's own version answers for that shop's deliveries", () => {
-    expect(rootConversionOf(flat, packs.get("shop-b"), measures, true)).toEqual({ rootOz: 240, rootLabel: "case" });
+    expect(rootConversionOf(flat, packs.get("shop-b"), measures, true)).toMatchObject({ rootOz: 240, rootLabel: "case" });
+    expect(rootConversionOf(flat, packs.get("shop-b"), measures, true).levelsPerRoot.get("bag")).toBe(3);
   });
   it("before any version of a versioned SKU the conversion is unknown; a never-versioned SKU reads its flat pack", () => {
     expect(packs.has("before-any")).toBe(false);
-    expect(rootConversionOf(flat, undefined, measures, true)).toEqual({ rootOz: null, rootLabel: null });
-    expect(rootConversionOf(flat, undefined, measures, false)).toEqual({ rootOz: 320, rootLabel: "case" });
+    expect(rootConversionOf(flat, undefined, measures, true)).toEqual({ rootOz: null, rootLabel: null, levelsPerRoot: new Map() });
+    expect(rootConversionOf(flat, undefined, measures, false)).toMatchObject({ rootOz: 320, rootLabel: "case" });
+    expect(rootConversionOf(flat, undefined, measures, false).levelsPerRoot.get("bag")).toBe(4);
   });
 });

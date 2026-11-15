@@ -45,7 +45,7 @@ import type { MeasureUnitFactor } from "@/lib/recipe-math";
 // The PURE half lives in cost-shared.ts (the house *-shared law) so the
 // derivation is test-pinnable; re-exported here so server consumers' import
 // paths are unchanged.
-import { contentOzForSku, receivedLineContribution, rootConversionOf, type FlatPackFacts } from "@/lib/admin/cost-shared";
+import { contentOzForSku, levelsPerRootOf, receivedLineContribution, rootConversionOf, type FlatPackFacts, type RootConversion } from "@/lib/admin/cost-shared";
 import { buildPackChain, chainRootLabel } from "@/lib/pack-chain-shared";
 
 export {
@@ -191,8 +191,8 @@ async function loadChainAwareContent(
   if (skuIds.length === 0) return new Map();
   const [skuRows, chains] = await Promise.all([
     // W04/B149: chunked + paged, and a failed read throws instead of leaving SKUs "missing oz".
-    selectByIdChunks<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null; pack_format: string | null }>(
-      skuIds, (chunk, from, to) => sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each, pack_format")
+    selectByIdChunks<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null; pack_format: string | null; each_container_label: string | null }>(
+      skuIds, (chunk, from, to) => sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each, pack_format, each_container_label")
         .in("id", chunk).order("id", { ascending: true }).range(from, to)),
     loadSkuPackChains(skuIds, null), // the drawer's ledgers span every shop: the global default
   ]);
@@ -200,7 +200,7 @@ async function loadChainAwareContent(
     skuRows.map((s) => {
       const chain = chains.get(s.id) ?? null;
       const rootLabel = chain && chain.length > 0 ? chainRootLabel(buildPackChain(chain)) : s.pack_format;
-      const flat: FlatPackFacts = { pack_format: s.pack_format, unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) };
+      const flat: FlatPackFacts = { pack_format: s.pack_format, eachContainerLabel: s.each_container_label ?? null, unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) };
       return [s.id, { oz: contentOzForSku(flat, chain, measuresMap), rootLabel, flat }];
     }),
   );
@@ -335,7 +335,8 @@ export interface SkuReceivingLedger {
  * root-pack price (a store run's line price is per received level) ?? the current SKU price.
  * W04 r1: a line's frozen price converts through the pack in force AT THE DELIVERY'S SHOP WHEN THE
  * LINE WAS WRITTEN (`loadSkuPacksAtPoints`), so a later pack edit or a shop pack differing from the
- * global default never moves historical dollars.
+ * global default never moves historical dollars. W04 r2: an inner-level line converts by that pack's CONTAINER
+ * COUNT (2 of a 12-bottle case = 1/6), never by an ounce ratio that rides today's average weight.
  * Lines missing a price / an oz basis are excluded and counted (honest under-count).
  * Received-to-date, NOT true on-hand (R4 = received − counted).
  */
@@ -394,14 +395,15 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
     const qty = num(l.qty_received) ?? 0;
     const meta = delMeta.get(l.delivery_id);
     const content = contentById.get(l.vendor_item_id);
-    const then = content && l.created_at
+    const then: RootConversion = content && l.created_at
       ? rootConversionOf(content.flat, packAtLine.get(l.id), measuresMap, versioned.has(l.vendor_item_id))
-      : { rootOz: null, rootLabel: null };
+      : { rootOz: null, rootLabel: null, levelsPerRoot: new Map() };
     const { oz, dollars } = receivedLineContribution({
       qty, levelLabel: l.received_level_label, resolvedOz: num(l.resolved_oz),
       linePrice: num(l.unit_price), currentRootPrice: prices.get(l.vendor_item_id) ?? null,
       contentOz: content?.oz ?? null, rootLabel: content?.rootLabel ?? null,
-      receivedRootOz: then.rootOz, receivedRootLabel: then.rootLabel, priceIsPerLevel: meta?.store ?? false,
+      receivedRootOz: then.rootOz, receivedRootLabel: then.rootLabel,
+      receivedLevelsPerRoot: levelsPerRootOf(then, l.received_level_label), priceIsPerLevel: meta?.store ?? false,
     });
     if (dollars == null) led.unpricedLineCount += 1;
     else led.receivedDollars += dollars;
