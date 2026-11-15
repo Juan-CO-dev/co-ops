@@ -7,6 +7,7 @@ import {
   cashReadoutVisible,
   computeCashTotals,
   DEFAULT_FLOAT_CENTS,
+  drawerFigureEntered,
   overShortReadout,
   sumDenominations,
   type Denominations,
@@ -84,6 +85,10 @@ export function CashClient({
 
   const projectedCents = toCents(projected);
   const drawerTotalCents = mode === "denomination" ? sumDenominations(denoms) : toCents(handTotal);
+  // W03/B007: an untouched form must never submit (it filed drawer 0 → a negative deposit).
+  // Submit waits for the same "the closer entered both figures" rule as the live readout.
+  const drawerEntered = drawerFigureEntered({ mode, handTotal, denoms, enteredDenoms });
+  const canSubmit = cashReadoutVisible({ mode, projected, handTotal, denoms, enteredDenoms });
   const { overShortCents, depositCents } = useMemo(
     () => computeCashTotals({ projectedCents, drawerTotalCents, floatCents: DEFAULT_FLOAT_CENTS }),
     [projectedCents, drawerTotalCents],
@@ -108,8 +113,11 @@ export function CashClient({
           pin,
           projectedCents,
           countMethod: mode,
-          drawerTotalCents: mode === "hand" ? drawerTotalCents : undefined,
+          drawerTotalCents: mode === "hand" && drawerEntered ? drawerTotalCents : undefined,
           denominations: mode === "denomination" ? denoms : undefined,
+          // A $0 drawer the closer actually typed (hand "0", or denomination zeros) — the server
+          // refuses a $0 drawer without it.
+          drawerCountedEmpty: drawerEntered && drawerTotalCents === 0,
           floatCents: DEFAULT_FLOAT_CENTS,
           cashTipsCents: toCents(tips),
           onShift,
@@ -120,14 +128,18 @@ export function CashClient({
         router.refresh(); // page re-renders into the read-only view (report now exists)
         return { ok: true };
       }
-      const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
-      if (body.code === REAUTH_LOCKED_CODE) {
+      const raw = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+      if (raw.code === REAUTH_LOCKED_CODE) {
         // Five wrong PINs in a row: the server signed this session out (audit W07 B159).
         leaveAfterReauthLock();
         return { ok: false, error: { kind: "invalid", message: t("auth.reauth.signed_out") } };
       }
+      // jsonError puts the machine code in `code` (and a message, when given, in `error`).
+      const body = { error: raw.code ?? raw.error };
       if (body.error === "pin_invalid") return { ok: false, error: { kind: "invalid", message: t("cash.error.pin_invalid") } };
       if (body.error === "closing_finalized") return { ok: false, error: { kind: "invalid", message: t("cash.error.closing_finalized") } };
+      if (body.error === "drawer_not_counted") return { ok: false, error: { kind: "invalid", message: t("cash.error.drawer_not_counted") } };
+      if (body.error === "cash_concurrent_submit") return { ok: false, error: { kind: "invalid", message: t("cash.error.concurrent_submit") } };
       return { ok: false, error: { kind: "network", message: t("cash.error.generic") } };
     } catch {
       return { ok: false, error: { kind: "network", message: t("cash.error.generic") } };
@@ -381,9 +393,12 @@ export function CashClient({
         </div>
       </section>
 
-      <ActionButton size="lg" className="w-full" onClick={() => setPinOpen(true)}>
+      <ActionButton size="lg" className="w-full" disabled={!canSubmit} onClick={() => { if (!canSubmit) return; setPinOpen(true); }}>
         {t("cash.submit.button")}
       </ActionButton>
+      {!canSubmit ? (
+        <p className="-mt-4 text-xs text-co-text-muted">{t("cash.submit.needs_count")}</p>
+      ) : null}
       </div>
 
       {pinOpen ? (
