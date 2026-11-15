@@ -33,6 +33,8 @@ let completions: Record<string, unknown>[];
 let user: Record<string, unknown>;
 let session: Record<string, unknown>;
 let memberships: { location_id: string; active: boolean }[];
+let photos: Record<string, unknown>[];
+const PHOTO = "0d9a3c1e-5b6f-4a7d-8e9f-0123456789ab";
 let exists: boolean;
 let insertResult: unknown;
 let rpcError: string | null;
@@ -58,7 +60,8 @@ function client(service: boolean): SupabaseClient {
           : table === "checklist_instances" ? exists || inserting ? instance : null
           : table === "checklist_templates" ? template
           : table === "checklist_template_items" ? single ? items.find(row => row.id === (filters.id ?? "00000000-0000-4000-8000-000000000001")) : items
-          : table === "checklist_completions" ? filters.superseded_by ? [] : completions : [];
+          : table === "checklist_completions" ? filters.superseded_by ? [] : completions
+          : table === "photos" ? (() => { const rows = photos.filter(row => filters.id === undefined || row.id === filters.id); return single ? rows[0] ?? null : rows; })() : [];
         if (table === "checklist_completions") {
           if (updating && tagGone) completions[0]![tagGone] = new Date().toISOString();
           if (updating && tagRace) {
@@ -105,6 +108,7 @@ beforeEach(() => {
   user = { id: "actor", name: "Actor", role: "key_holder", active: true, pin_hash: "test-hash" };
   session = { id: "session", user_id: "actor", revoked_at: null, expires_at: new Date(Date.now() + 60000).toISOString() };
   memberships = [{ location_id: "shop", active: true }];
+  photos = [{ id: PHOTO, location_id: "shop" }];
   mocks.pin.mockResolvedValue(true); mocks.access.mockResolvedValue(true);
   mocks.reader = client(false); mocks.writer = client(true);
   mocks.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
@@ -443,5 +447,37 @@ describe("CC correction fix regressions", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "concurrent_modification" });
     expect(mocks.audit).not.toHaveBeenCalled();
+  });
+});
+
+describe("W08/B163 a completion's photo must be a photo of this instance's shop", () => {
+  it("refuses a photo id that does not exist", async () => {
+    items[0]!.expects_photo = true;
+    await expect(completeItem(mocks.reader, { ...completionArgs, photoId: "00000000-0000-4000-8000-000000000000" }))
+      .rejects.toMatchObject({ code: "invalid_photo" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("refuses another shop's photo", async () => {
+    items[0]!.expects_photo = true;
+    photos = [{ id: PHOTO, location_id: "other" }];
+    await expect(completeItem(mocks.reader, { ...completionArgs, photoId: PHOTO })).rejects.toMatchObject({ code: "invalid_photo" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("refuses a malformed photo id even on an item that does not require one", async () => {
+    await expect(completeItem(mocks.reader, { ...completionArgs, photoId: "not-a-uuid" })).rejects.toMatchObject({ code: "invalid_photo" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("accepts this shop's photo", async () => {
+    items[0]!.expects_photo = true;
+    await completeItem(mocks.reader, { ...completionArgs, photoId: PHOTO });
+    expect(mocks.rpc).toHaveBeenCalledWith("checklist_write_completion", expect.objectContaining({ p_photo_id: PHOTO }));
+  });
+  it("the route maps it to 400 invalid_photo on photoId", async () => {
+    items[0]!.expects_photo = true;
+    photos = [];
+    const response = await complete(request("completions", { instanceId: "instance", templateItemId: "00000000-0000-4000-8000-000000000001", photoId: PHOTO }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "invalid_photo", field: "photoId" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
   });
 });

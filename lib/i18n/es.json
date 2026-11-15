@@ -2456,6 +2456,7 @@
   "closing.error.role_level_insufficient": "Tu rol no puede completar este ítem.",
   "closing.error.missing_count": "Pon una cantidad primero.",
   "closing.error.missing_photo": "Toma una foto primero.",
+  "closing.error.invalid_photo": "Esa foto no sirve aquí. Tómala de nuevo.",
   "closing.error.pin_mismatch": "El PIN no coincide.",
   "closing.error.missing_reasons": "Faltan razones para los ítems sin completar.",
   "closing.error.extra_reasons": "Hay razones para ítems ya completados.",

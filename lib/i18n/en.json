@@ -2456,6 +2456,7 @@
   "closing.error.role_level_insufficient": "Your role can't complete this item.",
   "closing.error.missing_count": "Enter a count value first.",
   "closing.error.missing_photo": "Take a photo first.",
+  "closing.error.invalid_photo": "That photo couldn't be used here. Take it again.",
   "closing.error.pin_mismatch": "PIN didn't match.",
   "closing.error.missing_reasons": "Reasons required for incomplete items.",
   "closing.error.extra_reasons": "Reasons supplied for completed items.",
