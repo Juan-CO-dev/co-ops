@@ -31,6 +31,7 @@ import { redirect } from "next/navigation";
 import { signJwt, verifyJwt, hashToken, type AppJwtClaims } from "./auth";
 import { trustedClientIp } from "./client-ip";
 import { jsonError } from "./api-helpers";
+import { signInHref } from "./nav-sign-in-return";
 import { getServiceRoleClient } from "./supabase-server";
 import { type RoleCode, getRoleLevel } from "./roles";
 import { audit } from "./audit";
@@ -349,7 +350,7 @@ async function requireSessionCore(
   ipAddress: string | null,
   userAgent: string | null,
   currentPath: string,
-): Promise<AuthContext | { denied: true } | { unavailable: true }> {
+): Promise<AuthContext | { denied: true; userId?: string } | { unavailable: true }> {
   if (!rawJwt) return { denied: true };
 
   let claims;
@@ -359,6 +360,10 @@ async function requireSessionCore(
     return { denied: true };
   }
 
+  // Past this point the JWT verified: a denial names whose session it was, so the sign-in return link can be bound to
+  // that person (owner decision W06-2). It is a navigation hint only, never authority.
+  const deniedFor = { denied: true as const, userId: claims.user_id };
+
   const sb = getServiceRoleClient();
   const { data: rowRaw, error } = await sb
     .from("sessions")
@@ -366,7 +371,7 @@ async function requireSessionCore(
     .eq("id", claims.session_id)
     .maybeSingle<SessionRow>();
   if (error) return { unavailable: true };
-  if (!rowRaw) return { denied: true };
+  if (!rowRaw) return deniedFor;
   const row = rowRaw;
 
   // Token-hash dual verification — guards against AUTH_JWT_SECRET-leak forgery.
@@ -385,13 +390,13 @@ async function requireSessionCore(
     return { denied: true };
   }
 
-  if (row.revoked_at) return { denied: true };
+  if (row.revoked_at) return deniedFor;
   const now = new Date();
-  if (new Date(row.expires_at) <= now) return { denied: true };
+  if (new Date(row.expires_at) <= now) return deniedFor;
 
   const idleThresholdMs = idleMinutes() * 60 * 1000;
   const lastActivity = row.last_activity_at ? new Date(row.last_activity_at) : new Date(0);
-  if (now.getTime() - lastActivity.getTime() > idleThresholdMs) return { denied: true };
+  if (now.getTime() - lastActivity.getTime() > idleThresholdMs) return deniedFor;
 
   // Touch last_activity_at — non-blocking semantics: if the touch fails, keep
   // the request flowing rather than 401-ing on a transient write error.
@@ -404,8 +409,8 @@ async function requireSessionCore(
     .eq("id", claims.user_id)
     .maybeSingle<UserRow>();
   if (userErr) return { unavailable: true };
-  if (!userRowRaw) return { denied: true };
-  if (!userRowRaw.active) return { denied: true };
+  if (!userRowRaw) return deniedFor;
+  if (!userRowRaw.active) return deniedFor;
   const userRow = userRowRaw;
 
   // WB2-02: derive `locations` LIVE from user_locations (like role/level are already read live from
@@ -523,7 +528,13 @@ export async function requireSessionFromHeaders(
   // Audit W06/B048: a failed READ renders the error page ("Try again"), never the sign-in page.
   if ("unavailable" in result) throw new Error("session_unavailable");
   if ("denied" in result) {
-    const target = currentPath ? `/?next=${encodeURIComponent(currentPath)}` : "/";
+    // Audit W06/B155: return to the page actually served (proxy.ts `x-co-path`), not the caller's hub path; fall back
+    // to currentPath. currentPath alone keeps driving the step-up auto-clear above. W06-2: when the JWT named a user
+    // the link is bound to them (a different person signing in lands on the dashboard); with no known user it is the
+    // proxy's old "you opened a link while signed out" meaning.
+    const served = headerStore.get("x-co-path");
+    const nextPath = served && served.startsWith("/") && !served.startsWith("//") ? served : currentPath;
+    const target = signInHref({ next: nextPath || null, forUser: result.userId ?? null, keepUnownedNext: true });
     redirect(target); // throws — `never` return type narrows the type below
   }
   return result;
