@@ -3,7 +3,8 @@ import { hasTaskAccess } from "@/lib/assignments";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
-import { verifyActorPin } from "@/lib/auth-flows";
+import { reauthLockedResponse } from "@/lib/auth-reauth";
+import { verifyActorPinForSession } from "@/lib/auth-reauth-pin";
 import { loadToastCashProjected } from "@/lib/cash-toast";
 import { CASH_REPORT_BASE_LEVEL, DENOMINATION_UNITS_CENTS, sumDenominations, submitCashReport, type Denominations, type OnShiftEntry } from "@/lib/cash";
 import { uncountedDrawer } from "@/lib/cash-shared";
@@ -64,7 +65,10 @@ export async function POST(req: NextRequest) {
     return jsonError(403, "role_insufficient", { required_level: CASH_REPORT_BASE_LEVEL });
   }
 
-  if (!(await verifyActorPin(ctx.user.id, b.pin as string))) {
+  // Counted per session (audit W07 B159): five wrong PINs in a row sign this device out; the account is not locked.
+  const pinCheck = await verifyActorPinForSession(ctx.session.id, ctx.user.id, b.pin as string);
+  if (pinCheck === "signed_out") return reauthLockedResponse();
+  if (pinCheck !== "ok") {
     return jsonError(401, "pin_invalid", { message: "Incorrect PIN." });
   }
 

@@ -240,6 +240,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/toast-sales/exclusions/route.ts": ["A"],
   "app/api/admin/toast-sales/pull/route.ts": ["A"],
   "app/api/admin/users/[id]/activate/route.ts": ["B"],
+  // Confirm-your-email (audit W07 B053): mails a link that sets a manager's password — a user-admin act, Tier B.
+  "app/api/admin/users/[id]/confirm-email/route.ts": ["B"],
   "app/api/admin/users/[id]/deactivate/route.ts": ["B"],
   // Staff separations (0279): on leave / back / separated / rehire / correction — a user-lifecycle write, Tier B.
   "app/api/admin/users/[id]/employment/route.ts": ["B"],

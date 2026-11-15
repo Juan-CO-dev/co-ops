@@ -27,6 +27,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
 import { ActionButton } from "@/components/ActionButton";
+import { REAUTH_LOCKED_CODE, leaveAfterReauthLock } from "@/lib/auth-reauth-client";
 import { PinKeypad, type PinKeypadError } from "@/components/auth/PinKeypad";
 import { DenominationCounter } from "@/components/cash/DenominationCounter";
 
@@ -128,6 +129,11 @@ export function CashClient({
         return { ok: true };
       }
       const raw = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+      if (raw.code === REAUTH_LOCKED_CODE) {
+        // Five wrong PINs in a row: the server signed this session out (audit W07 B159).
+        leaveAfterReauthLock();
+        return { ok: false, error: { kind: "invalid", message: t("auth.reauth.signed_out") } };
+      }
       // jsonError puts the machine code in `code` (and a message, when given, in `error`).
       const body = { error: raw.code ?? raw.error };
       if (body.error === "pin_invalid") return { ok: false, error: { kind: "invalid", message: t("cash.error.pin_invalid") } };

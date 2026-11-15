@@ -18,6 +18,11 @@ vi.mock("@/lib/session", () => ({ requireSession: mocks.session }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({}) }));
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: mocks.access }));
 vi.mock("@/lib/auth-flows", () => ({ verifyActorPin: mocks.pin }));
+// W07 (merged first) routes the cash PIN through the per-session re-check counter; this file tests the
+// drawer rules, so the counter wraps the same PIN mock (W07's own tests cover the counter).
+vi.mock("@/lib/auth-reauth-pin", () => ({
+  verifyActorPinForSession: async (_session: string, user: string, pin: string) => ((await mocks.pin(user, pin)) ? "ok" : "wrong"),
+}));
 vi.mock("@/lib/cash-toast", () => ({ loadToastCashProjected: mocks.toast }));
 vi.mock("@/lib/cash", async () => {
   const shared = await vi.importActual<typeof import("@/lib/cash-shared")>("@/lib/cash-shared");
@@ -39,7 +44,7 @@ function req(body: unknown): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.session.mockResolvedValue({ user: { id: USER }, role: "key_holder", level: 4, locations: [SHOP] });
+  mocks.session.mockResolvedValue({ user: { id: USER }, session: { id: "session-1" }, role: "key_holder", level: 4, locations: [SHOP] });
   mocks.access.mockResolvedValue(true);
   mocks.pin.mockResolvedValue(true);
   mocks.toast.mockResolvedValue(null);

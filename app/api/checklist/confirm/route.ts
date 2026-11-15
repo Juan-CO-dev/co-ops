@@ -95,6 +95,7 @@ export async function POST(req: NextRequest) {
       instanceId: parsed.instanceId,
       actor: await resolveChecklistWriteActor(ctx),
       pin: parsed.pin,
+      sessionId: ctx.session.id,
       incompleteReasons: parsed.incompleteReasons,
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),
