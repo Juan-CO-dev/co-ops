@@ -6,11 +6,11 @@ import { ROLES } from "@/lib/roles";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
 
-const state = vi.hoisted(() => ({ level: 4, role: "key_holder", tasks: [] as TaskAssignment[], failure: "", yesterday: false }));
+const state = vi.hoisted(() => ({ level: 4, role: "key_holder", tasks: [] as TaskAssignment[], failure: "", yesterday: false, logoutProps: [] as unknown[] }));
 vi.mock("next/server", () => ({ after: vi.fn() }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) })); // B2: no remembered shop
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => ({ user: { id: "viewer", name: "Viewer", language: "en" }, level: state.level, role: state.role, locations: ["shop-a"] }) }));
+vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => ({ user: { id: "viewer", name: "Viewer", language: "en" }, session: { id: "session-dash" }, level: state.level, role: state.role, locations: ["shop-a"] }) }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ from: (table: string) => {
   if (state.failure === "closing" && table === "checklist_templates") throw new Error("offline");
   const result = { data: table === "locations" ? [{ id: "shop-a", name: "Shop A", code: "A" }] : table === "checklist_instances" && state.yesterday ? [{ id: "old-close", date: "2026-10-06", status: "open" }] : [], error: null };
@@ -40,7 +40,7 @@ vi.mock("@/lib/ordering", () => ({ loadOrderingAttention: async () => ({ vendors
 vi.mock("@/lib/counts", () => ({ loadCountsTileState: async () => null }));
 vi.mock("@/components/auth/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/components/BrandMark", () => ({ BrandMark: () => null }));
-vi.mock("@/components/auth/LogoutButton", () => ({ LogoutButton: () => null }));
+vi.mock("@/components/auth/LogoutButton", () => ({ LogoutButton: (props: unknown) => { state.logoutProps.push(props); return null; } }));
 vi.mock("@/components/dashboard/NotificationBell", () => ({ NotificationBell: () => null }));
 vi.mock("@/components/DashboardNav", () => ({ DashboardNav: () => null }));
 vi.mock("@/components/OpeningTile", () => ({ OpeningTile: () => createElement("i", { "data-task-tile": "opening_report" }) }));
@@ -68,7 +68,7 @@ async function dashboard(level: number, assigned: boolean, assigneeId = "viewer"
     safetyLine: html.includes("Unassigned:"),
   };
 }
-beforeEach(() => { vi.clearAllMocks(); state.failure = ""; state.yesterday = false; });
+beforeEach(() => { vi.clearAllMocks(); state.failure = ""; state.yesterday = false; state.logoutProps = []; });
 describe("dashboard rendered visibility by role", () => {
   it.each([2, 3, 4, 5, 6, 7, 9])("snapshots assigned and unassigned dashboards at level %s", async (level) => {
     expect({ unassigned: await dashboard(level, false), assigned: await dashboard(level, true) }).toMatchSnapshot();
@@ -102,5 +102,13 @@ describe("dashboard loader resilience and closing alert", () => {
       expect(await dashboard(4, true, "other", true)).toContain("/operations/closing?location=shop-a&amp;date=2026-10-06");
       expect(await dashboard(3, true, "viewer", true)).not.toContain("/operations/closing?location=shop-a&amp;date=2026-10-06");
     } finally { vi.useRealTimers(); }
+  });
+});
+// Audit W06/B012 fix round 7: the dashboard's Log out button names the session the page was served for, so a retried
+// sign-out (after a network failure, while someone signs in in another tab) can never end the newer session.
+describe("the dashboard Log out button", () => {
+  it("is given the served session id", async () => {
+    await dashboard(4, false);
+    expect(state.logoutProps).toEqual([{ sessionId: "session-dash" }]);
   });
 });

@@ -34,7 +34,7 @@ function setup(role: string, locations = ["old", "new"], count = 1) {
 }
 describe("manual conflict resolution", () => {
   beforeEach(() => { vi.clearAllMocks(); vi.mocked(canDoOperationalTask).mockResolvedValue(true); });
-  it.each(["moo", "gm", "key_holder"])("%s authorized for both sides moves then links at the account shop", async role => {
+  it.each(["moo", "gm"])("%s authorized for both sides moves then links at the account shop", async role => {
     const { actor, receipt } = setup(role);
     await moveConflictedReceipt(actor, "receipt");
     expect(receipt).toMatchObject({ location_id: "new", vendor_guess_id: "account-vendor", attributed_by: "manual", attribution_conflict: false });
@@ -46,7 +46,7 @@ describe("manual conflict resolution", () => {
       after: { location_id: "new", vendor_guess_id: "account-vendor", attributed_by: "manual", attribution_conflict: false },
     } }));
   });
-  it.each([["gm", ["old"]], ["social_media_mgr", ["old", "new"]]] as const)("refuses %s without eligible access", async (role, locations) => {
+  it.each([["gm", ["old"]], ["social_media_mgr", ["old", "new"]], ["key_holder", ["old", "new"]], ["shift_lead", ["old", "new"]]] as const)("refuses %s without eligible access", async (role, locations) => {
     const { actor, updates } = setup(role, [...locations]);
     await expect(moveConflictedReceipt(actor, "receipt")).rejects.toMatchObject({ status: 403 });
     expect(updates).toEqual([]);

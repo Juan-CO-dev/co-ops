@@ -42,6 +42,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
+import { catalogShopAllowed } from "@/lib/sku-versions-shared";
 import type { AuthContext } from "@/lib/session";
 import { COST_READ_MIN, loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { costPerOzFromGraph } from "@/lib/admin/menu-costing";
@@ -99,6 +100,11 @@ function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) {
     throw new WeightError(403, "forbidden", "Insufficient role level for this action");
   }
+}
+
+/** W08/B015: may this actor weigh a row OWNED by `shopId`? The catalog shop rule (MoO+ any shop). */
+function weighShopAllowed(actor: AuthContext, shopId: string): boolean {
+  return catalogShopAllowed({ level: getRoleLevel(actor.user.role), locations: actor.locations }, shopId);
 }
 
 /** numeric off PostgREST arrives as `number | string | null`. */
@@ -765,14 +771,18 @@ export async function recordWeightMeasurement(
   if (input.subjectKind === "sku") {
     const { data: before, error: bErr } = await sb
       .from("vendor_items")
-      .select("id, name, avg_oz_per_each, weight_class")
+      .select("id, name, avg_oz_per_each, weight_class, location_id")
       .eq("id", input.subjectId)
-      .maybeSingle<{ id: string; name: string; avg_oz_per_each: number | string | null; weight_class: string | null }>();
+      .maybeSingle<{ id: string; name: string; avg_oz_per_each: number | string | null; weight_class: string | null; location_id?: string | null }>();
     if (bErr) throw new Error(`recordWeightMeasurement lookup: ${bErr.message}`);
     if (!before) throw new WeightError(404, "not_found", "SKU not found");
+    // W08/B015: a SKU owned by ONE shop is that shop's business. Below MoO only someone who
+    // works there may weigh it (the catalog shop rule); a shared SKU stays weighable by any GM.
+    const owner = before.location_id ?? null;
+    if (owner !== null && !weighShopAllowed(actor, owner)) throw new WeightError(404, "not_found", "SKU not found");
     const beforeOz = num(before.avg_oz_per_each);
 
-    const { error, count } = await sb
+    let skuUpdate = sb
       .from("vendor_items")
       .update(
         {
@@ -787,10 +797,14 @@ export async function recordWeightMeasurement(
         { count: "exact" },
       )
       .eq("id", input.subjectId);
+    // Bind the write to the owner just read (owners never move to another shop — 0264).
+    skuUpdate = owner === null ? skuUpdate.is("location_id", null) : skuUpdate.eq("location_id", owner);
+    const { error, count } = await skuUpdate;
     if (error) throw new Error(`recordWeightMeasurement sku update: ${error.message}`);
     // UPDATE denials are SILENT on Postgres (UPDATE 0, no error) — the rowcount is
-    // the only signal, and an unchecked one is a write that never happened.
-    if (count === 0) throw new WeightError(404, "not_found", "SKU not found");
+    // the only signal, and an unchecked one is a write that never happened. With the
+    // owner bound, 0 means the row's ownership changed between the read and the write.
+    if (count === 0) throw new WeightError(409, "ownership_changed", "SKU ownership changed — reload");
 
     // The OPERATIONAL_DRIFT tripwire, honored at the moment of the write: if this
     // SKU is one of the five Juan ruled on, say whether the new measurement agrees
@@ -879,19 +893,24 @@ export async function recordWeightMeasurement(
 
   const { data: before, error: bErr } = await sb
     .from("items")
-    .select("id, name, oz_per_par_unit")
+    .select("id, name, oz_per_par_unit, location_id")
     .eq("id", input.subjectId)
-    .maybeSingle<{ id: string; name: string; oz_per_par_unit: number | string | null }>();
+    .maybeSingle<{ id: string; name: string; oz_per_par_unit: number | string | null; location_id?: string | null }>();
   if (bErr) throw new Error(`recordWeightMeasurement item lookup: ${bErr.message}`);
   if (!before) throw new WeightError(404, "not_found", "Item not found");
+  // W08/B015: the same owner rule as the SKU branch, for a shop-owned prep item.
+  const owner = before.location_id ?? null;
+  if (owner !== null && !weighShopAllowed(actor, owner)) throw new WeightError(404, "not_found", "Item not found");
   const beforeOz = num(before.oz_per_par_unit);
 
-  const { error, count } = await sb
+  let itemUpdate = sb
     .from("items")
     .update({ oz_per_par_unit: input.valueOz, updated_at: nowIso, updated_by: actor.user.id }, { count: "exact" })
     .eq("id", input.subjectId);
+  itemUpdate = owner === null ? itemUpdate.is("location_id", null) : itemUpdate.eq("location_id", owner);
+  const { error, count } = await itemUpdate;
   if (error) throw new Error(`recordWeightMeasurement item update: ${error.message}`);
-  if (count === 0) throw new WeightError(404, "not_found", "Item not found");
+  if (count === 0) throw new WeightError(409, "ownership_changed", "Item ownership changed — reload");
 
   await audit({
     actorId: actor.user.id,

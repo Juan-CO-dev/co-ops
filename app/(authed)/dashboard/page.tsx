@@ -770,7 +770,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         ) : null}
 
         <div className="flex justify-center">
-          <LogoutButton />
+          <LogoutButton sessionId={auth.session.id} />
         </div>
       </div>
     </AuthShell>

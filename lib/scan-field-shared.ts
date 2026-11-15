@@ -48,6 +48,14 @@ export interface ScanStepLine {
  * The outcome of one scan against the list. `index` is -1 when nothing moved; `conflict` is
  * set only on the explicit-pick path, and only for the one case the caller has to re-decide.
  */
+/**
+ * The patch a row takes when its LEVEL changes (W04 r3, B046): the door's own expectation conversion
+ * (`levelChangePatch` — a PO's 2 cases become 24 each, or the expectation and its flag clear when the
+ * levels cannot be converted). The level picker and a scan that moves a row's level call the SAME one,
+ * so no transition can relabel a row while its expectation stays in the old unit.
+ */
+export type RelevelPatch<L> = (line: L, nextLevel: string) => Partial<L>;
+
 export interface ScanStepResult<L> {
   lines: L[];
   index: number;
@@ -90,6 +98,7 @@ export function applyScanToLines<L extends ScanStepLine>(
   levelLabel: string,
   newLine: L | null = null,
   lineKey: string | null = null,
+  relevel?: RelevelPatch<L>,
 ): ScanStepResult<L> {
   const untouched = (): ScanStepResult<L> => ({ lines: [...lines], index: -1 });
 
@@ -100,7 +109,7 @@ export function applyScanToLines<L extends ScanStepLine>(
     if (levelLabel !== "" && picked.level.trim() !== "" && picked.level !== levelLabel) {
       return { lines: [...lines], index: -1, conflict: "level" };
     }
-    return step([...lines], at, levelLabel);
+    return step([...lines], at, levelLabel, relevel);
   }
 
   const sameLevel = lines.findIndex(
@@ -112,9 +121,9 @@ export function applyScanToLines<L extends ScanStepLine>(
   if (found < 0) {
     if (newLine === null) return untouched();
     const base = [...lines, newLine];
-    return step(base, base.length - 1, levelLabel);
+    return step(base, base.length - 1, levelLabel, relevel);
   }
-  return step([...lines], found, levelLabel);
+  return step([...lines], found, levelLabel, relevel);
 }
 
 /**
@@ -127,11 +136,14 @@ export function applyScanToLines<L extends ScanStepLine>(
  * template-seeded level is real information and a scan that knows no level has no business
  * erasing it.
  */
-function step<L extends ScanStepLine>(base: L[], index: number, levelLabel: string): ScanStepResult<L> {
+function step<L extends ScanStepLine>(base: L[], index: number, levelLabel: string, relevel?: RelevelPatch<L>): ScanStepResult<L> {
   const target = base[index];
   if (target === undefined) return { lines: base, index: -1 };
+  // W04 r3: a scan that moves the row's level converts its expectation exactly as the picker does.
+  const moved = levelLabel !== "" && levelLabel !== target.level && relevel ? relevel(target, levelLabel) : {};
   base[index] = {
     ...target,
+    ...moved,
     expanded: true,
     level: levelLabel || target.level,
     qty: stepQty(target.qty),
@@ -409,14 +421,16 @@ export function applyScanToIntake<L extends ScanStepLine>(
     code: string | null;
     newLine: L | null;
     lineKey: string | null;
+    /** The row's expectation conversion on a level change (W04 r3); the form passes `levelChangePatch`. */
+    relevel?: RelevelPatch<L>;
   },
 ): IntakeScanState<L> {
   const match = { skuId: input.skuId };
-  let next = applyScanToLines(state.lines, match, input.levelLabel, input.newLine, input.lineKey);
+  let next = applyScanToLines(state.lines, match, input.levelLabel, input.newLine, input.lineKey, input.relevel);
   // The picked row is already counted at ANOTHER level: the scanned level gets its own row
   // rather than relabelling a counted one (finding 2). Decided here, once.
   if (next.conflict === "level") {
-    next = applyScanToLines(state.lines, match, input.levelLabel, input.newLine, null);
+    next = applyScanToLines(state.lines, match, input.levelLabel, input.newLine, null, input.relevel);
   }
   if (next.index < 0) return state;
 

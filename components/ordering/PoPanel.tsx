@@ -46,6 +46,7 @@ import {
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { PoDetail, VendorPoSku } from "@/lib/purchase-orders";
 import { renderPoBodyText } from "@/lib/po-body";
+import { buildDraftEditPayload } from "@/lib/po-draft-edits-shared";
 import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import type { OrderEmailPreview } from "@/lib/po-email-shared";
 import type { ThreeWayView, ThreeWayLine, ThreeWayFlag } from "@/lib/po-match-shared";
@@ -188,14 +189,13 @@ export function PoPanel({
   const setQty = (skuId: string, qty: string) =>
     setEdits((m) => ({ ...m, [skuId]: { ...m[skuId], qty, note: m[skuId]?.note ?? null } }));
 
-  // The PATCH payload: every seeded line at its (possibly edited) qty. A qty of 0 keeps the
-  // line as a "removed" row (append-only: the lib stores qty 0, transmission skips it).
+  // The PATCH payload: every seeded line at its (possibly edited) qty. A qty of 0 keeps a SAVED
+  // line as a "removed" row (append-only: the lib stores qty 0, transmission skips it); an
+  // UNSAVED pick at 0 is left out entirely, so a pick that stopped fitting the PO can be dropped
+  // and the rest saved without a reload (W08/B056 r2, lib/po-draft-edits-shared.ts).
   const editPayload = useMemo(
-    () =>
-      Object.entries(edits)
-        .map(([skuId, e]) => ({ skuId, orderQty: Number(e.qty), note: e.note, orderUnitLabel: e.orderUnitLabel }))
-        .filter((l) => Number.isFinite(l.orderQty) && l.orderQty >= 0),
-    [edits],
+    () => buildDraftEditPayload(edits, new Set((detail?.lines ?? []).map((l) => l.skuId))),
+    [edits, detail],
   );
 
   const anyInvalid = useMemo(
@@ -1127,6 +1127,7 @@ const FLAG_TONE: Record<ThreeWayFlag, AlertPillTone> = {
   short_received: "warn",
   not_billed: "info",
   unmatched_invoice_line: "info",
+  invoice_credit: "info",
 };
 
 /** Qty display: advisory-null → em dash (never a fabricated 0 — the null-leg law). */
@@ -1247,6 +1248,7 @@ function ThreeWayRow({ line, hasOpenCredit }: { line: ThreeWayLine; hasOpenCredi
           </dt>
           <dd className="text-[14px] font-semibold text-co-text">
             {qtyOrDash(line.billedQty)}
+            {line.billedUnit ? <span className="text-[11px] font-normal text-co-text-dim"> {line.billedUnit}</span> : null}
             {line.billedCents != null ? (
               <span className="text-[11px] font-normal text-co-text-dim"> {money(line.billedCents)}</span>
             ) : null}

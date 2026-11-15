@@ -1517,7 +1517,9 @@ async function casesLogout(f: Fixtures) {
       actions: ["auth_logout"],
     });
     const outcome = (audit[0]?.metadata as { outcome?: string })?.outcome;
-    const cookieCleared = res.setCookieCleared === true;
+    // Revoke-only since audit W06/B012 round 5: logout never sets a cookie (a late response must not clear a newer
+    // sign-in); the revoked cookie is cleared by the next protected request's 401.
+    const cookieUntouched = res.setCookieCleared !== true && res.setCookieJwt === undefined;
     // Verify session is revoked
     const { count: liveSessions } = await sb
       .from("sessions")
@@ -1528,7 +1530,7 @@ async function casesLogout(f: Fixtures) {
       res.status === 200 &&
       audit.length === 1 &&
       outcome === "revoked" &&
-      cookieCleared &&
+      cookieUntouched &&
       liveSessions === 0;
     record({
       id: "logout-valid-revoked",
@@ -1539,8 +1541,8 @@ async function casesLogout(f: Fixtures) {
       captured_audit_rows: summarize(audit),
       passed,
       evidence: passed
-        ? "200 + cookie cleared + outcome=revoked + sessions row revoked"
-        : `status=${res.status}, outcome=${outcome}, cleared=${cookieCleared}, liveSessions=${liveSessions}`,
+        ? "200 + no Set-Cookie + outcome=revoked + sessions row revoked"
+        : `status=${res.status}, outcome=${outcome}, cookieUntouched=${cookieUntouched}, liveSessions=${liveSessions}`,
     });
 
     // G2 already-revoked: re-use the same cookie
@@ -1923,7 +1925,8 @@ async function casesLifecycle(f: Fixtures) {
     await revokeAllSessionsForUser(f.gmId);
   }
 
-  // I5 step-up auto-clear via /api/auth/heartbeat
+  // I5 step-up auto-clear. Audit W06/B013: the idle heartbeat now fires during activity, so it LEAVES the unlock
+  // as it stands (lib/session.ts isHeartbeatPath); a page visit outside the step-up surface (GET /dashboard) clears it.
   {
     const cookie = await signInGM(f);
     // Unlock step-up
@@ -1932,41 +1935,40 @@ async function casesLifecycle(f: Fixtures) {
       cookieJwt: cookie,
     });
     if (su.status !== 200) throw new Error(`step-up setup failed: ${su.status}`);
-    // Confirm unlocked
-    const { data: pre } = await sb
-      .from("sessions")
-      .select("step_up_unlocked")
-      .eq("user_id", f.gmId)
-      .is("revoked_at", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<{ step_up_unlocked: boolean }>();
-    // Hit /api/auth/heartbeat (path != /admin/*) — should auto-clear
-    const hb = await call("/api/auth/heartbeat", { cookieJwt: cookie });
-    const { data: post } = await sb
+    const readFlag = async () => (await sb
       .from("sessions")
       .select("step_up_unlocked, step_up_unlocked_at")
       .eq("user_id", f.gmId)
       .is("revoked_at", null)
       .order("created_at", { ascending: false })
       .limit(1)
-      .maybeSingle<{ step_up_unlocked: boolean; step_up_unlocked_at: string | null }>();
+      .maybeSingle<{ step_up_unlocked: boolean; step_up_unlocked_at: string | null }>()).data;
+    // Confirm unlocked
+    const pre = await readFlag();
+    // Hit /api/auth/heartbeat — must KEEP the unlock
+    const hb = await call("/api/auth/heartbeat", { cookieJwt: cookie });
+    const mid = await readFlag();
+    // Visit a page outside the step-up surface — must auto-clear
+    const page = await call("/dashboard", { method: "GET", cookieJwt: cookie });
+    const post = await readFlag();
     const passed =
       pre?.step_up_unlocked === true &&
       hb.status === 200 &&
+      mid?.step_up_unlocked === true &&
+      page.status === 200 &&
       post?.step_up_unlocked === false &&
       post?.step_up_unlocked_at === null;
     record({
       id: "lifecycle-step-up-auto-clear",
-      endpoint: "POST /api/auth/heartbeat (after step-up; non-/admin path)",
+      endpoint: "POST /api/auth/heartbeat then GET /dashboard (after step-up)",
       expected_status: 200,
-      actual_status: hb.status,
+      actual_status: page.status,
       expected_audit_actions: [],
       captured_audit_rows: [],
       passed,
       evidence: passed
-        ? "step-up unlocked → heartbeat (non-/admin) → requireSessionCore cleared step_up_unlocked back to false"
-        : `pre=${pre?.step_up_unlocked}, hb=${hb.status}, post.unlocked=${post?.step_up_unlocked}, post.at=${post?.step_up_unlocked_at}`,
+        ? "step-up unlocked → heartbeat kept step_up_unlocked → GET /dashboard (non-/admin) → requireSessionCore cleared it back to false"
+        : `pre=${pre?.step_up_unlocked}, hb=${hb.status}, mid=${mid?.step_up_unlocked}, page=${page.status}, post.unlocked=${post?.step_up_unlocked}, post.at=${post?.step_up_unlocked_at}`,
     });
     await revokeAllSessionsForUser(f.gmId);
   }
