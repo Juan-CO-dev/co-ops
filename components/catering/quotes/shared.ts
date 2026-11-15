@@ -59,6 +59,7 @@ const KNOWN_ERROR_CODES = new Set([
   "not_due",
   "status_changed", // guarded setQuoteStatus 409 (stale read) — actionable, not generic
   "quote_expired", // expired→accepted block — needs a revision, not a retry
+  "payments_unreconciled", // send/accept held: earlier payments are not on this revision yet — retry
   "invalid_customer", // a client outside the actor's shops (or gone) — pick another client
   "generic",
 ]);

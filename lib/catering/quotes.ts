@@ -30,7 +30,7 @@ import { redactEmailAddresses } from "@/lib/email-redact";
 import { escapeHtml } from "@/lib/email-templates/_layout";
 import type { AuthContext } from "@/lib/session";
 import { loadCateringReader } from "./ezcater-detail";
-import { carryPaymentsToRevision, retireSessionFor, type CarryPaymentsResult } from "./payment-carry";
+import { carryPaymentsToRevision, reconcileFamilyPayments, retireSessionFor, type CarryPaymentsResult } from "./payment-carry";
 import { canReadCateringContact } from "./ezcater-detail-shared";
 import { quoteTimeExpired } from "@/lib/portal/payability-shared";
 
@@ -917,8 +917,11 @@ export interface ReviseQuoteInput {
  *     family's payments are carried onto it (lib/catering/payment-carry.ts — read its header
  *     for what happens to each kind of row). That step is BEST-EFFORT by the same reasoning
  *     as strand B below: the revision is already live, so a failure is audited
- *     (`payments_carry_failed`) and healed by the next revise, never turned into a failed
- *     request the manager retries into a 409.
+ *     (`payments_carry_failed`), never turned into a failed request the manager retries
+ *     into a 409. BEST-EFFORT IS NOT "PAYABLE ANYWAY" (review r1): the new revision is a
+ *     draft, and every door it must pass to take money — `sendQuote`, an accept, the
+ *     portal's pay gate — re-runs the carry and refuses while a payment is still stranded
+ *     (`assertFamilyPaymentsReconciled` below).
  *
  * ── THE TWO STRANDS BELOW THE SUPERSEDE (audit v2, seat C5 finding F8 · BC-036) ──────
  * Validating early does NOT make an INSERT infallible, and this docstring used to promise
@@ -1110,14 +1113,78 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
   return { id: inserted.id, version: inserted.version, pipelineId: current.pipeline_id };
 }
 
+/**
+ * THE DOOR RULE (review r1 of audit W02/B006): a revision whose family still has a payment
+ * on an EARLIER revision may not be sent or accepted. The carry in `reviseQuote` is
+ * best-effort; when it failed, the paid deposit stayed on the superseded row, every reader
+ * keyed on the live quote id saw no payment, and the team could send a revision the
+ * customer would be charged a second deposit on. So the carry is re-run here (idempotent —
+ * it also heals a family orphaned before the carry existed) and, if a payment is STILL
+ * stranded, the action is refused 409 `payments_unreconciled` before anything is written.
+ *
+ * Audited on `catering.quote.revise` — the action that already records which payments
+ * moved onto a revision — with `outcome: "payments_reconciled"` or
+ * `"payments_reconcile_failed"`. A quote that was never revised returns at once, having
+ * read and written nothing.
+ */
+async function assertFamilyPaymentsReconciled(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  actor: AuthContext,
+  quote: { id: string; root_id: string | null; location_id: string; deposit_cents: number; total_cents: number },
+  context: "send" | "accept",
+): Promise<void> {
+  const outcome = await reconcileFamilyPayments(sb, {
+    id: quote.id,
+    rootId: quote.root_id ?? null,
+    locationId: quote.location_id,
+    depositCents: quote.deposit_cents,
+    totalCents: quote.total_cents,
+  });
+  if (!outcome.attempted) return;
+  // Awaited: on the refusal we throw on the next line (audit() is fail-open, never throws).
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "catering.quote.revise",
+    resourceTable: "catering_quotes",
+    resourceId: quote.id,
+    metadata: {
+      outcome: outcome.reconciled ? "payments_reconciled" : "payments_reconcile_failed",
+      context,
+      root_id: quote.root_id,
+      stranded: outcome.stranded,
+      payments: outcome.healed,
+      error: outcome.error,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+  if (!outcome.reconciled) {
+    throw new CateringQuoteError(
+      409,
+      "payments_unreconciled",
+      "This order's earlier payments could not be moved onto this revision yet — try again in a moment",
+    );
+  }
+}
+
 /** Transition a live quote's status (accept / decline / mark expired). Level-gated + audited. */
 export async function setQuoteStatus(actor: AuthContext, id: string, status: Extract<QuoteStatus, "accepted" | "declined" | "expired">): Promise<void> {
   const sb = getServiceRoleClient();
   const { data: row, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, location_id, status, superseded_at, expires_at")
+    .select("id, root_id, location_id, status, superseded_at, expires_at, deposit_cents, total_cents")
     .eq("id", id)
-    .maybeSingle<{ id: string; location_id: string; status: string; superseded_at: string | null; expires_at: string | null }>();
+    .maybeSingle<{
+      id: string;
+      root_id: string | null;
+      location_id: string;
+      status: string;
+      superseded_at: string | null;
+      expires_at: string | null;
+      deposit_cents: number;
+      total_cents: number;
+    }>();
   if (lErr) throw new Error(`setQuoteStatus load: ${lErr.message}`);
   if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
   assertCanWrite(actor, row.location_id);
@@ -1132,6 +1199,11 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   // (lib/portal/payability-shared.ts), so the two cannot disagree: `accepted` is not judged
   // by the clock, so accepting a lapsed order used to re-open payment at its old price.
   if (status === "accepted") {
+    // `accepted` is payable from the portal, so the family's payments must be on THIS
+    // revision first (the door rule above) — and BEFORE the expiry reading below, which asks
+    // "was anything paid on this quote id?". Declining or expiring a quote takes no money
+    // and is not held.
+    await assertFamilyPaymentsReconciled(sb, actor, row, "accept");
     let expired = row.status === "expired";
     if (!expired && quoteTimeExpired(row.status, row.expires_at)) {
       // An offer the customer PAID toward was taken up in time (the reading the customer's
@@ -1277,9 +1349,19 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   const sb = getServiceRoleClient();
   const { data: row, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, location_id, status, superseded_at, customer_id, total_cents, expires_at")
+    .select("id, root_id, location_id, status, superseded_at, customer_id, total_cents, deposit_cents, expires_at")
     .eq("id", id)
-    .maybeSingle<{ id: string; location_id: string; status: string; superseded_at: string | null; customer_id: string | null; total_cents: number; expires_at: string | null }>();
+    .maybeSingle<{
+      id: string;
+      root_id: string | null;
+      location_id: string;
+      status: string;
+      superseded_at: string | null;
+      customer_id: string | null;
+      total_cents: number;
+      deposit_cents: number;
+      expires_at: string | null;
+    }>();
   if (lErr) throw new Error(`sendQuote load: ${lErr.message}`);
   if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
   assertCanWrite(actor, row.location_id);
@@ -1287,6 +1369,9 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   if (row.status !== "draft" && row.status !== "sent") {
     throw new CateringQuoteError(409, "invalid_status", "Only a draft or sent quote can be sent");
   }
+  // SENDING IS WHAT MAKES A REVISION PAYABLE. Before the status moves and before any email
+  // carries a pay link, the family's payments must be on THIS revision (the door rule).
+  await assertFamilyPaymentsReconciled(sb, actor, row, "send");
 
   // Review 2 (P1) + option b: the recipient is contact data at the CUSTOMER's shop, not the
   // quote's. It is authorized BEFORE the status write and the email. A customer the sender

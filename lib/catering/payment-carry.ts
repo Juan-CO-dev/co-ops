@@ -65,8 +65,21 @@
  * ── NOT A TRANSACTION, AND HONEST ABOUT IT ───────────────────────────────────────────
  * `reviseQuote` is three round trips with no transaction (see its header); this adds more.
  * Every step is idempotent and the whole pass is re-runnable, so a partial failure leaves a
- * family that the next revise finishes. The caller does not fail the revise on an error
+ * family that the next pass finishes. The caller does not fail the revise on an error
  * here — the revision is already live — it audits `outcome: "payments_carry_failed"`.
+ *
+ * ── …SO THE DOORS CHECK, EVERY TIME (review r1) ──────────────────────────────────────
+ * "The next revise heals it" left a hole exactly as wide as the bug: after a failed carry
+ * the revision could be SENT and PAID with the paid deposit still on the superseded row,
+ * and the already-paid gate — keyed on the live quote id — saw nothing. So a best-effort
+ * carry is paired with a hard rule at every door a revision passes through on its way to
+ * taking money: A REVISION WHOSE FAMILY STILL HAS A PAYMENT ON AN EARLIER REVISION CANNOT
+ * BE SENT, ACCEPTED OR PAID. `reconcileFamilyPayments` is that rule. Each door —
+ * `sendQuote`, `setQuoteStatus('accepted')` and the portal's `loadPayableQuote` — calls it
+ * first: it re-runs this carry when anything is stranded (which also heals a family
+ * orphaned before this fix existed, without waiting for a revise) and then RE-READS; a
+ * payment still stranded keeps the door shut. A quote that was never revised has no earlier
+ * revision and costs no read at all.
  * The one row this pass can knowingly leave behind is a checkout already COMPLETE whose
  * move a unique index refuses (two finished checkouts for one order — a double payment the
  * webhook flags for a person on its own); it is reported in `leftBehind`.
@@ -131,6 +144,18 @@ const EMPTY = (): CarryPaymentsResult => ({
   leftBehind: [],
 });
 
+/** The family's EARLIER revisions: the root itself, plus every row that names it, minus the
+ *  live one. THROWS on a read error, labelled for whoever asked. */
+async function earlierRevisionIds(sb: ServiceClient, rootId: string, liveQuoteId: string, label: string): Promise<string[]> {
+  const { data: revisions, error } = await sb
+    .from("catering_quotes")
+    .select("id")
+    .eq("root_id", rootId)
+    .returns<Array<{ id: string }>>();
+  if (error) throw new Error(`${label} family: ${error.message}`);
+  return [...new Set([rootId, ...(revisions ?? []).map((r) => r.id)])].filter((id) => id !== liveQuoteId);
+}
+
 /**
  * Move a family's payments onto `newQuoteId`. THROWS on a database error — the caller
  * catches, audits and carries on (see the header). `retire` is injected so the vitest
@@ -143,14 +168,7 @@ export async function carryPaymentsToRevision(
 ): Promise<CarryPaymentsResult> {
   const result = EMPTY();
 
-  // The family's EARLIER revisions: the root itself, plus every row that names it.
-  const { data: revisions, error: famErr } = await sb
-    .from("catering_quotes")
-    .select("id")
-    .eq("root_id", input.rootId)
-    .returns<Array<{ id: string }>>();
-  if (famErr) throw new Error(`carryPayments family: ${famErr.message}`);
-  const earlier = [...new Set([input.rootId, ...(revisions ?? []).map((r) => r.id)])].filter((id) => id !== input.newQuoteId);
+  const earlier = await earlierRevisionIds(sb, input.rootId, input.newQuoteId, "carryPayments");
   if (earlier.length === 0) return result;
 
   const { data: rows, error: payErr } = await sb
@@ -325,4 +343,85 @@ export async function retireSessionFor(sb: ServiceClient, locationId: string): P
   const creds = stripeCredentialsFor(data.code ?? null);
   if (!creds) return null;
   return (sessionId: string) => retireCheckoutSession(creds.secretKey, sessionId);
+}
+
+// ── The doors: is this family's money all on its live revision? (review r1) ──────────
+
+/** The LIVE revision of a family, as the reconciliation needs it. */
+export interface FamilyQuote {
+  id: string;
+  /** `catering_quotes.root_id` — null for a quote that was never revised. */
+  rootId: string | null;
+  locationId: string;
+  depositCents: number;
+  totalCents: number;
+}
+
+export interface FamilyReconciliation {
+  /** True when NO payment of the family sits on an earlier revision. The door may open. */
+  reconciled: boolean;
+  /** False when nothing was stranded to begin with (nothing was read twice or written). */
+  attempted: boolean;
+  /** Payment ids still on an earlier revision after the attempt. */
+  stranded: string[];
+  /** What the heal moved. Null when nothing was attempted or the heal threw. */
+  healed: CarryPaymentsResult | null;
+  /** The heal's own failure, when it threw. */
+  error: string | null;
+}
+
+/**
+ * The ids of every payment of this family that is NOT on `quote` — the caller's LIVE
+ * revision (it has already checked `superseded_at IS NULL`). READ-ONLY. THROWS on a read
+ * error: "we could not look" is not "there is nothing there".
+ *
+ * A quote with no `root_id` is the first and only revision of its family, so it has no
+ * earlier revision to strand anything on: answered with no query.
+ */
+export async function strandedFamilyPayments(sb: ServiceClient, quote: Pick<FamilyQuote, "id" | "rootId">): Promise<string[]> {
+  if (quote.rootId == null) return [];
+  const earlier = await earlierRevisionIds(sb, quote.rootId, quote.id, "strandedFamilyPayments");
+  if (earlier.length === 0) return [];
+  const { data, error } = await sb
+    .from("catering_payments")
+    .select("id")
+    .in("quote_id", earlier)
+    .returns<Array<{ id: string }>>();
+  if (error) throw new Error(`strandedFamilyPayments read: ${error.message}`);
+  return (data ?? []).map((r) => r.id);
+}
+
+/**
+ * Make sure a family's payments are on its live revision, or say that they are not (see
+ * the header). Called by every door a revision passes on its way to taking money.
+ *
+ *   nothing stranded → `{ reconciled: true, attempted: false }`, and nothing was written;
+ *   something stranded → the carry is re-run (idempotent; its own failure is caught and
+ *     reported, never thrown), then the family is READ AGAIN. `reconciled` is that second
+ *     read, not the carry's own account of itself — a row the carry had to leave behind
+ *     (`leftBehind`: a second finished checkout whose money is landing) keeps the door shut
+ *     until its webhook settles it and a later pass moves it.
+ *
+ * THROWS only when the family cannot be READ. The caller audits and refuses.
+ */
+export async function reconcileFamilyPayments(sb: ServiceClient, quote: FamilyQuote): Promise<FamilyReconciliation> {
+  const before = await strandedFamilyPayments(sb, quote);
+  if (before.length === 0) return { reconciled: true, attempted: false, stranded: [], healed: null, error: null };
+
+  let healed: CarryPaymentsResult | null = null;
+  let error: string | null = null;
+  try {
+    const retire = await retireSessionFor(sb, quote.locationId);
+    healed = await carryPaymentsToRevision(
+      sb,
+      { rootId: quote.rootId as string, newQuoteId: quote.id, depositCents: quote.depositCents, totalCents: quote.totalCents },
+      retire,
+    );
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e);
+    console.error(`[catering] could not reconcile the payments of family ${quote.rootId} onto revision ${quote.id}: ${error}`);
+  }
+
+  const stranded = await strandedFamilyPayments(sb, quote);
+  return { reconciled: stranded.length === 0, attempted: true, stranded, healed, error };
 }

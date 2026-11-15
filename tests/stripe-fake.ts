@@ -4,7 +4,7 @@
  * used could not see two real regressions, because both live in Stripe's own memory:
  *
  *   - IDEMPOTENCY KEYS (docs.stripe.com/api/idempotent_requests). A key replays the
- *     ORIGINAL response for 24 hours — whatever has happened to the session since — and a
+ *     ORIGINAL response for at least 24 hours — whatever has happened to the session since — and a
  *     key re-used with different parameters is an error, not a new object. So "mint again
  *     under the same key" hands back an EXPIRED session, and "same key, new quote" is a 400.
  *   - SESSION STATUS. A session is `open`, `complete` or `expired`; only an open one can be

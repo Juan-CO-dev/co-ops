@@ -3,7 +3,7 @@
  * (audit wave W02, B035 — review r1's P2 "Retired sessions retain reusable idempotency keys").
  *
  * The first cut keyed Stripe's idempotency on `<payment id>:<amount>`. Stripe replays the
- * ORIGINAL response for a key for 24 hours and refuses a key re-used with other parameters
+ * ORIGINAL response for a key for at least 24 hours and refuses a key re-used with other parameters
  * (docs.stripe.com/api/idempotent_requests), so:
  *   - deposit → full → back to deposit: the deposit's key had not changed, and Stripe
  *     handed back the deposit session we had just RETIRED — a dead checkout link;

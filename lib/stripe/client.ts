@@ -152,7 +152,7 @@ export interface CreateCheckoutSessionResult {
  * `idempotencyKey` protects ONE HTTP REQUEST: if the transport retries it, Stripe replays
  * the original response instead of minting twice. It must NOT be used to mean "the same
  * checkout attempt" (audit W02/B035, review r1). Stripe replays a key's ORIGINAL response
- * for 24 hours — whatever has happened to the session since — and refuses a key re-used
+ * for at least 24 hours — whatever has happened to the session since — and refuses a key re-used
  * with different parameters (docs.stripe.com/api/idempotent_requests). A key derived from
  * the payment row therefore handed customers a session we had already retired, and 400'd
  * a revised quote for a day. The caller passes a key no request has used before

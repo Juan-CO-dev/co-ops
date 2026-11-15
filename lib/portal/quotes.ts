@@ -31,6 +31,7 @@ import { randomUUID } from "node:crypto";
 import { portalOrigin } from "@/lib/portal/origin-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
+import { reconcileFamilyPayments } from "@/lib/catering/payment-carry";
 import { createPaymentDue, syncDuePaymentAmount } from "@/lib/catering/payments";
 import { paymentPlan } from "@/lib/catering/payment-plan";
 import {
@@ -299,10 +300,11 @@ async function loadPayableQuote(
   if (!UUID_RE.test(quoteId)) throw new PortalQuoteError(404, "not_found", "Quote not found");
   const { data: row, error } = await sb
     .from("catering_quotes")
-    .select("id, customer_id, location_id, origin, status, superseded_at, expires_at, event_date, deposit_cents, total_cents")
+    .select("id, root_id, customer_id, location_id, origin, status, superseded_at, expires_at, event_date, deposit_cents, total_cents")
     .eq("id", quoteId)
     .maybeSingle<{
       id: string;
+      root_id: string | null;
       customer_id: string | null;
       location_id: string;
       origin: string;
@@ -336,6 +338,46 @@ async function loadPayableQuote(
     }
     throw new PortalQuoteError(409, "not_payable", "This quote can no longer be paid");
   }
+
+  // THE FAMILY'S PAYMENTS MUST BE ON THIS REVISION (review r1 of audit W02/B006). Every
+  // check below this gate — the already-paid guard above all — asks "payments for THIS
+  // quote id". A paid deposit still sitting on a superseded revision (a carry that failed,
+  // or a revise made before the carry existed) is invisible to them, and the customer
+  // would be charged again. So the carry is re-run here when anything is stranded, and a
+  // quote whose money still cannot be accounted for is NOT payable: 409, "try again
+  // shortly", no intent raised, no session minted. A quote that was never revised has no
+  // earlier revision and costs nothing here.
+  const family = await reconcileFamilyPayments(sb, {
+    id: row.id,
+    rootId: row.root_id ?? null,
+    locationId: row.location_id,
+    depositCents: row.deposit_cents,
+    totalCents: row.total_cents,
+  });
+  if (family.attempted) {
+    // Awaited: on the refusal we throw on the next line (audit() is fail-open, never throws).
+    await audit({
+      actorId: null,
+      actorRole: null,
+      action: "catering.quote.revise",
+      resourceTable: "catering_quotes",
+      resourceId: row.id,
+      metadata: {
+        outcome: family.reconciled ? "payments_reconciled" : "payments_reconcile_failed",
+        context: "portal_pay",
+        root_id: row.root_id,
+        stranded: family.stranded,
+        payments: family.healed,
+        error: family.error,
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
+  }
+  if (!family.reconciled) {
+    throw new PortalQuoteError(409, "payment_reconciling", "We are updating this order's payment records — please try again shortly");
+  }
+
   return {
     id: row.id,
     locationId: row.location_id,
@@ -608,7 +650,7 @@ async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<Ch
  * The first cut keyed Stripe's idempotency on `<payment id>:<amount>` and let Stripe decide
  * whether a tap was "the same attempt". Stripe's contract (docs.stripe.com/api/
  * idempotent_requests) makes that wrong twice over: a key replays the ORIGINAL response
- * for 24 hours — whatever has happened to the session since — and a key re-used with other
+ * for at least 24 hours — whatever has happened to the session since — and a key re-used with other
  * parameters is an error. So deposit → full → deposit handed the customer the deposit
  * session we had just retired (a dead link), and a revise that kept the amount moved the
  * row to a new quote id under the same key (a 400 for a day).
