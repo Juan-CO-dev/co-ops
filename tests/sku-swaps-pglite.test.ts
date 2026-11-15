@@ -5,7 +5,7 @@ import { migratedShopOwnedDb, SHOP_OWNED_ID as I } from './fixtures/shop-owned-p
 const next='00000000-0000-4000-8000-0000000000d3';
 let db:PGlite;
 afterEach(async()=>{await db?.close();});
-async function setup(){db=await migratedShopOwnedDb();await db.exec(readFileSync('supabase/migrations/0265_sku_swaps.sql','utf8'));await db.query('insert into vendor_items(id,name) values($1,$2)',[next,'Replacement']);}
+async function setup(){db=await migratedShopOwnedDb();await db.exec(readFileSync('supabase/migrations/0265_sku_swaps.sql','utf8'));await db.exec(readFileSync('supabase/migrations/0308_sku_swap_shop_scope.sql','utf8'));await db.query('insert into vendor_items(id,name) values($1,$2)',[next,'Replacement']);}
 async function preview(scope:string|null=I.shopA){return (await db.query<{p:unknown;r:Record<string,unknown>[]}>(`select sku_swap_product_snapshot($1,$2,$3) p,sku_swap_recipe_snapshot($1,$2,$3) r`,[I.sharedSku,next,scope])).rows[0]!;}
 async function start(p:Awaited<ReturnType<typeof preview>>,scope:string|null=I.shopA,temporary=true){return (await db.query<{r:{swap_id:string;product_id:string}}>(`select start_sku_swap($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,null) r`,[I.sharedSku,next,scope,I.actor,JSON.stringify(p.p),JSON.stringify(p.r.map(r=>({...r,replacement_lines:(r.lines as Record<string,unknown>[]).map(l=>({...l,component_sku_id:l.component_sku_id===I.sharedSku?next:l.component_sku_id}))}))),temporary] )).rows[0]!.r;}
 describe('swap exact restoration in real SQL',()=>{
@@ -58,5 +58,18 @@ describe('swap exact restoration in real SQL',()=>{
 
 
  it('names a conflicting grouping name and rolls back all swap effects',async()=>{await setup();await db.query("insert into products(name) values('Shared turkey')");const p=await preview();await expect(start(p)).rejects.toThrow('swap:product_name_taken');expect((await db.query('select id from sku_swaps')).rows).toHaveLength(0);expect((await db.query('select id from product_primaries')).rows).toHaveLength(0);expect((await db.query<{product_id:string|null}>('select product_id from vendor_items where id in($1,$2)',[I.sharedSku,next])).rows.map(r=>r.product_id)).toEqual([null,null]);expect((await db.query('select id from recipe_versions where location_id=$1 and active',[I.shopA])).rows).toHaveLength(0);});
+
+ // W08/B057 (0308): a shop-scoped swap never moves another shop.
+ it('a shop-scoped swap of an existing product without a default refuses and moves no shop',async()=>{await setup();const product=(await db.query<{id:string}>(`insert into products(name) values('No default') returning id`)).rows[0]!.id;await db.query('update vendor_items set product_id=$1 where id in($2,$3)',[product,I.sharedSku,next]);await expect(start(await preview())).rejects.toThrow('swap:product_needs_primary');expect((await db.query('select id from product_primaries')).rows).toHaveLength(0);expect((await db.query('select id from sku_swaps')).rows).toHaveLength(0);});
+ it("a new product's default still pins the old item and Back removes it",async()=>{await setup();const s=await start(await preview());expect((await db.query<{primary_sku_id:string}>('select primary_sku_id from product_primaries where product_id=$1 and location_id is null',[s.product_id])).rows[0]!.primary_sku_id).toBe(I.sharedSku);await db.query('select end_sku_swap($1,$2)',[s.swap_id,I.actor]);expect((await db.query('select id from product_primaries where product_id=$1',[s.product_id])).rows).toHaveLength(0);});
+ it.each([false,true])('Back removes a pre-fix stray default at its exact revision (re-chosen since: %s)',async(bumped)=>{await setup();const product=(await db.query<{id:string}>(`insert into products(name) values('Pre-fix') returning id`)).rows[0]!.id;await db.query('update vendor_items set product_id=$1 where id in($2,$3)',[product,I.sharedSku,next]);
+  const def=(await db.query<{j:{id:string}}>('insert into product_primaries(product_id,primary_sku_id,updated_by) values($1,$2,$3) returning to_jsonb(product_primaries) j',[product,I.sharedSku,I.actor])).rows[0]!.j;
+  const shop=(await db.query<{j:unknown}>('insert into product_primaries(product_id,location_id,primary_sku_id,updated_by) values($1,$2,$3,$4) returning to_jsonb(product_primaries) j',[product,I.shopA,next,I.actor])).rows[0]!.j;
+  const snap=(await preview()).p;
+  const swap=(await db.query<{id:string}>(`insert into sku_swaps(old_sku_id,new_sku_id,location_id,product_id,temporary,product_snapshot_before,product_snapshot_after,primary_before,primary_after,recipes,grouping_created,default_created,created_by) values($1,$2,$3,$4,true,$5::jsonb,$5::jsonb,'null'::jsonb,$6::jsonb,'[]'::jsonb,false,$7::jsonb,$8) returning id`,[I.sharedSku,next,I.shopA,product,JSON.stringify(snap),JSON.stringify(shop),JSON.stringify(def),I.actor])).rows[0]!.id;
+  if(bumped)await db.query('update product_primaries set primary_sku_id=primary_sku_id where id=$1',[def.id]);
+  await db.query('select end_sku_swap($1,$2)',[swap,I.actor]);
+  expect((await db.query('select id from product_primaries where id=$1',[def.id])).rows).toHaveLength(bumped?1:0);
+ });
 
 });
