@@ -193,6 +193,18 @@ describe("W05B — level 8+ (MoO, owner, CGS) work checklist tasks at any active
     await expect(submitBatch(mocks.reader, { instanceId: "instance", actor: moo, completionIds: ["completion"] })).resolves.toHaveProperty("submission");
     await expect(confirmInstance(mocks.reader, { ...confirmArgs, actor: moo })).resolves.toMatchObject({ status: "confirmed" });
   });
+  it("fix round 1: a MoO elsewhere completes a photo-required item with the photo uploaded for THIS shop (B163 binding unchanged)", async () => {
+    // The task-photo upload (tests/audit-w05b-task-photo-upload.test.ts) stores the photo for the instance's shop.
+    items[0]!.expects_photo = true;
+    const moo = checklistActor({ role: "moo", level: 8, locations: ["other-shop"] });
+    await expect(completeItem(mocks.reader, { ...completionArgs, actor: moo })).rejects.toMatchObject({ code: "missing_photo" });
+    photos = [{ id: PHOTO, location_id: "other-shop" }]; // the MoO's own shop's photo is still not this shop's evidence
+    await expect(completeItem(mocks.reader, { ...completionArgs, actor: moo, photoId: PHOTO })).rejects.toMatchObject({ code: "invalid_photo" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    photos = [{ id: PHOTO, location_id: "shop" }];
+    await expect(completeItem(mocks.reader, { ...completionArgs, actor: moo, photoId: PHOTO })).resolves.toHaveProperty("completion");
+    expect(mocks.rpc).toHaveBeenCalledWith("checklist_write_completion", expect.objectContaining({ p_photo_id: PHOTO }));
+  });
   it.each([["a GM (7)", { role: "gm", level: 7 }], ["an AGM (6)", { role: "agm", level: 6 }], ["an SMM (6)", { role: "social_media_mgr", level: 6 }],
     ["a key holder (4)", { role: "key_holder", level: 4 }]] as const)("%s of another shop is refused every writer before the RPC", async (_n, who) => {
     const actorElsewhere = checklistActor({ ...who, locations: ["other-shop"] });
