@@ -674,7 +674,10 @@ async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<Ch
  * state step 4 left — so the second writer matches nothing, closes the session it minted
  * (best-effort) and answers 409 `payment_in_progress`; a row a webhook advanced to `paid`
  * in the meantime answers 409 `not_due`. Either way the customer is never handed a second
- * checkout for money that is already on its way.
+ * checkout for money that is already on its way. The same write is guarded on the intent
+ * still being on THIS quote at THIS amount (review r2): an intent a revise moved or
+ * re-priced while the mint was at Stripe answers 409 `not_payable`, and the session priced
+ * for the old revision is closed instead of recorded.
  *
  * Step 6 runs AFTER step 5 on purpose: a session is not a charge, so a session we then
  * fail to record costs nothing but an unused Stripe object, whereas recording a session id
@@ -812,12 +815,18 @@ export async function createQuoteCheckout(input: {
     throw e;
   }
 
-  // COMPARE-AND-SET: only the still-due row that still holds NO session takes this one.
+  // COMPARE-AND-SET: only the still-due row that still holds NO session takes this one —
+  // and only while it is still the intent this session was MINTED FOR (review r2): on this
+  // quote, at this amount. A manager's revise can land while the mint is at Stripe; its
+  // carry moves the intent to the new revision and re-prices it, and a session at the old
+  // amount must not then be recorded on a row that says the new one.
   const { error: updErr, count } = await sb
     .from("catering_payments")
     .update({ provider: "stripe", provider_session_id: session.id }, { count: "exact" })
     .eq("id", input.paymentId)
     .eq("status", "due")
+    .eq("quote_id", input.quoteId)
+    .eq("amount_cents", input.amountCents)
     .is("provider_session_id", null);
   if (updErr) {
     await abandonSession(creds.secretKey, session.id);
@@ -830,14 +839,18 @@ export async function createQuoteCheckout(input: {
   }
   if (count === 0) {
     await abandonSession(creds.secretKey, session.id);
-    // Lost the compare-and-set. Either the money already landed (the row is no longer due)
-    // or another request recorded its own checkout on this intent first. Tell them apart
-    // for the customer's sake; refuse the redirect either way.
+    // Lost the compare-and-set. Either the money already landed (the row is no longer due),
+    // or the quote was revised under us (the intent now belongs to another revision or
+    // carries another amount), or another request recorded its own checkout on this intent
+    // first. Tell them apart for the customer's sake; refuse the redirect every time.
     const { data: now } = await sb
       .from("catering_payments")
-      .select("id, status")
+      .select("id, status, quote_id, amount_cents")
       .eq("id", input.paymentId)
-      .maybeSingle<{ id: string; status: string }>();
+      .maybeSingle<{ id: string; status: string; quote_id: string; amount_cents: number }>();
+    if (now?.status === "due" && (now.quote_id !== input.quoteId || now.amount_cents !== input.amountCents)) {
+      throw new PortalQuoteError(409, "not_payable", "This quote can no longer be paid");
+    }
     if (now?.status === "due") {
       throw new PortalQuoteError(409, "payment_in_progress", "A payment for this order is already in progress");
     }

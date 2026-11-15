@@ -80,6 +80,30 @@
  * orphaned before this fix existed, without waiting for a revise) and then RE-READS; a
  * payment still stranded keeps the door shut. A quote that was never revised has no earlier
  * revision and costs no read at all.
+ *
+ * ── TWO OF THESE CAN RUN AT ONCE, SO EVERY WRITE IS A COMPARE-AND-SET (review r2) ────
+ * The doors run this carry from customer requests, and two requests can both read the same
+ * stranded intent. Guarding a write on `id` + `status = 'due'` was not enough: request A
+ * carried the intent and attached a new checkout to it; request B, resuming its own stale
+ * pass, matched the same row and wrote `provider_session_id: null` — erasing A's checkout
+ * from our records while it stayed payable at Stripe — and then attached a second one.
+ * So a write applies ONLY to the row exactly as this pass read it: same `status`, same
+ * `quote_id`, same `provider_session_id`. A write that matches nothing is followed by a
+ * re-read, and the answer is one of two facts:
+ *   · the row is no longer `due` → a payment landed; it is moved as it now is (above);
+ *   · the row is still `due` but is not what we read → ANOTHER REQUEST got there first.
+ *     Nothing is written. The whole pass is run again from a fresh read (at most
+ *     `MAX_CARRY_PASSES` times, then it throws), so a row that request already moved is
+ *     simply no longer ours, and one whose checkout changed is handled as what it is NOW —
+ *     its new session retired before anything about it is decided. A SESSION ANOTHER
+ *     REQUEST ATTACHED IS NEVER CLEARED BY A PASS THAT DID NOT READ IT.
+ * And a pass only writes while its TARGET IS STILL THE LIVE REVISION (re-read at the start
+ * of every pass that has something to move): a request that loaded revision 2 just before a
+ * manager made revision 3 must not pull the family's payments back onto revision 2. The
+ * attach side holds the same line: `createQuoteCheckout` records a session only on an
+ * intent that is still on the quote, and at the amount, the session was minted for.
+ * Not a transaction (see above) — but no write here can land on a state it did not read.
+ *
  * The one row this pass can knowingly leave behind is a checkout already COMPLETE whose
  * move a unique index refuses (two finished checkouts for one order — a double payment the
  * webhook flags for a person on its own); it is reported in `leftBehind`.
@@ -167,9 +191,39 @@ export async function carryPaymentsToRevision(
   retire: RetireSession,
 ): Promise<CarryPaymentsResult> {
   const result = EMPTY();
+  for (let pass = 1; ; pass += 1) {
+    // Due intents that were no longer what this pass read when it came to write them (see
+    // the header): another request is working the same family. Read again, decide again.
+    const changed = await carryPass(sb, input, retire, result);
+    if (changed.length === 0) return result;
+    if (pass >= MAX_CARRY_PASSES) {
+      throw new Error(`carryPayments: payments ${changed.join(", ")} kept changing under the carry — they were left as they are`);
+    }
+  }
+}
+
+/** How many times one carry re-reads a family that another request keeps changing. */
+const MAX_CARRY_PASSES = 4;
+
+const pushOnce = (list: string[], id: string): void => {
+  if (!list.includes(id)) list.push(id);
+};
+
+/**
+ * ONE read-then-write pass over the family, accumulating into `result`. Returns the ids of
+ * the due intents another request changed between this pass's read and its write; the
+ * caller runs a fresh pass for them.
+ */
+async function carryPass(
+  sb: ServiceClient,
+  input: CarryPaymentsInput,
+  retire: RetireSession,
+  result: CarryPaymentsResult,
+): Promise<string[]> {
+  const changed: string[] = [];
 
   const earlier = await earlierRevisionIds(sb, input.rootId, input.newQuoteId, "carryPayments");
-  if (earlier.length === 0) return result;
+  if (earlier.length === 0) return changed;
 
   const { data: rows, error: payErr } = await sb
     .from("catering_payments")
@@ -179,7 +233,19 @@ export async function carryPaymentsToRevision(
     .returns<FamilyPayment[]>();
   if (payErr) throw new Error(`carryPayments read: ${payErr.message}`);
   const payments = rows ?? [];
-  if (payments.length === 0) return result;
+  if (payments.length === 0) return changed;
+
+  // THE TARGET MUST STILL BE THE LIVE REVISION (see the header). Read on every pass, once we
+  // know there is something to move and before anything is retired or written.
+  const { data: target, error: targetErr } = await sb
+    .from("catering_quotes")
+    .select("id, superseded_at")
+    .eq("id", input.newQuoteId)
+    .maybeSingle<{ id: string; superseded_at: string | null }>();
+  if (targetErr) throw new Error(`carryPayments target: ${targetErr.message}`);
+  if (!target || target.superseded_at != null) {
+    throw new Error(`carryPayments: revision ${input.newQuoteId} is no longer the live revision — nothing was moved onto it`);
+  }
 
   // Payments already ON the new revision count too: a second carry pass (a retry, or a
   // heal) must not resurrect a due deposit beside a deposit that has since been paid there.
@@ -210,7 +276,7 @@ export async function carryPaymentsToRevision(
     session.set(p.id, outcome);
     if (outcome === "complete") anythingPaid = true;
     else if (outcome === "expired") result.sessionsRetired += 1;
-    else result.sessionsNotRetired.push(p.id);
+    else pushOnce(result.sessionsNotRetired, p.id);
   }
 
   // ── pass 2: the due intents, newest first ─────────────────────────────────────────
@@ -222,39 +288,41 @@ export async function carryPaymentsToRevision(
     if (outcome === "complete") {
       // IN FLIGHT: the customer finished this checkout. Do not re-price or void what they
       // are paying; just make sure the webhook's flip lands on the live revision.
-      const wrote = await writeDue(sb, p.id, { quote_id: input.newQuoteId });
+      const wrote = await writeDue(sb, p, { quote_id: input.newQuoteId });
       if (wrote === "written") {
         result.moved.push(from);
         result.inFlight.push(p.id);
         liveDueKinds.add(p.kind);
       } else if (wrote === "advanced") {
         // The webhook's flip beat us to it: the money has landed. Move the row as it is.
-        if (await moveSettled(sb, p.id, input.newQuoteId)) result.moved.push(from);
+        if (await moveSettled(sb, p, input.newQuoteId)) result.moved.push(from);
+      } else if (wrote === "changed") {
+        changed.push(p.id);
       } else {
-        result.leftBehind.push(p.id);
+        pushOnce(result.leftBehind, p.id);
       }
       continue;
     }
     // No session, or one we just retired ⇒ the row may stop pointing at it.
     const sessionCleared = outcome === undefined || outcome === "expired";
 
-    const target = p.kind === "deposit" ? input.depositCents : p.kind === "full" ? input.totalCents : null;
-    const carry = !anythingPaid && target != null && target > 0 && !liveDueKinds.has(p.kind);
+    const priced = p.kind === "deposit" ? input.depositCents : p.kind === "full" ? input.totalCents : null;
+    const carry = !anythingPaid && priced != null && priced > 0 && !liveDueKinds.has(p.kind);
 
     let wrote: DueWrite = "conflict";
     if (carry) {
       // RE-PRICED ONLY ONCE ITS CHECKOUT IS GONE (see the header). With a session we could
       // not retire, the row moves as it is: its amount is what that checkout will charge.
       const patch: Record<string, unknown> = sessionCleared
-        ? { quote_id: input.newQuoteId, amount_cents: target, provider_session_id: null }
+        ? { quote_id: input.newQuoteId, amount_cents: priced, provider_session_id: null }
         : { quote_id: input.newQuoteId };
       // A unique-index refusal (0130 / 0303) is a legacy collision, not a fault: fall
       // through to voiding this intent rather than abandoning the whole carry.
-      wrote = await writeDue(sb, p.id, patch);
+      wrote = await writeDue(sb, p, patch);
       if (wrote === "written") {
         result.moved.push(from);
         if (sessionCleared) {
-          result.carriedDue.push({ paymentId: p.id, kind: p.kind, fromCents: p.amount_cents, toCents: target as number });
+          result.carriedDue.push({ paymentId: p.id, kind: p.kind, fromCents: p.amount_cents, toCents: priced as number });
         }
         liveDueKinds.add(p.kind);
         continue;
@@ -266,7 +334,7 @@ export async function carryPaymentsToRevision(
       // both unique indexes, so this write cannot collide.
       const patch: Record<string, unknown> = { status: "void", quote_id: input.newQuoteId };
       if (sessionCleared) patch.provider_session_id = null;
-      wrote = await writeDue(sb, p.id, patch);
+      wrote = await writeDue(sb, p, patch);
       if (wrote === "written") {
         result.moved.push(from);
         result.voided.push(p.id);
@@ -275,55 +343,86 @@ export async function carryPaymentsToRevision(
       if (wrote === "conflict") throw new Error(`carryPayments write ${p.id}: a void write was refused by a unique index`);
     }
 
+    if (wrote === "changed") {
+      // ANOTHER REQUEST GOT THERE FIRST (see the header): still due, but not the row this
+      // pass read. Nothing was written, and nothing about it is decided from a stale read.
+      changed.push(p.id);
+      continue;
+    }
+
     // "advanced": the row stopped being `due` under us (see the header). It is history now.
-    if (await moveSettled(sb, p.id, input.newQuoteId)) result.moved.push(from);
+    if (await moveSettled(sb, p, input.newQuoteId)) result.moved.push(from);
   }
 
   // ── everything that is not due: move it as it is ──────────────────────────────────
   for (const p of payments) {
     if (p.status === "due") continue;
-    if (await moveSettled(sb, p.id, input.newQuoteId)) result.moved.push({ paymentId: p.id, fromQuoteId: p.quote_id });
+    if (await moveSettled(sb, p, input.newQuoteId)) result.moved.push({ paymentId: p.id, fromQuoteId: p.quote_id });
   }
 
-  return result;
+  return changed;
 }
 
 /** What a guarded write to a due intent did. */
 type DueWrite =
-  | "written" //   the row was still `due` and took the patch
+  | "written" //   the row was exactly as this pass read it, and took the patch
   | "advanced" //  the row is no longer `due` (a webhook got there first) — nothing written
+  | "changed" //   still `due`, but another request moved it or changed its checkout — nothing written
   | "conflict"; // a unique index (0130 / 0303) refused the patch — nothing written
 
+/** The part of a row every write is compared against: what this pass READ. */
+type ReadPayment = Pick<FamilyPayment, "id" | "quote_id" | "provider_session_id">;
+
 /**
- * One guarded write to an intent we read as `due`: applied only while it still is. THROWS
- * on any database error other than a unique-index refusal.
+ * One COMPARE-AND-SET write to an intent this pass read as `due`: applied only while the row
+ * is still `due`, still on the revision we read it on, and still holding the Checkout
+ * Session we read (or still holding none). A write guarded on less than that is how one
+ * request cleared a session another had just attached (see the header).
+ *
+ * A write that matches nothing is followed by a re-read, which tells `advanced` (a payment
+ * landed) from `changed` (another request moved it or gave it a checkout). THROWS on any
+ * database error other than a unique-index refusal.
  */
-async function writeDue(sb: ServiceClient, paymentId: string, patch: Record<string, unknown>): Promise<DueWrite> {
-  const { error, count } = await sb
+async function writeDue(sb: ServiceClient, read: ReadPayment, patch: Record<string, unknown>): Promise<DueWrite> {
+  const guarded = sb
     .from("catering_payments")
     .update(patch, { count: "exact" })
-    .eq("id", paymentId)
-    .eq("status", "due");
+    .eq("id", read.id)
+    .eq("status", "due")
+    .eq("quote_id", read.quote_id);
+  const { error, count } = await (read.provider_session_id
+    ? guarded.eq("provider_session_id", read.provider_session_id)
+    : guarded.is("provider_session_id", null));
   if (error) {
     if (error.code === "23505") return "conflict";
-    throw new Error(`carryPayments write ${paymentId}: ${error.message}`);
+    throw new Error(`carryPayments write ${read.id}: ${error.message}`);
   }
-  return (count ?? 0) > 0 ? "written" : "advanced";
+  if ((count ?? 0) > 0) return "written";
+
+  const { data: now, error: readErr } = await sb
+    .from("catering_payments")
+    .select("id, status")
+    .eq("id", read.id)
+    .maybeSingle<{ id: string; status: string }>();
+  if (readErr) throw new Error(`carryPayments re-read ${read.id}: ${readErr.message}`);
+  return now?.status === "due" ? "changed" : "advanced";
 }
 
 /**
  * Move a SETTLED row (paid / refunded / void) onto the live revision, changing nothing else.
  * Whatever its status has become by now is fine — only `due` is excluded, because a due row
- * is inside the unique indexes and its move is `writeDue`'s decision. Returns whether a row
- * moved.
+ * is inside the unique indexes and its move is `writeDue`'s decision. Guarded on the
+ * revision we read it on, so a row a newer pass already moved is not pulled back. Returns
+ * whether a row moved.
  */
-async function moveSettled(sb: ServiceClient, paymentId: string, newQuoteId: string): Promise<boolean> {
+async function moveSettled(sb: ServiceClient, read: ReadPayment, newQuoteId: string): Promise<boolean> {
   const { error, count } = await sb
     .from("catering_payments")
     .update({ quote_id: newQuoteId }, { count: "exact" })
-    .eq("id", paymentId)
+    .eq("id", read.id)
+    .eq("quote_id", read.quote_id)
     .neq("status", "due");
-  if (error) throw new Error(`carryPayments move ${paymentId}: ${error.message}`);
+  if (error) throw new Error(`carryPayments move ${read.id}: ${error.message}`);
   return (count ?? 0) > 0;
 }
 
