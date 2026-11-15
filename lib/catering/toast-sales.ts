@@ -328,9 +328,10 @@ const KINDS = new Set(["dining_option", "toast_item_guid", "item_name_contains"]
  * because a second, higher-privileged spelling of a thing Juan just said should not happen
  * is a capability with no caller and a hole with a lock on it.
  *
- * Global rows still MATCH — the two legacy ones (`Ezcater`, `App Catering Delivery`,
- * authored 2026-07-25) keep working exactly as they do today, and are NOT migrated here;
- * their disposition (keep-as-global vs split-per-shop) is Juan's call and its own change.
+ * Global rows still MATCH. The two legacy ones (`Ezcater`, `App Catering Delivery`, authored
+ * 2026-07-25) never matched anything (the ingest passed dining_option = null until W16/B094);
+ * Juan's disposition (2026-11-15, the recommended pick) is DEACTIVATE, done by migration 0322
+ * before dining-option rules start matching.
  */
 export async function addExclusion(
   actor: AuthContext,
