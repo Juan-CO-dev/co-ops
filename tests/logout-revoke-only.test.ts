@@ -1,5 +1,6 @@
 /**
- * Audit W06/B012 fix round 5 — a logout response can never clear a cookie it did not end.
+ * Audit W06/B012 fix rounds 5 + 6 — a CONFIRMED logout can never clear a cookie it did not end; an UNCONFIRMED one
+ * fails closed (503 + cleared cookie; round 6, at the bottom).
  *
  * The race (review r5): two tabs reach the shared idle deadline together and each POSTs /api/auth/logout. Tab A's
  * response lands, A goes to the login page, someone signs in there, and then tab B's LATE response — which used to carry
@@ -22,8 +23,23 @@ import { fakeSupabase } from "./fake-supabase";
 const h = vi.hoisted(() => ({
   db: null as unknown as import("./fake-supabase").FakeDb,
   audits: [] as Array<{ action: string; resourceId: string | null; metadata: Record<string, unknown> }>,
+  /** Round 6: runs just before the route's revoke UPDATE (e.g. a concurrent logout landing first). */
+  beforeRevoke: null as null | (() => void),
+  /** Round 6: the revoke UPDATE "succeeds" but matches no row. */
+  revokeNoop: false,
 }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.db.client }));
+vi.mock("@/lib/session", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/session")>();
+  return {
+    ...actual,
+    revokeSession: async (id: string) => {
+      h.beforeRevoke?.();
+      if (h.revokeNoop) return { rowsAffected: 0 };
+      return actual.revokeSession(id);
+    },
+  };
+});
 vi.mock("@/lib/audit", () => ({
   audit: async (row: { action: string; resourceId: string | null; metadata: Record<string, unknown> }) => {
     h.audits.push(row);
@@ -83,6 +99,8 @@ const outcomes = () => h.audits.filter((a) => a.action === "auth_logout").map((a
 
 beforeEach(() => {
   h.audits = [];
+  h.beforeRevoke = null;
+  h.revokeNoop = false;
   jar = "jwt-s1";
   h.db = fakeSupabase({
     sessions: [sessionRow("session-1", "jwt-s1")],
@@ -112,7 +130,7 @@ describe("two concurrent idle logouts, settled separately around a new sign-in",
     expect(outcomes()).toEqual(["revoked", "already_revoked"]);
   });
 
-  it("no logout response carries a Set-Cookie", async () => {
+  it("a confirmed logout response carries no Set-Cookie", async () => {
     const res = await logout(send({ sessionId: "session-1" }));
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(await res.json()).toEqual({ ok: true });
@@ -188,5 +206,110 @@ describe("the idempotent edges stay 200 without a Set-Cookie", () => {
     const res = await logout(req);
     expect(res.status).toBe(200);
     expect(row("session-1").revoked_at).not.toBeNull();
+  });
+});
+
+// ── Fix round 6 (review W06-r6 P1) — an unconfirmed end fails CLOSED ─────────────────────────────────────────────────
+// A sessions read error used to read as "session not found": nothing was revoked, the route answered 200 and, being
+// revoke-only, left the cookie too — so once the database came back the old cookie opened /dashboard again. Now only a
+// successful read or write confirms an end; anything else is 503 logout_unconfirmed WITH a cookie-clearing Set-Cookie.
+const reasons = () => h.audits.filter((a) => a.action === "auth_logout").map((a) => a.metadata.reason);
+const restoreDb = () => {
+  h.db.failSelectTables = [];
+  h.db.failUpdates = 0;
+};
+
+describe("round 6 — a logout the server cannot confirm fails closed", () => {
+  it("a sessions READ failure: 503 + cleared cookie; after the DB recovers the old cookie opens nothing", async () => {
+    h.db.failSelectTables = ["sessions"];
+    const res = await logout(send({ sessionId: "session-1" }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "logout_unconfirmed", sessionId: "session-1" });
+    expect(res.headers.get("set-cookie")).toMatch(new RegExp(`${SESSION_COOKIE_NAME}=;`));
+    arrive(res);
+    expect(jar).toBeNull();
+    expect(outcomes()).toEqual(["unconfirmed"]);
+    expect(reasons()).toEqual(["session_read_failed"]);
+
+    restoreDb();
+    const next = await nextRequest(); // /dashboard on the shared tablet
+    expect(next).toBeInstanceOf(Response);
+    expect((next as Response).status).toBe(401);
+  });
+
+  it("the read failure is never 'session not found' (no 200 and no silent skip)", async () => {
+    h.db.failSelectTables = ["sessions"];
+    const res = await logout(send()); // the Log out button
+    expect(res.status).not.toBe(200);
+    expect(outcomes()).not.toContain("session_not_found");
+  });
+
+  it("a revoke UPDATE failure: 503 + cleared cookie; after the DB recovers the old cookie opens nothing", async () => {
+    h.db.failUpdates = 1;
+    const res = await logout(send());
+    expect(res.status).toBe(503);
+    expect(row("session-1").revoked_at).toBeNull(); // the row really is still live…
+    arrive(res);
+    expect(jar).toBeNull(); // …so the browser must stop carrying it
+    expect(reasons()).toEqual(["revoke_failed"]);
+
+    restoreDb();
+    const next = await nextRequest();
+    expect(next).toBeInstanceOf(Response);
+    expect((next as Response).status).toBe(401);
+  });
+
+  it("the UPDATE matched nothing and the confirming read fails: 503 confirm_read_failed", async () => {
+    h.beforeRevoke = () => {
+      row("session-1").revoked_at = new Date().toISOString(); // a concurrent logout landed first…
+      h.db.failSelectTables = ["sessions"]; // …and the database then blips
+    };
+    const res = await logout(send({ sessionId: "session-1" }));
+    expect(res.status).toBe(503);
+    expect(reasons()).toEqual(["confirm_read_failed"]);
+    arrive(res);
+    expect(jar).toBeNull();
+  });
+
+  it("the UPDATE matched nothing on a row still live: 503 revoke_not_applied", async () => {
+    h.revokeNoop = true; // an UPDATE that silently applies to nothing (the silent-denial shape), the row staying live
+    const res = await logout(send());
+    expect(res.status).toBe(503);
+    expect(row("session-1").revoked_at).toBeNull();
+    expect(reasons()).toEqual(["revoke_not_applied"]);
+    arrive(res);
+    expect(jar).toBeNull();
+  });
+
+  it("a concurrent logout that ended it first, CONFIRMED by the second read: 200 already_revoked, no Set-Cookie", async () => {
+    h.beforeRevoke = () => {
+      row("session-1").revoked_at = new Date().toISOString();
+    };
+    const res = await logout(send({ sessionId: "session-1" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(outcomes()).toEqual(["already_revoked"]);
+  });
+
+  it("the confirmed paths still set no cookie (revoked, already revoked, not found)", async () => {
+    const first = await logout(send({ sessionId: "session-1" }));
+    const again = await logout(send({ sessionId: "session-1" }));
+    h.db.tables.sessions = [];
+    const gone = await logout(send({ sessionId: "session-1" }));
+    for (const res of [first, again, gone]) {
+      expect(res.status).toBe(200);
+      expect(res.headers.get("set-cookie")).toBeNull();
+    }
+    expect(outcomes()).toEqual(["revoked", "already_revoked", "session_not_found"]);
+  });
+
+  it("the superseded path is unchanged even while the database is down (it reads nothing)", async () => {
+    signIn();
+    h.db.failSelectTables = ["sessions"];
+    const res = await logout(send({ sessionId: "session-1" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(outcomes()).toEqual(["session_superseded"]);
+    expect(jar).toBe("jwt-s2");
   });
 });
