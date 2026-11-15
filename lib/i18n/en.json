@@ -2845,6 +2845,8 @@
   "opening.error.recount_split_negative": "A count can't be negative.",
   "opening.error.out_of_range_reason_missing": "Out-of-range values need a reason — add one and resubmit.",
   "opening.error.phase1_not_eligible": "Phase 1 was already submitted — refresh to see the latest.",
+  "opening.error.phase1_incomplete": "Some counts are missing. Check every item before you continue.",
+  "opening.error.item_not_in_template": "An item on this form is not part of this opening — refresh the page.",
   "opening.error.phase2_not_eligible": "Phase 1 must be submitted before prep can be finished — refresh the page.",
   "opening.error.phase3_not_eligible": "Phase 3 was already submitted — refresh to see the latest.",
   "opening.error.phase2_incomplete": "{count} prep item(s) still need to be saved before you can finish.",

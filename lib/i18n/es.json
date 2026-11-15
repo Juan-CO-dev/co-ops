@@ -2845,6 +2845,8 @@
   "opening.error.recount_split_negative": "Un conteo no puede ser negativo.",
   "opening.error.out_of_range_reason_missing": "Los valores fuera de rango necesitan una razón — agrégala y vuelve a enviar.",
   "opening.error.phase1_not_eligible": "La fase 1 ya fue enviada — actualiza para ver lo último.",
+  "opening.error.phase1_incomplete": "Faltan conteos. Revisa cada artículo antes de continuar.",
+  "opening.error.item_not_in_template": "Un artículo de este formulario no es de esta apertura — recarga la página.",
   "opening.error.phase2_not_eligible": "La Fase 1 debe enviarse antes de poder terminar el prep — actualiza la página.",
   "opening.error.phase3_not_eligible": "La fase 3 ya fue enviada — actualiza para ver lo último.",
   "opening.error.phase2_incomplete": "Faltan {count} artículo(s) de prep por guardar antes de terminar.",
