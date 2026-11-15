@@ -84,7 +84,6 @@ class BudgetSpent extends Error {}
 
 /** `work`, or a `BudgetSpent` rejection once `ms` have passed. The timer never outlives it. */
 async function within<T>(work: Promise<T>, ms: number): Promise<T> {
-  if (ms <= 0) throw new BudgetSpent("no time left to confirm the checkout closed");
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -148,8 +147,16 @@ export async function closeQuoteCheckouts(sb: ServiceClient, input: CloseQuoteCh
       out.stillOpen.push(row.id);
       continue;
     }
+    // Checked BEFORE the call is made: a retire we start and then abandon would be a Stripe
+    // request nobody is listening to. (One that outlives the budget below is still raced, so
+    // its late answer — or its late failure — is handled, never an unhandled rejection.)
+    const left = deadline - Date.now();
+    if (left <= 0) {
+      out.stillOpen.push(row.id);
+      continue;
+    }
     try {
-      const outcome = await within(retire(sessionId), deadline - Date.now());
+      const outcome = await within(retire(sessionId), left);
       if (outcome === "complete") {
         out.completing.push(row.id);
         continue;

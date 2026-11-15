@@ -675,6 +675,13 @@ describe("W02 review r3 (P1) — closing checkouts after a settlement never hold
     expect(rowOf(OTHER).provider_session_id).toBe(sessionId);
   });
 
+  it("with no budget left, Stripe is not called at all — nothing is started that nobody waits for", async () => {
+    await paidDepositBeside({ status: "void" });
+    const retire = vi.fn(async () => "expired" as const);
+    expect(await close({ retire, budgetMs: 0 })).toEqual({ retired: [], stillOpen: [OTHER], completing: [] });
+    expect(retire).not.toHaveBeenCalled();
+  });
+
   it("a shop that cannot reach Stripe at all (no credentials) reports every checkout still open and calls nothing", async () => {
     await paidDepositBeside({ status: "void" });
     expect(await close({ retire: null })).toEqual({ retired: [], stillOpen: [OTHER], completing: [] });
