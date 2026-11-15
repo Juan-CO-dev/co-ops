@@ -96,7 +96,9 @@ function countPost(ctx: AuthContext, writer: (...args: unknown[]) => Promise<unk
     ROLES, assertStepUp, assertSameOrigin, COUNT_WRITE_MIN: 4, COUNT_READ_MIN: 6, CountError: DomainError,
     requireSession: async () => ctx,
     parseJsonBody: async () => ({ locationId, pin, lines: [{ skuId: "sku", levelLabel: "each", qty: 1 }] }),
-    verifyActorPin: async (_userId: string, supplied: string) => supplied === "1234",
+    // Counted per session since audit W07 B159; the counter itself is proven in tests/step-up-reauth-throttle.test.ts.
+    verifyActorPinForSession: async (_sessionId: string, _userId: string, supplied: string) => (supplied === "1234" ? "ok" : "wrong"),
+    reauthLockedResponse: () => Response.json({ code: "reauth_locked" }, { status: 401 }),
     createCountEvent: writer,
     jsonError: (status: number, code: string) => Response.json({ code }, { status }),
     jsonOk: (body: unknown, status: number) => Response.json(body, { status }),
@@ -105,7 +107,7 @@ function countPost(ctx: AuthContext, writer: (...args: unknown[]) => Promise<unk
 }
 
 describe("count API step-up and assignment boundary", () => {
-  const signedIn = (role: RoleCode, unlocked = false) => ({ ...actor(role), session: { stepUpUnlocked: unlocked } }) as AuthContext;
+  const signedIn = (role: RoleCode, unlocked = false) => ({ ...actor(role), session: { id: "session", stepUpUnlocked: unlocked } }) as AuthContext;
   it.each(["key_holder", "trainer", "shift_lead"] as const)("%s must re-enter a correct PIN before writing", async role => {
     const writer = vi.fn(async () => ({ countEventId: "count", advisories: [] }));
     const res = await countPost(signedIn(role), writer, "0000");

@@ -30,11 +30,14 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { lastClockIns, clockInsByUser } from "./dormancy";
 import type { AuthContext } from "@/lib/session";
+import { looksLikeEmail } from "./email-confirm-shared";
 
 export interface AdminUserListItem {
   id: string;
   name: string;
   email: string | null;
+  /** Manager sign-in (email + password) works only once this is true (audit W07 B053). */
+  emailVerified: boolean;
   role: RoleCode;
   level: number;
   active: boolean;
@@ -79,7 +82,7 @@ interface DbUserRow {
   locked_until: string | null; dormant_at: string | null;
 }
 
-const LIST_COLS = "id, name, email, role, active, last_login_at, created_at, dormant_at";
+const LIST_COLS = "id, name, email, email_verified, role, active, last_login_at, created_at, dormant_at";
 const DETAIL_COLS =
   "id, name, email, role, active, last_login_at, phone, email_verified, created_at, created_by, locked_until, dormant_at";
 
@@ -155,7 +158,7 @@ export async function listUsers(filters: ListUsersFilters, viewer?: UserListView
   const now = Date.now();
   const employment = viewer ? await loadEmploymentStates(sb, rows.map((r) => r.id)) : null;
   const items = rows.map((r) => ({
-    id: r.id, name: r.name, email: r.email, role: r.role,
+    id: r.id, name: r.name, email: r.email, emailVerified: r.email_verified === true, role: r.role,
     level: getRoleLevel(r.role), active: r.active, lastLoginAt: r.last_login_at,
     locationIds: locMap.get(r.id) ?? [],
     dormantAt: r.dormant_at,
@@ -396,13 +399,20 @@ export async function updateUserProfile(
   }
   if (patch.phone !== undefined) send.phone = patch.phone?.trim() || null;
   if (patch.email !== undefined) send.email = patch.email?.trim() ? patch.email.trim().toLowerCase() : null;
+  // Edit profile can now set a manager's email (audit W07 B053), and that address may be mailed a link that sets
+  // their password: refuse what is plainly not an address (the screen checks the same shape first).
+  if (send.email && !looksLikeEmail(send.email)) throw new AdminUserError(400, "invalid_payload", "Enter a valid email address");
   if (Object.keys(send).length === 0) return;
   // The writer (0279) re-checks the actor under the target's lock, refuses a taken email, and revokes the sessions on
   // an email change in the same transaction (email is the login identifier for email-auth roles).
   const r = await userAdminRpc(getServiceRoleClient(), updateUserProfileCall({ actorId: actor.user.id, userId: id, patch: send }));
   if (r.email_changed === true) {
     await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.change_email",
-      resourceTable: "users", resourceId: id, metadata: { fields: r.fields ?? Object.keys(send), sessions_revoked: r.sessions_revoked ?? 0 }, ipAddress: null, userAgent: null });
+      resourceTable: "users", resourceId: id,
+      // reset_links_retired (0307, audit W07 B052): the open password-reset links the email change retired. Absent before 0307.
+      metadata: { fields: r.fields ?? Object.keys(send), sessions_revoked: r.sessions_revoked ?? 0,
+        ...(typeof r.reset_links_retired === "number" ? { reset_links_retired: r.reset_links_retired } : {}) },
+      ipAddress: null, userAgent: null });
   }
 }
 
@@ -417,7 +427,10 @@ async function setCredential(
   const r = await userAdminRpc(getServiceRoleClient(), setUserCredentialCall({ actorId: actor.user.id, userId: id, kind, hash }));
   await audit({ actorId: actor.user.id, actorRole: actor.user.role,
     action: kind === "pin" ? "user.reset_pin" : "user.reset_password",
-    resourceTable: "users", resourceId: id, metadata: { sessions_revoked: r.sessions_revoked ?? 0 }, ipAddress: null, userAgent: null });
+    resourceTable: "users", resourceId: id,
+    // reset_links_retired (0307, audit W07 B157): the open password-reset links a password set retired. Absent before 0307.
+    metadata: { sessions_revoked: r.sessions_revoked ?? 0, ...(typeof r.reset_links_retired === "number" ? { reset_links_retired: r.reset_links_retired } : {}) },
+    ipAddress: null, userAgent: null });
 }
 
 export const resetPin = (actor: AuthContext, id: string, pin: string) => setCredential(actor, id, "pin", pin);

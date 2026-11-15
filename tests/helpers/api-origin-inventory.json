@@ -6,7 +6,6 @@
   "app/api/auth/password-reset-request/route.ts": "POST",
   "app/api/auth/password-reset/route.ts": "POST",
   "app/api/auth/password/route.ts": "POST",
-  "app/api/auth/pin-confirm/route.ts": "POST",
   "app/api/auth/pin/route.ts": "POST",
   "app/api/auth/step-up/route.ts": "POST",
   "app/api/auth/verify/route.ts": "POST",

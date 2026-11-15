@@ -369,6 +369,9 @@ export const DESTRUCTIVE_ACTIONS = [
   // Migration-emitted grant rewrite on public.users (0198, LRA-001/214): a change to who may
   // read or write which columns is an alteration of the accountability perimeter itself.
   "security.grants_change",
+  // Migration-emitted (0307, audit W07 B053): managers promoted before the fix are marked email-verified in bulk —
+  // a change to who can sign in with email + password, so it belongs in the accountability record.
+  "user.email_vouch_backfill",
   // SQL-only 0201 bundle: changes the shared purchase and costing basis; literal true in RPC.
   "sku.angel_import",
 
