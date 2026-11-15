@@ -7,7 +7,9 @@
  * Regressions run on both and must pass on both. An UPGRADE database carries pre-0312 state through
  * the apply (the B174 acknowledgement gate, the B176 backfill, the B071 existing-state flip). Pre-flight
  * refusals and an ACL sabotage prove a refused apply leaves no partial DDL.
- * The B070 lock race needs two sessions: scripts/sim/customers-0312-retention-lock-check-management.mjs (sim only, CC).
+ * The B070 lock races (the sweep vs a consent write, and r1: the sweep vs an import finish, both orders) need
+ * two sessions: scripts/sim/customers-0312-retention-lock-check-management.mjs (sim only, CC). Here, the finish's
+ * identity lock is read from pg_locks and both serial commit orders run end to end.
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -135,6 +137,61 @@ async function b070Recheck(ctx) {
   const idents = (await one(ctx.db, 'select count(*)::int n from customer_identifiers where customer_id = $1', [p2])).n;
   return { fixed: sweep.erased === 1 && sweep.skipped === 1 && two.erased_at === null && two.active && idents === 1, sweep, p1 };
 }
+// W12/B070 r1 (review P2): an import FINISH must serialise with the retention sweep on the identity
+// lock, taken after the import lock (the chunk's import -> identity order), so a sweep can never erase
+// a person between its eligibility check and its erase while a completing import opts them in. PGlite
+// is one session, so the lock itself is read from pg_locks inside the finishing transaction; the
+// blocking is the sim script's two-session proof. Then both serial commit orders, end to end.
+const HOLDS_IDENTITY_LOCK = `exists(select 1 from pg_locks where locktype = 'advisory' and pid = pg_backend_pid() and granted
+  and objsubid = 1 and ((classid::bigint << 32) | objid::bigint) = hashtextextended('customer-identity', 0)) as held`;
+async function b070Finish(ctx) {
+  const { db, actor } = ctx;
+  // Inactive people whose import is dated > 36 months ago: resolving them in the chunk does not make
+  // them active, so until finish their pending opt-in is invisible to the sweep.
+  const old = new Date(Date.now() - 40 * 31 * 86_400_000);
+  const exportDate = old.toISOString().slice(0, 10);
+  const stage = async (email) => {
+    await resolve(db, email, null, old.toISOString());
+    const begun = await call(db, 'customer_consent_import_begin', [actor, 'toast_csv_import', sha(`${email}:${randomUUID()}`), exportDate, false, 1]);
+    await call(db, 'customer_consent_import_chunk', [actor, begun.import_id, 0, JSON.stringify([{ email }])], ['', '', '', '::jsonb']);
+    return begun.import_id;
+  };
+  const finish = (id) => call(db, 'customer_consent_import_finish', [actor, id, false]);
+  const sweep = async () => (await one(db, "select public.customer_retention_sweep($1, now() - interval '36 months', 200) r", [actor])).r;
+  const state = (id) => one(db, `select c.erased_at is null as live,
+      (select count(*)::int from customer_identifiers i where i.customer_id = c.id) as idents,
+      (select k.status from customer_consent_current k where k.customer_id = c.id and k.channel = 'email') as consent,
+      exists(select 1 from public.customer_marketing_export('email') x where x.customer_id = c.id) as exported
+    from customers c where c.id = $1`, [id]);
+
+  // The finishing transaction holds the identity lock until it commits.
+  const probe = await stage('probe@example.test');
+  await db.exec('begin');
+  await finish(probe);
+  const lockHeld = (await one(db, `select ${HOLDS_IDENTITY_LOCK}`)).held;
+  await db.exec('rollback');
+  await call(db, 'customer_consent_import_cancel', [actor, probe]); // the probe never completes
+
+  // Order A: the finish commits first, then the sweep. The person is opted in and survives.
+  const aId = (await resolve(db, 'order-a@example.test', null, old.toISOString())).customer_id;
+  await finish(await stage('order-a@example.test'));
+  const sweepA = await sweep();
+  const a = await state(aId);
+  const orderA = a.live && a.idents === 1 && a.consent === 'opted_in' && a.exported;
+
+  // Order B: the sweep commits first (the import is still pending, so the person is not opted in and
+  // is erased), then the finish. The finish completes without error; the erased person stays erased,
+  // opted out (the retention opt-out is newer than the export date) and is never marketed.
+  const bId = (await resolve(db, 'order-b@example.test', null, old.toISOString())).customer_id;
+  const bImport = await stage('order-b@example.test');
+  const sweepB = await sweep();
+  let finishB;
+  try { finishB = await finish(bImport); } catch (e) { finishB = { error: String(e.message) }; }
+  const b = await state(bId);
+  const orderB = !b.live && b.idents === 0 && b.consent === 'opted_out' && !b.exported && finishB.error === undefined
+    && finishB.replay === false;
+  return { fixed: lockHeld && orderA && orderB, lockHeld, orderA, orderB, sweepA, sweepB, finishB, a, b };
+}
 async function seedToast(db) {
   const shop = randomUUID();
   await db.query('insert into locations(id) values($1)', [shop]);
@@ -248,7 +305,7 @@ async function refused(prep, re, label, sql = migration) {
 
 try {
   const results = {};
-  for (const [name, run] of Object.entries({ b071, b173, b174, b070Recheck, b176, b177 })) {
+  for (const [name, run] of Object.entries({ b071, b173, b174, b070Recheck, b070Finish, b176, b177 })) {
     const before = await fresh(false); before.with0312 = false;
     const after = await fresh(true); after.with0312 = true;
     results[name] = { before: await run(before), after: await run(after) };
@@ -266,6 +323,12 @@ try {
   check(results.b174.after.fixed, 'retention erasure leaves no suppression; a returning guest can opt in again as a new customer');
   check(!results.b070Recheck.before.fixed && results.b070Recheck.before.sweep.erased === 2, 'B070 reproduced before 0312: the sweep erased a person who had just become active');
   check(results.b070Recheck.after.fixed, 'a person made active after the candidate snapshot is skipped, not erased');
+  check(!results.b070Finish.before.lockHeld, 'B070 reproduced before 0312: an import finish completes consent without the identity lock');
+  check(results.b070Finish.after.lockHeld, 'an import finish holds the identity lock until it commits, so it cannot land inside a sweep');
+  check(results.b070Finish.after.orderA && results.b070Finish.before.orderA,
+    'finish then sweep: the person the import opted in keeps identity, opt-in and the marketing file');
+  check(results.b070Finish.after.orderB && results.b070Finish.after.sweepB.erased >= 1,
+    'sweep then finish: the finish completes; the person erased before it stays erased, opted out and unmarketed');
   check(!results.b176.before.fixed, 'B176 reproduced before 0312: a voided order still counts as a visit and spend');
   check(results.b176.after.fixed, 'a voided order leaves visits and spend but stays listed; an un-void brings it back; a re-capture never un-voids');
   check(!results.b177.before.fixed && results.b177.before.oldPath === 0, 'B177 reproduced before 0312: other shops fill the top 50 and the GM sees none');
@@ -277,6 +340,14 @@ try {
     const def = (await one(db, "select pg_get_functiondef('public.customer_retention_sweep(uuid,timestamptz,integer)'::regprocedure) d")).d;
     check(def.indexOf('customer_identity_lock()') > 0 && def.indexOf('customer_identity_lock()') < def.indexOf('for v_id in'),
       'retention sweep takes the identity lock before reading candidates');
+    // One lock order everywhere: import -> identity (the chunk's, through customer_resolve). The finish
+    // takes both before it reads the import; nothing that holds the identity lock takes the import lock.
+    const fin = (await one(db, "select pg_get_functiondef('public.customer_consent_import_finish(uuid,uuid,boolean)'::regprocedure) d")).d;
+    const [imp, idl, upd] = [fin.indexOf("hashtextextended('customer-consent-import',0)"), fin.indexOf('customer_identity_lock()'), fin.indexOf('for update')];
+    check(imp > 0 && imp < idl && idl < upd, 'import finish takes the import lock, then the identity lock, before it reads the import');
+    const erase = (await one(db, "select pg_get_functiondef('public.customer_erase(uuid,uuid,text)'::regprocedure) d")).d;
+    check(!def.includes('customer-consent-import') && !erase.includes('customer-consent-import'),
+      'the sweep and the erase never take the import lock (no identity -> import order, no deadlock)');
     const p = await resolve(db, 'recent@example.test', null, new Date(Date.now() - 2 * 86_400_000).toISOString());
     const q = await resolve(db, 'stale-opted@example.test', null, new Date(Date.now() - 40 * 31 * 86_400_000).toISOString());
     await explicitConsent(db, 'stale-opted@example.test', '3');

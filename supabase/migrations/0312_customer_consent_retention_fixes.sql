@@ -33,8 +33,14 @@
 --      pre-flight REPORTS their count and REFUSES unless the applier acknowledges that exact count (see
 --      the pre-flight) — the unblock is never applied silently.
 --   4. B070 — customer_retention_sweep takes customer_identity_lock() BEFORE reading candidates, and
---      re-checks each candidate on a fresh snapshot right before erasing it (an import finish completes
---      consent without that lock). Returns { erased, skipped }; the app loops on erased + skipped.
+--      re-checks each candidate on a fresh snapshot right before erasing it. Returns { erased, skipped };
+--      the app loops on erased + skipped. customer_consent_import_finish takes the same identity lock
+--      (r1 review P2: before, a finish could commit an opt-in between the sweep's re-check and its erase),
+--      right after the import lock and before it reads the import — the chunk's import -> identity order;
+--      the sweep and customer_erase never take the import lock, so there is no reverse order. A finish
+--      and a sweep now commit one after the other: finish first, the person is opted in and kept; sweep
+--      first, the person was not opted in yet (their import was pending) and is erased, and the finish
+--      then completes with that person staying erased, opted out and out of every marketing file.
 --   5. B176 (owner decision W12-5 b) — voided / deleted Toast orders. customer_orders.voided_at (null =
 --      live) is set and cleared by customer_orders_sync_voided(location, business date), which reads the
 --      latest pointer's snapshot; capture calls it after every customer ingest of a shop-day. Backfilled
@@ -47,7 +53,8 @@
 --
 -- Grants follow 0234/0249 ("CREATE OR REPLACE never implies a safe ACL"); the closing block asserts no
 -- escape. Proof: scripts/sql-harness-0312.mjs (PGlite, offline, single session; pinned by
--- tests/customer-w12-migration.test.ts). The B070 lock race needs two sessions:
+-- tests/customer-w12-migration.test.ts). The B070 lock races (the sweep vs a consent write; r1: the sweep vs an
+-- import finish, both orders) need two sessions:
 -- scripts/sim/customers-0312-retention-lock-check-management.mjs, sim only, run by CC.
 begin;
 
@@ -205,6 +212,9 @@ declare
   v_effective timestamptz; v_absent int := 0; v_absent_stale int := 0; v_prev int := 0; v_sum record; v_moved int := 0; v_root uuid;
 begin
   perform pg_advisory_xact_lock(hashtextextended('customer-consent-import',0));
+  -- W12/B070 r1: serialise with the retention sweep (and every identity writer). Import -> identity,
+  -- the chunk's order; everything below reads on a snapshot taken after both locks.
+  perform public.customer_identity_lock();
   select * into v_imp from public.customer_consent_imports where id = p_import_id for update;
   if not found then raise exception 'consent_import_not_found'; end if;
   if v_imp.status = 'completed' then
@@ -478,8 +488,8 @@ begin
   if p_cutoff is null or p_cutoff > now() - interval '365 days' or p_limit is null or p_limit < 1 or p_limit > 500 then
     raise exception 'retention_invalid';
   end if;
-  -- W12/B070: serialise with every identity writer (Toast capture, the consent import chunk, the Meta
-  -- consent writer, merges) BEFORE the candidate snapshot is taken; a person they just made active is
+  -- W12/B070: serialise with every identity writer (Toast capture, the consent import chunk and finish,
+  -- the Meta consent writer, merges) BEFORE the candidate snapshot is taken; a person they just made active is
   -- then either visible as active or waits behind this sweep.
   perform public.customer_identity_lock();
   for v_id in
@@ -489,8 +499,9 @@ begin
       and not exists(select 1 from public.customers m where m.merged_into = c.id and m.last_seen_at >= p_cutoff)
     order by c.last_seen_at limit p_limit
   loop
-    -- W12/B070: re-check on a fresh snapshot right before erasing (an import finish completes consent
-    -- without the identity lock).
+    -- W12/B070: re-check on a fresh snapshot right before erasing (a write that made the person active
+    -- or opted in after the candidate read). Every consent writer, the import finish included (r1), waits
+    -- on the identity lock this sweep holds until it commits, so nothing lands between this and the erase.
     if not exists(select 1 from public.customers c
         where c.id = v_id and c.merged_into is null and c.erased_at is null and c.last_seen_at < p_cutoff
           and not exists(select 1 from public.customer_consent_current k where k.customer_id = c.id and k.status = 'opted_in')
