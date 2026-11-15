@@ -8,6 +8,10 @@
  *                          would accept, so the page and the gate cannot drift apart.
  *   lib/portal/account.ts  the account list's "Review & pay" call to action.
  *
+ * It also holds the two facts about PAYMENTS those surfaces must agree on: whether an
+ * expired offer was taken up in time (`offerTakenUpInTime`) and whether an order is paid
+ * for (`quoteSettlement`) — both at the bottom of this file.
+ *
  * PURE: no I/O, no server imports (the `*-shared.ts` law), `now` is a parameter. Three
  * callers reading one function is the point — the bugs this closes were all a rule that
  * existed in one place and not in another.
@@ -124,4 +128,44 @@ export function payPanelState(input: { payability: QuotePayability; paidCount: n
   if (payability.payable) return { showOptions: paidCount === 0, notice: null };
   const quiet = payability.reason === "expired" && paidCount > 0;
   return { showOptions: false, notice: quiet ? null : payability.reason };
+}
+
+// ── Settlement: is the order paid for? ──────────────────────────────────────────────
+
+/** What has been paid toward a quote, weighed against what it asks for NOW. */
+export interface QuoteSettlement {
+  /** The sum of the quote's `paid` payment rows. */
+  paidCents: number;
+  /** What the current total still asks for after that: `max(0, total − paid)`. */
+  outstandingCents: number;
+  /** Something has been paid AND it covers the current total. */
+  settled: boolean;
+}
+
+/**
+ * "Is this order paid for?" — answered from the MONEY, never from a row's name (audit W02,
+ * review r2).
+ *
+ * A payment's `kind` is history: what the customer was asked for when they paid. It used to
+ * be read as a verdict — a paid `full` row meant "All set". But a family's payments follow
+ * it onto every revision (lib/catering/payment-carry.ts), so a quote paid in full at $1,000
+ * and then revised to $1,200 still carries a paid `full` row, with $200 outstanding. The
+ * history is kept as it is; settlement is the paid amounts against the CURRENT total.
+ *
+ * Only `paid` rows are money held (`due`, `void` and `refunded` are not). A partial Stripe
+ * refund leaves its row `paid` at the full amount (lib/stripe/webhook.ts `refund`) — the
+ * refunded part is in the audit trail, not in this sum; that is the settlement ledger's job
+ * when there is one. Nothing paid is never "settled", whatever the total says.
+ *
+ * PURE. Read by the customer's order list (`customerOrderStatus`) and the quote page, so
+ * the badge and the page cannot disagree about what is still owed.
+ */
+export function quoteSettlement(
+  totalCents: number,
+  payments: ReadonlyArray<{ status: string; amountCents: number }>,
+): QuoteSettlement {
+  const paid = payments.filter((p) => p.status === "paid");
+  const paidCents = paid.reduce((sum, p) => sum + p.amountCents, 0);
+  const outstandingCents = Math.max(0, totalCents - paidCents);
+  return { paidCents, outstandingCents, settled: paid.length > 0 && outstandingCents === 0 };
 }

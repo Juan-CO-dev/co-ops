@@ -29,6 +29,8 @@ import { audit } from "@/lib/audit";
 import { sendEmail } from "@/lib/email";
 import { CateringQuoteError, reviseQuote, sendQuote, setQuoteStatus } from "@/lib/catering/quotes";
 import { loadPaymentsForQuote } from "@/lib/catering/payments";
+import { loadCustomerAccount } from "@/lib/portal/account";
+import { quoteSettlement } from "@/lib/portal/payability-shared";
 import { initiatePayment, loadCustomerQuoteDetail, PortalQuoteError } from "@/lib/portal/quotes";
 import type { AuthContext } from "@/lib/session";
 
@@ -430,5 +432,78 @@ describe("W02/B006 review r1 — a failed carry never leaves a revision that can
     expect(en["catering.quotes.error.payments_unreconciled"]).toMatch(/nothing was sent/);
     expect(readFileSync("app/order/quote/[id]/pay-buttons.tsx", "utf8")).toContain('payment_reconciling: "order.quote.error_reconciling"');
     expect(readFileSync("components/catering/quotes/shared.ts", "utf8")).toContain('"payments_unreconciled"');
+  });
+});
+
+describe("W02 review r2 (P2) — revise AFTER a full payment: the larger revision is not `All set`", () => {
+  // A staff quote for $1,000, paid in full. The team then revises it to $1,200.
+  const paidInFull = () =>
+    deposit({ id: "d0000000-0000-4000-8000-0000000000f1", kind: "full", amount_cents: 100000, provider: "stripe", provider_ref: "pi_full" });
+
+  async function reviseAfterFullPayment() {
+    db.tables.catering_quotes = [v1({ origin: "staff", status: "accepted" })];
+    db.tables.catering_customers = [{ id: CUSTOMER, name: "Pat", email: "pat@example.com", company: null }];
+    payments().push(paidInFull());
+    const revised = await reviseQuote(owner, V1, REVISION); // total $1,200
+    quoteById(revised.id).status = "sent"; // the team sends the revision
+    return revised;
+  }
+  const orderFor = async (quoteId: string) => (await loadCustomerAccount(CUSTOMER)).orders.find((o) => o.quote.id === quoteId)!;
+
+  it("the payment keeps its history on the new revision: still kind `full`, still $1,000, still paid", async () => {
+    const revised = await reviseAfterFullPayment();
+    expect(payments()).toHaveLength(1);
+    expect(payments()[0]).toMatchObject({ quote_id: revised.id, kind: "full", status: "paid", amount_cents: 100000, provider_ref: "pi_full" });
+  });
+
+  it("the customer's order list does NOT say `All set`: it shows $200 outstanding and no pay button", async () => {
+    const revised = await reviseAfterFullPayment();
+
+    const order = await orderFor(revised.id);
+
+    expect(order.quote.totalCents).toBe(120000);
+    expect(order.status.key).not.toBe("paid");
+    expect(order.status).toMatchObject({ key: "pending", payable: false, balanceDueCents: 20000 });
+  });
+
+  it("…and once the team confirms the revision it reads `balance due` — still with no second full charge on offer", async () => {
+    const revised = await reviseAfterFullPayment();
+    await setQuoteStatus(owner, revised.id, "accepted");
+
+    const order = await orderFor(revised.id);
+
+    expect(order.status).toMatchObject({ key: "balance_due", payable: false, balanceDueCents: 20000 });
+  });
+
+  it("the pay gate refuses a second full charge whatever a client posts", async () => {
+    const revised = await reviseAfterFullPayment();
+    for (const kind of ["full", "deposit"] as const) {
+      const err = await initiatePayment(CUSTOMER, revised.id, kind).catch((e) => e as PortalQuoteError);
+      expect(err).toBeInstanceOf(PortalQuoteError);
+      expect((err as PortalQuoteError).code).toBe("already_paid");
+    }
+    expect(payments()).toHaveLength(1);
+  });
+
+  it("the quote page's own numbers agree: $1,000 received, $200 still to come", async () => {
+    const revised = await reviseAfterFullPayment();
+    const detail = (await loadCustomerQuoteDetail(CUSTOMER, revised.id))!;
+    expect(quoteSettlement(detail.quote.totalCents, detail.payments)).toEqual({ paidCents: 100000, outstandingCents: 20000, settled: false });
+  });
+
+  it("the page reads the ONE settlement rule, and never calls a part-payment `Paid in full`", async () => {
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync("app/order/quote/[id]/page.tsx", "utf8");
+    expect(page).toMatch(/quoteSettlement\(/);
+    expect(page).toMatch(/order\.quote\.paid_payment/);
+    const account = readFileSync("app/order/account/page.tsx", "utf8");
+    expect(account).toMatch(/balanceDueCents/);
+    expect(account).toMatch(/order\.account\.balance_due/);
+    for (const lang of ["en", "es"]) {
+      const dict = JSON.parse(readFileSync(`lib/i18n/${lang}.json`, "utf8")) as Record<string, string>;
+      expect(dict["order.quote.paid_payment"], lang).toMatch(/\{amount\}/);
+      expect(dict["order.account.balance_due"], lang).toMatch(/\{paid\}/);
+      expect(dict["order.account.balance_due"], lang).toMatch(/\{amount\}/);
+    }
   });
 });

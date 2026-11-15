@@ -15,6 +15,7 @@ vi.mock("@/lib/supabase-server", () => ({
 
 import { customerOrderStatus, type PortalQuote } from "@/lib/portal/account";
 import type { Payment } from "@/lib/catering/payments";
+import { quoteSettlement } from "@/lib/portal/payability-shared";
 
 function quote(over: Partial<PortalQuote> = {}): PortalQuote {
   return {
@@ -109,5 +110,66 @@ describe("W02/B039 — `balance due` never offers a pay button the portal cannot
     expect(
       customerOrderStatus(quote({ status: "accepted" }), [payment("deposit", "paid"), payment("balance", "paid", 80000)]).key,
     ).toBe("paid");
+  });
+});
+
+describe("W02 review r2 (P2) — settled means the MONEY covers the current total, not that a row is called `full`", () => {
+  // A quote paid in full at $1,000 is revised to $1,200. The payment follows the order onto
+  // the new revision (B006) and keeps its history: kind `full`, $1,000. "A paid `full` row
+  // exists" then read as "All set" with $200 outstanding.
+  const revised = (over: Partial<PortalQuote> = {}) => quote({ totalCents: 120000, depositCents: 30000, ...over });
+  const carriedFull = payment("full", "paid", 100000);
+
+  it("the pure rule: paid is the sum of PAID rows, outstanding is what the current total still asks for", () => {
+    expect(quoteSettlement(120000, [carriedFull])).toEqual({ paidCents: 100000, outstandingCents: 20000, settled: false });
+    expect(quoteSettlement(100000, [carriedFull])).toEqual({ paidCents: 100000, outstandingCents: 0, settled: true });
+    // Due, void and refunded rows are not money held.
+    expect(
+      quoteSettlement(100000, [payment("deposit", "due"), payment("full", "void", 100000), payment("balance", "refunded", 80000)]),
+    ).toEqual({ paidCents: 0, outstandingCents: 100000, settled: false });
+    // Nothing paid is never "settled" — not even on a zero-total quote.
+    expect(quoteSettlement(0, []).settled).toBe(false);
+    // A total that came DOWN after payment is covered (any refund is the team's call).
+    expect(quoteSettlement(90000, [carriedFull])).toEqual({ paidCents: 100000, outstandingCents: 0, settled: true });
+  });
+
+  it("revise-after-full-payment: the order is NOT `paid` — $200 is still owed", () => {
+    const s = customerOrderStatus(revised({ status: "sent" }), [carriedFull]);
+    expect(s.key).not.toBe("paid");
+    expect(s.key).toBe("pending");
+    expect(s.balanceDueCents).toBe(20000);
+  });
+
+  it("…and it does not offer a second full charge: no pay call to action, before or after the team confirms", () => {
+    const sent = customerOrderStatus(revised({ status: "sent" }), [carriedFull]);
+    expect(sent.payable).toBe(false);
+    const accepted = customerOrderStatus(revised({ status: "accepted" }), [carriedFull]);
+    expect(accepted.key).toBe("balance_due");
+    expect(accepted.payable).toBe(false);
+    expect(accepted.tone).toBe("pending");
+    expect(accepted.balanceDueCents).toBe(20000);
+  });
+
+  it("the badge does not call a part-payment a deposit when it was a full payment at the old total", () => {
+    expect(customerOrderStatus(revised({ status: "sent" }), [carriedFull]).label).not.toMatch(/deposit/i);
+    // A real deposit still reads as one.
+    expect(customerOrderStatus(revised({ status: "sent" }), [payment("deposit", "paid", 30000)]).label).toMatch(/deposit/i);
+  });
+
+  it("a deposit + balance that no longer add up to the total is not `paid` either", () => {
+    const s = customerOrderStatus(revised({ status: "accepted" }), [payment("deposit", "paid", 20000), payment("balance", "paid", 80000)]);
+    expect(s.key).toBe("balance_due");
+    expect(s.balanceDueCents).toBe(20000);
+  });
+
+  it("a full payment that covers the current total is still `paid`, with nothing owed", () => {
+    const s = customerOrderStatus(revised({ status: "accepted" }), [payment("full", "paid", 120000)]);
+    expect(s.key).toBe("paid");
+    expect(s.balanceDueCents).toBe(0);
+  });
+
+  it("an order nobody has paid toward reports no balance line — the card already shows its total", () => {
+    expect(customerOrderStatus(revised({ status: "sent" }), []).balanceDueCents).toBe(0);
+    expect(customerOrderStatus(revised({ status: "declined" }), [carriedFull]).balanceDueCents).toBe(0);
   });
 });

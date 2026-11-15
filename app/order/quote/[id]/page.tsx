@@ -23,7 +23,7 @@ import { redirect } from "next/navigation";
 import { getCustomerFromHeaders } from "@/lib/portal/session";
 import { loadCustomerQuoteDetail, type PortalPayment } from "@/lib/portal/quotes";
 import { paymentPlan } from "@/lib/catering/payment-plan";
-import { payPanelState, quotePayability, type QuoteUnpayableReason } from "@/lib/portal/payability-shared";
+import { payPanelState, quotePayability, quoteSettlement, type QuoteUnpayableReason } from "@/lib/portal/payability-shared";
 import { serverT } from "@/lib/i18n/server";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -151,8 +151,15 @@ export default async function QuotePage({
   // What the customer still owes AFTER what has cleared. The closed panel must not read as
   // "nothing left to pay" when only the deposit landed (LRA-236): the balance is real money
   // the team raises later, so name it and say when it comes.
-  const paidCents = paid.reduce((sum, p) => sum + p.amountCents, 0);
-  const remainingCents = Math.max(0, quote.totalCents - paidCents);
+  // ONE rule for "what is still owed" (lib/portal/payability-shared.ts `quoteSettlement`), the
+  // same one the order list's badge reads: paid amounts against the CURRENT total.
+  const settlement = quoteSettlement(quote.totalCents, detail.payments);
+  const remainingCents = settlement.outstandingCents;
+  // A payment's kind is what it was raised as. A `full` payment made before the quote was
+  // revised upward no longer covers the total, so its line must not say "Paid in full"
+  // directly above "Balance of … still to come" (audit W02, review r2).
+  const paidLineKey = (kind: PortalPayment["kind"]): TranslationKey =>
+    kind === "full" && !settlement.settled ? "order.quote.paid_payment" : PAID_LINE_KEY[kind];
 
   return (
     <Shell>
@@ -233,7 +240,7 @@ export default async function QuotePage({
           <ul className="mt-2 flex flex-col gap-1.5">
             {paid.map((p, i) => (
               <li key={`${p.kind}-${i}`} className="text-sm font-semibold text-co-text">
-                {t(PAID_LINE_KEY[p.kind], { amount: money(p.amountCents) })}
+                {t(paidLineKey(p.kind), { amount: money(p.amountCents) })}
               </li>
             ))}
           </ul>

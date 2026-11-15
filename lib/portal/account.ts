@@ -21,7 +21,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { Quote, QuoteStatus } from "@/lib/catering/quotes";
 import { isQuoteStatus } from "@/lib/catering/quotes";
 import type { Payment, PaymentKind, PaymentStatus } from "@/lib/catering/payments";
-import { quoteTimeExpired } from "@/lib/portal/payability-shared";
+import { quoteSettlement, quoteTimeExpired } from "@/lib/portal/payability-shared";
 
 // ── View types ──────────────────────────────────────────────────────────────────
 
@@ -49,6 +49,13 @@ export interface CustomerStatus {
   label: string;
   tone: "action" | "pending" | "success" | "muted";
   payable: boolean;
+  /**
+   * What the order still owes AFTER what has been paid — the current total minus the paid
+   * amounts (`quoteSettlement`). 0 when nothing has been paid (the card already shows the
+   * total), when the order is paid for, and when it is declined or expired. Shown beside
+   * the badge; it is information, never a pay button (the team raises the balance).
+   */
+  balanceDueCents: number;
 }
 
 export interface CustomerOrder {
@@ -195,14 +202,20 @@ function mapPayment(r: DbPaymentRow): Payment {
  * Rules are evaluated in order — the first match wins:
  *   1. declined            → not available (muted)
  *   2. expired             → expired (muted)
- *   3. fully paid          → all set (a paid `full`, OR a paid `deposit` AND a paid `balance`)
+ *   3. fully paid          → all set: the PAID AMOUNTS cover the quote's current total
+ *                            (`quoteSettlement`). Not "a paid `full` row exists" (review r2):
+ *                            payments follow a quote onto its revisions, so a `full` paid
+ *                            at $1,000 is still on the quote after it is revised to $1,200,
+ *                            and that order is $200 short of all set.
  *   4. accepted + not paid → team-confirmed, balance due. Payable ONLY while nothing is
  *                            paid (the portal can then still take the deposit or the full
  *                            amount). Once a payment has landed, what remains is a `balance`
  *                            — and nothing raises a `balance` intent yet, nor does the pay
  *                            route accept one — so there is no button to offer (audit
  *                            W02/B039: "Review & pay" led to a page with no pay panel).
- *   5. deposit/full paid   → deposit taken, pending our confirmation (not yet accepted)
+ *   5. anything paid       → payment taken, pending our confirmation (not yet accepted).
+ *                            Never payable: both of the portal's options are priced for an
+ *                            UNPAID quote, so a second charge is not offered here either.
  *   6. offer past its date → expired (muted). Evaluated AFTER the paid rules on purpose: a
  *                            deposit paid inside the window took the offer up in time, and
  *                            that order is pending, not expired. (Audit W02/B037 — this
@@ -213,54 +226,60 @@ function mapPayment(r: DbPaymentRow): Payment {
  */
 export function customerOrderStatus(quote: PortalQuote, payments: Payment[]): CustomerStatus {
   if (quote.status === "declined") {
-    return { key: "declined", label: "Not available", tone: "muted", payable: false };
+    return { key: "declined", label: "Not available", tone: "muted", payable: false, balanceDueCents: 0 };
   }
   if (quote.status === "expired") {
-    return { key: "expired", label: "Expired", tone: "muted", payable: false };
+    return { key: "expired", label: "Expired", tone: "muted", payable: false, balanceDueCents: 0 };
   }
 
+  // SETTLEMENT IS THE MONEY AGAINST THE CURRENT TOTAL (rule 3). A payment's `kind` says what
+  // it was raised as, not whether the order is paid for now.
+  const settlement = quoteSettlement(quote.totalCents, payments);
+  const anythingPaid = payments.some((p) => p.status === "paid");
+  const balanceDueCents = anythingPaid ? settlement.outstandingCents : 0;
   const paid = (k: PaymentKind): boolean =>
     payments.some((p) => p.kind === k && p.status === "paid");
-  const fullyPaid = paid("full") || (paid("deposit") && paid("balance"));
 
-  if (fullyPaid) {
-    return { key: "paid", label: "All set 🎉", tone: "success", payable: false };
+  if (settlement.settled) {
+    return { key: "paid", label: "All set 🎉", tone: "success", payable: false, balanceDueCents: 0 };
   }
   if (quote.status === "accepted") {
     // Team-confirmed and not fully paid — the balance is now due. Whether the CUSTOMER can
     // do anything about it here is a separate fact (see rule 4 above): `payable` must match
     // what /order/quote/[id] will actually offer, and after a payment it offers nothing.
-    const anythingPaid = payments.some((p) => p.status === "paid");
     return {
       key: "balance_due",
       label: "Confirmed — balance due",
       tone: anythingPaid ? "pending" : "action",
       payable: !anythingPaid,
+      balanceDueCents,
     };
   }
-  if (paid("deposit") || paid("full")) {
-    // A deposit (or a full payment not yet reconciled to fully-paid) exists, but the team
-    // hasn't confirmed the order yet.
+  if (anythingPaid) {
+    // Money has been taken but does not cover the total, and the team hasn't confirmed the
+    // order yet. Usually that is the deposit; it can also be a full payment made before the
+    // quote was revised upward — which is a payment, not a deposit, so it is not called one.
     return {
       key: "pending",
-      label: "Deposit paid — pending our confirmation",
+      label: paid("deposit") ? "Deposit paid — pending our confirmation" : "Payment received — pending our confirmation",
       tone: "pending",
       payable: false,
+      balanceDueCents,
     };
   }
 
   // Nothing paid and the offer's date has passed (`isExpired` is the clock on an open
   // offer): the pay gate refuses this quote, so the list must not invite the customer to it.
   if (quote.isExpired) {
-    return { key: "expired", label: "Expired", tone: "muted", payable: false };
+    return { key: "expired", label: "Expired", tone: "muted", payable: false, balanceDueCents: 0 };
   }
 
   // Submitted / sent with nothing paid — the customer's next action is to pay.
   // A self-serve order reserves its date with a deposit; a staff-built quote is ready to review.
   if (quote.origin === "self_serve") {
-    return { key: "reserve", label: "Reserve your date — pay the deposit", tone: "action", payable: true };
+    return { key: "reserve", label: "Reserve your date — pay the deposit", tone: "action", payable: true, balanceDueCents: 0 };
   }
-  return { key: "review", label: "Quote ready — review & pay", tone: "action", payable: true };
+  return { key: "review", label: "Quote ready — review & pay", tone: "action", payable: true, balanceDueCents: 0 };
 }
 
 // ── Loader ──────────────────────────────────────────────────────────────────────
