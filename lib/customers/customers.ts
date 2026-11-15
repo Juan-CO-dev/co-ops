@@ -371,10 +371,19 @@ export async function loadSuggestions(viewer: CustomerViewer, deps: CustomerDeps
   requireEnabled();
   requireStats(viewer);
   const sb = deps.client ?? getServiceRoleClient();
-  const { data, error } = await sb.from("customer_merge_suggestions").select("id,customer_a,customer_b,confidence,reasons")
-    .eq("status", "open").order("confidence", { ascending: false }).limit(50);
-  if (error) throw new Error(`suggestions: ${error.message}`);
-  const rows = (data ?? []) as { id: string; customer_a: string; customer_b: string; confidence: number; reasons: string[] }[];
+  type Row = { id: string; customer_a: string; customer_b: string; confidence: number; reasons: string[] };
+  // 0312 (W12/B177): the shop filter runs in SQL BEFORE the 50-row limit, so other shops' pairs can no
+  // longer fill the page and leave a GM with none. assertInScope below stays as a second check.
+  let rows: Row[];
+  const scoped = await sb.rpc("customer_merge_suggestions_open", { p_location_ids: customerShopScope(viewer), p_limit: 50 });
+  if (!scoped.error) rows = (scoped.data ?? []) as Row[];
+  else if (["PGRST202", "42883"].includes(scoped.error.code ?? "")) {
+    // 0312 not applied yet: the pre-0312 read (limit first), so the page keeps working until the apply.
+    const { data, error } = await sb.from("customer_merge_suggestions").select("id,customer_a,customer_b,confidence,reasons")
+      .eq("status", "open").order("confidence", { ascending: false }).limit(50);
+    if (error) throw new Error(`suggestions: ${error.message}`);
+    rows = (data ?? []) as Row[];
+  } else throw new CustomerError(503, "customer_list_unavailable");
   const ids = [...new Set(rows.flatMap((r) => [r.customer_a, r.customer_b]))];
   if (ids.length === 0) return [];
   const { data: people, error: pe } = await sb.from("customers").select("id,full_name").in("id", ids);

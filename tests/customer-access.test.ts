@@ -5,7 +5,7 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 import { audit } from "@/lib/audit";
 import { STATS_DTO_KEYS, canSeeRawContact, customerShopScope, toStatsDto } from "@/lib/customers/access-shared";
 import {
-  confirmMerge, eraseCustomer, importConsentCsv, loadConsentOverview, loadProfilePage, lookupByContact, revealContact, runRetention, retentionCutoff,
+  confirmMerge, eraseCustomer, importConsentCsv, loadConsentOverview, loadProfilePage, loadSuggestions, lookupByContact, revealContact, runRetention, retentionCutoff,
 } from "@/lib/customers/customers";
 
 const meta = { ipAddress: "203.0.113.9", userAgent: "vitest" };
@@ -65,6 +65,31 @@ describe("refusals happen before any I/O", () => {
   });
   it("a malformed id is refused before I/O", async () => {
     await expect(revealContact(owner, "not-a-uuid", meta, { client: noClient() as never })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe("merge suggestions (W12/B177)", () => {
+  const A = "33333333-3333-4333-8333-333333333333", B = "44444444-4444-4444-8444-444444444444";
+  it("suggestions are scoped in SQL before the 50-row limit", async () => {
+    for (const [viewer, expected] of [[gm, [SHOP]], [moo, null]] as const) {
+      const rpc = vi.fn(async () => ({ data: [{ id: ID, customer_a: A, customer_b: B, confidence: "0.90", reasons: ["same_full_name"] }], error: null }));
+      const from = vi.fn((table: string) => {
+        if (table === "customer_merge_suggestions") throw new Error("table read before the limit");
+        if (table === "customers") return chain([{ id: A, full_name: "Ana" }, { id: B, full_name: "Ana D" }]);
+        return chain([{ id: "order" }]);
+      });
+      const out = await loadSuggestions(viewer, { client: { rpc, from } as never });
+      expect(rpc).toHaveBeenCalledWith("customer_merge_suggestions_open", { p_location_ids: expected, p_limit: 50 });
+      expect(out).toEqual([{ id: ID, confidence: 0.9, reasons: ["same_full_name"], a: { id: A, name: "Ana" }, b: { id: B, name: "Ana D" } }]);
+    }
+  });
+  it("before 0312 is applied the old read still answers", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function" } }));
+    const from = vi.fn((table: string) => table === "customer_merge_suggestions"
+      ? chain([{ id: ID, customer_a: A, customer_b: B, confidence: 0.9, reasons: ["same_shop"] }])
+      : table === "customers" ? chain([{ id: A, full_name: "Ana" }, { id: B, full_name: "Bo" }]) : chain([{ id: "order" }]));
+    const out = await loadSuggestions(moo, { client: { rpc, from } as never });
+    expect(out.map((s) => s.id)).toEqual([ID]);
   });
 });
 
