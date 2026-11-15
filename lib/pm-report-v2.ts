@@ -173,6 +173,26 @@ function dayRef(day: DayRow, copies: readonly CopyRow[]): PmDayRef {
   return { locationId: day.location_id, status: day.status, authorIds: copies.map((c) => c.author_id) };
 }
 
+/**
+ * The copies that WROTE something live: a grade (incl. "Didn't see") or a note about someone other than the
+ * copy's own author (W09: B016/B058/B059). An opened-but-empty copy is not an author of the day.
+ */
+async function copiesWithSubstance(service: SupabaseClient, copies: readonly CopyRow[]): Promise<Set<string>> {
+  if (!copies.length) return new Set();
+  const ids = copies.map((c) => c.id);
+  const byId = new Map(copies.map((c) => [c.id, c] as const));
+  const [g, n] = await Promise.all([
+    loadLive<{ copy_id: string; subject_id: string }>(service, "pm_copy_grades", "copy_id, subject_id", ids),
+    loadLive<{ copy_id: string; subject_id: string }>(service, "pm_copy_notes", "copy_id, subject_id", ids),
+  ]);
+  return new Set([...g, ...n].filter((r) => r.subject_id !== byId.get(r.copy_id)?.author_id).map((r) => r.copy_id));
+}
+
+/** The GM / Op-6 / MoO+ path of `canReadPmDayResults`: reads every submitted day of the shop with no I/O. */
+function readsAsManager(actor: PeopleActor, day: DayRow): boolean {
+  return canReadPmDayResults(actor, { locationId: day.location_id, status: day.status, authorIds: [] });
+}
+
 // ─── the actor's copy ────────────────────────────────────────────────────────
 
 /** Open (or return) the actor's copy of today's v2 day. A v1 day answers `format_mismatch`. Audited when created. */
@@ -503,7 +523,7 @@ export async function loadDayResults(service: SupabaseClient, args: { actor: Peo
     weights.set(key, observationMinutes({ copyId: copy.id, authorId: copy.author_id, from: copy.observed_from, to: copy.observed_to }, intervals, g.subject_id, g.position_id, { added: addedHere }));
   }
   const cells = averageGrades(grades.map((g) => ({ copyId: g.copy_id, authorId: copyById.get(g.copy_id)!.author_id, subjectId: g.subject_id, positionId: g.position_id, criterionId: g.criterion_id, grade: g.grade })), weights);
-  const themesFor = await themeNotes(service, args.locationId, args.date, subjects);
+  const themesFor = await themeNotes(service, args.actor, args.locationId, args.date, subjects);
 
   const people = subjects.map((subjectId) => {
     const keys = [...new Set([...cells.filter((c) => c.subjectId === subjectId).map((c) => c.positionId ?? ""), ...notes.filter((n) => n.subject_id === subjectId).map((n) => n.position_id ?? "")])];
@@ -550,15 +570,28 @@ export async function loadDayResults(service: SupabaseClient, args: { actor: Peo
   };
 }
 
-/** The notes of SUBMITTED v2 days at the shop in the last 30 days for these subjects, attributed (the themes' input). */
-async function themeNotes(service: SupabaseClient, locationId: string, date: string, subjects: readonly string[]): Promise<(subjectId: string, positionId: string | null) => AttributedNote[]> {
+/**
+ * The notes of SUBMITTED v2 days at the shop in the last 30 days for these subjects, attributed (the themes' input).
+ * B016: only from days the READER may read (`canReadPmDayResults` per day): the GM / Op-6 / MoO+ path reads every
+ * day; a KH/SL reads only the days where their own copy wrote something. The copies of an unreadable day are
+ * dropped BEFORE any note is loaded, so its text and author never leave the database. Self-notes (subject = the
+ * copy's author, B059) never count.
+ */
+async function themeNotes(service: SupabaseClient, actor: PeopleActor, locationId: string, date: string, subjects: readonly string[]): Promise<(subjectId: string, positionId: string | null) => AttributedNote[]> {
   if (!subjects.length) return () => [];
   const days = await selectAllRows<DayRow>((from, to) => service.from("pm_reports").select("*").eq("location_id", locationId).eq("format", "v2")
     .neq("status", "open").is("superseded_at", null).gte("report_date", etYmdMinusDays(date, PM_V2_THEME_DAYS - 1)).lte("report_date", date)
     .order("report_date", { ascending: true }).range(from, to));
-  const copies: CopyRow[] = [];
-  for (const d of days) copies.push(...await loadCopies(service, d.id));
-  const notes = await loadLive<NoteRow>(service, "pm_copy_notes", "id, copy_id, subject_id, position_id, note", copies.map((c) => c.id), subjects);
+  const allCopies: CopyRow[] = [];
+  for (const d of days) allCopies.push(...await loadCopies(service, d.id));
+  const free = new Set(days.filter((d) => readsAsManager(actor, d)).map((d) => d.id));
+  const mineElsewhere = allCopies.filter((c) => c.author_id === actor.userId && !free.has(c.pm_report_id));
+  const wrote = await copiesWithSubstance(service, mineElsewhere);
+  const readable = new Set([...free, ...mineElsewhere.filter((c) => wrote.has(c.id)).map((c) => c.pm_report_id)]);
+  const copies = allCopies.filter((c) => readable.has(c.pm_report_id));
+  const copyAuthor = new Map(copies.map((c) => [c.id, c.author_id] as const));
+  const notes = (await loadLive<NoteRow>(service, "pm_copy_notes", "id, copy_id, subject_id, position_id, note", copies.map((c) => c.id), subjects))
+    .filter((n) => n.subject_id !== copyAuthor.get(n.copy_id));
   const names = await loadNames(service, copies.map((c) => c.author_id));
   const copyById = new Map(copies.map((c) => [c.id, c] as const));
   const dayById = new Map(days.map((d) => [d.id, d] as const));

@@ -259,6 +259,50 @@ describe("after submit: the day's results", () => {
   });
 });
 
+/** Three more SUBMITTED v2 days at shop A where ONLY the GM wrote, each a note on Eli at Expo sharing "window". */
+const OTHER_DAY_NOTES = ["slow at the expo window", "window backed up", "window slow again"];
+function withOtherDays(t: Tables): Tables {
+  ["2026-10-06", "2026-10-09", "2026-10-12"].forEach((d, i) => {
+    const dayId = id(60 + i), copyId = id(70 + i);
+    t.pm_reports!.push({ id: dayId, location_id: A, report_date: d, status: "submitted", format: "v2", created_by: GM, submitted_by: GM, submitted_at: `${d}T23:00:00Z`, mvp_user_id: null, superseded_at: null });
+    t.pm_report_copies!.push({ id: copyId, pm_report_id: dayId, location_id: A, author_id: GM, status: "sealed", observed_from: `${d}T18:00:00Z`, observed_to: `${d}T21:00:00Z`, created_at: `${d}T18:00:00Z`, sealed_at: null });
+    t.pm_copy_notes!.push({ id: `n-other-${i}`, copy_id: copyId, location_id: A, subject_id: EMP, position_id: P_EXPO, note: OTHER_DAY_NOTES[i], superseded_at: null });
+  });
+  return t;
+}
+
+describe("B016 — themes only from days the reader may read", () => {
+  it("a KH author of today never sees another day's notes in the themes", async () => {
+    db = createFakeDb(withOtherDays(tables("submitted")));
+    const r = await v2.loadDayResults(service(), { actor: kh, locationId: A, date: DATE });
+    const expo = r!.people.find((p) => p.subjectId === EMP)!.positions.find((p) => p.positionId === P_EXPO)!;
+    for (const th of expo.themes) for (const s of th.sources) expect(s.day).toBe(DATE);
+    expect(expo.themes.map((t) => t.term)).not.toContain("window");
+    const json = JSON.stringify(r);
+    for (const text of OTHER_DAY_NOTES) expect(json).not.toContain(text);
+  });
+  it("the GM still gets the 30-day themes", async () => {
+    db = createFakeDb(withOtherDays(tables("submitted")));
+    const r = await v2.loadDayResults(service(), { actor: gm, locationId: A, date: DATE });
+    const expo = r!.people.find((p) => p.subjectId === EMP)!.positions.find((p) => p.positionId === P_EXPO)!;
+    const win = expo.themes.find((t) => t.term === "window");
+    expect(win).toBeDefined();
+    expect(win!.days).toBeGreaterThanOrEqual(3);
+  });
+  it("a KH who WROTE on an earlier day reads that day's notes in the themes too", async () => {
+    const t = withOtherDays(tables("submitted"));
+    t.pm_report_copies!.push({ id: id(80), pm_report_id: id(60), location_id: A, author_id: KH, status: "sealed", observed_from: null, observed_to: null, created_at: "2026-10-06T18:00:00Z", sealed_at: null });
+    t.pm_copy_grades!.push({ id: "g-kh-old", copy_id: id(80), location_id: A, subject_id: EMP2, position_id: null, criterion_id: C_SHARED, grade: "good", superseded_at: null });
+    db = createFakeDb(t);
+    const r = await v2.loadDayResults(service(), { actor: kh, locationId: A, date: DATE });
+    const json = JSON.stringify(r);
+    expect(json).not.toContain(OTHER_DAY_NOTES[1]);
+    const expo = r!.people.find((p) => p.subjectId === EMP)!.positions.find((p) => p.positionId === P_EXPO)!;
+    const days = new Set(expo.themes.flatMap((th) => th.sources.map((s) => s.day)));
+    expect([...days].every((d) => d === DATE || d === "2026-10-06")).toBe(true);
+  });
+});
+
 describe("loadMyFeedbackV2 — bands from submitted v2 days, no author, no note", () => {
   it("open days are hidden; a submitted day shows bands only", async () => {
     expect(await v2.loadMyFeedbackV2(service(), { userId: EMP })).toEqual([]);
