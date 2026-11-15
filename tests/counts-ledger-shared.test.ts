@@ -65,6 +65,14 @@ describe("retro-edit staleness", () => {
     expect(retroEditStale(headers, "2026-10-06T13:30:00+00:00")).toBe(false); // dated after this anchor
     expect(retroEditStale(headers, "2026-10-10T00:00:00+00:00")).toBe(false); // written before this anchor
   });
+  // B186: delivery_date is an ET calendar date the receiver picks, so the anchor's day is its
+  // ET operational date. A 9 PM ET count is stored as the NEXT UTC day.
+  it("an evening ET count is not stale against the next morning's delivery", () => {
+    const eveningCount = "2026-11-14T02:00:00+00:00"; // 2026-11-13 21:00 ET
+    const nextMorning = (deliveryDate: string) => [{ createdUs: instantMicros("2026-11-14T13:00:00Z"), deliveryDate }];
+    expect(retroEditStale(nextMorning("2026-11-14"), eveningCount)).toBe(false);
+    expect(retroEditStale(nextMorning("2026-11-13"), eveningCount)).toBe(true); // back-dated onto the count's own ET day
+  });
 });
 
 describe("the one sales read, sliced", () => {

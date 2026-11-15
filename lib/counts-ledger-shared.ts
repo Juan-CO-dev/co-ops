@@ -19,7 +19,7 @@
  * proof is tests/counts-onhand-equivalence.test.ts (old read path vs this one over the
  * same database, both capture sales sources).
  */
-import { salesWindowUntrustworthy } from "@/lib/counts-shared";
+import { etBusinessDate, salesWindowUntrustworthy } from "@/lib/counts-shared";
 import { buildPackChain, chainLeafUnitsFrom, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { CaptureDayManifest, EffectiveSalesRow, SalesCoverage } from "@/lib/toast/effective-depletion";
 
@@ -267,11 +267,13 @@ export function productionInputsFrom(inputs: readonly ProductionLedgerInput[], f
 /**
  * Retro-edit staleness — detectRetroEditStaleness over the loaded headers: a delivery
  * written AFTER the anchor whose effective delivery_date is on-or-before the anchor's
- * (UTC) date.
+ * ET operational date. `delivery_date` is the ET calendar date the receiver picks, so the
+ * anchor's day is read in ET too (audit B186: the UTC date put every count taken after
+ * 8 PM ET on the NEXT day, so the following morning's ordinary delivery flagged it stale).
  */
 export function retroEditStale(headers: readonly DeliveryLedgerHeader[], anchorIso: string): boolean {
   const anchorUs = instantMicros(anchorIso);
-  const anchorDate = anchorIso.slice(0, 10); // YYYY-MM-DD for the bare delivery_date compare.
+  const anchorDate = etBusinessDate(anchorIso); // YYYY-MM-DD (ET) for the bare delivery_date compare.
   return headers.some((h) => h.createdUs > anchorUs && h.deliveryDate != null && h.deliveryDate <= anchorDate);
 }
 
