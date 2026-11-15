@@ -7,8 +7,52 @@
  * and final chain; verified last by transitive census).
  */
 
+import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
+
 /** KH+ — matches the closing-finalize gate (the closer deposits). */
 export const CASH_REPORT_BASE_LEVEL = 4;
+
+/**
+ * W03 follow-up (owner ruling, Juan 2026-11-15): GM (7) and above file or edit a cash report for
+ * ANY date. Everyone below GM who can file cash (key holders, shift leads, the level-6 managers,
+ * an assignee) is limited to the CURRENT business week, Monday through Sunday.
+ */
+export const CASH_ANY_DATE_MIN_LEVEL = 7;
+
+/**
+ * The cash business day an instant falls on: the ET calendar date — the same helper the /cash page
+ * has always used for its `today` (`etCalendarDate`). One definition for the page and the write gate.
+ */
+export function cashBusinessDay(nowIso: string): string {
+  return etCalendarDate(nowIso);
+}
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A well-formed REAL calendar date (2026-02-30 is refused, not normalized). */
+function isCalendarYmd(ymd: string): boolean {
+  return YMD_RE.test(ymd) && etYmdMinusDays(ymd, 0) === ymd;
+}
+
+/** Monday..Sunday of the week containing business day `dayYmd`. Calendar math only (DST-immune). */
+export function cashWeekOf(dayYmd: string): { monday: string; sunday: string } {
+  const [y, m, d] = dayYmd.split("-").map(Number);
+  const dow = new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay(); // 0 = Sunday
+  const monday = etYmdMinusDays(dayYmd, (dow + 6) % 7);
+  return { monday, sunday: etYmdMinusDays(monday, -6) };
+}
+
+/**
+ * May an actor at `level` file or edit the cash report for `dateYmd` at instant `nowIso`? null = yes;
+ * `outside_current_week` = below GM and the date is outside this business week (or not a real date).
+ * Pure: lib/cash.ts runs it before any I/O. An unknown level fails closed.
+ */
+export function cashDateRefusal(level: number, dateYmd: string, nowIso: string): "outside_current_week" | null {
+  if (level >= CASH_ANY_DATE_MIN_LEVEL) return null;
+  if (!isCalendarYmd(dateYmd)) return "outside_current_week";
+  const { monday, sunday } = cashWeekOf(cashBusinessDay(nowIso));
+  return dateYmd >= monday && dateYmd <= sunday ? null : "outside_current_week";
+}
 /** $200 float kept in the register. */
 export const DEFAULT_FLOAT_CENTS = 20000;
 
