@@ -4,17 +4,24 @@
 --   AFTER submit froze the total), B144 (submit's status flip, napkins line and deposit-due intent were
 --   three separate writes; a failure after the flip left a submitted order with no napkins line and no
 --   deposit request, and a retry answered 409) and B002 (the order's allergy / special-instructions
---   note now rides the submit).
+--   note now rides the submit). Review round 2 (B033): an older cart save that reached the database
+--   AFTER a newer one overwrote it (the row lock serializes arrival, not edit order), so the cart
+--   writer now refuses to go backwards on the build page's edit revision.
 --
 -- WHAT: two SECURITY DEFINER writers, the ONLY database writers of a self-serve DRAFT's lines and of
 --   its submit. Each runs in ONE transaction and takes the SAME lock first: the catering_quotes row
 --   FOR UPDATE. So a cart save and a submit for one draft serialize; whichever commits second sees the
 --   first's result.
---     portal_draft_set_lines(customer, quote, lines, snapshot)
---       owned + 'draft' + not superseded (re-checked under the lock) → delete the draft's lines
---       (options cascade, 0144) → insert the new lines and their package picks → write the charge
---       snapshot. A submit that won the lock first leaves status 'submitted' → `not_draft`, nothing
---       written.
+--     portal_draft_set_lines(customer, quote, lines, snapshot, rev_epoch, rev_seq)
+--       owned + 'draft' + not superseded (re-checked under the lock) → [edit order] → delete the
+--       draft's lines (options cascade, 0144) → insert the new lines and their package picks → write
+--       the charge snapshot and the revision. A submit that won the lock first leaves status
+--       'submitted' → `not_draft`, nothing written.
+--       Edit order: the build page sends (epoch = one id per page load, seq = grows per edit). When
+--       the stored revision has the SAME epoch and a seq >= this one, the save is older than (or a
+--       retry of) one already written → returns {stale: true} and writes nothing. Another epoch, or a
+--       save with no revision (a page cached from before this), is written as before; a save with no
+--       revision leaves the stored revision alone. Epoch and seq come together or not at all.
 --     portal_draft_submit(customer, quote, expected_lines, snapshot, napkins, expires_at,
 --                         set_dietary_notes, dietary_notes)
 --       owned + 'draft' + not superseded under the lock → the draft's CURRENT lines must equal the set
@@ -26,16 +33,23 @@
 --   re-checks the arithmetic it can see: the snapshot's subtotal must equal the lines it writes.
 --
 -- REFUSALS (raise exception <code>; lib/portal/draft.ts maps each): not_found · not_draft ·
---   invalid_lines · invalid_snapshot · invalid_napkins · invalid_notes · empty_cart · cart_changed ·
---   subtotal_mismatch.
+--   invalid_lines · invalid_snapshot · invalid_napkins · invalid_notes · invalid_rev · empty_cart ·
+--   cart_changed · subtotal_mismatch.
+--
+-- SCHEMA: two nullable columns on catering_quotes, portal_rev_epoch text + portal_rev_seq bigint
+--   (both null or both set, CHECK): the last edit revision the cart writer stored. Existing rows stay
+--   null (no backfill). Nothing else reads them.
 --
 -- PRIVILEGES: execute for service_role ONLY (revoked from public, anon, authenticated; asserted). The
---   tables' grants are untouched; nothing new is granted on any table.
+--   tables' grants are untouched; nothing new is granted on any table (the two new columns inherit
+--   catering_quotes' existing table-level grants, as every column added to it has).
 --
 -- APP COMPATIBILITY: lib/portal/draft.ts calls these RPCs first and, when the function does not exist
 --   yet (PGRST202 / 42883), runs its previous non-transactional path. Applying 0302 is therefore safe at
 --   any time after the W01 deploy, and the deploy is safe before it. Until it is applied, B032 and B144
---   remain open (the legacy path is what ran before W01).
+--   remain open (the legacy path is what ran before W01), and the server-side edit order is not
+--   enforced (the legacy path has no column to keep the revision in; the build page still sends its
+--   saves one at a time, the unmount save included).
 --
 -- DEPENDS ON: 0120 (quotes, items), 0127 (status 'submitted', origin, catering_payments), 0128
 --   (portion), 0129 (pipeline intake columns incl. dietary_notes), 0130 (catering_payments_one_due),
@@ -45,13 +59,14 @@
 --   CI-pinned by tests/portal-draft-atomic-migration.test.ts. The two-session serialization is the
 --   row lock itself; a sim two-session check is CC's, not part of this file.
 --
--- ROLLBACK: drop the two functions; the app falls back to its legacy path by itself.
+-- ROLLBACK: drop the two functions (and, optionally, the two portal_rev_* columns); the app falls back
+--   to its legacy path by itself.
 begin;
 
 do $$
 declare v_col text; v_missing text[] := '{}';
 begin
-  if to_regprocedure('public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb)') is not null
+  if to_regprocedure('public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb,text,bigint)') is not null
      or to_regprocedure('public.portal_draft_submit(uuid,uuid,jsonb,jsonb,jsonb,timestamptz,boolean,text)') is not null then
     raise exception '0302: already applied';
   end if;
@@ -83,11 +98,21 @@ begin
     v_missing := v_missing || 'catering_pipeline.dietary_notes'::text;
   end if;
   if cardinality(v_missing) > 0 then raise exception '0302: missing columns %', v_missing; end if;
+  select string_agg(column_name::text, ', ' order by column_name) into v_col from information_schema.columns
+   where table_schema = 'public' and table_name = 'catering_quotes' and column_name in ('portal_rev_epoch', 'portal_rev_seq');
+  if v_col is not null then raise exception '0302: catering_quotes already has %', v_col; end if;
   if not exists (select 1 from pg_indexes where schemaname = 'public' and tablename = 'catering_payments'
                    and indexname = 'catering_payments_one_due' and indexdef ilike '%unique%(quote_id, kind)%where%status%due%') then
     raise exception '0302: missing the 0130 partial unique index catering_payments_one_due';
   end if;
 end $$;
+
+-- The cart writer's last stored edit revision (W01-r2). Nullable, no backfill, no default.
+alter table public.catering_quotes
+  add column portal_rev_epoch text,
+  add column portal_rev_seq bigint,
+  add constraint catering_quotes_portal_rev_pair check ((portal_rev_epoch is null) = (portal_rev_seq is null)
+    and (portal_rev_seq is null or portal_rev_seq >= 1) and (portal_rev_epoch is null or length(portal_rev_epoch) between 1 and 64));
 
 -- The 15 snapshot keys, exactly (the app's snapshotColumns). A payload with any other key set refuses.
 create function public.portal_draft_snapshot_ok(p jsonb) returns boolean
@@ -102,7 +127,8 @@ language sql immutable set search_path = pg_catalog, public as $$
        'gratuity_cents','tax_cents','total_cents','deposit_cents','tax_rate_bps','gratuity_bps','service_charge_bps','deposit_pct_bps']) k)
 $$;
 
-create function public.portal_draft_set_lines(p_customer_id uuid, p_quote_id uuid, p_lines jsonb, p_snapshot jsonb)
+create function public.portal_draft_set_lines(p_customer_id uuid, p_quote_id uuid, p_lines jsonb, p_snapshot jsonb,
+  p_rev_epoch text, p_rev_seq bigint)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
   q record; l jsonb; o jsonb; v_item uuid; v_sum bigint := 0;
@@ -110,11 +136,20 @@ begin
   if p_customer_id is null or p_quote_id is null then raise exception 'not_found'; end if;
   if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) > 200 then raise exception 'invalid_lines'; end if;
   if not public.portal_draft_snapshot_ok(p_snapshot) then raise exception 'invalid_snapshot'; end if;
+  if (p_rev_epoch is null) <> (p_rev_seq is null)
+     or (p_rev_seq is not null and (p_rev_seq < 1 or length(p_rev_epoch) not between 1 and 64)) then
+    raise exception 'invalid_rev';
+  end if;
 
   -- THE lock (shared with portal_draft_submit): the draft's quote row.
-  select id, customer_id, status, superseded_at into q from public.catering_quotes where id = p_quote_id for update;
+  select id, customer_id, status, superseded_at, portal_rev_epoch, portal_rev_seq into q from public.catering_quotes where id = p_quote_id for update;
   if not found or q.customer_id is distinct from p_customer_id then raise exception 'not_found'; end if;
   if q.status <> 'draft' or q.superseded_at is not null then raise exception 'not_draft'; end if;
+
+  -- Edit order (W01-r2): a save from the same page that is not newer than the stored one writes nothing.
+  if p_rev_epoch is not null and q.portal_rev_epoch = p_rev_epoch and q.portal_rev_seq >= p_rev_seq then
+    return jsonb_build_object('quote_id', p_quote_id, 'stale', true);
+  end if;
 
   for l in select value from jsonb_array_elements(p_lines) loop
     if jsonb_typeof(l) <> 'object' or jsonb_typeof(l->'line_total_cents') <> 'number' then raise exception 'invalid_lines'; end if;
@@ -145,10 +180,12 @@ begin
     deposit_cents = (p_snapshot->>'deposit_cents')::integer, tax_rate_bps = (p_snapshot->>'tax_rate_bps')::integer,
     gratuity_bps = (p_snapshot->>'gratuity_bps')::integer, service_charge_bps = (p_snapshot->>'service_charge_bps')::integer,
     deposit_pct_bps = (p_snapshot->>'deposit_pct_bps')::integer, tax_on_delivery = (p_snapshot->>'tax_on_delivery')::boolean,
-    tax_on_gratuity = (p_snapshot->>'tax_on_gratuity')::boolean
+    tax_on_gratuity = (p_snapshot->>'tax_on_gratuity')::boolean,
+    portal_rev_epoch = coalesce(p_rev_epoch, portal_rev_epoch),
+    portal_rev_seq = case when p_rev_epoch is null then portal_rev_seq else p_rev_seq end
   where id = p_quote_id;
 
-  return jsonb_build_object('quote_id', p_quote_id, 'lines', jsonb_array_length(p_lines));
+  return jsonb_build_object('quote_id', p_quote_id, 'lines', jsonb_array_length(p_lines), 'stale', false);
 end $$;
 
 create function public.portal_draft_submit(p_customer_id uuid, p_quote_id uuid, p_expected_lines jsonb, p_snapshot jsonb,
@@ -225,7 +262,7 @@ end $$;
 -- (it runs inside the definer functions as their owner).
 do $$ declare f regprocedure; begin
   foreach f in array array[
-    'public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb)'::regprocedure,
+    'public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb,text,bigint)'::regprocedure,
     'public.portal_draft_submit(uuid,uuid,jsonb,jsonb,jsonb,timestamptz,boolean,text)'::regprocedure
   ] loop
     execute format('revoke all on function %s from public, anon, authenticated, service_role', f);

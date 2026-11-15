@@ -211,6 +211,7 @@ describe("B032 — a cart save can never replace the lines of an order already s
       p_customer_id: CUST, p_quote_id: QUOTE,
       p_lines: [{ item_id: ITEM, menu_item_id: null, package_id: null, size_id: null, portion: null, description: "Chips", quantity: 3, unit_price_cents: 1000, line_total_cents: 3000, display_order: 0, line_kind: null, components_listed: null, options: [] }],
       p_snapshot: expect.objectContaining({ subtotal_cents: 3000, gratuity_bps: 1500, gratuity_cents: 450, is_delivery: false, delivery_zone_id: null }),
+      p_rev_epoch: null, p_rev_seq: null,
     } });
     expect(Object.keys(db.rpcCalls[0]!.args.p_snapshot as object)).toHaveLength(15);
     expect(directWrites(db)).toEqual([]);
@@ -224,6 +225,21 @@ describe("B032 — a cart save can never replace the lines of an order already s
     const db = useDb(seed(), { portal_draft_set_lines: () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }) });
     await expect(setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 3 }])).rejects.toThrow(/setDraftLines: canceling statement/);
     expect(directWrites(db)).toEqual([]);
+  });
+  it("W01-r2: the page's edit revision rides the save, and a save OLDER than the stored one is answered stale (nothing written)", async () => {
+    // v2 reached the database first; the older v1 arrives after it. The writer refuses to go backwards.
+    const db = useDb(seed(), { portal_draft_set_lines: rpcOk({ quote_id: QUOTE, stale: true }) });
+    const view = await setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 1 }], { rev: { epoch: "page-a", seq: 1 } });
+    expect(db.rpcCalls[0]!.args).toMatchObject({ p_rev_epoch: "page-a", p_rev_seq: 1 });
+    expect(view.stale).toBe(true);
+    expect(directWrites(db)).toEqual([]);
+    const fresh = useDb(seed(), { portal_draft_set_lines: rpcOk({ quote_id: QUOTE, stale: false }) });
+    expect((await setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 2 }], { rev: { epoch: "page-a", seq: 2 } })).stale).toBe(false);
+    expect(fresh.rpcCalls[0]!.args).toMatchObject({ p_rev_epoch: "page-a", p_rev_seq: 2 });
+  });
+  it("W01-r2: the writer's invalid_rev is a clean 400", async () => {
+    useDb(seed(), { portal_draft_set_lines: rpcRefuse("invalid_rev") });
+    await expect(setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 1 }], { rev: { epoch: "page-a", seq: 1 } })).rejects.toMatchObject({ status: 400, code: "invalid_rev" });
   });
   it("before 0302 (legacy path): a submit landing mid-save is reported as 409 not_draft, not a silent success", async () => {
     const db = useDb();

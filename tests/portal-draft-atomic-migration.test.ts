@@ -43,14 +43,17 @@ describe("0302_portal_draft_atomic", () => {
     expect(src).toContain("execute format('revoke all on function %s from public, anon, authenticated, service_role', f);");
     expect(src).toContain("execute format('grant execute on function %s to service_role', f);");
     expect(src).not.toMatch(/grant (select|insert|update|delete|all) on (table )?public\./i);
-    expect(src).not.toMatch(/\n\s*(drop|alter) table/i);
+    // The ONLY table change: the two nullable edit-revision columns on catering_quotes (W01-r2).
+    expect(src).not.toMatch(/\n\s*drop table/i);
+    expect(src.match(/\n\s*alter table/gi)).toHaveLength(1);
+    expect(src).toMatch(/\nalter table public\.catering_quotes\n  add column portal_rev_epoch text,\n  add column portal_rev_seq bigint,\n  add constraint catering_quotes_portal_rev_pair check /);
   });
 
   it("the lib calls exactly these writers and falls back ONLY when the function is missing", () => {
     expect(lib).toContain('sb.rpc("portal_draft_set_lines", {');
     expect(lib).toContain('sb.rpc("portal_draft_submit", {');
     expect(lib).toContain('error.code === "PGRST202" || error.code === "42883"');
-    for (const arg of ["p_customer_id", "p_quote_id", "p_lines", "p_snapshot", "p_expected_lines", "p_napkins", "p_expires_at", "p_set_dietary_notes", "p_dietary_notes"]) {
+    for (const arg of ["p_customer_id", "p_quote_id", "p_lines", "p_snapshot", "p_rev_epoch", "p_rev_seq", "p_expected_lines", "p_napkins", "p_expires_at", "p_set_dietary_notes", "p_dietary_notes"]) {
       expect(lib).toContain(`${arg}:`);
       expect(src).toContain(arg);
     }

@@ -12,6 +12,7 @@ import { setDraftLines, PortalDraftError, MAX_CART_LINES } from "@/lib/portal/dr
 import type { DraftLineInput } from "@/lib/portal/draft";
 import { checkAndRecord } from "@/lib/portal/rate-limit";
 import { assertSameOrigin } from "@/lib/portal/csrf";
+import { parseCartRevision } from "@/lib/portal/cart-save-queue-shared";
 
 export const runtime = "nodejs";
 
@@ -30,6 +31,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!body || typeof body.quoteId !== "string" || !Array.isArray(body.lines)) {
     return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
+  // The page's edit revision (audit W01-r2). Absent = a page cached from before it (saved as before).
+  const rev = parseCartRevision(body.rev);
+  if (rev === "invalid") return NextResponse.json({ error: "invalid_rev" }, { status: 400 });
   // Reject an oversized cart BEFORE mapping it (A-H4 — unbounded-input DoS).
   if (body.lines.length > MAX_CART_LINES) {
     return NextResponse.json({ error: "too_many_lines" }, { status: 400 });
@@ -64,7 +68,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // Delivery vs pickup and the delivery zone are decided server-side (audit W01/B001); a body's
       // isDelivery / deliveryZoneId is ignored.
       tipBps: Number.isFinite(body.tipBps) ? (body.tipBps as number) : undefined,
+      rev,
     });
+    // A save older than one already stored wrote nothing; its stack would describe the older cart.
+    if (view.stale) return NextResponse.json({ ok: true, stale: true });
     return NextResponse.json({ ok: true, stack: view.stack, isDelivery: view.isDelivery, deliveryZoneId: view.deliveryZoneId });
   } catch (e) {
     if (e instanceof PortalDraftError) return NextResponse.json({ error: e.code }, { status: e.status });

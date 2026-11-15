@@ -48,7 +48,7 @@ import type { CateringMenuItem } from "@/lib/catering/menu";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 import { catForSection, orderSections, orderWithinSection, sectionLabel, type MenuCat } from "@/lib/portal/menu-order-shared";
 import { coverageSegments } from "@/lib/portal/coverage-shared";
-import { createCartSaveQueue, type CartSaveOutcome } from "@/lib/portal/cart-save-queue-shared";
+import { createCartSaveQueue, newCartRevEpoch, type CartRevision, type CartSaveOutcome } from "@/lib/portal/cart-save-queue-shared";
 import { isEligiblePackagePick as isEligiblePick } from "@/lib/portal/draft-shared";
 
 type Cat = MenuCat;
@@ -460,7 +460,8 @@ function OrderBuild() {
 
   // ── Debounced persistence (D20 — references + qty + portion + sizeId only, never prices) ──
   // Saves go through ONE queue (audit W01/B033): Continue flushes it before navigating, and an unmount
-  // sends any unsent edit with keepalive — an edit inside the 400 ms debounce is never dropped.
+  // sends any unsent edit with keepalive — an edit inside the 400 ms debounce is never dropped. Each save
+  // carries this page's edit revision (W01-r2): the server refuses a save older than one it stored.
   const [saveError, setSaveError] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [saveQueue] = useState(() => createCartSaveQueue({
@@ -489,10 +490,20 @@ function OrderBuild() {
       }
     },
   }));
-  // Unmount (navigation away by any route): send the unsent edit, best effort, surviving the unload.
+  // The edit revision: one epoch per page load, a seq that grows with every scheduled save (W01-r2).
+  const cartRev = useRef<CartRevision | null>(null);
+  const nextCartRev = (): CartRevision => {
+    const cur = cartRev.current ?? { epoch: newCartRevEpoch(), seq: 0 };
+    cartRev.current = { epoch: cur.epoch, seq: cur.seq + 1 };
+    return cartRev.current;
+  };
+  // Unmount (navigation away by any route): send the unsent edit, best effort, with keepalive — through
+  // the queue, so it goes out only AFTER a save already in flight (W01-r2), never beside it.
   useEffect(() => () => {
-    const body = saveQueue.takePending();
-    if (body) void fetch("/api/portal/order/draft/lines", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
+    void saveQueue.drainOnUnmount(async (body) => {
+      const res = await fetch("/api/portal/order/draft/lines", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true });
+      return res.ok ? "ok" : "failed";
+    });
   }, [saveQueue]);
   // Serialize the reference payload so the effect only fires when the persisted shape actually changes
   // (not on a display-only customization edit). sizeId is included so a size change re-triggers POST.
@@ -520,7 +531,7 @@ function OrderBuild() {
       if (!resaveAfterHydrate.current) return;
       resaveAfterHydrate.current = false;
     }
-    saveQueue.schedule(JSON.stringify({ quoteId: draftId, lines: linesPayload }));
+    saveQueue.schedule(JSON.stringify({ quoteId: draftId, lines: linesPayload, rev: nextCartRev() }));
     // payloadKey captures the persisted-reference shape (incl. sizeId + pkgCart); linesPayload/draftId/loadState are stable deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payloadKey, draftId, loadState]);

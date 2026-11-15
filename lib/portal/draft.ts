@@ -245,6 +245,7 @@ function rpcRefusal(where: string, error: { message?: string }): never {
   if (code === "cart_changed") throw new PortalDraftError(409, "cart_changed", "Your order changed while it was being placed. Please review it.");
   if (code === "empty_cart") throw new PortalDraftError(400, "empty_cart", "Your order is empty");
   if (code === "invalid_notes") throw new PortalDraftError(400, "invalid_notes", "Notes can be at most 2000 characters");
+  if (code === "invalid_rev") throw new PortalDraftError(400, "invalid_rev", "Invalid edit revision");
   throw new Error(`${where}: ${error.message ?? "rpc failed"}`);
 }
 
@@ -610,11 +611,17 @@ export interface SetLinesOpts {
    *  zone is decided by the server. Kept so existing callers type-check; never read. */
   isDelivery?: boolean;
   tipBps?: number | null;
+  /** The build page's edit revision (audit W01-r2): with 0302 the writer refuses (answers `stale`, writes
+   *  nothing) a save from the same page epoch whose seq is not newer than the one it stored — so an older
+   *  save that arrives late never overwrites a newer one. Null/absent: no ordering check (as before).
+   *  The pre-0302 path cannot honour it (no column to keep it in). */
+  rev?: { epoch: string; seq: number } | null;
 }
 
 /** Replace the draft's lines + recompute + snapshot the charge stack IN PLACE (owned + 'draft'
- * only — no version churn). Returns the updated DraftView. */
-export async function setDraftLines(customerId: string, quoteId: string, lines: DraftLineInput[], opts: SetLinesOpts = {}): Promise<DraftView> {
+ * only — no version churn). Returns the updated DraftView; `stale: true` when the save was older than
+ * the revision already stored and so wrote nothing. */
+export async function setDraftLines(customerId: string, quoteId: string, lines: DraftLineInput[], opts: SetLinesOpts = {}): Promise<DraftView & { stale: boolean }> {
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
   const isDelivery = header.is_delivery;
@@ -637,7 +644,7 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
 
   // 0302: replace the lines + write the snapshot in ONE transaction under the quote row lock, re-checking
   // owned + 'draft' there — a submit that won the lock first makes this a 409 that wrote nothing (B032).
-  const { error: rpcErr } = await sb.rpc("portal_draft_set_lines", {
+  const { data: rpcData, error: rpcErr } = await sb.rpc("portal_draft_set_lines", {
     p_customer_id: customerId, p_quote_id: quoteId,
     p_lines: resolved.map((l) => ({
       item_id: l.itemId, menu_item_id: l.menuItemId, package_id: l.packageId, size_id: l.sizeId, portion: l.portion,
@@ -646,8 +653,9 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
       options: l.options.map((o) => ({ package_item_id: o.packageItemId, item_id: o.itemId, menu_item_id: o.menuItemId, quantity: o.quantity })),
     })),
     p_snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId),
+    p_rev_epoch: opts.rev?.epoch ?? null, p_rev_seq: opts.rev?.seq ?? null,
   });
-  if (!rpcErr) return view;
+  if (!rpcErr) return { ...view, stale: (rpcData as { stale?: unknown } | null)?.stale === true };
   if (!rpcMissing(rpcErr)) rpcRefusal("setDraftLines", rpcErr);
   warnLegacy("setDraftLines");
 
@@ -680,7 +688,7 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
   // Silent-UPDATE law: the draft was submitted meanwhile — say so instead of reporting a save.
   if (upCount === 0) throw new PortalDraftError(409, "not_draft", "This order can no longer be edited");
 
-  return view;
+  return { ...view, stale: false };
 }
 
 // ── Preview (compute-only, review page) ────────────────────────────────────────────

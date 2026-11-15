@@ -18,7 +18,7 @@ const reject = async (f, re, s) => { await assert.rejects(f, re); check(true, s)
 
 const SNAP_KEYS = ['is_delivery', 'delivery_zone_id', 'subtotal_cents', 'delivery_fee_cents', 'service_charge_cents', 'gratuity_cents', 'tax_cents', 'total_cents', 'deposit_cents', 'tax_rate_bps', 'gratuity_bps', 'service_charge_bps', 'deposit_pct_bps', 'tax_on_delivery', 'tax_on_gratuity'];
 const snap = (subtotal, extra = {}) => ({ is_delivery: false, delivery_zone_id: null, subtotal_cents: subtotal, delivery_fee_cents: 0, service_charge_cents: 0, gratuity_cents: 0, tax_cents: 0, total_cents: subtotal, deposit_cents: Math.round(subtotal / 4), tax_rate_bps: 0, gratuity_bps: 0, service_charge_bps: 0, deposit_pct_bps: 2500, tax_on_delivery: false, tax_on_gratuity: false, ...extra });
-const setLines = (c, q, lines, s) => one('select public.portal_draft_set_lines($1,$2,$3,$4) r', [c, q, JSON.stringify(lines), JSON.stringify(s)]).then((x) => x.r);
+const setLines = (c, q, lines, s, epoch = null, seq = null) => one('select public.portal_draft_set_lines($1,$2,$3,$4,$5,$6) r', [c, q, JSON.stringify(lines), JSON.stringify(s), epoch, seq]).then((x) => x.r);
 const submit = (c, q, expected, s, napkins = null, setNotes = false, notes = null) =>
   one('select public.portal_draft_submit($1,$2,$3,$4,$5,$6,$7,$8) r', [c, q, JSON.stringify(expected), JSON.stringify(s), napkins === null ? null : JSON.stringify(napkins), '2027-01-16T00:00:00Z', setNotes, notes]).then((x) => x.r);
 const linesOf = (q) => all('select id::text, item_id::text, package_id::text, quantity, unit_price_cents, line_total_cents, display_order, line_kind, components_listed from catering_quote_items where quote_id=$1 order by display_order', [q]);
@@ -56,18 +56,20 @@ try {
   `);
 
   // ── Preflight refusals: each in a transaction, rolled back, leaving no partial DDL ─────────────
-  const noFunctions = async () => (await one("select to_regprocedure('public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb)') a, to_regprocedure('public.portal_draft_snapshot_ok(jsonb)') b")).a === null;
+  const noFunctions = async () => (await one("select to_regprocedure('public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb,text,bigint)') a, to_regprocedure('public.portal_draft_snapshot_ok(jsonb)') b")).a === null;
   const refusePreflight = async (sql, re, label) => {
     await db.exec('begin;' + sql);
     await reject(() => db.exec(migration), re, label);
     await db.exec('rollback');
     check(await noFunctions(), `${label}: no partial DDL`);
+    check((await one("select count(*)::int n from information_schema.columns where table_name = 'catering_quotes' and column_name = 'portal_rev_epoch'")).n === 0, `${label}: no revision column left behind`);
   };
   await refusePreflight('alter table public.catering_pipeline drop column dietary_notes', /missing columns .*catering_pipeline\.dietary_notes/, 'missing dietary_notes refused');
   await refusePreflight('alter table public.catering_quote_items drop column line_kind cascade', /missing columns .*catering_quote_items\.line_kind/, 'missing line_kind refused');
   await refusePreflight('alter table catering_payments drop column created_by', /missing columns .*catering_payments\.created_by/, 'missing payments.created_by refused');
   await refusePreflight('drop index catering_payments_one_due', /missing the 0130 partial unique index/, 'missing 0130 index refused');
-  await refusePreflight("create function public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb) returns jsonb language sql as 'select null::jsonb'", /already applied/, 'already applied refused');
+  await refusePreflight("create function public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb,text,bigint) returns jsonb language sql as 'select null::jsonb'", /already applied/, 'already applied refused');
+  await refusePreflight('alter table public.catering_quotes add column portal_rev_seq bigint', /catering_quotes already has portal_rev/, 'a pre-existing revision column refused');
 
   await db.exec(migration);
   check(!(await noFunctions()), '0302 applies');
@@ -75,7 +77,7 @@ try {
   await db.exec('rollback');
 
   // ── Privileges ─────────────────────────────────────────────────────────────────────────────
-  for (const f of ['public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb)', 'public.portal_draft_submit(uuid,uuid,jsonb,jsonb,jsonb,timestamptz,boolean,text)']) {
+  for (const f of ['public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb,text,bigint)', 'public.portal_draft_submit(uuid,uuid,jsonb,jsonb,jsonb,timestamptz,boolean,text)']) {
     const p = await one(`select has_function_privilege('anon',$1,'EXECUTE') a, has_function_privilege('authenticated',$1,'EXECUTE') b, has_function_privilege('service_role',$1,'EXECUTE') s, (select prosecdef from pg_proc where oid=$1::regprocedure) d, (select proconfig from pg_proc where oid=$1::regprocedure) c`, [f]);
     check(!p.a && !p.b && p.s, `${f}: service_role only`);
     check(p.d === true && p.c.includes('search_path=pg_catalog, public'), `${f}: security definer, pinned search_path`);
@@ -132,6 +134,39 @@ try {
   await reject(() => setLines(cust, q1, Array.from({ length: 201 }, (_, i) => chips(1, 1, i)), snap(201)), /invalid_lines/, 'set_lines: over 200 lines → invalid_lines');
   await reject(() => setLines(cust, q1, [{ ...chips(1), quantity: 0, line_total_cents: 0 }], snap(0)), /catering_quote_items_quantity_check|violates check/, 'set_lines: a DB constraint violation rolls the whole save back');
   check(JSON.stringify(await linesOf(q1)) === before, 'every refused save left the lines untouched');
+
+  // ── W01-r2: edit order is enforced by the writer — a save older than one already stored is refused ──
+  // The reviewer's interleaving: save v1 is in flight, the page sends v2, and v2 reaches the database FIRST.
+  const q6 = await newDraft();
+  const pageA = randomUUID(), pageB = randomUUID();
+  const qtyOf = async (q) => (await linesOf(q)).map((l) => Number(l.quantity));
+  r = await setLines(cust, q6, [chips(2)], snap(2000), pageA, 2); // v2 lands first
+  check(r.stale === false && r.lines === 1, 'r2: v2 (seq 2) is written');
+  r = await setLines(cust, q6, [chips(1)], snap(1000), pageA, 1); // then the older v1
+  check(r.stale === true, 'r2: the older v1 (seq 1) arriving after v2 is answered stale');
+  check(JSON.stringify(await qtyOf(q6)) === '[2]' && (await one('select subtotal_cents from catering_quotes where id=$1', [q6])).subtotal_cents === 2000, 'r2: v2 stands, lines and snapshot untouched by v1');
+  let rev = await one('select portal_rev_epoch, portal_rev_seq::int s from catering_quotes where id=$1', [q6]);
+  check(rev.portal_rev_epoch === pageA && rev.s === 2, 'r2: the stored revision is still the one v2 carried');
+  r = await setLines(cust, q6, [chips(2)], snap(2000), pageA, 2);
+  check(r.stale === true, 'r2: a retry of the stored revision is a no-op (already saved)');
+  r = await setLines(cust, q6, [chips(3)], snap(3000), pageA, 3);
+  check(r.stale === false && JSON.stringify(await qtyOf(q6)) === '[3]', 'r2: a newer seq from the same page is written');
+  r = await setLines(cust, q6, [chips(5)], snap(5000), pageB, 1);
+  check(r.stale === false && JSON.stringify(await qtyOf(q6)) === '[5]', 'r2: a new page load (another epoch) starts its own sequence and is written');
+  r = await setLines(cust, q6, [chips(4)], snap(4000), pageA, 4);
+  check(r.stale === false && JSON.stringify(await qtyOf(q6)) === '[4]', 'r2: epochs never compare across pages (the other page is not frozen out)');
+  r = await setLines(cust, q6, [chips(6)], snap(6000));
+  rev = await one('select portal_rev_epoch, portal_rev_seq::int s from catering_quotes where id=$1', [q6]);
+  check(r.stale === false && JSON.stringify(await qtyOf(q6)) === '[6]' && rev.portal_rev_epoch === pageA && rev.s === 4, 'r2: a save with no revision (an older cached page) is written and leaves the stored revision alone');
+  r = await setLines(cust, q6, [chips(1)], snap(1000), pageA, 4);
+  check(r.stale === true && JSON.stringify(await qtyOf(q6)) === '[6]', 'r2: so a late revision of that page is still refused');
+  for (const [e, s, label] of [[pageA, null, 'epoch without seq'], [null, 5, 'seq without epoch'], [pageA, 0, 'seq 0'], ['', 1, 'empty epoch'], ['x'.repeat(65), 1, 'epoch over 64 chars']]) {
+    await reject(() => setLines(cust, q6, [chips(1)], snap(1000), e, s), /invalid_rev/, `r2: ${label} → invalid_rev`);
+  }
+  check(JSON.stringify(await qtyOf(q6)) === '[6]', 'r2: every invalid_rev wrote nothing');
+  await reject(() => db.query("update catering_quotes set portal_rev_epoch = 'x', portal_rev_seq = null where id=$1", [q6]), /portal_rev|check/, 'r2: the epoch and seq columns are set together or not at all');
+  await db.query("update catering_quotes set status='submitted' where id=$1", [q6]);
+  await reject(() => setLines(cust, q6, [chips(9)], snap(9000), pageA, 99), /not_draft/, 'r2: a submitted draft is not_draft whatever the revision');
 
   // ── submit: one transaction — flip + napkins + deposit + dietary notes ──────────────────────
   await setLines(cust, q1, [chips(10)], snap(10000));
