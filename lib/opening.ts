@@ -565,16 +565,6 @@ export class OpeningPhase3NotEligibleError extends OpeningPhaseError {
 }
 
 /**
- * C.53 Phase 2 — finalize (`submit_phase2_atomic`) refuses to advance when one
- * or more items in the Phase 2 universe (every `openingPhase2` template item)
- * lack a live (non-superseded, non-revoked) phase2 completion. The opener must
- * save every prep item before finalize advances the instance to
- * `phase2_complete`. The RPC raises P0001 with the
- * `submit_phase2_atomic: phase2_incomplete` prefix; `missingCount` is parsed
- * from the message for the translated UI hint. i18n key
- * `opening.error.phase2_incomplete`.
- */
-/**
  * W13/B074 — Phase 1 submitted without a spot-check status for every live closer-count
  * snapshot item (snapshot row ∩ active template item). Refused by submit_phase1_atomic
  * (0313) before anything is written, because Phase 2 can never save those items.
@@ -600,6 +590,16 @@ export class OpeningItemNotInTemplateError extends OpeningError {
   }
 }
 
+/**
+ * C.53 Phase 2 — finalize (`submit_phase2_atomic`) refuses to advance when one
+ * or more items in the Phase 2 universe (every `openingPhase2` template item)
+ * lack a live (non-superseded, non-revoked) phase2 completion. The opener must
+ * save every prep item before finalize advances the instance to
+ * `phase2_complete`. The RPC raises P0001 with the
+ * `submit_phase2_atomic: phase2_incomplete` prefix; `missingCount` is parsed
+ * from the message for the translated UI hint. i18n key
+ * `opening.error.phase2_incomplete`.
+ */
 export class OpeningPhase2IncompleteError extends OpeningError {
   constructor(
     public readonly instanceId: string,
