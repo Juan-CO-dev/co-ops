@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import type { AuthContext } from "@/lib/session";
 import {
-  buildInboxEscalation, inboxCronEligible, inboxDeliveryConfig, inboxDeliveryOutcome, inboxReplyThreading, inboxSendable, inboxStaffUrl, renderInboxReply, senderAddress, textToHtml,
+  buildInboxEscalation, INBOX_DELIVERY_ERROR_CODES, INBOX_SEND_ERRORS, inboxCronEligible, inboxDeliveryConfig, inboxDeliveryOutcome, inboxReplyThreading, inboxSendable, inboxStaffUrl, renderInboxReply, senderAddress, textToHtml,
 } from "@/lib/catering/inbox-delivery-shared";
 import { getCateringInboxMessage, listCateringInbox } from "@/lib/catering/inbox";
 import { inboxOwnAddresses } from "@/lib/catering/inbox-content-shared";
@@ -224,6 +224,18 @@ describe("the delivery worker (cron path)", () => {
     expect(rpc.mock.calls.find(([name, args]) => name === "claim_catering_inbox_delivery" && (args as Record<string, unknown>).p_kind === "escalation")![1]).toMatchObject({ p_escalation: null });
     expect(rpc).toHaveBeenCalledWith("finish_catering_inbox_delivery", expect.objectContaining({ p_outcome: "failed", p_error_code: "provider_rejected" }));
   });
+  it.each(["recipient_cap", "unsafe_preview"])("%s from the claim is a named skip, not an error", async code => {
+    const rpc = vi.fn((name: string) => {
+      if (name === "sweep_catering_inbox_delivery") return { data: [], error: null };
+      if (name === "catering_inbox_delivery_due") return { data: { replies: [{ message_id: ids.message, draft_id: ids.draft }], escalations: [] }, error: null };
+      if (name === "claim_catering_inbox_delivery") return { data: null, error: { message: code } };
+      throw new Error(`Unexpected writer: ${name}`);
+    });
+    const { sb } = fakeInboxService({ tables: liveTables(), rpc });
+    const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
+    expect(run.replies).toEqual({ attempted: 1, sent: 0, failed: 0, ambiguous: 0, skipped: 1, errored: 0 });
+    expect(runtime.sendEmail).not.toHaveBeenCalled();
+  });
   // Audit W11/B169: an unexpected claim error (a timeout, a network failure) was counted as an ordinary skip, with no log.
   it("an unexpected claim error is logged and counted errored, not skipped", async () => {
     const rpc = vi.fn((name: string) => {
@@ -409,4 +421,14 @@ it.each(["en", "es"] as const)("escalation text never carries a customer URL or 
   expect(envelope.preview_text).not.toMatch(/token\s*=/i);
   expect(envelope.preview_text).toContain(dict["catering.inbox.escalation.link_removed"]!);
   expect(envelope.preview_text).toContain("https://staff.example.test/catering/inbox");
+});
+
+// Audit W11 (0311): the two new SQL codes are named, translated refusals, never generic failures.
+it("recipient_cap and unsafe_preview have en + es text", () => {
+  for (const dict of [en, es] as Record<string, string>[]) {
+    expect(dict["catering.inbox.send_error.recipient_cap"]).toBeTruthy();
+    expect(dict["catering.inbox.delivery.error.unsafe_preview"]).toBeTruthy();
+    for (const code of INBOX_SEND_ERRORS) expect(dict[`catering.inbox.send_error.${code}`], code).toBeTruthy();
+    for (const code of INBOX_DELIVERY_ERROR_CODES) expect(dict[`catering.inbox.delivery.error.${code}`], code).toBeTruthy();
+  }
 });

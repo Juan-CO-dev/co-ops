@@ -36,7 +36,9 @@ import {
 type Service = ReturnType<typeof getServiceRoleClient>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLAIM_CODES = ["delivery_off", "not_found", "forbidden", "request_conflict", "stale_revision", "invalid_state", "no_draft", "already_sent",
-  "needs_review", "assignee_unavailable", "delivery_busy", "attempts_exhausted", "not_new", "invalid_recipient", "revalidation_failed", "quote_revalidation_failed", "thread_cap", "invalid_escalation", "invalid_input"] as const;
+  "needs_review", "assignee_unavailable", "delivery_busy", "attempts_exhausted", "not_new", "invalid_recipient", "revalidation_failed", "quote_revalidation_failed", "thread_cap", "invalid_escalation", "invalid_input",
+  // 0311 (audit W11): the per-recipient daily cap (B066a) and the permanent unsafe-preview refusal (B068). Never raised before 0311.
+  "recipient_cap", "unsafe_preview"] as const;
 const dictionaries: Record<"en" | "es", Record<string, string>> = { en, es };
 const translator = (language: "en" | "es"): Translate => (key, params) =>
   (dictionaries[language][key] ?? key).replace(/\{(\w+)\}/g, (match, name: string) => params?.[name] ?? match);
