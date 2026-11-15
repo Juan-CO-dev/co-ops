@@ -74,7 +74,7 @@ const FNS = ["auth_reserve_attempt(uuid)", "increment_failed_login(uuid)",
   "auth_password_reset_consume(text, text)", "admin_user_set_credential(uuid, uuid, text, text)",
   "admin_user_update_profile(uuid, uuid, jsonb)", "auth_email_confirm_issue(uuid, uuid, text, timestamptz)",
   "session_reauth_reserve(uuid)", "session_reauth_clear(uuid)",
-  "auth_password_reset_issue(uuid, text, text, text, timestamptz)"];
+  "auth_password_reset_issue(uuid, text, text, text, timestamptz)", "auth_email_confirm_consume(text, text)"];
 /** The 0279 writers 0307 re-emits (each must still take the one gate). */
 const REEMITTED = ["admin_user_set_credential", "admin_user_update_profile"];
 
@@ -669,6 +669,115 @@ try {
     }
   }
 
+  // ── R2: "confirm your email" is ONE transaction (B053, review P2 #2) ──
+  {
+    const issueConfirm = async (u) => {
+      const tokenHash = sha();
+      const r = await rpc(emailConfirmIssueCall({ actorId: gm, userId: u, tokenHash, expiresAt: inHours(24) }));
+      return { r, tokenHash };
+    };
+    const confirm = (tokenHash, passwordHash) => rpc(emailConfirmConsumeCall({ tokenHash, passwordHash }));
+    const state = (u) => one("select password_hash, email, email_verified as v, email_verified_at as at, role, active from public.users where id = $1", [u]);
+    const linkOpen = async (tokenHash) => (await one("select consumed_at from public.email_verifications where token_hash = $1", [tokenHash])).consumed_at === null;
+    /** A promoted manager with an unconfirmed email, a PIN session live, and a link in their inbox. */
+    const promoted = async (email) => {
+      const u = await user("agm", { email, pin_hash: HASH("pin") });
+      await member(u, SA);
+      await db.query("insert into public.sessions (user_id) values ($1)", [u]);
+      return { u, link: await issueConfirm(u) };
+    };
+
+    // the happy path: one transaction does all of it
+    const a = await promoted("confirm-a@example.test");
+    check((await one("select issued_email from public.email_verifications where id = $1", [a.link.r.id])).issued_email === "confirm-a@example.test",
+      "R2 the issuer binds the link to the address it is mailed to");
+    const strayReset = await resetLink(a.u);
+    const done = await confirm(a.link.tokenHash, HASH("a-pw"));
+    const sa = await state(a.u);
+    check(done.user_id === a.u && done.role === "agm" && done.email === "confirm-a@example.test" && done.verification_id === a.link.r.id
+      && done.sessions_revoked === 1 && done.reset_links_retired === 1
+      && sa.password_hash === HASH("a-pw") && sa.v === true && sa.at !== null && !(await linkOpen(a.link.tokenHash))
+      && (await liveSessions(a.u)) === 0 && (await linkConsumed(strayReset)),
+      "R2 a confirmation writes the password, marks the email confirmed, consumes the link, revokes sessions and retires reset links — together");
+    const signedIn = await mint(a.u, { kind: "password", hash: HASH("a-pw"), loginEmail: done.email });
+    check(signedIn.r.session_id === signedIn.sessionId, "R2 … and the auto sign-in mints on the hash and the email the confirmation returned");
+    await refuses(() => confirm(a.link.tokenHash, HASH("again")), "token_consumed", "R2 a used link is refused by name");
+
+    // WRITE FAILURE during confirmation: nothing is burned
+    const w = await promoted("confirm-w@example.test");
+    await db.exec(`create function public.harness_fail_users() returns trigger language plpgsql as $f$ begin raise exception 'harness: users write failed'; end $f$;
+      create trigger harness_fail_users before update on public.users for each row execute function public.harness_fail_users();`);
+    await refuses(() => confirm(w.link.tokenHash, HASH("w-pw")), "harness: users write failed", "R2 (setup) the credential write fails inside the confirmation");
+    const sw = await state(w.u);
+    check((await linkOpen(w.link.tokenHash)) && sw.password_hash === null && sw.v === false && (await liveSessions(w.u)) === 1,
+      "R2 a confirmation whose write fails rolls back the consume — the link is still usable, nothing changed, no session revoked");
+    await db.exec("drop trigger harness_fail_users on public.users; drop function public.harness_fail_users();");
+    await confirm(w.link.tokenHash, HASH("w-pw"));
+    check((await state(w.u)).v === true && !(await linkOpen(w.link.tokenHash)), "R2 … the same link then succeeds");
+
+    // EMAIL CHANGE during confirmation (the route read the link, was hashing, the admin changed the address)
+    const c = await promoted("confirm-c@example.test");
+    await rpc(updateUserProfileCall({ actorId: gm, userId: c.u, patch: { email: "replacement@example.test" } }));
+    await refuses(() => confirm(c.link.tokenHash, HASH("c-pw")), "token_consumed", "R2 confirm → email change → consume: the change retired the link");
+    const sc = await state(c.u);
+    check(sc.password_hash === null && sc.v === false && sc.email === "replacement@example.test",
+      "R2 … the replacement address is NOT confirmed and no password was written");
+    // even a link that escaped that retirement confirms only the address it was mailed to
+    await db.query("update public.email_verifications set consumed_at = null where token_hash = $1", [c.link.tokenHash]);
+    await refuses(() => confirm(c.link.tokenHash, HASH("c-pw")), "email_changed", "R2 a link mailed to another address is refused, retired or not");
+    check((await state(c.u)).v === false && (await linkOpen(c.link.tokenHash)), "R2 … and that refusal wrote and consumed nothing");
+
+    // DEMOTION during confirmation: admin_user_set_role does not retire links — the consumer re-checks the role itself
+    const d = await promoted("confirm-d@example.test");
+    await rpc(setUserRoleCall({ actorId: gm, userId: d.u, role: "shift_lead" }));
+    await refuses(() => confirm(d.link.tokenHash, HASH("d-pw")), "role_not_email_auth", "R2 confirm → demotion below manager → consume");
+    const sd = await state(d.u);
+    check(sd.password_hash === null && sd.v === false && (await linkOpen(d.link.tokenHash)) && (await liveSessions(d.u)) === 0,
+      "R2 … no password, no confirmation, the link not consumed (the demotion's own session revoke stands)");
+    await rpc(setUserRoleCall({ actorId: gm, userId: d.u, role: "agm" }));
+    await confirm(d.link.tokenHash, HASH("d-pw"));
+    check((await state(d.u)).v === true, "R2 … promoted again, the SAME link works (a refusal never burns it)");
+
+    // DEACTIVATION during confirmation
+    const x = await promoted("confirm-x@example.test");
+    await rpc(setUserActiveCall({ actorId: gm, userId: x.u, active: false }));
+    await refuses(() => confirm(x.link.tokenHash, HASH("x-pw")), "account_inactive", "R2 confirm → deactivation → consume");
+    const sx = await state(x.u);
+    check(sx.password_hash === null && sx.v === false && (await linkOpen(x.link.tokenHash)), "R2 … an inactive account gets no password and no confirmation");
+
+    // the link's own state, and the payload
+    const t = await promoted("confirm-t@example.test");
+    await db.query("update public.email_verifications set expires_at = now() - interval '1 second' where token_hash = $1", [t.link.tokenHash]);
+    await refuses(() => confirm(t.link.tokenHash, HASH("t-pw")), "token_expired", "R2 an expired link is refused by name");
+    check(await linkOpen(t.link.tokenHash), "R2 … and an expired link is not consumed by the refusal");
+    await refuses(() => confirm(sha(), HASH("t-pw")), "token_invalid", "R2 an unknown link is refused by name");
+    await refuses(() => confirm(t.link.tokenHash, "short"), "invalid_payload", "R2 a malformed password hash is refused");
+    check(JSON.stringify([...EMAIL_CONFIRM_CONSUME_REFUSALS].sort()) === JSON.stringify(["account_inactive", "email_changed", "role_not_email_auth", "token_consumed", "token_expired", "token_invalid"]),
+      "R2 every refusal exercised above is one the lib names (EMAIL_CONFIRM_CONSUME_REFUSALS)");
+
+    // a link issued BEFORE 0307 carries no address (the older scripts insert the row themselves): it still works,
+    // and every check on the locked row still applies to it
+    const l = await user("agm", { email: "legacy-link@example.test" });
+    const legacy = sha();
+    await db.query("insert into public.email_verifications (user_id, token_hash, expires_at) values ($1, $2, now() + interval '1 hour')", [l, legacy]);
+    await db.query("update public.users set role = 'key_holder' where id = $1", [l]);
+    await refuses(() => confirm(legacy, HASH("l-pw")), "role_not_email_auth", "R2 a pre-0307 link is still refused for a person who is not a manager");
+    await db.query("update public.users set role = 'agm' where id = $1", [l]);
+    await confirm(legacy, HASH("l-pw"));
+    check((await state(l)).v === true, "R2 a pre-0307 link (no address on it) still confirms an eligible manager");
+
+    // the lock order: the per-person advisory key, then the users row, then the link — the reset consumer's order
+    const k = await promoted("confirm-k@example.test");
+    const held = await heldLocks(k.u, () => confirm(k.link.tokenHash, HASH("k-pw")));
+    check(held.advisory_total === 1 && held.advisory_person === 1 && held.row_locked === true,
+      "R2 the consumer holds the per-person advisory lock (0279's key, and only it) and the users row lock to the end of its transaction");
+    check(await linkOpen(k.link.tokenHash), "R2 … (rolled back: the link is open again)");
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      await refuses(() => db.query("select public.auth_email_confirm_consume('a', 'b')"), "42501", `R2 ${role} cannot EXECUTE auth_email_confirm_consume`);
+      await db.exec("reset role");
+    }
+  }
 } catch (e) {
   failures++;
   console.error("FAIL harness threw:", e);

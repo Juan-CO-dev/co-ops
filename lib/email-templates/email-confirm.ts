@@ -1,7 +1,7 @@
 /**
  * "Confirm your email" — sent to a manager whose email nobody has confirmed yet (a person promoted into a manager
  * role; audit W07 / B053, owner decision W07-1 b). The link opens /verify, where they set their own password; the
- * address is then marked confirmed and they are signed in (POST /api/auth/verify — unchanged).
+ * address is then marked confirmed and they are signed in (POST /api/auth/verify → 0307's `auth_email_confirm_consume`, one transaction).
  *
  * The words live in lib/admin/email-confirm-shared.ts `emailConfirmCopy` (en + es); this is only the HTML shell.
  * Delivery is decided elsewhere (`staffConfirmDelivery`): rendering an email never sends one.

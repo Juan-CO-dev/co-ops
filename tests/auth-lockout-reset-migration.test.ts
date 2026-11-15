@@ -7,8 +7,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  FAILURE_LIMIT, LOCKOUT_MINUTES, PASSWORD_RESET_EXPIRES_HOURS, PASSWORD_RESET_ISSUE_REFUSALS, REAUTH_LIMIT, createSessionCall,
-  emailConfirmIssueCall, passwordResetConsumeCall, passwordResetIssueCall, reserveAttemptCall,
+  EMAIL_CONFIRM_CONSUME_REFUSALS, FAILURE_LIMIT, LOCKOUT_MINUTES, PASSWORD_RESET_EXPIRES_HOURS, PASSWORD_RESET_ISSUE_REFUSALS, REAUTH_LIMIT,
+  createSessionCall, emailConfirmConsumeCall, emailConfirmIssueCall, passwordResetConsumeCall, passwordResetIssueCall, reserveAttemptCall,
   sessionReauthClearCall, sessionReauthReserveCall,
 } from "@/lib/auth-lockout-shared";
 import { EMAIL_CONFIRM_RPC_ERRORS } from "@/lib/admin/email-confirm-shared";
@@ -164,6 +164,26 @@ describe("0307_auth_lockout_reset_hardening", () => {
       "R1 (control) the lock probe reads NOTHING held for a transaction that only read the row",
       "R1 the issuer holds the per-person advisory lock (0279's key, and only it) and the users row lock to the end of its transaction",
       "R1 anon cannot EXECUTE auth_password_reset_issue → 42501", "R1 authenticated cannot EXECUTE auth_password_reset_issue → 42501",
+      // review round 1 — P2 #2: the confirmation is one transaction
+      "S1 auth_email_confirm_consume: SECURITY DEFINER, search_path pinned, service_role only",
+      "R2 the issuer binds the link to the address it is mailed to",
+      "R2 a confirmation writes the password, marks the email confirmed, consumes the link, revokes sessions and retires reset links — together",
+      "R2 … and the auto sign-in mints on the hash and the email the confirmation returned",
+      "R2 a used link is refused by name → token_consumed",
+      "R2 a confirmation whose write fails rolls back the consume — the link is still usable, nothing changed, no session revoked",
+      "R2 … the same link then succeeds",
+      "R2 confirm → email change → consume: the change retired the link → token_consumed",
+      "R2 … the replacement address is NOT confirmed and no password was written",
+      "R2 a link mailed to another address is refused, retired or not → email_changed",
+      "R2 confirm → demotion below manager → consume → role_not_email_auth",
+      "R2 … no password, no confirmation, the link not consumed (the demotion's own session revoke stands)",
+      "R2 … promoted again, the SAME link works (a refusal never burns it)",
+      "R2 confirm → deactivation → consume → account_inactive",
+      "R2 … an inactive account gets no password and no confirmation",
+      "R2 an expired link is refused by name → token_expired", "R2 an unknown link is refused by name → token_invalid",
+      "R2 a pre-0307 link (no address on it) still confirms an eligible manager",
+      "R2 the consumer holds the per-person advisory lock (0279's key, and only it) and the users row lock to the end of its transaction",
+      "R2 anon cannot EXECUTE auth_email_confirm_consume → 42501", "R2 authenticated cannot EXECUTE auth_email_confirm_consume → 42501",
       "PASS 0307:",
     ]) expect(out, s).toContain(s);
   }, 260_000);
@@ -220,6 +240,8 @@ describe("0307_auth_lockout_reset_hardening", () => {
     expect(Object.keys(issue.args)).toEqual(sqlParams(`create function public.${issue.fn}(`));
     const resetIssue = passwordResetIssueCall({ userId: "u", email: "e", seenPasswordHash: "h", tokenHash: "t", expiresAt: "x" });
     expect(Object.keys(resetIssue.args)).toEqual(sqlParams(`create function public.${resetIssue.fn}(`));
+    const confirm = emailConfirmConsumeCall({ tokenHash: "t", passwordHash: "p" });
+    expect(Object.keys(confirm.args)).toEqual(sqlParams(`create function public.${confirm.fn}(`));
     for (const call of [sessionReauthReserveCall("s"), sessionReauthClearCall("s")]) {
       expect(Object.keys(call.args), call.fn).toEqual(sqlParams(`create function public.${call.fn}(`));
     }
@@ -249,7 +271,9 @@ describe("0307_auth_lockout_reset_hardening", () => {
       "raise exception 'email_required'",
       "raise exception 'email_already_confirmed'",
       "update public.email_verifications set consumed_at = v_now where user_id = p_user and consumed_at is null;",
-      "insert into public.email_verifications (user_id, token_hash, expires_at)",
+      "insert into public.email_verifications (user_id, token_hash, expires_at, issued_email)",
+      // review round 1: the link is bound to the address on the LOCKED row
+      "values (p_user, p_token_hash, p_expires_at, lower(btrim(v_email)))",
     ].map((s) => fn.indexOf(s));
     expect(order.every((i) => i > -1)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -271,10 +295,68 @@ describe("0307_auth_lockout_reset_hardening", () => {
     expect(block).toContain("'user.email_vouch_backfill', 'users', null, true,");
     expect(block).toContain("'actor_context', 'migration_apply'");
     expect(src).toContain("raise exception '0307: the B053 backfill left an unverified level-6+ email';");
-    // no function in this file sets email_verified: a promoted manager is confirmed only by using their link
-    for (const name of ["admin_user_set_credential", "admin_user_update_profile", "auth_email_confirm_issue"]) {
+    // nothing vouches an email on anyone's behalf: a promoted manager is confirmed only by USING their link —
+    // the one function that writes email_verified is the link's own consumer
+    for (const name of ["admin_user_set_credential", "admin_user_update_profile", "auth_email_confirm_issue", "auth_password_reset_issue",
+      "auth_password_reset_consume"]) {
       expect(fnBody(`function public.${name}(`), name).not.toContain("email_verified = true");
     }
+    const writers = [...src.matchAll(/\ncreate (?:or replace )?function public\.([a-z_]+)\(/g)].map((m) => m[1]!)
+      .filter((name) => fnBody(`function public.${name}(`).includes("email_verified = true"));
+    expect(writers).toEqual(["auth_email_confirm_consume"]);
+  });
+
+  it("review round 1: the confirmation is ONE transaction — locks, the link, the PERSON on the locked row, then every write", () => {
+    const fn = fnBody("create function public.auth_email_confirm_consume(");
+    const order = [
+      // the reset consumer's lock order: the per-person key (0279's), the users row, the link row
+      "pg_advisory_xact_lock(hashtextextended('user-employment/' || v_user::text, 0))",
+      "from public.users where id = v_user for update",
+      "from public.email_verifications where token_hash = p_token_hash for update",
+      "raise exception 'token_consumed'",
+      "raise exception 'token_expired'",
+      // eligibility, re-decided under the lock
+      "coalesce(public.user_admin_role_level(v_role), 0) < 6 then raise exception 'role_not_email_auth'",
+      "(v_issued is not null and v_issued is distinct from lower(btrim(v_email)))",
+      "raise exception 'email_changed'",
+      "raise exception 'account_inactive'",
+      // …and only then the writes, all in this one body
+      "update public.users set password_hash = p_password_hash, email_verified = true, email_verified_at = v_now where id = v_user",
+      "update public.email_verifications set consumed_at = v_now where user_id = v_user and consumed_at is null",
+      "update public.password_resets set consumed_at = v_now where user_id = v_user and consumed_at is null",
+      "update public.sessions set revoked_at = v_now where user_id = v_user and revoked_at is null",
+    ].map((s) => fn.indexOf(s));
+    expect(order.every((i) => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // no write of any kind before the last refusal
+    const firstWrite = fn.search(/\n\s*(update|insert into|delete from) public\./);
+    expect(firstWrite).toBeGreaterThan(fn.lastIndexOf("raise exception"));
+    // every refusal the lib names is raised, and nothing else
+    const raised = [...fn.matchAll(/raise exception '([a-z_]+)'/g)].map((m) => m[1]!).filter((c) => c !== "invalid_payload");
+    expect([...new Set(raised)].sort()).toEqual([...EMAIL_CONFIRM_CONSUME_REFUSALS].sort());
+    expect(src).toContain("alter table public.email_verifications add column issued_email text;");
+    // the email change and the issuer hold the same two locks (through 0279's gate) around their own link writes
+    const profile = fnBody("create or replace function public.admin_user_update_profile(");
+    expect(profile.indexOf("perform public.user_admin_lock(p_actor, p_user);")).toBeLessThan(profile.indexOf("update public.email_verifications set consumed_at"));
+  });
+
+  it("review round 1: the verify route hashes FIRST, then makes ONE call — its own consume / write survive only as the pre-0307 path", () => {
+    const route = read("app/api/auth/verify/route.ts");
+    const post = route.slice(route.indexOf("export async function POST("), route.indexOf("async function legacyVerify("));
+    const hash = post.indexOf("const passwordHash = await hashPassword(password);");
+    const rpc = post.indexOf("await sb.rpc(call.fn, call.args)");
+    expect(hash).toBeGreaterThan(-1);
+    expect(rpc).toBeGreaterThan(hash);
+    // before the hash the handler only READS; it never writes a table itself
+    expect(post).not.toMatch(/\.(update|insert|upsert|delete)\(/);
+    expect(post).toContain("if (consumeErr && isMissingRpc(consumeErr)) {");
+    expect(post).toContain("return legacyVerify(sb, row, passwordHash, now, ipAddress, userAgent);");
+    // a failure that is not a named refusal is a 500 that says the link is still usable — and logs no secret
+    for (const line of route.split("\n").filter((l) => /console\./.test(l))) expect(line).not.toMatch(/\$\{(token|password|tokenHash|passwordHash)\b/);
+    // the sign-in names the hash AND the address the function confirmed
+    expect(post).toContain('loginEmail: typeof result.email === "string" && result.email !== "" ? result.email : undefined,');
+    const tail = route.slice(route.indexOf("async function finishVerified("));
+    expect(tail).toContain("if (!(e instanceof CredentialChangedError)) throw e;");
   });
 
   it("B159 the re-check counter: one statement decides and counts, the limit equals REAUTH_LIMIT, the account is never touched", () => {
@@ -416,6 +498,7 @@ describe("0307_auth_lockout_reset_hardening", () => {
       auth_password_reset_consume: "app/api/auth/password-reset/route.ts",
       auth_password_reset_issue: "app/api/auth/password-reset-request/route.ts",
       auth_email_confirm_issue: "lib/admin/email-confirm.ts",
+      auth_email_confirm_consume: "app/api/auth/verify/route.ts",
       session_reauth_reserve: "lib/auth-reauth.ts",
       session_reauth_clear: "lib/auth-reauth.ts",
     };

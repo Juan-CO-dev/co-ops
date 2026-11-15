@@ -51,12 +51,12 @@
 --      This function is the issuer: behind the ONE gate (user_admin_lock: the actor rule on the locked rows) it
 --      requires an active level-6+ person with an email that is not yet confirmed ('email_confirm_not_available',
 --      'email_required', 'email_already_confirmed'), retires that person's older open links (at most ONE link is
---      ever live) and inserts the new one. It stores a HASH; the lib mails the raw link, and ONLY when the owner's
---      delivery switches allow it (lib/admin/email-confirm-shared.ts). /api/auth/verify — unchanged, already in the
---      app — is what the link opens: the person sets their own password, the email is marked confirmed, they are
---      signed in. The level floor (below 6 is refused) is the twin of lib/roles.ts hasEmailAuth (pinned by the
---      migration test). No function in this file sets email_verified: a promoted manager is confirmed only by
---      using their link.
+--      ever live) and inserts the new one, bound to the address it is mailed to (issued_email). It stores a HASH;
+--      the lib mails the raw link, and ONLY when the owner's delivery switches allow it
+--      (lib/admin/email-confirm-shared.ts). /api/auth/verify is what the link opens: the person sets their own
+--      password, the email is marked confirmed, they are signed in — through 11 below. The level floor (below 6 is
+--      refused) is the twin of lib/roles.ts hasEmailAuth (pinned by the migration test). Nothing in this file
+--      marks an email verified on anyone's behalf: a promoted manager is confirmed only by USING their link (11).
 --   8. A ONE-TIME BACKFILL (B053, owner decision W07-2 a) — see EXISTING ROWS below.
 --   9. sessions.reauth_failed_count + session_reauth_reserve(p_session) + session_reauth_clear(p_session) — NEW (B159,
 --      owner decisions W07-3 a and W07-4 a). The re-check screens — the password step-up, and the PIN re-entered on
@@ -82,6 +82,18 @@
 --      that is no longer at that address — the same rule a second time, independent of the retirement. A link with
 --      no address (issued before this file) is guarded by the retirements alone, as before. Rate limits are the
 --      app's and are untouched (the per-email throttle still runs before anything is read).
+--  11. email_verifications.issued_email + auth_email_confirm_consume(p_token_hash, p_password_hash) — NEW (review
+--      round 1; completes B053). /api/auth/verify consumed the link, THEN hashed the password, THEN wrote the
+--      password and email_verified in a separate request. While it hashed, an admin could change the person's email
+--      (6 retires the link — but it was already consumed) or demote them: the route still overwrote the password,
+--      marked the REPLACEMENT address verified and signed the person in; its role check was a snapshot. A failed
+--      write also left the link consumed for good. Now the route hashes FIRST and this function does the rest in
+--      one transaction under the per-person advisory key and the users row lock: the link is re-checked
+--      ('token_invalid' / 'token_consumed' / 'token_expired'), then the PERSON on the locked row — still level 6+
+--      ('role_not_email_auth'), still at the address the link was mailed to ('email_changed'), active
+--      ('account_inactive') — then the password hash and email_verified are written, the link (and any reset link)
+--      consumed and the sessions revoked. Any refusal or failure rolls all of it back: nothing written, the link
+--      still usable. A link with no address on it (inserted before this file) skips only the address comparison.
 --
 -- LOCK ORDER (unchanged from 0279): the identity lock → the per-person advisory lock → users rows → password_resets /
 --   email_verifications / sessions. auth_reserve_attempt and auth_create_session each take ONE users row lock (the mint then
@@ -89,7 +101,9 @@
 --   advisory key, then the users row, then the token row, then the person's other links and sessions — never a
 --   password_resets or sessions row before the users row. auth_password_reset_issue takes the same per-person
 --   advisory key, then the users row, then inserts its password_resets row — the consumer's order, one person per
---   call. session_reauth_reserve / _clear touch ONE sessions row and no users row, so they add no edge to that order.
+--   call. auth_email_confirm_consume is the reset consumer's twin on email_verifications: the per-person advisory
+--   key, the users row, its link row, then the person's other links (email_verifications, password_resets) and
+--   sessions. session_reauth_reserve / _clear touch ONE sessions row and no users row, so they add no edge to that order.
 --   Why issuance is safe against every retirer: each retirer (admin_user_update_profile, admin_user_set_credential,
 --   auth_password_reset_consume) holds that advisory key AND the users row FOR UPDATE from before its retirement to
 --   its commit, and the issuer holds the same two from before its checks to its commit — the two transactions run
@@ -113,6 +127,8 @@
 --     auth_create_session          lib/session.ts createSession → the old plain insert + separate counter reset (B051 open)
 --     auth_password_reset_consume  the reset route → its old consume / write / revoke steps (B156 / B157 open)
 --     auth_password_reset_issue    the reset-request route → its old plain insert (the issuance race stays open)
+--     auth_email_confirm_consume   the verify route → its old consume / write / revoke steps. (No link issued by 7
+--                                  can exist before this file is applied, so that path only ever sees older links.)
 --     auth_email_confirm_issue     lib/admin/email-confirm.ts → outcome 'not_installed': nothing issued, nothing sent
 --     session_reauth_reserve/clear lib/auth-reauth.ts → the re-check is not counted (B159 open)
 --   File first, code later — the three RE-EMITTED functions keep their signatures and only ADD keys to their jsonb
@@ -122,7 +138,7 @@
 -- DEPENDS ON: users (failed_login_count, locked_until, last_login_at, pin_hash, password_hash, email, active), sessions
 --   (id, user_id, token_hash, auth_method, step_up_unlocked, last_activity_at, expires_at, ip_address, user_agent),
 --   password_resets and email_verifications (id, user_id, token_hash, expires_at, consumed_at; this file ADDS
---   password_resets.issued_email), audit_log, 0076 (increment_failed_login), 0279.
+--   issued_email to both), audit_log, 0076 (increment_failed_login), 0279.
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select count(*) from users where failed_login_count >= 5 and locked_until <= now();  -- accounts B049 frees on their next try
@@ -139,7 +155,8 @@
 -- VERIFY AFTER APPLY:
 --   select proname, prosecdef, proconfig from pg_proc where proname in ('auth_reserve_attempt', 'increment_failed_login',
 --     'auth_create_session', 'auth_password_reset_consume', 'admin_user_set_credential', 'admin_user_update_profile',
---     'auth_email_confirm_issue', 'session_reauth_reserve', 'session_reauth_clear', 'auth_password_reset_issue');
+--     'auth_email_confirm_issue', 'session_reauth_reserve', 'session_reauth_clear', 'auth_password_reset_issue',
+--     'auth_email_confirm_consume');
 --     -- t, {search_path=pg_catalog, public} on each
 --   select count(*) from users where not coalesce(email_verified, false) and email is not null and btrim(email) <> ''
 --     and coalesce(public.user_admin_role_level(role), 0) >= 6;  -- 0 (the backfill ran)
@@ -149,9 +166,10 @@
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
 --    and routine_name in ('auth_reserve_attempt', 'increment_failed_login', 'auth_create_session', 'auth_password_reset_consume',
 --      'admin_user_set_credential', 'admin_user_update_profile', 'auth_email_confirm_issue',
---      'session_reauth_reserve', 'session_reauth_clear', 'auth_password_reset_issue');  -- service_role (+ postgres) only
+--      'session_reauth_reserve', 'session_reauth_clear', 'auth_password_reset_issue',
+--      'auth_email_confirm_consume');  -- service_role (+ postgres) only
 --   select table_name, column_name, is_nullable from information_schema.columns where table_schema = 'public'
---     and column_name = 'issued_email';  -- password_resets, YES (existing links keep NULL)
+--     and column_name = 'issued_email';  -- password_resets and email_verifications, YES (existing links keep NULL)
 --
 -- ROLLBACK: none needed for the app (it falls back on a missing function). Re-emit through a new reviewed migration.
 
@@ -192,6 +210,10 @@ begin
   if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'password_resets'
               and column_name = 'issued_email') then
     raise exception '0307: already applied (password_resets.issued_email exists)';
+  end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'email_verifications'
+              and column_name = 'issued_email') then
+    raise exception '0307: already applied (email_verifications.issued_email exists)';
   end if;
   if (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'email_verifications'
        and column_name in ('id', 'user_id', 'token_hash', 'expires_at', 'consumed_at')) <> 5 then
@@ -327,6 +349,11 @@ comment on column public.password_resets.issued_email is
   '0307 (audit W07 B052, review round 1): the lowercased account email this reset link was issued for, written by '
   'auth_password_reset_issue under the users row lock. auth_password_reset_consume refuses the link (email_changed) '
   'when the account is no longer at that address. NULL = issued before 0307 / by the pre-0307 fallback.';
+alter table public.email_verifications add column issued_email text;
+comment on column public.email_verifications.issued_email is
+  '0307 (audit W07 B053, review round 1): the lowercased address this "confirm your email" link was mailed to, written '
+  'by auth_email_confirm_issue under the user-admin gate. auth_email_confirm_consume confirms ONLY that address '
+  '(email_changed otherwise). NULL = a link inserted before 0307.';
 
 -- ── 4. B156 + B157: the whole self-service reset in ONE transaction ──
 -- The route hashes the new password first (bcrypt is slow and must not run inside the transaction), then calls this.
@@ -522,7 +549,9 @@ begin
   -- At most ONE live link per person: a newer email replaces every older one.
   update public.email_verifications set consumed_at = v_now where user_id = p_user and consumed_at is null;
   get diagnostics v_retired = row_count;
-  insert into public.email_verifications (user_id, token_hash, expires_at) values (p_user, p_token_hash, p_expires_at)
+  -- Review round 1: the link is bound to the address it is mailed to (the LOCKED row's).
+  insert into public.email_verifications (user_id, token_hash, expires_at, issued_email)
+    values (p_user, p_token_hash, p_expires_at, lower(btrim(v_email)))
     returning id into v_id;
   return jsonb_build_object('id', v_id, 'email', lower(btrim(v_email)), 'links_retired', v_retired);
 end $$;
@@ -532,6 +561,65 @@ comment on function public.auth_email_confirm_issue(uuid, uuid, text, timestampt
   'Refusals: email_confirm_not_available, email_required, email_already_confirmed, invalid_payload + the gate''s.';
 revoke all on function public.auth_email_confirm_issue(uuid, uuid, text, timestamptz) from public, anon, authenticated;
 grant execute on function public.auth_email_confirm_issue(uuid, uuid, text, timestamptz) to service_role;
+
+-- ── 7a. B053, review round 1: USE a "confirm your email" link — ONE transaction ──
+-- The route hashes the new password FIRST (bcrypt is slow and must not run inside the transaction, nor between the
+-- consume and the write), then calls this. Under the per-person advisory key and the users row lock — the two the
+-- email change (6), the role change, the deactivation and the issuer (7) hold through 0279's gate — it re-checks the
+-- link AND the person, then writes the password + the verification, consumes the link and revokes the sessions.
+-- An admin change that lands while the route is hashing is therefore SEEN here, and any refusal or failure rolls
+-- everything back: nothing is written and the link is exactly as it was.
+create function public.auth_email_confirm_consume(p_token_hash text, p_password_hash text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_user uuid; v_role text; v_active boolean; v_email text; v_id uuid; v_expires timestamptz; v_consumed timestamptz;
+  v_issued text; v_retired integer := 0; v_revoked integer := 0; v_now timestamptz;
+begin
+  if p_token_hash is null or p_token_hash = '' or p_password_hash is null or char_length(p_password_hash) not between 20 and 255 then
+    raise exception 'invalid_payload';
+  end if;
+  -- Learn whose link this is WITHOUT a lock, so the locks below are taken in the 0279 order.
+  select user_id into v_user from public.email_verifications where token_hash = p_token_hash;
+  if not found then raise exception 'token_invalid'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('user-employment/' || v_user::text, 0));
+  select role, active, email into v_role, v_active, v_email from public.users where id = v_user for update;
+  if not found then raise exception 'token_invalid'; end if;
+  select id, expires_at, consumed_at, issued_email into v_id, v_expires, v_consumed, v_issued
+    from public.email_verifications where token_hash = p_token_hash for update;
+  if not found then raise exception 'token_invalid'; end if;
+  v_now := clock_timestamp();
+  if v_consumed is not null then raise exception 'token_consumed'; end if;
+  if v_expires <= v_now then raise exception 'token_expired'; end if;
+  -- The PERSON, on the locked row. Still a manager role (the twin of lib/roles.ts hasEmailAuth) …
+  if coalesce(public.user_admin_role_level(v_role), 0) < 6 then raise exception 'role_not_email_auth'; end if;
+  -- … still at the address the link was mailed to (an email change also retires the link; this is the same rule
+  -- on the link itself, so a link can never confirm a replacement address) …
+  if v_email is null or btrim(v_email) = '' or (v_issued is not null and v_issued is distinct from lower(btrim(v_email))) then
+    raise exception 'email_changed';
+  end if;
+  -- … and active: an inactive account gets no password and no confirmation.
+  if not coalesce(v_active, false) then raise exception 'account_inactive'; end if;
+  -- The credential and the verification, together.
+  update public.users set password_hash = p_password_hash, email_verified = true, email_verified_at = v_now where id = v_user;
+  -- This link (and any other still open: at most one is ever live).
+  update public.email_verifications set consumed_at = v_now where user_id = v_user and consumed_at is null;
+  -- A password was just set: an open reset link must not overwrite it (the B157 rule, for every password writer).
+  update public.password_resets set consumed_at = v_now where user_id = v_user and consumed_at is null;
+  get diagnostics v_retired = row_count;
+  -- A first password is a credential change: retire the pre-confirmation (PIN) sessions.
+  update public.sessions set revoked_at = v_now where user_id = v_user and revoked_at is null;
+  get diagnostics v_revoked = row_count;
+  return jsonb_build_object('verification_id', v_id, 'user_id', v_user, 'role', v_role, 'email', lower(btrim(v_email)),
+    'sessions_revoked', v_revoked, 'reset_links_retired', v_retired);
+end $$;
+comment on function public.auth_email_confirm_consume(text, text) is
+  '0307 (audit W07 B053, review round 1): uses a "confirm your email" link in one transaction under the per-person '
+  'advisory lock and the users row lock — re-checks the link and the person (level 6+, the address the link was '
+  'mailed to, active), writes the password hash + email_verified, consumes the link, retires reset links, revokes '
+  'sessions. Returns {verification_id, user_id, role, email, sessions_revoked, reset_links_retired}. Refusals: '
+  'token_invalid, token_consumed, token_expired, role_not_email_auth, email_changed, account_inactive, invalid_payload. '
+  'A refusal or a failure writes nothing and leaves the link usable.';
+revoke all on function public.auth_email_confirm_consume(text, text) from public, anon, authenticated;
+grant execute on function public.auth_email_confirm_consume(text, text) to service_role;
 
 -- ── 8. EXISTING ROWS — B053, owner decision W07-2 a: unstick the managers already blocked ──
 -- Admin-vouched, exactly as admin_user_create does for a manager a GM creates: level 6+, an email on file, not yet
@@ -605,6 +693,7 @@ declare
     'public.admin_user_set_credential(uuid,uuid,text,text)',
     'public.admin_user_update_profile(uuid,uuid,jsonb)',
     'public.auth_email_confirm_issue(uuid,uuid,text,timestamptz)',
+    'public.auth_email_confirm_consume(text,text)',
     'public.session_reauth_reserve(uuid)',
     'public.session_reauth_clear(uuid)'
   ];
