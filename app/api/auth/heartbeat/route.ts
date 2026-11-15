@@ -7,7 +7,9 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  * throttled keep-alive while the person is active with no other request. It
  * leaves an unlocked step-up flag as it stands (lib/session.ts isHeartbeatPath).
  * requireSession does the touch as a side effect of validation — so this route is just a thin protected
- * endpoint that returns 200 on a healthy session, 401 otherwise.
+ * endpoint that returns 200 on a healthy session, 401 otherwise. A 200 means the touch LANDED: when the
+ * last_activity_at UPDATE fails or matches no row it is a retryable 503 `session_unavailable` that keeps the
+ * cookie (audit W06/B013 r3), so the client keeps the activity pending and retries.
  *
  * Protected (NOT in proxy PUBLIC_PATHS): the proxy validates JWT signature/exp
  * at the edge first; if that fails the user gets 307'd to / before the route

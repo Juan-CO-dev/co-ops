@@ -400,8 +400,17 @@ async function requireSessionCore(
 
   // Touch last_activity_at — non-blocking semantics: if the touch fails, keep
   // the request flowing rather than 401-ing on a transient write error.
+  // EXCEPT on the heartbeat (audit W06/B013 r3): its only job is this touch, and the client clears its pending
+  // activity on a 2xx, so a 200 over a failed or zero-row UPDATE left the server clock behind the client's (a later
+  // 401 and a lost draft). There, a touch that did not land is `unavailable` — a retryable 503 that keeps the cookie.
   const touchedAt = now.toISOString();
-  await sb.from("sessions").update({ last_activity_at: touchedAt }).eq("id", row.id);
+  const touch = sb.from("sessions").update({ last_activity_at: touchedAt }).eq("id", row.id);
+  if (isHeartbeatPath(currentPath)) {
+    const { data: touchedRows, error: touchErr } = await touch.select("id");
+    if (touchErr || !touchedRows?.length) return { unavailable: true };
+  } else {
+    await touch;
+  }
 
   const { data: userRowRaw, error: userErr } = await sb
     .from("users")
