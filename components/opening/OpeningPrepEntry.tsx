@@ -63,6 +63,7 @@ import {
 } from "./OverParModal";
 import { UnderParModal, type UnderParCapture } from "./UnderParModal";
 import { RevokeReasonModal } from "./RevokeReasonModal";
+import { phase2BlankOutcome, type Phase2IncompleteReason } from "@/lib/opening-phase2-gate";
 import { etCalendarDate } from "@/lib/operational-day";
 import { TwoTapUndoButton } from "@/components/prep/TwoTapUndoButton";
 import { SaveStatusFrame } from "@/components/ui/SaveStatus";
@@ -110,13 +111,10 @@ export type Phase2SaveStatus =
  * Why a blur-save no-op'd because a prerequisite blocks persistence. Drives the
  * calm, directive "incomplete" badge (distinct from the alarming "failed"
  * badge): "incomplete" means "you started this row but a prerequisite blocks
- * the save — here's the next step," NOT "something broke."
- *   - "needs_ground_truth": section unverified AND no per-item recount, so there
- *     is no ground-truth count to compute prep_need against.
- *   - "needs_reason": a non-zero delta_vs_prep_need needs its over/under reason
- *     captured before the row can persist.
+ * the save — here's the next step," NOT "something broke." ONE vocabulary: the
+ * type lives beside the gate (lib/opening-phase2-gate.ts) and is re-exported here.
  */
-export type Phase2IncompleteReason = "needs_ground_truth" | "needs_reason" | "needs_batch";
+export type { Phase2IncompleteReason };
 
 export interface Phase2SaveState {
   status: Phase2SaveStatus;
@@ -431,7 +429,14 @@ export function OpeningPrepEntry({
                     saveState={saveState}
                     saverName={saverName}
                     onChange={(next) => onChange(item.id, next)}
-                    onSave={(next) => onSaveItem(item.id, next)}
+                    onSave={(next) => {
+                      onSaveItem(item.id, next);
+                      // Audit W14 / B180 (owner decision W14-2 b) — deleting an amount that was
+                      // already saved is an Undo. The dispatcher (same rule, same row state) has
+                      // just marked the row "cleared"; this runs the ordinary revoke, where the
+                      // SERVER still decides silent vs reason-required.
+                      if (!readOnly && next.openerPrepped === null && phase2BlankOutcome(saveState) === "undo") void handleRevokeClick(item.id);
+                    }}
                     onRevoke={() => handleRevokeClick(item.id)}
                     revoking={revokingItemId === item.id}
                     revokeError={revokeErrorItemId === item.id}
@@ -968,6 +973,35 @@ function PrepEntryRow({
           // Calm, directive nudge — informational (Brand Blue), NOT an error.
           // Tells the prepper the next step to make the row savable; deliberately
           // distinct from the alarming red "failed" badge above.
+          saveState.incompleteReason === "cleared_saved" ? (
+            // Audit W14 / B180 — the saved amount was deleted. Deleting it is an Undo; this
+            // is the row while that Undo is running, was cancelled at its reason prompt, or
+            // failed. It no longer counts as done, and Undo stays one tap away.
+            <>
+              <span className="font-medium text-co-info">
+                {t("opening.phase2.save.incomplete_cleared")}
+              </span>
+              {!readOnly && saveState.completionId !== null ? (
+                <TwoTapUndoButton
+                  key={saveState.completionId}
+                  resetKey={saveState.completionId}
+                  onConfirm={onRevoke}
+                  disabled={revoking}
+                  pending={revoking}
+                  label={t("opening.phase2.revoke.cta")}
+                  armedLabel={t("opening.phase2.revoke.cta_confirm")}
+                  pendingLabel={t("opening.phase2.revoke.cta_pending")}
+                  ariaLabel={t("opening.phase2.revoke.cta_aria", { item: resolved.label })}
+                  armedAriaLabel={t("opening.phase2.revoke.cta_confirm_aria", { item: resolved.label })}
+                />
+              ) : null}
+              {revokeError ? (
+                <span role="alert" className="font-bold text-co-cta-text">
+                  {t("opening.phase2.revoke.error")}
+                </span>
+              ) : null}
+            </>
+          ) : (
           <span className="font-medium text-co-info">
             {saveState.incompleteReason === "needs_ground_truth"
               ? t("opening.phase2.save.incomplete_ground_truth")
@@ -975,6 +1009,7 @@ function PrepEntryRow({
                 ? t("opening.phase2.save.incomplete_batch" as TranslationKey)
                 : t("opening.phase2.save.incomplete_reason")}
           </span>
+          )
         ) : (
           <span className="font-medium text-co-text-dim">
             {t("opening.phase2.save.unsaved")}

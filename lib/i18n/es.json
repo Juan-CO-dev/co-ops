@@ -2960,6 +2960,7 @@
   "opening.phase2.save.incomplete_ground_truth": "Verifica la sección para guardar",
   "opening.phase2.save.incomplete_reason": "Agrega una razón para guardar",
   "opening.phase2.save.incomplete_batch": "Completa la fila de tanda para guardar",
+  "opening.phase2.save.incomplete_cleared": "Cantidad borrada — toca Deshacer para quitar la entrada guardada, o escribe la cantidad otra vez",
   "opening.phase2.save.race_notice": "Guardado hace un momento por otra persona — mostrando lo más reciente",
   "opening.phase2.revoke.cta": "Deshacer",
   "opening.phase2.revoke.cta_pending": "Deshaciendo…",

@@ -41,7 +41,7 @@ import {
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
 import { hydratePhase2Row, phase2Signature, type HydratedPhase2Row } from "@/lib/opening-phase2-form-shared";
-import { phase2SaveGate } from "@/lib/opening-phase2-gate";
+import { phase2BlankOutcome, phase2SaveGate } from "@/lib/opening-phase2-gate";
 import { isDuplicateInFlight } from "@/lib/made-the-need-shared";
 import { openingFooterHint } from "@/lib/prep-display-shared";
 import type {
@@ -1179,7 +1179,15 @@ export function OpeningClient({
         batch: batchByItem.get(templateItemId) ?? null,
       },
     );
-    if (gate.kind === "blank") return;
+    if (gate.kind === "blank") {
+      // Audit W14 / B180 (owner decision W14-2 b) — a blank box on a row with a SAVED entry
+      // is not "nothing typed yet": the prepper deleted the amount. The row stops counting
+      // as done right here (so finalize can never submit the old number behind an empty
+      // box), and OpeningPrepEntry — reading the same rule on the same row state — runs the
+      // ordinary Undo. An untouched row stays "unsaved", exactly as before.
+      if (phase2BlankOutcome(saveStates.get(templateItemId)) !== "ignore") markIncomplete("cleared_saved");
+      return;
+    }
     if (gate.kind === "incomplete") {
       markIncomplete(gate.reason);
       return;

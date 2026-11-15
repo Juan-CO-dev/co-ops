@@ -19,7 +19,16 @@ import {
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
 
-export type Phase2IncompleteReason = "needs_ground_truth" | "needs_reason" | "needs_batch";
+/**
+ * Why a started row is not saved (the calm "incomplete" nudge, never the red "failed" badge):
+ *   - "needs_ground_truth": section unverified AND no per-item recount.
+ *   - "needs_reason": a non-zero delta (or an over-batch) needs its reason first.
+ *   - "needs_batch": the batch half of the row is not complete yet.
+ *   - "cleared_saved": the amount of an ALREADY-SAVED row was deleted. Deleting a saved amount
+ *     is an Undo (owner decision W14-2 b); the row stops counting as done while that Undo is
+ *     pending, was cancelled at its reason prompt, or failed — and it keeps offering Undo.
+ */
+export type Phase2IncompleteReason = "needs_ground_truth" | "needs_reason" | "needs_batch" | "cleared_saved";
 
 export type Phase2GateOutcome =
   /** Nothing typed yet — the row stays "unsaved", no nudge. */
@@ -92,4 +101,38 @@ export function phase2SaveGate(v: Phase2GateValue, ctx: Phase2GateContext): Phas
   }
   if (v.underPar && !v.underPar.freeText.trim()) return { kind: "incomplete", reason: "needs_reason" };
   return { kind: "ok", batchEntry: null };
+}
+
+/** What the dispatcher knows about a row when its amount box is blank. */
+export interface Phase2BlankRow {
+  status: "unsaved" | "incomplete" | "saving" | "saved" | "failed";
+  /** completions.id of the live phase2 row; non-null whenever a saved entry is on file. */
+  completionId: string | null;
+  incompleteReason: Phase2IncompleteReason | null;
+}
+
+/**
+ * Audit W14 / B180 — what a BLANK amount means for a row (the gate's "blank" outcome).
+ *
+ * It used to mean "nothing typed yet" for every row, so deleting an amount that was already
+ * saved did nothing: the box read empty, the row still read Saved, the finalize counter still
+ * counted it, and finalize submitted the old number. Owner decision W14-2 b: deleting a saved
+ * amount IS an Undo.
+ *   - "ignore"       — nothing is on file (or this row's Undo is already pending / a save is in
+ *                      flight): the row stays as it is.
+ *   - "undo"         — a saved entry is on file: the row stops counting as done
+ *                      ("cleared_saved") and the ordinary revoke runs (the server still decides
+ *                      silent vs reason-required; nothing is revoked without it).
+ *   - "mark_cleared" — the row reads Saved but its completion id is unknown (the 409 path that
+ *                      could not name the winner): it stops counting as done; there is no id to
+ *                      undo, the prepper retypes the amount.
+ * ONE rule read by the dispatcher (opening-client.tsx) and by the row (OpeningPrepEntry.tsx).
+ */
+export function phase2BlankOutcome(row: Phase2BlankRow | null | undefined): "ignore" | "undo" | "mark_cleared" {
+  if (!row) return "ignore";
+  if (row.status === "saving") return "ignore";
+  if (row.incompleteReason === "cleared_saved") return "ignore";
+  if (row.completionId !== null) return "undo";
+  if (row.status === "saved") return "mark_cleared";
+  return "ignore";
 }

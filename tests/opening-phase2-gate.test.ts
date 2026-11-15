@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { phase2SaveGate, type Phase2GateContext } from "@/lib/opening-phase2-gate";
+import { phase2BlankOutcome, phase2SaveGate, type Phase2GateContext } from "@/lib/opening-phase2-gate";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 import type { BatchRowContext } from "@/lib/batch-prep-shared";
@@ -91,5 +91,61 @@ describe("single-box row — today's gates, unchanged", () => {
     const src = readFileSync(join(ROOT, "app", "(authed)", "operations", "opening", "opening-client.tsx"), "utf8");
     expect(src).toContain("phase2SaveGate(");
     expect(src).not.toContain("const prepNeed = resolved?.prepNeed ?? Math.max(0, parValue - groundTruth);");
+  });
+});
+
+/**
+ * Audit W14 / B180 (owner decision W14-2 b: deleting a saved amount is an Undo). Clearing an
+ * amount that was already saved used to be a silent no-op: the box read empty, the row still
+ * read Saved, the finalize counter still counted it, and finalize submitted the old number.
+ */
+describe("phase2BlankOutcome — clearing a saved amount is an Undo (B180)", () => {
+  const row = (over: Partial<Parameters<typeof phase2BlankOutcome>[0] & object>) =>
+    ({ status: "unsaved" as const, completionId: null, incompleteReason: null, ...over });
+  it("clearing an untouched row is ignored", () => {
+    expect(phase2BlankOutcome(undefined)).toBe("ignore");
+    expect(phase2BlankOutcome(row({}))).toBe("ignore");
+    expect(phase2BlankOutcome(row({ status: "incomplete", incompleteReason: "needs_reason" }))).toBe("ignore");
+    expect(phase2BlankOutcome(row({ status: "failed" }))).toBe("ignore");
+  });
+  it("clearing a saved row undoes it", () => {
+    expect(phase2BlankOutcome(row({ status: "saved", completionId: "c1" }))).toBe("undo");
+  });
+  it("a row with a live saved entry behind a failed or blocked re-save is undone too", () => {
+    expect(phase2BlankOutcome(row({ status: "failed", completionId: "c1" }))).toBe("undo");
+    expect(phase2BlankOutcome(row({ status: "incomplete", incompleteReason: "needs_reason", completionId: "c1" }))).toBe("undo");
+  });
+  it("a row already waiting on its Undo is not undone a second time on the next blur", () => {
+    expect(phase2BlankOutcome(row({ status: "incomplete", incompleteReason: "cleared_saved", completionId: "c1" }))).toBe("ignore");
+  });
+  it("a save in flight is left alone (its answer decides the row)", () => {
+    expect(phase2BlankOutcome(row({ status: "saving", completionId: "c1" }))).toBe("ignore");
+  });
+  it("saved but the row id is unknown: the row stops counting as done, nothing to undo by id", () => {
+    expect(phase2BlankOutcome(row({ status: "saved", completionId: null }))).toBe("mark_cleared");
+  });
+
+  it("the dispatcher and the row both read the one rule; the cleared row offers Undo", () => {
+    const page = readFileSync(join(ROOT, "app", "(authed)", "operations", "opening", "opening-client.tsx"), "utf8");
+    const blank = page.slice(page.indexOf('if (gate.kind === "blank")'), page.indexOf('if (gate.kind === "incomplete")'));
+    expect(blank).toContain("phase2BlankOutcome(");
+    expect(blank).toContain('markIncomplete("cleared_saved")');
+    const entry = readFileSync(join(ROOT, "components", "opening", "OpeningPrepEntry.tsx"), "utf8");
+    // The row fires the ordinary revoke (server decides silent vs reason) on an "undo" outcome.
+    expect(entry).toMatch(/phase2BlankOutcome\([^)]*\) === "undo"\) void handleRevokeClick\(item\.id\)/);
+    // One reason vocabulary: the component imports the lib's type instead of redeclaring it.
+    expect(entry).not.toMatch(/export type Phase2IncompleteReason =\s*"needs_ground_truth"/);
+    expect(entry).toContain('saveState.incompleteReason === "cleared_saved"');
+    expect(entry).toContain('t("opening.phase2.save.incomplete_cleared")');
+    const cleared = entry.slice(entry.indexOf('saveState.incompleteReason === "cleared_saved"'));
+    expect(cleared.slice(0, 1600)).toContain("<TwoTapUndoButton");
+  });
+
+  it("the cleared message exists in en and es", () => {
+    const en = JSON.parse(readFileSync(join(ROOT, "lib", "i18n", "en.json"), "utf8")) as Record<string, string>;
+    const es = JSON.parse(readFileSync(join(ROOT, "lib", "i18n", "es.json"), "utf8")) as Record<string, string>;
+    expect(en["opening.phase2.save.incomplete_cleared"]).toBeTruthy();
+    expect(es["opening.phase2.save.incomplete_cleared"]).toBeTruthy();
+    expect(es["opening.phase2.save.incomplete_cleared"]).not.toBe(en["opening.phase2.save.incomplete_cleared"]);
   });
 });
