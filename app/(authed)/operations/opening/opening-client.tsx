@@ -36,12 +36,11 @@ import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/typ
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku } from "@/lib/prep-consumption";
 import {
-  batchFormFromRecord,
   needForLine,
-  readBatchFromPrepData,
   type BatchItemContext,
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
+import { hydratePhase2Row, phase2Signature, type HydratedPhase2Row } from "@/lib/opening-phase2-form-shared";
 import { phase2SaveGate } from "@/lib/opening-phase2-gate";
 import { isDuplicateInFlight } from "@/lib/made-the-need-shared";
 import { openingFooterHint } from "@/lib/prep-display-shared";
@@ -73,15 +72,7 @@ import {
   type Phase2RevokeReason,
   type Phase2SaveState,
 } from "@/components/opening/OpeningPrepEntry";
-import {
-  isOverParReasonCategory,
-  type ManagerOption,
-  type OverParCapture,
-} from "@/components/opening/OverParModal";
-import {
-  isUnderParReasonCategory,
-  type UnderParCapture,
-} from "@/components/opening/UnderParModal";
+import type { ManagerOption } from "@/components/opening/OverParModal";
 
 interface OpeningClientProps {
   instance: ChecklistInstance;
@@ -137,7 +128,7 @@ interface OpeningClientProps {
    * loadOpeningState. Under dual-membership an openingPhase2 item carries TWO
    * live rows once Phase 2 saves exist — a phase1 row (prep_data ? 'phase1')
    * and a phase2 row (prep_data ? 'phase2'). The phase2Values seed filters to
-   * the phase2 rows ONLY (see readPhase2SaveState); the phase1 `values` seed
+   * the phase2 rows ONLY (see hydratePhase2Row); the phase1 `values` seed
    * reads no completions, so it can never pick up a phase2 row.
    */
   completions: ReadonlyArray<ChecklistCompletion>;
@@ -177,51 +168,6 @@ interface SubmitState {
 }
 
 /**
- * Shape of a persisted Phase 2 save, as written by save_phase2_item_atomic
- * (migration 0056) into completions.prep_data->'phase2'. snake_case mirrors the
- * RPC's jsonb_build_object exactly. NOT modeled by lib/types.ts PrepData (which
- * only covers the AM-Prep inputs/snapshot shape), so it's defined locally for
- * the hydration seed. Review Gate #1: this is the persisted-row → form-value
- * contract Triad A scrutinizes before Lane B.
- *
- * Forward-bind (Triad A, Review Gate #1): promote this to lib/types.ts as a
- * PrepData union arm ({ inputs, snapshot } | { phase2 }) when the verify-then-
- * prep primitive is designed — NOT now. Widening PrepData mid-build forces every
- * existing consumer to handle the new arm; local is correct for Lane A, the
- * promotion belongs to the primitive-design pass.
- */
-interface OpeningPhase2SaveState {
-  phase: 2;
-  closer_count: number | null;
-  spot_check_status: string | null;
-  opener_recount: number | null;
-  ground_truth_count: number | null;
-  prep_need: number | null;
-  opener_prepped: number | null;
-  delta_vs_prep_need: number | null;
-  over_under_status: "at_par" | "over_prep" | "under_prep";
-  over_under_reason_category: string | null;
-  over_under_reason_text: string | null;
-  directed_by: string | null;
-  saved_at: string;
-  saved_by: string;
-}
-
-/**
- * Explicit prep_data ? 'phase2' filter. Under dual-membership an openingPhase2
- * item carries a phase1 row AND a phase2 row once saves exist; this guard
- * returns non-null ONLY for the phase2 row, so the phase2Values seed can never
- * incidentally hydrate from a phase1 completion.
- */
-function readPhase2SaveState(prepData: unknown): OpeningPhase2SaveState | null {
-  if (prepData == null || typeof prepData !== "object") return null;
-  if (!("phase2" in prepData)) return null;
-  const p2 = (prepData as { phase2: unknown }).phase2;
-  if (p2 == null || typeof p2 !== "object") return null;
-  return p2 as OpeningPhase2SaveState;
-}
-
-/**
  * True when a completion is the Phase 2 (prep-beat) row of a dual-membership
  * item — i.e. its prep_data carries a 'phase2' sub-object. The Phase 1 `values`
  * seed (Finding D hydration) uses this to EXCLUDE phase2 rows: a spot-check
@@ -240,7 +186,7 @@ function isPhase2Row(prepData: unknown): boolean {
  * sub-object (the 8-key spot-check contract written by submit_opening_atomic,
  * migration 0053). Returns null when the completion carries no phase1 sub-object
  * — non-spot-check items store prep_data = null and never have a recount. Mirrors
- * readPhase2SaveState's untyped-boundary discipline: prep_data->phase1 is NOT
+ * the phase2 reader's untyped-boundary discipline: prep_data->phase1 is NOT
  * modeled by lib/types.ts PrepData, so it's read defensively here.
  */
 function readPhase1OpenerRecount(prepData: unknown): number | null {
@@ -293,115 +239,6 @@ function readPhase1Resolved(
     groundTruth: typeof gt === "number" ? gt : null,
     prepNeed: typeof pn === "number" ? pn : null,
   };
-}
-
-/**
- * Map a persisted phase2 save onto the controlled form value. The numeric beats
- * (openerRecount, openerPrepped) always hydrate. The over/under capture is
- * reconstructed from over_under_status, but the persisted reason category is an
- * UNTYPED text column — so it's validated at the boundary against the canonical
- * vocabulary (isOver/UnderParReasonCategory, derived from the modals' REASON_
- * OPTIONS). An unrecognized category does NOT get blind-cast in: the capture is
- * left null (forcing the operator to re-pick, since the numeric that triggered
- * over/under still hydrates) and a console.warn makes the bad value observable
- * rather than silently swallowed. (Review Gate #1 required fix.)
- */
-function saveStateToFormValue(
-  s: OpeningPhase2SaveState,
-  itemId: string,
-  /** 0215 — the row's whole prep_data, so the persisted batch object (phase2.batch) hydrates too. */
-  prepData?: unknown,
-): OpeningPhase2FormValue {
-  const batchRecord = prepData === undefined ? null : readBatchFromPrepData(prepData);
-  let overPar: OverParCapture | null = null;
-  if (s.over_under_status === "over_prep") {
-    const cat = s.over_under_reason_category;
-    if (cat != null && isOverParReasonCategory(cat)) {
-      overPar = {
-        reasonCategory: cat,
-        directedBy: s.directed_by,
-        freeText: s.over_under_reason_text,
-      };
-    } else if (process.env.NODE_ENV === "development") {
-      // Dev-only observability (projects F7): operators/managers should not see
-      // this hydration noise in DevTools during support calls.
-      console.warn(
-        `[opening] Phase 2 hydration: invalid over-par reasonCategory ${JSON.stringify(
-          cat,
-        )} on item ${itemId} (saved_at=${s.saved_at}); leaving capture unset for re-pick.`,
-      );
-    }
-  }
-
-  let underPar: UnderParCapture | null = null;
-  if (s.over_under_status === "under_prep") {
-    const cat = s.over_under_reason_category;
-    if (cat != null && isUnderParReasonCategory(cat)) {
-      underPar = {
-        reasonCategory: cat,
-        freeText: s.over_under_reason_text ?? "",
-      };
-    } else if (process.env.NODE_ENV === "development") {
-      // Dev-only observability (projects F7) — see the over-par branch above.
-      console.warn(
-        `[opening] Phase 2 hydration: invalid under-par reasonCategory ${JSON.stringify(
-          cat,
-        )} on item ${itemId} (saved_at=${s.saved_at}); leaving capture unset for re-pick.`,
-      );
-    }
-  }
-
-  return {
-    openerRecount: s.opener_recount,
-    openerPrepped: s.opener_prepped,
-    overPar,
-    underPar,
-    // Panel confirmation is not persisted into the phase2 completion's read-back
-    // shape (it lives on the productions ledger). A hydrated row starts untouched;
-    // the server re-derives the default on any subsequent blur-save.
-    confirmedConsumption: null,
-    batch: batchRecord ? batchFormFromRecord(batchRecord) : null,
-  };
-}
-
-/**
- * Serialize the persistable beats of a Phase 2 form value into a stable string
- * for value-diff dedup. Mirrors the /api/opening/prep/item route body shape
- * exactly: openerPrepped + the over/under captures, in the same field order the
- * route validates. openerRecount is intentionally EXCLUDED — recount is a
- * Phase 1 (verify-beat) concern, not in the route body, and a recount change
- * alone must not trigger a Phase 2 save. Used both to seed savedSignature from a
- * hydrated save and to compute the current signature at dispatch time, so the
- * two are computed by the identical code path and can be compared safely.
- */
-function phase2Signature(v: OpeningPhase2FormValue): string {
-  return JSON.stringify({
-    openerPrepped: v.openerPrepped,
-    overPar: v.overPar
-      ? {
-          reasonCategory: v.overPar.reasonCategory,
-          directedBy: v.overPar.directedBy,
-          freeText: v.overPar.freeText,
-        }
-      : null,
-    underPar: v.underPar
-      ? {
-          reasonCategory: v.underPar.reasonCategory,
-          freeText: v.underPar.freeText,
-        }
-      : null,
-    // Production-in-prep fold — MUST fold in the panel confirmation, else a
-    // panel-only edit (same openerPrepped/over/under) produces an identical
-    // signature and the value-diff guard silently skips the re-POST that would
-    // persist the confirmed consumption.
-    confirmedConsumption: v.confirmedConsumption,
-    // 0215 — the batch half rides the signature for the same reason (a stepper tap with
-    // the same bottled number must still POST). null on single-box rows, so their
-    // signature only gains a constant key.
-    batch: v.batch
-      ? { batches: v.batch.batches, cameOutTo: v.batch.cameOutTo, tossed: v.batch.tossed, overBatchReason: v.batch.overBatchReason }
-      : null,
-  });
 }
 
 export function OpeningClient({
@@ -577,27 +414,21 @@ export function OpeningClient({
   // Phase 2 form state — C.50 redesign: openerRecount replaces openerActual.
   // Hydrated from persisted phase2 completions so a returning prepper sees their
   // prior saves (Lane A). The seed filters completions to phase2 rows ONLY via
-  // readPhase2SaveState (explicit prep_data ? 'phase2' guard) — under dual-
+  // hydratePhase2Row (explicit prep_data ? 'phase2' guard) — under dual-
   // membership the same item also carries a phase1 row, which must never seed
   // this map. Items with no phase2 save start blank.
   const [phase2Values, setPhase2Values] = useState<Map<string, OpeningPhase2FormValue>>(() => {
-    const savedByItem = new Map<string, OpeningPhase2SaveState>();
-    const prepDataByItem = new Map<string, unknown>();
+    const hydratedByItem = new Map<string, HydratedPhase2Row>();
     for (const c of completions) {
-      const save = readPhase2SaveState(c.prepData);
-      if (save) {
-        savedByItem.set(c.templateItemId, save);
-        prepDataByItem.set(c.templateItemId, c.prepData);
-      }
+      const hydrated = hydratePhase2Row(c.prepData, c.templateItemId);
+      if (hydrated) hydratedByItem.set(c.templateItemId, hydrated);
     }
     const map = new Map<string, OpeningPhase2FormValue>();
     for (const item of phase2Items) {
-      const saved = savedByItem.get(item.id);
       map.set(
         item.id,
-        saved
-          ? saveStateToFormValue(saved, item.id, prepDataByItem.get(item.id))
-          : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null, confirmedConsumption: null, batch: null },
+        hydratedByItem.get(item.id)?.formValue
+          ?? { openerRecount: null, openerPrepped: null, overPar: null, underPar: null, confirmedConsumption: null, batch: null },
       );
     }
     return map;
@@ -672,32 +503,35 @@ export function OpeningClient({
   // `saveStates`) AND the finalize outstanding-count (savedPhase2Count /
   // outstandingCount below) — the badge and the finalize gate read the same Map
   // so they can never disagree. Seeded from the SAME phase2 completions the
-  // phase2Values hydration uses (readPhase2SaveState), so a returning prepper's
-  // already-persisted items render "saved" and don't inflate the outstanding
-  // count. Items with no persisted phase2 save start "unsaved".
+  // phase2Values hydration uses, THROUGH THE SAME hydratePhase2Row (audit W14 / B179: the
+  // saved signature used to be seeded by a second call that dropped the row's prep_data, so
+  // a batch row's signature said batch:null while its form value carried the batch object,
+  // and the first untouched blur re-saved the row under the second opener's name). A
+  // returning prepper's already-persisted items render "saved" and don't inflate the
+  // outstanding count. Items with no persisted phase2 save start "unsaved".
   const [saveStates, setSaveStates] = useState<Map<string, Phase2SaveState>>(() => {
-    const savedByItem = new Map<string, OpeningPhase2SaveState>();
+    const hydratedByItem = new Map<string, HydratedPhase2Row>();
     // completions.id of each live phase2 row, keyed by templateItemId — the
     // revoke POST target a returning prepper needs to revert an already-saved row.
     const idByItem = new Map<string, string>();
     for (const c of completions) {
-      const save = readPhase2SaveState(c.prepData);
-      if (save) {
-        savedByItem.set(c.templateItemId, save);
+      const hydrated = hydratePhase2Row(c.prepData, c.templateItemId);
+      if (hydrated) {
+        hydratedByItem.set(c.templateItemId, hydrated);
         idByItem.set(c.templateItemId, c.id);
       }
     }
     const map = new Map<string, Phase2SaveState>();
     for (const item of phase2Items) {
-      const saved = savedByItem.get(item.id);
-      if (saved) {
+      const hydrated = hydratedByItem.get(item.id);
+      if (hydrated) {
         map.set(item.id, {
           status: "saved",
-          savedById: saved.saved_by,
-          savedAt: saved.saved_at,
+          savedById: hydrated.save.saved_by,
+          savedAt: hydrated.save.saved_at,
           errorCode: null,
           incompleteReason: null,
-          savedSignature: phase2Signature(saveStateToFormValue(saved, item.id)),
+          savedSignature: hydrated.savedSignature,
           completionId: idByItem.get(item.id) ?? null,
         });
       } else {
@@ -1411,8 +1245,7 @@ export function OpeningClient({
         // would only race again — so this must never render as the red "failed"
         // badge. Instead the client ADOPTS the winner: its numbers go into
         // phase2Values and its attribution into saveStates, through the EXACT
-        // helpers the initial hydration uses (readPhase2SaveState →
-        // saveStateToFormValue → phase2Signature), so an adopted row is
+        // helper the initial hydration uses (hydratePhase2Row), so an adopted row is
         // indistinguishable from one loaded on a fresh page open — which is what
         // makes "showing the latest" true rather than a hopeful label. The status
         // is "saved" because a live head genuinely exists, so the finalize gate
@@ -1421,9 +1254,10 @@ export function OpeningClient({
         // rest of the server-rendered page).
         if (res.status === 409 && body.code === "phase2_save_conflict") {
           const winner = body.completion ?? null;
-          const winnerSave = winner ? readPhase2SaveState(winner.prepData) : null;
-          if (winnerSave) {
-            const adopted = saveStateToFormValue(winnerSave, templateItemId, winner?.prepData);
+          const hydrated = winner ? hydratePhase2Row(winner.prepData, templateItemId) : null;
+          if (hydrated) {
+            const adopted = hydrated.formValue;
+            const winnerSave = hydrated.save;
             setPhase2Values((prev) => {
               const updated = new Map(prev);
               updated.set(templateItemId, adopted);
@@ -1441,7 +1275,7 @@ export function OpeningClient({
                 // path computes it — so the prepper's next edit diffs against what
                 // is actually persisted, and a re-blur on the winner's own numbers
                 // correctly skips the round-trip.
-                savedSignature: phase2Signature(adopted),
+                savedSignature: hydrated.savedSignature,
                 completionId: winner?.id ?? null,
                 raceNotice: true,
               });
