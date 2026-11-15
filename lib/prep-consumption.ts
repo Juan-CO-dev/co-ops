@@ -21,8 +21,8 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
-  asOfForBusinessDate, assertScopeToken, levelsBySku, packsFromVersions, pickVersionsAsOf, resolvePackLevels, unitsPerPackForScope,
-  type PackPickWarning, type ResolvedPack, type ScopedLevelRow, type ScopedVersionRow, type VersionScope,
+  asOfForBusinessDate, assertScopeToken, levelsBySku, packsFromVersions, pickVersionsAsOf, resolvePackLevels, resolvePacksAtPoints, unitsPerPackForScope,
+  type PackPickWarning, type PackPoint, type ResolvedPack, type ScopedLevelRow, type ScopedVersionRow, type VersionScope,
 } from "@/lib/sku-versions-shared";
 import {
   mergeResolvedInputs, pickLiveShopRecipeVersions, pickRecipeVersionsAsOf, recipeLineReplacements, versionIdsNeedingLines,
@@ -171,6 +171,44 @@ async function loadSkuPackResolutionAsOf(skuIds: string[], scope: VersionScope, 
   // NAMED, never silent: a picked version with no loaded level is a data fault the log must show.
   for (const w of warnings) console.warn(`sku_pack_as_of_${w.code}`, { skuId: w.skuId, versionId: w.versionId, locationId: w.locationId, fellBackToVersionId: w.fellBackToVersionId, asOf });
   return packs;
+}
+
+/**
+ * The pack in force at MANY (SKU, shop, instant) points (W04 r1: each delivery line, at its shop, when it
+ * was written). Loads every version of these SKUs (all scopes) and exactly their levels once — paged and
+ * id-chunked — and picks per point through the one pure resolver. `versioned` names the SKUs that have
+ * any version, so a caller can tell "no pack in force then" from "never versioned (flat only)".
+ */
+export async function loadSkuPacksAtPoints(points: readonly PackPoint[]): Promise<{ packs: Map<string, ResolvedPack>; versioned: Set<string> }> {
+  const skuIds = [...new Set(points.map((p) => p.skuId))];
+  if (skuIds.length === 0) return { packs: new Map(), versioned: new Set() };
+  const sb = getServiceRoleClient();
+  const versions: ScopedVersionRow[] = [];
+  for (let i = 0; i < skuIds.length; i += ID_CHUNK) {
+    const chunk = skuIds.slice(i, i + ID_CHUNK);
+    versions.push(...await selectAllRows<ScopedVersionRow>(async (from, to) => {
+      const { data, error } = await sb.from("sku_pack_versions").select("id, sku_id, location_id, valid_from, valid_to, flat_snapshot")
+        .in("sku_id", chunk).order("id", { ascending: true }).range(from, to).returns<ScopedVersionRow[]>();
+      if (error) throw new Error(`loadSkuPacksAtPoints versions: ${error.message}`);
+      return { data };
+    }));
+  }
+  const versionIds = versions.filter((v) => !v.flat_snapshot).map((v) => v.id);
+  const levels: ScopedLevelRow[] = [];
+  for (let i = 0; i < versionIds.length; i += ID_CHUNK) {
+    const chunk = versionIds.slice(i, i + ID_CHUNK);
+    levels.push(...await selectAllRows<ScopedLevelRow>(async (from, to) => {
+      const { data, error } = await sb.from("sku_pack_levels").select(PACK_LEVEL_COLUMNS).in("version_id", chunk)
+        .order("display_ordinal", { ascending: true }).order("id", { ascending: true })
+        .range(from, to).returns<ScopedLevelRow[]>();
+      if (error) throw new Error(`loadSkuPacksAtPoints levels: ${error.message}`);
+      return { data };
+    }));
+  }
+  const warnings: PackPickWarning[] = [];
+  const packs = resolvePacksAtPoints(versions, levels, points, warnings);
+  for (const w of warnings) console.warn(`sku_pack_at_point_${w.code}`, { skuId: w.skuId, versionId: w.versionId, locationId: w.locationId, fellBackToVersionId: w.fellBackToVersionId });
+  return { packs, versioned: new Set(versions.map((v) => v.sku_id)) };
 }
 
 /** Chain levels per SKU for `scope` (the pre-0259 return shape); missing entry = no chain. */

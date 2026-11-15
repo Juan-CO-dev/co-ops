@@ -433,3 +433,54 @@ export function collapsedPriceNotice(rawPrice: string, hasQty: boolean): Collaps
 export function pricedLineCount(lines: ReadonlyArray<{ unitPrice: string }>): number {
   return lines.filter((l) => priceEntryState(l.unitPrice) === "ok").length;
 }
+
+/**
+ * Units of `to` inside ONE `from`, through a chain given in walk order (root → leaf):
+ * `labels[i]` holds `counts[i]` of `labels[i + 1]` (W04/B046). An empty label means the root
+ * pack (the legacy no-level rule). Null when either label is not on the chain or the counts
+ * do not describe it — never a guess.
+ */
+export function levelMultiplier(labels: readonly string[], counts: readonly number[], from: string, to: string): number | null {
+  if (labels.length === 0 || counts.length !== labels.length - 1) return null;
+  if (counts.some((n) => !Number.isFinite(n) || n <= 0)) return null;
+  const at = (label: string) => (label.trim() === "" ? 0 : labels.indexOf(label.trim()));
+  const i = at(from), j = at(to);
+  if (i < 0 || j < 0) return null;
+  let m = 1;
+  for (let k = Math.min(i, j); k < Math.max(i, j); k++) m *= counts[k]!;
+  return i <= j ? m : 1 / m;
+}
+
+/**
+ * The patch for a level change on a door row (W04/B046). A PO/template row's `expectedQty` is in
+ * the level it was seeded at, so switching cases → each must rescale it (2 cases → 24 each), or
+ * the short/over suggestion and the credit compare a case count to an each count. When the two
+ * levels cannot be converted, the expectation and any flag are cleared rather than left in the
+ * wrong unit.
+ */
+export function levelChangePatch(
+  line: { level: string; expectedQty: number | null; discrepancy: "short" | "over" | "damaged" | "substitution" | null },
+  nextLevel: string,
+  labels: readonly string[],
+  counts: readonly number[],
+): { level: string; expectedQty?: number | null; discrepancy?: null } {
+  if (line.expectedQty == null || nextLevel === line.level) return { level: nextLevel };
+  const m = levelMultiplier(labels, counts, line.level, nextLevel);
+  if (m == null) return { level: nextLevel, expectedQty: null, discrepancy: null };
+  return { level: nextLevel, expectedQty: Math.round(line.expectedQty * m * 1e6) / 1e6 };
+}
+
+/**
+ * A vendor line's price is per ROOT pack ("Price/pack"); a discrepancy on a line received at an
+ * inner level counts inner units, so its credit price is the root price over the units per root
+ * (W04/B046). A store line is already priced per level. Null when the level cannot be placed on
+ * the chain: the credit amount is then a judgment call, never a wrong number.
+ */
+export function creditUnitPrice(unitPrice: number | null, receivedLevel: string | null,
+  levels: PackChainLevel[] | null, rootLabel: string | null, store: boolean): number | null {
+  if (unitPrice == null || store) return unitPrice;
+  const label = receivedLevel?.trim() || null;
+  if (label == null) return unitPrice;
+  const perRoot = storeRootPackPrice(1, label, levels, rootLabel);
+  return perRoot == null || perRoot <= 0 ? null : unitPrice / perRoot;
+}
