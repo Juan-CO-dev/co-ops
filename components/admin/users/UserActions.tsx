@@ -37,7 +37,8 @@ import type { AdminUserListItem } from "@/lib/admin/users";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { effectiveScheduleRole } from "@/lib/scheduling/works-as-shared";
 import { hasPositionRank } from "@/lib/scheduling/position-rank-shared";
-import { postJson, resolveErrorKey, type LocationOption } from "./shared";
+import { postJson, postJsonData, resolveErrorKey, type LocationOption } from "./shared";
+import { emailSignInNotice, looksLikeEmail, type EmailConfirmOutcome } from "@/lib/admin/email-confirm-shared";
 import { UserPositionsDialog, type PositionShops } from "./UserPositions";
 import { EmploymentDialog, type EmploymentMode } from "./Employment";
 import { actStateOf, employmentActionsFor } from "@/lib/admin/employment-shared";
@@ -49,6 +50,7 @@ type ActiveAction =
   | { kind: "change_role" }
   | { kind: "change_locations" }
   | { kind: "edit_profile" }
+  | { kind: "confirm_email" }
   | { kind: "deactivate" }
   | { kind: "activate" }
   | { kind: "dormant" }
@@ -92,6 +94,9 @@ export function UserActions({
   const [role, setRole] = useState<RoleCode>(user.role);
   const [locs, setLocs] = useState<string[]>(user.locationIds);
   const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email ?? "");
+  /** The plain-words result of "Send confirmation email" (the dialog stays open to show it). */
+  const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
   const close = () => {
     setActive(null);
@@ -102,22 +107,37 @@ export function UserActions({
     setRole(user.role);
     setLocs(user.locationIds);
     setName(user.name);
+    setEmail(user.email ?? "");
+    setInfoMsg(null);
   };
 
-  const run = async (tier: "A" | "B", url: string, body: unknown, method: "POST" | "PATCH" = "POST") => {
+  // ONE lane for every action here (the step-up tier map pins it): the tier's prompt, then the write. `onAnswer`
+  // (POST only) keeps the dialog open and hands the answer back instead of closing — "Send confirmation email"
+  // uses it to say what actually happened.
+  const run = async (tier: "A" | "B", url: string, body: unknown, method: "POST" | "PATCH" = "POST", onAnswer?: (data: unknown) => void) => {
     if (submitting) return;
     setErrorMsg(null);
     const stepUp = await requestStepUp(tier);
     if (stepUp !== "ok") return;
     setSubmitting(true);
-    const result = await postJson(url, body, method);
+    const result = onAnswer ? await postJsonData<unknown>(url, body) : await postJson(url, body, method);
     setSubmitting(false);
-    if (result.ok) {
-      close();
+    if (!result.ok) {
+      setErrorMsg(t(resolveErrorKey(result.code)));
+    } else if (onAnswer) {
+      onAnswer("data" in result ? result.data : null);
       router.refresh();
     } else {
-      setErrorMsg(t(resolveErrorKey(result.code)));
+      close();
+      router.refresh();
     }
+  };
+
+  // "Send confirmation email" (audit W07 B053): the server answers with an OUTCOME — only "sent" means an email
+  // left; "suppressed" means the owner's staff-email switches are closed and nothing was issued or sent.
+  const showEmailConfirmAnswer = (data: unknown) => {
+    const outcome = (data as { outcome?: EmailConfirmOutcome } | null)?.outcome ?? "not_needed";
+    setInfoMsg(t(`admin.users.email_confirm.${outcome}` as TranslationKey));
   };
 
   const base = `/api/admin/users/${user.id}`;
@@ -136,6 +156,9 @@ export function UserActions({
       <ActionButton label={t("admin.users.action.change_role")} onClick={() => setActive({ kind: "change_role" })} />
       <ActionButton label={t("admin.users.action.change_locations")} onClick={() => setActive({ kind: "change_locations" })} />
       <ActionButton label={t("admin.users.edit.profile")} onClick={() => setActive({ kind: "edit_profile" })} />
+      {emailSignInNotice(user) === "unconfirmed" ? (
+        <ActionButton label={t("admin.users.action.confirm_email")} onClick={() => setActive({ kind: "confirm_email" })} />
+      ) : null}
       {user.active ? (
         <ActionButton label={t("admin.users.action.deactivate")} onClick={() => setActive({ kind: "deactivate" })} />
       ) : employed ? (
@@ -267,6 +290,23 @@ export function UserActions({
                   />
                 </label>
               ) : null}
+              {/* The email is what manager sign-in uses; a promoted manager needs one before they can confirm it (B053). */}
+              {active.kind === "edit_profile" ? (
+                <label className="block">
+                  <span className="text-sm font-bold text-co-text">{t("admin.users.create.field.email")}</span>
+                  <input
+                    type="email"
+                    autoComplete="off"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+                  />
+                  <span className="mt-1 block text-[11px] text-co-text-muted">{t("admin.users.create.field.email_help")}</span>
+                </label>
+              ) : null}
+              {active.kind === "confirm_email" ? (
+                <p className="text-sm text-co-text">{infoMsg ?? t("admin.users.confirm.confirm_email")}</p>
+              ) : null}
 
               {active.kind === "deactivate" ? (
                 <p className="text-sm text-co-text">{t("admin.users.confirm.deactivate")}</p>
@@ -288,18 +328,24 @@ export function UserActions({
                 disabled={submitting}
                 className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {t("admin.users.cancel")}
+                {infoMsg ? t("admin.users.close") : t("admin.users.cancel")}
               </button>
-              <button
+              {infoMsg ? null : <button
                 type="button"
                 disabled={submitting}
                 onClick={() => {
                   const a = active;
+                  if (a.kind === "confirm_email") { void run("B", `${base}/confirm-email`, {}, "POST", showEmailConfirmAnswer); return; }
+                  // Edit profile sends the email only when it changed (an email change signs the person out and retires their links).
+                  const nextEmail = email.trim().toLowerCase();
+                  const emailChanged = nextEmail !== (user.email ?? "").trim().toLowerCase();
+                  if (a.kind === "edit_profile" && emailChanged && nextEmail !== "" && !looksLikeEmail(nextEmail)) { setErrorMsg(t("admin.users.error.invalid_payload")); return; }
+                  const profilePatch = { name: name.trim(), ...(emailChanged ? { email: nextEmail === "" ? null : nextEmail } : {}) };
                   if (a.kind === "reset_pin") void run("B", `${base}/reset-pin`, { pin });
                   else if (a.kind === "set_password") void run("B", `${base}/set-password`, { password });
                   else if (a.kind === "change_role") void run("B", `${base}/role`, { role });
                   else if (a.kind === "change_locations") void run("B", `${base}/locations`, { locationIds: locs });
-                  else if (a.kind === "edit_profile") void run("B", base, { name: name.trim() }, "PATCH");
+                  else if (a.kind === "edit_profile") void run("B", base, profilePatch, "PATCH");
                   else if (a.kind === "deactivate") void run("B", `${base}/deactivate`, {});
                   else if (a.kind === "dormant" || a.kind === "wake") void run("B", `${base}/${a.kind}`, {});
                   else if (a.kind === "activate") void run("B", `${base}/activate`, {});
@@ -307,7 +353,7 @@ export function UserActions({
                 className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {t("admin.users.confirm")}
-              </button>
+              </button>}
             </div>
           </div>
         </div>

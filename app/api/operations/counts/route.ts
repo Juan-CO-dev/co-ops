@@ -3,7 +3,8 @@ import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
-import { verifyActorPin } from "@/lib/auth-flows";
+import { reauthLockedResponse } from "@/lib/auth-reauth";
+import { verifyActorPinForSession } from "@/lib/auth-reauth-pin";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { createCountEvent, CountError, COUNT_WRITE_MIN, type CreateCountEventInput } from "@/lib/counts";
 import type { CountLineEntry } from "@/lib/counts-shared";
@@ -22,7 +23,10 @@ export async function POST(req: NextRequest) {
   const b = parsed as Record<string, unknown>;
   if (ROLES[ctx.user.role].level < 6) {
     if (typeof b.pin !== "string") return jsonError(400, "invalid_payload", { field: "pin" });
-    if (!(await verifyActorPin(ctx.user.id, b.pin))) return jsonError(401, "pin_invalid");
+    // Counted per session (audit W07 B159): five wrong PINs in a row sign this device out; the account is not locked.
+    const pinCheck = await verifyActorPinForSession(ctx.session.id, ctx.user.id, b.pin);
+    if (pinCheck === "signed_out") return reauthLockedResponse();
+    if (pinCheck !== "ok") return jsonError(401, "pin_invalid");
   } else {
     const su = assertStepUp(ctx, "A");
     if (!su.ok) return jsonError(403, su.code);

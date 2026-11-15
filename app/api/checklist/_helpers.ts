@@ -13,7 +13,8 @@
  *       empty_batch, completion_not_found, completion_wrong_instance,
  *       completion_wrong_author, invalid_picker_candidate,
  *       revocation_note_required, use_quick_revoke
- *   401 pin_mismatch            — confirmation PIN didn't match (no lockout)
+ *   401 pin_mismatch            — confirmation PIN didn't match
+ *   401 reauth_locked           — five wrong confirmation PINs in a row: the session was signed out (W07 B159)
  *   403 role_level_insufficient — actor's role level too low for the op
  *       not_self                — silent revoke attempted on someone else's row
  *       tag_hierarchy_violation — KH attempting to override AGM tag, etc.
@@ -40,6 +41,7 @@ import {
   ChecklistInvalidPhotoError,
   ChecklistInvalidAnswerError,
   ChecklistPinMismatchError,
+  ChecklistReauthLockedError,
   ChecklistMissingReasonError,
   ChecklistExtraReasonError,
   ChecklistBlankReasonError,
@@ -57,6 +59,7 @@ import {
   ChecklistFinalizeGateError,
 } from "@/lib/checklists";
 import { jsonError } from "@/lib/api-helpers";
+import { reauthLockedResponse } from "@/lib/auth-reauth";
 import type { NextResponse } from "next/server";
 
 export function mapChecklistError(err: ChecklistError): NextResponse {
@@ -112,6 +115,8 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
   if (err instanceof ChecklistPinMismatchError) {
     return jsonError(401, err.code, { message: err.message });
   }
+  // Audit W07 B159: five wrong confirmation PINs in a row signed the session out — 401, cookie cleared.
+  if (err instanceof ChecklistReauthLockedError) return reauthLockedResponse();
   if (err instanceof ChecklistMissingReasonError) {
     return jsonError(400, err.code, {
       message: err.message,

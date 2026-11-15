@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({ reader: {} as SupabaseClient, writer: {} as Su
 vi.mock("@/lib/supabase-server", () => ({ createAuthedClient: () => mocks.reader, getServiceRoleClient: () => mocks.writer }));
 vi.mock("@/lib/auth", () => ({ verifyPin: mocks.pin }));
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
+// The per-session re-check counter (audit W07 B159) is not what this file tests: every re-check is allowed.
+vi.mock("@/lib/auth-reauth", async () => (await import("./helpers/reauth-mock")).reauthAllowAll());
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: mocks.access, auditTaskOverride: vi.fn() }));
 vi.mock("@/lib/session", () => ({ SESSION_COOKIE_NAME: "co_session", requireSession: async () => ({
   user: { id: "actor" }, session: { id: "session", userId: "actor" }, role: "owner", level: 9, locations: ["spoof-shop"],

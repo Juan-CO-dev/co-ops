@@ -14,6 +14,8 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.db.clien
 vi.mock("@/lib/session", async (orig) => ({ ...(await orig<typeof import("@/lib/session")>()), requireSession: h.session }));
 vi.mock("@/lib/auth", () => ({ verifyPassword: async () => true }));
 vi.mock("@/lib/auth-flows", () => ({ upgradeLegacyPasswordHash: async () => undefined }));
+// The per-session re-check counter (audit W07 B159) is not what this file tests: every re-check is allowed.
+vi.mock("@/lib/auth-reauth", async () => (await import("./helpers/reauth-mock")).reauthAllowAll());
 
 import { POST } from "@/app/api/auth/step-up/route";
 import { audit, auditChecked } from "@/lib/audit";
