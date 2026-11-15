@@ -39,15 +39,15 @@ export function LogoutButton({ sessionId }: LogoutButtonProps = {}) {
 
   return (
     <>
-    {submitting ? <SigningOutOverlay /> : null}
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={submitting}
-      className={actionButtonClass("secondary")}
-    >
-      {submitting ? t("auth.logout.submitting") : t("auth.logout.label")}
-    </button>
+      {submitting ? <SigningOutOverlay /> : null}
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={submitting}
+        className={actionButtonClass("secondary")}
+      >
+        {submitting ? t("auth.logout.submitting") : t("auth.logout.label")}
+      </button>
     </>
   );
 }
