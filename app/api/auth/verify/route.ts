@@ -30,7 +30,7 @@ import { recordSuccessfulAuth } from "@/lib/auth-flows";
 import { applySessionCookie, revokeAllUserSessions } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
-import type { RoleCode } from "@/lib/roles";
+import { ROLES, isRoleCode, type RoleCode } from "@/lib/roles";
 
 interface VerifyBody {
   token: string;
@@ -122,6 +122,28 @@ export async function POST(req: NextRequest) {
       resourceTable: "email_verifications",
       resourceId: row.id,
       metadata: { context: "verify", expires_at: row.expires_at },
+      ipAddress,
+      userAgent,
+    });
+    return invalidTokenResponse();
+  }
+
+  // 2b. The link is for MANAGER sign-in (audit W07 B053: links are issued only to a level-6+ person, by 0307's
+  // auth_email_confirm_issue). If the person was moved out of a manager role after the email went out, the link
+  // must not set a password or sign anyone in. Same constant answer; the link is left unconsumed.
+  const { data: holder } = await sb
+    .from("users")
+    .select("role")
+    .eq("id", row.user_id)
+    .maybeSingle<{ role: string }>();
+  if (!holder || !isRoleCode(holder.role) || !ROLES[holder.role].hasEmailAuth) {
+    await audit({
+      actorId: row.user_id,
+      actorRole: null,
+      action: "auth_token_invalid",
+      resourceTable: "email_verifications",
+      resourceId: row.id,
+      metadata: { context: "verify", reason: "role_not_email_auth" },
       ipAddress,
       userAgent,
     });

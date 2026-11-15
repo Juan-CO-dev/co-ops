@@ -6,7 +6,11 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, passwordResetConsumeCall, reserveAttemptCall } from "@/lib/auth-lockout-shared";
+import {
+  FAILURE_LIMIT, LOCKOUT_MINUTES, createSessionCall, emailConfirmIssueCall, passwordResetConsumeCall, reserveAttemptCall,
+} from "@/lib/auth-lockout-shared";
+import { EMAIL_CONFIRM_RPC_ERRORS } from "@/lib/admin/email-confirm-shared";
+import { ROLES } from "@/lib/roles";
 import { setUserCredentialCall, updateUserProfileCall } from "@/lib/admin/user-admin-rpc-shared";
 import { applyMods, extractFunction, normalize, type Mod } from "../scripts/shop-versions/reemit-mods";
 
@@ -52,6 +56,8 @@ const REEMITS: Record<string, readonly Mod[]> = {
         "    -- 0307 B052: a reset link mailed to the OLD address must not set the password of the account at the new one.",
         "    update public.password_resets set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;",
         "    get diagnostics v_retired = row_count;",
+        "    -- 0307 B053: nor may a \"confirm your email\" link mailed to the old address confirm the new one.",
+        "    update public.email_verifications set consumed_at = clock_timestamp() where user_id = p_user and consumed_at is null;",
         "",
       ].join("\n"),
     ],
@@ -116,6 +122,18 @@ describe("0307_auth_lockout_reset_hardening", () => {
       "B052 an email change retires the person's open reset links; a name-only edit and another person's link are untouched",
       "B052 the old address's link can no longer set the password → token_consumed",
       "B052 a taken email is still refused and retires nothing → email_taken",
+      "S1 auth_email_confirm_issue: SECURITY DEFINER, search_path pinned, service_role only",
+      "B053 the backfill vouches exactly the stranded level-6+ rows (an email on file, any active state), nobody below 6, nobody without an email",
+      "B053 the backfill writes ONE destructive audit row (actor_context migration_apply) naming the ids it vouched",
+      "B053 with nobody stranded the backfill writes no audit row",
+      "B053 (the bug) promotion shift_lead → agm leaves email_verified false: manager sign-in is refused",
+      "B053 promotion shift_lead→agm of a person with an email → one open confirmation link, the address returned lowercased",
+      "B053 a resend retires the older link: one live link at a time",
+      "B053 an email change retires the confirmation link mailed to the old address",
+      "B053 a confirmed email gets no further link → email_already_confirmed",
+      "B053 a GM cannot send a link to a manager at a shop they do not manage → target_outside_shop",
+      "B053 an AGM cannot send a link (GM and up only) → forbidden",
+      "B053 anything but a sha-256 hex digest is refused (never a raw token) → invalid_payload",
       "PASS 0307:",
     ]) expect(out, s).toContain(s);
   }, 260_000);
@@ -168,6 +186,8 @@ describe("0307_auth_lockout_reset_hardening", () => {
     // the re-emitted 0279 writer keeps the arguments lib/admin/user-admin-rpc-shared.ts sends
     const cred = setUserCredentialCall({ actorId: "a", userId: "u", kind: "pin", hash: "h" });
     expect(Object.keys(cred.args)).toEqual(sqlParams(`create or replace function public.${cred.fn}(`));
+    const issue = emailConfirmIssueCall({ actorId: "a", userId: "u", tokenHash: "h", expiresAt: "e" });
+    expect(Object.keys(issue.args)).toEqual(sqlParams(`create function public.${issue.fn}(`));
     const profile = updateUserProfileCall({ actorId: "a", userId: "u", patch: {} });
     expect(Object.keys(profile.args)).toEqual(sqlParams(`create or replace function public.${profile.fn}(`));
   });
@@ -182,6 +202,43 @@ describe("0307_auth_lockout_reset_hardening", () => {
       expect(gate, name).toBeGreaterThan(-1);
       expect(firstWrite, name).toBeGreaterThan(gate);
       expect(shipped, name).not.toMatch(/pg_advisory_xact_lock|for update/);
+    }
+  });
+
+  it("B053 the issuer sits behind the ONE gate, stores a hash, keeps one live link, and its level floor is hasEmailAuth's", () => {
+    const fn = fnBody("create function public.auth_email_confirm_issue(");
+    const order = [
+      "p_token_hash !~ '^[0-9a-f]{64}$'",
+      "v_ctx := public.user_admin_lock(p_actor, p_user);",
+      "raise exception 'email_confirm_not_available'",
+      "raise exception 'email_required'",
+      "raise exception 'email_already_confirmed'",
+      "update public.email_verifications set consumed_at = v_now where user_id = p_user and consumed_at is null;",
+      "insert into public.email_verifications (user_id, token_hash, expires_at)",
+    ].map((s) => fn.indexOf(s));
+    expect(order.every((i) => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(fn).not.toMatch(/pg_advisory_xact_lock|for update/); // the gate holds the locks; no lock of its own
+    // the SQL floor (< 6 refused) is exactly lib/roles.ts hasEmailAuth
+    expect(fn).toContain("coalesce((v_ctx ->> 'target_level')::integer, 0) < 6");
+    for (const r of Object.values(ROLES)) expect(r.hasEmailAuth, r.code).toBe(r.level >= 6);
+    // every named refusal the lib maps is raised by the function
+    for (const code of Object.keys(EMAIL_CONFIRM_RPC_ERRORS)) expect(fn, code).toContain(`raise exception '${code}'`);
+  });
+
+  it("B053 the backfill vouches level-6+ people with an email only, writes its own audit row, and is checked after apply", () => {
+    const start = src.indexOf("-- ── 8. EXISTING ROWS");
+    const block = src.slice(start, src.indexOf("-- ── POST-APPLY", start));
+    expect(block).toContain("update public.users set email_verified = true, email_verified_at = clock_timestamp()");
+    expect(block).toContain("where not coalesce(email_verified, false) and email is not null and btrim(email) <> ''");
+    expect(block).toContain("and coalesce(public.user_admin_role_level(role), 0) >= 6");
+    expect(block).not.toMatch(/\bactive\b\s*(=|is)/); // deliberately not filtered on active
+    expect(block).toContain("'user.email_vouch_backfill', 'users', null, true,");
+    expect(block).toContain("'actor_context', 'migration_apply'");
+    expect(src).toContain("raise exception '0307: the B053 backfill left an unverified level-6+ email';");
+    // no function in this file sets email_verified: a promoted manager is confirmed only by using their link
+    for (const name of ["admin_user_set_credential", "admin_user_update_profile", "auth_email_confirm_issue"]) {
+      expect(fnBody(`function public.${name}(`), name).not.toContain("email_verified = true");
     }
   });
 

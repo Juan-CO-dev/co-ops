@@ -624,7 +624,8 @@ export async function clearStepUp(sessionId: string): Promise<void> {
  */
 export function applySessionCookie(
   res: NextResponse,
-  session: CreateSessionResult,
+  // Only what the cookie needs: a caller holding a cookie spec (tests, the legacy path) need not know how it was minted.
+  session: Pick<CreateSessionResult, "cookieName" | "jwt" | "cookieMaxAgeSeconds">,
 ): NextResponse {
   res.cookies.set(session.cookieName, session.jwt, cookieOptions(session.cookieMaxAgeSeconds));
   return res;
