@@ -6,13 +6,16 @@
  * A shop's credentials resolve per shop, with a shared default (lib/stripe/client.ts): the
  * account a shop takes NEW money through can change — an override is added, replaced or
  * removed. A Checkout Session opened before the change lives on in the OLD account, open and
- * payable. Stripe scopes a secret key to its own account's objects ("Stripe uses API keys to
+ * payable. A secret key reaches its own account's objects ("Stripe uses API keys to
  * authenticate requests from your integration and determine which Stripe resources it can
- * access" — docs.stripe.com/keys; requests are per account, docs.stripe.com/connect/
- * authentication), so the NEW account's key answers 404 for that session ("404 Not Found:
- * The requested resource doesn't exist" — docs.stripe.com/api/errors). That 404 was read as
- * "expired": the id was cleared from its row and a second checkout was opened beside a
- * first that anyone holding its link could still pay.
+ * access" — docs.stripe.com/keys; a request acts on the key's own account unless a
+ * `Stripe-Account` header names a connected one — docs.stripe.com/connect/authentication —
+ * and this codebase sends none), so the NEW account's key is answered 404 for that session
+ * ("404 Not Found: The requested resource doesn't exist" — docs.stripe.com/api/errors).
+ * WHAT IS NOT ASSUMED: the docs do not spell out the status for "another account's object",
+ * and nothing here depends on it — the rule below is only that a 404 proves nothing. That
+ * 404 was read as "expired": the id was cleared from its row and a second checkout was
+ * opened beside a first that anyone holding its link could still pay.
  *
  * ── THE RULE ─────────────────────────────────────────────────────────────────────────
  * A 404 MEANS "THIS KEY CANNOT SEE IT". ONLY AN ACCOUNT THAT KNOWS A SESSION CAN SAY IT IS
