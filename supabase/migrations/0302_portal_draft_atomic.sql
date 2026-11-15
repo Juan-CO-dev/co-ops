@@ -29,12 +29,19 @@
 --       committed between the server's read and this lock) → flip to 'submitted' with the snapshot and
 --       expiry → the napkins line (when chosen) → the deposit 'due' payment intent (the 0130 partial
 --       unique index makes it at most one) → the lead's dietary notes (when sent). All or nothing.
+--       DELIVERY (Juan's ruling 2026-11-15): before the flip, a delivery order is re-priced against the
+--       shop's active zones as they are UNDER THE LOCK (the zone rows are read FOR SHARE, so a fee edit
+--       waits for this submit): no active zone → `delivery_unavailable` (never free); the snapshot
+--       must carry the MOST EXPENSIVE active zone (ties: the higher minimum, then the lower id — the
+--       app's resolvePortalDeliveryZone) and its fee, else `delivery_changed`; the snapshot subtotal
+--       must reach that zone's min_order_cents, else `below_delivery_minimum`. A pickup must carry no
+--       zone and no fee, and the snapshot's is_delivery must be the draft's own (else invalid_snapshot).
 --   Every price is still decided in the app (D20 server price authority, lib/portal/draft.ts); the SQL
 --   re-checks the arithmetic it can see: the snapshot's subtotal must equal the lines it writes.
 --
 -- REFUSALS (raise exception <code>; lib/portal/draft.ts maps each): not_found · not_draft ·
 --   invalid_lines · invalid_snapshot · invalid_napkins · invalid_notes · invalid_rev · empty_cart ·
---   cart_changed · subtotal_mismatch.
+--   cart_changed · subtotal_mismatch · delivery_unavailable · delivery_changed · below_delivery_minimum.
 --
 -- SCHEMA: two nullable columns on catering_quotes, portal_rev_epoch text + portal_rev_seq bigint
 --   (both null or both set, CHECK): the last edit revision the cart writer stored. Existing rows stay
@@ -53,7 +60,8 @@
 --
 -- DEPENDS ON: 0120 (quotes, items), 0127 (status 'submitted', origin, catering_payments), 0128
 --   (portion), 0129 (pipeline intake columns incl. dietary_notes), 0130 (catering_payments_one_due),
---   0143 (size_id), 0144 (catering_quote_item_options), 0251/0252 (line_kind, components_listed).
+--   0143 (size_id), 0144 (catering_quote_item_options), 0251/0252 (line_kind, components_listed),
+--   0117 (catering_delivery_zones: location_id, fee_cents, min_order_cents, active).
 --
 -- PROOF: scripts/sql-harness-0302.mjs (PGlite, the real parent DDL + this file, synthetic rows),
 --   CI-pinned by tests/portal-draft-atomic-migration.test.ts. The two-session serialization is the
@@ -92,6 +100,11 @@ begin
   foreach v_col in array array['quote_id','customer_id','kind','amount_cents','status','created_by'] loop
     if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'catering_payments' and column_name = v_col) then
       v_missing := v_missing || ('catering_payments.' || v_col);
+    end if;
+  end loop;
+  foreach v_col in array array['id','location_id','fee_cents','min_order_cents','active'] loop
+    if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'catering_delivery_zones' and column_name = v_col) then
+      v_missing := v_missing || ('catering_delivery_zones.' || v_col);
     end if;
   end loop;
   if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'catering_pipeline' and column_name = 'dietary_notes') then
@@ -192,7 +205,7 @@ create function public.portal_draft_submit(p_customer_id uuid, p_quote_id uuid, 
   p_napkins jsonb, p_expires_at timestamptz, p_set_dietary_notes boolean, p_dietary_notes text)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
-  q record; v_current jsonb; v_expected jsonb; v_count integer; v_sum bigint; v_payment uuid;
+  q record; z record; v_current jsonb; v_expected jsonb; v_count integer; v_sum bigint; v_payment uuid;
 begin
   if p_customer_id is null or p_quote_id is null then raise exception 'not_found'; end if;
   if p_expected_lines is null or jsonb_typeof(p_expected_lines) <> 'array' then raise exception 'invalid_lines'; end if;
@@ -205,7 +218,7 @@ begin
   if p_set_dietary_notes is null or (p_dietary_notes is not null and length(p_dietary_notes) > 2000) then raise exception 'invalid_notes'; end if;
 
   -- THE lock (shared with portal_draft_set_lines): the draft's quote row.
-  select id, customer_id, status, superseded_at, pipeline_id into q from public.catering_quotes where id = p_quote_id for update;
+  select id, customer_id, status, superseded_at, pipeline_id, location_id, is_delivery into q from public.catering_quotes where id = p_quote_id for update;
   if not found or q.customer_id is distinct from p_customer_id then raise exception 'not_found'; end if;
   if q.status <> 'draft' or q.superseded_at is not null then raise exception 'not_draft'; end if;
 
@@ -220,6 +233,25 @@ begin
   if v_current is distinct from v_expected then raise exception 'cart_changed'; end if;
   if v_sum + coalesce((p_napkins->>'unit_price_cents')::bigint, 0) <> (p_snapshot->>'subtotal_cents')::bigint then
     raise exception 'subtotal_mismatch';
+  end if;
+
+  -- Delivery (Juan 2026-11-15): never free, never the cheaper zone, never under the minimum.
+  if (p_snapshot->>'is_delivery')::boolean is distinct from q.is_delivery then raise exception 'invalid_snapshot'; end if;
+  if q.is_delivery then
+    perform 1 from public.catering_delivery_zones where location_id = q.location_id and active for share;
+    select id, fee_cents, min_order_cents into z from public.catering_delivery_zones
+     where location_id = q.location_id and active
+     order by fee_cents desc, coalesce(min_order_cents, -1) desc, id asc limit 1;
+    if not found then raise exception 'delivery_unavailable'; end if;
+    if (p_snapshot->>'delivery_zone_id') is distinct from z.id::text
+       or (p_snapshot->>'delivery_fee_cents')::integer is distinct from z.fee_cents then
+      raise exception 'delivery_changed';
+    end if;
+    if z.min_order_cents is not null and (p_snapshot->>'subtotal_cents')::bigint < z.min_order_cents then
+      raise exception 'below_delivery_minimum';
+    end if;
+  elsif jsonb_typeof(p_snapshot->'delivery_zone_id') <> 'null' or (p_snapshot->>'delivery_fee_cents')::integer <> 0 then
+    raise exception 'invalid_snapshot';
   end if;
 
   update public.catering_quotes set

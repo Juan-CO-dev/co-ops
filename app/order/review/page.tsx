@@ -22,7 +22,7 @@ import { FAQ, GTK } from "@/components/portal/portal-content";
 import type { DraftLoad } from "@/lib/portal/draft";
 import type { ChargeStack } from "@/lib/catering/quotes";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
-import { reviewFailure } from "@/lib/portal/draft-shared";
+import { reviewFailure, type PortalDeliveryInfo } from "@/lib/portal/draft-shared";
 
 // ── Tip presets ──────────────────────────────────────────────────────────────────────
 const TIP_PRESETS = [0, 0.15, 0.18, 0.2] as const;
@@ -87,6 +87,9 @@ function OrderReview() {
 
   const [draft, setDraft] = useState<DraftLoad | null>(null);
   const [stack, setStack] = useState<ChargeStack | null>(null);
+  // Delivery as the server priced it (Juan 2026-11-15): the fee, the zone's minimum, and whether the
+  // order can be placed as it stands. Null until the first preview (or on a pre-change server).
+  const [delivery, setDelivery] = useState<PortalDeliveryInfo | null>(null);
   const [tipRate, setTipRate] = useState<TipRate>(0);
   const [napkins, setNapkins] = useState(false);
   // The order's allergy / special-instructions note — the lead's dietary_notes, saved with the submit
@@ -169,8 +172,8 @@ function OrderReview() {
           if (!ac.signal.aborted) fail(res.status, code);
           return;
         }
-        const json = (await res.json()) as { ok: boolean; stack: ChargeStack };
-        if (!ac.signal.aborted) { hasStack.current = true; setStack(json.stack); }
+        const json = (await res.json()) as { ok: boolean; stack: ChargeStack; delivery?: PortalDeliveryInfo };
+        if (!ac.signal.aborted) { hasStack.current = true; setStack(json.stack); setDelivery(json.delivery ?? null); }
       } catch (e) {
         // AbortError is expected on rapid tip/napkins changes — silently ignore.
         if (e instanceof DOMException && e.name === "AbortError") return;
@@ -204,6 +207,14 @@ function OrderReview() {
       const action = reviewFailure(res.status, json.error ?? null, true);
       if (action === "go_to_quote") { router.replace(`/order/quote/${encodeURIComponent(draft.quoteId)}`); return; }
       if (action === "cart_changed" || action === "session_expired") { setBlocked(action); setSubmitting(false); return; }
+      if (action === "delivery_unavailable") { setSubmitError(t("order.review.delivery_unavailable")); setSubmitting(false); return; }
+      if (action === "below_delivery_minimum") {
+        setSubmitError(delivery?.minOrderCents != null
+          ? t("order.review.delivery_minimum_short", { min: centsToMoney(delivery.minOrderCents), short: centsToMoney(Math.max(delivery.shortByCents, 1)) })
+          : t("order.review.delivery_minimum_generic"));
+        setSubmitting(false);
+        return;
+      }
       setSubmitError(t("order.review.submit_failed"));
       setSubmitting(false);
     } catch {
@@ -257,6 +268,12 @@ function OrderReview() {
   const lead = draft.lead;
   const isDelivery = draft.isDelivery;
   const isCompany = !!(lead?.company?.trim());
+  // A delivery order the server would refuse (no zone, under the minimum): say why, and hold Submit.
+  const deliveryBlock: string | null = delivery?.refusal === "delivery_unavailable"
+    ? t("order.review.delivery_unavailable")
+    : delivery?.refusal === "below_delivery_minimum" && delivery.minOrderCents != null
+      ? t("order.review.delivery_minimum_short", { min: centsToMoney(delivery.minOrderCents), short: centsToMoney(delivery.shortByCents) })
+      : null;
 
   return (
     <div className="min-h-screen bg-co-bg pb-32 text-co-text">
@@ -435,9 +452,12 @@ function OrderReview() {
               <Row label="Service charge (kitchen & packing)" value={centsToMoney(stack.serviceChargeCents)} muted />
               <Row
                 label={isDelivery ? "Delivery" : "Pickup"}
-                value={stack.deliveryFeeCents > 0 ? centsToMoney(stack.deliveryFeeCents) : "Free"}
+                value={stack.deliveryFeeCents > 0 ? centsToMoney(stack.deliveryFeeCents) : isDelivery && delivery?.refusal === "delivery_unavailable" ? "—" : "Free"}
                 muted
               />
+              {isDelivery && delivery?.minOrderCents != null && (
+                <p className="-mt-1 text-xs text-co-text-dim">{t("order.review.delivery_minimum", { min: centsToMoney(delivery.minOrderCents) })}</p>
+              )}
               {stack.gratuityCents > 0 && <Row label="Tip for the crew" value={centsToMoney(stack.gratuityCents)} muted />}
               <Row label="Estimated DC tax" value={centsToMoney(stack.taxCents)} muted />
               <div className="mt-1.5 flex items-center justify-between border-t border-co-border pt-3">
@@ -504,6 +524,14 @@ function OrderReview() {
       {/* Sticky place-order bar — the one click that completes the order */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-co-border bg-co-bg/95 px-5 py-3.5 backdrop-blur">
         <div className="mx-auto flex max-w-2xl flex-col gap-2">
+          {deliveryBlock && !submitError && (
+            <p role="alert" className="text-center text-xs font-semibold text-co-cta-text">
+              {deliveryBlock}{" "}
+              {delivery?.refusal === "below_delivery_minimum" && (
+                <Link href={`/order/build?draft=${encodeURIComponent(draft.quoteId)}`} className="inline-flex min-h-[44px] items-center underline">{t("order.review.edit_order")}</Link>
+              )}
+            </p>
+          )}
           {submitError && (
             <p className="text-center text-xs font-semibold text-red-600">{submitError}</p>
           )}
@@ -520,7 +548,7 @@ function OrderReview() {
             <button
               type="button"
               onClick={() => { void handleComplete(); }}
-              disabled={submitting}
+              disabled={submitting || deliveryBlock != null}
               className="inline-flex min-h-[54px] flex-1 items-center justify-center rounded-full bg-co-text px-6 text-sm font-bold uppercase tracking-[0.08em] text-co-cta shadow-xl shadow-black/20 transition hover:bg-co-text/90 disabled:opacity-50 sm:flex-none sm:px-10"
             >
               {submitting

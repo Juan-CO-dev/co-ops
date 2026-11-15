@@ -1,4 +1,4 @@
-/** 0302 offline proof (audit W01: B032, B144, B002): the REAL parent DDL + 0302 in PGlite, synthetic rows only. */
+/** 0302 offline proof (audit W01: B032, B144, B002, and the delivery ruling of 2026-11-15): the REAL parent DDL + 0302 in PGlite, synthetic rows only. */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -38,7 +38,7 @@ try {
     create table public.catering_packages(id uuid primary key);
     create table public.catering_package_items(id uuid primary key);
     create table public.item_sizes(id uuid primary key);
-    create table public.catering_delivery_zones(id uuid primary key);
+    ${table('0117_catering_delivery_zones.sql', 'catering_delivery_zones')}
     create table public.catering_portal_tokens(id uuid primary key);
     ${table('0108_catering_scaffold_capture.sql', 'catering_customers')}
     ${table('0108_catering_scaffold_capture.sql', 'catering_pipeline')}
@@ -67,6 +67,7 @@ try {
   await refusePreflight('alter table public.catering_pipeline drop column dietary_notes', /missing columns .*catering_pipeline\.dietary_notes/, 'missing dietary_notes refused');
   await refusePreflight('alter table public.catering_quote_items drop column line_kind cascade', /missing columns .*catering_quote_items\.line_kind/, 'missing line_kind refused');
   await refusePreflight('alter table catering_payments drop column created_by', /missing columns .*catering_payments\.created_by/, 'missing payments.created_by refused');
+  await refusePreflight('alter table public.catering_delivery_zones drop column min_order_cents', /missing columns .*catering_delivery_zones\.min_order_cents/, 'missing zones.min_order_cents refused');
   await refusePreflight('drop index catering_payments_one_due', /missing the 0130 partial unique index/, 'missing 0130 index refused');
   await refusePreflight("create function public.portal_draft_set_lines(uuid,uuid,jsonb,jsonb,text,bigint) returns jsonb language sql as 'select null::jsonb'", /already applied/, 'already applied refused');
   await refusePreflight('alter table public.catering_quotes add column portal_rev_seq bigint', /catering_quotes already has portal_rev/, 'a pre-existing revision column refused');
@@ -95,9 +96,9 @@ try {
   await db.query('insert into catering_package_items values($1)', [slot]);
   await db.query("insert into catering_customers(id,name,email) values($1,'Synthetic','s@example.test'),($2,'Other','o@example.test')", [cust, other]);
   await db.query("insert into catering_pipeline(id,customer_id,contact_name,stage,location_id) values($1,$2,'Synthetic','inquiry',$3)", [pipe, cust, loc]);
-  const newDraft = async (status = 'draft') => {
+  const newDraft = async (status = 'draft', isDelivery = false, location = loc) => {
     const id = randomUUID();
-    await db.query("insert into catering_quotes(id,pipeline_id,customer_id,location_id,status,origin) values($1,$2,$3,$4,$5,'self_serve')", [id, pipe, cust, loc, status]);
+    await db.query("insert into catering_quotes(id,pipeline_id,customer_id,location_id,status,origin,is_delivery) values($1,$2,$3,$4,$5,'self_serve',$6)", [id, pipe, cust, location, status, isDelivery]);
     return id;
   };
   const chips = (qty, unit = 1000, order = 0) => ({ item_id: item, menu_item_id: null, package_id: null, size_id: null, portion: null, description: 'Chips', quantity: qty, unit_price_cents: unit, line_total_cents: qty * unit, display_order: order, line_kind: null, components_listed: null, options: [] });
@@ -236,6 +237,63 @@ try {
   const q5 = await newDraft('sent');
   await reject(() => setLines(cust, q5, [chips(1)], snap(1000)), /not_draft/, 'a staff-sent quote → not_draft');
   check((await one('select status from catering_quotes where id=$1', [q4])).status === 'draft', 'refused submits changed no status');
+
+  // ── Delivery (Juan's ruling 2026-11-15): never free, the MOST EXPENSIVE zone, its minimum enforced ──
+  const dloc = randomUUID();
+  await db.query('insert into locations values($1)', [dloc]);
+  const dsnap = (subtotal, zoneId, fee) => snap(subtotal, { is_delivery: true, delivery_zone_id: zoneId, delivery_fee_cents: fee, total_cents: subtotal + fee });
+  const deliveryDraft = async (qty) => { const q = await newDraft('draft', true, dloc); await setLines(cust, q, [chips(qty)], dsnap(qty * 1000, null, 0)); return q; };
+  const statusOf = async (q) => (await one('select status from catering_quotes where id=$1', [q])).status;
+  // No active zone at the shop: refused, never free.
+  const dq = await deliveryDraft(10);
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, null, 0)), /delivery_unavailable/, 'delivery: no active zone → delivery_unavailable (never free)');
+  const zInactive = randomUUID();
+  await db.query("insert into catering_delivery_zones(id,location_id,slug,label_en,fee_cents,min_order_cents,active) values($1,$2,'old','Old',9999,null,false)", [zInactive, dloc]);
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, zInactive, 9999)), /delivery_unavailable/, 'delivery: an inactive zone covers nothing → delivery_unavailable');
+  check(await statusOf(dq) === 'draft' && (await one('select count(*)::int n from catering_payments where quote_id=$1', [dq])).n === 0, 'delivery_unavailable wrote nothing');
+  // Two active zones: the higher fee is the one the snapshot must carry.
+  const zLow = randomUUID(), zHigh = randomUUID();
+  await db.query("insert into catering_delivery_zones(id,location_id,slug,label_en,fee_cents,min_order_cents,active) values($1,$3,'near','Near',1500,null,true),($2,$3,'far','Far',3500,8000,true)", [zLow, zHigh, dloc]);
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, zLow, 1500)), /delivery_changed/, 'delivery: two zones, the cheaper one in the snapshot → delivery_changed');
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, null, 0)), /delivery_changed/, 'delivery: a free snapshot when zones exist → delivery_changed');
+  await reject(async () => submit(cust, dq, await expectedOf(dq), dsnap(10000, zHigh, 1500)), /delivery_changed/, 'delivery: the right zone with the wrong fee → delivery_changed');
+  await reject(async () => submit(cust, dq, await expectedOf(dq), snap(10000)), /invalid_snapshot/, 'delivery: a snapshot claiming pickup on a delivery draft → invalid_snapshot');
+  await submit(cust, dq, await expectedOf(dq), dsnap(10000, zHigh, 3500));
+  qr = await one('select status, delivery_zone_id::text z, delivery_fee_cents f from catering_quotes where id=$1', [dq]);
+  check(qr.status === 'submitted' && qr.z === zHigh && qr.f === 3500, 'delivery: two zones → submitted with the MORE EXPENSIVE zone and its fee recorded');
+  // The minimum (8000 on the far zone): one cent under refuses; exactly at it passes.
+  const dUnder = await newDraft('draft', true, dloc);
+  await setLines(cust, dUnder, [chips(1, 7999)], dsnap(7999, null, 0));
+  await reject(async () => submit(cust, dUnder, await expectedOf(dUnder), dsnap(7999, zHigh, 3500)), /below_delivery_minimum/, 'delivery: 1 cent under the minimum → below_delivery_minimum');
+  check(await statusOf(dUnder) === 'draft' && (await one('select count(*)::int n from catering_payments where quote_id=$1', [dUnder])).n === 0, 'below_delivery_minimum wrote nothing');
+  const dAt = await newDraft('draft', true, dloc);
+  await setLines(cust, dAt, [chips(1, 8000)], dsnap(8000, null, 0));
+  await submit(cust, dAt, await expectedOf(dAt), dsnap(8000, zHigh, 3500));
+  check(await statusOf(dAt) === 'submitted', 'delivery: exactly AT the minimum submits');
+  // Napkins count toward the minimum (the snapshot subtotal is the order as charged).
+  const dNap = await newDraft('draft', true, dloc);
+  await setLines(cust, dNap, [chips(1, 7500)], dsnap(7500, null, 0));
+  await submit(cust, dNap, await expectedOf(dNap), dsnap(8000, zHigh, 3500), { item_id: napkin, description: 'Napkins', unit_price_cents: 500 });
+  check(await statusOf(dNap) === 'submitted', 'delivery: the napkins add-on counts toward the minimum');
+  // A fee tie goes to the higher minimum, then the lower id (the app's resolvePortalDeliveryZone order).
+  const tloc = randomUUID();
+  await db.query('insert into locations values($1)', [tloc]);
+  const [tA, tB] = [randomUUID(), randomUUID()].sort();
+  await db.query("insert into catering_delivery_zones(id,location_id,slug,label_en,fee_cents,min_order_cents,active) values($1,$3,'a','A',2000,null,true),($2,$3,'b','B',2000,null,true)", [tA, tB, tloc]);
+  const dTie = await newDraft('draft', true, tloc);
+  await setLines(cust, dTie, [chips(5)], dsnap(5000, null, 0));
+  await reject(async () => submit(cust, dTie, await expectedOf(dTie), dsnap(5000, tB, 2000)), /delivery_changed/, 'delivery: equal fees, no minimums → the lower id, not the other');
+  await submit(cust, dTie, await expectedOf(dTie), dsnap(5000, tA, 2000));
+  check(await statusOf(dTie) === 'submitted', 'delivery: equal fees resolve to the lower id');
+  // Pickup carries no zone and no fee.
+  const pq = await newDraft();
+  await setLines(cust, pq, [chips(2)], snap(2000));
+  await reject(async () => submit(cust, pq, await expectedOf(pq), snap(2000, { delivery_fee_cents: 500, total_cents: 2500 })), /invalid_snapshot/, 'pickup with a delivery fee → invalid_snapshot');
+  await reject(async () => submit(cust, pq, await expectedOf(pq), snap(2000, { delivery_zone_id: zHigh })), /invalid_snapshot/, 'pickup with a zone → invalid_snapshot');
+  await reject(async () => submit(cust, pq, await expectedOf(pq), snap(2000, { is_delivery: true })), /invalid_snapshot/, 'a snapshot claiming delivery on a pickup draft → invalid_snapshot');
+  const zsrc = (await one("select prosrc from pg_proc where proname='portal_draft_submit'")).prosrc;
+  check(/from public\.catering_delivery_zones where location_id = q\.location_id and active for share/.test(zsrc), 'delivery: the zone rows are read FOR SHARE under the quote lock');
+  check(zsrc.indexOf('for share') > zsrc.indexOf('for update') && zsrc.indexOf('for share') < zsrc.indexOf("status = 'submitted'"), 'delivery: zones checked after the quote lock, before the flip');
 
   // Lock: both writers take the quote row FOR UPDATE (the serialization point).
   for (const fn of ['portal_draft_set_lines', 'portal_draft_submit']) {

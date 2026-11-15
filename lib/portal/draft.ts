@@ -28,10 +28,10 @@ import { createPaymentDue } from "@/lib/catering/payments";
 import { sendEmail } from "@/lib/email";
 import { renderOrderConfirmationEmail } from "@/lib/email-templates/order-confirmation";
 import { allowlistMatches } from "./magic-link-shared";
-import { resolvePortalDeliveryZone } from "./draft-shared";
+import { portalDeliveryInfo, portalDeliveryRefusal, resolvePortalDeliveryZone, type PortalDeliveryInfo } from "./draft-shared";
 
 export { resolvePortalDeliveryZone } from "./draft-shared";
-export type { PortalZoneResolution } from "./draft-shared";
+export type { PortalZoneResolution, PortalDeliveryInfo } from "./draft-shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The dedicated menu section the napkins/utensils add-on lives in (excluded from the shopping list). */
@@ -246,6 +246,11 @@ function rpcRefusal(where: string, error: { message?: string }): never {
   if (code === "empty_cart") throw new PortalDraftError(400, "empty_cart", "Your order is empty");
   if (code === "invalid_notes") throw new PortalDraftError(400, "invalid_notes", "Notes can be at most 2000 characters");
   if (code === "invalid_rev") throw new PortalDraftError(400, "invalid_rev", "Invalid edit revision");
+  // Delivery re-checked by 0302 under the lock (Juan 2026-11-15). `delivery_changed`: the shop's zones
+  // moved between this server's read and the lock — the customer reviews the new price.
+  if (code === "delivery_unavailable") throw new PortalDraftError(409, "delivery_unavailable", "Delivery isn't available for online orders at this shop right now");
+  if (code === "below_delivery_minimum") throw new PortalDraftError(409, "below_delivery_minimum", "This delivery order is under the minimum");
+  if (code === "delivery_changed") throw new PortalDraftError(409, "cart_changed", "The delivery fee changed. Please review your order.");
   throw new Error(`${where}: ${error.message ?? "rpc failed"}`);
 }
 
@@ -529,8 +534,9 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
 }
 
 /** The draft's delivery zone + fee, decided by the SERVER from the location's active zones and the
- * draft's own is_delivery (set at intake). Nothing the browser sends reaches it (audit W01/B001). */
-function serverDeliveryZone(pricing: { zones: Array<{ id: string; feeCents: number }> }, isDelivery: boolean) {
+ * draft's own is_delivery (set at intake). Nothing the browser sends reaches it (audit W01/B001).
+ * Two or more zones → the most expensive one (Juan 2026-11-15); see resolvePortalDeliveryZone. */
+function serverDeliveryZone(pricing: { zones: Array<{ id: string; feeCents: number; minOrderCents: number | null }> }, isDelivery: boolean) {
   return resolvePortalDeliveryZone(pricing.zones, isDelivery);
 }
 
@@ -695,10 +701,16 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
 
 export interface PreviewOpts { tipBps?: number | null; napkins?: boolean }
 
+/** The preview's answer: the charge stack plus what the page shows about delivery (fee, minimum,
+ * and whether the order can be placed as it stands). */
+export type DraftPreview = ChargeStack & { delivery: PortalDeliveryInfo };
+
 /** Compute-only charge stack for the review page (owned + 'draft'). Reads the draft's CURRENT
  * persisted lines, optionally + the napkins add-on, applies the chosen tip/delivery — persists
- * NOTHING. Keeps the review breakdown server-authoritative (no client illustrative rates). */
-export async function previewDraft(customerId: string, quoteId: string, opts: PreviewOpts = {}): Promise<ChargeStack> {
+ * NOTHING. Keeps the review breakdown server-authoritative (no client illustrative rates). A delivery
+ * order the submit would refuse (no zone, under the minimum) still previews, with `delivery.refusal`
+ * set, so the page can say why before the customer taps. */
+export async function previewDraft(customerId: string, quoteId: string, opts: PreviewOpts = {}): Promise<DraftPreview> {
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
   const lineTotals = (await repriceStoredLines(header.location_id, await loadStoredLines(sb, quoteId))).map((l) => l.lineTotalCents);
@@ -708,7 +720,8 @@ export async function previewDraft(customerId: string, quoteId: string, opts: Pr
   }
   const pricing = await loadPublicPricingContext(header.location_id);
   const zone = serverDeliveryZone(pricing, header.is_delivery);
-  return computeChargeStack(lineTotals, zone.feeCents, ratesWithTip(pricing.rates, opts.tipBps));
+  const stack = computeChargeStack(lineTotals, zone.feeCents, ratesWithTip(pricing.rates, opts.tipBps));
+  return { ...stack, delivery: portalDeliveryInfo(zone, stack.subtotalCents) };
 }
 
 // ── Submit (draft → submitted, the one completing click) ───────────────────────────
@@ -765,6 +778,15 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   const deliveryZoneId = zone.zoneId;
   const rates = ratesWithTip(pricing.rates, opts.tipBps);
   const stack = computeChargeStack(lineTotals, zone.feeCents, rates);
+  // A delivery order is never placed free or under its zone's minimum (Juan 2026-11-15): refused here,
+  // before any write, and again by 0302 under the quote row lock against the zones as they are then.
+  const deliveryRefusal = portalDeliveryRefusal(zone, stack.subtotalCents);
+  if (deliveryRefusal === "delivery_unavailable") {
+    throw new PortalDraftError(409, "delivery_unavailable", "Delivery isn't available for online orders at this shop right now");
+  }
+  if (deliveryRefusal === "below_delivery_minimum") {
+    throw new PortalDraftError(409, "below_delivery_minimum", `Delivery orders need at least ${centsToUsd(zone.minOrderCents ?? 0)} in food`);
+  }
 
   // 0302: ONE transaction under the quote row lock — the lines priced above must still be the draft's
   // lines (else cart_changed, B032), then flip + napkins line + deposit-due intent, all or nothing (B144).

@@ -123,13 +123,61 @@ describe("B001 — the delivery fee of a self-serve delivery order is decided by
     await submitDraft(CUST, QUOTE, forged);
     expect(quoteRow(db)).toMatchObject({ is_delivery: false, delivery_zone_id: null, delivery_fee_cents: 0 });
   });
-  it("no zones configured, or several fee tiers the server cannot place an address in: no fee, no zone (staff set it on confirm)", async () => {
-    useDb(seed({ is_delivery: true }));
-    expect((await previewDraft(CUST, QUOTE, {})).deliveryFeeCents).toBe(0);
-    h.zones = [zone(ZONE, 2500), zone("66666666-6666-4666-8666-666666666666", 4000)];
+  it("no active zone at the shop: the preview says delivery is unavailable and the submit is REFUSED, never free", async () => {
     const db = useDb(seed({ is_delivery: true }));
+    const p = await previewDraft(CUST, QUOTE, {});
+    expect(p.deliveryFeeCents).toBe(0);
+    expect(p.delivery).toMatchObject({ isDelivery: true, zoneId: null, refusal: "delivery_unavailable" });
+    await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "delivery_unavailable" });
+    expect(quoteRow(db)).toMatchObject({ status: "draft" });
+    expect(h.createPaymentDue).not.toHaveBeenCalled();
+    expect(h.sendEmail).not.toHaveBeenCalled();
+  });
+  it("two active zones (Juan 2026-11-15): the MORE EXPENSIVE zone is charged and recorded, in preview, save and submit", async () => {
+    const FAR = "66666666-6666-4666-8666-666666666666";
+    h.zones = [zone(ZONE, 2500), zone(FAR, 4000)];
+    const db = useDb(seed({ is_delivery: true }));
+    const p = await previewDraft(CUST, QUOTE, {});
+    expect(p.deliveryFeeCents).toBe(4000);
+    expect(p.delivery).toMatchObject({ zoneId: FAR, feeCents: 4000, refusal: null });
+    const view = await setDraftLines(CUST, QUOTE, [{ itemId: ITEM, quantity: 10 }]);
+    expect(view.deliveryZoneId).toBe(FAR);
     await submitDraft(CUST, QUOTE, {});
-    expect(quoteRow(db)).toMatchObject({ delivery_zone_id: null, delivery_fee_cents: 0 });
+    expect(quoteRow(db)).toMatchObject({ status: "submitted", delivery_zone_id: FAR, delivery_fee_cents: 4000, total_cents: 14000 });
+  });
+  it("the zone's minimum: exactly AT it submits; one cent under is refused with the amount still needed", async () => {
+    h.zones = [{ ...zone(ZONE, 2500), minOrderCents: 10000 }]; // the cart is 10 × $10.00 = $100.00
+    let db = useDb(seed({ is_delivery: true }));
+    expect((await previewDraft(CUST, QUOTE, {})).delivery).toMatchObject({ minOrderCents: 10000, shortByCents: 0, refusal: null });
+    await submitDraft(CUST, QUOTE, {});
+    expect(quoteRow(db)).toMatchObject({ status: "submitted", delivery_zone_id: ZONE, delivery_fee_cents: 2500 });
+
+    h.zones = [{ ...zone(ZONE, 2500), minOrderCents: 10001 }];
+    h.createPaymentDue.mockClear();
+    db = useDb(seed({ is_delivery: true }));
+    expect((await previewDraft(CUST, QUOTE, {})).delivery).toMatchObject({ minOrderCents: 10001, shortByCents: 1, refusal: "below_delivery_minimum" });
+    await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "below_delivery_minimum" });
+    expect(quoteRow(db)).toMatchObject({ status: "draft" });
+    expect(h.createPaymentDue).not.toHaveBeenCalled();
+  });
+  it("the napkins add-on counts toward the minimum (the subtotal as charged)", async () => {
+    h.menu = [chips(), { ...chips(500), id: "napkins-1", name: "Napkins", section: "Add-ons" }];
+    h.zones = [{ ...zone(ZONE, 2500), minOrderCents: 10500 }];
+    useDb(seed({ is_delivery: true }));
+    expect((await previewDraft(CUST, QUOTE, {})).delivery.refusal).toBe("below_delivery_minimum");
+    expect((await previewDraft(CUST, QUOTE, { napkins: true })).delivery.refusal).toBeNull();
+  });
+  it("the minimum of the zone actually charged is the one enforced (the higher-fee zone's)", async () => {
+    h.zones = [{ ...zone(ZONE, 2500), minOrderCents: null }, { ...zone("66666666-6666-4666-8666-666666666666", 4000), minOrderCents: 20000 }];
+    useDb(seed({ is_delivery: true }));
+    await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "below_delivery_minimum" });
+  });
+  it("a pickup order is never held to a delivery minimum", async () => {
+    h.zones = [{ ...zone(ZONE, 2500), minOrderCents: 999999 }];
+    const db = useDb(seed({ is_delivery: false }));
+    expect((await previewDraft(CUST, QUOTE, {})).delivery).toMatchObject({ isDelivery: false, refusal: null, feeCents: 0 });
+    await submitDraft(CUST, QUOTE, {});
+    expect(quoteRow(db)).toMatchObject({ status: "submitted", delivery_fee_cents: 0, delivery_zone_id: null });
   });
 });
 
@@ -273,10 +321,13 @@ describe("B144 — submit is all or nothing (flip + napkins line + deposit inten
   });
   it("with 0302: a refusal (cart_changed / not_draft) sends no email and writes no audit row", async () => {
     vi.stubEnv("PORTAL_MAGIC_LINK_ALLOWLIST", "*");
-    for (const [code, status] of [["cart_changed", 409], ["not_draft", 409], ["not_found", 404]] as const) {
+    for (const [code, status] of [["cart_changed", 409], ["not_draft", 409], ["not_found", 404], ["delivery_unavailable", 409], ["below_delivery_minimum", 409]] as const) {
       useDb(seed(), { portal_draft_submit: rpcRefuse(code) });
       await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status, code });
     }
+    // The zones moved between the server's read and 0302's lock: the customer re-reviews the price.
+    useDb(seed(), { portal_draft_submit: rpcRefuse("delivery_changed") });
+    await expect(submitDraft(CUST, QUOTE, {})).rejects.toMatchObject({ status: 409, code: "cart_changed" });
     expect(h.sendEmail).not.toHaveBeenCalled();
     expect(h.audit).not.toHaveBeenCalled();
   });
