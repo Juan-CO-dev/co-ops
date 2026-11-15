@@ -252,3 +252,13 @@ it("repairs archive projection from stored receipt paths without re-fetching byt
   expect(mocks.ingest).not.toHaveBeenCalled();
   expect(db.calls.filter(c => c.method === "update").at(-1)?.args[0]).toMatchObject({ archive_state: "incomplete", archive_error: "unavailable" });
 });
+
+// Audit W11/B017: a run killed mid-work (Vercel timeout) must still use up its attempt.
+it("the claim spends the attempt before any work, so a killed run still counts", async () => {
+  mocks.fetch.mockResolvedValue({ text: "Catering", attachments: [] });
+  const db = database([...cateringReplies(child), { count: 1 }]);
+  await processInboundMessage(row.id, db.sb);
+  const claim = db.calls.find(c => c.table === "inbound_messages" && c.method === "update");
+  expect(claim?.args[0]).toMatchObject({ fetch_attempts: 1, lease_token: expect.any(String) });
+  expect(db.calls).toContainEqual({ table: "inbound_messages", method: "eq", args: ["fetch_attempts", 0] });
+});

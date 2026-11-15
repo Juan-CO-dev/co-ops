@@ -36,7 +36,9 @@ import {
 type Service = ReturnType<typeof getServiceRoleClient>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLAIM_CODES = ["delivery_off", "not_found", "forbidden", "request_conflict", "stale_revision", "invalid_state", "no_draft", "already_sent",
-  "needs_review", "assignee_unavailable", "delivery_busy", "attempts_exhausted", "not_new", "invalid_recipient", "revalidation_failed", "quote_revalidation_failed", "thread_cap", "invalid_escalation", "invalid_input"] as const;
+  "needs_review", "assignee_unavailable", "delivery_busy", "attempts_exhausted", "not_new", "invalid_recipient", "revalidation_failed", "quote_revalidation_failed", "thread_cap", "invalid_escalation", "invalid_input",
+  // 0311 (audit W11): the per-recipient daily cap (B066a) and the permanent unsafe-preview refusal (B068). Never raised before 0311.
+  "recipient_cap", "unsafe_preview"] as const;
 const dictionaries: Record<"en" | "es", Record<string, string>> = { en, es };
 const translator = (language: "en" | "es"): Translate => (key, params) =>
   (dictionaries[language][key] ?? key).replace(/\{(\w+)\}/g, (match, name: string) => params?.[name] ?? match);
@@ -157,8 +159,10 @@ export async function sendCateringInboxDraft(ctx: AuthContext, id: string, input
 }
 
 export interface DeliveryRun { ran: boolean; reason?: string; replies: RunCounts; escalations: RunCounts; swept: number }
-export interface RunCounts { attempted: number; sent: number; failed: number; ambiguous: number; skipped: number }
-const counts = (): RunCounts => ({ attempted: 0, sent: 0, failed: 0, ambiguous: 0, skipped: 0 });
+/** `skipped` = an expected, named refusal (a 409 from the claim, or the deadline); `errored` = an unexpected failure (a 5xx
+ *  claim error, a timeout, a network error), logged by its fixed code so cron.success can tell them apart (audit W11/B169). */
+export interface RunCounts { attempted: number; sent: number; failed: number; ambiguous: number; skipped: number; errored: number }
+const counts = (): RunCounts => ({ attempted: 0, sent: 0, failed: 0, ambiguous: 0, skipped: 0, errored: 0 });
 /** The per-tick queue size per lane (the SQL `catering_inbox_delivery_due` limit and the sweep limit). */
 export const RUN_PAGE = 25;
 /** The queue, ELIGIBILITY-FILTERED IN SQL before its limit (0298 `catering_inbox_delivery_due`): draft or retryable reply
@@ -202,8 +206,10 @@ export async function runCateringInboxDelivery(input: { now?: Date; deadlineMs?:
     try { tally(bucket, (await deliverOne({ sb, config, own, trigger: "cron", requestId: randomUUID(), ...args })).state); }
     catch (error) {
       if (error instanceof CateringInboxError && error.status === 503) throw error;
-      if (!(error instanceof CateringInboxError)) console.error("[catering-inbox] delivery attempt failed", error instanceof Error ? error.message : "unknown");
-      bucket.skipped += 1;
+      if (error instanceof CateringInboxError && error.status < 500) { bucket.skipped += 1; return; }
+      // Ids and the fixed code only: never an address, a subject or a provider message.
+      console.error("[catering-inbox] delivery attempt errored", { code: error instanceof CateringInboxError ? error.code : "unexpected", kind: args.kind, message_id: args.messageId });
+      bucket.errored += 1;
     }
   };
   const queue = await dueQueue(sb);
